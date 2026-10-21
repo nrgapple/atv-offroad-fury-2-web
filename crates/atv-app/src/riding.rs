@@ -32,6 +32,9 @@ pub struct Riding {
     pub autodrive_done: bool,
     /// Simulation and sound time of the latest frame (ms).
     pub sim_ms: f64,
+    /// Each of those steps' follow camera (position, target), for the world
+    /// effects that track the simulation camera (Snow).
+    pub step_cameras: Vec<([f32; 3], [f32; 3])>,
 }
 
 /// What a frame sampled from the keyboard/controller.
@@ -62,6 +65,7 @@ impl Riding {
             autodrive: None,
             autodrive_done: false,
             sim_ms: 0.,
+            step_cameras: Vec::new(),
         }
     }
 
@@ -86,6 +90,7 @@ impl Riding {
 
     fn frame_inner(&mut self, input: &Sample, dt: f32) -> Result<(), String> {
         self.steps_last_frame = 0;
+        self.step_cameras.clear();
         if let Some((controls, cursor)) = &mut self.autodrive {
             // The browser's accumulator, with the script supplying each step.
             self.accumulator = (self.accumulator + dt).min(0.1);
@@ -100,6 +105,8 @@ impl Riding {
                 };
                 *cursor += 1;
                 self.ride.step(&control, self.orbit)?;
+                let camera = self.ride.camera().0;
+                self.step_cameras.push((camera.position, camera.target));
                 if let Some(sound) = &mut self.sound {
                     sound.step(self.ride.sound());
                 }
@@ -165,6 +172,8 @@ impl Riding {
             if let Some(sound) = &mut self.sound {
                 sound.step(self.ride.sound());
             }
+            let camera = self.ride.camera().0;
+            self.step_cameras.push((camera.position, camera.target));
         }
         self.steps_last_frame += count;
         // GameAudio.update runs once per delivered batch.

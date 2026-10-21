@@ -5,6 +5,7 @@
 pub mod ambient;
 pub mod archive;
 pub mod audio;
+pub mod intro;
 pub mod launch;
 pub mod materials;
 pub mod ride;

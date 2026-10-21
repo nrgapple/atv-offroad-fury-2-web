@@ -30,6 +30,54 @@ camera in the JavaScript game, the Rust engine in the browser and the native bui
 When the Rust engine reaches parity, `play.html` switches to it and the JavaScript
 equivalents are removed.
 
+## Fidelity and performance requirements for continuation
+
+The target remains the recovered behavior of ATV Offroad Fury 2 USA v2.00
+(`SCUS_972.11`), as established in [IMPLEMENTATION.md](IMPLEMENTATION.md). The
+current JavaScript game is the migration reference for working integration and
+platform adaptations. Its existing approximations remain documented gaps; matching
+them is evidence of migration parity, not proof of PS2 equivalence. Preserve
+original tuning, update order, fixed-step cadence, animation/camera transitions,
+materials and sound decisions where recovered evidence exists. Correct known
+fidelity gaps with that evidence and record the intentional difference from the
+JavaScript reference.
+
+Retain the performance improvements already validated in the browser port. Their
+implementation can change in Rust, but their benefit and observable behavior must
+survive. [PERFORMANCE.md](PERFORMANCE.md) records measured examples: conservative
+culling without visible draw-order changes, terrain buffer reuse and partial
+updates, unchanged-state HUD redraw avoidance, and inactive single-player render
+sleep while preserving multiplayer clocks. The migration also needs to retain
+bounded simulation batches and input/event ordering, shared resource caches,
+parallel loading and economical audio/resource reads where the current port uses
+them. These are acceptance requirements, not a claim that every optimization has
+already reached the Rust engine.
+
+For each completed subsystem checkpoint:
+
+- Identify the JavaScript paths being replaced, the recovered routines or resource
+  evidence, and the existing optimization/adaptation behavior to preserve.
+- Compare matched inputs, simulation steps, cameras and graphics settings across
+  the JavaScript game, Rust browser engine and native engine using the applicable
+  replay, image, audio and input checks. Keep known differences explicit.
+- Measure the affected costs against the same baseline: frame-time distribution
+  and stalls, input responsiveness, memory/allocation or upload volume, startup
+  and resource loading, and audio continuity as applicable. Removing JavaScript
+  or moving simulation onto the main thread is not itself a performance result.
+- Retain mobile touch ownership/cancellation, portrait and safe-area behavior,
+  focus/pause/resume handling and audio activation. Keep the authored input
+  adaptations documented in [TOUCH.md](TOUCH.md) and [CONTROLS.md](CONTROLS.md).
+- Label host viewport simulations separately from physical iOS/Android results.
+  Validate the affected mobile path before claiming mobile performance parity;
+  document device coverage still missing.
+
+Original remains the baseline preset. Existing optional graphics, camera, crash
+and physics enhancements remain explicit options, with baseline behavior checked
+separately. A performance shortcut that changes original behavior or visible output
+must be recorded and exposed as an explicit quality/enhancement choice, not silently
+substituted for the baseline. Keep the current game available until the replacement
+passes its relevant behavior and performance gates.
+
 ## Feasibility checkpoint (2026-10-20)
 
 Scope: ENV01 terrain only (base layers, detail blend, GS fog, fine patch, culling), a
@@ -177,9 +225,13 @@ Snow and camera flashes (fourth checkpoint): `atv-game/snow.rs` + `atv-render/sn
 port `weather.js` (source SnowEmitter births from `atv_core::weather::Snow` into a
 10,800-slot GPU ring aged in WGSL, unfogged). Only ENV01 races select Snow, so the
 engine gained a static-world race-course load (`--race`, `?race=1`; ride disabled) and
-`compare_engine.mjs --race`. The browser steps Snow around its follow camera; the engine
-uses the last rendered view until the ride shares its camera (`set_weather_camera`), so
-the ENV01 race intro differs by flake placement only (5.5/255, 0.02 browser vs native).
+`compare_engine.mjs --race`. Snow now steps around each simulation step's camera, as the
+browser's op 50 batch does: the ride's follow camera (`Riding::step_cameras` ->
+`SceneRenderer::set_weather_view`) or, for a race-course load, the pre-race shot camera
+(`atv-game/intro.rs`, `atv_core::race_intro`), which also drives the free view and is
+stepped once at load like startSimulation's first op 46 request. ENV01 race intro: 3.1/255
+(was 5.5); the flakes now match and the residue is near plants whose orientation the
+browser captured along the moving intro camera (the capture pins the view).
 Stadium camera flashes now run on the browser's seeded `race_crowd::Flashes` clock
 (0020ee10, about one of SX01's 187 lit at a time); `flash_burst` takes race events.
 

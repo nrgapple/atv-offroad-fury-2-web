@@ -224,8 +224,12 @@ pub struct SceneRenderer {
         snow::SnowPass,
         std::rc::Rc<std::cell::RefCell<atv_game::snow::Weather>>,
     )>,
-    /// The latest rendered camera: the Snow rings follow it.
+    /// This step's simulation camera (position, target): the Snow rings
+    /// follow it. Without one, the latest rendered view stands in.
+    weather_view: Option<([f32; 3], [f32; 3])>,
     weather_camera: Camera,
+    /// Pre-race shots of a race-course load, stepped with the world.
+    intro: Option<(atv_game::intro::IntroCamera, atv_core::terrain::Heightfield)>,
     water: Option<(
         water::WaterPass,
         std::rc::Rc<std::cell::RefCell<atv_game::water::Water>>,
@@ -301,7 +305,7 @@ impl SceneRenderer {
             )
         });
         let depth_far = far + scenery.reach.max(terrain.reach()) + 1.;
-        Self {
+        let mut scene = Self {
             terrain,
             world,
             sky,
@@ -310,14 +314,36 @@ impl SceneRenderer {
             train,
             ambient,
             snow,
+            weather_view: None,
             weather_camera: Camera::default(),
+            intro: atv_game::intro::IntroCamera::new(
+                venue.intro_shots.clone(),
+                venue.scene.start_position,
+                venue.scene.start_direction,
+            )
+            .map(|intro| {
+                let t = &venue.terrain;
+                (
+                    intro,
+                    atv_core::terrain::Heightfield {
+                        width: t.width,
+                        depth: t.depth,
+                        spacing: f64::from(t.spacing),
+                        heights: t.heights.clone(),
+                    },
+                )
+            }),
             water,
             fog_color,
             far,
             depth_far,
             clock: 0.,
             vehicle: None,
-        }
+        };
+        // startSimulation's first follow-camera request (op 46, dt 1/60)
+        // already advances the pre-race shots once.
+        scene.step_intro();
+        scene
     }
 
     /// Advances world animation (scenery UV scroll and ATM clocks) by
@@ -368,11 +394,21 @@ impl SceneRenderer {
                 self.ambient = None;
             }
         }
+        self.step_intro();
         if let Some((pass, shared)) = &mut self.snow {
-            // The browser steps Snow around its simulation (follow) camera;
-            // here the latest rendered view stands in for it.
+            // The browser steps Snow around its simulation camera (follow or
+            // intro); the latest rendered view stands in when none is given.
+            let (position, forward) = match self.weather_view {
+                Some((position, target)) => {
+                    (position, std::array::from_fn(|i| target[i] - position[i]))
+                }
+                None => (
+                    self.weather_camera.eye(),
+                    self.weather_camera.axes().forward,
+                ),
+            };
             let mut weather = shared.borrow_mut();
-            if pass.step(&mut weather, &self.weather_camera).is_err() {
+            if pass.step(&mut weather, position, forward).is_err() {
                 drop(weather);
                 self.snow = None;
             }
@@ -386,9 +422,59 @@ impl SceneRenderer {
         }
     }
 
+    /// One step of the pre-race shot camera; the Snow rings follow it.
+    fn step_intro(&mut self) {
+        if let Some((intro, ground)) = &mut self.intro {
+            // The swoop ends on a follow pose behind the start (the browser
+            // uses the player's follow camera; only the swoop reads it).
+            let (rider, forward) = intro.start();
+            let follow = atv_core::race_intro::Pose {
+                position: [
+                    rider[0] - forward[0] * 14.,
+                    rider[1] + 6.,
+                    rider[2] - forward[2] * 14.,
+                ],
+                target: rider,
+                fov: 60.,
+            };
+            let ground = |x: f32, z: f32| ground.height(f64::from(x), f64::from(z)) as f32;
+            match intro.step(follow, &ground) {
+                Ok(Some(pose)) => self.weather_view = Some((pose.position, pose.target)),
+                Ok(None) => {}
+                Err(_) => self.intro = None,
+            }
+        }
+    }
+
     /// The camera the weather rings follow until the next rendered frame.
     pub fn set_weather_camera(&mut self, camera: Camera) {
         self.weather_camera = camera;
+    }
+
+    /// The simulation camera of the next world step (the ride's follow
+    /// camera: position and target), which the Snow rings follow.
+    pub fn set_weather_view(&mut self, position: [f32; 3], target: [f32; 3]) {
+        self.weather_view = Some((position, target));
+    }
+
+    /// The pre-race shot camera while it plays (cinematicPresentation in
+    /// render-support.js): its pose with the portrait focal adaptation.
+    pub fn intro_view(&self, aspect: f32) -> Option<(Camera, f32)> {
+        let pose = self.intro.as_ref()?.0.pose()?;
+        let v: [f32; 3] = std::array::from_fn(|i| pose.target[i] - pose.position[i]);
+        let portrait = ((1. - aspect) / 0.5).clamp(0., 1.);
+        let focal =
+            (4. / 3.) / (pose.fov * std::f32::consts::PI / 360.).tan() * (1. - 0.12 * portrait);
+        Some((
+            Camera {
+                x: pose.position[0],
+                y: pose.position[1],
+                z: pose.position[2],
+                yaw: v[0].atan2(v[2]),
+                pitch: v[1].atan2(v[0].hypot(v[2])),
+            },
+            focal,
+        ))
     }
 
     /// Advances world animation by exact simulation steps (parity captures).
