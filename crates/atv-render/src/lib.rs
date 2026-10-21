@@ -2,6 +2,7 @@
 //! Windows, Vulkan on Linux and WebGL2 in browsers.
 pub mod camera;
 mod terrain;
+mod vehicle;
 
 use atv_game::venue::Venue;
 pub use camera::Camera;
@@ -142,12 +143,15 @@ pub struct View {
 pub struct FrameStats {
     pub terrain_draws: u32,
     pub terrain_triangles: u32,
+    pub vehicle_triangles: u32,
 }
 
 pub struct SceneRenderer {
     terrain: terrain::TerrainPass,
     fog_color: [f32; 3],
     far: f32,
+    /// The player's quad and rider, once a ride is loaded.
+    vehicle: Option<vehicle::VehiclePass>,
 }
 
 impl SceneRenderer {
@@ -162,7 +166,38 @@ impl SceneRenderer {
             terrain: terrain::TerrainPass::new(gpu, venue, fine_center, gpu.samples),
             fog_color,
             far,
+            vehicle: None,
         }
+    }
+
+    /// Uploads the ride's quad and rider models.
+    pub fn set_ride(
+        &mut self,
+        gpu: &Gpu,
+        venue: &Venue,
+        quad: &atv_game::ride::Model,
+        rider: &atv_game::ride::Model,
+    ) -> Result<(), String> {
+        self.vehicle = Some(vehicle::VehiclePass::new(
+            gpu,
+            venue,
+            quad,
+            rider,
+            gpu.samples,
+        )?);
+        Ok(())
+    }
+
+    /// The latest simulation pose of the quad linkage and rider skeleton.
+    pub fn pose_ride(&self, gpu: &Gpu, pose: &atv_game::ride::Pose) {
+        if let Some(vehicle) = &self.vehicle {
+            vehicle.pose(gpu, pose);
+        }
+    }
+
+    /// Rebuilds the fine terrain patch around a new rider position.
+    pub fn recenter_terrain(&mut self, gpu: &Gpu, venue: &Venue, center: [f32; 2]) {
+        self.terrain.recenter(gpu, venue, center);
     }
 
     pub fn render(&mut self, gpu: &Gpu, view: &View) -> Result<FrameStats, String> {
@@ -205,9 +240,13 @@ impl SceneRenderer {
         let view_projection =
             view.camera
                 .view_projection(aspect, view.focal_length, 1., self.far + 1.);
-        let stats = self
+        let mut stats = self
             .terrain
             .prepare(gpu, &view_projection, view.camera.eye());
+        if let Some(vehicle) = &mut self.vehicle {
+            vehicle.prepare(gpu, &view_projection, view.camera.eye());
+            stats.vehicle_triangles = vehicle.triangles;
+        }
         let mut encoder = gpu.device.create_command_encoder(&Default::default());
         {
             let [r, g, b] = self.fog_color.map(f64::from);
@@ -237,6 +276,9 @@ impl SceneRenderer {
                 ..Default::default()
             });
             self.terrain.draw(&mut pass);
+            if let Some(vehicle) = &self.vehicle {
+                vehicle.draw(&mut pass);
+            }
         }
         (encoder, stats)
     }

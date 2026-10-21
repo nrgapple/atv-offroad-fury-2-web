@@ -14,7 +14,7 @@ that recovered behavior.
 | --- | --- |
 | `atv-core` | Simulation and original formats (unchanged) |
 | `atv-content` | Hosted content package reader (`manifest.json` + SHA-256 chunks); HTTP on the web, a package directory on desktop |
-| `atv-game` | Platform-independent game layer: venue ids/archives (`launch.rs`, from `web/launch.js`), venue loading (`venue.rs`, from `terrainFromContent`), presentation terrain grid (`terrain_mesh.rs`, from `buildTerrainMesh`) |
+| `atv-game` | Platform-independent game layer: venue ids/archives (`launch.rs`, from `web/launch.js`), venue loading (`venue.rs`, from `terrainFromContent`), presentation terrain grid (`terrain_mesh.rs`, from `buildTerrainMesh`), the Freeride ride (`ride/`: loading, fixed-step simulation, default bindings, chase presentation) |
 | `atv-render` | wgpu renderer: Metal (macOS), DX12/Vulkan (Windows), Vulkan (Linux), WebGL2 (browsers). WGSL ports of the `game.js` shaders |
 | `atv-app` | One winit application for every target: `fury` desktop binary and the `engine.html` WebAssembly module |
 
@@ -55,6 +55,56 @@ Limitations: phone frame rate, Windows/Linux runtime and Firefox are unverified.
 builds read a package directory (`--content` or `FURY_CONTENT`); embedding the package
 into the executables is a later packaging step that never runs in CI.
 
+## First ride checkpoint (2026-10-20)
+
+Scope: ENV01 Freeride on the default Garage selection (quad 1, male rider) in the
+native build and `/engine.html`.
+
+Ported:
+
+- Loading (`atv-game/src/ride/load.rs`): quad mesh, physics, chassis and actor
+  collision rays, terrain materials TOY, scene COL placements with mud flags,
+  boundary/partition config, vegetation partition (ESB), water field, follow-camera
+  presets, rider mesh, the 78 riding/stunt/wreck/landing motions and both models'
+  original material textures (single-pass `baseTextures`). Mirrors
+  `terrainFromContent`/`startSimulation` and atv-web ops 2/3, 11, 20-22, 26-27,
+  44-45, 48-49, 51-53, 64-65, 89, 140 and 145, calling atv-core directly.
+- Simulation (`ride/mod.rs`): op 23 placement, op 24 vehicle/rider/wreck step,
+  op 46 follow and wreck camera, op 47 reset/cycle, in the op 50 batch order at the
+  fixed 1/60 s; the browser's frame accumulator (dt capped at 50 ms, accumulator at
+  0.1 s, at most four steps per frame, one control sample per batch).
+- Input (`ride/bindings.rs`, `atv-app/src/gamepad.rs`): `web/bindings.js` keyboard
+  defaults and the Fury Remastered controller preset (15% dead zone, linear),
+  keyboard brake-then-reverse intent, preload hold/release, keyboard trick
+  directions, Reset (R/Backspace), Camera (C), orbit (Z/X, right stick, mouse
+  drag), Pause (Esc/P). Controllers use gilrs natively and in the browser.
+- Camera presentation (`ride/view.rs`): `chasePresentation` with the 4:3 vertical
+  framing on wide screens and the portrait pull-back/widening, plus the speed-rush
+  FOV kick. The fine terrain patch follows the rider (48-cell rule).
+- Drawing (`atv-render/src/vehicle.rs`, `vehicle.wgsl`): rigid-node quad linkage
+  and rider skeleton (32 node uniforms), original textures, the browser's
+  provisional ambient/sun vehicle lighting and per-pass GS fog.
+
+Observed (`node tools/compare_engine.mjs ride env01`, which replays one script
+through the JavaScript game's own op 50 batches, `fury --trace` and `/engine.html`):
+
+- Physics. Default script (600 steps: settle, gas, both turns, brake into reverse):
+  no step diverges by more than 0.001 ft; largest origin difference 0.00024 ft,
+  orientation 2e-5, camera 0.0005 ft. A 930-step script with two wrecks and
+  recoveries matches exactly in origin and orientation (camera within 0.001 ft).
+  The browser (wasm) and native builds end within 0.00002 ft.
+- Pixels (Original preset, canvas only): quad/rider screen box mean absolute
+  difference 1.3 (1280x720) and 1.9-2.1 (390x844) of 255; whole frame 6.7 and 12.1.
+  The rest is sky, scenery and vegetation the Rust engine does not draw yet.
+- Cost. 0.04 ms per native fixed step (Apple M4). `atv_app_bg.wasm` is 5.63 MB
+  raw, 1.05 MB brotli.
+
+Limitations: no audio, HUD, minimap, menus, wheel/ambient effects, water surface,
+speed-rush screen pass, remapping or touch controls; optional Crazy/Gorn crashes,
+flips, gear and paint, motorcycles, races, multiplayer and trains are not ported.
+Controller input has not been tried with physical pads. Linux builds need
+`libudev-dev` for gilrs.
+
 ## Commands
 
 ```sh
@@ -64,6 +114,10 @@ cargo run --release -p atv-app --bin fury -- --content DIR --venue env01 \
   --camera x,y,z,yaw,pitch,focal --capture out.png 1280x720
 FURY_BIN=target/release/fury ATV_TEST_URL=http://127.0.0.1:4173 \
   node tools/compare_engine.mjs env01   # writes private/reports/engine-parity/*.png
+FURY_BIN=target/release/fury FURY_CONTENT=private/reports/hosted-content ATV_TEST_URL=... \
+  node tools/compare_engine.mjs ride env01 [script.json]   # private/reports/engine-parity/ride/
+cargo run --release -p atv-app --bin fury -- --content DIR --script s.json --trace out.json
+cargo run --release -p atv-app --bin fury -- --free ...   # terrain free camera, no ride
 ```
 
 Cross-building from macOS: Colima only shares the home directory, so the source is

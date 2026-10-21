@@ -236,25 +236,7 @@ impl TerrainPass {
             multiview_mask: None,
             cache: None,
         });
-        let patch = fine_center.map(|center| terrain_mesh::patch(terrain, center));
-        let chunks = terrain_mesh::build(terrain, patch)
-            .into_iter()
-            .map(|chunk| Chunk {
-                vertices: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("terrain vertices"),
-                    contents: bytemuck::cast_slice(&chunk.vertices),
-                    usage: wgpu::BufferUsages::VERTEX,
-                }),
-                indices: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("terrain indices"),
-                    contents: bytemuck::cast_slice(&chunk.indices),
-                    usage: wgpu::BufferUsages::INDEX,
-                }),
-                count: chunk.indices.len() as u32,
-                min: chunk.min,
-                max: chunk.max,
-            })
-            .collect();
+        let chunks = chunks(gpu, terrain, fine_center);
         Self {
             pipeline,
             bind_group,
@@ -263,6 +245,11 @@ impl TerrainPass {
             chunks,
             visible: Vec::new(),
         }
+    }
+
+    /// Moves the fine patch (buildTerrainMesh after the rider leaves it).
+    pub fn recenter(&mut self, gpu: &Gpu, venue: &Venue, center: [f32; 2]) {
+        self.chunks = chunks(gpu, &venue.terrain, Some(center));
     }
 
     pub fn prepare(&mut self, gpu: &Gpu, view_projection: &[f32; 16], eye: [f32; 3]) -> FrameStats {
@@ -379,4 +366,27 @@ fn outside(planes: &[[f32; 4]; 6], min: [f32; 3], max: [f32; 3]) -> bool {
         let corner = [0, 1, 2].map(|a| if p[a] >= 0. { max[a] } else { min[a] });
         p[0] * corner[0] + p[1] * corner[1] + p[2] * corner[2] + p[3] < 0.
     })
+}
+
+fn chunks(gpu: &Gpu, terrain: &atv_game::venue::Terrain, center: Option<[f32; 2]>) -> Vec<Chunk> {
+    let device = &gpu.device;
+    let patch = center.map(|center| terrain_mesh::patch(terrain, center));
+    terrain_mesh::build(terrain, patch)
+        .into_iter()
+        .map(|chunk| Chunk {
+            vertices: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("terrain vertices"),
+                contents: bytemuck::cast_slice(&chunk.vertices),
+                usage: wgpu::BufferUsages::VERTEX,
+            }),
+            indices: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("terrain indices"),
+                contents: bytemuck::cast_slice(&chunk.indices),
+                usage: wgpu::BufferUsages::INDEX,
+            }),
+            count: chunk.indices.len() as u32,
+            min: chunk.min,
+            max: chunk.max,
+        })
+        .collect()
 }
