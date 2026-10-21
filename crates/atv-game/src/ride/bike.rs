@@ -117,6 +117,48 @@ pub(super) fn placeholder_frame() -> VehicleFrame {
 }
 
 impl Ride {
+    /// The step's sound inputs for a motorcycle: the shared engine model's
+    /// inputs and listener plus the bike's impact and clutch cues (atv-web's
+    /// motorcycle `frame`: `impact_sample`, `rider_audio_position`).
+    pub(super) fn capture_bike_sound(&self, controls: &Controls) -> super::sound::AudioStep {
+        let Mount::Bike(bike) = &self.mount else {
+            unreachable!("motorcycle sound without a motorcycle");
+        };
+        let f = bike.frame();
+        let frame = &self.frame;
+        super::sound::AudioStep {
+            quad: super::sound::QuadFrame {
+                origin: f.origin,
+                velocity: f.linear_velocity,
+                wheels: [f.origin; 2],
+                ..Default::default()
+            },
+            rider_position: f.origin,
+            rider_impact: [0.; 3],
+            rider_water: false,
+            riding: f.wreck.phase == super::Phase::Riding,
+            throttle: self.applied.throttle,
+            grounded: f.grounded.iter().any(|g| *g),
+            speed: frame.speed_magnitude,
+            camera: atv_core::spatial_audio::CameraPose {
+                position: self.camera_frame.position,
+                target: self.camera_frame.target,
+            },
+            placement: self.placement,
+            bike: Some(super::sound::BikeSound {
+                tick: bike.tick,
+                impact_sample: bike
+                    .model
+                    .audio_config
+                    .impact_samples
+                    .first()
+                    .filter(|_| f.crash_impact_speed >= 18.8)
+                    .cloned(),
+                clutch: controls.clutch,
+            }),
+        }
+    }
+
     /// The motorcycle's op 24 for one step (atv-web `dispatch_sim`): the
     /// browser drive adapters, the race's imposed controls, spin/clutch
     /// intent, physics, the stunt controller, then the HUD.

@@ -5,7 +5,7 @@
 // offline with `fury --audio` and compares 100 ms levels, the engine sample
 // sequence and drive-on pitch on the simulation-step timeline.
 //
-//   node tools/compare_audio.mjs [venue] [script.json] [out-dir] [original|enhanced]
+//   node tools/compare_audio.mjs [venue] [script.json] [out-dir] [original|enhanced] [quad]
 // Environment: ATV_TEST_URL (served site with private content), FURY_BIN,
 // FURY_CONTENT. Outputs (WAV, JSON) contain game audio: keep them private.
 import { execFileSync } from 'node:child_process';
@@ -24,6 +24,8 @@ const DEFAULT_SCRIPT = [
 const script = process.argv[3] ? JSON.parse(await readFile(process.argv[3], 'utf8')) : DEFAULT_SCRIPT;
 const out = path.resolve(process.argv[4] ?? 'private/reports/engine-parity/audio');
 const mode = process.argv[5] ?? 'original';
+// The Garage selection (27-46 are the motorcycles).
+const quad = Number(process.argv[6] ?? 1);
 await mkdir(out, { recursive: true });
 const scriptFile = path.join(out, 'script.json');
 await writeFile(scriptFile, JSON.stringify(script));
@@ -101,7 +103,7 @@ try {
       return post.call(this, { ...message, bytes: new TextEncoder().encode(JSON.stringify(request)) }, ...rest);
     };
   }, { steps, mode });
-  await page.goto(url(`/play.html?drive=1&environment=${venue}`));
+  await page.goto(url(`/play.html?drive=1&environment=${venue}&quad=${quad}`));
   await waitForGame(page);
   await page.waitForFunction(() => window.rideTrace.held, null, { timeout: 180000 });
   await page.waitForTimeout(1500);
@@ -117,7 +119,7 @@ try {
 
 const content = process.env.FURY_CONTENT ? ['--content', process.env.FURY_CONTENT] : [];
 const rustWav = path.join(out, `${venue}-${mode}-rust.wav`);
-execFileSync(process.env.FURY_BIN, [...content, '--venue', venue, '--script', scriptFile, '--sound', mode, '--audio', rustWav], { stdio: 'inherit' });
+execFileSync(process.env.FURY_BIN, [...content, '--venue', venue, '--quad', String(quad), '--script', scriptFile, '--sound', mode, '--audio', rustWav], { stdio: 'inherit' });
 const rust = JSON.parse(await readFile(rustWav.replace(/\.wav$/, '.json'), 'utf8'));
 
 // JavaScript capture as one PCM timeline on its context clock.
