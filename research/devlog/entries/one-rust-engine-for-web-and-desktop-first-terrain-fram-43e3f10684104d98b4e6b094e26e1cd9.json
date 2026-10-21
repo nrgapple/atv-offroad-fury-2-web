@@ -1,0 +1,15 @@
+{
+  "id": "one-rust-engine-for-web-and-desktop-first-terrain-fram-43e3f10684104d98b4e6b094e26e1cd9",
+  "timestamp": "2026-10-21T00:19:27.581312+00:00",
+  "recorded_at": "2026-10-21T00:19:27.615966+00:00",
+  "kind": "build",
+  "title": "One Rust engine for web and desktop: first terrain frame",
+  "summary": "Migration of the JavaScript game host into Rust has started, so one codebase can build the website plus standalone macOS, Windows and Linux apps. The first milestone renders the ENV01 terrain from the original base/detail blend and GS fog. The live game at play.html is unchanged; a preview of the Rust build will be at /engine.html once deployed.",
+  "details": [
+    "New crates: atv-content reads the hosted content package, atv-game ports venue loading and the terrain grid from game.js, atv-render is a wgpu renderer (Metal on macOS, DX12/Vulkan on Windows, Vulkan on Linux, WebGL2 in browsers) with the terrain pass, and atv-app is one winit app that produces the fury desktop binary and the /engine.html WebAssembly preview. Parity: from the same camera at the ENV01 start (1280x720), terrain-only pixels match the current JavaScript game to a mean 0.01-0.02 out of 255, and the Rust browser and native frames agree to 0.00-0.02. Performance: headless Chromium (ANGLE/Metal, Apple M4) runs about 78 fps uncapped with 0.5 ms CPU per frame; WebKit holds the 60 Hz cap. Size: the wasm is 0.87 MB brotli, against 0.67 MB brotli wasm plus about 0.25 MB JS today. Linux x64/arm64 and Windows x64 cross-compile in Docker. Host-verified on implementation PR #179 (commit d8862ff); auto-merge is armed, so it is not yet verified live."
+  ],
+  "limitation": "Terrain only: no sky, scenery, vehicle, rider, audio, HUD or menus yet. Not measured on phones. Linux and Windows binaries were built but not launched. Firefox not tested. Not verified on the public site yet.",
+  "image": "/devlog-images/one-rust-engine-for-web-and-desktop-first-terrain-fram-43e3f10684104d98b4e6b094e26e1cd9.png",
+  "caption": "Terrain only, from the native macOS (Metal) Rust build at the ENV01 start; it matches the JavaScript game's terrain from the same camera. No sky, scenery, vehicle or HUD yet.",
+  "working_on": "Porting the rest of the scene (sky, scenery, vehicle) to the Rust engine"
+}
