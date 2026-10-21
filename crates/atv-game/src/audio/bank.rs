@@ -89,6 +89,11 @@ impl Bank {
         self.vocal_cache.get(&key, self.rate)
     }
 
+    /// The output rate samples are decoded at.
+    pub fn rate(&self) -> u32 {
+        self.rate
+    }
+
     pub fn decoded_vocals(&self) -> usize {
         self.vocal_cache.decoded.len()
     }
@@ -122,6 +127,36 @@ impl Bank {
         }
         Ok(())
     }
+}
+
+/// Another rider's ATV engine (GameAudio's remote banks): its `vehicle.aud`
+/// table and the engine samples, decoded at `rate`.
+pub async fn load_remote_engine(
+    content: &Content,
+    quad: u32,
+    rate: u32,
+) -> Result<(EngineAudioConfig, HashMap<String, Arc<Pcm>>)> {
+    let table = Archive::open(content, "/AUDIOTBL.RES").await?;
+    let index = table
+        .members
+        .iter()
+        .position(|m| m.name.to_ascii_lowercase().ends_with("vehicle.aud"))
+        .ok_or("original vehicle audio table is missing")?;
+    let engine = EngineAudioConfig::parse(&table.member(index).await?, quad)?;
+    let sounds = Archive::open(content, "/AUDIO/AUDIO.RES").await?;
+    let mut samples = HashMap::new();
+    for name in engine.samples.iter().flatten() {
+        let key = normal(name);
+        if samples.contains_key(&key) {
+            continue;
+        }
+        let Some(index) = find(&sounds, &key) else {
+            continue;
+        };
+        let audio = decode_vag(&sounds.member(index).await?)?;
+        samples.insert(key, Arc::new(Pcm::from_vag(&audio, rate)));
+    }
+    Ok((engine, samples))
 }
 
 fn find(archive: &Archive, key: &str) -> Option<usize> {

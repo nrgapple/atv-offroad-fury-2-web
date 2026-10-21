@@ -10,11 +10,12 @@
 //! JavaScript game's socket glue. The wire format, codec, deltas and
 //! smoothing are atv-net's, shared with the JavaScript game and the relay.
 pub mod remote;
+pub use atv_net::RiderState;
 pub mod spawn;
 
 use crate::Result;
 use crate::ride::Ride;
-use atv_net::{Lobby, Packet, Participant, PoseBuffer, RiderState, SampledPose, Snapshot};
+use atv_net::{Lobby, Packet, Participant, PoseBuffer, SampledPose, Snapshot};
 use std::collections::BTreeMap;
 
 /// The wire protocol version (atv-net), shared with the JavaScript game.
