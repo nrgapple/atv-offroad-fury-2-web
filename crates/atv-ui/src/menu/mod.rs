@@ -86,6 +86,7 @@ pub fn title(page: &str) -> &'static str {
         "race-overlays" => "Race Overlays",
         "bindings" => "Keyboard",
         "music" => "Audio",
+        "players" => "Players",
         _ => "Pause",
     }
 }
@@ -127,6 +128,9 @@ pub struct State {
     pub notice: Option<String>,
     /// Controller bindings: glyph rows and the summary panel (pad-glyphs.js).
     pub pad: Option<glyphs::PadGlyphs>,
+    /// Players page: riders who cannot be spawned beside (label, "You" or
+    /// "Connecting"), listed above the spawn rows (`.pause-player`).
+    pub roster: Vec<(String, String)>,
 }
 
 const FOOTER: [&str; 9] = [
@@ -624,6 +628,41 @@ pub fn element(view: &Viewport, state: &State, images: &glyphs::GlyphImages) -> 
             capture.style.padding = sides(20., 20., 20., 20.);
             capture.style.border = sides(1., 1., 1., 1.);
             body = body.child(capture);
+        }
+        if state.page == "players" && !state.roster.is_empty() {
+            let mut roster = column(0.);
+            for (label, value) in &state.roster {
+                let mut row = El::new(Style {
+                    display: Display::Flex,
+                    align_items: AlignItems::CENTER,
+                    justify_content: JustifyContent::SPACE_BETWEEN,
+                    gap: Size {
+                        width: length(12.),
+                        height: length(0.),
+                    },
+                    padding: sides(14., 14., 14., 14.),
+                    min_size: Size {
+                        width: auto(),
+                        height: length(48.),
+                    },
+                    ..Default::default()
+                });
+                row = row
+                    .child(El::new(Style::default()).content(Content::Text {
+                        text: label.clone(),
+                        style: TextStyle::new(display(16., 600, false), Color::hex("#f4f5f7")),
+                        line_height: 20.,
+                        wrap: true,
+                    }))
+                    .child(El::new(Style::default()).content(Content::Text {
+                        text: value.clone(),
+                        style: TextStyle::new(display(14., 600, false), Color::hex("#c4c4c4")),
+                        line_height: 20.,
+                        wrap: false,
+                    }));
+                roster = roster.child(row);
+            }
+            body = body.child(roster);
         }
         body = body.child(settings);
         if state.page == "controls" {

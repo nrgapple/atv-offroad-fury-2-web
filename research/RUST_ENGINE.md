@@ -1203,12 +1203,34 @@ Observed (host-only, local relay):
   Its marker was in the top 14% of the screen, so it is an edge tag pointing up
   toward the rider, as the browser draws it.
 
+### Slice 8: online pause rows
+
+- The Rust pause menu sends the browser's `lobby_*` request fields to
+  `ui_menu`, so a room ride gets its online rows: Players, Copy invite link and
+  Leave Game. A shared Free Ride room has no invite row.
+- **Players** lists the rider and anyone still connecting (`.pause-player`: "You",
+  "Connecting"). It offers "Spawn beside <name>" for each fresh rider, which runs
+  the arrival spawn search (`Net::spawn_beside`, atv-web op 86's checks and
+  messages) and resumes. Errors show as the menu notice.
+- **Copy invite link** copies the room's play.html invite: the clipboard on the
+  web, the menu notice on desktop.
+- **Leave Game** forgets the kept slot key, closes the socket and returns to the
+  engine's main menu (a direct room link reloads engine.html).
+- Observed (`tools/test_engine_multiplayer_pause.mjs`, local relay, host-only):
+  - The pause rows were resume, reset, players, settings, copyride, devlog, leave.
+  - The copied invite carried the room code.
+  - Spawn beside the JavaScript host moved the Rust guest from 145 ft to 15.1 ft
+    away.
+  - Leave Game removed the guest from the host's roster.
+  - Inspected: `private/reports/engine-multiplayer/pause-pause.png` and
+    `pause-players.png`.
+
 Gaps, in planned slice order:
 
-1. No Multiplayer menu in `atv-ui`: no Host/Join forms (text entry), room code entry,
-   Players page and its spawn-beside action, invite copy, Select Track for a Rust
-   host, Change ATV and Rider, or Leave Game wording. Private rooms start from the
-   command line or URL only.
+1. No Multiplayer menu in `atv-ui`: no Host/Join forms (text entry) or room code
+   entry, so private rooms start from the command line or URL only. Change ATV and
+   Rider and the host's Select Track need the frontend over a live room ride; both
+   rows are hidden for now.
 2. Train on a motorcycle ride, the Realistic train-riding setting, and an arrival's
    spawn velocity on a moving car (the browser adds the car's point velocity).
 3. Twenty-rider rooms are untested in the Rust engine; the JavaScript game's

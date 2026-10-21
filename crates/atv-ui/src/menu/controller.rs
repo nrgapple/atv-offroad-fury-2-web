@@ -24,8 +24,25 @@ pub enum Event {
     Changed,
     /// Display → Fullscreen.
     Fullscreen,
-    /// Pause → Copy ride link (web).
+    /// Pause → Copy ride link (web), or Copy invite link in a room.
     CopyRide,
+    /// Players → Spawn beside this rider's slot.
+    Spawn(u8),
+    /// Leave Game: leave the multiplayer room.
+    LeaveGame,
+}
+
+/// The multiplayer room as the pause menu shows it (the browser's
+/// `lobby_*` request fields).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Lobby {
+    /// "N/4 riders / names" or "Arlington Free Ride / N/20 riders".
+    pub status: String,
+    pub host: bool,
+    pub public: bool,
+    pub started: bool,
+    /// (slot, label, "self" | "ready" | "waiting").
+    pub players: Vec<(u8, String, &'static str)>,
 }
 
 /// The settings a pause action may change.
@@ -39,6 +56,8 @@ pub struct Context<'a> {
     /// Name of the controller in use, if any (Controller Settings row).
     pub pad_name: Option<String>,
     pub view: Viewport,
+    /// The multiplayer room this ride is in.
+    pub lobby: Option<&'a Lobby>,
 }
 
 /// Rows the Rust engine cannot perform yet are left out of its menu.
@@ -94,7 +113,7 @@ fn parent(page: &str) -> &'static str {
         "settings" => "pause",
         "minimap-config" | "race-overlays" => "hud-settings",
         "controller-settings" | "bindings" => "controls",
-        "pause" => "pause",
+        "pause" | "players" => "pause",
         _ => "settings",
     }
 }
@@ -147,6 +166,26 @@ impl PauseMenu {
                 .then_some(ctx.bindings.as_deref())
                 .flatten()
                 .map(|b| super::glyphs::PadGlyphs::new(b, true)),
+            roster: if self.page == "players" {
+                ctx.lobby
+                    .iter()
+                    .flat_map(|l| l.players.iter())
+                    .filter(|(_, _, value)| *value != "ready")
+                    .map(|(_, label, value)| {
+                        (
+                            label.clone(),
+                            if *value == "self" {
+                                "You"
+                            } else {
+                                "Connecting"
+                            }
+                            .into(),
+                        )
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            },
             page_count: (self.page == "bindings").then(|| {
                 format!(
                     "Page {} of {}",
@@ -230,6 +269,17 @@ impl PauseMenu {
         if let Some(c) = &self.capture {
             request["capture_label"] = c.label.clone().into();
         }
+        if let Some(lobby) = ctx.lobby {
+            request["lobby_status"] = lobby.status.clone().into();
+            request["lobby_host"] = lobby.host.into();
+            request["lobby_public"] = lobby.public.into();
+            request["lobby_started"] = lobby.started.into();
+            request["lobby_players"] = lobby
+                .players
+                .iter()
+                .map(|(id, label, value)| json!({"id": id.to_string(), "label": label, "value": value}))
+                .collect();
+        }
         let key = request.to_string();
         if key == self.key {
             return;
@@ -242,9 +292,15 @@ impl PauseMenu {
             rows.choices.retain(|c| !UNSUPPORTED.contains(&c.as_str()));
             if !cfg!(target_arch = "wasm32") {
                 // Desktop has no dev log page to open, and no web page to
-                // link a ride to.
-                rows.choices.retain(|c| c != "devlog" && c != "copyride");
+                // link a ride to (a room's invite link is shown instead).
+                let online = ctx.lobby.is_some();
+                rows.choices
+                    .retain(|c| c != "devlog" && (online || c != "copyride"));
             }
+            // Not ported yet: Change ATV and Rider, Select Track (both open the
+            // frontend over a live room ride).
+            rows.choices
+                .retain(|c| c != "changeride" && c != "hosttrack");
             if !cfg!(target_arch = "wasm32") && !self.frontend {
                 rows.choices.retain(|c| c != "main");
             }
@@ -306,6 +362,14 @@ impl PauseMenu {
             "devlog" => return Some(Event::Leave("devlog.html")),
             "fullscreen" => return Some(Event::Fullscreen),
             "copyride" => return Some(Event::CopyRide),
+            "leave" => return Some(Event::LeaveGame),
+            "players" => {
+                self.show("players");
+                return None;
+            }
+            _ if action.starts_with("spawn:") => {
+                return action[6..].parse().ok().map(Event::Spawn);
+            }
             "main" => return Some(Event::Leave("play.html")),
             "settings" | "extras" | "hud-settings" | "minimap-config" | "race-overlays"
             | "controls" | "music" => {

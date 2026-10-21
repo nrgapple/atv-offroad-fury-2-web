@@ -217,6 +217,16 @@ fn saved_key(code: &str) -> Option<String> {
     .then(|| key.to_string())
 }
 
+/// Leaving a room on purpose drops the kept slot key.
+fn forget_key() {
+    #[cfg(target_arch = "wasm32")]
+    if let Some(storage) = web_sys::window().and_then(|w| w.session_storage().ok().flatten()) {
+        let _ = storage.remove_item("atv-mp-session");
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    atv_ui::settings::Settings::load().set("atv-mp-session", "");
+}
+
 /// Keeps this rider's slot key (never in links).
 fn save_key(code: &str, key: &str) {
     let record = serde_json::json!({ "code": code, "key": key }).to_string();
@@ -644,6 +654,79 @@ impl Net {
             }
         }
         self.drawn = scene.pose_peers(gpu, &poses, eye);
+    }
+
+    /// The room as the pause menu shows it (frontend.js lobby fields).
+    pub fn menu_lobby(&self) -> Option<atv_ui::menu::controller::Lobby> {
+        let lobby = self.session.lobby.as_ref()?;
+        let fresh: std::collections::BTreeSet<u8> = self
+            .presented
+            .iter()
+            .filter(|(.., stale, _)| !*stale)
+            .map(|(peer, ..)| *peer)
+            .collect();
+        let me = self.session.peer;
+        Some(atv_ui::menu::controller::Lobby {
+            status: if lobby.public {
+                format!("Arlington Free Ride / {}/20 riders", lobby.players.len())
+            } else {
+                format!(
+                    "{}/4 riders / {}",
+                    lobby.players.len(),
+                    lobby
+                        .players
+                        .iter()
+                        .map(|p| p.name.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            },
+            host: me == Some(lobby.host),
+            public: lobby.public,
+            started: lobby.started,
+            players: lobby
+                .players
+                .iter()
+                .map(|p| {
+                    if Some(p.id) == me {
+                        (p.id, format!("{} (You)", p.name), "self")
+                    } else if fresh.contains(&p.id) {
+                        (p.id, p.name.clone(), "ready")
+                    } else {
+                        (p.id, p.name.clone(), "waiting")
+                    }
+                })
+                .collect(),
+        })
+    }
+
+    /// Players → Spawn beside a rider (atv-web `spawn`): a clear spot next
+    /// to that rider while it rides on the ground.
+    pub fn spawn_beside(&mut self, peer: u8, ride: &Ride) -> Result<([f32; 3], f32), String> {
+        let now = now_ms(self.clock);
+        let cars = |car| ride.train_car(car);
+        if self.session.peer == Some(peer) || !self.session.others().any(|p| p.id == peer) {
+            return Err("That rider has left the lobby.".into());
+        }
+        let target = self
+            .session
+            .current(peer, now, &cars)
+            .ok_or("Waiting for a fresh position from that rider.")?;
+        if target.rider_state != atv_game::multiplayer::RiderState::Riding {
+            return Err("Wait until that rider is safely on the ground.".into());
+        }
+        let others = self.session.positions(now, &cars);
+        let spot = atv_game::multiplayer::spawn::beside(ride, &target, &others)?;
+        self.session.ghost(now);
+        Ok(spot)
+    }
+
+    /// Leave Game: this rider gives up its slot (web/multiplayer.js
+    /// `forgetKey` and disconnect).
+    pub fn leave(&mut self) {
+        forget_key();
+        self.socket.close();
+        self.closed = Some("Left lobby".into());
     }
 
     /// Other riders for the HUD: roster names at their presented positions.
