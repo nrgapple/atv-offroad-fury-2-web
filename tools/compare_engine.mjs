@@ -17,6 +17,9 @@
 // headless replay (`fury --trace`) and the Rust browser build, then compares
 // vehicle pose and camera step by step and captures the held final frame at
 // landscape and portrait sizes.
+// Ride and static Rust browser captures load with `?ui=0` (scene only: no
+// toolbar, HUD, minimap or keyboard card), matching the JavaScript canvas
+// capture that leaves out its DOM overlays; race captures keep the HUD.
 // Environment: ATV_TEST_URL (served site with private content), FURY_BIN
 // (native binary; skipped when unset) and FURY_CONTENT (package directory).
 // Outputs belong in ignored private storage; they contain game imagery.
@@ -291,7 +294,7 @@ async function rideMode() {
 
       const rustErrors = [];
       const rust = await newPage(browser, { viewport }, rustErrors);
-      await rust.goto(url(`/engine.html?venue=${venue}&quad=${quad}${dressWeb}&graphics=${graphics}&crash=${crash}&script=${encodeURIComponent(JSON.stringify(script))}`));
+      await rust.goto(url(`/engine.html?venue=${venue}&quad=${quad}${dressWeb}&graphics=${graphics}&crash=${crash}&ui=0&script=${encodeURIComponent(JSON.stringify(script))}`));
       await rust.waitForFunction(() => document.querySelector('#trace') && /fps/.test(document.querySelector('#status').textContent)
         || /fail|error|stopped/i.test(document.querySelector('#status').textContent), null, { timeout: 120000 });
       await rust.waitForTimeout(1000);
@@ -517,7 +520,7 @@ try {
     console.log(`view ${index}: ${view}`);
     const rustErrors = [];
     const rust = await newPage(browser, { viewport }, rustErrors);
-    await rust.goto(url(`/engine.html?venue=${venue}&camera=${view}&weather=${state.weather ? 'on' : 'off'}&steps=${state.steps}&graphics=${graphics}${actors ? '' : '&free=1'}${race ? '&race=1&cpu=0' : ''}`));
+    await rust.goto(url(`/engine.html?venue=${venue}&camera=${view}&weather=${state.weather ? 'on' : 'off'}&steps=${state.steps}&graphics=${graphics}&ui=0${actors ? '' : '&free=1'}${race ? '&race=1&cpu=0' : ''}`));
     await rust.waitForFunction(() => /fps/.test(document.querySelector('#status').textContent) || /fail|error/i.test(document.querySelector('#status').textContent), null, { timeout: 180000 });
     await rust.waitForTimeout(2500);
     const status = await rust.locator('#status').textContent();
