@@ -1273,6 +1273,8 @@ impl App {
             menu.notice = Some(url);
         }
         self.wake();
+    }
+
     /// The saved choices game.js applies while riding (graphicsSettings,
     /// crashSettings, audio and soundtrack onChange): Speed rush, crashes,
     /// Unleashed flips, realistic train, effect and music volume, music on or
