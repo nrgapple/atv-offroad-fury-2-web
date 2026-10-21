@@ -689,10 +689,63 @@ maths below). The same cause explains the
 small native drift in the Freeride comparisons above.
 
 Not connected yet: the race overlays (place, lap, times, results menu) beyond the
-status line, race music and start-lamp sounds, stadium crowd cues and flash bursts,
-Supercross fireworks, the National drop gate, Restart Race/Quit menus and the CPU
-grid's rest pose before the first step. Restart reuses the loaded roster; the browser
-reloads the event and draws a new one.
+status line and Restart Race/Quit menus. Restart reuses the loaded roster; the browser
+reloads the event and draws a new one. Crowd, flashes, fireworks, the drop gate, lamp
+sounds, race music and the grid rest pose: see Race presentation below.
+
+## Race presentation: stadium, gate, lamps and music (2026-10-21)
+
+Each race step now reports its presentation (`atv_game::ride::race::StepEvents`),
+ported from the extras atv-web attaches to its op 50 race frame (`step_race`) and the
+per-frame handlers of web/game.js:
+
+- Stadium crowd (CrowdPresent races, op 115): `crowd.aud` from the race archive, the
+  Pro crowd when Tracks.dat lists the venue under `prosxN` (frontend.js
+  `proSupercross`), `atv_core::race_crowd::Crowd` with the browser's seed; it reacts to
+  finishes, a final lap, the player's rank, wreck starts and stunt chains (the rider's
+  ChainFinished, as atv-web's `stunt_result`). Sound plays one crowd voice with
+  `crowdCue`'s rules (a clip keeps the voice, a Stomp loop gives way).
+- Camera-flash bursts (0020ee10): a player win, a CPU top-3 finish and a landed stunt
+  burst the existing renderer flash clock before that step's flash step.
+- Supercross fireworks (00223c60): `race_fireworks::Controller` over the ambient mode
+  TOY (now kept as `Ambient::mode`); its emitter commands reach the shared ambient
+  emitters before that step's ambient step, as in atv-web's batch.
+- National drop gate (op 116, 00222cd0/00223bf0): the race TOY's `[DropGate]` model
+  is added as the last scene model when racing and posed each step (standing until GO,
+  then its linear swing; scenery record and bounds updated in place).
+- 321 lamps and gate sounds (002e79a0): `beep01.vag` per red lamp, `go.vag` at GO,
+  `gate.vag` with a gate (game.js `startLightSound`).
+- Race music (raceMusicEvent; 00217bb0, 00217590, 00216260): the soundtrack is held
+  through the intro and countdown, a random INT001-INT004 stinger plays on the music
+  bus at race load and is cut at GO, which releases the soundtrack (next song); race
+  over fades the song over 1.5 s and plays OUT004 then the OUT001 loop after a win, or
+  OUT001 after a loss. A sound bank that finishes loading mid-race applies the current
+  phase's hold. Leaving the ride stops the stingers and crowd.
+- CPU grid before the first step: each CPU quad's rest matrices with the player's
+  seated rider pose at its grid origin and yaw (`drawRosterCpu`).
+
+The race samples (lamps, gate, IntOut, the crowd lists) decode from AUDIO.RES after
+the ride's bank. `fury --race ... --trace T.json` also writes `T.events.json`, and the
+`determinism` example takes `--events`; `compare_engine.mjs race` compares the lamps,
+crowd cues, gate matrix and lit flashes against the JavaScript game's batches per step.
+
+Parity (`compare_engine.mjs race VENUE "" OUT 1 3 12345`, `RACE_AUTOPILOT=9000`, the
+player finishing first; JavaScript game vs Rust native events, per step):
+
+| Venue | Steps | Lamps | Crowd cues | Lit flashes | Gate matrix | Other |
+| --- | --- | --- | --- | --- | --- | --- |
+| SX01 (stadium, Am crowd) | 9,000 | identical | 8/8 identical (boo, cheers, win, Stomp stops) | identical every step | none | 58 firework commands (not observable in the JS trace) |
+| NAT01 (drop gate) | 9,000 | identical | none | none | identical (binary32) | `gate.vag` at GO (step 676) |
+
+Race fingerprints are unchanged (ENV01 `53fda056a945608e`; trajectories JS = Rust
+browser = native over both 9,000-step races). Held frames after GO (NAT01, step 720)
+and in the SX01 intro (step 300) match the browser by inspection
+(`private/reports/engine-parity/race-presentation/`). Limitations: the sounds are
+checked at the event level (which sample on which step), not by a recorded mix
+(`compare_audio.mjs` has no race mode yet); fireworks are checked against the
+ported controller only; the hold fade ignores the browser's shortened fade near a
+song's end on desktop VAG music; the IntOut pick uses the clock rather than
+`Math.random`.
 
 ## Deterministic simulation maths (2026-10-21)
 

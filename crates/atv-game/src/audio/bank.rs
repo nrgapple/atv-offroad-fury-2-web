@@ -92,6 +92,36 @@ impl Bank {
     pub fn decoded_vocals(&self) -> usize {
         self.vocal_cache.decoded.len()
     }
+
+    /// Decodes further AUDIO.RES samples (race lamps, IntOut stingers, the
+    /// stadium crowd); missing ones stay silent like an older package.
+    pub async fn load_samples(&mut self, content: &Content, names: &[String]) -> Result<()> {
+        let missing: Vec<String> = names
+            .iter()
+            .map(|name| normal(name))
+            .filter(|key| !self.samples.contains_key(key))
+            .collect();
+        if missing.is_empty() {
+            return Ok(());
+        }
+        let sounds = Archive::open(content, "/AUDIO/AUDIO.RES").await?;
+        for key in missing {
+            if self.samples.contains_key(&key) {
+                continue;
+            }
+            let Some(index) = find(&sounds, &key) else {
+                continue;
+            };
+            let vag = sounds.member(index).await?;
+            let started = web_time::Instant::now();
+            let audio = decode_vag(&vag)?;
+            self.rates.insert(key.clone(), audio.info.sample_rate);
+            self.samples
+                .insert(key, Arc::new(Pcm::from_vag(&audio, self.rate)));
+            self.decode_ms += started.elapsed().as_secs_f64() * 1000.;
+        }
+        Ok(())
+    }
 }
 
 fn find(archive: &Archive, key: &str) -> Option<usize> {

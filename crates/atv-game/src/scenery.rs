@@ -51,6 +51,8 @@ pub struct Draw {
     pub unlit: bool,
     /// Stadium camera-flash pool index (hidden until lit), or None.
     pub flash: Option<usize>,
+    /// Part of the race's drop gate (posed each step after GO).
+    pub gate: bool,
     pub min: [f32; 3],
     pub max: [f32; 3],
 }
@@ -66,8 +68,14 @@ pub struct Scenery {
     pub flashes: Option<(atv_core::race_crowd::FlashConfig, usize)>,
 }
 
-/// `common` is the venue TOY, read for `[CameraFlash]`.
-pub fn load(archive: &Resource, scene: &Scene, common: Option<&[u8]>) -> Result<Scenery> {
+/// `common` is the venue TOY, read for `[CameraFlash]`; `gate` is the scene
+/// model index of a race's drop gate.
+pub fn load(
+    archive: &Resource,
+    scene: &Scene,
+    common: Option<&[u8]>,
+    gate: Option<usize>,
+) -> Result<Scenery> {
     let mut scenery = Scenery::default();
     let mut materials = Materials::default();
     let mut geometry: Vec<(String, Vec<usize>)> = Vec::new();
@@ -89,7 +97,7 @@ pub fn load(archive: &Resource, scene: &Scene, common: Option<&[u8]>) -> Result<
     // Stadium cameraflash.slt models are hidden and lit in random batches
     // (0020f2c0); each keeps its pool index in scene order.
     let mut flashes = 0usize;
-    for model in &scene.models {
+    for (index, model) in scene.models.iter().enumerate() {
         let flash =
             (scene.crowd_present && model.name.eq_ignore_ascii_case("cameraflash")).then(|| {
                 flashes += 1;
@@ -107,6 +115,7 @@ pub fn load(archive: &Resource, scene: &Scene, common: Option<&[u8]>) -> Result<
                 matrix: model.world_matrix,
                 unlit: prelit || !model.use_lighting,
                 flash,
+                gate: gate == Some(index),
                 min,
                 max,
             });

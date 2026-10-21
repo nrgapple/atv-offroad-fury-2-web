@@ -15,6 +15,8 @@ pub struct Ambient {
     pub atlas: Option<Image>,
     /// 128x256 GPU fountain atlas.
     pub gpu_atlas: Option<Image>,
+    /// The mode TOY the emitters came from (race fireworks read it).
+    pub mode: Option<String>,
 }
 
 impl Ambient {
@@ -105,6 +107,7 @@ pub fn load(
         _ if mode_index != toy_index => mode.map(|m| String::from_utf8_lossy(m).into_owned()),
         _ => None,
     };
+    let mode_text = mode.clone();
     let mut source = Source {
         scene: String::from_utf8_lossy(scene).into_owned(),
         common: common
@@ -172,5 +175,6 @@ pub fn load(
         metadata,
         atlas,
         gpu_atlas,
+        mode: mode_text,
     }))
 }

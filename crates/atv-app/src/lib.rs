@@ -394,6 +394,15 @@ async fn prepare(
             // Hold the replayed state for screenshots.
             riding.paused = true;
             riding.held = true;
+            if let Some(gate) = riding.ride.race().and_then(|r| r.frame.as_ref()?.gate) {
+                scene.race_step(
+                    &gpu,
+                    &atv_game::ride::race::StepEvents {
+                        gate: Some(gate),
+                        ..Default::default()
+                    },
+                );
+            }
             if let Some(effects) = &mut riding.effects {
                 scene.accept_wheel_effects(&gpu, effects);
             }
@@ -409,6 +418,7 @@ async fn prepare(
                     mode,
                     music,
                     selection,
+                    race_samples: riding.ride.race().map(|r| r.samples()).unwrap_or_default(),
                 },
             });
         }
@@ -589,6 +599,11 @@ impl App {
             for (step, &(position, target)) in riding.step_cameras.iter().enumerate() {
                 if let Some(Some(origin)) = riding.step_rest.get(step) {
                     ready.scene.observe_rest(*origin);
+                }
+                // The race's flash bursts, fireworks and gate precede the
+                // step's ambient and flash clocks (atv-web's batch order).
+                if let Some(events) = riding.step_race.get(step) {
+                    ready.scene.race_step(&ready.gpu, events);
                 }
                 ready.scene.set_weather_view(position, target);
                 ready.scene.advance_steps(1);
@@ -1381,6 +1396,13 @@ impl ApplicationHandler<Message> for App {
                     if let Err(error) = sound.configure(&ready.venue, &riding.ride) {
                         status(&format!("Sound unavailable: {error}"));
                         return;
+                    }
+                    // A race already under way holds the soundtrack now.
+                    if let Some(music) = riding.ride.race().and_then(|r| r.music_now()) {
+                        sound.race(&atv_game::ride::race::StepEvents {
+                            music: Some(music),
+                            ..Default::default()
+                        });
                     }
                     riding.sound = Some(*sound);
                     // A delayed bank can finish after blur/hide. Apply the

@@ -45,6 +45,9 @@ pub struct Riding {
     /// Each step's body origin while Riding with every wheel down (contact
     /// shadow resting lift).
     pub step_rest: Vec<Option<[f32; 3]>>,
+    /// Each of those steps' race presentation (crowd, flashes, fireworks,
+    /// gate, lamp sounds, race music).
+    pub step_race: Vec<atv_game::ride::race::StepEvents>,
     /// Wheel dust, chunks, spray and wet births, stepped after each ride step.
     pub effects: Option<atv_game::wheel_effects::WheelEffects>,
     /// Optional Crazy/Gorn crashes (off under Original).
@@ -98,6 +101,7 @@ impl Riding {
             sim_ms: 0.,
             step_cameras: Vec::new(),
             step_rest: Vec::new(),
+            step_race: Vec::new(),
             effects: None,
             crashes: None,
             interpolation: false,
@@ -165,6 +169,7 @@ impl Riding {
         self.input_cleared = false;
         self.step_cameras.clear();
         self.step_rest.clear();
+        self.step_race.clear();
         if !self.focused {
             return Ok(());
         }
@@ -189,9 +194,12 @@ impl Riding {
                 );
                 let camera = self.ride.camera().0;
                 self.step_cameras.push((camera.position, camera.target));
+                let race = self.ride.take_race_events();
                 if let Some(sound) = &mut self.sound {
                     sound.step(self.ride.sound());
+                    sound.race(&race);
                 }
+                self.step_race.push(race);
                 self.steps_last_frame += 1;
             }
             if count > 0
@@ -330,9 +338,12 @@ impl Riding {
             if let Some(crashes) = &mut self.crashes {
                 crashes.step(&self.ride)?;
             }
+            let race = self.ride.take_race_events();
             if let Some(sound) = &mut self.sound {
                 sound.step(self.ride.sound());
+                sound.race(&race);
             }
+            self.step_race.push(race);
             let camera = self.ride.camera().0;
             self.step_cameras.push((camera.position, camera.target));
         }

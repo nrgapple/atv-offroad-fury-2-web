@@ -72,6 +72,14 @@ pub fn trace(
             )
             .map_err(|e| e.to_string())?;
         }
+        // A race also writes its presentation per step beside the trace.
+        if !trace.events.is_empty() {
+            std::fs::write(
+                out.with_extension("events.json"),
+                serde_json::to_vec(&trace.events).map_err(|e| e.to_string())?,
+            )
+            .map_err(|e| e.to_string())?;
+        }
         std::fs::write(
             out,
             serde_json::to_vec(&trace.records).map_err(|e| e.to_string())?,

@@ -74,6 +74,8 @@ pub struct RideAudio {
     clutch_down: bool,
     /// Counters for diagnostics and parity reports.
     pub stats: Stats,
+    /// Lamp/gate one-shots, the stadium crowd and the IntOut stingers.
+    pub race: super::race::RaceAudio,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -153,6 +155,7 @@ impl RideAudio {
             bike_impact_tick: None,
             clutch_down: false,
             stats: Stats::default(),
+            race: Default::default(),
         }
     }
 

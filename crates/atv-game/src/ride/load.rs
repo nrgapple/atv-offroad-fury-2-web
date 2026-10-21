@@ -519,6 +519,31 @@ async fn race_setup(
             String::from_utf8_lossy(common_toy).into_owned(),
         ))
         .collect();
+    // CrowdPresent stadiums: crowd.aud reactions (op 115), the Pro crowd on
+    // Tracks.dat Pro Supercross courses (002cb9b0).
+    let crowd = if venue.scene.crowd_present {
+        match basename_index(archive, "crowd.aud") {
+            Some(index) => {
+                let prefix = if pro_supercross(content, environment).await? {
+                    "Pro"
+                } else {
+                    "Am"
+                };
+                Some(atv_core::race_crowd::parse_crowd(
+                    &String::from_utf8_lossy(&archive.extract(index)?),
+                    prefix,
+                )?)
+            }
+            None => None,
+        }
+    } else {
+        None
+    };
+    // Supercross fireworks are the ambient mode TOY's emitter groups.
+    let fireworks = match venue.ambient.as_ref().and_then(|a| a.borrow().mode.clone()) {
+        Some(mode) => atv_core::race_fireworks::parse(&mode)?,
+        None => Default::default(),
+    };
     Ok(super::race::Setup {
         course,
         shots: venue.intro_shots.clone(),
@@ -528,5 +553,43 @@ async fn race_setup(
         draw,
         spacing_sources,
         cpu_rider: None,
+        stage: super::race::Stage {
+            crowd,
+            gate: venue.drop_gate.clone(),
+            fireworks,
+        },
     })
+}
+
+/// Tracks.dat lists the venue under a Pro Supercross (`prosxN`) section
+/// (frontend.js `proSupercross`).
+async fn pro_supercross(content: &Content, environment: &str) -> Result<bool> {
+    let Ok(bytes) = content.file("/STARTAPP.RES").await else {
+        return Ok(false);
+    };
+    let archive = Resource::parse(&bytes)?;
+    let Some(index) = basename_index(&archive, "tracks.dat") else {
+        return Ok(false);
+    };
+    let document = atv_core::ui::Document::parse(&archive.extract(index)?)?;
+    let mut sections: Vec<(String, Option<String>)> = Vec::new();
+    for section in &document.sections {
+        let name = section.name.to_ascii_lowercase();
+        // sections(): the first value of each key; a later duplicate
+        // section replaces the earlier one's fields in its slot.
+        let scn = section
+            .fields
+            .iter()
+            .find(|f| f.key.eq_ignore_ascii_case("scn"))
+            .map(|f| f.value.clone());
+        match sections.iter_mut().find(|(n, _)| *n == name) {
+            Some(slot) => slot.1 = scn,
+            None => sections.push((name, scn)),
+        }
+    }
+    Ok(sections.iter().any(|(name, scn)| {
+        name.strip_prefix("prosx")
+            .is_some_and(|d| !d.is_empty() && d.bytes().all(|b| b.is_ascii_digit()))
+            && scn.as_deref() == Some(environment)
+    }))
 }

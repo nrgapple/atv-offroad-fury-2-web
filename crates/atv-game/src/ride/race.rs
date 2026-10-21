@@ -3,8 +3,9 @@
 //! contacts and the after-finish director. Ports atv-web's operations 95,
 //! 96, 105, 106, 113 and 114 and the race paths of its op 50 batch
 //! (`race_controls`, `step_race`, `follow_camera`), calling atv-core directly.
-//! Stadium crowd cues, camera-flash bursts, Supercross fireworks and the
-//! National drop gate are presentation that is not connected yet.
+//! Each step also reports its presentation ([`StepEvents`]): stadium crowd
+//! cues and camera-flash bursts, Supercross firework commands, the National
+//! drop gate pose, the 321 lamp sounds and the race music events.
 use super::{Mount, Ride, STEP, cpu::CpuModel, cpu::CpuRacer, cpu::World};
 use crate::Result;
 use atv_core::math::Det;
@@ -14,7 +15,10 @@ use atv_core::{
     motorcycle::Motorcycle,
     race::{Course, Frame, Race},
     race_ai::{Context, Driver, DriverPose, Options},
+    race_crowd::{self, Crowd, CrowdFrame},
     race_director::{self, Cameras, Director},
+    race_fireworks::{self, Fireworks},
+    race_gate::DropGate,
     race_hud::{self, RaceHud},
     race_intro::{Intro, Pose, Scene, ShotFrame},
     race_roster::Entry,
@@ -55,6 +59,67 @@ impl Default for Settings {
     }
 }
 
+/// A stadium camera-flash burst (`0020ee10` targets of `[CameraFlash]`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FlashBurst {
+    PlayerWin,
+    AiFinish,
+    PlayerStunt,
+}
+
+/// IntOut race music and the soundtrack hold (raceMusicEvent in game.js:
+/// 00217bb0, 00217590, 00216260).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MusicEvent {
+    /// Race load: hold the soundtrack, a random INT001-INT004 stinger.
+    Intro,
+    /// Countdown without the pre-race camera (Restart Race): hold only.
+    Restart,
+    /// GO: cut the stinger, release the soundtrack.
+    Go,
+    /// Race over: 1.5 s fade, OUT004 then the OUT001 loop after a win.
+    Over { won: bool },
+}
+
+/// One race step's presentation: the extras atv-web attaches to its op 50
+/// race frame and the per-frame race handlers of web/game.js.
+#[derive(Clone, Debug, Default)]
+pub struct StepEvents {
+    pub flashes: Vec<FlashBurst>,
+    pub crowd: Option<CrowdFrame>,
+    /// Ambient mode emitter (emitter, instance, fire) commands.
+    pub fireworks: Vec<(usize, usize, bool)>,
+    /// The drop gate's world matrix this step.
+    pub gate: Option<[f32; 16]>,
+    /// One-shot samples: `beep01.vag`/`go.vag` with the lamps, `gate.vag`.
+    pub sounds: Vec<&'static str>,
+    pub music: Option<MusicEvent>,
+}
+
+/// Samples a race plays besides the ride's bank: the lamps, the gate and
+/// the IntOut stingers (GameAudio.loadBank, game.js prefetch).
+pub const RACE_SAMPLES: [&str; 9] = [
+    "beep01.vag",
+    "go.vag",
+    "gate.vag",
+    "intout/int001.vag",
+    "intout/int002.vag",
+    "intout/int003.vag",
+    "intout/int004.vag",
+    "intout/out001.vag",
+    "intout/out004.vag",
+];
+
+/// Race presentation loaded with the course (op 115, op 116, the ambient
+/// mode TOY's fireworks).
+#[derive(Clone, Debug, Default)]
+pub struct Stage {
+    /// CrowdPresent races: `crowd.aud` for the Am or Pro crowd.
+    pub crowd: Option<race_crowd::Sounds>,
+    pub gate: Option<DropGate>,
+    pub fireworks: Fireworks,
+}
+
 /// What a race load reads besides the ride itself.
 pub struct Setup {
     pub course: Course,
@@ -67,7 +132,11 @@ pub struct Setup {
     pub spacing_sources: Vec<String>,
     /// A motorcycle player's CPUs ride with the ATV rider rig.
     pub cpu_rider: Option<Box<super::CpuRider>>,
+    pub stage: Stage,
 }
+
+/// Each CPU quad's rest node matrices and the seated rider's.
+type GridRest = (Vec<Vec<[f32; 16]>>, Vec<[f32; 16]>);
 
 pub struct RaceState {
     pub race: Race,
@@ -95,6 +164,47 @@ pub struct RaceState {
     spacing_sources: Vec<String>,
     course: Course,
     cpu_rider: Option<Box<super::CpuRider>>,
+    stage: Stage,
+    crowd: Option<Crowd>,
+    crowd_wrecked: bool,
+    crowd_laps: usize,
+    fireworks: Option<race_fireworks::Controller>,
+    firework_positions: Vec<[f32; 3]>,
+    lights: Option<u8>,
+    music_phase: Option<&'static str>,
+    /// Grid pose before the first step: each CPU quad's rest matrices and
+    /// the player's seated rider pose (drawRosterCpu in game.js).
+    rest: Option<GridRest>,
+    /// The latest step's presentation, until the host takes it.
+    pub events: StepEvents,
+}
+
+impl RaceState {
+    /// Samples the race plays besides the ride's bank: the lamps, gate and
+    /// IntOut stingers, and the stadium crowd's reactions.
+    pub fn samples(&self) -> Vec<String> {
+        let mut names: Vec<String> = RACE_SAMPLES.iter().map(|s| s.to_string()).collect();
+        if let Some(c) = &self.stage.crowd {
+            for list in [&c.boo, &c.cheer, &c.oh, &c.win, &c.stomp] {
+                names.extend(list.iter().cloned());
+            }
+        }
+        names
+    }
+
+    /// The music event of the current phase, for sound that becomes ready
+    /// after the race began (the browser queues it on the loading bank).
+    pub fn music_now(&self) -> Option<MusicEvent> {
+        let frame = self.frame.as_ref()?;
+        match frame.phase {
+            "intro" => Some(MusicEvent::Intro),
+            "countdown" => Some(MusicEvent::Restart),
+            "finished" => Some(MusicEvent::Over {
+                won: frame.position == 1,
+            }),
+            _ => None,
+        }
+    }
 }
 
 /// The rider rig and skeleton CPU racers fork and pose: the player's own on
@@ -198,6 +308,16 @@ impl Ride {
             ..Options::difficulty(settings.difficulty)
         };
         let (rig, nodes) = cpu_rig(&self.mount, &self.rider, setup.cpu_rider.as_deref())?;
+        // Before the first step the grid draws each quad's rest pose with the
+        // player's seated rider (the same rig).
+        let rest = (
+            setup
+                .draw
+                .iter()
+                .map(|(quad, _)| quad.mesh.nodes.iter().map(|n| n.world_matrix).collect())
+                .collect(),
+            rig.0.pose(nodes)?.world_matrices,
+        );
         let cpus = race
             .opponents()
             .iter()
@@ -249,8 +369,31 @@ impl Ride {
             spacing_sources: setup.spacing_sources,
             course: setup.course,
             cpu_rider: setup.cpu_rider,
+            // Op 115 seeds the crowd per load (atv-web).
+            crowd: setup
+                .stage
+                .crowd
+                .clone()
+                .map(|sounds| Crowd::new(sounds, 97211 + 7 * 47)),
+            stage: setup.stage,
+            crowd_wrecked: false,
+            crowd_laps: 0,
+            fireworks: None,
+            firework_positions: Vec::new(),
+            lights: None,
+            music_phase: None,
+            rest: Some(rest),
+            events: StepEvents::default(),
         });
         Ok(())
+    }
+
+    /// The latest race step's presentation (empty without a race).
+    pub fn take_race_events(&mut self) -> StepEvents {
+        self.race
+            .as_mut()
+            .map(|state| std::mem::take(&mut state.events))
+            .unwrap_or_default()
     }
 
     /// Restart Race: a fresh race on the same course straight to the
@@ -269,6 +412,7 @@ impl Ride {
             draw: state.draw,
             spacing_sources: state.spacing_sources,
             cpu_rider: state.cpu_rider,
+            stage: state.stage,
         };
         self.begin_race(setup, state.settings, false)?;
         self.step_camera(0.)
@@ -393,6 +537,10 @@ impl Ride {
         };
         let player = vehicle.frame();
         let race = &mut state.race;
+        let laps_before: Vec<u32> = std::iter::once(None)
+            .chain((0..race.opponents().len()).map(Some))
+            .map(|r| race.laps_completed(r))
+            .collect();
         race.step(player.origin, STEP);
         let terrain = &self.sim.terrain;
         let hold = race.holding();
@@ -521,7 +669,6 @@ impl Ride {
             }
         }
         let mut frame = race.frame(yaw(player.orientation));
-        let _ = race.take_finishes();
         // The ATV's deep-water clock (the bike has none).
         let too_deep = match &vehicle {
             Player::Quad(v) => Some(v.frame().water_failure),
@@ -529,6 +676,100 @@ impl Ride {
         }
         .filter(|w| w.submerged)
         .map(|w| w.remaining);
+        // Crowd reactions and flash bursts (00216190, 002164b0).
+        let finishes = race.take_finishes();
+        let wrecked = vehicle.frame().wreck.phase != Phase::Riding;
+        let mut events = StepEvents::default();
+        let wreck_began = wrecked && !state.crowd_wrecked;
+        state.crowd_wrecked = wrecked;
+        let laps_done = frame.lap_times.len();
+        let final_lap = laps_done > state.crowd_laps && laps_done as u32 + 1 == frame.laps;
+        state.crowd_laps = laps_done;
+        for &(player, place) in &finishes {
+            if place <= 3 {
+                events.flashes.push(if player && place == 1 {
+                    FlashBurst::PlayerWin
+                } else {
+                    FlashBurst::AiFinish
+                });
+            }
+        }
+        if std::mem::take(&mut self.stunt_landed) {
+            events.flashes.push(FlashBurst::PlayerStunt);
+        }
+        let stunt = self.stunt_result.take();
+        if let Some(crowd) = state.crowd.as_mut() {
+            let cue = crowd.step(&race_crowd::Events {
+                elapsed: frame.elapsed,
+                player_rank: frame.position,
+                player_wrecked: wreck_began,
+                final_lap,
+                finishes,
+                single_player: true,
+                stunt,
+            });
+            frame.crowd = (cue.cue.is_some() || cue.stop_loop).then_some(cue);
+            events.crowd.clone_from(&frame.crowd);
+        }
+        // Supercross fireworks: the countdown stops the pre-race set; racers
+        // crossing the start/finish triggers fire their groups (00223c60).
+        let laps = frame.laps;
+        let controller = state.fireworks.get_or_insert_with(|| {
+            race_fireworks::Controller::new(state.stage.fireworks.clone(), laps)
+        });
+        let current: Vec<[f32; 3]> = std::iter::once(player.origin)
+            .chain(frame.opponents.iter().map(|o| o.origin))
+            .collect();
+        if state.firework_positions.len() != current.len() {
+            state.firework_positions.clone_from(&current);
+        }
+        let racers: Vec<_> = current
+            .iter()
+            .zip(&state.firework_positions)
+            .enumerate()
+            .map(|(i, (now, before))| race_fireworks::Racer {
+                previous: *before,
+                current: *now,
+                laps: laps_before.get(i).copied().unwrap_or(0),
+                place: frame.ranks.get(i).copied().unwrap_or(0),
+                cpu: i > 0,
+            })
+            .collect();
+        state.firework_positions = current;
+        events.fireworks = controller.step(STEP, frame.phase == "countdown", &racers);
+        // National drop gate: standing until GO, then its linear swing.
+        if let Some(gate) = &state.stage.gate {
+            let live = matches!(frame.phase, "racing" | "finished");
+            frame.gate = Some(gate.matrix(gate.angle_at(live.then_some(frame.elapsed))));
+            events.gate = frame.gate;
+        }
+        // 321 LIGHTS (002e79a0): beep01 as each red lamp lights, go with the
+        // green lamp; a National drops its gate (00223bf0).
+        if frame.lights != state.lights
+            && let Some(lights) = frame.lights.filter(|l| *l > 0)
+        {
+            events
+                .sounds
+                .push(if lights < 4 { "beep01.vag" } else { "go.vag" });
+            if lights == 4 && frame.gate.is_some() {
+                events.sounds.push("gate.vag");
+            }
+        }
+        state.lights = frame.lights;
+        if state.music_phase != Some(frame.phase) {
+            let previous = state.music_phase.replace(frame.phase);
+            events.music = match frame.phase {
+                "intro" => Some(MusicEvent::Intro),
+                "countdown" if previous != Some("intro") => Some(MusicEvent::Restart),
+                "racing" => Some(MusicEvent::Go),
+                "finished" => Some(MusicEvent::Over {
+                    won: frame.position == 1,
+                }),
+                _ => None,
+            };
+        }
+        state.events = events;
+        state.rest = None;
         frame.hud = Some(state.hud.step(
             STEP,
             &race_hud::Input {
@@ -662,6 +903,24 @@ impl Ride {
         let Some(state) = &self.race else {
             return Vec::new();
         };
+        if let (Some((quads, rider)), None) = (&state.rest, &state.frame) {
+            return state
+                .race
+                .opponents()
+                .iter()
+                .zip(quads)
+                .map(|(cpu, quad)| {
+                    let (s, c) = (cpu.yaw / 2.).sin_cos_d();
+                    let world = super::quaternion_world(cpu.origin, [c, 0., s, 0.]);
+                    super::Pose {
+                        quad_world: world,
+                        quad_nodes: quad.clone(),
+                        rider_world: world,
+                        rider_nodes: rider.clone(),
+                    }
+                })
+                .collect();
+        }
         state
             .cpus
             .iter()
