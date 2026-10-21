@@ -552,9 +552,54 @@ Measured at the NAT01 sea view `2614.86,200,3019.69,4.3,-0.3,1.455078`, Original
   0.03.
 - CPU is unchanged: one draw, and the grid is rebuilt only on resize. Host status
   0.70 -> 0.67 ms, frame 12.1 -> 12.5 ms at vsync.
-- GPU time is not measured. The cost is the larger vertex count above, with one
-  integer height fetch per vertex. Portrait phones go from 8,000 to 24,500 vertices.
-  Physical-phone timing is still to do.
+- GPU time, measured below on the desktop host. Portrait phones go from 8,000 to
+  24,500 vertices; physical-phone timing is still to do.
+
+### Scene-pass GPU time with the native rows (2026-10-21)
+
+`fury --capture OUT WxH --gpu-frames N` now times the scene render pass with wgpu
+timestamp queries (native only; WebGL2 has none): 30 untimed warm-up frames, then N
+offscreen frames submitted back to back, and prints the median. Each row below is the
+median of five such runs (240 frames each), alternating a build of current main with a
+temporary build that re-applies the browser's 12,000/8,000-vertex cap (not shipped).
+Views: the NAT01 sea view above (free camera), and the ride start of every wet venue.
+
+Host: Apple M4, macOS, native Metal. **These are desktop host numbers, not phone
+results.** No phone has been timed.
+
+| View | Size | Preset | Native rows (ms) | Browser cap (ms) | Difference |
+| --- | --- | --- | ---: | ---: | ---: |
+| NAT01 sea | 1280x720 | Original | 2.07 | 1.14 | +0.93 (+81%) |
+| NAT01 sea | 1280x720 | High | 3.18 | 2.26 | +0.93 (+41%) |
+| NAT01 sea | 390x844 | Original | 0.88 | 0.55 | +0.33 (+60%) |
+| NAT01 sea | 390x844 | High | 0.99 | 0.66 | +0.34 (+52%) |
+| NAT01 start | 1280x720 | Original | 1.34 | 0.94 | +0.40 |
+| NAT01 start | 390x844 | Original | 0.57 | 0.45 | +0.12 |
+| ENV04/05/07/08, FREE04 starts | 1280x720 | Original | 0.94-1.04 | 0.66-0.80 | +0.25 to +0.27 |
+| ENV04/05/07/08, FREE04 starts | 1280x720 | High | 1.16-1.43 | 0.92-1.21 | +0.22 to +0.25 |
+| ENV04/05/07/08, FREE04 starts | 390x844 | Original | 0.44-0.53 | 0.32-0.43 | +0.10 to +0.12 |
+| ENV04/05/07/08, FREE04 starts | 390x844 | High | 0.47-0.66 | 0.39-0.58 | +0.04 to +0.08 |
+
+Observed:
+- On this host the native rows cost about 0.25 ms of GPU time per frame at 1280x720
+  wherever the water draws, and about 0.1 ms in portrait. The cost is close to
+  constant across venues, so it is mostly per-vertex work: the grid is built for the
+  viewport, not the visible water.
+- The sea view, where water fills most of the frame, costs most: +0.93 ms at 1280x720
+  (scene pass 1.14 -> 2.07 ms) and +0.33 ms in portrait (0.55 -> 0.88 ms). Distant rows
+  there are thinner than a pixel, so the extra triangles add rasterizer and partial
+  fragment-quad work as well as vertex work. This is an interpretation; no per-stage
+  counters were read.
+- Within a run the timing is stable (run medians agree to about 0.01 ms). An
+  occasional whole run is 2-3x slower in every frame (GPU clock ramp-up); the
+  five-run median discards it.
+
+Not established: phone GPU time. Phone GPUs are slower than the M4, so the absolute
+cost will be larger there; whether the sea view still fits the frame budget on the
+weakest supported phones needs a device measurement before deciding between native
+rows and a phone-only cap. If one is needed it must be an explicit option, because
+the native rows are the recovered behaviour. Raw rows and the script are in ignored
+`private/reports/water-gpu-timing/`.
 
 ## Browser stand-ins in the ported presentation
 
@@ -644,10 +689,63 @@ maths below). The same cause explains the
 small native drift in the Freeride comparisons above.
 
 Not connected yet: the race overlays (place, lap, times, results menu) beyond the
-status line, race music and start-lamp sounds, stadium crowd cues and flash bursts,
-Supercross fireworks, the National drop gate, Restart Race/Quit menus and the CPU
-grid's rest pose before the first step. Restart reuses the loaded roster; the browser
-reloads the event and draws a new one.
+status line and Restart Race/Quit menus. Restart reuses the loaded roster; the browser
+reloads the event and draws a new one. Crowd, flashes, fireworks, the drop gate, lamp
+sounds, race music and the grid rest pose: see Race presentation below.
+
+## Race presentation: stadium, gate, lamps and music (2026-10-21)
+
+Each race step now reports its presentation (`atv_game::ride::race::StepEvents`),
+ported from the extras atv-web attaches to its op 50 race frame (`step_race`) and the
+per-frame handlers of web/game.js:
+
+- Stadium crowd (CrowdPresent races, op 115): `crowd.aud` from the race archive, the
+  Pro crowd when Tracks.dat lists the venue under `prosxN` (frontend.js
+  `proSupercross`), `atv_core::race_crowd::Crowd` with the browser's seed; it reacts to
+  finishes, a final lap, the player's rank, wreck starts and stunt chains (the rider's
+  ChainFinished, as atv-web's `stunt_result`). Sound plays one crowd voice with
+  `crowdCue`'s rules (a clip keeps the voice, a Stomp loop gives way).
+- Camera-flash bursts (0020ee10): a player win, a CPU top-3 finish and a landed stunt
+  burst the existing renderer flash clock before that step's flash step.
+- Supercross fireworks (00223c60): `race_fireworks::Controller` over the ambient mode
+  TOY (now kept as `Ambient::mode`); its emitter commands reach the shared ambient
+  emitters before that step's ambient step, as in atv-web's batch.
+- National drop gate (op 116, 00222cd0/00223bf0): the race TOY's `[DropGate]` model
+  is added as the last scene model when racing and posed each step (standing until GO,
+  then its linear swing; scenery record and bounds updated in place).
+- 321 lamps and gate sounds (002e79a0): `beep01.vag` per red lamp, `go.vag` at GO,
+  `gate.vag` with a gate (game.js `startLightSound`).
+- Race music (raceMusicEvent; 00217bb0, 00217590, 00216260): the soundtrack is held
+  through the intro and countdown, a random INT001-INT004 stinger plays on the music
+  bus at race load and is cut at GO, which releases the soundtrack (next song); race
+  over fades the song over 1.5 s and plays OUT004 then the OUT001 loop after a win, or
+  OUT001 after a loss. A sound bank that finishes loading mid-race applies the current
+  phase's hold. Leaving the ride stops the stingers and crowd.
+- CPU grid before the first step: each CPU quad's rest matrices with the player's
+  seated rider pose at its grid origin and yaw (`drawRosterCpu`).
+
+The race samples (lamps, gate, IntOut, the crowd lists) decode from AUDIO.RES after
+the ride's bank. `fury --race ... --trace T.json` also writes `T.events.json`, and the
+`determinism` example takes `--events`; `compare_engine.mjs race` compares the lamps,
+crowd cues, gate matrix and lit flashes against the JavaScript game's batches per step.
+
+Parity (`compare_engine.mjs race VENUE "" OUT 1 3 12345`, `RACE_AUTOPILOT=9000`, the
+player finishing first; JavaScript game vs Rust native events, per step):
+
+| Venue | Steps | Lamps | Crowd cues | Lit flashes | Gate matrix | Other |
+| --- | --- | --- | --- | --- | --- | --- |
+| SX01 (stadium, Am crowd) | 9,000 | identical | 8/8 identical (boo, cheers, win, Stomp stops) | identical every step | none | 58 firework commands (not observable in the JS trace) |
+| NAT01 (drop gate) | 9,000 | identical | none | none | identical (binary32) | `gate.vag` at GO (step 676) |
+
+Race fingerprints are unchanged (ENV01 `53fda056a945608e`; trajectories JS = Rust
+browser = native over both 9,000-step races). Held frames after GO (NAT01, step 720)
+and in the SX01 intro (step 300) match the browser by inspection
+(`private/reports/engine-parity/race-presentation/`). Limitations: the sounds are
+checked at the event level (which sample on which step), not by a recorded mix
+(`compare_audio.mjs` has no race mode yet); fireworks are checked against the
+ported controller only; the hold fade ignores the browser's shortened fade near a
+song's end on desktop VAG music; the IntOut pick uses the clock rather than
+`Math.random`.
 
 ## Deterministic simulation maths (2026-10-21)
 
@@ -938,6 +1036,8 @@ FURY_BIN=target/release/fury FURY_CONTENT=private/reports/hosted-content \
 FURY_BIN=target/release/fury FURY_CONTENT=private/reports/hosted-content ATV_TEST_URL=... \
   node tools/compare_engine.mjs ride env01 [script.json]   # private/reports/engine-parity/ride/
   #   ride options: --graphics original|enhanced|high --crash original|crazy|gorn --region x0,y0,x1,y1
+cargo run --release -p atv-app --bin fury -- --content DIR --venue nat01 --free \
+  --camera x,y,z,yaw,pitch,focal --capture out.png 1280x720 --gpu-frames 240   # median scene-pass GPU ms (native)
 cargo run --release -p atv-app --bin fury -- --content DIR --venue env01 --mute \
   --autodrive drive.json --bench out.json --profile   # per-pass CPU (browser: ?autodrive=...&profile=1)
 cargo run --release -p atv-app --bin fury -- --content DIR --script s.json --trace out.json

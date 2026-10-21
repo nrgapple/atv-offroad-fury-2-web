@@ -4,7 +4,8 @@
 //! builds for any target, e.g. Linux in Docker or Windows under Wine:
 //!
 //!   cargo run --release -p atv-game --example determinism -- CONTENT_DIR \
-//!     env01 SCRIPT.json [--quad 29] [--race 1 3 12345] [--out TRACE.json]
+//!     env01 SCRIPT.json [--quad 29] [--race 1 3 12345] [--out TRACE.json] \
+//!     [--events EVENTS.json]   # race presentation per step (not fingerprinted)
 use atv_content::{Content, Store};
 use atv_game::ride::{
     Selection,
@@ -14,13 +15,14 @@ use atv_game::ride::{
 
 fn main() {
     let mut args = std::env::args().skip(1);
-    let usage = "determinism CONTENT_DIR VENUE SCRIPT.json [--quad N] [--race LAPS CPU SEED] [--out TRACE.json]";
+    let usage = "determinism CONTENT_DIR VENUE SCRIPT.json [--quad N] [--race LAPS CPU SEED] [--out TRACE.json] [--events EVENTS.json]";
     let content = args.next().expect(usage);
     let venue = args.next().expect(usage);
     let script =
         Script::parse(&std::fs::read_to_string(args.next().expect(usage)).expect("read script"))
             .expect("parse script");
     let (mut race, mut out, mut selection) = (None, None, Selection::default());
+    let mut events = None;
     while let Some(arg) = args.next() {
         let mut number = || {
             args.next()
@@ -37,6 +39,7 @@ fn main() {
                 })
             }
             "--out" => out = args.next(),
+            "--events" => events = args.next(),
             "--quad" => selection.quad = number() as u16,
             _ => panic!("{usage}"),
         }
@@ -55,6 +58,9 @@ fn main() {
         fingerprint(&traced.records),
         started.elapsed().as_secs_f64() * 1000. / steps.max(1) as f64
     );
+    if let Some(path) = events {
+        std::fs::write(path, serde_json::to_vec(&traced.events).unwrap()).expect("write events");
+    }
     if let Some(path) = out {
         std::fs::write(path, serde_json::to_vec(&traced.records).unwrap()).expect("write trace");
     }

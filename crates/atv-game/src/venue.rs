@@ -60,6 +60,8 @@ pub struct Venue {
     pub train: Option<std::rc::Rc<std::cell::RefCell<crate::train::Train>>>,
     /// Placed TOY particle effects (smoke, fountains, fog), stepped at 60 Hz.
     pub ambient: Option<std::rc::Rc<std::cell::RefCell<crate::ambient::Ambient>>>,
+    /// A race's National drop gate (drawn as the last scene model).
+    pub drop_gate: Option<atv_core::race_gate::DropGate>,
     /// Pre-race camera shots of a race-course load (empty in free ride).
     pub intro_shots: Vec<Vec<atv_core::race_intro::ShotFrame>>,
     /// Active Snow weather (ring emitters around the camera).
@@ -152,6 +154,25 @@ pub async fn load_with(
             .models
             .retain(|model| !model.name.eq_ignore_ascii_case(removed));
     }
+    // National drop gate: its own model from the race TOY, not a scene
+    // model (00222cd0, op 116); the race poses it after GO.
+    let drop_gate = match (&mode, racing) {
+        (Some(mode), true) => atv_core::race_gate::parse(&String::from_utf8_lossy(mode))?,
+        _ => None,
+    };
+    let gate_model = drop_gate.as_ref().map(|gate| {
+        let matrix = gate.matrix(0.);
+        scene.models.push(atv_core::scene::StaticModel {
+            name: gate.model.clone(),
+            position: gate.position,
+            look: [matrix[8], matrix[9], matrix[10]],
+            up: Some([matrix[4], matrix[5], matrix[6]]),
+            use_lighting: true,
+            dynamic_lighting: false,
+            world_matrix: matrix,
+        });
+        scene.models.len() - 1
+    });
     let tr2 = extract(&format!("{environment}.tr2"), "terrain")?;
     let decoded = terrain::decode_tr2(&tr2)?;
     let heights = decoded.heightfield()?;
@@ -232,7 +253,7 @@ pub async fn load_with(
         &archive.extract(sky_index)?,
         options.sky_smooth,
     )?);
-    let scenery = crate::scenery::load(&archive, &scene, toy.as_deref())?;
+    let scenery = crate::scenery::load(&archive, &scene, toy.as_deref(), gate_model)?;
     let vegetation = crate::vegetation::load(&archive, environment, &scene, &ground)?;
     let water = crate::water::load(&archive, &scene)?
         .map(|water| std::rc::Rc::new(std::cell::RefCell::new(water)));
@@ -272,6 +293,7 @@ pub async fn load_with(
             .as_deref()
             .map(|toy| crate::lingering_dust::dust_zones(&String::from_utf8_lossy(toy)))
             .unwrap_or_default(),
+        drop_gate,
         terrain_zones: toy
             .as_deref()
             .map(|toy| crate::tire_tracks::terrain_zones(&String::from_utf8_lossy(toy)))

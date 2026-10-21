@@ -11,7 +11,7 @@ use std::path::PathBuf;
 const USAGE: &str = "usage: fury [--content DIR | --pack FILE] [--front PAGE] [--venue ID] [--quad 1-46] [--rider 0|1] [--gear H,G,B,S,SL,P,GO] [--paint 0-10] [--free] [--race [--laps N] [--cpu 0|3|4] [--difficulty 1|2] [--seed N]] \
 [--camera x,y,z,yaw,pitch,focal] [--weather on|off] [--steps N] [--graphics original|enhanced|high] \
 [--crash original|crazy|gorn] \
-[--script IN.json] [--trace OUT.json] [--present-trace OUT.json [--present-hz 144]] [--capture OUT.png WxH [--ui]] [--verify-content] [--version] \
+[--script IN.json] [--trace OUT.json] [--present-trace OUT.json [--present-hz 144]] [--capture OUT.png WxH [--ui] [--gpu-frames N]] [--verify-content] [--version] \
 [--host [--room CODE] | --room CODE] [--relay URL] [--name NAME] \
 [--mute] [--no-music] [--sound original|enhanced] [--audio OUT.wav] \
 [--autodrive IN.json [--bench OUT.json [--profile]]]";
@@ -62,6 +62,7 @@ fn main() {
     let mut host = false;
     let mut relay = "https://furyremastered.com".to_string();
     let mut name = "Rider".to_string();
+    let mut gpu_frames = None;
     let mut verify = false;
     let mut camera = None;
     let mut weather = None;
@@ -132,6 +133,13 @@ fn main() {
             "--room" => room_code = Some(args.next().expect("--room needs a code")),
             "--relay" => relay = args.next().expect("--relay needs a URL"),
             "--name" => name = args.next().expect("--name needs a name"),
+            "--gpu-frames" => {
+                gpu_frames = Some(
+                    args.next()
+                        .and_then(|v| v.parse().ok())
+                        .expect("--gpu-frames needs a count"),
+                )
+            }
             "--capture" => {
                 let path = args.next().expect("--capture needs a PNG path");
                 let size = args.next().unwrap_or_else(|| "1280x720".into());
@@ -307,6 +315,7 @@ fn main() {
         crash,
         capture,
         capture_ui,
+        gpu_frames,
         ride,
         selection,
         appearance,

@@ -72,13 +72,15 @@ async function scriptedGame(browser, venue, steps, viewport, errors, { measure =
         this.addEventListener('message', ({ data }) => { if (Number.isFinite(data.operationMs)) cpu.workerMs += data.operationMs; });
         this.addEventListener('message', ({ data }) => {
           if (!pending.delete(data.id) || data.error || !data.bytes) return;
-          for (const { frame, camera, race: state } of JSON.parse(new TextDecoder().decode(data.bytes))) {
+          for (const { frame, camera, race: state, flashes } of JSON.parse(new TextDecoder().decode(data.bytes))) {
             trace.frames.push({ step: trace.frames.length + 1, origin: frame.origin, orientation: frame.orientation, speed: frame.speed,
               wheel_compression: frame.wheel_compression, grounded: frame.grounded, phase: frame.wreck.phase, reset_count: frame.reset_count, camera,
               gore: frame.funny_crash && [frame.funny_crash.severed_nodes.length, (frame.funny_crash.blood?.drops?.length ?? 0) / 7, (frame.funny_crash.blood?.splats?.length ?? 0) / 10, frame.funny_crash.rider_impact],
               race: state && { phase: state.phase, elapsed: state.elapsed, lap: state.lap, position: state.position, countdown: state.countdown,
                 contacts: state.contacts, off_track: state.off_track, opponents: state.opponents.map(o => ({ origin: o.origin, distance: o.distance, finished: o.finished })),
-                standings: state.standings.map(s => ({ name: s.name, time: s.time, position: s.position })) } });
+                standings: state.standings.map(s => ({ name: s.name, time: s.time, position: s.position })),
+                // Presentation (compared with the Rust trace's events).
+                lights: state.lights ?? null, crowd: state.crowd ?? null, gate: state.gate ?? null, flashes: flashes ?? null } });
           }
         });
       }
@@ -385,7 +387,26 @@ async function raceMode() {
     };
     const count = Math.min(js.length, rust.length - 1);
     const last = (trace, i) => trace[i].race;
-    const report = { venue, race, steps: count, web: versus(webTrace), native: versus(rust),
+    // Race presentation (fury --trace writes TRACE.events.json): lamps, crowd
+    // cues, the drop gate and the stadium flashes lit after each step.
+    const eventsFile = traceFile.replace(/\.json$/, '.events.json');
+    const events = await readFile(eventsFile, 'utf8').then(JSON.parse).catch(() => []);
+    const presentation = { steps: Math.min(js.length, events.length), lights: 0, crowd: 0, crowdCues: 0, flashes: 0, flashSteps: 0, gateWorst: 0, firstMismatch: null };
+    for (let i = 0; i < presentation.steps; i++) {
+      const a = js[i].race ?? {}, b = events[i], step = js[i].step;
+      const mismatch = what => { presentation[what]++; presentation.firstMismatch ??= { step, what }; };
+      if ((a.lights ?? null) !== (b.lights ?? null)) mismatch('lights');
+      const canonical = v => JSON.stringify(v, (_, x) => x && typeof x === 'object' && !Array.isArray(x) ? Object.fromEntries(Object.entries(x).sort()) : x);
+      if (canonical(a.crowd ?? null) !== canonical(b.crowd ?? null)) mismatch('crowd');
+      if (a.crowd) presentation.crowdCues++;
+      if (JSON.stringify(a.flashes ?? null) !== JSON.stringify(b.flashes ?? null)) mismatch('flashes');
+      if (a.flashes?.length) presentation.flashSteps++;
+      if (a.gate || b.gate) presentation.gateWorst = Math.max(presentation.gateWorst, ...(a.gate ?? []).map((v, k) => Math.abs(Math.fround(v) - Math.fround(b.gate?.[k] ?? NaN))));
+    }
+    presentation.fireworkCommands = events.reduce((n, e) => n + (e.fireworks?.length ?? 0), 0);
+    presentation.sounds = events.flatMap(e => (e.sounds ?? []).map(name => [e.step, name]));
+    presentation.music = events.filter(e => e.music).map(e => [e.step, e.music]);
+    const report = { venue, race, steps: count, web: versus(webTrace), native: versus(rust), presentation,
       phases: { javascript: phases(js), rustWeb: phases(webTrace.slice(1)), rustNative: phases(rust.slice(1)) },
       final: { javascript: last(js, count - 1), rust: last(rust, count) } };
     await writeFile(path.join(out, 'report.json'), JSON.stringify(report, null, 2));

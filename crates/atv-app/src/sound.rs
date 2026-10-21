@@ -309,6 +309,10 @@ pub struct Sound {
     #[cfg(target_arch = "wasm32")]
     diagnostics: bool,
     pub title: Option<String>,
+    /// A race holds the soundtrack (intro, countdown, race over), with an
+    /// optional fade: (started, seconds).
+    held: bool,
+    hold_fade: Option<(web_time::Instant, f32)>,
     /// CPU spent on sound decisions per rendered frame (ms), for the meter.
     pub cpu: f64,
     /// Mixer render time per rendered frame (ms), averaged over a second.
@@ -321,6 +325,8 @@ pub struct Settings {
     pub music: bool,
     /// The ridden vehicle and rider: engine bank, rider vocals.
     pub selection: atv_game::ride::Selection,
+    /// A race's lamp, IntOut and crowd samples (`RaceState::samples`).
+    pub race_samples: Vec<String>,
 }
 
 impl Sound {
@@ -341,6 +347,8 @@ impl Sound {
             output.rate,
         )
         .await?;
+        let mut bank = bank;
+        bank.load_samples(&content, &settings.race_samples).await?;
         let decoded = format!(
             "{} samples, {:.0} ms decode",
             bank.samples.len(),
@@ -383,6 +391,8 @@ impl Sound {
                         .any(|p| p == "audioDiagnostics=1")
                 }),
             title: None,
+            held: false,
+            hold_fade: None,
             cpu: 0.,
             mix: 0.,
             mix_mark: (0., 0, web_time::Instant::now()),
@@ -457,8 +467,155 @@ impl Sound {
         }
     }
 
+    /// One race step's sounds: lamp/gate one-shots and crowd cues on a
+    /// running output (the browser drops them on a suspended context), and
+    /// the race music events.
+    pub fn race(&mut self, events: &atv_game::ride::race::StepEvents) {
+        if self.output.started.get()
+            && (!events.sounds.is_empty() || events.crowd.is_some())
+            && let Ok(mut mixer) = self.output.mixer.lock()
+        {
+            let ride = &mut self.ride;
+            for name in &events.sounds {
+                ride.race.one_shot(&ride.bank, &mut mixer, name);
+            }
+            if let Some(crowd) = &events.crowd {
+                ride.race.crowd_cue(&ride.bank, &mut mixer, crowd);
+            }
+        }
+        if let Some(event) = events.music {
+            self.race_music(event);
+        }
+    }
+
+    /// GameAudio.raceMusic: IntOut stingers and the soundtrack hold.
+    fn race_music(&mut self, event: atv_game::ride::race::MusicEvent) {
+        use atv_game::ride::race::MusicEvent;
+        let cues: Vec<(String, bool)> = match event {
+            MusicEvent::Go => {
+                if let Ok(mut mixer) = self.output.mixer.lock() {
+                    self.ride.race.stop_int_out(&mut mixer);
+                }
+                self.release_music();
+                return;
+            }
+            MusicEvent::Intro => {
+                self.hold_music(0.);
+                // A random INT001-INT004 (Math.random in the browser).
+                let pick = web_time::SystemTime::now()
+                    .duration_since(web_time::UNIX_EPOCH)
+                    .map_or(0, |d| d.subsec_nanos())
+                    % 4;
+                vec![(format!("intout/int00{}.vag", pick + 1), false)]
+            }
+            MusicEvent::Restart => {
+                self.hold_music(0.);
+                Vec::new()
+            }
+            MusicEvent::Over { won } => {
+                self.hold_music(1.5);
+                if won {
+                    vec![
+                        ("intout/out004.vag".into(), false),
+                        ("intout/out001.vag".into(), true),
+                    ]
+                } else {
+                    vec![("intout/out001.vag".into(), true)]
+                }
+            }
+        };
+        if let Ok(mut mixer) = self.output.mixer.lock() {
+            self.ride.race.set_int_out(&mut mixer, cues);
+        }
+    }
+
+    /// MusicStream.hold: no new song; a fade stops the current one.
+    fn hold_music(&mut self, fade: f32) {
+        if self.held {
+            return;
+        }
+        self.held = true;
+        if fade > 0. && self.sounding() {
+            self.hold_fade = Some((web_time::Instant::now(), fade));
+        } else {
+            self.stop_song();
+        }
+    }
+
+    /// MusicStream.release: the next song starts (GO).
+    fn release_music(&mut self) {
+        if !self.held {
+            return;
+        }
+        self.held = false;
+        self.hold_fade = None;
+        self.set_song_gain(1.);
+    }
+
+    fn sounding(&self) -> bool {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.output
+                .mixer
+                .lock()
+                .is_ok_and(|mixer| mixer.music_queued() > 0.)
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            self.web
+                .as_ref()
+                .is_some_and(|w| w.borrow().playing && !w.borrow().element.paused())
+        }
+    }
+
+    fn set_song_gain(&mut self, gain: f32) {
+        if let Ok(mut mixer) = self.output.mixer.lock() {
+            mixer.stream_gain = gain;
+        }
+        #[cfg(target_arch = "wasm32")]
+        if let Some(web) = &self.web {
+            web.borrow().element.set_volume(f64::from(
+                gain * atv_game::audio::mixer::MUSIC_VOLUME * atv_game::audio::mixer::MASTER,
+            ));
+        }
+    }
+
+    /// The held song ends; release picks the next one.
+    fn stop_song(&mut self) {
+        self.hold_fade = None;
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.song = None;
+            if let Ok(mut mixer) = self.output.mixer.lock() {
+                mixer.clear_music();
+            }
+        }
+        #[cfg(target_arch = "wasm32")]
+        if let Some(web) = &self.web {
+            let mut web = web.borrow_mut();
+            let _ = web.element.pause();
+            web.playing = false;
+        }
+        self.set_song_gain(1.);
+    }
+
     /// Keep the soundtrack fed independently of paused simulation steps.
     pub fn maintain(&mut self) {
+        if let Ok(mut mixer) = self.output.mixer.lock() {
+            let ride = &mut self.ride;
+            ride.race.update(&ride.bank, &mut mixer, self.music_enabled);
+        }
+        if let Some((started, seconds)) = self.hold_fade {
+            let t = started.elapsed().as_secs_f32() / seconds;
+            if t >= 1. {
+                self.stop_song();
+            } else {
+                self.set_song_gain(1. - t);
+            }
+        }
+        if self.held {
+            return;
+        }
         if self.focused && self.output.started.get() && self.music_enabled {
             #[cfg(not(target_arch = "wasm32"))]
             self.native_music();
@@ -567,5 +724,20 @@ impl Sound {
         web.element.set_src(&url);
         web.resume(true);
         web.playing = true;
+    }
+}
+
+impl Drop for Sound {
+    /// Leaving the ride (GameAudio.raceMusic('leave')): the stingers, crowd
+    /// and soundtrack hold end with it.
+    fn drop(&mut self) {
+        if let Ok(mut mixer) = self.output.mixer.lock() {
+            self.ride.race.stop(&mut mixer);
+            mixer.stream_gain = 1.;
+        }
+        #[cfg(target_arch = "wasm32")]
+        if self.held {
+            self.set_song_gain(1.);
+        }
     }
 }

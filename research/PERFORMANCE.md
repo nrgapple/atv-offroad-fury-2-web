@@ -604,3 +604,24 @@ before sounds finish would save ~4 s more on a cold slow link but changes the
 real disk profile already reuses content from the HTTP cache (1.1 MB over the
 network), so no Cache Storage layer was added. WASM is 829 KB brotli; physics
 batches average about 1 ms on the host during a four-CPU race.
+
+## Rust engine: water grid GPU time (desktop host, 2026-10-21)
+
+The Rust engine dropped the browser's 12,000/8,000-vertex water-grid cap and draws
+the recovered dense-row count (00190aa0; RUST_ENGINE.md "Fidelity follow-up: water
+grid rows"). Its cost was timed with `fury --gpu-frames` (wgpu timestamp queries
+around the scene pass, median of 240 back-to-back frames, median of five runs) on an
+Apple M4 under native Metal, against a temporary build with the cap restored.
+
+| View | Size | Original preset: native rows / browser cap (ms) |
+| --- | --- | --- |
+| NAT01 sea (water fills the frame) | 1280x720 | 2.07 / 1.14 (+0.93) |
+| NAT01 sea | 390x844 | 0.88 / 0.55 (+0.33) |
+| Wet venue starts (ENV04/05/07/08, FREE04) | 1280x720 | +0.25 to +0.27 |
+| Wet venue starts | 390x844 | +0.10 to +0.12 |
+
+High adds about the same absolute amount. These are host GPU numbers, not phone
+results; the portrait size is a viewport, not a device. The vertex count triples in
+portrait (8,000 to 24,500), so a phone measurement is needed before the native rows
+reach play.html; any phone cap would be an explicit option. Details and the full
+table are in RUST_ENGINE.md.

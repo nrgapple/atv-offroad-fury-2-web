@@ -67,6 +67,8 @@ struct Draw {
     /// Record slot (material + instance); the alpha-failure pass follows.
     record: u32,
     flash: Option<usize>,
+    /// The race drop gate's chunk-local bounds (posed after GO).
+    gate: Option<([f32; 3], [f32; 3])>,
     min: [f32; 3],
     max: [f32; 3],
 }
@@ -254,10 +256,12 @@ impl SceneryPass {
             if diagonal.is_finite() {
                 reach = reach.max(diagonal);
             }
+            let local = &scenery.chunks[draw.chunk];
             draws.push(Draw {
                 chunk: draw.chunk,
                 record: 0,
                 flash: draw.flash,
+                gate: draw.gate.then_some((local.min, local.max)),
                 min: draw.min,
                 max: draw.max,
             });
@@ -369,6 +373,28 @@ impl SceneryPass {
 
     pub fn steps(&self) -> u64 {
         self.clocks.steps()
+    }
+
+    /// Poses the race's drop gate (poseGate in game.js): its draws' model
+    /// matrix and world bounds.
+    pub fn pose_gate(&mut self, gpu: &Gpu, matrix: &[f32; 16]) {
+        let offset = std::mem::offset_of!(Record, d) + std::mem::offset_of!(DrawUniform, model);
+        let bytes = bytemuck::bytes_of(matrix);
+        for draw in &mut self.draws {
+            let Some((min, max)) = draw.gate else {
+                continue;
+            };
+            (draw.min, draw.max) = atv_game::scenery::world_bounds(min, max, matrix);
+            let passes = 1 + usize::from(self.chunks[draw.chunk].alpha_fail);
+            for pass in 0..passes {
+                let at = (draw.record as usize + pass) * self.record_slot as usize + offset;
+                // The animated block is rewritten from its CPU copy each frame.
+                if let Some(copy) = self.animated_records.get_mut(at..at + bytes.len()) {
+                    copy.copy_from_slice(bytes);
+                }
+                gpu.queue.write_buffer(&self.records, at as u64, bytes);
+            }
+        }
     }
 
     pub fn prepare(&mut self, gpu: &Gpu, cull_planes: &[[f32; 4]]) -> Stats {
