@@ -7,3 +7,5 @@ publish.workspace = true
 [dependencies]
 atv-core = { path = "../atv-core" }
 atv-content = { path = "../atv-content" }
+miniz_oxide.workspace = true
+web-time = "1"

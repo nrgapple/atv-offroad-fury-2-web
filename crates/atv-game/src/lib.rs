@@ -3,6 +3,8 @@
 //! The browser previously orchestrated loading and presentation in
 //! JavaScript; that logic moves here so every build runs the same code.
 pub mod ambient;
+pub mod archive;
+pub mod audio;
 pub mod intro;
 pub mod launch;
 pub mod materials;

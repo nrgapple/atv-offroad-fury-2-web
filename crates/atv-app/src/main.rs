@@ -10,7 +10,9 @@ use std::path::PathBuf;
 
 const USAGE: &str = "usage: fury [--content DIR | --pack FILE] [--venue ID] [--free] [--race] \
 [--camera x,y,z,yaw,pitch,focal] [--weather on|off] [--steps N] [--graphics original|enhanced|high] \
-[--script IN.json] [--trace OUT.json] [--capture OUT.png WxH] [--verify-content] [--version]";
+[--script IN.json] [--trace OUT.json] [--capture OUT.png WxH] [--verify-content] [--version] \
+[--mute] [--no-music] [--sound original|enhanced] [--audio OUT.wav] \
+[--autodrive IN.json [--bench OUT.json]]";
 
 fn fail(message: &str) -> ! {
     eprintln!("fury: {message}");
@@ -60,6 +62,12 @@ fn main() {
     let mut race = false;
     let mut script = None;
     let mut trace = None;
+    let mut audio = None;
+    let mut sound = atv_game::audio::ride::SoundMode::Original;
+    let mut music = true;
+    let mut no_audio = false;
+    let mut autodrive = None;
+    let mut bench = None;
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--content" => content = args.next().map(PathBuf::from),
@@ -108,12 +116,43 @@ fn main() {
                 // Accept the browser tool's script file unchanged.
                 script = Some(atv_app::replay::Script::parse(&text).expect("parse script"));
             }
+            "--audio" => {
+                audio = Some(PathBuf::from(
+                    args.next().expect("--audio needs a WAV path"),
+                ))
+            }
+            "--sound" => {
+                sound = match args.next().as_deref() {
+                    Some("enhanced") => atv_game::audio::ride::SoundMode::Enhanced,
+                    Some("original") => atv_game::audio::ride::SoundMode::Original,
+                    _ => panic!("--sound needs original or enhanced"),
+                }
+            }
+            "--no-music" => music = false,
+            "--autodrive" => {
+                let text =
+                    std::fs::read_to_string(args.next().expect("--autodrive needs a JSON file"))
+                        .expect("read autodrive script");
+                autodrive = Some(atv_app::replay::Script::parse(&text).expect("parse autodrive"));
+            }
+            "--bench" => bench = Some(PathBuf::from(args.next().expect("--bench needs a path"))),
+            "--mute" => no_audio = true,
             "--trace" => trace = Some(PathBuf::from(args.next().expect("--trace needs a path"))),
             other => fail(&format!("unknown argument {other}\n{USAGE}")),
         }
     }
     if !atv_game::launch::environments().contains(&venue) {
         panic!("unknown venue {venue}");
+    }
+    // Captures render a held frame; they open no audio device.
+    no_audio |= capture.is_some();
+    if let Some(out) = audio {
+        let content = content.unwrap_or_else(|| PathBuf::from("content"));
+        // Offline mix of a scripted ride: no window or audio device.
+        let script = script.unwrap_or_else(|| atv_app::replay::Script::parse("[]").unwrap());
+        atv_app::replay::render_audio(&content, &venue, &script, &out, sound)
+            .expect("render audio");
+        return;
     }
     if let Some(out) = trace {
         // Headless replay for parity traces: no window or GPU, package directory only.
@@ -137,6 +176,10 @@ fn main() {
         ride,
         race,
         script,
+        ui_backdrop: None,
+        sound: (!no_audio).then_some((sound, music)),
+        autodrive,
+        bench,
     });
 }
 

@@ -168,6 +168,8 @@ pub struct FrameStats {
     pub snow_draws: u32,
     pub snow_triangles: u32,
     pub vehicle_triangles: u32,
+    /// Time spent waiting for the swapchain image (vsync), not CPU work.
+    pub acquire_ms: f64,
 }
 
 impl FrameStats {
@@ -535,6 +537,18 @@ impl SceneRenderer {
     }
 
     pub fn render(&mut self, gpu: &Gpu, view: &View) -> Result<FrameStats, String> {
+        self.render_with(gpu, view, &mut |_, _| {})
+    }
+
+    /// Renders the scene, then `overlay` (e.g. the UI pass) into the same
+    /// resolved frame before presenting it.
+    pub fn render_with(
+        &mut self,
+        gpu: &Gpu,
+        view: &View,
+        overlay: &mut dyn FnMut(&mut wgpu::CommandEncoder, &wgpu::TextureView),
+    ) -> Result<FrameStats, String> {
+        let acquire = web_time::Instant::now();
         let frame = match gpu.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(frame)
             | wgpu::CurrentSurfaceTexture::Suboptimal(frame) => frame,
@@ -547,8 +561,9 @@ impl SceneRenderer {
             }
             other => return Err(format!("surface: {other:?}")),
         };
+        let acquire_ms = acquire.elapsed().as_secs_f64() * 1000.;
         let target = frame.texture.create_view(&Default::default());
-        let (encoder, stats) = self.encode(
+        let (mut encoder, mut stats) = self.encode(
             gpu,
             view,
             (gpu.config.width, gpu.config.height),
@@ -556,8 +571,10 @@ impl SceneRenderer {
             gpu.msaa.as_ref(),
             &gpu.depth,
         );
+        overlay(&mut encoder, &target);
         gpu.queue.submit([encoder.finish()]);
         gpu.queue.present(frame);
+        stats.acquire_ms = acquire_ms;
         Ok(stats)
     }
 
@@ -689,6 +706,19 @@ impl SceneRenderer {
         width: u32,
         height: u32,
     ) -> Result<Vec<u8>, String> {
+        self.capture_with(gpu, view, width, height, &mut |_, _| {})
+    }
+
+    /// `capture` with an overlay pass drawn over the scene.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn capture_with(
+        &mut self,
+        gpu: &Gpu,
+        view: &View,
+        width: u32,
+        height: u32,
+        overlay: &mut dyn FnMut(&mut wgpu::CommandEncoder, &wgpu::TextureView),
+    ) -> Result<Vec<u8>, String> {
         let config = wgpu::SurfaceConfiguration {
             width,
             height,
@@ -712,6 +742,7 @@ impl SceneRenderer {
         let target = texture.create_view(&Default::default());
         let (mut encoder, _) =
             self.encode(gpu, view, (width, height), &target, msaa.as_ref(), &depth);
+        overlay(&mut encoder, &target);
         let row = (width * 4).div_ceil(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT)
             * wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
         let buffer = gpu.device.create_buffer(&wgpu::BufferDescriptor {

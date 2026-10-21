@@ -8,6 +8,7 @@
 //! presentation layers are not part of it yet.
 pub mod bindings;
 mod load;
+pub mod sound;
 pub mod textures;
 pub mod view;
 
@@ -54,6 +55,8 @@ pub struct Controls {
     pub preload_axis: Option<f32>,
     /// Keyboard gas/brake for the authored brake-then-reverse adapter.
     pub keyboard_drive: Option<TouchIntent>,
+    /// Touch drive intent (web/touch.js `sample().drive`).
+    pub touch_drive: Option<TouchIntent>,
     /// Circle=1, Triangle=2, L1=4 with their direction axes.
     pub stunt_modifiers: u8,
     pub stunt_x: f32,
@@ -106,6 +109,10 @@ pub struct Ride {
     camera_mode: CameraMode,
     applied: Controls,
     steps: u64,
+    /// The actor sound position (`001e7600`, atv-web rider_audio_position).
+    rider_audio_position: [f32; 3],
+    placement: u32,
+    sound: Option<sound::AudioStep>,
     pub quad: Model,
     pub rider: Model,
 }
@@ -176,6 +183,9 @@ impl Ride {
             camera_mode: CameraMode::Follow,
             applied: Controls::default(),
             steps: 0,
+            rider_audio_position: [0.; 3],
+            placement: 0,
+            sound: None,
             quad,
             rider,
         };
@@ -225,6 +235,8 @@ impl Ride {
     /// Reset ATV: back to the scene start with the follow camera reset (ops
     /// 23, 47 and one op 46 step).
     pub fn reset(&mut self) -> Result<()> {
+        self.placement = self.placement.wrapping_add(1);
+        self.sound = None;
         self.vehicle = Self::place(&mut self.sim, &self.quad.mesh, self.start)?;
         self.after_placement()?;
         self.sim.camera.reset();
@@ -241,7 +253,56 @@ impl Ride {
         self.step_vehicle(controls)?;
         self.step_camera(orbit)?;
         self.steps += 1;
+        self.sound = Some(self.capture_sound()?);
         Ok(())
+    }
+
+    /// The step's sound inputs (simulation_frame's audio fields).
+    fn capture_sound(&mut self) -> Result<sound::AudioStep> {
+        let frame = &self.frame;
+        let events = self.vehicle.take_audio_events();
+        let surfaces = self.vehicle.wheel_effect_state().surfaces;
+        let matrices = match self.vehicle.linkage_matrices() {
+            Some(matrices) => matrices.to_vec(),
+            None => self.sim.quad_pose.sample(
+                frame.visual_steering_angle,
+                frame.wheel_angles,
+                frame.wheel_compression,
+            )?,
+        };
+        let world = vehicle_world(frame);
+        let centers = self
+            .sim
+            .quad_pose
+            .wheel_positions(&matrices)?
+            .map(|point| atv_core::obstacle::transform_point(&world, point));
+        let ground = self
+            .sim
+            .terrain
+            .contact(frame.origin[0], frame.origin[2])?
+            .map(|hit| hit.height);
+        let water = self.sim.water.as_ref().map(|_| frame.water_height);
+        let rider = self.sim.wreck.frame();
+        Ok(sound::AudioStep {
+            quad: sound::quad_frame(events, frame, surfaces, ground, water, &centers),
+            rider_position: self.rider_audio_position,
+            rider_impact: rider.as_ref().map_or([0.; 3], |r| r.sampled_impact_delta),
+            rider_water: rider.as_ref().is_some_and(|r| r.water_touching),
+            riding: frame.wreck.phase == Phase::Riding,
+            throttle: self.applied.throttle,
+            grounded: frame.grounded.iter().any(|g| *g),
+            speed: frame.speed_magnitude,
+            camera: atv_core::spatial_audio::CameraPose {
+                position: self.camera_frame.position,
+                target: self.camera_frame.target,
+            },
+            placement: self.placement,
+        })
+    }
+
+    /// Sound inputs of the latest step (None right after a reset).
+    pub fn sound(&self) -> Option<&sound::AudioStep> {
+        self.sound.as_ref()
     }
 
     fn step_vehicle(&mut self, controls: &Controls) -> Result<()> {
@@ -260,7 +321,7 @@ impl Ride {
         let input = self.browser_drive.resolve(
             input,
             controls.keyboard_drive,
-            None,
+            controls.touch_drive,
             current.grounded.iter().any(|c| *c),
             current.speed,
         )?;
@@ -304,6 +365,16 @@ impl Ride {
             self.wreck_camera = None;
             self.rider_mode = None;
             self.browser_drive.reset();
+        }
+        // 001e7600 publishes actor+290 before rider physics only while
+        // Riding/Attached; detached audio retains the last actor point.
+        if frame.wreck.phase == Phase::Riding
+            || sim
+                .wreck
+                .frame()
+                .is_none_or(|rider| rider.phase == wreck_animation::Phase::Attached)
+        {
+            self.rider_audio_position = frame.origin;
         }
         let (throttle, brake, reverse) = vehicle.applied_drive_controls();
         self.applied = Controls {

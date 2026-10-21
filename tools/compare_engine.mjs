@@ -38,9 +38,15 @@ const PORTRAIT = { width: 390, height: 844 };
 // Rewrites the game's own op 50 batches so each step carries the script's
 // input; once the script is exhausted the next batch is never sent, holding
 // the final state on screen.
-async function scriptedGame(browser, venue, steps, viewport, errors) {
+async function scriptedGame(browser, venue, steps, viewport, errors, { measure = false } = {}) {
   const page = await newPage(browser, { viewport }, errors);
-  await page.addInitScript(({ steps }) => {
+  await page.addInitScript(({ steps, measure }) => {
+    // CPU baseline: animation frames and worker operation time (worker.js
+    // reports each operation's Wasm time).
+    const cpu = window.rideCpu = { frames: 0, workerMs: 0 };
+    const raf = window.requestAnimationFrame.bind(window);
+    window.requestAnimationFrame = callback => raf(time => { cpu.frames++; callback(time); });
+    if (measure) localStorage.setItem('atv-audio-v1', JSON.stringify({ sfx: 1, mode: 'original', silent: 'play' }));
     // The Original graphics preset, without the first-ride keyboard panel.
     localStorage.setItem('atv-graphics', 'original');
     localStorage.setItem('atv2-keyboard-help-seen-v1', '1');
@@ -50,6 +56,7 @@ async function scriptedGame(browser, venue, steps, viewport, errors) {
       if (message?.op !== 50 || !message.bytes) return post.call(this, message, ...rest);
       if (!this.rideListener) {
         this.rideListener = true;
+        this.addEventListener('message', ({ data }) => { if (Number.isFinite(data.operationMs)) cpu.workerMs += data.operationMs; });
         this.addEventListener('message', ({ data }) => {
           if (!pending.delete(data.id) || data.error || !data.bytes) return;
           for (const { frame, camera } of JSON.parse(new TextDecoder().decode(data.bytes))) {
@@ -69,14 +76,80 @@ async function scriptedGame(browser, venue, steps, viewport, errors) {
       trace.cursor += count; pending.add(message.id);
       return post.call(this, { ...message, bytes: new TextEncoder().encode(JSON.stringify(request)) }, ...rest);
     };
-  }, { steps });
+  }, { steps, measure });
+  const session = measure ? await page.context().newCDPSession(page) : null;
+  if (session) await session.send('Performance.enable');
   await page.goto(url(`/play.html?drive=1&environment=${venue}`));
   await waitForGame(page);
+  let start;
+  if (session) {
+    // A click unlocks audio as a player's first input does.
+    await page.mouse.click(viewport.width / 2, viewport.height / 2);
+    await page.waitForFunction(() => window.rideTrace.cursor > 0, null, { timeout: 60000 });
+    start = await sample(page, session);
+  }
   await page.waitForFunction(() => window.rideTrace.held || /stopped/.test(document.querySelector('#status').textContent), null, { timeout: 120000 });
   const stopped = await page.locator('#status').textContent();
   if (!await page.evaluate(() => window.rideTrace.held)) throw new Error(`JavaScript game: ${stopped}`);
+  if (session) page.cpu = cost(start, await sample(page, session));
   await page.waitForTimeout(500);
   return page;
+}
+
+// Main-thread task time (Chrome's TaskDuration) and frames for a page.
+async function sample(page, session) {
+  const { metrics } = await session.send('Performance.getMetrics');
+  const value = name => metrics.find(m => m.name === name)?.value ?? 0;
+  const page_ = await page.evaluate(() => ({ ...(window.rideCpu ?? {}), now: performance.now() }));
+  return { task: value('TaskDuration') * 1000, script: value('ScriptDuration') * 1000, frames: page_.frames ?? 0, workerMs: page_.workerMs ?? 0, now: page_.now };
+}
+function cost(a, b) {
+  const frames = Math.max(1, b.frames - a.frames), seconds = (b.now - a.now) / 1000;
+  return { frames, seconds, fps: frames / seconds, mainThreadMsPerFrame: (b.task - a.task) / frames, scriptMsPerFrame: (b.script - a.script) / frames,
+    workerMsPerFrame: (b.workerMs - a.workerMs) / frames, totalMsPerFrame: (b.task - a.task + b.workerMs - a.workerMs) / frames,
+    // Headless frames are not vsync-capped: CPU per second of riding,
+    // expressed per 60 Hz frame, compares builds at different frame rates.
+    totalMsPer60HzFrame: (b.task - a.task + b.workerMs - a.workerMs) / seconds / 60 };
+}
+
+// The same script in real time: the JavaScript game (main thread plus its
+// simulation worker), the Rust engine in the browser (one thread) and the
+// native build. GPU process time is excluded everywhere.
+async function cpuBaseline(venue, script, steps, scriptFile) {
+  const browser = await launch({ args: ['--autoplay-policy=no-user-gesture-required'] });
+  const viewport = { width: 1280, height: 720 };
+  try {
+    const errors = [];
+    const page = await scriptedGame(browser, venue, steps, viewport, errors, { measure: true });
+    const javascript = page.cpu;
+    await page.close();
+    const rust = await newPage(browser, { viewport }, []);
+    await rust.addInitScript(() => {
+      const cpu = window.rideCpu = { frames: 0 };
+      const raf = window.requestAnimationFrame.bind(window);
+      window.requestAnimationFrame = callback => raf(time => { cpu.frames++; callback(time); });
+    });
+    const session = await rust.context().newCDPSession(rust);
+    await session.send('Performance.enable');
+    await rust.goto(url(`/engine.html?venue=${venue}&autodrive=${encodeURIComponent(JSON.stringify(script))}`));
+    await rust.waitForFunction(() => /fps/.test(document.querySelector('#status').textContent), null, { timeout: 120000 });
+    await rust.mouse.click(viewport.width / 2, viewport.height / 2);
+    const start = await sample(rust, session);
+    await rust.waitForFunction(() => document.querySelector('#trace'), null, { timeout: 120000 });
+    const web = { ...cost(start, await sample(rust, session)), engine: JSON.parse(await rust.locator('#trace').textContent()) };
+    await rust.close();
+    let native = null;
+    if (process.env.FURY_BIN) {
+      const bench = scriptFile.replace(/\.json$/, '-bench.json');
+      const content = process.env.FURY_CONTENT ? ['--content', process.env.FURY_CONTENT] : [];
+      execFileSync(process.env.FURY_BIN, [...content, '--venue', venue, '--autodrive', scriptFile, '--bench', bench], { stdio: 'inherit' });
+      native = JSON.parse(await readFile(bench, 'utf8'));
+    }
+    assertNoErrors(errors);
+    return { javascript, rustWeb: web, rustNative: native };
+  } finally {
+    await browser.close();
+  }
 }
 
 // Mean absolute RGB difference (0-255) over the frame and a centre crop.
@@ -177,6 +250,7 @@ async function rideMode() {
       const final = native.at(-1), web = report.rustWebFinal;
       report.webVersusNative = { origin: Math.hypot(...web.origin.map((v, i) => v - final.origin[i])), step: [web.step, final.step] };
     }
+    report.cpu = await cpuBaseline(venue, script, steps, scriptFile);
     await writeFile(path.join(out, 'report.json'), JSON.stringify(report, null, 2));
     console.log(JSON.stringify(report, null, 2));
     console.log(`PASS: wrote ${venue} ride parity to ${out}`);

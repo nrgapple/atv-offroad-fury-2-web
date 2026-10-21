@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/atv-core", "crates/atv-web", "crates/atv-tools", "crates/atv-net", "crates/atv-relay", "crates/atv-content", "crates/atv-game", "crates/atv-render", "crates/atv-app"]
+members = ["crates/atv-core", "crates/atv-web", "crates/atv-tools", "crates/atv-net", "crates/atv-relay", "crates/atv-content", "crates/atv-game", "crates/atv-render", "crates/atv-app", "crates/atv-ui"]
 resolver = "2"
 
 [workspace.package]

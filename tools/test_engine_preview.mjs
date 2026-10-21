@@ -14,10 +14,10 @@ for (const engine of ['chromium', 'webkit']) {
     const status = () => page.locator('#status').textContent();
     if (contentAvailable) {
       await page.waitForFunction(() => /\d+ fps/.test(document.querySelector('#status').textContent), null, { timeout: 120000 });
-      assert.match(await status(), /^ENV01 · \d+ fps .* [1-9]\d* tris · Gl .* · \d+ MPH$/);
+      assert.match(await status(), /^ENV01 · \d+ fps .* [1-9]\d* tris · Gl .* · \d+ MPH(?: · .*)?$/);
       await page.locator('canvas').click();
       await page.keyboard.down('KeyW');
-      await page.waitForFunction(() => /· [1-9]\d* MPH$/.test(document.querySelector('#status').textContent), null, { timeout: 15000 });
+      await page.waitForFunction(() => /· [1-9]\d* MPH(?: · |$)/.test(document.querySelector('#status').textContent), null, { timeout: 15000 });
       await page.keyboard.up('KeyW');
     } else {
       await page.waitForFunction(() => /content\/manifest\.json|content package/.test(document.querySelector('#status').textContent), null, { timeout: 60000 });

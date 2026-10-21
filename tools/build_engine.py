@@ -18,7 +18,9 @@ subprocess.run([cargo, 'build', '--locked', '--release', '-p', 'atv-app', '--lib
 dist = ROOT / 'web/dist'
 dist.mkdir(exist_ok=True)
 # Flat names keep the release allowlist and cache-busting rules unchanged.
-subprocess.run([bindgen, '--target', 'web', '--no-typescript', '--out-dir', str(dist), str(target / 'wasm32-unknown-unknown/release/atv_app.wasm')], cwd=ROOT, check=True)
+# The name section (function names for stack traces) is most of the raw file;
+# panics still report their messages through console_error_panic_hook.
+subprocess.run([bindgen, '--target', 'web', '--no-typescript', '--remove-name-section', '--out-dir', str(dist), str(target / 'wasm32-unknown-unknown/release/atv_app.wasm')], cwd=ROOT, check=True)
 for name in ['engine.html', 'engine.css', 'engine.js']:
     shutil.copy2(ROOT / 'web' / name, dist / name)
 wasm = dist / 'atv_app_bg.wasm'
