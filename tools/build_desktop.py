@@ -102,9 +102,9 @@ class Context:
                 '  xattr -dr com.apple.quarantine "Fury Remastered.app"\n'
                 'Runs natively on Apple silicon and Intel Macs (macOS 11 or later, Metal).'),
             'linux-x86_64': 'Extract the archive and run ./fury from a graphical session (X11 or Wayland).\n'
-                            'Needs a Vulkan driver (Mesa or the vendor driver) and glibc 2.31 or newer.',
+                            'Needs a Vulkan driver (Mesa or the vendor driver), libudev (libudev.so.1) and glibc 2.31 or newer.',
             'linux-aarch64': 'Extract the archive and run ./fury from a graphical session (X11 or Wayland).\n'
-                             'Needs a Vulkan driver (Mesa or the vendor driver) and glibc 2.31 or newer.',
+                             'Needs a Vulkan driver (Mesa or the vendor driver), libudev (libudev.so.1) and glibc 2.31 or newer.',
             'windows-x86_64': 'Unzip and run fury.exe. Windows SmartScreen may warn about an unrecognized\n'
                               'app (the build is not code signed): choose More info, then Run anyway.\n'
                               'Needs a DirectX 12 or Vulkan capable graphics driver. A console window opens\n'
