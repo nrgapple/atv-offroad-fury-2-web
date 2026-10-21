@@ -36,7 +36,7 @@ impl Catalog {
         })
     }
 
-    pub fn next(&mut self) -> Result<Option<&Song>> {
+    pub fn next_song(&mut self) -> Result<Option<&Song>> {
         Ok(self
             .shuffle
             .next_song(&mut self.random)?

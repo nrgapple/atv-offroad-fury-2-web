@@ -460,8 +460,7 @@ impl Mixer {
 
     /// Queues interleaved stereo soundtrack frames.
     pub fn push_music(&mut self, frames: &[f32]) {
-        self.music
-            .extend(frames.chunks_exact(2).map(|f| [f[0], f[1]]));
+        self.music.extend(frames.as_chunks::<2>().0.iter().copied());
     }
 
     /// Seconds of soundtrack still queued.
@@ -563,7 +562,7 @@ impl Mixer {
             }
         }
         let sfx_gain = if self.active { self.sfx_volume } else { 0. };
-        for (i, out) in out.chunks_exact_mut(2).enumerate() {
+        for (i, out) in out.as_chunks_mut::<2>().0.iter_mut().enumerate() {
             let bus = [sfx[i][0] * sfx_gain, sfx[i][1] * sfx_gain];
             let echo = self.echo.as_mut().map_or([0.; 2], |e| e.process(bus));
             for c in 0..2 {

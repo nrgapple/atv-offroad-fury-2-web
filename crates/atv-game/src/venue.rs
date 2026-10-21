@@ -1,6 +1,13 @@
 //! Loads one venue's terrain presentation from its original course archive.
 //! Mirrors terrainFromContent/uploadTerrainTextures in web/game.js.
-use crate::{Result, launch::course_resource};
+use crate::{
+    Result,
+    launch::course_resource,
+    materials::{last_component, member_named},
+    scenery::Scenery,
+    sky::Sky,
+    vegetation::Vegetation,
+};
 use atv_content::Content;
 use atv_core::{ipu, resource::Resource, scene::Scene, terrain, texture};
 
@@ -44,19 +51,52 @@ pub struct Venue {
     pub environment: String,
     pub scene: Scene,
     pub terrain: Terrain,
+    pub sky: Option<Sky>,
+    pub scenery: Scenery,
+    pub vegetation: Option<Vegetation>,
+    /// Shared live field: the renderer and physics read the same surface.
+    pub water: Option<std::rc::Rc<std::cell::RefCell<crate::water::Water>>>,
+    /// ENV08's train, shared like the water field (physics collides with it).
+    pub train: Option<std::rc::Rc<std::cell::RefCell<crate::train::Train>>>,
+    /// Placed TOY particle effects (smoke, fountains, fog), stepped at 60 Hz.
+    pub ambient: Option<std::rc::Rc<std::cell::RefCell<crate::ambient::Ambient>>>,
+    /// Active Snow weather (ring emitters around the camera).
+    pub snow: Option<std::rc::Rc<std::cell::RefCell<crate::snow::Weather>>>,
+    /// Source Weather selection for this load (00208cc0).
+    pub weather: Option<atv_core::weather::Selection>,
 }
 
-fn member_named(resource: &Resource, name: &str) -> Option<usize> {
-    resource.members.iter().position(|member| {
-        member
-            .name
-            .rsplit(['/', '\\'])
-            .next()
-            .is_some_and(|last| last.eq_ignore_ascii_case(name))
-    })
+/// Presentation choices made at load time.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct LoadOptions {
+    /// Weather RNG sample (0..2^31), or a forced outcome for parity captures.
+    pub weather: WeatherChoice,
+    /// Decode the Enhanced/High smoothed sky tiles as well.
+    pub sky_smooth: bool,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum WeatherChoice {
+    Random(u32),
+    Active(bool),
+}
+
+impl Default for WeatherChoice {
+    fn default() -> Self {
+        Self::Random(0)
+    }
 }
 
 pub async fn load(content: &Content, environment: &str, racing: bool) -> Result<Venue> {
+    load_with(content, environment, racing, LoadOptions::default()).await
+}
+
+pub async fn load_with(
+    content: &Content,
+    environment: &str,
+    racing: bool,
+    options: LoadOptions,
+) -> Result<Venue> {
     let course = course_resource(environment, racing)?;
     let bytes = content.file(&course.archive).await?;
     let archive = Resource::parse(&bytes)?;
@@ -67,13 +107,49 @@ pub async fn load(content: &Content, environment: &str, racing: bool) -> Result<
         )
     };
     let scene_text = extract(&format!("{}.scn", course.scene_stem), "start position")?;
-    let mode = member_named(&archive, &format!("{}.toy", course.mode_stem))
-        .map(|i| archive.extract(i))
-        .transpose()?;
-    let scene = atv_core::scene::parse_with_start(&scene_text, mode.as_deref())?;
+    let mode_index = member_named(&archive, &format!("{}.toy", course.mode_stem));
+    let mode = mode_index.map(|i| archive.extract(i)).transpose()?;
+    let mut scene = atv_core::scene::parse_with_start(&scene_text, mode.as_deref())?;
+    // 00208cc0 reads [Weather] from the common/mode TOYs; an inactive
+    // weather removes its model from the scene.
+    // The browser compares this index with the ambient mode TOY's course
+    // index even when it came from the placements archive; keep that.
+    let (toy, toy_index) = match member_named(&archive, &format!("{environment}.toy")) {
+        Some(index) => (Some(archive.extract(index)?), Some(index)),
+        None => match &course.placements {
+            Some(path) => {
+                let bytes = content.file(path).await?;
+                let placements = Resource::parse(&bytes)?;
+                match member_named(&placements, &format!("{environment}.toy")) {
+                    Some(index) => (Some(placements.extract(index)?), Some(index)),
+                    None => (None, None),
+                }
+            }
+            None => (None, None),
+        },
+    };
+    let weather = match &toy {
+        Some(common) => {
+            let definition =
+                atv_core::weather::Definition::parse(common, mode.as_deref().unwrap_or(&[]))?;
+            let random = match options.weather {
+                WeatherChoice::Random(sample) => sample & 0x7fff_ffff,
+                WeatherChoice::Active(true) => 0,
+                WeatherChoice::Active(false) => 0x7fff_ffff,
+            };
+            Some(atv_core::weather::select(definition, random, 1)?)
+        }
+        None => None,
+    };
+    if let Some(removed) = weather.as_ref().and_then(|w| w.removed_model.as_deref()) {
+        scene
+            .models
+            .retain(|model| !model.name.eq_ignore_ascii_case(removed));
+    }
     let tr2 = extract(&format!("{environment}.tr2"), "terrain")?;
     let decoded = terrain::decode_tr2(&tr2)?;
     let heights = decoded.heightfield()?;
+    let ground = decoded.render_heights()?;
     let (width, depth) = (
         decoded.width_cells as usize + 1,
         decoded.depth_cells as usize + 1,
@@ -141,8 +217,52 @@ pub async fn load(content: &Content, environment: &str, racing: bool) -> Result<
         &format!("{environment}_d.pst"),
         "ground detail texture",
     )?)?;
+    let sky_index = archive
+        .members
+        .iter()
+        .position(|m| last_component(&m.name).eq_ignore_ascii_case(&scene.cube_file))
+        .ok_or("Original scene sky is missing.")?;
+    let sky = Some(crate::sky::load(
+        &archive.extract(sky_index)?,
+        options.sky_smooth,
+    )?);
+    let scenery = crate::scenery::load(&archive, &scene, toy.as_deref())?;
+    let vegetation = crate::vegetation::load(&archive, environment, &scene, &ground)?;
+    let water = crate::water::load(&archive, &scene)?
+        .map(|water| std::rc::Rc::new(std::cell::RefCell::new(water)));
+    let ambient = crate::ambient::load(
+        &archive,
+        environment,
+        &scene_text,
+        toy.as_deref(),
+        toy_index,
+        mode.as_deref(),
+        mode_index,
+    )
+    .unwrap_or_else(|error| {
+        // The browser skips effects it cannot configure.
+        eprintln!("ambient effects: {error}");
+        None
+    })
+    .map(|ambient| std::rc::Rc::new(std::cell::RefCell::new(ambient)));
+    let snow = crate::snow::load(&archive, weather.as_ref())?
+        .map(|snow| std::rc::Rc::new(std::cell::RefCell::new(snow)));
+    let train = if environment == "env08" {
+        crate::train::load(&archive, mode_index)?
+            .map(|train| std::rc::Rc::new(std::cell::RefCell::new(train)))
+    } else {
+        None
+    };
     Ok(Venue {
         environment: environment.to_string(),
+        sky,
+        scenery,
+        vegetation,
+        water,
+        train,
+        ambient,
+        snow,
+        weather,
         scene,
         terrain: Terrain {
             width,

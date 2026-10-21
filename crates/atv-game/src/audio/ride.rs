@@ -511,7 +511,7 @@ impl RideAudio {
         } else {
             apply(mixer, self.chassis_voice, None);
         }
-        for side in 0..2 {
+        for (side, wheel) in wheels.iter().enumerate() {
             let level = self.drive_level[side].and_then(|(record, pitch, volume)| {
                 let sound = self.bank.drive.get(record - 1)?;
                 let rate = *self.bank.rates.get(&normal(&sound.sample))? as f32;
@@ -519,12 +519,7 @@ impl RideAudio {
                     return None;
                 }
                 let command = spatial_audio::command(
-                    source(
-                        wheels[side],
-                        [0.; 3],
-                        sound.min_distance,
-                        sound.max_distance,
-                    ),
+                    source(*wheel, [0.; 3], sound.min_distance, sound.max_distance),
                     std::slice::from_ref(&listener),
                 )
                 .ok()?;

@@ -392,60 +392,12 @@ impl VehiclePass {
     }
 }
 
-/// RGBA8 texture with a box-filtered mip chain, as WebGL's generateMipmap.
 fn upload(gpu: &Gpu, image: &Image) -> wgpu::Texture {
-    let (width, height) = (image.width.max(1), image.height.max(1));
-    let levels = 32 - width.max(height).leading_zeros();
-    let texture = gpu.device.create_texture(&wgpu::TextureDescriptor {
-        label: Some("vehicle texture"),
-        size: wgpu::Extent3d {
-            width,
-            height,
-            depth_or_array_layers: 1,
-        },
-        mip_level_count: levels,
-        sample_count: 1,
-        dimension: wgpu::TextureDimension::D2,
-        format: wgpu::TextureFormat::Rgba8Unorm,
-        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-        view_formats: &[],
-    });
-    let (mut w, mut h, mut pixels) = (width, height, image.rgba.clone());
-    for level in 0..levels {
-        gpu.queue.write_texture(
-            wgpu::TexelCopyTextureInfo {
-                texture: &texture,
-                mip_level: level,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
-            },
-            &pixels,
-            wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(w * 4),
-                rows_per_image: Some(h),
-            },
-            wgpu::Extent3d {
-                width: w,
-                height: h,
-                depth_or_array_layers: 1,
-            },
-        );
-        let (nw, nh) = ((w / 2).max(1), (h / 2).max(1));
-        let mut next = vec![0u8; (nw * nh * 4) as usize];
-        for y in 0..nh {
-            for x in 0..nw {
-                for c in 0..4 {
-                    let mut sum = 0u32;
-                    for (dx, dy) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
-                        let (sx, sy) = ((x * 2 + dx).min(w - 1), (y * 2 + dy).min(h - 1));
-                        sum += pixels[((sy * w + sx) * 4 + c) as usize] as u32;
-                    }
-                    next[((y * nw + x) * 4 + c) as usize] = ((sum + 2) / 4) as u8;
-                }
-            }
-        }
-        (pixels, w, h) = (next, nw, nh);
-    }
-    texture
+    crate::texture::upload(
+        gpu,
+        image.width.max(1),
+        image.height.max(1),
+        &image.rgba,
+        "vehicle texture",
+    )
 }

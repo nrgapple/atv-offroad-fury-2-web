@@ -72,7 +72,10 @@ impl Output {
                 Ok(mut mixer) => mixer.render(&mut stereo),
                 Err(_) => stereo.fill(0.),
             }
-            for (frame, pair) in out.chunks_exact_mut(channels).zip(stereo.chunks_exact(2)) {
+            for (frame, pair) in out
+                .chunks_exact_mut(channels)
+                .zip(stereo.as_chunks::<2>().0)
+            {
                 for (c, sample) in frame.iter_mut().enumerate() {
                     *sample = pair[c.min(1)].clamp(-1., 1.);
                 }
@@ -280,7 +283,7 @@ impl Sound {
                 if self.song.is_some() && mixer.lock().map_err(|_| "lock")?.music_queued() > 0.05 {
                     return Ok(());
                 }
-                let Some(song) = catalog.next()? else {
+                let Some(song) = catalog.next_song()? else {
                     return Ok(());
                 };
                 self.title = Some(format!("{} – {}", song.title, song.artist));
@@ -326,7 +329,7 @@ impl Sound {
         if web.playing && !web.element.ended() {
             return;
         }
-        let Ok(Some(song)) = catalog.next() else {
+        let Ok(Some(song)) = catalog.next_song() else {
             return;
         };
         let path = atv_game::audio::music::path(song);

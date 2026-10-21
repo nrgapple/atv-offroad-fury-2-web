@@ -1604,6 +1604,9 @@ function vehicleMatrix(actor = presentedFrame ?? simFrame) {
     ...position, 1,
   ]);
 }
+// tools/compare_engine.mjs sets window.atvParityView ({ camera, world, freeze })
+// to pin the view, hide the actors and hold the scene clocks. Read-only otherwise.
+const parityView = () => globalThis.atvParityView;
 function matrix() {
   if (cameraFrame) presentCameraFrame();
   // Original00325e80 uses horizontal FOV. Preserve the4:3 vertical framing
@@ -1612,7 +1615,10 @@ function matrix() {
   // Cull whole objects there, but extend the depth range by the largest
   // object so an admitted stadium stand is not sliced open into the sky.
   const near = 1, far = terrain.world?.metadata.fog?.end ?? Math.max(terrain.sizeX, terrain.sizeZ) * 5;
-  const f = (cameraFrame ? diagnostics.cameraPresentation.focalLength : 1 / Math.tan(Math.PI / 6)) * speedRush.focalScale;
+  // Test-only pinned view for Rust-engine parity captures; the game never sets it.
+  const pinned = parityView()?.camera;
+  if (pinned) Object.assign(camera, { x: pinned.x, y: pinned.y, z: pinned.z, yaw: pinned.yaw, pitch: pinned.pitch });
+  const f = pinned?.focalLength ?? (cameraFrame ? diagnostics.cameraPresentation.focalLength : 1 / Math.tan(Math.PI / 6)) * speedRush.focalScale;
   const aspect = canvas.width / canvas.height, depthFar = far + boundsReach(sceneDraws, boundsReach(chunks)) + 1;
   diagnostics.depthFar = depthFar;
   // Read-only view for Rust-engine parity captures (tools/compare_engine.mjs).
@@ -1804,7 +1810,7 @@ async function startSimulation(source) {
 const liveMultiplayer = () => Boolean(multiplayer?.started && !multiplayer.loading && multiplayer.state.lobby?.started);
 const simulationPaused = () => document.hidden || lost || pageSuspended || ((!focused || menuOpen) && !liveMultiplayer());
 async function pumpSimulation() {
-  if (simBusy || !simReady || simulationPaused()) return;
+  if (simBusy || !simReady || simulationPaused() || parityView()?.freeze) return;
   const count = Math.min(4, Math.floor(simAccumulator * 60));
   if (count < 1) return;
   simBusy = true;
@@ -2123,7 +2129,7 @@ function render(time) {
   const rushMask=speedRush.amount>0;
   if(rushMask){gl.enable(gl.STENCIL_TEST);gl.stencilFunc(gl.ALWAYS,1,0xff);gl.stencilOp(gl.KEEP,gl.KEEP,gl.REPLACE);}
   const playerPaint = PAINT_PALETTE[rideAppearance?.paint ?? 0] ?? PAINT_PALETTE[0];
-  for (const chunk of vehicleChunks) {
+  for (const chunk of parityView()?.world ? [] : vehicleChunks) {
     gl.uniform2fv(uniforms.quadPaint, chunk.quad && paintable(chunk.material) ? playerPaint : PAINT_PALETTE[0]);
     gl.activeTexture(gl.TEXTURE4);gl.bindTexture(gl.TEXTURE_2D,chunk.mudTexture ?? fallbackTexture);
     gl.uniform1i(uniforms.mudReveal,simFrame?.vehicle_kind!=='motorcycle');
@@ -2176,7 +2182,7 @@ function render(time) {
     bloodRenderer ??= new BloodRenderer(gl);
     bloodRenderer.draw(simFrame.funny_crash.blood, {camera,viewProjection,program});
   } else if (bloodRenderer) bloodRenderer.draws = 0;
-  if (wheelEffectsRenderer) {
+  if (wheelEffectsRenderer && !parityView()?.world) {
     wheelEffectsRenderer.draw({ camera, viewProjection });
     diagnostics.wheelEffects.draws = wheelEffectsRenderer.draws; diagnostics.wheelEffects.triangles = wheelEffectsRenderer.triangles; diagnostics.wheelEffects.cpuMilliseconds = wheelEffectsRenderer.cpuMilliseconds; diagnostics.wheelEffects.wetLive = wheelEffectsRenderer.wetLive ?? 0;
   }

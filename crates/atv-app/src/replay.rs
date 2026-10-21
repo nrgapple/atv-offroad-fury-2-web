@@ -188,7 +188,7 @@ pub fn render_audio(
             );
             mixer.render(&mut block);
             mix += t.elapsed().as_secs_f64();
-            for frame in block.chunks_exact(2) {
+            for frame in block.as_chunks::<2>().0 {
                 for c in 0..2 {
                     window[c] += f64::from(frame[c] * frame[c]);
                     pcm.push((frame[c].clamp(-1., 1.) * 32767.) as i16);

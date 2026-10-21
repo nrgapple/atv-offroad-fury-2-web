@@ -7,7 +7,7 @@ mod sound;
 
 use atv_content::{Content, Store};
 use atv_game::venue::{self, Venue};
-use atv_render::{Camera, Gpu, SceneRenderer, View, camera::default_focal_length};
+use atv_render::{Camera, Gpu, Graphics, SceneRenderer, View, camera::default_focal_length};
 use std::{collections::HashSet, sync::Arc};
 use web_time::Instant;
 use winit::{
@@ -23,11 +23,20 @@ pub struct Options {
     pub venue: String,
     /// Fixed `x,y,z,yaw,pitch,focal` view, e.g. copied from the browser build.
     pub camera: Option<[f32; 6]>,
+    /// Forced Weather outcome (parity captures); random per load otherwise.
+    pub weather: Option<bool>,
+    /// World clock steps to run before the first frame, then hold the clocks
+    /// (parity captures against a paused JavaScript frame).
+    pub steps: Option<u64>,
+    pub graphics: Graphics,
     /// Native parity capture: render once at this size, write PNG and exit.
     #[cfg(not(target_arch = "wasm32"))]
     pub capture: Option<(std::path::PathBuf, u32, u32)>,
     /// Ride the player's quad (default); false keeps the free camera.
     pub ride: bool,
+    /// Load the venue's National/Supercross race course resources (static
+    /// world only for now: race weather, gate and grid are not ridden).
+    pub race: bool,
     /// Steps replayed at load, then the ride holds (parity captures).
     pub script: Option<replay::Script>,
     /// Sound: None plays nothing (captures); otherwise the mode and music.
@@ -45,6 +54,8 @@ struct Ready {
     scene: SceneRenderer,
     camera: Camera,
     focal_length: f32,
+    /// World clocks held at the requested steps (parity captures).
+    hold: bool,
     /// A fixed `--camera` view overrides the chase camera.
     fixed: bool,
     riding: Option<riding::Riding>,
@@ -91,6 +102,19 @@ struct Meter {
     cpu: f64,
     since: Option<Instant>,
     triangles: u32,
+    draws: u32,
+}
+
+/// Load-time choices for the venue presentation and the ride.
+struct World {
+    race: bool,
+    weather: Option<bool>,
+    steps: Option<u64>,
+    graphics: Graphics,
+    ride: bool,
+    script: Option<replay::Script>,
+    sound: Option<(atv_game::audio::ride::SoundMode, bool)>,
+    autodrive: Option<replay::Script>,
 }
 
 async fn prepare(
@@ -99,11 +123,18 @@ async fn prepare(
     store: Store,
     environment: String,
     fixed: Option<[f32; 6]>,
-    ride: bool,
-    script: Option<replay::Script>,
-    sound: Option<(atv_game::audio::ride::SoundMode, bool)>,
-    autodrive: Option<replay::Script>,
+    world: World,
 ) -> Result<Ready, String> {
+    let World {
+        race,
+        weather,
+        steps,
+        graphics,
+        ride,
+        script,
+        sound,
+        autodrive,
+    } = world;
     let size = window.inner_size();
     let mut descriptor = wgpu::InstanceDescriptor::new_with_display_handle(Box::new(display));
     // Browsers get WebGL2 so the port runs on every phone the site supports.
@@ -119,7 +150,26 @@ async fn prepare(
     let gpu = Gpu::new(&instance, surface, size.width, size.height).await?;
     status(&format!("Reading original {}…", environment.to_uppercase()));
     let content = std::rc::Rc::new(Content::open(store).await?);
-    let venue = venue::load(&content, &environment, false).await?;
+    let weather = match weather {
+        Some(active) => venue::WeatherChoice::Active(active),
+        // Per-load sample, like the browser's Math.random() * 2^31.
+        None => venue::WeatherChoice::Random(
+            web_time::SystemTime::now()
+                .duration_since(web_time::UNIX_EPOCH)
+                .map_or(0, |d| d.subsec_nanos() ^ d.as_secs() as u32),
+        ),
+    };
+    let ride = ride && !race;
+    let venue = venue::load_with(
+        &content,
+        &environment,
+        race,
+        venue::LoadOptions {
+            weather,
+            sky_smooth: graphics.sky_smooth,
+        },
+    )
+    .await?;
     let start = venue.scene.start_position;
     let direction = venue.scene.start_direction;
     let yaw = direction[0].atan2(direction[2]);
@@ -145,7 +195,12 @@ async fn prepare(
         focal_length = focal;
     }
     // The browser centres the fine terrain patch on the rider at the start.
-    let mut scene = SceneRenderer::new(&gpu, &venue, Some([start[0], start[2]]));
+    let mut scene =
+        SceneRenderer::with_graphics(&gpu, &venue, Some([start[0], start[2]]), graphics);
+    if let Some(steps) = steps {
+        scene.set_weather_camera(camera);
+        scene.advance_steps(steps);
+    }
     let riding = if ride {
         // Default Garage selection: quad 1, male rider.
         let ride = atv_game::ride::load(&content, &venue, 1, 0, status).await?;
@@ -184,6 +239,7 @@ async fn prepare(
         scene,
         camera,
         focal_length,
+        hold: steps.is_some(),
         fixed: fixed.is_some(),
         riding,
     })
@@ -233,6 +289,9 @@ impl App {
         c.y = c.y.max(ground(&ready.venue, c.x, c.z) + 1.5);
         let started = Instant::now();
         let mut acquire = 0.;
+        if !ready.hold {
+            ready.scene.advance(dt);
+        }
         match ready.scene.render(
             &ready.gpu,
             &View {
@@ -241,7 +300,8 @@ impl App {
             },
         ) {
             Ok(stats) => {
-                self.meter.triangles = stats.terrain_triangles;
+                self.meter.triangles = stats.triangles();
+                self.meter.draws = stats.draws();
                 acquire = stats.acquire_ms;
             }
             Err(error) => status(&error),
@@ -274,6 +334,13 @@ impl App {
             ready.riding = None;
             return;
         }
+        // World clocks (scenery animation, water, train) follow the
+        // simulation's fixed steps, as the browser's op 50 batch does.
+        if !ready.hold {
+            ready
+                .scene
+                .advance_steps(u64::from(riding.steps_last_frame));
+        }
         match riding.present(
             &ready.gpu,
             &mut ready.scene,
@@ -298,7 +365,8 @@ impl App {
             },
         ) {
             Ok(stats) => {
-                self.meter.triangles = stats.terrain_triangles + stats.vehicle_triangles;
+                self.meter.triangles = stats.triangles();
+                self.meter.draws = stats.draws();
                 acquire = stats.acquire_ms;
             }
             Err(error) => status(&error),
@@ -371,17 +439,19 @@ impl App {
         if elapsed >= 1. {
             let info = &ready.gpu.adapter_info;
             status(&format!(
-                "{} · {:.0} fps · {:.1} ms frame · {:.2} ms CPU · {} tris · {:?} {}{extra}",
+                "{} · {:.0} fps · {:.1} ms frame · {:.2} ms CPU · {} draws · {} tris · {:?} {}{extra}",
                 ready.venue.environment.to_uppercase(),
                 self.meter.frames as f64 / elapsed,
                 elapsed * 1000. / self.meter.frames as f64,
                 self.meter.cpu / self.meter.frames as f64,
+                self.meter.draws,
                 self.meter.triangles,
                 info.backend,
                 info.name
             ));
             self.meter = Meter {
                 triangles: self.meter.triangles,
+                draws: self.meter.draws,
                 ..Default::default()
             };
         }
@@ -431,10 +501,16 @@ impl ApplicationHandler<Message> for App {
             options.store,
             options.venue,
             options.camera,
-            options.ride,
-            options.script,
-            options.sound,
-            options.autodrive,
+            World {
+                race: options.race,
+                weather: options.weather,
+                steps: options.steps,
+                graphics: options.graphics,
+                ride: options.ride,
+                script: options.script,
+                sound: options.sound,
+                autodrive: options.autodrive,
+            },
         );
         let proxy = self.proxy.clone();
         let send = move |result: Result<Ready, String>| {
@@ -602,6 +678,32 @@ pub fn parse_camera(text: &str) -> Option<[f32; 6]> {
     values.try_into().ok()
 }
 
+/// `on`/`off` (also 1/0, true/false).
+pub fn parse_switch(text: &str) -> Option<bool> {
+    match text {
+        "on" | "1" | "true" => Some(true),
+        "off" | "0" | "false" => Some(false),
+        _ => None,
+    }
+}
+
+/// Display -> Graphics preset features (presetFeatures in web/graphics.js).
+pub fn graphics_preset(name: &str) -> Graphics {
+    match name {
+        "high" => Graphics {
+            sky_smooth: true,
+            anisotropy: 16,
+            fresnel: true,
+        },
+        "enhanced" => Graphics {
+            sky_smooth: true,
+            anisotropy: 4,
+            fresnel: true,
+        },
+        _ => Graphics::default(),
+    }
+}
+
 /// The replayed state, for the browser parity tool (`#trace`).
 fn publish_trace(text: &str) {
     #[cfg(target_arch = "wasm32")]
@@ -690,6 +792,9 @@ pub fn start() {
         store: Store::Http("/content/".into()),
         venue,
         camera: param("camera").and_then(|text| parse_camera(&text)),
+        weather: param("weather").and_then(|v| parse_switch(&v)),
+        steps: param("steps").and_then(|v| v.parse().ok()),
+        graphics: param("graphics").map_or_else(Graphics::default, |v| graphics_preset(&v)),
         ride: param("free").is_none(),
         sound: Some((
             if param("sound").as_deref() == Some("enhanced") {
@@ -702,6 +807,7 @@ pub fn start() {
         autodrive: param("autodrive")
             .and_then(|text| js_sys_decode(&text))
             .and_then(|text| replay::Script::parse(&text).ok()),
+        race: param("race").is_some_and(|v| v == "1"),
         script: param("script")
             .and_then(|text| js_sys_decode(&text))
             .and_then(|text| replay::Script::parse(&text).ok()),

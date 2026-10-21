@@ -252,16 +252,34 @@ impl TerrainPass {
         self.chunks = chunks(gpu, &venue.terrain, Some(center));
     }
 
-    pub fn prepare(&mut self, gpu: &Gpu, view_projection: &[f32; 16], eye: [f32; 3]) -> FrameStats {
+    /// Longest chunk bounds diagonal (boundsReach in render-support.js).
+    pub fn reach(&self) -> f32 {
+        self.chunks
+            .iter()
+            .map(|c| {
+                let d: [f32; 3] = std::array::from_fn(|a| c.max[a] - c.min[a]);
+                (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt()
+            })
+            .fold(0., f32::max)
+    }
+
+    /// `cull` holds the browser's fog-end clip planes (crate::cull); the depth
+    /// range of `view_projection` extends past them.
+    pub fn prepare(
+        &mut self,
+        gpu: &Gpu,
+        view_projection: &[f32; 16],
+        cull: &[[f32; 4]],
+        eye: [f32; 3],
+    ) -> FrameStats {
         self.globals.view_projection = *view_projection;
         self.globals.eye = [eye[0], eye[1], eye[2], 1.];
         gpu.queue
             .write_buffer(&self.uniforms, 0, bytemuck::bytes_of(&self.globals));
-        let planes = frustum(view_projection);
         self.visible.clear();
         let mut stats = FrameStats::default();
         for (index, chunk) in self.chunks.iter().enumerate() {
-            if outside(&planes, chunk.min, chunk.max) {
+            if crate::cull::outside(cull, chunk.min, chunk.max) {
                 continue;
             }
             self.visible.push(index);
@@ -293,7 +311,7 @@ fn upload_layers(gpu: &Gpu, images: &[Image]) -> wgpu::Texture {
         size: wgpu::Extent3d {
             width,
             height,
-            depth_or_array_layers: images.len() as u32,
+            depth_or_array_layers: crate::texture::array_layers(images.len() as u32),
         },
         mip_level_count: levels,
         sample_count: 1,
@@ -350,22 +368,6 @@ fn downsample(pixels: &[u8], w: u32, h: u32) -> (Vec<u8>, u32, u32) {
         }
     }
     (out, nw, nh)
-}
-
-/// Clip planes (a, b, c, d) of a 0..1 depth view-projection.
-fn frustum(m: &[f32; 16]) -> [[f32; 4]; 6] {
-    let row = |r: usize| [m[r], m[4 + r], m[8 + r], m[12 + r]];
-    let (x, y, z, w) = (row(0), row(1), row(2), row(3));
-    let add = |a: [f32; 4], b: [f32; 4]| [a[0] + b[0], a[1] + b[1], a[2] + b[2], a[3] + b[3]];
-    let sub = |a: [f32; 4], b: [f32; 4]| [a[0] - b[0], a[1] - b[1], a[2] - b[2], a[3] - b[3]];
-    [add(w, x), sub(w, x), add(w, y), sub(w, y), z, sub(w, z)]
-}
-
-fn outside(planes: &[[f32; 4]; 6], min: [f32; 3], max: [f32; 3]) -> bool {
-    planes.iter().any(|p| {
-        let corner = [0, 1, 2].map(|a| if p[a] >= 0. { max[a] } else { min[a] });
-        p[0] * corner[0] + p[1] * corner[1] + p[2] * corner[2] + p[3] < 0.
-    })
 }
 
 fn chunks(gpu: &Gpu, terrain: &atv_game::venue::Terrain, center: Option<[f32; 2]>) -> Vec<Chunk> {
