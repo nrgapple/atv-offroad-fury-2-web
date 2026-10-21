@@ -72,6 +72,9 @@ pub struct Net {
     /// attempts so far.
     reconnect: Option<(f64, f64, u32)>,
     pub reconnects: u32,
+    /// Where to place the rider once the reloaded ride reports Ready
+    /// (Change ATV and Rider reloads in place).
+    pub resume_at: Option<([f32; 3], f32)>,
     drop_at: Option<f64>,
     train_place_at: Option<f64>,
     /// The slot key last kept for this tab.
@@ -276,6 +279,7 @@ impl Net {
             meet: None,
             reconnect: None,
             reconnects: 0,
+            resume_at: None,
             drop_at: start.drop_after.map(|s| s * 1000.),
             train_place_at: start.train_place.map(|s| s * 1000.),
             saved_key: String::new(),
@@ -344,7 +348,9 @@ impl Net {
     /// Socket traffic, keep-alive pings, the player's pose at the 50 ms
     /// send tick (web/multiplayer.js timers), reconnects, arrivals and
     /// course changes.
-    pub fn tick(&mut self, ride: &Ride, paused: bool) -> Tick {
+    /// Without a ride (the frontend over a held room) only the socket,
+    /// reconnects and pings run.
+    pub fn tick(&mut self, ride: Option<&Ride>, paused: bool) -> Tick {
         let mut tick = Tick::default();
         if self.closed.is_some() {
             return tick;
@@ -434,57 +440,68 @@ impl Net {
                 }
             }
         }
-        // The host moved the room to another course: reload there.
-        if let Some(environment) = self.session.environment()
-            && environment != self.environment
-        {
-            tick.course = Some(environment.to_string());
-            return tick;
-        }
-        if !self.ready_sent
-            && self.session.peer.is_some()
-            && let Ok(bytes) = self.session.ready()
-        {
-            self.ready_sent = self.socket.send(bytes);
-            self.last_traffic = now_f;
-            // A fresh arrival starts apart from nobody: contacts wait.
-            self.session.ghost(now);
-        }
-        if let Some((at, tries)) = self.meet
-            && self.ready_sent
-            && now_f >= at
-        {
-            self.meet = (tries > 1).then_some((now_f + 250., tries - 1));
-            let cars = |car| ride.train_car(car);
-            let others = self.session.positions(now, &cars);
-            for target in self.session.meet_candidates(now, now, &cars) {
-                if let Ok(spot) = atv_game::multiplayer::spawn::beside(ride, &target, &others) {
-                    let d = spot
-                        .0
-                        .iter()
-                        .zip(target.atv.position)
-                        .map(|(a, b)| (a - b) * (a - b))
-                        .sum::<f32>()
-                        .sqrt();
-                    self.met = Some((target.peer, d));
-                    tick.place = Some(spot);
-                    self.meet = None;
-                    self.session.ghost(now);
-                    break;
-                }
+        if let Some(ride) = ride {
+            // The host moved the room to another course: reload there.
+            if let Some(environment) = self.session.environment()
+                && environment != self.environment
+            {
+                tick.course = Some(environment.to_string());
+                return tick;
             }
-        }
-        if now_f - self.last_send >= 50. && self.ready_sent && tick.place.is_none() {
-            self.last_send = now_f;
-            match self.session.snapshot(ride, now, paused) {
-                Ok(Some(bytes)) => {
-                    if self.socket.send(bytes.clone()) {
-                        let _ = self.session.sent(&bytes);
-                        self.last_traffic = now_f;
+            // Returning from the frontend: back where the rider was.
+            if let Some(spot) = self.resume_at
+                && self.ready_sent
+            {
+                self.resume_at = None;
+                self.meet = None;
+                tick.place = Some(spot);
+                self.session.ghost(now);
+            }
+            if !self.ready_sent
+                && self.session.peer.is_some()
+                && let Ok(bytes) = self.session.ready()
+            {
+                self.ready_sent = self.socket.send(bytes);
+                self.last_traffic = now_f;
+                // A fresh arrival starts apart from nobody: contacts wait.
+                self.session.ghost(now);
+            }
+            if let Some((at, tries)) = self.meet
+                && self.ready_sent
+                && now_f >= at
+            {
+                self.meet = (tries > 1).then_some((now_f + 250., tries - 1));
+                let cars = |car| ride.train_car(car);
+                let others = self.session.positions(now, &cars);
+                for target in self.session.meet_candidates(now, now, &cars) {
+                    if let Ok(spot) = atv_game::multiplayer::spawn::beside(ride, &target, &others) {
+                        let d = spot
+                            .0
+                            .iter()
+                            .zip(target.atv.position)
+                            .map(|(a, b)| (a - b) * (a - b))
+                            .sum::<f32>()
+                            .sqrt();
+                        self.met = Some((target.peer, d));
+                        tick.place = Some(spot);
+                        self.meet = None;
+                        self.session.ghost(now);
+                        break;
                     }
                 }
-                Ok(None) => {}
-                Err(error) => crate::status(&format!("Multiplayer pose: {error}")),
+            }
+            if now_f - self.last_send >= 50. && self.ready_sent && tick.place.is_none() {
+                self.last_send = now_f;
+                match self.session.snapshot(ride, now, paused) {
+                    Ok(Some(bytes)) => {
+                        if self.socket.send(bytes.clone()) {
+                            let _ = self.session.sent(&bytes);
+                            self.last_traffic = now_f;
+                        }
+                    }
+                    Ok(None) => {}
+                    Err(error) => crate::status(&format!("Multiplayer pose: {error}")),
+                }
             }
         }
         // Pings keep the socket warm and refine the shared world clock.
@@ -719,6 +736,21 @@ impl Net {
         let spot = atv_game::multiplayer::spawn::beside(ride, &target, &others)?;
         self.session.ghost(now);
         Ok(spot)
+    }
+
+    /// Change ATV and Rider: the room gets the new look (Profile), the next
+    /// pose is a full snapshot (atv-web op 110).
+    pub fn change_profile(&mut self, quad: u16, rider: u16) -> Result<(), String> {
+        let bytes = self.session.change_profile(quad, rider)?;
+        self.socket.send(bytes);
+        Ok(())
+    }
+
+    /// The host's Select Track: move the room to `environment`.
+    pub fn set_map(&mut self, environment: &str) -> Result<(), String> {
+        let bytes = self.session.start_room(environment)?;
+        self.socket.send(bytes);
+        Ok(())
     }
 
     /// Leave Game: this rider gives up its slot (web/multiplayer.js

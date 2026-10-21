@@ -204,6 +204,19 @@ impl Session {
         encode(&Packet::Ready { map })
     }
 
+    /// Change ATV and Rider in place: a Profile packet for the room; the next
+    /// pose is an independent full snapshot.
+    pub fn change_profile(&mut self, quad: u16, rider: u16) -> Result<Vec<u8>> {
+        let profile = self.profile.as_mut().ok_or("no multiplayer profile")?;
+        profile.quad = if (1..=26).contains(&quad) { quad } else { 1 };
+        profile.rider = rider.min(1);
+        let participant = profile.participant();
+        self.force_full = true;
+        self.baseline = None;
+        self.pending = None;
+        encode(&Packet::Profile(participant))
+    }
+
     /// The room's current course, once the host has started it.
     pub fn environment(&self) -> Option<&'static str> {
         self.lobby
