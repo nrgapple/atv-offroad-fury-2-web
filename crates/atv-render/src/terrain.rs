@@ -18,12 +18,21 @@ struct Globals {
     shadow: [f32; 4],
 }
 
+/// One tile's range of the shared index buffer.
 struct Chunk {
-    vertices: wgpu::Buffer,
-    indices: wgpu::Buffer,
+    first: u32,
     count: u32,
     min: [f32; 3],
     max: [f32; 3],
+}
+
+/// Every tile in one vertex and one index buffer (indices rebased), so the
+/// GL backend specifies the vertex attributes once per frame instead of per
+/// tile: the same draws, triangles and order.
+struct Mesh {
+    vertices: wgpu::Buffer,
+    indices: wgpu::Buffer,
+    chunks: Vec<Chunk>,
 }
 
 pub struct TerrainPass {
@@ -31,8 +40,9 @@ pub struct TerrainPass {
     bind_group: wgpu::BindGroup,
     uniforms: wgpu::Buffer,
     globals: Globals,
-    chunks: Vec<Chunk>,
-    visible: Vec<usize>,
+    mesh: Mesh,
+    /// Index ranges of this frame's visible tiles.
+    ranges: Vec<std::ops::Range<u32>>,
 }
 
 impl TerrainPass {
@@ -270,20 +280,20 @@ impl TerrainPass {
             multiview_mask: None,
             cache: None,
         });
-        let chunks = chunks(gpu, terrain, fine_center);
+        let mesh = mesh(gpu, terrain, fine_center);
         Self {
             pipeline,
             bind_group,
             uniforms,
             globals,
-            chunks,
-            visible: Vec::new(),
+            mesh,
+            ranges: Vec::new(),
         }
     }
 
     /// Moves the fine patch (buildTerrainMesh after the rider leaves it).
     pub fn recenter(&mut self, gpu: &Gpu, venue: &Venue, center: [f32; 2]) {
-        self.chunks = chunks(gpu, &venue.terrain, Some(center));
+        self.mesh = mesh(gpu, &venue.terrain, Some(center));
     }
 
     /// The High vehicle shadow map this frame (shadowReceive), or none.
@@ -299,7 +309,8 @@ impl TerrainPass {
 
     /// Longest chunk bounds diagonal (boundsReach in render-support.js).
     pub fn reach(&self) -> f32 {
-        self.chunks
+        self.mesh
+            .chunks
             .iter()
             .map(|c| {
                 let d: [f32; 3] = std::array::from_fn(|a| c.max[a] - c.min[a]);
@@ -321,27 +332,28 @@ impl TerrainPass {
         self.globals.eye = [eye[0], eye[1], eye[2], 1.];
         gpu.queue
             .write_buffer(&self.uniforms, 0, bytemuck::bytes_of(&self.globals));
-        self.visible.clear();
+        self.ranges.clear();
         let mut stats = FrameStats::default();
-        for (index, chunk) in self.chunks.iter().enumerate() {
+        for chunk in &self.mesh.chunks {
             if crate::cull::outside(cull, chunk.min, chunk.max) {
                 continue;
             }
-            self.visible.push(index);
-            stats.terrain_draws += 1;
+            // One draw per tile: merging adjacent ranges into one draw
+            // measurably changes Metal's output (a few hundred far pixels).
+            self.ranges.push(chunk.first..chunk.first + chunk.count);
             stats.terrain_triangles += chunk.count / 3;
         }
+        stats.terrain_draws = self.ranges.len() as u32;
         stats
     }
 
     pub fn draw(&self, pass: &mut wgpu::RenderPass<'_>) {
         pass.set_pipeline(&self.pipeline);
         pass.set_bind_group(0, &self.bind_group, &[]);
-        for &index in &self.visible {
-            let chunk = &self.chunks[index];
-            pass.set_vertex_buffer(0, chunk.vertices.slice(..));
-            pass.set_index_buffer(chunk.indices.slice(..), wgpu::IndexFormat::Uint32);
-            pass.draw_indexed(0..chunk.count, 0, 0..1);
+        pass.set_vertex_buffer(0, self.mesh.vertices.slice(..));
+        pass.set_index_buffer(self.mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
+        for range in &self.ranges {
+            pass.draw_indexed(range.clone(), 0, 0..1);
         }
     }
 }
@@ -415,25 +427,33 @@ fn downsample(pixels: &[u8], w: u32, h: u32) -> (Vec<u8>, u32, u32) {
     (out, nw, nh)
 }
 
-fn chunks(gpu: &Gpu, terrain: &atv_game::venue::Terrain, center: Option<[f32; 2]>) -> Vec<Chunk> {
+fn mesh(gpu: &Gpu, terrain: &atv_game::venue::Terrain, center: Option<[f32; 2]>) -> Mesh {
     let device = &gpu.device;
     let patch = center.map(|center| terrain_mesh::patch(terrain, center));
-    terrain_mesh::build(terrain, patch)
-        .into_iter()
-        .map(|chunk| Chunk {
-            vertices: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("terrain vertices"),
-                contents: bytemuck::cast_slice(&chunk.vertices),
-                usage: wgpu::BufferUsages::VERTEX,
-            }),
-            indices: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("terrain indices"),
-                contents: bytemuck::cast_slice(&chunk.indices),
-                usage: wgpu::BufferUsages::INDEX,
-            }),
+    let built = terrain_mesh::build(terrain, patch);
+    let (mut vertices, mut indices, mut chunks) = (Vec::new(), Vec::new(), Vec::new());
+    for chunk in &built {
+        let base = (vertices.len() / terrain_mesh::FLOATS_PER_VERTEX) as u32;
+        chunks.push(Chunk {
+            first: indices.len() as u32,
             count: chunk.indices.len() as u32,
             min: chunk.min,
             max: chunk.max,
-        })
-        .collect()
+        });
+        vertices.extend_from_slice(&chunk.vertices);
+        indices.extend(chunk.indices.iter().map(|i| i + base));
+    }
+    Mesh {
+        vertices: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("terrain vertices"),
+            contents: bytemuck::cast_slice(&vertices),
+            usage: wgpu::BufferUsages::VERTEX,
+        }),
+        indices: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("terrain indices"),
+            contents: bytemuck::cast_slice(&indices),
+            usage: wgpu::BufferUsages::INDEX,
+        }),
+        chunks,
+    }
 }

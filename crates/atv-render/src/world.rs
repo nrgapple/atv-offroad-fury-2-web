@@ -296,14 +296,44 @@ impl World {
     }
 
     pub fn pipeline(&self, gpu: &Gpu, desc: PipelineDesc<'_>) -> wgpu::RenderPipeline {
+        self.pipeline_with(gpu, desc, &self.texture_layout)
+    }
+
+    /// [`World::pipeline`] with another group-1 layout (e.g. a texture array).
+    pub fn pipeline_with(
+        &self,
+        gpu: &Gpu,
+        desc: PipelineDesc<'_>,
+        texture_layout: &wgpu::BindGroupLayout,
+    ) -> wgpu::RenderPipeline {
+        self.pipeline_layouts(gpu, desc, texture_layout, &self.draw_layout)
+    }
+
+    /// One dynamic uniform binding per draw (group 2 of [`World::record_layout`]).
+    pub fn record_layout(&self, gpu: &Gpu) -> wgpu::BindGroupLayout {
+        gpu.device
+            .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("world record"),
+                entries: &[entry(0, uniform(true))],
+            })
+    }
+
+    /// [`World::pipeline`] with other group-1 and per-draw group-2 layouts.
+    pub fn pipeline_layouts(
+        &self,
+        gpu: &Gpu,
+        desc: PipelineDesc<'_>,
+        texture_layout: &wgpu::BindGroupLayout,
+        draw_layout: &wgpu::BindGroupLayout,
+    ) -> wgpu::RenderPipeline {
         let layout = gpu
             .device
             .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some(desc.label),
                 bind_group_layouts: &[
                     Some(&self.globals_layout),
-                    Some(&self.texture_layout),
-                    desc.per_draw.then_some(&self.draw_layout),
+                    Some(texture_layout),
+                    desc.per_draw.then_some(draw_layout),
                 ][..if desc.per_draw { 3 } else { 2 }],
                 immediate_size: 0,
             });

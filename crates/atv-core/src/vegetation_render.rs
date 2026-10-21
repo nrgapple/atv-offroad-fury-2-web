@@ -69,12 +69,16 @@ pub struct Vegetation {
     extent: f64,
     far: f64,
     distances: [f64; 2],
-    selected: Vec<u32>,
+    /// Selected (projected depth, placement) pairs: the heap, then the
+    /// sorted selection. Keeping the depth beside the index avoids a random
+    /// placement read per heap and sort comparison; the order is unchanged.
+    selected: Vec<(f64, u32)>,
     /// Instances: billboards (distant then transition), then near meshes by group.
     pub output: Vec<f32>,
     /// Near mesh instance count per group, after the last selection.
     pub group_counts: Vec<u32>,
     pub counts: Counts,
+    next: Vec<usize>,
 }
 
 impl Vegetation {
@@ -185,6 +189,7 @@ impl Vegetation {
             selected: Vec::with_capacity(CAPACITY),
             output: vec![0.; CAPACITY * (BILLBOARD_FLOATS + MESH_FLOATS)],
             counts: Counts::default(),
+            next: Vec::new(),
         })
     }
 
@@ -203,10 +208,7 @@ impl Vegetation {
     /// Source placement indices and projected depths of the last selection,
     /// in submission (descending depth) order.
     pub fn selection(&self) -> Vec<(u32, f64)> {
-        self.selected
-            .iter()
-            .map(|i| (*i, self.placements[*i as usize].depth))
-            .collect()
+        self.selected.iter().map(|&(depth, i)| (i, depth)).collect()
     }
     /// Offset in floats of a group's near mesh instances within `output`.
     pub fn group_offset(&self, group: usize) -> usize {
@@ -217,41 +219,35 @@ impl Vegetation {
     fn push(&mut self, index: u32) {
         let depth = self.placements[index as usize].depth;
         let heap = &mut self.selected;
-        let depth_at = |heap: &Vec<u32>, i: usize, placements: &[Placement]| {
-            placements[heap[i] as usize].depth
-        };
         if heap.len() == CAPACITY {
-            if depth >= depth_at(heap, 0, &self.placements) {
+            if depth >= heap[0].0 {
                 return;
             }
             let mut i = 0;
             while i * 2 + 1 < heap.len() {
                 let mut child = i * 2 + 1;
-                if child + 1 < heap.len()
-                    && depth_at(heap, child + 1, &self.placements)
-                        > depth_at(heap, child, &self.placements)
-                {
+                if child + 1 < heap.len() && heap[child + 1].0 > heap[child].0 {
                     child += 1;
                 }
-                if depth_at(heap, child, &self.placements) <= depth {
+                if heap[child].0 <= depth {
                     break;
                 }
                 heap[i] = heap[child];
                 i = child;
             }
-            heap[i] = index;
+            heap[i] = (depth, index);
         } else {
             let mut i = heap.len();
-            heap.push(index);
+            heap.push((depth, index));
             while i > 0 {
                 let parent = (i - 1) >> 1;
-                if depth_at(heap, parent, &self.placements) >= depth {
+                if heap[parent].0 >= depth {
                     break;
                 }
                 heap[i] = heap[parent];
                 i = parent;
             }
-            heap[i] = index;
+            heap[i] = (depth, index);
         }
     }
 
@@ -327,25 +323,23 @@ impl Vegetation {
             }
         }
         // Descending projected depth; stable, as the former browser sort.
-        let placements = &self.placements;
-        self.selected.sort_by(|a, b| {
-            let (a, b) = (placements[*a as usize].depth, placements[*b as usize].depth);
-            b.partial_cmp(&a).unwrap_or(std::cmp::Ordering::Equal)
-        });
-        for i in &self.selected {
-            let p = &mut self.placements[*i as usize];
+        self.selected
+            .sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+        for &(_, i) in &self.selected {
+            let p = &mut self.placements[i as usize];
             p.seen = frame;
             if p.phase != 64. {
                 self.group_counts[p.group] += 1;
             }
         }
-        let mut next: Vec<usize> = (0..self.groups.len())
-            .map(|g| self.group_offset(g))
-            .collect();
+        // Running near-mesh write offset per group (reused, no per-frame allocation).
+        let mut next = std::mem::take(&mut self.next);
+        next.clear();
+        next.extend((0..self.groups.len()).map(|g| self.group_offset(g)));
         let mut billboard = [0usize; 2];
         for transition in [false, true] {
-            for i in &self.selected {
-                let p = &self.placements[*i as usize];
+            for &(_, i) in &self.selected {
+                let p = &self.placements[i as usize];
                 if let Some(atlas) = p.atlas
                     && p.phase != 0.
                     && (p.phase < 49.) == transition
@@ -362,8 +356,8 @@ impl Vegetation {
                 }
             }
         }
-        for i in &self.selected {
-            let p = &self.placements[*i as usize];
+        for &(_, i) in &self.selected {
+            let p = &self.placements[i as usize];
             if p.phase == 64. {
                 continue;
             }
@@ -375,6 +369,7 @@ impl Vegetation {
             data[5..7].copy_from_slice(&p.rotation.map(|v| v as f32));
             data[7] = p.phase as f32;
         }
+        self.next = next;
         self.counts = Counts {
             visible: self.selected.len() as u32,
             scanned,

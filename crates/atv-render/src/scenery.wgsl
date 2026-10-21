@@ -38,8 +38,13 @@ struct Instance {
   // unlit
   flags: vec4<f32>,
 };
-@group(2) @binding(0) var<uniform> m: Material;
-@group(2) @binding(1) var<uniform> d: Instance;
+// One record per draw and pass: its material, then its instance (one
+// dynamic offset per draw).
+struct Record {
+  m: Material,
+  d: Instance,
+};
+@group(2) @binding(0) var<uniform> r: Record;
 
 struct Varyings {
   @builtin(position) clip: vec4<f32>,
@@ -61,36 +66,43 @@ fn finish(world: vec4<f32>, normal: vec3<f32>, uv: vec2<f32>, color: vec4<f32>) 
   out.clip = g.view_projection * world;
   out.world = world.xyz;
   out.uv = uv;
-  out.normal = (d.model * vec4<f32>(normal, 0.0)).xyz;
+  out.normal = (r.d.model * vec4<f32>(normal, 0.0)).xyz;
   out.color = color * 255.0;
-  let fogged = g.fog.z > 0.5 && m.params.y > 0.5;
+  let fogged = g.fog.z > 0.5 && r.m.params.y > 0.5;
   let coverage = select(1.0, native_fog_coverage(length(world.xyz - g.eye.xyz)), fogged);
   out.fog = vec2<f32>(coverage * out.clip.w, out.clip.w);
   return out;
 }
 
 @vertex
-fn vs(@location(0) position: vec3<f32>, @location(1) normal: vec3<f32>, @location(2) uv: vec2<f32>,
+// Position with U and normal with V share attributes (fewer GL attribute
+// setups per pipeline change); the values are unchanged.
+fn vs(@location(0) position_u: vec4<f32>, @location(1) normal_v: vec4<f32>,
       @location(3) color: vec4<f32>) -> Varyings {
-  return finish(d.model * vec4<f32>(position, 1.0), normal, uv + m.uv_offset.xy, color);
+  let position = position_u.xyz;
+  let normal = normal_v.xyz;
+  let uv = vec2<f32>(position_u.w, normal_v.w);
+  return finish(r.d.model * vec4<f32>(position, 1.0), normal, uv + r.m.uv_offset.xy, color);
 }
 
 @vertex
-fn vs_reflect(@location(0) position: vec3<f32>, @location(1) normal: vec3<f32>, @location(2) uv: vec2<f32>,
+fn vs_reflect(@location(0) position_u: vec4<f32>, @location(1) normal_v: vec4<f32>,
       @location(3) color: vec4<f32>, @location(4) local_position: vec3<f32>, @location(5) local_normal: vec3<f32>,
       @location(6) n0: vec3<f32>, @location(7) n1: vec3<f32>, @location(8) n2: vec3<f32>, @location(9) n3: vec3<f32>) -> Varyings {
+  let position = position_u.xyz;
+  let normal = normal_v.xyz;
   // TriStripPrologue transforms the world camera into each rigid node's
   // coordinates. The compressed reflection programs retain the authored
   // scaled normal; normalizing it would change the original UVs.
-  let node = d.model * mat4x4<f32>(vec4<f32>(n0, 0.0), vec4<f32>(n1, 0.0), vec4<f32>(n2, 0.0), vec4<f32>(n3, 1.0));
+  let node = r.d.model * mat4x4<f32>(vec4<f32>(n0, 0.0), vec4<f32>(n1, 0.0), vec4<f32>(n2, 0.0), vec4<f32>(n3, 1.0));
   let basis = mat3x3<f32>(node[0].xyz, node[1].xyz, node[2].xyz);
   let local_eye = transpose(basis) * (g.eye.xyz - node[3].xyz);
   let direction = normalize(local_eye - local_position);
   let reflected = vec3<f32>(0.5) - 0.5 * direction + local_normal * dot(local_normal, direction);
-  let plane = i32(m.params.z + 0.5);
+  let plane = i32(r.m.params.z + 0.5);
   var texcoord = reflected.yz;
   if (plane == 1) { texcoord = reflected.xy; } else if (plane == 2) { texcoord = reflected.xz; }
-  return finish(d.model * vec4<f32>(position, 1.0), normal, texcoord, color);
+  return finish(r.d.model * vec4<f32>(position, 1.0), normal, texcoord, color);
 }
 
 @fragment
@@ -98,19 +110,19 @@ fn fs(in: Varyings) -> @location(0) vec4<f32> {
   var base = vec3<f32>(0.68, 0.70, 0.73);
   var source_alpha = 1.0;
   var sampled = textureSample(base_texture, base_sampler, in.uv);
-  if (m.flags.x > 0.5) {
-    if (m.flags.y > 0.5) { sampled = sampled * (in.color / 128.0); }
-    let cutoff = m.params.x;
+  if (r.m.flags.x > 0.5) {
+    if (r.m.flags.y > 0.5) { sampled = sampled * (in.color / 128.0); }
+    let cutoff = r.m.params.x;
     let fails = (sampled.a < cutoff);
     let accepted_fails = (sampled.a >= cutoff);
-    if (select(fails, accepted_fails, m.flags.w > 0.5)) { discard; }
+    if (select(fails, accepted_fails, r.m.flags.w > 0.5)) { discard; }
     base = sampled.rgb;
     // GS source alpha uses 128 for unity, while decoded PST bytes use 255.
-    source_alpha = select(1.0, clamp(sampled.a * (255.0 / 128.0), 0.0, 1.0), m.flags.z > 0.5);
+    source_alpha = select(1.0, clamp(sampled.a * (255.0 / 128.0), 0.0, 1.0), r.m.flags.z > 0.5);
   }
   let n = normalize(in.normal);
   let sunlight = max(dot(n, normalize(g.sun_direction.xyz)), 0.0);
-  let lit = select(base * (g.ambient.xyz + g.sun_color.xyz * sunlight), base, d.flags.x > 0.5)
+  let lit = select(base * (g.ambient.xyz + g.sun_color.xyz * sunlight), base, r.d.flags.x > 0.5)
     * vehicle_shadow(in.world);
   let coverage = select(1.0, clamp(in.fog.x / in.fog.y, 0.0, 1.0), in.fog.y != 0.0);
   return vec4<f32>(mix(g.fog_color.rgb, lit, coverage), source_alpha);
