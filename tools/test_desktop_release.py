@@ -243,6 +243,14 @@ class PublishTests(unittest.TestCase):
             self.assertIn('desktop-v0.1.0-abc1234', text)
             self.assertIn('--prerelease', text)
 
+    def test_notes_state_status_and_verification(self):
+        release = {'short': 'abc1234', 'archives': {'linux-x86_64': {'file': 'f.tar.gz', 'bytes': 5, 'sha256': '1' * 64}}}
+        text = publish.notes(release, 'Launched on Linux only.')
+        for phrase in ('Unofficial, incomplete', 'Not in the desktop app yet', 'Unsigned builds', 'What was tested',
+                       'Launched on Linux only.'):
+            self.assertIn(phrase, text)
+        self.assertNotIn('What was tested', publish.notes(release))
+
 
 class WatcherTests(unittest.TestCase):
     def test_new_tags_are_found_once_and_annotated_tags_are_peeled(self):

@@ -89,25 +89,30 @@ def check_archives(directory, release, scratch=None):
     return files
 
 
-def notes(release):
+def notes(release, verification=''):
     rows = '\n'.join(f'| {p} | `{r["file"]}` | {r["bytes"] / 1e6:.0f} MB | `{r["sha256"][:16]}...` |'
                      for p, r in sorted(release['archives'].items()))
-    return f'''Unofficial desktop build of the Fury Remastered Rust port of ATV Offroad Fury 2, commit `{release['short']}`.
+    tested = f'\n## What was tested\n\n{verification.strip()}\n' if verification.strip() else ''
+    return f'''**Unofficial, incomplete fan port.** Desktop build of the Fury Remastered Rust port of ATV Offroad Fury 2,
+commit `{release['short']}`. It is an early preview, not the finished game.
 
-**Early preview.** The desktop app currently shows the ENV01 terrain with a free camera. Riding, racing and menus
-are not in it yet; the web version at https://furyremastered.com/ plays the port in a browser.
+**What works:** Freeride on the original venues with their worlds drawn, the original quad and rider with the
+recovered riding physics, and audio. **Not in the desktop app yet:** menus, HUD, races, progression and multiplayer.
+The browser version at https://furyremastered.com/ has more.
 
 Each archive is self-contained: the original game's runtime resources the port needs are packed in, so nothing else
-is required (no disc, emulator or install step). The builds are not code signed or notarized: macOS asks you to
-Control-click the app and choose Open, and Windows SmartScreen asks you to choose More info, Run anyway.
-See the README.txt inside each archive.
+is required (no disc, emulator or install step). Read the `README.txt` inside for controls and options.
+
+**Unsigned builds.** They are not code signed or notarized: macOS asks you to Control-click the app and choose Open
+(or run `xattr -dr com.apple.quarantine "Fury Remastered.app"`), and Windows SmartScreen asks you to choose
+More info, Run anyway.
 
 | Platform | Archive | Size | SHA-256 |
 | --- | --- | --- | --- |
 {rows}
 
 Full checksums are in `SHA256SUMS.txt`. Built locally from the commit above with `tools/build_desktop.py`.
-'''
+{tested}'''
 
 
 def main(argv=None):
@@ -116,6 +121,7 @@ def main(argv=None):
     parser.add_argument('--dry-run', action='store_true', help='run every check and print the gh command without publishing')
     parser.add_argument('--yes', action='store_true', help='do not ask for confirmation')
     parser.add_argument('--stable', action='store_true', help='mark the release as a full release instead of a prerelease')
+    parser.add_argument('--verification', default='', help='what was actually launched/tested, added to the release notes')
     parser.add_argument('--tag', help='override the tag (default desktop-v<version>-<short commit>)')
     args = parser.parse_args(argv)
     try:
@@ -129,7 +135,7 @@ def main(argv=None):
             raise PublishError(f'release {tag} already exists')
         command = ['gh', 'release', 'create', tag, *[str(f) for f in files], '--target', head,
                    '--title', f'Fury Remastered desktop {release["version"]} ({release["short"]})',
-                   '--notes', notes(release)]
+                   '--notes', notes(release, args.verification)]
         if not args.stable:
             command.append('--prerelease')
         print(f'checks passed for {len(files) - 1} archives from {release["short"]} ({head})')

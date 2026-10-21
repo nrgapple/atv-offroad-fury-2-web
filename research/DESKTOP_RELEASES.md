@@ -8,9 +8,10 @@ owner's machine, never in CI, because they contain the extracted runtime resourc
 be published outside the R2 content package). The ISO, BIOS, raw boot executable
 (`SCUS_972.11`), unrelated disc content and reverse-engineering output never enter an archive.
 
-Status: the desktop app lets you ride the default quad around ENV01 Freeride (see
-`RUST_ENGINE.md` for what is and is not ported yet), so releases are marked prerelease until
-the port is further along.
+Status: the desktop app rides the original quad and rider in Freeride on the original venues
+with their worlds drawn, with audio (see `RUST_ENGINE.md` for what is and is not ported yet;
+menus, HUD, races and multiplayer are not in it), so releases are marked prerelease until the
+port is further along.
 
 ## What is in an archive
 
@@ -116,7 +117,7 @@ requires a clean tree (the commit is the version) and uses `git archive HEAD` fo
 Cargo target directories: native builds use `$CARGO_TARGET_DIR` or
 `~/LargeFiles/fury-desktop/target`.
 
-### Verification done on 2026-10-20 (Apple M4, macOS 27, Colima 2 CPU / 4 GiB)
+### Verification (Apple M4, macOS 27, Colima 2 CPU / 4 GiB; first release commit a2547c8, 2026-10-21)
 
 `--capture OUT.png 1280x720` renders the ride's first frame and exits; it was used on every
 platform that can run here. Content check: `fury --verify-content` reads and hashes all 219
@@ -124,12 +125,12 @@ files (454 MB).
 
 | Platform | Result |
 | --- | --- |
-| macOS universal | Ran from the unzipped app (arm64 slice, Metal): ride-view capture in 0.8 s warm (4.5 s on the very first launch of a fresh download while macOS assesses it); content check 2.0 s; the PNG is byte-identical to a capture from the package directory. `open -n` launches and keeps running. The x86_64 slice was built and signed but not run (no Rosetta on this Mac). `spctl` rejects the app, as expected for an ad hoc signature. |
-| Linux aarch64 | Launched natively in Docker (Debian 12, Xvfb, Mesa lavapipe software Vulkan): content check 2.0 s, capture 1.2 s including software rendering; the quad and rider are drawn. |
-| Linux x86_64 | Launched in Docker under qemu emulation on the arm64 VM (same image recipe, `linux/amd64`): content check 6.9 s, capture 8.3 s (qemu); same frame. |
+| macOS universal | Ran from the unzipped app (arm64 slice, Metal): ride-view capture in 1.0 s warm (5.3 s on the very first launch of a fresh download while macOS assesses it); content check 2.1 s; an SX05 capture also renders the full stadium. `open -n` launches and keeps running. The x86_64 slice was built and signed but not run (no Rosetta on this Mac). `spctl` rejects the app, as expected for an ad hoc signature. |
+| Linux aarch64 | Launched natively in Docker (Debian 12, Xvfb, Mesa lavapipe software Vulkan): content check 2.1 s, capture 2.9 s including software rendering; the quad, rider and scenery are drawn. |
+| Linux x86_64 | Launched in Docker under qemu emulation on the arm64 VM (same image recipe, `linux/amd64`): content check 6.6 s, capture 15.4 s (qemu); same frame. |
 | Windows x86_64 | Built and structurally verified only. Wine 8 (Debian 12) under qemu-user on this arm64 VM cannot start even a hello-world Rust `x86_64-pc-windows-gnu` executable ("failed to start"), so no runtime result either way. Needs a run on a real Windows machine. |
 
-Sizes: macOS app 8.7 MB executable plus the 454 MB pack; archives are about 415 MB each
+Sizes: archives are about 417-419 MB each (the 454 MB pack plus a roughly 9-12 MB executable)
 (DEFLATE/gzip saves about 9%).
 
 ## Publish
@@ -137,6 +138,7 @@ Sizes: macOS app 8.7 MB executable plus the 454 MB pack; archives are about 415 
 ```sh
 python3 tools/publish_desktop_release.py --dry-run   # all checks, prints the gh command
 python3 tools/publish_desktop_release.py             # type the tag to confirm
+python3 tools/publish_desktop_release.py --verification "what was launched and what was not"
 ```
 
 It refuses to run when `GITHUB_ACTIONS` or `CI` is set, with a dirty tree, or when `HEAD` is
