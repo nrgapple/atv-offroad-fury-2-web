@@ -494,11 +494,15 @@ fn settle_room(ready: &mut Ready) {
     let started = Instant::now();
     let mut seen: Option<Instant> = None;
     while started.elapsed().as_secs_f32() < wait && net.closed.is_none() {
-        for key in net.tick(&riding.ride, false) {
+        let tick = net.tick(&riding.ride, false);
+        for key in tick.loads {
             net.model_loaded(pollster::block_on(multiplayer::load_model(
                 net.content(),
                 key,
             )));
+        }
+        if let Some((origin, yaw)) = tick.place {
+            let _ = riding.place_beside(origin, yaw);
         }
         let eye = ready.camera.eye();
         net.present(
@@ -597,6 +601,7 @@ impl App {
     /// One rendered frame of the ride: input, fixed steps, chase view.
     fn ride_frame(&mut self, dt: f32) {
         let focused = self.effective_focused();
+        let suspended = !self.visible || self.suspended;
         let now = Instant::now();
         let Some(ready) = &mut self.ready else { return };
         let Some(riding) = &mut ready.riding else {
@@ -704,29 +709,43 @@ impl App {
             motion.linear_velocity,
         );
         let mut loads = Vec::new();
+        let mut course = None;
         if let Some(net) = &mut ready.net {
             let was_open = net.closed.is_none();
-            // An unfocused or paused rider reports a paused pose (neutral).
-            let wanted = net.tick(&riding.ride, riding.paused || !focused);
+            // Only actual suspension (hidden page, suspended app) sends the
+            // paused presence pose; the online pause menu and blur keep
+            // neutral-input riding (Riding::online).
+            let tick = net.tick(&riding.ride, suspended);
+            if let Some((origin, yaw)) = tick.place
+                && let Err(error) = riding.place_beside(origin, yaw)
+            {
+                status(&format!("Unable to join beside that rider: {error}"));
+            }
+            riding.peers = net.contact_bodies();
             let eye = ready.camera.eye();
             net.present(
                 &ready.gpu,
                 &mut ready.scene,
                 &ready.venue,
-                motion.origin,
+                riding.ride.frame().origin,
                 eye,
             );
             if was_open && let Some(closed) = &net.closed {
                 status(&format!("Multiplayer ended: {closed}"));
             }
             let content = net.content();
-            loads.extend(wanted.into_iter().map(|key| (content.clone(), key)));
-            publish_multiplayer(net);
+            loads.extend(tick.loads.into_iter().map(|key| (content.clone(), key)));
+            course = tick.course;
+            publish_multiplayer(net, riding.contacts, riding.ride.frame().origin);
         }
         for (content, key) in loads {
             self.spawn(multiplayer::load_model(content, key), |model| {
                 Message::PeerModel(Box::new(model))
             });
+        }
+        if let Some(environment) = course {
+            self.reload_room(environment);
+            return;
         }
         let Some(ready) = &mut self.ready else { return };
         let Some(riding) = &mut ready.riding else {
@@ -1473,6 +1492,13 @@ impl ApplicationHandler<Message> for App {
                 options.appearance,
             )
         });
+        let ride = multiplayer::RoomRide {
+            graphics: options.graphics,
+            weather: options.weather,
+            crash: options.crash,
+            sound: options.sound,
+            appearance: options.appearance,
+        };
         let world = World {
             selection: profile
                 .as_ref()
@@ -1500,7 +1526,7 @@ impl ApplicationHandler<Message> for App {
                 (Some(room), Some(profile)) => {
                     status("Joining the multiplayer room…");
                     let (net, environment) =
-                        multiplayer::Net::join(&room, profile, &environment, content.clone())
+                        multiplayer::Net::join(&room, profile, &environment, content.clone(), ride)
                             .await?;
                     (Some(net), environment)
                 }
@@ -1522,6 +1548,11 @@ impl ApplicationHandler<Message> for App {
                     net.session.lobby.as_ref().map_or(1, |l| l.players.len()),
                     net.invite()
                 ));
+            }
+            if net.is_some()
+                && let Some(riding) = &mut ready.riding
+            {
+                riding.online = true;
             }
             ready.net = net;
             Ok::<_, String>(ready)
@@ -2548,17 +2579,78 @@ fn publish_trace(text: &str) {
 }
 
 /// Multiplayer status for tests (`window.furyMultiplayer`, JSON).
-fn publish_multiplayer(net: &multiplayer::Net) {
+fn publish_multiplayer(net: &multiplayer::Net, contacts: u64, origin: [f32; 3]) {
     #[cfg(target_arch = "wasm32")]
     if let Some(window) = web_sys::window() {
+        let mut report = net.report();
+        report["contacts"] = contacts.into();
+        report["origin"] = serde_json::json!(origin);
         let _ = js_sys::Reflect::set(
             &window,
             &"furyMultiplayer".into(),
-            &net.report().to_string().into(),
+            &report.to_string().into(),
         );
     }
     #[cfg(not(target_arch = "wasm32"))]
-    let _ = net;
+    let _ = (net, contacts, origin);
+}
+
+impl App {
+    /// The room moved to another course: reload the ride there, keeping the
+    /// room (web/multiplayer.js `follow` -> `ride`).
+    fn reload_room(&mut self, environment: String) {
+        let Some(mut ready) = self.ready.take() else {
+            return;
+        };
+        let Some(mut net) = ready.net.take() else {
+            return;
+        };
+        self.overlay = None;
+        status(&format!(
+            "The room moved to {}…",
+            environment.to_uppercase()
+        ));
+        let Ready { gpu, .. } = ready;
+        let content = net.content();
+        let profile = net.session.profile().cloned();
+        let world = World {
+            selection: profile.map_or_else(Default::default, |p| atv_game::ride::Selection {
+                quad: p.quad,
+                rider: p.rider,
+            }),
+            appearance: net.ride.appearance,
+            race: None,
+            weather: net.ride.weather,
+            steps: None,
+            graphics: net.ride.graphics,
+            crash: net.ride.crash,
+            ride: true,
+            script: None,
+            sound: net.ride.sound,
+            autodrive: None,
+        };
+        let future = async move {
+            let mut ready = prepare(
+                gpu,
+                content,
+                environment.clone(),
+                None,
+                world,
+                Box::new(|_, text| status(text)),
+            )
+            .await?;
+            net.loaded(&environment);
+            if let Some(riding) = &mut ready.riding {
+                riding.online = true;
+            }
+            ready.net = Some(net);
+            Ok::<_, String>(ready)
+        };
+        self.spawn(future, |result| match result {
+            Ok(ready) => Message::Ready(Box::new(ready)),
+            Err(error) => Message::Failed(error),
+        });
+    }
 }
 
 pub(crate) fn status(text: &str) {
@@ -2736,6 +2828,7 @@ pub fn start() {
                 name: param("name")
                     .and_then(|v| js_sys_decode(&v))
                     .unwrap_or_else(|| "Rider".into()),
+                drop_after: param("dropAfter").and_then(|v| v.parse().ok()),
             }
         }),
         // `script=storage` reads a long parity script from localStorage

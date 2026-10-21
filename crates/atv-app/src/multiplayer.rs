@@ -24,6 +24,9 @@ pub struct RoomStart {
     pub code: Option<String>,
     pub host: bool,
     pub name: String,
+    /// Test hook (`?dropAfter=S`): close the socket once after S seconds of
+    /// riding, exercising the slot-key reconnect.
+    pub drop_after: Option<f64>,
 }
 
 enum Loaded {
@@ -52,6 +55,48 @@ pub struct Net {
     pub drawn: usize,
     /// Each presented rider's slot, ATV position and staleness (tests).
     presented: Vec<(u8, [f32; 3], bool)>,
+    /// The course this client has loaded (the room may move on).
+    pub environment: String,
+    /// Ride choices to reload with when the room changes course.
+    pub ride: RoomRide,
+    /// Arriving while others ride: next meet attempt (ms) and attempts left.
+    meet: Option<(f64, u32)>,
+    /// A dropped socket retries its slot key: next attempt (ms), deadline,
+    /// attempts so far.
+    reconnect: Option<(f64, f64, u32)>,
+    pub reconnects: u32,
+    drop_at: Option<f64>,
+    /// The slot key last kept for this tab.
+    saved_key: String,
+    /// The latest arrival beside another rider (tests): slot and distance.
+    pub met: Option<(u8, f32)>,
+}
+
+/// What the app does after a room tick.
+#[derive(Default)]
+pub struct Tick {
+    /// Remote models to load.
+    pub loads: Vec<Key>,
+    /// Place the player here (arrival beside a rider).
+    pub place: Option<([f32; 3], f32)>,
+    /// The room moved to this course: reload the ride there.
+    pub course: Option<String>,
+}
+
+/// The player's ride choices, kept to reload on a course change.
+#[derive(Clone)]
+pub struct RoomRide {
+    pub graphics: atv_render::Graphics,
+    pub weather: Option<bool>,
+    pub crash: atv_game::crash::CrashMode,
+    pub sound: Option<(atv_game::audio::ride::SoundMode, bool)>,
+    pub appearance: atv_game::ride::gear::Appearance,
+}
+
+/// Close codes a rider with a slot key retries (web/multiplayer.js).
+fn retryable(code: u16, reason: &str) -> bool {
+    matches!(code, 1001 | 1005 | 1006 | 1011 | 1012 | 1013)
+        || (code == 1000 && reason == "Connection timed out")
 }
 
 fn now_ms(clock: Instant) -> u64 {
@@ -100,9 +145,47 @@ async fn claim(start: &RoomStart) -> Result<(String, Option<String>), String> {
         if players >= room["max"].as_u64().unwrap_or(4) {
             return Err("Game is full!".into());
         }
-        return Ok((code, None));
+        // This tab's kept slot key reclaims its rider after a reload.
+        return Ok((code.clone(), saved_key(&code)));
     }
     Ok((code, room["hostToken"].as_str().map(String::from)))
+}
+
+/// The browser tab's slot key for `code` (sessionStorage `atv-mp-session`,
+/// shared with web/multiplayer.js); desktop keeps keys in memory only.
+fn saved_key(code: &str) -> Option<String> {
+    #[cfg(target_arch = "wasm32")]
+    {
+        let text = web_sys::window()?
+            .session_storage()
+            .ok()??
+            .get_item("atv-mp-session")
+            .ok()??;
+        let saved: serde_json::Value = serde_json::from_str(&text).ok()?;
+        let key = saved["key"].as_str()?;
+        (saved["code"].as_str() == Some(code)
+            && key.len() == 32
+            && key.bytes().all(|b| b.is_ascii_hexdigit()))
+        .then(|| key.to_string())
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let _ = code;
+        None
+    }
+}
+
+/// Keeps this tab's slot key (never in links).
+fn save_key(code: &str, key: &str) {
+    #[cfg(target_arch = "wasm32")]
+    if let Some(storage) = web_sys::window().and_then(|w| w.session_storage().ok().flatten()) {
+        let _ = storage.set_item(
+            "atv-mp-session",
+            &serde_json::json!({ "code": code, "key": key }).to_string(),
+        );
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    let _ = (code, key);
 }
 
 impl Net {
@@ -114,6 +197,7 @@ impl Net {
         profile: Profile,
         venue: &str,
         content: Rc<Content>,
+        ride: RoomRide,
     ) -> Result<(Net, String), String> {
         let (code, key) = claim(start).await?;
         let socket = net::Socket::connect(
@@ -136,6 +220,14 @@ impl Net {
             closed: None,
             drawn: 0,
             presented: Vec::new(),
+            environment: String::new(),
+            ride,
+            meet: None,
+            reconnect: None,
+            reconnects: 0,
+            drop_at: start.drop_after.map(|s| s * 1000.),
+            saved_key: String::new(),
+            met: None,
         };
         let deadline = Instant::now();
         let mut set_up = false;
@@ -163,6 +255,14 @@ impl Net {
                 }
             }
             if let Some(environment) = net.session.environment() {
+                save_key(&net.session.code, &net.session.key);
+                net.saved_key.clone_from(&net.session.key);
+                net.environment = environment.to_string();
+                // Arriving while others already ride: meet them instead of
+                // the start line (up to 12 tries, 250 ms apart).
+                if net.session.others().count() > 0 {
+                    net.meet = Some((0., 12));
+                }
                 return Ok((net, environment.to_string()));
             }
             // A new room waits for its host to choose the course.
@@ -189,43 +289,135 @@ impl Net {
         )
     }
 
-    /// Socket traffic, keep-alive pings and the player's pose at the 50 ms
-    /// send tick (web/multiplayer.js timers). Returns models to load.
-    pub fn tick(&mut self, ride: &Ride, paused: bool) -> Vec<Key> {
+    /// Socket traffic, keep-alive pings, the player's pose at the 50 ms
+    /// send tick (web/multiplayer.js timers), reconnects, arrivals and
+    /// course changes.
+    pub fn tick(&mut self, ride: &Ride, paused: bool) -> Tick {
+        let mut tick = Tick::default();
         if self.closed.is_some() {
-            return Vec::new();
+            return tick;
         }
         let now = now_ms(self.clock);
         let now_f = now as f64;
+        if self.drop_at.is_some_and(|at| now_f >= at) {
+            self.drop_at = None;
+            self.drop_socket();
+        }
+        // A dropped socket retries its slot key; `at` is infinite while the
+        // new socket connects.
+        if let Some((at, until, attempts)) = self.reconnect {
+            if now_f > until {
+                self.reconnect = None;
+                self.closed = Some("Connection lost.".into());
+                return tick;
+            }
+            if at.is_finite() {
+                if now_f < at {
+                    return tick;
+                }
+                // A fresh socket and session with the slot key; the ride stays.
+                let key = self.session.key.clone();
+                let code = self.session.code.clone();
+                self.session.restart();
+                self.session.code = code.clone();
+                self.session.key = key.clone();
+                self.socket = net::Socket::connect(
+                    &net::room_url(&self.relay, &code, Some(&key)),
+                    &net::origin(&self.relay),
+                );
+                self.ready_sent = false;
+                self.reconnect = Some((f64::INFINITY, until, attempts));
+                self.reconnects += 1;
+            }
+        }
         for event in self.socket.poll() {
             match event {
-                Event::Open => {}
+                Event::Open => {
+                    // Only a reconnect opens here; the first join is in `join`.
+                    let code = self.session.code.clone();
+                    if let Ok(bytes) = self.session.join(&code) {
+                        self.socket.send(bytes);
+                    }
+                    if let Ok(bytes) = self.session.ping(now) {
+                        self.socket.send(bytes);
+                        self.last_ping = now_f;
+                    }
+                }
                 Event::Message(bytes) => {
                     if let Err(error) = self.session.receive(&bytes, now) {
                         self.socket.close();
                         self.closed = Some(format!("Invalid session message: {error}"));
-                        return Vec::new();
+                        return tick;
+                    }
+                    if self.session.peer.is_some() {
+                        self.reconnect = None;
+                    }
+                    // A new Welcome may carry a new slot key (a released slot
+                    // rejoined as a new rider): keep the latest.
+                    if !self.session.key.is_empty() && self.session.key != self.saved_key {
+                        self.saved_key.clone_from(&self.session.key);
+                        save_key(&self.session.code, &self.session.key);
                     }
                 }
                 Event::Closed { code, reason } => {
-                    // Reconnecting with the slot key is a later slice.
-                    self.closed = Some(if reason.is_empty() {
-                        format!("Connection lost ({code}).")
+                    let key = !self.session.key.is_empty() && !self.session.code.is_empty();
+                    let until = self.reconnect.map_or(now_f + 25_000., |r| r.1);
+                    if key && retryable(code, &reason) && now_f < until {
+                        let attempts = self.reconnect.map_or(0, |r| r.2);
+                        let delay = (500. * 2f64.powi(attempts as i32)).min(3000.);
+                        self.reconnect = Some((now_f + delay, until, attempts + 1));
+                        crate::status("Reconnecting to the multiplayer room…");
                     } else {
-                        reason
-                    });
-                    return Vec::new();
+                        self.closed = Some(if reason.is_empty() {
+                            format!("Connection lost ({code}).")
+                        } else {
+                            reason
+                        });
+                    }
+                    return tick;
                 }
             }
         }
-        // The room moved to another course: the reload is a later slice.
+        // The host moved the room to another course: reload there.
+        if let Some(environment) = self.session.environment()
+            && environment != self.environment
+        {
+            tick.course = Some(environment.to_string());
+            return tick;
+        }
         if !self.ready_sent
+            && self.session.peer.is_some()
             && let Ok(bytes) = self.session.ready()
         {
             self.ready_sent = self.socket.send(bytes);
             self.last_traffic = now_f;
+            // A fresh arrival starts apart from nobody: contacts wait.
+            self.session.ghost(now);
         }
-        if now_f - self.last_send >= 50. && self.ready_sent {
+        if let Some((at, tries)) = self.meet
+            && self.ready_sent
+            && now_f >= at
+        {
+            self.meet = (tries > 1).then_some((now_f + 250., tries - 1));
+            let others = self.session.positions(now);
+            for target in self.session.meet_candidates(now, now) {
+                if let Ok(spot) = atv_game::multiplayer::spawn::beside(ride, &target, &others) {
+                    let d = spot
+                        .0
+                        .iter()
+                        .zip(target.atv.position)
+                        .map(|(a, b)| (a - b) * (a - b))
+                        .sum::<f32>()
+                        .sqrt();
+                    self.met = Some((target.peer, d));
+                    tick.place = Some(spot);
+                    self.meet = None;
+                    self.session.ghost(now);
+                    break;
+                }
+            }
+        }
+        if now_f - self.last_send >= 50. && self.ready_sent && tick.place.is_none() {
             self.last_send = now_f;
             match self.session.snapshot(ride, now, paused) {
                 Ok(Some(bytes)) => {
@@ -243,23 +435,46 @@ impl Net {
         if (now_f - self.last_traffic >= 10_000.
             || now_f - self.last_ping >= 15_000.
             || (!synced && now_f - self.last_ping >= 2000.))
+            && self.session.peer.is_some()
             && let Ok(bytes) = self.session.ping(now)
         {
             self.socket.send(bytes);
             self.last_ping = now_f;
             self.last_traffic = now_f;
         }
-        let mut wanted = Vec::new();
         for player in self.session.others() {
             let key = (player.atv_model, player.rider_model, player.appearance);
-            if !self.models.contains_key(&key) && !wanted.contains(&key) {
-                wanted.push(key);
+            if !self.models.contains_key(&key) && !tick.loads.contains(&key) {
+                tick.loads.push(key);
             }
         }
-        for key in &wanted {
+        for key in &tick.loads {
             self.models.insert(*key, Loaded::Loading);
         }
-        wanted
+        tick
+    }
+
+    /// Other riders' bodies for this frame's contact steps.
+    pub fn contact_bodies(&self) -> Vec<atv_game::multiplayer::PeerBody> {
+        self.session.contact_bodies(now_ms(self.clock))
+    }
+
+    /// After a course reload: report Ready again.
+    pub fn loaded(&mut self, environment: &str) {
+        self.environment = environment.to_string();
+        self.ready_sent = false;
+        self.locals.clear();
+        // A course change starts everyone at the start line; only a fresh
+        // arrival meets a rider (web/multiplayer.js `ride`).
+        self.met = None;
+        self.meet = None;
+    }
+
+    /// Simulates a dropped connection (tests: `?dropSocket` / reconnect gate).
+    pub fn drop_socket(&mut self) {
+        self.socket.drop_connection();
+        let now = now_ms(self.clock) as f64;
+        self.reconnect = Some((now + 500., now + 25_000., 1));
     }
 
     pub fn content(&self) -> Rc<Content> {
@@ -367,6 +582,9 @@ impl Net {
             "rttMs": self.session.rtt_ms,
             "clockSynced": self.session.server_now(0).is_some(),
             "closed": self.closed,
+            "reconnects": self.reconnects,
+            "reconnecting": self.reconnect.is_some(),
+            "met": self.met.map(|(peer, d)| serde_json::json!({"peer": peer, "distanceFt": d})),
             "remote": self.presented.iter().map(|(peer, position, stale)| {
                 serde_json::json!({"peer": peer, "position": position, "stale": stale})
             }).collect::<Vec<_>>(),
