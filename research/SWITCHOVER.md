@@ -69,23 +69,6 @@ These would regress players at switch-over. Highest impact first.
    `ride_start` (with load seconds and, online, players), `ride_failed`,
    `ride_time` (riding time stops in menus) and `race_finish`. Before deleting
    launch.js, move the `ENVIRONMENTS` list that analytics.js imports from it.
-10. **Missing sounds.**
-    - ENV08 train spatial sounds: the logic is only in atv-core `spatial_audio`,
-      which only the JS worker uses.
-    - The rain loop (`rain.vag`) while Rain weather is active.
-    - The Crazy/Gorn crash boom: `impact_severity` drives only rumble.
-    - Frontend menu music (UIMUSIC): menus are silent. This may belong to the
-      main-menu jukebox port.
-11. **Audio page song picker.** Settings → Audio has no song rows, and its
-    Previous/Next buttons do nothing (no `musicprev`/`musicnext` handler). The
-    pause-menu Jukebox works.
-
-8. **No adaptive render resolution.** JS caps device pixel ratio at 1.5 and steps to
-   1.0 on slow frames (`RenderScale`). Rust renders at the full physical size. This
-   is a likely frame-rate regression on high-DPR phones; not measured.
-9. **Analytics.** None of the five events are sent: `session_start`, `ride_start`,
-   `ride_failed`, `ride_time`, `race_finish`. Play is unaffected, but usage data
-   stops at switch-over.
 10. ~~**Missing sounds.**~~ Closed: ENV08 train spatial sounds (atv-core
     `spatial_audio` scene commands driven from the ride's car transforms), the
     `rain.vag` loop while Rain is active, and the Crazy/Gorn crash boom
