@@ -319,6 +319,7 @@ impl Presentation {
     /// A delivered batch of `ticks` steps from `previous` to `current`.
     /// `continuous`: focused, no menu and no camera cycle in the batch;
     /// `interpolation`: the preset's ATV interpolation (Enhanced/High).
+    #[allow(clippy::too_many_arguments)]
     pub fn accept(
         &mut self,
         previous: &Snapshot,
@@ -327,7 +328,10 @@ impl Presentation {
         ticks: u32,
         continuous: bool,
         interpolation: bool,
+        // Alpha slow motion (`scale` < 1) stretches each 60 Hz interval.
+        scale: f32,
     ) {
+        let scale = f64::from(scale.clamp(0.05, 1.));
         // MotorcyclePresentation.accept (every preset).
         self.bike = None;
         let compatible = bike_normal(previous)
@@ -344,7 +348,7 @@ impl Presentation {
                     previous: previous.clone(),
                     current: current.clone(),
                     now,
-                    duration: ticks as f64 * 1000. / 60.,
+                    duration: ticks as f64 * 1000. / 60. / scale,
                 });
             }
         }
@@ -372,7 +376,7 @@ impl Presentation {
                 previous: previous.clone(),
                 current: current.clone(),
                 now,
-                duration: ticks as f64 * 1000. / 60.,
+                duration: ticks as f64 * 1000. / 60. / scale,
             });
         }
     }

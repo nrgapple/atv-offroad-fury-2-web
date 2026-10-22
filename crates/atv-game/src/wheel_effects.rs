@@ -59,11 +59,55 @@ pub struct WheelEffects {
 pub struct LingeringDust {
     pub emitter: crate::lingering_dust::DustEmitter,
     zones: [bool; 8],
-    /// Mean colour per terrain layer and the 64-cell layer mapping (dustTint).
+    tint: DustTint,
+}
+
+/// dustTint in game.js: the mean colour of the terrain layer under a point.
+#[derive(Clone, Debug)]
+pub struct DustTint {
+    /// Mean colour per terrain layer and the 64-cell layer mapping.
     colors: Vec<[f32; 3]>,
     mapping: Vec<u16>,
     mapping_size: [usize; 2],
     tile: f32,
+}
+
+impl DustTint {
+    pub fn new(venue: &Venue) -> Self {
+        let t = &venue.terrain;
+        // uploadTerrainTextures: every 16th texel of each layer, averaged.
+        let colors = t
+            .layers
+            .iter()
+            .map(|image| {
+                let (mut sum, mut n) = ([0f64; 3], 0f64);
+                for pixel in image.rgba.as_chunks::<64>().0 {
+                    for c in 0..3 {
+                        sum[c] += f64::from(pixel[c]);
+                    }
+                    n += 1.;
+                }
+                sum.map(|v| (v / (n * 255.)) as f32)
+            })
+            .collect();
+        Self {
+            colors,
+            mapping: t.mapping.clone(),
+            mapping_size: [t.mapping_width as usize, t.mapping_height as usize],
+            tile: t.spacing * 64.,
+        }
+    }
+
+    pub fn at(&self, x: f32, z: f32) -> [f32; 3] {
+        tint(
+            &self.colors,
+            &self.mapping,
+            self.mapping_size,
+            self.tile,
+            x,
+            z,
+        )
+    }
 }
 
 /// The terrain layer's mean colour under a point (dustTint in game.js).
@@ -223,6 +267,14 @@ impl WheelEffects {
         ));
     }
 
+    /// The terrain zones the tire tracks read (Alpha Heavy mud adjusts them,
+    /// as game.js passes `dirtBuildup.zones`).
+    pub fn set_track_zones(&mut self, zones: [crate::tire_tracks::TerrainZone; 8]) {
+        if let Some((_, current, _)) = &mut self.tracks {
+            *current = zones;
+        }
+    }
+
     /// Turns on lingering dust with `capacity` puffs (Enhanced 24, High 96);
     /// 0 turns it off.
     pub fn set_lingering_dust(&mut self, capacity: usize, venue: &Venue) {
@@ -238,29 +290,10 @@ impl WheelEffects {
         {
             return;
         }
-        let t = &venue.terrain;
-        // uploadTerrainTextures: every 16th texel of each layer, averaged.
-        let colors = t
-            .layers
-            .iter()
-            .map(|image| {
-                let (mut sum, mut n) = ([0f64; 3], 0f64);
-                for pixel in image.rgba.as_chunks::<64>().0 {
-                    for c in 0..3 {
-                        sum[c] += f64::from(pixel[c]);
-                    }
-                    n += 1.;
-                }
-                sum.map(|v| (v / (n * 255.)) as f32)
-            })
-            .collect();
         self.dust = Some(LingeringDust {
             emitter: crate::lingering_dust::DustEmitter::new(capacity),
             zones: venue.dust_zones,
-            colors,
-            mapping: t.mapping.clone(),
-            mapping_size: [t.mapping_width as usize, t.mapping_height as usize],
-            tile: t.spacing * 64.,
+            tint: DustTint::new(venue),
         });
     }
 
@@ -339,12 +372,9 @@ impl WheelEffects {
             let LingeringDust {
                 emitter,
                 zones,
-                colors,
-                mapping,
-                mapping_size,
-                tile,
+                tint,
             } = dust;
-            let tint = |x: f32, z: f32| tint(colors, mapping, *mapping_size, *tile, x, z);
+            let tint = |x: f32, z: f32| tint.at(x, z);
             emitter.step(
                 &input,
                 ride.wheel_radii(),

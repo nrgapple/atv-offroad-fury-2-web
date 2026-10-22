@@ -30,7 +30,20 @@ pub struct Preferences {
     pub music_volume: f32,
     pub overlays_off: Vec<String>,
     pub race_position: String,
+    /// Settings → Alpha: the experiments switched on (`atv-alpha`).
+    pub alpha: Vec<String>,
 }
+
+/// web/alpha.js `ALPHA_FEATURES`: authored experiments, each off by default.
+pub const ALPHA_FEATURES: [(&str, &str); 7] = [
+    ("air-slowmo", "Air slow-mo"),
+    ("big-air-camera", "Big-air camera"),
+    ("music-muffle", "Speed & air muffle"),
+    ("air-blur", "Air dark blur"),
+    ("landing-burst", "Landing burst"),
+    ("heavy-mud", "Heavy mud"),
+    ("arcade-flips", "Arcade flips"),
+];
 
 fn cycle<'a>(list: &[&'a str], current: &str, direction: i32) -> &'a str {
     let at = list.iter().position(|v| *v == current).unwrap_or(0) as i32;
@@ -87,7 +100,17 @@ impl Preferences {
                 .filter(|g| OVERLAY_GROUPS.contains(&g.as_str()))
                 .collect(),
             race_position: one_of(get("atv-race-position"), &["name", "place", "off"], "name"),
+            alpha: json("atv-alpha")
+                .and_then(|v| serde_json::from_value::<Vec<String>>(v).ok())
+                .unwrap_or_default()
+                .into_iter()
+                .filter(|id| ALPHA_FEATURES.iter().any(|(f, _)| f == id))
+                .collect(),
         }
+    }
+
+    pub fn alpha(&self, id: &str) -> bool {
+        self.alpha.iter().any(|a| a == id)
     }
 
     pub fn graphics_resolved(&self) -> &str {
@@ -226,6 +249,19 @@ impl Preferences {
             "musictoggle" => {
                 self.music_enabled = !self.music_enabled;
                 self.save_music(settings);
+            }
+            _ if action.starts_with("alpha:") => {
+                let id = &action[6..];
+                if !ALPHA_FEATURES.iter().any(|(f, _)| *f == id) {
+                    return false;
+                }
+                match self.alpha.iter().position(|a| a == id) {
+                    Some(i) => {
+                        self.alpha.remove(i);
+                    }
+                    None => self.alpha.push(id.into()),
+                }
+                settings.set("atv-alpha", &json!(self.alpha).to_string());
             }
             "musicvolume" => {
                 self.music_volume = step(self.music_volume, direction);

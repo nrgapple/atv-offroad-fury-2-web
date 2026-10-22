@@ -11,6 +11,8 @@ mod bike;
 pub mod bindings;
 pub mod cpu;
 pub mod gear;
+pub mod hype;
+pub mod impact;
 pub(crate) mod load;
 pub mod present;
 pub mod race;
@@ -89,6 +91,9 @@ pub struct Controls {
     pub generation: u64,
     /// Motorcycle clutch held (web/bindings.js `clutch`; ATVs ignore it).
     pub clutch: bool,
+    /// Alpha Arcade flips: the keyboard/controller steering that spins the
+    /// quad in the air (game.js `input.arcade_spin`).
+    pub arcade_spin: Option<f32>,
 }
 
 /// Camera mode of the latest camera step.
@@ -250,6 +255,9 @@ fn vehicle_platform(vehicle: &Vehicle, train: &crate::train::Train) -> Option<(u
 pub struct RideOptions {
     pub flips: bool,
     pub realistic_train: bool,
+    /// Alpha Arcade flips (authored analog air rotation; replaces the
+    /// Unleashed gestures while on).
+    pub arcade_flips: bool,
 }
 
 /// World pose of the player's quad and rider for drawing.
@@ -435,6 +443,18 @@ impl Ride {
         match &self.mount {
             Mount::Quad { rig, .. } => Some(rig.animator.recipe()),
             Mount::Bike(_) => None,
+        }
+    }
+
+    /// The ATV wreck rig's latest sampled rider impact (`rider_wreck`
+    /// `sampled_impact_delta`, ft/s); zero otherwise.
+    pub fn rider_impact_delta(&self) -> [f32; 3] {
+        match &self.mount {
+            Mount::Quad { rig, .. } => rig
+                .wreck
+                .frame()
+                .map_or([0.; 3], |w| w.sampled_impact_delta),
+            Mount::Bike(_) => [0.; 3],
         }
     }
 
@@ -850,9 +870,10 @@ impl Ride {
         }
         vehicle.set_stunt_landing_safe(safe);
         vehicle.set_realistic_train(self.options.realistic_train);
-        vehicle.set_flips(self.options.flips)?;
-        vehicle.set_arcade_flips(false)?;
-        vehicle.set_arcade_spin(None)?;
+        let arcade = self.options.arcade_flips;
+        vehicle.set_flips(self.options.flips && !arcade)?;
+        vehicle.set_arcade_flips(arcade)?;
+        vehicle.set_arcade_spin(controls.arcade_spin.filter(|_| arcade))?;
         if controls.stunt_modifiers > 7 {
             return Err("invalid stunt modifiers".into());
         }
@@ -1265,6 +1286,23 @@ impl Ride {
                     .map(|h| (h.height, h.normal))
             },
         ))
+    }
+
+    /// What the ATV dirt rule reads from the latest step; None on a motorcycle.
+    pub fn dirt_sample(&self) -> Result<Option<crate::dirt::Sample>> {
+        if self.is_motorcycle() {
+            return Ok(None);
+        }
+        let input = self.wheel_effect_input()?;
+        Ok(Some(crate::dirt::Sample {
+            centers: input.centers,
+            radii: self.wheel_radii(),
+            water_heights: input.water_heights.map(|h| h.unwrap_or(-256.)),
+            grounded: input.grounded,
+            surfaces: input.surfaces,
+            mud: input.mud,
+            speed: self.frame.speed_magnitude,
+        }))
     }
 
     /// Wheel radii (presentation effects place dust at the contact patch).

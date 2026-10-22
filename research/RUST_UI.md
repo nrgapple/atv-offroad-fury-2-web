@@ -442,7 +442,7 @@ the Rust ride, which until now only persisted them:
 
 | Setting (key) | play.html | Rust engine now |
 | --- | --- | --- |
-| Display → Graphics (`atv-graphics`, Auto = `detectGraphicsTier`) | preset at load; on change: interpolation, anisotropy, contact shadows, dust/tire pools, shadow map, smoothed sky, Fresnel, wheel re-projection, dirt | saved preset for rides from the frontend (Auto ports `detectGraphicsTier`; URL/CLI `graphics=` wins; direct `?venue=` parity rides keep Original); on change: interpolation, smoothed sky (when decoded at load), Fresnel, contact shadows, dust and tire-track pools. wheel re-projection follows the preset (Enhanced/High). Anisotropy and shadow-map size apply from the next load; ATV dirt is not ported |
+| Display → Graphics (`atv-graphics`, Auto = `detectGraphicsTier`) | preset at load; on change: interpolation, anisotropy, contact shadows, dust/tire pools, shadow map, smoothed sky, Fresnel, wheel re-projection, dirt | saved preset for rides from the frontend (Auto ports `detectGraphicsTier`; URL/CLI `graphics=` wins; direct `?venue=` parity rides keep Original); on change: interpolation, smoothed sky (when decoded at load), Fresnel, contact shadows, dust and tire-track pools. Wheel re-projection follows the preset (Enhanced/High). Anisotropy and shadow-map size apply from the next load; ATV dirt follows the preset |
 | Speed rush (`atv-speed-rush`) | FOV kick and screen pass intensity Off/Low/Normal/High; Off by default with reduced motion | applied at load and on change, same peaks and reduced-motion default |
 | Crashes (`atv-crash-mode`) | Original/Crazy/Gorn switch mid-ride | applied at load and on change (crash layer created or dropped) |
 | Flips (`atv-flips`) | `input.flips` each batch | `RideOptions::flips` each step |
@@ -450,9 +450,9 @@ the Rust ride, which until now only persisted them:
 | Audio → Effects volume, Sound mode (`atv-audio-v1`) | live | live (mode was already live) |
 | Audio → Music on/off and volume (`atv-soundtrack-v1`) | live | live; default volume fixed to the browser's 0.45 (was 0.7 in the Rust menu) |
 | Minimap, Race overlays, touch steering/one-handed, bindings | live | already live |
-| Crash camera (`atv-crash-camera`, authored Tight by default) | crash framing | not ported: the Rust ride always uses the original crash camera |
-| Chase camera (`atv-chase-camera`, uphill assist) | assisted sightline | not ported |
-| Vibration (`atv-vibration`) | gamepad/touch rumble | not ported (no rumble output in the Rust engine yet) |
+| Crash camera (`atv-crash-camera`, authored Tight by default) | crash framing | on change: Tight frames Crazy/Gorn crashes with `crashPresentation` (`ride/view.rs` `crash`); held parity rides read `crashcam=`/storage (`--crash-camera` natively) |
+| Chase camera (`atv-chase-camera`, uphill assist) | assisted sightline | on change: `UphillSightline` and the assisted `chasePresentation` orbit/pull-back (`chase=`/storage, `--chase-camera` natively) |
+| Vibration (`atv-vibration`) | gamepad/touch rumble | on change (and at load for direct rides): `ride/impact.rs` ports ImpactEvents, Rumble and rumbleStrength; the web build plays `dual-rumble` on the pad with the latest input (else `navigator.vibrate` on coarse pointers from 0.3), desktop uses gilrs force feedback (Linux and Windows; gilrs has none on macOS, so Mac desktops stay still) |
 | Diagnostics (`atv.diagnostics.v1`) | performance/debug overlay | not ported (the status line carries frame and CPU numbers) |
 | Silent switch (`silent`, iOS) | mute on the ringer switch | persisted only |
 | Alpha experiments (`atv-alpha-*`) | see the Alpha registry | separate checkpoint |
@@ -486,6 +486,48 @@ images `private/reports/rust-ui/pad-glyphs/`): 1280x720 binding rows 1.93, summa
 panel 1.12, whole panel 1.37; 390x844 whole frame 2.63. Glyph shapes match by
 inspection (`glyph-rows-side.png`); the glyph labels sit within about a pixel.
 
+## Alpha experiments (2026-10-21)
+
+Settings → Alpha (web/alpha.js) lists the seven authored experiments, Off by
+default, toggled from the menu (Enter or Left/Right) and saved under `atv-alpha`,
+shared with play.html. The Rust ride runs three of them:
+
+- Air slow-mo and the big-air camera: `atv_game::ride::hype::HypeDirector` ports
+  web/hype.js (big-air detection from clearance, rise and air time; one apex slow
+  motion per jump at 0.3x with its ease in/hold/ease out, ended by touchdown or a
+  wreck; the landing dip spring; the chase pull-in, flattening and FOV widening).
+  It steps once per accepted simulation step (live rides, autodrive and the Reset
+  frame; before 2026-10-22 only autodrive stepped it, so live rides never left the
+  ground for it) and updates once per rendered frame; slow motion
+  scales the step accumulator (Freestyle only, as in the browser) and stretches the
+  presenters' segments, so even Original ATVs interpolate while it runs. Clearance
+  reads the physics terrain under the rider; the browser reads its rendered terrain
+  height (the same heights after `render_heights`, sampled bilinearly rather than by
+  the triangle the physics uses).
+- Arcade flips: `RideOptions::arcade_flips` switches the recovered vehicle's arcade
+  flip mode and feeds the keyboard/controller steering as `arcade_spin`, replacing the
+  Unleashed gestures (game.js `drivingInput`). Touch spin axes are not passed yet.
+
+- Landing burst: each landing the director reports while focused (no wheel in
+  water) throws `atv_game::burst::BurstEmitter` dust puffs and clods (hype-gl.js,
+  192-particle ring, tinted by the terrain layer under it via `DustTint`) drawn by
+  `atv-render` `burst.wgsl` after lingering dust, and plays `audio::synth::
+  landing_thump` (78 -> 34 Hz sine plus lowpassed noise, rendered to PCM on the SFX
+  bus). Turning it off clears the particles.
+- Heavy mud: `DirtBuildup::set_heavy` (heavyMudZones: quarter times, doubled
+  cleaning, dusty zones soil) and landing splats of `min(60, 0.9 x severity)`; the
+  dirt draws on any preset while it is on, and the tire tracks read the heavy zones.
+
+Evidence (host Chromium): unit tests match BurstEmitter rows and counts; ENV05 held
+throttle on Original after the spawn drop gave 50, 45 and 29 particles per landing
+in both games (`private/reports/rust-ui/alpha-landing/env05-{rust-web,javascript}.png`);
+`tools/test_engine_alpha_landing.mjs` (burst, thumps and soiling on, none off).
+
+Not run yet (rows listed, saved, no effect in the Rust ride): Speed & air muffle (the
+music lowpass and wind loop) and Air dark blur (screen pass). Evidence: `atv-game` unit test (a launched 40 ft/s jump fires
+one apex, one slow motion reaching 0.3x and a landing over 30 ft/s);
+`tools/test_engine_alpha.mjs` (rows, saved toggles, applied ride flags); the presenter
+and interpolation tests are unchanged at scale 1. Host only.
 ## Jukebox (2026-10-21)
 
 Pause → Jukebox ports web/jukebox.js and its music.js hooks for rides:
@@ -557,3 +599,21 @@ Training, host Chromium, mean absolute RGB): 1280x720 hero 0.71, card 2.04, fram
 builds keep the photo-less card: the image is a site asset, not part of the game
 content package. Arlington Free Ride is the multiplayer frontend's.
 
+## Controller rumble (2026-10-22)
+
+`atv-game/ride/impact.rs` ports ImpactEvents (render-support.js: hard body contacts
+from 30 ft/s with a 5 ft/s velocity change, landings after 0.18 s airborne falling
+faster than 12 ft/s, rider wreck impacts from 40 ft/s; 0.3 s cooldown, one crash
+upgrade) and Rumble/rumbleStrength (graphics.js: strength 0.2-1 from 18 ft/s, a fresh
+wreck at least 0.7, 70-300 ms, no chaining inside one impact unless 0.15 stronger).
+They run once per accepted step (and on the Reset frame) while the ride is focused
+with no menu; scripted autodrive rides now also step wheel effects, dirt, impacts and
+Crazy/Gorn crashes as live rides do. Output: the web build's Gamepad API
+`dual-rumble` through `js_sys::Reflect` on the pad with the latest timestamp (gilrs
+has no web force feedback), else `navigator.vibrate` on touch devices for pulses from
+0.3; desktop uses gilrs force feedback (Linux evdev and Windows XInput; macOS has
+none in gilrs). Evidence: the unit test matches the JavaScript classes on landing,
+cooldown, crash upgrade, pulse and wreck cases; `tools/test_engine_rumble.mjs`
+(host Chromium, a recording `vibrationActuator` on a stand-in pad, ENV03 into a Gorn
+wreck): 4 impacts and 5 pulses with Vibration On, none Off. Real controllers, phones
+and desktop force feedback are not tested.

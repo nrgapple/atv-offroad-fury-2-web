@@ -6,7 +6,7 @@ use atv_game::{
     ride::{
         self, Controls, Ride,
         bindings::{Bindings, Pad},
-        view::{SpeedRush, View, chase},
+        view::{SpeedRush, View},
     },
     venue::Venue,
 };
@@ -63,6 +63,17 @@ pub struct Riding {
     /// Parity tooling: every delivered state and sampled presentation, in
     /// the browser's frame shape (tools/compare_presentation.mjs).
     pub present_log: Option<Vec<serde_json::Value>>,
+    /// Settings → Alpha presentation (web/hype.js): slow motion and the
+    /// big-air camera read it.
+    pub hype: atv_game::ride::hype::HypeDirector,
+    pub alpha_slowmo: bool,
+    pub alpha_big_air_camera: bool,
+    /// Alpha Landing burst: dust, clods and a thump at hard landings.
+    pub alpha_landing_burst: bool,
+    pub burst: atv_game::burst::BurstEmitter,
+    dust_tint: atv_game::wheel_effects::DustTint,
+    /// Landing thumps played (diagnostics).
+    pub thumps: u32,
     /// Enhanced/High: draw sunk wheels on the visible ground
     /// (graphics.js `wheelReprojection`).
     pub wheel_reprojection: bool,
@@ -71,6 +82,32 @@ pub struct Riding {
     /// The largest compression the last reprojection added (game.js
     /// `wheelLift`, diagnostics only).
     pub wheel_lift: std::cell::Cell<f32>,
+    /// ATV dirt buildup (graphics.js DirtBuildup), drawn when `dirt_enabled`
+    /// (Enhanced/High) or Alpha Heavy mud.
+    pub dirt: atv_game::dirt::DirtBuildup,
+    pub dirt_enabled: bool,
+    /// Settings → Chase camera: Assisted (UphillSightline).
+    pub chase_assist: bool,
+    sightline: atv_game::ride::view::UphillSightline,
+    /// Settings → Crash camera: Tight (the default) frames Crazy/Gorn crashes
+    /// with crashPresentation; Original keeps the recovered wreck camera.
+    pub crash_camera_tight: bool,
+    /// LOD-0 node boxes of the quad and rider, built at the first tight shot.
+    crash_bounds: Option<(
+        Vec<atv_game::ride::view::NodeBox>,
+        Vec<atv_game::ride::view::NodeBox>,
+    )>,
+    /// ImpactEvents and controller rumble (Settings → Vibration).
+    pub impacts: atv_game::ride::impact::ImpactEvents,
+    pub rumble: atv_game::ride::impact::Rumble,
+    pub vibration: bool,
+    /// The previous accepted frame's reset count and Riding phase.
+    impact_previous: Option<(u32, bool)>,
+    /// The latest impact severity (ft/s; Alpha landing effects read it).
+    pub impact_severity: f64,
+    /// Pulses for the controller (or a touch device's vibration), drained
+    /// by the app each frame.
+    pub pulses: Vec<atv_game::ride::impact::Pulse>,
     /// In a multiplayer room: pause and blur keep neutral-input simulation
     /// running so other riders see this one (web/game.js online pause).
     pub online: bool,
@@ -91,6 +128,22 @@ pub struct Sample<'a> {
     pub now: f64,
     /// Mouse drag this frame, in pixels.
     pub drag: f32,
+}
+
+/// What the hype director reads from the ride's latest step.
+fn hype_frame(ride: &Ride) -> (atv_game::ride::hype::HypeFrame, Option<f32>) {
+    let f = ride.frame();
+    (
+        atv_game::ride::hype::HypeFrame {
+            origin: f.origin,
+            linear_velocity: f.linear_velocity,
+            speed: f.speed_magnitude,
+            reset_count: f.reset_count,
+            riding: f.wreck.phase == ride::Phase::Riding,
+            grounded: f.grounded.iter().any(|g| *g),
+        },
+        ride.ground(f.origin[0], f.origin[2]),
+    )
 }
 
 /// Samples touch controls once per batch (game.js `drivingInput`).
@@ -128,9 +181,28 @@ impl Riding {
             clock: 0.,
             presented: (false, 1.),
             present_log: None,
+            hype: Default::default(),
+            alpha_slowmo: false,
+            alpha_big_air_camera: false,
+            alpha_landing_burst: false,
+            burst: atv_game::burst::BurstEmitter::new(192),
+            dust_tint: atv_game::wheel_effects::DustTint::new(venue),
+            thumps: 0,
             wheel_reprojection: false,
             ground: venue.visible.clone(),
             wheel_lift: std::cell::Cell::new(0.),
+            dirt: atv_game::dirt::DirtBuildup::new(venue.terrain_zones),
+            dirt_enabled: false,
+            chase_assist: false,
+            sightline: Default::default(),
+            crash_camera_tight: true,
+            crash_bounds: None,
+            impacts: Default::default(),
+            rumble: Default::default(),
+            vibration: true,
+            impact_previous: None,
+            impact_severity: 0.,
+            pulses: Vec::new(),
             online: false,
             peers: Vec::new(),
             contacts: 0,
@@ -150,9 +222,17 @@ impl Riding {
     pub fn reset(&mut self) -> Result<(), String> {
         self.clear_input();
         self.ride.reset()?;
+        self.hype.reset();
+        self.burst.reset();
+        let (frame, ground) = hype_frame(&self.ride);
+        self.hype.step(frame, ground);
         if let Some(effects) = &mut self.effects {
             effects.reset(&self.ride)?;
         }
+        // A player Reset cleans the quad; the reset frame is accepted.
+        self.dirt.reset();
+        self.step_dirt()?;
+        self.accept_impacts();
         self.orbit = 0.;
         // The reset frame (op 23) is the next segment's start.
         self.delivered = None;
@@ -237,20 +317,35 @@ impl Riding {
         if !self.focused {
             return Ok(());
         }
-        if let Some((controls, cursor)) = &mut self.autodrive {
+        if self.autodrive.is_some() {
             // The browser's accumulator, with the script supplying each step.
             self.accumulator = (self.accumulator + dt).min(0.1);
             let count = ((self.accumulator * 60.).floor() as u32).min(4);
             for _ in 0..count {
                 self.accumulator -= 1. / 60.;
-                let Some(control) = controls.get(*cursor).copied() else {
+                let next = self.autodrive.as_mut().and_then(|(controls, cursor)| {
+                    let control = controls.get(*cursor).copied();
+                    *cursor += 1;
+                    control
+                });
+                let Some(control) = next else {
                     self.autodrive = None;
                     self.autodrive_done = true;
                     self.held = true;
                     return Ok(());
                 };
-                *cursor += 1;
                 self.ride.step(&control, self.orbit)?;
+                // The per-step presentation `run` performs.
+                if let Some(effects) = &mut self.effects {
+                    effects.step(&self.ride)?;
+                }
+                self.step_dirt()?;
+                self.accept_impacts();
+                if let Some(crashes) = &mut self.crashes {
+                    crashes.step(&self.ride)?;
+                }
+                let (frame, ground) = hype_frame(&self.ride);
+                self.hype.step(frame, ground);
                 let frame = self.ride.frame();
                 self.step_rest.push(
                     (frame.wreck.phase == ride::Phase::Riding && frame.grounded.iter().all(|g| *g))
@@ -300,7 +395,15 @@ impl Riding {
                     .value(ride::bindings::Action::CameraLeft, input.keys, input.pad);
         self.orbit -= orbit_axis * dt * 1.7;
         self.orbit -= input.drag * 0.004;
-        self.accumulator = (self.accumulator + dt).min(0.1);
+        // Alpha slow motion stretches real time between fixed steps
+        // (Freestyle only: races and shared rides keep real time).
+        let landed = self
+            .hype
+            .update(dt, self.alpha_slowmo && self.ride.race().is_none());
+        if let Some(landing) = landed {
+            self.land(&landing)?;
+        }
+        self.accumulator = (self.accumulator + dt * self.hype.time_scale).min(0.1);
         let count = ((self.accumulator * 60.).floor() as u32).min(4);
         if count < 1 {
             return Ok(());
@@ -346,7 +449,8 @@ impl Riding {
                 self.clock,
                 ticks,
                 continuous,
-                self.interpolation,
+                self.interpolation || self.hype.time_scale < 1.,
+                self.hype.time_scale,
             ),
             None => self.presentation.reset(),
         }
@@ -410,9 +514,14 @@ impl Riding {
                 }
             }
             self.ride.step(controls, self.orbit)?;
+            // acceptFrame: the Alpha hype director reads every step.
+            let (frame, ground) = hype_frame(&self.ride);
+            self.hype.step(frame, ground);
             if let Some(effects) = &mut self.effects {
                 effects.step(&self.ride)?;
             }
+            self.step_dirt()?;
+            self.accept_impacts();
             if let Some(crashes) = &mut self.crashes {
                 crashes.step(&self.ride)?;
             }
@@ -448,7 +557,7 @@ impl Riding {
     /// Frames draw through the presenters: every motorcycle, and ATVs with
     /// the preset's interpolation.
     fn presents(&self) -> bool {
-        self.interpolation || self.ride.is_motorcycle()
+        self.interpolation || self.ride.is_motorcycle() || self.alpha_slowmo
     }
 
     /// Settings → Speed rush intensity (`speedRushAmount`'s peak).
@@ -492,6 +601,7 @@ impl Riding {
                 (*frame, mode)
             }
         };
+        let subjects = self.crash_subjects()?;
         let frame = self.ride.frame();
         let riding = frame.wreck.phase == ride::Phase::Riding;
         self.rush.update(
@@ -500,17 +610,47 @@ impl Riding {
             riding && (!self.paused || self.held),
             dt,
         );
+        // updateCamera: the uphill sightline follows the presented actor.
+        let ground = self.ground.clone();
+        let height = move |x: f32, z: f32| ground.height(f64::from(x), f64::from(z)) as f32;
+        let actor = atv_game::ride::view::SightlineActor {
+            origin: shown.map_or(frame.origin, |s| s.origin),
+            orientation: shown.map_or(frame.orientation, |s| s.orientation),
+            speed: frame.speed,
+            grounded: frame.grounded,
+            riding,
+            reset_count: shown.map_or(frame.reset_count, |s| s.reset_count),
+        };
+        self.sightline.update(
+            self.chase_assist.then_some(&actor),
+            camera.1 == ride::CameraMode::Follow,
+            camera.0.preset,
+            dt,
+            &height,
+        );
+        let assist = self.chase_assist.then_some((&self.sightline, actor.origin));
+        let view = match (&camera.0, camera.1) {
+            (frame, ride::CameraMode::Intro | ride::CameraMode::Tv) => {
+                atv_game::ride::view::cinematic(frame, aspect)
+            }
+            (frame, _) if self.alpha_big_air_camera => {
+                let ride = &self.ride;
+                let shot = self.hype.camera(frame, |x, z| ride.ground(x, z));
+                atv_game::ride::view::chase_assisted(&shot, aspect, assist, &height)
+            }
+            (frame, _) => atv_game::ride::view::chase_assisted(frame, aspect, assist, &height),
+        };
+        // presentCameraFrame: the tight Crazy/Gorn crash shot.
+        let view = match subjects {
+            Some(subjects) => atv_game::ride::view::crash(view, aspect, &subjects, &height),
+            None => view,
+        };
         let View {
             position,
             yaw,
             pitch,
             focal_length,
-        } = match (&camera.0, camera.1) {
-            (frame, ride::CameraMode::Intro | ride::CameraMode::Tv) => {
-                atv_game::ride::view::cinematic(frame, aspect)
-            }
-            (frame, _) => chase(frame, aspect),
-        };
+        } = view;
         // buildTerrainMesh again once the rider leaves 48 cells of the patch.
         let at = cells(venue, frame.origin);
         if (at[0] - self.center[0]).abs() > 48. || (at[1] - self.center[1]).abs() > 48. {
@@ -572,7 +712,19 @@ impl Riding {
                 })
                 .map(|c| &c.blood),
         );
-        scene.set_ride_mud(self.ride.mud_amount(), !self.ride.is_motorcycle());
+        scene.accept_burst(
+            gpu,
+            self.alpha_landing_burst
+                .then_some((&self.burst, self.ride.steps() as f32 / 60.)),
+        );
+        let mud = if self.ride.is_motorcycle() {
+            self.ride.mud_amount()
+        } else if self.dirt_enabled || self.dirt.heavy() {
+            self.dirt.amount()
+        } else {
+            0.
+        };
+        scene.set_ride_mud(mud, !self.ride.is_motorcycle());
         scene.pose_ride(gpu, &pose);
         scene.pose_race_cpus(gpu, &cpu_poses, position);
         Ok((
@@ -610,6 +762,114 @@ impl Riding {
         self.ride
             .reprojected_quad(&height)
             .map_or(0., |(_, lift)| lift)
+    }
+
+    /// acceptFrame: ImpactEvents and the rumble for the latest frame (while
+    /// focused with no menu open).
+    fn accept_impacts(&mut self) {
+        use atv_game::ride::impact::Actor;
+        let actor = Actor::of(&self.ride);
+        let enabled = self.focused && !self.menu_open;
+        self.impact_severity = self.impacts.accept(actor, enabled, self.clock / 1000.);
+        if let Some(pulse) = self.rumble.accept(
+            self.impact_previous,
+            &actor,
+            self.impact_severity,
+            self.vibration && enabled,
+            self.clock,
+        ) {
+            self.pulses.push(pulse);
+        }
+        self.impact_previous = Some((actor.reset_count, actor.riding));
+    }
+
+    /// One accepted frame of ATV dirt, only while it is drawn (the browser
+    /// steps it on every preset; Original skips the four wheel samples).
+    /// updateHype's landing: Alpha Landing burst (dust and clods at the
+    /// visible ground, a thump) and Heavy mud's splat, unless a wheel is in
+    /// water.
+    fn land(&mut self, landing: &atv_game::ride::hype::Landing) -> Result<(), String> {
+        if !self.focused || self.menu_open {
+            return Ok(());
+        }
+        let wet = self.ride.dirt_sample()?.is_some_and(|s| {
+            (0..4).any(|i| s.water_heights[i] > s.centers[i][1] - s.radii[i] * 0.5)
+        });
+        if wet {
+            return Ok(());
+        }
+        if self.alpha_landing_burst {
+            let [x, _, z] = landing.position;
+            let v = self.ride.frame().linear_velocity;
+            self.burst.burst(
+                [x, self.visible_ground(x, z), z],
+                landing.severity,
+                self.ride.steps() as f64 / 60.,
+                self.dust_tint.at(x, z),
+                [v[0], v[2]],
+            );
+            if let Some(sound) = &mut self.sound
+                && sound.landing_thump(landing.severity)
+            {
+                self.thumps += 1;
+            }
+        }
+        if self.dirt.heavy() && !self.ride.is_motorcycle() {
+            self.dirt
+                .splat(f64::from((landing.severity * 0.9).min(60.)));
+        }
+        Ok(())
+    }
+
+    fn step_dirt(&mut self) -> Result<(), String> {
+        if (self.dirt_enabled || self.dirt.heavy())
+            && let Some(sample) = self.ride.dirt_sample()?
+        {
+            self.dirt.step(&sample, atv_game::dirt::STEP);
+        }
+        Ok(())
+    }
+
+    /// crashSubjects for the latest Crazy/Gorn crash frame (Crash camera:
+    /// Tight), from the latest simulated pose as acceptFrame computes it.
+    fn crash_subjects(&mut self) -> Result<Option<atv_game::ride::view::CrashSubjects>, String> {
+        let Some(crash) = self
+            .crashes
+            .as_ref()
+            .and_then(|c| c.frame())
+            .filter(|_| self.crash_camera_tight)
+        else {
+            return Ok(None);
+        };
+        let ride = &self.ride;
+        let (quad_bounds, rider_bounds) = self.crash_bounds.get_or_insert_with(|| {
+            (
+                atv_game::ride::view::mesh_node_bounds(&ride.quad.mesh),
+                atv_game::ride::view::mesh_node_bounds(&ride.rider.mesh),
+            )
+        });
+        let pose = ride.pose()?;
+        Ok(Some(atv_game::ride::view::crash_subjects(
+            &atv_game::ride::view::CrashPose {
+                quad: (&ride.quad.mesh, quad_bounds),
+                rider: (&ride.rider.mesh, rider_bounds),
+                quad_nodes: if crash.quad_node_matrices.len() == pose.quad_nodes.len() {
+                    &crash.quad_node_matrices
+                } else {
+                    &pose.quad_nodes
+                },
+                ragdoll: &crash.rider_node_matrices,
+                rider_nodes: &pose.rider_nodes,
+                rider_world: pose.rider_world,
+                actor_world: pose.quad_world,
+                origin: ride.frame().origin,
+            },
+        )))
+    }
+
+    /// The Assisted chase orbit (radians; `requestedHillOrbit`).
+    pub fn hill_orbit(&self) -> f64 {
+        self.sightline.lift
     }
 
     /// The visible terrain height (renderCore.terrainHeight).

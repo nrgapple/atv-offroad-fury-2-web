@@ -53,6 +53,7 @@ pub fn controls(input: &Value) -> Controls {
             .and_then(Value::as_bool)
             .unwrap_or(false),
         reverse_chord_brake: optional("reverse_chord_brake"),
+        arcade_spin: optional("arcade_spin"),
         preload_axis: optional("preload_axis"),
         keyboard_drive: input.get("keyboard_drive").map(|k| TouchIntent {
             generation: k.get("generation").and_then(Value::as_u64).unwrap_or(0),
