@@ -188,8 +188,9 @@ Ported under the Original preset, from the `game.js` scene shader and loaders:
   ESB species meshes and the EcoSystemCode2D atlas; `atv_core::vegetation_render`
   selects and orders instances (distant billboards, depth-disabled transition, near
   material queues) with the per-instance alpha reference and the biased-float vertex
-  lighting. Like the browser, the frame serial stays 0, so 0012a1c0's stale-visibility
-  reset only applies to a plant's first selection.
+  lighting. Like the browser's rAF id, the frame serial rises every drawn frame, so
+  0012a1c0's stale-visibility reset restarts a near plant unseen for more than three
+  frames (the browser's id can step by more than one when other callbacks run).
 
 Parity (`tools/compare_engine.mjs`, Original preset, JavaScript actors hidden and clocks
 held via the test-only `window.atvParityView`; mean absolute difference of 255,
@@ -631,7 +632,7 @@ measured comparison). Parity above is with the JavaScript build.
 | Where | Stand-in | Original / evidence | Replaced |
 | --- | --- | --- | --- |
 | `atv_core::vegetation_render` (used by `atv-render/vegetation.rs`) | 64² cell scan, behind/range test, 1,500-plant nearest-depth heap and sort | 0012a1c0: spatial-callback candidates, frustum tests for near plants only, 600 depth buckets (u16 depth), submission far-to-near of buckets whose cumulative count is under 1,500 (`private/reports/map-fidelity/billboard-recovery/0012a1c0.c`) | No |
-| `atv-render/vegetation.rs` | frame serial held at 0 (the browser passes `frame`, which stays 0) | 0012a1c0 increments its serial every call; a plant unseen for more than 3 frames restarts its fade | No |
+| `atv-render/vegetation.rs` | frame serial rising by one per drawn frame (`select_next`, as the browser's rAF id) | 0012a1c0 increments its serial every call; a plant unseen for more than 3 frames restarts its fade | Yes |
 | `atv-render/scenery.rs` | lit models: ambient + sun·N·L ("provisional prop lighting") | `use_lighting`/`dynamic_lighting` VU programs not recovered | No |
 | `atv-render/scenery.rs`, `cull.rs` | per-object fog-end culling with depth range extended by the largest object | 0012b360 far clip at fog end; native object culling not recovered (behaviour-equivalent optimisation, keep) | Keep |
 | `atv-render/water.rs` | projected grid capped at 12,000/8,000 vertices for 16-bit indices; portable reflection; no froth | 00190aa0 strip/row counts without the cap; VU reflection and froth pending | Grid cap: yes (see "Water grid rows"); reflection/froth: no |
@@ -1023,7 +1024,7 @@ Ported:
   guest rides the room's course; the host starts the room on `--venue`. Every frame
   `Net` sends at the 50 ms tick, uploads remote models as they load (one
   `VehiclePass` per slot in `SceneRenderer`, beside the race CPUs) and draws the
-  presented riders. Riders over 864 ft from the eye are skipped, as for CPUs. A room
+  presented riders at any distance (drawRemotePlayers; only race CPUs stop at 864 ft). A room
   keeps the app awake, so inactive render sleep never stops its socket or poses.
 - Entry points: `fury --host [--room CODE] | --room CODE [--relay URL] [--name NAME]`
   (relay default `https://furyremastered.com`), and `engine.html?host=1` or
@@ -1220,7 +1221,9 @@ web/audio.js `remoteFrame`):
   the whole Web Audio buffer, so a looped remote idle can differ at its loop point.
 - A new crash serial plays an original body impact (`rider.aud`) at the detached
   rider's position.
-- Every voice is placed for the follow camera's listener by the recovered spatial
+- Every voice is placed for the drawn camera's listener (after the chase, crash and
+  big-air presentation), moving with the player's vehicle as game.js's multiplayer
+  listener does, by the recovered spatial
   arithmetic: distance attenuation of 15 to 300 ft for engines, `rider.aud` distances
   for impacts, then stereo pan and Doppler pitch.
 - Voices stop while the output is suspended or unfocused, and when the ride ends.
@@ -1359,14 +1362,16 @@ Observed (host-only, local relay):
     course.
 - A direct room link (`engine.html?room=`, `fury --room`) has no frontend, so both
   rows stay hidden there.
-- Behind the garage or course picker the ride waits paused and stays present, as
-  in the browser (its simulation pauses under the menu while web/multiplayer.js
-  keeps sending). The app keeps the room's `Ride` (`held_ride`) and
-  `Net::hold` sends its paused presence (0.2 Hz; others keep a paused pose for
-  15 s) on the 1 s presence timer. The GPU scene is released for the frontend,
-  and the ride reloads after Done/Ride. During that reload no poses go out, as in
-  the browser while it loads. Before this change the ride was dropped, and the
-  guest saw the host go stale after about 1 s.
+- Behind the garage or course picker the ride keeps riding and stays present, as
+  in the browser (game.js keeps simulating a live room under a menu, with neutral
+  input, and web/multiplayer.js keeps sending unpaused poses). The app keeps the
+  room's `Ride` (`held_ride`); each frontend frame `Net::ride_held` steps it with
+  neutral controls (rider contacts and the shared train clock per step) and
+  `Net::hold` sends its pose at the 50 ms cadence. A hidden or suspended page
+  sends the paused presence on the 1 s presence timer instead. The GPU scene and
+  ride sounds are released for the frontend, and the ride reloads after Done/Ride
+  (Change ATV and Rider at the held ride's current pose). During that reload no
+  poses go out, as in the browser while it loads.
 - Observed (`tools/test_engine_multiplayer_room_front.mjs`, local relay,
   host-only):
   - A Rust browser hosted room JKSRF5Y8 from its menus with a JavaScript guest.

@@ -927,12 +927,16 @@ impl Ride {
             self.input_generation = Some(controls.generation);
         }
         vehicle.set_stunt_landing_safe(safe);
-        vehicle.set_realistic_train(self.options.realistic_train);
-        let arcade = self.options.arcade_flips;
+        // Race-imposed controls (countdown, post-finish autopilot) carry only
+        // the drive axes and crash settings, so atv-web op 24 reads flips,
+        // Arcade flips and realistic train as off for those steps.
+        let options = |on: bool| on && !race_input;
+        vehicle.set_realistic_train(options(self.options.realistic_train));
+        let arcade = options(self.options.arcade_flips);
         // Alpha Arcade flips imply flips regardless of the Extras row (atv-web
         // op 24). Turning flips off here every step would drop the arcade
         // controller each step, so its rotation never spun up past one step.
-        vehicle.set_flips(arcade || self.options.flips)?;
+        vehicle.set_flips(arcade || options(self.options.flips))?;
         vehicle.set_arcade_flips(arcade)?;
         vehicle.set_arcade_spin(controls.arcade_spin.filter(|_| arcade))?;
         if controls.stunt_modifiers > 7 {

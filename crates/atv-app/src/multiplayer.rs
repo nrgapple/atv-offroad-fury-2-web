@@ -94,6 +94,8 @@ pub struct Net {
     /// The room was listed as a public (Free Ride) room before its state
     /// was dropped by a closed socket.
     public: bool,
+    /// Step accumulator of the ride held behind the frontend (s).
+    held_accumulator: f32,
 }
 
 /// What the app does after a room tick.
@@ -378,6 +380,7 @@ impl Net {
             saved_key: String::new(),
             met: None,
             public: false,
+            held_accumulator: 0.,
         };
         let deadline = Instant::now();
         let mut set_up = false;
@@ -645,12 +648,14 @@ impl Net {
         tick
     }
 
-    /// The frontend over a held room (Change ATV and Rider, Select Track): the
-    /// ride waits paused behind it and its paused presence keeps going out, so
-    /// others do not see this rider go stale (web/multiplayer.js keeps `send`
-    /// running while the simulation is paused behind the garage). Call after
-    /// [`Net::tick`] without a ride, which keeps the socket and pings.
-    pub fn hold(&mut self, ride: &Ride) {
+    /// The frontend over a held room (Change ATV and Rider, Select Track):
+    /// the ride keeps riding behind it (see [`Net::ride_held`]) and its pose
+    /// goes out at the normal 50 ms cadence, unpaused, as web/multiplayer.js
+    /// sends while game.js keeps simulating a live room under a menu.
+    /// `paused` is actual suspension (hidden page, suspended app), which
+    /// sends the paused presence pose. Call after [`Net::tick`] without a
+    /// ride, which keeps the socket and pings.
+    pub fn hold(&mut self, ride: &Ride, paused: bool) {
         if self.closed.is_some() || self.reconnect.is_some() {
             return;
         }
@@ -667,7 +672,7 @@ impl Net {
             return;
         }
         self.last_send = now_f;
-        match self.session.snapshot(ride, now, true) {
+        match self.session.snapshot(ride, now, paused) {
             Ok(Some(bytes)) => {
                 if self.socket.send(bytes.clone()) {
                     let _ = self.session.sent(&bytes);
@@ -677,6 +682,42 @@ impl Net {
             Ok(None) => {}
             Err(error) => crate::status(&format!("Multiplayer pose: {error}")),
         }
+    }
+
+    /// One rendered frame of the ride held behind the frontend. A live room
+    /// keeps simulating under a menu (game.js `simulationPaused` is false
+    /// and drivingInput is neutral): up to four fixed steps with neutral
+    /// controls, each touching the other riders at its own session time and
+    /// on the shared train clock, as [`crate::riding::Riding`] does online.
+    pub fn ride_held(&mut self, ride: &mut Ride, dt: f32) -> Result<(), String> {
+        if self.closed.is_some() {
+            return Ok(());
+        }
+        self.held_accumulator = (self.held_accumulator + dt.min(0.05)).min(0.1);
+        let count = ((self.held_accumulator * 60.).floor() as u32).min(4);
+        if count == 0 {
+            return Ok(());
+        }
+        self.held_accumulator -= count as f32 / 60.;
+        let server = self
+            .server_clock()
+            .map(|(origin, offset)| origin.elapsed().as_secs_f64() * 1000. + offset);
+        let now = self.session_now();
+        let controls = atv_game::ride::Controls::default();
+        for step in 0..count {
+            let behind = count - 1 - step;
+            ride.train_server_ms = server.map(|now| now - f64::from(behind) * 1000. / 60.);
+            let step_now = now.saturating_sub(u64::from(behind) * 1000 / 60);
+            let mut touch = |ride: &mut Ride| {
+                for peer in self.contact_bodies_at(step_now, ride) {
+                    ride.peer_contact(peer.position, peer.velocity, peer.orientation, peer.tie);
+                }
+            };
+            ride.step_with(&controls, 0., &mut touch)?;
+            // Rooms do not race; drain the step's (empty) race events.
+            let _ = ride.take_race_events();
+        }
+        Ok(())
     }
 
     /// The session clock (ms) that pose buffers and contacts read.
@@ -773,7 +814,6 @@ impl Net {
         scene: &mut SceneRenderer,
         venue: &atv_game::venue::Venue,
         ride: &Ride,
-        eye: [f32; 3],
     ) {
         // An ended room draws nobody (and its riders' sounds stop).
         if self.closed.is_some() {
@@ -885,7 +925,7 @@ impl Net {
                 Err(error) => crate::status(&format!("Remote rider pose: {error}")),
             }
         }
-        self.drawn = scene.pose_peers(gpu, &poses, eye);
+        self.drawn = scene.pose_peers(gpu, &poses);
     }
 
     /// The room as the pause menu shows it (frontend.js lobby fields).

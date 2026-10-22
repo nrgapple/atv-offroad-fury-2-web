@@ -113,12 +113,6 @@ fn gains(command: &Command, volume: i32, rate: f32) -> Option<([f32; 2], f32)> {
 }
 
 impl RideAudio {
-    /// The listener of the latest audio step (the follow camera), for
-    /// sounds placed by the app such as other riders'.
-    pub fn listener(&self) -> Option<Listener> {
-        self.last.map(|(listener, ..)| listener)
-    }
-
     pub fn new(bank: Bank, mode: SoundMode) -> Self {
         let vocals = bank
             .vocals
