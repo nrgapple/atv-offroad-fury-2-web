@@ -94,6 +94,9 @@ pub struct Controls {
     /// Alpha Arcade flips: the keyboard/controller steering that spins the
     /// quad in the air (game.js `input.arcade_spin`).
     pub arcade_spin: Option<f32>,
+    /// Touch Extras flip request (game.js `flip_request`, `flip_launch`,
+    /// `flip_hold`): "backflip", "left" or "right".
+    pub flip_request: Option<(&'static str, bool, f32)>,
 }
 
 /// Camera mode of the latest camera step.
@@ -911,7 +914,10 @@ impl Ride {
         vehicle.set_stunt_landing_safe(safe);
         vehicle.set_realistic_train(self.options.realistic_train);
         let arcade = self.options.arcade_flips;
-        vehicle.set_flips(self.options.flips && !arcade)?;
+        // Alpha Arcade flips imply flips regardless of the Extras row (atv-web
+        // op 24). Turning flips off here every step would drop the arcade
+        // controller each step, so its rotation never spun up past one step.
+        vehicle.set_flips(arcade || self.options.flips)?;
         vehicle.set_arcade_flips(arcade)?;
         vehicle.set_arcade_spin(controls.arcade_spin.filter(|_| arcade))?;
         if controls.stunt_modifiers > 7 {
@@ -921,6 +927,16 @@ impl Ride {
             controls.stunt_modifiers,
             [controls.stunt_x, controls.stunt_y],
         )?;
+        if let Some((request, launch, hold)) = controls.flip_request {
+            use atv_core::flip_tricks::Trick;
+            let trick = match request {
+                "backflip" => Trick::Backflip,
+                "left" => Trick::ThreeSixtyLeft,
+                "right" => Trick::ThreeSixtyRight,
+                _ => return Err("invalid flip request".into()),
+            };
+            vehicle.request_flip(trick, launch, hold);
+        }
         vehicle.set_rider_mode(self.rider_mode);
         vehicle.set_forced_landing(forced_landing);
         if let Some(water) = &mut sim.water {

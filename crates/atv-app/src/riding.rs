@@ -960,6 +960,13 @@ fn cells(venue: &Venue, origin: [f32; 3]) -> [f32; 2] {
 pub fn merge_touch(controls: &mut atv_game::ride::Controls, t: &atv_ui::touch::Controls) {
     controls.steer = (controls.steer + t.steer).clamp(-1., 1.);
     controls.lean += t.lean;
+    // Arcade flips: touch steering stays the original air lean; its 360 axis
+    // starts past full lock (keys and controllers spin with steering).
+    controls.arcade_spin = controls
+        .arcade_spin
+        .map(|pad| (pad + t.spin).clamp(-1., 1.))
+        .or((t.spin != 0.).then(|| t.spin.clamp(-1., 1.)));
+    controls.flip_request = t.flip;
     controls.touch_drive = Some(t.sample.drive);
     controls.generation += t.generation;
     if t.sample.stunt_modifiers != 0 {

@@ -57,6 +57,13 @@ pub struct Controls {
     /// Added to the keyboard/controller steer and lean.
     pub steer: f32,
     pub lean: f32,
+    /// Alpha Arcade flips' 360 axis: the one-handed thumb or the two-finger
+    /// lean pad dragged past full lock (game.js `touchLean.spin + touch.spin`).
+    pub spin: f32,
+    /// An Extras flip to request: (flip, launch, hold) from the thumb's flip
+    /// zones or swipes, or the two-finger pad's pull when the drive thumb
+    /// lifts (game.js `drivingInput` padFlip / `touch.flip_request`).
+    pub flip: Option<(&'static str, bool, f32)>,
     pub sample: Sample,
     pub generation: u64,
 }
@@ -345,9 +352,24 @@ impl TouchControls {
         }
         self.wheel_visible = wheel;
         let sensitivity = self.input.steering_sensitivity;
+        let pad_flip = (sample.flip_request.is_none()
+            && sample.preload_axis == Some(-1.)
+            && self.input.flips
+            && !self.input.arcade
+            && !self.input.one_handed)
+            .then(|| self.lean.launch_flip(now))
+            .flatten()
+            .map(|(flip, hold)| (flip, true, hold));
+        let flip = pad_flip.or_else(|| {
+            sample
+                .flip_request
+                .map(|flip| (flip, sample.flip_launch, sample.flip_hold))
+        });
         Controls {
             steer: self.lean.steer(sensitivity) + sample.steer,
             lean: self.lean.lean() + sample.lean,
+            spin: self.lean.spin(sensitivity) + sample.spin,
+            flip,
             sample,
             generation: self.input.generation,
         }

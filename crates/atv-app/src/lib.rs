@@ -1061,7 +1061,14 @@ impl App {
                 "throttle": applied.throttle, "brake": applied.brake,
                 "touchHeld": applied.touch_drive.is_some_and(|t| t.held),
                 "preload": applied.preload_axis,
+                "arcadeSpin": applied.arcade_spin,
+                "flipRequest": applied.flip_request.map(|f| f.0),
             });
+            // Air tricks (tools/test_engine_arcade_touch.mjs): Arcade flips'
+            // rotation and the preload state.
+            let frame = riding.ride.frame();
+            state["flip"] = serde_json::json!(frame.flip);
+            state["preloadArmed"] = frame.preload_armed.into();
             if let Some(overlay) = &self.overlay {
                 state["toolbar"] = overlay.diagnostics();
             }
