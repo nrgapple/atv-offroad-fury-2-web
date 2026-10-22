@@ -1,9 +1,9 @@
 //! The original frontend music (GameAudio.loadMenuMusic in web/audio.js).
 //!
-//! Recovered: FUN_00255b50 builds the frontend's UI sound list at object
+//! Recovered: the routine at 00255b50 builds the frontend's UI sound list at object
 //! +0x160 from `audio\UI\uimusic.aud`: section `UIMusic`, `NumTracks`, and
 //! `Track%d` names, each added as a looping sample (flags 0xc1) from
-//! `audio\audio`; FUN_00254ae0 frees it when the frontend closes. The four
+//! `audio\audio`; the routine at 00254ae0 frees it when the frontend closes. The four
 //! tunes are `uitune1`-`uitune4`, stored as left/right mono VAGs in
 //! AUDIO.RES. Which tune the frontend starts, and how it changes them, is
 //! not recovered; the browser game loops the first with its VAG loop

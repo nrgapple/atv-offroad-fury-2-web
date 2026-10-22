@@ -675,9 +675,9 @@ on its VAG markers on the music bus at the saved music volume. It starts after t
 first gesture, plays while the frontend owns the screen and the page is focused with
 Music on, and stops when a ride takes over or focus is lost.
 
-ROM evidence (USA v2.00): FUN_00255b50 builds the frontend object's UI sound list
+ROM evidence (USA v2.00): the routine at 00255b50 builds the frontend object's UI sound list
 (+0x160) from `audio\UI\uimusic.aud`: `UIMusic`, `NumTracks`, then each `Track%d`
-added as a looping sample (flags 0xc1) from `audio\audio`; FUN_00254ae0 frees the
+added as a looping sample (flags 0xc1) from `audio\audio`; the routine at 00254ae0 frees the
 list when the frontend closes. The routine that picks which tune plays, and when it
 changes, is not recovered, so the Rust frontend follows the browser game and loops
 the first. Evidence: `tools/test_engine_menu_music.mjs` (host Chromium: silent before

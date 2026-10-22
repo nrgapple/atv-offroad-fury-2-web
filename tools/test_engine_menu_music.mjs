@@ -1,5 +1,5 @@
 // The original frontend tune in the Rust engine (audio.js loadMenuMusic /
-// playMenuMusic; FUN_00255b50's UIMusic list): after the first gesture on
+// playMenuMusic; the routine at 00255b50's UIMusic list): after the first gesture on
 // the title, the first UIMUSIC.AUD tune (uitune1, left/right VAGs from
 // AUDIO.RES) loops on the music bus while the menus are shown and focused;
 // Music off stops it; a ride takes over. Records the mixer's voices through
