@@ -52,6 +52,21 @@ pub enum Event {
         rider: u16,
         name: String,
     },
+    /// Free Ride Lobby → Copy invite link (while joining).
+    CopyInvite,
+    /// Free Ride Lobby → Leave Game, or Back: abandon the room being joined.
+    LeaveLobby,
+}
+
+/// The Free Ride Lobby page shown while a hosted or joined room connects
+/// (multiplayer.js `host` shows 'lobby' before `connect`).
+#[derive(Clone, Debug, PartialEq)]
+pub struct Lobby {
+    /// The room code, once known (a custom or typed code; blank while the
+    /// relay assigns one).
+    pub code: String,
+    /// `lobby_status`: blank while connecting.
+    pub status: String,
 }
 
 /// frontend.js refuses rooms on a motorcycle with this message.
@@ -171,6 +186,8 @@ pub struct Frontend {
     /// The garage ("garage") or course picker ("tracks") is open over a
     /// held room ride; leaving it rides again.
     pub room: Option<&'static str>,
+    /// The room being joined (the Free Ride Lobby page).
+    pub lobby: Option<Lobby>,
 }
 
 impl Frontend {
@@ -215,6 +232,7 @@ impl Frontend {
             hosting: false,
             notice: None,
             room: None,
+            lobby: None,
         };
         front.player_name = front.saved["playerName"]
             .as_str()
@@ -539,6 +557,10 @@ impl Frontend {
             self.room = None;
             return Some(self.room_ride(None));
         }
+        if self.page == "lobby" {
+            // frontend.js: Back on the lobby page is Leave Game.
+            return self.leave_lobby(view);
+        }
         let to = match self.page.as_str() {
             "main" => "title".to_string(),
             "single" => "main".into(),
@@ -562,6 +584,27 @@ impl Frontend {
         None
     }
 
+    /// Host/Join: the Free Ride Lobby page over the room's course while
+    /// the room connects; the loader follows once it has.
+    pub fn show_lobby(&mut self, code: &str, environment: &str, view: &Viewport) {
+        if let Some(index) = self.tracks.iter().position(|t| t.id == environment) {
+            self.track = index;
+        }
+        self.lobby = Some(Lobby {
+            code: code.into(),
+            status: String::new(),
+        });
+        self.notice = None;
+        self.focus = None;
+        self.show("lobby", view);
+    }
+
+    fn leave_lobby(&mut self, view: &Viewport) -> Option<Event> {
+        self.lobby = None;
+        self.show("multiplayer", view);
+        Some(Event::LeaveLobby)
+    }
+
     fn room_ride(&self, environment: Option<String>) -> Event {
         Event::RoomRide {
             quad: if self.quad_id >= 27 { 1 } else { self.quad_id },
@@ -578,6 +621,8 @@ impl Frontend {
                 self.focus = None;
                 self.show(action, view);
             }
+            "share" if self.page == "lobby" => return Some(Event::CopyInvite),
+            "leave" if self.page == "lobby" => return self.leave_lobby(view),
             "hosttrack" if self.page == "create-lobby" && self.quad_id >= 27 => {
                 self.notice = Some(MOTORCYCLE_ROOM.into());
                 return None;
@@ -1021,6 +1066,7 @@ impl Frontend {
                     .collect()
             },
             notice: self.notice.clone(),
+            lobby: self.lobby.clone(),
             backdrop,
             backdrop_track,
             logo: logo.map(|l| l.0),
@@ -1190,6 +1236,43 @@ mod tests {
         front.run("garage", &view, &mut settings);
         assert!(!front.online_garage());
         assert!(catalog(&front).iter().any(|v| v.motorcycle));
+    }
+
+    #[test]
+    fn lobby_page_shows_while_joining_and_back_leaves() {
+        let view = view(1280., 720.);
+        let mut settings = Settings::memory();
+        let mut front = Frontend::new(tracks(), &settings, true);
+        let env = front.tracks[1].id.clone();
+        front.show_lobby("ABCD1234", &env, &view);
+        assert_eq!(front.page, "lobby");
+        assert_eq!(front.tracks[front.track].id, env);
+        let actions: Vec<_> = front.choices().iter().map(|(a, _)| a.as_str()).collect();
+        assert_eq!(actions, ["share", "leave"]);
+        let screen = front.screen(None, false, None, &|_| None, None, (None, None), 0.);
+        assert_eq!(
+            screen.lobby.as_ref().map(|l| l.code.as_str()),
+            Some("ABCD1234")
+        );
+        assert_eq!(
+            front.run("share", &view, &mut settings),
+            Some(Event::CopyInvite)
+        );
+        // Back is Leave Game: the Multiplayer page again.
+        assert_eq!(
+            front.key("Escape", &view, &mut settings),
+            Some(Event::LeaveLobby)
+        );
+        assert_eq!(
+            (front.page.as_str(), front.lobby.is_none()),
+            ("multiplayer", true)
+        );
+        front.show_lobby("", &env, &view);
+        assert_eq!(
+            front.run("leave", &view, &mut settings),
+            Some(Event::LeaveLobby)
+        );
+        assert_eq!(front.page, "multiplayer");
     }
 
     #[test]

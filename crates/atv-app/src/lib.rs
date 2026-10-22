@@ -154,6 +154,12 @@ enum Message {
     /// The browser's 1 s presence timer (a hidden tab runs no frames).
     #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
     PresenceTick,
+    /// A line for the frontend's notice (the copied invite link).
+    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+    LobbyNotice(String),
+    /// A hosted or joined room connected (or failed) while the Free Ride
+    /// Lobby page showed: (the room, its course).
+    RoomJoined(Box<Result<(multiplayer::Net, String), String>>),
     /// Another rider's engine bank finished loading.
     RemoteEngine(u16, Box<Result<atv_game::audio::remote::Engine, String>>),
 }
@@ -255,6 +261,12 @@ struct App {
     held_ride: Option<atv_game::ride::Ride>,
     /// The held room the next frontend ride resumes.
     pending_room: Option<multiplayer::Net>,
+    /// `pending_room` was just joined (it meets a rider; a held room
+    /// reloading a course does not).
+    pending_fresh: bool,
+    /// The room connecting behind the Free Ride Lobby page: (quad, rider,
+    /// the form page a failure returns to). None after Leave.
+    joining: Option<(u16, u16, &'static str)>,
     /// Frame-spread loads (see `spawn_frame`).
     frame_tasks: Vec<std::pin::Pin<Box<dyn std::future::Future<Output = Message>>>>,
     /// The Host/Join forms' browser inputs.
@@ -2313,6 +2325,13 @@ impl ApplicationHandler<Message> for App {
                 }
             }
             Message::PresenceTick => self.presence_tick(),
+            Message::RoomJoined(result) => self.room_joined(*result),
+            Message::LobbyNotice(text) => {
+                if let Some(front) = &self.front {
+                    front.borrow_mut().state.notice = Some(text);
+                }
+                self.wake();
+            }
             Message::FrontText(action, text) => {
                 if let Some(front) = &self.front {
                     front.borrow_mut().state.set_field(action, &text);
@@ -2977,6 +2996,12 @@ impl App {
                 };
                 self.start_ride(environment, quad, rider, None, Some(room));
             }
+            Event::LeaveLobby => {
+                // The connect finishes in the background and is left at once.
+                self.joining = None;
+                self.wake();
+            }
+            Event::CopyInvite => self.copy_lobby_invite(),
             Event::DevLog =>
             {
                 #[cfg(target_arch = "wasm32")]
@@ -2996,22 +3021,117 @@ impl App {
     }
 
     /// Shows the course loader and loads the ride on the frontend's GPU.
-    fn start_ride(
-        &mut self,
-        environment: String,
-        quad: u16,
-        rider: u16,
-        race: Option<atv_game::ride::race::Settings>,
-        room: Option<RoomStart>,
-    ) {
+    /// Claims the room and connects with the frontend still live on the
+    /// Free Ride Lobby page; [`Message::RoomJoined`] then loads the ride.
+    fn join_room(&mut self, environment: String, quad: u16, rider: u16, room: RoomStart) {
         let (Some(front), Some(content)) = (self.front.clone(), self.content.clone()) else {
             return;
         };
-        let Some(gpu) = self.gpu.take() else {
+        let (world, ride) = self.ride_setup(&front, quad, rider, None);
+        let form = if room.host {
+            "create-lobby"
+        } else {
+            "join-lobby"
+        };
+        {
+            let mut f = front.borrow_mut();
+            let view = f.view;
+            f.state
+                .show_lobby(room.code.as_deref().unwrap_or(""), &environment, &view);
+        }
+        self.joining = Some((quad, rider, form));
+        let profile =
+            atv_game::multiplayer::Profile::new(&room.name, quad, rider, world.appearance);
+        let delay = multiplayer::JOIN_DELAY_MS.load(std::sync::atomic::Ordering::Relaxed);
+        let future = async move {
+            if delay > 0 {
+                net::sleep(delay).await;
+            }
+            multiplayer::Net::join(&room, profile, &environment, content, ride).await
+        };
+        self.spawn(future, |result| Message::RoomJoined(Box::new(result)));
+        self.wake();
+    }
+
+    /// The room connected: load its course (the loader replaces the lobby
+    /// page), or leave it when Leave Game came first.
+    fn room_joined(&mut self, result: Result<(multiplayer::Net, String), String>) {
+        let Some((quad, rider, form)) = self.joining.take() else {
+            if let Ok((mut net, _)) = result {
+                net.leave();
+            }
             return;
         };
+        match result {
+            Ok((net, environment)) => {
+                self.pending_room = Some(net);
+                self.pending_fresh = true;
+                self.start_ride(environment, quad, rider, None, None);
+            }
+            Err(error) => {
+                status(&error);
+                // multiplayer.js reports a failed host/join on the form.
+                if let Some(front) = &self.front {
+                    let mut f = front.borrow_mut();
+                    f.state.lobby = None;
+                    let view = f.view;
+                    f.state.show(form, &view);
+                    f.state.notice = Some(error);
+                }
+                self.wake();
+            }
+        }
+    }
+
+    /// Free Ride Lobby → Copy invite link (multiplayer.js `inviteUrl`), once
+    /// the room's code is known.
+    fn copy_lobby_invite(&mut self) {
+        let Some(front) = self.front.clone() else {
+            return;
+        };
+        let mut f = front.borrow_mut();
+        let Some(code) = f.state.lobby.as_ref().map(|l| l.code.clone()) else {
+            return;
+        };
+        if code.is_empty() {
+            return;
+        }
+        let Some(relay) = self.defaults.as_ref().map(|d| d.relay.clone()) else {
+            return;
+        };
+        let environment = f
+            .state
+            .tracks
+            .get(f.state.track)
+            .map_or("env01".to_string(), |t| t.id.clone());
+        let url = multiplayer::invite_url(&relay, &environment, &code);
+        f.state.notice = Some(url.clone());
         #[cfg(target_arch = "wasm32")]
-        self.text_inputs.sync(&[], &[], &self.proxy);
+        if let Some(clipboard) = web_sys::window().map(|w| w.navigator().clipboard()) {
+            let promise = clipboard.write_text(&url);
+            let proxy = self.proxy.clone();
+            wasm_bindgen_futures::spawn_local(async move {
+                let copied = wasm_bindgen_futures::JsFuture::from(promise).await.is_ok();
+                let _ = proxy.send_event(Message::LobbyNotice(if copied {
+                    "Invite link copied.".into()
+                } else {
+                    url
+                }));
+            });
+        }
+        drop(f);
+        self.wake();
+    }
+
+    /// The ride's world setup and the room's view of it, from the saved
+    /// settings (Display → Graphics, crash mode, Garage appearance).
+    fn ride_setup(
+        &self,
+        front: &Rc<RefCell<front::Front>>,
+        quad: u16,
+        rider: u16,
+        race: Option<atv_game::ride::race::Settings>,
+    ) -> (World, multiplayer::RoomRide) {
         let (graphics, weather, sound, default_crash) = self
             .defaults
             .as_ref()
@@ -3032,33 +3152,6 @@ impl App {
             .get("atv-crash-mode")
             .and_then(|v| atv_game::crash::CrashMode::parse(&v))
             .unwrap_or(default_crash);
-        {
-            let mut f = front.borrow_mut();
-            f.begin_loading(&environment);
-            paint_front(&gpu, &mut f);
-        }
-        // The original loader's action shots for this course.
-        let key = format!("shots:{environment}");
-        if self.requested.insert(key) {
-            let (c, env, shot_env) = (content.clone(), environment.clone(), environment.clone());
-            self.spawn(
-                async move { atv_ui::front::assets::shots(&c, &env).await },
-                move |result| {
-                    Message::FrontArt(Box::new(ArtPiece::Shots(
-                        shot_env,
-                        result.unwrap_or_default(),
-                    )))
-                },
-            );
-        }
-        let painter = front.clone();
-        let progress: Progress = Box::new(move |gpu, text| {
-            status(text);
-            if let Ok(mut f) = painter.try_borrow_mut() {
-                f.state.loading_stage(text);
-                paint_front(gpu, &mut f);
-            }
-        });
         let world = World {
             race,
             weather,
@@ -3087,13 +3180,72 @@ impl App {
             sound,
             appearance: world.appearance,
         };
+        (world, ride)
+    }
+
+    fn start_ride(
+        &mut self,
+        environment: String,
+        quad: u16,
+        rider: u16,
+        race: Option<atv_game::ride::race::Settings>,
+        room: Option<RoomStart>,
+    ) {
+        let (Some(front), Some(content)) = (self.front.clone(), self.content.clone()) else {
+            return;
+        };
+        // Host/Join: the Free Ride Lobby page while the room connects
+        // (multiplayer.js `host`); Free Ride goes straight to the loader.
+        if let Some(room) = room.as_ref().filter(|r| !r.freeride)
+            && self.pending_room.is_none()
+        {
+            let room = room.clone();
+            self.join_room(environment, quad, rider, room);
+            return;
+        }
+        let Some(gpu) = self.gpu.take() else {
+            return;
+        };
+        #[cfg(target_arch = "wasm32")]
+        self.text_inputs.sync(&[], &[], &self.proxy);
+        let (world, ride) = self.ride_setup(&front, quad, rider, race);
+        {
+            let mut f = front.borrow_mut();
+            f.begin_loading(&environment);
+            paint_front(&gpu, &mut f);
+        }
+        // The original loader's action shots for this course.
+        let key = format!("shots:{environment}");
+        if self.requested.insert(key) {
+            let (c, env, shot_env) = (content.clone(), environment.clone(), environment.clone());
+            self.spawn(
+                async move { atv_ui::front::assets::shots(&c, &env).await },
+                move |result| {
+                    Message::FrontArt(Box::new(ArtPiece::Shots(
+                        shot_env,
+                        result.unwrap_or_default(),
+                    )))
+                },
+            );
+        }
+        let painter = front.clone();
+        let progress: Progress = Box::new(move |gpu, text| {
+            status(text);
+            if let Ok(mut f) = painter.try_borrow_mut() {
+                f.state.loading_stage(text);
+                paint_front(gpu, &mut f);
+            }
+        });
         let held = self.pending_room.take();
+        let fresh = std::mem::take(&mut self.pending_fresh);
         let future = async move {
             // A room ride claims its slot first; the room decides the course.
             // Returning from the garage/course picker resumes the held room.
             let (net, environment) = match (held, room) {
                 (Some(mut net), _) => {
-                    net.loaded(&environment);
+                    if !fresh {
+                        net.loaded(&environment);
+                    }
                     (Some(net), environment)
                 }
                 (None, room) => match room {
@@ -3878,6 +4030,8 @@ pub fn run(options: Options) {
         held_room: None,
         held_ride: None,
         pending_room: None,
+        pending_fresh: false,
+        joining: None,
         frame_tasks: Vec::new(),
         #[cfg(target_arch = "wasm32")]
         text_inputs: Default::default(),
@@ -3929,6 +4083,9 @@ pub fn start() {
     // A room link (`?room=` / `?host=1`) rides at once too.
     if let Some(ms) = param("pingMs").and_then(|v| v.parse::<u32>().ok()) {
         multiplayer::PING_MS.store(ms.clamp(250, 15_000), std::sync::atomic::Ordering::Relaxed);
+    }
+    if let Some(ms) = param("joinDelayMs").and_then(|v| v.parse::<u32>().ok()) {
+        multiplayer::JOIN_DELAY_MS.store(ms.min(10_000), std::sync::atomic::Ordering::Relaxed);
     }
     let direct = param("venue").or_else(|| {
         (param("room").is_some() || param("host").is_some_and(|v| v == "1"))

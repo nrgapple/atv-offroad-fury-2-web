@@ -1423,11 +1423,42 @@ outside the window; joins paced 250 ms; one Mac, headless Chromium/Metal,
 - Inspected: `private/reports/devlog-images/rust-mp-full-room-loading.png`; raw
   samples in `private/reports/rust-mp/full-room-10hz.json`.
 
+### Free Ride Lobby page while joining (multiplayer)
+
+- Host Game → Select Track → Ride and Join Game now show the **Free Ride Lobby**
+  page while the room is claimed and connects, as multiplayer.js `host` shows
+  'lobby' before `connect`. The page shows:
+  - the room code (or `--------` while the relay assigns one);
+  - "Connecting…";
+  - Copy invite link and Leave Game;
+  - the course photo and name.
+- After the join, the loader replaces it. Arlington Free Ride still goes straight
+  to the loader, as in the browser.
+- The join now runs before the ride load, with the frontend live: the GPU stays
+  with the frontend until the room has connected. The joined room then loads
+  through the held-room path (`pending_room`), keeping its meet-a-rider arrival.
+- Leave Game, or Back, returns to the Multiplayer page. A connect still in flight
+  is left as soon as it finishes. A failed host or join returns to its form with
+  the error as the notice.
+- Copy invite link copies the room's invite link (`invite_url`, as `Net::invite`)
+  once the code is known.
+- `?joinDelayMs=` (at most 10 s) is a test hook that holds the page before the
+  claim.
+- Observed (`tools/test_engine_multiplayer_menu.mjs`, local relay, host-only):
+  - The host saw the lobby page with its typed code and the share/leave rows,
+    then rode.
+  - A Rust guest's Back on the lobby page returned to Multiplayer with no ride.
+    It then joined and drew both riders (3 players).
+  - `test_engine_multiplayer_room_front.mjs`, `test_engine_freeride.mjs` and
+    `test_engine_front.mjs` pass.
+  - Inspected: `private/reports/devlog-images/rust-mp-menu-lobby.png`.
+- Difference: the page shows "Connecting…" until the ride loads. The browser
+  fills in the room's rider list when the lobby state arrives; here the join hands
+  over to the loader at that point.
+
 Gaps, in planned slice order:
 
-1. The joining "Free Ride Lobby" page and Copy invite link from the frontend are
-   not drawn; rides start at once.
-2. The Realistic train-riding setting, and an arrival's spawn velocity on a
+1. The Realistic train-riding setting, and an arrival's spawn velocity on a
    moving car (the browser adds the car's point velocity).
 3. A phone measurement of a full room; arrival frames are 25-31 ms on this host.
 
