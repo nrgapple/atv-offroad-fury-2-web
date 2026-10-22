@@ -20,6 +20,8 @@ use taffy::prelude::*;
 pub const ROW: u32 = 1000;
 pub const PANEL: u32 = 900;
 pub const CONTENT: u32 = 901;
+/// The Jukebox spectrum's area (the host paints the bars each frame).
+pub const BARS: u32 = 902;
 
 /// The ui_menu frame parts the panel uses.
 #[derive(Clone, Debug, PartialEq, Default)]

@@ -23,6 +23,9 @@ reaches parity; then the JavaScript and its ABI operations are deleted.
 
 ## Migration rule
 
+New work lands in the Rust engine only; the JavaScript game is frozen as the parity
+reference until the switch-over (AGENTS.md "Rust only for new work").
+
 The Rust engine runs beside the live game at `/engine.html` until it matches. A
 subsystem moves when `tools/compare_engine.mjs` shows the same frame from the same
 camera in the JavaScript game, the Rust engine in the browser and the native build.
@@ -1122,8 +1125,15 @@ Ported:
 - An ATV ride on ENV08 installs the cars as moving scene obstacles (op 69). It then
   steps the shared train runtime before every vehicle step with the scene's
   collision heights, republishing each car's collision body (`step_train_scene`).
-  The renderer stops stepping a train the ride drives (`Train::driven`). Motorcycles
-  keep the presentation-only train; the bike scene does not install it yet.
+  The renderer stops stepping a train the ride drives (`Train::driven`).
+- A motorcycle ride does the same with the bike's own scene, as motorcycles.rs
+  does: the scene installs the train bodies and op 24 steps the train after the
+  race step. The content test `crates/atv-game/tests/motorcycle_train.rs` (bike
+  29; `FURY_CONTENT=... cargo test -p atv-game --test motorcycle_train --
+  --ignored`) repeats test_motorcycle_train.mjs's two cases. A broadside hit made
+  4 dynamic contacts and wrecked. A drop onto car 0 stood on the moving train
+  for 73 of 720 steps. Before this change the bike had no train (`train_car`
+  returned none).
 - In a room, every step's train phase follows the relay clock: the browser's
   `synchronize_train`, with gentle phase correction and a primed 16-step resync
   that carries a rider standing on a car along.
@@ -1417,8 +1427,8 @@ Gaps, in planned slice order:
 
 1. The joining "Free Ride Lobby" page and Copy invite link from the frontend are
    not drawn; rides start at once.
-2. Train on a motorcycle ride, the Realistic train-riding setting, and an arrival's
-   spawn velocity on a moving car (the browser adds the car's point velocity).
+2. The Realistic train-riding setting, and an arrival's spawn velocity on a
+   moving car (the browser adds the car's point velocity).
 3. A phone measurement of a full room; arrival frames are 25-31 ms on this host.
 
 ## Commands

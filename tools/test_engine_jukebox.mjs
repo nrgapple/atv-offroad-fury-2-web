@@ -45,6 +45,10 @@ try {
   await click(page, 'song:2');
   await until(page, () => JSON.parse(document.querySelector('#ui-state').textContent).toolbar.menu.music?.playing === 2);
   await until(page, () => JSON.parse(document.documentElement.getAttribute('data-engine-audio')).musicTime > 0.5);
+  // drawBars: the analyser lights the spectrum while the song plays.
+  await until(page, () => JSON.parse(document.querySelector('#ui-state').textContent).toolbar.menu.music?.spectrum > 0);
+  assert.equal((await music(page)).bars, true);
+  if (process.env.ATV_SHOT) await page.screenshot({ path: process.env.ATV_SHOT });
   let saved = await page.evaluate(() => JSON.parse(localStorage.getItem('atv-soundtrack-v1')));
   assert.equal(saved.v, 3); assert.equal(saved.history.at(-1).toLowerCase().includes('.vag'), true);
   // Pause and Play (a transient pause, not Music off).

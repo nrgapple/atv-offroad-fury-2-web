@@ -973,6 +973,7 @@ impl App {
                 "skySmooth": graphics.sky_smooth, "fresnel": graphics.fresnel,
                 "contactShadows": graphics.contact_shadows, "anisotropy": graphics.anisotropy,
                 "dust": graphics.dust, "tireTracks": graphics.tire_tracks.0,
+                "shadowMap": graphics.shadow_map,
                 "wheelReprojection": riding.wheel_reprojection,
                 "hillOrbit": riding.hill_orbit(), "chaseAssist": riding.chase_assist,
                 "crashCameraTight": riding.crash_camera_tight,
@@ -1472,12 +1473,23 @@ impl App {
 
     /// The open menu's music view, and the Jukebox art on its first visit.
     fn update_jukebox(&mut self) {
-        let (Some(ready), Some(overlay)) = (&self.ready, &mut self.overlay) else {
+        let (Some(ready), Some(overlay)) = (&mut self.ready, &mut self.overlay) else {
             return;
         };
         if overlay.menu.is_none() {
             return;
         }
+        // jukebox.js drawBars: the analyser only while a song plays.
+        overlay.spectrum = if overlay.jukebox_open() {
+            ready
+                .riding
+                .as_mut()
+                .and_then(|r| r.sound.as_mut())
+                .and_then(|s| s.spectrum())
+                .map(|bytes| bytes.to_vec())
+        } else {
+            None
+        };
         overlay.music = ready
             .riding
             .as_ref()
