@@ -1060,6 +1060,7 @@ impl App {
             state["shadows"] = serde_json::json!({
                 "contact": self.meter.shadows.0,
                 "map": self.meter.shadows.1,
+                "restLift": ready.scene.rest_lift(),
             });
             let applied = riding.ride.applied();
             state["controls"] = serde_json::json!({
