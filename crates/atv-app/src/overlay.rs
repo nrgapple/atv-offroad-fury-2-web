@@ -1041,6 +1041,8 @@ impl Overlay {
                 "choices": m.rows.choices,
                 "scroll": m.scroll,
                 "notice": m.notice,
+                "labels": m.rows.labels.iter().cloned().collect::<std::collections::BTreeMap<_, _>>(),
+                "musicPage": m.music_page(),
                 "music": self.music.as_ref().map(|v| serde_json::json!({
                     "playing": v.playing_index, "enabled": v.enabled, "paused": v.paused,
                     "position": v.position, "duration": v.duration, "volume": v.volume,

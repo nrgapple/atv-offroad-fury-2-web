@@ -472,6 +472,9 @@ pub struct Sound {
     song: Option<atv_game::audio::music::VagMusic>,
     #[cfg(target_arch = "wasm32")]
     web: Option<Rc<RefCell<WebMusic>>>,
+    /// The original-VAG soundtrack when no stream can play (music.js fallback).
+    #[cfg(target_arch = "wasm32")]
+    vag: VagFallback,
     #[cfg(target_arch = "wasm32")]
     diagnostics: bool,
     pub title: Option<String>,
@@ -491,6 +494,8 @@ pub struct Sound {
     /// Mixer render time per rendered frame (ms), averaged over a second.
     pub mix: f64,
     mix_mark: (f64, u32, web_time::Instant),
+    /// The last Crazy/Gorn crash boom (0.3 s apart) and how many played.
+    boom: (Option<web_time::Instant>, u32),
     /// The Jukebox spectrum's smoothing (native soundtrack).
     #[cfg(not(target_arch = "wasm32"))]
     analyser: atv_game::audio::spectrum::Analyser,
@@ -531,6 +536,10 @@ pub struct Settings {
     pub selection: atv_game::ride::Selection,
     /// A race's lamp, IntOut and crowd samples (`RaceState::samples`).
     pub race_samples: Vec<String>,
+    /// ENV08's train car sounds (`Venue::train_sounds`).
+    pub train_sounds: Vec<atv_core::spatial_audio::Definition>,
+    /// Active Rain weather (the rain loop).
+    pub rain: bool,
 }
 
 impl Sound {
@@ -558,7 +567,22 @@ impl Sound {
             bank.samples.len(),
             bank.decode_ms
         );
-        let ride = RideAudio::new(bank, settings.mode);
+        // Train and rain samples: missing ones leave the ride silent there,
+        // as the browser reports and rides on.
+        let mut world: Vec<String> = settings
+            .train_sounds
+            .iter()
+            .map(|d| d.sample.clone())
+            .collect();
+        if settings.rain {
+            world.push("rain.vag".into());
+        }
+        if let Err(error) = bank.load_samples(&content, &world).await {
+            crate::status(&format!("Train/rain sound: {error}"));
+        }
+        let mut ride = RideAudio::new(bank, settings.mode);
+        ride.train_sounds = settings.train_sounds.clone();
+        ride.rain = settings.rain;
         ride.apply_mode(&mut *output.mixer.lock().map_err(|_| "mixer lock")?);
         let seed = (web_time::SystemTime::now()
             .duration_since(web_time::UNIX_EPOCH)
@@ -580,6 +604,8 @@ impl Sound {
             focused: true,
             #[cfg(not(target_arch = "wasm32"))]
             song: None,
+            #[cfg(target_arch = "wasm32")]
+            vag: VagFallback::default(),
             #[cfg(target_arch = "wasm32")]
             web: if settings.music {
                 activation.web()
@@ -603,6 +629,7 @@ impl Sound {
             remote: Default::default(),
             mix: 0.,
             mix_mark: (0., 0, web_time::Instant::now()),
+            boom: (None, 0),
             #[cfg(not(target_arch = "wasm32"))]
             analyser: Default::default(),
         })
@@ -841,6 +868,37 @@ impl Sound {
         true
     }
 
+    /// GameAudio.crashBoom (Crazy/Gorn crashes): a synthesized boom on the
+    /// SFX bus for an impact of 40 ft/s or more, at most every 0.3 s.
+    pub fn crash_boom(&mut self, severity: f32) {
+        if !self.output.started.get()
+            || self.boom.0.is_some_and(|t| t.elapsed().as_secs_f32() < 0.3)
+        {
+            return;
+        }
+        let Some(pcm) = atv_game::audio::synth::crash_boom(severity, self.ride.bank.rate()) else {
+            return;
+        };
+        let Ok(mut mixer) = self.output.mixer.lock() else {
+            return;
+        };
+        mixer.play(
+            &std::sync::Arc::new(pcm),
+            atv_game::audio::mixer::Looping::Once,
+            [1., 1.],
+            1.,
+            atv_game::audio::mixer::Bus::Sfx,
+            false,
+            "boom",
+        );
+        self.boom = (Some(web_time::Instant::now()), self.boom.1 + 1);
+    }
+
+    /// Crash booms played (diagnostics).
+    pub fn crash_booms(&self) -> u32 {
+        self.boom.1
+    }
+
     /// One race step's sounds: lamp/gate one-shots and crowd cues on a
     /// running output (the browser drops them on a suspended context), and
     /// the race music events.
@@ -1014,6 +1072,15 @@ impl Sound {
                 "musicTitle": self.title,
                 "musicTime": self.web.as_ref().map(|w| w.borrow().element.current_time()),
                 "musicPaused": self.web.as_ref().map(|w| w.borrow().element.paused()),
+                "vagFallback": self.vag.fallback, "musicQueued": mixer.music_queued(),
+                // Event sounds started so far (the sound audit).
+                "events": {
+                    "vocals": self.ride.stats.vocals, "chassis": self.ride.stats.chassis,
+                    "drive": self.ride.stats.drive, "impacts": self.ride.stats.impacts,
+                    "ambient": self.ride.stats.ambient, "soultree": self.ride.stats.soultree,
+                    "train": self.ride.stats.train, "rain": self.ride.stats.rain,
+                    "crashBooms": self.boom.1, "history": self.ride.stats.history,
+                },
             });
             if let Some(root) = web_sys::window()
                 .and_then(|w| w.document())
@@ -1074,6 +1141,23 @@ impl Sound {
         {
             return;
         }
+        if self.vag.fallback {
+            self.vag_fallback(None);
+            return;
+        }
+        // A stream that cannot play (decode or network error) also falls
+        // back, as music.js does for errors other than autoplay denial.
+        if let Some(web) = &self.web
+            && web.borrow().playing
+            && web.borrow().element.error().is_some()
+        {
+            let web = web.borrow();
+            let _ = web.element.pause();
+            drop(web);
+            self.vag.fallback = true;
+            self.vag_fallback(None);
+            return;
+        }
         let Some(catalog) = &mut self.catalog else {
             return;
         };
@@ -1095,6 +1179,8 @@ impl Sound {
         };
         let song = &catalog.library.songs[index];
         let path = atv_game::audio::music::path(song);
+        let song_title = song.title.clone();
+        self.title = Some(format!("{} – {}", song.title, song.artist));
         let Some(url) = self
             .content
             .manifest
@@ -1102,13 +1188,96 @@ impl Sound {
             .and_then(|r| r.stream.as_ref())
             .map(|s| s.url.clone())
         else {
-            self.music_enabled = false;
+            // MusicStream.fallback: no hosted stream, so decode the original
+            // VAG for the rest of the session instead of falling silent.
+            drop(web);
+            self.vag_fallback(Some((path, song_title)));
             return;
         };
-        self.title = Some(format!("{} – {}", song.title, song.artist));
         web.element.set_src(&url);
         web.resume(true);
         web.playing = true;
+    }
+}
+
+/// The browser's original-VAG soundtrack fallback state.
+#[cfg(target_arch = "wasm32")]
+#[derive(Default)]
+struct VagFallback {
+    fallback: bool,
+    song: Rc<RefCell<Option<atv_game::audio::music::VagMusic>>>,
+    busy: Rc<Cell<bool>>,
+    failed: Rc<Cell<bool>>,
+}
+
+#[cfg(target_arch = "wasm32")]
+impl Sound {
+    /// Decodes the soundtrack's VAGs into the mixer's music stream, a song
+    /// at a time about two seconds ahead (the browser's decoder mode). `next`
+    /// names the song already picked; otherwise the next pick follows when
+    /// the current one has played out.
+    fn vag_fallback(&mut self, next: Option<(String, String)>) {
+        self.vag.fallback = true;
+        if self.vag.busy.get() || self.vag.failed.get() {
+            return;
+        }
+        let queued = self.output.mixer.lock().map_or(0., |m| m.music_queued());
+        let finished = self.vag.song.borrow().as_ref().is_none_or(|s| s.finished());
+        let next = match next {
+            Some(next) => Some(next),
+            None if finished && queued <= 0.05 => {
+                let Some(catalog) = &mut self.catalog else {
+                    return;
+                };
+                let Ok(Some(index)) = self.player.pick(catalog) else {
+                    return;
+                };
+                let song = &catalog.library.songs[index];
+                self.title = Some(format!("{} – {}", song.title, song.artist));
+                Some((atv_game::audio::music::path(song), song.title.clone()))
+            }
+            None => None,
+        };
+        let (content, mixer, rate) = (
+            self.content.clone(),
+            self.output.mixer.clone(),
+            self.output.rate,
+        );
+        let (slot, busy, failed) = (
+            self.vag.song.clone(),
+            self.vag.busy.clone(),
+            self.vag.failed.clone(),
+        );
+        busy.set(true);
+        wasm_bindgen_futures::spawn_local(async move {
+            let result: Result<(), String> = async {
+                if let Some((path, title)) = next {
+                    let song =
+                        atv_game::audio::music::VagMusic::open_path(&content, path, title, rate)
+                            .await?;
+                    *slot.borrow_mut() = Some(song);
+                }
+                // The song leaves the slot while it decodes (no borrow across awaits).
+                let taken = slot.borrow_mut().take();
+                if let Some(mut song) = taken {
+                    let pumped = song.pump(&content, &mixer, 2.).await;
+                    *slot.borrow_mut() = Some(song);
+                    pumped?;
+                }
+                Ok(())
+            }
+            .await;
+            if let Err(error) = result {
+                web_sys::console::warn_1(&format!("music fallback: {error}").into());
+                failed.set(true);
+            }
+            busy.set(false);
+        });
+    }
+
+    /// Whether the soundtrack plays from the decoded VAGs (diagnostics).
+    pub fn vag_fallback_active(&self) -> bool {
+        self.vag.fallback
     }
 }
 

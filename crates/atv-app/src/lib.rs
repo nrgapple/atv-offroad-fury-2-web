@@ -522,6 +522,14 @@ async fn prepare(
                     music,
                     selection,
                     race_samples: riding.ride.race().map(|r| r.samples()).unwrap_or_default(),
+                    train_sounds: venue.train_sounds.clone(),
+                    // loadWeather: active Rain weather loops rain.vag.
+                    rain: venue.weather.as_ref().is_some_and(|w| {
+                        w.active
+                            && w.definition
+                                .as_ref()
+                                .is_some_and(|d| d.kind.eq_ignore_ascii_case("rain"))
+                    }),
                 },
             });
         }

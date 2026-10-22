@@ -785,6 +785,16 @@ impl Riding {
         let actor = Actor::of(&self.ride);
         let enabled = self.focused && !self.menu_open;
         self.impact_severity = self.impacts.accept(actor, enabled, self.clock / 1000.);
+        // acceptFrame: the authored boom belongs to Crazy/Gorn crashes.
+        if self.impact_severity >= 40.
+            && self
+                .crashes
+                .as_ref()
+                .is_some_and(|c| c.mode != atv_game::crash::CrashMode::Original)
+            && let Some(sound) = &mut self.sound
+        {
+            sound.crash_boom(self.impact_severity as f32);
+        }
         if let Some(pulse) = self.rumble.accept(
             self.impact_previous,
             &actor,
