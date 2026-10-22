@@ -42,6 +42,7 @@ export const TESTS = {
   'test_engine_alpha_landing.mjs': { group: 'content' },
   'test_engine_settings.mjs': { group: 'content' },
   'test_engine_wake_lock.mjs': { group: 'content' },
+  'test_engine_background_audio.mjs': { group: 'content' },
   'test_engine_jukebox.mjs': { group: 'content' },
   'test_engine_ride_link.mjs': { group: 'content' },
   'test_engine_freeride.mjs': {
