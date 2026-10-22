@@ -186,8 +186,19 @@ impl Gamepads {
             .ok()
             .flatten()
             .is_some_and(|m| m.matches());
-        if coarse && pulse.strength >= 0.3 {
-            return window.navigator().vibrate_with_duration(pulse.duration_ms);
+        // Only where `navigator.vibrate` exists: iOS Safari has none, and
+        // calling the missing binding throws through the frame and freezes
+        // the engine (game.js calls `navigator.vibrate?.()`).
+        if coarse
+            && pulse.strength >= 0.3
+            && let Some(vibrate) =
+                get(&navigator, "vibrate").and_then(|f| f.dyn_into::<js_sys::Function>().ok())
+        {
+            return vibrate
+                .call1(&navigator, &f64::from(pulse.duration_ms).into())
+                .ok()
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
         }
         false
     }

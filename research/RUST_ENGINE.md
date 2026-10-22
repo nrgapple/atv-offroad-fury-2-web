@@ -1433,6 +1433,11 @@ Gaps, in planned slice order:
 
 ## Commands
 
+The browser build's debug strip (frame stats, load and error lines in `#status`) is hidden
+by default: add `?debug=1` to `/engine.html` or press F3 to show it. Tests read its text,
+which stays current while hidden; start-up failures still show. Desktop writes the same
+lines to standard error.
+
 ```sh
 python3 tools/build_engine.py          # browser build into web/dist (part of make web)
 cargo run --release -p atv-app --bin fury -- --content private/reports/hosted-content --venue env01
