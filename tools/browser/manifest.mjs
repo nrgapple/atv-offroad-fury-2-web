@@ -37,10 +37,11 @@ export const TESTS = {
   'test_engine_touch.mjs': { group: 'content' },
   'test_engine_hud.mjs': { group: 'content' },
   'test_engine_pause.mjs': { group: 'content' },
+  'test_engine_alpha.mjs': { group: 'content' },
+  'test_engine_settings.mjs': { group: 'content' },
   'test_engine_wake_lock.mjs': { group: 'content' },
   'test_engine_jukebox.mjs': { group: 'content' },
   'test_engine_ride_link.mjs': { group: 'content' },
-  'test_engine_settings.mjs': { group: 'content' },
   'test_engine_freeride.mjs': {
     group: 'relay',
     reason: 'needs the multiplayer relay at the same origin (shared Free Ride rooms, room WebSocket); run with --url'
@@ -92,6 +93,9 @@ export const TESTS = {
   'test_engine_sleep.mjs': { group: 'content' },
   'test_engine_motorcycle.mjs': { group: 'content' },
   'test_engine_interpolation.mjs': { group: 'content' },
+  'test_engine_wheel_reprojection.mjs': { group: 'content' },
+  'test_engine_cameras.mjs': { group: 'content' },
+  'test_engine_rumble.mjs': { group: 'content' },
   'test_rust_audio.mjs': { group: 'content' },
   'test_rust_audio_activation.mjs': { group: 'content' },
   'test_boundary_launch.mjs': { defaults: ['pins crash mode crazy'], group: 'content' },

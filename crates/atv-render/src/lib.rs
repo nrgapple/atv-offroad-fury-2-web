@@ -312,6 +312,10 @@ pub struct Graphics {
     pub contact_shadows: bool,
     /// Vehicle-only sun shadow map size (High 2048; 0 off).
     pub shadow_map: u16,
+    /// Enhanced/High: draw sunk wheels on the visible ground.
+    pub wheel_reprojection: bool,
+    /// Enhanced/High: ATV dirt buildup through the reveal (`graphics.dirt`).
+    pub dirt: bool,
     /// Tire track ring segments and their life in seconds (Enhanced 600/15,
     /// High 3600/75; 0 off).
     pub tire_tracks: (u16, u16),

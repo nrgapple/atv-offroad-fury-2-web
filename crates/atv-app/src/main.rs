@@ -70,6 +70,7 @@ fn main() {
     let mut graphics = atv_render::Graphics::default();
     let mut graphics_set = false;
     let mut crash = atv_game::crash::CrashMode::Original;
+    let mut camera_choice = (true, false);
     let mut ride = true;
     let mut selection = atv_game::ride::Selection::default();
     let mut appearance = atv_game::ride::gear::Appearance::default();
@@ -131,6 +132,20 @@ fn main() {
                     .next()
                     .and_then(|v| atv_game::crash::CrashMode::parse(&v))
                     .expect("--crash needs original, crazy or gorn")
+            }
+            "--crash-camera" => {
+                camera_choice.0 = match args.next().as_deref() {
+                    Some("tight") => true,
+                    Some("original") => false,
+                    _ => panic!("--crash-camera needs tight or original"),
+                }
+            }
+            "--chase-camera" => {
+                camera_choice.1 = match args.next().as_deref() {
+                    Some("assisted") => true,
+                    Some("original") => false,
+                    _ => panic!("--chase-camera needs original or assisted"),
+                }
             }
             "--ui" => capture_ui = true,
             "--host" => host = true,
@@ -322,6 +337,7 @@ fn main() {
         graphics,
         graphics_set,
         crash,
+        camera_choice,
         capture,
         capture_ui,
         gpu_frames,

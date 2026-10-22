@@ -6,6 +6,7 @@ pub mod ambient;
 pub mod archive;
 pub mod audio;
 pub mod crash;
+pub mod dirt;
 pub mod intro;
 pub mod jukebox;
 pub mod launch;

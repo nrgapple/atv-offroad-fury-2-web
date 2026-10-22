@@ -44,6 +44,10 @@ pub struct Options {
     pub graphics_set: bool,
     /// Ride Effects -> Crashes (Original by default; Crazy/Gorn are authored).
     pub crash: atv_game::crash::CrashMode,
+    /// Crash camera Tight (default) and Chase camera Assisted for rides the
+    /// saved settings do not reach (held parity replays): `crashcam=` /
+    /// `chase=` or storage on the web, `--crash-camera` / `--chase-camera`.
+    pub camera_choice: (bool, bool),
     /// Native parity capture: render once at this size, write PNG and exit.
     #[cfg(not(target_arch = "wasm32"))]
     pub capture: Option<(std::path::PathBuf, u32, u32)>,
@@ -192,6 +196,8 @@ struct Defaults {
 }
 
 struct App {
+    /// Crash camera Tight, Chase camera Assisted (Options::camera_choice).
+    camera_choice: (bool, bool),
     /// Screen Wake Lock while riding (web/wake-lock.js).
     wake_lock: wake::ScreenWake,
     /// The Display → Graphics choice the running ride applied.
@@ -223,6 +229,9 @@ struct App {
     mouse_ui: bool,
     ui_backdrop: Option<[u8; 3]>,
     ui_diagnostics: bool,
+    /// `?ui=0` (parity captures): draw the scene only, as the JavaScript
+    /// canvas captures leave out the DOM toolbar, HUD and keyboard card.
+    hide_ui: bool,
     sound_unlocked: bool,
     activation: Option<sound::Activation>,
     bench: Bench,
@@ -423,6 +432,8 @@ async fn prepare(
         }
         let mut riding = riding::Riding::new(ride, &venue);
         riding.interpolation = graphics.interpolation;
+        riding.wheel_reprojection = graphics.wheel_reprojection;
+        riding.dirt_enabled = graphics.dirt;
         // `?autopilot=1` (parity tooling): the race path driver rides the
         // player before the finish too; traces record its controls.
         if url_flag("autopilot=1")
@@ -715,6 +726,12 @@ impl App {
             ready.riding = None;
             return;
         }
+        // Rumble.pulse: the frame's impacts on the active controller.
+        for pulse in std::mem::take(&mut riding.pulses) {
+            if self.gamepad.rumble(pulse) {
+                riding.rumble.sent(pulse);
+            }
+        }
         // A Pause binding this frame opens the menu in this same frame (the
         // ride then sleeps until input).
         if let Some(overlay) = &mut self.overlay {
@@ -936,15 +953,29 @@ impl App {
                 "crashMode": riding.crashes.as_ref().map(|c| c.mode.name()),
                 "flips": riding.ride.options.flips,
                 "realisticTrain": riding.ride.options.realistic_train,
+                "arcadeFlips": riding.ride.options.arcade_flips,
+                "alphaSlowmo": riding.alpha_slowmo,
+                "alphaBigAirCamera": riding.alpha_big_air_camera,
+                "timeScale": riding.hype.time_scale,
                 "interpolation": riding.interpolation,
                 "skySmooth": graphics.sky_smooth, "fresnel": graphics.fresnel,
                 "contactShadows": graphics.contact_shadows, "anisotropy": graphics.anisotropy,
                 "dust": graphics.dust, "tireTracks": graphics.tire_tracks.0,
+                "wheelReprojection": riding.wheel_reprojection,
+                "hillOrbit": riding.hill_orbit(), "chaseAssist": riding.chase_assist,
+                "crashCameraTight": riding.crash_camera_tight,
+                "vibration": {"enabled": riding.vibration, "pulses": riding.rumble.pulses,
+                    "impacts": riding.impacts.impacts,
+                    "last": riding.rumble.last.map(|p| serde_json::json!({
+                        "strength": p.strength, "duration": p.duration_ms}))},
+                "wheelLift": riding.wheel_lift.get(),
+                "dirtLevel": riding.dirt.level(),
+                "dirtApplied": if riding.dirt_enabled { riding.dirt.amount() } else { 0. },
                 "sfx": mixer.map(|m| m.0), "music": mixer.map(|m| m.1),
             });
             publish_ui_state(&state.to_string());
         }
-        let overlay = &self.overlay;
+        let overlay = self.overlay.as_ref().filter(|_| !self.hide_ui);
         let render_started = Instant::now();
         let mut acquire = 0.;
         match ready.scene.render_with(
@@ -1554,10 +1585,17 @@ impl App {
         }
         let prefs = &overlay.prefs;
         riding.set_speed_rush(&prefs.speed_rush);
+        riding.crash_camera_tight = !prefs.crash_camera_original;
+        riding.chase_assist = prefs.chase_assist;
+        riding.vibration = prefs.vibration;
         riding.ride.options = atv_game::ride::RideOptions {
             flips: prefs.flips,
             realistic_train: prefs.realistic_train,
+            arcade_flips: prefs.alpha("arcade-flips"),
         };
+        // Settings → Alpha presentation (web/hype.js).
+        riding.alpha_slowmo = prefs.alpha("air-slowmo");
+        riding.alpha_big_air_camera = prefs.alpha("big-air-camera");
         let mode = atv_game::crash::CrashMode::parse(&prefs.crash_mode).unwrap_or_default();
         if riding
             .crashes
@@ -1586,6 +1624,8 @@ impl App {
             self.graphics_pref = Some(prefs.graphics.clone());
             let graphics = graphics_preset(prefs.graphics_resolved());
             riding.interpolation = graphics.interpolation;
+            riding.wheel_reprojection = graphics.wheel_reprojection;
+            riding.dirt_enabled = graphics.dirt;
             if let Some(effects) = &mut riding.effects
                 && !riding.ride.is_motorcycle()
             {
@@ -2019,6 +2059,7 @@ impl ApplicationHandler<Message> for App {
                 // A room capture first exchanges poses until other riders show.
                 settle_room(ready);
                 if let Some(riding) = &mut ready.riding {
+                    (riding.crash_camera_tight, riding.chase_assist) = options.camera_choice;
                     let aspect = width as f32 / height as f32;
                     // About a second of held presentation, as the browser
                     // renders before its capture: the speed rush settles.
@@ -2146,6 +2187,12 @@ impl ApplicationHandler<Message> for App {
                     front.borrow_mut().release_gpu();
                 }
                 self.ready = Some(*ready);
+                // Rides the saved settings do not reach (direct and held
+                // replays) still honour the camera and Vibration settings.
+                if let Some(riding) = self.ready.as_mut().and_then(|r| r.riding.as_mut()) {
+                    (riding.crash_camera_tight, riding.chase_assist) = self.camera_choice;
+                    riding.vibration = saved_setting("atv-vibration").as_deref() != Some("off");
+                }
                 self.sync_activity();
                 // Desktop has no autoplay rule: sound starts with the ride.
                 if !cfg!(target_arch = "wasm32") {
@@ -2645,6 +2692,21 @@ impl App {
         self.gpu = Some(gpu);
         self.content = Some(content.clone());
         // Course photos, loader tips and ATV stats load behind the title.
+        // Training ships no TP photo pair: play.html shows the approved
+        // capture of the venue from the site's dev log images.
+        #[cfg(target_arch = "wasm32")]
+        if tracks.iter().any(|t| t.id == "training") {
+            self.spawn(
+                web_image("/devlog-images/training-map-preview.png"),
+                |image| {
+                    Message::FrontArt(Box::new(ArtPiece::Photos(
+                        image
+                            .map(|i| vec![("training".to_string(), i)])
+                            .unwrap_or_default(),
+                    )))
+                },
+            );
+        }
         let c = content.clone();
         self.spawn(
             async move { atv_ui::front::assets::photos(&c, &tracks).await },
@@ -3490,6 +3552,8 @@ pub fn graphics_preset(name: &str) -> Graphics {
             contact_shadows: true,
             shadow_map: 2048,
             tire_tracks: (3600, 75),
+            wheel_reprojection: true,
+            dirt: true,
         },
         "enhanced" => Graphics {
             interpolation: true,
@@ -3500,6 +3564,8 @@ pub fn graphics_preset(name: &str) -> Graphics {
             contact_shadows: true,
             shadow_map: 0,
             tire_tracks: (600, 15),
+            wheel_reprojection: true,
+            dirt: true,
         },
         _ => Graphics::default(),
     }
@@ -3510,6 +3576,24 @@ fn trace_all() -> bool {
 }
 
 /// A `name=value` pair in the page URL (always false on desktop).
+/// A saved browser setting (localStorage); None natively, where the
+/// frontend's settings file applies through `apply_preferences`.
+fn saved_setting(key: &str) -> Option<String> {
+    #[cfg(target_arch = "wasm32")]
+    {
+        web_sys::window()?
+            .local_storage()
+            .ok()??
+            .get_item(key)
+            .ok()?
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let _ = key;
+        None
+    }
+}
+
 fn url_flag(pair: &str) -> bool {
     #[cfg(target_arch = "wasm32")]
     {
@@ -3684,6 +3768,7 @@ pub fn run(options: Options) {
         .build()
         .expect("event loop");
     let app = App {
+        camera_choice: options.camera_choice,
         wake_lock: Default::default(),
         graphics_pref: None,
         proxy: event_loop.create_proxy(),
@@ -3708,6 +3793,7 @@ pub fn run(options: Options) {
         mouse_ui: false,
         ui_backdrop: None,
         ui_diagnostics: ui_diagnostics_enabled(),
+        hide_ui: url_flag("ui=0"),
         sound_unlocked: false,
         activation,
         bench: Bench {
@@ -3807,6 +3893,21 @@ pub fn start() {
             })
             .and_then(|v| atv_game::crash::CrashMode::parse(&v))
             .unwrap_or_default(),
+        camera_choice: {
+            let choice = |key: &str, storage: &str| {
+                param(key).or_else(|| {
+                    web_sys::window()?
+                        .local_storage()
+                        .ok()??
+                        .get_item(storage)
+                        .ok()?
+                })
+            };
+            (
+                choice("crashcam", "atv-crash-camera").as_deref() != Some("original"),
+                choice("chase", "atv-chase-camera").as_deref() == Some("assisted"),
+            )
+        },
         ride: param("free").is_none(),
         // `gear=1.0.2.0.0.0.0&paint=3` (captures and tests).
         appearance: atv_game::ride::gear::saved_appearance(&serde_json::json!({"appearance": {
@@ -3929,4 +4030,44 @@ fn fresh_seed() -> u64 {
         .duration_since(web_time::UNIX_EPOCH)
         .map_or(1, |d| u64::from(d.subsec_nanos()) ^ d.as_secs())
         & 0x7fff_ffff
+}
+
+/// A same-origin image decoded by the browser into RGBA (None when it is
+/// missing, e.g. a package without the dev log images).
+#[cfg(target_arch = "wasm32")]
+async fn web_image(url: &str) -> Option<atv_ui::front::pixels::Rgba> {
+    use wasm_bindgen::JsCast;
+    let document = web_sys::window()?.document()?;
+    let image = web_sys::HtmlImageElement::new().ok()?;
+    image.set_src(url);
+    wasm_bindgen_futures::JsFuture::from(image.decode())
+        .await
+        .ok()?;
+    let (width, height) = (image.natural_width(), image.natural_height());
+    if width == 0 || height == 0 {
+        return None;
+    }
+    let canvas = document
+        .create_element("canvas")
+        .ok()?
+        .dyn_into::<web_sys::HtmlCanvasElement>()
+        .ok()?;
+    canvas.set_width(width);
+    canvas.set_height(height);
+    let context = canvas
+        .get_context("2d")
+        .ok()??
+        .dyn_into::<web_sys::CanvasRenderingContext2d>()
+        .ok()?;
+    context
+        .draw_image_with_html_image_element(&image, 0., 0.)
+        .ok()?;
+    let data = context
+        .get_image_data(0., 0., f64::from(width), f64::from(height))
+        .ok()?;
+    Some(atv_ui::front::pixels::Rgba::new(
+        width,
+        height,
+        data.data().0,
+    ))
 }

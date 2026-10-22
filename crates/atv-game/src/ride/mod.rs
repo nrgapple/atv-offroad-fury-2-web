@@ -11,6 +11,8 @@ mod bike;
 pub mod bindings;
 pub mod cpu;
 pub mod gear;
+pub mod hype;
+pub mod impact;
 pub(crate) mod load;
 pub mod present;
 pub mod race;
@@ -89,6 +91,9 @@ pub struct Controls {
     pub generation: u64,
     /// Motorcycle clutch held (web/bindings.js `clutch`; ATVs ignore it).
     pub clutch: bool,
+    /// Alpha Arcade flips: the keyboard/controller steering that spins the
+    /// quad in the air (game.js `input.arcade_spin`).
+    pub arcade_spin: Option<f32>,
 }
 
 /// Camera mode of the latest camera step.
@@ -250,6 +255,9 @@ fn vehicle_platform(vehicle: &Vehicle, train: &crate::train::Train) -> Option<(u
 pub struct RideOptions {
     pub flips: bool,
     pub realistic_train: bool,
+    /// Alpha Arcade flips (authored analog air rotation; replaces the
+    /// Unleashed gestures while on).
+    pub arcade_flips: bool,
 }
 
 /// World pose of the player's quad and rider for drawing.
@@ -435,6 +443,18 @@ impl Ride {
         match &self.mount {
             Mount::Quad { rig, .. } => Some(rig.animator.recipe()),
             Mount::Bike(_) => None,
+        }
+    }
+
+    /// The ATV wreck rig's latest sampled rider impact (`rider_wreck`
+    /// `sampled_impact_delta`, ft/s); zero otherwise.
+    pub fn rider_impact_delta(&self) -> [f32; 3] {
+        match &self.mount {
+            Mount::Quad { rig, .. } => rig
+                .wreck
+                .frame()
+                .map_or([0.; 3], |w| w.sampled_impact_delta),
+            Mount::Bike(_) => [0.; 3],
         }
     }
 
@@ -850,9 +870,10 @@ impl Ride {
         }
         vehicle.set_stunt_landing_safe(safe);
         vehicle.set_realistic_train(self.options.realistic_train);
-        vehicle.set_flips(self.options.flips)?;
-        vehicle.set_arcade_flips(false)?;
-        vehicle.set_arcade_spin(None)?;
+        let arcade = self.options.arcade_flips;
+        vehicle.set_flips(self.options.flips && !arcade)?;
+        vehicle.set_arcade_flips(arcade)?;
+        vehicle.set_arcade_spin(controls.arcade_spin.filter(|_| arcade))?;
         if controls.stunt_modifiers > 7 {
             return Err("invalid stunt modifiers".into());
         }
@@ -1267,6 +1288,23 @@ impl Ride {
         ))
     }
 
+    /// What the ATV dirt rule reads from the latest step; None on a motorcycle.
+    pub fn dirt_sample(&self) -> Result<Option<crate::dirt::Sample>> {
+        if self.is_motorcycle() {
+            return Ok(None);
+        }
+        let input = self.wheel_effect_input()?;
+        Ok(Some(crate::dirt::Sample {
+            centers: input.centers,
+            radii: self.wheel_radii(),
+            water_heights: input.water_heights.map(|h| h.unwrap_or(-256.)),
+            grounded: input.grounded,
+            surfaces: input.surfaces,
+            mud: input.mud,
+            speed: self.frame.speed_magnitude,
+        }))
+    }
+
     /// Wheel radii (presentation effects place dust at the contact patch).
     pub fn wheel_radii(&self) -> [f32; 4] {
         self.wheel_effect_state()
@@ -1324,6 +1362,83 @@ impl Ride {
             placement_epoch: u64::from(self.placement),
             mud_heights: state.mud_heights.map(Some),
         })
+    }
+
+    /// graphics.js `wheelReprojection` + game.js `reprojectWheels`
+    /// (Enhanced/High): wheels sunk into the visible ground (`height`) after
+    /// integration are redrawn on it, the compression clamped to
+    /// MAX_WHEEL_LIFT; only when the drawn linkage is the rig's own pose.
+    /// Presentation only; None keeps the simulated pose. Also returns the
+    /// largest added compression (game.js `wheelLift`).
+    pub fn reprojected_quad(
+        &self,
+        height: &dyn Fn(f32, f32) -> f32,
+    ) -> Option<(Vec<[f32; 16]>, f32)> {
+        const MAX_WHEEL_LIFT: f32 = 0.5;
+        let Mount::Quad { rig, vehicle } = &self.mount else {
+            return None;
+        };
+        let frame = &self.frame;
+        if frame.wreck.phase != Phase::Riding {
+            return None;
+        }
+        let matrices = match vehicle.linkage_matrices() {
+            Some(m) => m.to_vec(),
+            None => rig
+                .quad_pose
+                .sample(
+                    frame.visual_steering_angle,
+                    frame.wheel_angles,
+                    frame.wheel_compression,
+                )
+                .ok()?,
+        };
+        let world = vehicle_world(frame);
+        let centers = rig
+            .quad_pose
+            .wheel_positions(&matrices)
+            .ok()?
+            .map(|p| atv_core::obstacle::transform_point(&world, p));
+        let radii = vehicle.wheel_effect_state().radii;
+        let [_, x, _, z] = frame.orientation;
+        let up = (1. - 2. * (x * x + z * z)).max(0.5);
+        let mut changed = false;
+        let mut compression = frame.wheel_compression;
+        for (i, c) in compression.iter_mut().enumerate() {
+            let depth = height(centers[i][0], centers[i][2]) - (centers[i][1] - radii[i]);
+            if depth > 0.01 {
+                changed = true;
+                *c += (depth / up).min(MAX_WHEEL_LIFT);
+            }
+        }
+        if !changed {
+            return None;
+        }
+        let base = rig
+            .quad_pose
+            .sample(
+                frame.visual_steering_angle,
+                frame.wheel_angles,
+                frame.wheel_compression,
+            )
+            .ok()?;
+        let same = base.len() == matrices.len()
+            && base
+                .iter()
+                .zip(&matrices)
+                .all(|(a, b)| a.iter().zip(b).all(|(p, q)| (p - q).abs() <= 1e-3));
+        if !same {
+            return None;
+        }
+        let lift = compression
+            .iter()
+            .zip(frame.wheel_compression)
+            .fold(0f32, |m, (c, b)| m.max(c - b));
+        let quad = rig
+            .quad_pose
+            .sample(frame.visual_steering_angle, frame.wheel_angles, compression)
+            .ok()?;
+        Some((quad, lift))
     }
 
     /// Vehicle linkage and rider skeleton for the latest frame

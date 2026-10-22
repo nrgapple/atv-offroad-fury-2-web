@@ -26,7 +26,15 @@ impl RunScript for Script {
         let mut records = Vec::new();
         for controls in self.steps() {
             riding.run(controls, 1)?;
-            records.push(record(&riding.ride, riding.ride.steps()));
+            let mut entry = record(&riding.ride, riding.ride.steps());
+            // Enhanced/High: the wheel lift this delivered state drew.
+            if riding.wheel_reprojection {
+                entry["wheelLift"] = riding.reprojected_lift().into();
+            }
+            if riding.dirt_enabled {
+                entry["dirtLevel"] = riding.dirt.level().into();
+            }
+            records.push(entry);
         }
         Ok(records)
     }

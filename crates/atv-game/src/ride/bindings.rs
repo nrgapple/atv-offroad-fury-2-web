@@ -884,6 +884,9 @@ impl Bindings {
             | ((v(Action::StuntL1) > 0.5) as u8) << 2;
         let [stunt_x, stunt_y] = self.keyboard_trick_axes(keys, now).unwrap_or([x, y]);
         let mut controls = Controls {
+            // Keys and controllers spin with steering under Alpha Arcade
+            // flips (touch keeps its own axis).
+            arcade_spin: Some(x.clamp(-1., 1.)),
             throttle: pd(Action::Throttle),
             brake,
             steer: x,
