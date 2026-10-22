@@ -555,7 +555,7 @@ impl SceneRenderer {
     fn step_world(&mut self) {
         self.scenery.step();
         if let Some((_, shared)) = &self.train {
-            // An ATV ride steps the shared clock with its physics (collision
+            // A ride (ATV or bike) steps the shared clock with its physics (collision
             // heights, moving obstacles); otherwise the presentation does.
             let driven = shared.borrow().driven;
             if !driven
