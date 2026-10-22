@@ -57,7 +57,10 @@ class LocalReleaseTests(unittest.TestCase):
                     uploader.require_deployed_release(COMMIT)
 
     def test_delayed_actions_cannot_rollback_or_overlap_local_owner(self):
-        self.assertFalse(decision('old', 'new', 'live', 'ahead')[0])
+        # An older main build that still advances production deploys; the
+        # newer build follows it through the serialized deploy job.
+        self.assertTrue(decision('old', 'new', 'live', 'ahead')[0])
+        self.assertFalse(decision('old', 'new', 'new', 'behind')[0])
         self.assertFalse(decision('main', 'main', 'live', 'ahead', True)[0])
         self.assertFalse(decision('main', 'main', 'main', 'identical')[0])
         self.assertFalse(decision('old', 'old', 'new', 'behind')[0])

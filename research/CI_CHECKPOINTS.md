@@ -35,9 +35,12 @@ dev log on `https://furyremastered.com/` (the same Worker serves the workers.dev
 address). The smoke group serves an empty content directory and uses pinned Playwright 1.58.2 Chromium/WebKit. Content, native
 and relay browser groups stay local; see `BROWSER_TESTS.md`.
 
-A newer push cancels the superseded `web` build on the same branch, `main`
-included, since each main build deploys the whole application. The deploy job has
-its own `deploy-production` concurrency group: deploys run one at a time, are never
+A newer push cancels the superseded `web` build on a PR branch. On `main` the running
+build finishes (GitHub keeps only the newest pending one) and deploys if it advances
+production, even when newer merges are still building; requiring each build to be
+main's tip starved production while merges landed every few minutes (2026-10-21:
+production stayed on #259 through six later merges). The deploy job has its own
+`deploy-production` concurrency group: deploys run one at a time, are never
 interrupted, and an older build reaching it after a newer deploy is rejected.
 `main` requires the `web` check, so PRs use `gh pr merge --auto` and merge when it
 passes; branches need not be up to date with `main` first. The trusted main build saves the Rust compilation

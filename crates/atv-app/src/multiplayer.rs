@@ -96,7 +96,8 @@ pub struct Tick {
     /// Remote models to load.
     pub loads: Vec<Key>,
     /// Place the player here (arrival beside a rider).
-    pub place: Option<([f32; 3], f32)>,
+    /// Origin, heading and starting velocity.
+    pub place: Option<([f32; 3], f32, [f32; 3])>,
     /// The room moved to this course: reload the ride there.
     pub course: Option<String>,
     /// Test hook: stand on the train's flatbed now.
@@ -481,7 +482,7 @@ impl Net {
             {
                 self.resume_at = None;
                 self.meet = None;
-                tick.place = Some(spot);
+                tick.place = Some((spot.0, spot.1, [0.; 3]));
                 self.session.ghost(now);
             }
             if !self.ready_sent
@@ -796,7 +797,11 @@ impl Net {
 
     /// Players → Spawn beside a rider (atv-web `spawn`): a clear spot next
     /// to that rider while it rides on the ground.
-    pub fn spawn_beside(&mut self, peer: u8, ride: &Ride) -> Result<([f32; 3], f32), String> {
+    pub fn spawn_beside(
+        &mut self,
+        peer: u8,
+        ride: &Ride,
+    ) -> Result<([f32; 3], f32, [f32; 3]), String> {
         let now = now_ms(self.clock);
         let cars = |car| ride.train_car(car);
         if self.session.peer == Some(peer) || !self.session.others().any(|p| p.id == peer) {

@@ -44,9 +44,15 @@ fn surface(
         .max_by(f32::total_cmp))
 }
 
-/// A clear spot beside `target` (a fresh, Riding snapshot) and its heading,
-/// avoiding the riders at `others`.
-pub fn beside(ride: &Ride, target: &Snapshot, others: &[[f32; 3]]) -> Result<([f32; 3], f32)> {
+/// A clear spot beside `target` (a fresh, Riding snapshot), its heading and
+/// starting velocity, avoiding the riders at `others`. On a train car the
+/// arrival moves with the car: its point velocity at the spot, as the browser
+/// sets it.
+pub fn beside(
+    ride: &Ride,
+    target: &Snapshot,
+    others: &[[f32; 3]],
+) -> Result<([f32; 3], f32, [f32; 3])> {
     let m = target.atv.to_column_major();
     let scene = ride.scene_collision();
     let objects = || {
@@ -110,7 +116,12 @@ pub fn beside(ride: &Ride, target: &Snapshot, others: &[[f32; 3]]) -> Result<([f
         if blocked {
             continue;
         }
-        return Ok((origin, m[8].atan2_d(m[10])));
+        let velocity = target
+            .platform
+            .as_ref()
+            .and_then(|p| ride.train_point_velocity(p.car as usize, origin))
+            .unwrap_or([0.; 3]);
+        return Ok((origin, m[8].atan2_d(m[10]), velocity));
     }
     Err("No clear nearby spawn found. Ask the rider to move into an open area.".into())
 }
