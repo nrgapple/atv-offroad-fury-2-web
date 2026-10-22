@@ -54,6 +54,10 @@ pub enum Event {
     },
 }
 
+/// frontend.js refuses rooms on a motorcycle with this message.
+pub const MOTORCYCLE_ROOM: &str =
+    "Choose an ATV for multiplayer. Motorcycles are available in Single Player.";
+
 /// A text field on the Host/Join forms (`ui_menu::TextInput`).
 #[derive(Clone, Debug, PartialEq)]
 pub struct Field {
@@ -448,8 +452,21 @@ impl Frontend {
         self.reveal = true;
     }
 
+    /// Multiplayer garages (from its menus, or Change ATV and Rider over a
+    /// room) list ATVs only (frontend.js `onlineGarage`).
+    pub fn online_garage(&self) -> bool {
+        matches!(
+            self.garage_return.as_str(),
+            "multiplayer" | "create-lobby" | "join-lobby"
+        ) || self.room == Some("garage")
+    }
+
     fn step_quad(&mut self, direction: i32) {
-        let n = i32::from(VEHICLES);
+        let n = if self.online_garage() {
+            26
+        } else {
+            i32::from(VEHICLES)
+        };
         self.quad_id = ((i32::from(self.quad_id) - 1 + direction).rem_euclid(n) + 1) as u16;
         self.reveal = true;
     }
@@ -472,11 +489,11 @@ impl Frontend {
             return Some(self.room_ride(Some(track.id)));
         }
         if self.hosting {
-            // Rooms ride ATVs: a motorcycle choice rides ATV01.
+            // Select Track refused a motorcycle, as frontend.js does.
             return Some(Event::Host {
                 environment: track.id,
                 code: Some(self.create_code.clone()).filter(|c| !c.is_empty()),
-                quad: if self.quad_id >= 27 { 1 } else { self.quad_id },
+                quad: self.quad_id,
                 rider: self.rider_id,
                 name: self.room_name(),
             });
@@ -561,6 +578,14 @@ impl Frontend {
                 self.focus = None;
                 self.show(action, view);
             }
+            "hosttrack" if self.page == "create-lobby" && self.quad_id >= 27 => {
+                self.notice = Some(MOTORCYCLE_ROOM.into());
+                return None;
+            }
+            "join" if self.quad_id >= 27 => {
+                self.notice = Some(MOTORCYCLE_ROOM.into());
+                return None;
+            }
             "hosttrack" => {
                 // Host Game → Select Track; its Ride creates the room.
                 if !self.create_code.is_empty() && self.create_code.len() != 8 {
@@ -586,7 +611,7 @@ impl Frontend {
                         .tracks
                         .get(self.track)
                         .map_or("env01".into(), |t| t.id.clone()),
-                    quad: if self.quad_id >= 27 { 1 } else { self.quad_id },
+                    quad: self.quad_id,
                     rider: self.rider_id,
                     name: self.room_name(),
                 });
@@ -916,7 +941,12 @@ impl Frontend {
             }
             _ if (VEHICLE..VEHICLE + 100).contains(&id) => {
                 let quad = (id - VEHICLE) as u16;
-                if self.catalog.iter().any(|v| v.id == quad) {
+                let online = self.online_garage();
+                if self
+                    .catalog
+                    .iter()
+                    .any(|v| v.id == quad && !(online && v.motorcycle))
+                {
                     self.quad_id = quad;
                     self.save(settings);
                     self.refresh(view);
@@ -1019,7 +1049,12 @@ impl Frontend {
                 .map_or(format!("Vehicle {}", self.quad_id), |v| v.label.clone()),
             rider: self.rider_id,
             catalog: if self.page == "garage" {
-                self.catalog.clone()
+                let online = self.online_garage();
+                self.catalog
+                    .iter()
+                    .filter(|v| !online || !v.motorcycle)
+                    .cloned()
+                    .collect()
             } else {
                 Vec::new()
             },
@@ -1113,6 +1148,48 @@ mod tests {
             front.key("Enter", &view, &mut settings),
             Some(Event::Join { ref code, .. }) if code == "ABCD1234"
         ));
+    }
+
+    #[test]
+    fn rooms_refuse_motorcycles_and_online_garages_list_atvs() {
+        let view = view(1280., 720.);
+        let mut settings = Settings::memory();
+        settings.set(SELECTION_KEY, r#"{"quadId":29,"riderId":0}"#);
+        let mut front = Frontend::new(tracks(), &settings, true);
+        front.show("create-lobby", &view);
+        assert_eq!(front.run("hosttrack", &view, &mut settings), None);
+        assert_eq!(front.page, "create-lobby");
+        assert_eq!(front.notice.as_deref(), Some(MOTORCYCLE_ROOM));
+        front.notice = None;
+        front.show("join-lobby", &view);
+        front.set_field("room-code", "abcd1234");
+        assert_eq!(front.run("join", &view, &mut settings), None);
+        assert_eq!(front.notice.as_deref(), Some(MOTORCYCLE_ROOM));
+        // The garage opened from the Multiplayer menus lists ATVs only, and
+        // stepping wraps within ATVs 1-26.
+        let catalog = |front: &Frontend| {
+            front
+                .screen(None, false, None, &|_| None, None, (None, None), 0.)
+                .catalog
+        };
+        front.show("multiplayer", &view);
+        front.run("garage", &view, &mut settings);
+        assert_eq!(front.page, "garage");
+        assert!(front.online_garage());
+        assert!(!catalog(&front).is_empty());
+        assert!(catalog(&front).iter().all(|v| !v.motorcycle));
+        front.click(VEHICLE + 30, &view, &mut settings);
+        assert_eq!(front.quad_id, 29);
+        front.click(VEHICLE + 3, &view, &mut settings);
+        assert_eq!(front.quad_id, 3);
+        front.quad_id = 26;
+        front.step_quad(1);
+        assert_eq!(front.quad_id, 1);
+        // Single Player's garage keeps the motorcycles.
+        front.show("single", &view);
+        front.run("garage", &view, &mut settings);
+        assert!(!front.online_garage());
+        assert!(catalog(&front).iter().any(|v| v.motorcycle));
     }
 
     #[test]
