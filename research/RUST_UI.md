@@ -665,3 +665,22 @@ the output restarts and the song reloads at its position. Evidence:
 contexts suspended, the song unloaded, no session entry; on return the same song
 plays on). Real iOS is not exercised by the test.
 
+## Frontend music (2026-10-22)
+
+The Rust frontend now plays the original menu tune, as play.html does
+(audio.js `loadMenuMusic`/`playMenuMusic`). `atv_game::audio::menu::load_tune` reads
+`UIMUSIC.AUD` from PAGE07.RES (section `UIMusic`, `NumTracks` 4, `Track1`-`Track4`),
+decodes the first tune's left/right VAGs from AUDIO.RES into stereo PCM and loops it
+on its VAG markers on the music bus at the saved music volume. It starts after the
+first gesture, plays while the frontend owns the screen and the page is focused with
+Music on, and stops when a ride takes over or focus is lost.
+
+ROM evidence (USA v2.00): the routine at 00255b50 builds the frontend object's UI sound list
+(+0x160) from `audio\UI\uimusic.aud`: `UIMusic`, `NumTracks`, then each `Track%d`
+added as a looping sample (flags 0xc1) from `audio\audio`; the routine at 00254ae0 frees the
+list when the frontend closes. The routine that picks which tune plays, and when it
+changes, is not recovered, so the Rust frontend follows the browser game and loops
+the first. Evidence: `tools/test_engine_menu_music.mjs` (host Chromium: silent before
+a gesture, then the tune loaded and the output peaking at 0.24; Music off: silent);
+`test_engine_front` passes (ride and Quit to Main Menu).
+
