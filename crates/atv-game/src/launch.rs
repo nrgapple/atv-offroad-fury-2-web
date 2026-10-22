@@ -199,13 +199,23 @@ pub struct RideLink<'a> {
     pub player: &'a str,
     /// A race: laps, CPU riders, difficulty (2 Expert), EATDIRT, BRINGIT.
     pub race: Option<(u32, usize, u32, bool, bool)>,
+    /// A multiplayer invite's room code (`mode=multiplayer&action=join`).
+    pub room: Option<&'a str>,
 }
 
 /// launch.js `buildRideUrl`: `page` (e.g. `https://host/engine.html`) with
 /// the single-player setup's query, in the browser's key order.
 pub fn ride_url(page: &str, link: &RideLink) -> String {
     let mut pairs: Vec<(&str, String)> = vec![
-        ("mode", "single".into()),
+        (
+            "mode",
+            if link.room.is_some() {
+                "multiplayer"
+            } else {
+                "single"
+            }
+            .into(),
+        ),
         (
             "activity",
             if link.race.is_some() {
@@ -219,6 +229,10 @@ pub fn ride_url(page: &str, link: &RideLink) -> String {
         ("quad", link.quad.to_string()),
         ("rider", link.rider.to_string()),
     ];
+    if let Some(room) = link.room {
+        pairs.push(("action", "join".into()));
+        pairs.push(("room", room.into()));
+    }
     if !link.player.is_empty() {
         pairs.push(("player", link.player.into()));
     }
@@ -539,6 +553,7 @@ mod tests {
                 rider: 1,
                 player: "Ada L",
                 race: None,
+                room: None,
             },
         );
         assert_eq!(
@@ -553,12 +568,35 @@ mod tests {
                 rider: 0,
                 player: "Rider",
                 race: Some((2, 4, 2, true, false)),
+                room: None,
             },
         );
         assert!(race.ends_with("activity=race&map=nat01&quad=1&rider=0&player=Rider&laps=2&cpu=4&difficulty=expert&cheats=eatdirt&play=1"));
         let parsed = parse_launch(&race[race.find('?').unwrap()..], &[]);
         assert!(parsed.errors.is_empty(), "{:?}", parsed.errors);
         assert_eq!(parsed.race.difficulty, 2);
+        // An invite (buildRideUrl with mode multiplayer, without the player).
+        let invite = ride_url(
+            "https://furyremastered.com/play.html",
+            &RideLink {
+                map: "env08",
+                quad: 12,
+                rider: 1,
+                player: "",
+                race: None,
+                room: Some("ABCD1234"),
+            },
+        );
+        assert_eq!(
+            invite,
+            "https://furyremastered.com/play.html?mode=multiplayer&activity=freestyle&map=env08&quad=12&rider=1&action=join&room=ABCD1234&play=1"
+        );
+        let parsed = parse_launch(&invite[invite.find('?').unwrap()..], &[]);
+        assert!(parsed.errors.is_empty(), "{:?}", parsed.errors);
+        assert_eq!(
+            (parsed.mode, parsed.action, parsed.room.as_str()),
+            ("multiplayer", Some("join"), "ABCD1234")
+        );
     }
 
     #[test]

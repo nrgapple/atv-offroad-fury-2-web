@@ -1597,16 +1597,11 @@ impl App {
         }
     }
 
-    /// Pause → Copy ride link (frontend.js `rideUrl` + launch.js
-    /// `copyRideUrl`): this page with the ride's setup; the clipboard, or
-    /// the link itself on the notice line when the copy is refused.
-    fn copy_ride_link(&mut self) {
-        let (Some(ready), Some(overlay)) = (&self.ready, &mut self.overlay) else {
-            return;
-        };
-        let Some(riding) = &ready.riding else {
-            return;
-        };
+    /// This ride's link (frontend.js `rideUrl`): this page with the ride's
+    /// setup, or the room's invite, and the notice a copy shows.
+    fn ride_link(&self) -> Option<(String, &'static str)> {
+        let (ready, overlay) = (self.ready.as_ref()?, self.overlay.as_ref()?);
+        let riding = ready.riding.as_ref()?;
         let selection = riding.ride.selection();
         let player = overlay
             .settings
@@ -1629,24 +1624,48 @@ impl App {
         #[cfg(not(target_arch = "wasm32"))]
         let page = "https://furyremastered.com/engine.html".to_string();
         // In a room the row is Copy invite link (buildRideUrl's invite).
-        let invite = ready.net.as_ref().map(|net| net.invite());
-        let copied_text = if invite.is_some() {
-            "Invite link copied."
-        } else {
-            "Ride link copied."
+        if let Some(net) = &ready.net {
+            return Some((
+                net.invite(selection.quad, selection.rider),
+                "Invite link copied.",
+            ));
+        }
+        let url = atv_game::launch::ride_url(
+            &page,
+            &atv_game::launch::RideLink {
+                map: &ready.venue.environment,
+                quad: selection.quad,
+                rider: selection.rider,
+                player: &player,
+                race,
+                room: None,
+            },
+        );
+        Some((url, "Ride link copied."))
+    }
+
+    /// After a WebGL context loss engine.js reopens this ride's link
+    /// (`fury-resume` in session storage); menus clear it.
+    fn remember_ride(&self) {
+        #[cfg(target_arch = "wasm32")]
+        if let Some(storage) = web_sys::window().and_then(|w| w.session_storage().ok().flatten()) {
+            let _ = match self.ride_link() {
+                Some((url, _)) => storage.set_item("fury-resume", &url),
+                None => storage.remove_item("fury-resume"),
+            };
+        }
+    }
+
+    /// Pause → Copy ride link (frontend.js `rideUrl` + launch.js
+    /// `copyRideUrl`): the clipboard, or the link itself on the notice line
+    /// when the copy is refused.
+    fn copy_ride_link(&mut self) {
+        let Some((url, copied_text)) = self.ride_link() else {
+            return;
         };
-        let url = invite.unwrap_or_else(|| {
-            atv_game::launch::ride_url(
-                &page,
-                &atv_game::launch::RideLink {
-                    map: &ready.venue.environment,
-                    quad: selection.quad,
-                    rider: selection.rider,
-                    player: &player,
-                    race,
-                },
-            )
-        });
+        let Some(overlay) = &mut self.overlay else {
+            return;
+        };
         let Some(menu) = &mut overlay.menu else {
             return;
         };
@@ -2340,11 +2359,16 @@ impl ApplicationHandler<Message> for App {
             )
             .await?;
             if let Some(net) = &net {
+                let selection = ready
+                    .riding
+                    .as_ref()
+                    .map(|r| r.ride.selection())
+                    .unwrap_or_default();
                 status(&format!(
                     "Multiplayer room {} ({} riding). Invite: {}",
                     net.code(),
                     net.session.lobby.as_ref().map_or(1, |l| l.players.len()),
-                    net.invite()
+                    net.invite(selection.quad, selection.rider)
                 ));
             }
             if net.is_some()
@@ -2563,6 +2587,7 @@ impl ApplicationHandler<Message> for App {
                     window.request_redraw();
                 }
                 self.apply_preferences();
+                self.remember_ride();
             }
             Message::Failed(error) => {
                 status(&error);
@@ -3156,7 +3181,7 @@ impl App {
             return;
         }
         if let Some(page) = atv_game::launch::menu_shortcut(&start.search) {
-            // The Rust engine has no race setup page yet: Single Player.
+            // Without the race setup page (gap 1), Single Player.
             f.state
                 .show(if page == "race" { "single" } else { page }, &view);
             return;
@@ -3172,11 +3197,11 @@ impl App {
             return;
         }
         let mut errors = setup.errors.clone();
-        if setup.mode == "multiplayer" {
-            errors.push("Multiplayer is not available in the Rust engine yet.".into());
-        }
-        if setup.activity == "race" && setup.quad_id >= 27 {
-            errors.push("Races on a motorcycle are not ported to the Rust engine yet.".into());
+        // frontend.js refuses motorcycles online (Free Ride falls back).
+        if setup.mode == "multiplayer" && setup.quad_id >= 27 {
+            errors.push(
+                "Choose an ATV for multiplayer. Motorcycles are available in Single Player.".into(),
+            );
         }
         if !errors.is_empty() {
             f.state.show("main", &view);
@@ -3187,6 +3212,51 @@ impl App {
         f.state.rider_id = setup.rider_id;
         if let Some(index) = f.state.tracks.iter().position(|t| t.id == setup.map) {
             f.state.track = index;
+        }
+        // openLaunch: a multiplayer link opens Create or Join Lobby with its
+        // code and name (the saved name unless the link names one) and, with
+        // play=1, hosts or joins at once; a join reopens an ended room on the
+        // link's map.
+        if setup.mode == "multiplayer" {
+            let create = setup.action == Some("create");
+            if setup.player_name != "Rider" || f.state.player_name.is_empty() {
+                f.state.player_name = setup.player_name.clone();
+            }
+            if create {
+                f.state.create_code = setup.room.clone();
+            } else {
+                f.state.room_code = setup.room.clone();
+            }
+            f.state
+                .show(if create { "create-lobby" } else { "join-lobby" }, &view);
+            if !setup.play {
+                return;
+            }
+            let name = f.state.player_name.clone();
+            {
+                let f = &mut *f;
+                f.state.save(&mut f.settings);
+            }
+            drop(f);
+            use atv_ui::front::controller::Event;
+            self.front_event(if create {
+                Event::Host {
+                    environment: setup.map,
+                    code: (!setup.room.is_empty()).then_some(setup.room),
+                    quad: setup.quad_id,
+                    rider: setup.rider_id,
+                    name,
+                }
+            } else {
+                Event::Join {
+                    code: setup.room,
+                    environment: setup.map,
+                    quad: setup.quad_id,
+                    rider: setup.rider_id,
+                    name,
+                }
+            });
+            return;
         }
         let race = setup.activity == "race";
         f.state.show(if race { "single" } else { "tracks" }, &view);
@@ -3204,6 +3274,9 @@ impl App {
                 laps: setup.race.laps,
                 cpu: setup.race.cpu as usize,
                 difficulty: setup.race.difficulty,
+                // The original EATDIRT and BRINGIT cheats (cheats=).
+                aggressive: setup.race.aggressive,
+                all_out: setup.race.all_out,
                 // A new roster draw per load, as the browser draws one.
                 seed: fresh_seed(),
                 ..defaults
@@ -3456,7 +3529,13 @@ impl App {
             .tracks
             .get(f.state.track)
             .map_or("env01".to_string(), |t| t.id.clone());
-        let url = multiplayer::invite_url(&relay, &environment, &code);
+        let url = multiplayer::invite_url(
+            &relay,
+            &environment,
+            f.state.quad_id,
+            f.state.rider_id,
+            &code,
+        );
         f.state.notice = Some(url.clone());
         #[cfg(target_arch = "wasm32")]
         if let Some(clipboard) = web_sys::window().map(|w| w.navigator().clipboard()) {
@@ -3825,6 +3904,7 @@ impl App {
         self.usage.ended();
         self.overlay = None;
         self.gpu = Some(gpu);
+        self.remember_ride();
         if let Some(page) = page {
             front.borrow_mut().resume(page);
         }
@@ -4598,10 +4678,14 @@ pub fn start() {
     if let Some(ms) = param("joinDelayMs").and_then(|v| v.parse::<u32>().ok()) {
         multiplayer::JOIN_DELAY_MS.store(ms.min(10_000), std::sync::atomic::Ordering::Relaxed);
     }
-    let direct = param("venue").or_else(|| {
-        (param("room").is_some() || param("host").is_some_and(|v| v == "1"))
-            .then(|| "env01".to_string())
-    });
+    // A bare `?room=` / `?host=1` rides at once (tests); a shared invite
+    // (`mode`, `action` or `lobby`) opens through the frontend's lobby forms.
+    let invite = ["mode", "action", "lobby"]
+        .iter()
+        .any(|k| param(k).is_some());
+    let direct_room =
+        !invite && (param("room").is_some() || param("host").is_some_and(|v| v == "1"));
+    let direct = param("venue").or_else(|| direct_room.then(|| "env01".to_string()));
     let venue = direct
         .clone()
         .filter(|id| atv_game::launch::environments().contains(id))
@@ -4700,20 +4784,18 @@ pub fn start() {
         relay: None,
         // `?host=1` hosts a room (`room=` an optional custom code) and
         // `?room=CODE` joins one, on this page's relay.
-        room: (param("host").is_some_and(|v| v == "1") || param("room").is_some()).then(|| {
-            RoomStart {
-                relay: web_sys::window()
-                    .and_then(|w| w.location().origin().ok())
-                    .unwrap_or_default(),
-                code: param("room"),
-                host: param("host").is_some_and(|v| v == "1"),
-                name: param("name")
-                    .and_then(|v| js_sys_decode(&v))
-                    .unwrap_or_else(|| "Rider".into()),
-                drop_after: param("dropAfter").and_then(|v| v.parse().ok()),
-                train_place: param("trainPlace").and_then(|v| v.parse().ok()),
-                freeride: false,
-            }
+        room: direct_room.then(|| RoomStart {
+            relay: web_sys::window()
+                .and_then(|w| w.location().origin().ok())
+                .unwrap_or_default(),
+            code: param("room"),
+            host: param("host").is_some_and(|v| v == "1"),
+            name: param("name")
+                .and_then(|v| js_sys_decode(&v))
+                .unwrap_or_else(|| "Rider".into()),
+            drop_after: param("dropAfter").and_then(|v| v.parse().ok()),
+            train_place: param("trainPlace").and_then(|v| v.parse().ok()),
+            freeride: false,
         }),
         // `script=storage` reads a long parity script from localStorage
         // `furyScript` (URLs are bounded).
