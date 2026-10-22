@@ -268,7 +268,12 @@ impl VehicleShared {
                 module: &shader,
                 entry_point: Some("fs"),
                 compilation_options: Default::default(),
-                targets: &[Some(gpu.config.format.into())],
+                // GS (Cs-Cd)*As+Cd for blended materials; opaque ones write As 1.
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: gpu.config.format,
+                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
             }),
             multiview_mask: None,
             cache: None,
@@ -398,8 +403,10 @@ impl VehiclePass {
                         .or_insert_with(|| cached(&format!("{name}#mud"), image))
                         .clone()
                 });
+                // x: textured (1) plus GS source-alpha blending (2).
+                let blend = view.is_some() && texture.is_some_and(|t| t.blend);
                 let flags = [
-                    view.is_some() as u8 as f32,
+                    (view.is_some() as u8 + 2 * blend as u8) as f32,
                     texture.is_none_or(|t| t.fog) as u8 as f32,
                     mud.is_some() as u8 as f32,
                     // The paint recolours quad body materials, never the rider.

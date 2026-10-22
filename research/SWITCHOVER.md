@@ -1,0 +1,354 @@
+# Switch-over readiness: JavaScript game → Rust engine
+
+Audit of 2026-10-21 against `origin/main`. It covers every JavaScript game module that
+will be deleted when `play.html` starts the Rust engine (`engine.html` today).
+
+Each row is a user-visible behaviour or URL parameter of the JavaScript game, with
+its status in the Rust engine:
+
+- **Ported**: present and wired.
+- **Partial**: present but incomplete, with what is missing.
+- **Missing**: absent.
+- **Not needed**: replaced by another Rust mechanism, or JS-only plumbing.
+- **In progress**: owned by another agent; not listed as a gap.
+
+Statuses were checked in the Rust code, not only in RUST_ENGINE.md. "Unverified"
+marks rows that were not confirmed either way.
+
+Nothing has been switched or deleted. `play.html`'s PWA, offline and analytics
+modules (`install.js`, `offline.js`, `sw.js`, `analytics.js`, `landing.js`) are not
+on the deletion list. The gaps below are about wiring them to the Rust page.
+
+## Blocking gaps
+
+These would regress players at switch-over. Highest impact first.
+
+1. **No race from the menus.** Single Player has no Race row or race setup page
+   (course tabs, laps, CPU count, difficulty, Start). Two settings hide it: `race`
+   is in `UNSUPPORTED` (atv-ui/src/front/controller.rs) and `race_available: false`.
+   - Races start only from links.
+   - The manifest's "Single Race" shortcut (`?menu=race`) lands on Single Player.
+   - A race link with `play=0` cannot show its setup.
+2. **iPhone silent switch.** The Rust web build never sets
+   `navigator.audioSession.type`, so with the Ring/Silent switch on, iPhones play no
+   game sound. The JavaScript game played sound by default. The Settings → Extras
+   "Silent switch" row is also hidden, because `silent_mode` is never filled.
+3. **PWA shell and offline.** engine.html has none of:
+   - the manifest link, icons, apple-mobile meta tags or theme-color;
+   - the install banner or the iOS "Add to Home Screen" help (install.js);
+   - service worker registration and offline precache (offline.js, sw.js);
+   - the iOS standalone viewport fix and launch screens.
+
+   sw.js precaches only play.html and index.html. Whether it would pick up
+   `atv_app_bg.wasm` is unverified. The Rust page needs these modules and an
+   updated precache list before it replaces play.html.
+4. **Multiplayer links.**
+   - `mode=multiplayer` links without `room=` fail with a stale error, "Multiplayer
+     is not available in the Rust engine yet" (atv-app/src/lib.rs `open_launch`).
+     This covers the `lobby=` alias and `action=create`/`host`.
+   - `room=` invites skip the frontend and join as "Rider". They ignore `player=`
+     and the saved name (only `name=` is read), and `play=0`.
+   - An ended room reopens on env01 instead of the link's `map=` (unverified).
+   - Copy invite link always writes `quad=1&rider=0` (JS writes the rider's own),
+     and hard-codes `/play.html`.
+5. **WebGL context loss.** After a GPU reset (common on iOS backgrounding or memory
+   pressure) the Rust page stays dead. atv-render only reconfigures a `Lost`
+   surface. The JavaScript game rebuilds and shows "Restoring graphics…".
+6. **Rider Gear page.** Gear and quad paint cannot be edited (`gear` is in
+   `UNSUPPORTED`). Saved gear still dresses the ride, but the garage previews show
+   stock gear and paint.
+7. **Sound mode at ride start.** The saved Sound mode is ignored when a ride starts.
+   The ride uses `?sound=` and defaults to Original, while the JavaScript default is
+   Enhanced. Changing it mid-ride works.
+8. **No adaptive render resolution.** JS caps device pixel ratio at 1.5 and steps to
+   1.0 on slow frames (`RenderScale`). Rust renders at the full physical size. This
+   is a likely frame-rate regression on high-DPR phones; not measured.
+9. **Analytics.** None of the five events are sent: `session_start`, `ride_start`,
+   `ride_failed`, `ride_time`, `race_finish`. Play is unaffected, but usage data
+   stops at switch-over.
+10. **Missing sounds.**
+    - ENV08 train spatial sounds: the logic is only in atv-core `spatial_audio`,
+      which only the JS worker uses.
+    - The rain loop (`rain.vag`) while Rain weather is active.
+    - The Crazy/Gorn crash boom: `impact_severity` drives only rumble.
+    - Frontend menu music (UIMUSIC): menus are silent. This may belong to the
+      main-menu jukebox port.
+11. **Audio page song picker.** Settings → Audio has no song rows, and its
+    Previous/Next buttons do nothing (no `musicprev`/`musicnext` handler). The
+    pause-menu Jukebox works.
+12. **Race links.**
+    - `cheats=eatdirt,bringit` are dropped.
+    - Motorcycle race links are refused with a stale error, although motorcycle
+      races landed in #215.
+13. **Race intro skip** works only from the keyboard. JS also skips on a tap or a
+    controller button.
+14. **Smaller regressions.**
+    - Controller pinning (`padselect` does nothing): it matters when an idle
+      virtual pad steals Auto.
+    - The Fullscreen row shows even where the Fullscreen API is missing (iPhone).
+    - CPU racers and remote riders get no contact shadows and cast no High
+      shadow-map shadows.
+    - No buzz when a touch flip arms.
+    - No menu page transitions.
+    - Non-standard pads get standard glyphs.
+    - Ride prefetch is serial: no parallel chunk fetch (load-time effect
+      unmeasured).
+    - Web soundtrack falls back to silence (not VAG decoding) when a stream is
+      missing.
+
+In progress elsewhere, not counted as gaps: the diagnostics overlay (F3) and the
+main-menu Jukebox.
+
+## Can be dropped
+
+- **workbench.html with app.js, controls.js, input.js and style.css.** This is the
+  developer disc explorer and controls tester, not part of the game.
+  tools/test_browser.mjs and tools/test_music.mjs open workbench.html and need
+  retargeting or retiring. tools/package_release.py lists these files.
+- **worker.js and atv_web.wasm** (crates/atv-web, built by tools/build_web.py).
+  This is the JS host's decoder and simulation worker; Rust runs everything in
+  atv_app. Retire it together with workbench.
+- **`?source=disc` and the hidden `#disc` input.** This local ISO/.tr2 path is
+  unused, and hosted content replaces it.
+- **Hidden play.html `#fullscreen`/`#reset` buttons and `#help` text.** Replaced by
+  the Settings Fullscreen row, the Reset binding and the keyboard card.
+- **`window.atvTerrainStatus`.** Replaced by `?uiDiagnostics=1` → `#ui-state` and
+  `window.furyMultiplayer`. Drop it only after migrating the browser tests that
+  read it (about 113 tool files).
+- **`window.atvParityView` and the JS side of tools/compare_engine.mjs.** This is
+  JS-versus-Rust parity tooling.
+- **race.js DOM fallback strip** (direction, WRONG WAY, mini radar, digit
+  countdown). The JS hides it whenever the native race HUD exists, and Rust always
+  draws that HUD.
+- **WebGL/Canvas2D render code** (ModelView, HUD draw lists, minimap Canvas2D,
+  `trimDark`, `shadowGlState`, `observedSize`). Replaced by wgpu.
+- **The water grid's Uint16 vertex cap.** Rust deliberately keeps the native row
+  count (#219).
+- **audio.js `updateStadium`.** Dead code: `loadStadium` always empties the list.
+- **`snapshot()` hooks** in audio.js, music.js and quad-sounds.js. Test-only; Rust
+  has `report()`.
+- **content.js lazy music-chunk retention.** Superseded by the Rust 40 MiB LRU.
+- **`atv-last-disconnect` session record.** Debug-only; can come with the
+  diagnostics overlay.
+- **Pre-v3 soundtrack `enabled:false` migration.** A one-off fix for old saves.
+  Rust reads `enabled` without the version check; optional.
+- **Keep:** index.html and landing.js forward old bookmarks to play.html, and stay.
+
+## Per file
+
+### Entry points: play.html, index.html, launch.js
+
+| Behaviour / parameter | Rust | Where | Notes |
+|---|---|---|---|
+| index.html → landing.js forwards query/hash to play.html | Not needed | — | Keep as is |
+| `parseLaunch` aliases: `map`/`environment`, `quad`/`vehicle`/`atv`, `rider`, `player`/`name`, `room`/`lobby`, `play`/`drive`, `cheats`/`cheat`, `mode`, `activity`, `action`, `laps`, `cpu`, `difficulty` | Partial | atv-game/src/launch.rs `parse_launch` (#210) | Reached only without `room=`/`host=`/`venue=`. Gaps: blocking 4 and 12 |
+| `activity=freestyle` link → course select, rides with `play=1` | Ported | atv-app/src/lib.rs `open_launch` | |
+| `activity=race` link | Partial | lib.rs `open_launch` | Starts the race. `play=0` lands on Single Player; motorcycles and cheats as in blocking 12 |
+| `mode=multiplayer` + `action=create`/`host`, `lobby=` | Missing | lib.rs:2821 | Stale error |
+| `room=CODE` invite | Partial | lib.rs `start()` direct path | Blocking 4 |
+| `?menu=freeride` / `?menu=race` (manifest shortcuts) | Partial | launch.rs `menu_shortcut` | `race` → Single Player |
+| `?source=disc` | Missing | — | Can be dropped |
+| Copy ride link (`buildRideUrl`/`copyRideUrl`) | Ported | launch.rs `ride_url`, lib.rs `copy_ride_link` (#231) | Uses the current page path |
+| Invite link | Partial | multiplayer.rs `invite_url` (#224, #268) | `quad=1&rider=0`, `/play.html` |
+| Manifest, icons, apple meta, theme-color | Missing | engine.html | Blocking 3 |
+| Install banner, iOS help dialog, standalone viewport, launch screens (install.js) | Missing | — | Blocking 3 |
+| Service worker and offline shell (offline.js, sw.js) | Missing | — | Blocking 3 |
+| Rust-only dev params | — | lib.rs `start()` | `venue, front, camera, weather, steps, graphics, crash, crashcam, chase, free, gear, paint, uibackdrop, sound, music, profile, autodrive, race=1, seed, host=1, name, dropAfter, trainPlace, script, pingMs, joinDelayMs, uiDiagnostics, ui=0, autopilot, presentTrace, traceAll, debug` |
+
+### analytics.js (kept) and its callers in game.js
+
+| Event / behaviour | Rust | Notes |
+|---|---|---|
+| `session_start` (entry: link or menu) | Missing | Blocking 9 |
+| `ride_start` (mode, activity, map, vehicle, quad, laps, cpu, players, load seconds) | Missing | |
+| `ride_failed` | Missing | |
+| `ride_time` (visible unpaused seconds, flushed on hide/pagehide/menu) | Missing | |
+| `race_finish` (place, field, seconds) | Missing | |
+| Opt-outs (webdriver, DNT, GPC, non-https/local) and device context | Missing | Comes with whichever bridge sends the events |
+
+### game.js
+
+| Behaviour / parameter | Rust | Where | Notes |
+|---|---|---|---|
+| Hosted-content ride load | Ported | lib.rs `prepare`, atv-game/src/ride/load.rs | |
+| Toolbar Pause/Camera (+ Keys) | Ported | atv-ui/src/hud/toolbar.rs (#191, #196) | |
+| Reset ATV; race reset to last track point | Ported | ride/mod.rs `reset`, riding.rs | |
+| Fullscreen | Ported | lib.rs `Event::Fullscreen` (#202) | Settings row |
+| Keyboard driving, bindings, mouse-drag orbit | Ported | ride/bindings.rs, riding.rs | |
+| Race intro skip | Partial | ride/race.rs `skip_intro` | Keyboard only (blocking 13) |
+| Pause on blur/hidden/menu; rooms keep simulating | Ported | lib.rs `sync_activity` | |
+| bfcache pagehide/pageshow | Ported | lib.rs `resumed`, sound.rs (#191, #262) | |
+| WebGL context-loss rebuild | Missing | — | Blocking 5 |
+| Adaptive render resolution | Missing | — | Blocking 8 |
+| Wake lock while riding | Ported | atv-app/src/wake.rs (#239) | |
+| Impact and wreck rumble | Ported | gamepad.rs, ride/impact.rs (#250) | |
+| Graphics presets (anisotropy, sky, interpolation, shadows, tracks, dust, fresnel) | Ported | lib.rs `graphics_preset` (#183, #197, #200, #217) | |
+| Wheel re-projection | Ported | ride/present.rs (#245) | |
+| Dirt buildup and water wash | Ported | atv-game/src/dirt.rs (#248) | |
+| Keyboard help card | Ported | overlay.rs, hud/help.rs (#196) | |
+| Status/loading line | Ported | `#status`, front `loading_stage` | |
+| Static free camera | Ported (dev) | lib.rs `?free` | |
+| `?source=disc`, `#disc` | Missing | — | Can be dropped |
+| Diagnostics overlay (F3) | In progress | — | engine.js uses F3 for the debug strip; reconcile |
+| `window.atvTerrainStatus`, `window.atvParityView` | Not needed | `#ui-state`, `furyMultiplayer` | Test hooks |
+
+### app.js, worker.js, controls.js, input.js
+
+| Behaviour | Rust | Notes |
+|---|---|---|
+| Workbench disc explorer and controls tester (app.js, controls.js, input.js) | Not needed | Dev tool |
+| atv_web.wasm worker (worker.js) | Not needed | Rust runs in atv_app |
+
+### content.js
+
+| Behaviour | Rust | Where | Notes |
+|---|---|---|---|
+| Manifest version/build-hash check | Ported | atv-content | |
+| Per-chunk SHA-256, chunked records | Ported | atv-content `chunk` (#252) | Yields every 512 KiB |
+| Archive directory reads, block inflate | Ported | atv-game/src/archive.rs | |
+| Parallel ride prefetch with fetch priority | Missing | — | Serial; unmeasured |
+| Soundtrack `.m4a` streams | Ported | atv-content `MediaStream`, sound.rs (#191) | |
+| Lazy music-chunk retention | Not needed | Rust LRU | |
+
+### wake-lock.js, graphics.js, alpha.js
+
+| Behaviour | Rust | Where | Notes |
+|---|---|---|---|
+| Wake lock: hold while riding, release in menus, re-acquire | Ported | wake.rs (#239) | |
+| Presets Auto/Original/Enhanced/High (`atv-graphics`) | Ported | lib.rs, menu/prefs.rs (#183, #202) | |
+| `detectGraphicsTier` | Ported | lib.rs `detect_graphics_tier` (#228) | No `saveData` probe |
+| Vibration setting and rumble (pad, else `navigator.vibrate`) | Ported | prefs.rs, gamepad.rs (#202, #250) | |
+| Dirt zones | Ported | dirt.rs (#248) | |
+| Settings → Alpha toggles (`atv-alpha`) | Ported | prefs.rs `ALPHA_FEATURES` (#237) | |
+
+### hype.js, hype-gl.js, speed-rush.js, motorcycle-presentation.js
+
+| Behaviour | Rust | Where | Notes |
+|---|---|---|---|
+| Big-air detection, apex slow-mo, big-air camera, landing dip | Ported | ride/hype.rs (#237) | Disabled in rooms: unverified |
+| Speed/air muffle, wind | Ported | audio/hype.rs (#255) | |
+| Heavy mud zones | Ported | dirt.rs (#251) | |
+| Landing burst; air dark blur | Ported | atv-render burst.rs, air_blur.rs (#251, #253) | |
+| Speed rush: curve, FOV kick, taps, stencil, lines, vignette; reduced-motion default | Ported | atv-render speed_rush.rs (#204, #228) | |
+| Motorcycle and Enhanced/High ATV interpolation | Ported | ride/present.rs (#217) | |
+| Interpolation stretch under Alpha slow-mo | Unverified | — | |
+
+### frontend.js and menu-screens.js
+
+| Behaviour | Rust | Where | Notes |
+|---|---|---|---|
+| Title, main menu, Free Ride "N riding" count, Dev log (web) | Ported | atv-ui/src/front (#210) | |
+| Main-menu Jukebox | In progress | — | |
+| Single Player → Race setup page | Missing | `UNSUPPORTED` | Blocking 1 |
+| Freestyle course select (tabs, photos, hero, keys, LB/RB) | Ported | front/mod.rs, controller.rs | |
+| Garage (46 vehicles, rider, stats, 3D previews, ATV-only online) | Ported | front, app/front.rs (#254) | Previews lack gear/paint |
+| Rider Gear page | Missing | `UNSUPPORTED` | Blocking 6 |
+| Host/Join forms, validation, motorcycle refusal | Ported | front/controller.rs (#241, #254) | |
+| Free Ride Lobby page while connecting | Ported | #268 | Shows "Connecting…"; the rider list is pending |
+| Loading screen (shots, tips, staged bar) | Ported | controller.rs `loading_stage` | |
+| Pause menu (Resume, Reset, Players/Spawn, Change ATV, Select Track, Settings, Jukebox, Copy link, Quit/Leave) | Ported | menu/controller.rs (#202, #238, #242, #256) | Change ATV and Select Track are hidden on frontend-less room links |
+| Settings pages and toggles (Display, Extras, Alpha, Race overlays, Minimap, Controls, Controller, Bindings) | Ported | menu/controller.rs, prefs.rs (#202) | Applied live |
+| Extras → Diagnostics | In progress | — | |
+| Display → Fullscreen | Partial | lib.rs | Always shown |
+| Extras → Silent switch | Missing | — | Blocking 2 |
+| Audio page song list and paging | Partial | menu/controller.rs | Blocking 11 |
+| Controller Settings → pin a controller | Partial | `padselect` no-op | Blocking 14 |
+| Binding capture, presets, reset | Ported | menu/controller.rs | |
+| Page slide transitions | Missing | — | Cosmetic |
+| `atv-player-selection` persistence | Ported | controller.rs `save` | |
+
+### hud.js, minimap.js, keyboard-help.js, race.js
+
+| Behaviour | Rust | Where | Notes |
+|---|---|---|---|
+| Speed/preload meter, stunt text | Ported | hud/meter.rs (#196) | |
+| Start lamps; race HUD (lap time, lap, score, place, best/total/lead, history, signs, radar) | Ported | hud/race.rs (#223) | |
+| Race overlay settings | Ported | prefs.rs | |
+| GPS minimap and all its settings; tap toggles orientation; peer dots | Ported | hud/minimap.rs, overlay.rs (#196, #236) | |
+| Keyboard card (live bindings, H, first ride 15 s, never on touch) | Ported | hud/help.rs, overlay.rs | |
+| Race fade-in; results panel; Restart/Quit/Hide | Ported | overlay.rs, hud/results.rs (#225) | |
+| DOM fallback race strip | Not needed | — | Hidden whenever the native HUD exists |
+
+### touch.js, bindings.js, gamepads.js, pad-glyphs.js
+
+| Behaviour | Rust | Where | Notes |
+|---|---|---|---|
+| One-finger compass, trick wheel, two-finger layout, flips, arcade spin | Ported | atv-ui/src/touch (#191) | |
+| Coaching, idle hints, sensitivity, one-handed | Ported | touch/mod.rs | |
+| Flip-armed `vibrate(12)` | Missing | — | Minor |
+| 17 actions, defaults, chords, migration, presets, trick grace (`atv2-gameplay-bindings-v1`) | Ported | ride/bindings.rs (#182) | |
+| Storage-failure notice | Unverified | — | |
+| Pad Auto selection | Partial | app/gamepad.rs (gilrs) | No resting-axis baseline |
+| Pin a pad by name | Missing | — | Blocking 14 |
+| Tuning sliders, deadzone (`atv2-controller-v1`) | Ported | bindings.rs `Tuning` | |
+| Pads with more than 17 buttons or 4 axes | Partial | gamepad.rs | Standard set only |
+| Glyphs and controller summary | Ported | menu/glyphs.rs (#230) | |
+| Non-standard pads as "Button N / Axis N" | Partial | — | Always standard |
+
+### multiplayer.js
+
+| Behaviour | Rust | Where | Notes |
+|---|---|---|---|
+| Host (custom code, 409/429 messages), join, reopen ended room, "Game is full!" | Ported | atv-app/src/multiplayer.rs `claim` (#224, #241) | |
+| Arlington Free Ride (429/503) | Ported | multiplayer.rs (#229) | |
+| Reserved FREERDnn codes: refusal / redirect to Free Ride | Unverified | — | |
+| Slot-key reconnect, 25 s window, backoff | Ported | multiplayer.rs (#234) | |
+| Meet a rider on arrival; Spawn beside (car velocity on trains) | Ported | multiplayer.rs, spawn.rs (#227, #238, #264) | |
+| Change ATV in place (kept present behind the garage), host Select Track | Ported | lib.rs (#242, #256) | |
+| Copy invite link | Partial | `invite_url` | Blocking 4 |
+| Pose send, pings, remote models (frame-spread), remote engine audio | Ported | multiplayer.rs, sound.rs (#224, #233, #252) | |
+| Name tags, peer dots | Ported | hud/peers.rs (#236) | |
+| Shared train clock | Ported | ride/mod.rs (#232) | |
+| `atv-last-disconnect` record | Missing | — | Debug-only |
+
+### audio.js, music.js, jukebox.js, quad-sounds.js, audio-enhance.js
+
+| Behaviour | Rust | Where | Notes |
+|---|---|---|---|
+| Sample bank, VAG decode, loops; engine selection, idle | Ported | atv-game/src/audio/bank.rs, mixer.rs, ride.rs (#191) | |
+| Enhanced crossfade and echo / Original | Ported | ride.rs, mixer.rs | |
+| Sound mode setting | Partial | lib.rs | Blocking 7 |
+| SFX/music volume, music on/off | Ported | sound.rs `set_volumes` | |
+| Silent switch (`audioSession`) | Missing | — | Blocking 2 |
+| Gesture unlock | Ported | sound.rs | |
+| Motorcycle bank; rider vocals; body and chassis impacts; terrain loops; water splash | Ported | ride.rs, bank.rs | |
+| Venue ambient, Soultree loops, crowd cue | Ported | ride.rs, audio/race.rs (#222) | |
+| Race lamp/GO/gate one-shots, IntOut stingers, soundtrack hold/fade | Ported | race.rs, sound.rs (#222) | |
+| ENV08 train sounds | Missing | — | Blocking 10 |
+| Rain loop | Missing | — | Blocking 10 |
+| Crash boom (Crazy/Gorn) | Missing | — | Blocking 10 |
+| Alpha landing thump, muffle, wind | Ported | audio/synth.rs, hype.rs (#251, #255) | |
+| Remote engines and impacts | Ported | audio/remote.rs (#233) | |
+| Frontend menu music (UIMUSIC) | Missing | front.rs | Blocking 10; may belong to the main-menu port |
+| Suspend on blur/hidden; no Media Session | Ported | sound.rs (#262) | |
+| Soundtrack: catalog, shuffle, history (`atv-soundtrack-v1`), AAC stream, park/resume, muffle, spectrum | Ported | audio/music.rs, sound.rs | |
+| Soundtrack VAG fallback on the web | Missing | sound.rs | Blocking 14 |
+| Pause → Jukebox (list, transport, seek, volume, PAGE14 art, spectrum) | Ported | menu/jukebox.rs (#235) | |
+| Main-menu Jukebox | In progress | — | |
+
+### render-support.js, water.js, weather.js, fog.js, scenery-materials.js, train.js
+
+| Behaviour | Rust | Where | Notes |
+|---|---|---|---|
+| Frustum culling | Ported | atv-render/src/cull.rs (#183) | |
+| Portrait chase, assisted chase, cinematic pre-race, tight crash camera | Ported | ride/view.rs, riding.rs (#203, #249) | |
+| Gorn severing, quad paint shader | Ported | crash_effects.rs, vehicle.wgsl (#207, #220) | |
+| `RenderScale` adaptive DPR | Missing | — | Blocking 8 |
+| Water grid, normals, reflection, fog; Fresnel on Enhanced/High | Ported | atv-render/src/water.rs (#183, #219, #228) | |
+| Weather selection; snow ring | Ported | venue.rs, snow.rs (#187) | |
+| Rain visuals | Unverified | — | Drawn as a scenery model by game.js |
+| GS fog | Ported | shaders `native_fog_coverage` (#179) | |
+| Multi-pass scenery materials | Ported | atv-game/src/materials.rs | |
+| ENV08 train cars and wheels | Ported | atv-render/src/train.rs (#183); bike rides #259 | |
+
+### wheel-effects.js, tire-tracks.js, shadow-map.js, vehicle-shadows.js, ambient-effects.js, ambient-streams.js, lingering-dust.js
+
+| Behaviour | Rust | Where | Notes |
+|---|---|---|---|
+| Dust/chunk/spray and wet births; motorcycle MX atlas | Ported | atv-render wheel_effects.rs (#197) | |
+| Gorn blood | Ported | blood.rs (#207) | |
+| Tire tracks Enhanced/High, mud zones | Ported | tire_tracks.rs (#201) | |
+| High sun shadow map | Partial | shadows.rs (#200) | Player only (blocking 14) |
+| Contact shadow blobs | Partial | shadows.rs | Player only (blocking 14) |
+| TOY effects (smoke, fire); type-11 fountains | Ported | atv-render ambient.rs (#186) | |
+| Lingering dust Enhanced/High | Ported | lingering_dust.rs (#197) | |

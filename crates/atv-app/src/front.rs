@@ -78,6 +78,8 @@ pub struct Front {
     image_view: (f32, f32),
     started: web_time::Instant,
     pub prepare_ms: f64,
+    /// The diagnostics overlay's lines (empty while Off).
+    pub diagnostics: Vec<String>,
     /// `prepare_ms` split into artwork, layout and upload.
     split_ms: [f64; 3],
     /// Vehicle (0) and garage rider (1) previews.
@@ -158,6 +160,7 @@ impl Front {
             image_view: (0., 0.),
             started: web_time::Instant::now(),
             prepare_ms: 0.,
+            diagnostics: Vec::new(),
             split_ms: [0.; 3],
             previews: [None, None],
             turning: None,
@@ -200,6 +203,16 @@ impl Front {
         self.images.clear();
         self.recent.clear();
         self.uploaded = DisplayList::default();
+    }
+
+    /// Settings → Diagnostics as saved by the menu row.
+    pub fn diagnostics_pref(&self) -> &str {
+        &self.prefs.diagnostics
+    }
+
+    /// F3 changed the mode: the menu row shows it.
+    pub fn set_diagnostics_pref(&mut self, mode: &str) {
+        self.prefs.diagnostics = mode.into();
     }
 
     /// Settings → Audio: the soundtrack (and menu tune) on, and its volume.
@@ -784,6 +797,15 @@ impl Front {
         }
         if self.menu.is_some() {
             self.prepare_menu(device, queue);
+        }
+        if !self.diagnostics.is_empty() {
+            atv_ui::diagnostics::paint(
+                &mut self.list,
+                &mut self.fonts,
+                view.width,
+                view.height,
+                &self.diagnostics,
+            );
         }
         let layout_ms = started.elapsed().as_secs_f64() * 1000. - art_ms;
         let upload_size = (width, height, view.scale);
