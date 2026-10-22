@@ -26,6 +26,12 @@ pub struct Preferences {
     pub sound_mode: String,
     pub sfx_volume: f32,
     pub silent: String,
+    /// The browser has `navigator.audioSession` (iOS/iPadOS Safari 16.4+), so
+    /// Settings → Extras shows the Silent switch row. Set by the host; not saved.
+    pub audio_session: bool,
+    /// The host can go fullscreen (`document.fullscreenEnabled`; desktop
+    /// windows always can). Set by the host; not saved.
+    pub fullscreen: bool,
     pub music_enabled: bool,
     pub music_volume: f32,
     pub overlays_off: Vec<String>,
@@ -89,6 +95,8 @@ impl Preferences {
                 Some("mute") => "mute".into(),
                 _ => "play".into(),
             },
+            audio_session: false,
+            fullscreen: true,
             music_enabled: music["enabled"].as_bool().unwrap_or(true),
             music_volume: music["volume"]
                 .as_f64()

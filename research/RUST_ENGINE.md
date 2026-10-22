@@ -217,6 +217,14 @@ Water and train (second checkpoint):
   `atv_core::train` runtime (route/MOT, 0011c840) stepped at 60 Hz, cars posed by their
   bind nodes and the locomotive wheels by the Rust wheel matrices. Two views beside the
   train: 2.19 and 1.04, all of it the locomotive smoke (an ambient effect, not yet ported).
+  Mesh detail (2026-10-22, user report of a low-poly train): both ENV08 archives
+  (`E08_FR.RES`, `E08_NAT.RES`) carry each car once, as a single-LOD PSG under
+  `geometry/animgeometry/` (threshold f32::MAX): locomotive 451 triangles, tender 66,
+  coal cars 262/284, flatbeds 426/293, mail car 167, plus `anim/loco_wheels.psg` 48. No
+  hi/lo variants or other train meshes exist in the extracted content, every car group
+  draws (no reflective passes are skipped), and the Rust draw matches the browser's
+  apart from effects. The low-poly look is the original's own geometry; nothing to
+  switch to.
 - The GL backend creates a cube map for any texture whose layer count is a multiple of
   six, which WebGL then rejects for 2D-array views: ENV04's 102 terrain layers rendered
   garbage in the browser. Such arrays now get one unused layer (`texture::array_layers`).
@@ -638,6 +646,7 @@ measured comparison). Parity above is with the JavaScript build.
 | `atv-game/src/ride/race.rs` | CPU recovery after 5 s off the track polygon or 4 s below 3 ft/s; the player handed to the path driver after the finish; equal-mass rider contact proxy | RaceStatus +0xf0 consumer, finish takeover routine and quad-to-quad response not identified | No |
 | `atv-game/src/ride/race.rs` | Restart Race keeps the loaded roster | the original reloads the event (new roster draw) | Yes, through the frontend (direct parity rides keep the in-place restart) |
 | desktop `f32` math (`atv-core` via std) | system libm for sin/cos/atan2/…; the browser build uses Rust's libm, so native races drift from the JavaScript/browser result | one deterministic implementation on every target (PS2 VU/libm equivalence is a separate question) | Yes: `atv_core::math` (Deterministic simulation maths) |
+| `atv-render/vehicle.rs`, `vehicle.wgsl` (player, CPU and peer quads, bikes, riders) | was opaque like game.js (`alphaCutoff` 0), so cut-out texels drew black or grey (bike sprockets and spoked wheels, quad shock springs). Now each material's base PSM pass blends GS source alpha (`(Cs-Cd)*As+Cd`, As = byte·255/128) when `alphaBlendingOnOff` is set, and texels with zero alpha are dropped. This differs from the JavaScript build. | All 232 vehicle and rider materials surveyed (quads 1-26, bikes 27-46, ATV/MX riders) set `alphaBlendingOnOff=1`; authored inputs are A=Cs, B=Cd, C=As, D=Cd. Bike plastics and sprockets also set `AlphaTestOnOff=1` without a method; `StartApp/DefaultMT.psm` (read by 001b98f0 before each PSM) gives `alphaReferenceValue=0`. The default alpha-test method and Z behaviour of failed texels are not recovered: dropping zero-alpha texels stands in for them (before/after crops in `private/reports/rust-render/vehicle-alpha/`). | Partly (blend: yes; test method: no) |
 | `atv-render/blood.rs`, `atv-game/crash.rs` | Crazy/Gorn crash breakup, ragdoll and blood | authored browser feature with no original counterpart (the original crash is the wreck animation, kept under Original) | Keep (option) |
 
 ## UI stand-ins to move toward original rendering
@@ -1172,6 +1181,21 @@ Observed:
     1.75 ft of its own deck-relative position (20 samples).
   - A Rust rider placed on the flatbed (`?trainPlace=S` test hook) was seen by the
     JavaScript guest within 3.25 ft (20 samples).
+  - Later re-runs failed intermittently, with 0-8 platform samples. The cause is
+    placement, not presentation: the riders were dropped 17 ft above car 3,
+    10 ft along it, in Original riding. Logged deck positions show both the
+    JavaScript guest and the Rust rider sliding along or off the moving car after
+    the drop, depending on the route phase. One run also put both riders on the
+    same spot, so they pushed each other off.
+  - The test now places riders the way test_train_riding.mjs does: 8 ft above a
+    car's centre, at the car's velocity, with Realistic riding. The JavaScript
+    guest goes on car 6 and the Rust rider on car 3 (`?trainPlace`). Each check
+    re-places up to three times until 10 of 20 samples are on a platform.
+  - Content-test probes of the car centres (Realistic, curve) drifted 0.0-0.5 ft
+    on cars 3-7. Car 8 and off-centre spots (±12 ft) do not hold.
+  - Six consecutive runs passed on a host at load average 8-24. The guest was seen
+    within 1.6-3.2 ft and the Rust rider within 1.9-3.6 ft. 3 of 12 checks needed
+    a second placement.
   - Under Original train riding, both clients' riders later slide off the moving car,
     as the original does.
 - Inspected screenshots: `private/reports/engine-multiplayer/train-js.png` (the
@@ -1466,9 +1490,10 @@ outside the window; joins paced 250 ms; one Mac, headless Chromium/Metal,
   - `test_engine_multiplayer_room_front.mjs`, `test_engine_freeride.mjs` and
     `test_engine_front.mjs` pass.
   - Inspected: `private/reports/devlog-images/rust-mp-menu-lobby.png`.
-- Difference: the page shows "Connecting…" until the ride loads. The browser
-  fills in the room's rider list when the lobby state arrives; here the join hands
-  over to the loader at that point.
+- Once connected, the page shows the room's code and riders ("1/4 riders /
+  RustHost", the browser's `lobby_status`) for at least one drawn frame. With
+  `?joinDelayMs` it holds that long again. The loader then takes over; Leave Game
+  in that window leaves the room.
 
 Gaps, in planned slice order:
 

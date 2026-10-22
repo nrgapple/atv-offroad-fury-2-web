@@ -439,6 +439,48 @@ impl Drop for WebMusic {
     }
 }
 
+/// audio.js applyAudioSession: iOS/iPadOS Safari (16.4+) mutes Web Audio with
+/// the Ring/Silent switch unless the page declares playback audio. Settings →
+/// Extras → Silent switch 'play' (default) sets `playback`, like a native game;
+/// 'mute' sets `ambient`, which mixes with other apps' audio and follows the
+/// switch. Records whether the session exists so the menu shows its row; the
+/// type is written only when it changes. Also records fullscreen support.
+pub fn sync_audio_session(prefs: &mut atv_ui::menu::prefs::Preferences) {
+    #[cfg(target_arch = "wasm32")]
+    {
+        // frontend.js shows Fullscreen only where `document.fullscreenEnabled`.
+        prefs.fullscreen = web_sys::window()
+            .and_then(|w| w.document())
+            .is_some_and(|d| d.fullscreen_enabled());
+        thread_local! {
+            static APPLIED: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+        }
+        let session = web_sys::window()
+            .and_then(|w| js_sys::Reflect::get(&w.navigator(), &"audioSession".into()).ok())
+            .filter(|s| s.is_object());
+        prefs.audio_session = session.is_some();
+        let Some(session) = session else {
+            return;
+        };
+        let kind = if prefs.silent == "mute" {
+            "ambient"
+        } else {
+            "playback"
+        };
+        APPLIED.with_borrow_mut(|applied| {
+            if applied.as_deref() != Some(kind)
+                && js_sys::Reflect::set(&session, &"type".into(), &kind.into()).unwrap_or(false)
+            {
+                *applied = Some(kind.into());
+            }
+        });
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        prefs.audio_session = false;
+    }
+}
+
 #[cfg(target_arch = "wasm32")]
 fn silent_url() -> Option<String> {
     // 50 ms, mono signed 16-bit PCM at 8 kHz; authored silence, no game data.

@@ -29,10 +29,10 @@ These would regress players at switch-over. Highest impact first.
    - Races start only from links.
    - The manifest's "Single Race" shortcut (`?menu=race`) lands on Single Player.
    - A race link with `play=0` cannot show its setup.
-2. **iPhone silent switch.** The Rust web build never sets
-   `navigator.audioSession.type`, so with the Ring/Silent switch on, iPhones play no
-   game sound. The JavaScript game played sound by default. The Settings → Extras
-   "Silent switch" row is also hidden, because `silent_mode` is never filled.
+2. ~~**iPhone silent switch.**~~ Closed: `sound::sync_audio_session` sets
+   `navigator.audioSession.type` (`playback`, or `ambient` for Silent switch → mute)
+   and Settings → Extras shows the row where the session exists
+   (`tools/test_engine_session_settings.mjs`).
 3. **PWA shell and offline.** engine.html has none of:
    - the manifest link, icons, apple-mobile meta tags or theme-color;
    - the install banner or the iOS "Add to Home Screen" help (install.js);
@@ -57,9 +57,8 @@ These would regress players at switch-over. Highest impact first.
 6. **Rider Gear page.** Gear and quad paint cannot be edited (`gear` is in
    `UNSUPPORTED`). Saved gear still dresses the ride, but the garage previews show
    stock gear and paint.
-7. **Sound mode at ride start.** The saved Sound mode is ignored when a ride starts.
-   The ride uses `?sound=` and defaults to Original, while the JavaScript default is
-   Enhanced. Changing it mid-ride works.
+7. ~~**Sound mode at ride start.**~~ Closed: played rides use the saved mode,
+   Enhanced by default; `?sound=` wins and scripted rides keep Original.
 8. **No adaptive render resolution.** JS caps device pixel ratio at 1.5 and steps to
    1.0 on slow frames (`RenderScale`). Rust renders at the full physical size. This
    is a likely frame-rate regression on high-DPR phones; not measured.
@@ -80,12 +79,13 @@ These would regress players at switch-over. Highest impact first.
     - `cheats=eatdirt,bringit` are dropped.
     - Motorcycle race links are refused with a stale error, although motorcycle
       races landed in #215.
-13. **Race intro skip** works only from the keyboard. JS also skips on a tap or a
-    controller button.
+13. ~~**Race intro skip**~~ Closed: a click or tap off the toolbar and a new pad
+    press skip it too.
 14. **Smaller regressions.**
     - Controller pinning (`padselect` does nothing): it matters when an idle
       virtual pad steals Auto.
-    - The Fullscreen row shows even where the Fullscreen API is missing (iPhone).
+    - ~~The Fullscreen row shows even where the Fullscreen API is missing (iPhone).~~
+      Closed: shown only where `document.fullscreenEnabled`.
     - CPU racers and remote riders get no contact shadows and cast no High
       shadow-map shadows.
     - No buzz when a touch flip arms.
@@ -244,7 +244,7 @@ main-menu Jukebox.
 | Garage (46 vehicles, rider, stats, 3D previews, ATV-only online) | Ported | front, app/front.rs (#254) | Previews lack gear/paint |
 | Rider Gear page | Missing | `UNSUPPORTED` | Blocking 6 |
 | Host/Join forms, validation, motorcycle refusal | Ported | front/controller.rs (#241, #254) | |
-| Free Ride Lobby page while connecting | Ported | #268 | Shows "Connecting…"; the rider list is pending |
+| Free Ride Lobby page while connecting, then its riders | Ported | #268, this PR | |
 | Loading screen (shots, tips, staged bar) | Ported | controller.rs `loading_stage` | |
 | Pause menu (Resume, Reset, Players/Spawn, Change ATV, Select Track, Settings, Jukebox, Copy link, Quit/Leave) | Ported | menu/controller.rs (#202, #238, #242, #256) | Change ATV and Select Track are hidden on frontend-less room links |
 | Settings pages and toggles (Display, Extras, Alpha, Race overlays, Minimap, Controls, Controller, Bindings) | Ported | menu/controller.rs, prefs.rs (#202) | Applied live |

@@ -115,7 +115,8 @@ pub struct RoomRide {
 }
 
 /// Test hook (`?joinDelayMs=`): hold a Host/Join on the Free Ride Lobby
-/// page this long before claiming the room (local relays connect at once).
+/// page this long before claiming the room, and again once it has connected
+/// (local relays connect at once).
 pub static JOIN_DELAY_MS: AtomicU32 = AtomicU32::new(0);
 
 /// A room's invite link (multiplayer.js `inviteUrl`): the browser game's

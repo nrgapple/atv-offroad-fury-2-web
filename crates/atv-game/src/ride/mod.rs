@@ -557,26 +557,21 @@ impl Ride {
         Ok(())
     }
 
-    /// Test hook (`?trainPlace=`): places the ATV on the first car whose
-    /// model contains `model`, 17 ft up and 10 ft along its deck, moving with
-    /// it (test_multiplayer_features.mjs places riders the same way).
-    pub fn place_on_train(&mut self, model: &str) -> Result<()> {
-        let (matrix, velocity) = {
+    /// Test hook (`?trainPlace=`): places the ATV 8 ft above the centre of
+    /// train car `car`, moving with it (test_train_riding.mjs's placement).
+    /// Off-centre spots slide off in the curves even with realistic riding.
+    pub fn place_on_train(&mut self, car: usize) -> Result<()> {
+        let (matrix, origin, velocity) = {
             let train = self.sim.train.as_ref().ok_or("no train here")?.borrow();
-            let frame = train.runtime.frame()?;
-            let car = frame
-                .cars
-                .iter()
-                .position(|c| c.model.to_ascii_lowercase().contains(model))
-                .ok_or("train car not found")?;
             let motion = train
                 .runtime
                 .motion_state(car)
                 .ok_or("train car not found")?;
-            (motion.current, motion.linear_velocity())
+            let m = motion.current;
+            let origin: [f32; 3] = std::array::from_fn(|i| m[12 + i] + m[4 + i] * 8.);
+            (m, origin, motion.point_velocity(origin))
         };
         let m = matrix;
-        let origin = std::array::from_fn(|i| m[12 + i] + m[4 + i] * 17. + m[8 + i] * 10.);
         self.place_at((origin, m[8].atan2_d(m[10])))?;
         if let Mount::Quad { vehicle, .. } = &mut self.mount {
             vehicle.set_network_velocity(velocity)?;

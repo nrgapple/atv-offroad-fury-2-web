@@ -14,6 +14,10 @@ pub struct MaterialTexture {
     /// The MX MudAnimator map or the ATV2 PixelAnimation dirt pass texture
     /// (`image.mud` in baseTextures), blended by the mud amount.
     pub mud: Option<Image>,
+    /// The base pass enables GS source-alpha blending (`alphaBlendingOnOff`;
+    /// every surveyed vehicle and rider PSM does): texels below full GS
+    /// alpha (128) show what lies behind, e.g. the bike sprockets' cut-outs.
+    pub blend: bool,
 }
 
 pub(crate) fn basename_index(resource: &Resource, name: &str) -> Option<usize> {
@@ -174,6 +178,7 @@ fn material_texture(material: &str, archive: &Resource) -> Result<Option<Materia
             image: None,
             fog,
             mud: None,
+            blend: false,
         }));
     }
     let animated = described
@@ -228,5 +233,11 @@ fn material_texture(material: &str, archive: &Resource) -> Result<Option<Materia
         }
         None => None,
     };
-    Ok(Some(MaterialTexture { image, fog, mud }))
+    let blend = described.pass.as_ref().is_some_and(|pass| pass.blend);
+    Ok(Some(MaterialTexture {
+        image,
+        fog,
+        mud,
+        blend,
+    }))
 }
