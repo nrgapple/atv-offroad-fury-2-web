@@ -148,6 +148,23 @@ pub fn share_page(relay: &str) -> String {
     format!("{}/play.html", relay.trim_end_matches('/'))
 }
 
+/// Distinct remote quad/rider models kept loaded: one per possible rider
+/// (web/multiplayer.js `MAX_REMOTE_MODELS`).
+const MAX_REMOTE_MODELS: usize = 20;
+
+/// Before caching another remote model: once `MAX_REMOTE_MODELS` are held,
+/// drop every model no rider in the room still uses (game.js
+/// `remoteAssets`). Each rider's GPU upload is per slot and already released
+/// when it leaves or changes model (`SceneRenderer::retain_peers`).
+fn evict_models(models: &mut HashMap<Key, Loaded>, active: &[Key]) {
+    if models.len() >= MAX_REMOTE_MODELS {
+        models.retain(|key, _| active.contains(key));
+    }
+}
+
+/// multiplayer.js `host` for a FREERDnn code.
+pub const RESERVED_CODE: &str = "That code is reserved. Choose another.";
+
 /// Close codes a rider with a slot key retries (web/multiplayer.js).
 fn retryable(code: u16, reason: &str) -> bool {
     matches!(code, 1001 | 1005 | 1006 | 1011 | 1012 | 1013)
@@ -167,7 +184,17 @@ fn arrival(clock: Instant, at: Instant, now: u64) -> u64 {
 /// returns its code and, when this rider becomes its creator, the slot key.
 async fn claim(start: &RoomStart) -> Result<(String, Option<String>), String> {
     let origin = net::origin(&start.relay);
-    if start.freeride {
+    // Shared Free Ride codes (FREERDnn) are the relay's: hosting one is
+    // refused, and opening one (an invite from a shared room) is Free Ride,
+    // which finds a shared room with space (multiplayer.js `host`).
+    let shared = start
+        .code
+        .as_deref()
+        .is_some_and(atv_game::multiplayer::is_shared_room);
+    if shared && start.host {
+        return Err(RESERVED_CODE.into());
+    }
+    if start.freeride || shared {
         // POST /multiplayer/freeride reserves a slot in the first shared
         // room with space (web/multiplayer.js `freeride`).
         let url = format!("{}/multiplayer/freeride", start.relay.trim_end_matches('/'));
@@ -567,13 +594,18 @@ impl Net {
             self.last_ping = now_f;
             self.last_traffic = now_f;
         }
-        for player in self.session.others() {
-            let key = (player.atv_model, player.rider_model, player.appearance);
-            if !self.models.contains_key(&key) && !tick.loads.contains(&key) {
-                tick.loads.push(key);
+        let active: Vec<Key> = self
+            .session
+            .others()
+            .map(|p| (p.atv_model, p.rider_model, p.appearance))
+            .collect();
+        for key in &active {
+            if !self.models.contains_key(key) && !tick.loads.contains(key) {
+                tick.loads.push(*key);
             }
         }
         for key in &tick.loads {
+            evict_models(&mut self.models, &active);
             self.models.insert(*key, Loaded::Loading);
         }
         tick
@@ -613,10 +645,18 @@ impl Net {
         }
     }
 
-    /// Other riders' bodies for this frame's contact steps.
-    pub fn contact_bodies(&self, ride: &Ride) -> Vec<atv_game::multiplayer::PeerBody> {
-        self.session
-            .contact_bodies(now_ms(self.clock), &|car| ride.train_car(car))
+    /// The session clock (ms) that pose buffers and contacts read.
+    pub fn session_now(&self) -> u64 {
+        now_ms(self.clock)
+    }
+
+    /// Other riders' bodies at session time `now` (ms), rebased onto the
+    /// ride's current train cars (one step's contacts).
+    pub fn contact_bodies_at(&self, now: u64, ride: &Ride) -> Vec<atv_game::multiplayer::PeerBody> {
+        if self.closed.is_some() {
+            return Vec::new();
+        }
+        self.session.contact_bodies(now, &|car| ride.train_car(car))
     }
 
     /// The relay clock as (local clock origin, offset ms) once synced, so the
@@ -650,15 +690,22 @@ impl Net {
     }
 
     pub fn model_loaded(&mut self, model: Result<RemoteModel, (Key, String)>) {
-        match model {
-            Ok(model) => {
-                self.models.insert(model.key, Loaded::Ready(Rc::new(model)));
-            }
-            Err((key, error)) => {
+        // A load whose rider left (and was evicted meanwhile) is dropped; a
+        // rider who comes back loads again.
+        let key = match &model {
+            Ok(model) => model.key,
+            Err((key, _)) => *key,
+        };
+        let Some(slot) = self.models.get_mut(&key) else {
+            return;
+        };
+        *slot = match model {
+            Ok(model) => Loaded::Ready(Rc::new(model)),
+            Err((_, error)) => {
                 crate::status(&format!("Remote rider model unavailable: {error}"));
-                self.models.insert(key, Loaded::Failed);
+                Loaded::Failed
             }
-        }
+        };
     }
 
     /// Uploads arrived models, then poses every presented remote rider.
@@ -896,6 +943,7 @@ impl Net {
             "environment": self.session.environment(),
             "players": self.session.lobby.as_ref().map(|l| l.players.len()),
             "drawn": self.drawn,
+            "models": self.models.len(),
             "rttMs": self.session.rtt_ms,
             "rttSamples": self.session.rtt_history.iter().collect::<Vec<_>>(),
             "clockSynced": self.session.server_now(0).is_some(),
@@ -925,4 +973,30 @@ pub async fn load_model(content: Rc<Content>, key: Key) -> Result<RemoteModel, (
     remote::load_model(&content, key)
         .await
         .map_err(|e| (key, e))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn key(quad: u16) -> Key {
+        (quad, 0, Default::default())
+    }
+
+    #[test]
+    fn remote_models_evict_departed_riders_once_twenty_are_held() {
+        let mut models: HashMap<Key, Loaded> = HashMap::new();
+        for quad in 1..=19 {
+            models.insert(key(quad), Loaded::Failed);
+        }
+        // Below the cap nothing is dropped.
+        evict_models(&mut models, &[key(1)]);
+        assert_eq!(models.len(), 19);
+        models.insert(key(20), Loaded::Loading);
+        // At the cap, only models a rider in the room still uses stay.
+        evict_models(&mut models, &[key(3), key(20)]);
+        let mut kept: Vec<u16> = models.keys().map(|k| k.0).collect();
+        kept.sort_unstable();
+        assert_eq!(kept, [3, 20]);
+    }
 }

@@ -41,6 +41,28 @@ pub struct Rider {
     pub stale: bool,
 }
 
+/// The riders that keep an engine voice: the fresh ones nearest the
+/// player's vehicle, slot order breaking ties (atv-web multiplayer.rs ranks
+/// by distance to the player's own vehicle, not the camera).
+pub fn voiced(riders: &[Rider], own: Option<[f32; 3]>) -> BTreeSet<u8> {
+    let mut ranked: Vec<(f32, u8)> = riders
+        .iter()
+        .filter(|r| !r.stale)
+        .map(|r| {
+            let d: f32 = own.map_or(0., |own| {
+                r.position
+                    .iter()
+                    .zip(own)
+                    .map(|(a, b)| (a - b) * (a - b))
+                    .sum()
+            });
+            (d, r.peer)
+        })
+        .collect();
+    ranked.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
+    ranked.iter().take(ENGINE_VOICES).map(|(_, p)| *p).collect()
+}
+
 /// A remote quad's engine table and decoded samples.
 pub struct Engine {
     pub config: EngineAudioConfig,
@@ -114,14 +136,17 @@ impl RemoteAudio {
     }
 
     /// One rendered frame of remote sound; `impact_sample` looks up the
-    /// player's decoded body-impact samples. `audible` is false while the
-    /// output is suspended: voices stop, as the browser drops them.
+    /// player's decoded body-impact samples. `own` is the player's vehicle,
+    /// which ranks the riders that keep an engine voice. `audible` is false
+    /// while the output is suspended: voices stop, as the browser drops them.
+    #[allow(clippy::too_many_arguments)]
     pub fn frame(
         &mut self,
         mixer: &mut Mixer,
         effects: Option<&sound_effects::Config>,
         impact_sample: &dyn Fn(&str) -> Option<Arc<Pcm>>,
         listener: &Listener,
+        own: Option<[f32; 3]>,
         riders: &[Rider],
         audible: bool,
     ) -> Result<()> {
@@ -131,22 +156,7 @@ impl RemoteAudio {
             .map_or(0.016, |last| (now - last) as f32)
             .clamp(0., 0.1);
         self.last = Some(now);
-        // Only the nearest riders keep an engine voice.
-        let mut ranked: Vec<(f32, u8)> = riders
-            .iter()
-            .filter(|r| !r.stale)
-            .map(|r| {
-                let d: f32 = r
-                    .position
-                    .iter()
-                    .zip(listener.position)
-                    .map(|(a, b)| (a - b) * (a - b))
-                    .sum();
-                (d, r.peer)
-            })
-            .collect();
-        ranked.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
-        let voiced: BTreeSet<u8> = ranked.iter().take(ENGINE_VOICES).map(|(_, p)| *p).collect();
+        let voiced = voiced(riders, own);
         let present: BTreeSet<u8> = riders.iter().filter(|r| !r.stale).map(|r| r.peer).collect();
         let quads: BTreeMap<u8, u16> = riders.iter().map(|r| (r.peer, r.quad)).collect();
         // Silent, stale, departed or re-vehicled riders lose their voice.
@@ -334,6 +344,7 @@ mod tests {
                 Some(&effects),
                 &sample,
                 &listener,
+                Some([0.; 3]),
                 &[rider(1, 20., 0)],
                 true,
             )
@@ -345,6 +356,7 @@ mod tests {
                 Some(&effects),
                 &sample,
                 &listener,
+                Some([0.; 3]),
                 &[rider(1, 20., 1)],
                 true,
             )
@@ -357,11 +369,23 @@ mod tests {
                 Some(&effects),
                 &sample,
                 &listener,
+                Some([0.; 3]),
                 &[rider(1, 20., 2)],
                 false,
             )
             .unwrap();
         assert_eq!(audio.impact_starts, 1);
         assert_eq!(mixer.voices(), 0);
+    }
+
+    #[test]
+    fn engine_voices_go_to_riders_nearest_the_player_not_the_camera() {
+        let riders: Vec<Rider> = (1..=8).map(|p| rider(p, f32::from(p) * 10., 0)).collect();
+        // Six voices nearest the player at x = 70 (the camera is not asked).
+        let near = voiced(&riders, Some([70., 0., 0.]));
+        assert_eq!(near.into_iter().collect::<Vec<_>>(), [3, 4, 5, 6, 7, 8]);
+        // No player position: slot order.
+        let none = voiced(&riders, None);
+        assert_eq!(none.into_iter().collect::<Vec<_>>(), [1, 2, 3, 4, 5, 6]);
     }
 }

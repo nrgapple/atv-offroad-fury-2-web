@@ -971,6 +971,11 @@ impl Frontend {
                     );
                     return None;
                 }
+                // FREERDnn codes belong to the shared Free Ride rooms.
+                if atv_game::multiplayer::is_shared_room(&self.create_code) {
+                    self.notice = Some("That code is reserved. Choose another.".into());
+                    return None;
+                }
                 self.save(settings);
                 self.hosting = true;
                 self.focus = None;
@@ -982,6 +987,15 @@ impl Frontend {
                     return None;
                 }
                 self.save(settings);
+                // A shared room's code opens Free Ride, which finds a shared
+                // room with space (multiplayer.js `host` with `open`).
+                if atv_game::multiplayer::is_shared_room(&self.room_code) {
+                    return Some(Event::FreeRide {
+                        quad: self.quad_id,
+                        rider: self.rider_id,
+                        name: self.room_name(),
+                    });
+                }
                 return Some(Event::Join {
                     code: self.room_code.clone(),
                     environment: self
@@ -1627,6 +1641,22 @@ mod tests {
             front.key("Enter", &view, &mut settings),
             Some(Event::Join { ref code, .. }) if code == "ABCD1234"
         ));
+        // A shared Free Ride code joins Free Ride instead.
+        front.set_field("room-code", "freerd07");
+        assert!(matches!(
+            front.key("Enter", &view, &mut settings),
+            Some(Event::FreeRide { .. })
+        ));
+        // Hosting one is refused.
+        front.key("Escape", &view, &mut settings);
+        front.show("create-lobby", &view);
+        front.set_field("create-code", "FREERD01");
+        assert_eq!(front.run("hosttrack", &view, &mut settings), None);
+        assert_eq!(
+            front.notice.as_deref(),
+            Some("That code is reserved. Choose another.")
+        );
+        assert_eq!(front.page, "create-lobby");
     }
 
     #[test]

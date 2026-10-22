@@ -692,7 +692,11 @@ impl Sound {
 
     /// Other riders' engines and body impacts this frame; returns the
     /// remote quads whose engine banks should load.
-    pub fn remote_frame(&mut self, riders: &[atv_game::audio::remote::Rider]) -> Vec<u16> {
+    pub fn remote_frame(
+        &mut self,
+        riders: &[atv_game::audio::remote::Rider],
+        own: [f32; 3],
+    ) -> Vec<u16> {
         let wanted = self.remote.wanted(riders);
         let Some(listener) = self.ride.listener() else {
             return wanted;
@@ -706,6 +710,7 @@ impl Sound {
                 bank.effects.as_ref(),
                 &impact,
                 &listener,
+                Some(own),
                 riders,
                 audible,
             ) {

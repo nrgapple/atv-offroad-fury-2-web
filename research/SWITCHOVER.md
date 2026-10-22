@@ -231,7 +231,7 @@ In progress elsewhere, not counted as gaps: the diagnostics overlay (F3).
 
 | Behaviour | Rust | Where | Notes |
 |---|---|---|---|
-| Big-air detection, apex slow-mo, big-air camera, landing dip | Ported | ride/hype.rs (#237) | Disabled in rooms: unverified |
+| Big-air detection, apex slow-mo, big-air camera, landing dip | Ported | ride/hype.rs (#237) | Slow-mo is Freestyle only: off in races and rooms |
 | Speed/air muffle, wind | Ported | audio/hype.rs (#255) | |
 | Heavy mud zones | Ported | dirt.rs (#251) | |
 | Landing burst; air dark blur | Ported | atv-render burst.rs, air_blur.rs (#251, #253) | |
@@ -297,12 +297,12 @@ In progress elsewhere, not counted as gaps: the diagnostics overlay (F3).
 |---|---|---|---|
 | Host (custom code, 409/429 messages), join, reopen ended room, "Game is full!" | Ported | atv-app/src/multiplayer.rs `claim` (#224, #241) | |
 | Arlington Free Ride (429/503) | Ported | multiplayer.rs (#229) | |
-| Reserved FREERDnn codes: refusal / redirect to Free Ride | Unverified | — | |
+| Reserved FREERDnn codes: refusal / redirect to Free Ride | Ported | multiplayer.rs `claim`, front/controller.rs | Hosting one is refused; an invite, lobby link or Join code opens Free Ride (`tools/test_engine_freeride.mjs`) |
 | Slot-key reconnect, 25 s window, backoff | Ported | multiplayer.rs (#234) | |
-| Meet a rider on arrival; Spawn beside (car velocity on trains) | Ported | multiplayer.rs, spawn.rs (#227, #238, #264) | |
+| Meet a rider on arrival; Spawn beside (car velocity on trains) | Ported | multiplayer.rs, spawn.rs (#227, #238, #264) | Rider contacts sample each peer per step after the train step (atv-web op 50) |
 | Change ATV in place (kept present behind the garage), host Select Track | Ported | lib.rs (#242, #256) | |
 | Copy invite link | Partial | `invite_url` | Blocking 4 |
-| Pose send, pings, remote models (frame-spread), remote engine audio | Ported | multiplayer.rs, sound.rs (#224, #233, #252) | |
+| Pose send, pings, remote models (frame-spread), remote engine audio | Ported | multiplayer.rs, sound.rs (#224, #233, #252) | Models evicted past 20 cached; engine voices ranked by distance to the player's vehicle; inbox guard (192 poses, 256 closes 1008) |
 | Name tags, peer dots | Ported | hud/peers.rs (#236) | |
 | Shared train clock | Ported | ride/mod.rs (#232) | |
 | `atv-last-disconnect` record | Missing | — | Debug-only |
@@ -319,7 +319,7 @@ In progress elsewhere, not counted as gaps: the diagnostics overlay (F3).
 | Gesture unlock | Ported | sound.rs | |
 | Motorcycle bank; rider vocals; body and chassis impacts; terrain loops; water splash | Ported | ride.rs, bank.rs | |
 | Venue ambient, Soultree loops, crowd cue | Ported | ride.rs, audio/race.rs (#222) | |
-| Race lamp/GO/gate one-shots, IntOut stingers, soundtrack hold/fade | Ported | race.rs, sound.rs (#222) | |
+| Race lamp/GO/gate one-shots, IntOut stingers, soundtrack hold/fade | Ported | race.rs, sound.rs (#222) | The race-over fade shortens to 80% of a song's remainder near its end |
 | ENV08 train sounds | Ported | audio/ride.rs `train_step` | |
 | Rain loop | Ported | audio/ride.rs | |
 | Crash boom (Crazy/Gorn) | Ported | audio/synth.rs, sound.rs | 0.3 s cooldown |
@@ -355,6 +355,6 @@ In progress elsewhere, not counted as gaps: the diagnostics overlay (F3).
 | Gorn blood | Ported | blood.rs (#207) | |
 | Tire tracks Enhanced/High, mud zones | Ported | tire_tracks.rs (#201) | |
 | High sun shadow map | Ported | shadows.rs (#200) | Player, CPUs and riders within 40 ft |
-| Contact shadow blobs | Ported | shadows.rs | Player, CPUs within 240 ft, other riders |
+| Contact shadow blobs | Ported | shadows.rs | Player, CPUs within 240 ft, other riders; resting lift measured every step |
 | TOY effects (smoke, fire); type-11 fountains | Ported | atv-render ambient.rs (#186) | |
 | Lingering dust Enhanced/High | Ported | lingering_dust.rs (#197) | |

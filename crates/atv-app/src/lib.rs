@@ -846,7 +846,14 @@ impl App {
         let dt = dt.min(0.05);
         let overlay = &mut self.overlay;
         let mut touch = || overlay.as_mut().map(|o| o.sample(ms, active));
-        if let Err(error) = riding.frame(&sample, &mut touch, dt) {
+        // Room contacts: each step samples the other riders at its own
+        // session time, after its train step (atv-web op 50).
+        let net = ready.net.as_ref();
+        let sampler = |now: u64, ride: &atv_game::ride::Ride| {
+            net.map_or_else(Vec::new, |n| n.contact_bodies_at(now, ride))
+        };
+        let peers = net.map(|n| (n.session_now(), &sampler as riding::PeerSampler));
+        if let Err(error) = riding.frame(&sample, &mut touch, dt, peers) {
             status(&format!("Simulation stopped: {error}"));
             ready.riding = None;
             return;
@@ -937,7 +944,6 @@ impl App {
             {
                 status(&format!("Train placement: {error}"));
             }
-            riding.peers = net.contact_bodies(&riding.ride);
             if let Some(overlay) = &mut self.overlay {
                 overlay.lobby = net.menu_lobby();
             }
@@ -954,7 +960,7 @@ impl App {
                 status(&format!("Multiplayer ended: {closed}"));
             }
             if let Some(sound) = &mut riding.sound {
-                for quad in sound.remote_frame(&net.riders) {
+                for quad in sound.remote_frame(&net.riders, riding.ride.frame().origin) {
                     engine_loads.push((quad, sound.load_remote_engine(quad)));
                 }
             }
@@ -1061,6 +1067,7 @@ impl App {
             state["shadows"] = serde_json::json!({
                 "contact": self.meter.shadows.0,
                 "map": self.meter.shadows.1,
+                "restLift": ready.scene.rest_lift(),
             });
             let applied = riding.ride.applied();
             state["controls"] = serde_json::json!({
@@ -1552,7 +1559,6 @@ impl App {
                     ready.net = None;
                     if let Some(riding) = &mut ready.riding {
                         riding.online = false;
-                        riding.peers.clear();
                         riding.server_clock = None;
                     }
                 }
@@ -3728,6 +3734,17 @@ impl App {
                     train_place: None,
                 };
                 self.start_ride(environment, quad, rider, None, Some(room));
+            }
+            // A shared room's code (an invite from Free Ride) opens Free Ride
+            // (multiplayer.js `host` with `open`).
+            Event::Join {
+                code,
+                quad,
+                rider,
+                name,
+                ..
+            } if atv_game::multiplayer::is_shared_room(&code) => {
+                self.front_event(Event::FreeRide { quad, rider, name });
             }
             Event::Join {
                 code,

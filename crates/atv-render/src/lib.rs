@@ -1005,6 +1005,12 @@ impl SceneRenderer {
         }
     }
 
+    /// The measured resting lift (None until a step rides with every wheel
+    /// down under contact shadows; drawing then assumes 1.5 ft).
+    pub fn rest_lift(&self) -> Option<f32> {
+        self.rest_lift
+    }
+
     fn visible_ground(&self, x: f32, z: f32) -> f32 {
         self.ground.height(f64::from(x), f64::from(z)) as f32
     }

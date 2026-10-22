@@ -3,6 +3,7 @@
 //   1. The Rust main menu lists Arlington Free Ride with its live rider count.
 //   2. Choosing it claims a shared-room slot and rides Arlington (env08).
 //   3. A JavaScript player taps Arlington Free Ride; both see each other.
+//      A shared room's invite link (FREERDnn) opens Free Ride too.
 //   4. Pause → Leave Game leaves the room; the JavaScript player sees it go.
 //   PLAYWRIGHT_MODULE=... ATV_TEST_URL=http://127.0.0.1:4187 node tools/test_engine_freeride.mjs
 // ATV_MP_SCREENSHOT=out.png saves the menu and both rides.
@@ -83,6 +84,21 @@ try {
     await rust.screenshot({ path: shots.replace('.png', '-rust.png') });
     await js.screenshot({ path: shots.replace('.png', '-js.png') });
   }
+
+  // 3b. A shared room's invite (FREERDnn) opens Free Ride on Arlington, as
+  // multiplayer.js `host` does, instead of a refused room claim.
+  const invited = await newPage(browser, { viewport: { width: 960, height: 540 } }, errors);
+  await invited.addInitScript(() => {
+    localStorage.setItem('atv2-keyboard-help-seen-v1', '1');
+    Object.defineProperty(document, 'hasFocus', { value: () => true });
+  });
+  await invited.goto(url(`/engine.html?uiDiagnostics=1&mode=multiplayer&room=${e.code}&map=env01&play=1`));
+  await wait(invited, () => JSON.parse(window.furyMultiplayer ?? 'null')?.environment === 'env08', null, 180000);
+  const invite = await engine(invited);
+  assert.match(invite.code, /^FREERD\d\d$/);
+  assert.equal(invite.closed, null);
+  report.invite = { code: invite.code, peer: invite.peer };
+  await invited.close();
 
   // 4. Leave Game leaves the room.
   const rustPeer = e.peer;
