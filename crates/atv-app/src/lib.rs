@@ -2279,6 +2279,8 @@ impl ApplicationHandler<Message> for App {
                     }
                     return;
                 }
+                // Nothing left to show: keep the error on screen without ?debug=1.
+                fatal();
                 if !cfg!(target_arch = "wasm32") {
                     event_loop.exit();
                 }
@@ -3775,6 +3777,20 @@ impl App {
     }
 }
 
+/// Shows the status line even when the debug strip is hidden (engine.css
+/// `#status.fatal`): the engine could not start or load anything to draw.
+fn fatal() {
+    #[cfg(target_arch = "wasm32")]
+    if let Some(element) = web_sys::window()
+        .and_then(|w| w.document())
+        .and_then(|d| d.get_element_by_id("status"))
+    {
+        element.set_class_name("fatal");
+    }
+}
+
+/// The debug strip line (web `#status`, shown with `?debug=1` or F3; desktop
+/// standard error).
 pub(crate) fn status(text: &str) {
     #[cfg(target_arch = "wasm32")]
     {
