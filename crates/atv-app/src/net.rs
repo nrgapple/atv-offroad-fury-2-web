@@ -20,6 +20,40 @@ pub enum Event {
 const BACKLOG: usize = 32768;
 /// Relay messages are at most 8 KiB (web/multiplayer.js closes otherwise).
 const MESSAGE_LIMIT: usize = 8192;
+/// Received messages not yet taken by the session (web/multiplayer.js): pose
+/// snapshots beyond `INBOX_POSES` are dropped (newer ones follow); anything
+/// beyond `INBOX_LIMIT` means the session is stuck, and the socket closes.
+const INBOX_POSES: usize = 192;
+const INBOX_LIMIT: usize = 256;
+/// The close reason for a stuck inbox (web/multiplayer.js, code 1008).
+const BACKLOG_REASON: &str = "Control message backlog";
+
+/// What happens to a received message with `queued` messages waiting.
+#[derive(Debug, PartialEq)]
+enum Admit {
+    Queue,
+    Drop,
+    Close,
+}
+
+fn admit(queued: usize, bytes: &[u8]) -> Admit {
+    if queued >= INBOX_POSES && is_pose(bytes) {
+        Admit::Drop
+    } else if queued >= INBOX_LIMIT {
+        Admit::Close
+    } else {
+        Admit::Queue
+    }
+}
+
+/// A pose snapshot by its header alone (web/multiplayer.js sniffs it; the
+/// session still validates every admitted packet): `ATVM`, then protocol 2
+/// kind 4 or protocol 3+ kind 9.
+fn is_pose(bytes: &[u8]) -> bool {
+    bytes.len() >= 8
+        && bytes.starts_with(b"ATVM")
+        && ((bytes[4] == 2 && bytes[5] == 4) || (bytes[4] >= 3 && bytes[5] == 9))
+}
 
 /// `http(s)://host[:port]` to the matching `ws(s)://` room URL.
 pub fn room_url(relay: &str, code: &str, key: Option<&str>) -> String {
@@ -49,7 +83,7 @@ pub fn origin(relay: &str) -> String {
 
 #[cfg(not(target_arch = "wasm32"))]
 mod native {
-    use super::{BACKLOG, Event, MESSAGE_LIMIT};
+    use super::{Admit, BACKLOG, BACKLOG_REASON, Event, MESSAGE_LIMIT, admit};
     use std::sync::{
         Arc,
         atomic::{AtomicUsize, Ordering},
@@ -70,6 +104,8 @@ mod native {
         out: mpsc::Sender<Out>,
         events: mpsc::Receiver<Event>,
         queued: Arc<AtomicUsize>,
+        /// Received messages the session has not polled yet.
+        inbox: Arc<AtomicUsize>,
     }
 
     impl Socket {
@@ -78,6 +114,8 @@ mod native {
             let (event_tx, events) = mpsc::channel();
             let queued = Arc::new(AtomicUsize::new(0));
             let backlog = queued.clone();
+            let inbox = Arc::new(AtomicUsize::new(0));
+            let waiting = inbox.clone();
             let (url, origin) = (url.to_string(), origin.to_string());
             std::thread::Builder::new()
                 .name("relay socket".into())
@@ -141,6 +179,17 @@ mod native {
                                     let _ = event_tx.send(closed(1008, "Message limit".into()));
                                     return;
                                 }
+                                match admit(waiting.load(Ordering::Relaxed), &bytes) {
+                                    Admit::Queue => {}
+                                    Admit::Drop => continue,
+                                    Admit::Close => {
+                                        let _ = socket.close(None);
+                                        let _ = socket.flush();
+                                        let _ = event_tx.send(closed(1008, BACKLOG_REASON.into()));
+                                        return;
+                                    }
+                                }
+                                waiting.fetch_add(1, Ordering::Relaxed);
                                 if event_tx
                                     .send(Event::Message(bytes.to_vec(), web_time::Instant::now()))
                                     .is_err()
@@ -173,6 +222,7 @@ mod native {
                 out: out_tx,
                 events,
                 queued,
+                inbox,
             }
         }
 
@@ -192,7 +242,13 @@ mod native {
         }
 
         pub fn poll(&self) -> Vec<Event> {
-            self.events.try_iter().collect()
+            let events: Vec<Event> = self.events.try_iter().collect();
+            let messages = events
+                .iter()
+                .filter(|e| matches!(e, Event::Message(..)))
+                .count();
+            self.inbox.fetch_sub(messages, Ordering::Relaxed);
+            events
         }
 
         pub fn close(&self) {
@@ -259,8 +315,12 @@ mod native {
 
 #[cfg(target_arch = "wasm32")]
 mod web {
-    use super::{BACKLOG, Event, MESSAGE_LIMIT};
-    use std::{cell::RefCell, collections::VecDeque, rc::Rc};
+    use super::{Admit, BACKLOG, BACKLOG_REASON, Event, MESSAGE_LIMIT, admit};
+    use std::{
+        cell::{Cell, RefCell},
+        collections::VecDeque,
+        rc::Rc,
+    };
     use wasm_bindgen::{JsCast, closure::Closure};
 
     type Queue = Rc<RefCell<VecDeque<Event>>>;
@@ -274,26 +334,48 @@ mod web {
     pub struct Socket {
         socket: web_sys::WebSocket,
         events: Queue,
+        /// The inbox overflowed: the socket closes at the next poll.
+        stuck: Rc<Cell<bool>>,
         _callbacks: Callbacks,
     }
 
     impl Socket {
         pub fn connect(url: &str, _origin: &str) -> Socket {
             let events: Queue = Rc::default();
+            let stuck: Rc<Cell<bool>> = Rc::default();
             let socket = web_sys::WebSocket::new(url);
             let open = {
                 let events = events.clone();
                 Closure::<dyn FnMut()>::new(move || events.borrow_mut().push_back(Event::Open))
             };
             let message = {
-                let events = events.clone();
+                let (events, stuck) = (events.clone(), stuck.clone());
                 Closure::<dyn FnMut(_)>::new(move |event: web_sys::MessageEvent| {
+                    if stuck.get() {
+                        return;
+                    }
                     if let Ok(buffer) = event.data().dyn_into::<js_sys::ArrayBuffer>() {
                         let bytes = js_sys::Uint8Array::new(&buffer).to_vec();
-                        if bytes.len() <= MESSAGE_LIMIT {
-                            events
-                                .borrow_mut()
-                                .push_back(Event::Message(bytes, web_time::Instant::now()));
+                        if bytes.len() > MESSAGE_LIMIT {
+                            return;
+                        }
+                        let mut events = events.borrow_mut();
+                        let queued = events
+                            .iter()
+                            .filter(|e| matches!(e, Event::Message(..)))
+                            .count();
+                        match admit(queued, &bytes) {
+                            Admit::Queue => {
+                                events.push_back(Event::Message(bytes, web_time::Instant::now()))
+                            }
+                            Admit::Drop => {}
+                            Admit::Close => {
+                                stuck.set(true);
+                                events.push_back(Event::Closed {
+                                    code: 1008,
+                                    reason: BACKLOG_REASON.into(),
+                                });
+                            }
                         }
                     }
                 })
@@ -319,6 +401,7 @@ mod web {
                         socket: web_sys::WebSocket::new("ws://0.0.0.0:9/")
                             .expect("placeholder socket"),
                         events,
+                        stuck,
                         _callbacks: (open, message, close),
                     };
                 }
@@ -330,6 +413,7 @@ mod web {
             Socket {
                 socket,
                 events,
+                stuck,
                 _callbacks: (open, message, close),
             }
         }
@@ -344,6 +428,13 @@ mod web {
         }
 
         pub fn poll(&self) -> Vec<Event> {
+            if self.stuck.get() && self.socket.ready_state() <= web_sys::WebSocket::OPEN {
+                // Browsers only let pages close with 1000 or 3000-4999; the
+                // session already reported the 1008 backlog close.
+                let _ = self
+                    .socket
+                    .close_with_code_and_reason(1000, "Control message backlog");
+            }
             self.events.borrow_mut().drain(..).collect()
         }
 
@@ -440,6 +531,24 @@ mod tests {
         assert_eq!(super::riders_from(r#"{"riders":7}"#), Some(7));
         assert_eq!(super::riders_from(r#"{"riders":-1}"#), None);
         assert_eq!(super::riders_from("nope"), None);
+    }
+
+    #[test]
+    fn a_stuck_inbox_drops_poses_then_closes() {
+        use super::{Admit, admit, is_pose};
+        let pose = *b"ATVM\x03\x09\0\0";
+        let old_pose = *b"ATVM\x02\x04\0\0";
+        let control = *b"ATVM\x03\x01\0\0";
+        assert!(is_pose(&pose) && is_pose(&old_pose) && !is_pose(&control));
+        assert!(!is_pose(b"ATVM\x03\x09"));
+        assert_eq!(admit(0, &pose), Admit::Queue);
+        assert_eq!(admit(191, &pose), Admit::Queue);
+        // Beyond 192 waiting: poses are dropped, control traffic still queues.
+        assert_eq!(admit(192, &pose), Admit::Drop);
+        assert_eq!(admit(192, &control), Admit::Queue);
+        // Beyond 256: the session is stuck.
+        assert_eq!(admit(256, &control), Admit::Close);
+        assert_eq!(admit(300, &pose), Admit::Drop);
     }
 
     #[test]

@@ -778,7 +778,21 @@ impl Ride {
 
     /// One fixed step: vehicle and rider (op 24), then the camera (op 46).
     pub fn step(&mut self, controls: &Controls, orbit: f32) -> Result<()> {
+        self.step_with(controls, orbit, &mut |_| {})
+    }
+
+    /// [`Ride::step`] with a multiplayer hook: `contacts` applies the other
+    /// riders' contacts once the step's train has moved, before the vehicle
+    /// steps (atv-web op 50: train, `collide`, then the vehicle). Rooms ride
+    /// ATVs; a motorcycle takes its contacts before its own step.
+    pub fn step_with(
+        &mut self,
+        controls: &Controls,
+        orbit: f32,
+        contacts: &mut dyn FnMut(&mut Ride),
+    ) -> Result<()> {
         if self.is_motorcycle() {
+            contacts(self);
             self.step_bike(controls)?;
             self.step_race()?;
             self.step_train()?;
@@ -793,6 +807,7 @@ impl Ride {
             return Ok(());
         }
         self.step_train()?;
+        contacts(self);
         // During the countdown and after the finish the race supplies the
         // player's controls; tricks and touch/keyboard intents are dropped.
         match self.race_controls()? {

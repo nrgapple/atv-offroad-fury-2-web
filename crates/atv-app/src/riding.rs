@@ -116,8 +116,6 @@ pub struct Riding {
     /// In a multiplayer room: pause and blur keep neutral-input simulation
     /// running so other riders see this one (web/game.js online pause).
     pub online: bool,
-    /// Other riders' bodies for owner-local contacts on each step.
-    pub peers: Vec<atv_game::multiplayer::PeerBody>,
     /// Steps on which a rider contact touched.
     pub contacts: u64,
     /// The room's relay clock: local origin and offset (ms). Each step's
@@ -153,6 +151,15 @@ fn hype_frame(ride: &Ride) -> (atv_game::ride::hype::HypeFrame, Option<f32>) {
 
 /// Samples touch controls once per batch (game.js `drivingInput`).
 pub type TouchSampler<'a> = &'a mut dyn FnMut() -> Option<atv_ui::touch::Controls>;
+
+/// Other riders' contact bodies at a step's room-session time (ms), read
+/// with that step's train phase (atv-web `collide` at each step's
+/// `step_now`, after the train step).
+pub type PeerSampler<'a> = &'a dyn Fn(u64, &Ride) -> Vec<atv_game::multiplayer::PeerBody>;
+
+/// A room's contact source for one frame: the session clock now (ms) and
+/// the sampler.
+pub type Peers<'a> = Option<(u64, PeerSampler<'a>)>;
 
 impl Riding {
     pub fn new(ride: Ride, venue: &Venue) -> Self {
@@ -212,7 +219,6 @@ impl Riding {
             impact_severity: 0.,
             pulses: Vec::new(),
             online: false,
-            peers: Vec::new(),
             contacts: 0,
             server_clock: None,
         }
@@ -293,10 +299,16 @@ impl Riding {
     }
 
     /// Advances one rendered frame of `dt` seconds (already capped at 50 ms).
-    pub fn frame(&mut self, input: &Sample, touch: TouchSampler, dt: f32) -> Result<(), String> {
+    pub fn frame(
+        &mut self,
+        input: &Sample,
+        touch: TouchSampler,
+        dt: f32,
+        peers: Peers,
+    ) -> Result<(), String> {
         let started = web_time::Instant::now();
         self.clock += f64::from(dt) * 1000.;
-        let result = self.frame_inner(input, touch, dt);
+        let result = self.frame_inner(input, touch, dt, peers);
         self.sync_hype_audio();
         if let Some(sound) = &mut self.sound {
             sound.maintain();
@@ -306,7 +318,13 @@ impl Riding {
         result
     }
 
-    fn frame_inner(&mut self, input: &Sample, touch: TouchSampler, dt: f32) -> Result<(), String> {
+    fn frame_inner(
+        &mut self,
+        input: &Sample,
+        touch: TouchSampler,
+        dt: f32,
+        peers: Peers,
+    ) -> Result<(), String> {
         self.steps_last_frame = 0;
         self.input_cleared = false;
         self.step_cameras.clear();
@@ -323,7 +341,7 @@ impl Riding {
             let count = ((self.accumulator * 60.).floor() as u32).min(4);
             if count > 0 {
                 self.accumulator -= count as f32 / 60.;
-                self.run(&Controls::default(), count)?;
+                self.run_with(&Controls::default(), count, peers)?;
                 self.accept_batch(count, false)?;
             }
             return Ok(());
@@ -360,11 +378,7 @@ impl Riding {
                 }
                 let (frame, ground) = hype_frame(&self.ride);
                 self.hype.step(frame, ground);
-                let frame = self.ride.frame();
-                self.step_rest.push(
-                    (frame.wreck.phase == ride::Phase::Riding && frame.grounded.iter().all(|g| *g))
-                        .then_some(frame.origin),
-                );
+                self.step_rest.push(rest_origin(&self.ride));
                 let camera = self.ride.camera().0;
                 self.step_cameras.push((camera.position, camera.target));
                 let race = self.ride.take_race_events();
@@ -410,10 +424,12 @@ impl Riding {
         self.orbit -= orbit_axis * dt * 1.7;
         self.orbit -= input.drag * 0.004;
         // Alpha slow motion stretches real time between fixed steps
-        // (Freestyle only: races and shared rides keep real time).
-        let landed = self
-            .hype
-            .update(dt, self.alpha_slowmo && self.ride.race().is_none());
+        // (Freestyle only: races and multiplayer rooms keep real time;
+        // game.js updateHype `!raceSettings && !liveMultiplayer()`).
+        let landed = self.hype.update(
+            dt,
+            slowmo_allowed(self.alpha_slowmo, self.ride.race().is_some(), self.online),
+        );
         if let Some(landing) = landed {
             self.land(&landing)?;
         }
@@ -443,7 +459,7 @@ impl Riding {
             self.orbit = 0.;
             self.ride.cycle_camera();
         }
-        self.run(&read.controls, count)?;
+        self.run_with(&read.controls, count, peers)?;
         // A camera cycle snaps.
         self.accept_batch(count, self.focused && !self.menu_open && !cycle)
     }
@@ -512,6 +528,12 @@ impl Riding {
 
     /// `count` fixed steps with one control sample (an op 50 batch).
     pub fn run(&mut self, controls: &Controls, count: u32) -> Result<(), String> {
+        self.run_with(controls, count, None)
+    }
+
+    /// [`Riding::run`] in a room: each step touches the other riders as
+    /// sampled at that step's session time, after its train step.
+    fn run_with(&mut self, controls: &Controls, count: u32, peers: Peers) -> Result<(), String> {
         let server = self
             .server_clock
             .map(|(origin, offset)| origin.elapsed().as_secs_f64() * 1000. + offset);
@@ -519,15 +541,18 @@ impl Riding {
             // Each step's relay time, oldest first (op 50's step_now).
             self.ride.train_server_ms =
                 server.map(|now| now - f64::from(count - 1 - step) * 1000. / 60.);
-            for peer in &self.peers {
-                if self
-                    .ride
-                    .peer_contact(peer.position, peer.velocity, peer.orientation, peer.tie)
-                {
-                    self.contacts += 1;
+            let orbit = self.orbit;
+            let contacts = &mut self.contacts;
+            let mut touch = |ride: &mut Ride| {
+                let Some((now, sample)) = peers else { return };
+                let step_now = now.saturating_sub(u64::from(count - 1 - step) * 1000 / 60);
+                for peer in sample(step_now, ride) {
+                    if ride.peer_contact(peer.position, peer.velocity, peer.orientation, peer.tie) {
+                        *contacts += 1;
+                    }
                 }
-            }
-            self.ride.step(controls, self.orbit)?;
+            };
+            self.ride.step_with(controls, orbit, &mut touch)?;
             // acceptFrame: the Alpha hype director reads every step.
             let (frame, ground) = hype_frame(&self.ride);
             self.hype.step(frame, ground);
@@ -545,6 +570,7 @@ impl Riding {
                 sound.race(&race);
             }
             self.step_race.push(race);
+            self.step_rest.push(rest_origin(&self.ride));
             let camera = self.ride.camera().0;
             self.step_cameras.push((camera.position, camera.target));
         }
@@ -947,6 +973,20 @@ impl Riding {
     }
 }
 
+/// The step's body origin while Riding with every wheel down: the contact
+/// shadows' resting lift (game.js `acceptFrame` measures every step).
+fn rest_origin(ride: &Ride) -> Option<[f32; 3]> {
+    let frame = ride.frame();
+    (frame.wreck.phase == ride::Phase::Riding && frame.grounded.iter().all(|g| *g))
+        .then_some(frame.origin)
+}
+
+/// Alpha Air slow motion stretches real time: Freestyle only (game.js
+/// `updateHype`: not in races, not in a live multiplayer room).
+fn slowmo_allowed(toggle: bool, race: bool, online: bool) -> bool {
+    toggle && !race && !online
+}
+
 fn cells(venue: &Venue, origin: [f32; 3]) -> [f32; 2] {
     let t = &venue.terrain;
     [
@@ -976,5 +1016,17 @@ pub fn merge_touch(controls: &mut atv_game::ride::Controls, t: &atv_ui::touch::C
     }
     if let Some(axis) = t.sample.preload_axis {
         controls.preload_axis = Some(axis);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn air_slowmo_is_freestyle_only() {
+        assert!(super::slowmo_allowed(true, false, false));
+        assert!(!super::slowmo_allowed(false, false, false));
+        // Races and multiplayer rooms keep real time (game.js updateHype).
+        assert!(!super::slowmo_allowed(true, true, false));
+        assert!(!super::slowmo_allowed(true, false, true));
     }
 }
