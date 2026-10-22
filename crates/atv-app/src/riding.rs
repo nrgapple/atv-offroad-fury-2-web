@@ -97,6 +97,17 @@ pub struct Riding {
         Vec<atv_game::ride::view::NodeBox>,
         Vec<atv_game::ride::view::NodeBox>,
     )>,
+    /// ImpactEvents and controller rumble (Settings → Vibration).
+    pub impacts: atv_game::ride::impact::ImpactEvents,
+    pub rumble: atv_game::ride::impact::Rumble,
+    pub vibration: bool,
+    /// The previous accepted frame's reset count and Riding phase.
+    impact_previous: Option<(u32, bool)>,
+    /// The latest impact severity (ft/s; Alpha landing effects read it).
+    pub impact_severity: f64,
+    /// Pulses for the controller (or a touch device's vibration), drained
+    /// by the app each frame.
+    pub pulses: Vec<atv_game::ride::impact::Pulse>,
     /// In a multiplayer room: pause and blur keep neutral-input simulation
     /// running so other riders see this one (web/game.js online pause).
     pub online: bool,
@@ -186,6 +197,12 @@ impl Riding {
             sightline: Default::default(),
             crash_camera_tight: true,
             crash_bounds: None,
+            impacts: Default::default(),
+            rumble: Default::default(),
+            vibration: true,
+            impact_previous: None,
+            impact_severity: 0.,
+            pulses: Vec::new(),
             online: false,
             peers: Vec::new(),
             contacts: 0,
@@ -215,6 +232,7 @@ impl Riding {
         // A player Reset cleans the quad; the reset frame is accepted.
         self.dirt.reset();
         self.step_dirt()?;
+        self.accept_impacts();
         self.orbit = 0.;
         // The reset frame (op 23) is the next segment's start.
         self.delivered = None;
@@ -299,20 +317,33 @@ impl Riding {
         if !self.focused {
             return Ok(());
         }
-        if let Some((controls, cursor)) = &mut self.autodrive {
+        if self.autodrive.is_some() {
             // The browser's accumulator, with the script supplying each step.
             self.accumulator = (self.accumulator + dt).min(0.1);
             let count = ((self.accumulator * 60.).floor() as u32).min(4);
             for _ in 0..count {
                 self.accumulator -= 1. / 60.;
-                let Some(control) = controls.get(*cursor).copied() else {
+                let next = self.autodrive.as_mut().and_then(|(controls, cursor)| {
+                    let control = controls.get(*cursor).copied();
+                    *cursor += 1;
+                    control
+                });
+                let Some(control) = next else {
                     self.autodrive = None;
                     self.autodrive_done = true;
                     self.held = true;
                     return Ok(());
                 };
-                *cursor += 1;
                 self.ride.step(&control, self.orbit)?;
+                // The per-step presentation `run` performs.
+                if let Some(effects) = &mut self.effects {
+                    effects.step(&self.ride)?;
+                }
+                self.step_dirt()?;
+                self.accept_impacts();
+                if let Some(crashes) = &mut self.crashes {
+                    crashes.step(&self.ride)?;
+                }
                 let (frame, ground) = hype_frame(&self.ride);
                 self.hype.step(frame, ground);
                 let frame = self.ride.frame();
@@ -490,6 +521,7 @@ impl Riding {
                 effects.step(&self.ride)?;
             }
             self.step_dirt()?;
+            self.accept_impacts();
             if let Some(crashes) = &mut self.crashes {
                 crashes.step(&self.ride)?;
             }
@@ -730,6 +762,25 @@ impl Riding {
         self.ride
             .reprojected_quad(&height)
             .map_or(0., |(_, lift)| lift)
+    }
+
+    /// acceptFrame: ImpactEvents and the rumble for the latest frame (while
+    /// focused with no menu open).
+    fn accept_impacts(&mut self) {
+        use atv_game::ride::impact::Actor;
+        let actor = Actor::of(&self.ride);
+        let enabled = self.focused && !self.menu_open;
+        self.impact_severity = self.impacts.accept(actor, enabled, self.clock / 1000.);
+        if let Some(pulse) = self.rumble.accept(
+            self.impact_previous,
+            &actor,
+            self.impact_severity,
+            self.vibration && enabled,
+            self.clock,
+        ) {
+            self.pulses.push(pulse);
+        }
+        self.impact_previous = Some((actor.reset_count, actor.riding));
     }
 
     /// One accepted frame of ATV dirt, only while it is drawn (the browser
