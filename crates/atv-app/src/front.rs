@@ -38,6 +38,8 @@ pub struct Art {
     /// and the PAGE07 menu riders (male, female).
     pub vehicles: Vec<(u16, PreviewModel, Option<MenuRider>)>,
     pub menu_riders: HashMap<u16, MenuRider>,
+    /// `/RIDER/RIDER_MT.RES`: the gear materials that dress the garage rider.
+    pub rider_materials: Option<std::rc::Rc<Vec<u8>>>,
 }
 
 /// Something the frontend needs loaded.
@@ -45,6 +47,8 @@ pub struct Art {
 pub enum Want {
     Vehicle(u16),
     MenuRider(u16),
+    /// The gear materials, once the garage rider wears any gear.
+    RiderMaterials,
 }
 
 /// One 3D preview: its model, the UI image it renders into, and whether
@@ -100,6 +104,9 @@ pub struct Front {
     touch: TouchControls,
     bindings: atv_game::ride::bindings::Bindings,
     pub pad_name: Option<String>,
+    /// Connected controllers and whether the one in use is standard-mapped.
+    pub pads: Vec<(String, u32)>,
+    pub pad_standard: bool,
     /// The loader shows the frame drawn when loading started.
     shot_started: f64,
     /// A tip was picked for the current loader.
@@ -176,6 +183,8 @@ impl Front {
             touch,
             bindings,
             pad_name: None,
+            pads: Vec::new(),
+            pad_standard: true,
             shot_started: 0.,
             tip_chosen: false,
         };
@@ -214,6 +223,11 @@ impl Front {
     /// F3 changed the mode: the menu row shows it.
     pub fn set_diagnostics_pref(&mut self, mode: &str) {
         self.prefs.diagnostics = mode.into();
+    }
+
+    /// Controller Settings' pinned pad (or Auto).
+    pub fn pad_pin(&self) -> Option<(String, u32)> {
+        self.bindings.tuning.selected.clone()
     }
 
     /// Settings → Audio: the soundtrack (and menu tune) on, and its volume.
@@ -258,7 +272,7 @@ impl Front {
     pub fn animating(&self) -> bool {
         self.menu.is_none()
             && (matches!(self.state.page.as_str(), "title" | "loading")
-                || (self.state.page == "garage"
+                || (matches!(self.state.page.as_str(), "garage" | "gear")
                     && self.previews[1].as_ref().is_some_and(|p| p.animated)))
     }
 
@@ -269,7 +283,13 @@ impl Front {
         if self.menu.is_none()
             && matches!(
                 page,
-                "main" | "single" | "garage" | "multiplayer" | "create-lobby" | "join-lobby"
+                "main"
+                    | "single"
+                    | "garage"
+                    | "gear"
+                    | "multiplayer"
+                    | "create-lobby"
+                    | "join-lobby"
             )
         {
             let quad = self.state.quad_id;
@@ -277,8 +297,16 @@ impl Front {
                 wants.push(Want::Vehicle(quad));
             }
             let rider = self.state.rider_id;
-            if page == "garage" && quad < 27 && !self.art.menu_riders.contains_key(&rider) {
+            let garage = matches!(page, "garage" | "gear");
+            if garage && quad < 27 && !self.art.menu_riders.contains_key(&rider) {
                 wants.push(Want::MenuRider(rider));
+            }
+            if garage
+                && quad < 27
+                && self.art.rider_materials.is_none()
+                && self.state.appearance.gear.iter().any(|g| *g != 0)
+            {
+                wants.push(Want::RiderMaterials);
             }
         }
         wants
@@ -307,6 +335,8 @@ impl Front {
             touch: &mut self.touch,
             bindings: Some(&mut self.bindings),
             pad_name: self.pad_name.clone(),
+            pads: self.pads.clone(),
+            pad_standard: self.pad_standard,
             view: self.view,
             lobby: None,
             music: None,
@@ -526,6 +556,8 @@ impl Front {
         let (box_w, box_h) = (view.width + 80., view.height + 80.);
         let track_id = match &self.state.loading {
             Some(loading) if page == "loading" => Some(loading.environment.clone()),
+            // Single Race presents the setup's course.
+            _ if page == "race" => Some(self.state.race.course.clone()),
             _ => self
                 .state
                 .tracks
@@ -536,7 +568,7 @@ impl Front {
         // backdrop.
         let mut backdrop_track = false;
         let mut backdrop = None;
-        if matches!(page.as_str(), "tracks" | "lobby" | "loading")
+        if matches!(page.as_str(), "tracks" | "lobby" | "loading" | "race")
             && let Some(id) = &track_id
             && self.art.photos.contains_key(id)
         {
@@ -601,11 +633,13 @@ impl Front {
         }
         // Course photos: small thumbnails for the list, the graded hero.
         let mut photos = HashMap::new();
-        if matches!(page.as_str(), "tracks" | "lobby") {
+        if matches!(page.as_str(), "tracks" | "lobby" | "race") {
             let thumb_px = 72. * view.scale * 1.5;
             // The lobby shows only the room's course (`.ms-track-hero`).
             let ids: Vec<String> = if page == "lobby" {
                 track_id.iter().cloned().collect()
+            } else if page == "race" {
+                self.state.race_order()
             } else {
                 self.state
                     .order()
@@ -910,9 +944,26 @@ impl Front {
         let shown = self.menu.is_none()
             && matches!(
                 page.as_str(),
-                "main" | "single" | "garage" | "multiplayer" | "create-lobby" | "join-lobby"
+                "main"
+                    | "single"
+                    | "garage"
+                    | "gear"
+                    | "multiplayer"
+                    | "create-lobby"
+                    | "join-lobby"
             );
         let quad = self.state.quad_id;
+        let garage = matches!(page.as_str(), "garage" | "gear");
+        // The garage look: paint on ATVs (motorcycles keep their livery).
+        let appearance = self.state.appearance;
+        let paint = if quad < 27 {
+            atv_game::ride::gear::PAINT_PALETTE
+                .get(usize::from(appearance.paint))
+                .copied()
+                .unwrap_or([0., 0.])
+        } else {
+            [0., 0.]
+        };
         let texture = |textures: &HashMap<String, front::assets::ModelTexture>| {
             let textures = textures.clone();
             move |name: &str| {
@@ -928,20 +979,27 @@ impl Front {
             }
         };
         // Slot 0: the vehicle in its bind (or MX resting) pose.
-        let key = format!("vehicle:{quad}");
+        let key = format!("vehicle:{quad}:{paint:?}");
         if !shown {
             self.previews = [None, None];
         } else if self.previews[0].as_ref().is_none_or(|p| p.key != key)
             && let Some((_, model, _)) = self.art.vehicles.iter().find(|(q, ..)| *q == quad)
         {
             let lookup = texture(&model.textures);
-            match ModelPreview::new(device, queue, &model.mesh, &lookup, model.pose.as_deref()) {
+            match ModelPreview::new(
+                device,
+                queue,
+                &model.mesh,
+                &lookup,
+                model.pose.as_deref(),
+                paint,
+            ) {
                 Ok(preview) => self.set_preview(0, key, preview, false),
                 Err(error) => crate::status(&format!("Model preview: {error}")),
             }
         }
         // Slot 1: the garage rider's idle playlist (PAGE07, or the MX rider).
-        if page != "garage" || !shown {
+        if !garage || !shown {
             if let Some(old) = self.previews[1].take()
                 && let (Some(renderer), Some((id, ..))) = (&mut self.renderer, old.target)
             {
@@ -959,18 +1017,46 @@ impl Front {
         } else {
             self.art.menu_riders.get(&self.state.rider_id)
         };
+        // gearPreview: the ATV rider wears the garage gear once its
+        // materials are read.
+        let dressed = quad < 27
+            && appearance.gear.iter().any(|g| *g != 0)
+            && self.art.rider_materials.is_some()
+            && !self.state.gear_catalog.is_empty();
         let key = if quad >= 27 {
             format!("mx:{quad}")
+        } else if dressed {
+            format!("rider:{}:{:?}", self.state.rider_id, appearance.gear)
         } else {
             format!("rider:{}", self.state.rider_id)
         };
         let time = ((now - self.garage_since) / 1000.).max(0.) as f32;
         if let Some(rider) = rider {
             if self.previews[1].as_ref().is_none_or(|p| p.key != key) {
-                let lookup = texture(&rider.textures);
-                let pose = rider.rider.pose(time).ok().map(|(_, p)| p.world_matrices);
-                match ModelPreview::new(device, queue, &rider.rider.mesh, &lookup, pose.as_deref())
+                let mut textures = rider.textures.clone();
+                if dressed
+                    && let Some(bytes) = &self.art.rider_materials
+                    && let Ok(materials) = atv_core::resource::Resource::parse(bytes)
                 {
+                    textures.extend(front::assets::ride_textures(
+                        atv_game::ride::gear::gear_textures(
+                            &rider.rider.mesh,
+                            &appearance,
+                            &self.state.gear_catalog,
+                            &materials,
+                        ),
+                    ));
+                }
+                let lookup = texture(&textures);
+                let pose = rider.rider.pose(time).ok().map(|(_, p)| p.world_matrices);
+                match ModelPreview::new(
+                    device,
+                    queue,
+                    &rider.rider.mesh,
+                    &lookup,
+                    pose.as_deref(),
+                    [0., 0.],
+                ) {
                     Ok(mut preview) => {
                         preview.yaw = rider.yaw;
                         self.set_preview(1, key, preview, true);
@@ -1057,6 +1143,17 @@ impl Front {
                 "code": l.code, "status": l.status,
             })),
             "notice": self.state.notice,
+            "labels": self.state.choices().iter().map(|(_, l)| l).collect::<Vec<_>>(),
+            "race": {
+                "courses": self.state.race_courses.len(), "course": self.state.race.course,
+                "laps": self.state.race.laps, "cpu": self.state.race.cpu,
+                "difficulty": self.state.race.difficulty, "filter": self.state.race_filter,
+            },
+            "gear": {
+                "gear": self.state.appearance.gear, "paint": self.state.appearance.paint,
+                "rows": self.state.gear_rows(), "catalog": self.state.gear_catalog.len(),
+                "materials": self.art.rider_materials.is_some(),
+            },
             "loading": self.state.loading.as_ref().map(|l| serde_json::json!({
                 "environment": l.environment, "status": l.status, "progress": l.progress,
             })),

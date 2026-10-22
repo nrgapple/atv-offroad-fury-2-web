@@ -305,7 +305,7 @@ pub struct PreviewModel {
     pub pose: Option<Vec<[f32; 16]>>,
 }
 
-fn ride_textures(
+pub fn ride_textures(
     textures: HashMap<String, atv_game::ride::textures::MaterialTexture>,
 ) -> HashMap<String, ModelTexture> {
     textures
