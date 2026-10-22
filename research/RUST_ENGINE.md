@@ -1275,8 +1275,13 @@ Observed (host-only, local relay):
 - Host Game → Select Track → Ride creates the room (with the custom code) on that
   course and rides. Join Game checks the 8-character code and opens the room; an
   ended room opens again on the current course. Garage opens the garage.
-- A motorcycle choice rides ATV01 in rooms. The browser instead refuses with
-  "Choose an ATV for multiplayer"; this difference is recorded.
+- On a motorcycle, Host Game's Select Track and Join Game refuse with the
+  browser's notice ("Choose an ATV for multiplayer. Motorcycles are available
+  in Single Player.") and stay on the form. As in frontend.js, the garage opened
+  from the Multiplayer menus or from Change ATV and Rider over a room lists ATVs
+  only, and stepping wraps within ATVs 1-26. Free Ride and the frontend-less
+  entry points (`?room=`, `fury --room`) still fall back to ATV01, as the browser
+  does for Free Ride (unit test `rooms_refuse_motorcycles_and_online_garages_list_atvs`).
 - Observed (`tools/test_engine_multiplayer_menu.mjs`, local relay, host-only):
   - A Rust browser hosted room RM634747 from the menus, with the name and a
     lower-case custom code typed into the inputs.
