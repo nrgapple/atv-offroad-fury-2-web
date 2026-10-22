@@ -20,8 +20,9 @@ var PAGE_TIMEOUT_MS = 4000;
 var PRUNE_DELAY_MS = 20000;
 var MAX_SHELL_FILES = 400;
 
-var PAGE_PATHS = ['/', '/index.html', '/play.html', '/devlog.html'];
-var PRECACHE_PAGES = ['/play.html', '/index.html'];
+var PAGE_PATHS = ['/', '/index.html', '/play.html', '/engine.html', '/devlog.html'];
+// engine.html: the Rust engine page (its module graph includes atv_app_bg.wasm).
+var PRECACHE_PAGES = ['/play.html', '/index.html', '/engine.html'];
 var BLOB = /^\/content\/([a-f0-9]{64})\.bin$/;
 var MANIFEST = /^\/content\/(?:manifest\.json|manifests\/([a-f0-9]{40})\.json)$/;
 var ASSET = /^\/[a-z0-9_-]+\.(?:js|css|wasm)$/;

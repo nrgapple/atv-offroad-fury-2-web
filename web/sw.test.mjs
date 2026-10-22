@@ -78,6 +78,10 @@ function site(version = V) {
   return {
     '/play.html': `<link rel="manifest" href="/manifest.webmanifest"><link rel="icon" href="/fury-remastered-home-192-v1.png"><link rel="stylesheet" href="game.css${v}"><script type="module" src="game.js${v}"></script>`,
     '/index.html': `<script src="landing.js${v}" defer></script>`,
+    '/engine.html': `<link rel="manifest" href="/manifest.webmanifest"><script type="module" src="engine.js${v}"></script>`,
+    [`/engine.js${v}`]: `import init from './atv_app.js${v}';`,
+    [`/atv_app.js${v}`]: `new URL('atv_app_bg.wasm${v}', import.meta.url);`,
+    [`/atv_app_bg.wasm${v}`]: '\0asm',
     [`/game.js${v}`]: `import { hud } from './hud.js${v}';\nnew Worker('worker.js${v}');\nconst img = 'fury-remastered.svg';\nconst unused = 'missing.js${v}';
 fetch('/content/manifest.json');`,
     [`/hud.js${v}`]: 'export const hud = 1;',
@@ -147,8 +151,9 @@ test('install precaches the entry pages and their whole versioned shell, then ma
   await sw.lifecycle('install');
   const shell = sw.storage.urls(`fury-shell-v1-${V}`).sort();
   assert.deepEqual(shell, ['/__fury-offline/shell-complete', '/fury-remastered-home-192-v1.png', '/fury-remastered-home-512-v1.png', '/fury-remastered.svg',
-    `/game.css?v=${V}`, `/game.js?v=${V}`, `/hud.js?v=${V}`, `/landing.js?v=${V}`, '/manifest.webmanifest', `/worker.js?v=${V}`, `/atv_web.wasm?v=${V}`].sort());
-  assert.deepEqual(sw.storage.urls('fury-pages-v1').sort(), ['/index.html', '/play.html']);
+    `/game.css?v=${V}`, `/game.js?v=${V}`, `/hud.js?v=${V}`, `/landing.js?v=${V}`, '/manifest.webmanifest', `/worker.js?v=${V}`, `/atv_web.wasm?v=${V}`,
+    `/engine.js?v=${V}`, `/atv_app.js?v=${V}`, `/atv_app_bg.wasm?v=${V}`].sort());
+  assert.deepEqual(sw.storage.urls('fury-pages-v1').sort(), ['/engine.html', '/index.html', '/play.html']);
   assert.ok(sw.requests.includes(`/missing.js?v=${V}`), 'a quoted non-file is tried and skipped on 404');
   assert.deepEqual(sw.storage.urls('fury-manifests-v1'), ['/content/manifest.json'], 'the content manifest a module fetches is cached too');
   const unpublished = site();
@@ -182,7 +187,7 @@ test('activate deletes other deploys’ shells and manifests but keeps the shell
   await sw.lifecycle('activate');
   assert.deepEqual((await sw.storage.keys()).sort(), ['fury-manifests-v1', 'fury-pages-v1', `fury-shell-v1-${NEW}`, `fury-shell-v1-${V}`].sort());
   assert.deepEqual(sw.storage.urls('fury-manifests-v1').sort(), ['/content/manifest.json', `/content/manifests/${V}.json`]);
-  assert.deepEqual(sw.storage.urls('fury-pages-v1').sort(), ['/index.html', '/play.html'], 'a page naming a deleted shell is dropped');
+  assert.deepEqual(sw.storage.urls('fury-pages-v1').sort(), ['/engine.html', '/index.html', '/play.html'], 'a page naming a deleted shell is dropped');
   assert.equal(sw.self.clients.claimed, 1);
 });
 

@@ -1502,6 +1502,53 @@ Gaps, in planned slice order:
 
 1. A phone measurement of a full room; arrival frames are 25-31 ms on this host.
 
+## Page shell: app install, offline, usage events, render scale
+
+Switch-over items 3, 8 and 9 in SWITCHOVER.md.
+
+- **engine.html** carries play.html's app shell:
+  - manifest, icons and theme meta;
+  - the install banner and iOS Add to Home Screen help (install.js);
+  - the installed-iOS viewport fix: install.js sizes the page's `#game` canvas,
+    which winit now uses instead of appending its own;
+  - launch screens;
+  - offline.js.
+
+  The frontend mirrors its page to a hidden `#frontend` element (`sync_shell`),
+  so the banner shows only on the title screen. engine.js lets the banner and
+  dialog keep their native taps.
+- **sw.js** precaches and serves `/engine.html`. Its shell walk picks up
+  engine.js, engine.css, atv_app.js and `atv_app_bg.wasm` through the packaged
+  `?v=` references.
+- **Usage events (atv-app `usage.rs`):** the engine reports rides through
+  analytics.js (`window.furyUsage`, created by engine.js), with game.js's
+  fields:
+  - `session_start` (link or menu);
+  - `ride_start` (load seconds; players online);
+  - `ride_failed`;
+  - riding time, which stops in menus and is reported on hide, pagehide and
+    menu (`ride_time`);
+  - `race_finish`.
+
+  analytics.js keeps consent (Do Not Track, GPC, automation, local hosts) and
+  the beacon. Desktop builds send nothing.
+- **Render scale (`render_scale.rs`, game.js `RenderScale`):** the web surface
+  is the canvas's CSS box × min(device ratio, 1.5). While riding, 1.5 s of
+  frames averaging over 24 ms step it down by 0.25 to 1.0. 6 s under 17.5 ms
+  step it back up; a relapse doubles that wait (up to 60 s). UI layout stays in
+  CSS pixels. The diagnostics overlay shows the ratio.
+- **Observed** (`tools/test_engine_shell.mjs`, packaged fixture, Chromium with an
+  iPhone user agent at 2x; host-only):
+  - The banner and help dialog worked on the title.
+  - The title drew at 1.5x.
+  - The ride link sent `session_start` (link) and `ride_start` (single, env01,
+    3.46 s load).
+  - With the CPU throttled 20x, the ratio stepped 1.5 → 1.25 → 1.0.
+  - The pause menu stopped riding time.
+  - The worker cached 66 shell files, including the wasm, and relaunched
+    engine.html offline to its title.
+  - `test_offline.mjs` still passes with the extra page.
+
 ## Other riders' shadows and ride prefetch
 
 - **Shadows from CPUs and other riders.** Race CPUs and other riders cast
