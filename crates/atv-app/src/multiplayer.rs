@@ -543,6 +543,40 @@ impl Net {
         tick
     }
 
+    /// The frontend over a held room (Change ATV and Rider, Select Track): the
+    /// ride waits paused behind it and its paused presence keeps going out, so
+    /// others do not see this rider go stale (web/multiplayer.js keeps `send`
+    /// running while the simulation is paused behind the garage). Call after
+    /// [`Net::tick`] without a ride, which keeps the socket and pings.
+    pub fn hold(&mut self, ride: &Ride) {
+        if self.closed.is_some() || self.reconnect.is_some() {
+            return;
+        }
+        let now = now_ms(self.clock);
+        let now_f = now as f64;
+        if !self.ready_sent
+            && self.session.peer.is_some()
+            && let Ok(bytes) = self.session.ready()
+        {
+            self.ready_sent = self.socket.send(bytes);
+            self.last_traffic = now_f;
+        }
+        if !self.ready_sent || now_f - self.last_send < 50. {
+            return;
+        }
+        self.last_send = now_f;
+        match self.session.snapshot(ride, now, true) {
+            Ok(Some(bytes)) => {
+                if self.socket.send(bytes.clone()) {
+                    let _ = self.session.sent(&bytes);
+                    self.last_traffic = now_f;
+                }
+            }
+            Ok(None) => {}
+            Err(error) => crate::status(&format!("Multiplayer pose: {error}")),
+        }
+    }
+
     /// Other riders' bodies for this frame's contact steps.
     pub fn contact_bodies(&self, ride: &Ride) -> Vec<atv_game::multiplayer::PeerBody> {
         self.session

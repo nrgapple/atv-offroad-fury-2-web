@@ -23,6 +23,9 @@ reaches parity; then the JavaScript and its ABI operations are deleted.
 
 ## Migration rule
 
+New work lands in the Rust engine only; the JavaScript game is frozen as the parity
+reference until the switch-over (AGENTS.md "Rust only for new work").
+
 The Rust engine runs beside the live game at `/engine.html` until it matches. A
 subsystem moves when `tools/compare_engine.mjs` shows the same frame from the same
 camera in the JavaScript game, the Rust engine in the browser and the native build.
@@ -1275,8 +1278,13 @@ Observed (host-only, local relay):
 - Host Game → Select Track → Ride creates the room (with the custom code) on that
   course and rides. Join Game checks the 8-character code and opens the room; an
   ended room opens again on the current course. Garage opens the garage.
-- A motorcycle choice rides ATV01 in rooms. The browser instead refuses with
-  "Choose an ATV for multiplayer"; this difference is recorded.
+- On a motorcycle, Host Game's Select Track and Join Game refuse with the
+  browser's notice ("Choose an ATV for multiplayer. Motorcycles are available
+  in Single Player.") and stay on the form. As in frontend.js, the garage opened
+  from the Multiplayer menus or from Change ATV and Rider over a room lists ATVs
+  only, and stepping wraps within ATVs 1-26. Free Ride and the frontend-less
+  entry points (`?room=`, `fury --room`) still fall back to ATV01, as the browser
+  does for Free Ride (unit test `rooms_refuse_motorcycles_and_online_garages_list_atvs`).
 - Observed (`tools/test_engine_multiplayer_menu.mjs`, local relay, host-only):
   - A Rust browser hosted room RM634747 from the menus, with the name and a
     lower-case custom code typed into the inputs.
@@ -1303,9 +1311,14 @@ Observed (host-only, local relay):
     course.
 - A direct room link (`engine.html?room=`, `fury --room`) has no frontend, so both
   rows stay hidden there.
-- Difference: the browser keeps riding behind its garage. The Rust ride stops while
-  the garage is open, so for those seconds others see this rider go stale and
-  return after the reload.
+- Behind the garage or course picker the ride waits paused and stays present, as
+  in the browser (its simulation pauses under the menu while web/multiplayer.js
+  keeps sending). The app keeps the room's `Ride` (`held_ride`) and
+  `Net::hold` sends its paused presence (0.2 Hz; others keep a paused pose for
+  15 s) on the 1 s presence timer. The GPU scene is released for the frontend,
+  and the ride reloads after Done/Ride. During that reload no poses go out, as in
+  the browser while it loads. Before this change the ride was dropped, and the
+  guest saw the host go stale after about 1 s.
 - Observed (`tools/test_engine_multiplayer_room_front.mjs`, local relay,
   host-only):
   - A Rust browser hosted room JKSRF5Y8 from its menus with a JavaScript guest.
@@ -1313,6 +1326,9 @@ Observed (host-only, local relay):
     the guest saw slot 0's model become ATV 2.
   - Select Track → next course → Ride moved the room to env02. The Rust host reloaded
     there and drew the guest again.
+  - The guest kept the host present (not stale) in all 24 samples over 6 s
+    behind the garage. The same check on the previous build failed after 1 s
+    (4 of 24 samples).
 
 ### Full Free Ride room in the Rust engine (measurement)
 
@@ -1403,8 +1419,7 @@ outside the window; joins paced 250 ms; one Mac, headless Chromium/Metal,
 Gaps, in planned slice order:
 
 1. The joining "Free Ride Lobby" page and Copy invite link from the frontend are
-   not drawn; rides start at once. The ride does not keep running behind the
-   garage, as noted in slice 10.
+   not drawn; rides start at once.
 2. Train on a motorcycle ride, the Realistic train-riding setting, and an arrival's
    spawn velocity on a moving car (the browser adds the car's point velocity).
 3. A phone measurement of a full room; arrival frames are 25-31 ms on this host.
