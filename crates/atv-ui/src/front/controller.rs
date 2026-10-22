@@ -71,6 +71,8 @@ pub enum Event {
         laps: u32,
         cpu: u32,
         difficulty: u32,
+        /// A race link's EATDIRT / BRINGIT cheats (aggressive, all out).
+        cheats: (bool, bool),
     },
     /// Single Race → Copy ride link: the race setup's link.
     CopyRaceLink,
@@ -87,6 +89,10 @@ pub struct RaceSetup {
     pub laps: u32,
     pub cpu: u32,
     pub difficulty: u32,
+    /// A race link's EATDIRT (aggressive) and BRINGIT (all out) cheats:
+    /// kept through Start Race and Copy ride link, never saved
+    /// (frontend.js `raceSettings` vs `normalizedRace`).
+    pub cheats: (bool, bool),
 }
 
 impl RaceSetup {
@@ -111,6 +117,7 @@ impl RaceSetup {
             } else {
                 1
             },
+            cheats: (false, false),
         }
     }
 
@@ -618,6 +625,7 @@ impl Frontend {
             laps: self.race.laps,
             cpu: self.race.cpu,
             difficulty: self.race.difficulty,
+            cheats: self.race.cheats,
         })
     }
 
@@ -1040,10 +1048,8 @@ impl Frontend {
                     }
                     return None;
                 }
-                "Escape" => {
-                    self.focus = None;
-                    return None;
-                }
+                // frontend.js: Escape in a field still goes back a page.
+                "Escape" => self.focus = None,
                 "Tab" | "ArrowDown" | "Enter" | "NumpadEnter" => {
                     self.focus = (index + 1 < fields.len()).then_some(index + 1);
                     if self.focus.is_none() {
@@ -1156,8 +1162,8 @@ impl Frontend {
     /// accepts, B/Y go back, LB/RB switch the course tabs.
     pub fn pad(
         &mut self,
-        buttons: [f32; 17],
-        axes: [f32; 4],
+        buttons: &[f32],
+        axes: &[f32],
         view: &Viewport,
         settings: &mut Settings,
     ) -> Option<Event> {
@@ -1167,14 +1173,19 @@ impl Frontend {
                 held |= 1 << bit;
             }
         };
-        set(0, buttons[0] > 0.5 || buttons[9] > 0.5);
-        set(1, buttons[1] > 0.5 || buttons[3] > 0.5);
-        set(3, buttons[12] > 0.5 || axes[1] < -0.55);
-        set(4, buttons[13] > 0.5 || axes[1] > 0.55);
-        set(5, buttons[14] > 0.5 || axes[0] < -0.55);
-        set(6, buttons[15] > 0.5 || axes[0] > 0.55);
-        set(7, buttons[4] > 0.5);
-        set(8, buttons[5] > 0.5);
+        let (buttons, axes) = (
+            |i: usize| buttons.get(i).copied().unwrap_or(0.),
+            |i: usize| axes.get(i).copied().unwrap_or(0.),
+        );
+        set(0, buttons(0) > 0.5);
+        set(2, buttons(9) > 0.5);
+        set(1, buttons(1) > 0.5 || buttons(3) > 0.5);
+        set(3, buttons(12) > 0.5 || axes(1) < -0.55);
+        set(4, buttons(13) > 0.5 || axes(1) > 0.55);
+        set(5, buttons(14) > 0.5 || axes(0) < -0.55);
+        set(6, buttons(15) > 0.5 || axes(0) > 0.55);
+        set(7, buttons(4) > 0.5);
+        set(8, buttons(5) > 0.5);
         // Buttons held when the page opened act only after a release.
         let fresh = if self.pad == u32::MAX {
             0
@@ -1200,6 +1211,12 @@ impl Frontend {
             if fresh & 1 << bit != 0 && event.is_none() {
                 event = self.key(code, view, settings);
             }
+        }
+        // Start accepts, except over a held room: there it leaves the
+        // garage or course picker for the ride (frontend.js pause action).
+        if fresh & 1 << 2 != 0 && event.is_none() {
+            let room = self.room == Some(self.page.as_str());
+            event = self.key(if room { "Escape" } else { "Enter" }, view, settings);
         }
         event
     }
@@ -1533,6 +1550,7 @@ impl Frontend {
             pulse,
             quad_model: None,
             rider_model: None,
+            model_status: [None, None],
         }
     }
 }
@@ -1609,6 +1627,71 @@ mod tests {
             front.key("Enter", &view, &mut settings),
             Some(Event::Join { ref code, .. }) if code == "ABCD1234"
         ));
+    }
+
+    #[test]
+    fn escape_in_a_field_goes_back_and_start_leaves_a_room_garage() {
+        let view = view(1280., 720.);
+        let mut settings = Settings::memory();
+        let mut front = Frontend::new(tracks(), &settings, true);
+        front.show("join-lobby", &view);
+        front.key("Tab", &view, &mut settings);
+        assert!(front.focus.is_some());
+        front.key("Escape", &view, &mut settings);
+        assert_eq!((front.page.as_str(), front.focus), ("multiplayer", None));
+        // Over a held room, Start leaves the garage for the ride.
+        front.show("garage", &view);
+        front.room = Some("garage");
+        let pad = |held: &[usize]| {
+            let mut buttons = [0.; 17];
+            for b in held {
+                buttons[*b] = 1.;
+            }
+            buttons
+        };
+        front.pad(&pad(&[]), &[0.; 4], &view, &mut settings);
+        let event = front.pad(&pad(&[9]), &[0.; 4], &view, &mut settings);
+        assert!(matches!(event, Some(Event::RoomRide { .. })), "{event:?}");
+    }
+
+    #[test]
+    fn a_race_links_cheats_last_through_start_race() {
+        let view = view(1280., 720.);
+        let mut settings = Settings::memory();
+        let mut front = Frontend::new(tracks(), &settings, true);
+        front.set_race_courses(vec!["env01".into(), "nat01".into()], &view);
+        front.show_race(
+            RaceSetup {
+                course: "env01".into(),
+                laps: 2,
+                cpu: 3,
+                difficulty: 1,
+                cheats: (true, true),
+            },
+            &view,
+        );
+        let at = front
+            .choices()
+            .iter()
+            .position(|(a, _)| a == "racelaps")
+            .unwrap();
+        front.selection = at;
+        front.key("ArrowRight", &view, &mut settings);
+        let event = front.race_event(&mut settings);
+        assert!(
+            matches!(
+                event,
+                Some(Event::Race {
+                    laps: 3,
+                    cheats: (true, true),
+                    ..
+                })
+            ),
+            "{event:?}"
+        );
+        // The saved setup never keeps them (normalizedRace).
+        let saved: Value = serde_json::from_str(&settings.get(SELECTION_KEY).unwrap()).unwrap();
+        assert!(saved["race"].get("aggressive").is_none());
     }
 
     #[test]
@@ -1853,7 +1936,8 @@ mod tests {
                 rider: 0,
                 laps: 4,
                 cpu: 0,
-                difficulty: 2
+                difficulty: 2,
+                cheats: (false, false),
             })
         );
         let saved: Value = serde_json::from_str(&settings.get(SELECTION_KEY).unwrap()).unwrap();

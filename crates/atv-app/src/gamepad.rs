@@ -1,12 +1,22 @@
 //! Controllers through gilrs, in the W3C standard-gamepad order the browser
-//! bindings use. The pad with the latest input is the active one, like
+//! bindings use. The pad with fresh input is the active one, like
 //! web/gamepads.js "Auto", unless Controller Settings pins a connected pad.
 use atv_game::ride::bindings::Pad;
 use gilrs::{Axis, Button, GamepadId, Gilrs};
+use std::collections::HashMap;
+
+/// gamepads.js: axes resting far from centre (idle triggers, hat switches,
+/// pedals) are measured from their first-seen value, so they never count as
+/// activity; a move of more than MOVED from there does.
+const RESTING: f32 = 0.5;
+const MOVED: f32 = 0.35;
 
 pub struct Gamepads {
     gilrs: Option<Gilrs>,
+    /// The pad in use: the pin, else Auto's choice (`activeGamepad`).
     active: Option<GamepadId>,
+    /// Each pad's axis baselines (gamepads.js `baselines`).
+    baselines: HashMap<GamepadId, HashMap<gilrs::ev::Code, f32>>,
     /// Controller Settings' pinned pad (name, index), or Auto.
     pin: Option<(String, u32)>,
     /// The playing rumble (dropping a gilrs effect stops it).
@@ -42,6 +52,7 @@ impl Gamepads {
         Self {
             gilrs: Gilrs::new().ok(),
             active: None,
+            baselines: HashMap::new(),
             pin: None,
             #[cfg(not(target_arch = "wasm32"))]
             effect: None,
@@ -91,57 +102,81 @@ impl Gamepads {
     /// pad-glyphs.js `standardPad`: standard unless the active pad reports
     /// no mapping (the browser's empty `mapping`; gilrs without a layout).
     pub fn standard(&self) -> bool {
-        let Some(gilrs) = self.gilrs.as_ref() else {
-            return true;
-        };
         let Some(id) = self.pinned().or(self.active) else {
             return true;
         };
-        let Some(pad) = gilrs.connected_gamepad(id) else {
-            return true;
-        };
+        self.is_standard(id).unwrap_or(true)
+    }
+
+    /// Whether a connected pad reports the standard mapping (None: gone).
+    fn is_standard(&self, id: GamepadId) -> Option<bool> {
+        let pad = self.gilrs.as_ref()?.connected_gamepad(id)?;
         #[cfg(target_arch = "wasm32")]
         {
-            use js_sys::Reflect;
-            use wasm_bindgen::{JsCast, JsValue};
-            let Some(window) = web_sys::window() else {
-                return true;
-            };
-            let navigator: JsValue = window.navigator().into();
-            let get = |target: &JsValue, key: &str| Reflect::get(target, &key.into()).ok();
-            let pads = get(&navigator, "getGamepads")
-                .and_then(|f| f.dyn_into::<js_sys::Function>().ok())
-                .and_then(|f| f.call0(&navigator).ok())
-                .map(|list| js_sys::Array::from(&list))
-                .unwrap_or_default();
             let name = pad.name().to_string();
-            pads.iter()
-                .find(|p| get(p, "id").and_then(|v| v.as_string()).as_deref() == Some(&name))
-                .and_then(|p| get(&p, "mapping")?.as_string())
-                .is_none_or(|mapping| !mapping.is_empty())
+            Some(
+                browser_pads()
+                    .into_iter()
+                    .find(|p| {
+                        browser_get(p, "id").and_then(|v| v.as_string()).as_deref() == Some(&name)
+                    })
+                    .and_then(|p| browser_get(&p, "mapping")?.as_string())
+                    .is_none_or(|mapping| !mapping.is_empty()),
+            )
         }
         #[cfg(not(target_arch = "wasm32"))]
         {
-            pad.mapping_source() != gilrs::MappingSource::None
+            Some(pad.mapping_source() != gilrs::MappingSource::None)
         }
     }
 
-    pub fn sample(&mut self) -> Option<Pad> {
-        let pinned = self.pinned();
-        let gilrs = self.gilrs.as_mut()?;
-        while let Some(event) = gilrs.next_event() {
-            if !matches!(event.event, gilrs::EventType::Disconnected) {
-                self.active = Some(event.id);
-            } else if self.active == Some(event.id) {
-                self.active = None;
+    /// gamepads.js `activeGamepad`: the pinned pad while connected, else a
+    /// pad with fresh input (the current one first), else the current pad,
+    /// a standard-mapped one, or the first.
+    fn choose(&mut self) -> Option<GamepadId> {
+        if let Some(id) = self.pinned() {
+            return Some(id);
+        }
+        let gilrs = self.gilrs.as_ref()?;
+        let pads: Vec<GamepadId> = gilrs.gamepads().map(|(id, _)| id).collect();
+        self.baselines.retain(|id, _| pads.contains(id));
+        let mut live = Vec::new();
+        for &id in &pads {
+            let pad = gilrs.gamepad(id);
+            let state = pad.state();
+            let base = self.baselines.entry(id).or_default();
+            let mut moved = state.buttons().any(|(_, b)| b.is_pressed());
+            for (code, axis) in state.axes() {
+                let value = axis.value();
+                let rest =
+                    *base
+                        .entry(code)
+                        .or_insert(if value.abs() > RESTING { value } else { 0. });
+                moved |= (value - rest).abs() > MOVED;
+            }
+            if moved {
+                live.push(id);
             }
         }
-        // A pinned pad wins while connected; otherwise Auto follows input.
-        let id = pinned
-            .filter(|id| gilrs.connected_gamepad(*id).is_some())
-            .or(self.active)
-            .filter(|id| gilrs.connected_gamepad(*id).is_some())
-            .or_else(|| gilrs.gamepads().next().map(|(id, _)| id))?;
+        let current = self.active.filter(|id| pads.contains(id));
+        current
+            .filter(|id| live.contains(id))
+            .or_else(|| live.first().copied())
+            .or(current)
+            .or_else(|| {
+                pads.iter()
+                    .copied()
+                    .find(|id| self.is_standard(*id) == Some(true))
+            })
+            .or_else(|| pads.first().copied())
+    }
+
+    pub fn sample(&mut self) -> Option<Pad> {
+        let gilrs = self.gilrs.as_mut()?;
+        while gilrs.next_event().is_some() {}
+        self.active = self.choose();
+        let id = self.active?;
+        let gilrs = self.gilrs.as_ref()?;
         let pad = gilrs.gamepad(id);
         let mut out = Pad {
             id: usize::from(id) as u64,
@@ -154,12 +189,13 @@ impl Gamepads {
                 .clamp(0., 1.);
         }
         // Standard mapping: stick Y is positive downwards.
-        out.axes = [
+        out.axes[..4].copy_from_slice(&[
             pad.value(Axis::LeftStickX),
             -pad.value(Axis::LeftStickY),
             pad.value(Axis::RightStickX),
             -pad.value(Axis::RightStickY),
-        ];
+        ]);
+        extra_inputs(&pad, &mut out);
         Some(out)
     }
 
@@ -171,10 +207,10 @@ impl Gamepads {
         let Some(gilrs) = self.gilrs.as_mut() else {
             return false;
         };
+        // game.js Rumble: the pad in use (pinned or Auto), as it drives.
         let Some(id) = self
             .active
             .filter(|id| gilrs.connected_gamepad(*id).is_some())
-            .or_else(|| gilrs.gamepads().next().map(|(id, _)| id))
             .filter(|id| gilrs.gamepad(*id).is_ff_supported())
         else {
             return false;
@@ -211,7 +247,7 @@ impl Gamepads {
     }
 
     /// Rumble.pulse in the browser: the Gamepad API `dual-rumble` on the
-    /// pad with the latest input, else a touch device's `navigator.vibrate`
+    /// pad in use (pinned or Auto), else a touch device's `navigator.vibrate`
     /// for pulses from 0.3 (iOS has none). gilrs has no web force feedback.
     #[cfg(target_arch = "wasm32")]
     pub fn rumble(&mut self, pulse: atv_game::ride::impact::Pulse) -> bool {
@@ -221,15 +257,13 @@ impl Gamepads {
             return false;
         };
         let navigator: JsValue = window.navigator().into();
-        let get = |target: &JsValue, key: &str| Reflect::get(target, &key.into()).ok();
-        let pads = get(&navigator, "getGamepads")
-            .and_then(|f| f.dyn_into::<js_sys::Function>().ok())
-            .and_then(|f| f.call0(&navigator).ok())
-            .map(|list| js_sys::Array::from(&list))
-            .unwrap_or_default();
-        let pad = pads
-            .iter()
-            .filter(|p| get(p, "connected").and_then(|c| c.as_bool()) == Some(true))
+        let get = browser_get;
+        // The browser pad behind the gilrs pad in use (same id; the latest
+        // input among identical names).
+        let name = self.name();
+        let pad = browser_pads()
+            .into_iter()
+            .filter(|p| get(p, "id").and_then(|v| v.as_string()) == name)
             .max_by(|a, b| {
                 let t = |p: &JsValue| get(p, "timestamp").and_then(|v| v.as_f64()).unwrap_or(0.);
                 t(a).total_cmp(&t(b))
@@ -278,4 +312,90 @@ impl Gamepads {
         }
         false
     }
+}
+
+/// Inputs past the standard 17 buttons and 4 axes (gamepads.js reads every
+/// index): the browser pad's own further buttons and axes.
+#[cfg(target_arch = "wasm32")]
+fn extra_inputs(pad: &gilrs::Gamepad, out: &mut Pad) {
+    use atv_game::ride::bindings::{PAD_AXIS_COUNT, PAD_BUTTON_COUNT};
+    let name = pad.name().to_string();
+    let Some(browser) = browser_pads()
+        .into_iter()
+        .find(|p| browser_get(p, "id").and_then(|v| v.as_string()).as_deref() == Some(&name))
+    else {
+        return;
+    };
+    let list = |key: &str| {
+        browser_get(&browser, key)
+            .map(|v| js_sys::Array::from(&v))
+            .unwrap_or_default()
+    };
+    let buttons = list("buttons");
+    for i in BUTTONS.len()..(buttons.length() as usize).min(PAD_BUTTON_COUNT) {
+        let button = buttons.get(i as u32);
+        out.buttons[i] = browser_get(&button, "value")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.)
+            .clamp(0., 1.) as f32;
+    }
+    let axes = list("axes");
+    for i in 4..(axes.length() as usize).min(PAD_AXIS_COUNT) {
+        out.axes[i] = axes.get(i as u32).as_f64().unwrap_or(0.) as f32;
+    }
+}
+
+/// Inputs past the standard 17 buttons and 4 axes (gamepads.js reads every
+/// index): the pad's unmapped buttons and axes, in event-code order.
+#[cfg(not(target_arch = "wasm32"))]
+fn extra_inputs(pad: &gilrs::Gamepad, out: &mut Pad) {
+    use gilrs::ev::AxisOrBtn;
+    let unmapped = |code: gilrs::ev::Code| {
+        matches!(
+            pad.axis_or_btn_name(code),
+            None | Some(AxisOrBtn::Btn(Button::Unknown)) | Some(AxisOrBtn::Axis(Axis::Unknown))
+        )
+    };
+    let state = pad.state();
+    let mut buttons: Vec<_> = state
+        .buttons()
+        .filter(|(code, _)| unmapped(*code))
+        .map(|(code, data)| (code.into_u32(), data.value()))
+        .collect();
+    buttons.sort_by_key(|(code, _)| *code);
+    for (slot, (_, value)) in out.buttons[BUTTONS.len()..].iter_mut().zip(buttons) {
+        *slot = value.clamp(0., 1.);
+    }
+    let mut axes: Vec<_> = state
+        .axes()
+        .filter(|(code, _)| unmapped(*code))
+        .map(|(code, data)| (code.into_u32(), data.value()))
+        .collect();
+    axes.sort_by_key(|(code, _)| *code);
+    for (slot, (_, value)) in out.axes[4..].iter_mut().zip(axes) {
+        *slot = value;
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+fn browser_get(target: &wasm_bindgen::JsValue, key: &str) -> Option<wasm_bindgen::JsValue> {
+    js_sys::Reflect::get(target, &key.into()).ok()
+}
+
+/// `navigator.getGamepads()`'s connected pads.
+#[cfg(target_arch = "wasm32")]
+fn browser_pads() -> Vec<wasm_bindgen::JsValue> {
+    use wasm_bindgen::{JsCast, JsValue};
+    let Some(window) = web_sys::window() else {
+        return Vec::new();
+    };
+    let navigator: JsValue = window.navigator().into();
+    browser_get(&navigator, "getGamepads")
+        .and_then(|f| f.dyn_into::<js_sys::Function>().ok())
+        .and_then(|f| f.call0(&navigator).ok())
+        .map(|list| js_sys::Array::from(&list))
+        .unwrap_or_default()
+        .iter()
+        .filter(|p| browser_get(p, "connected").and_then(|c| c.as_bool()) == Some(true))
+        .collect()
 }

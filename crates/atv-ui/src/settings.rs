@@ -50,24 +50,31 @@ impl Settings {
         self.values.get(key).cloned()
     }
 
-    pub fn set(&mut self, key: &str, value: &str) {
+    /// Saves a value; false when it lasts only for this session (no
+    /// storage, private mode or quota, an unwritable file).
+    pub fn set(&mut self, key: &str, value: &str) -> bool {
         self.values.insert(key.into(), value.into());
         #[cfg(target_arch = "wasm32")]
-        if let Some(storage) = storage() {
+        {
             // Private mode or quota: keep the session value.
-            storage.set_item(key, value).ok();
+            storage().is_some_and(|storage| storage.set_item(key, value).is_ok())
         }
         #[cfg(not(target_arch = "wasm32"))]
-        if let Some(path) = &self.path {
+        {
+            let Some(path) = &self.path else {
+                return true;
+            };
             if let Some(dir) = path.parent() {
                 std::fs::create_dir_all(dir).ok();
             }
-            if let Ok(text) = serde_json::to_string_pretty(&self.values) {
-                std::fs::write(path, text).ok();
-            }
+            serde_json::to_string_pretty(&self.values)
+                .is_ok_and(|text| std::fs::write(path, text).is_ok())
         }
     }
 }
+
+/// bindings.js `storageError`: the notice when a binding cannot be saved.
+pub const STORAGE_ERROR: &str = "Settings work for this session; browser storage is unavailable.";
 
 #[cfg(target_arch = "wasm32")]
 fn storage() -> Option<web_sys::Storage> {

@@ -22,7 +22,7 @@ use atv_ui::{
     settings::Settings,
     touch::TouchControls,
 };
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// Artwork read after the title opens.
 #[derive(Default)]
@@ -40,6 +40,8 @@ pub struct Art {
     pub menu_riders: HashMap<u16, MenuRider>,
     /// `/RIDER/RIDER_MT.RES`: the gear materials that dress the garage rider.
     pub rider_materials: Option<std::rc::Rc<Vec<u8>>>,
+    /// Preview models that failed to load ("vehicle:N", "menu-rider:N").
+    pub failed: HashSet<String>,
 }
 
 /// Something the frontend needs loaded.
@@ -90,6 +92,12 @@ pub struct Front {
     previews: [Option<Preview>; 2],
     /// A pointer turning a preview: (pointer, slot, last x).
     turning: Option<(u64, usize, f32)>,
+    /// The preview last pressed: Left/Right turn it (ModelView keydown).
+    preview_focus: Option<usize>,
+    /// The preview each slot should show this frame, and a key whose GPU
+    /// preview could not be built ("3D preview unavailable").
+    wanted: [Option<String>; 2],
+    unbuilt: [Option<String>; 2],
     /// When the garage opened (the rider's idle clock).
     garage_since: f64,
     /// Settings opened from the main menu.
@@ -155,6 +163,7 @@ impl Front {
         touch.set_viewport(view.width, view.height);
         let minimap = MinimapSettings::load(&settings);
         let mut prefs = Preferences::load(&settings, view.touch_first);
+        crate::device_preferences(&mut prefs, &settings);
         crate::sound::sync_audio_session(&mut prefs);
         let bindings = pause::controller::load_bindings(&mut settings);
         let mut front = Self {
@@ -181,6 +190,9 @@ impl Front {
             split_ms: [0.; 3],
             previews: [None, None],
             turning: None,
+            preview_focus: None,
+            wanted: [None, None],
+            unbuilt: [None, None],
             garage_since: 0.,
             menu: None,
             menu_hits: Vec::new(),
@@ -254,6 +266,7 @@ impl Front {
     pub fn resume(&mut self, page: &str) {
         self.settings = Settings::load();
         self.prefs = Preferences::load(&self.settings, self.view.touch_first);
+        crate::device_preferences(&mut self.prefs, &self.settings);
         crate::sound::sync_audio_session(&mut self.prefs);
         self.minimap = MinimapSettings::load(&self.settings);
         self.bindings = pause::controller::load_bindings(&mut self.settings);
@@ -427,6 +440,26 @@ impl Front {
     }
 
     pub fn key(&mut self, code: &str) -> Option<Event> {
+        // A pressed preview takes Left/Right to turn (ModelView keydown,
+        // 0.25 rad a press); any other key moves on.
+        if let Some(slot) = self.preview_focus.filter(|_| self.menu.is_none()) {
+            let step = match code {
+                "ArrowLeft" => -0.25,
+                "ArrowRight" => 0.25,
+                _ => {
+                    self.preview_focus = None;
+                    0.
+                }
+            };
+            if step != 0. {
+                if let Some(preview) = &mut self.previews[slot] {
+                    // Dragging right turns by -dx here; ArrowRight matches it.
+                    preview.model.yaw -= step;
+                    preview.dirty = true;
+                }
+                return None;
+            }
+        }
         if self.menu.is_some() {
             self.menu_reveal = true;
             let event = self.with_menu(|m, ctx, _, _| m.key(code, ctx)).flatten();
@@ -443,17 +476,17 @@ impl Front {
     }
 
     pub fn pad(&mut self, pad: Option<&atv_game::ride::bindings::Pad>) -> Option<Event> {
-        let buttons = pad.map_or([0.; 17], |p| p.buttons);
-        let axes = pad.map_or([0.; 4], |p| p.axes);
         if self.menu.is_some() {
             self.menu_reveal = true;
-            let event = self
-                .with_menu(|m, ctx, _, _| m.pad(buttons, axes, pad.is_some(), ctx))
-                .flatten();
+            let event = self.with_menu(|m, ctx, _, _| m.pad(pad, ctx)).flatten();
             return self.menu_event(event);
         }
+        let idle = atv_game::ride::bindings::Pad::default();
+        let sample = pad.unwrap_or(&idle);
         let view = self.view;
-        let event = self.state.pad(buttons, axes, &view, &mut self.settings);
+        let event = self
+            .state
+            .pad(&sample.buttons, &sample.axes, &view, &mut self.settings);
         self.front_event(event)
     }
 
@@ -471,6 +504,7 @@ impl Front {
             .find(|(r, id)| (*id == MODEL_QUAD || *id == MODEL_RIDER) && r.contains(x, y))
             .map(|(_, id)| usize::from(*id == MODEL_RIDER));
         self.turning = slot.map(|slot| (pointer, slot, x));
+        self.preview_focus = slot;
     }
 
     pub fn moved(&mut self, pointer: u64, x: f32, y: f32, mouse: bool) {
@@ -519,6 +553,22 @@ impl Front {
         if let Some(menu) = &mut self.menu {
             menu.cancel_pointer();
         }
+    }
+
+    /// The page lost focus: pointers end and a binding capture is cancelled.
+    pub fn blur(&mut self) {
+        self.cancel_pointer();
+        self.preview_focus = None;
+        if let Some(menu) = &mut self.menu {
+            menu.cancel_capture();
+        }
+    }
+
+    /// A preview model failed to load: its slot says so, and the notice
+    /// carries the error (frontend.js updateModelViews).
+    pub fn model_failed(&mut self, key: String, error: &str) {
+        self.art.failed.insert(key);
+        self.state.notice = Some(format!("Models: {error}"));
     }
 
     pub fn wheel(&mut self, dy: f32) {
@@ -836,15 +886,22 @@ impl Front {
         if self.menu.is_some() {
             screen.page = "backdrop".into();
         }
-        let image = |p: &Option<Preview>| {
-            p.as_ref().and_then(|p| p.target).map(|(id, w, h)| Img {
-                id,
-                width: w as f32,
-                height: h as f32,
-            })
+        // A slot shows its model once the wanted one is built (ModelView
+        // clears to "Loading model..." on a change), else its status.
+        let wanted = self.wanted.clone();
+        let image = |slot: usize, p: &Option<Preview>| {
+            p.as_ref()
+                .filter(|p| wanted[slot].as_ref() == Some(&p.key))
+                .and_then(|p| p.target)
+                .map(|(id, w, h)| Img {
+                    id,
+                    width: w as f32,
+                    height: h as f32,
+                })
         };
-        screen.quad_model = image(&self.previews[0]);
-        screen.rider_model = image(&self.previews[1]);
+        screen.model_status = self.model_status();
+        screen.quad_model = image(0, &self.previews[0]);
+        screen.rider_model = image(1, &self.previews[1]);
         self.list.clear();
         self.hits.clear();
         layout::render(
@@ -871,8 +928,8 @@ impl Front {
         }
         // Preview targets follow their slots (canvas size x min(DPR, 2)).
         if self.fit_previews(device) {
-            screen.quad_model = image(&self.previews[0]);
-            screen.rider_model = image(&self.previews[1]);
+            screen.quad_model = image(0, &self.previews[0]);
+            screen.rider_model = image(1, &self.previews[1]);
             self.list.clear();
             self.hits.clear();
             layout::render(
@@ -1033,6 +1090,33 @@ impl Front {
         rects.into_iter().map(|(_, r)| r).collect()
     }
 
+    /// Each preview slot's status while it shows no model.
+    fn model_status(&self) -> [Option<&'static str>; 2] {
+        let quad = self.state.quad_id;
+        let source = |slot: usize| {
+            if slot == 1 && quad < 27 {
+                format!("menu-rider:{}", self.state.rider_id)
+            } else {
+                format!("vehicle:{quad}")
+            }
+        };
+        std::array::from_fn(|slot| {
+            let wanted = self.wanted[slot].as_ref()?;
+            if self.previews[slot]
+                .as_ref()
+                .is_some_and(|p| p.key == *wanted)
+            {
+                None
+            } else if self.art.failed.contains(&source(slot)) {
+                Some("Model unavailable")
+            } else if self.unbuilt[slot].as_ref() == Some(wanted) {
+                Some("3D preview unavailable")
+            } else {
+                Some("Loading model...")
+            }
+        })
+    }
+
     /// Builds the previews the page shows and poses the menu rider.
     fn update_previews(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, now: f64) {
         let page = self.state.page.clone();
@@ -1075,9 +1159,12 @@ impl Front {
         };
         // Slot 0: the vehicle in its bind (or MX resting) pose.
         let key = format!("vehicle:{quad}:{paint:?}");
+        self.wanted = [shown.then(|| key.clone()), None];
         if !shown {
             self.previews = [None, None];
+            self.preview_focus = None;
         } else if self.previews[0].as_ref().is_none_or(|p| p.key != key)
+            && self.unbuilt[0].as_ref() != Some(&key)
             && let Some((_, model, _)) = self.art.vehicles.iter().find(|(q, ..)| *q == quad)
         {
             let lookup = texture(&model.textures);
@@ -1090,7 +1177,10 @@ impl Front {
                 paint,
             ) {
                 Ok(preview) => self.set_preview(0, key, preview, false),
-                Err(error) => crate::status(&format!("Model preview: {error}")),
+                Err(error) => {
+                    crate::status(&format!("Model preview: {error}"));
+                    self.unbuilt[0] = Some(key);
+                }
             }
         }
         // Slot 1: the garage rider's idle playlist (PAGE07, or the MX rider).
@@ -1126,8 +1216,11 @@ impl Front {
             format!("rider:{}", self.state.rider_id)
         };
         let time = ((now - self.garage_since) / 1000.).max(0.) as f32;
+        self.wanted[1] = Some(key.clone());
         if let Some(rider) = rider {
-            if self.previews[1].as_ref().is_none_or(|p| p.key != key) {
+            if self.previews[1].as_ref().is_none_or(|p| p.key != key)
+                && self.unbuilt[1].as_ref() != Some(&key)
+            {
                 let mut textures = rider.textures.clone();
                 if dressed
                     && let Some(bytes) = &self.art.rider_materials
@@ -1156,9 +1249,13 @@ impl Front {
                         preview.yaw = rider.yaw;
                         self.set_preview(1, key, preview, true);
                     }
-                    Err(error) => crate::status(&format!("Rider preview: {error}")),
+                    Err(error) => {
+                        crate::status(&format!("Rider preview: {error}"));
+                        self.unbuilt[1] = Some(key);
+                    }
                 }
             } else if let Some(preview) = &mut self.previews[1]
+                && preview.key == key
                 && now - preview.posed >= 33.
                 && let Ok((_, pose)) = rider.rider.pose(time)
             {

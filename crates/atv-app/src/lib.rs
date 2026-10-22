@@ -1,5 +1,7 @@
 //! One game application for every build. The same event loop, loader and
 //! renderer run natively (Metal/DX12/Vulkan) and in browsers (WebGL2).
+#[cfg(not(target_arch = "wasm32"))]
+mod clipboard;
 mod front;
 mod gamepad;
 mod multiplayer;
@@ -158,6 +160,10 @@ enum Message {
     /// A form field took (or gave back) the keyboard.
     #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
     FrontFocus(Option<usize>),
+    /// Escape in a form field: it gives back the keyboard and the page
+    /// goes back (frontend.js keydown lets Escape through an input).
+    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+    FrontEscape,
     /// The browser's 1 s presence timer (a hidden tab runs no frames).
     #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
     PresenceTick,
@@ -201,6 +207,8 @@ enum ArtPiece {
     /// The original Profile Store gear catalog (Rider Gear's rows).
     GearCatalog(Vec<atv_core::rider_gear::Category>),
     RiderMaterials(Vec<u8>),
+    /// A preview model could not be read: (source key, error).
+    ModelFailed(String, String),
 }
 
 /// Load-time choices kept for rides started from the frontend.
@@ -807,8 +815,7 @@ impl App {
                 return;
             }
             if !riding.menu_open
-                && let Some(action) =
-                    overlay.results_pad(&pad.as_ref().map_or([0.; 17], |p| p.buttons))
+                && let Some(action) = overlay.results_pad(pad.as_ref())
             {
                 self.act(action);
                 return;
@@ -1419,7 +1426,10 @@ impl App {
             riding.clear_input();
         }
         if let Some(overlay) = &mut self.overlay {
-            overlay.clear_input();
+            overlay.blur();
+        }
+        if let Some(front) = &self.front {
+            front.borrow_mut().blur();
         }
     }
 
@@ -1430,6 +1440,12 @@ impl App {
             return;
         };
         match event {
+            // Restart Race (frontend.js reset({restart:true})): the whole
+            // event reloads, also after the finish.
+            Event::Reset if riding.ride.race().is_some() => {
+                self.menu_event(Event::Resume);
+                self.restart_race();
+            }
             Event::Resume | Event::Reset => {
                 // Leaving the menu ends a Jukebox pause (stopJukebox).
                 if let Some(sound) = &mut riding.sound {
@@ -1674,15 +1690,9 @@ impl App {
             let s = r.settings();
             (s.laps, s.cpu, s.difficulty, s.aggressive, s.all_out)
         });
-        #[cfg(target_arch = "wasm32")]
-        let page = web_sys::window()
-            .and_then(|w| {
-                let l = w.location();
-                Some(format!("{}{}", l.origin().ok()?, l.pathname().ok()?))
-            })
-            .unwrap_or_default();
-        #[cfg(not(target_arch = "wasm32"))]
-        let page = "https://furyremastered.com/engine.html".to_string();
+        // This page; desktop links open the site's play.html (buildRideUrl),
+        // as its invites do.
+        let page = multiplayer::share_page(&default_relay());
         // In a room the row is Copy invite link (buildRideUrl's invite).
         if let Some(net) = &ready.net {
             return Some((
@@ -1751,8 +1761,11 @@ impl App {
         }
         #[cfg(not(target_arch = "wasm32"))]
         {
-            let _ = copied_text;
-            menu.notice = Some(url);
+            menu.notice = Some(if clipboard::copy(&url) {
+                copied_text.into()
+            } else {
+                url
+            });
         }
         self.wake();
     }
@@ -1859,7 +1872,17 @@ impl App {
             overlay::Action::Camera => riding.cycle_requested = true,
             overlay::Action::RaceRetry => self.restart_race(),
             overlay::Action::RaceQuit => {
-                self.quit_to(Some("single"));
+                // race.js quit: Single Player; a page without the engine's
+                // frontend (a direct ride) opens its menus instead.
+                if !self.quit_to(Some("single")) {
+                    #[cfg(target_arch = "wasm32")]
+                    if let Some(window) = web_sys::window() {
+                        let location = window.location();
+                        if let Ok(path) = location.pathname() {
+                            location.set_href(&path).ok();
+                        }
+                    }
+                }
             }
         }
     }
@@ -2254,9 +2277,22 @@ impl App {
             riding.key_pressed(&format!("{code:?}"), now, &|c: &str| names.contains(c));
             // Any key skips the pre-race camera (00212d40).
             riding.ride.skip_intro();
-            // H stays a gameplay key when the player bound it (usesKey).
+            // H stays a gameplay key when the player bound it (usesKey),
+            // and Ctrl/Alt/Meta shortcuts leave the card alone.
             let free = !riding.bindings.uses_key("KeyH");
-            let riding = !riding.paused && !riding.held && free;
+            let modified = self.keys.iter().any(|k| {
+                matches!(
+                    k,
+                    KeyCode::ControlLeft
+                        | KeyCode::ControlRight
+                        | KeyCode::AltLeft
+                        | KeyCode::AltRight
+                        | KeyCode::SuperLeft
+                        | KeyCode::SuperRight
+                        | KeyCode::Meta
+                )
+            });
+            let riding = !riding.paused && !riding.held && free && !modified;
             if let Some(overlay) = &mut self.overlay {
                 overlay.key(&format!("{code:?}"), riding);
             }
@@ -2685,12 +2721,11 @@ impl ApplicationHandler<Message> for App {
                                 atv_ui::menu::controller::load_bindings(&mut overlay.settings);
                             overlay.set_help_keys(&riding.bindings);
                         }
-                        overlay.prefs.graphics_detected = detect_graphics_tier().into();
-                        // RideEffectsSettings: Speed rush defaults to Off with
-                        // reduced motion.
-                        if overlay.settings.get("atv-speed-rush").is_none() && reduced_motion() {
-                            overlay.prefs.speed_rush = "off".into();
-                        }
+                        device_preferences(&mut overlay.prefs, &overlay.settings);
+                        overlay.race = ready
+                            .riding
+                            .as_ref()
+                            .is_some_and(|r| r.ride.race().is_some());
                         self.graphics_pref = Some(overlay.prefs.graphics.clone());
                         self.overlay = Some(overlay);
                     }
@@ -2746,6 +2781,15 @@ impl ApplicationHandler<Message> for App {
                 if let Some(window) = &self.window {
                     window.request_redraw();
                 }
+            }
+            Message::FrontEscape => {
+                if let Some(front) = &self.front {
+                    front.borrow_mut().state.focus_field(None);
+                }
+                if self.front_input().is_some() {
+                    self.key_pressed(KeyCode::Escape);
+                }
+                self.wake();
             }
             Message::FrontFocus(index) => {
                 if let Some(front) = &self.front {
@@ -2809,6 +2853,10 @@ impl ApplicationHandler<Message> for App {
                         ArtPiece::RiderMaterials(bytes) => {
                             front.art.rider_materials = Some(std::rc::Rc::new(bytes));
                         }
+                        ArtPiece::ModelFailed(key, error) => {
+                            status(&format!("Model preview: {error}"));
+                            front.model_failed(key, &error);
+                        }
                     }
                 }
                 self.wake();
@@ -2860,6 +2908,31 @@ impl ApplicationHandler<Message> for App {
                 }
             }
             WindowEvent::KeyboardInput { event, .. } => {
+                // Desktop Cmd/Ctrl+V pastes into a focused Host/Join field.
+                #[cfg(not(target_arch = "wasm32"))]
+                if event.state == ElementState::Pressed
+                    && event.physical_key == PhysicalKey::Code(KeyCode::KeyV)
+                    && self.keys.iter().any(|k| {
+                        if cfg!(target_os = "macos") {
+                            matches!(k, KeyCode::SuperLeft | KeyCode::SuperRight)
+                        } else {
+                            matches!(k, KeyCode::ControlLeft | KeyCode::ControlRight)
+                        }
+                    })
+                    && let Some(front) = self.front_input()
+                {
+                    let text: String = clipboard::paste()
+                        .unwrap_or_default()
+                        .chars()
+                        .filter(|c| !c.is_control())
+                        .collect();
+                    if front.borrow_mut().state.type_text(&text) {
+                        if let Some(window) = &self.window {
+                            window.request_redraw();
+                        }
+                        return;
+                    }
+                }
                 // Desktop typing into a focused Host/Join field (the browser
                 // build types into its own <input>).
                 if event.state == ElementState::Pressed
@@ -3436,8 +3509,11 @@ impl App {
             );
         }
         if !errors.is_empty() {
+            // frontend.js openLaunch: the main menu's notice line says why.
+            let message = format!("Cannot open ride link. {}", errors.join(" "));
             f.state.show("main", &view);
-            status(&format!("Cannot open ride link. {}", errors.join(" ")));
+            f.state.notice = Some(message.clone());
+            status(&message);
             return;
         }
         f.state.quad_id = setup.quad_id;
@@ -3499,6 +3575,8 @@ impl App {
                     laps: setup.race.laps,
                     cpu: setup.race.cpu,
                     difficulty: setup.race.difficulty,
+                    // frontend.js keeps a link's cheats in raceSettings.
+                    cheats: (setup.race.aggressive, setup.race.all_out),
                 },
                 &view,
             );
@@ -3546,11 +3624,14 @@ impl App {
                 laps,
                 cpu,
                 difficulty,
+                cheats: (aggressive, all_out),
             } => {
                 let settings = atv_game::ride::race::Settings {
                     laps,
                     cpu: cpu as usize,
                     difficulty,
+                    aggressive,
+                    all_out,
                     // A new roster draw per load, as the browser draws one.
                     seed: fresh_seed(),
                     ..Default::default()
@@ -3799,15 +3880,7 @@ impl App {
         } else {
             player
         };
-        #[cfg(target_arch = "wasm32")]
-        let page = web_sys::window()
-            .and_then(|w| {
-                let l = w.location();
-                Some(format!("{}{}", l.origin().ok()?, l.pathname().ok()?))
-            })
-            .unwrap_or_default();
-        #[cfg(not(target_arch = "wasm32"))]
-        let page = "https://furyremastered.com/engine.html".to_string();
+        let page = multiplayer::share_page(&default_relay());
         let race = f.state.race.clone();
         let url = atv_game::launch::ride_url(
             &page,
@@ -3816,7 +3889,13 @@ impl App {
                 quad: f.state.quad_id,
                 rider: f.state.rider_id,
                 player: &player,
-                race: Some((race.laps, race.cpu as usize, race.difficulty, false, false)),
+                race: Some((
+                    race.laps,
+                    race.cpu as usize,
+                    race.difficulty,
+                    race.cheats.0,
+                    race.cheats.1,
+                )),
                 room: None,
             },
         );
@@ -3833,6 +3912,10 @@ impl App {
                     url
                 }));
             });
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        if clipboard::copy(&url) {
+            f.state.notice = Some("Ride link copied.".into());
         }
         drop(f);
         self.wake();
@@ -3877,6 +3960,10 @@ impl App {
                     url
                 }));
             });
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        if clipboard::copy(&url) {
+            f.state.notice = Some("Invite link copied.".into());
         }
         drop(f);
         self.wake();
@@ -4356,7 +4443,10 @@ impl App {
                                 Ok((model, rider)) => {
                                     Message::FrontArt(Box::new(ArtPiece::Vehicle(quad, model, rider)))
                                 }
-                                Err(error) => Message::SoundFailed(format!("Model preview: {error}")),
+                                Err(error) => Message::FrontArt(Box::new(ArtPiece::ModelFailed(
+                                    format!("vehicle:{quad}"),
+                                    error.to_string(),
+                                ))),
                             },
                         );
                     }
@@ -4380,7 +4470,10 @@ impl App {
                             async move { atv_ui::front::assets::menu_rider(&content, rider == 1).await },
                             move |result| match result {
                                 Ok(model) => Message::FrontArt(Box::new(ArtPiece::MenuRider(rider, model))),
-                                Err(error) => Message::SoundFailed(format!("Rider preview: {error}")),
+                                Err(error) => Message::FrontArt(Box::new(ArtPiece::ModelFailed(
+                                    format!("menu-rider:{rider}"),
+                                    error.to_string(),
+                                ))),
                             },
                         );
                     }
@@ -4608,6 +4701,19 @@ pub fn parse_switch(text: &str) -> Option<bool> {
     }
 }
 
+/// The device's defaults in the saved preferences, the same for the main
+/// menu's Settings and a ride's: Auto resolves to `detect_graphics_tier`, and
+/// Speed rush defaults to Off with reduced motion (RideEffectsSettings).
+pub(crate) fn device_preferences(
+    prefs: &mut atv_ui::menu::prefs::Preferences,
+    settings: &atv_ui::settings::Settings,
+) {
+    prefs.graphics_detected = detect_graphics_tier().into();
+    if settings.get("atv-speed-rush").is_none() && reduced_motion() {
+        prefs.speed_rush = "off".into();
+    }
+}
+
 /// `(prefers-reduced-motion: reduce)` (always false on desktop).
 fn reduced_motion() -> bool {
     #[cfg(target_arch = "wasm32")]
@@ -4652,18 +4758,32 @@ pub fn detect_graphics_tier() -> &'static str {
                 .flatten()
                 .is_some_and(|m| m.matches())
         };
-        let mobile_ua = [
-            "Android", "iPhone", "iPad", "iPod", "Mobile", "Silk", "Kindle",
-        ]
-        .iter()
-        .any(|m| ua.to_ascii_lowercase().contains(&m.to_ascii_lowercase()));
+        let get = |target: &wasm_bindgen::JsValue, key: &str| {
+            js_sys::Reflect::get(target, &key.into()).ok()
+        };
+        // Client hints first (`userAgentData.mobile`), then the user agent.
+        let hinted = get(&nav, "userAgentData")
+            .and_then(|data| get(&data, "mobile"))
+            .and_then(|m| m.as_bool())
+            == Some(true);
+        let mobile_ua = hinted
+            || [
+                "Android", "iPhone", "iPad", "iPod", "Mobile", "Silk", "Kindle",
+            ]
+            .iter()
+            .any(|m| ua.to_ascii_lowercase().contains(&m.to_ascii_lowercase()));
         let touch_mac = ua.contains("Macintosh") && nav.max_touch_points() > 1;
         let touch_primary = media("(pointer: coarse)") && !media("(any-pointer: fine)");
         let cores = nav.hardware_concurrency();
         let memory = js_sys::Reflect::get(&nav, &"deviceMemory".into())
             .ok()
             .and_then(|v| v.as_f64());
-        let low_power = (cores > 0. && cores <= 4.) || memory.is_some_and(|m| m > 0. && m <= 4.);
+        let save_data = get(&nav, "connection")
+            .and_then(|c| get(&c, "saveData"))
+            .and_then(|v| v.as_bool())
+            == Some(true);
+        let low_power =
+            (cores > 0. && cores <= 4.) || memory.is_some_and(|m| m > 0. && m <= 4.) || save_data;
         if mobile_ua || touch_mac || touch_primary || low_power {
             "enhanced"
         } else {
@@ -5033,7 +5153,6 @@ pub fn start() {
     };
     // `?venue=` rides at once (engine tests and parity tools); otherwise the
     // frontend opens and reads the page's ride link.
-    // A room link (`?room=` / `?host=1`) rides at once too.
     // Measurement hook: `?prefetch=off` loads rides one request at a time.
     if param("prefetch").as_deref() == Some("off") {
         PREFETCH.store(false, std::sync::atomic::Ordering::Relaxed);
@@ -5044,13 +5163,18 @@ pub fn start() {
     if let Some(ms) = param("joinDelayMs").and_then(|v| v.parse::<u32>().ok()) {
         multiplayer::JOIN_DELAY_MS.store(ms.min(10_000), std::sync::atomic::Ordering::Relaxed);
     }
-    // A bare `?room=` / `?host=1` rides at once (tests); a shared invite
-    // (`mode`, `action` or `lobby`) opens through the frontend's lobby forms.
+    // A room link, `?room=CODE` included, joins through the frontend as
+    // launch.js parseLaunch reads it (player name, vehicle aliases, saved
+    // gear, play=0, the motorcycle refusal). Only the engine's test hooks
+    // ride straight into a room: `?host=1`, or `room=` with `dropAfter=` or
+    // `trainPlace=`.
     let invite = ["mode", "action", "lobby"]
         .iter()
         .any(|k| param(k).is_some());
-    let direct_room =
-        !invite && (param("room").is_some() || param("host").is_some_and(|v| v == "1"));
+    let test_room = param("host").is_some_and(|v| v == "1")
+        || (param("room").is_some()
+            && (param("dropAfter").is_some() || param("trainPlace").is_some()));
+    let direct_room = !invite && test_room;
     let direct = param("venue").or_else(|| direct_room.then(|| "env01".to_string()));
     let venue = direct
         .clone()

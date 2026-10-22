@@ -93,6 +93,12 @@ pub struct TouchControls {
     viewport: [f32; 2],
 }
 
+thread_local! {
+    /// touch.js `rodeThisSession`: coaching counts one ride per page load,
+    /// not one per ride (each ride builds new controls).
+    static RODE_THIS_SESSION: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
 fn count(settings: &Settings, key: &str) -> u32 {
     settings
         .get(key)
@@ -119,7 +125,7 @@ impl TouchControls {
             preload: Preload::Idle,
             rides: count(settings, "atv-touch-coach-rides"),
             wheel_opens: count(settings, "atv-touch-coach-wheel"),
-            rode_this_session: false,
+            rode_this_session: RODE_THIS_SESSION.get(),
             wheel_visible: false,
             marker: [0., 0.],
             held: false,
@@ -240,6 +246,7 @@ impl TouchControls {
         if self.input.pointer.as_ref().is_some_and(|p| p.id == id) {
             if !self.rode_this_session {
                 self.rode_this_session = true;
+                RODE_THIS_SESSION.set(true);
                 self.rides += 1;
                 settings.set("atv-touch-coach-rides", &self.rides.to_string());
             }
@@ -1085,6 +1092,11 @@ mod tests {
         assert_eq!(settings.get("atv-touch-coach-rides").as_deref(), Some("1"));
         let c = touch.sample(16., true, &mut settings);
         assert!(c.sample.drive.held);
+        // The next ride's controls count no second ride this page load.
+        let mut next = TouchControls::new(&settings, true);
+        next.set_viewport(390., 844.);
+        assert!(next.down(2, 195., 500., 0., true, &mut settings));
+        assert_eq!(settings.get("atv-touch-coach-rides").as_deref(), Some("1"));
         settings.set("atv-mobile-one-handed", "false");
         let mut two = TouchControls::new(&settings, true);
         two.set_viewport(390., 844.);

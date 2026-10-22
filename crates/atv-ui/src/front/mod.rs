@@ -172,6 +172,10 @@ pub struct Screen {
     /// Rendered 3D previews of the vehicle and the garage rider.
     pub quad_model: Option<Img>,
     pub rider_model: Option<Img>,
+    /// The vehicle and rider preview slots' status while they show no
+    /// model: "Loading model...", "Model unavailable" or "3D preview
+    /// unavailable" (frontend.js ModelView messages).
+    pub model_status: [Option<&'static str>; 2],
     /// Host/Join form fields: (label, value, focused).
     pub fields: Vec<(String, String, bool)>,
     /// A form error under the rows (`#menu-notice`).
@@ -191,6 +195,58 @@ fn stage_page(page: &str) -> bool {
 
 fn display(size: f32, weight: u16, italic: bool) -> Font {
     Font::display(size, weight, italic)
+}
+
+/// `.model-view span` over an empty preview: centred, and while loading
+/// the `.is-loading` italic capitals with the tread bar under them.
+fn model_status(slot: El, status: &str) -> El {
+    let loading = status.starts_with("Loading");
+    let style = if loading {
+        TextStyle::new(display(14., 700, true), Color::hex("#f2f2f2")).spacing(14. * 0.04)
+    } else {
+        TextStyle::new(display(12., 700, false), Color::hex("#f2f2f2"))
+    };
+    let label = if loading {
+        status.to_uppercase()
+    } else {
+        status.to_string()
+    };
+    let mut column = El::new(Style {
+        position: Position::Absolute,
+        inset: taffy::Rect {
+            left: LengthPercentageAuto::length(0.),
+            right: LengthPercentageAuto::length(0.),
+            top: LengthPercentageAuto::length(0.),
+            bottom: LengthPercentageAuto::length(0.),
+        },
+        display: Display::Flex,
+        flex_direction: FlexDirection::Column,
+        align_items: AlignItems::CENTER,
+        justify_content: JustifyContent::CENTER,
+        gap: Size {
+            width: length(0.),
+            height: length(14.),
+        },
+        ..Default::default()
+    })
+    .child(text(label, style, 16.));
+    if loading {
+        column = column.child(
+            El::new(Style {
+                size: Size {
+                    width: percent(0.6),
+                    height: length(5.),
+                },
+                max_size: Size {
+                    width: length(180.),
+                    height: auto(),
+                },
+                ..Default::default()
+            })
+            .paint(Paint::fill(Color::hex("#e1c844"))),
+        );
+    }
+    slot.child(column)
 }
 
 fn clamp(min: f32, value: f32, max: f32) -> f32 {
@@ -720,6 +776,8 @@ fn panel(m: &Metrics, s: &Screen, loading: bool) -> El {
             .id(MODEL_QUAD);
             if let Some(image) = s.quad_model {
                 slot = slot.content(image.model());
+            } else if let Some(status) = s.model_status[0] {
+                slot = model_status(slot, status);
             }
             panel = panel.child(slot).child(plate(m, s));
         }
@@ -728,9 +786,11 @@ fn panel(m: &Metrics, s: &Screen, loading: bool) -> El {
             // `.ms-models`: the rider just behind the ATV's rear wheel.
             let model = |image: Option<Img>, id: u32, style: Style| {
                 let el = El::new(style).id(id);
-                match image {
-                    Some(image) => el.content(image.model()),
-                    None => el,
+                let status = s.model_status[usize::from(id == MODEL_RIDER)];
+                match (image, status) {
+                    (Some(image), _) => el.content(image.model()),
+                    (None, Some(status)) => model_status(el, status),
+                    (None, None) => el,
                 }
             };
             let mut quad = absolute(Some(0.), Some(0.), Some(0.), Some(0.));
