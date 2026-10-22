@@ -3,7 +3,7 @@
 //! now playing, seek, transport and volume, and the scrolling list of the
 //! original soundtrack. atv_core::ui_menu owns the actions, labels and
 //! keyboard order; the host's music player supplies the live view.
-use super::{CONTENT, PANEL, ROW, State, gold_pill};
+use super::{BARS, CONTENT, PANEL, ROW, State, gold_pill};
 use crate::{
     color::{Color, Fill, Gradient},
     hud::{Viewport, tokens},
@@ -388,6 +388,24 @@ pub fn element(
                     }),
                 }),
             ),
+        );
+    }
+
+    // .jb-bars: the spectrum area (left 6%, bottom 6%, 88% x 18%); the host
+    // paints the bars into it every frame (paint_bars). Hidden when compact.
+    if !compact {
+        art_el = art_el.child(
+            El::new(Style {
+                position: Position::Absolute,
+                inset: taffy::Rect {
+                    left: LengthPercentageAuto::percent(0.06),
+                    right: LengthPercentageAuto::percent(0.06),
+                    top: LengthPercentageAuto::percent(0.76),
+                    bottom: LengthPercentageAuto::percent(0.06),
+                },
+                ..Default::default()
+            })
+            .id(BARS),
         );
     }
 
@@ -993,6 +1011,41 @@ pub fn element(
         &[(0., Color::hex("#0000004d")), (1., Color::hex("#000000b3"))],
     )))
     .child(panel)
+}
+
+/// jukebox.js drawBars: 24 bars over a 192x48 canvas stretched across
+/// `area`, each 6 of its 8 columns, at least 2 px of 48 tall, under the
+/// canvas's vertical #a99900 -> #fffaa1 gradient at 90% opacity. `levels`
+/// are analyser bytes (empty while nothing plays: flat 2 px bars).
+pub fn paint_bars(list: &mut crate::DisplayList, area: crate::Rect, levels: &[u8]) {
+    const BARS_COUNT: usize = 24;
+    let bottom = Color::hex("#a99900");
+    let top = Color::hex("#fffaa1");
+    let at = |t: f32| Color {
+        r: bottom.r + (top.r - bottom.r) * t,
+        g: bottom.g + (top.g - bottom.g) * t,
+        b: bottom.b + (top.b - bottom.b) * t,
+        a: 0.9,
+    };
+    let (sx, sy) = (area.w / (BARS_COUNT as f32 * 8.), area.h / 48.);
+    for i in 0..BARS_COUNT {
+        let level = if levels.is_empty() {
+            0.
+        } else {
+            f32::from(levels[(i * levels.len() / BARS_COUNT).min(levels.len() - 1)]) / 255.
+        };
+        let height = (level * 48.).max(2.);
+        let rect = crate::Rect {
+            x: area.x + (i as f32 * 8. + 1.) * sx,
+            y: area.y + (48. - height) * sy,
+            w: 6. * sx,
+            h: height * sy,
+        };
+        list.rect(
+            rect,
+            Gradient::new(180., &[(0., at(height / 48.)), (1., at(0.))]),
+        );
+    }
 }
 
 #[cfg(test)]
