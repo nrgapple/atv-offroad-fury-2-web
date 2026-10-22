@@ -247,9 +247,14 @@ impl Riding {
     }
 
     /// A multiplayer arrival beside another rider (spawn), as Reset places.
-    pub fn place_beside(&mut self, origin: [f32; 3], yaw: f32) -> Result<(), String> {
+    pub fn place_beside(
+        &mut self,
+        origin: [f32; 3],
+        yaw: f32,
+        velocity: [f32; 3],
+    ) -> Result<(), String> {
         self.clear_input();
-        self.ride.place_beside(origin, yaw)?;
+        self.ride.place_beside(origin, yaw, velocity)?;
         if let Some(effects) = &mut self.effects {
             effects.reset(&self.ride)?;
         }

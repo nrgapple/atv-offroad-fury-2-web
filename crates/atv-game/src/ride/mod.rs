@@ -589,6 +589,16 @@ impl Ride {
         train.runtime.motion_state(car).map(|m| m.current)
     }
 
+    /// The world velocity of train car `car` at `point` (its linear and
+    /// angular motion).
+    pub fn train_point_velocity(&self, car: usize, point: [f32; 3]) -> Option<[f32; 3]> {
+        let train = self.sim.train.as_ref()?.borrow();
+        train
+            .runtime
+            .motion_state(car)
+            .map(|m| m.point_velocity(point))
+    }
+
     /// The ride's train clock (seconds along the route).
     pub fn train_time(&self) -> Option<f32> {
         self.sim.train.as_ref().map(|t| t.borrow().runtime.time)
@@ -604,8 +614,17 @@ impl Ride {
 
     /// Places the player at `origin` facing `yaw` (a multiplayer arrival
     /// beside another rider; ops 23/47 as Reset does).
-    pub fn place_beside(&mut self, origin: [f32; 3], yaw: f32) -> Result<()> {
-        self.place_at((origin, yaw))
+    /// An arrival placed beside another rider, moving with `velocity` (the
+    /// car's point velocity when that rider stands on a moving train car).
+    pub fn place_beside(&mut self, origin: [f32; 3], yaw: f32, velocity: [f32; 3]) -> Result<()> {
+        self.place_at((origin, yaw))?;
+        if velocity != [0.; 3]
+            && let Mount::Quad { vehicle, .. } = &mut self.mount
+        {
+            vehicle.set_network_velocity(velocity)?;
+            self.frame = vehicle.frame();
+        }
+        Ok(())
     }
 
     /// One owner-local contact against another rider's yawed box
