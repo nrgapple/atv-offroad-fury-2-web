@@ -583,6 +583,31 @@ impl Riding {
     }
 
     /// Window focus, like the browser's blur/focus: sound pauses while away.
+    /// The graphics context came back (web context loss): the scene
+    /// rebuilds on `gpu` with its fine terrain patch around the rider, and
+    /// the ride's quad, rider, race CPUs and wheel effects upload again from
+    /// their CPU data. The ride itself (position, clock, race) is untouched.
+    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+    pub fn restore_gpu(
+        &mut self,
+        scene: &mut SceneRenderer,
+        gpu: &Gpu,
+        venue: &Venue,
+    ) -> Result<(), String> {
+        let origin = self.ride.frame().origin;
+        self.center = cells(venue, origin);
+        scene.rebuild(gpu, venue, Some([origin[0], origin[2]]));
+        scene.set_ride(gpu, venue, &self.ride.quad, &self.ride.rider)?;
+        scene.set_ride_paint(self.ride.paint());
+        if let Some(race) = self.ride.race() {
+            scene.set_race_cpus(gpu, venue, &race.draw)?;
+        }
+        if let Some(effects) = &self.effects {
+            scene.set_wheel_effects(gpu, effects);
+        }
+        Ok(())
+    }
+
     pub fn set_focused(&mut self, focused: bool) {
         self.focused = focused;
         self.sync_sound();

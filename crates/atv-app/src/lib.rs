@@ -2,6 +2,8 @@
 //! renderer run natively (Metal/DX12/Vulkan) and in browsers (WebGL2).
 #[cfg(not(target_arch = "wasm32"))]
 mod clipboard;
+#[cfg(target_arch = "wasm32")]
+mod context;
 mod front;
 mod gamepad;
 mod multiplayer;
@@ -178,6 +180,11 @@ enum Message {
     RoomJoined(Box<Result<(multiplayer::Net, String), String>>),
     /// Another rider's engine bank finished loading.
     RemoteEngine(u16, Box<Result<atv_game::audio::remote::Engine, String>>),
+    /// Web: the canvas lost its WebGL context, and got it back (context.rs).
+    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+    ContextLost,
+    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+    ContextRestored,
 }
 
 /// A connected room waiting on the lobby page: (room, course, quad, rider,
@@ -341,6 +348,9 @@ struct App {
     /// The Host/Join forms' browser inputs.
     #[cfg(target_arch = "wasm32")]
     text_inputs: text_inputs::TextInputs,
+    /// Web: WebGL context loss, recovered in place (context.rs).
+    #[cfg(target_arch = "wasm32")]
+    context: context::Loss,
     /// Desktop: the rider count request in flight.
     #[cfg(not(target_arch = "wasm32"))]
     riders_pending: Option<std::sync::mpsc::Receiver<Option<u32>>>,
@@ -417,6 +427,8 @@ async fn open_gpu(window: Arc<Window>, display: OwnedDisplayHandle) -> Result<Gp
         .map_err(|e| format!("surface: {e}"))?;
     #[allow(unused_mut)]
     let mut gpu = Gpu::new(&instance, surface, size.width, size.height).await?;
+    #[cfg(target_arch = "wasm32")]
+    context::opened(&gpu);
     #[cfg(not(target_arch = "wasm32"))]
     {
         let info = &gpu.adapter_info;
@@ -568,8 +580,8 @@ async fn prepare(
         atv_game::yield_frame().await;
         scene.set_ride(&gpu, &venue, &ride.quad, &ride.rider)?;
         scene.set_ride_paint(ride.paint());
-        if let Some(race) = ride.race_mut() {
-            scene.set_race_cpus(&gpu, &venue, &std::mem::take(&mut race.draw))?;
+        if let Some(race) = ride.race() {
+            scene.set_race_cpus(&gpu, &venue, &race.draw)?;
         }
         let mut riding = riding::Riding::new(ride, &venue);
         riding.interpolation = graphics.interpolation;
@@ -764,6 +776,11 @@ impl App {
     fn step(&mut self) {
         #[cfg(not(target_arch = "wasm32"))]
         if self.device_lost() {
+            return;
+        }
+        // No context, no frame: the ride waits for the new device.
+        #[cfg(target_arch = "wasm32")]
+        if self.context.lost {
             return;
         }
         self.sync_wake();
@@ -1421,6 +1438,11 @@ impl App {
     /// states, so nothing but redundant redraws is skipped. Parity holds and
     /// autodrive benchmarks keep rendering. A multiplayer ride stays awake.
     fn awake(&self) -> bool {
+        // A lost graphics context draws nothing until the new device.
+        #[cfg(target_arch = "wasm32")]
+        if self.context.lost {
+            return false;
+        }
         let Some(ready) = &self.ready else {
             // The frontend draws on input, and continuously only while its
             // page animates; a ride loading from it presents its own frames.
@@ -1488,6 +1510,12 @@ impl App {
     }
 
     fn effective_focused(&self) -> bool {
+        // A lost graphics context holds the ride as blur does (game.js
+        // `lost` in syncAudio and simulationPaused).
+        #[cfg(target_arch = "wasm32")]
+        if self.context.lost {
+            return false;
+        }
         self.focused && self.visible && !self.suspended
     }
 
@@ -2453,6 +2481,8 @@ impl ApplicationHandler<Message> for App {
         let attributes = attributes.with_inner_size(winit::dpi::LogicalSize::new(1280, 720));
         let window = Arc::new(event_loop.create_window(attributes).expect("create window"));
         self.window = Some(window.clone());
+        #[cfg(target_arch = "wasm32")]
+        context::watch(&window, self.proxy.clone());
         if let Some(start) = options.front.clone() {
             self.defaults = Some(Defaults {
                 relay: options.relay.clone().unwrap_or_else(default_relay),
@@ -2652,6 +2682,10 @@ impl ApplicationHandler<Message> for App {
     }
 
     fn user_event(&mut self, event_loop: &ActiveEventLoop, message: Message) {
+        #[cfg(target_arch = "wasm32")]
+        let Some(message) = self.context_filter(message) else {
+            return;
+        };
         match message {
             Message::SoundReady(mut sound) => {
                 if let Some(ready) = &mut self.ready
@@ -2966,7 +3000,9 @@ impl ApplicationHandler<Message> for App {
             #[cfg(not(target_arch = "wasm32"))]
             Message::GpuRestored(gpu) => self.gpu_restored(*gpu),
             #[cfg(target_arch = "wasm32")]
-            Message::GpuRestored(_) => {}
+            Message::GpuRestored(_) | Message::ContextLost | Message::ContextRestored => {}
+            #[cfg(not(target_arch = "wasm32"))]
+            Message::ContextLost | Message::ContextRestored => {}
             Message::FrontGpu(gpu) => {
                 // A failed device restore lands on the course select too.
                 #[cfg(not(target_arch = "wasm32"))]
@@ -2988,6 +3024,23 @@ impl ApplicationHandler<Message> for App {
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _: WindowId, event: WindowEvent) {
+        // A lost graphics context takes no input; the new device takes the
+        // window's size then.
+        #[cfg(target_arch = "wasm32")]
+        if self.context.lost
+            && matches!(
+                event,
+                WindowEvent::Resized(_)
+                    | WindowEvent::KeyboardInput { .. }
+                    | WindowEvent::MouseInput { .. }
+                    | WindowEvent::CursorMoved { .. }
+                    | WindowEvent::MouseWheel { .. }
+                    | WindowEvent::Touch(_)
+                    | WindowEvent::ScaleFactorChanged { .. }
+            )
+        {
+            return;
+        }
         // Input and resizes reach a sleeping ride through one frame.
         if matches!(
             event,
@@ -4489,8 +4542,12 @@ impl App {
 
     /// A room ride whose window is hidden or suspended runs no frames.
     fn presence_due(&self) -> bool {
+        #[cfg(target_arch = "wasm32")]
+        let away = !self.visible || self.suspended || self.context.lost;
+        #[cfg(not(target_arch = "wasm32"))]
+        let away = !self.visible || self.suspended;
         self.held_room.is_some()
-            || (!self.visible || self.suspended)
+            || away
                 && self.ready.as_ref().is_some_and(|r| {
                     r.riding.is_some() && r.net.as_ref().is_some_and(|n| n.closed.is_none())
                 })
@@ -5454,6 +5511,8 @@ pub fn run(options: Options) {
         ),
         #[cfg(target_arch = "wasm32")]
         text_inputs: Default::default(),
+        #[cfg(target_arch = "wasm32")]
+        context: Default::default(),
         #[cfg(not(target_arch = "wasm32"))]
         riders_pending: None,
     };

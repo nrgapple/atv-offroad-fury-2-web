@@ -143,6 +143,16 @@ impl SnowPass {
         Ok(())
     }
 
+    /// Takes over a lost device's flakes (graphics context restored): they
+    /// upload again at the next prepare.
+    pub fn adopt(&mut self, old: SnowPass) {
+        self.data = old.data;
+        self.sequence = old.sequence;
+        self.count = old.count;
+        self.time = old.time;
+        self.dirty = (0..self.count as usize).collect();
+    }
+
     pub fn prepare(&mut self, gpu: &Gpu, camera: &Camera) -> (u32, u32) {
         self.dirty.sort_unstable();
         self.dirty.dedup();
