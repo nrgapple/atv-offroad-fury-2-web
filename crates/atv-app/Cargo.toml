@@ -36,6 +36,8 @@ tungstenite = { version = "0.28", default-features = false, features = ["handsha
 ureq = { version = "3", default-features = false, features = ["rustls"] }
 # Display-sleep inhibit while riding (wake.rs; the web uses the Wake Lock API).
 keepawake = "0.6"
+# Copy ride/invite links and paste into the Host/Join fields.
+arboard = { version = "3", default-features = false }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 console_error_panic_hook = "0.1"

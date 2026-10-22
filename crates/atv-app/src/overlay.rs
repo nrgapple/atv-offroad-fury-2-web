@@ -145,6 +145,8 @@ pub struct Overlay {
     pub backdrop: Option<[u8; 3]>,
     /// The engine's frontend can take the player back (Quit to Main Menu).
     pub frontend: bool,
+    /// The ride is a race (Pause → Restart Race).
+    pub race: bool,
 }
 
 impl Overlay {
@@ -212,6 +214,7 @@ impl Overlay {
             diagnostics: Vec::new(),
             backdrop: None,
             frontend: false,
+            race: false,
         }
     }
 
@@ -255,9 +258,13 @@ impl Overlay {
             (true, false) => {
                 let mut menu = PauseMenu::new();
                 menu.frontend = self.frontend;
+                menu.race_active = self.race;
                 self.menu = Some(menu);
                 self.press = None;
                 self.touch.clear();
+                // keyboard-help.js setRiding(false): menus hide the card.
+                self.help_open = false;
+                self.help_until = None;
             }
             (false, true) => {
                 self.menu = None;
@@ -318,12 +325,8 @@ impl Overlay {
         bindings: Option<&mut atv_game::ride::bindings::Bindings>,
     ) -> Option<MenuEvent> {
         self.menu_reveal = true;
-        let buttons = pad.map_or([0.; 17], |p| p.buttons);
-        let axes = pad.map_or([0.; 4], |p| p.axes);
-        self.with_menu(bindings, |m, ctx, _, _| {
-            m.pad(buttons, axes, pad.is_some(), ctx)
-        })
-        .flatten()
+        self.with_menu(bindings, |m, ctx, _, _| m.pad(pad, ctx))
+            .flatten()
     }
 
     pub fn menu_press(
@@ -496,6 +499,15 @@ impl Overlay {
         self.touch.clear();
         self.press = None;
         self.hovered = None;
+    }
+
+    /// The page lost focus: input clears and a binding capture is cancelled
+    /// (frontend.js `blur` → `cancelCapture`).
+    pub fn blur(&mut self) {
+        self.clear_input();
+        if let Some(menu) = &mut self.menu {
+            menu.cancel_capture();
+        }
     }
 
     pub fn touch_down(&mut self, id: u64, x: f32, y: f32, now: f64, active: bool) -> bool {
@@ -786,7 +798,9 @@ impl Overlay {
         // Race over: the results panel or the Show Results button.
         match race {
             Some((frame, ..)) if frame.phase == "finished" => {
-                self.results.can_quit = self.frontend;
+                // race.js always offers Quit Event; a page without the
+                // engine's frontend leaves for its menus.
+                self.results.can_quit = self.frontend || cfg!(target_arch = "wasm32");
                 self.results.finish(frame);
             }
             // A race restarted in place starts without results.
@@ -897,12 +911,16 @@ impl Overlay {
         (taken, command.map(command_action))
     }
 
-    /// Controller A/B/X while the race results are up.
-    pub fn results_pad(&mut self, buttons: &[f32]) -> Option<Action> {
+    /// Controller A/B/X and the D-pad while the race results are up.
+    pub fn results_pad(&mut self, pad: Option<&atv_game::ride::bindings::Pad>) -> Option<Action> {
         if self.menu.is_some() {
             return None;
         }
-        self.results.pad(buttons).map(command_action)
+        let idle = atv_game::ride::bindings::Pad::default();
+        let pad = pad.unwrap_or(&idle);
+        self.results
+            .pad(&pad.buttons, &pad.axes)
+            .map(command_action)
     }
 
     fn upload(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, width: u32, height: u32) {

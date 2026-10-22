@@ -89,7 +89,9 @@ impl Settings {
         self.values.get(key).cloned()
     }
 
-    pub fn set(&mut self, key: &str, value: &str) {
+    /// Saves a value; false when it lasts only for this session (no
+    /// storage, private mode or quota, an unwritable file).
+    pub fn set(&mut self, key: &str, value: &str) -> bool {
         #[cfg(not(target_arch = "wasm32"))]
         if let (Some(shared), Some(path)) = (&self.shared, &self.path) {
             let mut shared = shared.lock().unwrap_or_else(|e| e.into_inner());
@@ -100,17 +102,18 @@ impl Settings {
             if let Some(dir) = path.parent() {
                 std::fs::create_dir_all(dir).ok();
             }
-            if let Ok(text) = serde_json::to_string_pretty(&file) {
-                std::fs::write(path, text).ok();
-            }
-            return;
+            return serde_json::to_string_pretty(&file)
+                .is_ok_and(|text| std::fs::write(path, text).is_ok());
         }
         self.values.insert(key.into(), value.into());
         #[cfg(target_arch = "wasm32")]
-        if let Some(storage) = storage() {
+        {
             // Private mode or quota: keep the session value.
-            storage.set_item(key, value).ok();
+            storage().is_some_and(|storage| storage.set_item(key, value).is_ok())
         }
+        // Desktop in-memory settings (tests, captures) need no storage.
+        #[cfg(not(target_arch = "wasm32"))]
+        true
     }
 }
 
@@ -121,6 +124,9 @@ fn read_file(path: &std::path::Path) -> BTreeMap<String, String> {
         .and_then(|text| serde_json::from_str(&text).ok())
         .unwrap_or_default()
 }
+
+/// bindings.js `storageError`: the notice when a binding cannot be saved.
+pub const STORAGE_ERROR: &str = "Settings work for this session; browser storage is unavailable.";
 
 #[cfg(target_arch = "wasm32")]
 fn storage() -> Option<web_sys::Storage> {
