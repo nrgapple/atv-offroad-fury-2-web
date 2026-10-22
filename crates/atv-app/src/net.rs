@@ -6,8 +6,13 @@
 #[derive(Debug)]
 pub enum Event {
     Open,
-    Message(Vec<u8>),
-    Closed { code: u16, reason: String },
+    /// A relay message and when it arrived (the browser stamps
+    /// `performance.now()` in `onmessage`; poses and round trips use it).
+    Message(Vec<u8>, web_time::Instant),
+    Closed {
+        code: u16,
+        reason: String,
+    },
 }
 
 /// Outgoing bytes held beyond this are not queued (the browser checks
@@ -136,7 +141,10 @@ mod native {
                                     let _ = event_tx.send(closed(1008, "Message limit".into()));
                                     return;
                                 }
-                                if event_tx.send(Event::Message(bytes.to_vec())).is_err() {
+                                if event_tx
+                                    .send(Event::Message(bytes.to_vec(), web_time::Instant::now()))
+                                    .is_err()
+                                {
                                     return;
                                 }
                             }
@@ -283,7 +291,9 @@ mod web {
                     if let Ok(buffer) = event.data().dyn_into::<js_sys::ArrayBuffer>() {
                         let bytes = js_sys::Uint8Array::new(&buffer).to_vec();
                         if bytes.len() <= MESSAGE_LIMIT {
-                            events.borrow_mut().push_back(Event::Message(bytes));
+                            events
+                                .borrow_mut()
+                                .push_back(Event::Message(bytes, web_time::Instant::now()));
                         }
                     }
                 })

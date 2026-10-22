@@ -636,3 +636,13 @@ frames and 6.9 ms main-thread CPU. It received about 52.5 KB/s.
 Hitches: a 192 ms frame while six remote engine banks decoded on the main thread,
 and two 36 ms seconds of unknown cause. These are host numbers, not phone results;
 details are in RUST_ENGINE.md (Multiplayer).
+
+Follow-up (same host, 10 Hz bots, measured after the player's own loading): remote
+models and engine banks now load as frame tasks, polled about 3 ms per frame.
+Resampling kernels, rider motions, outfits, the vehicle pipeline and texture
+views are shared, and there is at most one upload per frame. Arrival seconds:
+worst frames 25-31 ms (were 16-53 ms), load slices up to 13.6 ms (were 16-23 ms),
+and uploads up to 7.7 ms (the first was 33-39 ms). The player's own bank output is
+bit-identical. Two 32-36 fps seconds remained, with engine CPU at 7 ms. On this
+heavily loaded host they are outside the engine's main-thread work. Round trip
+with 1 s pings: median 7 ms, p95 47 ms.

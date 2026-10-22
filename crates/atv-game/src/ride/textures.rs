@@ -5,6 +5,7 @@ use atv_core::{mesh::Mesh, resource::Resource, scenery_material, texture};
 use std::collections::HashMap;
 
 /// One material's base texture as the browser binds it.
+#[derive(Clone)]
 pub struct MaterialTexture {
     /// Decoded RGBA; `None` draws the untextured surface colour.
     pub image: Option<Image>,
@@ -40,6 +41,30 @@ pub fn load(mesh: &Mesh, archive: &Resource) -> Result<HashMap<String, MaterialT
         if let Some(texture) = material_texture(material, archive)? {
             textures.insert(material.clone(), texture);
         }
+    }
+    Ok(textures)
+}
+
+/// [`load`] a material at a time, yielding to the frame loop between them
+/// (other riders' models load during a ride).
+pub async fn load_spread(
+    mesh: &Mesh,
+    archive: &Resource<'_>,
+) -> Result<HashMap<String, MaterialTexture>> {
+    let mut textures = HashMap::new();
+    let lod = mesh.lods.first().ok_or("original mesh has no LOD")?;
+    for group in &lod.groups {
+        let material = mesh
+            .materials
+            .get(group.material as usize)
+            .ok_or("mesh material index out of range")?;
+        if textures.contains_key(material) {
+            continue;
+        }
+        if let Some(texture) = material_texture(material, archive)? {
+            textures.insert(material.clone(), texture);
+        }
+        crate::yield_frame().await;
     }
     Ok(textures)
 }

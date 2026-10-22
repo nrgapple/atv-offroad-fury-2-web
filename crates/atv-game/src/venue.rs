@@ -11,6 +11,7 @@ use crate::{
 use atv_content::Content;
 use atv_core::{ipu, resource::Resource, scene::Scene, terrain, texture};
 
+#[derive(Clone)]
 pub struct Image {
     pub width: u32,
     pub height: u32,

@@ -185,7 +185,14 @@ impl Content {
             return Ok(bytes);
         }
         let bytes = self.store.read(&format!("{}.bin", chunk.sha256)).await?;
-        if bytes.len() != chunk.bytes || hex(&Sha256::digest(&bytes)) != chunk.sha256 {
+        // Hash in 512 KiB pieces, yielding between them, so verifying a large
+        // file never holds one frame (other riders' models load mid-ride).
+        let mut digest = Sha256::new();
+        for piece in bytes.chunks(512 * 1024) {
+            digest.update(piece);
+            yield_once().await;
+        }
+        if bytes.len() != chunk.bytes || hex(&digest.finalize()) != chunk.sha256 {
             return Err(format!("content integrity check failed for {path}"));
         }
         let bytes = std::rc::Rc::new(bytes);
@@ -235,6 +242,28 @@ impl Content {
         }
         Ok(out)
     }
+}
+
+/// Returns to the caller's executor once (the app polls mid-ride loads a
+/// slice per frame; other executors re-poll at once).
+fn yield_once() -> impl std::future::Future<Output = ()> {
+    struct Yield(bool);
+    impl std::future::Future for Yield {
+        type Output = ();
+        fn poll(
+            mut self: std::pin::Pin<&mut Self>,
+            cx: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<()> {
+            if self.0 {
+                std::task::Poll::Ready(())
+            } else {
+                self.0 = true;
+                cx.waker().wake_by_ref();
+                std::task::Poll::Pending
+            }
+        }
+    }
+    Yield(false)
 }
 
 fn hex(bytes: &[u8]) -> String {

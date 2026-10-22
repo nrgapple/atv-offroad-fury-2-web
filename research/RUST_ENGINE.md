@@ -1312,6 +1312,61 @@ Chromium/Metal, 1280x720; host-only, not a phone or Internet result):
   frame, or spread them over frames (the browser decodes in Web Audio and loads
   models asynchronously). Find the late 28 fps samples. Measure on a phone.
 
+### Arrivals spread across frames (multiplayer)
+
+The first-second 192 ms frame was mostly the player's own sound bank: about 3 s
+of `Resampler::process` in a Chrome CPU profile (wasm names kept for that build
+only), plus per-sample kernel setup. Arrivals then cost 16-53 ms frames each.
+Remote loads now run as frame tasks, the way the browser loads asynchronously:
+
+- `atv_game::yield_frame()` returns Pending once. The app keeps remote rider
+  models and engine banks as boxed futures and polls them for about 3 ms at the
+  start of each ride frame (and in the hidden-tab presence tick), rotating which
+  task goes first. It does this on web and desktop.
+- Each remote model yields between archive read, PSG decode, quad mesh, each
+  material's textures and the animator. The rider mesh, its looping flags and
+  its 78 motions are decoded once per sex and shared (`Rc`). Outfit textures are
+  cached by sex and outfit.
+- Engine banks resample in 4096-frame pieces (`Pcm::from_vag_spread`, within
+  1e-5 of the one-read conversion, unit-tested). The windowed-sinc kernel is
+  cached per rate pair. `process` uses slice folds in the same summation order:
+  the player's own bank stays bit-identical (`fury --audio` WAVs compared with
+  `cmp`).
+- Content chunks hash SHA-256 in 512 KiB pieces with a yield between them.
+- GPU work: other riders share the player's vehicle pipeline, layouts and sampler
+  (`VehicleShared`, compiled at ride start). Texture views are cached by name,
+  size and a sampled fingerprint. At most one rider's GPU upload and one rig fork
+  happen per frame.
+- The status line shows the second's worst frame, room CPU, the longest load
+  slice and the longest upload. `?pingMs=` (250-15000) shortens the ping
+  interval for measurement. Messages carry their arrival time.
+
+Observed (`ATV_FREERIDE_HZ=10 node tools/test_engine_freeride_full.mjs`, local
+relay; the test waits 8 s after the ride starts, so the player's own loading is
+outside the window; joins paced 250 ms; one Mac, headless Chromium/Metal,
+1280x720; host-only, not a phone or Internet result):
+
+- All 19 riders were drawn 6.5 s after the first join. In the arrival seconds the
+  worst frames were 25-31 ms, the longest load slice 13.6 ms (most 5-7 ms), and
+  the longest upload 7.7 ms. Before the change: 16-53 ms frames, 16-23 ms load
+  slices, and a 33-39 ms first upload that included the pipeline compile.
+- Over the 30-second window: median 77 fps, 13.1 ms frames, 6.3 ms CPU (max
+  8.3 ms), and room work 1.8 ms median.
+- Round trips with a 1 s ping (`?pingMs=1000`): Rust median 7 ms, p95 47 ms,
+  max 164 ms (30 samples); a bot's own pings median 8 ms, p95 38 ms.
+- The slow seconds: two seconds ran at 32-36 fps (28-31 ms frames, 50 ms worst)
+  while the engine's CPU stayed at 6.7-7.0 ms, with no load or upload in them.
+  The frame time grew outside the engine's main-thread work. This host was
+  heavily loaded (load average 5-7, another agent's headless Chromium near
+  114% CPU, workerd near 100%), and WebGL has no GPU timestamps here, so host
+  scheduling and GPU/compositor time cannot be separated. They did not repeat at
+  the same point across runs.
+- At 20 Hz the local workerd relay saturates on this host (about 110% CPU). Claims
+  time out, pongs are lost and delivery drops to about 7 KB/s, so 20 Hz runs
+  measure the local relay, not the client. Steady round trips use 10 Hz.
+- Inspected: `private/reports/devlog-images/rust-mp-full-room-loading.png`; raw
+  samples in `private/reports/rust-mp/full-room-10hz.json`.
+
 Gaps, in planned slice order:
 
 1. The joining "Free Ride Lobby" page and Copy invite link from the frontend are
@@ -1319,8 +1374,7 @@ Gaps, in planned slice order:
    garage, as noted in slice 10.
 2. Train on a motorcycle ride, the Realistic train-riding setting, and an arrival's
    spawn velocity on a moving car (the browser adds the car's point velocity).
-3. Remote model and engine-bank loading runs on the main thread; with many
-   arrivals it hitches (see the full-room measurement).
+3. A phone measurement of a full room; arrival frames are 25-31 ms on this host.
 
 ## Commands
 

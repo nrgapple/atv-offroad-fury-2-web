@@ -117,6 +117,8 @@ pub struct Session {
     buffers: BTreeMap<u8, PoseBuffer>,
     pub counters: Counters,
     pub rtt_ms: Option<u32>,
+    /// The latest relay round trips (ms), oldest first.
+    pub rtt_history: std::collections::VecDeque<u32>,
     /// Relay wall clock minus local monotonic clock, from the best ping.
     clock_offset_ms: Option<f64>,
     clock_rtt_ms: u32,
@@ -316,6 +318,10 @@ impl Session {
             Packet::Pong { nonce, server_ms } => {
                 let rtt = (now_ms as u32).wrapping_sub(nonce);
                 self.rtt_ms = Some(rtt);
+                if self.rtt_history.len() >= 64 {
+                    self.rtt_history.pop_front();
+                }
+                self.rtt_history.push_back(rtt);
                 // Half the round trip is the best one-way estimate over TCP;
                 // prefer low-latency samples.
                 if rtt < 5000 {
