@@ -721,15 +721,9 @@ impl App {
         let suspended = !self.visible || self.suspended;
         let device = self.window.as_ref().map_or(1., |w| w.scale_factor());
         self.sync_shell(None);
+        self.sync_usage();
         let mut rescale = false;
         if let Some(riding) = self.ready.as_ref().and_then(|r| r.riding.as_ref()) {
-            // Usage: riding time pauses in menus; race_finish once per race.
-            self.usage.set_riding(!(riding.paused && !riding.held));
-            if let Some(f) = riding.ride.race().and_then(|r| r.frame.as_ref())
-                && f.phase == "finished"
-            {
-                self.usage.race_finished(f.position, f.field, f.elapsed);
-            }
             // game.js renderScale: sampled only while actively riding on a
             // high-density display.
             if cfg!(target_arch = "wasm32")
@@ -2856,6 +2850,8 @@ impl ApplicationHandler<Message> for App {
             }
             WindowEvent::RedrawRequested => {
                 self.step();
+                // After the frame: a pause it opened may be its last frame.
+                self.sync_usage();
                 self.load_sound();
                 if self.awake() {
                     if let Some(window) = &self.window {
@@ -3752,6 +3748,19 @@ impl App {
     }
 
     /// Pause → Quit to Main Menu: the ride ends and the frontend returns.
+    /// Usage: riding time stops while a menu is open; race_finish once per race.
+    fn sync_usage(&mut self) {
+        let Some(riding) = self.ready.as_ref().and_then(|r| r.riding.as_ref()) else {
+            return;
+        };
+        self.usage.set_riding(!(riding.paused && !riding.held));
+        if let Some(f) = riding.ride.race().and_then(|r| r.frame.as_ref())
+            && f.phase == "finished"
+        {
+            self.usage.race_finished(f.position, f.field, f.elapsed);
+        }
+    }
+
     /// Mirrors the frontend page to the page shell's `#frontend` element
     /// (`data-page`, `hidden` while riding) for install.js's banner, which
     /// offers the app only on the title screen.
