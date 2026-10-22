@@ -572,8 +572,8 @@ fn settle_room(ready: &mut Ready) {
                 key,
             )));
         }
-        if let Some((origin, yaw)) = tick.place {
-            let _ = riding.place_beside(origin, yaw);
+        if let Some((origin, yaw, velocity)) = tick.place {
+            let _ = riding.place_beside(origin, yaw, velocity);
         }
         let eye = ready.camera.eye();
         net.present(
@@ -805,8 +805,8 @@ impl App {
             // paused presence pose; the online pause menu and blur keep
             // neutral-input riding (Riding::online).
             let tick = net.tick(Some(&riding.ride), suspended);
-            if let Some((origin, yaw)) = tick.place
-                && let Err(error) = riding.place_beside(origin, yaw)
+            if let Some((origin, yaw, velocity)) = tick.place
+                && let Err(error) = riding.place_beside(origin, yaw, velocity)
             {
                 status(&format!("Unable to join beside that rider: {error}"));
             }
@@ -1342,7 +1342,7 @@ impl App {
                 };
                 match net
                     .spawn_beside(peer, &riding.ride)
-                    .and_then(|(origin, yaw)| riding.place_beside(origin, yaw))
+                    .and_then(|(origin, yaw, velocity)| riding.place_beside(origin, yaw, velocity))
                 {
                     Ok(()) => self.menu_event(Event::Resume),
                     Err(error) => {
