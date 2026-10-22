@@ -53,8 +53,15 @@ try {
   assert.equal(await page.evaluate(() => localStorage.getItem('atv-graphics')), 'enhanced');
   s = await settings(page);
   assert.deepEqual([s.interpolation, s.skySmooth, s.fresnel, s.contactShadows], [true, true, true, true]);
-  // Built-in parts (anisotropy, shadow map) apply from the next load.
-  assert.equal(s.anisotropy, 0);
+  // Anisotropy and the shadow map follow the preset mid-ride (applyAnisotropy,
+  // the shadow map resized or dropped), as the browser does.
+  assert.deepEqual([s.anisotropy, s.shadowMap], [4, 0]);
+  await click(page, 'graphics'); // enhanced → high
+  s = await settings(page);
+  assert.deepEqual([s.anisotropy, s.shadowMap], [16, 2048]);
+  for (let i = 0; i < 3; i++) await click(page, 'graphics'); // high → auto → original → enhanced
+  s = await settings(page);
+  assert.deepEqual([s.anisotropy, s.shadowMap], [4, 0]);
   await key(page, 'Escape'); await key(page, 'Escape');
   await click(page, 'resume');
   await wait(page, () => JSON.parse(document.querySelector('#ui-state').textContent).settings.dust === 24);

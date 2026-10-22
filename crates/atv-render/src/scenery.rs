@@ -86,6 +86,8 @@ pub struct SceneryPass {
     chunks: Vec<Chunk>,
     draws: Vec<Draw>,
     groups: Vec<wgpu::BindGroup>,
+    /// The textures behind `groups` (rebound when anisotropy changes).
+    images: Vec<wgpu::Texture>,
     /// Per-draw records ([`Record`]): one dynamic offset per draw. Draws of
     /// UV-animated chunks come first so one write refreshes them all.
     records: wgpu::Buffer,
@@ -110,11 +112,22 @@ const STRIDE: u64 = 36;
 const REFLECTION_STRIDE: u64 = 72;
 
 impl SceneryPass {
+    /// applyAnisotropy: every scenery texture rebinds with a new sampler.
+    pub fn set_anisotropy(&mut self, gpu: &Gpu, world: &World, anisotropy: u16) {
+        let sampler = texture::sampler(gpu, true, anisotropy);
+        self.groups = self
+            .images
+            .iter()
+            .map(|t| world.texture_group(gpu, t, &sampler))
+            .collect();
+    }
+
     pub fn new(gpu: &Gpu, world: &World, scenery: &Scenery, anisotropy: u16) -> Self {
         let device = &gpu.device;
         let sampler = texture::sampler(gpu, true, anisotropy);
         let fallback = texture::upload(gpu, 1, 1, &[255; 4], "fallback");
         let mut groups = vec![world.texture_group(gpu, &fallback, &sampler)];
+        let mut images = vec![fallback];
         let mut uploaded: HashMap<*const atv_game::materials::MaterialImage, Vec<usize>> =
             HashMap::new();
         let record_slot = world.slot(std::mem::size_of::<Record>());
@@ -143,6 +156,7 @@ impl SceneryPass {
                             .map(|rgba| {
                                 let t = texture::upload(gpu, w, h, rgba, "scenery");
                                 groups.push(world.texture_group(gpu, &t, &sampler));
+                                images.push(t);
                                 groups.len() - 1
                             })
                             .collect()
@@ -345,6 +359,7 @@ impl SceneryPass {
             chunks,
             draws,
             groups,
+            images,
             records,
             record_group,
             record_slot,
