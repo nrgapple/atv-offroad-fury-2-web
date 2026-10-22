@@ -243,6 +243,42 @@ impl Overlay {
             .map(|(_, id)| *id)
     }
 
+    /// The graphics context came back: a new UI renderer on `device` with
+    /// the HUD artwork registered again. The GPS map (a 2D canvas in
+    /// game.js, untouched by context loss) is rebuilt from the course;
+    /// glyphs and the Jukebox art return at their next use.
+    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+    pub fn rebuild_gpu(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        format: wgpu::TextureFormat,
+        venue: &atv_game::venue::Venue,
+    ) {
+        self.renderer = Renderer::new(device, format);
+        self.uploaded = DisplayList::default();
+        self.upload_size = (0, 0, 0.);
+        self.menu_cache = None;
+        self.toolbar_cache = None;
+        self.help_cache = None;
+        self.results_cache = None;
+        self.glyphs.clear();
+        self.jukebox_art = None;
+        self.jukebox_art_wanted = self.jukebox_open();
+        if let Some(meter) = &mut self.meter {
+            meter.images.clear();
+            for (name, image) in &meter.assets.images {
+                let id =
+                    self.renderer
+                        .add_image(device, queue, image.width, image.height, &image.rgba);
+                meter.images.insert(name.clone(), id);
+            }
+        }
+        self.minimap.image = None;
+        self.set_course(venue);
+        self.finish_course(&venue.terrain);
+    }
+
     /// Starts the GPS map build for a course (minimap.js `setTerrain`).
     pub fn set_course(&mut self, venue: &atv_game::venue::Venue) {
         self.minimap.set_terrain(&venue.terrain, &venue.scenery);
@@ -1137,8 +1173,8 @@ impl Overlay {
         })
     }
 
-    /// Finishes any pending GPS map build at once (parity captures).
-    #[cfg(not(target_arch = "wasm32"))]
+    /// Finishes any pending GPS map build at once (parity captures, a
+    /// restored graphics context).
     pub fn finish_course(&mut self, terrain: &atv_game::venue::Terrain) {
         while self.minimap.building() {
             self.minimap.build_slice(terrain, f64::INFINITY);

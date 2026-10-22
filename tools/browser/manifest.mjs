@@ -63,12 +63,17 @@ export const TESTS = {
   'test_engine_race_gear.mjs': { group: 'content' },
   'test_engine_menu_parity.mjs': { group: 'content' },
   'test_engine_menu_transitions.mjs': { group: 'content' },
+  'test_engine_context_loss.mjs': { group: 'content' },
   'test_engine_menu_music.mjs': { group: 'content' },
   'test_engine_freeride_full.mjs': {
     group: 'manual',
     reason: 'load measurement: a full Free Ride room of synthetic riders on a local relay (never production)'
   },
   'test_engine_multiplayer_dropin.mjs': {
+    group: 'relay',
+    reason: 'needs the multiplayer relay at the same origin (Host Game, room WebSocket); run with --url'
+  },
+  'test_engine_multiplayer_context.mjs': {
     group: 'relay',
     reason: 'needs the multiplayer relay at the same origin (Host Game, room WebSocket); run with --url'
   },
