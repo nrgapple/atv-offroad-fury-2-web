@@ -249,6 +249,60 @@ fn vehicle_platform(vehicle: &Vehicle, train: &crate::train::Train) -> Option<(u
     })
 }
 
+/// One train step with `scene` (atv-web `step_train_scene`): each car's
+/// height comes from the scene and its collision body is republished. In a
+/// room the phase follows the relay clock (`server_ms`, multiplayer_world.rs
+/// `synchronize_train`). True after a large resync.
+fn step_train_with(
+    train: &mut crate::train::Train,
+    scene: Option<&mut atv_core::scene_collision::SceneCollision>,
+    server_ms: Option<f64>,
+) -> Result<bool> {
+    let Some(scene) = scene else {
+        train.runtime.step(STEP, |_| Ok(None))?;
+        return Ok(false);
+    };
+    let bindings: Vec<usize> = train.collision.iter().map(|(car, _)| *car).collect();
+    let scene = std::cell::RefCell::new(scene);
+    let step = |runtime: &mut atv_core::train::Runtime| {
+        runtime.step_with_scene(
+            STEP,
+            |car, previous| {
+                let own = bindings.iter().position(|b| *b == car);
+                atv_core::train::height_geometry(&scene.borrow(), own, previous)
+            },
+            |car, motion| {
+                if let Some(index) = bindings.iter().position(|b| *b == car) {
+                    scene.borrow_mut().update_dynamic(index, motion)?;
+                }
+                Ok(())
+            },
+        )
+    };
+    let duration = train.runtime.route.duration();
+    let Some(server_ms) = server_ms.filter(|_| duration.is_finite() && duration > 0.) else {
+        step(&mut train.runtime)?;
+        return Ok(false);
+    };
+    let target = (server_ms / 1000.).rem_euclid(f64::from(duration)) as f32;
+    let error =
+        (target - train.runtime.time + duration * 0.5).rem_euclid(duration) - duration * 0.5;
+    if error.abs() > 0.25 {
+        // A large resync: prime the route's heading filter and velocity pair
+        // over 16 steps.
+        train.runtime.time = (target - 16. * STEP).rem_euclid(duration);
+        for _ in 0..16 {
+            step(&mut train.runtime)?;
+        }
+        return Ok(true);
+    }
+    // Gentle phase correction avoids impulses from clock jitter.
+    train.runtime.time =
+        (train.runtime.time + (error - STEP).clamp(-STEP * 0.25, STEP * 0.25)).rem_euclid(duration);
+    step(&mut train.runtime)?;
+    Ok(false)
+}
+
 /// Optional simulation choices (Settings → Extras): the Unleashed flip
 /// gestures and realistic train riding. Off is the original game.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -312,11 +366,6 @@ impl Ride {
         race: Option<(race::Setup, race::Settings)>,
     ) -> Result<Self> {
         let mut sim = sim;
-        // Motorcycles keep the presentation-only train (the bike scene does
-        // not install it yet).
-        if matches!(seed, Seed::Bike(_)) {
-            sim.train = None;
-        }
         if let Some(train) = &sim.train {
             train.borrow_mut().driven = true;
         }
@@ -478,69 +527,32 @@ impl Ride {
         let Some(train) = self.sim.train.clone() else {
             return Ok(());
         };
-        let Mount::Quad { vehicle, .. } = &mut self.mount else {
-            return Ok(());
-        };
         let mut train = train.borrow_mut();
         let train = &mut *train;
-        let attached = vehicle_platform(vehicle, train);
-        let Some(scene) = vehicle.scene_collision_mut() else {
-            train.runtime.step(STEP, |_| Ok(None))?;
-            return Ok(());
-        };
-        let bindings: Vec<usize> = train.collision.iter().map(|(car, _)| *car).collect();
-        let scene = std::cell::RefCell::new(scene);
-        let step = |runtime: &mut atv_core::train::Runtime| {
-            runtime.step_with_scene(
-                STEP,
-                |car, previous| {
-                    let own = bindings.iter().position(|b| *b == car);
-                    atv_core::train::height_geometry(&scene.borrow(), own, previous)
-                },
-                |car, motion| {
-                    if let Some(index) = bindings.iter().position(|b| *b == car) {
-                        scene.borrow_mut().update_dynamic(index, motion)?;
-                    }
-                    Ok(())
-                },
-            )
-        };
-        let Some(server_ms) = self.train_server_ms.take() else {
-            step(&mut train.runtime)?;
-            return Ok(());
-        };
-        let duration = train.runtime.route.duration();
-        if !duration.is_finite() || duration <= 0. {
-            step(&mut train.runtime)?;
-            return Ok(());
-        }
-        let target = (server_ms / 1000.).rem_euclid(f64::from(duration)) as f32;
-        let error =
-            (target - train.runtime.time + duration * 0.5).rem_euclid(duration) - duration * 0.5;
-        if error.abs() > 0.25 {
-            // A large resync: prime the route's heading filter and velocity
-            // pair over 16 steps, carrying a rider standing on a car along.
-            train.runtime.time = (target - 16. * STEP).rem_euclid(duration);
-            for _ in 0..16 {
-                step(&mut train.runtime)?;
+        let server_ms = self.train_server_ms.take();
+        // The bike steps the train with its own scene (motorcycles.rs op 24
+        // calls step_train_scene too); only an ATV rides a car in a room.
+        match &mut self.mount {
+            Mount::Quad { vehicle, .. } => {
+                let attached = vehicle_platform(vehicle, train);
+                let resynced = step_train_with(train, vehicle.scene_collision_mut(), server_ms)?;
+                if resynced
+                    && let Some((car, before)) = attached
+                    && let Some(motion) = train.runtime.motion_state(car)
+                {
+                    // Carry a rider standing on a car along a large resync.
+                    let origin = vehicle.frame().origin;
+                    let local = atv_core::obstacle::transform_point(
+                        &atv_core::obstacle::relative_transform(&IDENTITY_MATRIX, &before),
+                        origin,
+                    );
+                    let moved = atv_core::obstacle::transform_point(&motion.current, local);
+                    vehicle.translate_network(std::array::from_fn(|i| moved[i] - origin[i]));
+                }
             }
-            if let Some((car, before)) = attached
-                && let Some(motion) = train.runtime.motion_state(car)
-            {
-                let origin = vehicle.frame().origin;
-                let local = atv_core::obstacle::transform_point(
-                    &atv_core::obstacle::relative_transform(&IDENTITY_MATRIX, &before),
-                    origin,
-                );
-                let moved = atv_core::obstacle::transform_point(&motion.current, local);
-                vehicle.translate_network(std::array::from_fn(|i| moved[i] - origin[i]));
+            Mount::Bike(bike) => {
+                step_train_with(train, bike.scene_collision_mut(), server_ms)?;
             }
-        } else {
-            // Gentle phase correction avoids impulses from clock jitter.
-            train.runtime.time = (train.runtime.time
-                + (error - STEP).clamp(-STEP * 0.25, STEP * 0.25))
-            .rem_euclid(duration);
-            step(&mut train.runtime)?;
         }
         Ok(())
     }
@@ -752,6 +764,7 @@ impl Ride {
         if self.is_motorcycle() {
             self.step_bike(controls)?;
             self.step_race()?;
+            self.step_train()?;
             // atv-web reads the bike's frame after the race step, which can
             // move it (rider contact).
             if let Mount::Bike(bike) = &self.mount {

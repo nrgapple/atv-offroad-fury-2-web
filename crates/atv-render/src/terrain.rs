@@ -35,14 +35,93 @@ struct Mesh {
     chunks: Vec<Chunk>,
 }
 
+/// The texture views the terrain bind group holds.
+struct Views {
+    array: wgpu::TextureView,
+    mapping: wgpu::TextureView,
+    detail: wgpu::TextureView,
+}
+
 pub struct TerrainPass {
     pipeline: wgpu::RenderPipeline,
     bind_group: wgpu::BindGroup,
+    layout: wgpu::BindGroupLayout,
+    views: Views,
     uniforms: wgpu::Buffer,
     globals: Globals,
     mesh: Mesh,
     /// Index ranges of this frame's visible tiles.
     ranges: Vec<std::ops::Range<u32>>,
+}
+
+/// The terrain bind group: textures, samplers at `anisotropy` (the browser's
+/// anisotropic() on the atlas and detail map) and the vehicle shadow map.
+fn bind(
+    gpu: &Gpu,
+    layout: &wgpu::BindGroupLayout,
+    uniforms: &wgpu::Buffer,
+    views: &Views,
+    anisotropy: u16,
+    shadow: (&wgpu::TextureView, &wgpu::Sampler),
+) -> wgpu::BindGroup {
+    let device = &gpu.device;
+    let clamp = device.create_sampler(&wgpu::SamplerDescriptor {
+        label: Some("terrain colors"),
+        mag_filter: wgpu::FilterMode::Linear,
+        min_filter: wgpu::FilterMode::Linear,
+        mipmap_filter: wgpu::MipmapFilterMode::Linear,
+        // Enhanced/High: the browser's anisotropic() on the terrain atlas.
+        anisotropy_clamp: anisotropy.max(1),
+        ..Default::default()
+    });
+    let repeat = device.create_sampler(&wgpu::SamplerDescriptor {
+        label: Some("terrain detail"),
+        address_mode_u: wgpu::AddressMode::Repeat,
+        address_mode_v: wgpu::AddressMode::Repeat,
+        mag_filter: wgpu::FilterMode::Linear,
+        min_filter: wgpu::FilterMode::Linear,
+        mipmap_filter: wgpu::MipmapFilterMode::Linear,
+        anisotropy_clamp: anisotropy.max(1),
+        ..Default::default()
+    });
+    device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("terrain"),
+        layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: uniforms.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: wgpu::BindingResource::TextureView(&views.array),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: wgpu::BindingResource::TextureView(&views.mapping),
+            },
+            wgpu::BindGroupEntry {
+                binding: 3,
+                resource: wgpu::BindingResource::TextureView(&views.detail),
+            },
+            wgpu::BindGroupEntry {
+                binding: 4,
+                resource: wgpu::BindingResource::Sampler(&clamp),
+            },
+            wgpu::BindGroupEntry {
+                binding: 5,
+                resource: wgpu::BindingResource::Sampler(&repeat),
+            },
+            wgpu::BindGroupEntry {
+                binding: 6,
+                resource: wgpu::BindingResource::TextureView(shadow.0),
+            },
+            wgpu::BindGroupEntry {
+                binding: 7,
+                resource: wgpu::BindingResource::Sampler(shadow.1),
+            },
+        ],
+    })
 }
 
 impl TerrainPass {
@@ -78,25 +157,6 @@ impl TerrainPass {
             bytemuck::cast_slice(&terrain.mapping),
         );
         let detail = upload_layers(gpu, std::slice::from_ref(&terrain.detail));
-        let clamp = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("terrain colors"),
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
-            mipmap_filter: wgpu::MipmapFilterMode::Linear,
-            // Enhanced/High: the browser's anisotropic() on the terrain atlas.
-            anisotropy_clamp: anisotropy.max(1),
-            ..Default::default()
-        });
-        let repeat = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("terrain detail"),
-            address_mode_u: wgpu::AddressMode::Repeat,
-            address_mode_v: wgpu::AddressMode::Repeat,
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
-            mipmap_filter: wgpu::MipmapFilterMode::Linear,
-            anisotropy_clamp: anisotropy.max(1),
-            ..Default::default()
-        });
         let fog = venue.scene.fog.as_ref();
         let globals = Globals {
             view_projection: [0.; 16],
@@ -198,44 +258,12 @@ impl TerrainPass {
             dimension: Some(wgpu::TextureViewDimension::D2),
             ..Default::default()
         });
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("terrain"),
-            layout: &layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: uniforms.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::TextureView(&array_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: wgpu::BindingResource::TextureView(&mapping_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: wgpu::BindingResource::TextureView(&detail_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 4,
-                    resource: wgpu::BindingResource::Sampler(&clamp),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 5,
-                    resource: wgpu::BindingResource::Sampler(&repeat),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 6,
-                    resource: wgpu::BindingResource::TextureView(shadow.0),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 7,
-                    resource: wgpu::BindingResource::Sampler(shadow.1),
-                },
-            ],
-        });
+        let views = Views {
+            array: array_view,
+            mapping: mapping_view,
+            detail: detail_view,
+        };
+        let bind_group = bind(gpu, &layout, &uniforms, &views, anisotropy, shadow);
         let shader = device.create_shader_module(wgpu::include_wgsl!("terrain.wgsl"));
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("terrain"),
@@ -284,11 +312,30 @@ impl TerrainPass {
         Self {
             pipeline,
             bind_group,
+            layout,
+            views,
             uniforms,
             globals,
             mesh,
             ranges: Vec::new(),
         }
+    }
+
+    /// applyAnisotropy, or a resized shadow map: the bind group again.
+    pub fn rebind(
+        &mut self,
+        gpu: &Gpu,
+        anisotropy: u16,
+        shadow: (&wgpu::TextureView, &wgpu::Sampler),
+    ) {
+        self.bind_group = bind(
+            gpu,
+            &self.layout,
+            &self.uniforms,
+            &self.views,
+            anisotropy,
+            shadow,
+        );
     }
 
     /// Moves the fine patch (buildTerrainMesh after the rider leaves it).

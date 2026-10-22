@@ -15,7 +15,7 @@ use atv_core::{
 const SETTLE_STEPS: usize = 30;
 
 /// The bike's own partitioned scene (`motorcycle_scene`): static props,
-/// vegetation proxies and mud categories.
+/// vegetation proxies, mud categories and the moving train.
 fn scene(sim: &Simulation) -> Result<Option<SceneCollision>> {
     let Some(config) = sim.scene_partition else {
         return Ok(None);
@@ -29,6 +29,9 @@ fn scene(sim: &Simulation) -> Result<Option<SceneCollision>> {
     )?;
     if sim.mud_obstacles.len() == sim.obstacles.len() {
         scene.set_mud_obstacles(sim.mud_obstacles.clone())?;
+    }
+    if let Some(train) = &sim.train {
+        scene.install_dynamic(super::train_obstacles(&train.borrow())?)?;
     }
     Ok(Some(scene))
 }
