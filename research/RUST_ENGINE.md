@@ -1181,6 +1181,21 @@ Observed:
     1.75 ft of its own deck-relative position (20 samples).
   - A Rust rider placed on the flatbed (`?trainPlace=S` test hook) was seen by the
     JavaScript guest within 3.25 ft (20 samples).
+  - Later re-runs failed intermittently, with 0-8 platform samples. The cause is
+    placement, not presentation: the riders were dropped 17 ft above car 3,
+    10 ft along it, in Original riding. Logged deck positions show both the
+    JavaScript guest and the Rust rider sliding along or off the moving car after
+    the drop, depending on the route phase. One run also put both riders on the
+    same spot, so they pushed each other off.
+  - The test now places riders the way test_train_riding.mjs does: 8 ft above a
+    car's centre, at the car's velocity, with Realistic riding. The JavaScript
+    guest goes on car 6 and the Rust rider on car 3 (`?trainPlace`). Each check
+    re-places up to three times until 10 of 20 samples are on a platform.
+  - Content-test probes of the car centres (Realistic, curve) drifted 0.0-0.5 ft
+    on cars 3-7. Car 8 and off-centre spots (±12 ft) do not hold.
+  - Six consecutive runs passed on a host at load average 8-24. The guest was seen
+    within 1.6-3.2 ft and the Rust rider within 1.9-3.6 ft. 3 of 12 checks needed
+    a second placement.
   - Under Original train riding, both clients' riders later slide off the moving car,
     as the original does.
 - Inspected screenshots: `private/reports/engine-multiplayer/train-js.png` (the

@@ -830,7 +830,7 @@ impl App {
                 status(&format!("Unable to join beside that rider: {error}"));
             }
             if tick.train_place
-                && let Err(error) = riding.place_on_train("flatbeda")
+                && let Err(error) = riding.place_on_train(TRAIN_PLACE_CAR)
             {
                 status(&format!("Train placement: {error}"));
             }
@@ -4132,6 +4132,11 @@ fn default_relay() -> String {
         "https://furyremastered.com".into()
     }
 }
+
+/// `?trainPlace=`: the centre of Arlington's car 3, where a parked quad
+/// stays on the deck (test_engine_multiplayer_train.mjs puts its JavaScript
+/// guest on car 6, so the two never collide).
+const TRAIN_PLACE_CAR: usize = 3;
 
 /// Multiplayer status for tests (`window.furyMultiplayer`, JSON).
 fn publish_multiplayer(

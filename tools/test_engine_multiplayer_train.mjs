@@ -27,6 +27,11 @@ try {
   // 2. JavaScript guest with the worker test hook (test_multiplayer_features.mjs).
   const guest = await newPage(browser, { viewport: { width: 1280, height: 720 }, hasTouch: true }, errors);
   await guest.addInitScript(() => {
+    // Realistic train riding keeps a parked rider on the moving deck; in the
+    // Original mode both engines slide it off in the curves
+    // (test_train_riding.mjs), which made the deck checks depend on the route
+    // phase at placement.
+    localStorage.setItem('atv-train-riding', 'realistic');
     Object.defineProperty(document, 'hasFocus', { value: () => true });
     Object.defineProperty(document, 'hidden', { get: () => Boolean(window.testFreeze) });
     const Native = Worker;
@@ -83,92 +88,118 @@ try {
   // 4. The guest stands on the flatbed; the Rust host sees it deck-relative.
   // As test_multiplayer_features.mjs: freeze the guest's clocks while
   // placing it on the moving deck so placement and velocity share a frame.
-  await guest.evaluate(() => {
-    window.testFreeze = true;
-    document.dispatchEvent(new Event('visibilitychange'));
-  });
-  await guest.waitForTimeout(150); // Time-based on purpose: let in-flight replies land.
-  const setup = await guest.evaluate(async () => {
-    const previous = await testCommand(68, null);
-    const train = await testCommand(68, { dt: 1 / 60 });
-    const car = train.cars.findIndex(c => /flatbeda/i.test(c.model));
-    const m = train.cars[car].matrix;
-    const origin = [0, 1, 2].map(i => m[12 + i] + m[4 + i] * 17 + m[8 + i] * 10);
-    const velocity = [0, 1, 2].map(i => (m[12 + i] - previous.cars[car].matrix[12 + i]) * 60);
-    await testCommand(23, { origin, velocity, yaw: Math.atan2(m[8], m[10]) });
-    return { car, model: train.cars[car].model };
-  });
-  await guest.evaluate(() => {
-    window.testFreeze = false;
-    document.dispatchEvent(new Event('visibilitychange'));
-  });
-  report.flatbed = setup;
-  await host
-    .waitForFunction(
-      car => JSON.parse(window.furyMultiplayer ?? 'null')?.remote?.some(r => r.platform === car),
-      setup.car,
-      {
-        timeout: 20000
-      }
-    )
-    .catch(async error => {
-      const r = await engine(host),
-        j = await js(guest);
-      console.log(
-        JSON.stringify({
-          report,
-          remote: r.remote,
-          phase: [r.trainTime, j.train.time],
-          jsOrigin: j.frame?.origin,
-          grounded: j.frame?.grounded,
-          support: j.frame?.wheel_obstacle_support,
-          net: j.multiplayer?.state?.network
-        })
-      );
-      throw error;
+  const placeOnDeck = async () => {
+    await guest.evaluate(() => {
+      window.testFreeze = true;
+      document.dispatchEvent(new Event('visibilitychange'));
     });
-  await waitForSteps(guest, 45);
-  const samples = [];
-  for (let i = 0; i < 20; i++) {
-    const [r, j] = await Promise.all([engine(host), js(guest)]);
-    const peer = r.remote.find(p => p.platform != null);
-    if (peer && j.train.frame?.cars?.[peer.platform]) {
-      const owner = local(j.train.frame.cars[peer.platform].matrix, j.frame.origin);
-      const seen = local(r.trainCars[String(peer.platform)], peer.position);
-      samples.push(Math.hypot(...owner.map((v, k) => v - seen[k])));
+    await guest.waitForTimeout(150); // Time-based on purpose: let in-flight replies land.
+    const placed = await guest.evaluate(async () => {
+      const previous = await testCommand(68, null);
+      const train = await testCommand(68, { dt: 1 / 60 });
+      // test_train_riding.mjs's spot: 8 ft above flatbed car 6's centre.
+      const car = 6;
+      if (!/flatbeda/i.test(train.cars[car].model)) throw Error(`car 6 is ${train.cars[car].model}`);
+      const m = train.cars[car].matrix;
+      const origin = [0, 1, 2].map(i => m[12 + i] + m[4 + i] * 8);
+      const velocity = [0, 1, 2].map(i => (m[12 + i] - previous.cars[car].matrix[12 + i]) * 60);
+      await testCommand(23, { origin, velocity, yaw: Math.atan2(m[8], m[10]) });
+      return { car, model: train.cars[car].model };
+    });
+    await guest.evaluate(() => {
+      window.testFreeze = false;
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
+    return placed;
+  };
+  // Landing on the moving deck depends on the route phase and frame timing in
+  // both engines: a rider can slide along or off the car after the drop (the
+  // JavaScript guest as well as the Rust rider). That is placement, not the
+  // deck-relative presentation under test, so each check re-places up to three
+  // times until a window of 20 samples has at least 10 on a platform.
+  let setup;
+  const attempts = [];
+  let samples = [];
+  for (let attempt = 0; attempt < 3 && samples.length < 10; attempt++) {
+    setup = await placeOnDeck();
+    const seen = await host
+      .waitForFunction(
+        car => JSON.parse(window.furyMultiplayer ?? 'null')?.remote?.some(r => r.platform === car),
+        setup.car,
+        { timeout: 20000 }
+      )
+      .then(() => true)
+      .catch(() => false);
+    if (!seen) {
+      attempts.push({ seen });
+      continue;
     }
-    await host.waitForTimeout(50);
+    await waitForSteps(guest, 45);
+    samples = [];
+    const deck = [];
+    for (let i = 0; i < 20; i++) {
+      const [r, j] = await Promise.all([engine(host), js(guest)]);
+      const own = j.train.frame?.cars?.[setup.car];
+      if (own) deck.push(local(own.matrix, j.frame.origin).map(v => Math.round(v)));
+      const peer = r.remote.find(p => p.platform != null);
+      if (peer && j.train.frame?.cars?.[peer.platform]) {
+        const owner = local(j.train.frame.cars[peer.platform].matrix, j.frame.origin);
+        const seenAt = local(r.trainCars[String(peer.platform)], peer.position);
+        samples.push(Math.hypot(...owner.map((v, k) => v - seenAt[k])));
+      }
+      await host.waitForTimeout(50);
+    }
+    attempts.push({ seen, samples: samples.length, deck: [deck[0], deck.at(-1)] });
   }
+  report.flatbed = { ...setup, attempts };
   report.deckErrorFt = { max: Math.max(...samples), samples: samples.length };
-  assert.ok(samples.length >= 10, `platform samples: ${samples.length}`);
+  assert.ok(samples.length >= 10, `platform samples: ${JSON.stringify(attempts)}`);
   assert.ok(report.deckErrorFt.max < 4, `deck-relative error: ${JSON.stringify(samples)}`);
-  // 5. A Rust rider stands on the flatbed (?trainPlace test hook); the
-  // JavaScript guest sees it deck-relative.
-  const rider = await newPage(browser, { viewport: { width: 1280, height: 720 } }, errors);
-  await rider.addInitScript(() => Object.defineProperty(document, 'hasFocus', { value: () => true }));
-  await rider.goto(`${base}/engine.html?room=${code}&name=RustRider&trainPlace=6`);
-  await rider.waitForFunction(() => JSON.parse(window.furyMultiplayer ?? 'null')?.ownPlatform, null, {
-    timeout: 180000
-  });
-  const riderPeer = (await engine(rider)).peer;
-  await guest.waitForFunction(
-    peer => window.atvTerrainStatus.multiplayer?.remote?.some(r => r.peer === peer && r.platform != null),
-    riderPeer,
-    { timeout: 20000 }
-  );
-  const rustOwned = [];
-  for (let i = 0; i < 20; i++) {
-    const [r, j] = await Promise.all([engine(rider), js(guest)]);
-    const peer = j.multiplayer.remote.find(p => p.peer === riderPeer && p.platform != null);
-    if (peer && r.ownPlatform && j.train.frame?.cars?.[peer.platform]) {
-      const owner = local(r.ownPlatform.matrix, r.origin);
-      const seen = local(j.train.frame.cars[peer.platform].matrix, peer.position);
-      rustOwned.push(Math.hypot(...owner.map((v, k) => v - seen[k])));
+  // 5. A Rust rider stands on a flatbed (?trainPlace test hook, car 3's
+  // centre); the JavaScript guest sees it deck-relative.
+  let rider;
+  let rustOwned = [];
+  const riderAttempts = [];
+  for (let attempt = 0; attempt < 3 && rustOwned.length < 10; attempt++) {
+    if (rider) await rider.close();
+    rider = await newPage(browser, { viewport: { width: 1280, height: 720 } }, errors);
+    await rider.addInitScript(() => {
+      localStorage.setItem('atv-train-riding', 'realistic');
+      Object.defineProperty(document, 'hasFocus', { value: () => true });
+    });
+    await rider.goto(`${base}/engine.html?room=${code}&name=RustRider&trainPlace=6`);
+    await rider.waitForFunction(() => JSON.parse(window.furyMultiplayer ?? 'null')?.ownPlatform, null, {
+      timeout: 180000
+    });
+    const riderPeer = (await engine(rider)).peer;
+    const placed = (await engine(rider)).ownPlatform.car;
+    const seen = await guest
+      .waitForFunction(
+        peer => window.atvTerrainStatus.multiplayer?.remote?.some(r => r.peer === peer && r.platform != null),
+        riderPeer,
+        { timeout: 20000 }
+      )
+      .then(() => true)
+      .catch(() => false);
+    rustOwned = [];
+    const deck = [];
+    for (let i = 0; seen && i < 20; i++) {
+      const [r, j] = await Promise.all([engine(rider), js(guest)]);
+      const car = r.trainCars?.[String(placed)] ?? r.ownPlatform?.matrix;
+      if (car) deck.push(local(car, r.origin).map(v => Math.round(v)));
+      const peer = j.multiplayer.remote.find(p => p.peer === riderPeer && p.platform != null);
+      if (peer && r.ownPlatform && j.train.frame?.cars?.[peer.platform]) {
+        const owner = local(r.ownPlatform.matrix, r.origin);
+        const seenAt = local(j.train.frame.cars[peer.platform].matrix, peer.position);
+        rustOwned.push(Math.hypot(...owner.map((v, k) => v - seenAt[k])));
+      }
+      await rider.waitForTimeout(50);
     }
-    await rider.waitForTimeout(50);
+    riderAttempts.push({ placed, seen, samples: rustOwned.length, deck: [deck[0], deck.at(-1)] });
   }
+  report.rustRider = riderAttempts;
   report.rustOnDeckErrorFt = { max: Math.max(...rustOwned), samples: rustOwned.length };
-  assert.ok(rustOwned.length >= 10, `Rust platform samples: ${rustOwned.length}`);
+  assert.ok(rustOwned.length >= 10, `Rust platform samples: ${JSON.stringify(riderAttempts)}`);
   assert.ok(report.rustOnDeckErrorFt.max < 4, `Rust deck-relative error: ${JSON.stringify(rustOwned)}`);
   if (shots) await rider.screenshot({ path: shots.replace('.png', '-rust-rider.png') });
   if (shots) {
