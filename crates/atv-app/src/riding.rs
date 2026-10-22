@@ -272,9 +272,9 @@ impl Riding {
     }
 
     /// Test hook: stand on the train car whose model contains `model`.
-    pub fn place_on_train(&mut self, model: &str) -> Result<(), String> {
+    pub fn place_on_train(&mut self, car: usize) -> Result<(), String> {
         self.clear_input();
-        self.ride.place_on_train(model)?;
+        self.ride.place_on_train(car)?;
         if let Some(effects) = &mut self.effects {
             effects.reset(&self.ride)?;
         }
