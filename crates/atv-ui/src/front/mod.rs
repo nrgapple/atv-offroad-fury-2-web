@@ -1189,6 +1189,26 @@ fn left(m: &Metrics, s: &Screen) -> El {
                 rows = rows.child(menu_row(m, s, index, action, label));
             }
             left = left.child(rows);
+            // `#menu-notice`, e.g. why a ride link could not open.
+            if let Some(notice) = &s.notice {
+                left = left.child(
+                    El::new(Style {
+                        flex_shrink: 0.,
+                        margin: margins(10., 0., 0., 0.),
+                        max_size: Size {
+                            width: length(m.w.min(460.)),
+                            height: auto(),
+                        },
+                        ..Default::default()
+                    })
+                    .content(Content::Text {
+                        text: notice.clone(),
+                        style: TextStyle::new(display(15., 700, false), Color::hex("#ffd166")),
+                        line_height: 20.,
+                        wrap: true,
+                    }),
+                );
+            }
         }
         "tracks" => {
             left = left.child(tabs(m, s)).child(course_list(m, s));

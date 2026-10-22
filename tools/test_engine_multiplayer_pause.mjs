@@ -101,7 +101,7 @@ try {
   await guest.waitForFunction(
     () => JSON.parse(document.querySelector('#ui-state').textContent).toolbar?.menu?.page === 'pause'
   );
-  await click(guest, 'leave', false); // A direct room ride returns to engine.html.
+  await click(guest, 'leave', false); // Leave Game returns to the main menu.
   await host.waitForFunction(
     peer => !(window.atvTerrainStatus.multiplayer?.state?.lobby?.players ?? []).some(p => p.id === peer),
     rustPeer,

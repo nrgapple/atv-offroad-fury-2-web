@@ -61,6 +61,7 @@ export const TESTS = {
   },
   'test_engine_front.mjs': { group: 'content' },
   'test_engine_race_gear.mjs': { group: 'content' },
+  'test_engine_menu_parity.mjs': { group: 'content' },
   'test_engine_menu_music.mjs': { group: 'content' },
   'test_engine_freeride_full.mjs': {
     group: 'manual',

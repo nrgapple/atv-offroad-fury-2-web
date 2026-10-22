@@ -1107,7 +1107,15 @@ impl Front {
                 .is_some_and(|p| p.key == *wanted)
             {
                 None
-            } else if self.art.failed.contains(&source(slot)) {
+            } else if self.art.failed.contains(&source(slot))
+                || (slot == 1
+                    && quad >= 27
+                    && self
+                        .art
+                        .vehicles
+                        .iter()
+                        .any(|(q, _, rider)| *q == quad && rider.is_none()))
+            {
                 Some("Model unavailable")
             } else if self.unbuilt[slot].as_ref() == Some(wanted) {
                 Some("3D preview unavailable")
@@ -1331,6 +1339,8 @@ impl Front {
             "prepareMs": self.prepare_ms,
             "splitMs": self.split_ms,
             "models": self.previews.iter().map(|p| p.as_ref().filter(|p| p.target.is_some()).map(|p| p.key.clone())).collect::<Vec<_>>(),
+            "modelStatus": self.model_status(),
+            "modelYaw": self.previews.iter().map(|p| p.as_ref().map(|p| p.model.yaw)).collect::<Vec<_>>(),
             "lobby": self.state.lobby.as_ref().map(|l| serde_json::json!({
                 "code": l.code, "status": l.status,
             })),
