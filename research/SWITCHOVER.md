@@ -319,7 +319,7 @@ In progress elsewhere, not counted as gaps: the diagnostics overlay (F3).
 | Frontend menu music (UIMUSIC) | Ported | audio/menu.rs, lib.rs (#267) | |
 | Suspend on blur/hidden; no Media Session | Ported | sound.rs (#262) | |
 | Soundtrack: catalog, shuffle, history (`atv-soundtrack-v1`), AAC stream, park/resume, muffle, spectrum | Ported | audio/music.rs, sound.rs | |
-| Soundtrack VAG fallback on the web | Ported | sound.rs `vag_fallback` | |
+| Soundtrack VAG fallback on the web | Ported | soundtrack.rs `vag_fallback` | |
 | Pause → Jukebox (list, transport, seek, volume, PAGE14 art, spectrum) | Ported | menu/jukebox.rs (#235) | |
 | Main-menu Jukebox; one soundtrack player for menus and rides | Ported | soundtrack.rs, lib.rs `sync_soundtrack` | `tools/test_engine_menu_jukebox.mjs` |
 
