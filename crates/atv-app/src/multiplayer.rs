@@ -114,6 +114,19 @@ pub struct RoomRide {
     pub appearance: atv_game::ride::gear::Appearance,
 }
 
+/// Test hook (`?joinDelayMs=`): hold a Host/Join on the Free Ride Lobby
+/// page this long before claiming the room (local relays connect at once).
+pub static JOIN_DELAY_MS: AtomicU32 = AtomicU32::new(0);
+
+/// A room's invite link (multiplayer.js `inviteUrl`): the browser game's
+/// join link on the relay's origin.
+pub fn invite_url(relay: &str, environment: &str, code: &str) -> String {
+    format!(
+        "{}/play.html?mode=multiplayer&activity=freestyle&map={environment}&quad=1&rider=0&action=join&room={code}&play=1",
+        relay.trim_end_matches('/'),
+    )
+}
+
 /// Close codes a rider with a slot key retries (web/multiplayer.js).
 fn retryable(code: u16, reason: &str) -> bool {
     matches!(code, 1001 | 1005 | 1006 | 1011 | 1012 | 1013)
@@ -353,11 +366,10 @@ impl Net {
     /// An invite link for the JavaScript game (buildRideUrl in web/launch.js,
     /// without the player's own name or ride).
     pub fn invite(&self) -> String {
-        format!(
-            "{}/play.html?mode=multiplayer&activity=freestyle&map={}&quad=1&rider=0&action=join&room={}&play=1",
-            self.relay.trim_end_matches('/'),
+        invite_url(
+            &self.relay,
             self.session.environment().unwrap_or("env01"),
-            self.session.code
+            &self.session.code,
         )
     }
 

@@ -168,6 +168,8 @@ pub struct Screen {
     pub fields: Vec<(String, String, bool)>,
     /// A form error under the rows (`#menu-notice`).
     pub notice: Option<String>,
+    /// The Free Ride Lobby page's room code and status.
+    pub lobby: Option<controller::Lobby>,
 }
 
 /// Pages laid out like the main menu: rows on the left, the ride stage
@@ -533,6 +535,7 @@ fn page_title(page: &str) -> &'static str {
         "multiplayer" => "Multiplayer",
         "create-lobby" => "Create Lobby",
         "join-lobby" => "Join Lobby",
+        "lobby" => "Free Ride Lobby",
         "garage" => "Select ATV & Rider",
         "tracks" => "Select Track",
         "race" => "Single Race",
@@ -704,7 +707,7 @@ fn panel(m: &Metrics, s: &Screen, loading: bool) -> El {
             }
             panel = panel.child(slot).child(plate(m, s));
         }
-        "tracks" => panel = panel.child(hero(m, s)),
+        "tracks" | "lobby" => panel = panel.child(hero(m, s)),
         "garage" => {
             // `.ms-models`: the rider just behind the ATV's rear wheel.
             let model = |image: Option<Img>, id: u32, style: Style| {
@@ -872,7 +875,12 @@ fn hero(m: &Metrics, s: &Screen) -> El {
             .radius(5.),
         ),
     );
+    // The lobby's `.ms-track-hero` is the photo and name only.
+    let lobby = s.page == "lobby";
     for (left, id) in [(true, PREV), (false, NEXT)] {
+        if lobby {
+            break;
+        }
         let hovered = s.hovered == Some(id);
         let mut style = absolute(None, (!left).then_some(10.), None, left.then_some(10.));
         style.inset.top = LengthPercentageAuto::percent(0.5);
@@ -959,7 +967,7 @@ fn hero(m: &Metrics, s: &Screen) -> El {
             wrap: false,
         }),
     )
-    .child({
+    .children((!lobby).then(|| {
         let mut ride = gold_button(
             "Ride",
             RIDE,
@@ -971,7 +979,7 @@ fn hero(m: &Metrics, s: &Screen) -> El {
         );
         ride.style.align_self = Some(AlignSelf::CENTER);
         ride
-    });
+    }));
     hero.flex_shrink = 1.;
     El::new(hero).child(photo).child(caption)
 }
@@ -1086,6 +1094,56 @@ fn left(m: &Metrics, s: &Screen) -> El {
         }
         "tracks" => {
             left = left.child(tabs(m, s)).child(course_list(m, s));
+        }
+        "lobby" => {
+            // `.ms-lobby-info`: the code large, the status under it, then
+            // the lobby actions.
+            let lobby = s.lobby.as_ref();
+            let code = lobby
+                .map(|l| l.code.clone())
+                .filter(|c| !c.is_empty())
+                .unwrap_or_else(|| "--------".into());
+            let status = lobby
+                .map(|l| l.status.clone())
+                .filter(|t| !t.is_empty())
+                .unwrap_or_else(|| "Connecting…".into());
+            let size = clamp(30., m.w * 0.04, 44.);
+            let mut info = El::new(column(4.));
+            info.style.flex_shrink = 0.;
+            info = info
+                .child(text(
+                    code,
+                    TextStyle::new(display(size, 800, true), Color::hex("#ffffff"))
+                        .spacing(size * 0.14)
+                        .shadow(0., 1., 3., Color::hex("#000")),
+                    size,
+                ))
+                .child(text(
+                    status,
+                    TextStyle::new(display(15., 600, false), Color::hex("#e4e4e4")).shadow(
+                        0.,
+                        1.,
+                        3.,
+                        Color::hex("#000"),
+                    ),
+                    20.,
+                ));
+            left = left.child(info);
+            let mut rows = El::new(column(2.));
+            rows.style.flex_shrink = 0.;
+            for (index, (action, label)) in s.choices.iter().enumerate() {
+                if action != "back" {
+                    rows = rows.child(menu_row(m, s, index, action, label));
+                }
+            }
+            left = left.child(rows);
+            if let Some(notice) = &s.notice {
+                left = left.child(text(
+                    notice.clone(),
+                    TextStyle::new(display(15., 700, false), Color::hex("#ffd166")),
+                    20.,
+                ));
+            }
         }
         "garage" => left = garage_left(m, s, left),
         "loading" => left = left.child(shot(s)),

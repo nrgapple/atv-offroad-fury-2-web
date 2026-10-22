@@ -215,6 +215,11 @@ impl Front {
         self.prefs.diagnostics = mode.into();
     }
 
+    /// Settings → Audio: the soundtrack (and menu tune) on, and its volume.
+    pub fn music(&self) -> (bool, f32) {
+        (self.prefs.music_enabled, self.prefs.music_volume)
+    }
+
     /// Back from a ride: saved settings may have changed meanwhile.
     pub fn resume(&mut self, page: &str) {
         self.settings = Settings::load();
@@ -522,10 +527,11 @@ impl Front {
                 .get(self.state.track)
                 .map(|t| t.id.clone()),
         };
-        // Course select and the loader show the course photo as backdrop.
+        // Course select, the lobby and the loader show the course photo as
+        // backdrop.
         let mut backdrop_track = false;
         let mut backdrop = None;
-        if matches!(page.as_str(), "tracks" | "loading")
+        if matches!(page.as_str(), "tracks" | "lobby" | "loading")
             && let Some(id) = &track_id
             && self.art.photos.contains_key(id)
         {
@@ -590,14 +596,18 @@ impl Front {
         }
         // Course photos: small thumbnails for the list, the graded hero.
         let mut photos = HashMap::new();
-        if page == "tracks" {
+        if matches!(page.as_str(), "tracks" | "lobby") {
             let thumb_px = 72. * view.scale * 1.5;
-            let ids: Vec<String> = self
-                .state
-                .order()
-                .iter()
-                .map(|&i| self.state.tracks[i].id.clone())
-                .collect();
+            // The lobby shows only the room's course (`.ms-track-hero`).
+            let ids: Vec<String> = if page == "lobby" {
+                track_id.iter().cloned().collect()
+            } else {
+                self.state
+                    .order()
+                    .iter()
+                    .map(|&i| self.state.tracks[i].id.clone())
+                    .collect()
+            };
             for id in &ids {
                 if let Some(img) = self.image(device, queue, &format!("thumb:{id}"), |art| {
                     let photo = art.photos.get(id)?;
@@ -1035,6 +1045,10 @@ impl Front {
             "prepareMs": self.prepare_ms,
             "splitMs": self.split_ms,
             "models": self.previews.iter().map(|p| p.as_ref().filter(|p| p.target.is_some()).map(|p| p.key.clone())).collect::<Vec<_>>(),
+            "lobby": self.state.lobby.as_ref().map(|l| serde_json::json!({
+                "code": l.code, "status": l.status,
+            })),
+            "notice": self.state.notice,
             "loading": self.state.loading.as_ref().map(|l| serde_json::json!({
                 "environment": l.environment, "status": l.status, "progress": l.progress,
             })),

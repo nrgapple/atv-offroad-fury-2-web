@@ -1,9 +1,11 @@
 // Host-only gate: the Rust engine's Multiplayer menu. A Rust browser hosts
 // from Main Menu → Multiplayer → Host Game (name and custom code typed into
 // the form's browser inputs) → Select Track → Ride; a JavaScript player joins
-// by the code; a second Rust browser joins from Join Game.
+// by the code; a second Rust browser joins from Join Game. Host and Join show
+// the Free Ride Lobby page while the room connects (held 1.5 s with
+// ?joinDelayMs); the guest first leaves it with Back, then joins.
 //   PLAYWRIGHT_MODULE=... ATV_TEST_URL=http://127.0.0.1:4187 node tools/test_engine_multiplayer_menu.mjs
-// ATV_MP_SCREENSHOT=out.png saves the Host and Join forms.
+// ATV_MP_SCREENSHOT=out.png saves the Host and Join forms and the lobby page.
 import assert from 'node:assert/strict';
 import { assertNoErrors, base, launch, newPage, nextFrames, url } from './browser/harness.mjs';
 
@@ -39,7 +41,7 @@ async function open(page) {
     localStorage.removeItem('atv-player-selection');
     Object.defineProperty(document, 'hasFocus', { value: () => true });
   });
-  await page.goto(url('/engine.html?uiDiagnostics=1'));
+  await page.goto(url('/engine.html?uiDiagnostics=1&joinDelayMs=1500'));
   await onPage(page, 'title');
   await page.mouse.click(8, 8);
   await key(page, 'Enter');
@@ -63,6 +65,13 @@ try {
   await choose(host, 'hosttrack');
   await onPage(host, 'tracks');
   await key(host, 'Enter');
+  // The Free Ride Lobby page while the room connects, then the loader.
+  await onPage(host, 'lobby');
+  const lobby = (await read(host)).front;
+  assert.equal(lobby.lobby?.code, code);
+  assert.deepEqual(lobby.choices, ['share', 'leave']);
+  report.lobby = { code: lobby.lobby.code, status: lobby.lobby.status, choices: lobby.choices };
+  if (shots) await host.screenshot({ path: shots.replace('.png', '-lobby.png') });
   await host.waitForFunction(c => JSON.parse(window.furyMultiplayer ?? 'null')?.code === c, code, { timeout: 180000 });
   let e = await engine(host);
   assert.equal(e.host, true);
@@ -87,6 +96,18 @@ try {
   await guest.keyboard.press('Escape');
   await nextFrames(guest, 3);
   if (shots) await guest.screenshot({ path: shots.replace('.png', '-join-form.png') });
+  await guest.mouse.click(8, 8);
+  // Join, then Back on the lobby page: Leave Game before the room connects.
+  await choose(guest, 'join');
+  await onPage(guest, 'lobby');
+  await key(guest, 'Escape');
+  await onPage(guest, 'multiplayer');
+  await guest.waitForTimeout(2500); // Time-based on purpose: the held join would have finished.
+  assert.equal((await engine(guest))?.code, undefined, 'Leave Game abandoned the join');
+  assert.equal((await read(guest)).front.page, 'multiplayer');
+  report.leftLobby = true;
+  await choose(guest, 'join-lobby');
+  await onPage(guest, 'join-lobby');
   await guest.mouse.click(8, 8);
   await choose(guest, 'join');
   await guest.waitForFunction(() => JSON.parse(window.furyMultiplayer ?? 'null')?.drawn >= 2, null, {
