@@ -294,6 +294,8 @@ pub struct Frontend {
     /// Profile Store catalog that names and bounds it.
     pub appearance: Appearance,
     pub gear_catalog: Vec<Category>,
+    /// Generation of the page last shown (each `show` slides a page in).
+    pub shown: u64,
 }
 
 impl Frontend {
@@ -346,6 +348,7 @@ impl Frontend {
             race_filter: "all".into(),
             appearance,
             gear_catalog: Vec::new(),
+            shown: crate::transition::next_show(),
         };
         front.player_name = front.saved["playerName"]
             .as_str()
@@ -720,6 +723,7 @@ impl Frontend {
     }
 
     pub fn show(&mut self, page: &str, view: &Viewport) {
+        self.shown = crate::transition::next_show();
         // frontend.js clears `#menu-notice` with each action.
         if self.page != page {
             self.notice = None;
@@ -1483,6 +1487,7 @@ impl Frontend {
             },
             notice: self.notice.clone(),
             lobby: self.lobby.clone(),
+            motion: None,
             backdrop,
             backdrop_track,
             logo: logo.map(|l| l.0),

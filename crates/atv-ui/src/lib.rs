@@ -15,6 +15,7 @@ pub mod render;
 pub mod settings;
 pub mod text;
 pub mod touch;
+pub mod transition;
 
 pub use color::{Color, Fill, Gradient};
 pub use paint::{BoxPaint, BoxShadow, DisplayList, ImageId, Item, Rect};

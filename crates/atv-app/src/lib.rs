@@ -1363,9 +1363,13 @@ impl App {
         if ready.net.as_ref().is_some_and(|n| n.closed.is_none()) {
             return true;
         }
-        // The Jukebox animates its disc, progress and spectrum while open.
-        let jukebox = self.overlay.as_ref().is_some_and(|o| o.jukebox_open());
-        self.effective_focused() && (jukebox || ready.riding.as_ref().is_none_or(|r| !r.paused))
+        // The Jukebox animates its disc, progress and spectrum while open,
+        // and a pause page slides in as it opens.
+        let animating = self
+            .overlay
+            .as_ref()
+            .is_some_and(|o| o.jukebox_open() || o.sliding());
+        self.effective_focused() && (animating || ready.riding.as_ref().is_none_or(|r| !r.paused))
     }
 
     /// Schedule one frame: it applies the event, then `awake` decides.
@@ -4569,6 +4573,8 @@ fn capture_front(booted: Booted, page: &str, path: &std::path::Path, width: u32,
         boot.backdrop,
         atv_ui::settings::Settings::memory(),
     );
+    // Captures show the page at rest.
+    front.slide = false;
     pollster::block_on(async {
         front.art.photos.extend(
             atv_ui::front::assets::photos(&content, &tracks)

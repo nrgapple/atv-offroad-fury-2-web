@@ -121,6 +121,8 @@ pub struct PauseMenu {
     /// Keys held while the menu is open (frontend.js `menuKeys`), for the
     /// rebindable Pause action.
     held: Vec<String>,
+    /// Generation of the page last shown (each `show` slides a page in).
+    pub shown: u64,
 }
 
 struct Pressed {
@@ -167,6 +169,7 @@ impl PauseMenu {
             seek_to: None,
             race_active: false,
             held: Vec::new(),
+            shown: crate::transition::next_show(),
         }
     }
 
@@ -214,6 +217,7 @@ impl PauseMenu {
             music: ctx.music.filter(|_| self.page == "jukebox").cloned(),
             jukebox_art: None,
             frame: 0,
+            motion: None,
             // Controller bindings show glyphs (standard-mapping pads).
             pad: (self.page == "bindings" && !self.keyboard)
                 .then_some(ctx.bindings.as_deref())
@@ -424,6 +428,7 @@ impl PauseMenu {
     }
 
     fn show(&mut self, page: &str) {
+        self.shown = crate::transition::next_show();
         self.capture = None;
         self.notice = None;
         self.page = page.into();
@@ -1379,6 +1384,53 @@ mod parity_tests {
             pad.buttons[*b] = 1.;
         }
         pad
+    }
+
+    #[test]
+    fn each_page_shown_slides_its_panel_in() {
+        let mut fx = Fixture::new();
+        let mut menu = PauseMenu::new();
+        let opened = menu.shown;
+        fx.with(&mut menu, |m, ctx| m.run("settings", 1, false, ctx));
+        assert!(menu.shown > opened, "Settings is a new page");
+        let settings = menu.shown;
+        fx.with(&mut menu, |m, ctx| m.key("ArrowDown", ctx));
+        assert_eq!(menu.shown, settings, "moving the selection is not a page");
+        fx.with(&mut menu, |m, ctx| m.key("Escape", ctx));
+        assert_eq!(menu.page, "pause");
+        assert!(menu.shown > settings, "Back shows Pause again");
+
+        let view = Viewport {
+            width: 1280.,
+            height: 720.,
+            ..Default::default()
+        };
+        let render = |state: &crate::menu::State| {
+            let (mut list, mut hits) = (crate::DisplayList::default(), Vec::new());
+            crate::layout::render(
+                &crate::menu::element(&view, state, &Default::default()),
+                &mut crate::Fonts::new(),
+                1280.,
+                720.,
+                &mut list,
+                &mut hits,
+            );
+            (list, hits)
+        };
+        let mut state = fx.with(&mut menu, |m, ctx| m.state(ctx));
+        let (rest, rest_hits) = render(&state);
+        state.motion = crate::transition::enter(0.);
+        let (list, hits) = render(&state);
+        let panel = |hits: &[(Rect, u32)]| {
+            hits.iter()
+                .find(|(_, id)| *id == crate::menu::PANEL)
+                .unwrap()
+                .0
+        };
+        assert_eq!(panel(&hits).x - panel(&rest_hits).x, 36.);
+        // The dim backdrop stays; the stage starts transparent.
+        assert_eq!(list.items[0], rest.items[0]);
+        assert_eq!(list.items[1], crate::paint::Item::PushOpacity(0.));
     }
 
     #[test]

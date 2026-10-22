@@ -21,6 +21,7 @@ use atv_ui::{
     },
     settings::Settings,
     touch::TouchControls,
+    transition::PageTransition,
 };
 use std::collections::{HashMap, HashSet};
 
@@ -128,6 +129,12 @@ pub struct Front {
     shot_started: f64,
     /// A tip was picked for the current loader.
     tip_chosen: bool,
+    /// Pages slide in as they open (frontend.js `animatePage`); parity
+    /// captures turn it off.
+    pub slide: bool,
+    transition: PageTransition,
+    /// This frame's slide of the page or the menu panel over it.
+    motion: Option<atv_ui::transition::Motion>,
 }
 
 /// Fixed-seed pick (tips do not need cryptographic randomness).
@@ -213,6 +220,9 @@ impl Front {
             pad_standard: true,
             shot_started: 0.,
             tip_chosen: false,
+            slide: true,
+            transition: PageTransition::default(),
+            motion: None,
         };
         front.state.refresh(&view);
         front
@@ -225,6 +235,8 @@ impl Front {
     pub fn set_view(&mut self, view: Viewport) {
         if self.view != view {
             self.state.cancel_pointer();
+            // frontend.js: a resize cancels the page's slide.
+            self.transition.cancel();
         }
         self.view = view;
         self.touch.coarse = view.coarse;
@@ -276,6 +288,10 @@ impl Front {
 
     pub fn begin_loading(&mut self, environment: &str) {
         self.state.begin_loading(environment, &self.view);
+        // The loader paints only between load stages (the load holds the
+        // GPU), where a slide would freeze part way or blank; the browser's
+        // compositor runs it through the load. It opens at rest.
+        self.transition.observe(Some(self.state.shown), true);
         self.shot_started = self.now();
         self.tip_chosen = false;
         self.choose_tip();
@@ -314,7 +330,8 @@ impl Front {
     /// Whether the page animates (Press Start pulse, loader crossfade,
     /// the Jukebox disc and bars).
     pub fn animating(&self) -> bool {
-        self.jukebox_open()
+        self.transition.active()
+            || self.jukebox_open()
             || self.menu.is_none()
                 && (matches!(self.state.page.as_str(), "title" | "loading")
                     || (matches!(self.state.page.as_str(), "garage" | "gear")
@@ -863,6 +880,11 @@ impl Front {
         let art = self.artwork(device, queue);
         let art_ms = started.elapsed().as_secs_f64() * 1000.;
         let now = self.now();
+        // Each page shown, and the menu panel over the backdrop, slides in.
+        let shown = self.menu.as_ref().map_or(self.state.shown, |m| m.shown);
+        self.transition
+            .observe(Some(shown), !self.slide || crate::reduced_motion());
+        self.motion = self.transition.motion(now);
         // ms-pulse: brightness 1 → 1.18 → 1 over 1.8 s, ease-in-out.
         let phase = (now / 1800.).fract() as f32;
         let wave = 0.5 - 0.5 * atv_core::math::Det::cos_d(phase * std::f32::consts::TAU);
@@ -885,6 +907,8 @@ impl Front {
         screen.shot_fade = art.shot_fade;
         if self.menu.is_some() {
             screen.page = "backdrop".into();
+        } else {
+            screen.motion = self.motion;
         }
         // A slot shows its model once the wanted one is built (ModelView
         // clears to "Loading model..." on a change), else its status.
@@ -950,11 +974,17 @@ impl Front {
             self.prepare_menu(device, queue);
             // drawBars: the spectrum repaints over the panel each frame.
             if let Some((area, _)) = self.menu_hits.iter().find(|(_, id)| *id == pause::BARS) {
+                if let Some(m) = self.motion {
+                    self.list.opacity(m.opacity);
+                }
                 atv_ui::menu::jukebox::paint_bars(
                     &mut self.list,
                     *area,
                     self.spectrum.as_deref().unwrap_or(&[]),
                 );
+                if self.motion.is_some() {
+                    self.list.unopacity();
+                }
             }
         }
         if !self.diagnostics.is_empty() {
@@ -996,6 +1026,7 @@ impl Front {
         }) else {
             return;
         };
+        state.motion = self.motion;
         if state.page == "jukebox" {
             // The original PAGE14 art, registered once the host read it.
             if self.jukebox_art.is_none()
@@ -1323,6 +1354,8 @@ impl Front {
     pub fn diagnostics(&self) -> serde_json::Value {
         serde_json::json!({
             "page": self.state.page,
+            // The page (or menu panel) slide: [opacity, translateX px].
+            "motion": self.motion.map(|m| [m.opacity, m.dx]),
             "selection": self.state.selection,
             "choices": self.state.choices().iter().map(|(a, _)| a).collect::<Vec<_>>(),
             "freerideRiders": self.state.freeride_riders,
