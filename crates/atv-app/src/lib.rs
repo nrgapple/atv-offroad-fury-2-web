@@ -3588,6 +3588,7 @@ impl App {
                 rider: f.state.rider_id,
                 player: &player,
                 race: Some((race.laps, race.cpu as usize, race.difficulty, false, false)),
+                room: None,
             },
         );
         f.state.notice = Some(url.clone());
