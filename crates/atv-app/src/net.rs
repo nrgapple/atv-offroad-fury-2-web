@@ -267,8 +267,14 @@ mod native {
         }
     }
 
-    /// POST a JSON body to the relay; the status and body text.
+    /// POST a JSON body to the relay; the status and body text. The request
+    /// runs on its own thread: the event loop keeps going while it waits.
     pub async fn post(url: &str, origin: &str, body: &str) -> Result<(u16, String), String> {
+        let (url, origin, body) = (url.to_string(), origin.to_string(), body.to_string());
+        off_thread(move || post_blocking(&url, &origin, &body)).await
+    }
+
+    fn post_blocking(url: &str, origin: &str, body: &str) -> Result<(u16, String), String> {
         let agent: ureq::Agent = ureq::Agent::config_builder()
             .http_status_as_error(false)
             .timeout_global(Some(Duration::from_secs(10)))
@@ -288,8 +294,47 @@ mod native {
         Ok((status, text))
     }
 
+    /// Resolves after `ms` without holding the caller's thread.
     pub async fn sleep(ms: u32) {
-        std::thread::sleep(Duration::from_millis(u64::from(ms)));
+        off_thread(move || std::thread::sleep(Duration::from_millis(u64::from(ms)))).await;
+    }
+
+    /// Runs blocking `work` on its own thread; the future resolves with its
+    /// result and wakes its task (the app's loop, or `pollster` in tools).
+    pub(super) fn off_thread<T: Send + 'static>(
+        work: impl FnOnce() -> T + Send + 'static,
+    ) -> impl std::future::Future<Output = T> {
+        use std::sync::Mutex;
+        use std::task::{Poll, Waker};
+        type Slot<T> = Arc<Mutex<(Option<T>, Option<Waker>)>>;
+        let slot: Slot<T> = Arc::new(Mutex::new((None, None)));
+        let job = Arc::new(Mutex::new(Some(work)));
+        let run = {
+            let (slot, job) = (slot.clone(), job.clone());
+            move || {
+                let work = job.lock().unwrap_or_else(|e| e.into_inner()).take();
+                let value = work.map(|work| work());
+                let mut slot = slot.lock().unwrap_or_else(|e| e.into_inner());
+                slot.0 = value;
+                if let Some(waker) = slot.1.take() {
+                    waker.wake();
+                }
+            }
+        };
+        let thread = std::thread::Builder::new().name("relay request".into());
+        if thread.spawn(run).is_err() {
+            // No thread to be had: do the work here rather than never.
+            let work = job.lock().unwrap_or_else(|e| e.into_inner()).take();
+            slot.lock().unwrap_or_else(|e| e.into_inner()).0 = work.map(|work| work());
+        }
+        std::future::poll_fn(move |cx| {
+            let mut state = slot.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some(value) = state.0.take() {
+                return Poll::Ready(value);
+            }
+            state.1 = Some(cx.waker().clone());
+            Poll::Pending
+        })
     }
 
     /// The Free Ride rider count (blocking; call off the UI thread).

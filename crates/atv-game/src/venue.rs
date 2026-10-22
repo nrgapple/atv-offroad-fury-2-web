@@ -114,6 +114,9 @@ pub async fn load_with(
     let course = course_resource(environment, racing)?;
     let bytes = content.file(&course.archive).await?;
     let archive = Resource::parse(&bytes)?;
+    // The decode steps below are long: each yields to the host's loop
+    // (desktop polls loads between events; the web resumes at once).
+    crate::yield_frame().await;
     let extract = |name: &str, what: &str| -> Result<Vec<u8>> {
         archive.extract(
             member_named(&archive, name)
@@ -181,8 +184,10 @@ pub async fn load_with(
     });
     let tr2 = extract(&format!("{environment}.tr2"), "terrain")?;
     let decoded = terrain::decode_tr2(&tr2)?;
+    crate::yield_frame().await;
     let heights = decoded.heightfield()?;
     let ground = decoded.render_heights()?;
+    crate::yield_frame().await;
     let (width, depth) = (
         decoded.width_cells as usize + 1,
         decoded.depth_cells as usize + 1,
@@ -219,6 +224,7 @@ pub async fn load_with(
             height: 256,
             rgba: image.rgba,
         });
+        crate::yield_frame().await;
     }
     let mapping_width = (width - 1).div_ceil(64) as u32;
     let mapping_height = (depth - 1).div_ceil(64) as u32;
@@ -259,8 +265,11 @@ pub async fn load_with(
         &archive.extract(sky_index)?,
         options.sky_smooth,
     )?);
+    crate::yield_frame().await;
     let scenery = crate::scenery::load(&archive, &scene, toy.as_deref(), gate_model)?;
+    crate::yield_frame().await;
     let vegetation = crate::vegetation::load(&archive, environment, &scene, &ground)?;
+    crate::yield_frame().await;
     let water = crate::water::load(&archive, &scene)?
         .map(|water| std::rc::Rc::new(std::cell::RefCell::new(water)));
     let ambient = crate::ambient::load(

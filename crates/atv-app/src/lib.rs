@@ -150,6 +150,9 @@ enum Message {
     FrontArt(Box<ArtPiece>),
     /// A new GPU after a failed load from the frontend.
     FrontGpu(Box<Gpu>),
+    /// Desktop: a new GPU after the old device was lost.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    GpuRestored(Box<Gpu>),
     /// A remote rider's model finished loading.
     PeerModel(Box<PeerModel>),
     /// The Arlington Free Ride rider count for the main menu.
@@ -316,6 +319,25 @@ struct App {
     joined: Option<Joined>,
     /// Frame-spread loads (see `spawn_frame`).
     frame_tasks: Vec<std::pin::Pin<Box<dyn std::future::Future<Output = Message>>>>,
+    /// Desktop: loads and joins `spawn` runs on the event loop a slice at a
+    /// time (the browser's microtask queue), so the window keeps answering
+    /// the OS and the loader keeps painting while they run.
+    #[cfg(not(target_arch = "wasm32"))]
+    background: RefCell<Vec<std::pin::Pin<Box<dyn std::future::Future<Output = ()>>>>>,
+    /// Desktop: the ride a lost GPU device reopens on the new one
+    /// (environment, ATV, rider, race), once the device is back.
+    #[cfg(not(target_arch = "wasm32"))]
+    restore: Option<Option<RestoreRide>>,
+    /// Desktop: the current run of background loads (started, the last
+    /// event-loop turn, its longest gap in ms) and, over finished runs, the
+    /// longest run and the longest gap in ms (bench report: the event loop
+    /// never stalls for a whole load).
+    #[cfg(not(target_arch = "wasm32"))]
+    load_watch: (Option<LoadRun>, Option<(f64, f64)>),
+    /// Test hook (`FURY_LOSE_GPU_AFTER=S`): lose the device S seconds into
+    /// the next ride, or after the frontend opens.
+    #[cfg(not(target_arch = "wasm32"))]
+    lose_gpu: (Option<f64>, Option<Instant>),
     /// The Host/Join forms' browser inputs.
     #[cfg(target_arch = "wasm32")]
     text_inputs: text_inputs::TextInputs,
@@ -393,7 +415,43 @@ async fn open_gpu(window: Arc<Window>, display: OwnedDisplayHandle) -> Result<Gp
     let surface = instance
         .create_surface(window.clone())
         .map_err(|e| format!("surface: {e}"))?;
-    Gpu::new(&instance, surface, size.width, size.height).await
+    #[allow(unused_mut)]
+    let mut gpu = Gpu::new(&instance, surface, size.width, size.height).await?;
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let info = &gpu.adapter_info;
+        // Metal stretches a smaller drawable over the layer and DX12 creates
+        // its swap chain with DXGI_SCALING_STRETCH; Vulkan and GL swap chains
+        // must match the window, so they keep the native size.
+        let scales = matches!(info.backend, wgpu::Backend::Metal | wgpu::Backend::Dx12);
+        SURFACE_SCALES.with(|s| s.set(scales));
+        let cores = std::thread::available_parallelism().map_or(0, |n| n.get());
+        let apple = cfg!(all(target_os = "macos", target_arch = "aarch64"));
+        ADAPTER_TIER.with(|t| t.set(Some(desktop_tier(info.device_type, apple, cores))));
+        if scales {
+            let size = render_size(&window);
+            gpu.resize(size.width, size.height);
+        }
+    }
+    Ok(gpu)
+}
+
+/// Desktop Auto graphics (graphics.js `detectGraphicsTier` has no adapter
+/// type to read): a discrete GPU, or Apple silicon's integrated one, gets
+/// High; other integrated, virtual and software adapters get Enhanced, as do
+/// machines with four or fewer cores (the browser's low-power rule).
+#[cfg(not(target_arch = "wasm32"))]
+fn desktop_tier(device: wgpu::DeviceType, apple_silicon: bool, cores: usize) -> &'static str {
+    let strong = match device {
+        wgpu::DeviceType::DiscreteGpu => true,
+        wgpu::DeviceType::IntegratedGpu => apple_silicon,
+        _ => false,
+    };
+    if strong && !(cores > 0 && cores <= 4) {
+        "high"
+    } else {
+        "enhanced"
+    }
 }
 
 async fn prepare(
@@ -452,6 +510,9 @@ async fn prepare(
     )
     .await?;
     progress(&gpu, "Building the scenery textures…");
+    // Desktop polls loads between events: each long step yields (the web
+    // resumes at once).
+    atv_game::yield_frame().await;
     let start = venue.scene.start_position;
     let direction = venue.scene.start_direction;
     let yaw = direction[0].atan2_d(direction[2]);
@@ -479,6 +540,7 @@ async fn prepare(
     // The browser centres the fine terrain patch on the rider at the start.
     let mut scene =
         SceneRenderer::with_graphics(&gpu, &venue, Some([start[0], start[2]]), graphics);
+    atv_game::yield_frame().await;
     if let Some(steps) = steps {
         scene.set_weather_camera(camera);
         scene.advance_steps(steps);
@@ -503,6 +565,7 @@ async fn prepare(
         .await?;
         let mut ride = ride;
         ride.dress(&content, appearance).await?;
+        atv_game::yield_frame().await;
         scene.set_ride(&gpu, &venue, &ride.quad, &ride.rider)?;
         scene.set_ride_paint(ride.paint());
         if let Some(race) = ride.race_mut() {
@@ -691,11 +754,19 @@ fn ground(venue: &Venue, x: f32, z: f32) -> f32 {
 }
 
 impl App {
-    fn step(&mut self) {
-        // game.js screenWake.set(!menuOpen): a ride on screen, no menu.
+    /// game.js screenWake.set(!menuOpen): a ride on screen, no menu.
+    fn sync_wake(&self) {
         let riding = self.ready.as_ref().is_some_and(|r| r.riding.is_some())
             && self.overlay.as_ref().is_none_or(|o| o.menu.is_none());
         self.wake_lock.set(riding, self.visible);
+    }
+
+    fn step(&mut self) {
+        #[cfg(not(target_arch = "wasm32"))]
+        if self.device_lost() {
+            return;
+        }
+        self.sync_wake();
         let now = Instant::now();
         let dt = (now - self.last).as_secs_f32().min(0.1);
         self.last = now;
@@ -773,7 +844,7 @@ impl App {
         if let Some(riding) = self.ready.as_ref().and_then(|r| r.riding.as_ref()) {
             // game.js renderScale: sampled only while actively riding on a
             // high-density display.
-            if cfg!(target_arch = "wasm32")
+            if render_ratio_applies()
                 && device > 1.
                 && focused
                 && !riding.paused
@@ -1204,6 +1275,13 @@ impl App {
                 )
             } else {
                 String::new()
+            };
+            #[cfg(not(target_arch = "wasm32"))]
+            let passes = match self.load_watch.1 {
+                Some((total, gap)) => {
+                    format!(r#"{passes},"longest_load_ms":{total:.1},"load_loop_gap_ms":{gap:.1}"#)
+                }
+                None => passes,
             };
             let report = format!(
                 r#"{{"frames":{},"cpu_ms_per_frame":{:.4},"cpu_ms_per_60hz_step":{:.4},"sim_and_sound_ms":{:.4},"render_ms":{:.4},"mixer_ms":{:.4},"steps":{}{passes}}}"#,
@@ -2151,7 +2229,7 @@ impl App {
                         "Resolution {} × {} ({:.2}x)",
                         size.width,
                         size.height,
-                        RENDER_RATIO.with(|r| r.get()).min(window.scale_factor())
+                        surface_scale(window)
                     ));
                 }
                 // The former debug strip (#status): load, error and frame lines.
@@ -2337,7 +2415,7 @@ impl App {
         #[cfg(target_arch = "wasm32")]
         wasm_bindgen_futures::spawn_local(future);
         #[cfg(not(target_arch = "wasm32"))]
-        pollster::block_on(future);
+        self.background.borrow_mut().push(Box::pin(future));
     }
 }
 
@@ -2504,6 +2582,15 @@ impl ApplicationHandler<Message> for App {
         };
         #[cfg(target_arch = "wasm32")]
         wasm_bindgen_futures::spawn_local(async move { send(future.await) });
+        // Desktop rides load on the event loop like the web; a capture (a
+        // tool run with no one watching) still loads at once.
+        #[cfg(not(target_arch = "wasm32"))]
+        if options.capture.is_none() {
+            self.background
+                .borrow_mut()
+                .push(Box::pin(async move { send(future.await) }));
+            return;
+        }
         #[cfg(not(target_arch = "wasm32"))]
         {
             let mut result = pollster::block_on(future);
@@ -2714,7 +2801,7 @@ impl ApplicationHandler<Message> for App {
                         let mut overlay = overlay::Overlay::new(
                             &ready.gpu.device,
                             ready.gpu.config.format,
-                            overlay::viewport(size.width, size.height, window.scale_factor()),
+                            overlay::viewport(size.width, size.height, surface_scale(window)),
                         );
                         overlay.backdrop = self.ui_backdrop;
                         overlay.frontend = self.front.is_some();
@@ -2743,6 +2830,11 @@ impl ApplicationHandler<Message> for App {
                 }
                 self.apply_preferences();
                 self.remember_ride();
+                #[cfg(not(target_arch = "wasm32"))]
+                if let Some(seconds) = self.lose_gpu.0.take() {
+                    self.lose_gpu.1 =
+                        Some(Instant::now() + std::time::Duration::from_secs_f64(seconds));
+                }
             }
             Message::Failed(error) => {
                 status(&error);
@@ -2871,7 +2963,16 @@ impl ApplicationHandler<Message> for App {
                 }
                 self.wake();
             }
+            #[cfg(not(target_arch = "wasm32"))]
+            Message::GpuRestored(gpu) => self.gpu_restored(*gpu),
+            #[cfg(target_arch = "wasm32")]
+            Message::GpuRestored(_) => {}
             Message::FrontGpu(gpu) => {
+                // A failed device restore lands on the course select too.
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    self.restore = None;
+                }
                 let mut gpu = *gpu;
                 if let Some(window) = &self.window {
                     let size = render_size(window);
@@ -3078,6 +3179,7 @@ impl ApplicationHandler<Message> for App {
                 self.step();
                 // After the frame: a pause it opened may be its last frame.
                 self.sync_usage();
+                self.sync_wake();
                 self.load_sound();
                 if self.awake() {
                     if let Some(window) = &self.window {
@@ -3103,6 +3205,43 @@ impl ApplicationHandler<Message> for App {
     }
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        #[cfg(not(target_arch = "wasm32"))]
+        let (loading, busy) = self.poll_background();
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let now = Instant::now();
+            self.load_watch.0 = match self.load_watch.0 {
+                Some((started, last, gap)) => {
+                    let gap = gap.max((now - last).as_secs_f64() * 1000.);
+                    if loading {
+                        Some((started, now, gap))
+                    } else {
+                        let total = (now - started).as_secs_f64() * 1000.;
+                        let (longest, worst) = self.load_watch.1.unwrap_or_default();
+                        self.load_watch.1 = Some((longest.max(total), worst.max(gap)));
+                        None
+                    }
+                }
+                None => loading.then_some((now, now, 0.)),
+            };
+        }
+        self.wait_policy(event_loop);
+        // Loads in progress come back soon: at once while they have work,
+        // shortly while they wait on the network or a timer.
+        #[cfg(not(target_arch = "wasm32"))]
+        if loading {
+            event_loop.set_control_flow(if busy {
+                ControlFlow::Poll
+            } else {
+                ControlFlow::WaitUntil(Instant::now() + std::time::Duration::from_millis(4))
+            });
+        }
+    }
+}
+
+impl App {
+    /// When the event loop next wakes without an event.
+    fn wait_policy(&mut self, event_loop: &ActiveEventLoop) {
         #[cfg(not(target_arch = "wasm32"))]
         if let Some(receive) = &self.riders_pending {
             match receive.try_recv() {
@@ -3148,6 +3287,127 @@ impl ApplicationHandler<Message> for App {
         } else {
             ControlFlow::Wait
         });
+    }
+}
+
+/// A run of background loads: started, the last event-loop turn and the
+/// longest gap between turns (ms).
+#[cfg(not(target_arch = "wasm32"))]
+type LoadRun = (Instant, Instant, f64);
+
+/// A ride a lost GPU device reopens: environment, ATV, rider and race.
+#[cfg(not(target_arch = "wasm32"))]
+type RestoreRide = (String, u16, u16, Option<atv_game::ride::race::Settings>);
+
+#[cfg(not(target_arch = "wasm32"))]
+impl App {
+    /// Desktop GPU device loss (driver reset, external GPU removed): every
+    /// GPU resource is gone. Like the browser's context-loss path (engine.js
+    /// reopens the ride's link), the app opens a new device and reopens the
+    /// current ride from its start; a room keeps its connection and slot and
+    /// reloads its course. Without the frontend there is nothing to reopen:
+    /// the app exits with the reason instead of panicking.
+    fn device_lost(&mut self) -> bool {
+        if let Some(at) = self.lose_gpu.1
+            && Instant::now() >= at
+            && let Some(gpu) = self.ready.as_ref().map(|r| &r.gpu).or(self.gpu.as_ref())
+        {
+            self.lose_gpu.1 = None;
+            gpu.simulate_loss();
+        }
+        if self.restore.is_some() {
+            // Waiting for the new device.
+            return true;
+        }
+        let reason = self
+            .ready
+            .as_ref()
+            .and_then(|r| r.gpu.lost())
+            .or_else(|| self.gpu.as_ref().and_then(|g| g.lost()));
+        let Some(reason) = reason else {
+            return false;
+        };
+        let (Some(front), Some(window)) = (self.front.clone(), self.window.clone()) else {
+            eprintln!("fury: the graphics device was lost ({reason}). Restart Fury Remastered.");
+            std::process::exit(1);
+        };
+        status(&format!(
+            "Graphics device lost ({reason}). Restoring graphics…"
+        ));
+        let mut ride = None;
+        if let Some(ready) = self.ready.take() {
+            if let Some(riding) = &ready.riding
+                && !riding.held
+                && riding.autodrive.is_none()
+            {
+                let selection = riding.ride.selection();
+                // A race restarts with a new roster draw, as a reload does.
+                let race = riding.ride.race().map(|r| atv_game::ride::race::Settings {
+                    seed: fresh_seed(),
+                    ..r.settings()
+                });
+                ride = Some((
+                    ready.venue.environment.clone(),
+                    selection.quad,
+                    selection.rider,
+                    race,
+                ));
+            }
+            if let Some(net) = ready.net
+                && net.closed.is_none()
+            {
+                self.pending_room = Some(net);
+                self.pending_fresh = false;
+            }
+            self.usage.ended();
+        }
+        self.overlay = None;
+        self.gpu = None;
+        front.borrow_mut().release_gpu();
+        self.restore = Some(ride);
+        let display = self.display.clone();
+        self.spawn(open_gpu(window, display), |result| match result {
+            Ok(gpu) => Message::GpuRestored(Box::new(gpu)),
+            Err(error) => Message::Failed(format!("Unable to restore graphics: {error}")),
+        });
+        true
+    }
+
+    /// The new device is up: the frontend draws on it, and the lost ride
+    /// loads again.
+    fn gpu_restored(&mut self, mut gpu: Gpu) {
+        if let Some(window) = &self.window {
+            let size = render_size(window);
+            gpu.resize(size.width, size.height);
+        }
+        self.gpu = Some(gpu);
+        let ride = self.restore.take().flatten();
+        status("Graphics restored.");
+        match ride {
+            Some((environment, quad, rider, race)) => {
+                self.start_ride(environment, quad, rider, race, None);
+            }
+            None => {
+                // No ride to reopen (menus, or the room ended meanwhile).
+                if let Some(net) = self.pending_room.take()
+                    && let Some(front) = &self.front
+                {
+                    let environment = net.environment.clone();
+                    let profile = net.session.profile().cloned();
+                    self.pending_room = Some(net);
+                    if let Some(p) = profile {
+                        self.start_ride(environment, p.quad, p.rider, None, None);
+                    } else {
+                        front.borrow_mut().resume("main");
+                    }
+                }
+            }
+        }
+        self.last = Instant::now();
+        self.wake();
+        if let Some(window) = &self.window {
+            window.request_redraw();
+        }
     }
 }
 
@@ -3199,22 +3459,67 @@ impl App {
         }
     }
 
-    /// Runs `future` (web: on the event loop; desktop: now) and posts its
-    /// outcome as a message.
+    /// Runs `future` on the event loop and posts its outcome as a message
+    /// (web: a microtask; desktop: [`App::poll_background`] advances it
+    /// between events, never blocking the loop for the whole load).
     fn spawn<T: 'static>(
         &self,
         future: impl std::future::Future<Output = T> + 'static,
         message: impl FnOnce(T) -> Message + 'static,
     ) {
         let proxy = self.proxy.clone();
-        #[cfg(target_arch = "wasm32")]
-        wasm_bindgen_futures::spawn_local(async move {
+        let task = async move {
             let _ = proxy.send_event(message(future.await));
-        });
+        };
+        #[cfg(target_arch = "wasm32")]
+        wasm_bindgen_futures::spawn_local(task);
         #[cfg(not(target_arch = "wasm32"))]
-        {
-            let _ = proxy.send_event(message(pollster::block_on(future)));
+        self.background.borrow_mut().push(Box::pin(task));
+    }
+
+    /// Desktop: advances `spawn`ed loads for up to a slice of this loop
+    /// iteration (smaller while a ride draws). Loads await between their
+    /// steps (content chunks, decodes, relay polls), so the event loop and
+    /// the loader's paints get a turn between slices. Returns whether loads
+    /// remain, and whether this slice used its whole budget.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn poll_background(&mut self) -> (bool, bool) {
+        let mut tasks = std::mem::take(&mut *self.background.borrow_mut());
+        if tasks.is_empty() {
+            return (false, false);
         }
+        let budget = if self.ready.as_ref().is_some_and(|r| r.riding.is_some()) {
+            0.004
+        } else {
+            0.016
+        };
+        let started = Instant::now();
+        let mut cx = std::task::Context::from_waker(std::task::Waker::noop());
+        let mut exhausted = false;
+        'slice: loop {
+            let round = Instant::now();
+            let mut index = 0;
+            while index < tasks.len() {
+                if started.elapsed().as_secs_f64() > budget {
+                    exhausted = true;
+                    break 'slice;
+                }
+                match tasks[index].as_mut().poll(&mut cx) {
+                    std::task::Poll::Ready(()) => drop(tasks.remove(index)),
+                    std::task::Poll::Pending => index += 1,
+                }
+            }
+            // A quick round means every load is waiting (network, timer),
+            // not working: come back later instead of spinning.
+            if tasks.is_empty() || round.elapsed().as_secs_f64() < 0.0002 {
+                break;
+            }
+        }
+        // Loads spawned while these ran (none today) keep their place after.
+        let mut background = self.background.borrow_mut();
+        tasks.append(&mut background);
+        *background = tasks;
+        (!background.is_empty(), exhausted)
     }
 
     /// audio.js setMusicPreview + playMenuMusic: on the frontend menus, while
@@ -3389,7 +3694,7 @@ impl App {
         };
         let size = render_size(&window);
         gpu.resize(size.width, size.height);
-        let view = overlay::viewport(size.width, size.height, window.scale_factor());
+        let view = overlay::viewport(size.width, size.height, surface_scale(&window));
         let tracks = boot.tracks.clone();
         let mut front = front::Front::new(
             &gpu.device,
@@ -3461,6 +3766,10 @@ impl App {
             );
         }
         self.open_launch();
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(seconds) = self.lose_gpu.0.take() {
+            self.lose_gpu.1 = Some(Instant::now() + std::time::Duration::from_secs_f64(seconds));
+        }
         window.request_redraw();
     }
 
@@ -4314,7 +4623,7 @@ impl App {
             return;
         };
         let size = render_size(&window);
-        let view = overlay::viewport(size.width, size.height, window.scale_factor());
+        let view = overlay::viewport(size.width, size.height, surface_scale(&window));
         if let Some(ready) = &mut self.ready {
             ready.gpu.resize(size.width, size.height);
         }
@@ -4765,7 +5074,8 @@ pub fn resolve_graphics(saved: Option<&str>) -> String {
 }
 
 /// graphics.js `detectGraphicsTier`: phones, tablets, touch-primary and
-/// low-power devices get Enhanced, others High (desktop builds: High).
+/// low-power devices get Enhanced, others High (desktop builds: the GPU
+/// adapter's tier, `desktop_tier`).
 pub fn detect_graphics_tier() -> &'static str {
     #[cfg(target_arch = "wasm32")]
     {
@@ -4815,7 +5125,7 @@ pub fn detect_graphics_tier() -> &'static str {
     }
     #[cfg(not(target_arch = "wasm32"))]
     {
-        "high"
+        ADAPTER_TIER.with(|t| t.get()).unwrap_or("high")
     }
 }
 
@@ -5129,6 +5439,19 @@ pub fn run(options: Options) {
         joining: None,
         joined: None,
         frame_tasks: Vec::new(),
+        #[cfg(not(target_arch = "wasm32"))]
+        background: RefCell::default(),
+        #[cfg(not(target_arch = "wasm32"))]
+        restore: None,
+        #[cfg(not(target_arch = "wasm32"))]
+        load_watch: (None, None),
+        #[cfg(not(target_arch = "wasm32"))]
+        lose_gpu: (
+            std::env::var("FURY_LOSE_GPU_AFTER")
+                .ok()
+                .and_then(|v| v.parse().ok()),
+            None,
+        ),
         #[cfg(target_arch = "wasm32")]
         text_inputs: Default::default(),
         #[cfg(not(target_arch = "wasm32"))]
@@ -5367,11 +5690,34 @@ thread_local! {
     /// The adaptive render ratio (backing pixels per CSS pixel, at most the
     /// display's): render_scale::RenderScale's current step.
     static RENDER_RATIO: std::cell::Cell<f64> = const { std::cell::Cell::new(1.5) };
+    /// Desktop: the GPU backend scales a surface smaller than the window up
+    /// to it (Metal, DX12), so the render ratio applies.
+    static SURFACE_SCALES: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// Desktop Auto graphics: the tier of the opened GPU adapter.
+    static ADAPTER_TIER: std::cell::Cell<Option<&'static str>> = const { std::cell::Cell::new(None) };
 }
 
-/// The surface size: the window's physical size, on the web scaled to at most
-/// RENDER_RATIO backing pixels per CSS pixel (game.js renderScale). Layout
-/// stays in CSS pixels (overlay::viewport derives its scale from this size).
+/// Whether the adaptive render ratio sizes the surface: always on the web;
+/// on desktop where the backend scales the surface (`SURFACE_SCALES`).
+fn render_ratio_applies() -> bool {
+    cfg!(target_arch = "wasm32") || SURFACE_SCALES.with(|s| s.get())
+}
+
+/// Backing pixels per logical (CSS) pixel of the surface: the display's,
+/// capped at RENDER_RATIO where the render ratio applies.
+fn surface_scale(window: &Window) -> f64 {
+    let device = window.scale_factor();
+    if render_ratio_applies() {
+        RENDER_RATIO.with(|r| r.get()).min(device).max(0.1)
+    } else {
+        device
+    }
+}
+
+/// The surface size: the window's physical size, scaled to at most
+/// RENDER_RATIO backing pixels per CSS pixel (game.js renderScale) on the
+/// web and on desktops whose backend scales the surface. Layout stays in CSS
+/// pixels (overlay::viewport derives its scale from this size).
 fn render_size(window: &Window) -> winit::dpi::PhysicalSize<u32> {
     #[cfg(target_arch = "wasm32")]
     {
@@ -5390,7 +5736,18 @@ fn render_size(window: &Window) -> winit::dpi::PhysicalSize<u32> {
             }
         }
     }
-    window.inner_size()
+    let size = window.inner_size();
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let scale = surface_scale(window) / window.scale_factor();
+        if scale < 1. {
+            return winit::dpi::PhysicalSize::new(
+                ((f64::from(size.width) * scale).round() as u32).max(1),
+                ((f64::from(size.height) * scale).round() as u32).max(1),
+            );
+        }
+    }
+    size
 }
 
 fn publish_ui_state(text: &str) {
@@ -5521,4 +5878,20 @@ struct MenuMusic {
     tune: Option<std::sync::Arc<atv_game::audio::mixer::Pcm>>,
     requested: bool,
     voice: Option<atv_game::audio::mixer::VoiceId>,
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod tests {
+    #[test]
+    fn desktop_auto_graphics_follows_the_adapter() {
+        use wgpu::DeviceType::*;
+        assert_eq!(super::desktop_tier(DiscreteGpu, false, 8), "high");
+        assert_eq!(super::desktop_tier(IntegratedGpu, true, 8), "high");
+        assert_eq!(super::desktop_tier(IntegratedGpu, false, 8), "enhanced");
+        assert_eq!(super::desktop_tier(Cpu, false, 16), "enhanced");
+        assert_eq!(super::desktop_tier(VirtualGpu, false, 16), "enhanced");
+        // Four cores or fewer: the browser's low-power rule.
+        assert_eq!(super::desktop_tier(DiscreteGpu, false, 4), "enhanced");
+        assert_eq!(super::desktop_tier(DiscreteGpu, false, 0), "high");
+    }
 }

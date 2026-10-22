@@ -72,6 +72,8 @@ pub struct VagMusic {
     stream: VagStream,
     offset: usize,
     resampler: Resampler,
+    /// The output rate the resampler converts to.
+    rate: u32,
     pub title: String,
 }
 
@@ -110,11 +112,22 @@ impl VagMusic {
         let stream = VagStream::new(&prefix, size)?;
         Ok(Self {
             resampler: Resampler::new(stream.info.sample_rate, rate, 2),
+            rate,
             path,
             stream,
             offset: 0,
             title,
         })
+    }
+
+    /// Jukebox seek: decoding continues from the block at `seconds` (the
+    /// caller drops what the mixer still has queued).
+    pub fn seek(&mut self, seconds: f32) -> Result<()> {
+        let offset = seek_offset(&self.stream.info, seconds);
+        self.stream.seek(offset)?;
+        self.offset = offset;
+        self.resampler = Resampler::new(self.stream.info.sample_rate, self.rate, 2);
+        Ok(())
     }
 
     pub fn finished(&self) -> bool {
@@ -153,5 +166,33 @@ impl VagMusic {
             let out = self.resampler.process(&samples, self.finished());
             mixer.lock().map_err(|_| "mixer lock")?.push_music(&out);
         }
+    }
+}
+
+/// The data byte of the whole interleaved block at `seconds`, before the
+/// song's last block.
+fn seek_offset(info: &atv_core::audio::StreamInfo, seconds: f32) -> usize {
+    let stride = info.channels as usize * 16;
+    let block = (seconds.max(0.) * info.sample_rate as f32 / 28.) as usize;
+    let last = (info.data_bytes / stride).saturating_sub(1);
+    block.min(last) * stride
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn seeks_land_on_whole_blocks_inside_the_song() {
+        let info = atv_core::audio::StreamInfo {
+            sample_rate: 28_000,
+            channels: 2,
+            data_offset: 2016,
+            data_bytes: 32 * 1000,
+            frames_max: 28_000,
+        };
+        // 1000 blocks of 28 frames at 28 kHz: one second, 1000 blocks/s.
+        assert_eq!(super::seek_offset(&info, 0.), 0);
+        assert_eq!(super::seek_offset(&info, 0.5), 500 * 32);
+        assert_eq!(super::seek_offset(&info, -3.), 0);
+        assert_eq!(super::seek_offset(&info, 9.), 999 * 32);
     }
 }

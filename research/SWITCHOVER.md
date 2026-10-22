@@ -56,6 +56,9 @@ These would regress players at switch-over. Highest impact first.
    once the context is restored, reopens the current ride's link (`fury-resume`,
    written by the engine; a room's invite rejoins its slot). Difference: game.js
    rebuilt in place and kept the ride's position; a single-player ride restarts.
+   Desktop: a lost GPU device (driver reset) opens a new device and reopens the
+   current ride from its start; a room keeps its connection and slot. A direct
+   ride with no frontend exits with the reason instead of panicking.
 6. ~~**Rider Gear page.**~~ Closed: Garage → Rider gear steps the Profile Store
    catalog and the quad paint. The garage and gear previews show the saved paint and
    the menu rider in the chosen gear.
@@ -187,7 +190,7 @@ In progress elsewhere, not counted as gaps: the diagnostics overlay (F3).
 | Pause on blur/hidden/menu; rooms keep simulating | Ported | lib.rs `sync_activity` | |
 | bfcache pagehide/pageshow | Ported | lib.rs `resumed`, sound.rs (#191, #262) | |
 | WebGL context-loss rebuild | Missing | — | Blocking 5 |
-| Adaptive render resolution | Ported | atv-app render_scale.rs | |
+| Adaptive render resolution | Ported | atv-app render_scale.rs | Also desktop on Metal and DX12 (PERFORMANCE.md) |
 | Wake lock while riding | Ported | atv-app/src/wake.rs (#239) | |
 | Impact and wreck rumble | Ported | gamepad.rs, ride/impact.rs (#250) | |
 | Graphics presets (anisotropy, sky, interpolation, shadows, tracks, dust, fresnel) | Ported | lib.rs `graphics_preset` (#183, #197, #200, #217) | |
@@ -222,9 +225,9 @@ In progress elsewhere, not counted as gaps: the diagnostics overlay (F3).
 
 | Behaviour | Rust | Where | Notes |
 |---|---|---|---|
-| Wake lock: hold while riding, release in menus, re-acquire | Ported | wake.rs (#239) | |
+| Wake lock: hold while riding, release in menus, re-acquire | Ported | wake.rs (#239) | Desktop: a display-sleep inhibitor (`keepawake`) under the same policy |
 | Presets Auto/Original/Enhanced/High (`atv-graphics`) | Ported | lib.rs, menu/prefs.rs (#183, #202) | |
-| `detectGraphicsTier` | Ported | lib.rs `detect_graphics_tier` (#228) | With `userAgentData.mobile` and `saveData`; main-menu Settings and rides share it (`device_preferences`) |
+| `detectGraphicsTier` | Ported | lib.rs `detect_graphics_tier` (#228) | With `userAgentData.mobile` and `saveData`; main-menu Settings and rides share it (`device_preferences`). Desktop: from the GPU adapter (`desktop_tier`, PERFORMANCE.md) |
 | Vibration setting and rumble (pad, else `navigator.vibrate`) | Ported | prefs.rs, gamepad.rs (#202, #250) | Rumbles the pad in use: the pinned pad, else Auto's |
 | Dirt zones | Ported | dirt.rs (#248) | |
 | Settings → Alpha toggles (`atv-alpha`) | Ported | prefs.rs `ALPHA_FEATURES` (#237) | |
@@ -331,7 +334,7 @@ In progress elsewhere, not counted as gaps: the diagnostics overlay (F3).
 | Suspend on blur/hidden; no Media Session | Ported | sound.rs (#262) | |
 | Soundtrack: catalog, shuffle, history (`atv-soundtrack-v1`), AAC stream, park/resume, muffle, spectrum | Ported | audio/music.rs, sound.rs | |
 | Soundtrack VAG fallback on the web | Ported | soundtrack.rs `vag_fallback` | |
-| Pause → Jukebox (list, transport, seek, volume, PAGE14 art, spectrum) | Ported | menu/jukebox.rs (#235) | |
+| Pause → Jukebox (list, transport, seek, volume, PAGE14 art, spectrum) | Ported | menu/jukebox.rs (#235) | Desktop seeks the decoded VAG song by block |
 | Main-menu Jukebox; one soundtrack player for menus and rides | Ported | soundtrack.rs, lib.rs `sync_soundtrack` | `tools/test_engine_menu_jukebox.mjs` |
 
 ### render-support.js, water.js, weather.js, fog.js, scenery-materials.js, train.js
@@ -341,7 +344,7 @@ In progress elsewhere, not counted as gaps: the diagnostics overlay (F3).
 | Frustum culling | Ported | atv-render/src/cull.rs (#183) | |
 | Portrait chase, assisted chase, cinematic pre-race, tight crash camera | Ported | ride/view.rs, riding.rs (#203, #249) | |
 | Gorn severing, quad paint shader | Ported | crash_effects.rs, vehicle.wgsl (#207, #220) | |
-| `RenderScale` adaptive DPR | Ported | atv-app render_scale.rs | |
+| `RenderScale` adaptive DPR | Ported | atv-app render_scale.rs | Desktop on Metal and DX12 too |
 | Water grid, normals, reflection, fog; Fresnel on Enhanced/High | Ported | atv-render/src/water.rs (#183, #219, #228) | |
 | Weather selection; snow ring | Ported | venue.rs, snow.rs (#187) | |
 | Rain visuals | Unverified | — | Drawn as a scenery model by game.js |
