@@ -452,7 +452,7 @@ the Rust ride, which until now only persisted them:
 | Minimap, Race overlays, touch steering/one-handed, bindings | live | already live |
 | Crash camera (`atv-crash-camera`, authored Tight by default) | crash framing | on change: Tight frames Crazy/Gorn crashes with `crashPresentation` (`ride/view.rs` `crash`); held parity rides read `crashcam=`/storage (`--crash-camera` natively) |
 | Chase camera (`atv-chase-camera`, uphill assist) | assisted sightline | on change: `UphillSightline` and the assisted `chasePresentation` orbit/pull-back (`chase=`/storage, `--chase-camera` natively) |
-| Vibration (`atv-vibration`) | gamepad/touch rumble | not ported (no rumble output in the Rust engine yet) |
+| Vibration (`atv-vibration`) | gamepad/touch rumble | on change (and at load for direct rides): `ride/impact.rs` ports ImpactEvents, Rumble and rumbleStrength; the web build plays `dual-rumble` on the pad with the latest input (else `navigator.vibrate` on coarse pointers from 0.3), desktop uses gilrs force feedback (Linux and Windows; gilrs has none on macOS, so Mac desktops stay still) |
 | Diagnostics (`atv.diagnostics.v1`) | performance/debug overlay | not ported (the status line carries frame and CPU numbers) |
 | Silent switch (`silent`, iOS) | mute on the ringer switch | persisted only |
 | Alpha experiments (`atv-alpha-*`) | see the Alpha registry | separate checkpoint |
@@ -584,3 +584,21 @@ Training, host Chromium, mean absolute RGB): 1280x720 hero 0.71, card 2.04, fram
 builds keep the photo-less card: the image is a site asset, not part of the game
 content package. Arlington Free Ride is the multiplayer frontend's.
 
+## Controller rumble (2026-10-22)
+
+`atv-game/ride/impact.rs` ports ImpactEvents (render-support.js: hard body contacts
+from 30 ft/s with a 5 ft/s velocity change, landings after 0.18 s airborne falling
+faster than 12 ft/s, rider wreck impacts from 40 ft/s; 0.3 s cooldown, one crash
+upgrade) and Rumble/rumbleStrength (graphics.js: strength 0.2-1 from 18 ft/s, a fresh
+wreck at least 0.7, 70-300 ms, no chaining inside one impact unless 0.15 stronger).
+They run once per accepted step (and on the Reset frame) while the ride is focused
+with no menu; scripted autodrive rides now also step wheel effects, dirt, impacts and
+Crazy/Gorn crashes as live rides do. Output: the web build's Gamepad API
+`dual-rumble` through `js_sys::Reflect` on the pad with the latest timestamp (gilrs
+has no web force feedback), else `navigator.vibrate` on touch devices for pulses from
+0.3; desktop uses gilrs force feedback (Linux evdev and Windows XInput; macOS has
+none in gilrs). Evidence: the unit test matches the JavaScript classes on landing,
+cooldown, crash upgrade, pulse and wreck cases; `tools/test_engine_rumble.mjs`
+(host Chromium, a recording `vibrationActuator` on a stand-in pad, ENV03 into a Gorn
+wreck): 4 impacts and 5 pulses with Vibration On, none Off. Real controllers, phones
+and desktop force feedback are not tested.

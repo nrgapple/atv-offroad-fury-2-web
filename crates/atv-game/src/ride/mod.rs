@@ -12,6 +12,7 @@ pub mod bindings;
 pub mod cpu;
 pub mod gear;
 pub mod hype;
+pub mod impact;
 pub(crate) mod load;
 pub mod present;
 pub mod race;
@@ -442,6 +443,18 @@ impl Ride {
         match &self.mount {
             Mount::Quad { rig, .. } => Some(rig.animator.recipe()),
             Mount::Bike(_) => None,
+        }
+    }
+
+    /// The ATV wreck rig's latest sampled rider impact (`rider_wreck`
+    /// `sampled_impact_delta`, ft/s); zero otherwise.
+    pub fn rider_impact_delta(&self) -> [f32; 3] {
+        match &self.mount {
+            Mount::Quad { rig, .. } => rig
+                .wreck
+                .frame()
+                .map_or([0.; 3], |w| w.sampled_impact_delta),
+            Mount::Bike(_) => [0.; 3],
         }
     }
 

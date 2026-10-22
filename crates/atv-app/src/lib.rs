@@ -712,6 +712,12 @@ impl App {
             ready.riding = None;
             return;
         }
+        // Rumble.pulse: the frame's impacts on the active controller.
+        for pulse in std::mem::take(&mut riding.pulses) {
+            if self.gamepad.rumble(pulse) {
+                riding.rumble.sent(pulse);
+            }
+        }
         // A Pause binding this frame opens the menu in this same frame (the
         // ride then sleeps until input).
         if let Some(overlay) = &mut self.overlay {
@@ -940,6 +946,10 @@ impl App {
                 "wheelReprojection": riding.wheel_reprojection,
                 "hillOrbit": riding.hill_orbit(), "chaseAssist": riding.chase_assist,
                 "crashCameraTight": riding.crash_camera_tight,
+                "vibration": {"enabled": riding.vibration, "pulses": riding.rumble.pulses,
+                    "impacts": riding.impacts.impacts,
+                    "last": riding.rumble.last.map(|p| serde_json::json!({
+                        "strength": p.strength, "duration": p.duration_ms}))},
                 "wheelLift": riding.wheel_lift.get(),
                 "dirtLevel": riding.dirt.level(),
                 "dirtApplied": if riding.dirt_enabled { riding.dirt.amount() } else { 0. },
@@ -1540,6 +1550,7 @@ impl App {
         riding.set_speed_rush(&prefs.speed_rush);
         riding.crash_camera_tight = !prefs.crash_camera_original;
         riding.chase_assist = prefs.chase_assist;
+        riding.vibration = prefs.vibration;
         riding.ride.options = atv_game::ride::RideOptions {
             flips: prefs.flips,
             realistic_train: prefs.realistic_train,
@@ -2139,8 +2150,11 @@ impl ApplicationHandler<Message> for App {
                     front.borrow_mut().release_gpu();
                 }
                 self.ready = Some(*ready);
+                // Rides the saved settings do not reach (direct and held
+                // replays) still honour the camera and Vibration settings.
                 if let Some(riding) = self.ready.as_mut().and_then(|r| r.riding.as_mut()) {
                     (riding.crash_camera_tight, riding.chase_assist) = self.camera_choice;
+                    riding.vibration = saved_setting("atv-vibration").as_deref() != Some("off");
                 }
                 self.sync_activity();
                 // Desktop has no autoplay rule: sound starts with the ride.
@@ -3480,6 +3494,24 @@ fn trace_all() -> bool {
 }
 
 /// A `name=value` pair in the page URL (always false on desktop).
+/// A saved browser setting (localStorage); None natively, where the
+/// frontend's settings file applies through `apply_preferences`.
+fn saved_setting(key: &str) -> Option<String> {
+    #[cfg(target_arch = "wasm32")]
+    {
+        web_sys::window()?
+            .local_storage()
+            .ok()??
+            .get_item(key)
+            .ok()?
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let _ = key;
+        None
+    }
+}
+
 fn url_flag(pair: &str) -> bool {
     #[cfg(target_arch = "wasm32")]
     {
