@@ -79,6 +79,22 @@ These would regress players at switch-over. Highest impact first.
 11. **Audio page song picker.** Settings → Audio has no song rows, and its
     Previous/Next buttons do nothing (no `musicprev`/`musicnext` handler). The
     pause-menu Jukebox works.
+
+8. **No adaptive render resolution.** JS caps device pixel ratio at 1.5 and steps to
+   1.0 on slow frames (`RenderScale`). Rust renders at the full physical size. This
+   is a likely frame-rate regression on high-DPR phones; not measured.
+9. **Analytics.** None of the five events are sent: `session_start`, `ride_start`,
+   `ride_failed`, `ride_time`, `race_finish`. Play is unaffected, but usage data
+   stops at switch-over.
+10. ~~**Missing sounds.**~~ Closed: ENV08 train spatial sounds (atv-core
+    `spatial_audio` scene commands driven from the ride's car transforms), the
+    `rain.vag` loop while Rain is active, and the Crazy/Gorn crash boom
+    (audio/synth.rs `crash_boom`) all play. A scripted JS/Rust audit gives equal
+    event counts per category (ENV08 train 11, ENV04 rain 1, ENV03 Gorn crash
+    boom 1). Frontend menu music landed in #267.
+11. ~~**Audio page song picker.**~~ Closed: Settings → Audio lists the soundtrack
+    four songs a page, with the playing song marked, the status line and the page
+    count. Previous/Next page through it and wrap (`tools/test_engine_audio_page.mjs`).
 12. ~~**Race links.**~~ Closed: `cheats=eatdirt,bringit` reach the race settings and
     motorcycle race links start (`tools/test_engine_links.mjs`).
 13. ~~**Race intro skip**~~ Closed: a click or tap off the toolbar and a new pad
@@ -88,15 +104,18 @@ These would regress players at switch-over. Highest impact first.
       virtual pad steals Auto.
     - ~~The Fullscreen row shows even where the Fullscreen API is missing (iPhone).~~
       Closed: shown only where `document.fullscreenEnabled`.
-    - CPU racers and remote riders get no contact shadows and cast no High
-      shadow-map shadows.
+    - ~~CPU racers and remote riders get no contact shadows and cast no High
+      shadow-map shadows.~~ Closed: contact blobs within 240 ft and the shadow map
+      within 40 ft, as game.js.
     - No buzz when a touch flip arms.
     - No menu page transitions.
     - Non-standard pads get standard glyphs.
-    - Ride prefetch is serial: no parallel chunk fetch (load-time effect
-      unmeasured).
-    - Web soundtrack falls back to silence (not VAG decoding) when a stream is
-      missing.
+    - ~~Ride prefetch is serial.~~ Closed: `Content::prefetch` (game.js
+      `prefetchRide`). With 150 ms request latency, env01 loaded in 4.6-5.2 s
+      against 5.8-6.4 s serial (host-only).
+    - ~~Web soundtrack falls back to silence (not VAG decoding) when a stream is
+      missing.~~ Closed: a missing or failed stream decodes the original VAGs on
+      the mixer's music bus for the rest of the session.
 
 In progress elsewhere, not counted as gaps: the diagnostics overlay (F3) and the
 main-menu Jukebox.
@@ -208,7 +227,7 @@ main-menu Jukebox.
 | Manifest version/build-hash check | Ported | atv-content | |
 | Per-chunk SHA-256, chunked records | Ported | atv-content `chunk` (#252) | Yields every 512 KiB |
 | Archive directory reads, block inflate | Ported | atv-game/src/archive.rs | |
-| Parallel ride prefetch with fetch priority | Missing | — | Serial; unmeasured |
+| Parallel ride prefetch with fetch priority | Ported | atv-content `prefetch`, atv-game `ride_prefetch` | |
 | Soundtrack `.m4a` streams | Ported | atv-content `MediaStream`, sound.rs (#191) | |
 | Lazy music-chunk retention | Not needed | Rust LRU | |
 
@@ -253,7 +272,7 @@ main-menu Jukebox.
 | Extras → Diagnostics | In progress | — | |
 | Display → Fullscreen | Partial | lib.rs | Always shown |
 | Extras → Silent switch | Missing | — | Blocking 2 |
-| Audio page song list and paging | Partial | menu/controller.rs | Blocking 11 |
+| Audio page song list and paging | Ported | menu/controller.rs | |
 | Controller Settings → pin a controller | Partial | `padselect` no-op | Blocking 14 |
 | Binding capture, presets, reset | Ported | menu/controller.rs | |
 | Page slide transitions | Missing | — | Cosmetic |
@@ -316,15 +335,15 @@ main-menu Jukebox.
 | Motorcycle bank; rider vocals; body and chassis impacts; terrain loops; water splash | Ported | ride.rs, bank.rs | |
 | Venue ambient, Soultree loops, crowd cue | Ported | ride.rs, audio/race.rs (#222) | |
 | Race lamp/GO/gate one-shots, IntOut stingers, soundtrack hold/fade | Ported | race.rs, sound.rs (#222) | |
-| ENV08 train sounds | Missing | — | Blocking 10 |
-| Rain loop | Missing | — | Blocking 10 |
-| Crash boom (Crazy/Gorn) | Missing | — | Blocking 10 |
+| ENV08 train sounds | Ported | audio/ride.rs `train_step` | |
+| Rain loop | Ported | audio/ride.rs | |
+| Crash boom (Crazy/Gorn) | Ported | audio/synth.rs, sound.rs | 0.3 s cooldown |
 | Alpha landing thump, muffle, wind | Ported | audio/synth.rs, hype.rs (#251, #255) | |
 | Remote engines and impacts | Ported | audio/remote.rs (#233) | |
-| Frontend menu music (UIMUSIC) | Missing | front.rs | Blocking 10; may belong to the main-menu port |
+| Frontend menu music (UIMUSIC) | Ported | audio/menu.rs, lib.rs (#267) | |
 | Suspend on blur/hidden; no Media Session | Ported | sound.rs (#262) | |
 | Soundtrack: catalog, shuffle, history (`atv-soundtrack-v1`), AAC stream, park/resume, muffle, spectrum | Ported | audio/music.rs, sound.rs | |
-| Soundtrack VAG fallback on the web | Missing | sound.rs | Blocking 14 |
+| Soundtrack VAG fallback on the web | Ported | sound.rs `vag_fallback` | |
 | Pause → Jukebox (list, transport, seek, volume, PAGE14 art, spectrum) | Ported | menu/jukebox.rs (#235) | |
 | Main-menu Jukebox | In progress | — | |
 
@@ -350,7 +369,7 @@ main-menu Jukebox.
 | Dust/chunk/spray and wet births; motorcycle MX atlas | Ported | atv-render wheel_effects.rs (#197) | |
 | Gorn blood | Ported | blood.rs (#207) | |
 | Tire tracks Enhanced/High, mud zones | Ported | tire_tracks.rs (#201) | |
-| High sun shadow map | Partial | shadows.rs (#200) | Player only (blocking 14) |
-| Contact shadow blobs | Partial | shadows.rs | Player only (blocking 14) |
+| High sun shadow map | Ported | shadows.rs (#200) | Player, CPUs and riders within 40 ft |
+| Contact shadow blobs | Ported | shadows.rs | Player, CPUs within 240 ft, other riders |
 | TOY effects (smoke, fire); type-11 fountains | Ported | atv-render ambient.rs (#186) | |
 | Lingering dust Enhanced/High | Ported | lingering_dust.rs (#197) | |

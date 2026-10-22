@@ -855,7 +855,20 @@ impl Ride {
             },
             placement: self.placement,
             bike: None,
+            train_cars: self.train_cars(),
         })
+    }
+
+    /// Every train car's matrix now and one step before (train sounds).
+    pub(super) fn train_cars(&self) -> Vec<([f32; 16], [f32; 16])> {
+        let Some(train) = self.sim.train.as_ref() else {
+            return Vec::new();
+        };
+        let train = train.borrow();
+        (0..)
+            .map_while(|car| train.runtime.motion_state(car))
+            .map(|m| (m.current, m.previous))
+            .collect()
     }
 
     /// Sound inputs of the latest step (None right after a reset).

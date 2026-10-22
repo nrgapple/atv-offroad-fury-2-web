@@ -648,6 +648,8 @@ measured comparison). Parity above is with the JavaScript build.
 | desktop `f32` math (`atv-core` via std) | system libm for sin/cos/atan2/…; the browser build uses Rust's libm, so native races drift from the JavaScript/browser result | one deterministic implementation on every target (PS2 VU/libm equivalence is a separate question) | Yes: `atv_core::math` (Deterministic simulation maths) |
 | `atv-render/vehicle.rs`, `vehicle.wgsl` (player, CPU and peer quads, bikes, riders) | was opaque like game.js (`alphaCutoff` 0), so cut-out texels drew black or grey (bike sprockets and spoked wheels, quad shock springs). Now each material's base PSM pass blends GS source alpha (`(Cs-Cd)*As+Cd`, As = byte·255/128) when `alphaBlendingOnOff` is set, and texels with zero alpha are dropped. This differs from the JavaScript build. | All 232 vehicle and rider materials surveyed (quads 1-26, bikes 27-46, ATV/MX riders) set `alphaBlendingOnOff=1`; authored inputs are A=Cs, B=Cd, C=As, D=Cd. Bike plastics and sprockets also set `AlphaTestOnOff=1` without a method; `StartApp/DefaultMT.psm` (read by 001b98f0 before each PSM) gives `alphaReferenceValue=0`. The default alpha-test method and Z behaviour of failed texels are not recovered: dropping zero-alpha texels stands in for them (before/after crops in `private/reports/rust-render/vehicle-alpha/`). | Partly (blend: yes; test method: no) |
 | `atv-render/blood.rs`, `atv-game/crash.rs` | Crazy/Gorn crash breakup, ragdoll and blood | authored browser feature with no original counterpart (the original crash is the wreck animation, kept under Original) | Keep (option) |
+| `atv-game/src/audio/synth.rs` `crash_boom`, `atv-app/src/sound.rs` | Crazy/Gorn crash boom: a synthesised 95→28 Hz thump with filtered noise for severity ≥ 40, 0.3 s cooldown, as audio.js `crashBoom` | authored browser feature with no original sample (Original crash mode plays only the disc's wreck sounds) | Keep (option) |
+| `atv-app/src/sound.rs` `vag_fallback` | the web soundtrack streams hosted AAC; when a stream is missing or fails it decodes the disc's VAG pair onto the music bus instead (music.js fallback) | the original streams the VAG soundtrack from disc; the AAC stream is a browser bandwidth stand-in | No (AAC kept on the web) |
 
 ## UI stand-ins to move toward original rendering
 
@@ -1545,6 +1547,34 @@ Switch-over items 3, 8 and 9 in SWITCHOVER.md.
   - The worker cached 66 shell files, including the wasm, and relaunched
     engine.html offline to its title.
   - `test_offline.mjs` still passes with the extra page.
+
+## Other riders' shadows and ride prefetch
+
+- **Shadows from CPUs and other riders.** Race CPUs and other riders cast
+  shadows as game.js draws them:
+  - Enhanced/High contact blobs: race CPUs within 240 ft of the camera and every
+    drawn rider, each with a detached rider's torso (`drawContactShadows`);
+  - High's sun shadow map: race CPUs and riders within 40 ft of the player
+    (`renderVehicleShadows`).
+
+  Each `VehiclePass` keeps its last pose's world matrix and detached torso. The
+  shadow map renders every caster through the shared vehicle bone layout.
+  `#ui-state` reports `shadows.contact` and `shadows.map`.
+- **Prefetch** (`Content::prefetch`, `atv_game::launch::ride_prefetch`): a ride
+  starts downloading every archive it reads at once (game.js `prefetchRide`).
+  These are the course and placements, vehicle, rider rig and motions,
+  overlays, start events and audio table. The sound bank's directory chunk is
+  fetched at low priority. Reads await the same request. `?prefetch=off` loads
+  serially for measurement.
+- **Observed** (`tools/test_engine_shadows_prefetch.mjs`, host-only, headless
+  Chromium):
+  - An env01 race grid with 3 CPUs drew 4 contact blobs on Enhanced and High.
+    High cast 4 vehicles into the shadow map; Enhanced cast none.
+  - With 150 ms latency per request, env01 reached riding in 4.6/4.7 s with
+    prefetch against 6.4/5.8 s serial (13 blobs against 11). A later run
+    measured 5.2 against 6.3 s.
+  - Inspected: `private/reports/devlog-images/rust-cpu-shadows-high.png`.
+  - Other riders' shadows share the code path; they were not browser-tested.
 
 ## Commands
 

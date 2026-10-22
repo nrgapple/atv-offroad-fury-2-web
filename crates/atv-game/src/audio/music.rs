@@ -87,7 +87,17 @@ const READ: usize = 65536;
 
 impl VagMusic {
     pub async fn open(content: &Content, song: &Song, rate: u32) -> Result<Self> {
-        let path = path(song);
+        Self::open_path(content, path(song), song.title.clone(), rate).await
+    }
+
+    /// [`VagMusic::open`] by content path (the browser's VAG fallback opens
+    /// a song outside the catalog borrow).
+    pub async fn open_path(
+        content: &Content,
+        path: String,
+        title: String,
+        rate: u32,
+    ) -> Result<Self> {
         let size = content.size(&path)?;
         let prefix = content.read(&path, 0, size.min(2016)).await?;
         let stream = VagStream::new(&prefix, size)?;
@@ -96,7 +106,7 @@ impl VagMusic {
             path,
             stream,
             offset: 0,
-            title: song.title.clone(),
+            title,
         })
     }
 

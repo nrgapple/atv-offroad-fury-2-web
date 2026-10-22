@@ -159,6 +159,7 @@ impl Ride {
                     .cloned(),
                 clutch: controls.clutch,
             }),
+            train_cars: self.train_cars(),
         }
     }
 

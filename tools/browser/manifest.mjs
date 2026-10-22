@@ -42,6 +42,7 @@ export const TESTS = {
   'test_engine_alpha_landing.mjs': { group: 'content' },
   'test_engine_air_blur.mjs': { group: 'content' },
   'test_engine_shell.mjs': { group: 'content' },
+  'test_engine_shadows_prefetch.mjs': { group: 'content' },
   'test_engine_settings.mjs': { group: 'content' },
   'test_engine_session_settings.mjs': { group: 'content' },
   'test_engine_links.mjs': { group: 'content' },
@@ -49,6 +50,7 @@ export const TESTS = {
   'test_engine_diagnostics.mjs': { group: 'content' },
   'test_engine_background_audio.mjs': { group: 'content' },
   'test_engine_jukebox.mjs': { group: 'content' },
+  'test_engine_audio_page.mjs': { group: 'content' },
   'test_engine_ride_link.mjs': { group: 'content' },
   'test_engine_freeride.mjs': {
     group: 'relay',
