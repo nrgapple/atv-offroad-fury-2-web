@@ -99,6 +99,8 @@ pub struct PauseMenu {
     /// Bindings page: keyboard (true) or controller rows, page and row.
     keyboard: bool,
     binding_page: usize,
+    /// Settings → Audio's song list page (four rows a page, musicPage).
+    music_page: usize,
     binding_row: usize,
     capture: Option<Capture>,
     /// Opened from the frontend's main menu: Settings is the root page.
@@ -146,6 +148,7 @@ impl PauseMenu {
             pending_select: None,
             keyboard: true,
             binding_page: 0,
+            music_page: 0,
             binding_row: 0,
             capture: None,
             from_menu: false,
@@ -162,6 +165,11 @@ impl PauseMenu {
             from_menu: true,
             ..Self::new()
         }
+    }
+
+    /// Settings → Audio's song list page.
+    pub fn music_page(&self) -> usize {
+        self.music_page
     }
 
     pub fn state(&self, ctx: &Context) -> State {
@@ -204,13 +212,24 @@ impl PauseMenu {
             } else {
                 Vec::new()
             },
-            page_count: (self.page == "bindings").then(|| {
-                format!(
+            page_count: match self.page.as_str() {
+                "bindings" => Some(format!(
                     "Page {} of {}",
                     self.binding_page + 1,
                     ACTIONS.len().div_ceil(4)
-                )
-            }),
+                )),
+                // frontend.js: Page n of the song list's four-row pages.
+                "music" => Some(format!(
+                    "Page {} of {}",
+                    self.music_page + 1,
+                    ctx.music.map_or(0, |m| m.songs.len()).div_ceil(4).max(1)
+                )),
+                _ => None,
+            },
+            // `.pause-header .pause-status`: Audio's soundtrack line.
+            status: (self.page == "music")
+                .then(|| ctx.music.map(music_status))
+                .flatten(),
         }
     }
 
@@ -253,9 +272,21 @@ impl PauseMenu {
                 ctx.music.map_or_else(Vec::new, |m| m.songs.iter().enumerate().map(|(i, (title, artist, _))| {
                     json!({"id": i.to_string(), "label": title, "value": artist})
                 }).collect())
+            } else if self.page == "music" {
+                // frontend.js: the playing song is marked on Audio's rows.
+                ctx.music.map_or_else(Vec::new, |m| m.songs.iter().enumerate().map(|(i, (title, artist, _))| {
+                    let mark = match (Some(i) == m.playing_index, m.enabled) {
+                        (true, true) => "Playing / ",
+                        (true, false) => "Selected / ",
+                        _ => "",
+                    };
+                    json!({"id": i.to_string(), "label": title, "value": format!("{mark}{artist}")})
+                }).collect())
             } else {
                 Vec::new()
             },
+            "music_page": self.music_page,
+            "music_status": ctx.music.map_or_else(String::new, music_status),
             "minimap_enabled": m.enabled,
             "minimap_size": m.size,
             "minimap_zoom": m.zoom,
@@ -485,6 +516,13 @@ impl PauseMenu {
             "controller" => {
                 self.show("controller-settings");
                 return None;
+            }
+            "musicprev" | "musicnext" => {
+                let pages = ctx.music.map_or(1, |m| m.songs.len().div_ceil(4).max(1));
+                let step = if action == "musicprev" { pages - 1 } else { 1 };
+                self.music_page = (self.music_page + step) % pages;
+                self.selection = 0;
+                Event::Changed
             }
             "bindprev" | "bindnext" => {
                 let pages = ACTIONS.len().div_ceil(4);
@@ -1039,6 +1077,18 @@ pub fn pad_name(id: &str) -> String {
         name
     };
     name.chars().take(48).collect()
+}
+
+/// frontend.js music_status: "On / Volume 45% / <song>".
+fn music_status(m: &super::jukebox::MusicView) -> String {
+    format!(
+        "{} / Volume {}% / {}",
+        if m.enabled { "On" } else { "Off" },
+        (m.volume * 100.).round() as i32,
+        m.playing_index
+            .and_then(|i| m.songs.get(i))
+            .map_or("Choose a song", |s| s.0.as_str())
+    )
 }
 
 #[cfg(test)]
