@@ -124,7 +124,7 @@ try {
   ])
     assert.ok(shell.includes(path), `shell precaches ${path}`);
   assert.ok(!shell.some(path => path.includes('/content/')), 'content is not part of the shell');
-  assert.deepEqual([...(first['fury-pages-v1'] ?? [])].sort(), ['/index.html', '/play.html']);
+  assert.deepEqual([...(first['fury-pages-v1'] ?? [])].sort(), ['/engine.html', '/index.html', '/play.html']);
   // Content the uncontrolled first visit fetched is reported to the worker and cached.
   const menuBlobs = await settledBlobs();
   assert.ok((await cached())['fury-manifests-v1']?.includes('/content/manifest.json'), 'content manifest cached');

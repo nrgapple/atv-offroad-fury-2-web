@@ -33,15 +33,18 @@ These would regress players at switch-over. Highest impact first.
    `navigator.audioSession.type`, so with the Ring/Silent switch on, iPhones play no
    game sound. The JavaScript game played sound by default. The Settings → Extras
    "Silent switch" row is also hidden, because `silent_mode` is never filled.
-3. **PWA shell and offline.** engine.html has none of:
-   - the manifest link, icons, apple-mobile meta tags or theme-color;
-   - the install banner or the iOS "Add to Home Screen" help (install.js);
-   - service worker registration and offline precache (offline.js, sw.js);
-   - the iOS standalone viewport fix and launch screens.
+3. ~~**PWA shell and offline.**~~ Closed by the PWA/analytics/render-scale batch.
+   engine.html now carries:
+   - the manifest, icons, apple meta tags and theme-color;
+   - the install banner and iOS help (install.js);
+   - the standalone viewport fix (`#game` canvas sized by `--app-width/height`);
+   - launch screens;
+   - offline.js.
 
-   sw.js precaches only play.html and index.html. Whether it would pick up
-   `atv_app_bg.wasm` is unverified. The Rust page needs these modules and an
-   updated precache list before it replaces play.html.
+   The frontend mirrors its page to `#frontend` for the banner. sw.js precaches
+   and serves `/engine.html` with its module graph, including `atv_app_bg.wasm`.
+   Remaining at switch-over: the manifest's `start_url` and shortcuts still name
+   play.html.
 4. **Multiplayer links.**
    - `mode=multiplayer` links without `room=` fail with a stale error, "Multiplayer
      is not available in the Rust engine yet" (atv-app/src/lib.rs `open_launch`).
@@ -60,12 +63,15 @@ These would regress players at switch-over. Highest impact first.
 7. **Sound mode at ride start.** The saved Sound mode is ignored when a ride starts.
    The ride uses `?sound=` and defaults to Original, while the JavaScript default is
    Enhanced. Changing it mid-ride works.
-8. **No adaptive render resolution.** JS caps device pixel ratio at 1.5 and steps to
-   1.0 on slow frames (`RenderScale`). Rust renders at the full physical size. This
-   is a likely frame-rate regression on high-DPR phones; not measured.
-9. **Analytics.** None of the five events are sent: `session_start`, `ride_start`,
-   `ride_failed`, `ride_time`, `race_finish`. Play is unaffected, but usage data
-   stops at switch-over.
+8. ~~**No adaptive render resolution.**~~ Closed: atv-app `render_scale.rs`.
+   The web surface renders at most 1.5 backing pixels per CSS pixel and steps by
+   0.25 to 1.0 after 1.5 s of slow frames while riding, with the browser's
+   recovery and backoff. The UI stays in CSS pixels.
+9. ~~**Analytics.**~~ Closed: atv-app `usage.rs` sends all five events through
+   analytics.js (`window.furyUsage`, set up in engine.js): `session_start`,
+   `ride_start` (with load seconds and, online, players), `ride_failed`,
+   `ride_time` (riding time stops in menus) and `race_finish`. Before deleting
+   launch.js, move the `ENVIRONMENTS` list that analytics.js imports from it.
 10. **Missing sounds.**
     - ENV08 train spatial sounds: the logic is only in atv-core `spatial_audio`,
       which only the JS worker uses.
@@ -150,21 +156,21 @@ main-menu Jukebox.
 | `?source=disc` | Missing | — | Can be dropped |
 | Copy ride link (`buildRideUrl`/`copyRideUrl`) | Ported | launch.rs `ride_url`, lib.rs `copy_ride_link` (#231) | Uses the current page path |
 | Invite link | Partial | multiplayer.rs `invite_url` (#224, #268) | `quad=1&rider=0`, `/play.html` |
-| Manifest, icons, apple meta, theme-color | Missing | engine.html | Blocking 3 |
-| Install banner, iOS help dialog, standalone viewport, launch screens (install.js) | Missing | — | Blocking 3 |
-| Service worker and offline shell (offline.js, sw.js) | Missing | — | Blocking 3 |
+| Manifest, icons, apple meta, theme-color | Ported | engine.html | |
+| Install banner, iOS help dialog, standalone viewport, launch screens (install.js) | Ported | engine.html, lib.rs `sync_shell` | |
+| Service worker and offline shell (offline.js, sw.js) | Ported | sw.js `PRECACHE_PAGES` | `start_url` still play.html |
 | Rust-only dev params | — | lib.rs `start()` | `venue, front, camera, weather, steps, graphics, crash, crashcam, chase, free, gear, paint, uibackdrop, sound, music, profile, autodrive, race=1, seed, host=1, name, dropAfter, trainPlace, script, pingMs, joinDelayMs, uiDiagnostics, ui=0, autopilot, presentTrace, traceAll, debug` |
 
 ### analytics.js (kept) and its callers in game.js
 
 | Event / behaviour | Rust | Notes |
 |---|---|---|
-| `session_start` (entry: link or menu) | Missing | Blocking 9 |
-| `ride_start` (mode, activity, map, vehicle, quad, laps, cpu, players, load seconds) | Missing | |
-| `ride_failed` | Missing | |
-| `ride_time` (visible unpaused seconds, flushed on hide/pagehide/menu) | Missing | |
-| `race_finish` (place, field, seconds) | Missing | |
-| Opt-outs (webdriver, DNT, GPC, non-https/local) and device context | Missing | Comes with whichever bridge sends the events |
+| `session_start` (entry: link or menu) | Ported | atv-app usage.rs |
+| `ride_start` (mode, activity, map, vehicle, quad, laps, cpu, players, load seconds) | Ported | |
+| `ride_failed` | Ported | |
+| `ride_time` (visible unpaused seconds, flushed on hide/pagehide/menu) | Ported | Visibility and pagehide in engine.js |
+| `race_finish` (place, field, seconds) | Ported | Unit-tested; not browser-tested |
+| Opt-outs (webdriver, DNT, GPC, non-https/local) and device context | Ported | analytics.js itself |
 
 ### game.js
 
@@ -179,7 +185,7 @@ main-menu Jukebox.
 | Pause on blur/hidden/menu; rooms keep simulating | Ported | lib.rs `sync_activity` | |
 | bfcache pagehide/pageshow | Ported | lib.rs `resumed`, sound.rs (#191, #262) | |
 | WebGL context-loss rebuild | Missing | — | Blocking 5 |
-| Adaptive render resolution | Missing | — | Blocking 8 |
+| Adaptive render resolution | Ported | atv-app render_scale.rs | |
 | Wake lock while riding | Ported | atv-app/src/wake.rs (#239) | |
 | Impact and wreck rumble | Ported | gamepad.rs, ride/impact.rs (#250) | |
 | Graphics presets (anisotropy, sky, interpolation, shadows, tracks, dust, fresnel) | Ported | lib.rs `graphics_preset` (#183, #197, #200, #217) | |
@@ -333,7 +339,7 @@ main-menu Jukebox.
 | Frustum culling | Ported | atv-render/src/cull.rs (#183) | |
 | Portrait chase, assisted chase, cinematic pre-race, tight crash camera | Ported | ride/view.rs, riding.rs (#203, #249) | |
 | Gorn severing, quad paint shader | Ported | crash_effects.rs, vehicle.wgsl (#207, #220) | |
-| `RenderScale` adaptive DPR | Missing | — | Blocking 8 |
+| `RenderScale` adaptive DPR | Ported | atv-app render_scale.rs | |
 | Water grid, normals, reflection, fog; Fresnel on Enhanced/High | Ported | atv-render/src/water.rs (#183, #219, #228) | |
 | Weather selection; snow ring | Ported | venue.rs, snow.rs (#187) | |
 | Rain visuals | Unverified | — | Drawn as a scenery model by game.js |

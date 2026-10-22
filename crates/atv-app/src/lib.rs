@@ -5,11 +5,13 @@ mod gamepad;
 mod multiplayer;
 mod net;
 mod overlay;
+mod render_scale;
 pub mod replay;
 mod riding;
 mod sound;
 #[cfg(target_arch = "wasm32")]
 mod text_inputs;
+mod usage;
 mod wake;
 use atv_core::math::Det;
 pub use multiplayer::RoomStart;
@@ -206,6 +208,12 @@ struct Defaults {
 struct App {
     /// Crash camera Tight, Chase camera Assisted (Options::camera_choice).
     camera_choice: (bool, bool),
+    /// Adaptive render resolution (web): steps RENDER_RATIO while riding.
+    render_scale: render_scale::RenderScale,
+    /// Anonymous usage events (usage.rs).
+    usage: usage::Usage,
+    /// The page last mirrored to the shell's `#frontend` (None: riding).
+    shell_page: Option<Option<String>>,
     /// Screen Wake Lock while riding (web/wake-lock.js).
     wake_lock: wake::ScreenWake,
     /// The Display → Graphics choice the running ride applied.
@@ -335,7 +343,7 @@ type Progress = Box<dyn FnMut(&Gpu, &str)>;
 
 /// The window's GPU device and surface.
 async fn open_gpu(window: Arc<Window>, display: OwnedDisplayHandle) -> Result<Gpu, String> {
-    let size = window.inner_size();
+    let size = render_size(&window);
     let mut descriptor = wgpu::InstanceDescriptor::new_with_display_handle(Box::new(display));
     // Browsers get WebGL2 so the port runs on every phone the site supports.
     descriptor.backends = if cfg!(target_arch = "wasm32") {
@@ -700,6 +708,37 @@ impl App {
         self.meter.net += loads.elapsed().as_secs_f64() * 1000.;
         let focused = self.effective_focused();
         let suspended = !self.visible || self.suspended;
+        let device = self.window.as_ref().map_or(1., |w| w.scale_factor());
+        self.sync_shell(None);
+        let mut rescale = false;
+        if let Some(riding) = self.ready.as_ref().and_then(|r| r.riding.as_ref()) {
+            // Usage: riding time pauses in menus; race_finish once per race.
+            self.usage.set_riding(!(riding.paused && !riding.held));
+            if let Some(f) = riding.ride.race().and_then(|r| r.frame.as_ref())
+                && f.phase == "finished"
+            {
+                self.usage.race_finished(f.position, f.field, f.elapsed);
+            }
+            // game.js renderScale: sampled only while actively riding on a
+            // high-density display.
+            if cfg!(target_arch = "wasm32")
+                && device > 1.
+                && focused
+                && !riding.paused
+                && !riding.held
+                && riding.autodrive.is_none()
+            {
+                let before = RENDER_RATIO.with(|r| r.get());
+                let ratio = self.render_scale.sample(f64::from(dt) * 1000.);
+                if ratio != before {
+                    RENDER_RATIO.with(|r| r.set(ratio));
+                    rescale = true;
+                }
+            }
+        }
+        if rescale {
+            self.resize_surface();
+        }
         let now = Instant::now();
         let Some(ready) = &mut self.ready else { return };
         let Some(riding) = &mut ready.riding else {
@@ -1968,8 +2007,13 @@ impl App {
                     self.meter.draws, self.meter.triangles
                 ));
                 if let Some(window) = &self.window {
-                    let size = window.inner_size();
-                    lines.push(format!("Resolution {} × {}", size.width, size.height));
+                    let size = render_size(window);
+                    lines.push(format!(
+                        "Resolution {} × {} ({:.2}x)",
+                        size.width,
+                        size.height,
+                        RENDER_RATIO.with(|r| r.get()).min(window.scale_factor())
+                    ));
                 }
                 // The former debug strip (#status): load, error and frame lines.
                 // Its " · " fields regroup into short lines so the panel stays
@@ -2160,8 +2204,18 @@ impl ApplicationHandler<Message> for App {
         let attributes = Window::default_attributes().with_title("Fury Remastered");
         #[cfg(target_arch = "wasm32")]
         let attributes = {
+            use wasm_bindgen::JsCast;
             use winit::platform::web::WindowAttributesExtWebSys;
-            attributes.with_append(true)
+            // engine.html's `#game` canvas (install.js sizes it for installed
+            // iOS apps); a page without one gets an appended canvas.
+            let canvas = web_sys::window()
+                .and_then(|w| w.document())
+                .and_then(|d| d.get_element_by_id("game"))
+                .and_then(|e| e.dyn_into::<web_sys::HtmlCanvasElement>().ok());
+            match canvas {
+                Some(canvas) => attributes.with_canvas(Some(canvas)),
+                None => attributes.with_append(true),
+            }
         };
         #[cfg(not(target_arch = "wasm32"))]
         let attributes = attributes.with_inner_size(winit::dpi::LogicalSize::new(1280, 720));
@@ -2432,6 +2486,12 @@ impl ApplicationHandler<Message> for App {
                 if let Some(front) = &self.front {
                     front.borrow_mut().release_gpu();
                 }
+                let players = ready
+                    .net
+                    .as_ref()
+                    .and_then(|n| n.session.lobby.as_ref())
+                    .map(|l| l.players.len());
+                self.usage.started(players);
                 self.ready = Some(*ready);
                 // The ride takes over the music bus from the menu tune.
                 self.sync_menu_music();
@@ -2448,7 +2508,7 @@ impl ApplicationHandler<Message> for App {
                 }
                 self.last = Instant::now();
                 if let Some(window) = &self.window {
-                    let size = window.inner_size();
+                    let size = render_size(window);
                     let ready = self.ready.as_mut().unwrap();
                     ready.gpu.resize(size.width, size.height);
                     if ready.riding.is_some() {
@@ -2487,6 +2547,7 @@ impl ApplicationHandler<Message> for App {
             }
             Message::Failed(error) => {
                 status(&error);
+                self.usage.failed();
                 if self.front.is_some() && self.gpu.is_none() && self.ready.is_none() {
                     // The ride did not load: back to the course select on a
                     // new surface (the failed load held the old one).
@@ -2593,7 +2654,7 @@ impl ApplicationHandler<Message> for App {
             Message::FrontGpu(gpu) => {
                 let mut gpu = *gpu;
                 if let Some(window) = &self.window {
-                    let size = window.inner_size();
+                    let size = render_size(window);
                     gpu.resize(size.width, size.height);
                 }
                 self.gpu = Some(gpu);
@@ -2621,28 +2682,7 @@ impl ApplicationHandler<Message> for App {
         }
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),
-            WindowEvent::Resized(size) => {
-                if let Some(ready) = &mut self.ready {
-                    ready.gpu.resize(size.width, size.height);
-                }
-                if let Some(gpu) = &mut self.gpu {
-                    gpu.resize(size.width, size.height);
-                }
-                if let (Some(front), Some(window)) = (&self.front, &self.window) {
-                    front.borrow_mut().set_view(overlay::viewport(
-                        size.width,
-                        size.height,
-                        window.scale_factor(),
-                    ));
-                }
-                if let (Some(overlay), Some(window)) = (&mut self.overlay, &self.window) {
-                    overlay.set_view(overlay::viewport(
-                        size.width,
-                        size.height,
-                        window.scale_factor(),
-                    ));
-                }
-            }
+            WindowEvent::Resized(_) => self.resize_surface(),
             WindowEvent::Touch(touch) => self.touch(touch),
             WindowEvent::MouseWheel { delta, .. } => {
                 let dy = match delta {
@@ -3004,7 +3044,7 @@ impl App {
         let Some(window) = self.window.clone() else {
             return;
         };
-        let size = window.inner_size();
+        let size = render_size(&window);
         gpu.resize(size.width, size.height);
         let view = overlay::viewport(size.width, size.height, window.scale_factor());
         let tracks = boot.tracks.clone();
@@ -3075,6 +3115,15 @@ impl App {
             .unwrap_or_default();
         let mut f = front.borrow_mut();
         let view = f.view;
+        // game.js: one session_start per page load, from a link or the menu.
+        let linked = atv_game::launch::parse_launch(&start.search, &[]).requested;
+        usage::call(
+            "track",
+            &[
+                "session_start".into(),
+                serde_json::json!({ "entry": if linked { "link" } else { "menu" } }),
+            ],
+        );
         if let Some(page) = &start.page {
             let page = page.clone();
             f.state.show(&page, &view);
@@ -3467,6 +3516,21 @@ impl App {
         let Some(gpu) = self.gpu.take() else {
             return;
         };
+        // Anonymous usage: this ride's context until it loads or fails.
+        let mode = match (&room, &self.pending_room) {
+            (Some(room), _) if room.freeride => "freeride",
+            (Some(_), _) => "multiplayer",
+            (None, Some(net)) if net.session.lobby.as_ref().is_some_and(|l| l.public) => "freeride",
+            (None, Some(_)) => "multiplayer",
+            (None, None) => "single",
+        };
+        self.usage.ended();
+        self.usage.loading(usage::ride(
+            mode,
+            &environment,
+            quad,
+            race.as_ref().map(|r| (r.laps, r.cpu)),
+        ));
         #[cfg(target_arch = "wasm32")]
         self.text_inputs.sync(&[], &[], &self.proxy);
         let (world, ride) = self.ride_setup(&front, quad, rider, race);
@@ -3636,6 +3700,53 @@ impl App {
     }
 
     /// Pause → Quit to Main Menu: the ride ends and the frontend returns.
+    /// Mirrors the frontend page to the page shell's `#frontend` element
+    /// (`data-page`, `hidden` while riding) for install.js's banner, which
+    /// offers the app only on the title screen.
+    fn sync_shell(&mut self, page: Option<&str>) {
+        if self
+            .shell_page
+            .as_ref()
+            .is_some_and(|p| p.as_deref() == page)
+        {
+            return;
+        }
+        self.shell_page = Some(page.map(String::from));
+        #[cfg(target_arch = "wasm32")]
+        if let Some(element) = web_sys::window()
+            .and_then(|w| w.document())
+            .and_then(|d| d.get_element_by_id("frontend"))
+        {
+            let _ = element.set_attribute("data-page", page.unwrap_or(""));
+            let _ = match page {
+                Some(_) => element.remove_attribute("hidden"),
+                None => element.set_attribute("hidden", ""),
+            };
+        }
+    }
+
+    /// Reconfigures the surfaces and UI views for the window's size and the
+    /// current render ratio (resize, rotation, adaptive resolution steps).
+    fn resize_surface(&mut self) {
+        let Some(window) = self.window.clone() else {
+            return;
+        };
+        let size = render_size(&window);
+        let view = overlay::viewport(size.width, size.height, window.scale_factor());
+        if let Some(ready) = &mut self.ready {
+            ready.gpu.resize(size.width, size.height);
+        }
+        if let Some(gpu) = &mut self.gpu {
+            gpu.resize(size.width, size.height);
+        }
+        if let Some(front) = &self.front {
+            front.borrow_mut().set_view(view);
+        }
+        if let Some(overlay) = &mut self.overlay {
+            overlay.set_view(view);
+        }
+    }
+
     fn quit_to_menu(&mut self) -> bool {
         self.quit_to(Some("main"))
     }
@@ -3650,6 +3761,7 @@ impl App {
             return false;
         };
         let Ready { gpu, .. } = ready;
+        self.usage.ended();
         self.overlay = None;
         self.gpu = Some(gpu);
         if let Some(page) = page {
@@ -3705,7 +3817,9 @@ impl App {
             );
         }
         let wants = f.wants();
+        let page = f.state.page.clone();
         drop(f);
+        self.sync_shell(Some(&page));
         self.sync_menu_music();
         let f = front.borrow();
         // The garage shows the authored top speed of the current ATV.
@@ -4289,6 +4403,9 @@ pub fn run(options: Options) {
         .expect("event loop");
     let app = App {
         camera_choice: options.camera_choice,
+        render_scale: Default::default(),
+        usage: Default::default(),
+        shell_page: None,
         wake_lock: Default::default(),
         graphics_pref: None,
         proxy: event_loop.create_proxy(),
@@ -4532,6 +4649,36 @@ fn ui_diagnostics_enabled() -> bool {
         });
     #[cfg(not(target_arch = "wasm32"))]
     false
+}
+
+thread_local! {
+    /// The adaptive render ratio (backing pixels per CSS pixel, at most the
+    /// display's): render_scale::RenderScale's current step.
+    static RENDER_RATIO: std::cell::Cell<f64> = const { std::cell::Cell::new(1.5) };
+}
+
+/// The surface size: the window's physical size, on the web scaled to at most
+/// RENDER_RATIO backing pixels per CSS pixel (game.js renderScale). Layout
+/// stays in CSS pixels (overlay::viewport derives its scale from this size).
+fn render_size(window: &Window) -> winit::dpi::PhysicalSize<u32> {
+    #[cfg(target_arch = "wasm32")]
+    {
+        use winit::platform::web::WindowExtWebSys;
+        // The canvas's CSS box, not inner_size(): winit reads the backing
+        // size back, which this function itself sets through the surface.
+        if let Some(canvas) = window.canvas() {
+            let rect = canvas.get_bounding_client_rect();
+            if rect.width() > 0. && rect.height() > 0. {
+                let device = window.scale_factor();
+                let ratio = RENDER_RATIO.with(|r| r.get()).min(device).max(0.1);
+                return winit::dpi::PhysicalSize::new(
+                    ((rect.width() * ratio).round() as u32).max(1),
+                    ((rect.height() * ratio).round() as u32).max(1),
+                );
+            }
+        }
+    }
+    window.inner_size()
 }
 
 fn publish_ui_state(text: &str) {
