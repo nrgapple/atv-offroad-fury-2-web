@@ -650,6 +650,7 @@ measured comparison). Parity above is with the JavaScript build.
 | `atv-render/blood.rs`, `atv-game/crash.rs` | Crazy/Gorn crash breakup, ragdoll and blood | authored browser feature with no original counterpart (the original crash is the wreck animation, kept under Original) | Keep (option) |
 | `atv-game/src/audio/synth.rs` `crash_boom`, `atv-app/src/sound.rs` | Crazy/Gorn crash boom: a synthesised 95→28 Hz thump with filtered noise for severity ≥ 40, 0.3 s cooldown, as audio.js `crashBoom` | authored browser feature with no original sample (Original crash mode plays only the disc's wreck sounds) | Keep (option) |
 | `atv-app/src/soundtrack.rs` `vag_fallback` | the web soundtrack streams hosted AAC; when a stream is missing or fails it decodes the disc's VAG pair onto the music bus instead (music.js fallback) | the original streams the VAG soundtrack from disc; the AAC stream is a browser bandwidth stand-in | No (AAC kept on the web) |
+| `atv-app/src/gamepad.rs` `pinned`, `standard` | Controller Settings pins a pad by name, then by gilrs's pad index; the browser game stores the Gamepad API index, so a pin saved there matches by name only. Mapping: the browser's empty `mapping` on the web, gilrs without a layout on desktop. | authored browser feature: the original ControllerSelect page lets each of four players claim a pad with ×; one rider per browser makes Auto stand in for it | Keep (authored input) |
 
 ## UI stand-ins to move toward original rendering
 

@@ -196,6 +196,9 @@ enum ArtPiece {
         Option<atv_ui::front::assets::MenuRider>,
     ),
     MenuRider(u16, atv_ui::front::assets::MenuRider),
+    /// The original Profile Store gear catalog (Rider Gear's rows).
+    GearCatalog(Vec<atv_core::rider_gear::Category>),
+    RiderMaterials(Vec<u8>),
 }
 
 /// Load-time choices kept for rides started from the frontend.
@@ -755,9 +758,13 @@ impl App {
         let started = Instant::now();
         let ms = (now - self.started).as_secs_f64() * 1000.;
         let active = !riding.paused && !riding.held && focused;
+        self.gamepad
+            .set_pin(riding.bindings.tuning.selected.clone());
         let pad = self.gamepad.sample();
         if let Some(overlay) = &mut self.overlay {
             overlay.pad_name = self.gamepad.name();
+            overlay.pads = self.gamepad.connected();
+            overlay.pad_standard = self.gamepad.standard();
             overlay.sync_menu(riding.paused && !riding.held);
             riding.menu_open = overlay.menu.is_some();
             if riding.menu_open
@@ -2728,6 +2735,14 @@ impl ApplicationHandler<Message> for App {
                         ArtPiece::MenuRider(rider, model) => {
                             front.art.menu_riders.insert(rider, model);
                         }
+                        ArtPiece::GearCatalog(catalog) => {
+                            front.state.gear_catalog = catalog;
+                            let view = front.view;
+                            front.state.refresh(&view);
+                        }
+                        ArtPiece::RiderMaterials(bytes) => {
+                            front.art.rider_materials = Some(std::rc::Rc::new(bytes));
+                        }
                     }
                 }
                 self.wake();
@@ -3246,13 +3261,23 @@ impl App {
         gpu.resize(size.width, size.height);
         let view = overlay::viewport(size.width, size.height, window.scale_factor());
         let tracks = boot.tracks.clone();
-        let front = front::Front::new(
+        let mut front = front::Front::new(
             &gpu.device,
             gpu.config.format,
             view,
             boot.tracks,
             boot.backdrop,
         );
+        // Each course's race archive is offered once its record exists
+        // (frontend.js `raceCourses`).
+        let race_courses = atv_game::launch::environments()
+            .into_iter()
+            .filter(|id| {
+                atv_game::launch::course_resource(id, true)
+                    .is_ok_and(|r| content.manifest.record(&r.archive).is_some())
+            })
+            .collect();
+        front.state.set_race_courses(race_courses, &view);
         self.front = Some(Rc::new(RefCell::new(front)));
         self.gpu = Some(gpu);
         self.content = Some(content.clone());
@@ -3276,6 +3301,15 @@ impl App {
         self.spawn(
             async move { atv_ui::front::assets::photos(&c, &tracks).await },
             |result| Message::FrontArt(Box::new(ArtPiece::Photos(result.unwrap_or_default()))),
+        );
+        let c = content.clone();
+        self.spawn(
+            async move { atv_game::ride::gear::catalog(&c).await },
+            |result| match result {
+                Ok(Some(catalog)) => Message::FrontArt(Box::new(ArtPiece::GearCatalog(catalog))),
+                Ok(None) => Message::Notice(String::new()),
+                Err(error) => Message::SoundFailed(format!("Rider gear: {error}")),
+            },
         );
         let c = content.clone();
         self.spawn(
@@ -3319,9 +3353,13 @@ impl App {
             return;
         }
         if let Some(page) = atv_game::launch::menu_shortcut(&start.search) {
-            // Without the race setup page (gap 1), Single Player.
-            f.state
-                .show(if page == "race" { "single" } else { page }, &view);
+            // "Single Race" opens the race setup when the content has races.
+            let page = if page == "race" && f.state.race_courses.is_empty() {
+                "single"
+            } else {
+                page
+            };
+            f.state.show(page, &view);
             return;
         }
         let tracks: Vec<(String, String)> = f
@@ -3397,7 +3435,20 @@ impl App {
             return;
         }
         let race = setup.activity == "race";
-        f.state.show(if race { "single" } else { "tracks" }, &view);
+        if race && !f.state.race_courses.is_empty() {
+            // Only race links change the race setup (frontend.js).
+            f.state.show_race(
+                atv_ui::front::controller::RaceSetup {
+                    course: setup.map.clone(),
+                    laps: setup.race.laps,
+                    cpu: setup.race.cpu,
+                    difficulty: setup.race.difficulty,
+                },
+                &view,
+            );
+        } else {
+            f.state.show(if race { "single" } else { "tracks" }, &view);
+        }
         if !setup.play {
             return;
         }
@@ -3432,6 +3483,25 @@ impl App {
                 quad,
                 rider,
             } => self.start_ride(environment, quad, rider, None, None),
+            Event::Race {
+                environment,
+                quad,
+                rider,
+                laps,
+                cpu,
+                difficulty,
+            } => {
+                let settings = atv_game::ride::race::Settings {
+                    laps,
+                    cpu: cpu as usize,
+                    difficulty,
+                    // A new roster draw per load, as the browser draws one.
+                    seed: fresh_seed(),
+                    ..Default::default()
+                };
+                self.start_ride(environment, quad, rider, Some(settings), None);
+            }
+            Event::CopyRaceLink => self.copy_race_link(),
             Event::FreeRide { quad, rider, name } => {
                 let Some(relay) = self.defaults.as_ref().map(|d| d.relay.clone()) else {
                     return;
@@ -3660,6 +3730,58 @@ impl App {
 
     /// Free Ride Lobby → Copy invite link (multiplayer.js `inviteUrl`), once
     /// the room's code is known.
+    /// Single Race → Copy ride link (frontend.js `rideUrl` for the race
+    /// page): the setup's race link, on the clipboard or the notice line.
+    fn copy_race_link(&mut self) {
+        let Some(front) = self.front.clone() else {
+            return;
+        };
+        let mut f = front.borrow_mut();
+        let player = f.state.player_name.trim().to_string();
+        let player = if player.is_empty() {
+            "Rider".to_string()
+        } else {
+            player
+        };
+        #[cfg(target_arch = "wasm32")]
+        let page = web_sys::window()
+            .and_then(|w| {
+                let l = w.location();
+                Some(format!("{}{}", l.origin().ok()?, l.pathname().ok()?))
+            })
+            .unwrap_or_default();
+        #[cfg(not(target_arch = "wasm32"))]
+        let page = "https://furyremastered.com/engine.html".to_string();
+        let race = f.state.race.clone();
+        let url = atv_game::launch::ride_url(
+            &page,
+            &atv_game::launch::RideLink {
+                map: &race.course,
+                quad: f.state.quad_id,
+                rider: f.state.rider_id,
+                player: &player,
+                race: Some((race.laps, race.cpu as usize, race.difficulty, false, false)),
+                room: None,
+            },
+        );
+        f.state.notice = Some(url.clone());
+        #[cfg(target_arch = "wasm32")]
+        if let Some(clipboard) = web_sys::window().map(|w| w.navigator().clipboard()) {
+            let promise = clipboard.write_text(&url);
+            let proxy = self.proxy.clone();
+            wasm_bindgen_futures::spawn_local(async move {
+                let copied = wasm_bindgen_futures::JsFuture::from(promise).await.is_ok();
+                let _ = proxy.send_event(Message::LobbyNotice(if copied {
+                    "Ride link copied.".into()
+                } else {
+                    url
+                }));
+            });
+        }
+        drop(f);
+        self.wake();
+    }
+
     fn copy_lobby_invite(&mut self) {
         let Some(front) = self.front.clone() else {
             return;
@@ -3994,9 +4116,13 @@ impl App {
             return;
         };
         let started = Instant::now();
+        let pin = front.borrow().pad_pin();
+        self.gamepad.set_pin(pin);
         let pad = self.gamepad.sample();
         let mut f = front.borrow_mut();
         f.pad_name = self.gamepad.name();
+        f.pads = self.gamepad.connected();
+        f.pad_standard = self.gamepad.standard();
         let event = f.pad(pad.as_ref());
         paint_front(gpu, &mut f);
         #[cfg(target_arch = "wasm32")]
@@ -4091,6 +4217,19 @@ impl App {
                                     Message::FrontArt(Box::new(ArtPiece::Vehicle(quad, model, rider)))
                                 }
                                 Err(error) => Message::SoundFailed(format!("Model preview: {error}")),
+                            },
+                        );
+                    }
+                }
+                front::Want::RiderMaterials => {
+                    if self.requested.insert("rider-materials".into()) {
+                        self.spawn(
+                            async move { content.file("/RIDER/RIDER_MT.RES").await },
+                            |result| match result {
+                                Ok(bytes) => {
+                                    Message::FrontArt(Box::new(ArtPiece::RiderMaterials(bytes)))
+                                }
+                                Err(error) => Message::SoundFailed(format!("Rider gear: {error}")),
                             },
                         );
                     }

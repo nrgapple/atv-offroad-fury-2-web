@@ -23,12 +23,11 @@ on the deletion list. The gaps below are about wiring them to the Rust page.
 
 These would regress players at switch-over. Highest impact first.
 
-1. **No race from the menus.** Single Player has no Race row or race setup page
-   (course tabs, laps, CPU count, difficulty, Start). Two settings hide it: `race`
-   is in `UNSUPPORTED` (atv-ui/src/front/controller.rs) and `race_available: false`.
-   - Races start only from links.
-   - The manifest's "Single Race" shortcut (`?menu=race`) lands on Single Player.
-   - A race link with `play=0` cannot show its setup.
+1. ~~**No race from the menus.**~~ Closed: Single Player → Race opens the race
+   setup (event tabs and course list, laps, CPU riders, difficulty, preview arrows,
+   Start Race, Copy ride link), and the last started race is remembered.
+   `?menu=race` opens it, and a race link with `play=0` shows its setup
+   (`tools/test_engine_race_gear.mjs`).
 2. ~~**iPhone silent switch.**~~ Closed: `sound::sync_audio_session` sets
    `navigator.audioSession.type` (`playback`, or `ambient` for Silent switch → mute)
    and Settings → Extras shows the row where the session exists
@@ -52,9 +51,9 @@ These would regress players at switch-over. Highest impact first.
    once the context is restored, reopens the current ride's link (`fury-resume`,
    written by the engine; a room's invite rejoins its slot). Difference: game.js
    rebuilt in place and kept the ride's position; a single-player ride restarts.
-6. **Rider Gear page.** Gear and quad paint cannot be edited (`gear` is in
-   `UNSUPPORTED`). Saved gear still dresses the ride, but the garage previews show
-   stock gear and paint.
+6. ~~**Rider Gear page.**~~ Closed: Garage → Rider gear steps the Profile Store
+   catalog and the quad paint. The garage and gear previews show the saved paint and
+   the menu rider in the chosen gear.
 7. ~~**Sound mode at ride start.**~~ Closed: played rides use the saved mode,
    Enhanced by default; `?sound=` wins and scripted rides keep Original.
 8. **No adaptive render resolution.** JS caps device pixel ratio at 1.5 and steps to
@@ -77,16 +76,18 @@ These would regress players at switch-over. Highest impact first.
 13. ~~**Race intro skip**~~ Closed: a click or tap off the toolbar and a new pad
     press skip it too.
 14. **Smaller regressions.**
-    - Controller pinning (`padselect` does nothing): it matters when an idle
-      virtual pad steals Auto.
+    - ~~Controller pinning (`padselect` does nothing).~~ Closed: Controller
+      cycles Auto and each connected pad; a pinned pad drives while connected.
     - ~~The Fullscreen row shows even where the Fullscreen API is missing (iPhone).~~
       Closed: shown only where `document.fullscreenEnabled`.
     - ~~CPU racers and remote riders get no contact shadows and cast no High
       shadow-map shadows.~~ Closed: contact blobs within 240 ft and the shadow map
       within 40 ft, as game.js.
-    - No buzz when a touch flip arms.
+    - ~~No buzz when a touch flip arms.~~ Closed: `vibrate(12)` once per armed
+      zone where the binding exists.
     - No menu page transitions.
-    - Non-standard pads get standard glyphs.
+    - ~~Non-standard pads get standard glyphs.~~ Closed: an empty browser
+      `mapping` (desktop: no gilrs layout) shows "Button N / Axis N".
     - ~~Ride prefetch is serial.~~ Closed: `Content::prefetch` (game.js
       `prefetchRide`). With 150 ms request latency, env01 loaded in 4.6-5.2 s
       against 5.8-6.4 s serial (host-only).
@@ -236,10 +237,10 @@ In progress elsewhere, not counted as gaps: the diagnostics overlay (F3).
 |---|---|---|---|
 | Title, main menu, Free Ride "N riding" count, Dev log (web) | Ported | atv-ui/src/front (#210) | |
 | Main-menu Jukebox | Ported | front.rs, soundtrack.rs | |
-| Single Player → Race setup page | Missing | `UNSUPPORTED` | Blocking 1 |
+| Single Player → Race setup page | Ported | front/controller.rs, front/mod.rs | |
 | Freestyle course select (tabs, photos, hero, keys, LB/RB) | Ported | front/mod.rs, controller.rs | |
-| Garage (46 vehicles, rider, stats, 3D previews, ATV-only online) | Ported | front, app/front.rs (#254) | Previews lack gear/paint |
-| Rider Gear page | Missing | `UNSUPPORTED` | Blocking 6 |
+| Garage (46 vehicles, rider, stats, 3D previews, ATV-only online) | Ported | front, app/front.rs (#254) | Previews wear the saved gear and paint |
+| Rider Gear page | Ported | front/controller.rs `step_gear`, preview.wgsl paint | |
 | Host/Join forms, validation, motorcycle refusal | Ported | front/controller.rs (#241, #254) | |
 | Free Ride Lobby page while connecting, then its riders | Ported | #268, this PR | |
 | Loading screen (shots, tips, staged bar) | Ported | controller.rs `loading_stage` | |
@@ -249,7 +250,7 @@ In progress elsewhere, not counted as gaps: the diagnostics overlay (F3).
 | Display → Fullscreen | Partial | lib.rs | Always shown |
 | Extras → Silent switch | Missing | — | Blocking 2 |
 | Audio page song list and paging | Ported | menu/controller.rs | |
-| Controller Settings → pin a controller | Partial | `padselect` no-op | Blocking 14 |
+| Controller Settings → pin a controller | Ported | menu/controller.rs, app/gamepad.rs | |
 | Binding capture, presets, reset | Ported | menu/controller.rs | |
 | Page slide transitions | Missing | — | Cosmetic |
 | `atv-player-selection` persistence | Ported | controller.rs `save` | |
@@ -272,15 +273,15 @@ In progress elsewhere, not counted as gaps: the diagnostics overlay (F3).
 |---|---|---|---|
 | One-finger compass, trick wheel, two-finger layout, flips, arcade spin | Ported | atv-ui/src/touch (#191) | |
 | Coaching, idle hints, sensitivity, one-handed | Ported | touch/mod.rs | |
-| Flip-armed `vibrate(12)` | Missing | — | Minor |
+| Flip-armed `vibrate(12)` | Ported | touch/mod.rs `flip_buzz` | |
 | 17 actions, defaults, chords, migration, presets, trick grace (`atv2-gameplay-bindings-v1`) | Ported | ride/bindings.rs (#182) | |
 | Storage-failure notice | Unverified | — | |
 | Pad Auto selection | Partial | app/gamepad.rs (gilrs) | No resting-axis baseline |
-| Pin a pad by name | Missing | — | Blocking 14 |
+| Pin a pad by name | Ported | gamepad.rs `pinned` | Matched by name, then gilrs index (not the browser index) |
 | Tuning sliders, deadzone (`atv2-controller-v1`) | Ported | bindings.rs `Tuning` | |
 | Pads with more than 17 buttons or 4 axes | Partial | gamepad.rs | Standard set only |
 | Glyphs and controller summary | Ported | menu/glyphs.rs (#230) | |
-| Non-standard pads as "Button N / Axis N" | Partial | — | Always standard |
+| Non-standard pads as "Button N / Axis N" | Ported | gamepad.rs `standard` | |
 
 ### multiplayer.js
 
