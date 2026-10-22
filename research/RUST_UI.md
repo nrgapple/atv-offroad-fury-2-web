@@ -523,8 +523,17 @@ throttle on Original after the spawn drop gave 50, 45 and 29 particles per landi
 in both games (`private/reports/rust-ui/alpha-landing/env05-{rust-web,javascript}.png`);
 `tools/test_engine_alpha_landing.mjs` (burst, thumps and soiling on, none off).
 
+- Air dark blur: `atv-render` `air_blur.rs`/`.wgsl` port AirBlurRenderer. While
+  `hype.blur` exceeds 0.002 the frame (after speed rush) renders into a texture that
+  the pass draws with ten zoom taps towards the centre, 45% edge desaturation and up
+  to 70% edge darkening, before the UI. Host Chromium ENV05 jump at 37 mph:
+  `private/reports/rust-ui/air-blur/env05-{rust-web,javascript}.png` (blur 0.83 /
+  0.90); `tools/test_engine_air_blur.mjs` (drawn when on, 0 when off while the
+  director still measures air). Costs one full-screen copy and ten taps per pixel
+  only during big air.
+
 Not run yet (rows listed, saved, no effect in the Rust ride): Speed & air muffle (the
-music lowpass and wind loop) and Air dark blur (screen pass). Evidence: `atv-game` unit test (a launched 40 ft/s jump fires
+music lowpass and wind loop). Evidence: `atv-game` unit test (a launched 40 ft/s jump fires
 one apex, one slow motion reaching 0.3x and a landing over 30 ft/s);
 `tools/test_engine_alpha.mjs` (rows, saved toggles, applied ride flags); the presenter
 and interpolation tests are unchanged at scale 1. Host only.

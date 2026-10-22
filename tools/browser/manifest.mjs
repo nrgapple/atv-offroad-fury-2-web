@@ -39,6 +39,7 @@ export const TESTS = {
   'test_engine_pause.mjs': { group: 'content' },
   'test_engine_alpha.mjs': { group: 'content' },
   'test_engine_alpha_landing.mjs': { group: 'content' },
+  'test_engine_air_blur.mjs': { group: 'content' },
   'test_engine_settings.mjs': { group: 'content' },
   'test_engine_wake_lock.mjs': { group: 'content' },
   'test_engine_jukebox.mjs': { group: 'content' },
