@@ -10,7 +10,9 @@ use crate::{
     settings::Settings,
     text::{Font, Fonts, Join, Shape, Stroke, TextStyle},
 };
-use input::{FLIPS, Mode, OUTER_DISTANCE, Sample, TRICK_WHEEL, TouchInput, TouchLeanIntent};
+use input::{
+    FLIP_DWELL, FLIPS, Mode, OUTER_DISTANCE, Sample, TRICK_WHEEL, TouchInput, TouchLeanIntent,
+};
 
 const COACH_RIDES: u32 = 3;
 const COACH_WHEEL: u32 = 5;
@@ -42,6 +44,32 @@ pub struct Feedback {
     pub flip_launch_window: bool,
     pub stunt_name: Option<String>,
 }
+
+/// touch.js `oneHandedFeedback`: the compass thumb and its cue.
+#[derive(Clone, Debug, Default, PartialEq)]
+struct Compass {
+    steer: f32,
+    lean: f32,
+    cue: &'static str,
+    /// The cue promises a flip: gold and larger (`data-flip=true`).
+    armed: bool,
+    /// The flip-zone arcs show (`data-flips-ready`): a lift could flip, or
+    /// Arcade spins in the air.
+    ready: bool,
+    /// The entered zone (a `FLIPS` index) and its fill, 0..=1: the dwell so
+    /// far, or the Arcade 360 rate.
+    zone: Option<usize>,
+    progress: f32,
+    /// Arcade airborne: only the two side arcs (`data-spin-zones`).
+    spin_zones: bool,
+}
+
+/// Compass flip-zone arcs (touch.js `FLIP_ARCS`), by `FLIPS` index: centre
+/// angle in degrees clockwise from three o'clock, ±30° wide, radius 55 in
+/// the 96-unit ring.
+const FLIP_ARCS: [f32; 3] = [90., 180., 0.];
+const FLIP_ARC_RADIUS: f32 = 55.;
+const FLIP_ARC_HALF: f32 = 30.;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Preload {
@@ -400,8 +428,7 @@ impl TouchControls {
             self.flip_buzzed = None;
             return false;
         }
-        let (.., armed) = self.one_handed_state(now);
-        let zone = self.input.pointer.as_ref().and_then(|p| p.flip);
+        let Compass { armed, zone, .. } = self.one_handed_state(now);
         if !armed {
             self.flip_buzzed = None;
             return false;
@@ -413,23 +440,48 @@ impl TouchControls {
         false
     }
 
-    /// `oneHandedFeedback`: compass position and cue without sampling.
-    fn one_handed_state(&self, now: f64) -> (f32, f32, String, bool) {
+    /// `oneHandedFeedback`: compass position, cue and flip-zone arcs
+    /// without sampling.
+    fn one_handed_state(&self, now: f64) -> Compass {
         let input = &self.input;
         let Some(p) = &input.pointer else {
-            return (0., 0., String::new(), false);
+            return Compass::default();
         };
         let frame = self.last.clone().unwrap_or_default();
         let current = frame
             .applied_touch
             .is_some_and(|(g, held)| g == input.generation && held);
+        // Only promise a flip when lifting now would start one.
         let can_launch = input.flips
+            && input.one_handed
             && (frame.preload_armed || frame.preload_active || frame.flip_launch_window);
         let flip = (can_launch && p.flip_armed(now))
             .then_some(p.flip)
             .flatten();
         let steer = input::steering_axis(p.current_x - p.x, input.steering_sensitivity);
         let lean = ((p.current_y - p.y) / 70.).clamp(-1., 1.);
+        // Arcade in the air: the side arcs mark where the 360 starts and
+        // fill with its rate.
+        if input.arcade && input.one_handed && input.airborne {
+            let spin = input::arcade_spin_axis(p.current_x - p.x, input.steering_sensitivity);
+            let (zone, cue) = if spin < 0. {
+                (Some(1), "SPIN ← 360")
+            } else if spin > 0. {
+                (Some(2), "SPIN 360 →")
+            } else {
+                (None, "LEAN · FLIP")
+            };
+            return Compass {
+                steer,
+                lean,
+                cue,
+                armed: false,
+                ready: true,
+                zone,
+                progress: spin.abs(),
+                spin_zones: true,
+            };
+        }
         let reverse = input
             .secondary
             .as_ref()
@@ -451,7 +503,23 @@ impl TouchControls {
         } else {
             "DRIVE · BRACE"
         };
-        (steer, lean, cue.into(), flip.is_some())
+        // Compass arming feedback: the entered zone and the dwell so far.
+        let zone = can_launch.then_some(p.flip).flatten();
+        let progress = if zone.is_some() {
+            ((now - p.flip_since) / FLIP_DWELL).min(1.) as f32
+        } else {
+            0.
+        };
+        Compass {
+            steer,
+            lean,
+            cue,
+            armed: flip.is_some(),
+            ready: can_launch,
+            zone,
+            progress,
+            spin_zones: false,
+        }
     }
 
     pub fn paint(&mut self, active: bool, now: f64, fonts: &mut Fonts, list: &mut DisplayList) {
@@ -540,6 +608,7 @@ impl TouchControls {
         coach: bool,
     ) {
         let one = self.input.one_handed;
+        let state = self.one_handed_state(now);
         let [cx, cy] = self.marker;
         let s = size * scale;
         let rect = Rect::new(cx - s / 2., cy - s / 2., s, s);
@@ -667,17 +736,16 @@ impl TouchControls {
         if alpha > 0. {
             list.push(Item::Box(ring(38.5, width, preload_color.fade(alpha))));
         }
+        if one {
+            paint_flip_arcs(list, &state, cx, cy, rk);
+        }
         // Children hidden after release (visibility: hidden on i, b, em).
         if !self.held {
-            if one {
-                self.paint_cue(fonts, list, rect, k, coach);
-            } else {
-                self.paint_cue(fonts, list, rect, k, false);
-            }
+            self.paint_cue(fonts, list, &state, rect, k, one && coach);
             list.unopacity();
             return;
         }
-        let (steer, lean, _, _) = self.one_handed_state(now);
+        let Compass { steer, lean, .. } = state;
         if one && coach {
             let line = Color::hex("#b9b9b938");
             list.rect(rect_at(at(47., 16.), 2. * k, 64. * k), line);
@@ -752,7 +820,7 @@ impl TouchControls {
             ],
             ..Default::default()
         }));
-        self.paint_cue(fonts, list, rect, k, one && coach);
+        self.paint_cue(fonts, list, &state, rect, k, one && coach);
         list.unopacity();
     }
 
@@ -760,15 +828,18 @@ impl TouchControls {
         &self,
         fonts: &mut Fonts,
         list: &mut DisplayList,
+        state: &Compass,
         rect: Rect,
         k: f32,
         coach: bool,
     ) {
         let one = self.input.one_handed;
-        let (_, _, state_cue, armed) = self.one_handed_state(0.);
+        // An armed flip cue turns gold and larger (`data-flip=true`).
+        let armed = one && state.armed;
         let cue = if one {
-            if !state_cue.is_empty() {
-                state_cue
+            // The release burst keeps naming achieved preload after the lift.
+            if !state.cue.is_empty() {
+                state.cue.into()
             } else if self.preload == Preload::Active {
                 "PRELOADED".into()
             } else {
@@ -1033,6 +1104,84 @@ fn centered(
     }
 }
 
+/// Compass flip-zone arcs (touch.css `.touch-flip-zone`, `.touch-flip-fill`):
+/// faint gold arcs outside the rim while a lift could flip (only the side
+/// pair for Arcade spins); the entered arc fills over the dwell (or with
+/// the 360 rate) in 1/20 steps like touch.js `present`.
+fn paint_flip_arcs(list: &mut DisplayList, state: &Compass, cx: f32, cy: f32, unit: f32) {
+    if !state.ready {
+        return;
+    }
+    let arc = |zone: usize, fraction: f32, width: f32, fill: Color, glow: bool| {
+        let a0 = (FLIP_ARCS[zone] - FLIP_ARC_HALF).to_radians();
+        let sweep = (2. * FLIP_ARC_HALF).to_radians() * fraction;
+        Item::Shape {
+            shape: Shape {
+                path: arc_path(FLIP_ARC_RADIUS, width, a0, sweep),
+                bounds: arc_bounds(FLIP_ARC_RADIUS, width, a0, sweep),
+                unit,
+                fill,
+                stroke: None,
+                // filter: drop-shadow(0 0 3px #e5d360) in ring units.
+                drop_shadow: glow.then_some(crate::text::Shadow {
+                    dx: 0.,
+                    dy: 0.,
+                    blur: 3. * unit,
+                    color: GOLD,
+                }),
+            },
+            x: cx,
+            y: cy,
+            rotation: 0.,
+        }
+    };
+    for zone in 0..FLIP_ARCS.len() {
+        if state.spin_zones && zone == 0 {
+            continue;
+        }
+        // stroke: gold, width 3, opacity .35.
+        list.push(arc(zone, 1., 3., GOLD.fade(0.35), false));
+    }
+    if let Some(zone) = state.zone {
+        // stroke: gold-light, width 5; dasharray `progress * 100 / 6`.
+        let progress = (state.progress.clamp(0., 1.) * 20.).round() / 20.;
+        list.push(arc(zone, progress, 5., GOLD_LIGHT, true));
+    }
+}
+
+/// An SVG `stroke-linecap: round` arc of radius `r` as a filled outline:
+/// `sweep` radians clockwise from `a0`. A zero sweep leaves the round-cap
+/// dot a zero-length dash draws.
+fn arc_path(r: f32, width: f32, a0: f32, sweep: f32) -> String {
+    let (outer, inner, cap) = (r + width / 2., r - width / 2., width / 2.);
+    let a1 = a0 + sweep;
+    let at = |r: f32, a: f32| format!("{:.3} {:.3}", r * a.cos(), r * a.sin());
+    if sweep <= 1e-4 {
+        return format!(
+            "M{}A{cap} {cap} 0 0 1 {}A{cap} {cap} 0 0 1 {}Z",
+            at(outer, a0),
+            at(inner, a0),
+            at(outer, a0)
+        );
+    }
+    let large = (sweep > std::f32::consts::PI) as u8;
+    format!(
+        "M{}A{outer} {outer} 0 {large} 1 {}A{cap} {cap} 0 0 1 {}A{inner} {inner} 0 {large} 0 {}A{cap} {cap} 0 0 1 {}Z",
+        at(outer, a0),
+        at(outer, a1),
+        at(inner, a1),
+        at(inner, a0),
+        at(outer, a0)
+    )
+}
+
+/// `arc_path` bounds: the annular sector plus the round caps.
+fn arc_bounds(r: f32, width: f32, a0: f32, sweep: f32) -> [f32; 4] {
+    let cap = width / 2.;
+    let [x0, y0, x1, y1] = sector_bounds(a0 + sweep / 2., sweep / 2., r - cap, r + cap, 0.);
+    [x0 - cap, y0 - cap, x1 + cap, y1 + cap]
+}
+
 fn rect_at(at: [f32; 2], w: f32, h: f32) -> Rect {
     Rect::new(at[0], at[1], w, h)
 }
@@ -1132,5 +1281,136 @@ mod tests {
         assert!(!touch.flip_buzz(350.));
         touch.moved(1, 195., 530., 360.);
         assert!(touch.flip_buzz(700.));
+    }
+
+    /// One-handed controls held at (195, 400) with a lift able to flip.
+    fn armed_ride(settings: &mut Settings) -> TouchControls {
+        let mut touch = TouchControls::new(settings, true);
+        touch.set_viewport(390., 844.);
+        touch.input.flips = true;
+        touch.feedback(
+            Feedback {
+                grounded: [true; 4],
+                preload_armed: true,
+                ..Default::default()
+            },
+            0.,
+        );
+        assert!(touch.down(1, 195., 400., 0., true, settings));
+        touch
+    }
+
+    fn painted(touch: &mut TouchControls, now: f64) -> DisplayList {
+        let mut list = DisplayList::default();
+        touch.paint(true, now, &mut Fonts::new(), &mut list);
+        list
+    }
+
+    fn cue(list: &DisplayList) -> Option<(String, Color, f32)> {
+        list.items.iter().find_map(|item| match item {
+            Item::Text { text, style, .. } if text.contains("LIFT") || text.contains('·') => {
+                Some((text.clone(), style.color, style.font.size))
+            }
+            _ => None,
+        })
+    }
+
+    /// Flip-zone arcs as (path, glowing fill).
+    fn arcs(list: &DisplayList) -> Vec<(String, bool)> {
+        list.items
+            .iter()
+            .filter_map(|item| match item {
+                Item::Shape { shape, .. } if shape.stroke.is_none() => {
+                    Some((shape.path.clone(), shape.drop_shadow.is_some()))
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn the_armed_flip_cue_paints_gold_at_the_real_time() {
+        let mut settings = Settings::memory();
+        let mut touch = armed_ride(&mut settings);
+        // Pull down into the backflip zone at 20 ms.
+        touch.moved(1, 195., 530., 20.);
+        let list = painted(&mut touch, 100.);
+        assert_eq!(
+            cue(&list),
+            Some(("LIFT FOR PRELOAD".into(), Color::WHITE, 10.)),
+            "not armed before the dwell"
+        );
+        let list = painted(&mut touch, 300.);
+        assert_eq!(
+            cue(&list),
+            Some(("LIFT → BACKFLIP".into(), GOLD_LIGHT, 11.))
+        );
+    }
+
+    #[test]
+    fn the_entered_flip_arc_fills_over_the_dwell() {
+        let mut settings = Settings::memory();
+        let mut touch = armed_ride(&mut settings);
+        // No zone entered: three faint arcs, no fill.
+        let state = touch.one_handed_state(10.);
+        assert!(state.ready && state.zone.is_none());
+        let list = painted(&mut touch, 10.);
+        assert_eq!(arcs(&list).iter().filter(|(_, glow)| !glow).count(), 3);
+        assert!(!arcs(&list).iter().any(|(_, glow)| *glow));
+        touch.moved(1, 195., 530., 20.);
+        // Half the 220 ms dwell in: the backflip arc is half filled.
+        let state = touch.one_handed_state(130.);
+        assert_eq!(state.zone, Some(0));
+        assert!((state.progress - 0.5).abs() < 1e-6);
+        assert!(!state.armed);
+        let fill = arc_path(55., 5., 60f32.to_radians(), 30f32.to_radians());
+        let list = painted(&mut touch, 130.);
+        assert!(arcs(&list).contains(&(fill, true)));
+        // Full after the dwell, and capped there.
+        assert_eq!(touch.one_handed_state(600.).progress, 1.);
+        let full = arc_path(55., 5., 60f32.to_radians(), 60f32.to_radians());
+        assert!(arcs(&painted(&mut touch, 600.)).contains(&(full, true)));
+        // No arcs when a lift could not flip.
+        touch.feedback(
+            Feedback {
+                grounded: [true; 4],
+                ..Default::default()
+            },
+            610.,
+        );
+        assert!(!touch.one_handed_state(620.).ready);
+        assert!(arcs(&painted(&mut touch, 620.)).is_empty());
+    }
+
+    #[test]
+    fn arcade_spins_in_the_air_show_side_arcs_and_spin_cues() {
+        let mut settings = Settings::memory();
+        let mut touch = TouchControls::new(&settings, true);
+        touch.set_viewport(390., 844.);
+        touch.input.arcade = true;
+        assert!(touch.down(1, 195., 400., 0., true, &mut settings));
+        touch.feedback(Feedback::default(), 5.);
+        assert!(touch.input.airborne);
+        let state = touch.one_handed_state(10.);
+        assert_eq!((state.cue, state.zone), ("LEAN · FLIP", None));
+        assert!(state.ready && state.spin_zones && !state.armed);
+        // The backflip arc hides; only the two side arcs remain.
+        let list = painted(&mut touch, 10.);
+        assert_eq!(arcs(&list).len(), 2);
+        assert_eq!(cue(&list), Some(("LEAN · FLIP".into(), Color::WHITE, 10.)));
+        // Half way up the 50 px ramp past the side reach to the left.
+        let reach = 105f32.max(70. * 100. / touch.input.steering_sensitivity * 1.3);
+        touch.moved(1, 195. - reach - 25., 400., 20.);
+        let state = touch.one_handed_state(30.);
+        assert_eq!((state.cue, state.zone), ("SPIN ← 360", Some(1)));
+        assert!((state.progress - 0.5).abs() < 1e-3);
+        let fill = arc_path(55., 5., 150f32.to_radians(), 30f32.to_radians());
+        assert!(arcs(&painted(&mut touch, 30.)).contains(&(fill, true)));
+        touch.moved(1, 195. + reach + 80., 400., 40.);
+        let state = touch.one_handed_state(50.);
+        assert_eq!((state.cue, state.zone), ("SPIN 360 →", Some(2)));
+        assert_eq!(state.progress, 1.);
+        // Spin cues never buzz or turn gold.
+        assert!(!touch.flip_buzz(60.));
     }
 }

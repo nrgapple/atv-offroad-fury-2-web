@@ -190,10 +190,10 @@ In progress elsewhere, not counted as gaps: the diagnostics overlay (F3).
 | Hosted-content ride load | Ported | lib.rs `prepare`, atv-game/src/ride/load.rs | |
 | Toolbar Pause/Camera (+ Keys) | Ported | atv-ui/src/hud/toolbar.rs (#191, #196) | |
 | Reset ATV; race reset to last track point | Ported | ride/mod.rs `reset`, riding.rs | Pause → Restart Race in a race reloads the event, also after the finish |
-| Fullscreen | Ported | lib.rs `Event::Fullscreen` (#202) | Settings row |
+| Fullscreen | Ported | lib.rs `toggle_fullscreen` (#202) | Settings row. The web fullscreens the document element, as frontend.js does, so the Host/Join inputs, install banner and status line stay visible; desktop goes borderless |
 | Keyboard driving, bindings, mouse-drag orbit | Ported | ride/bindings.rs, riding.rs | |
 | Race intro skip | Partial | ride/race.rs `skip_intro` | Keyboard only (blocking 13) |
-| Pause on blur/hidden/menu; rooms keep simulating | Ported | lib.rs `sync_activity` | |
+| Pause on blur/hidden/menu; rooms keep simulating | Ported | lib.rs `sync_activity` | Web focus is the window's `focus`/`blur` (`Message::PageFocus`), not the canvas's: a Host/Join input or the install banner taking focus pauses nothing. Leaving a field (Enter, Escape, Tab) returns the keyboard to the canvas |
 | bfcache pagehide/pageshow | Ported | lib.rs `resumed`, sound.rs (#191, #262) | |
 | WebGL context-loss rebuild | Ported | atv-app context.rs, `SceneRenderer::rebuild`, `Overlay::rebuild_gpu` | In place on WebGL2 (wgpu has no WebGPU backend in this build); desktop device loss reopens the ride (blocking 5) |
 | Adaptive render resolution | Ported | atv-app render_scale.rs | Also desktop on Metal and DX12 (PERFORMANCE.md) |
@@ -254,19 +254,19 @@ In progress elsewhere, not counted as gaps: the diagnostics overlay (F3).
 
 | Behaviour | Rust | Where | Notes |
 |---|---|---|---|
-| Title, main menu, Free Ride "N riding" count, Dev log (web) | Ported | atv-ui/src/front (#210) | |
+| Title, main menu, Free Ride "N riding" count, Dev log (web) | Ported | atv-ui/src/front (#210) | Idle menus poll the pad at display rate (buttons and stick past ±0.55, as frontend.js every frame) and draw only when its input changes (`paused_tick`, `tools/test_engine_menu_flows.mjs`). Tab/Shift+Tab walk the fields and every choice; Back opens a page on its first row; Start also takes the rebound controller Pause; a held button acts only after a release once focus returns (`padBlocked`). Deliberate difference: W/A/S/D also navigate the menus |
 | Main-menu Jukebox | Ported | front.rs, soundtrack.rs | |
 | Single Player → Race setup page | Ported | front/controller.rs, front/mod.rs | |
 | Freestyle course select (tabs, photos, hero, keys, LB/RB) | Ported | front/mod.rs, controller.rs | |
 | Garage (46 vehicles, rider, stats, 3D previews, ATV-only online) | Ported | front, app/front.rs (#254) | Previews wear the saved gear and paint, show "Loading model...", "Model unavailable" or "3D preview unavailable", and a pressed preview turns with Left/Right. Start leaves a room's garage |
 | Rider Gear page | Ported | front/controller.rs `step_gear`, preview.wgsl paint | |
-| Host/Join forms, validation, motorcycle refusal | Ported | front/controller.rs (#241, #254) | Escape in a field goes back a page; desktop pastes with Cmd/Ctrl+V |
+| Host/Join forms, validation, motorcycle refusal | Ported | front/controller.rs (#241, #254) | Escape in a field goes back a page; desktop pastes with Cmd/Ctrl+V. Free Ride rides the name as typed; a blank or "Rider" name becomes "Rider NNNN" for the session and the next save keeps it. Only a Freestyle ride changes the saved last Freestyle course |
 | Free Ride Lobby page while connecting, then its riders | Ported | #268, this PR | |
-| Loading screen (shots, tips, staged bar) | Ported | controller.rs `loading_stage` | |
-| Pause menu (Resume, Reset, Players/Spawn, Change ATV, Select Track, Settings, Jukebox, Copy link, Quit/Leave) | Ported | menu/controller.rs (#202, #238, #242, #256) | Restart Race in races. Start and the rebindable Pause action resume; Start accepts in Settings over the main menu. Left/Right turn the Bindings and Audio pages and change Jukebox tracks |
+| Loading screen (shots, tips, staged bar) | Ported | controller.rs `loading_stage` | A failed load returns to its page with the error on the notice line (frontend.js `fail`): Freestyle → course select, Race → race setup, Free Ride → main menu, a room → Multiplayer (main for Free Ride rooms), which also forgets the slot key |
+| Pause menu (Resume, Reset, Players/Spawn, Change ATV, Select Track, Settings, Jukebox, Copy link, Quit/Leave) | Ported | menu/controller.rs (#202, #238, #242, #256) | Restart Race in races. Start and the rebindable Pause action resume; Start accepts in Settings over the main menu. Left/Right turn the Bindings and Audio pages and change Jukebox tracks. Only the Pause binding and Escape resume (a P no longer bound does nothing); Shift+Tab walks back. Jukebox always shows (the page waits for the catalog); desktop keeps Copy ride link (the site's play.html link) |
 | Settings pages and toggles (Display, Extras, Alpha, Race overlays, Minimap, Controls, Controller, Bindings) | Ported | menu/controller.rs, prefs.rs (#202) | Applied live |
 | Extras → Diagnostics | In progress | — | |
-| Display → Fullscreen | Partial | lib.rs | Always shown |
+| Display → Fullscreen | Ported | lib.rs `toggle_fullscreen` | Shown where `document.fullscreenEnabled`; the whole page goes fullscreen |
 | Extras → Silent switch | Missing | — | Blocking 2 |
 | Audio page song list and paging | Ported | menu/controller.rs | |
 | Controller Settings → pin a controller | Ported | menu/controller.rs, app/gamepad.rs | |
@@ -290,7 +290,7 @@ In progress elsewhere, not counted as gaps: the diagnostics overlay (F3).
 
 | Behaviour | Rust | Where | Notes |
 |---|---|---|---|
-| One-finger compass, trick wheel, two-finger layout, flips, arcade spin | Ported | atv-ui/src/touch (#191) | |
+| One-finger compass, trick wheel, two-finger layout, flips, arcade spin | Ported | atv-ui/src/touch (#191) | The armed flip cue, flip-zone arcs with their 220 ms dwell fill and the Arcade airborne spin arcs and cues (touch.js `oneHandedFeedback`, touch.css) |
 | Coaching, idle hints, sensitivity, one-handed | Ported | touch/mod.rs | Coaching counts one ride per page load |
 | Flip-armed `vibrate(12)` | Ported | touch/mod.rs `flip_buzz` | |
 | 17 actions, defaults, chords, migration, presets, trick grace (`atv2-gameplay-bindings-v1`) | Ported | ride/bindings.rs (#182) | |
@@ -309,7 +309,7 @@ In progress elsewhere, not counted as gaps: the diagnostics overlay (F3).
 | Host (custom code, 409/429 messages), join, reopen ended room, "Game is full!" | Ported | atv-app/src/multiplayer.rs `claim` (#224, #241) | |
 | Arlington Free Ride (429/503) | Ported | multiplayer.rs (#229) | |
 | Reserved FREERDnn codes: refusal / redirect to Free Ride | Ported | multiplayer.rs `claim`, front/controller.rs | Hosting one is refused; an invite, lobby link or Join code opens Free Ride (`tools/test_engine_freeride.mjs`) |
-| Slot-key reconnect, 25 s window, backoff | Ported | multiplayer.rs (#234) | |
+| Slot-key reconnect, 25 s window, backoff | Ported | multiplayer.rs (#234) | A closed socket drops the other riders, the room state and their sounds at once, also while reconnecting (multiplayer.js onclose). A room that closes for good ends the ride on Multiplayer (main for Free Ride) with the reason; Leave Game goes to the same page (`tools/test_engine_multiplayer_end.mjs`) |
 | Meet a rider on arrival; Spawn beside (car velocity on trains) | Ported | multiplayer.rs, spawn.rs (#227, #238, #264) | Rider contacts sample each peer per step after the train step (atv-web op 50). Authored: a rider alone in a room sends a 1 Hz presence pose so an arrival can meet a host whose tab is in the background, and an arrival waits up to 15 s for a first pose (`tools/test_engine_multiplayer_idle_host.mjs`) |
 | Change ATV in place (kept present behind the garage), host Select Track | Ported | lib.rs (#242, #256) | |
 | Copy invite link | Partial | `invite_url` | Blocking 4 |

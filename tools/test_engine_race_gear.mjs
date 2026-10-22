@@ -72,8 +72,9 @@ try {
   assert.ok(notice === 'Ride link copied.' || notice.includes(`activity=race&map=${course}&`) && /laps=2&cpu=4&difficulty=expert/.test(notice), notice);
 
   // Garage → Rider Gear: steppers and the dressed previews.
+  // Back opens Single Player on its first row (frontend.js `show`).
   await key(page, 'Escape'); await onPage(page, 'single');
-  await key(page, 'ArrowDown'); await key(page, 'Enter'); await onPage(page, 'garage');
+  await key(page, 'ArrowDown'); await key(page, 'ArrowDown'); await key(page, 'Enter'); await onPage(page, 'garage');
   f = await front(page);
   await click(page, ROW + f.choices.indexOf('gear')); await onPage(page, 'gear');
   await wait(page, () => JSON.parse(document.querySelector('#ui-state').textContent).front.gear.catalog === 7);
@@ -100,13 +101,13 @@ try {
   await nextFrames(page, 10);
   if (shots) await page.screenshot({ path: `${shots}/rider-gear.png` });
   await key(page, 'Escape'); await onPage(page, 'garage');
-  assert.equal((await front(page)).choices[(await front(page)).selection], 'gear');
+  assert.equal((await front(page)).selection, 0);
   await nextFrames(page, 10);
   if (shots) await page.screenshot({ path: `${shots}/garage-dressed.png` });
 
   // Start Race: the race loads with the chosen laps and CPU riders.
   await key(page, 'Escape'); await onPage(page, 'single');
-  await key(page, 'ArrowUp'); await key(page, 'Enter'); await onPage(page, 'race');
+  await key(page, 'ArrowDown'); await key(page, 'Enter'); await onPage(page, 'race');
   f = await front(page);
   assert.deepEqual([f.race.course, f.race.laps, f.race.cpu], [course, 2, 4]);
   await click(page, START);
