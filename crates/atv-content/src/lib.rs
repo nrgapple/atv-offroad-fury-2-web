@@ -151,6 +151,10 @@ pub struct Content {
     /// Venue, ride and audio loading read the same course archive; the
     /// second and third reads are served from here.
     cache: std::cell::RefCell<Vec<(String, std::rc::Rc<Vec<u8>>)>>,
+    /// Prefetched chunk downloads in flight by blob name (web): the read that
+    /// needs one awaits the same request (content.js `prefetch`).
+    #[cfg(target_arch = "wasm32")]
+    inflight: std::cell::RefCell<std::collections::HashMap<String, js_sys::Promise>>,
 }
 
 const CACHE_BYTES: usize = 40 * 1024 * 1024;
@@ -162,6 +166,8 @@ impl Content {
             manifest,
             store,
             cache: Default::default(),
+            #[cfg(target_arch = "wasm32")]
+            inflight: Default::default(),
         })
     }
 
@@ -184,7 +190,22 @@ impl Content {
             cache.push(entry);
             return Ok(bytes);
         }
-        let bytes = self.store.read(&format!("{}.bin", chunk.sha256)).await?;
+        let name = format!("{}.bin", chunk.sha256);
+        #[cfg(target_arch = "wasm32")]
+        let pending = self.inflight.borrow_mut().remove(&name);
+        #[cfg(target_arch = "wasm32")]
+        let bytes = match (pending, &self.store) {
+            (Some(response), Store::Http(base)) => {
+                match web::finish(response, &format!("{base}{name}")).await {
+                    Ok(bytes) => bytes,
+                    // A failed prefetch is retried by the real read.
+                    Err(_) => self.store.read(&name).await?,
+                }
+            }
+            _ => self.store.read(&name).await?,
+        };
+        #[cfg(not(target_arch = "wasm32"))]
+        let bytes = self.store.read(&name).await?;
         // Hash in 512 KiB pieces, yielding between them, so verifying a large
         // file never holds one frame (other riders' models load mid-ride).
         let mut digest = Sha256::new();
@@ -203,6 +224,49 @@ impl Content {
             total -= cache.remove(0).1.len();
         }
         Ok(bytes)
+    }
+
+    /// Starts downloading the chunks of `paths` a load is about to read, so
+    /// they arrive in parallel instead of one request after another (web;
+    /// content.js `prefetch`). `low` asks the browser for low fetch priority;
+    /// `head` fetches only a file's first chunk (an archive read by
+    /// directory). Reads reuse the in-flight request. Local stores need none.
+    pub fn prefetch(&self, paths: &[String], low: bool, head: bool) {
+        #[cfg(target_arch = "wasm32")]
+        {
+            let Store::Http(base) = &self.store;
+            for path in paths {
+                let Some(record) = self.manifest.record(path) else {
+                    continue;
+                };
+                let chunks = record.chunks();
+                let take = if head || record.lazy { 1 } else { chunks.len() };
+                for chunk in chunks.iter().take(take) {
+                    let name = format!("{}.bin", chunk.sha256);
+                    let cached = self
+                        .cache
+                        .borrow()
+                        .iter()
+                        .any(|(sha, _)| *sha == chunk.sha256);
+                    if cached || self.inflight.borrow().contains_key(&name) {
+                        continue;
+                    }
+                    if let Some(request) = web::start(&format!("{base}{name}"), low) {
+                        self.inflight.borrow_mut().insert(name, request);
+                    }
+                }
+            }
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        let _ = (paths, low, head);
+    }
+
+    /// Prefetched downloads not yet read (tests and diagnostics).
+    pub fn prefetching(&self) -> usize {
+        #[cfg(target_arch = "wasm32")]
+        return self.inflight.borrow().len();
+        #[cfg(not(target_arch = "wasm32"))]
+        0
     }
 
     /// One whole original file, integrity checked chunk by chunk.
@@ -277,6 +341,32 @@ mod web {
 
     fn js(error: wasm_bindgen::JsValue) -> String {
         format!("{error:?}")
+    }
+
+    /// Starts a fetch (optionally at low priority) and returns its promise.
+    pub fn start(url: &str, low: bool) -> Option<js_sys::Promise> {
+        let window = web_sys::window()?;
+        let init = web_sys::RequestInit::new();
+        if low {
+            js_sys::Reflect::set(&init, &"priority".into(), &"low".into()).ok()?;
+        }
+        Some(window.fetch_with_str_and_init(url, &init))
+    }
+
+    /// The bytes of a fetch started by [`start`].
+    pub async fn finish(request: js_sys::Promise, url: &str) -> super::Result<Vec<u8>> {
+        let response: web_sys::Response = JsFuture::from(request)
+            .await
+            .map_err(js)?
+            .dyn_into()
+            .map_err(js)?;
+        if !response.ok() {
+            return Err(format!("{url}: HTTP {}", response.status()));
+        }
+        let buffer = JsFuture::from(response.array_buffer().map_err(js)?)
+            .await
+            .map_err(js)?;
+        Ok(js_sys::Uint8Array::new(&buffer).to_vec())
     }
 
     pub async fn fetch(url: &str) -> super::Result<Vec<u8>> {

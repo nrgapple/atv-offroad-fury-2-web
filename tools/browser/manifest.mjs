@@ -41,6 +41,7 @@ export const TESTS = {
   'test_engine_alpha_muffle.mjs': { group: 'content' },
   'test_engine_alpha_landing.mjs': { group: 'content' },
   'test_engine_air_blur.mjs': { group: 'content' },
+  'test_engine_shadows_prefetch.mjs': { group: 'content' },
   'test_engine_settings.mjs': { group: 'content' },
   'test_engine_session_settings.mjs': { group: 'content' },
   'test_engine_wake_lock.mjs': { group: 'content' },
