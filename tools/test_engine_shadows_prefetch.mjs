@@ -1,6 +1,7 @@
 // Rust engine: race CPUs cast shadows like the player (High: contact blobs
 // within 240 ft and the sun shadow map within 40 ft; drawContactShadows and
-// renderVehicleShadows in game.js), and ride archives prefetch in parallel
+// renderVehicleShadows in game.js) with the resting lift measured from the
+// ride's steps (acceptFrame), and ride archives prefetch in parallel
 // (game.js prefetchRide): env01 loads with 150 ms request latency with and
 // without `?prefetch=off`.
 //   PLAYWRIGHT_MODULE=... ATV_TEST_URL=http://127.0.0.1:4177 node tools/test_engine_shadows_prefetch.mjs
@@ -27,7 +28,8 @@ try {
       await page.screenshot({ path: process.env.ATV_SHADOW_SCREENSHOT });
     report[graphics] = {
       contact: Math.max(...samples.map(s => s.contact)),
-      map: Math.max(...samples.map(s => s.map))
+      map: Math.max(...samples.map(s => s.map)),
+      restLift: samples.at(-1).restLift
     };
     await page.close();
   }
@@ -35,6 +37,12 @@ try {
   assert.ok(report.high.map >= 2, `CPUs near the player cast into the shadow map: ${JSON.stringify(report)}`);
   assert.equal(report.enhanced.map, 0, 'Enhanced has no shadow map');
   assert.ok(report.enhanced.contact >= 4, `Enhanced contact blobs: ${JSON.stringify(report)}`);
+  // The contact shadows' resting lift is measured from the ride's own steps
+  // (game.js acceptFrame), not left at the 1.5 ft default.
+  for (const graphics of ['high', 'enhanced']) {
+    const lift = report[graphics].restLift;
+    assert.ok(Number.isFinite(lift) && Math.abs(lift) < 5, `${graphics} rest lift: ${JSON.stringify(report)}`);
+  }
 
   // 2. Prefetch: time to a running env01 ride with 150 ms latency per request.
   const load = async prefetch => {

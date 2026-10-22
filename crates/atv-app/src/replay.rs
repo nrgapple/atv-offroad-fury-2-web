@@ -143,7 +143,7 @@ pub fn present_trace(
         let dt = (1. / hz) as f32;
         let mut frames = 0;
         while !riding.autodrive_done {
-            riding.frame(&sample, &mut || None, dt)?;
+            riding.frame(&sample, &mut || None, dt, None)?;
             riding.sample_presentation()?;
             frames += 1;
         }

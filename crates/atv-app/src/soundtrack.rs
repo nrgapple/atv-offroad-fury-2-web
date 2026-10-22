@@ -325,16 +325,42 @@ impl Soundtrack {
         }
     }
 
-    /// MusicStream.hold: no new song; a fade stops the current one.
+    /// MusicStream.hold: no new song; a fade stops the current one. A song
+    /// with less than the fade left fades over 80% of what remains.
     pub fn hold(&mut self, fade: f32) {
         if self.held {
             return;
         }
         self.held = true;
-        if fade > 0. && self.sounding() {
-            self.hold_fade = Some((web_time::Instant::now(), fade));
+        let seconds = hold_seconds(fade, self.remaining());
+        if seconds > 0. && self.sounding() {
+            self.hold_fade = Some((web_time::Instant::now(), seconds));
         } else {
             self.stop_song();
+        }
+    }
+
+    /// Seconds left in the playing song: the media element's duration less
+    /// its time, or (decoded VAGs) the undecoded rest plus what is queued.
+    fn remaining(&self) -> Option<f32> {
+        let queued = self.output.mixer.lock().map_or(0., |m| m.music_queued());
+        let decoded = |song: &atv_game::audio::music::VagMusic| {
+            let (decoded, duration) = song.decoded_seconds();
+            (duration - decoded).max(0.) + queued
+        };
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.song.as_ref().map(decoded)
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            if self.vag.fallback {
+                return self.vag.song.borrow().as_ref().map(decoded);
+            }
+            let web = self.web.as_ref()?.borrow();
+            let duration = web.element.duration();
+            (web.playing && duration.is_finite())
+                .then(|| (duration - web.element.current_time()).max(0.) as f32)
         }
     }
 
@@ -501,6 +527,15 @@ impl Soundtrack {
         web.element.set_src(&url);
         web.resume(true);
         web.playing = true;
+    }
+}
+
+/// music.js `hold`: the race-over fade, or 80% of the song's remainder when
+/// less than the fade is left (unknown remainder: the full fade).
+fn hold_seconds(fade: f32, remaining: Option<f32>) -> f32 {
+    match remaining {
+        Some(remaining) if remaining < fade => remaining * 0.8,
+        _ => fade,
     }
 }
 
@@ -812,5 +847,18 @@ impl Soundtrack {
                 web.resume(true);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn race_hold_fades_over_what_is_left_of_a_song() {
+        assert_eq!(super::hold_seconds(1.5, Some(10.)), 1.5);
+        assert_eq!(super::hold_seconds(1.5, None), 1.5);
+        assert!((super::hold_seconds(1.5, Some(1.)) - 0.8).abs() < 1e-6);
+        assert_eq!(super::hold_seconds(1.5, Some(0.)), 0.);
+        // No fade asked: none given.
+        assert_eq!(super::hold_seconds(0., Some(0.5)), 0.);
     }
 }
