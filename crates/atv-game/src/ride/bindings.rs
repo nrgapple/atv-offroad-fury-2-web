@@ -476,13 +476,19 @@ impl Tuning {
 
 // --- reading ----------------------------------------------------------------
 
-/// A standard-mapping controller sample (W3C Gamepad button/axis order).
+/// Buttons and axes a controller sample carries: the standard 17 and 4,
+/// then a non-standard pad's further inputs (bindings.js binds any index).
+pub const PAD_BUTTON_COUNT: usize = 32;
+pub const PAD_AXIS_COUNT: usize = 16;
+
+/// A controller sample in W3C Gamepad button/axis order (standard mapping
+/// first; buttons from 17 and axes from 4 are the pad's further inputs).
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Pad {
     /// Distinguishes controllers; a change is a cancellation.
     pub id: u64,
-    pub buttons: [f32; 17],
-    pub axes: [f32; 4],
+    pub buttons: [f32; PAD_BUTTON_COUNT],
+    pub axes: [f32; PAD_AXIS_COUNT],
 }
 
 fn atom_amount(atom: &Atom, keys: &dyn Fn(&str) -> bool, pad: Option<&Pad>, zone: f32) -> f32 {

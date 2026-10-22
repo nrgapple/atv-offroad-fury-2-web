@@ -91,10 +91,15 @@ impl TextInputs {
                         let Some(key) = event.dyn_ref::<web_sys::KeyboardEvent>() else {
                             return;
                         };
-                        // Enter or Escape hands the keyboard back to the menu.
+                        // Enter or Escape hands the keyboard back to the menu;
+                        // Escape also goes back a page.
                         if key.key() == "Enter" || key.key() == "Escape" {
                             let _ = element.blur();
-                            let _ = proxy.send_event(Message::FrontFocus(None));
+                            let _ = proxy.send_event(if key.key() == "Escape" {
+                                Message::FrontEscape
+                            } else {
+                                Message::FrontFocus(None)
+                            });
                         }
                     })
                 };

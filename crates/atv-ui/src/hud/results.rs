@@ -58,7 +58,11 @@ pub struct Results {
     pub menu: Menu,
     /// The focused button shows its ring (keyboard or controller use).
     pub focus_visible: bool,
+    /// The focused button among those shown (`setMenu` focuses the first).
+    pub focus: usize,
     pad_armed: bool,
+    /// Controller left/right held (focus moves on a new press).
+    pad_steer: i32,
     /// The standings, fixed when the race ended: (text, total, best, player).
     pub rows: Vec<[String; 3]>,
     pub player_row: Option<usize>,
@@ -78,6 +82,7 @@ impl Results {
         self.shown = true;
         self.hidden = false;
         self.menu = Menu::Results;
+        self.focus = 0;
         self.pad_armed = false;
         self.player_row = frame.standings.iter().position(|s| s.name == "YOU");
         self.rows = frame
@@ -98,7 +103,33 @@ impl Results {
         self.shown
     }
 
-    /// race.js `act`.
+    /// The buttons shown, in focus order.
+    pub fn buttons(&self) -> Vec<u32> {
+        if self.hidden {
+            return vec![SHOW];
+        }
+        match self.menu {
+            Menu::Results => vec![CONTINUE, HIDE],
+            Menu::Quit if self.can_quit => vec![RETRY, QUIT],
+            Menu::Quit => vec![RETRY],
+        }
+    }
+
+    /// The focused button.
+    pub fn focused(&self) -> u32 {
+        let buttons = self.buttons();
+        buttons[self.focus.min(buttons.len() - 1)]
+    }
+
+    /// Tab and the arrows move between the buttons (the browser's focus
+    /// order), wrapping.
+    fn move_focus(&mut self, step: i32) {
+        let n = self.buttons().len() as i32;
+        self.focus = (self.focus.min(n as usize - 1) as i32 + step).rem_euclid(n) as usize;
+    }
+
+    /// race.js `act`; a new menu or the Show/Hide toggle focuses its
+    /// first button.
     pub fn act(&mut self, id: u32) -> Option<Command> {
         match id {
             CONTINUE => self.menu = Menu::Quit,
@@ -106,13 +137,15 @@ impl Results {
             SHOW => self.hidden = false,
             RETRY => return Some(Command::Retry),
             QUIT if self.can_quit => return Some(Command::Quit),
-            _ => {}
+            _ => return None,
         }
+        self.focus = 0;
         None
     }
 
     fn back(&mut self) {
         self.menu = Menu::Results;
+        self.focus = 0;
     }
 
     /// Escape and Enter while the results are up (the focused button is the
@@ -127,30 +160,50 @@ impl Results {
                 if self.menu == Menu::Quit {
                     self.back();
                 } else {
-                    self.hidden = !self.hidden;
+                    self.act(if self.hidden { SHOW } else { HIDE });
                 }
                 (true, None)
             }
             "Enter" | "NumpadEnter" => {
-                let id = if self.hidden {
-                    SHOW
-                } else if self.menu == Menu::Quit {
-                    RETRY
-                } else {
-                    CONTINUE
-                };
+                let id = self.focused();
                 (true, self.act(id))
+            }
+            "Tab" => {
+                self.move_focus(1);
+                (true, None)
+            }
+            "ArrowLeft" | "ArrowUp" if !self.hidden => {
+                self.move_focus(-1);
+                (true, None)
+            }
+            "ArrowRight" | "ArrowDown" if !self.hidden => {
+                self.move_focus(1);
+                (true, None)
             }
             _ => (false, None),
         }
     }
 
-    /// Standard-layout A/B/X edges (race.js polls `activeGamepad`).
-    pub fn pad(&mut self, buttons: &[f32]) -> Option<Command> {
+    /// Standard-layout A/B/X edges (race.js polls `activeGamepad`); the
+    /// D-pad or left stick moves the focus and A activates it.
+    pub fn pad(&mut self, buttons: &[f32], axes: &[f32]) -> Option<Command> {
         if !self.shown {
             return None;
         }
         let pressed = |i: usize| buttons.get(i).is_some_and(|v| *v > 0.5);
+        let axis = |i: usize| axes.get(i).copied().unwrap_or(0.);
+        let steer = if pressed(14) || pressed(12) || axis(0) < -0.55 || axis(1) < -0.55 {
+            -1
+        } else if pressed(15) || pressed(13) || axis(0) > 0.55 || axis(1) > 0.55 {
+            1
+        } else {
+            0
+        };
+        if steer != 0 && steer != self.pad_steer && !self.hidden {
+            self.focus_visible = true;
+            self.move_focus(steer);
+        }
+        self.pad_steer = steer;
         let held = pressed(0) || pressed(1) || pressed(2);
         if !held {
             self.pad_armed = true;
@@ -171,10 +224,8 @@ impl Results {
                 return None;
             }
             HIDE
-        } else if self.menu == Menu::Quit {
-            RETRY
         } else {
-            CONTINUE
+            self.focused()
         };
         self.act(id)
     }
@@ -341,19 +392,25 @@ pub fn element(view: &Viewport, state: &Results, summary: &str, fonts: &mut Font
         ..Default::default()
     })
     .children(cells);
-    let buttons: Vec<El> = match state.menu {
-        Menu::Results => vec![
-            button(CONTINUE, "Continue", true, state.focus_visible),
-            button(HIDE, "Hide Menu", false, false),
-        ],
-        Menu::Quit => {
-            let mut b = vec![button(RETRY, "Restart", true, state.focus_visible)];
-            if state.can_quit {
-                b.push(button(QUIT, "Quit Event", false, false));
-            }
-            b
-        }
-    };
+    let focused = state.focus_visible.then(|| state.focused());
+    let buttons: Vec<El> = state
+        .buttons()
+        .into_iter()
+        .map(|id| {
+            let label = match id {
+                CONTINUE => "Continue",
+                HIDE => "Hide Menu",
+                RETRY => "Restart",
+                _ => "Quit Event",
+            };
+            button(
+                id,
+                label,
+                matches!(id, CONTINUE | RETRY),
+                focused == Some(id),
+            )
+        })
+        .collect();
     let menu = El::new(Style {
         display: Display::Flex,
         flex_wrap: FlexWrap::Wrap,
@@ -468,13 +525,57 @@ mod tests {
             shown: true,
             ..Default::default()
         };
-        assert_eq!(p.pad(&[1., 0., 0.]), None);
+        assert_eq!(p.pad(&[1., 0., 0.], &[]), None);
         assert!(p.menu == Menu::Results);
-        p.pad(&[0., 0., 0.]);
-        p.pad(&[0., 0., 1.]);
+        p.pad(&[0., 0., 0.], &[]);
+        p.pad(&[0., 0., 1.], &[]);
         assert!(p.hidden);
-        p.pad(&[0., 0., 0.]);
-        p.pad(&[1., 0., 0.]);
+        p.pad(&[0., 0., 0.], &[]);
+        p.pad(&[1., 0., 0.], &[]);
         assert!(!p.hidden);
+    }
+
+    #[test]
+    fn focus_reaches_every_button() {
+        // Keyboard: Tab/arrows move the focus, Enter activates it.
+        let mut r = Results {
+            shown: true,
+            can_quit: true,
+            ..Default::default()
+        };
+        assert_eq!(r.key("ArrowRight"), (true, None));
+        assert_eq!(r.focused(), HIDE);
+        r.key("Enter");
+        assert!(r.hidden);
+        assert_eq!(r.focused(), SHOW);
+        r.key("Enter");
+        assert_eq!(r.focused(), CONTINUE);
+        r.key("Enter");
+        assert_eq!(r.menu, Menu::Quit);
+        r.key("Tab");
+        assert_eq!(r.focused(), QUIT);
+        assert_eq!(r.key("Enter"), (true, Some(Command::Quit)));
+        r.key("Tab");
+        assert_eq!(r.key("Enter"), (true, Some(Command::Retry)));
+        // Controller: D-pad right then A reaches Quit Event.
+        let mut p = Results {
+            shown: true,
+            can_quit: true,
+            menu: Menu::Quit,
+            ..Default::default()
+        };
+        let mut buttons = [0.; 17];
+        p.pad(&buttons, &[0.; 4]);
+        buttons[15] = 1.;
+        p.pad(&buttons, &[0.; 4]);
+        assert_eq!(p.focused(), QUIT);
+        buttons[15] = 0.;
+        p.pad(&buttons, &[0.; 4]);
+        buttons[0] = 1.;
+        assert_eq!(p.pad(&buttons, &[0.; 4]), Some(Command::Quit));
+        // Without a frontend's Quit, Restart is the only choice.
+        p.can_quit = false;
+        assert_eq!(p.buttons(), vec![RETRY]);
+        assert_eq!(p.focused(), RETRY);
     }
 }

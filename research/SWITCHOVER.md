@@ -48,7 +48,9 @@ These would regress players at switch-over. Highest impact first.
    links open Create/Join Lobby with the link's code and name (the saved name unless
    `player=` is given) and host or join with `play=1`, on the link's map; motorcycles get
    the JavaScript refusal. Invites carry the rider's own ATV and rider and this page
-   (`multiplayer::invite_url`). A bare `?room=`/`?host=1` still rides at once (tests).
+   (`multiplayer::invite_url`). A bare `?room=CODE` link joins through Join Lobby as
+   launch.js reads it (player, vehicle aliases, saved gear, `play=0`, motorcycle refusal);
+   only the test hooks `?host=1` and `room=` with `dropAfter=`/`trainPlace=` ride at once.
    Not verified: an ended room reopening on the link's map (needs a relay).
 5. ~~**WebGL context loss.**~~ Partly closed: engine.js shows "Restoring graphics…" and,
    once the context is restored, reopens the current ride's link (`fury-resume`,
@@ -145,14 +147,14 @@ In progress elsewhere, not counted as gaps: the diagnostics overlay (F3).
 | Behaviour / parameter | Rust | Where | Notes |
 |---|---|---|---|
 | index.html → landing.js forwards query/hash to play.html | Not needed | — | Keep as is |
-| `parseLaunch` aliases: `map`/`environment`, `quad`/`vehicle`/`atv`, `rider`, `player`/`name`, `room`/`lobby`, `play`/`drive`, `cheats`/`cheat`, `mode`, `activity`, `action`, `laps`, `cpu`, `difficulty` | Partial | atv-game/src/launch.rs `parse_launch` (#210) | Reached only without `room=`/`host=`/`venue=`. Gaps: blocking 4 and 12 |
+| `parseLaunch` aliases: `map`/`environment`, `quad`/`vehicle`/`atv`, `rider`, `player`/`name`, `room`/`lobby`, `play`/`drive`, `cheats`/`cheat`, `mode`, `activity`, `action`, `laps`, `cpu`, `difficulty` | Ported | atv-game/src/launch.rs `parse_launch` (#210) | Every link except the test hooks (`venue=`, `host=1`, room `dropAfter=`/`trainPlace=`). A bad link's reason shows in the main menu notice |
 | `activity=freestyle` link → course select, rides with `play=1` | Ported | atv-app/src/lib.rs `open_launch` | |
-| `activity=race` link | Partial | lib.rs `open_launch` | Starts the race. `play=0` lands on Single Player; motorcycles and cheats as in blocking 12 |
+| `activity=race` link | Ported | lib.rs `open_launch` | `play=0` opens the race setup; cheats last through Start Race and Copy ride link (not saved) |
 | `mode=multiplayer` + `action=create`/`host`, `lobby=` | Missing | lib.rs:2821 | Stale error |
-| `room=CODE` invite | Partial | lib.rs `start()` direct path | Blocking 4 |
+| `room=CODE` invite | Ported | lib.rs `open_launch` | Join Lobby, as `mode=multiplayer` links (`tools/test_engine_menu_parity.mjs`) |
 | `?menu=freeride` / `?menu=race` (manifest shortcuts) | Partial | launch.rs `menu_shortcut` | `race` → Single Player |
 | `?source=disc` | Missing | — | Can be dropped |
-| Copy ride link (`buildRideUrl`/`copyRideUrl`) | Ported | launch.rs `ride_url`, lib.rs `copy_ride_link` (#231) | Uses the current page path |
+| Copy ride link (`buildRideUrl`/`copyRideUrl`) | Ported | launch.rs `ride_url`, lib.rs `copy_ride_link` (#231) | The current page path; desktop links and invites open `https://furyremastered.com/play.html` and copy through the system clipboard (arboard) |
 | Invite link | Partial | multiplayer.rs `invite_url` (#224, #268) | `quad=1&rider=0`, `/play.html` |
 | Manifest, icons, apple meta, theme-color | Ported | engine.html | |
 | Install banner, iOS help dialog, standalone viewport, launch screens (install.js) | Ported | engine.html, lib.rs `sync_shell` | |
@@ -176,7 +178,7 @@ In progress elsewhere, not counted as gaps: the diagnostics overlay (F3).
 |---|---|---|---|
 | Hosted-content ride load | Ported | lib.rs `prepare`, atv-game/src/ride/load.rs | |
 | Toolbar Pause/Camera (+ Keys) | Ported | atv-ui/src/hud/toolbar.rs (#191, #196) | |
-| Reset ATV; race reset to last track point | Ported | ride/mod.rs `reset`, riding.rs | |
+| Reset ATV; race reset to last track point | Ported | ride/mod.rs `reset`, riding.rs | Pause → Restart Race in a race reloads the event, also after the finish |
 | Fullscreen | Ported | lib.rs `Event::Fullscreen` (#202) | Settings row |
 | Keyboard driving, bindings, mouse-drag orbit | Ported | ride/bindings.rs, riding.rs | |
 | Race intro skip | Partial | ride/race.rs `skip_intro` | Keyboard only (blocking 13) |
@@ -220,8 +222,8 @@ In progress elsewhere, not counted as gaps: the diagnostics overlay (F3).
 |---|---|---|---|
 | Wake lock: hold while riding, release in menus, re-acquire | Ported | wake.rs (#239) | |
 | Presets Auto/Original/Enhanced/High (`atv-graphics`) | Ported | lib.rs, menu/prefs.rs (#183, #202) | |
-| `detectGraphicsTier` | Ported | lib.rs `detect_graphics_tier` (#228) | No `saveData` probe |
-| Vibration setting and rumble (pad, else `navigator.vibrate`) | Ported | prefs.rs, gamepad.rs (#202, #250) | |
+| `detectGraphicsTier` | Ported | lib.rs `detect_graphics_tier` (#228) | With `userAgentData.mobile` and `saveData`; main-menu Settings and rides share it (`device_preferences`) |
+| Vibration setting and rumble (pad, else `navigator.vibrate`) | Ported | prefs.rs, gamepad.rs (#202, #250) | Rumbles the pad in use: the pinned pad, else Auto's |
 | Dirt zones | Ported | dirt.rs (#248) | |
 | Settings → Alpha toggles (`atv-alpha`) | Ported | prefs.rs `ALPHA_FEATURES` (#237) | |
 
@@ -233,7 +235,7 @@ In progress elsewhere, not counted as gaps: the diagnostics overlay (F3).
 | Speed/air muffle, wind | Ported | audio/hype.rs (#255) | |
 | Heavy mud zones | Ported | dirt.rs (#251) | |
 | Landing burst; air dark blur | Ported | atv-render burst.rs, air_blur.rs (#251, #253) | |
-| Speed rush: curve, FOV kick, taps, stencil, lines, vignette; reduced-motion default | Ported | atv-render speed_rush.rs (#204, #228) | |
+| Speed rush: curve, FOV kick, taps, stencil, lines, vignette; reduced-motion default | Ported | atv-render speed_rush.rs (#204, #228) | The main menu's Settings use the same default |
 | Motorcycle and Enhanced/High ATV interpolation | Ported | ride/present.rs (#217) | |
 | Interpolation stretch under Alpha slow-mo | Unverified | — | |
 
@@ -245,19 +247,19 @@ In progress elsewhere, not counted as gaps: the diagnostics overlay (F3).
 | Main-menu Jukebox | Ported | front.rs, soundtrack.rs | |
 | Single Player → Race setup page | Ported | front/controller.rs, front/mod.rs | |
 | Freestyle course select (tabs, photos, hero, keys, LB/RB) | Ported | front/mod.rs, controller.rs | |
-| Garage (46 vehicles, rider, stats, 3D previews, ATV-only online) | Ported | front, app/front.rs (#254) | Previews wear the saved gear and paint |
+| Garage (46 vehicles, rider, stats, 3D previews, ATV-only online) | Ported | front, app/front.rs (#254) | Previews wear the saved gear and paint, show "Loading model...", "Model unavailable" or "3D preview unavailable", and a pressed preview turns with Left/Right. Start leaves a room's garage |
 | Rider Gear page | Ported | front/controller.rs `step_gear`, preview.wgsl paint | |
-| Host/Join forms, validation, motorcycle refusal | Ported | front/controller.rs (#241, #254) | |
+| Host/Join forms, validation, motorcycle refusal | Ported | front/controller.rs (#241, #254) | Escape in a field goes back a page; desktop pastes with Cmd/Ctrl+V |
 | Free Ride Lobby page while connecting, then its riders | Ported | #268, this PR | |
 | Loading screen (shots, tips, staged bar) | Ported | controller.rs `loading_stage` | |
-| Pause menu (Resume, Reset, Players/Spawn, Change ATV, Select Track, Settings, Jukebox, Copy link, Quit/Leave) | Ported | menu/controller.rs (#202, #238, #242, #256) | Change ATV and Select Track are hidden on frontend-less room links |
+| Pause menu (Resume, Reset, Players/Spawn, Change ATV, Select Track, Settings, Jukebox, Copy link, Quit/Leave) | Ported | menu/controller.rs (#202, #238, #242, #256) | Restart Race in races. Start and the rebindable Pause action resume; Start accepts in Settings over the main menu. Left/Right turn the Bindings and Audio pages and change Jukebox tracks |
 | Settings pages and toggles (Display, Extras, Alpha, Race overlays, Minimap, Controls, Controller, Bindings) | Ported | menu/controller.rs, prefs.rs (#202) | Applied live |
 | Extras → Diagnostics | In progress | — | |
 | Display → Fullscreen | Partial | lib.rs | Always shown |
 | Extras → Silent switch | Missing | — | Blocking 2 |
 | Audio page song list and paging | Ported | menu/controller.rs | |
 | Controller Settings → pin a controller | Ported | menu/controller.rs, app/gamepad.rs | |
-| Binding capture, presets, reset | Ported | menu/controller.rs | |
+| Binding capture, presets, reset | Ported | menu/controller.rs | Clear binding follows the highlighted row; a capture keeps its row; blur cancels it |
 | Page slide transitions | Missing | — | Cosmetic |
 | `atv-player-selection` persistence | Ported | controller.rs `save` | |
 
@@ -269,8 +271,8 @@ In progress elsewhere, not counted as gaps: the diagnostics overlay (F3).
 | Start lamps; race HUD (lap time, lap, score, place, best/total/lead, history, signs, radar) | Ported | hud/race.rs (#223) | |
 | Race overlay settings | Ported | prefs.rs | |
 | GPS minimap and all its settings; tap toggles orientation; peer dots | Ported | hud/minimap.rs, overlay.rs (#196, #236) | |
-| Keyboard card (live bindings, H, first ride 15 s, never on touch) | Ported | hud/help.rs, overlay.rs | |
-| Race fade-in; results panel; Restart/Quit/Hide | Ported | overlay.rs, hud/results.rs (#225) | |
+| Keyboard card (live bindings, H, first ride 15 s, never on touch) | Ported | hud/help.rs, overlay.rs | Menus hide it; Ctrl/Alt/Meta+H do not toggle it |
+| Race fade-in; results panel; Restart/Quit/Hide | Ported | overlay.rs, hud/results.rs (#225) | Quit Event always shows (a page without the engine's menus reopens them); Tab/arrows/D-pad move the focus, Enter/A activate it |
 | DOM fallback race strip | Not needed | — | Hidden whenever the native HUD exists |
 
 ### touch.js, bindings.js, gamepads.js, pad-glyphs.js
@@ -278,14 +280,14 @@ In progress elsewhere, not counted as gaps: the diagnostics overlay (F3).
 | Behaviour | Rust | Where | Notes |
 |---|---|---|---|
 | One-finger compass, trick wheel, two-finger layout, flips, arcade spin | Ported | atv-ui/src/touch (#191) | |
-| Coaching, idle hints, sensitivity, one-handed | Ported | touch/mod.rs | |
+| Coaching, idle hints, sensitivity, one-handed | Ported | touch/mod.rs | Coaching counts one ride per page load |
 | Flip-armed `vibrate(12)` | Ported | touch/mod.rs `flip_buzz` | |
 | 17 actions, defaults, chords, migration, presets, trick grace (`atv2-gameplay-bindings-v1`) | Ported | ride/bindings.rs (#182) | |
-| Storage-failure notice | Unverified | — | |
-| Pad Auto selection | Partial | app/gamepad.rs (gilrs) | No resting-axis baseline |
+| Storage-failure notice | Ported | settings.rs `STORAGE_ERROR`, menu/controller.rs | After a binding capture that could not be saved |
+| Pad Auto selection | Ported | app/gamepad.rs (gilrs) | Resting-axis baselines, then the current, a standard-mapped or the first pad |
 | Pin a pad by name | Ported | gamepad.rs `pinned` | Matched by name, then gilrs index (not the browser index) |
 | Tuning sliders, deadzone (`atv2-controller-v1`) | Ported | bindings.rs `Tuning` | |
-| Pads with more than 17 buttons or 4 axes | Partial | gamepad.rs | Standard set only |
+| Pads with more than 17 buttons or 4 axes | Ported | gamepad.rs `extra_inputs` | Up to 32 buttons and 16 axes; desktop orders a pad's unmapped inputs by event code |
 | Glyphs and controller summary | Ported | menu/glyphs.rs (#230) | |
 | Non-standard pads as "Button N / Axis N" | Ported | gamepad.rs `standard` | |
 

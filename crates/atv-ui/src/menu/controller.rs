@@ -9,7 +9,8 @@ use crate::{
     touch::TouchControls,
 };
 use atv_game::ride::bindings::{
-    self as binds, ACTIONS, Action, Atom, Binding, Bindings, CONTROLLER_STORAGE_KEY, STORAGE_KEY,
+    self as binds, ACTIONS, Action, Atom, Binding, Bindings, CONTROLLER_STORAGE_KEY, Pad,
+    STORAGE_KEY,
 };
 use serde_json::json;
 
@@ -82,6 +83,9 @@ struct Capture {
     atoms: Vec<Atom>,
     held: Vec<String>,
     armed: bool,
+    /// The row it began on: the selection returns there (frontend.js keeps
+    /// `selection` through a capture).
+    selection: usize,
 }
 
 pub struct PauseMenu {
@@ -111,6 +115,12 @@ pub struct PauseMenu {
     pub notice: Option<String>,
     /// A Jukebox seek being dragged (fraction of the song).
     pub seek_to: Option<f32>,
+    /// The ride is a race: Pause's second row is Restart Race
+    /// (frontend.js `raceActive`).
+    pub race_active: bool,
+    /// Keys held while the menu is open (frontend.js `menuKeys`), for the
+    /// rebindable Pause action.
+    held: Vec<String>,
 }
 
 struct Pressed {
@@ -155,6 +165,8 @@ impl PauseMenu {
             frontend: false,
             notice: None,
             seek_to: None,
+            race_active: false,
+            held: Vec::new(),
         }
     }
 
@@ -257,6 +269,7 @@ impl PauseMenu {
             "width": ctx.view.width.clamp(240., 16384.),
             "height": ctx.view.height.clamp(240., 16384.),
             "selection": self.selection,
+            "race_active": self.race_active,
             "race_overlays_off": p.overlays_off,
             "race_position": p.race_position,
             "funny_crashes": p.crash_mode != "original",
@@ -551,7 +564,7 @@ impl PauseMenu {
                 Event::Changed
             }
             "bindcancel" => {
-                self.capture = None;
+                self.end_capture();
                 Event::Changed
             }
             "bindclear" | "bindreset" | "padpreset" | "paddefaults" => {
@@ -610,11 +623,12 @@ impl PauseMenu {
                     atoms: Vec::new(),
                     held: Vec::new(),
                     armed: false,
+                    selection: index % 4,
                 });
                 if let Some(b) = ctx.bindings.as_deref_mut() {
                     b.cancel();
                 }
-                self.selection = 0;
+                self.held.clear();
                 Event::Changed
             }
             "minimap-toggle" => {
@@ -698,15 +712,47 @@ impl PauseMenu {
         if n > 0 {
             self.selection = (self.selection as i32 + delta).rem_euclid(n) as usize;
             self.key.clear();
+            self.follow_binding_row();
         }
+    }
+
+    /// frontend.js `bindingRow` follows the highlighted binding row (arrow
+    /// keys and pointer focus), so Clear binding clears that row.
+    fn follow_binding_row(&mut self) {
+        if self.page != "bindings" {
+            return;
+        }
+        let row = self
+            .selected()
+            .and_then(|a| a.strip_prefix("bind:"))
+            .and_then(|id| ACTIONS.iter().position(|(_, a, _)| *a == id));
+        if let Some(row) = row {
+            self.binding_row = row;
+        }
+    }
+
+    /// Ends a binding capture, back on the row it began on.
+    fn end_capture(&mut self) -> Option<Capture> {
+        let c = self.capture.take()?;
+        self.selection = c.selection;
+        self.held.clear();
+        self.key.clear();
+        Some(c)
+    }
+
+    /// Losing focus cancels a binding capture (frontend.js `blur` and
+    /// `visibilitychange` → `cancelCapture`) and forgets held keys.
+    pub fn cancel_capture(&mut self) {
+        self.end_capture();
+        self.held.clear();
+        self.pad = u32::MAX;
     }
 
     /// Keyboard input while the menu is open (winit key code names).
     pub fn key(&mut self, code: &str, ctx: &mut Context) -> Option<Event> {
         if let Some(c) = &mut self.capture {
             if code == "Escape" {
-                self.capture = None;
-                self.key.clear();
+                self.end_capture();
                 return Some(Event::Changed);
             }
             let valid = code.len() <= 40
@@ -723,6 +769,25 @@ impl PauseMenu {
             }
             return None;
         }
+        if !self.held.iter().any(|h| h == code) {
+            self.held.push(code.into());
+        }
+        // frontend.js: the (rebindable) Pause action resumes from Pause.
+        if self.page == "pause"
+            && let Some(b) = ctx.bindings.as_deref()
+            && b.value(
+                Action::Pause,
+                &|c: &str| self.held.iter().any(|h| h == c),
+                None,
+            ) > 0.5
+        {
+            return Some(Event::Resume);
+        }
+        self.navigate(code, ctx)
+    }
+
+    /// A menu key or a controller press mapped to one.
+    fn navigate(&mut self, code: &str, ctx: &mut Context) -> Option<Event> {
         match code {
             "ArrowUp" | "KeyW" => self.step(-1),
             "ArrowDown" | "KeyS" | "Tab" => self.step(1),
@@ -733,11 +798,28 @@ impl PauseMenu {
                     1
                 };
                 let action = self.selected()?.to_string();
-                // Left/Right step sliders and cycle valued rows; never navigate.
-                let valued = self.rows.label(&action).is_some_and(|l| l.contains(": "));
-                if self.rows.slider(&action).is_some() || valued || action == "jukeseek" {
+                // Left/Right step sliders and cycle valued rows; never
+                // navigate. Binding and song rows are lists, not values.
+                let list = action.starts_with("bind:") || action.starts_with("song:");
+                let valued = !list && self.rows.label(&action).is_some_and(|l| l.contains(": "));
+                if self.rows.slider(&action).is_some()
+                    || valued
+                    || matches!(action.as_str(), "jukeseek" | "jukevolume")
+                {
                     return self.run(&action, direction, true, ctx);
                 }
+                // frontend.js: elsewhere the Jukebox changes track, and
+                // Bindings and Audio turn the page.
+                let turn = match (self.page.as_str(), direction < 0) {
+                    ("jukebox", true) => "jukeprev",
+                    ("jukebox", false) => "jukenext",
+                    ("bindings", true) => "bindprev",
+                    ("bindings", false) => "bindnext",
+                    ("music", true) => "musicprev",
+                    ("music", false) => "musicnext",
+                    _ => return None,
+                };
+                return self.run(turn, direction, false, ctx);
             }
             "Enter" | "Space" | "NumpadEnter" => {
                 let action = self.selected()?.to_string();
@@ -756,6 +838,7 @@ impl PauseMenu {
 
     /// Key release: a keyboard capture saves once every key is up.
     pub fn key_up(&mut self, code: &str, ctx: &mut Context) -> Option<Event> {
+        self.held.retain(|h| h != code);
         let c = self.capture.as_mut()?;
         if !self.keyboard {
             return None;
@@ -768,7 +851,7 @@ impl PauseMenu {
     }
 
     fn finish_capture(&mut self, ctx: &mut Context) -> Option<Event> {
-        let c = self.capture.take()?;
+        let c = self.end_capture()?;
         let binding = if c.atoms.len() == 1 {
             Binding::One(c.atoms[0].clone())
         } else {
@@ -776,7 +859,9 @@ impl PauseMenu {
         };
         let bindings = ctx.bindings.as_deref_mut()?;
         bindings.set_binding(self.keyboard, c.action, vec![binding]);
-        save_bindings(bindings, ctx.settings);
+        // frontend.js finishCapture: the notice shows a failed save.
+        self.notice = (!save_bindings(bindings, ctx.settings))
+            .then(|| crate::settings::STORAGE_ERROR.to_string());
         self.key.clear();
         Some(Event::Changed)
     }
@@ -785,8 +870,8 @@ impl PauseMenu {
     /// binding when all are released.
     fn capture_pad(
         &mut self,
-        buttons: &[f32; 17],
-        axes: &[f32; 4],
+        buttons: &[f32],
+        axes: &[f32],
         connected: bool,
         ctx: &mut Context,
     ) -> Option<Event> {
@@ -828,21 +913,23 @@ impl PauseMenu {
     }
 
     /// Standard-mapping controller buttons (edges): D-pad/stick move, A
-    /// accepts, B/Y go back, Start resumes.
-    pub fn pad(
-        &mut self,
-        buttons: [f32; 17],
-        axes: [f32; 4],
-        connected: bool,
-        ctx: &mut Context,
-    ) -> Option<Event> {
+    /// accepts, B/Y go back, Start (or the Pause binding) resumes.
+    pub fn pad(&mut self, pad: Option<&Pad>, ctx: &mut Context) -> Option<Event> {
+        let idle = Pad::default();
+        let sample = pad.unwrap_or(&idle);
+        let (buttons, axes) = (&sample.buttons, &sample.axes);
         if self.capture.is_some() {
             if self.keyboard {
                 // A pad press does not navigate under a keyboard capture.
                 return None;
             }
-            return self.capture_pad(&buttons, &axes, connected, ctx);
+            return self.capture_pad(buttons, axes, pad.is_some(), ctx);
         }
+        let pause = pad.is_some()
+            && ctx
+                .bindings
+                .as_deref()
+                .is_some_and(|b| b.value(Action::Pause, &|_: &str| false, pad) > 0.5);
         let mut held = 0u32;
         let mut set = |bit: u32, on: bool| {
             if on {
@@ -851,7 +938,7 @@ impl PauseMenu {
         };
         set(0, buttons[0] > 0.5);
         set(1, buttons[1] > 0.5 || buttons[3] > 0.5);
-        set(2, buttons[9] > 0.5);
+        set(2, buttons[9] > 0.5 || pause);
         set(3, buttons[12] > 0.5 || axes[1] < -0.55);
         set(4, buttons[13] > 0.5 || axes[1] > 0.55);
         set(5, buttons[14] > 0.5 || axes[0] < -0.55);
@@ -869,11 +956,17 @@ impl PauseMenu {
             (1, "Escape"),
         ] {
             if fresh & 1 << bit != 0 {
-                event = event.or(self.key(code, ctx));
+                event = event.or(self.navigate(code, ctx));
             }
         }
         if fresh & 1 << 2 != 0 {
-            event = event.or(Some(Event::Resume));
+            // frontend.js: Start resumes the ride from its menus; Settings
+            // and the Jukebox over the main menu take it as accept.
+            event = event.or(if self.from_menu {
+                self.navigate("Enter", ctx)
+            } else {
+                Some(Event::Resume)
+            });
         }
         event
     }
@@ -903,6 +996,7 @@ impl PauseMenu {
         if let Some((index, _)) = target {
             self.selection = index;
             self.key.clear();
+            self.follow_binding_row();
         }
         self.pressed = Some(Pressed {
             pointer,
@@ -1032,8 +1126,8 @@ impl Default for PauseMenu {
     }
 }
 
-fn save_bindings(bindings: &Bindings, settings: &mut Settings) {
-    settings.set(STORAGE_KEY, &bindings.to_json());
+fn save_bindings(bindings: &Bindings, settings: &mut Settings) -> bool {
+    settings.set(STORAGE_KEY, &bindings.to_json())
 }
 
 /// The ride's saved bindings and controller tuning (play.html's keys).
@@ -1206,5 +1300,228 @@ mod pad_select_tests {
         assert_eq!(bindings.tuning.selected, None);
         let saved = settings.get(CONTROLLER_STORAGE_KEY).unwrap();
         assert!(saved.contains("\"selected\":null"), "{saved}");
+    }
+}
+
+#[cfg(test)]
+mod parity_tests {
+    use super::*;
+    use crate::{
+        hud::minimap::MinimapSettings,
+        menu::{jukebox::MusicView, prefs::Preferences},
+        touch::TouchControls,
+    };
+
+    /// A menu's settings, bindings and soundtrack view.
+    struct Fixture {
+        settings: Settings,
+        prefs: Preferences,
+        minimap: MinimapSettings,
+        touch: TouchControls,
+        bindings: Bindings,
+        music: MusicView,
+    }
+
+    impl Fixture {
+        fn new() -> Self {
+            let mut settings = Settings::memory();
+            Self {
+                prefs: Preferences::load(&settings, false),
+                minimap: MinimapSettings::load(&settings),
+                touch: TouchControls::new(&settings, false),
+                bindings: load_bindings(&mut settings),
+                music: MusicView {
+                    ready: true,
+                    enabled: true,
+                    songs: (0..9)
+                        .map(|i| (format!("Song {i}"), "Artist".into(), String::new()))
+                        .collect(),
+                    playing_index: Some(0),
+                    ..Default::default()
+                },
+                settings,
+            }
+        }
+
+        /// Runs `f` with a context, the rows refreshed before and after.
+        fn with<T>(
+            &mut self,
+            menu: &mut PauseMenu,
+            f: impl FnOnce(&mut PauseMenu, &mut Context) -> T,
+        ) -> T {
+            let mut ctx = Context {
+                settings: &mut self.settings,
+                prefs: &mut self.prefs,
+                minimap: &mut self.minimap,
+                touch: &mut self.touch,
+                bindings: Some(&mut self.bindings),
+                pad_name: None,
+                pads: Vec::new(),
+                pad_standard: true,
+                view: Viewport {
+                    width: 1280.,
+                    height: 720.,
+                    ..Default::default()
+                },
+                lobby: None,
+                music: Some(&self.music),
+            };
+            menu.refresh(&ctx);
+            let out = f(menu, &mut ctx);
+            menu.refresh(&ctx);
+            out
+        }
+    }
+
+    fn pad(buttons: &[usize]) -> Pad {
+        let mut pad = Pad::default();
+        for b in buttons {
+            pad.buttons[*b] = 1.;
+        }
+        pad
+    }
+
+    #[test]
+    fn a_race_offers_restart_race() {
+        let mut fx = Fixture::new();
+        let mut menu = PauseMenu::new();
+        fx.with(&mut menu, |_, _| ());
+        assert_eq!(menu.rows.label("reset"), Some("Reset ATV"));
+        let mut race = PauseMenu::new();
+        race.race_active = true;
+        fx.with(&mut race, |_, _| ());
+        assert_eq!(race.rows.label("reset"), Some("Restart Race"));
+        assert_eq!(
+            fx.with(&mut race, |m, ctx| m.run("reset", 1, false, ctx)),
+            Some(Event::Reset)
+        );
+    }
+
+    #[test]
+    fn clear_binding_follows_the_highlighted_row() {
+        let mut fx = Fixture::new();
+        let mut menu = PauseMenu::new();
+        fx.with(&mut menu, |m, ctx| m.run("keyboard", 1, false, ctx));
+        // Down twice: the third action (Steer left) is highlighted.
+        fx.with(&mut menu, |m, ctx| m.key("ArrowDown", ctx));
+        fx.with(&mut menu, |m, ctx| m.key("ArrowDown", ctx));
+        assert_eq!(menu.selected(), Some("bind:steerLeft"));
+        fx.with(&mut menu, |m, ctx| m.run("bindclear", 1, false, ctx));
+        assert!(fx.bindings.row(true, Action::SteerLeft).is_empty());
+        assert!(!fx.bindings.row(true, Action::Throttle).is_empty());
+        // A pointer press on a row moves it too.
+        let hits = vec![(Rect::new(0., 0., 100., 40.), crate::menu::ROW + 1)];
+        fx.with(&mut menu, |m, ctx| m.press(&hits, 1, 10., 10., ctx));
+        assert_eq!(menu.binding_row, 1);
+    }
+
+    #[test]
+    fn left_right_turn_list_pages_and_change_jukebox_tracks() {
+        let mut fx = Fixture::new();
+        let mut menu = PauseMenu::new();
+        fx.with(&mut menu, |m, ctx| m.run("keyboard", 1, false, ctx));
+        assert_eq!(menu.selected(), Some("bind:throttle"));
+        fx.with(&mut menu, |m, ctx| m.key("ArrowRight", ctx));
+        assert!(menu.capture.is_none(), "Right does not start a capture");
+        assert_eq!(menu.binding_page, 1);
+        fx.with(&mut menu, |m, ctx| m.key("ArrowLeft", ctx));
+        assert_eq!(menu.binding_page, 0);
+        // Audio: a song row turns the page instead of playing the song.
+        let mut audio = PauseMenu::new();
+        fx.with(&mut audio, |m, _| m.show("music"));
+        let song = audio
+            .rows
+            .choices
+            .iter()
+            .position(|c| c.starts_with("song:"))
+            .unwrap();
+        audio.selection = song;
+        let event = fx.with(&mut audio, |m, ctx| m.key("ArrowRight", ctx));
+        assert_eq!(event, Some(Event::Changed));
+        assert_eq!(audio.music_page(), 1);
+        // Jukebox: Left/Right on a track row change track.
+        let mut juke = PauseMenu::new();
+        fx.with(&mut juke, |m, _| m.show("jukebox"));
+        let song = juke
+            .rows
+            .choices
+            .iter()
+            .position(|c| c.starts_with("song:"))
+            .unwrap();
+        juke.selection = song;
+        assert_eq!(
+            fx.with(&mut juke, |m, ctx| m.key("ArrowRight", ctx)),
+            Some(Event::Jukebox(crate::menu::jukebox::JukeboxAction::Next))
+        );
+        assert_eq!(
+            fx.with(&mut juke, |m, ctx| m.key("ArrowLeft", ctx)),
+            Some(Event::Jukebox(
+                crate::menu::jukebox::JukeboxAction::Previous
+            ))
+        );
+    }
+
+    #[test]
+    fn start_accepts_over_the_main_menu_and_resumes_a_ride() {
+        let mut fx = Fixture::new();
+        let mut settings = PauseMenu::settings();
+        fx.with(&mut settings, |m, ctx| m.pad(Some(&pad(&[])), ctx));
+        let event = fx.with(&mut settings, |m, ctx| m.pad(Some(&pad(&[9])), ctx));
+        assert_eq!(event, None, "Start accepted the first row");
+        assert_ne!(settings.page, "settings");
+        let mut ride = PauseMenu::new();
+        fx.with(&mut ride, |m, ctx| m.pad(Some(&pad(&[])), ctx));
+        assert_eq!(
+            fx.with(&mut ride, |m, ctx| m.pad(Some(&pad(&[9])), ctx)),
+            Some(Event::Resume)
+        );
+    }
+
+    #[test]
+    fn the_pause_binding_resumes() {
+        let mut fx = Fixture::new();
+        fx.bindings.set_binding(
+            true,
+            Action::Pause,
+            vec![Binding::One(Atom::Key("KeyQ".into()))],
+        );
+        fx.bindings
+            .set_binding(false, Action::Pause, vec![Binding::One(Atom::Button(8))]);
+        let mut menu = PauseMenu::new();
+        assert_eq!(
+            fx.with(&mut menu, |m, ctx| m.key("KeyQ", ctx)),
+            Some(Event::Resume)
+        );
+        let mut sub = PauseMenu::new();
+        fx.with(&mut sub, |m, _| m.show("settings"));
+        assert_eq!(fx.with(&mut sub, |m, ctx| m.key("KeyQ", ctx)), None);
+        // The controller binding resumes from any ride menu page.
+        fx.with(&mut sub, |m, ctx| m.pad(Some(&pad(&[])), ctx));
+        assert_eq!(
+            fx.with(&mut sub, |m, ctx| m.pad(Some(&pad(&[8])), ctx)),
+            Some(Event::Resume)
+        );
+    }
+
+    #[test]
+    fn capture_keeps_its_row_and_blur_cancels_it() {
+        let mut fx = Fixture::new();
+        let mut menu = PauseMenu::new();
+        fx.with(&mut menu, |m, ctx| m.run("keyboard", 1, false, ctx));
+        fx.with(&mut menu, |m, ctx| m.key("ArrowDown", ctx));
+        fx.with(&mut menu, |m, ctx| m.run("bind:brake", 1, false, ctx));
+        assert!(menu.capture.is_some());
+        fx.with(&mut menu, |m, ctx| m.key("KeyJ", ctx));
+        fx.with(&mut menu, |m, ctx| m.key_up("KeyJ", ctx));
+        assert!(menu.capture.is_none());
+        assert_eq!(menu.selected(), Some("bind:brake"));
+        assert_eq!(
+            fx.bindings.row(true, Action::Brake),
+            &[Binding::One(Atom::Key("KeyJ".into()))]
+        );
+        fx.with(&mut menu, |m, ctx| m.run("bind:brake", 1, false, ctx));
+        fx.with(&mut menu, |m, _| m.cancel_capture());
+        assert!(menu.capture.is_none());
+        assert_eq!(menu.selected(), Some("bind:brake"));
     }
 }
