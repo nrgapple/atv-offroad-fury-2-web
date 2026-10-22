@@ -27,3 +27,26 @@ pub mod water;
 pub mod wheel_effects;
 
 pub type Result<T> = std::result::Result<T, String>;
+
+/// Yields once to the host's frame loop. Long loads that must not hold up a
+/// frame (other riders' models and engine banks) await this between steps;
+/// the app polls such loads once per frame.
+pub fn yield_frame() -> impl std::future::Future<Output = ()> {
+    struct Yield(bool);
+    impl std::future::Future for Yield {
+        type Output = ();
+        fn poll(
+            mut self: std::pin::Pin<&mut Self>,
+            cx: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<()> {
+            if self.0 {
+                std::task::Poll::Ready(())
+            } else {
+                self.0 = true;
+                cx.waker().wake_by_ref();
+                std::task::Poll::Pending
+            }
+        }
+    }
+    Yield(false)
+}

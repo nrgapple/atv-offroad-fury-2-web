@@ -391,6 +391,8 @@ pub struct SceneRenderer {
     /// Multiplayer riders by slot: their (quad, rider) model, pass and
     /// whether this frame presents them.
     peers: std::collections::BTreeMap<u8, (PeerLook, vehicle::VehiclePass, bool)>,
+    /// One vehicle pipeline for every other rider and race CPU.
+    shared_vehicle: Option<vehicle::VehicleShared>,
     profiler: profile::Profiler,
     /// Scene-pass GPU timestamps, while [`SceneRenderer::gpu_scene_ms`] runs.
     gpu_timer: Option<profile::GpuTimer>,
@@ -500,6 +502,7 @@ impl SceneRenderer {
             vehicle: None,
             cpus: Vec::new(),
             peers: Default::default(),
+            shared_vehicle: None,
             profiler: profile::Profiler::default(),
             gpu_timer: None,
             wheel_effects: None,
@@ -847,7 +850,13 @@ impl SceneRenderer {
         quad: &atv_game::ride::Model,
         rider: &atv_game::ride::Model,
     ) -> Result<(), String> {
-        let vehicle = vehicle::VehiclePass::new(gpu, venue, quad, rider, gpu.samples)?;
+        // The player's pass compiles the shared pipeline at ride start, so a
+        // rider joining later costs no shader compile.
+        let shared = self
+            .shared_vehicle
+            .get_or_insert_with(|| vehicle::VehicleShared::new(gpu, gpu.samples))
+            .clone();
+        let vehicle = vehicle::VehiclePass::with_shared(gpu, venue, quad, rider, &shared)?;
         if self.graphics.shadow_map > 0 {
             self.shadow_map = Some(shadows::ShadowMap::new(gpu, &self.world, &vehicle));
         }
@@ -865,10 +874,15 @@ impl SceneRenderer {
         venue: &Venue,
         models: &[(atv_game::ride::Model, atv_game::ride::Model)],
     ) -> Result<(), String> {
+        let shared = self
+            .shared_vehicle
+            .get_or_insert_with(|| vehicle::VehicleShared::new(gpu, gpu.samples))
+            .clone();
         self.cpus = models
             .iter()
             .map(|(quad, rider)| {
-                vehicle::VehiclePass::new(gpu, venue, quad, rider, gpu.samples).map(|v| (v, false))
+                vehicle::VehiclePass::with_shared(gpu, venue, quad, rider, &shared)
+                    .map(|v| (v, false))
             })
             .collect::<Result<_, _>>()?;
         Ok(())
@@ -902,7 +916,11 @@ impl SceneRenderer {
         (quad, rider): (&atv_game::ride::Model, &atv_game::ride::Model),
         paint: [f32; 2],
     ) -> Result<(), String> {
-        let mut pass = vehicle::VehiclePass::new(gpu, venue, quad, rider, gpu.samples)?;
+        let shared = self
+            .shared_vehicle
+            .get_or_insert_with(|| vehicle::VehicleShared::new(gpu, gpu.samples))
+            .clone();
+        let mut pass = vehicle::VehiclePass::with_shared(gpu, venue, quad, rider, &shared)?;
         pass.set_paint(paint);
         self.peers.insert(peer, (key, pass, false));
         Ok(())

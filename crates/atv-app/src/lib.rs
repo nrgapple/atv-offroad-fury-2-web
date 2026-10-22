@@ -252,6 +252,8 @@ struct App {
     held_room: Option<multiplayer::Net>,
     /// The held room the next frontend ride resumes.
     pending_room: Option<multiplayer::Net>,
+    /// Frame-spread loads (see `spawn_frame`).
+    frame_tasks: Vec<std::pin::Pin<Box<dyn std::future::Future<Output = Message>>>>,
     /// The Host/Join forms' browser inputs.
     #[cfg(target_arch = "wasm32")]
     text_inputs: text_inputs::TextInputs,
@@ -282,6 +284,14 @@ struct Meter {
     since: Option<Instant>,
     triangles: u32,
     draws: u32,
+    /// Room work (socket, poses, remote riders and loads) CPU, included in
+    /// `cpu`, and the longest frame interval this second.
+    net: f64,
+    last: Option<Instant>,
+    worst: f64,
+    /// Longest single load slice this second (remote riders' uploads are
+    /// timed by the room).
+    load_max: f64,
 }
 
 /// Load-time choices for the venue presentation and the ride.
@@ -662,6 +672,10 @@ impl App {
 
     /// One rendered frame of the ride: input, fixed steps, chase view.
     fn ride_frame(&mut self, dt: f32) {
+        // Other riders' models and engine banks load a slice per frame.
+        let loads = Instant::now();
+        self.poll_frame_tasks();
+        self.meter.net += loads.elapsed().as_secs_f64() * 1000.;
         let focused = self.effective_focused();
         let suspended = !self.visible || self.suspended;
         let now = Instant::now();
@@ -776,6 +790,7 @@ impl App {
             motion.origin,
             motion.linear_velocity,
         );
+        let room_started = Instant::now();
         let mut loads = Vec::new();
         let mut engine_loads = Vec::new();
         let mut course = None;
@@ -827,14 +842,17 @@ impl App {
             publish_multiplayer(net, riding.contacts, &riding.ride, remote, tags);
         }
         for (quad, future) in engine_loads {
-            self.spawn(future, move |engine| {
+            self.spawn_frame(future, move |engine| {
                 Message::RemoteEngine(quad, Box::new(engine))
             });
         }
         for (content, key) in loads {
-            self.spawn(multiplayer::load_model(content, key), |model| {
+            self.spawn_frame(multiplayer::load_model(content, key), |model| {
                 Message::PeerModel(Box::new(model))
             });
+        }
+        if self.ready.as_ref().is_some_and(|r| r.net.is_some()) {
+            self.meter.net += room_started.elapsed().as_secs_f64() * 1000.;
         }
         if let Some(environment) = course {
             self.reload_room(environment);
@@ -1106,12 +1124,27 @@ impl App {
     fn meter_frame(&mut self, now: Instant, extra: &str) {
         let Some(ready) = &self.ready else { return };
         self.meter.frames += 1;
+        if let Some(last) = self.meter.last {
+            self.meter.worst = self.meter.worst.max((now - last).as_secs_f64() * 1000.);
+        }
+        self.meter.last = Some(now);
+        let room = if ready.net.is_some() {
+            format!(
+                " · {:.0} ms worst · {:.2} ms room · {:.1} ms load · {:.1} ms upload",
+                self.meter.worst,
+                self.meter.net / f64::from(self.meter.frames.max(1)),
+                self.meter.load_max,
+                ready.net.as_ref().map_or(0., |n| n.upload_max)
+            )
+        } else {
+            String::new()
+        };
         let since = *self.meter.since.get_or_insert(now);
         let elapsed = (now - since).as_secs_f64();
         if elapsed >= 1. {
             let info = &ready.gpu.adapter_info;
             status(&format!(
-                "{} · {:.0} fps · {:.1} ms frame · {:.2} ms CPU ({:.2} UI) · {} draws · {} tris · {:?} {}{extra}",
+                "{} · {:.0} fps · {:.1} ms frame · {:.2} ms CPU ({:.2} UI){room} · {} draws · {} tris · {:?} {}{extra}",
                 ready.venue.environment.to_uppercase(),
                 self.meter.frames as f64 / elapsed,
                 elapsed * 1000. / self.meter.frames as f64,
@@ -1122,9 +1155,13 @@ impl App {
                 info.backend,
                 info.name
             ));
+            if let Some(net) = self.ready.as_mut().and_then(|r| r.net.as_mut()) {
+                net.upload_max = 0.;
+            }
             self.meter = Meter {
                 triangles: self.meter.triangles,
                 draws: self.meter.draws,
+                last: self.meter.last,
                 ..Default::default()
             };
         }
@@ -2575,6 +2612,50 @@ impl ApplicationHandler<Message> for App {
 const MOUSE: u64 = overlay::MOUSE;
 
 impl App {
+    /// Loads that must not hold up a ride frame (another rider's model or
+    /// engine bank): polled a slice at a time from the frame loop, on both
+    /// web and desktop; they `yield_frame` between their steps.
+    fn spawn_frame<T: 'static>(
+        &mut self,
+        future: impl std::future::Future<Output = T> + 'static,
+        message: impl FnOnce(T) -> Message + 'static,
+    ) {
+        self.frame_tasks
+            .push(Box::pin(async move { message(future.await) }));
+    }
+
+    /// Advances frame-spread loads for about 3 ms of this frame, starting
+    /// with a different load each frame.
+    fn poll_frame_tasks(&mut self) {
+        if self.frame_tasks.is_empty() {
+            return;
+        }
+        let started = Instant::now();
+        let mut cx = std::task::Context::from_waker(std::task::Waker::noop());
+        let mut index = 0;
+        while index < self.frame_tasks.len() {
+            if index > 0 && started.elapsed().as_secs_f64() > 0.003 {
+                break;
+            }
+            let slice = Instant::now();
+            let poll = self.frame_tasks[index].as_mut().poll(&mut cx);
+            self.meter.load_max = self
+                .meter
+                .load_max
+                .max(slice.elapsed().as_secs_f64() * 1000.);
+            match poll {
+                std::task::Poll::Ready(message) => {
+                    drop(self.frame_tasks.remove(index));
+                    let _ = self.proxy.send_event(message);
+                }
+                std::task::Poll::Pending => index += 1,
+            }
+        }
+        if !self.frame_tasks.is_empty() {
+            self.frame_tasks.rotate_left(1);
+        }
+    }
+
     /// Runs `future` (web: on the event loop; desktop: now) and posts its
     /// outcome as a message.
     fn spawn<T: 'static>(
@@ -3055,10 +3136,11 @@ impl App {
         let content = net.content();
         let course = tick.course;
         for key in tick.loads {
-            self.spawn(multiplayer::load_model(content.clone(), key), |model| {
+            self.spawn_frame(multiplayer::load_model(content.clone(), key), |model| {
                 Message::PeerModel(Box::new(model))
             });
         }
+        self.poll_frame_tasks();
         if let Some(environment) = course {
             self.reload_room(environment);
         }
@@ -3741,6 +3823,7 @@ pub fn run(options: Options) {
         riders_polled: None,
         held_room: None,
         pending_room: None,
+        frame_tasks: Vec::new(),
         #[cfg(target_arch = "wasm32")]
         text_inputs: Default::default(),
         #[cfg(not(target_arch = "wasm32"))]
@@ -3789,6 +3872,9 @@ pub fn start() {
     // `?venue=` rides at once (engine tests and parity tools); otherwise the
     // frontend opens and reads the page's ride link.
     // A room link (`?room=` / `?host=1`) rides at once too.
+    if let Some(ms) = param("pingMs").and_then(|v| v.parse::<u32>().ok()) {
+        multiplayer::PING_MS.store(ms.clamp(250, 15_000), std::sync::atomic::Ordering::Relaxed);
+    }
     let direct = param("venue").or_else(|| {
         (param("room").is_some() || param("host").is_some_and(|v| v == "1"))
             .then(|| "env01".to_string())

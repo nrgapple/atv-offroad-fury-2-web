@@ -154,7 +154,9 @@ pub async fn load_remote_engine(
             continue;
         };
         let audio = decode_vag(&sounds.member(index).await?)?;
-        samples.insert(key, Arc::new(Pcm::from_vag(&audio, rate)));
+        crate::yield_frame().await;
+        // Resampled in pieces across frames: a bank never holds up the ride.
+        samples.insert(key, Arc::new(Pcm::from_vag_spread(&audio, rate).await));
     }
     Ok((engine, samples))
 }

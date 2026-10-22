@@ -13,6 +13,25 @@ use atv_core::{
 use atv_net::{RiderState, Snapshot};
 use std::rc::Rc;
 
+/// One rider sex's mesh, motion looping flags and decoded motions.
+struct RiderShared {
+    mesh: mesh::Mesh,
+    looping: Vec<bool>,
+    motions: Vec<Motion>,
+}
+
+type Outfit = std::collections::HashMap<String, textures::MaterialTexture>;
+type Outfits = std::collections::HashMap<(u16, [u8; 7]), std::rc::Rc<Outfit>>;
+
+thread_local! {
+    /// Rider rigs by sex (0 male, 1 female), read once per session.
+    static RIDERS: std::cell::RefCell<std::collections::HashMap<u16, std::rc::Rc<RiderShared>>> =
+        Default::default();
+    /// Decoded rider textures by sex and gear.
+    static OUTFITS: std::cell::RefCell<Outfits> =
+        Default::default();
+}
+
 /// A remote rider's look: quad (1-26), rider (0 male, 1 female) and the
 /// room's appearance bytes (seven gear indices and the quad paint).
 pub type Key = (u16, u16, [u8; atv_net::APPEARANCE_BYTES]);
@@ -50,44 +69,67 @@ pub async fn load_model(content: &Content, key: Key) -> Result<RemoteModel> {
     let models = player_models::selection(quad, rider)?;
     let quad_bytes = content.file(&models.quad).await?;
     let quad_archive = Resource::parse(&quad_bytes)?;
-    let quad_mesh = mesh::decode_psg(&load::member(
-        &quad_archive,
-        &models.quad_mesh,
-        "remote ATV mesh",
-    )?)?;
+    let quad_member = load::member(&quad_archive, &models.quad_mesh, "remote ATV mesh")?;
+    crate::yield_frame().await;
+    let quad_mesh = mesh::decode_psg(&quad_member)?;
+    crate::yield_frame().await;
     let quad_materials = content.file(&models.quad_materials).await?;
-    let quad_textures = textures::load(&quad_mesh, &Resource::parse(&quad_materials)?)?;
-    let rider_bytes = content.file(&models.rider).await?;
-    let rider_archive = Resource::parse(&rider_bytes)?;
-    let rider_mesh = mesh::decode_psg(&load::member_suffix(
-        &rider_archive,
-        &format!("/{}", models.rider_mesh),
-    )?)?;
-    let catalog = atv_core::motion_catalog::MotionCatalog::parse(&load::member_suffix(
-        &rider_archive,
-        &format!("/{}", models.rider_catalog),
-    )?)?;
-    let selected = load::riding_motions(&catalog)?;
-    let motion_bytes = content.file("/ANIMSRDR.RES").await?;
-    let motion_archive = Resource::parse(&motion_bytes)?;
-    let mut motions = Vec::with_capacity(selected.len());
-    for definition in &selected {
-        let file = definition
-            .path
-            .rsplit(['/', '\\'])
-            .next()
-            .unwrap_or(&definition.path);
-        motions.push(Motion {
-            animation: animation::decode_mot(&load::member_suffix(
-                &motion_archive,
-                &format!("/{file}"),
-            )?)?,
-            sampling: animation::Sampling {
-                translation_interpolation: definition.interpolate_position,
-                rotation_interpolation: definition.interpolate_rotation,
-            },
-        });
-    }
+    let quad_textures =
+        textures::load_spread(&quad_mesh, &Resource::parse(&quad_materials)?).await?;
+    crate::yield_frame().await;
+    // Every remote rider of one sex shares the rider mesh, motion catalog
+    // and 78 motions: read them once per session.
+    let cached = RIDERS.with_borrow(|m| m.get(&rider).cloned());
+    let shared = match cached {
+        Some(shared) => shared,
+        None => {
+            let rider_bytes = content.file(&models.rider).await?;
+            let rider_archive = Resource::parse(&rider_bytes)?;
+            let mesh = mesh::decode_psg(&load::member_suffix(
+                &rider_archive,
+                &format!("/{}", models.rider_mesh),
+            )?)?;
+            let catalog = atv_core::motion_catalog::MotionCatalog::parse(&load::member_suffix(
+                &rider_archive,
+                &format!("/{}", models.rider_catalog),
+            )?)?;
+            let selected = load::riding_motions(&catalog)?;
+            crate::yield_frame().await;
+            let motion_bytes = content.file("/ANIMSRDR.RES").await?;
+            let motion_archive = Resource::parse(&motion_bytes)?;
+            let mut motions = Vec::with_capacity(selected.len());
+            for (index, definition) in selected.iter().enumerate() {
+                let file = definition
+                    .path
+                    .rsplit(['/', '\\'])
+                    .next()
+                    .unwrap_or(&definition.path);
+                motions.push(Motion {
+                    animation: animation::decode_mot(&load::member_suffix(
+                        &motion_archive,
+                        &format!("/{file}"),
+                    )?)?,
+                    sampling: animation::Sampling {
+                        translation_interpolation: definition.interpolate_position,
+                        rotation_interpolation: definition.interpolate_rotation,
+                    },
+                });
+                if index % 8 == 7 {
+                    crate::yield_frame().await;
+                }
+            }
+            let shared = std::rc::Rc::new(RiderShared {
+                mesh,
+                looping: selected.iter().map(|m| m.looping).collect(),
+                motions,
+            });
+            RIDERS.with_borrow_mut(|m| m.insert(rider, shared.clone()));
+            shared
+        }
+    };
+    let rider_mesh = shared.mesh.clone();
+    crate::yield_frame().await;
+    let mut motions = shared.motions.clone();
     if motions.len() != 78 {
         return Err("remote rider motions are incomplete".into());
     }
@@ -97,20 +139,31 @@ pub async fn load_model(content: &Content, key: Key) -> Result<RemoteModel> {
     let wrecks = motions.split_off(62);
     let stunts = motions.split_off(14);
     let mut animator = Animator::new(motions, &rider_mesh.nodes)?;
-    animator.set_stunts(stunts, selected[14..62].iter().map(|m| m.looping).collect())?;
+    animator.set_stunts(stunts, shared.looping[14..62].to_vec())?;
     animator.set_landing_motions(landings)?;
-    let rider_materials = content.file("/RIDER/RIDER_MT.RES").await?;
-    let rider_materials = Resource::parse(&rider_materials)?;
-    let catalog = if appearance.gear.iter().any(|g| *g != 0) {
-        gear::catalog(content).await?
-    } else {
-        None
-    };
-    let rider_textures = match catalog {
-        Some(catalog) => {
-            gear::rider_textures(&rider_mesh, &appearance, &catalog, &rider_materials)?
+    crate::yield_frame().await;
+    // Riders of one sex in the same gear share their decoded textures.
+    let look_key = (rider, appearance.gear);
+    let cached = OUTFITS.with_borrow(|m| m.get(&look_key).cloned());
+    let rider_textures = match cached {
+        Some(textures) => (*textures).clone(),
+        None => {
+            let rider_materials = content.file("/RIDER/RIDER_MT.RES").await?;
+            let rider_materials = Resource::parse(&rider_materials)?;
+            let catalog = if appearance.gear.iter().any(|g| *g != 0) {
+                gear::catalog(content).await?
+            } else {
+                None
+            };
+            let textures = match catalog {
+                Some(catalog) => {
+                    gear::rider_textures(&rider_mesh, &appearance, &catalog, &rider_materials)?
+                }
+                None => textures::load_spread(&rider_mesh, &rider_materials).await?,
+            };
+            OUTFITS.with_borrow_mut(|m| m.insert(look_key, std::rc::Rc::new(textures.clone())));
+            textures
         }
-        None => textures::load(&rider_mesh, &rider_materials)?,
     };
     let rig = Rig {
         quad: QuadPose::new(&quad_mesh)?,
