@@ -264,7 +264,7 @@ impl PauseMenu {
         if let Some(b) = ctx.bindings.as_deref() {
             let t = &b.tuning;
             request["controller_label"] = match &ctx.pad_name {
-                Some(name) => format!("Auto ({name})"),
+                Some(name) => format!("Auto ({})", pad_name(name)),
                 None => "Auto (press a button)".into(),
             }
             .into();
@@ -950,4 +950,85 @@ pub fn load_bindings(settings: &mut Settings) -> Bindings {
         save_bindings(&bindings, settings);
     }
     bindings
+}
+
+/// gamepads.js padName: the readable pad name, without Chrome's
+/// "(STANDARD GAMEPAD Vendor: …)" or XInput groups and Firefox's
+/// "054c-0ce6-" prefix, at most 48 characters.
+pub fn pad_name(id: &str) -> String {
+    let mut out = String::new();
+    let mut rest = id;
+    // Drop each innermost "( … )" group that names the mapping or vendor.
+    while let Some(open) = rest.find('(') {
+        let Some(close) = rest[open + 1..].find(['(', ')']).map(|i| open + 1 + i) else {
+            break;
+        };
+        if rest.as_bytes()[close] == b'(' {
+            out.push_str(&rest[..close]);
+            rest = &rest[close..];
+            continue;
+        }
+        let inner = rest[open + 1..close].to_ascii_lowercase();
+        if ["standard gamepad", "vendor:", "xinput"]
+            .iter()
+            .any(|k| inner.contains(k))
+        {
+            out.push_str(rest[..open].trim_end());
+            out.push(' ');
+            rest = rest[close + 1..].trim_start();
+        } else {
+            out.push_str(&rest[..=close]);
+            rest = &rest[close + 1..];
+        }
+    }
+    out.push_str(rest);
+    let mut name = out.as_str();
+    // Firefox: "054c-0ce6-" vendor-product prefix.
+    let hex = |s: &str| (1..=4).contains(&s.len()) && s.bytes().all(|b| b.is_ascii_hexdigit());
+    let mut parts = name.splitn(3, '-');
+    if let (Some(a), Some(b), Some(tail)) = (parts.next(), parts.next(), parts.next())
+        && hex(a)
+        && hex(b)
+    {
+        name = tail;
+    }
+    let name = name.split_whitespace().collect::<Vec<_>>().join(" ");
+    let name = if name.is_empty() {
+        "Controller 1".to_string()
+    } else {
+        name
+    };
+    name.chars().take(48).collect()
+}
+
+#[cfg(test)]
+mod pad_name_tests {
+    use super::pad_name;
+
+    // Values from web/gamepads.js padName on the same ids.
+    #[test]
+    fn matches_the_browser() {
+        for (id, name) in [
+            (
+                "Xbox 360 compliant game controller (STANDARD GAMEPAD Vendor: 045e Product: 028e)",
+                "Xbox 360 compliant game controller",
+            ),
+            ("054c-0ce6-Wireless Controller", "Wireless Controller"),
+            (
+                "Xbox Wireless Controller (XInput STANDARD GAMEPAD)",
+                "Xbox Wireless Controller",
+            ),
+            (
+                "Pro Controller (Nintendo) (Vendor: 057e Product: 2009)",
+                "Pro Controller (Nintendo)",
+            ),
+            ("", "Controller 1"),
+            (
+                "A very long controller name that goes on and on beyond forty eight characters",
+                "A very long controller name that goes on and on ",
+            ),
+        ] {
+            assert_eq!(pad_name(id), name, "{id}");
+        }
+    }
 }
