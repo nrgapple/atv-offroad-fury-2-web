@@ -119,6 +119,8 @@ pub struct Overlay {
     pub jukebox_art: Option<atv_ui::menu::jukebox::Art>,
     /// The Jukebox was opened: the host loads its art once.
     pub jukebox_art_wanted: bool,
+    /// This frame's Jukebox spectrum (analyser bytes; None while silent).
+    pub spectrum: Option<Vec<u8>>,
     /// The last menu layout: its inputs, paint, hits and scroll range.
     menu_cache: Option<MenuCache>,
     /// The Jukebox has centred its playing row since it opened.
@@ -186,6 +188,7 @@ impl Overlay {
             music: None,
             jukebox_art: None,
             jukebox_art_wanted: false,
+            spectrum: None,
             menu_cache: None,
             jukebox_centred: false,
             created: web_time::Instant::now(),
@@ -517,6 +520,18 @@ impl Overlay {
         let view = self.view;
         if self.menu.is_some() {
             self.prepare_menu(device, queue, bindings);
+            // drawBars: the spectrum repaints every frame over the cached panel.
+            if let Some((area, _)) = self
+                .menu_hits
+                .iter()
+                .find(|(_, id)| *id == atv_ui::menu::BARS)
+            {
+                atv_ui::menu::jukebox::paint_bars(
+                    &mut self.list,
+                    *area,
+                    self.spectrum.as_deref().unwrap_or(&[]),
+                );
+            }
             self.upload(device, queue, width, height);
             self.prepare_ms = started.elapsed().as_secs_f64() * 1000.;
             return;
@@ -1017,6 +1032,8 @@ impl Overlay {
                     "playing": v.playing_index, "enabled": v.enabled, "paused": v.paused,
                     "position": v.position, "duration": v.duration, "volume": v.volume,
                     "songs": v.songs.len(), "art": self.jukebox_art.is_some(),
+                    "spectrum": self.spectrum.as_ref().map(|b| b.iter().copied().max().unwrap_or(0)),
+                    "bars": self.menu_hits.iter().any(|(_, id)| *id == atv_ui::menu::BARS),
                 })),
                 "hits": self.menu_hits.iter().filter(|(_, id)| *id >= pause::ROW).map(|(r, id)| serde_json::json!({
                     "action": m.rows.choices.get((*id - pause::ROW) as usize),
