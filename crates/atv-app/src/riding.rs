@@ -68,6 +68,8 @@ pub struct Riding {
     pub hype: atv_game::ride::hype::HypeDirector,
     pub alpha_slowmo: bool,
     pub alpha_big_air_camera: bool,
+    /// Alpha Air dark blur (the screen pass reads `hype.blur`).
+    pub alpha_air_blur: bool,
     /// Enhanced/High: draw sunk wheels on the visible ground
     /// (graphics.js `wheelReprojection`).
     pub wheel_reprojection: bool,
@@ -178,6 +180,7 @@ impl Riding {
             hype: Default::default(),
             alpha_slowmo: false,
             alpha_big_air_camera: false,
+            alpha_air_blur: false,
             wheel_reprojection: false,
             ground: venue.visible.clone(),
             wheel_lift: std::cell::Cell::new(0.),
@@ -809,6 +812,15 @@ impl Riding {
     /// The Assisted chase orbit (radians; `requestedHillOrbit`).
     pub fn hill_orbit(&self) -> f64 {
         self.sightline.lift
+    }
+
+    /// The Air dark blur amount this frame (0 with the toggle off).
+    pub fn air_blur(&self) -> f32 {
+        if self.alpha_air_blur {
+            self.hype.blur
+        } else {
+            0.
+        }
     }
 
     /// The visible terrain height (renderCore.terrainHeight).

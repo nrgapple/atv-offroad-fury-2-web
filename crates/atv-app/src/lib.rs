@@ -776,6 +776,8 @@ impl App {
             motion.origin,
             motion.linear_velocity,
         );
+        // Alpha Air dark blur follows the director's big-air amount.
+        ready.scene.set_air_blur(&ready.gpu, riding.air_blur());
         let mut loads = Vec::new();
         let mut engine_loads = Vec::new();
         let mut course = None;
@@ -938,6 +940,8 @@ impl App {
                 "arcadeFlips": riding.ride.options.arcade_flips,
                 "alphaSlowmo": riding.alpha_slowmo,
                 "alphaBigAirCamera": riding.alpha_big_air_camera,
+                "alphaAirBlur": riding.alpha_air_blur, "airBlur": riding.air_blur(),
+                "hypeBlur": riding.hype.blur,
                 "timeScale": riding.hype.time_scale,
                 "interpolation": riding.interpolation,
                 "skySmooth": graphics.sky_smooth, "fresnel": graphics.fresnel,
@@ -1559,6 +1563,7 @@ impl App {
         // Settings → Alpha presentation (web/hype.js).
         riding.alpha_slowmo = prefs.alpha("air-slowmo");
         riding.alpha_big_air_camera = prefs.alpha("big-air-camera");
+        riding.alpha_air_blur = prefs.alpha("air-blur");
         let mode = atv_game::crash::CrashMode::parse(&prefs.crash_mode).unwrap_or_default();
         if riding
             .crashes

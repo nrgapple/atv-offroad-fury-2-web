@@ -2,6 +2,7 @@
 //! Windows, Vulkan on Linux and WebGL2 in browsers.
 // Presentation only: not part of the deterministic simulation (clippy.toml).
 #![allow(clippy::disallowed_methods)]
+mod air_blur;
 mod ambient;
 mod blood;
 pub mod camera;
@@ -377,6 +378,8 @@ pub struct SceneRenderer {
     gate: Option<[f32; 16]>,
     /// Authored speed-rush screen pass, and the travel state it reads.
     speed_rush: Option<speed_rush::SpeedRushPass>,
+    /// Alpha Air dark blur, created at the first blurred frame.
+    air_blur: Option<air_blur::AirBlurPass>,
     rush_motion: ([f32; 3], [f32; 3]),
     coarse_pointer: bool,
     /// Gorn blood, created on the first frame with blood.
@@ -521,6 +524,7 @@ impl SceneRenderer {
             shadow_map: None,
             rest_lift: None,
             speed_rush: None,
+            air_blur: None,
             rush_motion: ([0.; 3], [0.; 3]),
             coarse_pointer: false,
             blood: None,
@@ -962,6 +966,16 @@ impl SceneRenderer {
         self.rush_motion = (origin, velocity);
     }
 
+    /// Alpha Air dark blur amount (hype.blur; 0 when the toggle is off).
+    pub fn set_air_blur(&mut self, gpu: &Gpu, amount: f32) {
+        if amount <= 0.002 && self.air_blur.is_none() {
+            return;
+        }
+        self.air_blur
+            .get_or_insert_with(|| air_blur::AirBlurPass::new(gpu))
+            .amount = amount;
+    }
+
     /// Phones and tablets get fewer blur taps (speedRushTaps).
     pub fn set_coarse_pointer(&mut self, coarse: bool) {
         self.coarse_pointer = coarse;
@@ -1264,6 +1278,12 @@ impl SceneRenderer {
             }
             _ => None,
         };
+        // Air blur: the frame (after speed rush) renders into its texture.
+        let blur_scene = match &mut self.air_blur {
+            Some(blur) if blur.active() => Some(blur.scene_target(gpu, size)),
+            _ => None,
+        };
+        let output = blur_scene.as_ref().unwrap_or(target);
         self.profiler.mark("prepare.shadows_rush");
         for (name, n) in [
             ("terrain", stats.terrain_draws),
@@ -1289,7 +1309,7 @@ impl SceneRenderer {
         {
             let [r, g, b] = self.fog_color.map(f64::from);
             // With speed rush the scene resolves into its own texture first.
-            let scene_target = rush_scene.as_ref().unwrap_or(target);
+            let scene_target = rush_scene.as_ref().unwrap_or(output);
             let (view, resolve_target) = match msaa {
                 Some(msaa) => (msaa, Some(scene_target)),
                 None => (scene_target, None),
@@ -1381,7 +1401,11 @@ impl SceneRenderer {
         }
         self.profiler.mark("encode.end_pass");
         if let (Some(rush), Some(_)) = (&self.speed_rush, &rush_scene) {
-            rush.draw(&mut encoder, target, msaa, depth);
+            rush.draw(&mut encoder, output, msaa, depth);
+            stats.shadow_draws += 1;
+        }
+        if let (Some(blur), Some(_)) = (&self.air_blur, &blur_scene) {
+            blur.draw(&mut encoder, target);
             stats.shadow_draws += 1;
         }
         (encoder, stats)
