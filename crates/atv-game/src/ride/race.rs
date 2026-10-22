@@ -147,7 +147,8 @@ pub struct RaceState {
     /// Original CPU quads and riders by slot (for drawing).
     pub roster: Vec<Entry>,
     pub models: Vec<CpuModel>,
-    /// Each CPU's quad and outfitted rider for drawing (taken by the app).
+    /// Each CPU's quad and outfitted rider for drawing (kept for uploads
+    /// to a new graphics device, as game.js keeps raceCpuModels).
     pub draw: Vec<(super::Model, super::Model)>,
     intro: Option<Intro>,
     shots: Vec<Vec<ShotFrame>>,

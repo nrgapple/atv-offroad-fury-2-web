@@ -390,6 +390,14 @@ impl SceneryPass {
         self.clocks.steps()
     }
 
+    /// Takes over a lost device's pass state: the animation clocks and the
+    /// stadium flashes (graphics context restored).
+    pub fn adopt(&mut self, old: SceneryPass) {
+        self.clocks = old.clocks;
+        self.flashes = old.flashes;
+        self.lit_flashes = old.lit_flashes;
+    }
+
     /// Poses the race's drop gate (poseGate in game.js): its draws' model
     /// matrix and world bounds.
     pub fn pose_gate(&mut self, gpu: &Gpu, matrix: &[f32; 16]) {

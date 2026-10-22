@@ -32,6 +32,31 @@ pub use camera::Camera;
 /// Depth plus the stencil the speed-rush pass masks the player's vehicle with.
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth24PlusStencil8;
 
+#[cfg(target_arch = "wasm32")]
+thread_local! {
+    static CONTEXT_PROBE: std::cell::RefCell<Option<Box<dyn Fn() -> bool>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Web: how to ask the browser whether the canvas's WebGL context is lost
+/// (`isContextLost()`). WebGL calls fail from the moment of loss, before
+/// `webglcontextlost` reaches the app; their errors are then expected.
+#[cfg(target_arch = "wasm32")]
+pub fn set_context_probe(probe: impl Fn() -> bool + 'static) {
+    CONTEXT_PROBE.with_borrow_mut(|p| *p = Some(Box::new(probe)));
+}
+
+fn context_lost() -> bool {
+    #[cfg(target_arch = "wasm32")]
+    {
+        CONTEXT_PROBE.with_borrow(|p| p.as_ref().is_some_and(|probe| probe()))
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        false
+    }
+}
+
 pub struct Gpu {
     pub surface: wgpu::Surface<'static>,
     pub device: wgpu::Device,
@@ -48,8 +73,9 @@ pub struct Gpu {
 }
 
 impl Gpu {
-    /// The device is gone (desktop): its resources draw nothing, and the
-    /// app rebuilds on a new device. The reason, for the status line.
+    /// The device is gone (desktop: a driver reset; web: a lost WebGL
+    /// context): its resources draw nothing, and the app rebuilds on a new
+    /// device. The reason, for the status line.
     pub fn lost(&self) -> Option<String> {
         // wgpu reports a destroyed or lost device from its maintenance pass.
         #[cfg(not(target_arch = "wasm32"))]
@@ -59,6 +85,12 @@ impl Gpu {
             lost.get_or_insert_with(|| error.to_string());
         }
         self.lost.lock().ok().and_then(|l| l.clone())
+    }
+
+    /// The shared record behind [`Self::lost`]: the web app marks every
+    /// device it opened when the browser loses the WebGL context.
+    pub fn lost_flag(&self) -> std::sync::Arc<std::sync::Mutex<Option<String>>> {
+        self.lost.clone()
     }
 
     /// Test hook: destroys the device as a driver reset would lose it.
@@ -198,10 +230,10 @@ impl Gpu {
             color_space: wgpu::SurfaceColorSpace::Auto,
         };
         let lost: std::sync::Arc<std::sync::Mutex<Option<String>>> = Default::default();
-        // Desktop: a lost device (driver reset, eGPU unplugged) is recorded
-        // for the app to recover from; its later errors are expected. Other
-        // errors still panic as wgpu's default handler does. The browser
-        // reloads the page on WebGL context loss instead (engine.js).
+        // A lost device (desktop: driver reset, eGPU unplugged; web: a lost
+        // WebGL context) is recorded for the app to recover from; its later
+        // errors are expected. Other errors still panic as wgpu's default
+        // handler does.
         #[cfg(not(target_arch = "wasm32"))]
         {
             let record = lost.clone();
@@ -210,10 +242,12 @@ impl Gpu {
                     lost.get_or_insert_with(|| format!("{reason:?} {message}").trim().to_string());
                 }
             });
+        }
+        {
             let record = lost.clone();
             device.on_uncaptured_error(std::sync::Arc::new(move |error: wgpu::Error| {
                 let text = error.to_string();
-                let gone = record.lock().is_ok_and(|l| l.is_some());
+                let gone = record.lock().is_ok_and(|l| l.is_some()) || context_lost();
                 if gone || text.to_ascii_lowercase().contains("lost") {
                     if let Ok(mut lost) = record.lock() {
                         lost.get_or_insert_with(|| text.clone());
@@ -592,6 +626,37 @@ impl SceneRenderer {
         // already advances the pre-race shots once.
         scene.step_intro();
         scene
+    }
+
+    /// The graphics context came back (WebGL context restored, a new
+    /// device): every GPU resource is rebuilt on `gpu` from the venue, which
+    /// keeps its CPU data, while the presentation state carries over: the
+    /// scenery clocks and stadium flashes, Snow flakes, pre-race shots, the
+    /// drop gate and the resting lift. Like game.js after
+    /// `webglcontextrestored`, the caller uploads the ride's models again
+    /// ([`Self::set_ride`], [`Self::set_race_cpus`], [`Self::set_wheel_effects`]);
+    /// on-demand passes (speed rush, air blur, blood, landing burst, tire
+    /// tracks, lingering dust, other riders) return at their next use.
+    /// `fine_center`: the fine terrain patch around the rider (world x, z).
+    pub fn rebuild(&mut self, gpu: &Gpu, venue: &Venue, fine_center: Option<[f32; 2]>) {
+        let fresh = Self::with_graphics(gpu, venue, fine_center, self.graphics);
+        let old = std::mem::replace(self, fresh);
+        self.scenery.adopt(old.scenery);
+        if let (Some((pass, _)), Some((previous, _))) = (&mut self.snow, old.snow) {
+            pass.adopt(previous);
+        }
+        if let Some(gate) = old.gate {
+            self.gate = Some(gate);
+            self.scenery.pose_gate(gpu, &gate);
+        }
+        self.weather_view = old.weather_view;
+        self.weather_camera = old.weather_camera;
+        self.intro = old.intro;
+        self.clock = old.clock;
+        self.rest_lift = old.rest_lift;
+        self.ride_pose = old.ride_pose;
+        self.rush_motion = old.rush_motion;
+        self.coarse_pointer = old.coarse_pointer;
     }
 
     /// Advances world animation (scenery UV scroll and ATM clocks) by

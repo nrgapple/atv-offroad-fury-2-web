@@ -52,10 +52,16 @@ These would regress players at switch-over. Highest impact first.
    launch.js reads it (player, vehicle aliases, saved gear, `play=0`, motorcycle refusal);
    only the test hooks `?host=1` and `room=` with `dropAfter=`/`trainPlace=` ride at once.
    Not verified: an ended room reopening on the link's map (needs a relay).
-5. ~~**WebGL context loss.**~~ Partly closed: engine.js shows "Restoring graphics…" and,
-   once the context is restored, reopens the current ride's link (`fury-resume`,
-   written by the engine; a room's invite rejoins its slot). Difference: game.js
-   rebuilt in place and kept the ride's position; a single-player ride restarts.
+5. ~~**WebGL context loss.**~~ Closed on the web (atv-app `context.rs`): like game.js,
+   the engine stops drawing and simulating and shows "Restoring graphics…". Once
+   the context is restored, it rebuilds in place on a new device: the scene, the ride's
+   and race CPUs' models, the HUD and the menus. The ride keeps its position, step
+   count, race and room slot, and loss during a load or under a menu recovers too
+   (`tools/test_engine_context_loss.mjs`; relay: `test_engine_multiplayer_context.mjs`).
+   Differences: the line is the `#status` strip, not game.js's loading panel. Old
+   objects are released on the restored context, so Chromium logs "object does
+   not belong to this context" warnings. If no device opens, the page reopens
+   the ride's link (`fury-resume`).
    Desktop: a lost GPU device (driver reset) opens a new device and reopens the
    current ride from its start; a room keeps its connection and slot. A direct
    ride with no frontend exits with the reason instead of panicking.
@@ -189,7 +195,7 @@ In progress elsewhere, not counted as gaps: the diagnostics overlay (F3).
 | Race intro skip | Partial | ride/race.rs `skip_intro` | Keyboard only (blocking 13) |
 | Pause on blur/hidden/menu; rooms keep simulating | Ported | lib.rs `sync_activity` | |
 | bfcache pagehide/pageshow | Ported | lib.rs `resumed`, sound.rs (#191, #262) | |
-| WebGL context-loss rebuild | Missing | — | Blocking 5 |
+| WebGL context-loss rebuild | Ported | atv-app context.rs, `SceneRenderer::rebuild`, `Overlay::rebuild_gpu` | In place on WebGL2 (wgpu has no WebGPU backend in this build); desktop device loss reopens the ride (blocking 5) |
 | Adaptive render resolution | Ported | atv-app render_scale.rs | Also desktop on Metal and DX12 (PERFORMANCE.md) |
 | Wake lock while riding | Ported | atv-app/src/wake.rs (#239) | |
 | Impact and wreck rumble | Ported | gamepad.rs, ride/impact.rs (#250) | |

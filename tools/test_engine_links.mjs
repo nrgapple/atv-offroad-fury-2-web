@@ -5,8 +5,10 @@
 //   name (or the saved name); play=1 hosts at once and a failure returns to the
 //   form; motorcycles are refused with the JavaScript message.
 // - race links keep cheats= and motorcycle races are no longer refused.
-// - a lost WebGL context shows "Restoring graphics…" and, once restored,
-//   reopens the current ride's link. Host Chromium evidence (no relay here).
+// - a lost WebGL context shows "Restoring graphics…" and, once restored, the
+//   ride rebuilds in place (tools/test_engine_context_loss.mjs); the ride's
+//   link stays in `fury-resume` for a device that cannot reopen. Host
+//   Chromium evidence (no relay here).
 import assert from 'node:assert/strict';
 import { assertNoErrors, launch, newPage, url } from './browser/harness.mjs';
 
@@ -49,7 +51,7 @@ try {
   await wait(page, () => /race intro/.test(document.querySelector('#status')?.textContent), null, 180000);
   assert.doesNotMatch(await status(page), /Cannot open ride link/);
   console.log('  links: join/lobby/host forms, play=1 host failure back to the form, motorcycle refusal, motorcycle race with cheats');
-  // Context loss on a direct ride: the notice, then the ride link reopens.
+  // Context loss on a direct ride: the notice, then the same page rides on.
   await page.goto(url('/engine.html?venue=env03&quad=2&uiDiagnostics=1'));
   await wait(page, () => JSON.parse(document.querySelector('#ui-state')?.textContent ?? 'null')?.settings != null);
   const resume = await page.evaluate(() => sessionStorage.getItem('fury-resume'));
@@ -61,10 +63,10 @@ try {
   });
   await wait(page, () => document.querySelector('#status').textContent === 'Restoring graphics…'
     && getComputedStyle(document.querySelector('#status')).display !== 'none', null, 10000);
-  await Promise.all([page.waitForURL(/map=env03.*play=1/, { timeout: 30000 }), page.evaluate(() => window.loseContext.restoreContext())]);
-  // The reopened link has no test parameters: the hidden status line reports the ride.
+  await page.evaluate(() => window.loseContext.restoreContext());
   await wait(page, () => /^ENV03 · \d+ fps/.test(document.querySelector('#status')?.textContent), null, 180000);
-  console.log('  context loss: "Restoring graphics…", then the ride link reopened the ride');
+  assert.match(page.url(), /venue=env03&quad=2/, 'rebuilt in place, not reopened');
+  console.log('  context loss: "Restoring graphics…", then the ride rebuilt in place');
   assertNoErrors(errors.filter(e => !/CONTEXT_LOST|context lost|WebGL/i.test(String(e))));
   console.log('PASS: Rust multiplayer and race links, WebGL context-loss recovery');
 } finally {
