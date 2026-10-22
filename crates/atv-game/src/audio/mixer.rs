@@ -385,6 +385,9 @@ pub struct Mixer {
     pub log: Option<Vec<(u64, &'static str, usize, f32)>>,
     /// Alpha Speed & air muffle: the music lowpass and the wind rush.
     pub hype: super::hype::HypeAudio,
+    /// The latest soundtrack samples at its volume, mono, oldest first (the
+    /// Jukebox analyser's tap on the music gain).
+    pub analysis: [f32; super::spectrum::FFT],
 }
 
 impl Mixer {
@@ -409,6 +412,7 @@ impl Mixer {
             render_seconds: 0.,
             log: None,
             hype: super::hype::HypeAudio::new(rate),
+            analysis: [0.; super::spectrum::FFT],
         }
     }
 
@@ -644,6 +648,20 @@ impl Mixer {
                     }
                 }
             }
+        }
+        // The analyser taps the music gain, ahead of the muffle filter.
+        let tail = music.len().min(super::spectrum::FFT);
+        self.analysis.rotate_left(tail);
+        let volume = if self.music_active {
+            self.music_volume
+        } else {
+            0.
+        };
+        for (slot, frame) in self.analysis[super::spectrum::FFT - tail..]
+            .iter_mut()
+            .zip(&music[music.len() - tail..])
+        {
+            *slot = (frame[0] + frame[1]) * 0.5 * volume;
         }
         self.hype.process(&mut music, &mut sfx);
         let sfx_gain = if self.active { self.sfx_volume } else { 0. };

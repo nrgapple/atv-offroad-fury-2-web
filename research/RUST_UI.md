@@ -578,9 +578,18 @@ timing), panel 7.90; 390x844 player 5.40, list 11.27, frame 8.53. Test:
 `tools/test_engine_jukebox.mjs` (21 songs, choice, Pause/Play, Next/Previous history,
 volume and the saved record, pause cleared on leaving).
 
-Not ported: the spectrum bars (the web stream plays through a media element outside
-the Rust audio graph, and desktop has no analyser yet; the bars area stays empty),
-the main-menu Jukebox (the Rust frontend has no soundtrack player outside rides; the
+Spectrum bars (2026-10-22): jukebox.js drawBars over the art (24 bars, 88% x 18% at
+the bottom, hidden when compact) from a music.js analyser (fftSize 64, smoothing
+0.78): the web build moves the streamed soundtrack into its Web Audio graph
+(`MusicGraph`, shared with Alpha muffle) and reads an AnalyserNode tapping the
+volume gain; desktop runs `atv_game::audio::spectrum::Analyser` (the AnalyserNode
+rules: Blackman window, smoothing, -100..-30 dB bytes) over the mixer's music tap.
+The bars repaint each frame on top of the cached panel layout. Evidence:
+`tools/test_engine_jukebox.mjs` waits for a lit spectrum; host Chromium 1280x720
+`private/reports/rust-ui/jukebox-bars/{rust-web,javascript}-1280.png` (same art box
+and bar geometry; levels differ with the song position).
+
+Not ported: the main-menu Jukebox (the Rust frontend has no soundtrack player outside rides; the
 row stays hidden there), dragging feedback before release, Media Session release
 (play.html keeps the soundtrack out of system media controls; the Rust web build
 never registers it).
