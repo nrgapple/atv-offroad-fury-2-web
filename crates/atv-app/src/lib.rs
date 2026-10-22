@@ -221,6 +221,9 @@ struct App {
     ready: Option<Ready>,
     keys: HashSet<KeyCode>,
     dragging: bool,
+    /// A pad button was down last frame (game.js introPadHeld): only a new
+    /// press skips the race intro.
+    intro_pad_held: bool,
     cursor: Option<(f64, f64)>,
     last: Instant,
     meter: Meter,
@@ -739,6 +742,15 @@ impl App {
         let Some(riding) = &mut ready.riding else {
             return;
         };
+        // game.js: a new pad press skips the pre-race camera (00212d40), like
+        // any key, tap or click.
+        let pad_pressed = pad
+            .as_ref()
+            .is_some_and(|p| p.buttons.iter().any(|b| *b > 0.5));
+        if pad_pressed && !self.intro_pad_held {
+            riding.ride.skip_intro();
+        }
+        self.intro_pad_held = pad_pressed;
         let names: HashSet<String> = self.keys.iter().map(|k| format!("{k:?}")).collect();
         let keys = |code: &str| names.contains(code);
         let sample = riding::Sample {
@@ -1018,6 +1030,7 @@ impl App {
                 "dirtLevel": riding.dirt.level(),
                 "dirtApplied": if riding.dirt_enabled { riding.dirt.amount() } else { 0. },
                 "sfx": mixer.map(|m| m.0), "music": mixer.map(|m| m.1),
+                "soundMode": riding.sound.as_ref().map(|s| format!("{:?}", s.ride.mode)),
             });
             publish_ui_state(&state.to_string());
         }
@@ -1835,6 +1848,10 @@ impl App {
             TouchPhase::Started => {
                 if !overlay.press(id, x, y) {
                     overlay.touch_down(id, x, y, now, active);
+                    // A tap off the toolbar skips the race intro (game.js).
+                    if let Some(riding) = self.ready.as_mut().and_then(|r| r.riding.as_mut()) {
+                        riding.ride.skip_intro();
+                    }
                 }
             }
             TouchPhase::Moved => {
@@ -2745,6 +2762,11 @@ impl ApplicationHandler<Message> for App {
                         .as_mut()
                         .is_some_and(|o| o.press(overlay::MOUSE, x, y));
                     self.dragging = !self.mouse_ui;
+                    if !self.mouse_ui
+                        && let Some(riding) = self.ready.as_mut().and_then(|r| r.riding.as_mut())
+                    {
+                        riding.ride.skip_intro();
+                    }
                 } else {
                     self.dragging = false;
                     if std::mem::take(&mut self.mouse_ui)
@@ -3430,6 +3452,12 @@ impl App {
             let saved = front.borrow().settings.get("atv-graphics");
             graphics_preset(&resolve_graphics(saved.as_deref()))
         };
+        // Audio → Sound as saved (audio.js loadAudioSettings: Enhanced unless
+        // Original was chosen); music on or off keeps the launch choice.
+        let sound = sound.map(|(_, music)| {
+            let saved = front.borrow().settings.get("atv-audio-v1");
+            (saved_sound_mode(saved.as_deref()), music)
+        });
         // Crash mode follows the saved setting (Settings may have changed it).
         let crash = front
             .borrow()
@@ -3997,6 +4025,19 @@ pub fn parse_camera(text: &str) -> Option<[f32; 6]> {
 }
 
 /// `on`/`off` (also 1/0, true/false).
+/// The saved `atv-audio-v1` sound mode (audio.js loadAudioSettings): Original
+/// only when chosen, else Enhanced.
+fn saved_sound_mode(saved: Option<&str>) -> atv_game::audio::ride::SoundMode {
+    let original = saved
+        .and_then(|text| serde_json::from_str::<serde_json::Value>(text).ok())
+        .is_some_and(|v| v["mode"] == "original");
+    if original {
+        atv_game::audio::ride::SoundMode::Original
+    } else {
+        atv_game::audio::ride::SoundMode::Enhanced
+    }
+}
+
 pub fn parse_switch(text: &str) -> Option<bool> {
     match text {
         "on" | "1" | "true" => Some(true),
@@ -4337,6 +4378,7 @@ pub fn run(options: Options) {
         ready: None,
         keys: HashSet::new(),
         dragging: false,
+        intro_pad_held: true,
         cursor: None,
         last: Instant::now(),
         meter: Meter::default(),
@@ -4494,11 +4536,23 @@ pub fn start() {
             let v = u32::from_str_radix(&hex, 16).ok()?;
             (hex.len() == 6).then_some([(v >> 16) as u8, (v >> 8) as u8, v as u8])
         }),
+        // ?sound= wins; scripted parity and benchmark rides keep the Original
+        // baseline; a played ride uses the saved Audio → Sound (Enhanced default).
         sound: Some((
-            if param("sound").as_deref() == Some("enhanced") {
-                atv_game::audio::ride::SoundMode::Enhanced
-            } else {
-                atv_game::audio::ride::SoundMode::Original
+            match param("sound").as_deref() {
+                Some("enhanced") => atv_game::audio::ride::SoundMode::Enhanced,
+                Some(_) => atv_game::audio::ride::SoundMode::Original,
+                None if ["script", "autodrive", "traceAll"]
+                    .iter()
+                    .any(|k| param(k).is_some()) =>
+                {
+                    atv_game::audio::ride::SoundMode::Original
+                }
+                None => saved_sound_mode(
+                    atv_ui::settings::Settings::load()
+                        .get("atv-audio-v1")
+                        .as_deref(),
+                ),
             },
             param("music").as_deref() != Some("off"),
         )),

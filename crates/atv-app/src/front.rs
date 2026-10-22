@@ -138,7 +138,8 @@ impl Front {
         let mut touch = TouchControls::new(&settings, view.coarse);
         touch.set_viewport(view.width, view.height);
         let minimap = MinimapSettings::load(&settings);
-        let prefs = Preferences::load(&settings, view.touch_first);
+        let mut prefs = Preferences::load(&settings, view.touch_first);
+        crate::sound::sync_audio_session(&mut prefs);
         let bindings = pause::controller::load_bindings(&mut settings);
         let mut front = Self {
             fonts: Fonts::new(),
@@ -224,6 +225,7 @@ impl Front {
     pub fn resume(&mut self, page: &str) {
         self.settings = Settings::load();
         self.prefs = Preferences::load(&self.settings, self.view.touch_first);
+        crate::sound::sync_audio_session(&mut self.prefs);
         self.minimap = MinimapSettings::load(&self.settings);
         self.bindings = pause::controller::load_bindings(&mut self.settings);
         self.state.loading = None;
@@ -309,7 +311,10 @@ impl Front {
             lobby: None,
             music: None,
         };
-        Some(f(menu, &mut ctx, &self.menu_hits, self.menu_scroll_max))
+        let out = f(menu, &mut ctx, &self.menu_hits, self.menu_scroll_max);
+        // Settings → Extras → Silent switch applies at once.
+        crate::sound::sync_audio_session(&mut self.prefs);
+        Some(out)
     }
 
     fn menu_event(&mut self, event: Option<MenuEvent>) -> Option<Event> {

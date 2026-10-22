@@ -157,7 +157,8 @@ impl Overlay {
         let mut touch = TouchControls::new(&settings, view.coarse);
         touch.set_viewport(view.width, view.height);
         let minimap = Minimap::new(MinimapSettings::load(&settings));
-        let prefs = Preferences::load(&settings, view.touch_first);
+        let mut prefs = Preferences::load(&settings, view.touch_first);
+        crate::sound::sync_audio_session(&mut prefs);
         let race_overlays = OverlaySettings::load(&settings);
         Self {
             fonts: Fonts::new(),
@@ -277,7 +278,9 @@ impl Overlay {
             lobby: self.lobby.as_ref(),
             music: self.music.as_ref(),
         };
-        Some(f(menu, &mut ctx, &self.menu_hits, self.menu_scroll_max))
+        let out = f(menu, &mut ctx, &self.menu_hits, self.menu_scroll_max);
+        crate::sound::sync_audio_session(&mut self.prefs);
+        Some(out)
     }
 
     pub fn menu_key(
