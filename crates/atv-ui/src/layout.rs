@@ -94,6 +94,15 @@ pub enum Inline {
 pub enum Content {
     #[default]
     None,
+    /// One line that ends in "…" when its box is narrower than the text
+    /// (CSS `white-space: nowrap; overflow: hidden; text-overflow: ellipsis`).
+    /// Measures at its full width; give the box `min_size.width: 0` and
+    /// `flex_shrink` so it can narrow.
+    Ellipsis {
+        text: String,
+        style: TextStyle,
+        line_height: f32,
+    },
     /// Block text; wraps at spaces when `wrap`.
     Text {
         text: String,
@@ -199,6 +208,39 @@ fn text_lines(
     let m = fonts.measure("", &style.font, style.letter_spacing);
     let baseline = css_baseline(line_height, m.ascent, m.descent);
     (lines, widest, baseline)
+}
+
+/// `text`, or its longest prefix plus "…" that fits `width`.
+fn ellipsize(fonts: &mut Fonts, text: &str, style: &TextStyle, width: f32) -> String {
+    let fits = |fonts: &mut Fonts, s: &str| {
+        fonts.measure(s, &style.font, style.letter_spacing).width <= width + 0.5
+    };
+    if fits(fonts, text) {
+        return text.to_string();
+    }
+    let chars: Vec<char> = text.chars().collect();
+    // Binary search the longest prefix that fits with the ellipsis.
+    let (mut lo, mut hi) = (0, chars.len());
+    while lo < hi {
+        let mid = (lo + hi).div_ceil(2);
+        let candidate: String = chars[..mid]
+            .iter()
+            .collect::<String>()
+            .trim_end()
+            .to_string()
+            + "…";
+        if fits(fonts, &candidate) {
+            lo = mid;
+        } else {
+            hi = mid - 1;
+        }
+    }
+    chars[..lo]
+        .iter()
+        .collect::<String>()
+        .trim_end()
+        .to_string()
+        + "…"
 }
 
 /// Inline run geometry: (x, width, top relative to baseline, bottom relative to
@@ -339,6 +381,19 @@ pub fn render(
                                 height: known.height.unwrap_or(lines.len() as f32 * line_height),
                             }
                         }
+                        Content::Ellipsis {
+                            text,
+                            style,
+                            line_height,
+                        } => {
+                            let (_, widest, b) =
+                                text_lines(fonts, text, style, *line_height, false, None);
+                            baseline = Some(b);
+                            Size {
+                                width: known.width.unwrap_or(widest),
+                                height: known.height.unwrap_or(*line_height),
+                            }
+                        }
                         Content::Inline { strut, runs } => {
                             let (_, w, above, below) = inline_layout(fonts, strut, runs);
                             baseline = Some(above);
@@ -416,6 +471,15 @@ fn paint(
                     content.y + i as f32 * line_height + baseline,
                 );
             }
+        }
+        Content::Ellipsis {
+            text,
+            style,
+            line_height,
+        } => {
+            let (_, _, baseline) = text_lines(fonts, text, style, *line_height, false, None);
+            let line = ellipsize(fonts, text, style, content.w);
+            list.text(&line, style, content.x, content.y + baseline);
         }
         Content::Inline { strut, runs } => {
             let (boxes, _, above, _) = inline_layout(fonts, strut, runs);
