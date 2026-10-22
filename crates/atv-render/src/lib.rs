@@ -5,6 +5,7 @@
 mod air_blur;
 mod ambient;
 mod blood;
+mod burst;
 pub mod camera;
 mod cull;
 mod lingering_dust;
@@ -365,6 +366,8 @@ pub struct SceneRenderer {
     tire_tracks: Option<tire_tracks::TireTracksPass>,
     /// Enhanced/High lingering dust puffs.
     lingering_dust: Option<lingering_dust::LingeringDustPass>,
+    /// Alpha landing burst particles (created at the first burst).
+    burst: Option<burst::BurstPass>,
     graphics: Graphics,
     /// Visible terrain heights (renderCore.terrainHeight) for contact shadows.
     ground: atv_core::terrain::Heightfield,
@@ -504,6 +507,7 @@ impl SceneRenderer {
             gpu_timer: None,
             wheel_effects: None,
             lingering_dust: None,
+            burst: None,
             tire_tracks: None,
             graphics,
             ground: {
@@ -819,6 +823,23 @@ impl SceneRenderer {
                 }
             }
             None => self.lingering_dust = None,
+        }
+    }
+
+    /// The Alpha landing-burst pool after this frame's steps (`now` its clock,
+    /// seconds); None drops the pass (Landing burst off).
+    pub fn accept_burst(
+        &mut self,
+        gpu: &Gpu,
+        burst: Option<(&atv_game::burst::BurstEmitter, f32)>,
+    ) {
+        match burst {
+            Some((emitter, now)) if emitter.emitted > 0 => self
+                .burst
+                .get_or_insert_with(|| burst::BurstPass::new(gpu, &self.world, emitter.capacity))
+                .accept(gpu, emitter, now),
+            Some(_) => {}
+            None => self.burst = None,
         }
     }
 
@@ -1210,6 +1231,16 @@ impl SceneRenderer {
             stats.wheel_draws += draws;
             stats.wheel_triangles += triangles;
         }
+        if let Some(pass) = &mut self.burst {
+            let fog_end = if self.world.globals.fog[2] > 0.5 {
+                self.far
+            } else {
+                768.
+            };
+            let (draws, triangles) = pass.prepare(gpu, &view.camera, fog_end);
+            stats.wheel_draws += draws;
+            stats.wheel_triangles += triangles;
+        }
         if let Some(blood) = &self.blood {
             stats.wheel_draws += blood.draws();
             stats.wheel_triangles += blood.triangles();
@@ -1396,6 +1427,9 @@ impl SceneRenderer {
             }
             if let Some(dust) = &self.lingering_dust {
                 dust.draw(&mut pass, &self.world);
+            }
+            if let Some(burst) = &self.burst {
+                burst.draw(&mut pass, &self.world);
             }
             self.profiler.mark("encode.effects");
         }

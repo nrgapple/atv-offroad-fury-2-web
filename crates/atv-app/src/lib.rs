@@ -942,6 +942,9 @@ impl App {
                 "alphaBigAirCamera": riding.alpha_big_air_camera,
                 "alphaAirBlur": riding.alpha_air_blur, "airBlur": riding.air_blur(),
                 "hypeBlur": riding.hype.blur,
+                "alphaLandingBurst": riding.alpha_landing_burst,
+                "burstLive": riding.burst.live, "thumps": riding.thumps,
+                "heavyMud": riding.dirt.heavy(),
                 "timeScale": riding.hype.time_scale,
                 "interpolation": riding.interpolation,
                 "skySmooth": graphics.sky_smooth, "fresnel": graphics.fresnel,
@@ -1564,6 +1567,15 @@ impl App {
         riding.alpha_slowmo = prefs.alpha("air-slowmo");
         riding.alpha_big_air_camera = prefs.alpha("big-air-camera");
         riding.alpha_air_blur = prefs.alpha("air-blur");
+        if riding.alpha_landing_burst && !prefs.alpha("landing-burst") {
+            riding.burst.reset();
+        }
+        riding.alpha_landing_burst = prefs.alpha("landing-burst");
+        riding.dirt.set_heavy(prefs.alpha("heavy-mud"));
+        // Tire tracks read the (Heavy mud) zones game.js passes.
+        if let Some(effects) = &mut riding.effects {
+            effects.set_track_zones(*riding.dirt.zones());
+        }
         let mode = atv_game::crash::CrashMode::parse(&prefs.crash_mode).unwrap_or_default();
         if riding
             .crashes
@@ -1603,6 +1615,7 @@ impl App {
                     f32::from(graphics.tire_tracks.1),
                     &ready.venue,
                 );
+                effects.set_track_zones(*riding.dirt.zones());
             }
             ready.scene.set_graphics(&ready.gpu, &ready.venue, graphics);
         }

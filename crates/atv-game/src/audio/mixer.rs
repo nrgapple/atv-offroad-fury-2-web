@@ -212,7 +212,7 @@ struct Voice {
 
 /// A parameterless Web Audio BiquadFilter lowpass (Q in dB, per the spec).
 #[derive(Clone, Copy, Default)]
-struct Lowpass {
+pub(crate) struct Lowpass {
     b: [f32; 3],
     a: [f32; 2],
     x: [[f32; 2]; 2],
@@ -220,7 +220,7 @@ struct Lowpass {
 }
 
 impl Lowpass {
-    fn new(frequency: f32, q_db: f32, rate: u32) -> Self {
+    pub(crate) fn new(frequency: f32, q_db: f32, rate: u32) -> Self {
         let w0 = 2. * std::f32::consts::PI * frequency / rate as f32;
         let alpha = w0.sin_d() / (2. * 10f32.powf_d(q_db / 20.));
         let cos = w0.cos_d();
@@ -232,7 +232,7 @@ impl Lowpass {
             ..Default::default()
         }
     }
-    fn process(&mut self, channel: usize, x: f32) -> f32 {
+    pub(crate) fn process(&mut self, channel: usize, x: f32) -> f32 {
         let [x1, x2] = self.x[channel];
         let [y1, y2] = self.y[channel];
         let y = self.b[0] * x + self.b[1] * x1 + self.b[2] * x2 - self.a[0] * y1 - self.a[1] * y2;
