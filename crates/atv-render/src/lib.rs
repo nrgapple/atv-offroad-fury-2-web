@@ -998,7 +998,7 @@ impl SceneRenderer {
             .shared_vehicle
             .get_or_insert_with(|| vehicle::VehicleShared::new(gpu, gpu.samples))
             .clone();
-        let vehicle = vehicle::VehiclePass::with_shared(gpu, venue, quad, rider, &shared)?;
+        let vehicle = vehicle::VehiclePass::with_shared(gpu, venue, quad, rider, &shared, true)?;
         if self.graphics.shadow_map > 0 {
             self.shadow_map = Some(shadows::ShadowMap::new(gpu, &self.world, &vehicle));
         }
@@ -1023,7 +1023,7 @@ impl SceneRenderer {
         self.cpus = models
             .iter()
             .map(|(quad, rider)| {
-                vehicle::VehiclePass::with_shared(gpu, venue, quad, rider, &shared)
+                vehicle::VehiclePass::with_shared(gpu, venue, quad, rider, &shared, false)
                     .map(|v| (v, false))
             })
             .collect::<Result<_, _>>()?;
@@ -1062,7 +1062,7 @@ impl SceneRenderer {
             .shared_vehicle
             .get_or_insert_with(|| vehicle::VehicleShared::new(gpu, gpu.samples))
             .clone();
-        let mut pass = vehicle::VehiclePass::with_shared(gpu, venue, quad, rider, &shared)?;
+        let mut pass = vehicle::VehiclePass::with_shared(gpu, venue, quad, rider, &shared, false)?;
         pass.set_paint(paint);
         self.peers.insert(peer, (key, pass, false));
         Ok(())
@@ -1078,22 +1078,15 @@ impl SceneRenderer {
         self.peers.retain(|peer, (key, ..)| keep(*peer, *key));
     }
 
-    /// Poses the presented multiplayer riders; others are hidden. Riders over
-    /// 864 ft from the eye are skipped like race CPUs. Returns those drawn.
-    pub fn pose_peers(
-        &mut self,
-        gpu: &Gpu,
-        poses: &[(u8, atv_game::ride::Pose)],
-        eye: [f32; 3],
-    ) -> usize {
+    /// Poses the presented multiplayer riders; others are hidden. Unlike race
+    /// CPUs, riders draw at any distance (drawRemotePlayers in game.js), as
+    /// their name tags do. Returns those drawn.
+    pub fn pose_peers(&mut self, gpu: &Gpu, poses: &[(u8, atv_game::ride::Pose)]) -> usize {
         let mut drawn = 0;
         for (peer, (_, pass, visible)) in &mut self.peers {
             let pose = poses.iter().find(|(id, _)| id == peer).map(|(_, p)| p);
-            *visible = pose.is_some_and(|pose| {
-                let [x, z] = [pose.quad_world[12], pose.quad_world[14]];
-                (x - eye[0]).hypot(z - eye[2]) <= 864.
-            });
-            if *visible && let Some(pose) = pose {
+            *visible = pose.is_some();
+            if let Some(pose) = pose {
                 pass.pose(gpu, pose);
                 drawn += 1;
             }
@@ -1366,9 +1359,16 @@ impl SceneRenderer {
             stats.water_draws = 1;
         }
         self.profiler.mark("prepare.water");
+        // Ambient effects, lingering dust and landing bursts fade out by the
+        // fog end, or 768 ft without fog (game.js farDistance/fogEnd).
+        let effects_far = if self.world.globals.fog[2] > 0.5 {
+            self.far
+        } else {
+            768.
+        };
         if let Some((pass, shared)) = &mut self.ambient {
             (stats.ambient_draws, stats.ambient_triangles) =
-                pass.prepare(gpu, &shared.borrow(), &view.camera, self.far);
+                pass.prepare(gpu, &shared.borrow(), &view.camera, effects_far);
         }
         self.profiler.mark("prepare.ambient");
         self.weather_camera = view.camera;
@@ -1384,22 +1384,12 @@ impl SceneRenderer {
             stats.wheel_triangles += triangles;
         }
         if let Some(pass) = &mut self.lingering_dust {
-            let fog_end = if self.world.globals.fog[2] > 0.5 {
-                self.far
-            } else {
-                768.
-            };
-            let (draws, triangles) = pass.prepare(gpu, &view.camera, fog_end);
+            let (draws, triangles) = pass.prepare(gpu, &view.camera, effects_far);
             stats.wheel_draws += draws;
             stats.wheel_triangles += triangles;
         }
         if let Some(pass) = &mut self.burst {
-            let fog_end = if self.world.globals.fog[2] > 0.5 {
-                self.far
-            } else {
-                768.
-            };
-            let (draws, triangles) = pass.prepare(gpu, &view.camera, fog_end);
+            let (draws, triangles) = pass.prepare(gpu, &view.camera, effects_far);
             stats.wheel_draws += draws;
             stats.wheel_triangles += triangles;
         }
@@ -1613,7 +1603,8 @@ impl SceneRenderer {
                 vegetation.draw(&mut pass, &self.world);
             }
             self.profiler.mark("encode.vegetation");
-            // The browser draws vehicles here, then water.
+            // The browser draws vehicles here, then water. Only the player's
+            // pass writes the speed-rush stencil.
             if let Some(vehicle) = &self.vehicle {
                 pass.set_stencil_reference(1);
                 vehicle.draw(&mut pass);
