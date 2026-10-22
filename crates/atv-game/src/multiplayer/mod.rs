@@ -354,11 +354,12 @@ impl Session {
         let now = now_ms as u32;
         let peer = self.peer.ok_or("join multiplayer first")?;
         let profile = self.profile.as_ref().ok_or("no multiplayer profile")?;
-        // Solo rooms send no movement poses.
-        if self.lobby.as_ref().is_some_and(|l| l.players.len() < 2) {
-            self.counters.suppressed += 1;
-            return Ok(None);
-        }
+        // Alone in the room (atv-web sends nothing): a presence pose at most
+        // once a second (paused: every 5 s) keeps the relay's copy current,
+        // which it hands the next arrival on Ready. Without it a host whose
+        // tab is in the background (throttled timers) has no pose to meet
+        // until long after a guest has loaded, who then starts on top of it.
+        let solo = self.lobby.as_ref().is_some_and(|l| l.players.len() < 2);
         let frame = ride.frame();
         let recipe = ride
             .rider_recipe()
@@ -469,7 +470,8 @@ impl Session {
         } else {
             100
         };
-        if !self.force_full && !transition && elapsed < interval {
+        let interval = if solo { interval.max(1000) } else { interval };
+        if !self.force_full && (solo || !transition) && elapsed < interval {
             self.counters.suppressed += 1;
             return Ok(None);
         }
@@ -548,6 +550,16 @@ impl Session {
                 })
             })
             .collect()
+    }
+
+    /// Whether any listed rider's pose has arrived (a meet has something
+    /// to try).
+    pub fn heard_from_others(&self) -> bool {
+        self.others().any(|p| {
+            self.buffers
+                .get(&p.id)
+                .is_some_and(|b| b.latest().is_some())
+        })
     }
 
     /// Riders to meet on arrival: fresh and Riding, the host first in a
