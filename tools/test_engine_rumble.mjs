@@ -48,6 +48,29 @@ try {
     console.log(`  vibration ${vibration}: ${v.impacts} impacts, ${effects.length} pulses ${JSON.stringify(effects.map(e => [+e.strongMagnitude.toFixed(2), e.duration]))}`);
     await page.close();
   }
+  // A phone with no controller and no navigator.vibrate (iOS Safari): landing
+  // pulses must not reach the missing API, which threw through the frame and
+  // froze the engine on the first hard landing.
+  {
+    const errors = [];
+    const page = await newPage(browser, { viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true }, errors);
+    await page.addInitScript(() => {
+      localStorage.setItem('atv2-keyboard-help-seen-v1', '1');
+      localStorage.setItem('atv-vibration', 'on');
+      delete Navigator.prototype.vibrate;
+    });
+    await page.goto(url(`/engine.html?venue=env03&crash=gorn&weather=off&uiDiagnostics=1&autodrive=${encodeURIComponent(JSON.stringify(script))}`));
+    await page.waitForSelector('#ui-state', { state: 'attached', timeout: 120000 });
+    assert.equal(await page.evaluate(() => matchMedia('(pointer: coarse)').matches && typeof navigator.vibrate), 'undefined');
+    await page.mouse.click(195, 300);
+    await page.waitForFunction(() => JSON.parse(document.querySelector('#ui-state')?.textContent ?? 'null')?.step >= 733
+      || /error|fail/i.test(document.querySelector('#status')?.textContent), null, { timeout: 240000 });
+    const state = await page.evaluate(() => JSON.parse(document.querySelector('#ui-state').textContent));
+    assert.ok(state.step >= 733 && state.settings.vibration.impacts > 0, JSON.stringify(state.settings.vibration));
+    assertNoErrors(errors);
+    console.log(`  phone without vibrate: ${state.settings.vibration.impacts} impacts, ride reached step ${state.step}`);
+    await page.close();
+  }
   console.log('PASS: Rust controller rumble');
 } finally {
   await browser.close();
