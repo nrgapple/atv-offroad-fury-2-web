@@ -45,6 +45,9 @@ pub struct MediaStream {
     pub url: String,
     pub bytes: usize,
     pub seconds: f64,
+    /// The encoded file's SHA-256 (its blob name, `<sha256>.m4a`).
+    #[serde(default)]
+    pub sha256: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -277,6 +280,37 @@ impl Content {
             out.extend_from_slice(&self.chunk(path, &chunk).await?);
         }
         Ok(out)
+    }
+
+    /// The bundled soundtrack stream of a song (the `.m4a` the web streams
+    /// from `stream.url`), integrity checked; `None` when the record has no
+    /// stream. A package or pack built without streams reports the blob as
+    /// missing, and the caller plays the original file instead.
+    pub async fn stream(&self, path: &str) -> Result<Option<Vec<u8>>> {
+        let Some(stream) = self.record_for(path)?.stream.as_ref() else {
+            return Ok(None);
+        };
+        let digest = stream
+            .sha256
+            .as_deref()
+            .filter(|d| d.len() == 64 && d.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')))
+            .ok_or_else(|| format!("invalid stream record for {path}"))?;
+        if stream.bytes == 0 || stream.bytes > MAX_FILE {
+            return Err(format!("invalid stream record for {path}"));
+        }
+        // Read past the chunk cache: a song is several megabytes, read once.
+        let bytes = self.store.read(&format!("{digest}.m4a")).await?;
+        let mut hash = Sha256::new();
+        for piece in bytes.chunks(512 * 1024) {
+            hash.update(piece);
+            yield_once().await;
+        }
+        if bytes.len() != stream.bytes || hex(&hash.finalize()) != digest {
+            return Err(format!(
+                "content integrity check failed for the {path} stream"
+            ));
+        }
+        Ok(Some(bytes))
     }
 
     /// Size of an original file in the package.

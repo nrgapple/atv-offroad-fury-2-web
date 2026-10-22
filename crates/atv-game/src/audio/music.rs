@@ -2,8 +2,10 @@
 //! non-repeating shuffle (atv_core::music), and a streaming decoder of the
 //! original VAG songs into the mixer's music bus. The browser JavaScript
 //! streams a hosted AAC re-encode of the same decoded PCM through a media
-//! element; the Rust web build does the same (atv-app), while desktop builds
-//! decode the original VAG with the decoder the JavaScript fallback uses.
+//! element; the Rust web build does the same (atv-app). Desktop builds decode
+//! the same AAC files, bundled in their content pack ([`super::stream`]),
+//! and fall back to the original VAG with the decoder the JavaScript fallback
+//! uses when a song's file is missing.
 use super::mixer::{Mixer, Resampler};
 use crate::{Result, archive::Archive};
 use atv_content::Content;
@@ -165,6 +167,56 @@ impl VagMusic {
             }
             let out = self.resampler.process(&samples, self.finished());
             mixer.lock().map_err(|_| "mixer lock")?.push_music(&out);
+        }
+    }
+}
+
+/// A desktop soundtrack song: the bundled remaster (what the web streams)
+/// or the original VAG.
+#[cfg(not(target_arch = "wasm32"))]
+pub enum NativeSong {
+    Stream(super::stream::StreamMusic),
+    Vag(VagMusic),
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl NativeSong {
+    /// Seconds decoded so far and the song's length.
+    pub fn decoded_seconds(&self) -> (f32, f32) {
+        match self {
+            Self::Stream(song) => song.decoded_seconds(),
+            Self::Vag(song) => song.decoded_seconds(),
+        }
+    }
+
+    pub fn finished(&self) -> bool {
+        match self {
+            Self::Stream(song) => song.finished(),
+            Self::Vag(song) => song.finished(),
+        }
+    }
+
+    pub fn seek(&mut self, seconds: f32) -> Result<()> {
+        match self {
+            Self::Stream(song) => song.seek(seconds),
+            Self::Vag(song) => song.seek(seconds),
+        }
+    }
+
+    pub fn is_stream(&self) -> bool {
+        matches!(self, Self::Stream(_))
+    }
+
+    /// Decodes until `ahead` seconds are queued; false once the song ended.
+    pub async fn pump(
+        &mut self,
+        content: &Content,
+        mixer: &Arc<Mutex<Mixer>>,
+        ahead: f32,
+    ) -> Result<bool> {
+        match self {
+            Self::Stream(song) => song.pump(mixer, ahead),
+            Self::Vag(song) => song.pump(content, mixer, ahead).await,
         }
     }
 }

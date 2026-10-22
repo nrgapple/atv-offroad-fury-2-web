@@ -364,15 +364,31 @@ fn verify_content(store: Store) {
     let result = pollster::block_on(async {
         let content = atv_content::Content::open(store).await?;
         let mut bytes = 0;
+        // The soundtrack's remaster songs: (bundled, listed, bytes). A song
+        // without its file plays the original VAG, so absence is reported,
+        // not fatal; a damaged file fails the check.
+        let mut songs = (0, 0, 0);
         for record in &content.manifest.files {
             bytes += content.file(&record.path).await?.len();
+            if record.stream.is_some() {
+                songs.1 += 1;
+                match content.stream(&record.path).await {
+                    Ok(Some(song)) => {
+                        songs.0 += 1;
+                        songs.2 += song.len();
+                    }
+                    Err(error) if error.contains("integrity") => return Err(error),
+                    _ => {}
+                }
+            }
         }
-        Ok::<_, String>((content.manifest.files.len(), bytes))
+        Ok::<_, String>((content.manifest.files.len(), bytes, songs))
     });
     match result {
-        Ok((files, bytes)) => println!(
-            "content ok: {files} files, {:.1} MB verified in {:.2}s",
+        Ok((files, bytes, (songs, listed, song_bytes))) => println!(
+            "content ok: {files} files, {:.1} MB, and {songs} of {listed} soundtrack songs, {:.1} MB, verified in {:.2}s",
             bytes as f64 / 1e6,
+            song_bytes as f64 / 1e6,
             started.elapsed().as_secs_f64()
         ),
         Err(e) => fail(&format!("content check failed: {e}")),

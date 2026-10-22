@@ -328,6 +328,48 @@ mod tests {
     }
 
     #[test]
+    fn soundtrack_streams_are_read_whole_and_verified() {
+        use sha2::{Digest, Sha256};
+        let dir = std::env::temp_dir().join(format!("fury-stream-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let (song, stream) = (b"original vag".as_slice(), b"encoded m4a".as_slice());
+        let sha = |bytes: &[u8]| hex(&Sha256::digest(bytes));
+        let (song_sha, stream_sha) = (sha(song), sha(stream));
+        let manifest = format!(
+            r#"{{"version":1,"source_build_sha256":"{}","files":[
+            {{"path":"/AUDIO/MUSIC/A.VAG","bytes":{},"sha256":"{song_sha}","stream":{{"url":"/content/{stream_sha}.m4a","bytes":{},"sha256":"{stream_sha}","seconds":1.0}}}},
+            {{"path":"/AUDIO/MUSIC/B.VAG","bytes":{},"sha256":"{song_sha}"}}]}}"#,
+            crate::SOURCE_BUILD,
+            song.len(),
+            stream.len(),
+            song.len()
+        );
+        std::fs::write(dir.join("manifest.json"), manifest).unwrap();
+        std::fs::write(dir.join(format!("{song_sha}.bin")), song).unwrap();
+        let content = block_on(Content::open(Store::Directory(dir.clone()))).unwrap();
+        // Not bundled yet: an error the soundtrack answers with the VAG.
+        assert!(block_on(content.stream("/AUDIO/MUSIC/A.VAG")).is_err());
+        std::fs::write(dir.join(format!("{stream_sha}.m4a")), stream).unwrap();
+        assert_eq!(
+            block_on(content.stream("/audio/music/a.vag"))
+                .unwrap()
+                .unwrap(),
+            stream
+        );
+        // No stream record, and an unknown song.
+        assert_eq!(
+            block_on(content.stream("/AUDIO/MUSIC/B.VAG")).unwrap(),
+            None
+        );
+        assert!(block_on(content.stream("/AUDIO/MUSIC/C.VAG")).is_err());
+        // A damaged stream is refused.
+        std::fs::write(dir.join(format!("{stream_sha}.m4a")), b"encoded m4b").unwrap();
+        assert!(block_on(content.stream("/AUDIO/MUSIC/A.VAG")).is_err());
+        drop(content);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
     fn file_backed_pack_matches_static() {
         let dir = std::env::temp_dir().join(format!("fury-pack-test-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();

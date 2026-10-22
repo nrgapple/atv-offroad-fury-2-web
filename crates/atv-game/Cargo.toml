@@ -11,3 +11,8 @@ atv-net = { path = "../atv-net" }
 miniz_oxide.workspace = true
 serde_json.workspace = true
 web-time = "1"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+# Desktop soundtrack: decodes the bundled AAC (.m4a) remaster songs the web
+# streams through a media element (MPL-2.0, research/THIRD_PARTY.md).
+symphonia = { version = "0.6", default-features = false, features = ["aac", "isomp4"] }
