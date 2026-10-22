@@ -523,8 +523,22 @@ throttle on Original after the spawn drop gave 50, 45 and 29 particles per landi
 in both games (`private/reports/rust-ui/alpha-landing/env05-{rust-web,javascript}.png`);
 `tools/test_engine_alpha_landing.mjs` (burst, thumps and soiling on, none off).
 
-Not run yet (rows listed, saved, no effect in the Rust ride): Speed & air muffle (the
-music lowpass and wind loop) and Air dark blur (screen pass). Evidence: `atv-game` unit test (a launched 40 ft/s jump fires
+- Speed & air muffle: `audio::hype::HypeAudio` in the mixer ports setHype for the
+  mixer's music bus (a lowpass from 22 kHz towards 320 Hz, Q 0.7 dB, and a level down
+  to 0.7, eased like setTargetAtTime per 128-frame block) and the wind rush (2 s of
+  leaky LCG noise, bandpass Q 0.6 at 380-1280 Hz, gain 0.32 w², on the SFX bus);
+  the riding loop sends the director's muffle and wind when either moves 0.004, open
+  in menus, and the toggle going off stops the wind. The web build's streamed
+  soundtrack moves into a Web Audio graph (MediaElementSource -> volume gain ->
+  lowpass -> level, as music.js MediaOutput) at the first muffle; until then it
+  plays from its element as before. Evidence: unit test (open bus untouched; fully
+  muffled a 2 kHz tone falls below 0.02 RMS while 100 Hz keeps about 0.7; wind
+  audible); `tools/test_engine_alpha_muffle.mjs` (host Chromium ENV05: director and
+  mixer muffle 0.47, the soundtrack graphed and still advancing; off: none sent).
+  Not measured: what the graphed soundtrack sounds like on phones.
+
+Not run yet (rows listed, saved, no effect in the Rust ride): Air dark blur (screen
+pass). Evidence: `atv-game` unit test (a launched 40 ft/s jump fires
 one apex, one slow motion reaching 0.3x and a landing over 30 ft/s);
 `tools/test_engine_alpha.mjs` (rows, saved toggles, applied ride flags); the presenter
 and interpolation tests are unchanged at scale 1. Host only.

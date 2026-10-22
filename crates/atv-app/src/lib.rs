@@ -956,6 +956,12 @@ impl App {
                 "arcadeFlips": riding.ride.options.arcade_flips,
                 "alphaSlowmo": riding.alpha_slowmo,
                 "alphaBigAirCamera": riding.alpha_big_air_camera,
+                "alphaMuffle": riding.alpha_muffle,
+                "hypeMuffle": riding.hype.muffle, "hypeWind": riding.hype.wind,
+                "musicMuffle": riding.sound.as_ref().map_or(0., |s| s.muffle()),
+                "musicStream": riding.sound.as_ref().and_then(|s| s.web_state())
+                    .map(|(graph, time, paused)| serde_json::json!({
+                        "graph": graph, "time": time, "paused": paused})),
                 "alphaLandingBurst": riding.alpha_landing_burst,
                 "burstLive": riding.burst.live, "thumps": riding.thumps,
                 "heavyMud": riding.dirt.heavy(),
@@ -1599,6 +1605,7 @@ impl App {
         // Settings → Alpha presentation (web/hype.js).
         riding.alpha_slowmo = prefs.alpha("air-slowmo");
         riding.alpha_big_air_camera = prefs.alpha("big-air-camera");
+        riding.set_alpha_muffle(prefs.alpha("music-muffle"));
         if riding.alpha_landing_burst && !prefs.alpha("landing-burst") {
             riding.burst.reset();
         }

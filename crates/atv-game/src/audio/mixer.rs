@@ -274,8 +274,8 @@ struct Voice {
 pub(crate) struct Lowpass {
     b: [f32; 3],
     a: [f32; 2],
-    x: [[f32; 2]; 2],
-    y: [[f32; 2]; 2],
+    pub(crate) x: [[f32; 2]; 2],
+    pub(crate) y: [[f32; 2]; 2],
 }
 
 impl Lowpass {
@@ -383,6 +383,8 @@ pub struct Mixer {
     pub render_seconds: f64,
     /// Voice start log: (output frame, label, frames, rate) for parity.
     pub log: Option<Vec<(u64, &'static str, usize, f32)>>,
+    /// Alpha Speed & air muffle: the music lowpass and the wind rush.
+    pub hype: super::hype::HypeAudio,
 }
 
 impl Mixer {
@@ -406,6 +408,7 @@ impl Mixer {
             music_underruns: 0,
             render_seconds: 0.,
             log: None,
+            hype: super::hype::HypeAudio::new(rate),
         }
     }
 
@@ -642,6 +645,7 @@ impl Mixer {
                 }
             }
         }
+        self.hype.process(&mut music, &mut sfx);
         let sfx_gain = if self.active { self.sfx_volume } else { 0. };
         for (i, out) in out.as_chunks_mut::<2>().0.iter_mut().enumerate() {
             let bus = [sfx[i][0] * sfx_gain, sfx[i][1] * sfx_gain];
