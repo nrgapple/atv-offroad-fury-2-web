@@ -86,6 +86,9 @@ pub struct AudioStep {
     pub placement: u32,
     /// A motorcycle's own cues (web/audio.js motorcycle branch); None on an ATV.
     pub bike: Option<BikeSound>,
+    /// The ENV08 train's car matrices this step and the step before
+    /// (captureSpatial's `cars`/`previous_cars`); empty without a train.
+    pub train_cars: Vec<([f32; 16], [f32; 16])>,
 }
 
 /// The motorcycle frame fields web/audio.js reads besides the engine inputs.

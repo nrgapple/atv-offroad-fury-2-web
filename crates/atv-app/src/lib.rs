@@ -9,6 +9,7 @@ mod render_scale;
 pub mod replay;
 mod riding;
 mod sound;
+mod soundtrack;
 #[cfg(target_arch = "wasm32")]
 mod text_inputs;
 mod usage;
@@ -131,6 +132,8 @@ enum Message {
     Ready(Box<Ready>),
     /// The original frontend tune decoded (or why not).
     MenuTune(Result<atv_game::audio::mixer::Pcm, String>),
+    /// The page's soundtrack player loaded for the frontend Jukebox.
+    SoundtrackReady(Result<Box<sound::Soundtrack>, String>),
     SoundReady(Box<sound::Sound>),
     /// The original Jukebox art decoded.
     JukeboxArt(Box<atv_game::jukebox::JukeboxArt>),
@@ -195,6 +198,9 @@ enum ArtPiece {
         Option<atv_ui::front::assets::MenuRider>,
     ),
     MenuRider(u16, atv_ui::front::assets::MenuRider),
+    /// The original Profile Store gear catalog (Rider Gear's rows).
+    GearCatalog(Vec<atv_core::rider_gear::Category>),
+    RiderMaterials(Vec<u8>),
 }
 
 /// Load-time choices kept for rides started from the frontend.
@@ -267,6 +273,14 @@ struct App {
     front: Option<Rc<RefCell<front::Front>>>,
     /// The original frontend tune (audio.js playMenuMusic).
     menu_music: MenuMusic,
+    /// The page's soundtrack player: a ride's sound and the frontend
+    /// Jukebox share it (audio.js `this.music`).
+    soundtrack: Option<Rc<RefCell<sound::Soundtrack>>>,
+    /// The frontend asked for the soundtrack before it was loaded.
+    soundtrack_requested: bool,
+    /// The Settings → Audio music on/off and volume last given to the
+    /// soundtrack from the frontend (applied on change, as rides do).
+    soundtrack_prefs: Option<(bool, f32)>,
     gpu: Option<Gpu>,
     content: Option<Rc<Content>>,
     defaults: Option<Defaults>,
@@ -557,6 +571,14 @@ async fn prepare(
                     music,
                     selection,
                     race_samples: riding.ride.race().map(|r| r.samples()).unwrap_or_default(),
+                    train_sounds: venue.train_sounds.clone(),
+                    // loadWeather: active Rain weather loops rain.vag.
+                    rain: venue.weather.as_ref().is_some_and(|w| {
+                        w.active
+                            && w.definition
+                                .as_ref()
+                                .is_some_and(|d| d.kind.eq_ignore_ascii_case("rain"))
+                    }),
                 },
             });
         }
@@ -769,9 +791,13 @@ impl App {
         let started = Instant::now();
         let ms = (now - self.started).as_secs_f64() * 1000.;
         let active = !riding.paused && !riding.held && focused;
+        self.gamepad
+            .set_pin(riding.bindings.tuning.selected.clone());
         let pad = self.gamepad.sample();
         if let Some(overlay) = &mut self.overlay {
             overlay.pad_name = self.gamepad.name();
+            overlay.pads = self.gamepad.connected();
+            overlay.pad_standard = self.gamepad.standard();
             overlay.sync_menu(riding.paused && !riding.held);
             riding.menu_open = overlay.menu.is_some();
             if riding.menu_open
@@ -1184,6 +1210,8 @@ impl App {
                 sound.cpu,
                 sound.mix,
                 sound
+                    .music
+                    .borrow()
                     .title
                     .as_ref()
                     .map_or(String::new(), |t| format!(" · {t}"))
@@ -1551,27 +1579,30 @@ impl App {
 
     /// music.js `save`: the soundtrack record keeps the play history.
     fn save_soundtrack(&mut self) {
-        let (Some(ready), Some(overlay)) = (&mut self.ready, &mut self.overlay) else {
+        let Some(music) = &self.soundtrack else {
             return;
         };
-        let Some(sound) = ready.riding.as_mut().and_then(|r| r.sound.as_mut()) else {
-            return;
-        };
-        if !std::mem::take(&mut sound.player.dirty) {
+        let mut music = music.borrow_mut();
+        if !std::mem::take(&mut music.player.dirty) {
             return;
         }
-        let mut record = overlay
-            .settings
+        let front = self.front.clone();
+        let mut front = front.as_ref().map(|f| f.borrow_mut());
+        let settings = match (&mut self.overlay, front.as_deref_mut()) {
+            (Some(overlay), _) if self.ready.is_some() => &mut overlay.settings,
+            (_, Some(front)) => &mut front.settings,
+            (Some(overlay), None) => &mut overlay.settings,
+            (None, None) => return,
+        };
+        let mut record = settings
             .get("atv-soundtrack-v1")
             .and_then(|v| serde_json::from_str::<serde_json::Value>(&v).ok())
             .filter(serde_json::Value::is_object)
             .unwrap_or_else(|| serde_json::json!({"v": 3, "enabled": true, "volume": 0.45}));
         record["v"] = 3.into();
-        record["history"] = sound.player.history.clone().into();
-        record["historyIndex"] = sound.player.history_index.into();
-        overlay
-            .settings
-            .set("atv-soundtrack-v1", &record.to_string());
+        record["history"] = music.player.history.clone().into();
+        record["historyIndex"] = music.player.history_index.into();
+        settings.set("atv-soundtrack-v1", &record.to_string());
     }
 
     /// The open menu's music view, and the Jukebox art on its first visit.
@@ -1957,10 +1988,14 @@ impl App {
             .and_then(|r| r.sound.as_mut())
         {
             sound.start();
-        } else if let Some(activation) = &self.activation
-            && let Err(error) = activation.activate()
-        {
-            status(&format!("Sound unavailable: {error}"));
+        } else if let Some(activation) = &self.activation {
+            if let Err(error) = activation.activate() {
+                status(&format!("Sound unavailable: {error}"));
+            }
+            // The frontend Jukebox's stream starts inside the gesture.
+            if let Some(music) = &self.soundtrack {
+                music.borrow_mut().start();
+            }
         }
     }
 
@@ -2227,12 +2262,14 @@ impl App {
         let Some(activation) = self.activation.clone() else {
             return;
         };
+        let music = self.soundtrack.clone();
         let future = async move {
             let result = sound::Sound::load(
                 pending.content,
                 &pending.environment,
                 pending.settings,
                 activation,
+                music,
             )
             .await;
             let _ = proxy.send_event(match result {
@@ -2480,12 +2517,19 @@ impl ApplicationHandler<Message> for App {
                         status(&format!("Sound unavailable: {error}"));
                         return;
                     }
-                    // The saved soundtrack history (music.js v3 record).
-                    if let Some(record) = self
-                        .overlay
+                    // The saved soundtrack history (music.js v3 record), once
+                    // per page: the frontend may have started the player.
+                    let fresh = self
+                        .soundtrack
                         .as_ref()
-                        .and_then(|o| o.settings.get("atv-soundtrack-v1"))
-                        .and_then(|v| serde_json::from_str::<serde_json::Value>(&v).ok())
+                        .is_none_or(|s| !Rc::ptr_eq(s, &sound.music));
+                    self.soundtrack = Some(sound.music.clone());
+                    if fresh
+                        && let Some(record) = self
+                            .overlay
+                            .as_ref()
+                            .and_then(|o| o.settings.get("atv-soundtrack-v1"))
+                            .and_then(|v| serde_json::from_str::<serde_json::Value>(&v).ok())
                     {
                         let history = record["history"]
                             .as_array()
@@ -2496,7 +2540,7 @@ impl ApplicationHandler<Message> for App {
                             })
                             .unwrap_or_default();
                         let index = record["historyIndex"].as_i64().unwrap_or(-1) as i32;
-                        sound.restore_history(history, index);
+                        sound.music.borrow_mut().restore_history(history, index);
                     }
                     // Settings → Audio volumes and the music switch.
                     if let Some(prefs) = self.overlay.as_ref().map(|o| &o.prefs)
@@ -2528,6 +2572,37 @@ impl ApplicationHandler<Message> for App {
                 self.wake();
             }
             Message::SoundFailed(error) => status(&format!("Sound unavailable: {error}")),
+            Message::SoundtrackReady(result) => {
+                match result {
+                    Ok(music) if self.soundtrack.is_none() => {
+                        let mut music = *music;
+                        // The saved soundtrack history (music.js v3 record).
+                        if let Some(record) = self
+                            .front
+                            .as_ref()
+                            .and_then(|f| f.borrow().settings.get("atv-soundtrack-v1"))
+                            .and_then(|v| serde_json::from_str::<serde_json::Value>(&v).ok())
+                        {
+                            let history = record["history"]
+                                .as_array()
+                                .map(|a| {
+                                    a.iter()
+                                        .filter_map(|v| v.as_str().map(String::from))
+                                        .collect()
+                                })
+                                .unwrap_or_default();
+                            let index = record["historyIndex"].as_i64().unwrap_or(-1) as i32;
+                            music.restore_history(history, index);
+                        }
+                        self.soundtrack_prefs = None;
+                        self.soundtrack = Some(Rc::new(RefCell::new(music)));
+                        self.sync_menu_music();
+                    }
+                    Ok(_) => {}
+                    Err(error) => status(&format!("Soundtrack unavailable: {error}")),
+                }
+                self.wake();
+            }
             Message::MenuTune(result) => {
                 match result {
                     Ok(pcm) => self.menu_music.tune = Some(std::sync::Arc::new(pcm)),
@@ -2538,6 +2613,8 @@ impl ApplicationHandler<Message> for App {
             Message::JukeboxArt(art) => {
                 if let (Some(overlay), Some(ready)) = (&mut self.overlay, &self.ready) {
                     overlay.set_jukebox_art(&ready.gpu.device, &ready.gpu.queue, *art);
+                } else if let Some(front) = &self.front {
+                    front.borrow_mut().jukebox_source = Some(*art);
                 }
                 self.wake();
             }
@@ -2712,6 +2789,14 @@ impl ApplicationHandler<Message> for App {
                         }
                         ArtPiece::MenuRider(rider, model) => {
                             front.art.menu_riders.insert(rider, model);
+                        }
+                        ArtPiece::GearCatalog(catalog) => {
+                            front.state.gear_catalog = catalog;
+                            let view = front.view;
+                            front.state.refresh(&view);
+                        }
+                        ArtPiece::RiderMaterials(bytes) => {
+                            front.art.rider_materials = Some(std::rc::Rc::new(bytes));
                         }
                     }
                 }
@@ -3051,7 +3136,18 @@ impl App {
             .as_ref()
             .filter(|_| front_shown)
             .map_or((false, 0.), |f| f.borrow().music());
-        let wanted = front_shown && enabled && self.effective_focused();
+        // The Jukebox (or an Audio page song) plays the soundtrack instead of
+        // the menu tune (setMusicPreview's `originalMenu`).
+        let preview = front_shown
+            && self
+                .front
+                .as_ref()
+                .is_some_and(|f| f.borrow().wants_soundtrack());
+        let focused = self.effective_focused();
+        if front_shown {
+            self.sync_soundtrack(preview, focused, (enabled, volume));
+        }
+        let wanted = front_shown && enabled && focused && !preview;
         if wanted
             && self.menu_music.tune.is_none()
             && !self.menu_music.requested
@@ -3095,10 +3191,90 @@ impl App {
                     mixer.stop(voice);
                 }
                 if front_shown {
-                    mixer.music_active = false;
+                    // The decoded soundtrack also plays on the music bus.
+                    mixer.music_volume = volume;
+                    mixer.music_active = preview && focused;
                 }
             }
         }
+    }
+
+    /// The frontend's soundtrack preview: load the player on first use, run
+    /// it while the Jukebox wants it, pause it under the menus otherwise,
+    /// and publish its view to the Jukebox page.
+    fn sync_soundtrack(&mut self, preview: bool, focused: bool, prefs: (bool, f32)) {
+        if preview && self.soundtrack.is_none() {
+            self.load_soundtrack();
+        }
+        let Some(music) = self.soundtrack.clone() else {
+            return;
+        };
+        let jukebox = self
+            .front
+            .as_ref()
+            .is_some_and(|f| f.borrow().jukebox_open());
+        {
+            let mut music = music.borrow_mut();
+            if self.soundtrack_prefs != Some(prefs) {
+                self.soundtrack_prefs = Some(prefs);
+                music.set_volume(prefs.1, prefs.0);
+            }
+            music.set_active(preview);
+            if preview {
+                music.set_focused(focused);
+                music.maintain();
+            }
+        }
+        if let Some(front) = &self.front {
+            let mut front = front.borrow_mut();
+            let mut music = music.borrow_mut();
+            front.music = Some(music.music_view());
+            front.spectrum = if jukebox {
+                music.spectrum().map(|b| b.to_vec())
+            } else {
+                None
+            };
+        }
+        // The original art loads on the first visit (jukebox.js loadArt).
+        if jukebox
+            && self
+                .front
+                .as_ref()
+                .is_some_and(|f| f.borrow().jukebox_source.is_none())
+            && let Some(content) = self.content.clone()
+            && self.requested.insert("front-jukebox-art".into())
+        {
+            self.spawn(
+                async move { atv_game::jukebox::load(&content).await },
+                |result| match result {
+                    Ok(Some(art)) => Message::JukeboxArt(Box::new(art)),
+                    Ok(None) => Message::Notice(String::new()),
+                    Err(error) => Message::SoundFailed(format!("Jukebox art: {error}")),
+                },
+            );
+        }
+        self.save_soundtrack();
+    }
+
+    /// Reads the soundtrack catalog for the frontend (once per page).
+    fn load_soundtrack(&mut self) {
+        if self.soundtrack_requested {
+            return;
+        }
+        let (Some(content), Some(activation)) = (self.content.clone(), self.activation.clone())
+        else {
+            return;
+        };
+        let music = self.front.as_ref().is_none_or(|f| f.borrow().music().0);
+        self.soundtrack_requested = true;
+        self.spawn(
+            async move {
+                sound::Soundtrack::load(content, &activation, music)
+                    .await
+                    .map(Box::new)
+            },
+            Message::SoundtrackReady,
+        );
     }
 
     /// The frontend while it owns the screen (no ride, not loading).
@@ -3121,13 +3297,23 @@ impl App {
         gpu.resize(size.width, size.height);
         let view = overlay::viewport(size.width, size.height, window.scale_factor());
         let tracks = boot.tracks.clone();
-        let front = front::Front::new(
+        let mut front = front::Front::new(
             &gpu.device,
             gpu.config.format,
             view,
             boot.tracks,
             boot.backdrop,
         );
+        // Each course's race archive is offered once its record exists
+        // (frontend.js `raceCourses`).
+        let race_courses = atv_game::launch::environments()
+            .into_iter()
+            .filter(|id| {
+                atv_game::launch::course_resource(id, true)
+                    .is_ok_and(|r| content.manifest.record(&r.archive).is_some())
+            })
+            .collect();
+        front.state.set_race_courses(race_courses, &view);
         self.front = Some(Rc::new(RefCell::new(front)));
         self.gpu = Some(gpu);
         self.content = Some(content.clone());
@@ -3151,6 +3337,15 @@ impl App {
         self.spawn(
             async move { atv_ui::front::assets::photos(&c, &tracks).await },
             |result| Message::FrontArt(Box::new(ArtPiece::Photos(result.unwrap_or_default()))),
+        );
+        let c = content.clone();
+        self.spawn(
+            async move { atv_game::ride::gear::catalog(&c).await },
+            |result| match result {
+                Ok(Some(catalog)) => Message::FrontArt(Box::new(ArtPiece::GearCatalog(catalog))),
+                Ok(None) => Message::Notice(String::new()),
+                Err(error) => Message::SoundFailed(format!("Rider gear: {error}")),
+            },
         );
         let c = content.clone();
         self.spawn(
@@ -3203,9 +3398,13 @@ impl App {
             return;
         }
         if let Some(page) = atv_game::launch::menu_shortcut(&start.search) {
-            // Without the race setup page (gap 1), Single Player.
-            f.state
-                .show(if page == "race" { "single" } else { page }, &view);
+            // "Single Race" opens the race setup when the content has races.
+            let page = if page == "race" && f.state.race_courses.is_empty() {
+                "single"
+            } else {
+                page
+            };
+            f.state.show(page, &view);
             return;
         }
         let tracks: Vec<(String, String)> = f
@@ -3281,7 +3480,20 @@ impl App {
             return;
         }
         let race = setup.activity == "race";
-        f.state.show(if race { "single" } else { "tracks" }, &view);
+        if race && !f.state.race_courses.is_empty() {
+            // Only race links change the race setup (frontend.js).
+            f.state.show_race(
+                atv_ui::front::controller::RaceSetup {
+                    course: setup.map.clone(),
+                    laps: setup.race.laps,
+                    cpu: setup.race.cpu,
+                    difficulty: setup.race.difficulty,
+                },
+                &view,
+            );
+        } else {
+            f.state.show(if race { "single" } else { "tracks" }, &view);
+        }
         if !setup.play {
             return;
         }
@@ -3316,6 +3528,25 @@ impl App {
                 quad,
                 rider,
             } => self.start_ride(environment, quad, rider, None, None),
+            Event::Race {
+                environment,
+                quad,
+                rider,
+                laps,
+                cpu,
+                difficulty,
+            } => {
+                let settings = atv_game::ride::race::Settings {
+                    laps,
+                    cpu: cpu as usize,
+                    difficulty,
+                    // A new roster draw per load, as the browser draws one.
+                    seed: fresh_seed(),
+                    ..Default::default()
+                };
+                self.start_ride(environment, quad, rider, Some(settings), None);
+            }
+            Event::CopyRaceLink => self.copy_race_link(),
             Event::FreeRide { quad, rider, name } => {
                 let Some(relay) = self.defaults.as_ref().map(|d| d.relay.clone()) else {
                     return;
@@ -3451,6 +3682,18 @@ impl App {
                 }
             }
             Event::Settings => {}
+            Event::Jukebox => {
+                self.sync_menu_music();
+                self.wake();
+            }
+            Event::Music(action) => {
+                if let Some(music) = &self.soundtrack {
+                    music.borrow_mut().jukebox(action);
+                }
+                self.save_soundtrack();
+                self.sync_menu_music();
+                self.wake();
+            }
         }
     }
 
@@ -3532,6 +3775,58 @@ impl App {
 
     /// Free Ride Lobby → Copy invite link (multiplayer.js `inviteUrl`), once
     /// the room's code is known.
+    /// Single Race → Copy ride link (frontend.js `rideUrl` for the race
+    /// page): the setup's race link, on the clipboard or the notice line.
+    fn copy_race_link(&mut self) {
+        let Some(front) = self.front.clone() else {
+            return;
+        };
+        let mut f = front.borrow_mut();
+        let player = f.state.player_name.trim().to_string();
+        let player = if player.is_empty() {
+            "Rider".to_string()
+        } else {
+            player
+        };
+        #[cfg(target_arch = "wasm32")]
+        let page = web_sys::window()
+            .and_then(|w| {
+                let l = w.location();
+                Some(format!("{}{}", l.origin().ok()?, l.pathname().ok()?))
+            })
+            .unwrap_or_default();
+        #[cfg(not(target_arch = "wasm32"))]
+        let page = "https://furyremastered.com/engine.html".to_string();
+        let race = f.state.race.clone();
+        let url = atv_game::launch::ride_url(
+            &page,
+            &atv_game::launch::RideLink {
+                map: &race.course,
+                quad: f.state.quad_id,
+                rider: f.state.rider_id,
+                player: &player,
+                race: Some((race.laps, race.cpu as usize, race.difficulty, false, false)),
+                room: None,
+            },
+        );
+        f.state.notice = Some(url.clone());
+        #[cfg(target_arch = "wasm32")]
+        if let Some(clipboard) = web_sys::window().map(|w| w.navigator().clipboard()) {
+            let promise = clipboard.write_text(&url);
+            let proxy = self.proxy.clone();
+            wasm_bindgen_futures::spawn_local(async move {
+                let copied = wasm_bindgen_futures::JsFuture::from(promise).await.is_ok();
+                let _ = proxy.send_event(Message::LobbyNotice(if copied {
+                    "Ride link copied.".into()
+                } else {
+                    url
+                }));
+            });
+        }
+        drop(f);
+        self.wake();
+    }
+
     fn copy_lobby_invite(&mut self) {
         let Some(front) = self.front.clone() else {
             return;
@@ -3942,9 +4237,13 @@ impl App {
             return;
         };
         let started = Instant::now();
+        let pin = front.borrow().pad_pin();
+        self.gamepad.set_pin(pin);
         let pad = self.gamepad.sample();
         let mut f = front.borrow_mut();
         f.pad_name = self.gamepad.name();
+        f.pads = self.gamepad.connected();
+        f.pad_standard = self.gamepad.standard();
         let event = f.pad(pad.as_ref());
         paint_front(gpu, &mut f);
         #[cfg(target_arch = "wasm32")]
@@ -3975,6 +4274,14 @@ impl App {
                         "playing": self.menu_music.voice.is_some(),
                         "peak": peak,
                     },
+                    // The page's soundtrack player (shared with rides).
+                    "soundtrack": self.soundtrack.as_ref().map(|m| {
+                        let m = m.borrow();
+                        let mut report = m.report();
+                        report["playing"] = m.player.selected.into();
+                        report["paused"] = m.player.paused.into();
+                        report
+                    }),
                 })
                 .to_string(),
             );
@@ -4033,6 +4340,19 @@ impl App {
                                     Message::FrontArt(Box::new(ArtPiece::Vehicle(quad, model, rider)))
                                 }
                                 Err(error) => Message::SoundFailed(format!("Model preview: {error}")),
+                            },
+                        );
+                    }
+                }
+                front::Want::RiderMaterials => {
+                    if self.requested.insert("rider-materials".into()) {
+                        self.spawn(
+                            async move { content.file("/RIDER/RIDER_MT.RES").await },
+                            |result| match result {
+                                Ok(bytes) => {
+                                    Message::FrontArt(Box::new(ArtPiece::RiderMaterials(bytes)))
+                                }
+                                Err(error) => Message::SoundFailed(format!("Rider gear: {error}")),
                             },
                         );
                     }
@@ -4634,6 +4954,9 @@ pub fn run(options: Options) {
         bench_out,
         front: None,
         menu_music: MenuMusic::default(),
+        soundtrack: None,
+        soundtrack_requested: false,
+        soundtrack_prefs: None,
         gpu: None,
         content: None,
         defaults: None,

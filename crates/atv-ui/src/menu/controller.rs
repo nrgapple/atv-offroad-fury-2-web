@@ -61,6 +61,10 @@ pub struct Context<'a> {
     pub bindings: Option<&'a mut Bindings>,
     /// Name of the controller in use, if any (Controller Settings row).
     pub pad_name: Option<String>,
+    /// Connected controllers (name, index) for pinning one, and whether
+    /// the one in use reports the standard mapping (glyph names).
+    pub pads: Vec<(String, u32)>,
+    pub pad_standard: bool,
     pub view: Viewport,
     /// The multiplayer room this ride is in.
     pub lobby: Option<&'a Lobby>,
@@ -95,6 +99,8 @@ pub struct PauseMenu {
     /// Bindings page: keyboard (true) or controller rows, page and row.
     keyboard: bool,
     binding_page: usize,
+    /// Settings → Audio's song list page (four rows a page, musicPage).
+    music_page: usize,
     binding_row: usize,
     capture: Option<Capture>,
     /// Opened from the frontend's main menu: Settings is the root page.
@@ -142,6 +148,7 @@ impl PauseMenu {
             pending_select: None,
             keyboard: true,
             binding_page: 0,
+            music_page: 0,
             binding_row: 0,
             capture: None,
             from_menu: false,
@@ -158,6 +165,26 @@ impl PauseMenu {
             from_menu: true,
             ..Self::new()
         }
+    }
+
+    /// The Jukebox opened from the frontend's main menu (jukeboxReturn
+    /// 'main'): Back leaves it for the menu.
+    pub fn jukebox() -> Self {
+        Self {
+            page: "jukebox".into(),
+            from_menu: true,
+            ..Self::new()
+        }
+    }
+
+    /// Opened over the frontend rather than a ride.
+    pub fn from_menu(&self) -> bool {
+        self.from_menu
+    }
+
+    /// Settings → Audio's song list page.
+    pub fn music_page(&self) -> usize {
+        self.music_page
     }
 
     pub fn state(&self, ctx: &Context) -> State {
@@ -179,7 +206,7 @@ impl PauseMenu {
             pad: (self.page == "bindings" && !self.keyboard)
                 .then_some(ctx.bindings.as_deref())
                 .flatten()
-                .map(|b| super::glyphs::PadGlyphs::new(b, true)),
+                .map(|b| super::glyphs::PadGlyphs::new(b, ctx.pad_standard)),
             roster: if self.page == "players" {
                 ctx.lobby
                     .iter()
@@ -200,13 +227,24 @@ impl PauseMenu {
             } else {
                 Vec::new()
             },
-            page_count: (self.page == "bindings").then(|| {
-                format!(
+            page_count: match self.page.as_str() {
+                "bindings" => Some(format!(
                     "Page {} of {}",
                     self.binding_page + 1,
                     ACTIONS.len().div_ceil(4)
-                )
-            }),
+                )),
+                // frontend.js: Page n of the song list's four-row pages.
+                "music" => Some(format!(
+                    "Page {} of {}",
+                    self.music_page + 1,
+                    ctx.music.map_or(0, |m| m.songs.len()).div_ceil(4).max(1)
+                )),
+                _ => None,
+            },
+            // `.pause-header .pause-status`: Audio's soundtrack line.
+            status: (self.page == "music")
+                .then(|| ctx.music.map(music_status))
+                .flatten(),
         }
     }
 
@@ -249,9 +287,21 @@ impl PauseMenu {
                 ctx.music.map_or_else(Vec::new, |m| m.songs.iter().enumerate().map(|(i, (title, artist, _))| {
                     json!({"id": i.to_string(), "label": title, "value": artist})
                 }).collect())
+            } else if self.page == "music" {
+                // frontend.js: the playing song is marked on Audio's rows.
+                ctx.music.map_or_else(Vec::new, |m| m.songs.iter().enumerate().map(|(i, (title, artist, _))| {
+                    let mark = match (Some(i) == m.playing_index, m.enabled) {
+                        (true, true) => "Playing / ",
+                        (true, false) => "Selected / ",
+                        _ => "",
+                    };
+                    json!({"id": i.to_string(), "label": title, "value": format!("{mark}{artist}")})
+                }).collect())
             } else {
                 Vec::new()
             },
+            "music_page": self.music_page,
+            "music_status": ctx.music.map_or_else(String::new, music_status),
             "minimap_enabled": m.enabled,
             "minimap_size": m.size,
             "minimap_zoom": m.zoom,
@@ -266,9 +316,13 @@ impl PauseMenu {
         let mut request = request;
         if let Some(b) = ctx.bindings.as_deref() {
             let t = &b.tuning;
-            request["controller_label"] = match &ctx.pad_name {
-                Some(name) => format!("Auto ({})", pad_name(name)),
-                None => "Auto (press a button)".into(),
+            // gamepads.js controllerLabel: Auto, a pinned pad, or a pinned
+            // pad that is absent.
+            request["controller_label"] = match (&t.selected, &ctx.pad_name) {
+                (Some((id, _)), _) if ctx.pads.iter().any(|(name, _)| name == id) => pad_name(id),
+                (Some((id, _)), _) => format!("{} (not connected, using Auto)", pad_name(id)),
+                (None, Some(name)) => format!("Auto ({})", pad_name(name)),
+                (None, None) => "Auto (press a button)".into(),
             }
             .into();
             request["controller_preset"] = b.controller_preset_label().into();
@@ -291,7 +345,10 @@ impl PauseMenu {
                         json!({
                             "id": id,
                             "label": if self.keyboard { binds::keyboard_label(*action) } else { label },
-                            "value": binds::binding_text(b.row(self.keyboard, *action), true),
+                            "value": binds::binding_text(
+                                b.row(self.keyboard, *action),
+                                self.keyboard || ctx.pad_standard,
+                            ),
                         })
                     })
                     .collect();
@@ -368,8 +425,11 @@ impl PauseMenu {
             return Some(Event::Resume);
         }
         if self.page == "jukebox" {
-            self.show("pause");
-            self.pending_select = Some("jukebox".into());
+            // From the main menu the Jukebox closes (the host ends the menu).
+            if !self.from_menu {
+                self.show("pause");
+                self.pending_select = Some("jukebox".into());
+            }
             return Some(Event::Jukebox(super::jukebox::JukeboxAction::Leave));
         }
         let to = if self.page == "bindings" && !self.keyboard {
@@ -475,6 +535,13 @@ impl PauseMenu {
                 self.show("controller-settings");
                 return None;
             }
+            "musicprev" | "musicnext" => {
+                let pages = ctx.music.map_or(1, |m| m.songs.len().div_ceil(4).max(1));
+                let step = if action == "musicprev" { pages - 1 } else { 1 };
+                self.music_page = (self.music_page + step) % pages;
+                self.selection = 0;
+                Event::Changed
+            }
             "bindprev" | "bindnext" => {
                 let pages = ACTIONS.len().div_ceil(4);
                 let step = if action == "bindprev" { pages - 1 } else { 1 };
@@ -501,7 +568,33 @@ impl PauseMenu {
                 save_bindings(bindings, ctx.settings);
                 Event::Changed
             }
-            "padselect" => Event::Changed,
+            // gamepads.js cycleController: Auto → each connected pad → Auto.
+            "padselect" => {
+                let bindings = ctx.bindings.as_deref_mut()?;
+                let options: Vec<Option<(String, u32)>> = std::iter::once(None)
+                    .chain(ctx.pads.iter().cloned().map(Some))
+                    .collect();
+                let at = bindings
+                    .tuning
+                    .selected
+                    .as_ref()
+                    .and_then(|(id, index)| {
+                        options
+                            .iter()
+                            .position(|o| o.as_ref().is_some_and(|(n, i)| n == id && i == index))
+                            .or_else(|| {
+                                options
+                                    .iter()
+                                    .position(|o| o.as_ref().is_some_and(|(n, _)| n == id))
+                            })
+                    })
+                    .unwrap_or(0) as i32;
+                let next = (at + direction).rem_euclid(options.len() as i32) as usize;
+                bindings.tuning.selected = options[next].clone();
+                ctx.settings
+                    .set(CONTROLLER_STORAGE_KEY, &bindings.tuning.to_json());
+                Event::Changed
+            }
             _ if action.starts_with("bind:") => {
                 let id = &action[5..];
                 let (index, (row, _, label)) =
@@ -1004,6 +1097,18 @@ pub fn pad_name(id: &str) -> String {
     name.chars().take(48).collect()
 }
 
+/// frontend.js music_status: "On / Volume 45% / <song>".
+fn music_status(m: &super::jukebox::MusicView) -> String {
+    format!(
+        "{} / Volume {}% / {}",
+        if m.enabled { "On" } else { "Off" },
+        (m.volume * 100.).round() as i32,
+        m.playing_index
+            .and_then(|i| m.songs.get(i))
+            .map_or("Choose a song", |s| s.0.as_str())
+    )
+}
+
 #[cfg(test)]
 mod pad_name_tests {
     use super::pad_name;
@@ -1033,5 +1138,73 @@ mod pad_name_tests {
         ] {
             assert_eq!(pad_name(id), name, "{id}");
         }
+    }
+}
+
+#[cfg(test)]
+mod pad_select_tests {
+    use super::*;
+    use crate::{hud::minimap::MinimapSettings, menu::prefs::Preferences, touch::TouchControls};
+
+    #[test]
+    fn padselect_cycles_auto_and_connected_pads_and_labels_the_pin() {
+        let mut settings = Settings::memory();
+        let mut prefs = Preferences::load(&settings, false);
+        let mut minimap = MinimapSettings::load(&settings);
+        let mut touch = TouchControls::new(&settings, false);
+        let mut bindings = load_bindings(&mut settings);
+        let pads = vec![
+            ("Virtual Pad".to_string(), 0),
+            (
+                "Xbox Wireless Controller (STANDARD GAMEPAD Vendor: 045e)".to_string(),
+                1,
+            ),
+        ];
+        let mut menu = PauseMenu::new();
+        let mut label =
+            |menu: &mut PauseMenu, bindings: &mut Bindings, pads: &[(String, u32)], step: i32| {
+                let mut ctx = Context {
+                    settings: &mut settings,
+                    prefs: &mut prefs,
+                    minimap: &mut minimap,
+                    touch: &mut touch,
+                    bindings: Some(bindings),
+                    pad_name: Some(pads[0].0.clone()),
+                    pads: pads.to_vec(),
+                    pad_standard: true,
+                    view: Default::default(),
+                    lobby: None,
+                    music: None,
+                };
+                if step != 0 {
+                    menu.run("padselect", step, true, &mut ctx);
+                }
+                menu.show("controller-settings");
+                menu.refresh(&ctx);
+                menu.rows.label("padselect").unwrap_or_default().to_string()
+            };
+        assert_eq!(
+            label(&mut menu, &mut bindings, &pads, 0),
+            "Controller: Auto (Virtual Pad)"
+        );
+        // Auto → the second pad (Left wraps from Auto to the last pad).
+        assert_eq!(
+            label(&mut menu, &mut bindings, &pads, -1),
+            "Controller: Xbox Wireless Controller"
+        );
+        assert_eq!(bindings.tuning.selected, Some((pads[1].0.clone(), 1)));
+        // Absent: Auto stands in until it reconnects.
+        assert_eq!(
+            label(&mut menu, &mut bindings, &pads[..1], 0),
+            "Controller: Xbox Wireless Controller (not connected, using Auto)"
+        );
+        // Right from the pinned pad wraps to Auto, and the choice is saved.
+        assert_eq!(
+            label(&mut menu, &mut bindings, &pads, 1),
+            "Controller: Auto (Virtual Pad)"
+        );
+        assert_eq!(bindings.tuning.selected, None);
+        let saved = settings.get(CONTROLLER_STORAGE_KEY).unwrap();
+        assert!(saved.contains("\"selected\":null"), "{saved}");
     }
 }

@@ -193,8 +193,27 @@ pub fn render_audio(
             RATE,
         )
         .await?;
+        let mut bank = bank;
+        // The train's car sounds and Rain weather's loop, as the live ride.
+        let rain = venue.weather.as_ref().is_some_and(|w| {
+            w.active
+                && w.definition
+                    .as_ref()
+                    .is_some_and(|d| d.kind.eq_ignore_ascii_case("rain"))
+        });
+        let mut world: Vec<String> = venue
+            .train_sounds
+            .iter()
+            .map(|d| d.sample.clone())
+            .collect();
+        if rain {
+            world.push("rain.vag".into());
+        }
+        bank.load_samples(&content, &world).await?;
         let load_ms = started.elapsed().as_secs_f64() * 1000.;
         let mut audio = RideAudio::new(bank, mode);
+        audio.train_sounds = venue.train_sounds.clone();
+        audio.rain = rain;
         let mut mixer = Mixer::new(RATE);
         mixer.log = Some(Vec::new());
         audio.apply_mode(&mut mixer);

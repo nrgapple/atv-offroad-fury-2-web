@@ -35,11 +35,11 @@ try {
   await key(page, 'Escape');
   await wait(page, () => !JSON.parse(document.querySelector('#ui-state').textContent).front.menu);
   await key(page, 'ArrowUp'); await key(page, 'ArrowUp'); await key(page, 'ArrowUp'); await key(page, 'Enter'); await onPage(page, 'single');
-  assert.deepEqual((await front(page)).choices, ['tracks', 'garage']);
+  assert.deepEqual((await front(page)).choices, ['tracks', 'race', 'garage']);
   // Garage: Right steps the ATV, the rider switch toggles; both persist.
-  await key(page, 'ArrowDown'); await key(page, 'Enter'); await onPage(page, 'garage');
+  await key(page, 'ArrowDown'); await key(page, 'ArrowDown'); await key(page, 'Enter'); await onPage(page, 'garage');
   // The 3D previews: the ATV and the original menu rider (animated idle).
-  await wait(page, () => { const m = JSON.parse(document.querySelector('#ui-state').textContent).front.models; return m[0] === 'vehicle:1' && m[1] === 'rider:0'; }, null, 120000);
+  await wait(page, () => { const m = JSON.parse(document.querySelector('#ui-state').textContent).front.models; return m[0]?.startsWith('vehicle:1:') && m[1] === 'rider:0'; }, null, 120000);
   await key(page, 'ArrowRight');
   await key(page, 'ArrowDown'); await key(page, 'Enter');
   f = await front(page);
@@ -48,7 +48,7 @@ try {
   assert.deepEqual([saved.quadId, saved.riderId], [2, 1]);
   await key(page, 'Escape'); await onPage(page, 'single');
   // Course select: photos load, tabs filter, a click on a card selects it.
-  await key(page, 'ArrowUp'); await key(page, 'Enter'); await onPage(page, 'tracks');
+  await key(page, 'ArrowUp'); await key(page, 'ArrowUp'); await key(page, 'Enter'); await onPage(page, 'tracks');
   await wait(page, () => JSON.parse(document.querySelector('#ui-state').textContent).front.photos >= 30, null, 120000);
   await key(page, 'PageDown');
   f = await front(page);

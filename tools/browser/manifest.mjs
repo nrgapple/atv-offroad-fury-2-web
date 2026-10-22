@@ -66,4 +66,7 @@ export const TESTS = {
   'test_rust_audio_activation.mjs': {"group":"content"},
   'test_devlog.mjs': {"group":"content-free"},
   'test_multiplayer_relay.mjs': {"group":"manual","reason":"Not a browser test: drives a running Rust relay (ATV_RELAY_URL) through WS_MODULE and the atv-relay codec example build"},
+  'test_engine_audio_page.mjs': {"group":"content"},
+  'test_engine_menu_jukebox.mjs': {"group":"content"},
+  'test_engine_race_gear.mjs': {"group":"content"},
 };

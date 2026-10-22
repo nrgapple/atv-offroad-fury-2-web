@@ -597,8 +597,14 @@ The bars repaint each frame on top of the cached panel layout. Evidence:
 `private/reports/rust-ui/jukebox-bars/{rust-web,javascript}-1280.png` (same art box
 and bar geometry; levels differ with the song position).
 
-Not ported: the main-menu Jukebox (the Rust frontend has no soundtrack player outside rides; the
-row stays hidden there), dragging feedback before release, Media Session release
+The main menu's Jukebox row opens the same page over the frontend. The page's one
+soundtrack player (`atv-app/src/soundtrack.rs`, audio.js `this.music`) serves both
+the menus and rides. A chosen song replaces the menu tune; Back pauses it in place
+(music.js `pauseQueue`); a ride carries on with the same song
+(`tools/test_engine_menu_jukebox.mjs`, `private/reports/rust-ui/menu-jukebox.png`).
+Settings → Audio's song rows preview the soundtrack the same way.
+
+Not ported: dragging feedback before release, Media Session release
 (play.html keeps the soundtrack out of system media controls; the Rust web build
 never registers it).
 

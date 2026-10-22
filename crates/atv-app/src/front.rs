@@ -38,6 +38,8 @@ pub struct Art {
     /// and the PAGE07 menu riders (male, female).
     pub vehicles: Vec<(u16, PreviewModel, Option<MenuRider>)>,
     pub menu_riders: HashMap<u16, MenuRider>,
+    /// `/RIDER/RIDER_MT.RES`: the gear materials that dress the garage rider.
+    pub rider_materials: Option<std::rc::Rc<Vec<u8>>>,
 }
 
 /// Something the frontend needs loaded.
@@ -45,6 +47,8 @@ pub struct Art {
 pub enum Want {
     Vehicle(u16),
     MenuRider(u16),
+    /// The gear materials, once the garage rider wears any gear.
+    RiderMaterials,
 }
 
 /// One 3D preview: its model, the UI image it renders into, and whether
@@ -100,6 +104,18 @@ pub struct Front {
     touch: TouchControls,
     bindings: atv_game::ride::bindings::Bindings,
     pub pad_name: Option<String>,
+    /// The page's soundtrack as the Jukebox sees it, this frame's spectrum
+    /// bytes, and the original PAGE14 art (raw, then registered).
+    pub music: Option<atv_ui::menu::jukebox::MusicView>,
+    pub spectrum: Option<Vec<u8>>,
+    pub jukebox_source: Option<atv_game::jukebox::JukeboxArt>,
+    jukebox_art: Option<atv_ui::menu::jukebox::Art>,
+    /// Settings → Audio chose a song: it previews until the page changes
+    /// (frontend.js `songPreview`).
+    song_preview: bool,
+    /// Connected controllers and whether the one in use is standard-mapped.
+    pub pads: Vec<(String, u32)>,
+    pub pad_standard: bool,
     /// The loader shows the frame drawn when loading started.
     shot_started: f64,
     /// A tip was picked for the current loader.
@@ -176,6 +192,13 @@ impl Front {
             touch,
             bindings,
             pad_name: None,
+            music: None,
+            spectrum: None,
+            jukebox_source: None,
+            jukebox_art: None,
+            song_preview: false,
+            pads: Vec::new(),
+            pad_standard: true,
             shot_started: 0.,
             tip_chosen: false,
         };
@@ -200,6 +223,7 @@ impl Front {
     /// Frees the GPU textures and renderer while a ride runs.
     pub fn release_gpu(&mut self) {
         self.previews = [None, None];
+        self.jukebox_art = None;
         self.renderer = None;
         self.images.clear();
         self.recent.clear();
@@ -214,6 +238,11 @@ impl Front {
     /// F3 changed the mode: the menu row shows it.
     pub fn set_diagnostics_pref(&mut self, mode: &str) {
         self.prefs.diagnostics = mode.into();
+    }
+
+    /// Controller Settings' pinned pad (or Auto).
+    pub fn pad_pin(&self) -> Option<(String, u32)> {
+        self.bindings.tuning.selected.clone()
     }
 
     /// Settings → Audio: the soundtrack (and menu tune) on, and its volume.
@@ -254,12 +283,29 @@ impl Front {
         self.choose_tip();
     }
 
-    /// Whether the page animates (Press Start pulse, loader crossfade).
+    /// The soundtrack plays over the menus: the Jukebox, or a song chosen
+    /// on Settings → Audio (frontend.js setMusicPreview's `!originalMenu`).
+    pub fn wants_soundtrack(&self) -> bool {
+        match self.menu.as_ref().map(|m| m.page.as_str()) {
+            Some("jukebox") => true,
+            Some("music") => self.song_preview,
+            _ => false,
+        }
+    }
+
+    /// The Jukebox page is open (it animates; the spectrum and art apply).
+    pub fn jukebox_open(&self) -> bool {
+        self.menu.as_ref().is_some_and(|m| m.page == "jukebox")
+    }
+
+    /// Whether the page animates (Press Start pulse, loader crossfade,
+    /// the Jukebox disc and bars).
     pub fn animating(&self) -> bool {
-        self.menu.is_none()
-            && (matches!(self.state.page.as_str(), "title" | "loading")
-                || (self.state.page == "garage"
-                    && self.previews[1].as_ref().is_some_and(|p| p.animated)))
+        self.jukebox_open()
+            || self.menu.is_none()
+                && (matches!(self.state.page.as_str(), "title" | "loading")
+                    || (matches!(self.state.page.as_str(), "garage" | "gear")
+                        && self.previews[1].as_ref().is_some_and(|p| p.animated)))
     }
 
     /// Models the current page needs that are not loaded yet.
@@ -269,7 +315,13 @@ impl Front {
         if self.menu.is_none()
             && matches!(
                 page,
-                "main" | "single" | "garage" | "multiplayer" | "create-lobby" | "join-lobby"
+                "main"
+                    | "single"
+                    | "garage"
+                    | "gear"
+                    | "multiplayer"
+                    | "create-lobby"
+                    | "join-lobby"
             )
         {
             let quad = self.state.quad_id;
@@ -277,8 +329,16 @@ impl Front {
                 wants.push(Want::Vehicle(quad));
             }
             let rider = self.state.rider_id;
-            if page == "garage" && quad < 27 && !self.art.menu_riders.contains_key(&rider) {
+            let garage = matches!(page, "garage" | "gear");
+            if garage && quad < 27 && !self.art.menu_riders.contains_key(&rider) {
                 wants.push(Want::MenuRider(rider));
+            }
+            if garage
+                && quad < 27
+                && self.art.rider_materials.is_none()
+                && self.state.appearance.gear.iter().any(|g| *g != 0)
+            {
+                wants.push(Want::RiderMaterials);
             }
         }
         wants
@@ -307,9 +367,11 @@ impl Front {
             touch: &mut self.touch,
             bindings: Some(&mut self.bindings),
             pad_name: self.pad_name.clone(),
+            pads: self.pads.clone(),
+            pad_standard: self.pad_standard,
             view: self.view,
             lobby: None,
-            music: None,
+            music: self.music.as_ref(),
         };
         let out = f(menu, &mut ctx, &self.menu_hits, self.menu_scroll_max);
         // Settings → Extras → Silent switch applies at once.
@@ -322,7 +384,24 @@ impl Front {
             MenuEvent::Resume => {
                 self.menu = None;
                 self.menu_hits.clear();
+                self.song_preview = false;
                 None
+            }
+            MenuEvent::Jukebox(action) => {
+                let page = self.menu.as_ref().map(|m| m.page.clone());
+                if matches!(action, atv_ui::menu::jukebox::JukeboxAction::Select(_))
+                    && page.as_deref() == Some("music")
+                {
+                    self.song_preview = true;
+                }
+                // Back from the main menu's Jukebox closes it.
+                if action == atv_ui::menu::jukebox::JukeboxAction::Leave
+                    && page.as_deref() == Some("jukebox")
+                {
+                    self.menu = None;
+                    self.menu_hits.clear();
+                }
+                Some(Event::Music(action))
             }
             MenuEvent::Leave(_) => Some(Event::DevLog),
             MenuEvent::Fullscreen => Some(Event::Fullscreen),
@@ -336,6 +415,12 @@ impl Front {
                 self.menu = Some(PauseMenu::settings());
                 self.menu_reveal = true;
                 None
+            }
+            Some(Event::Jukebox) => {
+                self.menu = Some(PauseMenu::jukebox());
+                self.menu_reveal = true;
+                // The host loads the soundtrack and starts the preview.
+                Some(Event::Jukebox)
             }
             other => other,
         }
@@ -526,6 +611,8 @@ impl Front {
         let (box_w, box_h) = (view.width + 80., view.height + 80.);
         let track_id = match &self.state.loading {
             Some(loading) if page == "loading" => Some(loading.environment.clone()),
+            // Single Race presents the setup's course.
+            _ if page == "race" => Some(self.state.race.course.clone()),
             _ => self
                 .state
                 .tracks
@@ -536,7 +623,7 @@ impl Front {
         // backdrop.
         let mut backdrop_track = false;
         let mut backdrop = None;
-        if matches!(page.as_str(), "tracks" | "lobby" | "loading")
+        if matches!(page.as_str(), "tracks" | "lobby" | "loading" | "race")
             && let Some(id) = &track_id
             && self.art.photos.contains_key(id)
         {
@@ -601,11 +688,13 @@ impl Front {
         }
         // Course photos: small thumbnails for the list, the graded hero.
         let mut photos = HashMap::new();
-        if matches!(page.as_str(), "tracks" | "lobby") {
+        if matches!(page.as_str(), "tracks" | "lobby" | "race") {
             let thumb_px = 72. * view.scale * 1.5;
             // The lobby shows only the room's course (`.ms-track-hero`).
             let ids: Vec<String> = if page == "lobby" {
                 track_id.iter().cloned().collect()
+            } else if page == "race" {
+                self.state.race_order()
             } else {
                 self.state
                     .order()
@@ -802,6 +891,14 @@ impl Front {
         }
         if self.menu.is_some() {
             self.prepare_menu(device, queue);
+            // drawBars: the spectrum repaints over the panel each frame.
+            if let Some((area, _)) = self.menu_hits.iter().find(|(_, id)| *id == pause::BARS) {
+                atv_ui::menu::jukebox::paint_bars(
+                    &mut self.list,
+                    *area,
+                    self.spectrum.as_deref().unwrap_or(&[]),
+                );
+            }
         }
         if !self.diagnostics.is_empty() {
             atv_ui::diagnostics::paint(
@@ -836,12 +933,44 @@ impl Front {
     fn prepare_menu(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
         let view = self.view;
         let start = self.list.items.len();
-        let Some(state) = self.with_menu(|m, ctx, _, _| {
+        let Some(mut state) = self.with_menu(|m, ctx, _, _| {
             m.refresh(ctx);
             m.state(ctx)
         }) else {
             return;
         };
+        if state.page == "jukebox" {
+            // The original PAGE14 art, registered once the host read it.
+            if self.jukebox_art.is_none()
+                && let (Some(source), Some(renderer)) = (&self.jukebox_source, &mut self.renderer)
+            {
+                let backdrop = source.backdrop.as_ref().map(|(w, h, rgba)| {
+                    (
+                        renderer.add_image(device, queue, *w, *h, rgba),
+                        [*w as f32, *h as f32],
+                    )
+                });
+                let disc_size = source
+                    .disc
+                    .first()
+                    .map_or([0.; 2], |(w, h, _)| [*w as f32, *h as f32]);
+                let disc = source
+                    .disc
+                    .iter()
+                    .map(|(w, h, rgba)| renderer.add_image(device, queue, *w, *h, rgba))
+                    .collect();
+                self.jukebox_art = Some(atv_ui::menu::jukebox::Art {
+                    backdrop,
+                    disc,
+                    disc_size,
+                });
+            }
+            state.jukebox_art = self.jukebox_art.clone();
+            // jb-turn: 20 steps every 1.6 s while a song plays.
+            if state.music.as_ref().is_some_and(|m| m.playing && m.enabled) {
+                state.frame = (self.now() / 80.) as usize;
+            }
+        }
         if let Some(renderer) = &mut self.renderer {
             self.glyphs
                 .prepare(renderer, device, queue, state.pad.as_ref(), view.scale);
@@ -910,9 +1039,26 @@ impl Front {
         let shown = self.menu.is_none()
             && matches!(
                 page.as_str(),
-                "main" | "single" | "garage" | "multiplayer" | "create-lobby" | "join-lobby"
+                "main"
+                    | "single"
+                    | "garage"
+                    | "gear"
+                    | "multiplayer"
+                    | "create-lobby"
+                    | "join-lobby"
             );
         let quad = self.state.quad_id;
+        let garage = matches!(page.as_str(), "garage" | "gear");
+        // The garage look: paint on ATVs (motorcycles keep their livery).
+        let appearance = self.state.appearance;
+        let paint = if quad < 27 {
+            atv_game::ride::gear::PAINT_PALETTE
+                .get(usize::from(appearance.paint))
+                .copied()
+                .unwrap_or([0., 0.])
+        } else {
+            [0., 0.]
+        };
         let texture = |textures: &HashMap<String, front::assets::ModelTexture>| {
             let textures = textures.clone();
             move |name: &str| {
@@ -928,20 +1074,27 @@ impl Front {
             }
         };
         // Slot 0: the vehicle in its bind (or MX resting) pose.
-        let key = format!("vehicle:{quad}");
+        let key = format!("vehicle:{quad}:{paint:?}");
         if !shown {
             self.previews = [None, None];
         } else if self.previews[0].as_ref().is_none_or(|p| p.key != key)
             && let Some((_, model, _)) = self.art.vehicles.iter().find(|(q, ..)| *q == quad)
         {
             let lookup = texture(&model.textures);
-            match ModelPreview::new(device, queue, &model.mesh, &lookup, model.pose.as_deref()) {
+            match ModelPreview::new(
+                device,
+                queue,
+                &model.mesh,
+                &lookup,
+                model.pose.as_deref(),
+                paint,
+            ) {
                 Ok(preview) => self.set_preview(0, key, preview, false),
                 Err(error) => crate::status(&format!("Model preview: {error}")),
             }
         }
         // Slot 1: the garage rider's idle playlist (PAGE07, or the MX rider).
-        if page != "garage" || !shown {
+        if !garage || !shown {
             if let Some(old) = self.previews[1].take()
                 && let (Some(renderer), Some((id, ..))) = (&mut self.renderer, old.target)
             {
@@ -959,18 +1112,46 @@ impl Front {
         } else {
             self.art.menu_riders.get(&self.state.rider_id)
         };
+        // gearPreview: the ATV rider wears the garage gear once its
+        // materials are read.
+        let dressed = quad < 27
+            && appearance.gear.iter().any(|g| *g != 0)
+            && self.art.rider_materials.is_some()
+            && !self.state.gear_catalog.is_empty();
         let key = if quad >= 27 {
             format!("mx:{quad}")
+        } else if dressed {
+            format!("rider:{}:{:?}", self.state.rider_id, appearance.gear)
         } else {
             format!("rider:{}", self.state.rider_id)
         };
         let time = ((now - self.garage_since) / 1000.).max(0.) as f32;
         if let Some(rider) = rider {
             if self.previews[1].as_ref().is_none_or(|p| p.key != key) {
-                let lookup = texture(&rider.textures);
-                let pose = rider.rider.pose(time).ok().map(|(_, p)| p.world_matrices);
-                match ModelPreview::new(device, queue, &rider.rider.mesh, &lookup, pose.as_deref())
+                let mut textures = rider.textures.clone();
+                if dressed
+                    && let Some(bytes) = &self.art.rider_materials
+                    && let Ok(materials) = atv_core::resource::Resource::parse(bytes)
                 {
+                    textures.extend(front::assets::ride_textures(
+                        atv_game::ride::gear::gear_textures(
+                            &rider.rider.mesh,
+                            &appearance,
+                            &self.state.gear_catalog,
+                            &materials,
+                        ),
+                    ));
+                }
+                let lookup = texture(&textures);
+                let pose = rider.rider.pose(time).ok().map(|(_, p)| p.world_matrices);
+                match ModelPreview::new(
+                    device,
+                    queue,
+                    &rider.rider.mesh,
+                    &lookup,
+                    pose.as_deref(),
+                    [0., 0.],
+                ) {
                     Ok(mut preview) => {
                         preview.yaw = rider.yaw;
                         self.set_preview(1, key, preview, true);
@@ -1057,12 +1238,32 @@ impl Front {
                 "code": l.code, "status": l.status,
             })),
             "notice": self.state.notice,
+            "labels": self.state.choices().iter().map(|(_, l)| l).collect::<Vec<_>>(),
+            "race": {
+                "courses": self.state.race_courses.len(), "course": self.state.race.course,
+                "laps": self.state.race.laps, "cpu": self.state.race.cpu,
+                "difficulty": self.state.race.difficulty, "filter": self.state.race_filter,
+            },
+            "gear": {
+                "gear": self.state.appearance.gear, "paint": self.state.appearance.paint,
+                "rows": self.state.gear_rows(), "catalog": self.state.gear_catalog.len(),
+                "materials": self.art.rider_materials.is_some(),
+            },
             "loading": self.state.loading.as_ref().map(|l| serde_json::json!({
                 "environment": l.environment, "status": l.status, "progress": l.progress,
             })),
             "menu": self.menu.as_ref().map(|m| serde_json::json!({
                 "page": m.page, "choices": m.rows.choices,
+                "music": self.music.as_ref().map(|v| serde_json::json!({
+                    "playing": v.playing_index, "enabled": v.enabled, "paused": v.paused,
+                    "songs": v.songs.len(), "position": v.position,
+                })),
+                "spectrum": self.spectrum.as_ref().map(|b| b.iter().copied().max().unwrap_or(0)),
+                "art": self.jukebox_art.is_some(),
             })),
+            "menuHits": self.menu_hits.iter().map(|(r, id)| serde_json::json!({
+                "id": id, "x": r.x, "y": r.y, "width": r.w, "height": r.h,
+            })).collect::<Vec<_>>(),
             "hits": self.hits.iter().map(|(r, id)| serde_json::json!({
                 "id": id, "x": r.x, "y": r.y, "width": r.w, "height": r.h,
             })).collect::<Vec<_>>(),

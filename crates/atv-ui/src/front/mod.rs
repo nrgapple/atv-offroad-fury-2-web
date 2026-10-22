@@ -38,6 +38,12 @@ pub const FIELD: u32 = 2420;
 /// 3D preview slots (their rects size the render targets).
 pub const MODEL_QUAD: u32 = 2409;
 pub const MODEL_RIDER: u32 = 2410;
+/// Single Race: Start Race under the preview, and Copy ride link by Back.
+pub const START: u32 = 2411;
+pub const SHARE: u32 = 2412;
+/// Value rows' Previous/Next arrows, by choice index.
+pub const STEP_PREV: u32 = 2430;
+pub const STEP_NEXT: u32 = 2440;
 
 /// A registered image and its texel size.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -144,6 +150,8 @@ pub struct Screen {
     pub current: Option<String>,
     pub hero: Option<Img>,
     pub hero_name: String,
+    /// Single Race: `.ms-track-mode` ("National race").
+    pub hero_mode: String,
     pub list_scroll: f32,
     /// Garage.
     pub vehicle_label: String,
@@ -371,6 +379,13 @@ pub fn element(view: &Viewport, s: &Screen) -> El {
                     0.4
                 }
             }
+            "gear" => {
+                if h <= 640. {
+                    0.2
+                } else {
+                    0.26
+                }
+            }
             _ => -1.,
         };
         style.grid_template_rows = if loading {
@@ -539,6 +554,7 @@ fn page_title(page: &str) -> &'static str {
         "garage" => "Select ATV & Rider",
         "tracks" => "Select Track",
         "race" => "Single Race",
+        "gear" => "Rider Gear",
         "loading" => "Now Loading...",
         "settings" => "Settings",
         _ => "",
@@ -707,8 +723,8 @@ fn panel(m: &Metrics, s: &Screen, loading: bool) -> El {
             }
             panel = panel.child(slot).child(plate(m, s));
         }
-        "tracks" | "lobby" => panel = panel.child(hero(m, s)),
-        "garage" => {
+        "tracks" | "lobby" | "race" => panel = panel.child(hero(m, s)),
+        "garage" | "gear" => {
             // `.ms-models`: the rider just behind the ATV's rear wheel.
             let model = |image: Option<Img>, id: u32, style: Style| {
                 let el = El::new(style).id(id);
@@ -735,6 +751,9 @@ fn panel(m: &Metrics, s: &Screen, loading: bool) -> El {
             })
             .child(model(s.quad_model, MODEL_QUAD, quad))
             .child(model(s.rider_model, MODEL_RIDER, rider));
+            if s.page == "gear" {
+                return panel.child(models);
+            }
             panel = panel.child(plate(m, s)).child(models);
             if let Some(stats) = &s.stats
                 && !(m.portrait && m.h <= 640.)
@@ -877,6 +896,7 @@ fn hero(m: &Metrics, s: &Screen) -> El {
     );
     // The lobby's `.ms-track-hero` is the photo and name only.
     let lobby = s.page == "lobby";
+    let race = s.page == "race";
     for (left, id) in [(true, PREV), (false, NEXT)] {
         if lobby {
             break;
@@ -949,11 +969,8 @@ fn hero(m: &Metrics, s: &Screen) -> El {
         flex_shrink: 0.,
         ..Default::default()
     })
-    .child(
-        El::new(Style {
-            flex_grow: 1.,
-            flex_shrink: 1.,
-            margin: margins(badge, 0., 0., 0.),
+    .child({
+        let name = El::new(Style {
             min_size: Size {
                 width: length(0.),
                 height: auto(),
@@ -965,17 +982,38 @@ fn hero(m: &Metrics, s: &Screen) -> El {
             style: TextStyle::new(display(name_size, 800, true), Color::hex("#111")),
             line_height: name_size * 1.05,
             wrap: false,
-        }),
-    )
+        });
+        let mut copy = El::new(Style {
+            flex_grow: 1.,
+            flex_shrink: 1.,
+            margin: margins(badge, 0., 0., 0.),
+            ..column(2.)
+        })
+        .child(name);
+        if race && !s.hero_mode.is_empty() {
+            // `.ms-track-mode`: 700 14px/1.3, .1em, upper case.
+            copy = copy.child(text(
+                s.hero_mode.to_uppercase(),
+                TextStyle::new(display(14., 700, false), Color::hex("#3a3a3a")).spacing(1.4),
+                18.2,
+            ));
+        }
+        copy
+    })
     .children((!lobby).then(|| {
+        let (label, id) = if race {
+            ("Start Race", START)
+        } else {
+            ("Ride", RIDE)
+        };
         let mut ride = gold_button(
-            "Ride",
-            RIDE,
+            label,
+            id,
             ride_size,
             ride_height,
             if m.portrait { 24. } else { 34. },
-            s.hovered == Some(RIDE),
-            false,
+            s.hovered == Some(id),
+            race && current_action(s) == Some("racestart"),
         );
         ride.style.align_self = Some(AlignSelf::CENTER);
         ride
@@ -1094,6 +1132,42 @@ fn left(m: &Metrics, s: &Screen) -> El {
         }
         "tracks" => {
             left = left.child(tabs(m, s)).child(course_list(m, s));
+        }
+        "race" => {
+            // `.ms-race-settings`: the value rows under the course list.
+            let mut settings = El::new(column(2.));
+            settings.style.flex_shrink = 0.;
+            settings.style.padding = sides(4., if m.portrait { 0. } else { 8. }, 0., 0.);
+            settings.paint.border = [1., 0., 0., 0.];
+            settings.paint.border_color = Color::hex("#ffffff26");
+            settings.style.border = sides(1., 0., 0., 0.);
+            for (index, (action, label)) in s.choices.iter().enumerate() {
+                if matches!(action.as_str(), "racelaps" | "racecpu" | "racedifficulty") {
+                    settings = settings.child(stepper_row(m, s, index, label));
+                }
+            }
+            left = left
+                .child(tabs(m, s))
+                .child(course_list(m, s))
+                .child(settings);
+            if let Some(notice) = &s.notice {
+                left = left.child(text(
+                    notice.clone(),
+                    TextStyle::new(display(15., 700, false), Color::hex("#ffd166")),
+                    20.,
+                ));
+            }
+        }
+        "gear" => {
+            let mut rows = El::new(column(2.));
+            rows.style.flex_shrink = 0.;
+            rows.style.padding = sides(0., if m.portrait { 0. } else { 8. }, 0., 0.);
+            for (index, (action, label)) in s.choices.iter().enumerate() {
+                if action != "back" {
+                    rows = rows.child(stepper_row(m, s, index, label));
+                }
+            }
+            left = left.child(rows);
         }
         "lobby" => {
             // `.ms-lobby-info`: the code large, the status under it, then
@@ -1440,7 +1514,16 @@ fn course_list(m: &Metrics, s: &Screen) -> El {
         let selected = s.current.as_deref() == Some(id.as_str());
         let hovered = s.hovered == Some(COURSE + index as u32) && !selected;
         let mut paint = Paint::default().radius(5.);
-        if selected {
+        if selected && s.page == "race" && current_action(s) == Some("racetrack") {
+            // The course list stands for the Course row: a white ring.
+            paint = Paint::fill(gold_pill())
+                .radius(5.)
+                .shadow(BoxShadow {
+                    spread: 3.,
+                    ..BoxShadow::inset(0., 0., 0., Color::WHITE)
+                })
+                .shadow(BoxShadow::outer(0., 2., 0., Color::hex("#0009")));
+        } else if selected {
             paint = pill_shadows(Paint::fill(gold_pill()).radius(5.));
         } else if hovered {
             paint.fill = Some(Color::hex("#ffffff14").into());
@@ -1791,7 +1874,45 @@ fn garage_left(m: &Metrics, s: &Screen, mut left: El) -> El {
         done.style.flex_grow = 1.;
         done.style.flex_basis = length(0.);
     }
-    left.child(El::new(actions).child(done))
+    let mut actions = El::new(actions);
+    // `.ms-pill-secondary.ms-gear-link`: Rider gear opens its own page.
+    if let Some(index) = s.choices.iter().position(|(a, _)| a == "gear") {
+        let id = ROW + index as u32;
+        let selected = s.selection == index;
+        let hovered = s.hovered == Some(id) && !selected;
+        let color = Color::hex(if selected { "#0d0b00" } else { "#f6e061" });
+        let paint = if selected {
+            pill_shadows(Paint::fill(gold_pill()).radius(5.))
+        } else {
+            Paint::fill(Color::hex(if hovered { "#000000b3" } else { "#0000008c" }))
+                .radius(5.)
+                .shadow(BoxShadow {
+                    spread: 2.,
+                    ..BoxShadow::inset(0., 0., 0., Color::hex("#f1d84e"))
+                })
+        };
+        let mut style = row(10.);
+        style.justify_content = JustifyContent::CENTER;
+        style.min_size.height = done.style.min_size.height;
+        style.padding = sides(0., 18., 0., 24.);
+        style.flex_shrink = 1.;
+        if m.portrait {
+            style.flex_grow = 1.;
+            style.flex_basis = length(0.);
+        }
+        actions = actions.child(
+            El::new(style)
+                .paint(paint)
+                .id(id)
+                .child(text(
+                    "Rider gear",
+                    TextStyle::new(display(19., 800, false), color).spacing(0.76),
+                    19.,
+                ))
+                .child(arrow(false, 14., color, false)),
+        );
+    }
+    left.child(actions.child(done))
 }
 
 fn bullet_slot(selected: bool) -> El {
@@ -1985,6 +2106,42 @@ fn hints(m: &Metrics, s: &Screen) -> Option<El> {
     .id(BACK)
     .child(arrow(true, 16., color, false))
     .child(text("Back", style, size));
+    // Race setup keeps its share link beside Back (`.ms-hint-share`).
+    let share = (s.page == "race")
+        .then(|| s.choices.iter().position(|(a, _)| a == "copyride"))
+        .flatten()
+        .map(|index| {
+            let selected = s.selection == index;
+            let hovered = s.hovered == Some(SHARE);
+            let color = Color::hex(if selected {
+                "#0d0b00"
+            } else if hovered {
+                "#fffaa1"
+            } else {
+                "#f2f2f2"
+            });
+            let mut style = TextStyle::new(display(size, 700, false), color);
+            if !selected {
+                style = style.shadow(0., 1., 3., Color::BLACK);
+            }
+            El::new(Style {
+                display: Display::Flex,
+                align_items: AlignItems::CENTER,
+                min_size: Size {
+                    width: length(64.),
+                    height: length(46.),
+                },
+                padding: sides(0., 12., 0., 12.),
+                ..Default::default()
+            })
+            .paint(if selected {
+                pill_shadows(Paint::fill(gold_pill()).radius(5.))
+            } else {
+                Paint::fill(Color::hex("#0000008f")).radius(5.)
+            })
+            .id(SHARE)
+            .child(text(s.choices[index].1.clone(), style, size))
+        });
     let mut bar = row(clamp(14., m.w * 0.024, 30.));
     bar.min_size.height = length(if m.short { 44. } else { 50. });
     if m.portrait {
@@ -2005,7 +2162,122 @@ fn hints(m: &Metrics, s: &Screen) -> Option<El> {
         );
         bar.padding = sides(0., m.gutter, 0., 26.);
     }
-    Some(El::new(bar).child(back))
+    Some(El::new(bar).children(share).child(back))
+}
+
+/// The selected choice's action.
+fn current_action(s: &Screen) -> Option<&str> {
+    s.choices.get(s.selection).map(|(a, _)| a.as_str())
+}
+
+/// `.ms-stepper`: a value row. Tapping the label steps forward; arrows
+/// either side of the value step back or forward.
+fn stepper_row(m: &Metrics, s: &Screen, index: usize, label: &str) -> El {
+    let selected = s.selection == index;
+    let (name, value) = label.split_once(": ").unwrap_or((label, ""));
+    let mut style = row(0.);
+    style.position = Position::Relative;
+    style.size.width = percent(1.);
+    style.min_size.height = length(m.row);
+    style.padding = sides(0., 0., 0., 6.);
+    let mut el = El::new(style);
+    if selected {
+        el = el.child(row_pill(m, if m.portrait { -12. } else { 0. }));
+    }
+    let mut text_style = TextStyle::new(
+        display(m.row_font, 700, false),
+        Color::hex(if selected { "#0d0b00" } else { "#d2d2d2" }),
+    )
+    .spacing(m.row_font * 0.035);
+    text_style = if selected {
+        text_style.shadow(0., 1., 0., Color::hex("#fff6b066"))
+    } else {
+        text_style.shadow(1., 2., 0., Color::hex("#000c"))
+    };
+    let mut label_style = row(14.);
+    label_style.flex_grow = 1.;
+    label_style.flex_shrink = 1.;
+    label_style.min_size = Size {
+        width: length(0.),
+        height: length(m.row),
+    };
+    let label_el = El::new(label_style)
+        .id(ROW + index as u32)
+        .child(bullet_slot(selected))
+        .child(text(name, text_style, m.row_font * 1.1));
+    let cycle = |left: bool, id: u32| {
+        let hovered = s.hovered == Some(id);
+        El::new(Style {
+            size: Size {
+                width: length(46.),
+                height: length(44.),
+            },
+            display: Display::Flex,
+            align_items: AlignItems::CENTER,
+            justify_content: JustifyContent::CENTER,
+            flex_shrink: 0.,
+            ..Default::default()
+        })
+        .paint(if hovered {
+            Paint::fill(Color::hex("#ffffff1f")).radius(5.)
+        } else {
+            Paint::default()
+        })
+        .id(id)
+        .child(arrow(
+            left,
+            16.,
+            Color::hex(if selected { "#1b1500" } else { "#f1d84ebf" }),
+            !selected,
+        ))
+    };
+    let value_size = m.row_font * 0.86;
+    let mut value_style = TextStyle::new(
+        display(value_size, 700, false),
+        Color::hex(if selected { "#3a2e00" } else { "#f1d84e" }),
+    );
+    if !selected {
+        value_style = value_style.shadow(1., 2., 0., Color::hex("#000c"));
+    }
+    let value_el = El::new(Style {
+        display: Display::Flex,
+        justify_content: JustifyContent::CENTER,
+        flex_grow: 0.,
+        flex_shrink: 1.,
+        // flex: 0 1 9em keeps the arrows in one column across rows.
+        size: Size {
+            width: length(9. * value_size),
+            height: auto(),
+        },
+        min_size: Size {
+            width: length(2.5 * value_size),
+            height: auto(),
+        },
+        ..Default::default()
+    })
+    .child(
+        El::new(Style {
+            min_size: Size {
+                width: length(0.),
+                height: auto(),
+            },
+            ..Default::default()
+        })
+        .content(Content::Ellipsis {
+            text: value.to_string(),
+            style: value_style,
+            line_height: value_size * 1.1,
+        }),
+    );
+    let mut control = row(0.);
+    control.flex_shrink = 1.;
+    control.min_size.width = length(0.);
+    el.child(label_el).child(
+        El::new(control)
+            .child(cycle(true, STEP_PREV + index as u32))
+            .child(value_el)
+            .child(cycle(false, STEP_NEXT + index as u32)),
+    )
 }
 
 /// The title: full-bleed scenery, the centred wordmark and Press Start.

@@ -3,17 +3,18 @@
 //! or pointer press as browser autoplay rules require. The soundtrack is the
 //! original VAG decoded in Rust on desktop and the hosted AAC stream in a
 //! media element on the web, as the JavaScript game plays it.
+pub use crate::soundtrack::Soundtrack;
 use atv_content::Content;
 use atv_game::{
     audio::{
         bank,
         mixer::Mixer,
-        music::Catalog,
         ride::{RideAudio, SoundMode},
     },
     ride::sound::AudioStep,
     venue::Venue,
 };
+pub use atv_ui::menu::jukebox::{JukeboxAction, MusicView};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use std::{
     cell::{Cell, RefCell},
@@ -169,7 +170,7 @@ impl Activation {
         self.0.borrow().output.clone().filter(|o| o.started.get())
     }
 
-    fn output(&self) -> Result<Rc<Output>, String> {
+    pub(crate) fn output(&self) -> Result<Rc<Output>, String> {
         let mut state = self.0.borrow_mut();
         if state.output.is_none() {
             let output = Rc::new(Output::open()?);
@@ -181,7 +182,7 @@ impl Activation {
     }
 
     #[cfg(target_arch = "wasm32")]
-    fn web(&self) -> Option<Rc<RefCell<WebMusic>>> {
+    pub(crate) fn web(&self) -> Option<Rc<RefCell<WebMusic>>> {
         let mut state = self.0.borrow_mut();
         if state.music && state.web.is_none() {
             state.web = WebMusic::new().map(|web| Rc::new(RefCell::new(web)));
@@ -190,6 +191,16 @@ impl Activation {
             }
         }
         state.web.clone()
+    }
+
+    /// The song element even when Music was off at start (a Jukebox control
+    /// turns it on, from inside the control's gesture).
+    #[cfg(target_arch = "wasm32")]
+    pub(crate) fn enable_music(&self) -> Option<Rc<RefCell<WebMusic>>> {
+        self.0.borrow_mut().music = true;
+        let web = self.web()?;
+        web.borrow_mut().prime();
+        Some(web)
     }
 
     /// Call synchronously from a key/pointer/touch event, including while the
@@ -210,12 +221,12 @@ impl Activation {
 /// Alpha Speed & air muffle or the Jukebox asks for it, so the default
 /// soundtrack keeps playing straight from the element.
 #[cfg(target_arch = "wasm32")]
-struct MusicGraph {
+pub(crate) struct MusicGraph {
     context: web_sys::AudioContext,
     gain: web_sys::GainNode,
     filter: web_sys::BiquadFilterNode,
     level: web_sys::GainNode,
-    analyser: web_sys::AnalyserNode,
+    pub(crate) analyser: web_sys::AnalyserNode,
     _source: web_sys::MediaElementAudioSourceNode,
 }
 
@@ -249,7 +260,7 @@ impl MusicGraph {
         })
     }
 
-    fn resume(&self) {
+    pub(crate) fn resume(&self) {
         if self.context.state() == web_sys::AudioContextState::Suspended
             && let Ok(promise) = self.context.resume()
         {
@@ -261,13 +272,13 @@ impl MusicGraph {
 }
 
 #[cfg(target_arch = "wasm32")]
-struct WebMusic {
-    graph: Option<MusicGraph>,
+pub(crate) struct WebMusic {
+    pub(crate) graph: Option<MusicGraph>,
     /// The element volume the soundtrack wants (gain node once graphed).
     volume: f32,
-    element: web_sys::HtmlAudioElement,
-    playing: bool,
-    pending: Rc<std::cell::Cell<bool>>,
+    pub(crate) element: web_sys::HtmlAudioElement,
+    pub(crate) playing: bool,
+    pub(crate) pending: Rc<std::cell::Cell<bool>>,
     retry: web_time::Instant,
     primed: Rc<Cell<bool>>,
     silent: Option<String>,
@@ -318,7 +329,7 @@ impl WebMusic {
 
     /// The original web/music.js primes one element with a tiny silent WAV in
     /// the gesture, then reuses it when the soundtrack catalog becomes ready.
-    fn prime(&mut self) {
+    pub(crate) fn prime(&mut self) {
         if let Some(graph) = &self.graph {
             graph.resume();
         }
@@ -348,7 +359,7 @@ impl WebMusic {
         });
     }
 
-    fn set_volume(&mut self, volume: f32) {
+    pub(crate) fn set_volume(&mut self, volume: f32) {
         self.volume = volume;
         match &self.graph {
             Some(graph) => graph.gain.gain().set_value(volume),
@@ -357,7 +368,7 @@ impl WebMusic {
     }
 
     /// Moves the soundtrack into its Web Audio graph (once).
-    fn graph(&mut self) -> Option<&MusicGraph> {
+    pub(crate) fn graph(&mut self) -> Option<&MusicGraph> {
         if self.graph.is_none() {
             self.graph = MusicGraph::new(&self.element);
             if self.graph.is_some() {
@@ -372,7 +383,7 @@ impl WebMusic {
     /// setHype on the streamed soundtrack: the graph's lowpass and level
     /// (created at the first muffle; the element then plays at full volume
     /// into it).
-    fn set_hype(&mut self, muffle: f32, fast: bool) {
+    pub(crate) fn set_hype(&mut self, muffle: f32, fast: bool) {
         if self.graph.is_none() && muffle <= 0. {
             return;
         }
@@ -389,7 +400,7 @@ impl WebMusic {
             .set_target_at_time(1. - 0.3 * amount, at, tc);
     }
 
-    fn resume(&mut self, gesture: bool) {
+    pub(crate) fn resume(&mut self, gesture: bool) {
         if let Some(graph) = &self.graph {
             graph.resume();
         }
@@ -502,30 +513,16 @@ fn silent_url() -> Option<String> {
     web_sys::Url::create_object_url_with_blob(&blob).ok()
 }
 
-/// The ride's sound: decisions, output and soundtrack.
+/// The ride's sound: decisions and output, with the page's soundtrack.
 pub struct Sound {
     pub output: Rc<Output>,
     pub ride: RideAudio,
     content: Rc<Content>,
-    catalog: Option<Catalog>,
-    music_enabled: bool,
+    /// The page's soundtrack player (shared with the frontend Jukebox).
+    pub music: Rc<RefCell<Soundtrack>>,
     focused: bool,
-    #[cfg(not(target_arch = "wasm32"))]
-    song: Option<atv_game::audio::music::VagMusic>,
-    #[cfg(target_arch = "wasm32")]
-    web: Option<Rc<RefCell<WebMusic>>>,
     #[cfg(target_arch = "wasm32")]
     diagnostics: bool,
-    pub title: Option<String>,
-    /// A race holds the soundtrack (intro, countdown, race over), with an
-    /// optional fade: (started, seconds).
-    held: bool,
-    hold_fade: Option<(web_time::Instant, f32)>,
-    /// The soundtrack volume (Settings → Audio → Music volume).
-    music_volume: f32,
-    /// The Jukebox's view of the soundtrack (MusicStream's selection,
-    /// history and transient pause).
-    pub player: Player,
     /// CPU spent on sound decisions per rendered frame (ms), for the meter.
     pub cpu: f64,
     /// Other riders' engines and impacts in a multiplayer room.
@@ -533,38 +530,9 @@ pub struct Sound {
     /// Mixer render time per rendered frame (ms), averaged over a second.
     pub mix: f64,
     mix_mark: (f64, u32, web_time::Instant),
-    /// The Jukebox spectrum's smoothing (native soundtrack).
-    #[cfg(not(target_arch = "wasm32"))]
-    analyser: atv_game::audio::spectrum::Analyser,
+    /// The last Crazy/Gorn crash boom (0.3 s apart) and how many played.
+    boom: (Option<web_time::Instant>, u32),
 }
-
-/// What the next song is (MusicStream `request`).
-#[derive(Clone, Copy, Debug, PartialEq)]
-enum Pick {
-    Next,
-    Select(usize),
-    History(usize, usize),
-}
-
-/// The soundtrack player state the Jukebox drives (web/music.js
-/// MusicStream: `select`, `next`, `previous`, `setPaused`, `seek`, history).
-#[derive(Clone, Debug, Default)]
-pub struct Player {
-    /// The playing (or selected) catalog index.
-    pub selected: Option<usize>,
-    /// Jukebox Pause: a transient pause, unlike the saved Music on/off.
-    pub paused: bool,
-    /// Played filenames (persisted, at most 64) and the playing position.
-    pub history: Vec<String>,
-    pub history_index: i32,
-    pending: Option<Pick>,
-    /// A fresh session has not started a song yet.
-    started: bool,
-    /// The history changed since the host last saved it.
-    pub dirty: bool,
-}
-
-pub use atv_ui::menu::jukebox::{JukeboxAction, MusicView};
 
 pub struct Settings {
     pub mode: SoundMode,
@@ -573,6 +541,10 @@ pub struct Settings {
     pub selection: atv_game::ride::Selection,
     /// A race's lamp, IntOut and crowd samples (`RaceState::samples`).
     pub race_samples: Vec<String>,
+    /// ENV08's train car sounds (`Venue::train_sounds`).
+    pub train_sounds: Vec<atv_core::spatial_audio::Definition>,
+    /// Active Rain weather (the rain loop).
+    pub rain: bool,
 }
 
 impl Sound {
@@ -581,6 +553,7 @@ impl Sound {
         environment: &str,
         settings: Settings,
         activation: Activation,
+        music: Option<Rc<RefCell<Soundtrack>>>,
     ) -> Result<Self, String> {
         let output = activation.output()?;
         let course = atv_game::launch::course_resource(environment, false)?;
@@ -600,34 +573,38 @@ impl Sound {
             bank.samples.len(),
             bank.decode_ms
         );
-        let ride = RideAudio::new(bank, settings.mode);
+        // Train and rain samples: missing ones leave the ride silent there,
+        // as the browser reports and rides on.
+        let mut world: Vec<String> = settings
+            .train_sounds
+            .iter()
+            .map(|d| d.sample.clone())
+            .collect();
+        if settings.rain {
+            world.push("rain.vag".into());
+        }
+        if let Err(error) = bank.load_samples(&content, &world).await {
+            crate::status(&format!("Train/rain sound: {error}"));
+        }
+        let mut ride = RideAudio::new(bank, settings.mode);
+        ride.train_sounds = settings.train_sounds.clone();
+        ride.rain = settings.rain;
         ride.apply_mode(&mut *output.mixer.lock().map_err(|_| "mixer lock")?);
-        let seed = (web_time::SystemTime::now()
-            .duration_since(web_time::UNIX_EPOCH)
-            .map_or(1, |d| d.as_millis() as u64)
-            & 0x7fff_ffff)
-            .max(1);
-        let catalog = if settings.music {
-            Catalog::load(&content, seed).await.ok()
-        } else {
-            None
+        // The page's soundtrack carries on into the ride (one MusicStream).
+        let music = match music {
+            Some(music) => music,
+            None => Rc::new(RefCell::new(
+                Soundtrack::load(content.clone(), &activation, settings.music).await?,
+            )),
         };
+        music.borrow_mut().set_active(true);
         crate::status(&format!("Sounds ready: {decoded}"));
         Ok(Self {
             output,
             ride,
             content,
-            catalog,
-            music_enabled: settings.music,
+            music,
             focused: true,
-            #[cfg(not(target_arch = "wasm32"))]
-            song: None,
-            #[cfg(target_arch = "wasm32")]
-            web: if settings.music {
-                activation.web()
-            } else {
-                None
-            },
             #[cfg(target_arch = "wasm32")]
             diagnostics: web_sys::window()
                 .and_then(|w| w.location().search().ok())
@@ -636,33 +613,17 @@ impl Sound {
                         .split('&')
                         .any(|p| p == "audioDiagnostics=1")
                 }),
-            title: None,
-            held: false,
-            hold_fade: None,
-            music_volume: atv_game::audio::mixer::MUSIC_VOLUME,
-            player: Player::default(),
             cpu: 0.,
             remote: Default::default(),
             mix: 0.,
             mix_mark: (0., 0, web_time::Instant::now()),
-            #[cfg(not(target_arch = "wasm32"))]
-            analyser: Default::default(),
+            boom: (None, 0),
         })
     }
 
     pub fn start(&mut self) {
         self.output.start();
-        #[cfg(target_arch = "wasm32")]
-        {
-            // A graphed soundtrack resumes its context on every gesture
-            // (stricter browsers start one created outside a gesture suspended).
-            if let Some(web) = &self.web
-                && let Some(graph) = &web.borrow().graph
-            {
-                graph.resume();
-            }
-            self.web_music(true);
-        }
+        self.music.borrow_mut().start();
     }
 
     pub fn configure(&mut self, venue: &Venue, ride: &atv_game::ride::Ride) -> Result<(), String> {
@@ -687,15 +648,7 @@ impl Sound {
             mixer.active = focused && !paused;
             mixer.music_active = focused;
         }
-        #[cfg(target_arch = "wasm32")]
-        if let Some(web) = &self.web {
-            let mut web = web.borrow_mut();
-            if focused && web.playing {
-                web.resume(true);
-            } else if !focused {
-                let _ = web.element.pause();
-            }
-        }
+        self.music.borrow_mut().set_focused(focused);
     }
 
     pub fn step(&mut self, step: Option<&AudioStep>) {
@@ -734,17 +687,7 @@ impl Sound {
             mixer.sfx_volume = sfx.clamp(0., 1.);
             mixer.music_volume = music.clamp(0., 1.);
         }
-        self.music_volume = music.clamp(0., 1.);
-        if enabled != self.music_enabled {
-            self.music_enabled = enabled;
-            if !enabled {
-                self.stop_song();
-            }
-        }
-        #[cfg(target_arch = "wasm32")]
-        if !self.held {
-            self.set_song_gain(1.);
-        }
+        self.music.borrow_mut().set_volume(music, enabled);
     }
 
     /// Other riders' engines and body impacts this frame; returns the
@@ -793,10 +736,7 @@ impl Sound {
         if let Ok(mut mixer) = self.output.mixer.lock() {
             mixer.hype.set(muffle, wind, fast);
         }
-        #[cfg(target_arch = "wasm32")]
-        if let Some(web) = &self.web {
-            web.borrow_mut().set_hype(muffle, fast);
-        }
+        self.music.borrow_mut().set_hype(muffle, fast);
     }
 
     /// stopHype: the muffle toggle went off.
@@ -804,53 +744,18 @@ impl Sound {
         if let Ok(mut mixer) = self.output.mixer.lock() {
             mixer.hype.stop();
         }
-        #[cfg(target_arch = "wasm32")]
-        if let Some(web) = &self.web {
-            web.borrow_mut().set_hype(0., true);
-        }
+        self.music.borrow_mut().set_hype(0., true);
     }
 
     /// The streamed soundtrack: (graphed through Web Audio, element time,
     /// paused); None natively or without a song element.
     pub fn web_state(&self) -> Option<(bool, f64, bool)> {
-        #[cfg(target_arch = "wasm32")]
-        {
-            let web = self.web.as_ref()?.borrow();
-            Some((
-                web.graph.is_some(),
-                web.element.current_time(),
-                web.element.paused(),
-            ))
-        }
-        #[cfg(not(target_arch = "wasm32"))]
-        None
+        self.music.borrow().web_state()
     }
 
-    /// The Jukebox spectrum while a song plays: 32 analyser bytes (the
-    /// web build graphs its soundtrack for it; natively the mixer's tap).
+    /// The Jukebox spectrum while a song plays.
     pub fn spectrum(&mut self) -> Option<[u8; atv_game::audio::spectrum::BINS]> {
-        if !self.output.started.get() || self.player.paused || !self.music_enabled {
-            return None;
-        }
-        #[cfg(target_arch = "wasm32")]
-        {
-            let web = self.web.as_ref()?;
-            let mut web = web.borrow_mut();
-            if !web.playing || web.element.paused() {
-                return None;
-            }
-            let graph = web.graph()?;
-            graph.resume();
-            let mut bytes = [0u8; atv_game::audio::spectrum::BINS];
-            graph.analyser.get_byte_frequency_data(&mut bytes);
-            Some(bytes)
-        }
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            self.song.as_ref()?;
-            let samples = self.output.mixer.lock().ok()?.analysis;
-            Some(self.analyser.bytes(&samples))
-        }
+        self.music.borrow_mut().spectrum()
     }
 
     /// The music muffle in effect (diagnostics).
@@ -883,6 +788,37 @@ impl Sound {
         true
     }
 
+    /// GameAudio.crashBoom (Crazy/Gorn crashes): a synthesized boom on the
+    /// SFX bus for an impact of 40 ft/s or more, at most every 0.3 s.
+    pub fn crash_boom(&mut self, severity: f32) {
+        if !self.output.started.get()
+            || self.boom.0.is_some_and(|t| t.elapsed().as_secs_f32() < 0.3)
+        {
+            return;
+        }
+        let Some(pcm) = atv_game::audio::synth::crash_boom(severity, self.ride.bank.rate()) else {
+            return;
+        };
+        let Ok(mut mixer) = self.output.mixer.lock() else {
+            return;
+        };
+        mixer.play(
+            &std::sync::Arc::new(pcm),
+            atv_game::audio::mixer::Looping::Once,
+            [1., 1.],
+            1.,
+            atv_game::audio::mixer::Bus::Sfx,
+            false,
+            "boom",
+        );
+        self.boom = (Some(web_time::Instant::now()), self.boom.1 + 1);
+    }
+
+    /// Crash booms played (diagnostics).
+    pub fn crash_booms(&self) -> u32 {
+        self.boom.1
+    }
+
     /// One race step's sounds: lamp/gate one-shots and crowd cues on a
     /// running output (the browser drops them on a suspended context), and
     /// the race music events.
@@ -912,11 +848,11 @@ impl Sound {
                 if let Ok(mut mixer) = self.output.mixer.lock() {
                     self.ride.race.stop_int_out(&mut mixer);
                 }
-                self.release_music();
+                self.music.borrow_mut().release();
                 return;
             }
             MusicEvent::Intro => {
-                self.hold_music(0.);
+                self.music.borrow_mut().hold(0.);
                 // A random INT001-INT004 (Math.random in the browser).
                 let pick = web_time::SystemTime::now()
                     .duration_since(web_time::UNIX_EPOCH)
@@ -925,11 +861,11 @@ impl Sound {
                 vec![(format!("intout/int00{}.vag", pick + 1), false)]
             }
             MusicEvent::Restart => {
-                self.hold_music(0.);
+                self.music.borrow_mut().hold(0.);
                 Vec::new()
             }
             MusicEvent::Over { won } => {
-                self.hold_music(1.5);
+                self.music.borrow_mut().hold(1.5);
                 if won {
                     vec![
                         ("intout/out004.vag".into(), false),
@@ -945,99 +881,14 @@ impl Sound {
         }
     }
 
-    /// MusicStream.hold: no new song; a fade stops the current one.
-    fn hold_music(&mut self, fade: f32) {
-        if self.held {
-            return;
-        }
-        self.held = true;
-        if fade > 0. && self.sounding() {
-            self.hold_fade = Some((web_time::Instant::now(), fade));
-        } else {
-            self.stop_song();
-        }
-    }
-
-    /// MusicStream.release: the next song starts (GO).
-    fn release_music(&mut self) {
-        if !self.held {
-            return;
-        }
-        self.held = false;
-        self.hold_fade = None;
-        self.set_song_gain(1.);
-    }
-
-    fn sounding(&self) -> bool {
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            self.output
-                .mixer
-                .lock()
-                .is_ok_and(|mixer| mixer.music_queued() > 0.)
-        }
-        #[cfg(target_arch = "wasm32")]
-        {
-            self.web
-                .as_ref()
-                .is_some_and(|w| w.borrow().playing && !w.borrow().element.paused())
-        }
-    }
-
-    fn set_song_gain(&mut self, gain: f32) {
-        if let Ok(mut mixer) = self.output.mixer.lock() {
-            mixer.stream_gain = gain;
-        }
-        #[cfg(target_arch = "wasm32")]
-        if let Some(web) = &self.web {
-            web.borrow_mut()
-                .set_volume(gain * self.music_volume * atv_game::audio::mixer::MASTER);
-        }
-    }
-
-    /// The held song ends; release picks the next one.
-    fn stop_song(&mut self) {
-        self.hold_fade = None;
-        self.title = None;
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            self.song = None;
-            if let Ok(mut mixer) = self.output.mixer.lock() {
-                mixer.clear_music();
-            }
-        }
-        #[cfg(target_arch = "wasm32")]
-        if let Some(web) = &self.web {
-            let mut web = web.borrow_mut();
-            let _ = web.element.pause();
-            web.playing = false;
-        }
-        self.set_song_gain(1.);
-    }
-
     /// Keep the soundtrack fed independently of paused simulation steps.
     pub fn maintain(&mut self) {
+        let enabled = self.music.borrow().music_enabled;
         if let Ok(mut mixer) = self.output.mixer.lock() {
             let ride = &mut self.ride;
-            ride.race.update(&ride.bank, &mut mixer, self.music_enabled);
+            ride.race.update(&ride.bank, &mut mixer, enabled);
         }
-        if let Some((started, seconds)) = self.hold_fade {
-            let t = started.elapsed().as_secs_f32() / seconds;
-            if t >= 1. {
-                self.stop_song();
-            } else {
-                self.set_song_gain(1. - t);
-            }
-        }
-        if self.held {
-            return;
-        }
-        if self.focused && self.output.started.get() && self.music_enabled {
-            #[cfg(not(target_arch = "wasm32"))]
-            self.native_music();
-            #[cfg(target_arch = "wasm32")]
-            self.web_music(false);
-        }
+        self.music.borrow_mut().maintain();
     }
 
     /// Opt-in browser test evidence; normal gameplay serializes no audio state.
@@ -1048,15 +899,26 @@ impl Sound {
         if self.diagnostics
             && let Ok(mixer) = self.output.mixer.lock()
         {
-            let state = serde_json::json!({
+            let mut state = serde_json::json!({
                 "steps": steps, "started": self.output.started.get(),
                 "active": mixer.active, "musicActive": mixer.music_active,
                 "clock": mixer.seconds(), "voices": mixer.voices(),
                 "engineCommands": self.ride.stats.engine_commands,
-                "musicTitle": self.title,
-                "musicTime": self.web.as_ref().map(|w| w.borrow().element.current_time()),
-                "musicPaused": self.web.as_ref().map(|w| w.borrow().element.paused()),
+                // Event sounds started so far (the sound audit).
+                "events": {
+                    "vocals": self.ride.stats.vocals, "chassis": self.ride.stats.chassis,
+                    "drive": self.ride.stats.drive, "impacts": self.ride.stats.impacts,
+                    "ambient": self.ride.stats.ambient, "soultree": self.ride.stats.soultree,
+                    "train": self.ride.stats.train, "rain": self.ride.stats.rain,
+                    "crashBooms": self.boom.1, "history": self.ride.stats.history,
+                },
             });
+            drop(mixer);
+            if let (Some(state), serde_json::Value::Object(music)) =
+                (state.as_object_mut(), self.music.borrow().report())
+            {
+                state.extend(music);
+            }
             if let Some(root) = web_sys::window()
                 .and_then(|w| w.document())
                 .and_then(|d| d.document_element())
@@ -1064,167 +926,6 @@ impl Sound {
                 let _ = root.set_attribute("data-engine-audio", &state.to_string());
             }
         }
-    }
-
-    #[cfg(not(target_arch = "wasm32"))]
-    fn native_music(&mut self) {
-        if self.held || self.player.paused {
-            return;
-        }
-        let Some(catalog) = &mut self.catalog else {
-            return;
-        };
-        let content = self.content.clone();
-        let mixer = self.output.mixer.clone();
-        let rate = self.output.rate;
-        let result: Result<(), String> = pollster::block_on(async {
-            if self.song.as_ref().is_none_or(|s| s.finished()) {
-                // Next song once the previous one has played out.
-                if self.song.is_some() && mixer.lock().map_err(|_| "lock")?.music_queued() > 0.05 {
-                    return Ok(());
-                }
-                let Some(index) = self.player.pick(catalog)? else {
-                    return Ok(());
-                };
-                let song = &catalog.library.songs[index];
-                self.title = Some(format!("{} – {}", song.title, song.artist));
-                self.song =
-                    Some(atv_game::audio::music::VagMusic::open(&content, song, rate).await?);
-            }
-            if let Some(song) = &mut self.song {
-                song.pump(&content, &mixer, 2.).await?;
-            }
-            Ok(())
-        });
-        if let Err(error) = result {
-            eprintln!("music: {error}");
-            self.music_enabled = false;
-        }
-    }
-
-    /// The hosted AAC stream through one media element (MusicStream in
-    /// web/music.js): volume 0.45 under the 0.65 master; the next shuffle
-    /// pick starts when a song ends.
-    #[cfg(target_arch = "wasm32")]
-    fn web_music(&mut self, gesture: bool) {
-        // A race holds the soundtrack until GO; the Jukebox may pause it.
-        if self.held
-            || self.player.paused
-            || !self.focused
-            || !self.music_enabled
-            || !self.output.started.get()
-        {
-            return;
-        }
-        let Some(catalog) = &mut self.catalog else {
-            return;
-        };
-        let Some(web) = &self.web else { return };
-        let mut web = web.borrow_mut();
-        // Let gesture-time priming settle before replacing its source: changing
-        // src during play() would abort the unlock on stricter mobile browsers.
-        if !web.playing && web.pending.get() {
-            return;
-        }
-        if web.playing && !web.element.ended() {
-            if web.element.paused() {
-                web.resume(gesture);
-            }
-            return;
-        }
-        let Ok(Some(index)) = self.player.pick(catalog) else {
-            return;
-        };
-        let song = &catalog.library.songs[index];
-        let path = atv_game::audio::music::path(song);
-        let Some(url) = self
-            .content
-            .manifest
-            .record(&path)
-            .and_then(|r| r.stream.as_ref())
-            .map(|s| s.url.clone())
-        else {
-            self.music_enabled = false;
-            return;
-        };
-        self.title = Some(format!("{} – {}", song.title, song.artist));
-        web.element.set_src(&url);
-        web.resume(true);
-        web.playing = true;
-    }
-}
-
-impl Player {
-    /// MusicStream `beginSong`: the pending choice or the next shuffle pick,
-    /// recorded in the history.
-    fn pick(&mut self, catalog: &mut Catalog) -> Result<Option<usize>, String> {
-        let pick = self.pending.take().unwrap_or(Pick::Next);
-        let index = match pick {
-            Pick::Select(i) | Pick::History(_, i) => {
-                catalog.select(i)?;
-                Some(i)
-            }
-            Pick::Next => {
-                let mut next = catalog.next_index()?;
-                // A fresh session avoids repeating the persisted last track.
-                let last = usize::try_from(self.history_index)
-                    .ok()
-                    .and_then(|i| self.history.get(i));
-                if !self.started
-                    && catalog.library.songs.len() > 1
-                    && next.is_some_and(|n| Some(&catalog.library.songs[n].filename) == last)
-                {
-                    next = catalog.next_index()?;
-                }
-                next
-            }
-        };
-        let Some(index) = index else {
-            return Ok(None);
-        };
-        self.started = true;
-        self.selected = Some(index);
-        let filename = catalog.library.songs[index].filename.clone();
-        if let Pick::History(cursor, _) = pick {
-            self.history_index = cursor as i32;
-        } else {
-            self.history
-                .truncate((self.history_index + 1).max(0) as usize);
-            self.history.push(filename);
-            let excess = self.history.len().saturating_sub(64);
-            self.history.drain(..excess);
-            self.history_index = self.history.len() as i32 - 1;
-        }
-        self.dirty = true;
-        Ok(Some(index))
-    }
-
-    /// `playingHistoryIndex`.
-    fn playing_history_index(&self, catalog: &Catalog) -> i32 {
-        match self.selected {
-            Some(i) => {
-                let name = &catalog.library.songs[i].filename;
-                let upto = ((self.history_index + 1).max(0) as usize).min(self.history.len());
-                self.history[..upto]
-                    .iter()
-                    .rposition(|f| f == name)
-                    .map_or(-1, |p| p as i32)
-            }
-            None => self.history_index,
-        }
-    }
-
-    /// The saved history (`atv-soundtrack-v1` v3 `history`, `historyIndex`),
-    /// restricted to the catalog's songs.
-    pub fn restore(&mut self, history: Vec<String>, index: i32, catalog: Option<&Catalog>) {
-        self.history = history;
-        if let Some(c) = catalog {
-            self.history
-                .retain(|f| c.library.songs.iter().any(|s| &s.filename == f));
-        }
-        let excess = self.history.len().saturating_sub(64);
-        self.history.drain(..excess);
-        self.history_index = index.clamp(-1, self.history.len() as i32 - 1);
     }
 }
 
@@ -1234,159 +935,14 @@ impl Sound {
         self.content.clone()
     }
 
-    /// The saved soundtrack history (call once after load).
-    pub fn restore_history(&mut self, history: Vec<String>, index: i32) {
-        let catalog = self.catalog.as_ref();
-        self.player.restore(history, index, catalog);
-    }
-
     /// The Jukebox's live view.
     pub fn music_view(&self) -> MusicView {
-        let songs = self.catalog.as_ref().map_or_else(Vec::new, |c| {
-            c.library
-                .songs
-                .iter()
-                .map(|s| (s.title.clone(), s.artist.clone(), s.genre.clone()))
-                .collect()
-        });
-        let mut view = MusicView {
-            ready: self.catalog.is_some(),
-            enabled: self.music_enabled,
-            paused: self.player.paused,
-            volume: self.music_volume,
-            songs,
-            playing_index: self.player.selected,
-            ..Default::default()
-        };
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            view.mode = "decoder";
-            if let Some(song) = &self.song {
-                let (decoded, duration) = song.decoded_seconds();
-                let queued = self.output.mixer.lock().map_or(0., |m| m.music_queued());
-                // Quarter seconds: the Jukebox lays out at most at 4 Hz for it.
-                view.position = ((decoded - queued).clamp(0., duration) * 4.).floor() / 4.;
-                view.duration = duration;
-                view.playing = !self.player.paused && !self.held && queued > 0.;
-            }
-        }
-        #[cfg(target_arch = "wasm32")]
-        {
-            view.mode = "stream";
-            if let Some(web) = &self.web {
-                let web = web.borrow();
-                if web.playing && self.player.selected.is_some() {
-                    // Quarter seconds: the Jukebox lays out at most at 4 Hz for it.
-                    view.position = (web.element.current_time() as f32 * 4.).floor() / 4.;
-                    let d = web.element.duration();
-                    view.duration = if d.is_finite() { d as f32 } else { 0. };
-                    view.seekable = true;
-                    view.playing = !web.element.paused();
-                }
-            }
-        }
-        view
+        self.music.borrow().music_view()
     }
 
-    /// A Jukebox control (frontend.js `run` for song:/jukeplay/jukeprev/
-    /// jukenext, the seek slider, and `stopJukebox`).
+    /// A Jukebox control.
     pub fn jukebox(&mut self, action: JukeboxAction) {
-        let Some(catalog) = &self.catalog else {
-            return;
-        };
-        let request = |sound: &mut Self, pick: Pick| {
-            sound.player.pending = Some(pick);
-            if let Pick::Select(i) | Pick::History(_, i) = pick {
-                sound.player.selected = Some(i);
-            }
-            sound.stop_song();
-        };
-        match action {
-            JukeboxAction::Select(i) if i < catalog.library.songs.len() => {
-                self.music_enabled = true;
-                self.set_paused(false);
-                request(self, Pick::Select(i));
-            }
-            JukeboxAction::Select(_) => {}
-            JukeboxAction::Toggle => {
-                let playing = self.music_enabled && !self.player.paused;
-                if !playing {
-                    self.music_enabled = true;
-                }
-                self.set_paused(playing);
-            }
-            JukeboxAction::Next => {
-                let cursor = (self.player.playing_history_index(catalog) + 1) as usize;
-                let pick = match self.player.history.get(cursor) {
-                    Some(name) => catalog
-                        .library
-                        .songs
-                        .iter()
-                        .position(|s| &s.filename == name)
-                        .map_or(Pick::Next, |i| Pick::History(cursor, i)),
-                    None => Pick::Next,
-                };
-                request(self, pick);
-            }
-            JukeboxAction::Previous => {
-                if self.player.history.is_empty() {
-                    request(self, Pick::Select(0));
-                } else {
-                    let cursor = (self.player.playing_history_index(catalog) - 1).max(0) as usize;
-                    let name = &self.player.history[cursor];
-                    if let Some(i) = catalog
-                        .library
-                        .songs
-                        .iter()
-                        .position(|s| &s.filename == name)
-                    {
-                        request(self, Pick::History(cursor, i));
-                    }
-                }
-            }
-            JukeboxAction::Seek(seconds) => {
-                #[cfg(target_arch = "wasm32")]
-                if let Some(web) = &self.web {
-                    let web = web.borrow();
-                    let d = web.element.duration();
-                    if web.playing && seconds.is_finite() && d.is_finite() {
-                        web.element
-                            .set_current_time(f64::from(seconds).clamp(0., (d - 0.25).max(0.)));
-                    }
-                }
-                #[cfg(not(target_arch = "wasm32"))]
-                let _ = seconds;
-            }
-            JukeboxAction::Leave => {
-                if self.player.paused {
-                    self.player.paused = false;
-                    self.apply_pause();
-                }
-            }
-        }
-    }
-
-    fn set_paused(&mut self, paused: bool) {
-        if self.player.paused != paused {
-            self.player.paused = paused;
-            self.apply_pause();
-        }
-    }
-
-    fn apply_pause(&mut self) {
-        let paused = self.player.paused;
-        if let Ok(mut mixer) = self.output.mixer.lock() {
-            mixer.stream_paused = paused;
-        }
-        #[cfg(target_arch = "wasm32")]
-        if let Some(web) = &self.web {
-            let mut web = web.borrow_mut();
-            if paused {
-                let _ = web.element.pause();
-            } else if web.playing {
-                web.resume(true);
-            }
-        }
+        self.music.borrow_mut().jukebox(action);
     }
 }
 
@@ -1397,12 +953,9 @@ impl Drop for Sound {
         if let Ok(mut mixer) = self.output.mixer.lock() {
             self.ride.race.stop(&mut mixer);
             self.remote.stop_all(&mut mixer);
-            mixer.stream_gain = 1.;
-            mixer.stream_paused = false;
         }
-        #[cfg(target_arch = "wasm32")]
-        if self.held {
-            self.set_song_gain(1.);
+        if let Ok(mut music) = self.music.try_borrow_mut() {
+            music.ride_ended();
         }
     }
 }

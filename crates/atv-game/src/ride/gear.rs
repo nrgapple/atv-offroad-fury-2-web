@@ -89,6 +89,22 @@ pub fn rider_textures(
     catalog: &[Category],
     materials: &Resource,
 ) -> Result<HashMap<String, MaterialTexture>> {
+    textures::outfit(rider, &outfit(appearance, catalog, materials), materials)
+}
+
+/// gearTextures for a menu preview: only the gear slots' textures, by the
+/// given rider mesh's material names.
+pub fn gear_textures(
+    rider: &Mesh,
+    appearance: &Appearance,
+    catalog: &[Category],
+    materials: &Resource,
+) -> HashMap<String, MaterialTexture> {
+    textures::outfit_textures(rider, &outfit(appearance, catalog, materials), materials)
+}
+
+/// Each chosen item's in-game material (the first candidate the archive holds).
+fn outfit(appearance: &Appearance, catalog: &[Category], materials: &Resource) -> Outfit {
     let names: std::collections::HashSet<String> = materials
         .members
         .iter()
@@ -129,7 +145,7 @@ pub fn rider_textures(
             _ => outfit.goggle = value,
         }
     }
-    textures::outfit(rider, &outfit, materials)
+    outfit
 }
 
 #[cfg(test)]

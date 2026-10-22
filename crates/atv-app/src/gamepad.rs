@@ -1,12 +1,14 @@
 //! Controllers through gilrs, in the W3C standard-gamepad order the browser
 //! bindings use. The pad with the latest input is the active one, like
-//! web/gamepads.js "Auto".
+//! web/gamepads.js "Auto", unless Controller Settings pins a connected pad.
 use atv_game::ride::bindings::Pad;
 use gilrs::{Axis, Button, GamepadId, Gilrs};
 
 pub struct Gamepads {
     gilrs: Option<Gilrs>,
     active: Option<GamepadId>,
+    /// Controller Settings' pinned pad (name, index), or Auto.
+    pin: Option<(String, u32)>,
     /// The playing rumble (dropping a gilrs effect stops it).
     #[cfg(not(target_arch = "wasm32"))]
     effect: Option<gilrs::ff::Effect>,
@@ -40,6 +42,7 @@ impl Gamepads {
         Self {
             gilrs: Gilrs::new().ok(),
             active: None,
+            pin: None,
             #[cfg(not(target_arch = "wasm32"))]
             effect: None,
             #[cfg(target_arch = "wasm32")]
@@ -50,10 +53,81 @@ impl Gamepads {
     /// Name of the controller in use (Controller Settings: "Auto (name)").
     pub fn name(&self) -> Option<String> {
         let gilrs = self.gilrs.as_ref()?;
-        Some(gilrs.connected_gamepad(self.active?)?.name().to_string())
+        let id = self.pinned().or(self.active)?;
+        Some(gilrs.connected_gamepad(id)?.name().to_string())
+    }
+
+    /// The saved pin (`atv2-controller-v1` `selected`), or None for Auto.
+    pub fn set_pin(&mut self, pin: Option<(String, u32)>) {
+        self.pin = pin;
+    }
+
+    /// Connected controllers: (name, index) in the platform's order.
+    pub fn connected(&self) -> Vec<(String, u32)> {
+        self.gilrs.as_ref().map_or_else(Vec::new, |gilrs| {
+            gilrs
+                .gamepads()
+                .map(|(id, pad)| (pad.name().to_string(), usize::from(id) as u32))
+                .collect()
+        })
+    }
+
+    /// gamepads.js `pinned`: the pinned pad while connected (same name,
+    /// preferring the same index).
+    fn pinned(&self) -> Option<GamepadId> {
+        let (name, index) = self.pin.as_ref()?;
+        let gilrs = self.gilrs.as_ref()?;
+        let same: Vec<GamepadId> = gilrs
+            .gamepads()
+            .filter(|(_, pad)| pad.name() == name)
+            .map(|(id, _)| id)
+            .collect();
+        same.iter()
+            .copied()
+            .find(|id| usize::from(*id) as u32 == *index)
+            .or_else(|| same.first().copied())
+    }
+
+    /// pad-glyphs.js `standardPad`: standard unless the active pad reports
+    /// no mapping (the browser's empty `mapping`; gilrs without a layout).
+    pub fn standard(&self) -> bool {
+        let Some(gilrs) = self.gilrs.as_ref() else {
+            return true;
+        };
+        let Some(id) = self.pinned().or(self.active) else {
+            return true;
+        };
+        let Some(pad) = gilrs.connected_gamepad(id) else {
+            return true;
+        };
+        #[cfg(target_arch = "wasm32")]
+        {
+            use js_sys::Reflect;
+            use wasm_bindgen::{JsCast, JsValue};
+            let Some(window) = web_sys::window() else {
+                return true;
+            };
+            let navigator: JsValue = window.navigator().into();
+            let get = |target: &JsValue, key: &str| Reflect::get(target, &key.into()).ok();
+            let pads = get(&navigator, "getGamepads")
+                .and_then(|f| f.dyn_into::<js_sys::Function>().ok())
+                .and_then(|f| f.call0(&navigator).ok())
+                .map(|list| js_sys::Array::from(&list))
+                .unwrap_or_default();
+            let name = pad.name().to_string();
+            pads.iter()
+                .find(|p| get(p, "id").and_then(|v| v.as_string()).as_deref() == Some(&name))
+                .and_then(|p| get(&p, "mapping")?.as_string())
+                .is_none_or(|mapping| !mapping.is_empty())
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            pad.mapping_source() != gilrs::MappingSource::None
+        }
     }
 
     pub fn sample(&mut self) -> Option<Pad> {
+        let pinned = self.pinned();
         let gilrs = self.gilrs.as_mut()?;
         while let Some(event) = gilrs.next_event() {
             if !matches!(event.event, gilrs::EventType::Disconnected) {
@@ -62,8 +136,10 @@ impl Gamepads {
                 self.active = None;
             }
         }
-        let id = self
-            .active
+        // A pinned pad wins while connected; otherwise Auto follows input.
+        let id = pinned
+            .filter(|id| gilrs.connected_gamepad(*id).is_some())
+            .or(self.active)
             .filter(|id| gilrs.connected_gamepad(*id).is_some())
             .or_else(|| gilrs.gamepads().next().map(|(id, _)| id))?;
         let pad = gilrs.gamepad(id);

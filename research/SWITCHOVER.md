@@ -24,12 +24,11 @@ analytics modules (`install.js`, `offline.js`, `sw.js`, `analytics.js`,
 
 These would regress players at switch-over. Highest impact first.
 
-1. **No race from the menus.** Single Player has no Race row or race setup page
-   (course tabs, laps, CPU count, difficulty, Start). Two settings hide it: `race`
-   is in `UNSUPPORTED` (atv-ui/src/front/controller.rs) and `race_available: false`.
-   - Races start only from links.
-   - The manifest's "Single Race" shortcut (`?menu=race`) lands on Single Player.
-   - A race link with `play=0` cannot show its setup.
+1. ~~**No race from the menus.**~~ Closed: Single Player → Race opens the race
+   setup (event tabs and course list, laps, CPU riders, difficulty, preview arrows,
+   Start Race, Copy ride link), and the last started race is remembered.
+   `?menu=race` opens it, and a race link with `play=0` shows its setup
+   (`tools/test_engine_race_gear.mjs`).
 2. ~~**iPhone silent switch.**~~ Closed: `sound::sync_audio_session` sets
    `navigator.audioSession.type` (`playback`, or `ambient` for Silent switch → mute)
    and Settings → Extras shows the row where the session exists
@@ -56,9 +55,9 @@ These would regress players at switch-over. Highest impact first.
    once the context is restored, reopens the current ride's link (`fury-resume`,
    written by the engine; a room's invite rejoins its slot). Difference: game.js
    rebuilt in place and kept the ride's position; a single-player ride restarts.
-6. **Rider Gear page.** Gear and quad paint cannot be edited (`gear` is in
-   `UNSUPPORTED`). Saved gear still dresses the ride, but the garage previews show
-   stock gear and paint.
+6. ~~**Rider Gear page.**~~ Closed: Garage → Rider gear steps the Profile Store
+   catalog and the quad paint. The garage and gear previews show the saved paint and
+   the menu rider in the chosen gear.
 7. ~~**Sound mode at ride start.**~~ Closed: played rides use the saved mode,
    Enhanced by default; `?sound=` wins and scripted rides keep Original.
 8. ~~**No adaptive render resolution.**~~ Closed: atv-app `render_scale.rs`.
@@ -70,39 +69,40 @@ These would regress players at switch-over. Highest impact first.
    `ride_start` (with load seconds and, online, players), `ride_failed`,
    `ride_time` (riding time stops in menus) and `race_finish`. Before deleting
    launch.js, move the `ENVIRONMENTS` list that analytics.js imports from it.
-10. **Missing sounds.**
-    - ENV08 train spatial sounds: the logic is only in atv-core `spatial_audio`,
-      which only the JS worker uses.
-    - The rain loop (`rain.vag`) while Rain weather is active.
-    - The Crazy/Gorn crash boom: `impact_severity` drives only rumble.
-    - Frontend menu music (UIMUSIC): menus are silent. This may belong to the
-      main-menu jukebox port.
-11. **Audio page song picker.** Settings → Audio has no song rows, and its
-    Previous/Next buttons do nothing (no `musicprev`/`musicnext` handler). The
-    pause-menu Jukebox works.
+10. ~~**Missing sounds.**~~ Closed: ENV08 train spatial sounds (atv-core
+    `spatial_audio` scene commands driven from the ride's car transforms), the
+    `rain.vag` loop while Rain is active, and the Crazy/Gorn crash boom
+    (audio/synth.rs `crash_boom`) all play. A scripted JS/Rust audit gives equal
+    event counts per category (ENV08 train 11, ENV04 rain 1, ENV03 Gorn crash
+    boom 1). Frontend menu music landed in #267.
+11. ~~**Audio page song picker.**~~ Closed: Settings → Audio lists the soundtrack
+    four songs a page, with the playing song marked, the status line and the page
+    count. Previous/Next page through it and wrap (`tools/test_engine_audio_page.mjs`).
 12. ~~**Race links.**~~ Closed: `cheats=eatdirt,bringit` reach the race settings and
     motorcycle race links start (`tools/test_engine_links.mjs`).
 13. ~~**Race intro skip**~~ Closed: a click or tap off the toolbar and a new pad
     press skip it too.
 14. **Smaller regressions.**
-    - Controller pinning (`padselect` does nothing): it matters when an idle
-      virtual pad steals Auto.
+    - ~~Controller pinning (`padselect` does nothing).~~ Closed: Controller
+      cycles Auto and each connected pad; a pinned pad drives while connected.
     - ~~The Fullscreen row shows even where the Fullscreen API is missing (iPhone).~~
       Closed: shown only where `document.fullscreenEnabled`.
     - ~~CPU racers and remote riders get no contact shadows and cast no High
       shadow-map shadows.~~ Closed: contact blobs within 240 ft and the shadow map
       within 40 ft, as game.js.
-    - No buzz when a touch flip arms.
+    - ~~No buzz when a touch flip arms.~~ Closed: `vibrate(12)` once per armed
+      zone where the binding exists.
     - No menu page transitions.
-    - Non-standard pads get standard glyphs.
+    - ~~Non-standard pads get standard glyphs.~~ Closed: an empty browser
+      `mapping` (desktop: no gilrs layout) shows "Button N / Axis N".
     - ~~Ride prefetch is serial.~~ Closed: `Content::prefetch` (game.js
       `prefetchRide`). With 150 ms request latency, env01 loaded in 4.6-5.2 s
       against 5.8-6.4 s serial (host-only).
-    - Web soundtrack falls back to silence (not VAG decoding) when a stream is
-      missing.
+    - ~~Web soundtrack falls back to silence (not VAG decoding) when a stream is
+      missing.~~ Closed: a missing or failed stream decodes the original VAGs on
+      the mixer's music bus for the rest of the session.
 
-In progress elsewhere, not counted as gaps: the diagnostics overlay (F3) and the
-main-menu Jukebox.
+In progress elsewhere, not counted as gaps: the diagnostics overlay (F3).
 
 ## The switch
 
@@ -297,11 +297,11 @@ GO_NO_GO_PLACEHOLDER
 | Behaviour | Rust | Where | Notes |
 |---|---|---|---|
 | Title, main menu, Free Ride "N riding" count, Dev log (web) | Ported | atv-ui/src/front (#210) | |
-| Main-menu Jukebox | In progress | — | |
-| Single Player → Race setup page | Missing | `UNSUPPORTED` | Blocking 1 |
+| Main-menu Jukebox | Ported | front.rs, soundtrack.rs | |
+| Single Player → Race setup page | Ported | front/controller.rs, front/mod.rs | |
 | Freestyle course select (tabs, photos, hero, keys, LB/RB) | Ported | front/mod.rs, controller.rs | |
-| Garage (46 vehicles, rider, stats, 3D previews, ATV-only online) | Ported | front, app/front.rs (#254) | Previews lack gear/paint |
-| Rider Gear page | Missing | `UNSUPPORTED` | Blocking 6 |
+| Garage (46 vehicles, rider, stats, 3D previews, ATV-only online) | Ported | front, app/front.rs (#254) | Previews wear the saved gear and paint |
+| Rider Gear page | Ported | front/controller.rs `step_gear`, preview.wgsl paint | |
 | Host/Join forms, validation, motorcycle refusal | Ported | front/controller.rs (#241, #254) | |
 | Free Ride Lobby page while connecting, then its riders | Ported | #268, this PR | |
 | Loading screen (shots, tips, staged bar) | Ported | controller.rs `loading_stage` | |
@@ -310,8 +310,8 @@ GO_NO_GO_PLACEHOLDER
 | Extras → Diagnostics | In progress | — | |
 | Display → Fullscreen | Partial | lib.rs | Always shown |
 | Extras → Silent switch | Missing | — | Blocking 2 |
-| Audio page song list and paging | Partial | menu/controller.rs | Blocking 11 |
-| Controller Settings → pin a controller | Partial | `padselect` no-op | Blocking 14 |
+| Audio page song list and paging | Ported | menu/controller.rs | |
+| Controller Settings → pin a controller | Ported | menu/controller.rs, app/gamepad.rs | |
 | Binding capture, presets, reset | Ported | menu/controller.rs | |
 | Page slide transitions | Missing | — | Cosmetic |
 | `atv-player-selection` persistence | Ported | controller.rs `save` | |
@@ -334,15 +334,15 @@ GO_NO_GO_PLACEHOLDER
 |---|---|---|---|
 | One-finger compass, trick wheel, two-finger layout, flips, arcade spin | Ported | atv-ui/src/touch (#191) | |
 | Coaching, idle hints, sensitivity, one-handed | Ported | touch/mod.rs | |
-| Flip-armed `vibrate(12)` | Missing | — | Minor |
+| Flip-armed `vibrate(12)` | Ported | touch/mod.rs `flip_buzz` | |
 | 17 actions, defaults, chords, migration, presets, trick grace (`atv2-gameplay-bindings-v1`) | Ported | ride/bindings.rs (#182) | |
 | Storage-failure notice | Unverified | — | |
 | Pad Auto selection | Partial | app/gamepad.rs (gilrs) | No resting-axis baseline |
-| Pin a pad by name | Missing | — | Blocking 14 |
+| Pin a pad by name | Ported | gamepad.rs `pinned` | Matched by name, then gilrs index (not the browser index) |
 | Tuning sliders, deadzone (`atv2-controller-v1`) | Ported | bindings.rs `Tuning` | |
 | Pads with more than 17 buttons or 4 axes | Partial | gamepad.rs | Standard set only |
 | Glyphs and controller summary | Ported | menu/glyphs.rs (#230) | |
-| Non-standard pads as "Button N / Axis N" | Partial | — | Always standard |
+| Non-standard pads as "Button N / Axis N" | Ported | gamepad.rs `standard` | |
 
 ### multiplayer.js
 
@@ -373,17 +373,17 @@ GO_NO_GO_PLACEHOLDER
 | Motorcycle bank; rider vocals; body and chassis impacts; terrain loops; water splash | Ported | ride.rs, bank.rs | |
 | Venue ambient, Soultree loops, crowd cue | Ported | ride.rs, audio/race.rs (#222) | |
 | Race lamp/GO/gate one-shots, IntOut stingers, soundtrack hold/fade | Ported | race.rs, sound.rs (#222) | |
-| ENV08 train sounds | Missing | — | Blocking 10 |
-| Rain loop | Missing | — | Blocking 10 |
-| Crash boom (Crazy/Gorn) | Missing | — | Blocking 10 |
+| ENV08 train sounds | Ported | audio/ride.rs `train_step` | |
+| Rain loop | Ported | audio/ride.rs | |
+| Crash boom (Crazy/Gorn) | Ported | audio/synth.rs, sound.rs | 0.3 s cooldown |
 | Alpha landing thump, muffle, wind | Ported | audio/synth.rs, hype.rs (#251, #255) | |
 | Remote engines and impacts | Ported | audio/remote.rs (#233) | |
-| Frontend menu music (UIMUSIC) | Missing | front.rs | Blocking 10; may belong to the main-menu port |
+| Frontend menu music (UIMUSIC) | Ported | audio/menu.rs, lib.rs (#267) | |
 | Suspend on blur/hidden; no Media Session | Ported | sound.rs (#262) | |
 | Soundtrack: catalog, shuffle, history (`atv-soundtrack-v1`), AAC stream, park/resume, muffle, spectrum | Ported | audio/music.rs, sound.rs | |
-| Soundtrack VAG fallback on the web | Missing | sound.rs | Blocking 14 |
+| Soundtrack VAG fallback on the web | Ported | soundtrack.rs `vag_fallback` | |
 | Pause → Jukebox (list, transport, seek, volume, PAGE14 art, spectrum) | Ported | menu/jukebox.rs (#235) | |
-| Main-menu Jukebox | In progress | — | |
+| Main-menu Jukebox; one soundtrack player for menus and rides | Ported | soundtrack.rs, lib.rs `sync_soundtrack` | `tools/test_engine_menu_jukebox.mjs` |
 
 ### render-support.js, water.js, weather.js, fog.js, scenery-materials.js, train.js
 

@@ -59,6 +59,8 @@ pub struct Venue {
     pub water: Option<std::rc::Rc<std::cell::RefCell<crate::water::Water>>>,
     /// ENV08's train, shared like the water field (physics collides with it).
     pub train: Option<std::rc::Rc<std::cell::RefCell<crate::train::Train>>>,
+    /// The train cars' sound sources (the mode TOY's procedural animations).
+    pub train_sounds: Vec<atv_core::spatial_audio::Definition>,
     /// Placed TOY particle effects (smoke, fountains, fog), stepped at 60 Hz.
     pub ambient: Option<std::rc::Rc<std::cell::RefCell<crate::ambient::Ambient>>>,
     /// A race's National drop gate (drawn as the last scene model).
@@ -284,6 +286,18 @@ pub async fn load_with(
     } else {
         None
     };
+    // GameAudio.loadSpatial: the mode TOY's procedural train animations name
+    // each car's looping sound.
+    let train_sounds = match (&train, mode.as_deref()) {
+        (Some(_), Some(mode)) => {
+            atv_core::spatial_audio::train_definitions(mode).unwrap_or_else(|error| {
+                // A missing train sample must leave driving usable.
+                eprintln!("train sound: {error}");
+                Vec::new()
+            })
+        }
+        _ => Vec::new(),
+    };
     Ok(Venue {
         environment: environment.to_string(),
         sky,
@@ -291,6 +305,7 @@ pub async fn load_with(
         vegetation,
         water,
         train,
+        train_sounds,
         ambient,
         snow,
         dust_zones: toy

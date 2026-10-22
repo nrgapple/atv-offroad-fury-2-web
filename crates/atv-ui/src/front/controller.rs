@@ -4,9 +4,11 @@
 //! same request fields the browser sends.
 use super::{
     BACK, COURSE, DONE, FIELD, GROUPS, Img, LIST, NEXT, PREV, QUAD_NEXT, QUAD_PREV, RIDE, RIDER,
-    ROW, Screen, Stats, TAB, VEHICLE, assets::Track, course_group,
+    ROW, SHARE, START, STEP_NEXT, STEP_PREV, Screen, Stats, TAB, VEHICLE, assets::Track,
+    course_group, group_label,
 };
 use crate::{hud::Viewport, paint::Rect, settings::Settings};
+use atv_core::rider_gear::{Appearance, Category, PAINTS, SLOTS};
 use serde_json::{Value, json};
 
 /// What the application must do after a frontend input.
@@ -22,6 +24,11 @@ pub enum Event {
     DevLog,
     /// Open Settings over the frontend.
     Settings,
+    /// Main menu → Jukebox: the soundtrack player over the frontend.
+    Jukebox,
+    /// A Jukebox (or Settings → Audio song) control for the page's
+    /// soundtrack player.
+    Music(crate::menu::jukebox::JukeboxAction),
     /// Display → Fullscreen in Settings.
     Fullscreen,
     /// Arlington Free Ride: join a shared room at once (no setup) with the
@@ -56,6 +63,89 @@ pub enum Event {
     CopyInvite,
     /// Free Ride Lobby → Leave Game, or Back: abandon the room being joined.
     LeaveLobby,
+    /// Single Race → Start Race: race this course with the garage choice.
+    Race {
+        environment: String,
+        quad: u16,
+        rider: u16,
+        laps: u32,
+        cpu: u32,
+        difficulty: u32,
+    },
+    /// Single Race → Copy ride link: the race setup's link.
+    CopyRaceLink,
+}
+
+/// Race setup offers 1-5 laps, 0, 3 or 4 CPU riders and the original
+/// Normal (1) or Expert (2) difficulty (frontend.js RACE_CPU).
+pub const RACE_CPU: [u32; 3] = [0, 3, 4];
+
+/// The Single Race setup (frontend.js `raceSettings`).
+#[derive(Clone, Debug, PartialEq)]
+pub struct RaceSetup {
+    pub course: String,
+    pub laps: u32,
+    pub cpu: u32,
+    pub difficulty: u32,
+}
+
+impl RaceSetup {
+    /// frontend.js `normalizedRace` of a saved `race` value.
+    pub fn from_value(value: &Value) -> Self {
+        Self {
+            course: value["course"]
+                .as_str()
+                .filter(|c| atv_game::launch::is_race_course(c))
+                .unwrap_or("env01")
+                .into(),
+            laps: value["laps"]
+                .as_u64()
+                .filter(|l| (1..=5).contains(l))
+                .unwrap_or(3) as u32,
+            cpu: value["cpu"]
+                .as_u64()
+                .and_then(|c| RACE_CPU.iter().copied().find(|r| u64::from(*r) == c))
+                .unwrap_or(3),
+            difficulty: if value["difficulty"].as_u64() == Some(2) {
+                2
+            } else {
+                1
+            },
+        }
+    }
+
+    pub fn value(&self) -> Value {
+        json!({"course": self.course, "laps": self.laps, "cpu": self.cpu, "difficulty": self.difficulty})
+    }
+}
+
+/// Rider Gear's rows (choice, appearance row) in page order.
+const GEAR_ROWS: [(&str, &str); 7] = [
+    ("gearhelmet", "helmet"),
+    ("gearjersey", "jersey"),
+    ("gearpant", "pant"),
+    ("gearglove", "glove"),
+    ("gearboot", "boot"),
+    ("geargoggle", "goggle"),
+    ("gearpaint", "paint"),
+];
+
+/// Value rows that Left/Right (and their arrows) step.
+pub fn stepper(action: &str) -> bool {
+    matches!(
+        action,
+        "racetrack" | "racelaps" | "racecpu" | "racedifficulty"
+    ) || GEAR_ROWS.iter().any(|(a, _)| *a == action)
+}
+
+/// The original catalog names pants and sleeves generically ("pants 10").
+fn generic_name(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    ["pants ", "sleeves "].iter().any(|p| {
+        lower
+            .strip_prefix(p)
+            .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
+    })
 }
 
 /// The Free Ride Lobby page shown while a hosted or joined room connects
@@ -93,7 +183,7 @@ pub const SELECTION_KEY: &str = "atv-player-selection";
 pub const VEHICLES: u16 = 46;
 
 /// Rows the Rust engine cannot perform yet are left out of its menus.
-const UNSUPPORTED: [&str; 3] = ["jukebox", "race", "gear"];
+const UNSUPPORTED: [&str; 0] = [];
 
 /// Loader phases (frontend.js `loadingStage`) and their bar positions.
 pub fn loading_stage(text: &str) -> (&'static str, f32) {
@@ -188,6 +278,15 @@ pub struct Frontend {
     pub room: Option<&'static str>,
     /// The room being joined (the Free Ride Lobby page).
     pub lobby: Option<Lobby>,
+    /// Race courses whose original race archive the content holds; the
+    /// Race row shows when there are any.
+    pub race_courses: Vec<String>,
+    pub race: RaceSetup,
+    pub race_filter: String,
+    /// Rider gear and quad paint (normalizedAppearance), and the original
+    /// Profile Store catalog that names and bounds it.
+    pub appearance: Appearance,
+    pub gear_catalog: Vec<Category>,
 }
 
 impl Frontend {
@@ -204,6 +303,8 @@ impl Frontend {
         let rider_id = u16::from(saved["riderId"].as_u64() == Some(1));
         let environment = saved["freestyleEnvironment"].as_str().unwrap_or("env01");
         let track = tracks.iter().position(|t| t.id == environment).unwrap_or(0);
+        let race = RaceSetup::from_value(&saved["race"]);
+        let appearance = atv_game::ride::gear::saved_appearance(&saved);
         let mut front = Self {
             page: "title".into(),
             selection: 0,
@@ -233,6 +334,11 @@ impl Frontend {
             notice: None,
             room: None,
             lobby: None,
+            race_courses: Vec::new(),
+            race,
+            race_filter: "all".into(),
+            appearance,
+            gear_catalog: Vec::new(),
         };
         front.player_name = front.saved["playerName"]
             .as_str()
@@ -259,6 +365,7 @@ impl Frontend {
         if let Some(track) = self.tracks.get(self.track) {
             value["freestyleEnvironment"] = track.id.clone().into();
         }
+        value["appearance"] = json!({"gear": self.appearance.gear, "paint": self.appearance.paint});
         self.saved = value.clone();
         settings.set(SELECTION_KEY, &value.to_string());
     }
@@ -269,6 +376,13 @@ impl Frontend {
             "tracks" | "loading" => "tracks",
             other => other,
         };
+        let track_name = if page == "race" {
+            self.course_name(&self.race.course)
+        } else {
+            self.tracks
+                .get(self.track)
+                .map_or(String::new(), |t| t.name.clone())
+        };
         let request = json!({
             "page": page,
             "width": view.width.clamp(240., 16384.),
@@ -276,8 +390,13 @@ impl Frontend {
             "selection": self.selection,
             "quad_id": self.quad_id,
             "rider_id": self.rider_id,
-            "track_name": self.tracks.get(self.track).map_or("", |t| t.name.as_str()),
-            "race_available": false,
+            "track_name": track_name,
+            "race_available": !self.race_courses.is_empty(),
+            "race_course": self.race.course,
+            "race_laps": self.race.laps,
+            "race_cpu": self.race.cpu,
+            "race_difficulty": self.race.difficulty,
+            "gear_rows": if page == "gear" { self.gear_rows() } else { Vec::new() },
             "menu_logo": true,
             "menu_atv": true,
         });
@@ -315,6 +434,201 @@ impl Frontend {
             .map(|a| (a.clone(), label(a)))
             .collect();
         self.selection = self.selection.min(self.choices.len().saturating_sub(1));
+    }
+
+    /// A course's display name (its id upper-cased when unlisted).
+    pub fn course_name(&self, id: &str) -> String {
+        self.tracks
+            .iter()
+            .find(|t| t.id == id)
+            .map_or_else(|| id.to_uppercase(), |t| t.name.clone())
+    }
+
+    /// The race courses under the race event tab (frontend.js `raceOrder`).
+    pub fn race_order(&self) -> Vec<String> {
+        self.race_courses
+            .iter()
+            .filter(|id| self.race_filter == "all" || course_group(id) == self.race_filter)
+            .cloned()
+            .collect()
+    }
+
+    /// Race event tabs with at least one course.
+    pub fn race_tabs(&self) -> Vec<(String, String, usize)> {
+        GROUPS
+            .iter()
+            .filter_map(|(key, label)| {
+                let count = if *key == "all" {
+                    self.race_courses.len()
+                } else {
+                    self.race_courses
+                        .iter()
+                        .filter(|id| course_group(id) == *key)
+                        .count()
+                };
+                (count > 0).then(|| (key.to_string(), label.to_string(), count))
+            })
+            .collect()
+    }
+
+    /// The content's race courses; the setup's course must be one of them.
+    pub fn set_race_courses(&mut self, courses: Vec<String>, view: &Viewport) {
+        self.race_courses = courses;
+        if !self.race_courses.is_empty() && !self.race_courses.contains(&self.race.course) {
+            self.race.course = self.race_courses[0].clone();
+        }
+        self.refresh(view);
+    }
+
+    fn set_race_filter(&mut self, filter: &str) {
+        self.race_filter = filter.into();
+        let order = self.race_order();
+        if !order.is_empty() && !order.contains(&self.race.course) {
+            self.race.course = order[0].clone();
+        }
+        self.list_scroll = 0.;
+        self.reveal = true;
+    }
+
+    fn cycle_race_filter(&mut self, direction: i32) {
+        let tabs = self.race_tabs();
+        if tabs.is_empty() {
+            return;
+        }
+        let at = tabs
+            .iter()
+            .position(|(k, _, _)| *k == self.race_filter)
+            .unwrap_or(0) as i32;
+        let next = tabs[(at + direction).rem_euclid(tabs.len() as i32) as usize]
+            .0
+            .clone();
+        self.set_race_filter(&next);
+    }
+
+    /// Gear rows' values (frontend.js `gearRows`): helmet, jersey, pants,
+    /// gloves, boots, goggles and the quad paint.
+    pub fn gear_rows(&self) -> Vec<String> {
+        let a = self.appearance;
+        let name = |slot: &str| {
+            let at = SLOTS.iter().position(|s| *s == slot).unwrap_or(0);
+            let index = usize::from(a.gear[at]);
+            let item = index
+                .checked_sub(1)
+                .and_then(|i| self.gear_catalog.get(at)?.items.get(i))
+                .map(|item| item.name.clone());
+            match item {
+                None => "Original".to_string(),
+                // Pants and sleeves share the jersey line of their index.
+                Some(item) if generic_name(&item) => {
+                    let shirt = SLOTS.iter().position(|s| *s == "shirt").unwrap_or(3);
+                    self.gear_catalog
+                        .get(shirt)
+                        .and_then(|c| c.items.get(index - 1))
+                        .map_or(item, |i| i.name.clone())
+                }
+                Some(item) => item,
+            }
+        };
+        vec![
+            name("helmet"),
+            name("shirt"),
+            name("pant"),
+            name("glove"),
+            name("boot"),
+            name("goggle"),
+            PAINTS[usize::from(a.paint)].to_string(),
+        ]
+    }
+
+    /// frontend.js `stepGear`: one row through Original and the catalog;
+    /// the jersey sets the shirt and its matching sleeves together.
+    fn step_gear(&mut self, row: &str, direction: i32) {
+        let mut a = self.appearance;
+        if row == "paint" {
+            a.paint = (i32::from(a.paint) + direction).rem_euclid(PAINTS.len() as i32) as u8;
+        } else {
+            let slot = if row == "jersey" { "shirt" } else { row };
+            let Some(at) = SLOTS.iter().position(|s| *s == slot) else {
+                return;
+            };
+            let items = self.gear_catalog.get(at).map_or(0, |c| c.items.len());
+            if items == 0 {
+                return;
+            }
+            a.gear[at] = (i32::from(a.gear[at]) + direction).rem_euclid(items as i32 + 1) as u8;
+            if row == "jersey" {
+                let sleeve = SLOTS.iter().position(|s| *s == "sleeve").unwrap_or(4);
+                let sleeves = self.gear_catalog.get(sleeve).map_or(0, |c| c.items.len());
+                a.gear[sleeve] = a.gear[at].min(sleeves.min(255) as u8);
+            }
+        }
+        self.appearance = a;
+    }
+
+    /// A value row stepped by Left/Right, its arrows or a tap (+1).
+    fn step(&mut self, action: &str, direction: i32, view: &Viewport, settings: &mut Settings) {
+        match action {
+            "racetrack" => {
+                let order = self.race_order();
+                if !order.is_empty() {
+                    let at = order
+                        .iter()
+                        .position(|c| *c == self.race.course)
+                        .unwrap_or(0) as i32;
+                    self.race.course =
+                        order[(at + direction).rem_euclid(order.len() as i32) as usize].clone();
+                    self.reveal = true;
+                }
+            }
+            "racelaps" => {
+                self.race.laps = ((self.race.laps as i32 - 1 + direction).rem_euclid(5) + 1) as u32
+            }
+            "racecpu" => {
+                let at = RACE_CPU
+                    .iter()
+                    .position(|c| *c == self.race.cpu)
+                    .unwrap_or(1) as i32;
+                self.race.cpu = RACE_CPU[(at + direction).rem_euclid(3) as usize];
+            }
+            "racedifficulty" => {
+                self.race.difficulty = if self.race.difficulty == 2 { 1 } else { 2 }
+            }
+            _ => {
+                let Some((_, row)) = GEAR_ROWS.iter().find(|(a, _)| *a == action) else {
+                    return;
+                };
+                self.step_gear(row, direction);
+                self.save(settings);
+            }
+        }
+        self.refresh(view);
+    }
+
+    fn race_event(&mut self, settings: &mut Settings) -> Option<Event> {
+        if !self.race_courses.contains(&self.race.course) {
+            return None;
+        }
+        // The last started race is remembered (frontend.js `lastRace`).
+        self.saved["race"] = self.race.value();
+        self.save(settings);
+        Some(Event::Race {
+            environment: self.race.course.clone(),
+            quad: self.quad_id,
+            rider: self.rider_id,
+            laps: self.race.laps,
+            cpu: self.race.cpu,
+            difficulty: self.race.difficulty,
+        })
+    }
+
+    /// A race link opened without play: its setup on the race page.
+    pub fn show_race(&mut self, setup: RaceSetup, view: &Viewport) {
+        self.race = setup;
+        if !self.race_courses.is_empty() && !self.race_courses.contains(&self.race.course) {
+            self.race.course = self.race_courses[0].clone();
+        }
+        self.race_filter = "all".into();
+        self.show("race", view);
     }
 
     /// The page's text fields (ui_menu `create-lobby` / `join-lobby`).
@@ -398,13 +712,17 @@ impl Frontend {
     }
 
     pub fn show(&mut self, page: &str, view: &Viewport) {
+        // frontend.js clears `#menu-notice` with each action.
+        if self.page != page {
+            self.notice = None;
+        }
         self.page = page.into();
         self.selection = 0;
         self.list_scroll = 0.;
         self.list_max = 0.;
         self.pressed = None;
         self.hovered = None;
-        self.reveal = matches!(page, "tracks" | "garage");
+        self.reveal = matches!(page, "tracks" | "garage" | "race");
         // A held button does not also act on the new page.
         self.pad = u32::MAX;
         self.refresh(view);
@@ -565,7 +883,8 @@ impl Frontend {
             "main" => "title".to_string(),
             "single" => "main".into(),
             "tracks" if self.hosting => "create-lobby".into(),
-            "tracks" => "single".into(),
+            "tracks" | "race" => "single".into(),
+            "gear" => "garage".into(),
             "garage" => self.garage_return.clone(),
             "multiplayer" => "main".into(),
             "create-lobby" | "join-lobby" => "multiplayer".into(),
@@ -615,7 +934,12 @@ impl Frontend {
 
     fn run(&mut self, action: &str, view: &Viewport, settings: &mut Settings) -> Option<Event> {
         match action {
-            "main" | "single" | "tracks" | "multiplayer" => self.show(action, view),
+            "main" | "single" | "tracks" | "multiplayer" | "race" | "gear" => {
+                self.show(action, view)
+            }
+            "racestart" => return self.race_event(settings),
+            "copyride" if self.page == "race" => return Some(Event::CopyRaceLink),
+            _ if stepper(action) => self.step(action, 1, view, settings),
             "create-lobby" | "join-lobby" => {
                 self.notice = None;
                 self.focus = None;
@@ -682,6 +1006,7 @@ impl Frontend {
                 });
             }
             "settings" => return Some(Event::Settings),
+            "jukebox" => return Some(Event::Jukebox),
             "quadprev" | "quadnext" => {
                 self.step_quad(if action == "quadnext" { 1 } else { -1 });
                 self.save(settings);
@@ -763,6 +1088,25 @@ impl Frontend {
                 self.refresh(view);
             }
             ("tracks", "accept") => return self.ride(settings),
+            ("race", "prevtab" | "nexttab") => {
+                self.cycle_race_filter(if action == "prevtab" { -1 } else { 1 });
+                self.refresh(view);
+            }
+            // Accepting the course list starts the race, as Ride does.
+            ("race", "accept") if self.current() == Some("racetrack") => {
+                return self.race_event(settings);
+            }
+            ("race" | "gear", "left" | "right") => {
+                // Only value rows step; Start Race, the link and Back do not.
+                if let Some(current) = self.current().filter(|a| stepper(a)).map(String::from) {
+                    self.step(
+                        &current,
+                        if action == "left" { -1 } else { 1 },
+                        view,
+                        settings,
+                    );
+                }
+            }
             ("garage", "left" | "right") => {
                 return self.run(
                     if action == "left" {
@@ -943,6 +1287,26 @@ impl Frontend {
         self.focus = None;
         match id {
             BACK | DONE => return self.back(view),
+            START => return self.race_event(settings),
+            SHARE if self.page == "race" => return Some(Event::CopyRaceLink),
+            PREV | NEXT if self.page == "race" => {
+                if let Some(index) = self.choices.iter().position(|(a, _)| a == "racetrack") {
+                    self.selection = index;
+                }
+                self.step("racetrack", if id == PREV { -1 } else { 1 }, view, settings);
+            }
+            _ if (STEP_PREV..STEP_PREV + 10).contains(&id)
+                || (STEP_NEXT..STEP_NEXT + 10).contains(&id) =>
+            {
+                let (index, direction) = if id >= STEP_NEXT {
+                    ((id - STEP_NEXT) as usize, 1)
+                } else {
+                    ((id - STEP_PREV) as usize, -1)
+                };
+                let action = self.choices.get(index)?.0.clone();
+                self.selection = index;
+                self.step(&action, direction, view, settings);
+            }
             RIDE => return self.ride(settings),
             PREV | NEXT => {
                 self.step_track(if id == PREV { -1 } else { 1 });
@@ -971,9 +1335,22 @@ impl Frontend {
                 self.selection = index;
                 return self.run(&action, view, settings);
             }
+            _ if (TAB..TAB + 10).contains(&id) && self.page == "race" => {
+                let key = self.race_tabs().get((id - TAB) as usize)?.0.clone();
+                self.set_race_filter(&key);
+                self.refresh(view);
+            }
             _ if (TAB..TAB + 10).contains(&id) => {
                 let key = self.tabs().get((id - TAB) as usize)?.0.clone();
                 self.set_filter(&key);
+                self.refresh(view);
+            }
+            _ if (COURSE..COURSE + 100).contains(&id) && self.page == "race" => {
+                // frontend.js `selectRaceCourse`: the course row takes focus.
+                self.race.course = self.race_order().get((id - COURSE) as usize)?.clone();
+                if let Some(index) = self.choices.iter().position(|(a, _)| a == "racetrack") {
+                    self.selection = index;
+                }
                 self.refresh(view);
             }
             _ if (COURSE..COURSE + 100).contains(&id) => {
@@ -1021,6 +1398,13 @@ impl Frontend {
         if std::mem::take(&mut self.reveal) {
             let current = if self.page == "garage" {
                 VEHICLE + u32::from(self.quad_id)
+            } else if self.page == "race" {
+                let order = self.race_order();
+                COURSE
+                    + order
+                        .iter()
+                        .position(|c| *c == self.race.course)
+                        .unwrap_or(0) as u32
             } else {
                 let order = self.order();
                 COURSE + order.iter().position(|&i| i == self.track).unwrap_or(0) as u32
@@ -1051,6 +1435,7 @@ impl Frontend {
     ) -> Screen {
         let order = self.order();
         let track = self.tracks.get(self.track);
+        let race = self.page == "race";
         Screen {
             page: self.page.clone(),
             choices: self.choices.clone(),
@@ -1079,14 +1464,44 @@ impl Frontend {
                         (t.id.clone(), t.name.clone(), photo(&t.id))
                     })
                     .collect()
+            } else if race {
+                self.race_order()
+                    .into_iter()
+                    .map(|id| {
+                        let name = self.course_name(&id);
+                        let image = photo(&id);
+                        (id, name, image)
+                    })
+                    .collect()
             } else {
                 Vec::new()
             },
-            filter: self.filter.clone(),
-            tabs: self.tabs(),
-            current: track.map(|t| t.id.clone()),
-            hero: track.and_then(|t| photo(&t.id)),
-            hero_name: track.map_or(String::new(), |t| t.name.clone()),
+            filter: if race {
+                self.race_filter.clone()
+            } else {
+                self.filter.clone()
+            },
+            tabs: if race { self.race_tabs() } else { self.tabs() },
+            current: if race {
+                Some(self.race.course.clone())
+            } else {
+                track.map(|t| t.id.clone())
+            },
+            hero: if race {
+                photo(&self.race.course)
+            } else {
+                track.and_then(|t| photo(&t.id))
+            },
+            hero_name: if race {
+                self.course_name(&self.race.course)
+            } else {
+                track.map_or(String::new(), |t| t.name.clone())
+            },
+            hero_mode: if race {
+                format!("{} race", group_label(&self.race.course))
+            } else {
+                String::new()
+            },
             list_scroll: self.list_scroll,
             vehicle_label: self
                 .catalog
@@ -1379,6 +1794,141 @@ mod tests {
         front.key("Escape", &view, &mut settings);
         assert_eq!(front.page, "single");
         assert_eq!(front.choices()[front.selection].0, "garage");
+    }
+
+    #[test]
+    fn single_race_setup_steps_and_starts_a_race() {
+        let view = view(1280., 720.);
+        let mut settings = Settings::memory();
+        let mut front = Frontend::new(tracks(), &settings, true);
+        front.show("single", &view);
+        assert!(front.choices().iter().all(|(a, _)| a != "race"));
+        front.set_race_courses(vec!["env01".into(), "nat01".into(), "sx01".into()], &view);
+        let at = front
+            .choices()
+            .iter()
+            .position(|(a, _)| a == "race")
+            .unwrap();
+        front.selection = at;
+        front.key("Enter", &view, &mut settings);
+        assert_eq!(front.page, "race");
+        assert_eq!(front.current(), Some("racetrack"));
+        // Left/Right on the course row walk the race courses.
+        front.key("ArrowRight", &view, &mut settings);
+        assert_eq!(front.race.course, "nat01");
+        front.key("ArrowDown", &view, &mut settings);
+        front.key("ArrowRight", &view, &mut settings);
+        assert_eq!(front.race.laps, 4);
+        front.key("ArrowDown", &view, &mut settings);
+        front.key("ArrowLeft", &view, &mut settings);
+        assert_eq!(front.race.cpu, 0);
+        front.key("ArrowDown", &view, &mut settings);
+        // Accept on a value row steps it forward.
+        front.key("Enter", &view, &mut settings);
+        assert_eq!(front.race.difficulty, 2);
+        assert!(front.choices()[front.selection].1.contains("Expert"));
+        // The event tabs filter the course list.
+        front.key("PageDown", &view, &mut settings);
+        assert_eq!(front.race_filter, "env");
+        assert_eq!(front.race.course, "env01");
+        front.key("PageUp", &view, &mut settings);
+        assert_eq!(front.race_filter, "all");
+        // Copy ride link and Start Race.
+        let copy = front
+            .choices()
+            .iter()
+            .position(|(a, _)| a == "copyride")
+            .unwrap();
+        front.selection = copy;
+        assert_eq!(
+            front.key("Enter", &view, &mut settings),
+            Some(Event::CopyRaceLink)
+        );
+        front.selection = 0;
+        assert_eq!(
+            front.key("Enter", &view, &mut settings),
+            Some(Event::Race {
+                environment: "env01".into(),
+                quad: 1,
+                rider: 0,
+                laps: 4,
+                cpu: 0,
+                difficulty: 2
+            })
+        );
+        let saved: Value = serde_json::from_str(&settings.get(SELECTION_KEY).unwrap()).unwrap();
+        assert_eq!(saved["race"]["laps"], 4);
+        // The setup comes back from the saved selection.
+        let again = Frontend::new(tracks(), &settings, true);
+        assert_eq!(again.race, front.race);
+        front.key("Escape", &view, &mut settings);
+        assert_eq!(front.page, "single");
+    }
+
+    #[test]
+    fn rider_gear_steps_the_catalog_and_paint() {
+        use atv_core::rider_gear::Item;
+        let view = view(1280., 720.);
+        let mut settings = Settings::memory();
+        let mut front = Frontend::new(tracks(), &settings, true);
+        let item = |name: &str| Item {
+            name: name.into(),
+            materials: vec![],
+            locked: false,
+            points: 0,
+            logo: String::new(),
+        };
+        front.gear_catalog = SLOTS
+            .iter()
+            .map(|slot| Category {
+                slot,
+                items: match *slot {
+                    "shirt" => vec![item("Fox Jersey"), item("Thor Jersey")],
+                    "sleeve" => vec![item("sleeves 1")],
+                    "pant" => vec![item("pants 1"), item("pants 2")],
+                    _ => vec![item(&format!("{slot} one"))],
+                },
+            })
+            .collect();
+        front.show("garage", &view);
+        let gear = front
+            .choices()
+            .iter()
+            .position(|(a, _)| a == "gear")
+            .unwrap();
+        front.selection = gear;
+        front.key("Enter", &view, &mut settings);
+        assert_eq!(front.page, "gear");
+        assert_eq!(front.gear_rows()[0], "Original");
+        front.key("ArrowRight", &view, &mut settings);
+        assert_eq!(front.gear_rows()[0], "helmet one");
+        // Original, item 1, back to Original.
+        front.key("ArrowRight", &view, &mut settings);
+        assert_eq!(front.appearance.gear[0], 0);
+        // The jersey sets the shirt and its matching sleeves.
+        front.key("ArrowDown", &view, &mut settings);
+        front.key("ArrowLeft", &view, &mut settings);
+        assert_eq!(front.appearance.gear[3], 2);
+        assert_eq!(front.appearance.gear[4], 1);
+        // Pants take their jersey line's name.
+        front.key("ArrowDown", &view, &mut settings);
+        front.key("Enter", &view, &mut settings);
+        assert_eq!(front.gear_rows()[2], "Fox Jersey");
+        // Paint wraps through the authored colours.
+        let paint = front
+            .choices()
+            .iter()
+            .position(|(a, _)| a == "gearpaint")
+            .unwrap();
+        front.selection = paint;
+        front.key("ArrowLeft", &view, &mut settings);
+        assert_eq!(front.gear_rows()[6], "Black");
+        let saved: Value = serde_json::from_str(&settings.get(SELECTION_KEY).unwrap()).unwrap();
+        assert_eq!(saved["appearance"]["paint"], 10);
+        assert_eq!(saved["appearance"]["gear"][3], 2);
+        front.key("Escape", &view, &mut settings);
+        assert_eq!(front.page, "garage");
+        assert_eq!(front.current(), Some("gear"));
     }
 
     #[test]

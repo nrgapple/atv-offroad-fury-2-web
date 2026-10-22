@@ -70,6 +70,8 @@ pub struct TouchControls {
     pub coarse: bool,
     airborne: bool,
     last: Option<Feedback>,
+    /// The flip zone whose arming last buzzed (touch.js `flipBuzzed`).
+    flip_buzzed: Option<usize>,
     preload: Preload,
     rides: u32,
     wheel_opens: u32,
@@ -106,6 +108,7 @@ impl TouchControls {
             coarse,
             airborne: false,
             last: None,
+            flip_buzzed: None,
             preload: Preload::Idle,
             rides: count(settings, "atv-touch-coach-rides"),
             wheel_opens: count(settings, "atv-touch-coach-wheel"),
@@ -359,6 +362,26 @@ impl TouchControls {
                 .as_ref()
                 .and_then(|s| s.pointer.as_ref())
                 .is_some_and(|p| p.mode == Mode::Radial)
+    }
+
+    /// touch.js: a short buzz confirms a one-handed flip armed (once per
+    /// zone); lifting now flips. True when the caller should vibrate.
+    pub fn flip_buzz(&mut self, now: f64) -> bool {
+        if !self.input.one_handed {
+            self.flip_buzzed = None;
+            return false;
+        }
+        let (.., armed) = self.one_handed_state(now);
+        let zone = self.input.pointer.as_ref().and_then(|p| p.flip);
+        if !armed {
+            self.flip_buzzed = None;
+            return false;
+        }
+        if zone.is_some() && self.flip_buzzed != zone {
+            self.flip_buzzed = zone;
+            return true;
+        }
+        false
     }
 
     /// `oneHandedFeedback`: compass position and cue without sampling.
@@ -1048,5 +1071,32 @@ mod tests {
         assert!(two.down(5, 50., 500., 0., true, &mut settings));
         two.moved(5, 85., 500., 5.);
         assert!(two.sample(10., true, &mut settings).steer > 0.);
+    }
+
+    #[test]
+    fn an_armed_one_handed_flip_buzzes_once_per_zone() {
+        let mut settings = Settings::memory();
+        let mut touch = TouchControls::new(&settings, true);
+        touch.set_viewport(390., 844.);
+        touch.input.flips = true;
+        touch.feedback(
+            Feedback {
+                preload_armed: true,
+                ..Default::default()
+            },
+            0.,
+        );
+        assert!(touch.down(1, 195., 400., 0., true, &mut settings));
+        assert!(!touch.flip_buzz(10.));
+        // Pull down into the backflip zone; it arms after the dwell.
+        touch.moved(1, 195., 530., 20.);
+        assert!(!touch.flip_buzz(100.), "not armed before the dwell");
+        assert!(touch.flip_buzz(300.));
+        assert!(!touch.flip_buzz(320.), "one buzz per zone");
+        // Back to the centre disarms; re-entering buzzes again.
+        touch.moved(1, 195., 400., 340.);
+        assert!(!touch.flip_buzz(350.));
+        touch.moved(1, 195., 530., 360.);
+        assert!(touch.flip_buzz(700.));
     }
 }

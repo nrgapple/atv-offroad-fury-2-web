@@ -76,6 +76,12 @@ pub struct RideAudio {
     pub stats: Stats,
     /// Lamp/gate one-shots, the stadium crowd and the IntOut stingers.
     pub race: super::race::RaceAudio,
+    /// ENV08's train car sounds (loadSpatial/updateSpatial) and their voices.
+    pub train_sounds: Vec<spatial_audio::Definition>,
+    train_voices: HashMap<usize, VoiceId>,
+    /// Active Rain weather: `rain.vag` loops on the effects bus (playWeather).
+    pub rain: bool,
+    rain_voice: Option<VoiceId>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -88,6 +94,8 @@ pub struct Stats {
     pub ambient: u32,
     pub soultree: u32,
     pub impacts: u32,
+    pub train: u32,
+    pub rain: u32,
     pub history: Vec<String>,
 }
 
@@ -162,7 +170,64 @@ impl RideAudio {
             clutch_down: false,
             stats: Stats::default(),
             race: Default::default(),
+            train_sounds: Vec::new(),
+            train_voices: HashMap::new(),
+            rain: false,
+            rain_voice: None,
         }
+    }
+
+    /// updateSpatial for one step: each train car's sound starts (looping
+    /// where authored) and follows the car with the original stereo,
+    /// attenuation and Doppler commands; a finished one-shot starts again.
+    fn train_step(
+        &mut self,
+        mixer: &mut Mixer,
+        step: &AudioStep,
+        camera: &CameraPose,
+        previous: &CameraPose,
+    ) -> Result<()> {
+        if self.train_sounds.is_empty() || step.train_cars.is_empty() {
+            return Ok(());
+        }
+        let commands = spatial_audio::scene_commands(spatial_audio::SceneInput {
+            dt: crate::ride::STEP,
+            camera: camera.clone(),
+            previous_camera: previous.clone(),
+            cars: step.train_cars.iter().map(|c| c.0).collect(),
+            previous_cars: step.train_cars.iter().map(|c| c.1).collect(),
+            definitions: self.train_sounds.clone(),
+        })?;
+        for (index, command) in commands.iter().enumerate() {
+            let playing = mixer.playing(self.train_voices.get(&index).copied());
+            if !playing {
+                self.train_voices.remove(&index);
+                let definition = &self.train_sounds[index];
+                if !definition.start_disabled {
+                    let (sample, looping) = (definition.sample.clone(), definition.looping);
+                    let looping = if looping {
+                        Looping::Markers
+                    } else {
+                        Looping::Once
+                    };
+                    if let Some(id) = self.start(mixer, &sample, looping, [0., 0.], "train") {
+                        self.train_voices.insert(index, id);
+                        self.stats.train += 1;
+                    }
+                }
+            }
+            // The original setter keeps the last parameters on an invalid pitch.
+            if let Some(&id) = self.train_voices.get(&index)
+                && !(command.pitch < -1 || command.pitch >= 0x4000)
+            {
+                mixer.set_gains(
+                    id,
+                    [command.left as f32 / 100., command.right as f32 / 100.],
+                );
+                mixer.set_rate(id, command.pitch.max(0) as f32 / 4096.);
+            }
+        }
+        Ok(())
     }
 
     /// Venue echo type for Enhanced sound (op 172 index 2): stadiums from
@@ -268,6 +333,7 @@ impl RideAudio {
         let listener = spatial_audio::camera_listener(&camera, &previous, dt)?;
         self.elapsed += dt;
         self.world_dt += dt;
+        self.train_step(mixer, step, &camera, &previous)?;
         // A motorcycle has no rider effects, vocals, chassis or drive-on
         // sounds (web/audio.js skips QuadSounds and loadEffects for it).
         if step.bike.is_some() {
@@ -569,6 +635,13 @@ impl RideAudio {
         }
         if let Some(bike) = &step.bike {
             self.bike_frame(mixer, bike);
+        }
+        // playWeather: the rain loop starts once and keeps looping.
+        if self.rain && !mixer.playing(self.rain_voice) {
+            self.rain_voice = self.start(mixer, "rain.vag", Looping::Markers, [1., 1.], "rain");
+            if self.rain_voice.is_some() {
+                self.stats.rain += 1;
+            }
         }
         self.world_frame(mixer, &listener)?;
         self.engine_frame(mixer, step)
