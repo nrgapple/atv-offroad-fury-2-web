@@ -49,14 +49,16 @@ try {
     Object.defineProperty(document, 'hasFocus', { value: () => true });
     localStorage.setItem('atv2-keyboard-help-seen-v1', '1');
   });
+  // The host rides away from the start line first: a guest who cannot meet
+  // a rider on arrival starts there.
+  await host.waitForFunction(() => window.atvTerrainStatus?.ready, null, { timeout: 180000 });
+  await host.bringToFront();
+  await holdKey(host, 'KeyW', 240);
+  await guest.bringToFront();
   await guest.goto(`${base}/engine.html?room=${code}&name=RustGuest&uiDiagnostics=1`);
   await guest.waitForFunction(() => JSON.parse(window.furyMultiplayer ?? 'null')?.drawn >= 1, null, {
     timeout: 180000
   });
-  // The host rides away first.
-  await host.bringToFront();
-  await holdKey(host, 'KeyW', 240);
-  await guest.bringToFront();
   let e = await engine(guest);
   const hostAt = (await host.evaluate(() => window.atvTerrainStatus.frame.origin)).slice();
   report.before = distance(e.origin, hostAt);
