@@ -10,7 +10,10 @@ const output = path.join(root, 'private/reports/app-icons');
 await mkdir(output, { recursive: true });
 const privateRoot = await realpath(path.join(root, 'private'));
 if (!(await realpath(output)).startsWith(privateRoot + path.sep)) throw Error('Icons must remain in private storage');
-const wasm = (await WebAssembly.instantiate(await readFile(path.join(root, 'web/dist/atv_web.wasm')), {})).instance.exports;
+// The decoder is the retired JavaScript game's atv_web.wasm: build the pinned
+// pre-switch reference first (python3 tools/js_reference.py prepare).
+const wasmPath = process.env.ATV_WEB_WASM || path.join(root, 'work/js-reference/web/dist/atv_web.wasm');
+const wasm = (await WebAssembly.instantiate(await readFile(wasmPath), {})).instance.exports;
 function decode(op, bytes, index = 0) {
   if (!wasm.input_resize(bytes.length)) throw Error('Input too large');
   new Uint8Array(wasm.memory.buffer, wasm.input_ptr(), bytes.length).set(bytes);

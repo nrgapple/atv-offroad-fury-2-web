@@ -11,7 +11,7 @@
 // ATV_MP_SCREENSHOT=out.png also saves the browser pages and the native capture.
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { assertNoErrors, base, holdKey, launch, watchErrors } from './browser/harness.mjs';
+import { assertNoErrors, base, holdKey, jsBase, launch, watchErrors } from './browser/harness.mjs';
 
 const fury = process.env.FURY_BIN;
 const content = process.env.FURY_CONTENT ?? 'private/reports/hosted-content';
@@ -72,7 +72,7 @@ const engineState = p => p.evaluate(() => JSON.parse(window.furyMultiplayer ?? '
 try {
   // 2. JavaScript guest by room link.
   const js = await page();
-  await js.goto(`${base}/play.html?room=${code}&quad=14&rider=1&player=JsGuest`);
+  await js.goto(`${jsBase}/play.html?room=${code}&quad=14&rider=1&player=JsGuest`);
   await js.waitForFunction(
     () => {
       const s = window.atvTerrainStatus;

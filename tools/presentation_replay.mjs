@@ -3,7 +3,12 @@
 // game's presenters and reports how far the Rust presented poses are from
 // theirs. Shared by tools/compare_presentation.mjs (native) and
 // tools/test_engine_interpolation.mjs (browser build).
-import { AtvPresentation, MotorcyclePresentation } from '../web/motorcycle-presentation.js';
+// The JavaScript presenters are the retired game's; since the switch-over they
+// load from the pinned pre-switch build (python3 tools/js_reference.py prepare).
+const reference = new URL('../work/js-reference/web/motorcycle-presentation.js', import.meta.url);
+const { AtvPresentation, MotorcyclePresentation } = await import(process.env.ATV_JS_PRESENTATION ?? reference.href).catch(error => {
+  throw new Error(`the JavaScript presenters are missing; run python3 tools/js_reference.py prepare (${error.message})`);
+});
 
 export function replay(log) {
   const bike = new MotorcyclePresentation(), atv = new AtvPresentation();

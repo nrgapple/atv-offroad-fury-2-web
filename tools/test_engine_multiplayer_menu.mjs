@@ -8,7 +8,7 @@
 //   PLAYWRIGHT_MODULE=... ATV_TEST_URL=http://127.0.0.1:4187 node tools/test_engine_multiplayer_menu.mjs
 // ATV_MP_SCREENSHOT=out.png saves the Host and Join forms and the lobby page.
 import assert from 'node:assert/strict';
-import { assertNoErrors, base, launch, newPage, nextFrames, url } from './browser/harness.mjs';
+import { assertNoErrors, base, jsBase, launch, newPage, nextFrames, url } from './browser/harness.mjs';
 
 const shots = process.env.ATV_MP_SCREENSHOT;
 const report = {};
@@ -90,7 +90,7 @@ try {
   // 2. A JavaScript player joins by the code.
   const js = await newPage(browser, { viewport: { width: 1280, height: 720 } }, errors);
   await js.addInitScript(() => Object.defineProperty(document, 'hasFocus', { value: () => true }));
-  await js.goto(`${base}/play.html?room=${code}&player=JsGuest`);
+  await js.goto(`${jsBase}/play.html?room=${code}&player=JsGuest`);
   await js.waitForFunction(() => window.atvTerrainStatus?.multiplayer?.remote?.some(r => !r.stale), null, {
     timeout: 180000
   });

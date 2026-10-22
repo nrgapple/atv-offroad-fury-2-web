@@ -21,9 +21,11 @@ dist.mkdir(exist_ok=True)
 # The name section (function names for stack traces) is most of the raw file;
 # panics still report their messages through console_error_panic_hook.
 subprocess.run([bindgen, '--target', 'web', '--no-typescript', '--remove-name-section', '--out-dir', str(dist), str(target / 'wasm32-unknown-unknown/release/atv_app.wasm')], cwd=ROOT, check=True)
-for name in ['engine.html', 'engine.css', 'engine.js']:
+for name in ['play.html', 'engine.css', 'engine.js']:
     shutil.copy2(ROOT / 'web' / name, dist / name)
+# The pre-switch name of the same page: old links, bookmarks and tests.
+shutil.copy2(ROOT / 'web/play.html', dist / 'engine.html')
 wasm = dist / 'atv_app_bg.wasm'
 if wasm.read_bytes()[:4] != b'\0asm':
     raise ValueError('engine build is not WebAssembly')
-print(f'Built Rust engine preview ({wasm.stat().st_size / 1e6:.2f} MB wasm); game assets are not included.')
+print(f'Built Rust engine ({wasm.stat().st_size / 1e6:.2f} MB wasm); game assets are not included.')

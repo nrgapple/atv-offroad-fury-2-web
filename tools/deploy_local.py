@@ -113,8 +113,6 @@ def deploy(commit, checkpoint, owner, reason):
             release = ROOT / 'work/local-releases' / commit
             package(commit, release)
             validate_release(release, commit)
-            smoke = ['node', 'tools/smoke_web_wasm.mjs', str(release / 'static/atv_web.wasm')]
-            run(*smoke); checks.append(smoke)
             stage(release, commit, preserve_custom_domains=True)
             run('npx', '--yes', 'wrangler@4.149.0', 'deploy', '--config', 'work/cloudflare/wrangler.jsonc')
             for url in URLS:

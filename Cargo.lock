@@ -263,16 +263,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "atv-web"
-version = "0.2.0"
-dependencies = [
- "atv-core",
- "atv-net",
- "serde",
- "serde_json",
-]
-
-[[package]]
 name = "autocfg"
 version = "1.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"

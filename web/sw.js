@@ -1,12 +1,12 @@
 // Fury Remastered offline cache. Design, cache names and update rules: research/OFFLINE.md.
 // Classic (non-module) service worker so every browser with service workers runs it.
 //
-// Packaging rewrites the quoted module name below to 'game.js?v=<commit>'. That
+// Packaging rewrites the quoted module name below to 'engine.js?v=<commit>'. That
 // names this deploy's shell cache and changes these bytes on every deploy, which
 // is what makes browsers install the new worker. An unversioned development build
 // leaves VERSION null and the worker intercepts nothing (offline.js does not
 // register it there either).
-var VERSION_PROBE = 'game.js';
+var VERSION_PROBE = 'engine.js';
 var VERSION = (/\?v=([a-f0-9]{40})$/.exec(VERSION_PROBE) || [])[1] || null;
 
 var SHELL_PREFIX = 'fury-shell-v1-';
@@ -21,7 +21,8 @@ var PRUNE_DELAY_MS = 20000;
 var MAX_SHELL_FILES = 400;
 
 var PAGE_PATHS = ['/', '/index.html', '/play.html', '/engine.html', '/devlog.html'];
-// engine.html: the Rust engine page (its module graph includes atv_app_bg.wasm).
+// play.html is the Rust engine page (its module graph includes atv_app_bg.wasm);
+// engine.html is the same page under its pre-switch name.
 var PRECACHE_PAGES = ['/play.html', '/index.html', '/engine.html'];
 var BLOB = /^\/content\/([a-f0-9]{64})\.bin$/;
 var MANIFEST = /^\/content\/(?:manifest\.json|manifests\/([a-f0-9]{40})\.json)$/;

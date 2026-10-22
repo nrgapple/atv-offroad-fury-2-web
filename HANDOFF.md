@@ -56,11 +56,10 @@ build. Motorcycles use a separate MX vs. ATV Unleashed disc (`SLUS_211.04`); see
 | Path | Role |
 | --- | --- |
 | `crates/atv-core/` | Resource readers (RES/LSI, PST, PSG, MOT, TR2, COL, TDF, VAG, IPUM...) and the game simulation: vehicle, contacts, wrecks, rider, camera, race, water, train, HUD/menu logic |
-| `crates/atv-web/` | Plain-ABI WASM bridge (no `wasm-bindgen`): numbered operations and batched frames for the browser worker; CPU racers, motorcycles, multiplayer world |
 | `crates/atv-net/` | Multiplayer snapshot codec, compaction and smoothing |
 | `crates/atv-relay/` | Rust Cloudflare Durable Object room relay (built with `worker-build`, config in `relay/`) |
 | `crates/atv-tools/` | Native tools for the private disc: audit, extraction, ELF reconnaissance |
-| `web/` | Browser game: `game.js` (render loop/WebGL), `worker.js` (WASM simulation worker), menus, HUD, audio, input/touch, effects; `/workbench.html` inspector |
+| `web/` | The game page `play.html` (the Rust engine, `crates/atv-app` built by `tools/build_engine.py`; `engine.html` is the same page) and its shell: landing, install, offline cache, analytics, dev log. The retired JavaScript game is served from a pinned pre-switch build (`tools/js_reference.py`) |
 | `cloudflare/` | Production Worker: static assets, R2 runtime content, multiplayer admission guards |
 | `tools/` | Build, packaging, release, verification, analysis and browser test scripts (`test_*.mjs` need Playwright and a server) |
 | `research/` | Shareable notes per system, deployment record, dev-log metadata |
@@ -110,7 +109,7 @@ make check          # secrets, repository hygiene, fmt, workspace tests, Clippy,
 make web            # build the browser app into web/dist
 make relay          # build the multiplayer relay Worker
 make serve          # host-only dev server on 127.0.0.1:4173 (BIND/PORT override)
-PLAYWRIGHT_MODULE=/path/to/node_modules/playwright make browser-check
+PLAYWRIGHT_MODULE=/path/to/node_modules/playwright make browser-smoke
 ```
 
 Focused browser suites are `tools/test_*.mjs`; run them with `ATV_TEST_URL`

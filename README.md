@@ -133,7 +133,7 @@ You need Rust with the `wasm32-unknown-unknown` target, rustfmt, Clippy, Python 
 ```sh
 make verify  # Check source identity, reference revisions, and Git exclusions
 make check   # Secrets/repository hygiene, Rust formatting, tests, Clippy, JS and Python tool tests
-make web     # Build the authored browser app and development workbench
+make web     # Build the browser game (Rust engine, play.html) and its page shell
 make serve   # Run the host-only development server on port 4173
 ```
 
@@ -151,9 +151,8 @@ See [research/BROWSER_TESTS.md](research/BROWSER_TESTS.md) for the groups, nativ
 | Folder | What's inside |
 | --- | --- |
 | `crates/atv-core/` | Shared Rust resource readers and game simulation |
-| `crates/atv-web/` | Rust/WebAssembly bridge for the browser |
 | `crates/atv-tools/` | Native tools for private-disc inspection and extraction |
-| `web/` | Fullscreen game presentation and a separate `/workbench.html` inspector |
+| `web/` | The game page (`play.html`, the Rust engine) and its shell: landing, app install, offline cache, usage events, dev log |
 | `tools/` | Build, analysis, verification, and deployment helpers |
 | `research/` | Shareable discoveries, evidence, and dev-log metadata |
 | `private/`, `references/`, `work/` | Original source, analysis, references, and intermediate outputs; ignored by Git |

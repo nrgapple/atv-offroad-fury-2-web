@@ -35,7 +35,7 @@ class LocalReleaseTests(unittest.TestCase):
                 local_artifact(COMMIT, root)
             record['public_verified'] = True
             (folder / 'receipt.json').write_text(json.dumps(record))
-            (artifact / 'static/game.js').write_text('tampered')
+            (artifact / 'static/engine.js').write_text('tampered')
             with self.assertRaisesRegex(ValueError, 'checksum'):
                 local_artifact(COMMIT, root)
 
@@ -70,7 +70,7 @@ class LocalReleaseTests(unittest.TestCase):
             decision('main', 'main', 'foreign', 'diverged')
 
     def test_uncommitted_or_unmerged_checkout_is_rejected(self):
-        with patch('deploy_local.git', return_value=' M web/game.js'):
+        with patch('deploy_local.git', return_value=' M web/engine.js'):
             with self.assertRaisesRegex(ValueError, 'commit all'):
                 require_clean_main(COMMIT)
         with patch('deploy_local.git', side_effect=['', COMMIT, 'b'*40]):

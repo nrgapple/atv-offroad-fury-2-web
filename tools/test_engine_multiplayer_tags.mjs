@@ -4,7 +4,7 @@
 //   PLAYWRIGHT_MODULE=... ATV_TEST_URL=http://127.0.0.1:4187 node tools/test_engine_multiplayer_tags.mjs
 // ATV_MP_SCREENSHOT=out.png saves the guest's view.
 import assert from 'node:assert/strict';
-import { assertNoErrors, base, button, holdKey, launch, newPage } from './browser/harness.mjs';
+import { assertNoErrors, base, button, holdKey, jsBase, launch, newPage } from './browser/harness.mjs';
 
 const shots = process.env.ATV_MP_SCREENSHOT;
 const errors = [];
@@ -13,7 +13,7 @@ const engine = p => p.evaluate(() => JSON.parse(window.furyMultiplayer ?? 'null'
 try {
   const host = await newPage(browser, { viewport: { width: 1280, height: 720 } }, errors);
   await host.addInitScript(() => Object.defineProperty(document, 'hasFocus', { value: () => true }));
-  await host.goto(base + '/play.html');
+  await host.goto(jsBase + '/play.html');
   await button(host, 'Press START').click({ timeout: 90000 });
   await button(host, 'Multiplayer').click();
   await button(host, 'Host Game').click();

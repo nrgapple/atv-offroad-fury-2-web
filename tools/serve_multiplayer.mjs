@@ -2,14 +2,17 @@
 // No private file access and no public tunnel. Bind is explicit.
 import http from 'node:http';
 const port=Number(process.env.PORT??4187), relay=Number(process.env.RELAY_PORT??8789), assets=Number(process.env.ASSET_PORT??4177);
+// RELAY_ORIGIN: a second site sharing one local relay (the pinned JavaScript
+// reference for JavaScript guests) presents the relay's admitted game origin.
+const relayHeaders=headers=>process.env.RELAY_ORIGIN&&headers.origin?{...headers,origin:process.env.RELAY_ORIGIN}:headers;
 const server=http.createServer((req,res)=>{
  const dest=req.url.startsWith('/multiplayer/')?relay:assets;
- const proxy=http.request({host:'127.0.0.1',port:dest,path:req.url,method:req.method,headers:req.headers},upstream=>{res.writeHead(upstream.statusCode,upstream.headers);upstream.pipe(res);});
+ const proxy=http.request({host:'127.0.0.1',port:dest,path:req.url,method:req.method,headers:dest===relay?relayHeaders(req.headers):req.headers},upstream=>{res.writeHead(upstream.statusCode,upstream.headers);upstream.pipe(res);});
  proxy.on('error',()=>{if(!res.headersSent)res.writeHead(502);res.end('Host integration upstream unavailable');});req.pipe(proxy);
 });
 server.on('upgrade',(req,socket,head)=>{
  if(!req.url.startsWith('/multiplayer/rooms/')){socket.destroy();return;}
- const proxy=http.request({host:'127.0.0.1',port:relay,path:req.url,method:req.method,headers:req.headers});
+ const proxy=http.request({host:'127.0.0.1',port:relay,path:req.url,method:req.method,headers:relayHeaders(req.headers)});
  proxy.on('upgrade',(response,upstream,first)=>{
   socket.write(`HTTP/1.1 ${response.statusCode} Switching Protocols\r\n`+Object.entries(response.headers).map(([key,value])=>`${key}: ${value}\r\n`).join('')+'\r\n');
   if(first.length)socket.write(first);if(head.length)upstream.write(head);socket.pipe(upstream);upstream.pipe(socket);

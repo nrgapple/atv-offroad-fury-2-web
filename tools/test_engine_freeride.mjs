@@ -7,7 +7,7 @@
 //   PLAYWRIGHT_MODULE=... ATV_TEST_URL=http://127.0.0.1:4187 node tools/test_engine_freeride.mjs
 // ATV_MP_SCREENSHOT=out.png saves the menu and both rides.
 import assert from 'node:assert/strict';
-import { assertNoErrors, base, button, launch, newPage, nextFrames, url, watchErrors } from './browser/harness.mjs';
+import { assertNoErrors, base, button, jsBase, launch, newPage, nextFrames, url, watchErrors } from './browser/harness.mjs';
 
 const shots = process.env.ATV_MP_SCREENSHOT;
 const report = {};
@@ -60,7 +60,7 @@ try {
   const js = await (await browser.newContext({ viewport: { width: 1280, height: 720 }, hasTouch: true })).newPage();
   watchErrors(js, errors);
   await js.addInitScript(() => Object.defineProperty(document, 'hasFocus', { value: () => true }));
-  await js.goto(base + '/play.html');
+  await js.goto(jsBase + '/play.html');
   await button(js, 'Press START').click({ timeout: 90000 });
   await button(js, 'Arlington Free Ride').click();
   await js.waitForFunction(

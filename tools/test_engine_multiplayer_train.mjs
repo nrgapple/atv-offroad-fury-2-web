@@ -4,7 +4,7 @@
 // the same deck-relative spot by the Rust host.
 //   PLAYWRIGHT_MODULE=... ATV_TEST_URL=http://127.0.0.1:4187 node tools/test_engine_multiplayer_train.mjs
 import assert from 'node:assert/strict';
-import { assertNoErrors, base, launch, newPage, waitForSteps } from './browser/harness.mjs';
+import { assertNoErrors, base, jsBase, launch, newPage, waitForSteps } from './browser/harness.mjs';
 
 const shots = process.env.ATV_MP_SCREENSHOT;
 const report = {};
@@ -61,7 +61,7 @@ try {
         });
       });
   });
-  await guest.goto(`${base}/play.html?room=${code}&player=JsGuest`);
+  await guest.goto(`${jsBase}/play.html?room=${code}&player=JsGuest`);
   await guest.waitForFunction(
     () => {
       const s = window.atvTerrainStatus;
@@ -171,8 +171,14 @@ try {
     await rider.waitForFunction(() => JSON.parse(window.furyMultiplayer ?? 'null')?.ownPlatform, null, {
       timeout: 180000
     });
-    const riderPeer = (await engine(rider)).peer;
-    const placed = (await engine(rider)).ownPlatform.car;
+    // One read: the rider may already have slid off by a second one.
+    const first = await engine(rider);
+    const riderPeer = first.peer;
+    const placed = first.ownPlatform?.car;
+    if (placed == null) {
+      riderAttempts.push({ placed: null });
+      continue;
+    }
     const seen = await guest
       .waitForFunction(
         peer => window.atvTerrainStatus.multiplayer?.remote?.some(r => r.peer === peer && r.platform != null),

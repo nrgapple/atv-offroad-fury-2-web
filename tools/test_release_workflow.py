@@ -67,7 +67,7 @@ class WorkflowTests(unittest.TestCase):
             git(root, 'add', 'game.rs'); git(root, 'commit', '-m', 'runtime')
             with self.assertRaisesRegex(ValueError, 'runtime changed'):
                 refresh(base, root / 'work/release', git(root, 'rev-parse', 'HEAD'), root)
-            (base / 'static/game.js').write_text('corrupt')
+            (base / 'static/engine.js').write_text('corrupt')
             with self.assertRaisesRegex(ValueError, 'checksum'):
                 refresh(base, root / 'work/release', git(root, 'rev-parse', 'HEAD'), root)
 

@@ -21,13 +21,15 @@
 // Ride and static Rust browser captures load with `?ui=0` (scene only: no
 // toolbar, HUD, minimap or keyboard card), matching the JavaScript canvas
 // capture that leaves out its DOM overlays; race captures keep the HUD.
-// Environment: ATV_TEST_URL (served site with private content), FURY_BIN
+// Environment: ATV_TEST_URL (served site with private content; the Rust engine),
+// ATV_JS_URL (the JavaScript game: since the switch-over the pinned pre-switch
+// build, `python3 tools/js_reference.py serve`), FURY_BIN
 // (native binary; skipped when unset) and FURY_CONTENT (package directory).
 // Outputs belong in ignored private storage; they contain game imagery.
 import { execFileSync } from 'node:child_process';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { assertNoErrors, launch, newPage, url, waitForGame } from './browser/harness.mjs';
+import { assertNoErrors, jsUrl, launch, newPage, url, waitForGame } from './browser/harness.mjs';
 
 
 // Default script: settle, accelerate, turn both ways, brake into reverse.
@@ -108,7 +110,7 @@ async function scriptedGame(browser, venue, steps, viewport, errors, { measure =
   }, { steps, measure, graphics, crash, race, appearance, cameras });
   const session = measure ? await page.context().newCDPSession(page) : null;
   if (session) await session.send('Performance.enable');
-  await page.goto(url(race ? `/play.html?activity=race&map=${venue}&laps=${race.laps}&cpu=${race.cpu}&quad=${quad}&play=1` : `/play.html?drive=1&environment=${venue}&quad=${quad}`));
+  await page.goto(jsUrl(race ? `/play.html?activity=race&map=${venue}&laps=${race.laps}&cpu=${race.cpu}&quad=${quad}&play=1` : `/play.html?drive=1&environment=${venue}&quad=${quad}`));
   await waitForGame(page);
   let start;
   if (session) {
@@ -507,7 +509,7 @@ try {
     window.atvParityView = { world };
   }, [graphics, !actors]);
   // --race: the National/Supercross course without CPU riders (race weather, Snow).
-  await page.goto(url(race ? `/play.html?play=1&map=${venue}&activity=race&cpu=0` : `/play.html?drive=1&environment=${venue}`));
+  await page.goto(jsUrl(race ? `/play.html?play=1&map=${venue}&activity=race&cpu=0` : `/play.html?drive=1&environment=${venue}`));
   await waitForGame(page);
   // Let the start camera settle, then hold the scene clocks.
   await page.waitForTimeout(2500);

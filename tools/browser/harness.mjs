@@ -31,6 +31,12 @@ export const base = (process.env.ATV_TEST_URL || 'http://127.0.0.1:4173').replac
 
 /** Absolute URL for a site path such as '/play.html?drive=1'. */
 export const url = (pathname = '/') => new URL(pathname, base + '/').href;
+/** The retired JavaScript game for references and JavaScript guests: the pinned
+ *  pre-switch build (tools/js_reference.py serve; with a relay, its multiplayer
+ *  proxy). Defaults to `base`, which before the switch served both. */
+export const jsBase = (process.env.ATV_JS_URL || base).replace(/\/+$/, '');
+/** Absolute URL on the JavaScript reference site. */
+export const jsUrl = (pathname = '/') => new URL(pathname, jsBase + '/').href;
 
 /** Chromium WebGL backend flags selected by ATV_BROWSER_GPU (see above). */
 export const METAL_ARGS = ['--enable-gpu', '--use-angle=metal'];

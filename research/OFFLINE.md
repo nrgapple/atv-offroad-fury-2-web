@@ -16,8 +16,8 @@ a worker, because their app files have no per-deploy cache key and a cache-first
 shell would go stale. The existing browser tests are unaffected.
 
 The registration URL stays `/sw.js`. `tools/package_release.py`'s
-`versioned_source` rewrites the quoted `'game.js'` probe inside `sw.js` to
-`'game.js?v=<commit>'`; that string names the worker's version (`VERSION`) and
+`versioned_source` rewrites the quoted `'engine.js'` probe inside `sw.js` to
+`'engine.js?v=<commit>'` (it named `game.js` before the switch-over); that string names the worker's version (`VERSION`) and
 makes the worker's bytes differ on every deploy, so browsers install the new
 worker on their normal update check. An unversioned `sw.js` intercepts nothing.
 

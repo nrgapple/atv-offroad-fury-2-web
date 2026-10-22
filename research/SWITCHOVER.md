@@ -15,9 +15,10 @@ its status in the Rust engine:
 Statuses were checked in the Rust code, not only in RUST_ENGINE.md. "Unverified"
 marks rows that were not confirmed either way.
 
-Nothing has been switched or deleted. `play.html`'s PWA, offline and analytics
-modules (`install.js`, `offline.js`, `sw.js`, `analytics.js`, `landing.js`) are not
-on the deletion list. The gaps below are about wiring them to the Rust page.
+The switch-over is prepared in a draft PR (branch `switchover/rust-play`, see "The
+switch" below); the user decides when it ships. `play.html`'s PWA, offline and
+analytics modules (`install.js`, `offline.js`, `sw.js`, `analytics.js`,
+`landing.js`) stay as the Rust page's shell.
 
 ## Blocking gaps
 
@@ -102,6 +103,60 @@ These would regress players at switch-over. Highest impact first.
 
 In progress elsewhere, not counted as gaps: the diagnostics overlay (F3) and the
 main-menu Jukebox.
+
+## The switch
+
+The draft switch-over branch (`switchover/rust-play`) makes these changes:
+
+- **One page.** `web/play.html` is the Rust engine page: the former `engine.html`
+  with its shell. `tools/build_engine.py` also writes it as `engine.html`, so
+  pre-switch engine links and tests keep working. Every existing URL keeps
+  working:
+  - `/`, `/index.html` and the landing redirect;
+  - `/play.html` with its query (ride, room and race links, `?menu=`);
+  - the installed app's `start_url` `/play.html` and its shortcuts.
+
+  None of these changed. sw.js precaches `/play.html`, `/index.html` and
+  `/engine.html`. Its deploy probe is now `'engine.js'` (packaging versions it;
+  `game.js` is gone).
+- **Deleted:**
+  - the JavaScript game: the 44 files listed above, their unit tests, and their
+    CSS (`game.css`, `menu-screens.css`, `jukebox.css`, `hud.css`, `touch.css`);
+  - the workbench (`workbench.html`, `app.js`, `controls.js`, `input.js`,
+    `style.css`);
+  - `worker.js`, `atv_web.wasm` and `crates/atv-web`;
+  - `tools/smoke_web_wasm.mjs`;
+  - the JavaScript game's 104 browser tests and their contact harness.
+- **Updated:**
+  - `make check` (JS unit tests: install, analytics, offline, sw); `make web`;
+  - the allowlists in `build_web.py`, `package_release.py` and `serve_web.py`;
+  - `deploy_local.py`; the release tests; the browser test manifest and runner;
+  - README, HANDOFF, BROWSER_TESTS and OFFLINE.
+
+  `analytics.js` now carries the course list it imported from `launch.js`.
+  The CI workflow needed no change: it runs `make check`, `make web` and the
+  content-free group.
+- **The JavaScript reference.** The pinned pre-switch build is
+  `tools/js_reference.py`, at the last pre-switch main
+  (`4783519a6f86`).
+  - `prepare` builds it in the ignored `work/js-reference` with its own
+    `make web`.
+  - `serve [--port 4178]` serves it with the private content.
+  - `test …` runs its own browser suite: the JavaScript game's tests.
+
+  Tools that drive both games read the JavaScript side from `ATV_JS_URL`
+  (`jsBase`/`jsUrl` in the harness). These are `compare_engine.mjs`,
+  `compare_audio.mjs` and the JavaScript guests in the relay tests.
+  `presentation_replay.mjs`, used by `compare_presentation.mjs` and
+  `test_engine_interpolation.mjs` (now manual), imports the reference's
+  presenters. `build_app_icons.mjs` uses the reference's `atv_web.wasm`.
+- **Not changed here:** AGENTS.md still describes the JavaScript game as frozen
+  and to be deleted, with tests targeting `/engine.html`. Update it with the
+  switch.
+
+### Go/no-go checklist
+
+GO_NO_GO_PLACEHOLDER
 
 ## Can be dropped
 

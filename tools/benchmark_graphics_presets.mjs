@@ -8,7 +8,7 @@
 // ATV_BENCH_PROFILES (phone,desktop), ATV_BENCH_SECONDS (10), ATV_BENCH_THROTTLE (4),
 // ATV_BENCH_OUTPUT (work/verification/graphics-presets).
 import { mkdir, writeFile } from 'node:fs/promises';
-import { base, launch, newPage, waitForGame } from './browser/harness.mjs';
+import { base, jsBase, launch, newPage, waitForGame } from './browser/harness.mjs';
 const maps = (process.env.ATV_BENCH_MAPS || 'env01,sx01,env04').split(',');
 const presets = (process.env.ATV_BENCH_PRESETS || 'original,enhanced,high').split(',');
 const profiles = (process.env.ATV_BENCH_PROFILES || 'phone,desktop').split(',');
@@ -52,7 +52,7 @@ try {
     }, preset);
     const cdp = await page.context().newCDPSession(page);
     await cdp.send('Performance.enable');
-    await page.goto(`${base}/play.html?drive=1&environment=${map}`);
+    await page.goto(`${jsBase}/play.html?drive=1&environment=${map}`);
     await waitForGame(page, { until: () => window.atvTerrainStatus.simulation });
     if (PROFILES[profile].throttle > 1) await cdp.send('Emulation.setCPUThrottlingRate', { rate: PROFILES[profile].throttle });
     await page.locator('#game').focus();
