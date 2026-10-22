@@ -42,18 +42,16 @@ These would regress players at switch-over. Highest impact first.
    sw.js precaches only play.html and index.html. Whether it would pick up
    `atv_app_bg.wasm` is unverified. The Rust page needs these modules and an
    updated precache list before it replaces play.html.
-4. **Multiplayer links.**
-   - `mode=multiplayer` links without `room=` fail with a stale error, "Multiplayer
-     is not available in the Rust engine yet" (atv-app/src/lib.rs `open_launch`).
-     This covers the `lobby=` alias and `action=create`/`host`.
-   - `room=` invites skip the frontend and join as "Rider". They ignore `player=`
-     and the saved name (only `name=` is read), and `play=0`.
-   - An ended room reopens on env01 instead of the link's `map=` (unverified).
-   - Copy invite link always writes `quad=1&rider=0` (JS writes the rider's own),
-     and hard-codes `/play.html`.
-5. **WebGL context loss.** After a GPU reset (common on iOS backgrounding or memory
-   pressure) the Rust page stays dead. atv-render only reconfigures a `Lost`
-   surface. The JavaScript game rebuilds and shows "Restoring graphics…".
+4. ~~**Multiplayer links.**~~ Closed: `mode=multiplayer`, `lobby=` and `action=create|host`
+   links open Create/Join Lobby with the link's code and name (the saved name unless
+   `player=` is given) and host or join with `play=1`, on the link's map; motorcycles get
+   the JavaScript refusal. Invites carry the rider's own ATV and rider and this page
+   (`multiplayer::invite_url`). A bare `?room=`/`?host=1` still rides at once (tests).
+   Not verified: an ended room reopening on the link's map (needs a relay).
+5. ~~**WebGL context loss.**~~ Partly closed: engine.js shows "Restoring graphics…" and,
+   once the context is restored, reopens the current ride's link (`fury-resume`,
+   written by the engine; a room's invite rejoins its slot). Difference: game.js
+   rebuilt in place and kept the ride's position; a single-player ride restarts.
 6. **Rider Gear page.** Gear and quad paint cannot be edited (`gear` is in
    `UNSUPPORTED`). Saved gear still dresses the ride, but the garage previews show
    stock gear and paint.
@@ -75,10 +73,8 @@ These would regress players at switch-over. Highest impact first.
 11. **Audio page song picker.** Settings → Audio has no song rows, and its
     Previous/Next buttons do nothing (no `musicprev`/`musicnext` handler). The
     pause-menu Jukebox works.
-12. **Race links.**
-    - `cheats=eatdirt,bringit` are dropped.
-    - Motorcycle race links are refused with a stale error, although motorcycle
-      races landed in #215.
+12. ~~**Race links.**~~ Closed: `cheats=eatdirt,bringit` reach the race settings and
+    motorcycle race links start (`tools/test_engine_links.mjs`).
 13. ~~**Race intro skip**~~ Closed: a click or tap off the toolbar and a new pad
     press skip it too.
 14. **Smaller regressions.**
