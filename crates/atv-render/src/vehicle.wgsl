@@ -87,16 +87,24 @@ fn vs(@location(0) position: vec3<f32>, @location(1) normal: vec3<f32>,
 @fragment
 fn fs(in: Varyings) -> @location(0) vec4<f32> {
   let n = normalize(in.normal);
-  let sampled = textureSample(base_texture, base_sampler, in.uv).rgb;
+  let texel = textureSample(base_texture, base_sampler, in.uv);
+  let sampled = texel.rgb;
+  let flags = u32(material.x + 0.5);
+  let textured = (flags & 1u) != 0u;
+  let blended = (flags & 2u) != 0u;
+  // GS source alpha: decoded bytes over 128 are full coverage. A texel with no
+  // alpha at all draws nothing (no colour, no depth), as the cut-outs need.
+  let source_alpha = select(1.0, clamp(texel.a * (255.0 / 128.0), 0.0, 1.0), blended);
+  if (blended && texel.a < 0.5 / 255.0) { discard; }
   let mud = textureSample(mud_texture, base_sampler, in.uv);
-  var base = select(g.surface.rgb, sampled, material.x > 0.5);
-  if (material.x > 0.5 && material.w > 0.5) {
+  var base = select(g.surface.rgb, sampled, textured);
+  if (textured && material.w > 0.5) {
     base = apply_paint(base, g.paint.xy);
   }
   // game.js motorcycleMudAmount: MX mud blends linearly by alpha; the ATV2
   // dirt pass reveals heavier-alpha texels first.
   let amount = g.mud.x;
-  if (material.x > 0.5 && material.z > 0.5 && amount > 0.0) {
+  if (textured && material.z > 0.5 && amount > 0.0) {
     let strength = clamp(mud.a * (255.0 / 128.0), 0.0, 1.0);
     let weight = select(clamp(mud.a * (255.0 / 128.0) * amount, 0.0, 1.0),
       strength * smoothstep(1.0 - amount, 1.12 - amount, mud.a), g.mud.y > 0.5);
@@ -105,5 +113,5 @@ fn fs(in: Varyings) -> @location(0) vec4<f32> {
   let sunlight = max(dot(n, normalize(g.sun_direction.xyz)), 0.0);
   let lit = base * (g.ambient.rgb + g.sun_color.rgb * sunlight);
   let coverage = select(1.0, clamp(in.fog.x / in.fog.y, 0.0, 1.0), in.fog.y != 0.0);
-  return vec4<f32>(mix(g.fog_color.rgb, lit, coverage), 1.0);
+  return vec4<f32>(mix(g.fog_color.rgb, lit, coverage), source_alpha);
 }
