@@ -73,6 +73,9 @@ pub struct Net {
     pub ride: RoomRide,
     /// Arriving while others ride: next meet attempt (ms) and attempts left.
     meet: Option<(f64, u32)>,
+    /// While no listed rider's pose has arrived yet, the meet keeps waiting
+    /// (until this time, ms) as long as the rider stays where it arrived.
+    meet_wait: Option<(f64, [f32; 3])>,
     /// A dropped socket retries its slot key: next attempt (ms), deadline,
     /// attempts so far.
     reconnect: Option<(f64, f64, u32)>,
@@ -164,6 +167,17 @@ fn evict_models(models: &mut HashMap<Key, Loaded>, active: &[Key]) {
 
 /// multiplayer.js `host` for a FREERDnn code.
 pub const RESERVED_CODE: &str = "That code is reserved. Choose another.";
+
+/// The longest an arrival waits for the first pose of a rider to meet (ms).
+const MEET_WAIT_MS: f64 = 15_000.;
+
+fn distance(a: [f32; 3], b: [f32; 3]) -> f32 {
+    a.iter()
+        .zip(b)
+        .map(|(a, b)| (a - b) * (a - b))
+        .sum::<f32>()
+        .sqrt()
+}
 
 /// Close codes a rider with a slot key retries (web/multiplayer.js).
 fn retryable(code: u16, reason: &str) -> bool {
@@ -351,6 +365,7 @@ impl Net {
             environment: String::new(),
             ride,
             meet: None,
+            meet_wait: None,
             reconnect: None,
             reconnects: 0,
             upload_max: 0.,
@@ -548,7 +563,19 @@ impl Net {
                 && self.ready_sent
                 && now_f >= at
             {
-                self.meet = (tries > 1).then_some((now_f + 250., tries - 1));
+                // A rider whose pose has not reached us yet (a host in a
+                // background tab sends on throttled timers) is waited for
+                // rather than given up after 3 s, while this rider stays put.
+                let origin = ride.frame().origin;
+                let (until, from) = *self.meet_wait.get_or_insert((now_f + MEET_WAIT_MS, origin));
+                let waiting = !self.session.heard_from_others()
+                    && now_f < until
+                    && distance(origin, from) < 3.;
+                self.meet = if waiting {
+                    Some((now_f + 250., tries))
+                } else {
+                    (tries > 1).then_some((now_f + 250., tries - 1))
+                };
                 let cars = |car| ride.train_car(car);
                 let others = self.session.positions(now, &cars);
                 for target in self.session.meet_candidates(now, now, &cars) {
@@ -676,6 +703,7 @@ impl Net {
         // arrival meets a rider (web/multiplayer.js `ride`).
         self.met = None;
         self.meet = None;
+        self.meet_wait = None;
     }
 
     /// Simulates a dropped connection (tests: `?dropSocket` / reconnect gate).

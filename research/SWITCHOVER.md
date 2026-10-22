@@ -301,7 +301,7 @@ In progress elsewhere, not counted as gaps: the diagnostics overlay (F3).
 | Arlington Free Ride (429/503) | Ported | multiplayer.rs (#229) | |
 | Reserved FREERDnn codes: refusal / redirect to Free Ride | Ported | multiplayer.rs `claim`, front/controller.rs | Hosting one is refused; an invite, lobby link or Join code opens Free Ride (`tools/test_engine_freeride.mjs`) |
 | Slot-key reconnect, 25 s window, backoff | Ported | multiplayer.rs (#234) | |
-| Meet a rider on arrival; Spawn beside (car velocity on trains) | Ported | multiplayer.rs, spawn.rs (#227, #238, #264) | Rider contacts sample each peer per step after the train step (atv-web op 50) |
+| Meet a rider on arrival; Spawn beside (car velocity on trains) | Ported | multiplayer.rs, spawn.rs (#227, #238, #264) | Rider contacts sample each peer per step after the train step (atv-web op 50). Authored: a rider alone in a room sends a 1 Hz presence pose so an arrival can meet a host whose tab is in the background, and an arrival waits up to 15 s for a first pose (`tools/test_engine_multiplayer_idle_host.mjs`) |
 | Change ATV in place (kept present behind the garage), host Select Track | Ported | lib.rs (#242, #256) | |
 | Copy invite link | Partial | `invite_url` | Blocking 4 |
 | Pose send, pings, remote models (frame-spread), remote engine audio | Ported | multiplayer.rs, sound.rs (#224, #233, #252) | Models evicted past 20 cached; engine voices ranked by distance to the player's vehicle; inbox guard (192 poses, 256 closes 1008) |

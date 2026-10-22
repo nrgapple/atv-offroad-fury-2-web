@@ -100,6 +100,11 @@ export const TESTS = {
     group: 'relay',
     reason: 'needs the multiplayer relay at the same origin (room WebSocket, ENV08 train); run with --url'
   },
+  'test_engine_multiplayer_idle_host.mjs': {
+    group: 'relay',
+    reason:
+      'needs the multiplayer relay at the same origin plus a native fury build (FURY_BIN) for the stopped host; run with --url'
+  },
   'test_engine_multiplayer.mjs': {
     group: 'relay',
     reason:
