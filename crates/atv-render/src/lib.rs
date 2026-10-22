@@ -265,6 +265,10 @@ pub struct FrameStats {
     pub wheel_draws: u32,
     pub wheel_triangles: u32,
     pub shadow_draws: u32,
+    /// Vehicles cast into the High shadow map this frame.
+    pub shadow_casters: u32,
+    /// Contact shadow blobs drawn this frame (Enhanced/High).
+    pub contact_casters: u32,
     pub vehicle_triangles: u32,
     /// Time spent waiting for the swapchain image (vsync), not CPU work.
     pub acquire_ms: f64,
@@ -1332,11 +1336,45 @@ impl SceneRenderer {
                         0.45,
                     ));
                 }
+                // Race CPUs within 240 ft of the camera and other riders
+                // (drawContactShadows), each with a detached rider's torso.
+                let cpus = self
+                    .cpus
+                    .iter()
+                    .filter(|(_, visible)| *visible)
+                    .filter_map(|(pass, _)| pass.placed())
+                    .filter(|(m, _)| (m[12] - eye[0]).hypot(m[14] - eye[2]) <= 240.);
+                let peers = self
+                    .peers
+                    .values()
+                    .filter(|(_, _, visible)| *visible)
+                    .filter_map(|(_, pass, _)| pass.placed());
+                for (m, torso) in cpus.chain(peers) {
+                    footprints.push(shadows::footprint(
+                        &m,
+                        length,
+                        width,
+                        lift(&m, rest),
+                        distance(&m),
+                        strength,
+                    ));
+                    if let Some(torso) = torso {
+                        footprints.push(shadows::footprint(
+                            &torso,
+                            3.,
+                            2.2,
+                            lift(&torso, 0.9),
+                            distance(&torso),
+                            0.45,
+                        ));
+                    }
+                }
                 contact.prepare(gpu, &footprints, ground)
             }
             _ => 0,
         };
         stats.shadow_draws = u32::from(contact > 0) + u32::from(light.is_some());
+        stats.contact_casters = contact;
         let rush_scene = match &mut self.speed_rush {
             Some(rush) if rush.active() => {
                 let (origin, velocity) = self.rush_motion;
@@ -1372,10 +1410,30 @@ impl SceneRenderer {
             self.profiler.count(name, n);
         }
         let mut encoder = gpu.device.create_command_encoder(&Default::default());
-        if let (Some(map), Some(vehicle), Some((clip, _))) =
-            (&self.shadow_map, &self.vehicle, &light)
+        if let (Some(map), Some(vehicle), Some((clip, _)), Some((quad, _))) =
+            (&self.shadow_map, &self.vehicle, &light, &self.ride_pose)
         {
-            map.render(gpu, &mut encoder, &self.world, vehicle, clip);
+            // renderVehicleShadows: the player, then race CPUs and other
+            // riders within 40 ft of it.
+            let near = |pass: &vehicle::VehiclePass| {
+                pass.placed()
+                    .is_some_and(|(m, _)| (m[12] - quad[12]).hypot(m[14] - quad[14]) < 40.)
+            };
+            let mut casters = vec![vehicle];
+            casters.extend(
+                self.cpus
+                    .iter()
+                    .filter(|(pass, visible)| *visible && near(pass))
+                    .map(|(pass, _)| pass),
+            );
+            casters.extend(
+                self.peers
+                    .values()
+                    .filter(|(_, pass, visible)| *visible && near(pass))
+                    .map(|(_, pass, _)| pass),
+            );
+            stats.shadow_casters = casters.len() as u32;
+            map.render(gpu, &mut encoder, &self.world, &casters, clip);
         }
         self.profiler.mark("encode.shadow_map");
         {
