@@ -22,6 +22,11 @@ pub enum Event {
     DevLog,
     /// Open Settings over the frontend.
     Settings,
+    /// Main menu → Jukebox: the soundtrack player over the frontend.
+    Jukebox,
+    /// A Jukebox (or Settings → Audio song) control for the page's
+    /// soundtrack player.
+    Music(crate::menu::jukebox::JukeboxAction),
     /// Display → Fullscreen in Settings.
     Fullscreen,
     /// Arlington Free Ride: join a shared room at once (no setup) with the
@@ -93,7 +98,7 @@ pub const SELECTION_KEY: &str = "atv-player-selection";
 pub const VEHICLES: u16 = 46;
 
 /// Rows the Rust engine cannot perform yet are left out of its menus.
-const UNSUPPORTED: [&str; 3] = ["jukebox", "race", "gear"];
+const UNSUPPORTED: [&str; 2] = ["race", "gear"];
 
 /// Loader phases (frontend.js `loadingStage`) and their bar positions.
 pub fn loading_stage(text: &str) -> (&'static str, f32) {
@@ -682,6 +687,7 @@ impl Frontend {
                 });
             }
             "settings" => return Some(Event::Settings),
+            "jukebox" => return Some(Event::Jukebox),
             "quadprev" | "quadnext" => {
                 self.step_quad(if action == "quadnext" { 1 } else { -1 });
                 self.save(settings);

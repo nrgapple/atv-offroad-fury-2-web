@@ -100,6 +100,15 @@ pub struct Front {
     touch: TouchControls,
     bindings: atv_game::ride::bindings::Bindings,
     pub pad_name: Option<String>,
+    /// The page's soundtrack as the Jukebox sees it, this frame's spectrum
+    /// bytes, and the original PAGE14 art (raw, then registered).
+    pub music: Option<atv_ui::menu::jukebox::MusicView>,
+    pub spectrum: Option<Vec<u8>>,
+    pub jukebox_source: Option<atv_game::jukebox::JukeboxArt>,
+    jukebox_art: Option<atv_ui::menu::jukebox::Art>,
+    /// Settings → Audio chose a song: it previews until the page changes
+    /// (frontend.js `songPreview`).
+    song_preview: bool,
     /// The loader shows the frame drawn when loading started.
     shot_started: f64,
     /// A tip was picked for the current loader.
@@ -176,6 +185,11 @@ impl Front {
             touch,
             bindings,
             pad_name: None,
+            music: None,
+            spectrum: None,
+            jukebox_source: None,
+            jukebox_art: None,
+            song_preview: false,
             shot_started: 0.,
             tip_chosen: false,
         };
@@ -200,6 +214,7 @@ impl Front {
     /// Frees the GPU textures and renderer while a ride runs.
     pub fn release_gpu(&mut self) {
         self.previews = [None, None];
+        self.jukebox_art = None;
         self.renderer = None;
         self.images.clear();
         self.recent.clear();
@@ -254,12 +269,29 @@ impl Front {
         self.choose_tip();
     }
 
-    /// Whether the page animates (Press Start pulse, loader crossfade).
+    /// The soundtrack plays over the menus: the Jukebox, or a song chosen
+    /// on Settings → Audio (frontend.js setMusicPreview's `!originalMenu`).
+    pub fn wants_soundtrack(&self) -> bool {
+        match self.menu.as_ref().map(|m| m.page.as_str()) {
+            Some("jukebox") => true,
+            Some("music") => self.song_preview,
+            _ => false,
+        }
+    }
+
+    /// The Jukebox page is open (it animates; the spectrum and art apply).
+    pub fn jukebox_open(&self) -> bool {
+        self.menu.as_ref().is_some_and(|m| m.page == "jukebox")
+    }
+
+    /// Whether the page animates (Press Start pulse, loader crossfade,
+    /// the Jukebox disc and bars).
     pub fn animating(&self) -> bool {
-        self.menu.is_none()
-            && (matches!(self.state.page.as_str(), "title" | "loading")
-                || (self.state.page == "garage"
-                    && self.previews[1].as_ref().is_some_and(|p| p.animated)))
+        self.jukebox_open()
+            || self.menu.is_none()
+                && (matches!(self.state.page.as_str(), "title" | "loading")
+                    || (self.state.page == "garage"
+                        && self.previews[1].as_ref().is_some_and(|p| p.animated)))
     }
 
     /// Models the current page needs that are not loaded yet.
@@ -309,7 +341,7 @@ impl Front {
             pad_name: self.pad_name.clone(),
             view: self.view,
             lobby: None,
-            music: None,
+            music: self.music.as_ref(),
         };
         let out = f(menu, &mut ctx, &self.menu_hits, self.menu_scroll_max);
         // Settings → Extras → Silent switch applies at once.
@@ -322,7 +354,24 @@ impl Front {
             MenuEvent::Resume => {
                 self.menu = None;
                 self.menu_hits.clear();
+                self.song_preview = false;
                 None
+            }
+            MenuEvent::Jukebox(action) => {
+                let page = self.menu.as_ref().map(|m| m.page.clone());
+                if matches!(action, atv_ui::menu::jukebox::JukeboxAction::Select(_))
+                    && page.as_deref() == Some("music")
+                {
+                    self.song_preview = true;
+                }
+                // Back from the main menu's Jukebox closes it.
+                if action == atv_ui::menu::jukebox::JukeboxAction::Leave
+                    && page.as_deref() == Some("jukebox")
+                {
+                    self.menu = None;
+                    self.menu_hits.clear();
+                }
+                Some(Event::Music(action))
             }
             MenuEvent::Leave(_) => Some(Event::DevLog),
             MenuEvent::Fullscreen => Some(Event::Fullscreen),
@@ -336,6 +385,12 @@ impl Front {
                 self.menu = Some(PauseMenu::settings());
                 self.menu_reveal = true;
                 None
+            }
+            Some(Event::Jukebox) => {
+                self.menu = Some(PauseMenu::jukebox());
+                self.menu_reveal = true;
+                // The host loads the soundtrack and starts the preview.
+                Some(Event::Jukebox)
             }
             other => other,
         }
@@ -802,6 +857,14 @@ impl Front {
         }
         if self.menu.is_some() {
             self.prepare_menu(device, queue);
+            // drawBars: the spectrum repaints over the panel each frame.
+            if let Some((area, _)) = self.menu_hits.iter().find(|(_, id)| *id == pause::BARS) {
+                atv_ui::menu::jukebox::paint_bars(
+                    &mut self.list,
+                    *area,
+                    self.spectrum.as_deref().unwrap_or(&[]),
+                );
+            }
         }
         if !self.diagnostics.is_empty() {
             atv_ui::diagnostics::paint(
@@ -836,12 +899,44 @@ impl Front {
     fn prepare_menu(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
         let view = self.view;
         let start = self.list.items.len();
-        let Some(state) = self.with_menu(|m, ctx, _, _| {
+        let Some(mut state) = self.with_menu(|m, ctx, _, _| {
             m.refresh(ctx);
             m.state(ctx)
         }) else {
             return;
         };
+        if state.page == "jukebox" {
+            // The original PAGE14 art, registered once the host read it.
+            if self.jukebox_art.is_none()
+                && let (Some(source), Some(renderer)) = (&self.jukebox_source, &mut self.renderer)
+            {
+                let backdrop = source.backdrop.as_ref().map(|(w, h, rgba)| {
+                    (
+                        renderer.add_image(device, queue, *w, *h, rgba),
+                        [*w as f32, *h as f32],
+                    )
+                });
+                let disc_size = source
+                    .disc
+                    .first()
+                    .map_or([0.; 2], |(w, h, _)| [*w as f32, *h as f32]);
+                let disc = source
+                    .disc
+                    .iter()
+                    .map(|(w, h, rgba)| renderer.add_image(device, queue, *w, *h, rgba))
+                    .collect();
+                self.jukebox_art = Some(atv_ui::menu::jukebox::Art {
+                    backdrop,
+                    disc,
+                    disc_size,
+                });
+            }
+            state.jukebox_art = self.jukebox_art.clone();
+            // jb-turn: 20 steps every 1.6 s while a song plays.
+            if state.music.as_ref().is_some_and(|m| m.playing && m.enabled) {
+                state.frame = (self.now() / 80.) as usize;
+            }
+        }
         if let Some(renderer) = &mut self.renderer {
             self.glyphs
                 .prepare(renderer, device, queue, state.pad.as_ref(), view.scale);
@@ -1062,7 +1157,16 @@ impl Front {
             })),
             "menu": self.menu.as_ref().map(|m| serde_json::json!({
                 "page": m.page, "choices": m.rows.choices,
+                "music": self.music.as_ref().map(|v| serde_json::json!({
+                    "playing": v.playing_index, "enabled": v.enabled, "paused": v.paused,
+                    "songs": v.songs.len(), "position": v.position,
+                })),
+                "spectrum": self.spectrum.as_ref().map(|b| b.iter().copied().max().unwrap_or(0)),
+                "art": self.jukebox_art.is_some(),
             })),
+            "menuHits": self.menu_hits.iter().map(|(r, id)| serde_json::json!({
+                "id": id, "x": r.x, "y": r.y, "width": r.w, "height": r.h,
+            })).collect::<Vec<_>>(),
             "hits": self.hits.iter().map(|(r, id)| serde_json::json!({
                 "id": id, "x": r.x, "y": r.y, "width": r.w, "height": r.h,
             })).collect::<Vec<_>>(),

@@ -163,6 +163,21 @@ impl PauseMenu {
         }
     }
 
+    /// The Jukebox opened from the frontend's main menu (jukeboxReturn
+    /// 'main'): Back leaves it for the menu.
+    pub fn jukebox() -> Self {
+        Self {
+            page: "jukebox".into(),
+            from_menu: true,
+            ..Self::new()
+        }
+    }
+
+    /// Opened over the frontend rather than a ride.
+    pub fn from_menu(&self) -> bool {
+        self.from_menu
+    }
+
     /// Settings → Audio's song list page.
     pub fn music_page(&self) -> usize {
         self.music_page
@@ -399,8 +414,11 @@ impl PauseMenu {
             return Some(Event::Resume);
         }
         if self.page == "jukebox" {
-            self.show("pause");
-            self.pending_select = Some("jukebox".into());
+            // From the main menu the Jukebox closes (the host ends the menu).
+            if !self.from_menu {
+                self.show("pause");
+                self.pending_select = Some("jukebox".into());
+            }
             return Some(Event::Jukebox(super::jukebox::JukeboxAction::Leave));
         }
         let to = if self.page == "bindings" && !self.keyboard {
