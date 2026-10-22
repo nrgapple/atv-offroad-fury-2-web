@@ -124,6 +124,9 @@ pub struct State {
     pub capture: Option<String>,
     /// Pager text, e.g. "Page 1 of 5".
     pub page_count: Option<String>,
+    /// `.pause-header .pause-status`: a line under the title (Audio's
+    /// soundtrack status).
+    pub status: Option<String>,
     /// Opened from the frontend's main menu: the panel fills the screen over
     /// the frontend backdrop (`#frontend[data-context=menu]`).
     pub from_menu: bool,
@@ -259,7 +262,19 @@ pub fn element(view: &Viewport, state: &State, images: &glyphs::GlyphImages) -> 
         margin: margins(0., 0., if state.from_menu { 0. } else { 14. }, 0.),
         ..Default::default()
     })
-    .child(heading);
+    .child(heading)
+    .children(state.status.as_ref().map(|status| {
+        El::new(Style {
+            margin: margins(4., 0., 0., 0.),
+            ..Default::default()
+        })
+        .content(Content::Text {
+            text: status.clone(),
+            style: TextStyle::new(display(15., 400, false), Color::hex("#c4c4c4")),
+            line_height: 21.,
+            wrap: true,
+        })
+    }));
 
     let button = |index: usize, action: &str, footer: bool, big: bool| -> El {
         let label = state.rows.label(action).unwrap_or(action);
