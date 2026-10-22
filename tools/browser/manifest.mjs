@@ -51,6 +51,7 @@ export const TESTS = {
   'test_engine_background_audio.mjs': { group: 'content' },
   'test_engine_jukebox.mjs': { group: 'content' },
   'test_engine_menu_jukebox.mjs': { group: 'content' },
+  'test_engine_ride_songs.mjs': { group: 'content' },
   'test_engine_audio_page.mjs': { group: 'content' },
   'test_engine_ride_link.mjs': { group: 'content' },
   'test_engine_freeride.mjs': {

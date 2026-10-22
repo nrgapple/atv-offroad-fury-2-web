@@ -205,6 +205,35 @@ impl Soundtrack {
         }
     }
 
+    /// A ride loads (game.js `loadGame` replaces GameAudio, whose
+    /// MusicStream reloads the catalog with a fresh `sessionSeed()`): the
+    /// song stops, the shuffle starts over and the first pick avoids the
+    /// last song heard (`beginSong` on a fresh stream). The history, volume
+    /// and Music setting carry on; a Jukebox pause, a race hold and a stream
+    /// fallback do not. An in-place Reset keeps the song (`audio.reset`).
+    pub fn new_session(&mut self, seed: u64) {
+        self.stop_song();
+        if let Ok(mut mixer) = self.output.mixer.lock() {
+            mixer.clear_music();
+        }
+        if let Some(catalog) = &mut self.catalog {
+            catalog.reseed(seed);
+        }
+        self.player.pending = None;
+        self.player.selected = None;
+        self.player.paused = false;
+        self.player.started = false;
+        self.held = false;
+        self.hold_fade = None;
+        #[cfg(target_arch = "wasm32")]
+        {
+            // The old fallback decoder (if any) keeps its own slot.
+            self.vag = VagFallback::default();
+        }
+        self.set_song_gain(1.);
+        self.apply_pause();
+    }
+
     /// The ride ended (GameAudio.raceMusic('leave')): its hold and the
     /// Jukebox pause end with it.
     pub fn ride_ended(&mut self) {
