@@ -1888,6 +1888,10 @@ impl App {
             );
             return;
         }
+        // race.js reloads the event, and with it a new song (loadGame).
+        if let Some(music) = &self.soundtrack {
+            music.borrow_mut().new_session(fresh_seed());
+        }
         let Some(riding) = self.ready.as_mut().and_then(|r| r.riding.as_mut()) else {
             return;
         };
@@ -3948,6 +3952,12 @@ impl App {
         let (Some(front), Some(content)) = (self.front.clone(), self.content.clone()) else {
             return;
         };
+        // Every ride load starts a new song (game.js `loadGame` builds a new
+        // GameAudio and MusicStream): Freestyle, races, Restart Race, a
+        // room's course or vehicle change.
+        if let Some(music) = &self.soundtrack {
+            music.borrow_mut().new_session(fresh_seed());
+        }
         // Host/Join: the Free Ride Lobby page while the room connects
         // (multiplayer.js `host`); Free Ride goes straight to the loader.
         if let Some(room) = room.as_ref().filter(|r| !r.freeride)

@@ -36,6 +36,13 @@ impl Catalog {
         })
     }
 
+    /// A new session's shuffle (music.js `load`: op 40 with a fresh
+    /// `sessionSeed()` for each ride).
+    pub fn reseed(&mut self, seed: u64) {
+        self.shuffle = MusicShuffle::new(&self.library);
+        self.random = OriginalRandom::with_seed(seed.max(1));
+    }
+
     pub fn next_song(&mut self) -> Result<Option<&Song>> {
         Ok(self
             .shuffle
