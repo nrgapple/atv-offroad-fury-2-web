@@ -1,7 +1,10 @@
 html, body { margin: 0; height: 100%; background: #0b0d10; overflow: hidden; overscroll-behavior: none; }
 html, body, canvas, #status { user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; }
 canvas { display: block; width: 100vw; height: 100vh; touch-action: none; outline: none; }
-#status { position: fixed; left: 8px; bottom: 8px; font: 12px ui-monospace, monospace; color: #e8edf2;
+/* Debug strip (frame stats, load and error lines): hidden unless ?debug=1 or F3.
+   Tests read its text, which stays current while hidden. */
+#status { display: none; position: fixed; left: 8px; bottom: 8px; font: 12px ui-monospace, monospace; color: #e8edf2;
   background: rgba(0, 0, 0, .55); padding: 4px 8px; border-radius: 4px; pointer-events: none; }
+html.debug #status, #status.fatal { display: block; }
 
 #safe-area-probe { position: fixed; visibility: hidden; pointer-events: none; padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); }
