@@ -68,6 +68,8 @@ pub struct Riding {
     pub hype: atv_game::ride::hype::HypeDirector,
     pub alpha_slowmo: bool,
     pub alpha_big_air_camera: bool,
+    /// Alpha Air dark blur (the screen pass reads `hype.blur`).
+    pub alpha_air_blur: bool,
     /// Alpha Speed & air muffle and the (muffle, wind) last sent.
     pub alpha_muffle: bool,
     hype_audio: [f32; 2],
@@ -187,6 +189,7 @@ impl Riding {
             hype: Default::default(),
             alpha_slowmo: false,
             alpha_big_air_camera: false,
+            alpha_air_blur: false,
             alpha_muffle: false,
             hype_audio: [0.; 2],
             alpha_landing_burst: false,
@@ -876,6 +879,15 @@ impl Riding {
     /// The Assisted chase orbit (radians; `requestedHillOrbit`).
     pub fn hill_orbit(&self) -> f64 {
         self.sightline.lift
+    }
+
+    /// The Air dark blur amount this frame (0 with the toggle off).
+    pub fn air_blur(&self) -> f32 {
+        if self.alpha_air_blur {
+            self.hype.blur
+        } else {
+            0.
+        }
     }
 
     /// updateHype's sound: the director's muffle and wind while live, open

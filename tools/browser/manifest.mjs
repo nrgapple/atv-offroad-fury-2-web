@@ -40,6 +40,7 @@ export const TESTS = {
   'test_engine_alpha.mjs': { group: 'content' },
   'test_engine_alpha_muffle.mjs': { group: 'content' },
   'test_engine_alpha_landing.mjs': { group: 'content' },
+  'test_engine_air_blur.mjs': { group: 'content' },
   'test_engine_settings.mjs': { group: 'content' },
   'test_engine_wake_lock.mjs': { group: 'content' },
   'test_engine_background_audio.mjs': { group: 'content' },

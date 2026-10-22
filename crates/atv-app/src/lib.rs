@@ -793,6 +793,8 @@ impl App {
             motion.origin,
             motion.linear_velocity,
         );
+        // Alpha Air dark blur follows the director's big-air amount.
+        ready.scene.set_air_blur(&ready.gpu, riding.air_blur());
         let room_started = Instant::now();
         let mut loads = Vec::new();
         let mut engine_loads = Vec::new();
@@ -959,6 +961,8 @@ impl App {
                 "arcadeFlips": riding.ride.options.arcade_flips,
                 "alphaSlowmo": riding.alpha_slowmo,
                 "alphaBigAirCamera": riding.alpha_big_air_camera,
+                "alphaAirBlur": riding.alpha_air_blur, "airBlur": riding.air_blur(),
+                "hypeBlur": riding.hype.blur,
                 "alphaMuffle": riding.alpha_muffle,
                 "hypeMuffle": riding.hype.muffle, "hypeWind": riding.hype.wind,
                 "musicMuffle": riding.sound.as_ref().map_or(0., |s| s.muffle()),
@@ -1625,6 +1629,7 @@ impl App {
         // Settings → Alpha presentation (web/hype.js).
         riding.alpha_slowmo = prefs.alpha("air-slowmo");
         riding.alpha_big_air_camera = prefs.alpha("big-air-camera");
+        riding.alpha_air_blur = prefs.alpha("air-blur");
         riding.set_alpha_muffle(prefs.alpha("music-muffle"));
         if riding.alpha_landing_burst && !prefs.alpha("landing-burst") {
             riding.burst.reset();
