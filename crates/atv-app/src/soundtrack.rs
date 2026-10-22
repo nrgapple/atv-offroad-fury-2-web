@@ -1,7 +1,8 @@
 //! The soundtrack player (web/music.js MusicStream): the catalog, shuffle
 //! and history, the Jukebox controls, a race's hold, and playback (the
-//! original VAG decoded in Rust on desktop; the hosted AAC stream in a media
-//! element on the web, falling back to the VAGs). One player serves the page:
+//! hosted AAC stream in a media element on the web; the same AAC files
+//! bundled in the content pack and decoded in Rust on desktop; both fall back
+//! to the original VAGs). One player serves the page:
 //! a ride's sound and the frontend Jukebox share it, as audio.js shares
 //! `this.music` between rides and menus.
 #[cfg(target_arch = "wasm32")]
@@ -25,7 +26,12 @@ pub struct Soundtrack {
     /// frontend menus pause it under their own tune (`pauseQueue`).
     active: bool,
     #[cfg(not(target_arch = "wasm32"))]
-    song: Option<atv_game::audio::music::VagMusic>,
+    song: Option<atv_game::audio::music::NativeSong>,
+    /// Desktop: whether the bundled remaster songs can play (a decode error
+    /// switches the session to the VAGs, as music.js falls back), and
+    /// whether a missing song file was reported.
+    #[cfg(not(target_arch = "wasm32"))]
+    streams: NativeStreams,
     #[cfg(target_arch = "wasm32")]
     pub(crate) web: Option<Rc<RefCell<WebMusic>>>,
     #[cfg(target_arch = "wasm32")]
@@ -98,6 +104,8 @@ impl Soundtrack {
             active: false,
             #[cfg(not(target_arch = "wasm32"))]
             song: None,
+            #[cfg(not(target_arch = "wasm32"))]
+            streams: NativeStreams::default(),
             #[cfg(target_arch = "wasm32")]
             web: activation.web(),
             #[cfg(target_arch = "wasm32")]
@@ -249,6 +257,8 @@ impl Soundtrack {
     }
 
     /// The streamed soundtrack's Web Audio graph for Alpha muffle (setHype).
+    /// Desktop songs play on the mixer's music bus, which the mixer's own
+    /// muffle filters (`Sound::set_hype`).
     pub fn set_hype(&mut self, muffle: f32, fast: bool) {
         #[cfg(target_arch = "wasm32")]
         if let Some(web) = &self.web {
@@ -277,9 +287,18 @@ impl Soundtrack {
             "soundtrackActive": self.active,
         });
         #[cfg(not(target_arch = "wasm32"))]
-        serde_json::json!({
-            "musicTitle": self.title, "musicQueued": queued, "soundtrackActive": self.active,
-        })
+        {
+            let (time, duration) = self
+                .song
+                .as_ref()
+                .map(|s| s.decoded_seconds())
+                .map_or((None, None), |(d, l)| (Some((d - queued).max(0.)), Some(l)));
+            serde_json::json!({
+                "musicTitle": self.title, "musicQueued": queued, "soundtrackActive": self.active,
+                "musicSource": self.song.as_ref().map(|s| if s.is_stream() { "stream" } else { "vag" }),
+                "musicTime": time, "musicDuration": duration, "streamsFailed": self.streams.failed,
+            })
+        }
     }
 
     /// The streamed soundtrack: (graphed through Web Audio, element time,
@@ -344,18 +363,20 @@ impl Soundtrack {
     /// its time, or (decoded VAGs) the undecoded rest plus what is queued.
     fn remaining(&self) -> Option<f32> {
         let queued = self.output.mixer.lock().map_or(0., |m| m.music_queued());
-        let decoded = |song: &atv_game::audio::music::VagMusic| {
-            let (decoded, duration) = song.decoded_seconds();
-            (duration - decoded).max(0.) + queued
-        };
+        let left = |(decoded, duration): (f32, f32)| (duration - decoded).max(0.) + queued;
         #[cfg(not(target_arch = "wasm32"))]
         {
-            self.song.as_ref().map(decoded)
+            self.song.as_ref().map(|s| left(s.decoded_seconds()))
         }
         #[cfg(target_arch = "wasm32")]
         {
             if self.vag.fallback {
-                return self.vag.song.borrow().as_ref().map(decoded);
+                return self
+                    .vag
+                    .song
+                    .borrow()
+                    .as_ref()
+                    .map(|s| left(s.decoded_seconds()));
             }
             let web = self.web.as_ref()?.borrow();
             let duration = web.element.duration();
@@ -443,13 +464,28 @@ impl Soundtrack {
                 };
                 let song = &catalog.library.songs[index];
                 self.title = Some(format!("{} – {}", song.title, song.artist));
-                self.song =
-                    Some(atv_game::audio::music::VagMusic::open(&content, song, rate).await?);
+                self.song = Some(open_native(&content, song, rate, &mut self.streams).await?);
             }
-            if let Some(song) = &mut self.song {
-                song.pump(&content, &mixer, 2.).await?;
+            let Some(song) = &mut self.song else {
+                return Ok(());
+            };
+            match song.pump(&content, &mixer, 2.).await {
+                Err(error) if song.is_stream() => {
+                    // music.js: a stream that cannot play falls back to the
+                    // VAGs for the session; this song continues where it was.
+                    eprintln!("music: {error}; the original VAGs play from here");
+                    self.streams.failed = true;
+                    let at = song.decoded_seconds().0;
+                    let index = self.player.selected.ok_or("no song selected")?;
+                    let original = &catalog.library.songs[index];
+                    let mut vag =
+                        atv_game::audio::music::VagMusic::open(&content, original, rate).await?;
+                    vag.seek(at)?;
+                    self.song = Some(atv_game::audio::music::NativeSong::Vag(vag));
+                    Ok(())
+                }
+                result => result.map(|_| ()),
             }
-            Ok(())
         });
         if let Err(error) = result {
             eprintln!("music: {error}");
@@ -528,6 +564,50 @@ impl Soundtrack {
         web.resume(true);
         web.playing = true;
     }
+}
+
+/// Desktop soundtrack sources (see `Soundtrack::streams`).
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Default)]
+struct NativeStreams {
+    failed: bool,
+    missing_reported: bool,
+}
+
+/// A desktop song: the bundled remaster the web streams, or the original VAG
+/// when the pack lacks the song's file (or it will not open).
+#[cfg(not(target_arch = "wasm32"))]
+async fn open_native(
+    content: &Content,
+    song: &atv_core::music::Song,
+    rate: u32,
+    streams: &mut NativeStreams,
+) -> Result<atv_game::audio::music::NativeSong, String> {
+    use atv_game::audio::{music, stream::StreamMusic};
+    if !streams.failed {
+        let path = music::path(song);
+        let opened = match content.stream(&path).await {
+            Ok(Some(bytes)) => StreamMusic::open(bytes, song.title.clone(), rate).map(Some),
+            Ok(None) => Ok(None),
+            Err(error) => Err(error),
+        };
+        match opened {
+            Ok(Some(stream)) => {
+                eprintln!("music: {} – {} (remaster)", song.title, song.artist);
+                return Ok(music::NativeSong::Stream(stream));
+            }
+            Ok(None) => {}
+            Err(error) if !streams.missing_reported => {
+                streams.missing_reported = true;
+                eprintln!("music: {error}; the original VAG plays for songs without their file");
+            }
+            Err(_) => {}
+        }
+    }
+    eprintln!("music: {} – {} (original VAG)", song.title, song.artist);
+    Ok(music::NativeSong::Vag(
+        music::VagMusic::open(content, song, rate).await?,
+    ))
 }
 
 /// music.js `hold`: the race-over fade, or 80% of the song's remainder when
@@ -715,7 +795,12 @@ impl Soundtrack {
         };
         #[cfg(not(target_arch = "wasm32"))]
         {
-            view.mode = "decoder";
+            // The remaster shows as the web's stream; the VAGs as the decoder.
+            view.mode = match &self.song {
+                Some(song) if !song.is_stream() => "decoder",
+                None if self.streams.failed => "decoder",
+                _ => "stream",
+            };
             if let Some(song) = &self.song {
                 let (decoded, duration) = song.decoded_seconds();
                 let queued = self.output.mixer.lock().map_or(0., |m| m.music_queued());
@@ -814,9 +899,10 @@ impl Soundtrack {
                             .set_current_time(f64::from(seconds).clamp(0., (d - 0.25).max(0.)));
                     }
                 }
-                // Desktop: decoding resumes at the block for `seconds` (music.js
-                // seeks its media element; the same quarter second short of
-                // the end) and the queued audio is dropped.
+                // Desktop: decoding resumes at `seconds` (the remaster's packet,
+                // or the VAG's block; music.js seeks its media element, the
+                // same quarter second short of the end) and the queued audio
+                // is dropped.
                 #[cfg(not(target_arch = "wasm32"))]
                 if let Some(song) = &mut self.song
                     && seconds.is_finite()
@@ -868,6 +954,139 @@ impl Soundtrack {
 
 #[cfg(test)]
 mod tests {
+    /// Native acceptance of the bundled remaster on a real output device:
+    /// `FURY_PACK=<pack> cargo test -p atv-app --release -- --ignored remaster`
+    /// (`FURY_PACK_NOSTREAMS=<pack built --no-streams>` also checks the VAG
+    /// fallback).
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    #[ignore = "needs a content pack (FURY_PACK) and an audio output device"]
+    fn desktop_plays_the_bundled_remaster() {
+        use super::*;
+        use atv_content::{Store, pack::Pack};
+        let open = |var: &str| {
+            let path = std::env::var_os(var)?;
+            let pack = Pack::open(std::path::Path::new(&path)).unwrap();
+            Some(Rc::new(
+                pollster::block_on(Content::open(Store::Pack(pack))).unwrap(),
+            ))
+        };
+        let content = open("FURY_PACK").expect("set FURY_PACK");
+        {
+            // Timing of a song start (diagnostic).
+            let t = std::time::Instant::now();
+            let bytes = pollster::block_on(content.stream("/AUDIO/MUSIC/PARADE.VAG"))
+                .unwrap()
+                .unwrap();
+            let read = t.elapsed().as_secs_f64() * 1000.;
+            let t = std::time::Instant::now();
+            let mut song =
+                atv_game::audio::stream::StreamMusic::open(bytes, String::new(), 48000).unwrap();
+            let opened = t.elapsed().as_secs_f64() * 1000.;
+            let mixer = std::sync::Arc::new(std::sync::Mutex::new(
+                atv_game::audio::mixer::Mixer::new(48000),
+            ));
+            let t = std::time::Instant::now();
+            song.pump(&mixer, 2.).unwrap();
+            let pumped = t.elapsed().as_secs_f64() * 1000.;
+            eprintln!(
+                "song start: read+hash {read:.1} ms, open {opened:.1} ms, first pump {pumped:.1} ms"
+            );
+        }
+        let activation = Activation::new(true);
+        let mut music =
+            pollster::block_on(Soundtrack::load(content.clone(), &activation, true)).unwrap();
+        activation.activate().unwrap();
+        // The ride's lifecycle (Sound::set_lifecycle) makes the music bus live.
+        music.output.mixer.lock().unwrap().music_active = true;
+        music.new_session(7);
+        music.set_active(true);
+        let run = |music: &mut Soundtrack, seconds: f32| {
+            let started = std::time::Instant::now();
+            let mut worst = 0f64;
+            while started.elapsed().as_secs_f32() < seconds {
+                let t = std::time::Instant::now();
+                music.maintain();
+                worst = worst.max(t.elapsed().as_secs_f64() * 1000.);
+                std::thread::sleep(std::time::Duration::from_millis(16));
+            }
+            worst
+        };
+        let time = |music: &Soundtrack| music.report()["musicTime"].as_f64().unwrap_or(-1.);
+        let first = run(&mut music, 1.5);
+        let report = music.report();
+        eprintln!("first song: {report} (longest maintain {first:.1} ms)");
+        assert_eq!(report["musicSource"], "stream");
+        assert!((0.8..2.0).contains(&time(&music)), "{report}");
+        // The length is the web's (the manifest's media seconds).
+        let index = music.player.selected.unwrap();
+        let catalog = music.catalog.as_ref().unwrap();
+        let path = atv_game::audio::music::path(&catalog.library.songs[index]);
+        let seconds = content
+            .manifest
+            .record(&path)
+            .unwrap()
+            .stream
+            .as_ref()
+            .unwrap()
+            .seconds;
+        let view = music.music_view();
+        assert_eq!(view.mode, "stream");
+        assert!(
+            (f64::from(view.duration) - seconds).abs() < 0.05,
+            "{} vs {seconds}",
+            view.duration
+        );
+        // Jukebox seek.
+        music.jukebox(JukeboxAction::Seek(60.));
+        run(&mut music, 0.5);
+        assert!((60.2..61.).contains(&time(&music)), "{}", music.report());
+        // Spectrum bars while it plays.
+        assert!(music.spectrum().is_some_and(|b| b.iter().any(|&v| v > 0)));
+        // The menus park it in place; it resumes where it was.
+        music.set_active(false);
+        let parked = time(&music);
+        run(&mut music, 0.6);
+        assert!(
+            (time(&music) - parked).abs() < 0.05,
+            "{parked} -> {}",
+            time(&music)
+        );
+        music.set_active(true);
+        run(&mut music, 0.6);
+        assert!(
+            (parked + 0.3..parked + 1.).contains(&time(&music)),
+            "{parked} -> {}",
+            time(&music)
+        );
+        // Jukebox Next: the next song, also the remaster.
+        let title = music.title.clone();
+        music.jukebox(JukeboxAction::Next);
+        let next = run(&mut music, 1.);
+        eprintln!(
+            "next song: {} (longest maintain {next:.1} ms)",
+            music.report()
+        );
+        assert_ne!(music.title, title);
+        assert_eq!(music.report()["musicSource"], "stream");
+        // Race over: the hold fades the song out over 1.5 s and stops it.
+        music.hold(1.5);
+        run(&mut music, 2.);
+        assert_eq!(music.report()["musicTitle"], serde_json::Value::Null);
+        music.release();
+        run(&mut music, 1.);
+        assert_eq!(music.report()["musicSource"], "stream");
+        // A pack without the songs plays the original VAGs.
+        if let Some(bare) = open("FURY_PACK_NOSTREAMS") {
+            let mut music = pollster::block_on(Soundtrack::load(bare, &activation, true)).unwrap();
+            music.new_session(7);
+            music.set_active(true);
+            run(&mut music, 1.);
+            assert_eq!(music.report()["musicSource"], "vag");
+            assert_eq!(music.music_view().mode, "decoder");
+        }
+    }
+
     #[test]
     fn race_hold_fades_over_what_is_left_of_a_song() {
         assert_eq!(super::hold_seconds(1.5, Some(10.)), 1.5);

@@ -1,8 +1,9 @@
 //! Audio output for the ride: cpal pulls the shared mixer (CoreAudio,
 //! WASAPI, ALSA natively; Web Audio in browsers), started by the first key
 //! or pointer press as browser autoplay rules require. The soundtrack is the
-//! original VAG decoded in Rust on desktop and the hosted AAC stream in a
-//! media element on the web, as the JavaScript game plays it.
+//! hosted AAC stream in a media element on the web, as the JavaScript game
+//! plays it, and the same AAC files bundled with the desktop app and decoded
+//! in Rust there (soundtrack.rs).
 pub use crate::soundtrack::Soundtrack;
 use atv_content::Content;
 use atv_game::{
