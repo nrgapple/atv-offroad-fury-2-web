@@ -4,10 +4,12 @@
 The pack (format documented in crates/atv-content/src/pack.rs) is embedded in, or
 shipped beside, the standalone desktop executables. It is game content: keep it in
 ignored storage (default ~/LargeFiles/fury-desktop/packs on the SSD), never in Git
-or CI. Only the manifest's authorized runtime files (.RES/.VAG/.LSI) are accepted;
-the ISO, BIOS, boot executable and anything else are refused.
+or CI. Only the manifest's authorized runtime files (.RES/.VAG/.LSI) are accepted,
+with the soundtrack's AAC (.m4a) remaster songs the web streams (the desktop app
+plays them; --no-streams leaves them out, and the app then plays the original
+VAGs); the ISO, BIOS, boot executable and anything else are refused.
 
-    tools/pack_content.py build [--source DIR] [--output FILE] [--include-streams]
+    tools/pack_content.py build [--source DIR] [--output FILE] [--no-streams]
     tools/pack_content.py verify PACK
 """
 import argparse
@@ -132,7 +134,7 @@ def refuse_tracked_destination(output):
         raise PackError(f'refusing to write content inside the repository: {output}')
 
 
-def build(source, output, include_streams=False):
+def build(source, output, include_streams=True):
     source = Path(source)
     manifest_bytes = (source / 'manifest.json').read_bytes()
     manifest = json.loads(manifest_bytes)
@@ -142,7 +144,8 @@ def build(source, output, include_streams=False):
         if path.is_symlink() or not path.is_file():
             raise PackError(f'missing package chunk {path.name}')
     output = Path(output) if output else DEFAULT_PACK_DIR / (
-        'fury-content-' + hashlib.sha256(manifest_bytes).hexdigest()[:12] + '.pack')
+        'fury-content-' + hashlib.sha256(manifest_bytes).hexdigest()[:12]
+        + ('' if include_streams else '-nostreams') + '.pack')
     refuse_tracked_destination(output)
     write_pack(output, manifest_bytes, blobs,
                lambda digest: (source / f'{digest}.{blobs[digest][1]}').read_bytes())
@@ -232,6 +235,13 @@ def _stream_digests(manifest):
     return [r['stream']['sha256'] for r in manifest.get('files', []) if r.get('stream')]
 
 
+def stream_count(path, base=0, length=None):
+    """`(packed, listed)` soundtrack songs of a pack (the desktop app plays the packed ones)."""
+    manifest_bytes, entries = read_pack(path, base, length)
+    digests = _stream_digests(json.loads(manifest_bytes))
+    return sum(1 for d in digests if d in entries), len(digests)
+
+
 def write_fixture(output):
     """Synthetic two-file pack (no game data) used by the Rust and Python tests."""
     one, a, b = b'first file', b'chunk-a|', b'chunk-b'
@@ -257,8 +267,8 @@ def main(argv=None):
     b = sub.add_parser('build', help='build a pack from the hosted package')
     b.add_argument('--source', type=Path, default=DEFAULT_SOURCE)
     b.add_argument('--output', type=Path)
-    b.add_argument('--include-streams', action='store_true',
-                   help='also pack the browser jukebox .m4a streams (unused by the desktop engine so far)')
+    b.add_argument('--no-streams', dest='include_streams', action='store_false',
+                   help='leave out the soundtrack .m4a songs (the desktop app then plays the original VAGs)')
     v = sub.add_parser('verify', help='check a pack end to end')
     v.add_argument('pack', type=Path)
     f = sub.add_parser('fixture', help='write the synthetic test fixture')

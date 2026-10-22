@@ -12,7 +12,9 @@ embedded = []
 [dependencies]
 serde.workspace = true
 serde_json.workspace = true
-sha2 = "0.10"
+# 0.11 hashes with the CPU's SHA-256 instructions on arm64 too (Apple silicon), detected
+# at run time: a bundled soundtrack song (5 MB) verifies in milliseconds.
+sha2 = "0.11"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 js-sys = "0.3"
