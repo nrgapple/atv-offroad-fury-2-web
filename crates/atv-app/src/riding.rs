@@ -68,6 +68,12 @@ pub struct Riding {
     pub hype: atv_game::ride::hype::HypeDirector,
     pub alpha_slowmo: bool,
     pub alpha_big_air_camera: bool,
+    /// Alpha Landing burst: dust, clods and a thump at hard landings.
+    pub alpha_landing_burst: bool,
+    pub burst: atv_game::burst::BurstEmitter,
+    dust_tint: atv_game::wheel_effects::DustTint,
+    /// Landing thumps played (diagnostics).
+    pub thumps: u32,
     /// Enhanced/High: draw sunk wheels on the visible ground
     /// (graphics.js `wheelReprojection`).
     pub wheel_reprojection: bool,
@@ -178,6 +184,10 @@ impl Riding {
             hype: Default::default(),
             alpha_slowmo: false,
             alpha_big_air_camera: false,
+            alpha_landing_burst: false,
+            burst: atv_game::burst::BurstEmitter::new(192),
+            dust_tint: atv_game::wheel_effects::DustTint::new(venue),
+            thumps: 0,
             wheel_reprojection: false,
             ground: venue.visible.clone(),
             wheel_lift: std::cell::Cell::new(0.),
@@ -213,6 +223,9 @@ impl Riding {
         self.clear_input();
         self.ride.reset()?;
         self.hype.reset();
+        self.burst.reset();
+        let (frame, ground) = hype_frame(&self.ride);
+        self.hype.step(frame, ground);
         if let Some(effects) = &mut self.effects {
             effects.reset(&self.ride)?;
         }
@@ -384,8 +397,12 @@ impl Riding {
         self.orbit -= input.drag * 0.004;
         // Alpha slow motion stretches real time between fixed steps
         // (Freestyle only: races and shared rides keep real time).
-        self.hype
+        let landed = self
+            .hype
             .update(dt, self.alpha_slowmo && self.ride.race().is_none());
+        if let Some(landing) = landed {
+            self.land(&landing)?;
+        }
         self.accumulator = (self.accumulator + dt * self.hype.time_scale).min(0.1);
         let count = ((self.accumulator * 60.).floor() as u32).min(4);
         if count < 1 {
@@ -497,6 +514,9 @@ impl Riding {
                 }
             }
             self.ride.step(controls, self.orbit)?;
+            // acceptFrame: the Alpha hype director reads every step.
+            let (frame, ground) = hype_frame(&self.ride);
+            self.hype.step(frame, ground);
             if let Some(effects) = &mut self.effects {
                 effects.step(&self.ride)?;
             }
@@ -692,6 +712,11 @@ impl Riding {
                 })
                 .map(|c| &c.blood),
         );
+        scene.accept_burst(
+            gpu,
+            self.alpha_landing_burst
+                .then_some((&self.burst, self.ride.steps() as f32 / 60.)),
+        );
         let mud = if self.ride.is_motorcycle() {
             self.ride.mud_amount()
         } else if self.dirt_enabled || self.dirt.heavy() {
@@ -760,6 +785,42 @@ impl Riding {
 
     /// One accepted frame of ATV dirt, only while it is drawn (the browser
     /// steps it on every preset; Original skips the four wheel samples).
+    /// updateHype's landing: Alpha Landing burst (dust and clods at the
+    /// visible ground, a thump) and Heavy mud's splat, unless a wheel is in
+    /// water.
+    fn land(&mut self, landing: &atv_game::ride::hype::Landing) -> Result<(), String> {
+        if !self.focused || self.menu_open {
+            return Ok(());
+        }
+        let wet = self.ride.dirt_sample()?.is_some_and(|s| {
+            (0..4).any(|i| s.water_heights[i] > s.centers[i][1] - s.radii[i] * 0.5)
+        });
+        if wet {
+            return Ok(());
+        }
+        if self.alpha_landing_burst {
+            let [x, _, z] = landing.position;
+            let v = self.ride.frame().linear_velocity;
+            self.burst.burst(
+                [x, self.visible_ground(x, z), z],
+                landing.severity,
+                self.ride.steps() as f64 / 60.,
+                self.dust_tint.at(x, z),
+                [v[0], v[2]],
+            );
+            if let Some(sound) = &mut self.sound
+                && sound.landing_thump(landing.severity)
+            {
+                self.thumps += 1;
+            }
+        }
+        if self.dirt.heavy() && !self.ride.is_motorcycle() {
+            self.dirt
+                .splat(f64::from((landing.severity * 0.9).min(60.)));
+        }
+        Ok(())
+    }
+
     fn step_dirt(&mut self) -> Result<(), String> {
         if (self.dirt_enabled || self.dirt.heavy())
             && let Some(sample) = self.ride.dirt_sample()?
