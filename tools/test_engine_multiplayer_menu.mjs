@@ -2,8 +2,9 @@
 // from Main Menu → Multiplayer → Host Game (name and custom code typed into
 // the form's browser inputs) → Select Track → Ride; a JavaScript player joins
 // by the code; a second Rust browser joins from Join Game. Host and Join show
-// the Free Ride Lobby page while the room connects (held 1.5 s with
-// ?joinDelayMs); the guest first leaves it with Back, then joins.
+// the Free Ride Lobby page while the room connects and then its riders (each
+// held 1.5 s with ?joinDelayMs); the guest first leaves it with Back, then
+// joins.
 //   PLAYWRIGHT_MODULE=... ATV_TEST_URL=http://127.0.0.1:4187 node tools/test_engine_multiplayer_menu.mjs
 // ATV_MP_SCREENSHOT=out.png saves the Host and Join forms and the lobby page.
 import assert from 'node:assert/strict';
@@ -70,7 +71,16 @@ try {
   const lobby = (await read(host)).front;
   assert.equal(lobby.lobby?.code, code);
   assert.deepEqual(lobby.choices, ['share', 'leave']);
-  report.lobby = { code: lobby.lobby.code, status: lobby.lobby.status, choices: lobby.choices };
+  // Once connected the page lists the room's riders (multiplayer.js
+  // lobby_status), held 1.5 s by ?joinDelayMs, then the loader follows.
+  await host.waitForFunction(
+    () => JSON.parse(document.querySelector('#ui-state')?.textContent || '{}').front?.lobby?.status,
+    null,
+    { timeout: 60000 }
+  );
+  const connected = (await read(host)).front.lobby;
+  assert.equal(connected.status, '1/4 riders / RustHost');
+  report.lobby = { code: lobby.lobby.code, connecting: lobby.lobby.status, connected: connected.status, choices: lobby.choices };
   if (shots) await host.screenshot({ path: shots.replace('.png', '-lobby.png') });
   await host.waitForFunction(c => JSON.parse(window.furyMultiplayer ?? 'null')?.code === c, code, { timeout: 180000 });
   let e = await engine(host);

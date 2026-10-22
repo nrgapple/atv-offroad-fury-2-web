@@ -233,6 +233,8 @@ impl PauseMenu {
             "vibration": p.vibration,
             "diagnostics_mode": p.diagnostics,
             "sound_mode": p.sound_mode,
+            // frontend.js: the row only where the audio session exists.
+            "silent_mode": if p.audio_session { p.silent.as_str() } else { "" },
             "sfx_volume": (p.sfx_volume * 100.).round() as usize,
             "alpha_rows": if self.page == "alpha" {
                 super::prefs::ALPHA_FEATURES.iter().map(|(id, label)| json!({
@@ -258,7 +260,8 @@ impl PauseMenu {
             "minimap_orientation": if m.heading_up { "heading-up" } else { "north-up" },
             "mobile_steering_sensitivity": ctx.touch.input.steering_sensitivity,
             "one_handed_mobile": ctx.touch.one_handed(),
-            "fullscreen": true,
+            // frontend.js: Fullscreen only where the API exists (not iPhone).
+            "fullscreen": p.fullscreen,
         });
         let mut request = request;
         if let Some(b) = ctx.bindings.as_deref() {
