@@ -133,6 +133,9 @@ pub struct Overlay {
     menu_reveal: bool,
     /// CPU time of the last `prepare`, milliseconds.
     pub prepare_ms: f64,
+    /// The diagnostics overlay's lines (empty while Off; menus hide it, as
+    /// `body.menu-open #diagnostics-overlay` does).
+    pub diagnostics: Vec<String>,
     /// Parity test hook: a flat colour painted under the UI.
     pub backdrop: Option<[u8; 3]>,
     /// The engine's frontend can take the player back (Quit to Main Menu).
@@ -197,6 +200,7 @@ impl Overlay {
             menu_scroll_max: 0.,
             menu_reveal: false,
             prepare_ms: 0.,
+            diagnostics: Vec::new(),
             backdrop: None,
             frontend: false,
         }
@@ -773,6 +777,15 @@ impl Overlay {
             self.list.rect(
                 Rect::new(0., 0., view.width, view.height),
                 atv_ui::Color::rgb(0, 0, 0).fade(1. - t.max(0.)),
+            );
+        }
+        if !self.diagnostics.is_empty() {
+            atv_ui::diagnostics::paint(
+                &mut self.list,
+                &mut self.fonts,
+                view.width,
+                view.height,
+                &self.diagnostics,
             );
         }
         self.upload(device, queue, width, height);
