@@ -398,7 +398,12 @@ pub fn element(view: &Viewport, state: &State, images: &glyphs::GlyphImages) -> 
             );
             return el;
         } else {
-            el = el.child(label_el(&text, &style, size));
+            let mut label = label_el(&text, &style, size);
+            // The label keeps its width; a long value ellipsizes instead.
+            if !value.is_empty() && !narrow {
+                label.style.flex_shrink = 0.;
+            }
+            el = el.child(label);
         }
         if !value.is_empty() {
             let value_color = if selected {
@@ -406,23 +411,40 @@ pub fn element(view: &Viewport, state: &State, images: &glyphs::GlyphImages) -> 
             } else {
                 Color::hex("#f1d84e")
             };
+            let value_style = TextStyle::new(display(15., 700, false), value_color).spacing(0.45);
             // ≤580px: `.pause-value { max-width: 50% }` wraps long values.
-            el = el.child(
+            // Wider, a long value (a controller's full name) gives way to
+            // its label and ends in an ellipsis instead of overrunning it.
+            el = el.child(if narrow {
                 El::new(Style {
                     flex_shrink: 0.,
                     max_size: Size {
-                        width: if narrow { percent(0.5) } else { auto() },
+                        width: percent(0.5),
                         height: auto(),
                     },
                     ..Default::default()
                 })
                 .content(Content::Text {
                     text: value,
-                    style: TextStyle::new(display(15., 700, false), value_color).spacing(0.45),
+                    style: value_style,
                     line_height: 18.,
-                    wrap: narrow,
-                }),
-            );
+                    wrap: true,
+                })
+            } else {
+                El::new(Style {
+                    flex_shrink: 1000.,
+                    min_size: Size {
+                        width: LengthPercentageAuto::length(0.),
+                        height: LengthPercentageAuto::auto(),
+                    },
+                    ..Default::default()
+                })
+                .content(Content::Ellipsis {
+                    text: value,
+                    style: value_style,
+                    line_height: 18.,
+                })
+            });
         }
         el
     };
