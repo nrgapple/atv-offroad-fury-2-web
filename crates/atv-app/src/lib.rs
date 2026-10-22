@@ -229,6 +229,8 @@ struct App {
     mouse_ui: bool,
     ui_backdrop: Option<[u8; 3]>,
     ui_diagnostics: bool,
+    /// The diagnostics overlay (F3; web/diagnostics.js).
+    diagnostics: Diagnostics,
     /// `?ui=0` (parity captures): draw the scene only, as the JavaScript
     /// canvas captures leave out the DOM toolbar, HUD and keyboard card.
     hide_ui: bool,
@@ -675,6 +677,7 @@ impl App {
 
     /// One rendered frame of the ride: input, fixed steps, chase view.
     fn ride_frame(&mut self, dt: f32) {
+        self.update_diagnostics();
         // Other riders' models and engine banks load a slice per frame.
         let loads = Instant::now();
         self.poll_frame_tasks();
@@ -933,6 +936,8 @@ impl App {
             state["camera"]["preset"] = riding.ride.camera().0.preset.into();
             state["paused"] = riding.paused.into();
             state["wakeLock"] = self.wake_lock.held().into();
+            state["diagnostics"] = serde_json::json!({
+                "mode": self.diagnostics.mode.name(), "lines": self.diagnostics.lines});
             state["active"] = active.into();
             let applied = riding.ride.applied();
             state["controls"] = serde_json::json!({
@@ -1016,6 +1021,7 @@ impl App {
         }
         let cpu = started.elapsed().as_secs_f64() * 1000. - acquire;
         self.meter.cpu += cpu;
+        self.diagnostics.cpu = cpu;
         if riding.autodrive.is_some() {
             let render = render_started.elapsed().as_secs_f64() * 1000. - acquire;
             let audio = riding.sound.as_ref().map_or(0., |s| s.mix);
@@ -1842,6 +1848,177 @@ impl App {
         }
     }
 
+    /// F3: Off -> Performance -> Debug, saved as the Settings row saves it.
+    fn cycle_diagnostics(&mut self) {
+        let mode = self.diagnostics.mode.next();
+        self.set_diagnostics(mode);
+        // Every settings holder keeps the choice (natively they rewrite one file).
+        let key = atv_ui::diagnostics::KEY;
+        let mut saved = false;
+        if let Some(overlay) = &mut self.overlay {
+            overlay.settings.set(key, mode.name());
+            saved = true;
+        }
+        if let Some(front) = &self.front {
+            front.borrow_mut().settings.set(key, mode.name());
+            saved = true;
+        }
+        if !saved {
+            atv_ui::settings::Settings::load().set(key, mode.name());
+        }
+        self.wake();
+    }
+
+    fn set_diagnostics(&mut self, mode: atv_ui::diagnostics::Mode) {
+        self.diagnostics.mode = mode;
+        self.diagnostics.updated = None;
+        if let Some(overlay) = &mut self.overlay {
+            overlay.prefs.diagnostics = mode.name().into();
+        }
+        if let Some(front) = &self.front {
+            front.borrow_mut().set_diagnostics_pref(mode.name());
+        }
+    }
+
+    /// One frame of the overlay: statistics, the menu row's choice, and the
+    /// lines (rebuilt four times a second, as diagnostics.js `present`).
+    fn update_diagnostics(&mut self) {
+        use atv_ui::diagnostics::{Mode, number, vector};
+        // Settings → Diagnostics in a menu changes the mode too.
+        // (ride menu?, value): a change seen on the same menu is the player's.
+        let pref = match (&self.ready, &self.overlay, &self.front) {
+            (Some(_), Some(overlay), _) => Some((true, overlay.prefs.diagnostics.clone())),
+            (None, _, Some(front)) => Some((false, front.borrow().diagnostics_pref().to_string())),
+            _ => None,
+        };
+        if let (Some((ride, value)), Some((was_ride, was))) = (&pref, &self.diagnostics.pref)
+            && ride == was_ride
+            && value != was
+            && let Some(mode) = Mode::parse(value)
+        {
+            self.diagnostics.mode = mode;
+            self.diagnostics.updated = None;
+        }
+        self.diagnostics.pref = pref;
+        let now = self.started.elapsed().as_secs_f64() * 1000.;
+        let active = self.effective_focused();
+        let mode = self.diagnostics.mode;
+        if mode == Mode::Off {
+            self.diagnostics.stats = Default::default();
+            self.diagnostics.lines.clear();
+        } else {
+            let cpu = self.diagnostics.cpu;
+            self.diagnostics.stats.sample(now, cpu, active);
+            if self.diagnostics.updated.is_none_or(|t| now - t >= 250.) {
+                self.diagnostics.updated = Some(now);
+                let t = self.diagnostics.stats.snapshot();
+                let riding = self.ready.as_ref().and_then(|r| r.riding.as_ref());
+                let state = match riding {
+                    Some(r) if r.paused => "PAUSED",
+                    _ if !active => "UNFOCUSED",
+                    Some(_) => "LIVE",
+                    None => "MENU",
+                };
+                let mut lines = vec![
+                    format!(
+                        "{} · {state} · F3",
+                        if mode == Mode::Debug {
+                            "DEBUG"
+                        } else {
+                            "PERFORMANCE"
+                        }
+                    ),
+                    format!(
+                        "FPS {}  Frame {} ms",
+                        number(t.fps, 1),
+                        number(t.frame_ms, 1)
+                    ),
+                    format!(
+                        "Frame p95 {} ms  CPU draw {} ms",
+                        number(t.p95_ms, 1),
+                        number(t.cpu_ms, 1)
+                    ),
+                ];
+                if let Some(r) = riding {
+                    lines.push(format!(
+                        "Simulation {} ms / {} steps",
+                        number(Some(r.sim_ms), 2),
+                        r.steps_last_frame
+                    ));
+                }
+                lines.push(format!(
+                    "Draws {}  Triangles {}",
+                    self.meter.draws, self.meter.triangles
+                ));
+                if let Some(window) = &self.window {
+                    let size = window.inner_size();
+                    lines.push(format!("Resolution {} × {}", size.width, size.height));
+                }
+                // The former debug strip (#status): load, error and frame lines.
+                // Its " · " fields regroup into short lines so the panel stays
+                // narrow, as the browser overlay's own lines are.
+                let strip = LAST_STATUS.with_borrow(|s| s.clone());
+                let mut line = String::new();
+                for field in strip.split(" · ").filter(|f| !f.is_empty()) {
+                    if !line.is_empty() && line.chars().count() + field.chars().count() > 44 {
+                        lines.push(std::mem::take(&mut line));
+                    }
+                    if !line.is_empty() {
+                        line.push_str(" · ");
+                    }
+                    line.push_str(field);
+                }
+                if !line.is_empty() {
+                    lines.push(line);
+                }
+                if let (Mode::Debug, Some(r), Some(ready)) = (mode, riding, &self.ready) {
+                    let f = r.ride.frame();
+                    let applied = r.ride.applied();
+                    let wheels = |v: [bool; 4]| v.map(|g| if g { "1" } else { "0" }).join(" ");
+                    lines.extend([
+                        format!(
+                            "Map {}  Step {}",
+                            ready.venue.environment.to_uppercase(),
+                            r.ride.steps()
+                        ),
+                        format!("Position ft {}", vector(&f.origin)),
+                        format!("Velocity ft/s {}", vector(&f.linear_velocity)),
+                        format!("Contact FL FR RL RR {}", wheels(f.grounded)),
+                        format!("Suspension ft {}", vector(&f.wheel_compression)),
+                        format!(
+                            "Stops {}  Body {}  Props {}",
+                            f.suspension_stop_contacts,
+                            f.chassis_contact_count,
+                            f.obstacle_contact_count
+                        ),
+                        format!("Wreck {:?}  Resets {}", f.wreck.phase, f.reset_count),
+                        format!("Water ft {}", number(Some(f64::from(f.water_height)), 2)),
+                        format!(
+                            "Input T {} B {} S {} L {}",
+                            number(Some(f64::from(applied.throttle)), 2),
+                            number(Some(f64::from(applied.brake)), 2),
+                            number(Some(f64::from(applied.steer)), 2),
+                            number(Some(f64::from(applied.lean)), 2)
+                        ),
+                        format!(
+                            "Speed {} mph",
+                            number(Some(f64::from(f.speed_magnitude) * 3600. / 5280.), 1)
+                        ),
+                    ]);
+                }
+                self.diagnostics.lines = lines;
+            }
+        }
+        let lines = self.diagnostics.lines.clone();
+        if self.ready.is_some() {
+            if let Some(overlay) = &mut self.overlay {
+                overlay.diagnostics = lines;
+            }
+        } else if let Some(front) = &self.front {
+            front.borrow_mut().diagnostics = lines;
+        }
+    }
+
     /// Key releases: a binding capture saves when all keys are up; the
     /// bindings track held edge keys (bindings.js `observeKeys`).
     fn key_released(&mut self, code: KeyCode) {
@@ -2462,6 +2639,13 @@ impl ApplicationHandler<Message> for App {
                     return;
                 }
                 if let PhysicalKey::Code(code) = event.physical_key {
+                    // F3 belongs to the diagnostics overlay everywhere.
+                    if code == KeyCode::F3 {
+                        if event.state == ElementState::Pressed && !event.repeat {
+                            self.cycle_diagnostics();
+                        }
+                        return;
+                    }
                     match event.state {
                         ElementState::Pressed => {
                             self.gesture();
@@ -3249,6 +3433,7 @@ impl App {
 
     /// One frontend frame: controller input, layout and present.
     fn front_frame(&mut self) {
+        self.update_diagnostics();
         let (Some(front), Some(gpu)) = (self.front.clone(), self.gpu.as_ref()) else {
             return;
         };
@@ -3265,7 +3450,16 @@ impl App {
             self.text_inputs.sync(&fields, &rects, &self.proxy);
         }
         if self.ui_diagnostics {
-            publish_ui_state(&serde_json::json!({ "front": f.diagnostics() }).to_string());
+            publish_ui_state(
+                &serde_json::json!({
+                    "front": f.diagnostics(),
+                    "diagnostics": {
+                        "mode": self.diagnostics.mode.name(),
+                        "lines": self.diagnostics.lines,
+                    },
+                })
+                .to_string(),
+            );
         }
         let wants = f.wants();
         // The garage shows the authored top speed of the current ATV.
@@ -3319,6 +3513,7 @@ impl App {
             }
         }
         self.meter.cpu += started.elapsed().as_secs_f64() * 1000.;
+        self.diagnostics.cpu = started.elapsed().as_secs_f64() * 1000.;
         if let Some(event) = event {
             self.front_event(event);
         }
@@ -3806,9 +4001,16 @@ fn fatal() {
     }
 }
 
-/// The debug strip line (web `#status`, shown with `?debug=1` or F3; desktop
-/// standard error).
+thread_local! {
+    /// The latest status line, shown in the diagnostics overlay.
+    static LAST_STATUS: RefCell<String> = const { RefCell::new(String::new()) };
+}
+
+/// The status line: web `#status` (hidden, kept current for tests and shown
+/// only for a fatal error; the diagnostics overlay carries it), desktop
+/// standard error.
 pub(crate) fn status(text: &str) {
+    LAST_STATUS.with_borrow_mut(|s| text.clone_into(s));
     #[cfg(target_arch = "wasm32")]
     {
         web_sys::console::log_1(&text.into());
@@ -3860,6 +4062,7 @@ pub fn run(options: Options) {
         mouse_ui: false,
         ui_backdrop: None,
         ui_diagnostics: ui_diagnostics_enabled(),
+        diagnostics: Diagnostics::new(),
         hide_ui: url_flag("ui=0"),
         sound_unlocked: false,
         activation,
@@ -4138,4 +4341,60 @@ async fn web_image(url: &str) -> Option<atv_ui::front::pixels::Rgba> {
         height,
         data.data().0,
     ))
+}
+
+/// The diagnostics overlay's state (web/diagnostics.js DiagnosticsOverlay).
+struct Diagnostics {
+    mode: atv_ui::diagnostics::Mode,
+    stats: atv_ui::diagnostics::FrameStats,
+    /// When the lines were last rebuilt (ms since start).
+    updated: Option<f64>,
+    lines: Vec<String>,
+    /// The last frame's CPU time (ms).
+    cpu: f64,
+    /// The menu row's value last seen (on a ride menu or the frontend's).
+    pref: Option<(bool, String)>,
+}
+
+impl Diagnostics {
+    /// Off unless `?debug=1` (Performance) / `?debug=2` (Debug) or the
+    /// saved choice says otherwise.
+    fn new() -> Self {
+        use atv_ui::diagnostics::{KEY, Mode};
+        let saved = || {
+            atv_ui::settings::Settings::load()
+                .get(KEY)
+                .and_then(|v| Mode::parse(&v))
+        };
+        let mode = debug_param()
+            .map(|v| match v.as_str() {
+                "0" => Mode::Off,
+                "2" => Mode::Debug,
+                _ => Mode::Performance,
+            })
+            .or_else(saved)
+            .unwrap_or_default();
+        Self {
+            mode,
+            stats: Default::default(),
+            updated: None,
+            lines: Vec::new(),
+            cpu: 0.,
+            pref: None,
+        }
+    }
+}
+
+/// `?debug=` on the web; `ATV_DEBUG` natively.
+fn debug_param() -> Option<String> {
+    #[cfg(target_arch = "wasm32")]
+    {
+        let search = web_sys::window()?.location().search().ok()?;
+        search.trim_start_matches('?').split('&').find_map(|pair| {
+            let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
+            (key == "debug").then(|| value.to_string())
+        })
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    std::env::var("ATV_DEBUG").ok()
 }

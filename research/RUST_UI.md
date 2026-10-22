@@ -665,3 +665,24 @@ the output restarts and the song reloads at its position. Evidence:
 contexts suspended, the song unloaded, no session entry; on return the same song
 plays on). Real iOS is not exercised by the test.
 
+## Diagnostics overlay (2026-10-22)
+
+`atv_ui::diagnostics` ports web/diagnostics.js and replaces the engine page's
+debug strip. F3 (web and desktop) cycles Off -> Performance -> Debug and saves the
+choice under `atv.diagnostics.v1`, the key the Settings row already used; the row
+and F3 stay in step. `?debug=1` opens Performance and `?debug=2` Debug (`ATV_DEBUG`
+natively); without either the saved choice applies, Off by default. Performance
+shows the browser overlay's frame lines (FPS and mean frame, p95 and CPU per frame
+over the last 120 frames, simulation time and steps, draws and triangles,
+resolution) and the former `#status` strip text regrouped into short lines; Debug
+adds the map and step, position, velocity, wheel contacts, suspension, contact
+counts, wreck phase and resets, water height, applied input and speed. The panel is
+drawn by the Rust UI at the top right (`#diagnostics-overlay` box, 11 px monospace,
+10 px and lower below 600 px), hidden behind ride menus as `body.menu-open` hides
+it, and shown on the frontend too since the strip it replaces was. `#status` stays
+hidden with its text updating; only `#status.fatal` shows it. Not ported: the
+browser-only lines (worker round trip, Wasm heap, minimap backing size, scene
+cache and plant query counters, rider wreck cache). Evidence:
+`tools/test_engine_diagnostics.mjs`; screenshots
+`private/reports/rust-ui/diagnostics/ride-{performance,debug}.png`.
+

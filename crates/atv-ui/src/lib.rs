@@ -5,6 +5,7 @@
 // Presentation only: not part of the deterministic simulation (clippy.toml).
 #![allow(clippy::disallowed_methods)]
 pub mod color;
+pub mod diagnostics;
 pub mod front;
 pub mod hud;
 pub mod layout;
