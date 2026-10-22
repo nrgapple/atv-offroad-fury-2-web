@@ -11,6 +11,14 @@
 - Continue the tested checkpoint, PR, merge, and deployment flow from the task branch. Use the change-aware CI lanes in research/CI_CHECKPOINTS.md: documentation validates without building/deploying the game; dev-log-only publication reuses checked application bytes. Release documentation also belongs on this chat's own branch.
 - After delivery, prune merged task branches when safe. Preserve other chats' worktrees and all uncommitted or unmerged work; never force-remove a checkout to free a branch.
 
+# Rust only for new work
+
+- All new game work goes into the Rust engine only (`crates/atv-game`, `atv-render`, `atv-ui`, `atv-net`, `atv-content`, `atv-app`, plus `atv-core`), which builds the web (`/engine.html`) and the macOS, Windows and Linux desktop apps from one codebase. This covers new features, enhancements, original-behavior fidelity fixes, UI, audio, multiplayer and performance work.
+- The JavaScript game is frozen and will be deleted when `play.html` switches to the Rust engine: `web/*.js` game modules (`game.js`, `frontend.js`, `audio.js`, `hud.js`, `multiplayer.js`, the render, input and effect modules and the rest), their `*.test.mjs` files, `web/worker.js` and the `crates/atv-web` ABI. Do not add features, settings, options or refactors there, and do not port Rust work back to it. Change it only for a fix the live `play.html` urgently needs, or when the user explicitly asks; say so in the PR.
+- If a request names a JavaScript file or "the web game", implement it in the Rust engine instead, and use the JavaScript only as the parity reference (read it, run it in comparisons). If the Rust engine lacks a dependency for the change, port that dependency to Rust first.
+- The page shell is not game code and stays JavaScript: `web/engine.js` (the Wasm loader), `sw.js`, `install.js`, `offline.js`, `analytics.js`, `devlog.js` and `landing.js`. Keep it minimal; put game logic in Rust.
+- Browser tests for new work target `/engine.html` (`tools/test_engine_*.mjs`); comparison tools may still drive `play.html` as the reference.
+
 # Working in this project
 
 - Read `README.md`, `HANDOFF.md`, and `research/RESOURCES.md` before making implementation choices.

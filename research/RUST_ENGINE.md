@@ -23,6 +23,9 @@ reaches parity; then the JavaScript and its ABI operations are deleted.
 
 ## Migration rule
 
+New work lands in the Rust engine only; the JavaScript game is frozen as the parity
+reference until the switch-over (AGENTS.md "Rust only for new work").
+
 The Rust engine runs beside the live game at `/engine.html` until it matches. A
 subsystem moves when `tools/compare_engine.mjs` shows the same frame from the same
 camera in the JavaScript game, the Rust engine in the browser and the native build.
