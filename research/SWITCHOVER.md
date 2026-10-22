@@ -101,8 +101,7 @@ These would regress players at switch-over. Highest impact first.
       missing.~~ Closed: a missing or failed stream decodes the original VAGs on
       the mixer's music bus for the rest of the session.
 
-In progress elsewhere, not counted as gaps: the diagnostics overlay (F3) and the
-main-menu Jukebox.
+In progress elsewhere, not counted as gaps: the diagnostics overlay (F3).
 
 ## Can be dropped
 
@@ -243,7 +242,7 @@ main-menu Jukebox.
 | Behaviour | Rust | Where | Notes |
 |---|---|---|---|
 | Title, main menu, Free Ride "N riding" count, Dev log (web) | Ported | atv-ui/src/front (#210) | |
-| Main-menu Jukebox | In progress | — | |
+| Main-menu Jukebox | Ported | front.rs, soundtrack.rs | |
 | Single Player → Race setup page | Ported | front/controller.rs, front/mod.rs | |
 | Freestyle course select (tabs, photos, hero, keys, LB/RB) | Ported | front/mod.rs, controller.rs | |
 | Garage (46 vehicles, rider, stats, 3D previews, ATV-only online) | Ported | front, app/front.rs (#254) | Previews wear the saved gear and paint |
@@ -327,9 +326,9 @@ main-menu Jukebox.
 | Frontend menu music (UIMUSIC) | Ported | audio/menu.rs, lib.rs (#267) | |
 | Suspend on blur/hidden; no Media Session | Ported | sound.rs (#262) | |
 | Soundtrack: catalog, shuffle, history (`atv-soundtrack-v1`), AAC stream, park/resume, muffle, spectrum | Ported | audio/music.rs, sound.rs | |
-| Soundtrack VAG fallback on the web | Ported | sound.rs `vag_fallback` | |
+| Soundtrack VAG fallback on the web | Ported | soundtrack.rs `vag_fallback` | |
 | Pause → Jukebox (list, transport, seek, volume, PAGE14 art, spectrum) | Ported | menu/jukebox.rs (#235) | |
-| Main-menu Jukebox | In progress | — | |
+| Main-menu Jukebox; one soundtrack player for menus and rides | Ported | soundtrack.rs, lib.rs `sync_soundtrack` | `tools/test_engine_menu_jukebox.mjs` |
 
 ### render-support.js, water.js, weather.js, fog.js, scenery-materials.js, train.js
 
