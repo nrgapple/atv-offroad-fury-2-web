@@ -166,6 +166,10 @@ enum Message {
     RemoteEngine(u16, Box<Result<atv_game::audio::remote::Engine, String>>),
 }
 
+/// A connected room waiting on the lobby page: (room, course, quad, rider,
+/// when the loader takes over).
+type Joined = (multiplayer::Net, String, u16, u16, Instant);
+
 type PeerModel = Result<
     atv_game::multiplayer::remote::RemoteModel,
     (atv_game::multiplayer::remote::Key, String),
@@ -273,6 +277,10 @@ struct App {
     /// The room connecting behind the Free Ride Lobby page: (quad, rider,
     /// the form page a failure returns to). None after Leave.
     joining: Option<(u16, u16, &'static str)>,
+    /// A connected room shown on the Free Ride Lobby page (its code and
+    /// riders, as multiplayer.js once the lobby state arrives) until the
+    /// loader takes over at the instant given.
+    joined: Option<Joined>,
     /// Frame-spread loads (see `spawn_frame`).
     frame_tasks: Vec<std::pin::Pin<Box<dyn std::future::Future<Output = Message>>>>,
     /// The Host/Join forms' browser inputs.
@@ -3260,6 +3268,9 @@ impl App {
             Event::LeaveLobby => {
                 // The connect finishes in the background and is left at once.
                 self.joining = None;
+                if let Some((mut net, ..)) = self.joined.take() {
+                    net.leave();
+                }
                 self.wake();
             }
             Event::CopyInvite => self.copy_lobby_invite(),
@@ -3325,9 +3336,22 @@ impl App {
         };
         match result {
             Ok((net, environment)) => {
-                self.pending_room = Some(net);
-                self.pending_fresh = true;
-                self.start_ride(environment, quad, rider, None, None);
+                // The lobby page fills in the room's code and riders; the
+                // next front frame draws it, then the loader takes over.
+                if let Some(front) = &self.front {
+                    let mut f = front.borrow_mut();
+                    if let Some(lobby) = &mut f.state.lobby {
+                        lobby.code.clone_from(&net.session.code);
+                        lobby.status = net.menu_lobby().map(|l| l.status).unwrap_or_default();
+                    }
+                }
+                let hold = multiplayer::JOIN_DELAY_MS.load(std::sync::atomic::Ordering::Relaxed);
+                let at = Instant::now() + std::time::Duration::from_millis(u64::from(hold));
+                self.joined = Some((net, environment, quad, rider, at));
+                self.wake();
+                if let Some(window) = &self.window {
+                    window.request_redraw();
+                }
             }
             Err(error) => {
                 status(&error);
@@ -3707,6 +3731,21 @@ impl App {
         let wants = f.wants();
         drop(f);
         self.sync_menu_music();
+        // The filled lobby page has been drawn: load the room's course.
+        if self.joined.as_ref().is_some_and(|j| Instant::now() >= j.4) {
+            if let Some((net, environment, quad, rider, _)) = self.joined.take() {
+                self.pending_room = Some(net);
+                self.pending_fresh = true;
+                self.start_ride(environment, quad, rider, None, None);
+            }
+            return;
+        }
+        if self.joined.is_some()
+            && let Some(window) = &self.window
+        {
+            // Keep drawing until the hold ends (menus otherwise idle).
+            window.request_redraw();
+        }
         let f = front.borrow();
         // The garage shows the authored top speed of the current ATV.
         let wanted = (f.state.page == "garage"
@@ -4335,6 +4374,7 @@ pub fn run(options: Options) {
         pending_room: None,
         pending_fresh: false,
         joining: None,
+        joined: None,
         frame_tasks: Vec::new(),
         #[cfg(target_arch = "wasm32")]
         text_inputs: Default::default(),

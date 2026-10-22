@@ -1490,9 +1490,10 @@ outside the window; joins paced 250 ms; one Mac, headless Chromium/Metal,
   - `test_engine_multiplayer_room_front.mjs`, `test_engine_freeride.mjs` and
     `test_engine_front.mjs` pass.
   - Inspected: `private/reports/devlog-images/rust-mp-menu-lobby.png`.
-- Difference: the page shows "Connecting…" until the ride loads. The browser
-  fills in the room's rider list when the lobby state arrives; here the join hands
-  over to the loader at that point.
+- Once connected, the page shows the room's code and riders ("1/4 riders /
+  RustHost", the browser's `lobby_status`) for at least one drawn frame. With
+  `?joinDelayMs` it holds that long again. The loader then takes over; Leave Game
+  in that window leaves the room.
 
 Gaps, in planned slice order:
 
