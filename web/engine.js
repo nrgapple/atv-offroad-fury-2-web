@@ -8,6 +8,21 @@ for (const type of ['selectstart', 'contextmenu']) document.addEventListener(typ
 // F3 cycles the engine's diagnostics overlay (Off, Performance, Debug; drawn
 // by the Rust UI, ?debug=1 or ?debug=2 to open it). Keep the browser's own F3.
 addEventListener('keydown', event => { if (event.code === 'F3') event.preventDefault(); }, { capture: true });
+// A lost WebGL context (iOS backgrounding, GPU memory pressure) leaves every
+// GPU resource invalid. Ask the browser to restore it, say so, then reopen the
+// current ride's link (the engine keeps it in `fury-resume`; a room's invite
+// rejoins its slot) or this page. game.js rebuilt in place instead.
+const status = () => document.getElementById('status');
+document.addEventListener('webglcontextlost', event => {
+  event.preventDefault();
+  status().textContent = 'Restoring graphics…';
+  status().classList.add('fatal');
+}, true);
+document.addEventListener('webglcontextrestored', () => {
+  let resume = null;
+  try { resume = sessionStorage.getItem('fury-resume'); } catch { /* storage blocked */ }
+  location.replace(resume || location.href);
+}, true);
 init().catch(error => {
   const status = document.getElementById('status');
   status.textContent = `Engine failed: ${error}`;

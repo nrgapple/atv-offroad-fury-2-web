@@ -43,6 +43,7 @@ export const TESTS = {
   'test_engine_air_blur.mjs': { group: 'content' },
   'test_engine_settings.mjs': { group: 'content' },
   'test_engine_session_settings.mjs': { group: 'content' },
+  'test_engine_links.mjs': { group: 'content' },
   'test_engine_wake_lock.mjs': { group: 'content' },
   'test_engine_diagnostics.mjs': { group: 'content' },
   'test_engine_background_audio.mjs': { group: 'content' },

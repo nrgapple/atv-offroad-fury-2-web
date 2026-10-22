@@ -121,11 +121,31 @@ pub static JOIN_DELAY_MS: AtomicU32 = AtomicU32::new(0);
 
 /// A room's invite link (multiplayer.js `inviteUrl`): the browser game's
 /// join link on the relay's origin.
-pub fn invite_url(relay: &str, environment: &str, code: &str) -> String {
-    format!(
-        "{}/play.html?mode=multiplayer&activity=freestyle&map={environment}&quad=1&rider=0&action=join&room={code}&play=1",
-        relay.trim_end_matches('/'),
+pub fn invite_url(relay: &str, environment: &str, quad: u16, rider: u16, code: &str) -> String {
+    atv_game::launch::ride_url(
+        &share_page(relay),
+        &atv_game::launch::RideLink {
+            map: environment,
+            quad,
+            rider,
+            player: "",
+            race: None,
+            room: Some(code),
+        },
     )
+}
+
+/// The page a shared link opens: this page in the browser (buildRideUrl
+/// uses the game's own page), the relay's site on desktop.
+pub fn share_page(relay: &str) -> String {
+    #[cfg(target_arch = "wasm32")]
+    if let Some(page) = web_sys::window().and_then(|w| {
+        let l = w.location();
+        Some(format!("{}{}", l.origin().ok()?, l.pathname().ok()?))
+    }) {
+        return page;
+    }
+    format!("{}/play.html", relay.trim_end_matches('/'))
 }
 
 /// Close codes a rider with a slot key retries (web/multiplayer.js).
@@ -364,12 +384,14 @@ impl Net {
         &self.session.code
     }
 
-    /// An invite link for the JavaScript game (buildRideUrl in web/launch.js,
-    /// without the player's own name or ride).
-    pub fn invite(&self) -> String {
+    /// An invite link (buildRideUrl in web/launch.js with the inviter's own
+    /// ATV and rider, without the player's name).
+    pub fn invite(&self, quad: u16, rider: u16) -> String {
         invite_url(
             &self.relay,
             self.session.environment().unwrap_or("env01"),
+            quad,
+            rider,
             &self.session.code,
         )
     }
