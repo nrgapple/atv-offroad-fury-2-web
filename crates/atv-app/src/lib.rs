@@ -973,6 +973,7 @@ impl App {
                 "skySmooth": graphics.sky_smooth, "fresnel": graphics.fresnel,
                 "contactShadows": graphics.contact_shadows, "anisotropy": graphics.anisotropy,
                 "dust": graphics.dust, "tireTracks": graphics.tire_tracks.0,
+                "shadowMap": graphics.shadow_map,
                 "wheelReprojection": riding.wheel_reprojection,
                 "hillOrbit": riding.hill_orbit(), "chaseAssist": riding.chase_assist,
                 "crashCameraTight": riding.crash_camera_tight,

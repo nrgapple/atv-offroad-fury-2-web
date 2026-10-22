@@ -695,11 +695,34 @@ impl SceneRenderer {
         } else if !graphics.contact_shadows {
             self.contact_shadows = None;
         }
-        self.graphics = Graphics {
-            anisotropy: self.graphics.anisotropy,
-            shadow_map: self.graphics.shadow_map,
-            ..graphics
-        };
+        // applyAnisotropy: the terrain, scenery and vegetation samplers.
+        let shadow_changed = graphics.shadow_map != self.graphics.shadow_map;
+        if shadow_changed {
+            // shadowMap.size !== graphics.shadowMap: a new map (or none).
+            self.world
+                .set_shadow_size(gpu, u32::from(graphics.shadow_map));
+            self.shadow_map = match (&self.vehicle, graphics.shadow_map) {
+                (Some(vehicle), size) if size > 0 => {
+                    Some(shadows::ShadowMap::new(gpu, &self.world, vehicle))
+                }
+                _ => None,
+            };
+        }
+        if graphics.anisotropy != self.graphics.anisotropy || shadow_changed {
+            self.terrain.rebind(
+                gpu,
+                graphics.anisotropy,
+                (&self.world.shadow_view, &self.world.shadow_sampler),
+            );
+        }
+        if graphics.anisotropy != self.graphics.anisotropy {
+            self.scenery
+                .set_anisotropy(gpu, &self.world, graphics.anisotropy);
+            if let Some(vegetation) = &mut self.vegetation {
+                vegetation.set_anisotropy(gpu, &self.world, graphics.anisotropy);
+            }
+        }
+        self.graphics = graphics;
     }
 
     /// The presentation options in effect.
