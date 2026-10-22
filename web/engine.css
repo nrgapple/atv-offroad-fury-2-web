@@ -4,6 +4,9 @@ html.app-standalone, html.app-standalone body { background: #210504; }
 html, body, canvas, #status { user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; }
 canvas { display: block; width: var(--app-width, 100vw); height: var(--app-height, 100vh); touch-action: none; outline: none; }
 #frontend { display: none; }
+/* play.html sized its UI border-box (game.css); without it the install banner's
+   padding and border overflow its min(520px, 100% - 20px) width on phones. */
+#app-install-banner, #app-install-help { box-sizing: border-box; }
 /* Status line (frame stats, load and error lines): hidden; the diagnostics
    overlay (F3, ?debug=1) shows its text. Tests read it, so it stays current. */
 #status { display: none; position: fixed; left: 8px; bottom: 8px; font: 12px ui-monospace, monospace; color: #e8edf2;
