@@ -496,7 +496,9 @@ shared with play.html. The Rust ride runs three of them:
   web/hype.js (big-air detection from clearance, rise and air time; one apex slow
   motion per jump at 0.3x with its ease in/hold/ease out, ended by touchdown or a
   wreck; the landing dip spring; the chase pull-in, flattening and FOV widening).
-  It steps once per simulation step and updates once per rendered frame; slow motion
+  It steps once per accepted simulation step (live rides, autodrive and the Reset
+  frame; before 2026-10-22 only autodrive stepped it, so live rides never left the
+  ground for it) and updates once per rendered frame; slow motion
   scales the step accumulator (Freestyle only, as in the browser) and stretches the
   presenters' segments, so even Original ATVs interpolate while it runs. Clearance
   reads the physics terrain under the rider; the browser reads its rendered terrain
@@ -506,10 +508,23 @@ shared with play.html. The Rust ride runs three of them:
   flip mode and feeds the keyboard/controller steering as `arcade_spin`, replacing the
   Unleashed gestures (game.js `drivingInput`). Touch spin axes are not passed yet.
 
+- Landing burst: each landing the director reports while focused (no wheel in
+  water) throws `atv_game::burst::BurstEmitter` dust puffs and clods (hype-gl.js,
+  192-particle ring, tinted by the terrain layer under it via `DustTint`) drawn by
+  `atv-render` `burst.wgsl` after lingering dust, and plays `audio::synth::
+  landing_thump` (78 -> 34 Hz sine plus lowpassed noise, rendered to PCM on the SFX
+  bus). Turning it off clears the particles.
+- Heavy mud: `DirtBuildup::set_heavy` (heavyMudZones: quarter times, doubled
+  cleaning, dusty zones soil) and landing splats of `min(60, 0.9 x severity)`; the
+  dirt draws on any preset while it is on, and the tire tracks read the heavy zones.
+
+Evidence (host Chromium): unit tests match BurstEmitter rows and counts; ENV05 held
+throttle on Original after the spawn drop gave 50, 45 and 29 particles per landing
+in both games (`private/reports/rust-ui/alpha-landing/env05-{rust-web,javascript}.png`);
+`tools/test_engine_alpha_landing.mjs` (burst, thumps and soiling on, none off).
+
 Not run yet (rows listed, saved, no effect in the Rust ride): Speed & air muffle (the
-music lowpass and wind loop), Air dark blur (screen pass), Landing burst (dust/clod
-particles and the thump) and Heavy mud (needs the ATV dirt buildup, which the Rust
-engine has not ported). Evidence: `atv-game` unit test (a launched 40 ft/s jump fires
+music lowpass and wind loop) and Air dark blur (screen pass). Evidence: `atv-game` unit test (a launched 40 ft/s jump fires
 one apex, one slow motion reaching 0.3x and a landing over 30 ft/s);
 `tools/test_engine_alpha.mjs` (rows, saved toggles, applied ride flags); the presenter
 and interpolation tests are unchanged at scale 1. Host only.

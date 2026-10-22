@@ -7,3 +7,4 @@ pub mod music;
 pub mod race;
 pub mod remote;
 pub mod ride;
+pub mod synth;

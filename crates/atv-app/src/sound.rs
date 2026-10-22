@@ -565,6 +565,31 @@ impl Sound {
         }
     }
 
+    /// GameAudio.landingThump (Alpha Landing burst) on the SFX bus of a
+    /// running output; true when it played.
+    pub fn landing_thump(&mut self, severity: f32) -> bool {
+        if !self.output.started.get() {
+            return false;
+        }
+        let Some(pcm) = atv_game::audio::synth::landing_thump(severity, self.ride.bank.rate())
+        else {
+            return false;
+        };
+        let Ok(mut mixer) = self.output.mixer.lock() else {
+            return false;
+        };
+        mixer.play(
+            &std::sync::Arc::new(pcm),
+            atv_game::audio::mixer::Looping::Once,
+            [1., 1.],
+            1.,
+            atv_game::audio::mixer::Bus::Sfx,
+            false,
+            "thump",
+        );
+        true
+    }
+
     /// One race step's sounds: lamp/gate one-shots and crowd cues on a
     /// running output (the browser drops them on a suspended context), and
     /// the race music events.
