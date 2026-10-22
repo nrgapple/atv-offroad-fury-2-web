@@ -1577,6 +1577,29 @@ Switch-over items 3, 8 and 9 in SWITCHOVER.md.
   - Inspected: `private/reports/devlog-images/rust-cpu-shadows-high.png`.
   - Other riders' shadows share the code path; they were not browser-tested.
 
+## Integration acceptance (2026-10-22)
+
+One pass on main at `242c66d` (after #277 and #279-#282), host Apple M4 / Chromium:
+
+- Native determinism example (`cargo run --release -p atv-game --example determinism`):
+  race `53fda056a945608e`, ride `ec381279129db4de`, wreck `cabb5cac130294a9`, all
+  unchanged.
+- `compare_engine.mjs` (JavaScript game, Rust browser build, `fury --trace`): ride env01
+  (600 steps), ride env01 on bike 29 (600 steps), and race env01 (1 lap, 3 CPUs, seed
+  12345, 9,000 autopilot steps; both finish). Origin, orientation and camera match
+  exactly at every step; the race's worst player difference is 0 ft for web and native.
+- Held-frame pixels (1280x720, web / native): quad 1 frame 4.02 / 4.02, vehicle box
+  1.06 / 1.06 (recorded 0.59 / 0.63); bike 29 frame 0.08 / 0.08, vehicle box 1.46 / 1.46
+  (recorded 0.13 / 0.15). The JavaScript captures are unchanged. The Rust change is
+  confined to cut-out texels: the vehicle alpha blending (see "Browser stand-ins")
+  draws the bike rider's back and the quad's plate edges textured where game.js draws
+  them black.
+- Browser content group (`tools/run_browser_tests.mjs --group content`): all 31 Rust
+  engine tests passed (29 `test_engine_*`, `test_rust_audio`, `test_rust_audio_activation`).
+  Of the 74 `play.html` tests, 19 passed and 55 are invalid: the runner's static server
+  stopped during `test_minimap_instrument`, so later tests could not connect. The
+  JavaScript game is frozen and its tests leave with the switch-over.
+
 ## Commands
 
 The browser build's debug strip (frame stats, load and error lines in `#status`) is hidden
