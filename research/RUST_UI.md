@@ -625,8 +625,9 @@ and bar geometry; levels differ with the song position).
 The main menu's Jukebox row opens the same page over the frontend. The page's one
 soundtrack player (`atv-app/src/soundtrack.rs`, audio.js `this.music`) serves both
 the menus and rides. A chosen song replaces the menu tune; Back pauses it in place
-(music.js `pauseQueue`); a ride carries on with the same song
-(`tools/test_engine_menu_jukebox.mjs`, `private/reports/rust-ui/menu-jukebox.png`).
+(music.js `pauseQueue`); each ride load then starts a new random song, never the one just
+heard, as game.js `loadGame` builds a new MusicStream (`tools/test_engine_ride_songs.mjs`,
+`tools/test_engine_menu_jukebox.mjs`, `private/reports/rust-ui/menu-jukebox.png`).
 Settings → Audio's song rows preview the soundtrack the same way.
 
 Not ported: dragging feedback before release, Media Session release

@@ -590,7 +590,7 @@ impl Sound {
         ride.train_sounds = settings.train_sounds.clone();
         ride.rain = settings.rain;
         ride.apply_mode(&mut *output.mixer.lock().map_err(|_| "mixer lock")?);
-        // The page's soundtrack carries on into the ride (one MusicStream).
+        // The page's player (the host started a new session for this ride).
         let music = match music {
             Some(music) => music,
             None => Rc::new(RefCell::new(

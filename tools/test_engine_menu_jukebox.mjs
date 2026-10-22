@@ -1,9 +1,9 @@
 // Main menu → Jukebox in the Rust engine (frontend.js jukeboxReturn 'main',
 // audio.js setMusicPreview): the soundtrack list over the frontend, a chosen
 // song playing in place of the menu tune with the spectrum and PAGE14 art,
-// Back returning to the menu tune with the song paused in place, and a ride
-// carrying on with the same player (one MusicStream per page). Host browser
-// evidence.
+// Back returning to the menu tune with the song paused in place, and the next
+// ride starting a new song (game.js loadGame builds a new MusicStream). Host
+// browser evidence.
 import assert from 'node:assert/strict';
 import { assertNoErrors, launch, newPage, nextFrames, url } from './browser/harness.mjs';
 
@@ -61,7 +61,7 @@ try {
   await until(page, () => JSON.parse(document.querySelector('#ui-state').textContent).menuMusic.playing === true);
   await until(page, () => JSON.parse(document.querySelector('#ui-state').textContent).soundtrack.musicPaused === true);
   console.log(`  Jukebox: ${title}; back on the menu tune with the song paused`);
-  // A ride carries on with the same player and song.
+  // A ride starts a new song (game.js loadGame builds a new MusicStream).
   await key(page, 'ArrowUp');
   for (let i = 0; i < 10 && (await read(page)).front.choices[(await read(page)).front.selection] !== 'single'; i++) await key(page, 'ArrowUp');
   await key(page, 'Enter');
@@ -73,11 +73,11 @@ try {
   await page.mouse.click(640, 400);
   await until(page, t => {
     const audio = JSON.parse(document.documentElement.getAttribute('data-engine-audio') ?? 'null');
-    return audio?.musicTitle === t && audio.musicPaused === false && audio.musicTime > 0;
+    return audio?.musicTitle && audio.musicTitle !== t && audio.musicPaused === false && audio.musicTime > 0;
   }, title, 120000);
-  console.log(`  Ride: the soundtrack carries on (${title})`);
+  console.log(`  Ride: a new song after the Jukebox's ${title}`);
   assertNoErrors(errors);
-  console.log('PASS: Rust main-menu Jukebox plays the soundtrack and shares it with rides');
+  console.log('PASS: Rust main-menu Jukebox plays the soundtrack; the next ride picks a new song');
 } finally {
   await browser.close();
 }
