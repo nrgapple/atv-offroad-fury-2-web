@@ -91,6 +91,29 @@ class PackTests(unittest.TestCase):
             with self.assertRaises(pack_content.PackError):
                 pack_content.verify(pack)
 
+    def test_soundtrack_streams_are_packed_by_default(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source, out = Path(tmp) / 'src', Path(tmp) / 'out'
+            source.mkdir()
+            out.mkdir()
+            manifest = synthetic_package(source)
+            song = b'synthetic m4a'
+            digest = hashlib.sha256(song).hexdigest()
+            (source / f'{digest}.m4a').write_bytes(song)
+            manifest['files'][0]['stream'] = {'url': f'/content/{digest}.m4a', 'bytes': len(song),
+                                              'sha256': digest, 'type': 'audio/mp4', 'seconds': 1.0}
+            (source / 'manifest.json').write_text(json.dumps(manifest))
+            pack = pack_content.build(source, out / 'p.pack')
+            self.assertEqual(pack_content.verify(pack)[0], 3)
+            self.assertEqual(pack_content.stream_count(pack), (1, 1))
+            bare = pack_content.build(source, out / 'bare.pack', include_streams=False)
+            self.assertEqual(pack_content.stream_count(bare), (0, 1))
+            self.assertEqual(pack_content.verify(bare)[0], 2)
+            # a damaged song is refused while packing
+            (source / f'{digest}.m4a').write_bytes(b'x' * len(song))
+            with self.assertRaises(pack_content.PackError):
+                pack_content.build(source, out / 'q.pack')
+
     def test_refuses_to_write_content_into_the_repository(self):
         with self.assertRaises(pack_content.PackError):
             pack_content.refuse_tracked_destination(ROOT / 'tools/not-ignored.pack')

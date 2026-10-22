@@ -87,6 +87,38 @@ ride overlay. `tools/test_music.mjs` now forces the decoder path. A host probe
 against the published (stream-free) package played through the decoder with the
 drawn disc and a disabled seek bar. Physical iOS/Android playback is unverified.
 
+### Desktop soundtrack
+
+The desktop apps play the same remaster songs, bundled instead of streamed:
+`tools/pack_content.py build` now packs the 21 `.m4a` files by default (the
+`--no-streams` option leaves them out), and `build_desktop.py` refuses a pack
+without them. `Content::stream` reads a song's whole file from the pack (3.1-5.5
+MB) and checks its SHA-256. `atv-game` `audio/stream.rs` decodes it with Symphonia
+0.6 (pure Rust, `aac` + `isomp4`, desktop only, MPL-2.0, see THIRD_PARTY.md). It
+decodes a packet at a time to about two seconds ahead, like the VAG decoder, and
+resamples 44.1 kHz to the output rate onto the mixer's music bus. The
+compressed song is the only copy kept in memory. Volume, race hold/fade, the
+Alpha muffle, the Jukebox spectrum, menu pausing and focus loss therefore act on
+it exactly as on the VAG decoder. Symphonia does not apply MP4 edit lists, so the
+player reads `elst` itself and drops the encoder priming (2112 frames). The
+start, positions, seeks and length then match the browser's media element.
+Seeking is sample-accurate (`SeekMode::Accurate`, then a skip to the target).
+A song whose file is missing from the pack plays its original VAG. A stream
+error switches the rest of the session to the VAGs and continues the song at
+the same position, as `music.js` falls back. The Jukebox shows the remaster
+as "Streaming", like the web, and the VAGs as "Original decoder".
+`fury --verify-content` also hashes the bundled songs. Song start cost on the host
+(Apple M4, release build): 11.5 ms to read and hash the file, 2.5 ms to open it,
+and 8 ms for the first pump. Past half a second queued, each frame decodes at most
+eight packets (about 3 ms). `atv-content` moved to `sha2` 0.11, which uses the
+arm64 SHA-256 instructions; 0.10 hashed in software there at about 50 MB/s, which
+alone cost about 100 ms per song. The pack grows from
+454.4 to 541.9 MB, and each desktop archive by about 87 MB (the AAC does not
+compress). Validation: unit tests use an authored one-second tone fixture
+(priming, length, onset, seek, end). The ignored acceptance test
+`desktop_plays_the_bundled_remaster` (atv-app soundtrack.rs, `FURY_PACK`) plays
+the real pack on the host's output device.
+
 ## Moving Arlington train body sounds
 
 The original Arlington Freestyle TOY binds eleven body-attached sound emitters
