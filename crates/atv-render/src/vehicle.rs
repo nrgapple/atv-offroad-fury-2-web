@@ -73,7 +73,13 @@ pub struct VehiclePass {
     /// Rider node parents, and the severed set the cut indices were built for.
     rider_parents: Vec<i32>,
     severed: Vec<usize>,
+    /// The last pose's quad world matrix and, when the rider is detached
+    /// (more than 1.5 ft from the quad), its torso: contact shadow casters.
+    placed: std::cell::Cell<Option<Placed>>,
 }
+
+/// A posed vehicle's shadow casters: quad world and detached torso.
+pub(crate) type Placed = ([f32; 16], Option<[f32; 16]>);
 
 /// The browser's inverseDirection: bind-space normal into node space.
 fn inverse_direction(m: &[f32; 16], v: [f32; 3]) -> [f32; 3] {
@@ -525,10 +531,24 @@ impl VehiclePass {
             severed: Vec::new(),
             pelvis,
             bones_layout,
+            placed: std::cell::Cell::new(None),
         })
     }
 
+    /// The last pose's casters (see [`VehiclePass::pose`]).
+    pub(crate) fn placed(&self) -> Option<Placed> {
+        self.placed.get()
+    }
+
     pub fn pose(&self, gpu: &Gpu, pose: &Pose) {
+        let (q, r) = (&pose.quad_world, &pose.rider_world);
+        let apart = (r[12] - q[12]).hypot(r[13] - q[13]).hypot(r[14] - q[14]) > 1.5;
+        let torso = apart.then(|| {
+            pose.rider_nodes
+                .get(self.pelvis)
+                .map_or(*r, |node| crate::camera::multiply(r, node))
+        });
+        self.placed.set(Some((*q, torso)));
         for ((buffer, _), world, nodes) in [
             (&self.quad, pose.quad_world, &pose.quad_nodes),
             (&self.rider, pose.rider_world, &pose.rider_nodes),

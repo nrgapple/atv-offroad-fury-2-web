@@ -210,12 +210,14 @@ impl ShadowMap {
     }
 
     /// Renders the casters into the world's shadow map with light `clip`.
+    /// Every caster shares the vehicle pipeline's bone layout
+    /// (`VehicleShared`): the player, then nearby race CPUs and other riders.
     pub fn render(
         &self,
         gpu: &Gpu,
         encoder: &mut wgpu::CommandEncoder,
         world: &World,
-        vehicle: &VehiclePass,
+        casters: &[&VehiclePass],
         clip: &[f32; 16],
     ) {
         gpu.queue
@@ -235,7 +237,9 @@ impl ShadowMap {
         });
         pass.set_pipeline(&self.pipeline);
         pass.set_bind_group(0, &self.light_group, &[]);
-        vehicle.draw_casters(&mut pass);
+        for vehicle in casters {
+            vehicle.draw_casters(&mut pass);
+        }
     }
 }
 
