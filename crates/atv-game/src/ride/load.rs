@@ -161,6 +161,8 @@ pub async fn load_with(
     progress("Reading original scene collisions…");
     let terrain =
         terrain::decode_tr2(&member(&archive, &format!("{environment}.tr2"), "terrain")?)?;
+    // Long decode steps yield to the host's loop between them.
+    crate::yield_frame().await;
     let scene = &venue.scene;
     let water = match &scene.water_file {
         None => None,
@@ -187,9 +189,11 @@ pub async fn load_with(
             )?)
         }
     };
+    crate::yield_frame().await;
     let ecosystem = basename_index(&archive, &format!("{environment}.esb"))
         .map(|index| archive.extract(index).and_then(|b| ecosystem::decode(&b)))
         .transpose()?;
+    crate::yield_frame().await;
     // 00206e90 ignores missing COL files; authored non-solid overlays have none.
     let mut meshes: Vec<(String, Rc<collision::CollisionMesh>)> = Vec::new();
     let mut obstacles = Vec::new();
@@ -219,6 +223,7 @@ pub async fn load_with(
             world_matrix: placement.world_matrix,
         });
     }
+    crate::yield_frame().await;
     let presets = camera::presets(
         &member(&archive, "followcampresets.pb", "camera presets")?,
         0,
@@ -263,6 +268,7 @@ pub async fn load_with(
             )
         }
     };
+    crate::yield_frame().await;
     let origin = atv_core::spawn::start_origin(&terrain, position, yaw, race.is_some(), None)?;
     let start = (origin.map(|v| v as f32), yaw as f32);
 
@@ -519,6 +525,7 @@ async fn race_setup(
                 textures: rider_textures,
             },
         ));
+        crate::yield_frame().await;
     }
     // Grid RiderSpacing from the race mode TOY or, for Supercross, the scene TOY.
     let spacing_sources = mode

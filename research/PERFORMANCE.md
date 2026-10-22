@@ -646,3 +646,30 @@ and uploads up to 7.7 ms (the first was 33-39 ms). The player's own bank output 
 bit-identical. Two 32-36 fps seconds remained, with engine CPU at 7 ms. On this
 heavily loaded host they are outside the engine's main-thread work. Round trip
 with 1 s pings: median 7 ms, p95 47 ms.
+
+## Rust engine: desktop render scale, Auto tier and loading (host, 2026-10-22)
+
+Desktop builds now follow the browser's render-scale policy where the GPU backend
+scales a surface smaller than the window: Metal (the drawable is stretched over the
+layer) and DX12 (`DXGI_SCALING_STRETCH`). There the surface renders at most 1.5
+backing pixels per logical pixel and `RenderScale` steps it down by 0.25 to 1.0 after
+1.5 s of slow frames while riding, exactly as on the web; a 2x Retina window of
+1280x720 points renders 1920x1080. Vulkan and GL swap chains must match the window,
+so Linux (and Windows on Vulkan) keep the native size and no adaptive step. The UI
+keeps laying out in logical pixels.
+
+Desktop Auto graphics comes from the GPU adapter (`desktop_tier` in atv-app):
+discrete GPUs, and Apple silicon's integrated GPU, get High; other integrated,
+virtual and software adapters get Enhanced, and so does any machine with four or
+fewer cores (the browser's low-power rule). The Apple M4 host resolves High.
+
+Ride loads and room joins no longer block the desktop event loop: `spawn`ed loads
+are polled between events (16 ms slices in menus, 4 ms while riding), relay POSTs and
+the admission wait run off-thread, and the venue/ride loaders yield between their
+long decode steps (the web resumes at once, so its behaviour is unchanged). Measured
+with `fury --autodrive ... --bench` on ENV01 (Apple M4, Metal, release, warm disk
+cache; bench `longest_load_ms` / `load_loop_gap_ms`): loads of 2.25-2.94 s whose
+longest event-loop turn was 279-359 ms (the start-of-ride scene partition in
+`Ride::start`). Before, the whole load ran inside one blocking call (a first cold run
+took 6.8 s), during which the window could not answer the OS. These are host-only
+measurements, not results from other desktops.

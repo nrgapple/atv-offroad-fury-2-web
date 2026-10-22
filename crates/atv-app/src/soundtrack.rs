@@ -722,6 +722,7 @@ impl Soundtrack {
                 // Quarter seconds: the Jukebox lays out at most at 4 Hz for it.
                 view.position = ((decoded - queued).clamp(0., duration) * 4.).floor() / 4.;
                 view.duration = duration;
+                view.seekable = true;
                 view.playing = !self.player.paused && !self.held && queued > 0.;
             }
         }
@@ -813,8 +814,23 @@ impl Soundtrack {
                             .set_current_time(f64::from(seconds).clamp(0., (d - 0.25).max(0.)));
                     }
                 }
+                // Desktop: decoding resumes at the block for `seconds` (music.js
+                // seeks its media element; the same quarter second short of
+                // the end) and the queued audio is dropped.
                 #[cfg(not(target_arch = "wasm32"))]
-                let _ = seconds;
+                if let Some(song) = &mut self.song
+                    && seconds.is_finite()
+                {
+                    let (_, duration) = song.decoded_seconds();
+                    match song.seek(seconds.clamp(0., (duration - 0.25).max(0.))) {
+                        Ok(()) => {
+                            if let Ok(mut mixer) = self.output.mixer.lock() {
+                                mixer.clear_music();
+                            }
+                        }
+                        Err(error) => eprintln!("music seek: {error}"),
+                    }
+                }
             }
             JukeboxAction::Leave => {
                 if self.player.paused {

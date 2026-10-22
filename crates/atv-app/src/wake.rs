@@ -4,8 +4,11 @@
 //! screen and released in menus; the browser drops it whenever the page is
 //! hidden, so it is requested again on return or on the next gesture (iOS
 //! Home Screen apps support it from iOS 18.4). The API is reached through
-//! `js_sys::Reflect` (web-sys marks it unstable). Desktop builds have no
-//! clean cross-platform screensaver inhibitor in winit; they do nothing.
+//! `js_sys::Reflect` (web-sys marks it unstable). Desktop builds hold the
+//! platform's display-sleep inhibitor under the same policy (`keepawake`:
+//! an IOKit assertion on macOS, `SetThreadExecutionState` on Windows,
+//! org.freedesktop.ScreenSaver/logind on Linux), released in menus and while
+//! the window is hidden or minimized.
 #[cfg(target_arch = "wasm32")]
 use std::{cell::RefCell, rc::Rc};
 
@@ -13,6 +16,9 @@ use std::{cell::RefCell, rc::Rc};
 pub struct ScreenWake {
     #[cfg(target_arch = "wasm32")]
     state: Rc<RefCell<State>>,
+    /// The held desktop inhibitor; dropping it releases the screen.
+    #[cfg(not(target_arch = "wasm32"))]
+    inhibit: std::cell::RefCell<Option<keepawake::KeepAwake>>,
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -82,7 +88,26 @@ impl ScreenWake {
             }
         }
         #[cfg(not(target_arch = "wasm32"))]
-        let _ = (wanted, visible);
+        {
+            let mut inhibit = self.inhibit.borrow_mut();
+            if !(wanted && visible) {
+                *inhibit = None;
+            } else if inhibit.is_none() {
+                // The window must not sleep the display mid-ride; a platform
+                // without an inhibitor service (no D-Bus session) rides on.
+                match keepawake::Builder::default()
+                    .display(true)
+                    .idle(true)
+                    .reason("Riding")
+                    .app_name("Fury Remastered")
+                    .app_reverse_domain("com.furyremastered.Fury")
+                    .create()
+                {
+                    Ok(held) => *inhibit = Some(held),
+                    Err(error) => eprintln!("screen wake: {error}"),
+                }
+            }
+        }
     }
 
     /// A pointer or key gesture: browsers that wanted an activation grant
@@ -100,7 +125,7 @@ impl ScreenWake {
         }
         #[cfg(not(target_arch = "wasm32"))]
         {
-            false
+            self.inhibit.borrow().is_some()
         }
     }
 

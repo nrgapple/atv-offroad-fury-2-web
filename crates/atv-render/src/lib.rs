@@ -43,9 +43,28 @@ pub struct Gpu {
     samples: u32,
     depth: wgpu::TextureView,
     msaa: Option<wgpu::TextureView>,
+    /// Why the device was lost (driver reset, GPU removed), once it is.
+    lost: std::sync::Arc<std::sync::Mutex<Option<String>>>,
 }
 
 impl Gpu {
+    /// The device is gone (desktop): its resources draw nothing, and the
+    /// app rebuilds on a new device. The reason, for the status line.
+    pub fn lost(&self) -> Option<String> {
+        // wgpu reports a destroyed or lost device from its maintenance pass.
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Err(error) = self.device.poll(wgpu::PollType::Poll)
+            && let Ok(mut lost) = self.lost.lock()
+        {
+            lost.get_or_insert_with(|| error.to_string());
+        }
+        self.lost.lock().ok().and_then(|l| l.clone())
+    }
+
+    /// Test hook: destroys the device as a driver reset would lose it.
+    pub fn simulate_loss(&self) {
+        self.device.destroy();
+    }
     /// Presents a frame drawn only by `draw` over black (menus without a
     /// scene, e.g. the frontend).
     pub fn present_with(
@@ -178,6 +197,32 @@ impl Gpu {
             view_formats: vec![],
             color_space: wgpu::SurfaceColorSpace::Auto,
         };
+        let lost: std::sync::Arc<std::sync::Mutex<Option<String>>> = Default::default();
+        // Desktop: a lost device (driver reset, eGPU unplugged) is recorded
+        // for the app to recover from; its later errors are expected. Other
+        // errors still panic as wgpu's default handler does. The browser
+        // reloads the page on WebGL context loss instead (engine.js).
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let record = lost.clone();
+            device.set_device_lost_callback(move |reason, message| {
+                if let Ok(mut lost) = record.lock() {
+                    lost.get_or_insert_with(|| format!("{reason:?} {message}").trim().to_string());
+                }
+            });
+            let record = lost.clone();
+            device.on_uncaptured_error(std::sync::Arc::new(move |error: wgpu::Error| {
+                let text = error.to_string();
+                let gone = record.lock().is_ok_and(|l| l.is_some());
+                if gone || text.to_ascii_lowercase().contains("lost") {
+                    if let Ok(mut lost) = record.lock() {
+                        lost.get_or_insert_with(|| text.clone());
+                    }
+                    return;
+                }
+                panic!("wgpu error: {text}");
+            }));
+        }
         surface.configure(&device, &config);
         let (depth, msaa) = targets(&device, &config, samples);
         Ok(Self {
@@ -190,6 +235,7 @@ impl Gpu {
             samples,
             depth,
             msaa,
+            lost,
         })
     }
 

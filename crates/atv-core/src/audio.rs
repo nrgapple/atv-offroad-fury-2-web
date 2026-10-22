@@ -72,6 +72,19 @@ impl VagStream {
             ended: false,
         })
     }
+    /// Continues decoding at data byte `consumed` (a whole interleaved block
+    /// boundary): a Jukebox seek. The predictor restarts from silence, as a
+    /// fresh stream does; the first block after the jump may click faintly.
+    pub fn seek(&mut self, consumed: usize) -> Result<()> {
+        let stride = self.info.channels as usize * 16;
+        if !consumed.is_multiple_of(stride) || consumed > self.info.data_bytes {
+            return Err("invalid VAG stream seek".into());
+        }
+        self.consumed = consumed;
+        self.history = [[0; 2]; 2];
+        self.ended = false;
+        Ok(())
+    }
     /// Chunks contain complete interleaved blocks and must arrive in file order.
     /// A failed chunk leaves predictor history and the byte cursor unchanged.
     pub fn decode_chunk(&mut self, bytes: &[u8]) -> Result<Vec<i16>> {
@@ -327,5 +340,19 @@ mod tests {
         }
         assert_eq!(actual, expected.samples);
         assert!(stream.decode_chunk(&[0; 32]).is_err());
+        // A seek back to a block boundary decodes from there again, the
+        // predictor restarting from silence; partial blocks are refused.
+        assert!(stream.seek(16).is_err());
+        assert!(stream.seek(32 * 14).is_err());
+        stream.seek(0).unwrap();
+        assert_eq!(
+            stream.decode_chunk(&data[2016..2048]).unwrap(),
+            &expected.samples[..56]
+        );
+        stream.seek(32 * 12).unwrap();
+        assert_eq!(
+            stream.decode_chunk(&data[2016 + 32 * 12..]).unwrap().len(),
+            56
+        );
     }
 }
