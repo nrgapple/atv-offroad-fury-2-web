@@ -164,6 +164,11 @@ impl Activation {
         })))
     }
 
+    /// The output once a gesture has started it (frontend music needs it).
+    pub fn started_output(&self) -> Option<Rc<Output>> {
+        self.0.borrow().output.clone().filter(|o| o.started.get())
+    }
+
     fn output(&self) -> Result<Rc<Output>, String> {
         let mut state = self.0.borrow_mut();
         if state.output.is_none() {

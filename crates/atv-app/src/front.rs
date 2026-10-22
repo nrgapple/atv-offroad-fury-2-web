@@ -202,6 +202,11 @@ impl Front {
         self.uploaded = DisplayList::default();
     }
 
+    /// Settings → Audio: the soundtrack (and menu tune) on, and its volume.
+    pub fn music(&self) -> (bool, f32) {
+        (self.prefs.music_enabled, self.prefs.music_volume)
+    }
+
     /// Back from a ride: saved settings may have changed meanwhile.
     pub fn resume(&mut self, page: &str) {
         self.settings = Settings::load();

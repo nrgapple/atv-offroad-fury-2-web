@@ -127,6 +127,8 @@ struct PendingSound {
 
 enum Message {
     Ready(Box<Ready>),
+    /// The original frontend tune decoded (or why not).
+    MenuTune(Result<atv_game::audio::mixer::Pcm, String>),
     SoundReady(Box<sound::Sound>),
     /// The original Jukebox art decoded.
     JukeboxArt(Box<atv_game::jukebox::JukeboxArt>),
@@ -240,6 +242,8 @@ struct App {
     /// The frontend (title and menus), its GPU while no ride runs, and the
     /// content they share with rides.
     front: Option<Rc<RefCell<front::Front>>>,
+    /// The original frontend tune (audio.js playMenuMusic).
+    menu_music: MenuMusic,
     gpu: Option<Gpu>,
     content: Option<Rc<Content>>,
     defaults: Option<Defaults>,
@@ -1272,6 +1276,7 @@ impl App {
         if let Some(riding) = self.ready.as_mut().and_then(|r| r.riding.as_mut()) {
             riding.set_focused(focused);
         }
+        self.sync_menu_music();
         self.last = Instant::now();
         self.wake();
     }
@@ -2215,6 +2220,13 @@ impl ApplicationHandler<Message> for App {
                 self.wake();
             }
             Message::SoundFailed(error) => status(&format!("Sound unavailable: {error}")),
+            Message::MenuTune(result) => {
+                match result {
+                    Ok(pcm) => self.menu_music.tune = Some(std::sync::Arc::new(pcm)),
+                    Err(error) => status(&format!("Menu music: {error}")),
+                }
+                self.sync_menu_music();
+            }
             Message::JukeboxArt(art) => {
                 if let (Some(overlay), Some(ready)) = (&mut self.overlay, &self.ready) {
                     overlay.set_jukebox_art(&ready.gpu.device, &ready.gpu.queue, *art);
@@ -2232,6 +2244,8 @@ impl ApplicationHandler<Message> for App {
                     front.borrow_mut().release_gpu();
                 }
                 self.ready = Some(*ready);
+                // The ride takes over the music bus from the menu tune.
+                self.sync_menu_music();
                 // Rides the saved settings do not reach (direct and held
                 // replays) still honour the camera and Vibration settings.
                 if let Some(riding) = self.ready.as_mut().and_then(|r| r.riding.as_mut()) {
@@ -2705,6 +2719,69 @@ impl App {
         #[cfg(not(target_arch = "wasm32"))]
         {
             let _ = proxy.send_event(message(pollster::block_on(future)));
+        }
+    }
+
+    /// audio.js setMusicPreview + playMenuMusic: on the frontend menus, while
+    /// the page is focused and Music is on, the original UI tune loops on the
+    /// music bus at the music volume; a ride (or losing focus) stops it.
+    fn sync_menu_music(&mut self) {
+        let Some(output) = self.activation.as_ref().and_then(|a| a.started_output()) else {
+            return;
+        };
+        let front_shown = self.ready.is_none() && self.gpu.is_some();
+        let (enabled, volume) = self
+            .front
+            .as_ref()
+            .filter(|_| front_shown)
+            .map_or((false, 0.), |f| f.borrow().music());
+        let wanted = front_shown && enabled && self.effective_focused();
+        if wanted
+            && self.menu_music.tune.is_none()
+            && !self.menu_music.requested
+            && let Some(content) = self.content.clone()
+        {
+            self.menu_music.requested = true;
+            let rate = output.rate;
+            self.spawn(
+                async move {
+                    atv_game::audio::menu::load_tune(&content, rate)
+                        .await
+                        .map_err(|e| e.to_string())
+                },
+                Message::MenuTune,
+            );
+        }
+        let Ok(mut mixer) = output.mixer.lock() else {
+            return;
+        };
+        match (&self.menu_music.tune, wanted) {
+            (Some(tune), true) => {
+                mixer.music_volume = volume;
+                mixer.music_active = true;
+                if !mixer.playing(self.menu_music.voice) {
+                    self.menu_music.voice = Some(mixer.play(
+                        tune,
+                        atv_game::audio::mixer::Looping::Markers,
+                        [1., 1.],
+                        1.,
+                        atv_game::audio::mixer::Bus::Music,
+                        false,
+                        "menu",
+                    ));
+                }
+                drop(mixer);
+                // A page shown again resumes an output the browser suspended.
+                output.start();
+            }
+            _ => {
+                if let Some(voice) = self.menu_music.voice.take() {
+                    mixer.stop(voice);
+                }
+                if front_shown {
+                    mixer.music_active = false;
+                }
+            }
         }
     }
 
@@ -3265,9 +3342,31 @@ impl App {
             self.text_inputs.sync(&fields, &rects, &self.proxy);
         }
         if self.ui_diagnostics {
-            publish_ui_state(&serde_json::json!({ "front": f.diagnostics() }).to_string());
+            // The output's peak since the last frame (audible menu tune).
+            let peak = self
+                .activation
+                .as_ref()
+                .and_then(|a| a.started_output())
+                .and_then(|o| {
+                    let mut mixer = o.mixer.lock().ok()?;
+                    Some(std::mem::take(&mut mixer.meter.peak))
+                });
+            publish_ui_state(
+                &serde_json::json!({
+                    "front": f.diagnostics(),
+                    "menuMusic": {
+                        "loaded": self.menu_music.tune.is_some(),
+                        "playing": self.menu_music.voice.is_some(),
+                        "peak": peak,
+                    },
+                })
+                .to_string(),
+            );
         }
         let wants = f.wants();
+        drop(f);
+        self.sync_menu_music();
+        let f = front.borrow();
         // The garage shows the authored top speed of the current ATV.
         let wanted = (f.state.page == "garage"
             && f.state.quad_id < 27
@@ -3870,6 +3969,7 @@ pub fn run(options: Options) {
         #[cfg(not(target_arch = "wasm32"))]
         bench_out,
         front: None,
+        menu_music: MenuMusic::default(),
         gpu: None,
         content: None,
         defaults: None,
@@ -4138,4 +4238,12 @@ async fn web_image(url: &str) -> Option<atv_ui::front::pixels::Rgba> {
         height,
         data.data().0,
     ))
+}
+
+/// The original frontend tune and its mixer voice.
+#[derive(Default)]
+struct MenuMusic {
+    tune: Option<std::sync::Arc<atv_game::audio::mixer::Pcm>>,
+    requested: bool,
+    voice: Option<atv_game::audio::mixer::VoiceId>,
 }

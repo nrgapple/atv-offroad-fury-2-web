@@ -51,6 +51,7 @@ export const TESTS = {
     reason: 'needs the multiplayer relay at the same origin (shared Free Ride rooms, room WebSocket); run with --url'
   },
   'test_engine_front.mjs': { group: 'content' },
+  'test_engine_menu_music.mjs': { group: 'content' },
   'test_engine_freeride_full.mjs': {
     group: 'manual',
     reason: 'load measurement: a full Free Ride room of synthetic riders on a local relay (never production)'

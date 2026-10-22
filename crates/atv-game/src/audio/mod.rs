@@ -3,6 +3,7 @@
 //! Audio semantics. Platform output lives in atv-app.
 pub mod bank;
 pub mod hype;
+pub mod menu;
 pub mod mixer;
 pub mod music;
 pub mod race;
