@@ -35,6 +35,16 @@ document.addEventListener('webglcontextrestored', () => {
   try { resume = sessionStorage.getItem('fury-resume'); } catch { /* storage blocked */ }
   location.replace(resume || location.href);
 }, true);
+// A WebAssembly trap (out of memory, unreachable) stops the engine without a
+// Rust panic message: show it rather than a frozen frame.
+addEventListener('error', event => {
+  const error = event.error;
+  if (!(error instanceof WebAssembly.RuntimeError) && !/memory|unreachable|wasm/i.test(event.message ?? '')) return;
+  const line = document.getElementById('status');
+  if (line.classList.contains('fatal')) return;
+  line.textContent = `The game stopped: ${error?.message ?? event.message}. Reload to try again.`;
+  line.classList.add('fatal');
+});
 init().catch(error => {
   const status = document.getElementById('status');
   status.textContent = `Engine failed: ${error}`;
