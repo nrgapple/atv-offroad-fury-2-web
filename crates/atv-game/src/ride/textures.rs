@@ -107,6 +107,18 @@ pub fn outfit(
     archive: &Resource,
 ) -> Result<HashMap<String, MaterialTexture>> {
     let mut textures = load(rider, archive)?;
+    textures.extend(outfit_textures(rider, outfit, archive));
+    Ok(textures)
+}
+
+/// Only the outfit slots' replacement textures, by the rider mesh's
+/// material names (outfitTextures; the garage dresses the menu rider).
+pub fn outfit_textures(
+    rider: &Mesh,
+    outfit: &atv_core::race_roster::Outfit,
+    archive: &Resource,
+) -> HashMap<String, MaterialTexture> {
+    let mut textures = HashMap::new();
     let mut replacements = Vec::new();
     for material in &rider.materials {
         let Some(slot) = outfit_slot(material) else {
@@ -142,7 +154,7 @@ pub fn outfit(
     let names: Vec<String> = replacements.iter().map(|(_, n)| n.clone()).collect();
     // Older content packages carry only the player outfit.
     let Ok(mut decoded) = load_named(&names, archive) else {
-        return Ok(textures);
+        return textures;
     };
     for (material, name) in replacements {
         if let Some(texture) = decoded.remove(&name).filter(|t| t.image.is_some()) {
@@ -155,7 +167,7 @@ pub fn outfit(
             textures.insert(material, texture);
         }
     }
-    Ok(textures)
+    textures
 }
 
 fn material_texture(material: &str, archive: &Resource) -> Result<Option<MaterialTexture>> {

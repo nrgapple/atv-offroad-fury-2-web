@@ -73,13 +73,16 @@ fn transform(m: &[f32; 16], p: [f32; 3]) -> [f32; 3] {
 }
 
 impl ModelPreview {
-    /// `pose`: node world matrices (the mesh bind pose when None).
+    /// `pose`: node world matrices (the mesh bind pose when None). `paint`:
+    /// the quad paint (mode, hue; PAINT_PALETTE) on paintable body
+    /// materials, as ModelView's `paint` option.
     pub fn new(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         mesh: &Mesh,
         textures: &dyn Fn(&str) -> Option<PreviewTexture>,
         pose: Option<&[[f32; 16]]>,
+        paint: [f32; 2],
     ) -> Result<Self, String> {
         if mesh.nodes.len() > BONES {
             return Err("preview mesh has too many nodes".into());
@@ -256,7 +259,16 @@ impl ModelPreview {
             let (_, texture, cutout) = &cache[at];
             let flags = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("preview material flags"),
-                contents: bytemuck::cast_slice(&[if *cutout { 1f32 } else { 0. }, 0., 0., 0.]),
+                contents: bytemuck::cast_slice(&[
+                    if *cutout { 1f32 } else { 0. },
+                    if atv_game::ride::gear::paintable(&name) {
+                        1.
+                    } else {
+                        0.
+                    },
+                    paint[0],
+                    paint[1],
+                ]),
                 usage: wgpu::BufferUsages::UNIFORM,
             });
             let material = device.create_bind_group(&wgpu::BindGroupDescriptor {

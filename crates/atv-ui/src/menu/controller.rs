@@ -61,6 +61,10 @@ pub struct Context<'a> {
     pub bindings: Option<&'a mut Bindings>,
     /// Name of the controller in use, if any (Controller Settings row).
     pub pad_name: Option<String>,
+    /// Connected controllers (name, index) for pinning one, and whether
+    /// the one in use reports the standard mapping (glyph names).
+    pub pads: Vec<(String, u32)>,
+    pub pad_standard: bool,
     pub view: Viewport,
     /// The multiplayer room this ride is in.
     pub lobby: Option<&'a Lobby>,
@@ -179,7 +183,7 @@ impl PauseMenu {
             pad: (self.page == "bindings" && !self.keyboard)
                 .then_some(ctx.bindings.as_deref())
                 .flatten()
-                .map(|b| super::glyphs::PadGlyphs::new(b, true)),
+                .map(|b| super::glyphs::PadGlyphs::new(b, ctx.pad_standard)),
             roster: if self.page == "players" {
                 ctx.lobby
                     .iter()
@@ -266,9 +270,13 @@ impl PauseMenu {
         let mut request = request;
         if let Some(b) = ctx.bindings.as_deref() {
             let t = &b.tuning;
-            request["controller_label"] = match &ctx.pad_name {
-                Some(name) => format!("Auto ({})", pad_name(name)),
-                None => "Auto (press a button)".into(),
+            // gamepads.js controllerLabel: Auto, a pinned pad, or a pinned
+            // pad that is absent.
+            request["controller_label"] = match (&t.selected, &ctx.pad_name) {
+                (Some((id, _)), _) if ctx.pads.iter().any(|(name, _)| name == id) => pad_name(id),
+                (Some((id, _)), _) => format!("{} (not connected, using Auto)", pad_name(id)),
+                (None, Some(name)) => format!("Auto ({})", pad_name(name)),
+                (None, None) => "Auto (press a button)".into(),
             }
             .into();
             request["controller_preset"] = b.controller_preset_label().into();
@@ -291,7 +299,10 @@ impl PauseMenu {
                         json!({
                             "id": id,
                             "label": if self.keyboard { binds::keyboard_label(*action) } else { label },
-                            "value": binds::binding_text(b.row(self.keyboard, *action), true),
+                            "value": binds::binding_text(
+                                b.row(self.keyboard, *action),
+                                self.keyboard || ctx.pad_standard,
+                            ),
                         })
                     })
                     .collect();
@@ -501,7 +512,33 @@ impl PauseMenu {
                 save_bindings(bindings, ctx.settings);
                 Event::Changed
             }
-            "padselect" => Event::Changed,
+            // gamepads.js cycleController: Auto → each connected pad → Auto.
+            "padselect" => {
+                let bindings = ctx.bindings.as_deref_mut()?;
+                let options: Vec<Option<(String, u32)>> = std::iter::once(None)
+                    .chain(ctx.pads.iter().cloned().map(Some))
+                    .collect();
+                let at = bindings
+                    .tuning
+                    .selected
+                    .as_ref()
+                    .and_then(|(id, index)| {
+                        options
+                            .iter()
+                            .position(|o| o.as_ref().is_some_and(|(n, i)| n == id && i == index))
+                            .or_else(|| {
+                                options
+                                    .iter()
+                                    .position(|o| o.as_ref().is_some_and(|(n, _)| n == id))
+                            })
+                    })
+                    .unwrap_or(0) as i32;
+                let next = (at + direction).rem_euclid(options.len() as i32) as usize;
+                bindings.tuning.selected = options[next].clone();
+                ctx.settings
+                    .set(CONTROLLER_STORAGE_KEY, &bindings.tuning.to_json());
+                Event::Changed
+            }
             _ if action.starts_with("bind:") => {
                 let id = &action[5..];
                 let (index, (row, _, label)) =
@@ -1033,5 +1070,73 @@ mod pad_name_tests {
         ] {
             assert_eq!(pad_name(id), name, "{id}");
         }
+    }
+}
+
+#[cfg(test)]
+mod pad_select_tests {
+    use super::*;
+    use crate::{hud::minimap::MinimapSettings, menu::prefs::Preferences, touch::TouchControls};
+
+    #[test]
+    fn padselect_cycles_auto_and_connected_pads_and_labels_the_pin() {
+        let mut settings = Settings::memory();
+        let mut prefs = Preferences::load(&settings, false);
+        let mut minimap = MinimapSettings::load(&settings);
+        let mut touch = TouchControls::new(&settings, false);
+        let mut bindings = load_bindings(&mut settings);
+        let pads = vec![
+            ("Virtual Pad".to_string(), 0),
+            (
+                "Xbox Wireless Controller (STANDARD GAMEPAD Vendor: 045e)".to_string(),
+                1,
+            ),
+        ];
+        let mut menu = PauseMenu::new();
+        let mut label =
+            |menu: &mut PauseMenu, bindings: &mut Bindings, pads: &[(String, u32)], step: i32| {
+                let mut ctx = Context {
+                    settings: &mut settings,
+                    prefs: &mut prefs,
+                    minimap: &mut minimap,
+                    touch: &mut touch,
+                    bindings: Some(bindings),
+                    pad_name: Some(pads[0].0.clone()),
+                    pads: pads.to_vec(),
+                    pad_standard: true,
+                    view: Default::default(),
+                    lobby: None,
+                    music: None,
+                };
+                if step != 0 {
+                    menu.run("padselect", step, true, &mut ctx);
+                }
+                menu.show("controller-settings");
+                menu.refresh(&ctx);
+                menu.rows.label("padselect").unwrap_or_default().to_string()
+            };
+        assert_eq!(
+            label(&mut menu, &mut bindings, &pads, 0),
+            "Controller: Auto (Virtual Pad)"
+        );
+        // Auto → the second pad (Left wraps from Auto to the last pad).
+        assert_eq!(
+            label(&mut menu, &mut bindings, &pads, -1),
+            "Controller: Xbox Wireless Controller"
+        );
+        assert_eq!(bindings.tuning.selected, Some((pads[1].0.clone(), 1)));
+        // Absent: Auto stands in until it reconnects.
+        assert_eq!(
+            label(&mut menu, &mut bindings, &pads[..1], 0),
+            "Controller: Xbox Wireless Controller (not connected, using Auto)"
+        );
+        // Right from the pinned pad wraps to Auto, and the choice is saved.
+        assert_eq!(
+            label(&mut menu, &mut bindings, &pads, 1),
+            "Controller: Auto (Virtual Pad)"
+        );
+        assert_eq!(bindings.tuning.selected, None);
+        let saved = settings.get(CONTROLLER_STORAGE_KEY).unwrap();
+        assert!(saved.contains("\"selected\":null"), "{saved}");
     }
 }

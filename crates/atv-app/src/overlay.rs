@@ -110,6 +110,11 @@ pub struct Overlay {
     help_keys: Vec<(String, Vec<String>)>,
     /// Name of the controller in use (Controller Settings row).
     pub pad_name: Option<String>,
+    /// Connected controllers and whether the one in use is standard-mapped.
+    pub pads: Vec<(String, u32)>,
+    pub pad_standard: bool,
+    /// One-handed flips armed with a buzz (diagnostics).
+    pub flip_buzzes: u32,
     pub prefs: Preferences,
     /// Controller glyph rasters for the bindings pages.
     glyphs: atv_ui::menu::glyphs::GlyphImages,
@@ -187,6 +192,9 @@ impl Overlay {
             help_cache: None,
             help_keys: Vec::new(),
             pad_name: None,
+            pads: Vec::new(),
+            pad_standard: true,
+            flip_buzzes: 0,
             prefs,
             glyphs: Default::default(),
             music: None,
@@ -274,6 +282,8 @@ impl Overlay {
             touch: &mut self.touch,
             bindings,
             pad_name: self.pad_name.clone(),
+            pads: self.pads.clone(),
+            pad_standard: self.pad_standard,
             view: self.view,
             lobby: self.lobby.as_ref(),
             music: self.music.as_ref(),
@@ -497,7 +507,12 @@ impl Overlay {
     }
 
     pub fn sample(&mut self, now: f64, active: bool) -> Controls {
-        self.touch.sample(now, active, &mut self.settings)
+        let controls = self.touch.sample(now, active, &mut self.settings);
+        if active && self.touch.flip_buzz(now) {
+            self.flip_buzzes += 1;
+            buzz(12);
+        }
+        controls
     }
 
     /// Builds this frame's UI and uploads it.
@@ -1034,6 +1049,7 @@ impl Overlay {
                 "id": id, "x": r.x, "y": r.y, "width": r.w, "height": r.h,
             })).collect::<Vec<_>>(),
             "touchOwned": self.touch.input.pointer.is_some(),
+            "flipBuzzes": self.flip_buzzes,
             "secondaryOwned": self.touch.input.secondary.as_ref().is_some_and(|s| s.pointer.is_some()),
             "scale": self.view.scale,
             "rasterized": self.renderer.rasterized,
@@ -1192,4 +1208,26 @@ fn offset_item(item: &mut atv_ui::paint::Item, dy: f32) {
         Item::PushClip { rect, .. } => rect.y += dy,
         Item::PopClip | Item::PushOpacity(_) | Item::PopOpacity => {}
     }
+}
+
+/// `navigator.vibrate?.(ms)` where it exists (iOS Safari has none, and
+/// calling a missing binding would throw through the frame).
+fn buzz(ms: u32) {
+    #[cfg(target_arch = "wasm32")]
+    {
+        use js_sys::Reflect;
+        use wasm_bindgen::{JsCast, JsValue};
+        let Some(window) = web_sys::window() else {
+            return;
+        };
+        let navigator: JsValue = window.navigator().into();
+        if let Some(vibrate) = Reflect::get(&navigator, &"vibrate".into())
+            .ok()
+            .and_then(|f| f.dyn_into::<js_sys::Function>().ok())
+        {
+            let _ = vibrate.call1(&navigator, &f64::from(ms).into());
+        }
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    let _ = ms;
 }

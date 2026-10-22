@@ -514,7 +514,11 @@ pub fn parse_launch(search: &str, tracks: &[(String, String)]) -> Launch {
 
 /// launch.js `menuShortcut`: `?menu=freeride|race` alone opens that menu.
 pub fn menu_shortcut(search: &str) -> Option<&'static str> {
-    let params = query_pairs(search);
+    // The engine's opt-in test diagnostics are not part of the link.
+    let params: Vec<_> = query_pairs(search)
+        .into_iter()
+        .filter(|(k, _)| k != "uiDiagnostics")
+        .collect();
     if params.len() != 1 || params[0].0 != "menu" {
         return None;
     }
