@@ -217,6 +217,14 @@ Water and train (second checkpoint):
   `atv_core::train` runtime (route/MOT, 0011c840) stepped at 60 Hz, cars posed by their
   bind nodes and the locomotive wheels by the Rust wheel matrices. Two views beside the
   train: 2.19 and 1.04, all of it the locomotive smoke (an ambient effect, not yet ported).
+  Mesh detail (2026-10-22, user report of a low-poly train): both ENV08 archives
+  (`E08_FR.RES`, `E08_NAT.RES`) carry each car once, as a single-LOD PSG under
+  `geometry/animgeometry/` (threshold f32::MAX): locomotive 451 triangles, tender 66,
+  coal cars 262/284, flatbeds 426/293, mail car 167, plus `anim/loco_wheels.psg` 48. No
+  hi/lo variants or other train meshes exist in the extracted content, every car group
+  draws (no reflective passes are skipped), and the Rust draw matches the browser's
+  apart from effects. The low-poly look is the original's own geometry; nothing to
+  switch to.
 - The GL backend creates a cube map for any texture whose layer count is a multiple of
   six, which WebGL then rejects for 2D-array views: ENV04's 102 terrain layers rendered
   garbage in the browser. Such arrays now get one unused layer (`texture::array_layers`).
