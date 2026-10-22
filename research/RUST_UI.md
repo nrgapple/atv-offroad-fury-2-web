@@ -640,3 +640,20 @@ cooldown, crash upgrade, pulse and wreck cases; `tools/test_engine_rumble.mjs`
 (host Chromium, a recording `vibrationActuator` on a stand-in pad, ENV03 into a Gorn
 wreck): 4 impacts and 5 pulses with Vibration On, none Off. Real controllers, phones
 and desktop force feedback are not tested.
+
+## Leaving the page (2026-10-22)
+
+Leaving the page (an iOS app switch, a hidden tab, pagehide) used to leave the Rust
+web build's soundtrack element loaded and its AudioContext running, so iOS kept
+showing "Fury" in Now Playing and the Dynamic Island. `sound::background` now
+listens to `visibilitychange` and `pagehide` directly and, inside that event,
+suspends every audio output (cpal's AudioContext and the soundtrack graph's) and
+parks the soundtrack as music.js `park()` does: pause, remember the position, drop
+`src` and `load()`. At start it clears any Media Session metadata, action handlers
+and playback state (music.js `releaseMediaSession`). Returning resumes through the
+normal lifecycle, as the browser game's `setActive(true)` and `updateMedia` do:
+the output restarts and the song reloads at its position. Evidence:
+`tools/test_engine_background_audio.mjs` (host Chromium; simulated page hide:
+contexts suspended, the song unloaded, no session entry; on return the same song
+plays on). Real iOS is not exercised by the test.
+

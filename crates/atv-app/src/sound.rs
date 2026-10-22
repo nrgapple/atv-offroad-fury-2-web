@@ -123,6 +123,12 @@ impl Output {
         })
     }
 
+    /// A hidden page suspends the output (audio.js setActive(false) ->
+    /// context.suspend()); the next lifecycle `start` resumes it.
+    pub fn suspend(&self) {
+        self.stream.pause().ok();
+    }
+
     /// Called from a key or pointer press (Web Audio autoplay policy).
     pub fn start(&self) {
         // A later gesture must also resume a context suspended by the browser.
@@ -161,7 +167,10 @@ impl Activation {
     fn output(&self) -> Result<Rc<Output>, String> {
         let mut state = self.0.borrow_mut();
         if state.output.is_none() {
-            state.output = Some(Rc::new(Output::open()?));
+            let output = Rc::new(Output::open()?);
+            #[cfg(target_arch = "wasm32")]
+            background::register_output(&output);
+            state.output = Some(output);
         }
         Ok(state.output.as_ref().unwrap().clone())
     }
@@ -171,6 +180,9 @@ impl Activation {
         let mut state = self.0.borrow_mut();
         if state.music && state.web.is_none() {
             state.web = WebMusic::new().map(|web| Rc::new(RefCell::new(web)));
+            if let Some(web) = &state.web {
+                background::register_music(web);
+            }
         }
         state.web.clone()
     }
@@ -254,6 +266,9 @@ struct WebMusic {
     retry: web_time::Instant,
     primed: Rc<Cell<bool>>,
     silent: Option<String>,
+    /// music.js park(): the song unloaded while the page is hidden (url,
+    /// position), restored on the next resume.
+    parked: Option<(String, f64)>,
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -271,7 +286,29 @@ impl WebMusic {
             retry: web_time::Instant::now(),
             primed: Rc::new(Cell::new(false)),
             silent: None,
+            parked: None,
         })
+    }
+
+    /// music.js park(): a hidden page unloads the song (iOS then drops its
+    /// Now Playing entry) and suspends the graph; resume reloads it at the
+    /// same position.
+    fn park(&mut self) {
+        if let Some(graph) = &self.graph
+            && let Ok(promise) = graph.context.suspend()
+        {
+            wasm_bindgen_futures::spawn_local(async move {
+                let _ = wasm_bindgen_futures::JsFuture::from(promise).await;
+            });
+        }
+        let src = self.element.src();
+        let _ = self.element.pause();
+        if self.parked.is_some() || src.is_empty() || self.silent.as_deref() == Some(src.as_str()) {
+            return;
+        }
+        self.parked = Some((src, self.element.current_time()));
+        self.element.remove_attribute("src").ok();
+        self.element.load();
     }
 
     /// The original web/music.js primes one element with a tiny silent WAV in
@@ -314,9 +351,6 @@ impl WebMusic {
         }
     }
 
-    /// setHype on the streamed soundtrack: the graph's lowpass and level
-    /// (created at the first muffle; the element then plays at full volume
-    /// into it).
     /// Moves the soundtrack into its Web Audio graph (once).
     fn graph(&mut self) -> Option<&MusicGraph> {
         if self.graph.is_none() {
@@ -330,6 +364,9 @@ impl WebMusic {
         self.graph.as_ref()
     }
 
+    /// setHype on the streamed soundtrack: the graph's lowpass and level
+    /// (created at the first muffle; the element then plays at full volume
+    /// into it).
     fn set_hype(&mut self, muffle: f32, fast: bool) {
         if self.graph.is_none() && muffle <= 0. {
             return;
@@ -353,6 +390,23 @@ impl WebMusic {
         }
         if self.pending.get() || (!gesture && self.retry.elapsed().as_millis() < 250) {
             return;
+        }
+        if let Some((url, time)) = self.parked.take() {
+            self.element.set_src(&url);
+            // Seek once the reloaded song knows its duration.
+            let element = self.element.clone();
+            let seek = wasm_bindgen::closure::Closure::once_into_js(move || {
+                element.set_current_time(time);
+            });
+            let options = web_sys::AddEventListenerOptions::new();
+            options.set_once(true);
+            let _ = self
+                .element
+                .add_event_listener_with_callback_and_add_event_listener_options(
+                    "loadedmetadata",
+                    wasm_bindgen::JsCast::unchecked_ref(&seek),
+                    &options,
+                );
         }
         self.retry = web_time::Instant::now();
         if let Ok(promise) = self.element.play() {
@@ -1303,5 +1357,119 @@ impl Drop for Sound {
         if self.held {
             self.set_song_gain(1.);
         }
+    }
+}
+
+/// Leaving the page (iOS app switch, tab hide, pagehide): every audio
+/// output suspends and the soundtrack element unloads at once, from the DOM
+/// event itself (music.js park on visibilitychange/pagehide, audio.js
+/// setActive(false)). The game publishes no Media Session entry
+/// (releaseMediaSession). Returning resumes through the normal lifecycle.
+#[cfg(target_arch = "wasm32")]
+mod background {
+    use super::{Output, WebMusic};
+    use std::{
+        cell::{Cell, RefCell},
+        rc::{Rc, Weak},
+    };
+    use wasm_bindgen::{JsCast, closure::Closure};
+
+    thread_local! {
+        static OUTPUTS: RefCell<Vec<Weak<Output>>> = const { RefCell::new(Vec::new()) };
+        static MUSIC: RefCell<Vec<Weak<RefCell<WebMusic>>>> = const { RefCell::new(Vec::new()) };
+        static INSTALLED: Cell<bool> = const { Cell::new(false) };
+    }
+
+    pub fn register_output(output: &Rc<Output>) {
+        install();
+        OUTPUTS.with_borrow_mut(|list| list.push(Rc::downgrade(output)));
+    }
+
+    pub fn register_music(music: &Rc<RefCell<WebMusic>>) {
+        install();
+        MUSIC.with_borrow_mut(|list| list.push(Rc::downgrade(music)));
+    }
+
+    fn hidden() -> bool {
+        web_sys::window()
+            .and_then(|w| w.document())
+            .is_some_and(|d| d.visibility_state() != web_sys::VisibilityState::Visible)
+    }
+
+    /// Suspends every live output and parks every soundtrack element.
+    pub fn park_all() {
+        OUTPUTS.with_borrow_mut(|list| {
+            list.retain(|w| w.strong_count() > 0);
+            for output in list.iter().filter_map(Weak::upgrade) {
+                output.suspend();
+            }
+        });
+        MUSIC.with_borrow_mut(|list| {
+            list.retain(|w| w.strong_count() > 0);
+            for music in list.iter().filter_map(Weak::upgrade) {
+                if let Ok(mut music) = music.try_borrow_mut() {
+                    music.park();
+                }
+            }
+        });
+    }
+
+    /// releaseMediaSession: no Now Playing metadata and no system actions.
+    fn release_media_session() {
+        use js_sys::Reflect;
+        let Some(window) = web_sys::window() else {
+            return;
+        };
+        let Ok(session) = Reflect::get(&window.navigator(), &"mediaSession".into()) else {
+            return;
+        };
+        if !session.is_object() {
+            return;
+        }
+        if let Ok(set) = Reflect::get(&session, &"setActionHandler".into())
+            && let Ok(set) = set.dyn_into::<js_sys::Function>()
+        {
+            for action in [
+                "play",
+                "pause",
+                "stop",
+                "nexttrack",
+                "previoustrack",
+                "seekto",
+                "seekbackward",
+                "seekforward",
+            ] {
+                let _ = set.call2(&session, &action.into(), &wasm_bindgen::JsValue::NULL);
+            }
+        }
+        let _ = Reflect::set(&session, &"metadata".into(), &wasm_bindgen::JsValue::NULL);
+        let _ = Reflect::set(&session, &"playbackState".into(), &"none".into());
+    }
+
+    fn install() {
+        if INSTALLED.get() {
+            return;
+        }
+        INSTALLED.set(true);
+        release_media_session();
+        let Some(window) = web_sys::window() else {
+            return;
+        };
+        let on_visibility = Closure::<dyn FnMut()>::new(|| {
+            if hidden() {
+                park_all();
+            }
+        });
+        if let Some(document) = window.document() {
+            let _ = document.add_event_listener_with_callback(
+                "visibilitychange",
+                on_visibility.as_ref().unchecked_ref(),
+            );
+        }
+        on_visibility.forget();
+        let on_pagehide = Closure::<dyn FnMut()>::new(park_all);
+        let _ = window
+            .add_event_listener_with_callback("pagehide", on_pagehide.as_ref().unchecked_ref());
+        on_pagehide.forget();
     }
 }
