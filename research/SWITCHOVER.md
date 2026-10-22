@@ -42,18 +42,16 @@ These would regress players at switch-over. Highest impact first.
    sw.js precaches only play.html and index.html. Whether it would pick up
    `atv_app_bg.wasm` is unverified. The Rust page needs these modules and an
    updated precache list before it replaces play.html.
-4. **Multiplayer links.**
-   - `mode=multiplayer` links without `room=` fail with a stale error, "Multiplayer
-     is not available in the Rust engine yet" (atv-app/src/lib.rs `open_launch`).
-     This covers the `lobby=` alias and `action=create`/`host`.
-   - `room=` invites skip the frontend and join as "Rider". They ignore `player=`
-     and the saved name (only `name=` is read), and `play=0`.
-   - An ended room reopens on env01 instead of the link's `map=` (unverified).
-   - Copy invite link always writes `quad=1&rider=0` (JS writes the rider's own),
-     and hard-codes `/play.html`.
-5. **WebGL context loss.** After a GPU reset (common on iOS backgrounding or memory
-   pressure) the Rust page stays dead. atv-render only reconfigures a `Lost`
-   surface. The JavaScript game rebuilds and shows "Restoring graphics…".
+4. ~~**Multiplayer links.**~~ Closed: `mode=multiplayer`, `lobby=` and `action=create|host`
+   links open Create/Join Lobby with the link's code and name (the saved name unless
+   `player=` is given) and host or join with `play=1`, on the link's map; motorcycles get
+   the JavaScript refusal. Invites carry the rider's own ATV and rider and this page
+   (`multiplayer::invite_url`). A bare `?room=`/`?host=1` still rides at once (tests).
+   Not verified: an ended room reopening on the link's map (needs a relay).
+5. ~~**WebGL context loss.**~~ Partly closed: engine.js shows "Restoring graphics…" and,
+   once the context is restored, reopens the current ride's link (`fury-resume`,
+   written by the engine; a room's invite rejoins its slot). Difference: game.js
+   rebuilt in place and kept the ride's position; a single-player ride restarts.
 6. **Rider Gear page.** Gear and quad paint cannot be edited (`gear` is in
    `UNSUPPORTED`). Saved gear still dresses the ride, but the garage previews show
    stock gear and paint.
@@ -74,10 +72,8 @@ These would regress players at switch-over. Highest impact first.
 11. ~~**Audio page song picker.**~~ Closed: Settings → Audio lists the soundtrack
     four songs a page, with the playing song marked, the status line and the page
     count. Previous/Next page through it and wrap (`tools/test_engine_audio_page.mjs`).
-12. **Race links.**
-    - `cheats=eatdirt,bringit` are dropped.
-    - Motorcycle race links are refused with a stale error, although motorcycle
-      races landed in #215.
+12. ~~**Race links.**~~ Closed: `cheats=eatdirt,bringit` reach the race settings and
+    motorcycle race links start (`tools/test_engine_links.mjs`).
 13. ~~**Race intro skip**~~ Closed: a click or tap off the toolbar and a new pad
     press skip it too.
 14. **Smaller regressions.**
@@ -85,13 +81,15 @@ These would regress players at switch-over. Highest impact first.
       virtual pad steals Auto.
     - ~~The Fullscreen row shows even where the Fullscreen API is missing (iPhone).~~
       Closed: shown only where `document.fullscreenEnabled`.
-    - CPU racers and remote riders get no contact shadows and cast no High
-      shadow-map shadows.
+    - ~~CPU racers and remote riders get no contact shadows and cast no High
+      shadow-map shadows.~~ Closed: contact blobs within 240 ft and the shadow map
+      within 40 ft, as game.js.
     - No buzz when a touch flip arms.
     - No menu page transitions.
     - Non-standard pads get standard glyphs.
-    - Ride prefetch is serial: no parallel chunk fetch (load-time effect
-      unmeasured).
+    - ~~Ride prefetch is serial.~~ Closed: `Content::prefetch` (game.js
+      `prefetchRide`). With 150 ms request latency, env01 loaded in 4.6-5.2 s
+      against 5.8-6.4 s serial (host-only).
     - ~~Web soundtrack falls back to silence (not VAG decoding) when a stream is
       missing.~~ Closed: a missing or failed stream decodes the original VAGs on
       the mixer's music bus for the rest of the session.
@@ -206,7 +204,7 @@ main-menu Jukebox.
 | Manifest version/build-hash check | Ported | atv-content | |
 | Per-chunk SHA-256, chunked records | Ported | atv-content `chunk` (#252) | Yields every 512 KiB |
 | Archive directory reads, block inflate | Ported | atv-game/src/archive.rs | |
-| Parallel ride prefetch with fetch priority | Missing | — | Serial; unmeasured |
+| Parallel ride prefetch with fetch priority | Ported | atv-content `prefetch`, atv-game `ride_prefetch` | |
 | Soundtrack `.m4a` streams | Ported | atv-content `MediaStream`, sound.rs (#191) | |
 | Lazy music-chunk retention | Not needed | Rust LRU | |
 
@@ -348,7 +346,7 @@ main-menu Jukebox.
 | Dust/chunk/spray and wet births; motorcycle MX atlas | Ported | atv-render wheel_effects.rs (#197) | |
 | Gorn blood | Ported | blood.rs (#207) | |
 | Tire tracks Enhanced/High, mud zones | Ported | tire_tracks.rs (#201) | |
-| High sun shadow map | Partial | shadows.rs (#200) | Player only (blocking 14) |
-| Contact shadow blobs | Partial | shadows.rs | Player only (blocking 14) |
+| High sun shadow map | Ported | shadows.rs (#200) | Player, CPUs and riders within 40 ft |
+| Contact shadow blobs | Ported | shadows.rs | Player, CPUs within 240 ft, other riders |
 | TOY effects (smoke, fire); type-11 fountains | Ported | atv-render ambient.rs (#186) | |
 | Lingering dust Enhanced/High | Ported | lingering_dust.rs (#197) | |
