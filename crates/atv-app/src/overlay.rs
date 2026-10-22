@@ -507,6 +507,11 @@ impl Overlay {
     }
 
     pub fn sample(&mut self, now: f64, active: bool) -> Controls {
+        // touch.js mountTouchControls: Extras flips and Alpha Arcade flips
+        // decide the thumb's flip zones and its 360 axis each frame.
+        let arcade = self.prefs.alpha("arcade-flips");
+        self.touch.input.flips = self.prefs.flips && !arcade;
+        self.touch.input.arcade = arcade;
         let controls = self.touch.sample(now, active, &mut self.settings);
         if active && self.touch.flip_buzz(now) {
             self.flip_buzzes += 1;

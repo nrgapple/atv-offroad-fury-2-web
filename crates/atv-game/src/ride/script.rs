@@ -54,6 +54,21 @@ pub fn controls(input: &Value) -> Controls {
             .unwrap_or(false),
         reverse_chord_brake: optional("reverse_chord_brake"),
         arcade_spin: optional("arcade_spin"),
+        // game.js flip_request / flip_launch / flip_hold.
+        flip_request: input
+            .get("flip_request")
+            .and_then(Value::as_str)
+            .and_then(|s| ["backflip", "left", "right"].into_iter().find(|f| *f == s))
+            .map(|flip| {
+                (
+                    flip,
+                    input
+                        .get("flip_launch")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false),
+                    optional("flip_hold").unwrap_or(0.),
+                )
+            }),
         preload_axis: optional("preload_axis"),
         keyboard_drive: input.get("keyboard_drive").map(|k| TouchIntent {
             generation: k.get("generation").and_then(Value::as_u64).unwrap_or(0),

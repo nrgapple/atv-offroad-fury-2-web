@@ -887,6 +887,7 @@ impl Bindings {
             // Keys and controllers spin with steering under Alpha Arcade
             // flips (touch keeps its own axis).
             arcade_spin: Some(x.clamp(-1., 1.)),
+            flip_request: None,
             throttle: pd(Action::Throttle),
             brake,
             steer: x,

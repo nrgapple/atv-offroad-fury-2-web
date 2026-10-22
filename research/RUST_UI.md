@@ -505,8 +505,33 @@ shared with play.html. The Rust ride runs three of them:
   height (the same heights after `render_heights`, sampled bilinearly rather than by
   the triangle the physics uses).
 - Arcade flips: `RideOptions::arcade_flips` switches the recovered vehicle's arcade
-  flip mode and feeds the keyboard/controller steering as `arcade_spin`, replacing the
-  Unleashed gestures (game.js `drivingInput`). Touch spin axes are not passed yet.
+  flip mode, as game.js `drivingInput` does:
+  - The keyboard/controller steering spins the quad as `arcade_spin`, replacing the
+    Unleashed gestures.
+  - On touch, steering stays the original air lean. Dragging the one-handed thumb
+    or the two-finger lean pad past full lock adds touch.js `arcadeSpinAxis`: it
+    starts past full lock and reaches full rate 50 px further.
+  - Leaning back (dragging down) and forward set the flip rate.
+  - Motorcycles have no Arcade flips, in either engine.
+
+  Fixed 2026-10-22, from a user report from an iPhone: "arcade flips aren't working;
+  I can't get the bike to rotate backwards faster".
+  - The ride called `set_flips(flips && !arcade)` every step. With Arcade on, that
+    dropped the flip controller each step, so the rotation never spun up past one
+    step (0.23 rad/s instead of about 6.5) on every input.
+  - atv-web enables flips with Arcade on. The ride now does the same.
+  - Touch also now passes its 360 axis.
+  - Touch now passes its Extras flip requests: the thumb's flip zones and swipes,
+    and the two-finger pad pull. These were never reaching `request_flip`.
+  - The overlay now tells touch whether Extras or Arcade flips are on.
+  - `tools/test_engine_arcade_touch.mjs` compares the peak commanded rates with
+    the JavaScript game, on the env01 ramp jump:
+
+    | Input | Rust (rad/s) | JavaScript (rad/s) |
+    | --- | --- | --- |
+    | Touch pull-down (backflip) | 6.53 | 6.65 |
+    | Touch drag past lock (360) | 7.25 | 7.25 |
+    | Keyboard lean back | 6.42 | 6.42 |
 
 - Landing burst: each landing the director reports while focused (no wheel in
   water) throws `atv_game::burst::BurstEmitter` dust puffs and clods (hype-gl.js,
