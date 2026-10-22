@@ -62,6 +62,7 @@ export const TESTS = {
   'test_engine_front.mjs': { group: 'content' },
   'test_engine_race_gear.mjs': { group: 'content' },
   'test_engine_menu_parity.mjs': { group: 'content' },
+  'test_engine_menu_flows.mjs': { group: 'content' },
   'test_engine_menu_transitions.mjs': { group: 'content' },
   'test_engine_context_loss.mjs': { group: 'content' },
   'test_engine_menu_music.mjs': { group: 'content' },
@@ -80,6 +81,10 @@ export const TESTS = {
   'test_engine_multiplayer_audio.mjs': {
     group: 'relay',
     reason: 'needs the multiplayer relay at the same origin (Host Game, room WebSocket); run with --url'
+  },
+  'test_engine_multiplayer_end.mjs': {
+    group: 'relay',
+    reason: 'needs the multiplayer relay at the same origin (room creation, slot-key reclaim, Free Ride); run with --url'
   },
   'test_engine_multiplayer_menu.mjs': {
     group: 'relay',

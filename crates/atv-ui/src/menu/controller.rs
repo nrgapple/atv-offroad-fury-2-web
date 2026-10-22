@@ -98,8 +98,6 @@ pub struct PauseMenu {
     pad: u32,
     /// The rows were built for this request.
     key: String,
-    /// After Back: select the row that opened the page just left.
-    pending_select: Option<String>,
     /// Bindings page: keyboard (true) or controller rows, page and row.
     keyboard: bool,
     binding_page: usize,
@@ -157,7 +155,6 @@ impl PauseMenu {
             pressed: None,
             pad: u32::MAX,
             key: String::new(),
-            pending_select: None,
             keyboard: true,
             binding_page: 0,
             music_page: 0,
@@ -395,16 +392,15 @@ impl PauseMenu {
             .map(|frame| Rows::from_frame(&frame));
         if let Ok(mut rows) = rows {
             rows.choices.retain(|c| !UNSUPPORTED.contains(&c.as_str()));
-            // The Jukebox plays the ride's soundtrack: rides with music only.
-            if !ctx.music.is_some_and(|m| m.ready) || self.from_menu {
+            // The main menu's Jukebox is its own page; a pause menu always
+            // lists it (the page waits for the soundtrack catalog).
+            if self.from_menu {
                 rows.choices.retain(|c| c != "jukebox");
             }
             if !cfg!(target_arch = "wasm32") {
-                // Desktop has no dev log page to open, and no web page to
-                // link a ride to (a room's invite link is shown instead).
-                let online = ctx.lobby.is_some();
-                rows.choices
-                    .retain(|c| c != "devlog" && (online || c != "copyride"));
+                // Desktop has no dev log page to open. Copy ride link stays:
+                // it copies the site's play.html link for this ride.
+                rows.choices.retain(|c| c != "devlog");
             }
             // Change ATV and Rider and Select Track open the engine's own
             // frontend; a direct room link has none.
@@ -419,12 +415,6 @@ impl PauseMenu {
             self.rows = rows;
         }
         self.key = key;
-        if let Some(from) = self.pending_select.take()
-            && let Some(i) = self.rows.choices.iter().position(|c| *c == from)
-        {
-            self.selection = i;
-            self.refresh(ctx);
-        }
     }
 
     fn show(&mut self, page: &str) {
@@ -446,7 +436,6 @@ impl PauseMenu {
             // From the main menu the Jukebox closes (the host ends the menu).
             if !self.from_menu {
                 self.show("pause");
-                self.pending_select = Some("jukebox".into());
             }
             return Some(Event::Jukebox(super::jukebox::JukeboxAction::Leave));
         }
@@ -455,15 +444,8 @@ impl PauseMenu {
         } else {
             parent(&self.page)
         };
-        // Return to the row that opened the page.
-        let from = match self.page.as_str() {
-            "bindings" if self.keyboard => "keyboard".to_string(),
-            "bindings" => "padbindings".to_string(),
-            "controller-settings" => "controller".to_string(),
-            page => page.to_string(),
-        };
+        // frontend.js `show`: the page opens on its first row.
         self.show(to);
-        self.pending_select = Some(from);
         None
     }
 
@@ -795,7 +777,19 @@ impl PauseMenu {
     fn navigate(&mut self, code: &str, ctx: &mut Context) -> Option<Event> {
         match code {
             "ArrowUp" | "KeyW" => self.step(-1),
-            "ArrowDown" | "KeyS" | "Tab" => self.step(1),
+            "ArrowDown" | "KeyS" => self.step(1),
+            // Focus order: Shift+Tab walks it backwards.
+            "Tab" => self.step(
+                if self
+                    .held
+                    .iter()
+                    .any(|h| h == "ShiftLeft" || h == "ShiftRight")
+                {
+                    -1
+                } else {
+                    1
+                },
+            ),
             "ArrowLeft" | "ArrowRight" | "KeyA" | "KeyD" => {
                 let direction = if matches!(code, "ArrowLeft" | "KeyA") {
                     -1
@@ -830,12 +824,9 @@ impl PauseMenu {
                 let action = self.selected()?.to_string();
                 return self.run(&action, 1, false, ctx);
             }
-            "Escape" | "Backspace" | "KeyP" => {
-                if code == "KeyP" && self.page != "pause" {
-                    return None;
-                }
-                return self.back();
-            }
+            // Only the Pause binding (handled in `key`) and Escape resume
+            // from Pause; a P no longer bound to Pause does nothing.
+            "Escape" | "Backspace" => return self.back(),
             _ => {}
         }
         None
@@ -1384,6 +1375,62 @@ mod parity_tests {
             pad.buttons[*b] = 1.;
         }
         pad
+    }
+
+    #[test]
+    fn only_the_pause_binding_or_escape_resumes_and_shift_tab_goes_back() {
+        let mut fx = Fixture::new();
+        let mut menu = PauseMenu::new();
+        // The default Pause keys (Escape, P) resume.
+        assert_eq!(
+            fx.with(&mut menu, |m, ctx| m.key("KeyP", ctx)),
+            Some(Event::Resume)
+        );
+        fx.with(&mut menu, |m, ctx| m.key_up("KeyP", ctx));
+        // Pause rebound to K: P does nothing, K and Escape resume.
+        fx.bindings.set_binding(
+            true,
+            Action::Pause,
+            vec![Binding::One(Atom::Key("KeyK".into()))],
+        );
+        assert_eq!(fx.with(&mut menu, |m, ctx| m.key("KeyP", ctx)), None);
+        fx.with(&mut menu, |m, ctx| m.key_up("KeyP", ctx));
+        assert_eq!(menu.page, "pause");
+        assert_eq!(
+            fx.with(&mut menu, |m, ctx| m.key("KeyK", ctx)),
+            Some(Event::Resume)
+        );
+        fx.with(&mut menu, |m, ctx| m.key_up("KeyK", ctx));
+        assert_eq!(
+            fx.with(&mut menu, |m, ctx| m.key("Escape", ctx)),
+            Some(Event::Resume)
+        );
+        fx.with(&mut menu, |m, ctx| m.key_up("Escape", ctx));
+        // Tab walks forward, Shift+Tab backward (wrapping to the last row).
+        let rows = menu.rows.choices.len();
+        fx.with(&mut menu, |m, ctx| m.key("Tab", ctx));
+        assert_eq!(menu.selection, 1);
+        fx.with(&mut menu, |m, ctx| m.key("ShiftLeft", ctx));
+        fx.with(&mut menu, |m, ctx| m.key("Tab", ctx));
+        fx.with(&mut menu, |m, ctx| m.key("Tab", ctx));
+        assert_eq!(menu.selection, rows - 1);
+    }
+
+    #[test]
+    fn back_opens_the_first_row_and_jukebox_waits_for_its_catalog() {
+        let mut fx = Fixture::new();
+        fx.music.ready = false;
+        let mut menu = PauseMenu::new();
+        fx.with(&mut menu, |_, _| ());
+        // The Jukebox row shows before the soundtrack catalog is ready.
+        assert!(menu.rows.choices.iter().any(|c| c == "jukebox"));
+        assert!(menu.rows.choices.iter().any(|c| c == "copyride"));
+        fx.with(&mut menu, |m, ctx| m.run("settings", 1, false, ctx));
+        fx.with(&mut menu, |m, ctx| m.run("controls", 1, false, ctx));
+        fx.with(&mut menu, |m, ctx| m.key("Escape", ctx));
+        assert_eq!((menu.page.as_str(), menu.selection), ("settings", 0));
+        fx.with(&mut menu, |m, ctx| m.key("Escape", ctx));
+        assert_eq!((menu.page.as_str(), menu.selection), ("pause", 0));
     }
 
     #[test]

@@ -296,6 +296,8 @@ pub struct Frontend {
     pub gear_catalog: Vec<Category>,
     /// Generation of the page last shown (each `show` slides a page in).
     pub shown: u64,
+    /// A Shift key is held: Tab moves focus backwards.
+    shift: bool,
 }
 
 impl Frontend {
@@ -349,6 +351,7 @@ impl Frontend {
             appearance,
             gear_catalog: Vec::new(),
             shown: crate::transition::next_show(),
+            shift: false,
         };
         front.player_name = front.saved["playerName"]
             .as_str()
@@ -363,8 +366,8 @@ impl Frontend {
         front
     }
 
-    /// Stores the garage choice and last Freestyle course, keeping the
-    /// browser's other saved fields (race setup, name, gear).
+    /// Stores the garage choice, keeping the browser's other saved fields
+    /// (last Freestyle course, race setup, name, gear).
     pub fn save(&mut self, settings: &mut Settings) {
         let mut value = self.saved.clone();
         value["quadId"] = self.quad_id.into();
@@ -372,12 +375,19 @@ impl Frontend {
         if valid_name(&self.player_name) {
             value["playerName"] = self.player_name.clone().into();
         }
-        if let Some(track) = self.tracks.get(self.track) {
-            value["freestyleEnvironment"] = track.id.clone().into();
-        }
         value["appearance"] = json!({"gear": self.appearance.gear, "paint": self.appearance.paint});
         self.saved = value.clone();
         settings.set(SELECTION_KEY, &value.to_string());
+    }
+
+    /// A Freestyle ride starts on the current course: it becomes the saved
+    /// last Freestyle course (frontend.js `lastFreestyleEnvironment`, which
+    /// only Freestyle rides change).
+    pub fn remember_freestyle(&mut self, settings: &mut Settings) {
+        if let Some(track) = self.tracks.get(self.track) {
+            self.saved["freestyleEnvironment"] = track.id.clone().into();
+        }
+        self.save(settings);
     }
 
     /// ui_menu rows for the page (labels and keyboard order).
@@ -846,6 +856,7 @@ impl Frontend {
                 name: self.room_name(),
             });
         }
+        self.remember_freestyle(settings);
         Some(Event::Ride {
             environment: track.id,
             quad: self.quad_id,
@@ -907,11 +918,8 @@ impl Frontend {
             self.hosting = false;
         }
         self.focus = None;
+        // frontend.js `show`: the new page starts on its first row.
         self.show(&to, view);
-        // Back lands on the row that opened the page just left.
-        if let Some(index) = self.choices.iter().position(|(a, _)| *a == from) {
-            self.selection = index;
-        }
         None
     }
 
@@ -1018,13 +1026,10 @@ impl Frontend {
             "back" => return self.back(view),
             "devlog" => return Some(Event::DevLog),
             "freeride" => {
-                // frontend.js: no setup; motorcycles fall back to ATV01.
-                let name = self.saved["playerName"]
-                    .as_str()
-                    .map(str::trim)
-                    .filter(|n| !n.is_empty() && n.len() <= 24)
-                    .unwrap_or("Rider")
-                    .to_string();
+                // frontend.js: no setup; motorcycles fall back to ATV01. The
+                // current name rides (also one typed but not yet saved); the
+                // host numbers a blank or default "Rider" for the session.
+                let name = self.room_name();
                 return Some(Event::FreeRide {
                     quad: if self.quad_id >= 27 { 1 } else { self.quad_id },
                     rider: self.rider_id,
@@ -1051,10 +1056,18 @@ impl Frontend {
 
     /// Keyboard navigation (frontend.js `action`).
     pub fn key(&mut self, code: &str, view: &Viewport, settings: &mut Settings) -> Option<Event> {
+        if matches!(code, "ShiftLeft" | "ShiftRight") {
+            self.shift = true;
+            return None;
+        }
         if self.page == "loading" {
             return None;
         }
-        // A focused field owns editing keys; Tab and the arrows move on.
+        if code == "Tab" {
+            self.tab(self.shift);
+            return None;
+        }
+        // A focused field owns editing keys; the arrows move on.
         if let Some(index) = self.focus {
             let fields = self.fields();
             match code {
@@ -1068,7 +1081,7 @@ impl Frontend {
                 }
                 // frontend.js: Escape in a field still goes back a page.
                 "Escape" => self.focus = None,
-                "Tab" | "ArrowDown" | "Enter" | "NumpadEnter" => {
+                "ArrowDown" | "Enter" | "NumpadEnter" => {
                     self.focus = (index + 1 < fields.len()).then_some(index + 1);
                     if self.focus.is_none() {
                         self.selection = 0;
@@ -1081,10 +1094,6 @@ impl Frontend {
                 }
                 _ => return None,
             }
-        }
-        if code == "Tab" && !self.fields().is_empty() {
-            self.focus = Some(0);
-            return None;
         }
         let action = match code {
             "ArrowUp" => "up",
@@ -1176,12 +1185,50 @@ impl Frontend {
         None
     }
 
-    /// Standard-mapping controller edges: D-pad/stick move, A or Start
-    /// accepts, B/Y go back, LB/RB switch the course tabs.
+    pub fn key_up(&mut self, code: &str) {
+        if matches!(code, "ShiftLeft" | "ShiftRight") {
+            self.shift = false;
+        }
+    }
+
+    /// Tab and Shift+Tab walk the page's focus order like the browser's DOM
+    /// focus (a focused button takes the selection, menu-screens.js
+    /// `selectChoice`): the form fields first, then every choice (rows,
+    /// cards, Back), wrapping. Buttons that are not choices (event tabs,
+    /// photo arrows) take no selection in the browser either and are skipped.
+    pub fn tab(&mut self, back: bool) {
+        let fields = self.fields().len();
+        let choices = self.choices.len();
+        // Stops: fields 0..fields, then choices.
+        let stops = fields + choices;
+        if stops == 0 {
+            return;
+        }
+        let at = match self.focus {
+            Some(index) => index,
+            None => fields + self.selection.min(choices.saturating_sub(1)),
+        };
+        let next = if back {
+            (at + stops - 1) % stops
+        } else {
+            (at + 1) % stops
+        };
+        if next < fields {
+            self.focus = Some(next);
+        } else {
+            self.focus = None;
+            self.selection = next - fields;
+        }
+    }
+
+    /// Standard-mapping controller edges: D-pad/stick move, A or Start (or
+    /// the rebound controller Pause binding, `pause`) accepts, B/Y go back,
+    /// LB/RB switch the course tabs.
     pub fn pad(
         &mut self,
         buttons: &[f32],
         axes: &[f32],
+        pause: bool,
         view: &Viewport,
         settings: &mut Settings,
     ) -> Option<Event> {
@@ -1196,7 +1243,7 @@ impl Frontend {
             |i: usize| axes.get(i).copied().unwrap_or(0.),
         );
         set(0, buttons(0) > 0.5);
-        set(2, buttons(9) > 0.5);
+        set(2, buttons(9) > 0.5 || pause);
         set(1, buttons(1) > 0.5 || buttons(3) > 0.5);
         set(3, buttons(12) > 0.5 || axes(1) < -0.55);
         set(4, buttons(13) > 0.5 || axes(1) > 0.55);
@@ -1295,6 +1342,14 @@ impl Frontend {
     pub fn cancel_pointer(&mut self) {
         self.pressed = None;
         self.hovered = None;
+    }
+
+    /// The page lost focus or was hidden (frontend.js `padBlocked`): a pad
+    /// button held across it acts only after a release, and held keys end.
+    pub fn blur(&mut self) {
+        self.cancel_pointer();
+        self.pad = u32::MAX;
+        self.shift = false;
     }
 
     pub fn release(
@@ -1614,8 +1669,15 @@ mod tests {
         front.key("Enter", &view, &mut settings);
         assert_eq!(front.page, "create-lobby");
         assert_eq!(front.fields().len(), 2);
-        // Tab focuses the name; typing edits it, Backspace deletes.
+        // The fields come before the rows in the focus order: Shift+Tab from
+        // the first row reaches the code, then the name. Typing edits it,
+        // Backspace deletes.
+        front.key("ShiftLeft", &view, &mut settings);
         front.key("Tab", &view, &mut settings);
+        assert_eq!(front.focus, Some(1));
+        front.key("Tab", &view, &mut settings);
+        front.key_up("ShiftLeft");
+        assert_eq!(front.focus, Some(0));
         front.set_field("player-name", "");
         assert!(front.type_text("Ann"));
         front.key("Backspace", &view, &mut settings);
@@ -1670,7 +1732,7 @@ mod tests {
         let mut settings = Settings::memory();
         let mut front = Frontend::new(tracks(), &settings, true);
         front.show("join-lobby", &view);
-        front.key("Tab", &view, &mut settings);
+        front.tab(true);
         assert!(front.focus.is_some());
         front.key("Escape", &view, &mut settings);
         assert_eq!((front.page.as_str(), front.focus), ("multiplayer", None));
@@ -1684,8 +1746,8 @@ mod tests {
             }
             buttons
         };
-        front.pad(&pad(&[]), &[0.; 4], &view, &mut settings);
-        let event = front.pad(&pad(&[9]), &[0.; 4], &view, &mut settings);
+        front.pad(&pad(&[]), &[0.; 4], false, &view, &mut settings);
+        let event = front.pad(&pad(&[9]), &[0.; 4], false, &view, &mut settings);
         assert!(matches!(event, Some(Event::RoomRide { .. })), "{event:?}");
     }
 
@@ -1909,9 +1971,9 @@ mod tests {
                 .iter()
                 .any(|v| v.motorcycle && !v.class.is_empty())
         );
+        // Back opens the page on its first row (frontend.js `show`).
         front.key("Escape", &view, &mut settings);
-        assert_eq!(front.page, "single");
-        assert_eq!(front.choices()[front.selection].0, "garage");
+        assert_eq!((front.page.as_str(), front.selection), ("single", 0));
     }
 
     #[test]
@@ -2046,8 +2108,116 @@ mod tests {
         assert_eq!(saved["appearance"]["paint"], 10);
         assert_eq!(saved["appearance"]["gear"][3], 2);
         front.key("Escape", &view, &mut settings);
-        assert_eq!(front.page, "garage");
-        assert_eq!(front.current(), Some("gear"));
+        assert_eq!((front.page.as_str(), front.selection), ("garage", 0));
+    }
+
+    #[test]
+    fn tab_walks_rows_and_fields_both_ways() {
+        let view = view(1280., 720.);
+        let mut settings = Settings::memory();
+        let mut front = Frontend::new(tracks(), &settings, true);
+        front.show("main", &view);
+        let rows = front.choices().len();
+        assert!(rows > 2);
+        // Tab walks every row and wraps; Shift+Tab goes back.
+        front.key("Tab", &view, &mut settings);
+        assert_eq!(front.selection, 1);
+        front.key("ShiftRight", &view, &mut settings);
+        front.key("Tab", &view, &mut settings);
+        front.key("Tab", &view, &mut settings);
+        assert_eq!(front.selection, rows - 1);
+        front.key_up("ShiftRight");
+        front.key("Tab", &view, &mut settings);
+        assert_eq!(front.selection, 0);
+        // On a form the fields come first: past the last row, Tab focuses
+        // the name, then the code, then the first row again.
+        front.show("join-lobby", &view);
+        let rows = front.choices().len();
+        for _ in 0..rows {
+            front.key("Tab", &view, &mut settings);
+        }
+        assert_eq!(front.focus, Some(0));
+        front.key("Tab", &view, &mut settings);
+        assert_eq!(front.focus, Some(1));
+        front.key("Tab", &view, &mut settings);
+        assert_eq!((front.focus, front.selection), (None, 0));
+        // A blur forgets a held Shift.
+        front.key("ShiftLeft", &view, &mut settings);
+        front.blur();
+        front.key("Tab", &view, &mut settings);
+        assert_eq!(front.selection, 1);
+    }
+
+    #[test]
+    fn only_freestyle_rides_change_the_saved_freestyle_course() {
+        let view = view(1280., 720.);
+        let mut settings = Settings::memory();
+        settings.set(SELECTION_KEY, r#"{"freestyleEnvironment":"env01"}"#);
+        let mut front = Frontend::new(tracks(), &settings, true);
+        let saved = |settings: &Settings| -> Value {
+            serde_json::from_str(&settings.get(SELECTION_KEY).unwrap()).unwrap()
+        };
+        // Another course chosen for a room (or by a link, or the garage)
+        // is saved with the garage choice but not as the Freestyle course.
+        front.track = 1;
+        front.show("garage", &view);
+        front.run("quadnext", &view, &mut settings);
+        assert_eq!(saved(&settings)["freestyleEnvironment"], "env01");
+        front.show("join-lobby", &view);
+        front.set_field("room-code", "abcd1234");
+        front.run("join", &view, &mut settings);
+        assert_eq!(saved(&settings)["freestyleEnvironment"], "env01");
+        // Riding Freestyle remembers its course.
+        front.show("tracks", &view);
+        front.key("Enter", &view, &mut settings);
+        assert_eq!(saved(&settings)["freestyleEnvironment"], "env02");
+    }
+
+    #[test]
+    fn free_ride_takes_the_name_just_typed() {
+        let view = view(1280., 720.);
+        let mut settings = Settings::memory();
+        settings.set(SELECTION_KEY, r#"{"playerName":"Ann"}"#);
+        let mut front = Frontend::new(tracks(), &settings, true);
+        front.show("join-lobby", &view);
+        front.set_field("player-name", " Bea ");
+        front.show("main", &view);
+        assert!(matches!(
+            front.run("freeride", &view, &mut settings),
+            Some(Event::FreeRide { ref name, .. }) if name == "Bea"
+        ));
+        // A blank name rides as "Rider" (the host numbers it).
+        front.set_field("player-name", "  ");
+        assert!(matches!(
+            front.run("freeride", &view, &mut settings),
+            Some(Event::FreeRide { ref name, .. }) if name == "Rider"
+        ));
+    }
+
+    #[test]
+    fn the_pause_binding_accepts_and_a_blur_blocks_held_buttons() {
+        let view = view(1280., 720.);
+        let mut settings = Settings::memory();
+        let mut front = Frontend::new(tracks(), &settings, true);
+        let idle = [0f32; 17];
+        let mut a = [0f32; 17];
+        a[0] = 1.;
+        // The rebound controller Pause (any input) accepts like Start.
+        front.pad(&idle, &[0.; 4], false, &view, &mut settings);
+        front.pad(&idle, &[0.; 4], true, &view, &mut settings);
+        assert_eq!(front.page, "main");
+        // A button held across a blur acts only after its release.
+        front.pad(&idle, &[0.; 4], false, &view, &mut settings);
+        front.blur();
+        front.pad(&a, &[0.; 4], false, &view, &mut settings);
+        assert_eq!(front.page, "main");
+        front.pad(&idle, &[0.; 4], false, &view, &mut settings);
+        front.pad(&a, &[0.; 4], false, &view, &mut settings);
+        assert_eq!(front.page, "single");
+        // The left stick navigates too.
+        front.pad(&idle, &[0.; 4], false, &view, &mut settings);
+        front.pad(&idle, &[0., 0.9, 0., 0.], false, &view, &mut settings);
+        assert_eq!(front.selection, 1);
     }
 
     #[test]

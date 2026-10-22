@@ -169,6 +169,15 @@ enum Message {
     /// goes back (frontend.js keydown lets Escape through an input).
     #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
     FrontEscape,
+    /// Tab (true: with Shift) in a form field: the menu's focus order moves
+    /// on and the canvas takes the keyboard back.
+    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+    FrontTab(bool),
+    /// Web: the page's window gained or lost focus (game.js `focus`/`blur`
+    /// on window). Focus moving between the canvas and the page's own
+    /// elements (Host/Join inputs, install banner) is not a blur.
+    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+    PageFocus(bool),
     /// The browser's 1 s presence timer (a hidden tab runs no frames).
     #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
     PresenceTick,
@@ -270,8 +279,13 @@ struct App {
     suspended: bool,
     /// No frame is scheduled: the single-player ride is inactive (see `awake`).
     asleep: bool,
-    /// Controller buttons held at the last paused-state poll.
-    pad_buttons: u32,
+    /// The pad's held buttons and stick directions at the last idle poll
+    /// ([`pad_signature`]).
+    pad_buttons: u64,
+    /// A pad answered the last idle poll (polled at display rate then).
+    pad_seen: bool,
+    /// Frontend frames drawn (`?uiDiagnostics=1`).
+    front_frames: u64,
     /// The left mouse press belongs to the UI, not the camera drag.
     mouse_ui: bool,
     ui_backdrop: Option<[u8; 3]>,
@@ -324,6 +338,13 @@ struct App {
     /// riders, as multiplayer.js once the lobby state arrives) until the
     /// loader takes over at the instant given.
     joined: Option<Joined>,
+    /// The frontend page a ride load that fails returns to (frontend.js:
+    /// Freestyle → course select, Race → race setup, Free Ride → main menu,
+    /// a room → Multiplayer, or main for Free Ride rooms).
+    ride_origin: &'static str,
+    /// A failed ride load waiting for the frontend's new surface: the page
+    /// and the error for its notice line.
+    load_failure: Option<(&'static str, String)>,
     /// Frame-spread loads (see `spawn_frame`).
     frame_tasks: Vec<std::pin::Pin<Box<dyn std::future::Future<Output = Message>>>>,
     /// Desktop: loads and joins `spawn` runs on the event loop a slice at a
@@ -1016,8 +1037,8 @@ impl App {
         let mut loads = Vec::new();
         let mut engine_loads = Vec::new();
         let mut course = None;
+        let mut ended = None;
         if let Some(net) = &mut ready.net {
-            let was_open = net.closed.is_none();
             // Only actual suspension (hidden page, suspended app) sends the
             // paused presence pose; the online pause menu and blur keep
             // neutral-input riding (Riding::online).
@@ -1044,8 +1065,9 @@ impl App {
                 &riding.ride,
                 eye,
             );
-            if was_open && let Some(closed) = &net.closed {
-                status(&format!("Multiplayer ended: {closed}"));
+            // The room ended for good (multiplayer.js onLeave).
+            if let Some(closed) = &net.closed {
+                ended = Some((room_page(net.shared()), closed.clone()));
             }
             if let Some(sound) = &mut riding.sound {
                 for quad in sound.remote_frame(&net.riders, riding.ride.frame().origin) {
@@ -1074,6 +1096,10 @@ impl App {
         }
         if self.ready.as_ref().is_some_and(|r| r.net.is_some()) {
             self.meter.net += room_started.elapsed().as_secs_f64() * 1000.;
+        }
+        if let Some((page, reason)) = ended {
+            self.room_ended(page, reason);
+            return;
         }
         if let Some(environment) = course {
             self.reload_room(environment);
@@ -1484,19 +1510,15 @@ impl App {
         }
     }
 
-    /// While asleep and paused in focus: poll controllers so a button can
-    /// resume, and keep the soundtrack fed (the pause menu keeps music).
+    /// While asleep in focus (an idle menu, or paused): poll controllers so a
+    /// press or a stick move reaches the menus, and keep the soundtrack fed
+    /// (the pause menu keeps music). Any change of the pad's held buttons or
+    /// stick directions draws one frame, which applies it; releases count
+    /// too, so the next press is a fresh edge for the menu.
     fn paused_tick(&mut self) {
-        let pad = self.gamepad.sample();
-        let buttons = pad.as_ref().map_or(0, |pad| {
-            pad.buttons
-                .iter()
-                .enumerate()
-                .filter(|(_, v)| **v > 0.5)
-                .fold(0u32, |bits, (i, _)| bits | 1 << i)
-        });
-        let pressed = buttons & !self.pad_buttons != 0;
-        self.pad_buttons = buttons;
+        let signature = self.pad_signature();
+        let changed = signature != self.pad_buttons;
+        self.pad_buttons = signature;
         if let Some(riding) = self.ready.as_mut().and_then(|r| r.riding.as_mut()) {
             let steps = riding.ride.steps();
             if let Some(sound) = &mut riding.sound {
@@ -1504,9 +1526,20 @@ impl App {
                 sound.report(steps);
             }
         }
-        if pressed {
+        if changed {
             self.wake();
         }
+    }
+
+    /// The active pad's held buttons (low 32 bits) and stick directions (two
+    /// bits an axis past ±0.5, under the menus' ±0.55), or 0 without a pad.
+    fn pad_signature(&mut self) -> u64 {
+        let Some(pad) = self.gamepad.sample() else {
+            self.pad_seen = false;
+            return 0;
+        };
+        self.pad_seen = true;
+        pad_signature(&pad)
     }
 
     fn effective_focused(&self) -> bool {
@@ -1595,11 +1628,7 @@ impl App {
                 let _ = page;
             }
             Event::Fullscreen => {
-                if let Some(window) = &self.window {
-                    let on = window.fullscreen().is_none();
-                    window
-                        .set_fullscreen(on.then_some(winit::window::Fullscreen::Borderless(None)));
-                }
+                self.toggle_fullscreen();
             }
             Event::CopyRide => self.copy_ride_link(),
             Event::Spawn(peer) => {
@@ -1653,12 +1682,14 @@ impl App {
                 }
             }
             Event::LeaveGame => {
+                let mut page = "main";
                 if let Some(net) = self.ready.as_mut().and_then(|r| r.net.as_mut()) {
+                    page = room_page(net.shared());
                     net.leave();
                 }
-                // Back to the main menu (shared Free Ride rooms return there
-                // in the browser too; the Multiplayer page is not ported).
-                if self.quit_to_menu() {
+                // multiplayer.js `leave`: a shared Free Ride room returns to
+                // the main menu, a private room to the Multiplayer page.
+                if self.quit_to(Some(page)) {
                     return;
                 }
                 #[cfg(target_arch = "wasm32")]
@@ -1667,9 +1698,14 @@ impl App {
                 }
                 if let Some(ready) = &mut self.ready {
                     ready.net = None;
+                    ready.scene.retain_peers(|_, _| false);
                     if let Some(riding) = &mut ready.riding {
                         riding.online = false;
                         riding.server_clock = None;
+                        let origin = riding.ride.frame().origin;
+                        if let Some(sound) = &mut riding.sound {
+                            sound.remote_frame(&[], origin);
+                        }
                     }
                 }
                 if let Some(overlay) = &mut self.overlay {
@@ -2455,6 +2491,8 @@ impl ApplicationHandler<Message> for App {
         #[cfg(target_arch = "wasm32")]
         if let Some(document) = web_sys::window().and_then(|w| w.document()) {
             self.visible = document.visibility_state() == web_sys::VisibilityState::Visible;
+            // game.js: `focused = document.hasFocus()` at start and pageshow.
+            self.focused = document.has_focus().unwrap_or(true);
         }
         self.sync_activity();
         let Some(options) = self.options.take() else {
@@ -2874,8 +2912,13 @@ impl ApplicationHandler<Message> for App {
                 status(&error);
                 self.usage.failed();
                 if self.front.is_some() && self.gpu.is_none() && self.ready.is_none() {
-                    // The ride did not load: back to the course select on a
-                    // new surface (the failed load held the old one).
+                    // The ride did not load: back to the page it started
+                    // from with the error on its notice line (frontend.js
+                    // `fail`), on a new surface (the failed load held the
+                    // old one).
+                    if self.load_failure.is_none() {
+                        self.load_failure = Some((self.ride_origin, error));
+                    }
                     if let Some(window) = self.window.clone() {
                         let display = self.display.clone();
                         self.spawn(open_gpu(window, display), |result| match result {
@@ -2926,6 +2969,21 @@ impl ApplicationHandler<Message> for App {
                     self.key_pressed(KeyCode::Escape);
                 }
                 self.wake();
+            }
+            Message::FrontTab(back) => {
+                if let Some(front) = &self.front {
+                    front.borrow_mut().state.tab(back);
+                }
+                self.wake();
+                if let Some(window) = &self.window {
+                    window.request_redraw();
+                }
+            }
+            Message::PageFocus(focused) => {
+                if self.focused != focused {
+                    self.focused = focused;
+                    self.sync_activity();
+                }
             }
             Message::FrontFocus(index) => {
                 if let Some(front) = &self.front {
@@ -3015,9 +3073,18 @@ impl ApplicationHandler<Message> for App {
                     gpu.resize(size.width, size.height);
                 }
                 self.gpu = Some(gpu);
+                let (page, notice) = self
+                    .load_failure
+                    .take()
+                    .map_or(("tracks", None), |(page, error)| (page, Some(error)));
                 if let Some(front) = &self.front {
-                    front.borrow_mut().resume("tracks");
+                    let mut f = front.borrow_mut();
+                    // Its GPU objects belonged to the device the load took.
+                    f.release_gpu();
+                    f.resume(page);
+                    f.state.notice = notice;
                 }
+                self.requested.remove("jukebox-art");
                 self.wake();
             }
         }
@@ -3132,9 +3199,13 @@ impl ApplicationHandler<Message> for App {
                     };
                 }
             }
+            // The browser's canvas focus is not the page's: web focus comes
+            // from the window's focus and blur (Message::PageFocus).
             WindowEvent::Focused(focused) => {
-                self.focused = focused;
-                self.sync_activity();
+                if cfg!(not(target_arch = "wasm32")) {
+                    self.focused = focused;
+                    self.sync_activity();
+                }
             }
             WindowEvent::Occluded(occluded) => {
                 self.visible = !occluded;
@@ -3240,7 +3311,8 @@ impl ApplicationHandler<Message> for App {
                     }
                 } else {
                     self.asleep = true;
-                    self.pad_buttons = u32::MAX;
+                    // The pad as this frame left it: only a later change wakes.
+                    self.pad_buttons = self.pad_signature();
                 }
             }
             _ => {}
@@ -3312,14 +3384,15 @@ impl App {
             }
         }
         self.poll_riders();
+        // The earliest of every reason to wake without an event.
+        let now = Instant::now();
+        let mut wake: Option<Instant> = None;
+        let mut at = |when: Instant| wake = Some(wake.map_or(when, |w| w.min(when)));
         // A hidden or suspended room ride draws no frames: a 1 s timer keeps
         // its presence (the browser's throttled background timers).
         #[cfg(not(target_arch = "wasm32"))]
         if self.presence_due() {
-            event_loop.set_control_flow(ControlFlow::WaitUntil(
-                Instant::now() + std::time::Duration::from_secs(1),
-            ));
-            return;
+            at(now + std::time::Duration::from_secs(1));
         }
         // The main menu refreshes its Free Ride count every 15 s.
         if self.ready.is_none()
@@ -3329,18 +3402,35 @@ impl App {
                 .is_some_and(|f| f.borrow().state.page == "main")
             && let Some(polled) = self.riders_polled
         {
-            event_loop.set_control_flow(ControlFlow::WaitUntil(
-                polled + std::time::Duration::from_secs(15),
-            ));
-            return;
+            at(polled + std::time::Duration::from_secs(15));
         }
-        // Asleep in focus (paused): a 50 ms tick; away: wait for events.
-        event_loop.set_control_flow(if self.asleep && self.effective_focused() {
-            ControlFlow::WaitUntil(Instant::now() + std::time::Duration::from_millis(50))
-        } else {
-            ControlFlow::Wait
-        });
+        // Asleep in focus (an idle menu, or paused): poll the pad at display
+        // rate while one answers (frontend.js polls every animation frame),
+        // else every 50 ms; nothing redraws until its input changes.
+        if self.asleep && self.effective_focused() {
+            let poll = if self.pad_seen { 16 } else { 50 };
+            at(now + std::time::Duration::from_millis(poll));
+        }
+        event_loop.set_control_flow(wake.map_or(ControlFlow::Wait, ControlFlow::WaitUntil));
     }
+}
+
+/// [`App::pad_signature`] for one sample.
+fn pad_signature(pad: &atv_game::ride::bindings::Pad) -> u64 {
+    let buttons = pad
+        .buttons
+        .iter()
+        .enumerate()
+        .filter(|(_, v)| **v > 0.5)
+        .fold(0u64, |bits, (i, _)| bits | 1 << i);
+    pad.axes
+        .iter()
+        .enumerate()
+        .fold(buttons, |bits, (i, v)| match *v {
+            v if v < -0.5 => bits | 1 << (32 + 2 * i),
+            v if v > 0.5 => bits | 1 << (33 + 2 * i),
+            _ => bits,
+        })
 }
 
 /// A run of background loads: started, the last event-loop turn and the
@@ -3958,10 +4048,15 @@ impl App {
         if !setup.play {
             return;
         }
-        // A launched link becomes the saved selection, as in the browser game.
+        // A launched link becomes the saved selection, as in the browser game
+        // (a Freestyle link also the last Freestyle course).
         {
             let f = &mut *f;
-            f.state.save(&mut f.settings);
+            if race {
+                f.state.save(&mut f.settings);
+            } else {
+                f.state.remember_freestyle(&mut f.settings);
+            }
         }
         let settings = race.then(|| {
             let defaults = atv_game::ride::race::Settings::default();
@@ -4016,9 +4111,14 @@ impl App {
                     return;
                 };
                 // Many riders keep the default name: number it so strangers
-                // can tell them apart (frontend.js).
+                // can tell them apart. Like frontend.js `playerName`, the
+                // number stays for the session and the next save keeps it.
                 let name = if name == "Rider" {
-                    format!("Rider {}", 1000 + fresh_seed() % 9000)
+                    let numbered = format!("Rider {}", 1000 + fresh_seed() % 9000);
+                    if let Some(front) = &self.front {
+                        front.borrow_mut().state.player_name.clone_from(&numbered);
+                    }
+                    numbered
                 } else {
                     name
                 };
@@ -4150,11 +4250,7 @@ impl App {
                 }
             }
             Event::Fullscreen => {
-                if let Some(window) = &self.window {
-                    let on = window.fullscreen().is_none();
-                    window
-                        .set_fullscreen(on.then_some(winit::window::Fullscreen::Borderless(None)));
-                }
+                self.toggle_fullscreen();
             }
             Event::Settings => {}
             Event::Jukebox => {
@@ -4435,6 +4531,21 @@ impl App {
         if let Some(music) = &self.soundtrack {
             music.borrow_mut().new_session(fresh_seed());
         }
+        self.ride_origin = match (&room, &self.pending_room) {
+            (Some(room), _)
+                if room.freeride
+                    || room
+                        .code
+                        .as_deref()
+                        .is_some_and(atv_game::multiplayer::is_shared_room) =>
+            {
+                "main"
+            }
+            (Some(_), _) => "multiplayer",
+            (None, Some(net)) => room_page(net.shared()),
+            (None, None) if race.is_some() => "race",
+            (None, None) => "tracks",
+        };
         // Host/Join: the Free Ride Lobby page while the room connects
         // (multiplayer.js `host`); Free Ride goes straight to the loader.
         if let Some(room) = room.as_ref().filter(|r| !r.freeride)
@@ -4525,7 +4636,17 @@ impl App {
                     None => (None, environment),
                 },
             };
-            let mut ready = prepare(gpu, content, environment, None, world, progress).await?;
+            let mut ready = match prepare(gpu, content, environment, None, world, progress).await {
+                Ok(ready) => ready,
+                Err(error) => {
+                    // A rider who cannot load the course leaves the room and
+                    // forgets its slot key (multiplayer.js `ride`).
+                    if let Some(mut net) = net {
+                        net.leave();
+                    }
+                    return Err(error);
+                }
+            };
             if net.is_some()
                 && let Some(riding) = &mut ready.riding
             {
@@ -4565,10 +4686,22 @@ impl App {
             if let Some(ride) = &self.held_ride {
                 net.hold(ride);
             }
-            if let Some(closed) = &net.closed {
+            if let Some(closed) = net.closed.clone() {
+                // multiplayer.js onLeave: the menu over the held room goes to
+                // the main menu (Free Ride) or Multiplayer, with the reason.
+                let page = room_page(net.shared());
                 status(&format!("Multiplayer ended: {closed}"));
                 self.held_room = None;
                 self.held_ride = None;
+                self.usage.ended();
+                if let Some(front) = &self.front {
+                    let mut f = front.borrow_mut();
+                    f.state.room = None;
+                    f.state.hosting = false;
+                    f.resume(page);
+                    f.state.notice = Some(closed);
+                }
+                self.wake();
             }
             return;
         }
@@ -4695,8 +4828,58 @@ impl App {
         }
     }
 
+    /// Display → Fullscreen. The browser fullscreens the whole page
+    /// (frontend.js `document.documentElement.requestFullscreen()`), so the
+    /// Host/Join inputs, install banner and status line stay visible; the
+    /// desktop window goes borderless fullscreen.
+    fn toggle_fullscreen(&mut self) {
+        #[cfg(target_arch = "wasm32")]
+        if let Some(document) = web_sys::window().and_then(|w| w.document()) {
+            if document.fullscreen_element().is_some() {
+                document.exit_fullscreen();
+            } else if let Some(root) = document.document_element() {
+                // A refusal (no user activation) leaves the page as it is.
+                let _ = root.request_fullscreen();
+            }
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(window) = &self.window {
+            let on = window.fullscreen().is_none();
+            window.set_fullscreen(on.then_some(winit::window::Fullscreen::Borderless(None)));
+        }
+    }
+
     fn quit_to_menu(&mut self) -> bool {
         self.quit_to(Some("main"))
+    }
+
+    /// The room closed for good (multiplayer.js onLeave, game.js): the ride
+    /// ends on the main menu (Free Ride) or the Multiplayer page with the
+    /// reason on the notice line. Without the engine's frontend the ride
+    /// goes on alone: the other riders, their sounds and the room's pause
+    /// rows go.
+    fn room_ended(&mut self, page: &'static str, reason: String) {
+        status(&format!("Multiplayer ended: {reason}"));
+        if self.quit_to(Some(page)) {
+            if let Some(front) = &self.front {
+                front.borrow_mut().state.notice = Some(reason);
+            }
+            return;
+        }
+        let Some(ready) = &mut self.ready else { return };
+        ready.net = None;
+        ready.scene.retain_peers(|_, _| false);
+        if let Some(riding) = &mut ready.riding {
+            riding.online = false;
+            riding.server_clock = None;
+            let origin = riding.ride.frame().origin;
+            if let Some(sound) = &mut riding.sound {
+                sound.remote_frame(&[], origin);
+            }
+        }
+        if let Some(overlay) = &mut self.overlay {
+            overlay.lobby = None;
+        }
     }
 
     /// Ends the ride and hands the GPU back to the frontend, showing `page`
@@ -4718,6 +4901,11 @@ impl App {
         }
         self.last = Instant::now();
         self.wake();
+        // Called from within a ride frame (a room that ended) the loop is
+        // not asleep yet: the frontend still needs its first frame.
+        if let Some(window) = &self.window {
+            window.request_redraw();
+        }
         true
     }
 
@@ -4728,6 +4916,7 @@ impl App {
             return;
         };
         let started = Instant::now();
+        self.front_frames += 1;
         let pin = front.borrow().pad_pin();
         self.gamepad.set_pin(pin);
         let pad = self.gamepad.sample();
@@ -4756,6 +4945,10 @@ impl App {
             publish_ui_state(
                 &serde_json::json!({
                     "front": f.diagnostics(),
+                    // Frontend frames drawn and the page's focus (tests: idle
+                    // menus draw nothing; Host/Join inputs keep the focus).
+                    "frontFrames": self.front_frames,
+                    "focused": self.effective_focused(),
                     "diagnostics": {
                         "mode": self.diagnostics.mode.name(),
                         "lines": self.diagnostics.lines,
@@ -5272,6 +5465,12 @@ fn publish_trace(text: &str) {
 
 /// The relay for menu rides: this page's origin on the web, the production
 /// site on desktop.
+/// The frontend page a room's Leave Game or end returns to
+/// (multiplayer.js `shared ? 'main' : 'multiplayer'`).
+fn room_page(shared: bool) -> &'static str {
+    if shared { "main" } else { "multiplayer" }
+}
+
 fn default_relay() -> String {
     #[cfg(target_arch = "wasm32")]
     {
@@ -5350,6 +5549,7 @@ impl App {
             environment.to_uppercase()
         ));
         let Ready { gpu, .. } = ready;
+        self.ride_origin = room_page(net.shared());
         let content = net.content();
         let profile = net.session.profile().cloned();
         let world = World {
@@ -5369,7 +5569,7 @@ impl App {
             autodrive: None,
         };
         let future = async move {
-            let mut ready = prepare(
+            let mut ready = match prepare(
                 gpu,
                 content,
                 environment.clone(),
@@ -5377,7 +5577,15 @@ impl App {
                 world,
                 Box::new(|_, text| status(text)),
             )
-            .await?;
+            .await
+            {
+                Ok(ready) => ready,
+                Err(error) => {
+                    // multiplayer.js `ride`: leave and forget the slot key.
+                    net.leave();
+                    return Err(error);
+                }
+            };
             net.loaded(&environment);
             if let Some(riding) = &mut ready.riding {
                 riding.online = true;
@@ -5466,6 +5674,8 @@ pub fn run(options: Options) {
         suspended: false,
         asleep: false,
         pad_buttons: 0,
+        pad_seen: false,
+        front_frames: 0,
         mouse_ui: false,
         ui_backdrop: None,
         ui_diagnostics: ui_diagnostics_enabled(),
@@ -5495,6 +5705,8 @@ pub fn run(options: Options) {
         pending_fresh: false,
         joining: None,
         joined: None,
+        ride_origin: "tracks",
+        load_failure: None,
         frame_tasks: Vec::new(),
         #[cfg(not(target_arch = "wasm32"))]
         background: RefCell::default(),
@@ -5533,6 +5745,18 @@ pub fn run(options: Options) {
             );
         }
         tick.forget();
+        // game.js pauses on the window's blur and focus, not the canvas's.
+        if let Some(window) = web_sys::window() {
+            for (name, focused) in [("focus", true), ("blur", false)] {
+                let proxy = app.proxy.clone();
+                let listener = wasm_bindgen::closure::Closure::<dyn FnMut()>::new(move || {
+                    let _ = proxy.send_event(Message::PageFocus(focused));
+                });
+                let _ = window
+                    .add_event_listener_with_callback(name, listener.as_ref().unchecked_ref());
+                listener.forget();
+            }
+        }
         event_loop.spawn_app(app);
     }
     #[cfg(not(target_arch = "wasm32"))]
@@ -5941,6 +6165,36 @@ struct MenuMusic {
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
+    #[test]
+    fn idle_menus_wake_on_any_pad_change_including_sticks() {
+        use atv_game::ride::bindings::Pad;
+        let idle = super::pad_signature(&Pad::default());
+        let mut pad = Pad::default();
+        pad.buttons[12] = 1.;
+        let dpad = super::pad_signature(&pad);
+        assert_ne!(dpad, idle);
+        // The left stick past the menus' threshold either way, and a held
+        // trigger axis, are changes too; small drift is not.
+        let mut stick = Pad::default();
+        stick.axes[1] = -0.6;
+        let up = super::pad_signature(&stick);
+        stick.axes[1] = 0.6;
+        let down = super::pad_signature(&stick);
+        assert!(up != idle && down != idle && up != down);
+        stick.axes[1] = 0.2;
+        assert_eq!(super::pad_signature(&stick), idle);
+        let mut last = Pad::default();
+        last.axes[15] = 1.;
+        last.buttons[31] = 1.;
+        assert_eq!(super::pad_signature(&last).count_ones(), 2);
+    }
+
+    #[test]
+    fn rooms_return_to_the_main_menu_or_multiplayer() {
+        assert_eq!(super::room_page(true), "main");
+        assert_eq!(super::room_page(false), "multiplayer");
+    }
+
     #[test]
     fn desktop_auto_graphics_follows_the_adapter() {
         use wgpu::DeviceType::*;

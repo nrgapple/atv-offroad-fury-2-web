@@ -91,6 +91,9 @@ pub struct Net {
     saved_key: String,
     /// The latest arrival beside another rider (tests): slot and distance.
     pub met: Option<(u8, f32)>,
+    /// The room was listed as a public (Free Ride) room before its state
+    /// was dropped by a closed socket.
+    public: bool,
 }
 
 /// What the app does after a room tick.
@@ -374,6 +377,7 @@ impl Net {
             train_place_at: start.train_place.map(|s| s * 1000.),
             saved_key: String::new(),
             met: None,
+            public: false,
         };
         let deadline = Instant::now();
         let mut set_up = false;
@@ -517,6 +521,9 @@ impl Net {
                 Event::Closed { code, reason } => {
                     let key = !self.session.key.is_empty() && !self.session.code.is_empty();
                     let until = self.reconnect.map_or(now_f + 25_000., |r| r.1);
+                    // multiplayer.js onclose: the other riders, the room state
+                    // and their sounds go at once, retry or not.
+                    self.forget_riders();
                     if key && retryable(code, &reason) && now_f < until {
                         let attempts = self.reconnect.map_or(0, |r| r.2);
                         let delay = (500. * 2f64.powi(attempts as i32)).min(3000.);
@@ -736,6 +743,29 @@ impl Net {
         };
     }
 
+    /// A closed socket (multiplayer.js onclose): the room's riders, state
+    /// and poses are dropped at once; a reconnect keeps the slot key and code.
+    fn forget_riders(&mut self) {
+        let (code, key) = (self.session.code.clone(), self.session.key.clone());
+        self.public |= self.session.lobby.as_ref().is_some_and(|l| l.public);
+        self.session.restart();
+        self.session.code = code;
+        self.session.key = key;
+        self.locals.clear();
+        self.presented.clear();
+        self.riders.clear();
+        self.meet = None;
+        self.meet_wait = None;
+    }
+
+    /// An Arlington Free Ride room (its Leave and end return to the main
+    /// menu; a private room's to the Multiplayer page).
+    pub fn shared(&self) -> bool {
+        self.public
+            || self.session.lobby.as_ref().is_some_and(|l| l.public)
+            || atv_game::multiplayer::is_shared_room(&self.session.code)
+    }
+
     /// Uploads arrived models, then poses every presented remote rider.
     pub fn present(
         &mut self,
@@ -745,6 +775,15 @@ impl Net {
         ride: &Ride,
         eye: [f32; 3],
     ) {
+        // An ended room draws nobody (and its riders' sounds stop).
+        if self.closed.is_some() {
+            scene.retain_peers(|_, _| false);
+            self.locals.clear();
+            self.presented.clear();
+            self.riders.clear();
+            self.drawn = 0;
+            return;
+        }
         let own = ride.frame().origin;
         let now = now_ms(self.clock);
         let dt = self

@@ -170,9 +170,15 @@ fn display(size: f32, weight: u16, italic: bool) -> Font {
 
 /// The full-viewport layer: dim backdrop and the centred panel.
 pub fn element(view: &Viewport, state: &State, images: &glyphs::GlyphImages) -> El {
-    if state.page == "jukebox"
-        && let Some(music) = &state.music
-    {
+    if state.page == "jukebox" {
+        // Before the ride's soundtrack catalog arrives the page still opens
+        // (jukebox.js: "Loading the soundtrack…").
+        let waiting = jukebox::MusicView {
+            enabled: true,
+            volume: 0.7,
+            ..Default::default()
+        };
+        let music = state.music.as_ref().unwrap_or(&waiting);
         return jukebox::element(view, state, music, state.jukebox_art.as_ref(), state.frame)
             .children(notice(view, state));
     }

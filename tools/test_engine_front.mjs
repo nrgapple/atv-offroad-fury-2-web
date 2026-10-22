@@ -46,9 +46,11 @@ try {
   assert.deepEqual([f.quad, f.rider], [2, 1]);
   const saved = JSON.parse(await page.evaluate(() => localStorage.getItem('atv-player-selection')));
   assert.deepEqual([saved.quadId, saved.riderId], [2, 1]);
+  // Back opens Single Player on its first row (frontend.js `show`).
   await key(page, 'Escape'); await onPage(page, 'single');
+  assert.equal((await front(page)).selection, 0);
   // Course select: photos load, tabs filter, a click on a card selects it.
-  await key(page, 'ArrowUp'); await key(page, 'ArrowUp'); await key(page, 'Enter'); await onPage(page, 'tracks');
+  await key(page, 'Enter'); await onPage(page, 'tracks');
   await wait(page, () => JSON.parse(document.querySelector('#ui-state').textContent).front.photos >= 30, null, 120000);
   await key(page, 'PageDown');
   f = await front(page);

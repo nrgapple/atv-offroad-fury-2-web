@@ -488,6 +488,7 @@ impl Front {
     }
 
     pub fn key_up(&mut self, code: &str) -> Option<Event> {
+        self.state.key_up(code);
         let event = self.with_menu(|m, ctx, _, _| m.key_up(code, ctx)).flatten();
         self.menu_event(event)
     }
@@ -501,9 +502,21 @@ impl Front {
         let idle = atv_game::ride::bindings::Pad::default();
         let sample = pad.unwrap_or(&idle);
         let view = self.view;
-        let event = self
-            .state
-            .pad(&sample.buttons, &sample.axes, &view, &mut self.settings);
+        // frontend.js: the rebound controller Pause binding is Start too.
+        let pause = pad.is_some_and(|p| {
+            self.bindings.value(
+                atv_game::ride::bindings::Action::Pause,
+                &|_: &str| false,
+                Some(p),
+            ) > 0.5
+        });
+        let event = self.state.pad(
+            &sample.buttons,
+            &sample.axes,
+            pause,
+            &view,
+            &mut self.settings,
+        );
         self.front_event(event)
     }
 
@@ -575,6 +588,7 @@ impl Front {
     /// The page lost focus: pointers end and a binding capture is cancelled.
     pub fn blur(&mut self) {
         self.cancel_pointer();
+        self.state.blur();
         self.preview_focus = None;
         if let Some(menu) = &mut self.menu {
             menu.cancel_capture();
@@ -1357,6 +1371,7 @@ impl Front {
             // The page (or menu panel) slide: [opacity, translateX px].
             "motion": self.motion.map(|m| [m.opacity, m.dx]),
             "selection": self.state.selection,
+            "focus": self.state.focus,
             "choices": self.state.choices().iter().map(|(a, _)| a).collect::<Vec<_>>(),
             "freerideRiders": self.state.freeride_riders,
             "track": self.state.tracks.get(self.state.track).map(|t| t.id.clone()),
