@@ -9,11 +9,16 @@ use atv_game::multiplayer::{
 };
 use atv_game::ride::{Pose, Ride};
 use atv_render::{Gpu, SceneRenderer};
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::{
     collections::{BTreeMap, HashMap},
     rc::Rc,
 };
 use web_time::Instant;
+
+/// Keep-alive ping interval (ms): 15 s like web/multiplayer.js; the
+/// `?pingMs=` test hook samples the round trip more often.
+pub static PING_MS: AtomicU32 = AtomicU32::new(15_000);
 
 /// How a ride starts in a room (`--host`/`--join`, `?host=1`/`?room=`).
 #[derive(Clone, Debug)]
@@ -72,6 +77,8 @@ pub struct Net {
     /// attempts so far.
     reconnect: Option<(f64, f64, u32)>,
     pub reconnects: u32,
+    /// Longest remote-rider GPU upload since the meter last reset (ms).
+    pub upload_max: f64,
     /// Where to place the rider once the reloaded ride reports Ready
     /// (Change ATV and Rider reloads in place).
     pub resume_at: Option<([f32; 3], f32)>,
@@ -114,6 +121,11 @@ fn retryable(code: u16, reason: &str) -> bool {
 
 fn now_ms(clock: Instant) -> u64 {
     clock.elapsed().as_millis() as u64
+}
+
+/// A message's arrival on the session clock (ms), at most `now`.
+fn arrival(clock: Instant, at: Instant, now: u64) -> u64 {
+    (at.saturating_duration_since(clock).as_millis() as u64).min(now)
 }
 
 /// Creates (`host`) or opens (`join`, `open`) the room on the relay and
@@ -279,6 +291,7 @@ impl Net {
             meet: None,
             reconnect: None,
             reconnects: 0,
+            upload_max: 0.,
             resume_at: None,
             drop_at: start.drop_after.map(|s| s * 1000.),
             train_place_at: start.train_place.map(|s| s * 1000.),
@@ -300,7 +313,9 @@ impl Net {
                         net.socket.send(net.session.ping(now)?);
                         net.last_ping = now as f64;
                     }
-                    Event::Message(bytes) => net.session.receive(&bytes, now)?,
+                    Event::Message(bytes, at) => {
+                        net.session.receive(&bytes, arrival(net.clock, at, now))?
+                    }
                     Event::Closed { code, reason } => {
                         return Err(if reason.is_empty() {
                             format!("Unable to connect to this lobby ({code}).")
@@ -405,8 +420,8 @@ impl Net {
                         self.last_ping = now_f;
                     }
                 }
-                Event::Message(bytes) => {
-                    if let Err(error) = self.session.receive(&bytes, now) {
+                Event::Message(bytes, at) => {
+                    if let Err(error) = self.session.receive(&bytes, arrival(self.clock, at, now)) {
                         self.socket.close();
                         self.closed = Some(format!("Invalid session message: {error}"));
                         return tick;
@@ -507,7 +522,7 @@ impl Net {
         // Pings keep the socket warm and refine the shared world clock.
         let synced = self.session.server_now(now).is_some() && self.session.rtt_ms.is_some();
         if (now_f - self.last_traffic >= 10_000.
-            || now_f - self.last_ping >= 15_000.
+            || now_f - self.last_ping >= f64::from(PING_MS.load(Ordering::Relaxed))
             || (!synced && now_f - self.last_ping >= 2000.))
             && self.session.peer.is_some()
             && let Ok(bytes) = self.session.ping(now)
@@ -526,6 +541,40 @@ impl Net {
             self.models.insert(*key, Loaded::Loading);
         }
         tick
+    }
+
+    /// The frontend over a held room (Change ATV and Rider, Select Track): the
+    /// ride waits paused behind it and its paused presence keeps going out, so
+    /// others do not see this rider go stale (web/multiplayer.js keeps `send`
+    /// running while the simulation is paused behind the garage). Call after
+    /// [`Net::tick`] without a ride, which keeps the socket and pings.
+    pub fn hold(&mut self, ride: &Ride) {
+        if self.closed.is_some() || self.reconnect.is_some() {
+            return;
+        }
+        let now = now_ms(self.clock);
+        let now_f = now as f64;
+        if !self.ready_sent
+            && self.session.peer.is_some()
+            && let Ok(bytes) = self.session.ready()
+        {
+            self.ready_sent = self.socket.send(bytes);
+            self.last_traffic = now_f;
+        }
+        if !self.ready_sent || now_f - self.last_send < 50. {
+            return;
+        }
+        self.last_send = now_f;
+        match self.session.snapshot(ride, now, true) {
+            Ok(Some(bytes)) => {
+                if self.socket.send(bytes.clone()) {
+                    let _ = self.session.sent(&bytes);
+                    self.last_traffic = now_f;
+                }
+            }
+            Ok(None) => {}
+            Err(error) => crate::status(&format!("Multiplayer pose: {error}")),
+        }
     }
 
     /// Other riders' bodies for this frame's contact steps.
@@ -601,25 +650,35 @@ impl Net {
         scene.retain_peers(|peer, key| roster.contains(&(peer, key)));
         self.locals
             .retain(|peer, _| roster.iter().any(|(id, _)| id == peer));
+        // One new GPU upload per frame, so a full room arriving at once does
+        // not stall a frame.
+        let mut uploaded = false;
         for &(peer, key) in &roster {
-            if scene.peer_model(peer) != Some(key)
+            if !uploaded
+                && scene.peer_model(peer) != Some(key)
                 && let Some(Loaded::Ready(model)) = self.models.get(&key)
-                && let Err(error) = scene.set_peer(
+            {
+                uploaded = true;
+                let started = Instant::now();
+                let result = scene.set_peer(
                     gpu,
                     venue,
                     peer,
                     key,
                     (&model.quad, &model.rider),
                     model.paint,
-                )
-            {
-                crate::status(&format!("Remote rider upload: {error}"));
+                );
+                self.upload_max = self.upload_max.max(started.elapsed().as_secs_f64() * 1000.);
+                if let Err(error) = result {
+                    crate::status(&format!("Remote rider upload: {error}"));
+                }
             }
         }
         let mut poses: Vec<(u8, Pose)> = Vec::new();
         self.presented.clear();
         self.riders.clear();
         let cars = |car| ride.train_car(car);
+        let mut forked = false;
         for (peer, sampled) in self.session.present(now, Some(own), &cars) {
             self.presented.push((
                 peer,
@@ -654,6 +713,12 @@ impl Net {
                 .get(&peer)
                 .is_none_or(|l| !l.key_matches(&model.rig))
             {
+                // A rider's animation clocks fork the rig's animator: at most
+                // one per frame, so a crowd arriving together never stalls.
+                if forked {
+                    continue;
+                }
+                forked = true;
                 match Local::new(model.rig.clone()) {
                     Ok(local) => {
                         self.locals.insert(peer, local);
@@ -792,6 +857,7 @@ impl Net {
             "players": self.session.lobby.as_ref().map(|l| l.players.len()),
             "drawn": self.drawn,
             "rttMs": self.session.rtt_ms,
+            "rttSamples": self.session.rtt_history.iter().collect::<Vec<_>>(),
             "clockSynced": self.session.server_now(0).is_some(),
             "closed": self.closed,
             "reconnects": self.reconnects,

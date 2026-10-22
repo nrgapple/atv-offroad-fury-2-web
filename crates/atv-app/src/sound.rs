@@ -187,8 +187,67 @@ impl Activation {
     }
 }
 
+/// The streamed soundtrack's Web Audio graph (MediaOutput.graph in
+/// web/music.js): element -> gain (volume) -> lowpass -> muffle level ->
+/// destination, with the Jukebox analyser tapping the gain. Built only once
+/// Alpha Speed & air muffle or the Jukebox asks for it, so the default
+/// soundtrack keeps playing straight from the element.
+#[cfg(target_arch = "wasm32")]
+struct MusicGraph {
+    context: web_sys::AudioContext,
+    gain: web_sys::GainNode,
+    filter: web_sys::BiquadFilterNode,
+    level: web_sys::GainNode,
+    analyser: web_sys::AnalyserNode,
+    _source: web_sys::MediaElementAudioSourceNode,
+}
+
+#[cfg(target_arch = "wasm32")]
+impl MusicGraph {
+    fn new(element: &web_sys::HtmlAudioElement) -> Option<Self> {
+        let context = web_sys::AudioContext::new().ok()?;
+        let gain = context.create_gain().ok()?;
+        let filter = context.create_biquad_filter().ok()?;
+        filter.set_type(web_sys::BiquadFilterType::Lowpass);
+        filter.frequency().set_value(22_000.);
+        filter.q().set_value(0.7);
+        let level = context.create_gain().ok()?;
+        let source = context.create_media_element_source(element).ok()?;
+        source.connect_with_audio_node(&gain).ok()?;
+        gain.connect_with_audio_node(&filter).ok()?;
+        filter.connect_with_audio_node(&level).ok()?;
+        level.connect_with_audio_node(&context.destination()).ok()?;
+        // music.js analyser(): a passive tap on the music gain.
+        let analyser = context.create_analyser().ok()?;
+        analyser.set_fft_size(64);
+        analyser.set_smoothing_time_constant(0.78);
+        gain.connect_with_audio_node(&analyser).ok()?;
+        Some(Self {
+            context,
+            gain,
+            filter,
+            level,
+            analyser,
+            _source: source,
+        })
+    }
+
+    fn resume(&self) {
+        if self.context.state() == web_sys::AudioContextState::Suspended
+            && let Ok(promise) = self.context.resume()
+        {
+            wasm_bindgen_futures::spawn_local(async move {
+                let _ = wasm_bindgen_futures::JsFuture::from(promise).await;
+            });
+        }
+    }
+}
+
 #[cfg(target_arch = "wasm32")]
 struct WebMusic {
+    graph: Option<MusicGraph>,
+    /// The element volume the soundtrack wants (gain node once graphed).
+    volume: f32,
     element: web_sys::HtmlAudioElement,
     playing: bool,
     pending: Rc<std::cell::Cell<bool>>,
@@ -201,10 +260,11 @@ struct WebMusic {
 impl WebMusic {
     fn new() -> Option<Self> {
         let element = web_sys::HtmlAudioElement::new().ok()?;
-        element.set_volume(f64::from(
-            atv_game::audio::mixer::MUSIC_VOLUME * atv_game::audio::mixer::MASTER,
-        ));
+        let volume = atv_game::audio::mixer::MUSIC_VOLUME * atv_game::audio::mixer::MASTER;
+        element.set_volume(f64::from(volume));
         Some(Self {
+            graph: None,
+            volume,
             element,
             playing: false,
             pending: Rc::new(Cell::new(false)),
@@ -217,6 +277,9 @@ impl WebMusic {
     /// The original web/music.js primes one element with a tiny silent WAV in
     /// the gesture, then reuses it when the soundtrack catalog becomes ready.
     fn prime(&mut self) {
+        if let Some(graph) = &self.graph {
+            graph.resume();
+        }
         if self.primed.get() || self.pending.get() {
             return;
         }
@@ -243,7 +306,51 @@ impl WebMusic {
         });
     }
 
+    fn set_volume(&mut self, volume: f32) {
+        self.volume = volume;
+        match &self.graph {
+            Some(graph) => graph.gain.gain().set_value(volume),
+            None => self.element.set_volume(f64::from(volume)),
+        }
+    }
+
+    /// setHype on the streamed soundtrack: the graph's lowpass and level
+    /// (created at the first muffle; the element then plays at full volume
+    /// into it).
+    /// Moves the soundtrack into its Web Audio graph (once).
+    fn graph(&mut self) -> Option<&MusicGraph> {
+        if self.graph.is_none() {
+            self.graph = MusicGraph::new(&self.element);
+            if self.graph.is_some() {
+                self.element.set_volume(1.);
+                let volume = self.volume;
+                self.set_volume(volume);
+            }
+        }
+        self.graph.as_ref()
+    }
+
+    fn set_hype(&mut self, muffle: f32, fast: bool) {
+        if self.graph.is_none() && muffle <= 0. {
+            return;
+        }
+        let Some(graph) = self.graph() else { return };
+        graph.resume();
+        let amount = muffle.clamp(0., 1.);
+        let cutoff = 22_000. * atv_core::math::Det::powf_d(320f32 / 22_000., amount);
+        let tc = if fast { 0.02 } else { 0.06 };
+        let at = graph.context.current_time();
+        let _ = graph.filter.frequency().set_target_at_time(cutoff, at, tc);
+        let _ = graph
+            .level
+            .gain()
+            .set_target_at_time(1. - 0.3 * amount, at, tc);
+    }
+
     fn resume(&mut self, gesture: bool) {
+        if let Some(graph) = &self.graph {
+            graph.resume();
+        }
         if self.pending.get() || (!gesture && self.retry.elapsed().as_millis() < 250) {
             return;
         }
@@ -325,6 +432,9 @@ pub struct Sound {
     /// Mixer render time per rendered frame (ms), averaged over a second.
     pub mix: f64,
     mix_mark: (f64, u32, web_time::Instant),
+    /// The Jukebox spectrum's smoothing (native soundtrack).
+    #[cfg(not(target_arch = "wasm32"))]
+    analyser: atv_game::audio::spectrum::Analyser,
 }
 
 /// What the next song is (MusicStream `request`).
@@ -434,13 +544,24 @@ impl Sound {
             remote: Default::default(),
             mix: 0.,
             mix_mark: (0., 0, web_time::Instant::now()),
+            #[cfg(not(target_arch = "wasm32"))]
+            analyser: Default::default(),
         })
     }
 
     pub fn start(&mut self) {
         self.output.start();
         #[cfg(target_arch = "wasm32")]
-        self.web_music(true);
+        {
+            // A graphed soundtrack resumes its context on every gesture
+            // (stricter browsers start one created outside a gesture suspended).
+            if let Some(web) = &self.web
+                && let Some(graph) = &web.borrow().graph
+            {
+                graph.resume();
+            }
+            self.web_music(true);
+        }
     }
 
     pub fn configure(&mut self, venue: &Venue, ride: &atv_game::ride::Ride) -> Result<(), String> {
@@ -563,6 +684,77 @@ impl Sound {
                 atv_game::audio::bank::load_remote_engine(&content, u32::from(quad), rate).await?;
             Ok(atv_game::audio::remote::Engine { config, samples })
         }
+    }
+
+    /// GameAudio.setHype (Alpha Speed & air muffle): the music lowpass and
+    /// level, and the wind rush on the SFX bus.
+    pub fn set_hype(&mut self, muffle: f32, wind: f32, fast: bool) {
+        if let Ok(mut mixer) = self.output.mixer.lock() {
+            mixer.hype.set(muffle, wind, fast);
+        }
+        #[cfg(target_arch = "wasm32")]
+        if let Some(web) = &self.web {
+            web.borrow_mut().set_hype(muffle, fast);
+        }
+    }
+
+    /// stopHype: the muffle toggle went off.
+    pub fn stop_hype(&mut self) {
+        if let Ok(mut mixer) = self.output.mixer.lock() {
+            mixer.hype.stop();
+        }
+        #[cfg(target_arch = "wasm32")]
+        if let Some(web) = &self.web {
+            web.borrow_mut().set_hype(0., true);
+        }
+    }
+
+    /// The streamed soundtrack: (graphed through Web Audio, element time,
+    /// paused); None natively or without a song element.
+    pub fn web_state(&self) -> Option<(bool, f64, bool)> {
+        #[cfg(target_arch = "wasm32")]
+        {
+            let web = self.web.as_ref()?.borrow();
+            Some((
+                web.graph.is_some(),
+                web.element.current_time(),
+                web.element.paused(),
+            ))
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        None
+    }
+
+    /// The Jukebox spectrum while a song plays: 32 analyser bytes (the
+    /// web build graphs its soundtrack for it; natively the mixer's tap).
+    pub fn spectrum(&mut self) -> Option<[u8; atv_game::audio::spectrum::BINS]> {
+        if !self.output.started.get() || self.player.paused || !self.music_enabled {
+            return None;
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            let web = self.web.as_ref()?;
+            let mut web = web.borrow_mut();
+            if !web.playing || web.element.paused() {
+                return None;
+            }
+            let graph = web.graph()?;
+            graph.resume();
+            let mut bytes = [0u8; atv_game::audio::spectrum::BINS];
+            graph.analyser.get_byte_frequency_data(&mut bytes);
+            Some(bytes)
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.song.as_ref()?;
+            let samples = self.output.mixer.lock().ok()?.analysis;
+            Some(self.analyser.bytes(&samples))
+        }
+    }
+
+    /// The music muffle in effect (diagnostics).
+    pub fn muffle(&self) -> f32 {
+        self.output.mixer.lock().map_or(0., |m| m.hype.muffle)
     }
 
     /// GameAudio.landingThump (Alpha Landing burst) on the SFX bus of a
@@ -697,9 +889,8 @@ impl Sound {
         }
         #[cfg(target_arch = "wasm32")]
         if let Some(web) = &self.web {
-            web.borrow().element.set_volume(f64::from(
-                gain * self.music_volume * atv_game::audio::mixer::MASTER,
-            ));
+            web.borrow_mut()
+                .set_volume(gain * self.music_volume * atv_game::audio::mixer::MASTER);
         }
     }
 

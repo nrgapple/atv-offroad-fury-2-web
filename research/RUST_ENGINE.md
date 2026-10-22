@@ -23,6 +23,9 @@ reaches parity; then the JavaScript and its ABI operations are deleted.
 
 ## Migration rule
 
+New work lands in the Rust engine only; the JavaScript game is frozen as the parity
+reference until the switch-over (AGENTS.md "Rust only for new work").
+
 The Rust engine runs beside the live game at `/engine.html` until it matches. A
 subsystem moves when `tools/compare_engine.mjs` shows the same frame from the same
 camera in the JavaScript game, the Rust engine in the browser and the native build.
@@ -1122,8 +1125,15 @@ Ported:
 - An ATV ride on ENV08 installs the cars as moving scene obstacles (op 69). It then
   steps the shared train runtime before every vehicle step with the scene's
   collision heights, republishing each car's collision body (`step_train_scene`).
-  The renderer stops stepping a train the ride drives (`Train::driven`). Motorcycles
-  keep the presentation-only train; the bike scene does not install it yet.
+  The renderer stops stepping a train the ride drives (`Train::driven`).
+- A motorcycle ride does the same with the bike's own scene, as motorcycles.rs
+  does: the scene installs the train bodies and op 24 steps the train after the
+  race step. The content test `crates/atv-game/tests/motorcycle_train.rs` (bike
+  29; `FURY_CONTENT=... cargo test -p atv-game --test motorcycle_train --
+  --ignored`) repeats test_motorcycle_train.mjs's two cases. A broadside hit made
+  4 dynamic contacts and wrecked. A drop onto car 0 stood on the moving train
+  for 73 of 720 steps. Before this change the bike had no train (`train_car`
+  returned none).
 - In a room, every step's train phase follows the relay clock: the browser's
   `synchronize_train`, with gentle phase correction and a primed 16-step resync
   that carries a rider standing on a car along.
@@ -1275,8 +1285,13 @@ Observed (host-only, local relay):
 - Host Game → Select Track → Ride creates the room (with the custom code) on that
   course and rides. Join Game checks the 8-character code and opens the room; an
   ended room opens again on the current course. Garage opens the garage.
-- A motorcycle choice rides ATV01 in rooms. The browser instead refuses with
-  "Choose an ATV for multiplayer"; this difference is recorded.
+- On a motorcycle, Host Game's Select Track and Join Game refuse with the
+  browser's notice ("Choose an ATV for multiplayer. Motorcycles are available
+  in Single Player.") and stay on the form. As in frontend.js, the garage opened
+  from the Multiplayer menus or from Change ATV and Rider over a room lists ATVs
+  only, and stepping wraps within ATVs 1-26. Free Ride and the frontend-less
+  entry points (`?room=`, `fury --room`) still fall back to ATV01, as the browser
+  does for Free Ride (unit test `rooms_refuse_motorcycles_and_online_garages_list_atvs`).
 - Observed (`tools/test_engine_multiplayer_menu.mjs`, local relay, host-only):
   - A Rust browser hosted room RM634747 from the menus, with the name and a
     lower-case custom code typed into the inputs.
@@ -1303,9 +1318,14 @@ Observed (host-only, local relay):
     course.
 - A direct room link (`engine.html?room=`, `fury --room`) has no frontend, so both
   rows stay hidden there.
-- Difference: the browser keeps riding behind its garage. The Rust ride stops while
-  the garage is open, so for those seconds others see this rider go stale and
-  return after the reload.
+- Behind the garage or course picker the ride waits paused and stays present, as
+  in the browser (its simulation pauses under the menu while web/multiplayer.js
+  keeps sending). The app keeps the room's `Ride` (`held_ride`) and
+  `Net::hold` sends its paused presence (0.2 Hz; others keep a paused pose for
+  15 s) on the 1 s presence timer. The GPU scene is released for the frontend,
+  and the ride reloads after Done/Ride. During that reload no poses go out, as in
+  the browser while it loads. Before this change the ride was dropped, and the
+  guest saw the host go stale after about 1 s.
 - Observed (`tools/test_engine_multiplayer_room_front.mjs`, local relay,
   host-only):
   - A Rust browser hosted room JKSRF5Y8 from its menus with a JavaScript guest.
@@ -1313,6 +1333,9 @@ Observed (host-only, local relay):
     the guest saw slot 0's model become ATV 2.
   - Select Track → next course → Ride moved the room to env02. The Rust host reloaded
     there and drew the guest again.
+  - The guest kept the host present (not stale) in all 24 samples over 6 s
+    behind the garage. The same check on the previous build failed after 1 s
+    (4 of 24 samples).
 
 ### Full Free Ride room in the Rust engine (measurement)
 
@@ -1345,15 +1368,68 @@ Chromium/Metal, 1280x720; host-only, not a phone or Internet result):
   frame, or spread them over frames (the browser decodes in Web Audio and loads
   models asynchronously). Find the late 28 fps samples. Measure on a phone.
 
+### Arrivals spread across frames (multiplayer)
+
+The first-second 192 ms frame was mostly the player's own sound bank: about 3 s
+of `Resampler::process` in a Chrome CPU profile (wasm names kept for that build
+only), plus per-sample kernel setup. Arrivals then cost 16-53 ms frames each.
+Remote loads now run as frame tasks, the way the browser loads asynchronously:
+
+- `atv_game::yield_frame()` returns Pending once. The app keeps remote rider
+  models and engine banks as boxed futures and polls them for about 3 ms at the
+  start of each ride frame (and in the hidden-tab presence tick), rotating which
+  task goes first. It does this on web and desktop.
+- Each remote model yields between archive read, PSG decode, quad mesh, each
+  material's textures and the animator. The rider mesh, its looping flags and
+  its 78 motions are decoded once per sex and shared (`Rc`). Outfit textures are
+  cached by sex and outfit.
+- Engine banks resample in 4096-frame pieces (`Pcm::from_vag_spread`, within
+  1e-5 of the one-read conversion, unit-tested). The windowed-sinc kernel is
+  cached per rate pair. `process` uses slice folds in the same summation order:
+  the player's own bank stays bit-identical (`fury --audio` WAVs compared with
+  `cmp`).
+- Content chunks hash SHA-256 in 512 KiB pieces with a yield between them.
+- GPU work: other riders share the player's vehicle pipeline, layouts and sampler
+  (`VehicleShared`, compiled at ride start). Texture views are cached by name,
+  size and a sampled fingerprint. At most one rider's GPU upload and one rig fork
+  happen per frame.
+- The status line shows the second's worst frame, room CPU, the longest load
+  slice and the longest upload. `?pingMs=` (250-15000) shortens the ping
+  interval for measurement. Messages carry their arrival time.
+
+Observed (`ATV_FREERIDE_HZ=10 node tools/test_engine_freeride_full.mjs`, local
+relay; the test waits 8 s after the ride starts, so the player's own loading is
+outside the window; joins paced 250 ms; one Mac, headless Chromium/Metal,
+1280x720; host-only, not a phone or Internet result):
+
+- All 19 riders were drawn 6.5 s after the first join. In the arrival seconds the
+  worst frames were 25-31 ms, the longest load slice 13.6 ms (most 5-7 ms), and
+  the longest upload 7.7 ms. Before the change: 16-53 ms frames, 16-23 ms load
+  slices, and a 33-39 ms first upload that included the pipeline compile.
+- Over the 30-second window: median 77 fps, 13.1 ms frames, 6.3 ms CPU (max
+  8.3 ms), and room work 1.8 ms median.
+- Round trips with a 1 s ping (`?pingMs=1000`): Rust median 7 ms, p95 47 ms,
+  max 164 ms (30 samples); a bot's own pings median 8 ms, p95 38 ms.
+- The slow seconds: two seconds ran at 32-36 fps (28-31 ms frames, 50 ms worst)
+  while the engine's CPU stayed at 6.7-7.0 ms, with no load or upload in them.
+  The frame time grew outside the engine's main-thread work. This host was
+  heavily loaded (load average 5-7, another agent's headless Chromium near
+  114% CPU, workerd near 100%), and WebGL has no GPU timestamps here, so host
+  scheduling and GPU/compositor time cannot be separated. They did not repeat at
+  the same point across runs.
+- At 20 Hz the local workerd relay saturates on this host (about 110% CPU). Claims
+  time out, pongs are lost and delivery drops to about 7 KB/s, so 20 Hz runs
+  measure the local relay, not the client. Steady round trips use 10 Hz.
+- Inspected: `private/reports/devlog-images/rust-mp-full-room-loading.png`; raw
+  samples in `private/reports/rust-mp/full-room-10hz.json`.
+
 Gaps, in planned slice order:
 
 1. The joining "Free Ride Lobby" page and Copy invite link from the frontend are
-   not drawn; rides start at once. The ride does not keep running behind the
-   garage, as noted in slice 10.
-2. Train on a motorcycle ride, the Realistic train-riding setting, and an arrival's
-   spawn velocity on a moving car (the browser adds the car's point velocity).
-3. Remote model and engine-bank loading runs on the main thread; with many
-   arrivals it hitches (see the full-room measurement).
+   not drawn; rides start at once.
+2. The Realistic train-riding setting, and an arrival's spawn velocity on a
+   moving car (the browser adds the car's point velocity).
+3. A phone measurement of a full room; arrival frames are 25-31 ms on this host.
 
 ## Commands
 

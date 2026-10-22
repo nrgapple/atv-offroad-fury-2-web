@@ -49,6 +49,8 @@ pub struct VegetationPass {
     /// Billboard chunk, then its far and transition material slots.
     billboard: Option<(Chunk, u32)>,
     textures: Vec<wgpu::BindGroup>,
+    /// The textures behind `textures` (rebound when anisotropy changes).
+    images: Vec<wgpu::Texture>,
     instances: wgpu::Buffer,
     draw_group: wgpu::BindGroup,
     slot: u64,
@@ -60,11 +62,22 @@ pub struct VegetationPass {
 }
 
 impl VegetationPass {
+    /// applyAnisotropy: every vegetation texture rebinds with a new sampler.
+    pub fn set_anisotropy(&mut self, gpu: &Gpu, world: &World, anisotropy: u16) {
+        let sampler = texture::sampler(gpu, true, anisotropy);
+        self.textures = self
+            .images
+            .iter()
+            .map(|t| world.texture_group(gpu, t, &sampler))
+            .collect();
+    }
+
     pub fn new(gpu: &Gpu, world: &World, vegetation: &Vegetation, anisotropy: u16) -> Self {
         let device = &gpu.device;
         let sampler = texture::sampler(gpu, true, anisotropy);
         let fallback = texture::upload(gpu, 1, 1, &[255; 4], "fallback");
         let mut textures = vec![world.texture_group(gpu, &fallback, &sampler)];
+        let mut images = vec![fallback];
         let mut uploaded: HashMap<*const atv_game::materials::MaterialImage, usize> =
             HashMap::new();
         let slot = world.slot(std::mem::size_of::<MaterialUniform>());
@@ -88,6 +101,7 @@ impl VegetationPass {
                         "vegetation",
                     );
                     textures.push(world.texture_group(gpu, &t, &sampler));
+                    images.push(t);
                     textures.len() - 1
                 }),
         };
@@ -216,6 +230,7 @@ impl VegetationPass {
             groups,
             billboard,
             textures,
+            images,
             instances,
             draw_group,
             slot,

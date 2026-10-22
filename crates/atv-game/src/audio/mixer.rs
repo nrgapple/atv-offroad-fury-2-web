@@ -39,7 +39,7 @@ const PHASES: usize = 512;
 /// window, 32 taps, 512 fractional phases normalised to unity DC gain.
 pub struct Resampler {
     ratio: f64,
-    table: Vec<f32>,
+    table: std::rc::Rc<Vec<f32>>,
     channels: usize,
     /// Pending input (interleaved) and the read position within it.
     input: Vec<f32>,
@@ -48,6 +48,24 @@ pub struct Resampler {
 
 impl Resampler {
     pub fn new(from: u32, to: u32, channels: usize) -> Self {
+        Self {
+            ratio: from as f64 / to as f64,
+            table: TABLES.with_borrow_mut(|tables| {
+                tables
+                    .entry((from, to))
+                    .or_insert_with(|| std::rc::Rc::new(Self::table(from, to)))
+                    .clone()
+            }),
+            channels,
+            // Leading silence so the first output sample is centred on input 0.
+            input: vec![0.; (HALF - 1) * channels],
+            position: (HALF - 1) as f64,
+        }
+    }
+
+    /// The kernel for one rate pair (shared: every sample at that pair uses
+    /// the same table).
+    fn table(from: u32, to: u32) -> Vec<f32> {
         let ratio = from as f64 / to as f64;
         let cutoff = (1. / ratio).min(1.) * 0.97;
         let mut table = vec![0f32; (PHASES + 1) * 2 * HALF];
@@ -82,14 +100,7 @@ impl Resampler {
                 };
             }
         }
-        Self {
-            ratio,
-            table,
-            channels,
-            // Leading silence so the first output sample is centred on input 0.
-            input: vec![0.; (HALF - 1) * channels],
-            position: (HALF - 1) as f64,
-        }
+        table
     }
 
     /// Appends interleaved input and returns every output frame it completes;
@@ -101,18 +112,27 @@ impl Resampler {
             self.input.extend(std::iter::repeat_n(0., HALF * c));
         }
         let frames = self.input.len() / c;
-        let mut out = Vec::new();
+        let mut out = Vec::with_capacity(
+            ((frames as f64 - self.position) / self.ratio).max(0.) as usize * c + c,
+        );
         while (self.position.floor() as usize) + HALF < frames {
             let center = self.position.floor() as usize;
             let phase = ((self.position - center as f64) * PHASES as f64).round() as usize;
             let row = &self.table[phase * 2 * HALF..(phase + 1) * 2 * HALF];
             let first = center + 1 - HALF;
-            for channel in 0..c {
-                let mut value = 0f32;
-                for (k, w) in row.iter().enumerate() {
-                    value += w * self.input[(first + k) * c + channel];
+            // The window's inputs as one slice: no per-tap bounds checks; the
+            // sum runs in the same order as before (bit-identical output).
+            let window = &self.input[first * c..(first + 2 * HALF) * c];
+            if c == 1 {
+                out.push(row.iter().zip(window).fold(0f32, |v, (w, x)| v + w * x));
+            } else {
+                for channel in 0..c {
+                    out.push(
+                        row.iter()
+                            .zip(window[channel..].iter().step_by(c))
+                            .fold(0f32, |v, (w, x)| v + w * x),
+                    );
                 }
-                out.push(value);
             }
             self.position += self.ratio;
         }
@@ -124,6 +144,13 @@ impl Resampler {
         self.position -= keep_from as f64;
         out
     }
+}
+
+type Kernels = std::collections::HashMap<(u32, u32), std::rc::Rc<Vec<f32>>>;
+
+thread_local! {
+    /// Resampling kernels by (from, to) rate.
+    static TABLES: std::cell::RefCell<Kernels> = Default::default();
 }
 
 pub fn resample(samples: &[i16], channels: usize, from: u32, to: u32) -> Vec<f32> {
@@ -138,11 +165,43 @@ pub fn resample(samples: &[i16], channels: usize, from: u32, to: u32) -> Vec<f32
     out
 }
 
+/// Input frames converted between frame yields by [`Pcm::from_vag_spread`]:
+/// about 1-2 ms of wasm work per piece at 48 kHz.
+const SPREAD_FRAMES: usize = 4096;
+
 impl Pcm {
     /// An original decoded VAG at `rate`, keeping its loop markers.
     pub fn from_vag(audio: &atv_core::audio::Audio, rate: u32) -> Self {
         let channels = audio.info.channels as usize;
         let data = resample(&audio.samples, channels, audio.info.sample_rate, rate);
+        Self::with_data(audio, rate, data)
+    }
+
+    /// [`Pcm::from_vag`] converted in pieces with a frame yield between them,
+    /// for loads that run while a ride is drawing (remote riders' engines).
+    /// The streaming resampler matches the one-read conversion to 1e-5.
+    pub async fn from_vag_spread(audio: &atv_core::audio::Audio, rate: u32) -> Self {
+        let channels = (audio.info.channels as usize).max(1);
+        let from = audio.info.sample_rate;
+        if from == rate || audio.samples.is_empty() {
+            return Self::from_vag(audio, rate);
+        }
+        let frames = audio.samples.len() / channels;
+        let expected = ((frames as f64) * rate as f64 / from as f64).ceil() as usize;
+        let mut resampler = Resampler::new(from, rate, channels);
+        let mut data = Vec::with_capacity(expected * channels + channels);
+        let pieces: Vec<&[i16]> = audio.samples.chunks(SPREAD_FRAMES * channels).collect();
+        for (i, piece) in pieces.iter().enumerate() {
+            let input: Vec<f32> = piece.iter().map(|&s| s as f32 / 32768.).collect();
+            data.extend(resampler.process(&input, i + 1 == pieces.len()));
+            crate::yield_frame().await;
+        }
+        data.resize(expected * channels, 0.);
+        Self::with_data(audio, rate, data)
+    }
+
+    fn with_data(audio: &atv_core::audio::Audio, rate: u32, data: Vec<f32>) -> Self {
+        let channels = audio.info.channels as usize;
         let scale = rate as f64 / audio.info.sample_rate as f64;
         Self {
             channels,
@@ -215,8 +274,8 @@ struct Voice {
 pub(crate) struct Lowpass {
     b: [f32; 3],
     a: [f32; 2],
-    x: [[f32; 2]; 2],
-    y: [[f32; 2]; 2],
+    pub(crate) x: [[f32; 2]; 2],
+    pub(crate) y: [[f32; 2]; 2],
 }
 
 impl Lowpass {
@@ -324,6 +383,11 @@ pub struct Mixer {
     pub render_seconds: f64,
     /// Voice start log: (output frame, label, frames, rate) for parity.
     pub log: Option<Vec<(u64, &'static str, usize, f32)>>,
+    /// Alpha Speed & air muffle: the music lowpass and the wind rush.
+    pub hype: super::hype::HypeAudio,
+    /// The latest soundtrack samples at its volume, mono, oldest first (the
+    /// Jukebox analyser's tap on the music gain).
+    pub analysis: [f32; super::spectrum::FFT],
 }
 
 impl Mixer {
@@ -347,6 +411,8 @@ impl Mixer {
             music_underruns: 0,
             render_seconds: 0.,
             log: None,
+            hype: super::hype::HypeAudio::new(rate),
+            analysis: [0.; super::spectrum::FFT],
         }
     }
 
@@ -583,6 +649,21 @@ impl Mixer {
                 }
             }
         }
+        // The analyser taps the music gain, ahead of the muffle filter.
+        let tail = music.len().min(super::spectrum::FFT);
+        self.analysis.rotate_left(tail);
+        let volume = if self.music_active {
+            self.music_volume
+        } else {
+            0.
+        };
+        for (slot, frame) in self.analysis[super::spectrum::FFT - tail..]
+            .iter_mut()
+            .zip(&music[music.len() - tail..])
+        {
+            *slot = (frame[0] + frame[1]) * 0.5 * volume;
+        }
+        self.hype.process(&mut music, &mut sfx);
         let sfx_gain = if self.active { self.sfx_volume } else { 0. };
         for (i, out) in out.as_chunks_mut::<2>().0.iter_mut().enumerate() {
             let bus = [sfx[i][0] * sfx_gain, sfx[i][1] * sfx_gain];
@@ -708,6 +789,43 @@ mod tests {
                 .iter()
                 .zip(expected)
                 .all(|(a, b)| (*a - b).abs() < 1e-5)
+        );
+    }
+
+    #[test]
+    fn spread_vag_conversion_matches_one_read() {
+        let samples: Vec<i16> = (0..11_000)
+            .map(|i| ((i as f32 * 0.031).sin_d() * 12000.) as i16)
+            .collect();
+        let audio = atv_core::audio::Audio {
+            info: atv_core::audio::AudioInfo {
+                sample_rate: 22050,
+                channels: 1,
+                frames: samples.len(),
+                loop_start: Some(100),
+                loop_end: Some(10_000),
+            },
+            samples,
+        };
+        let complete = Pcm::from_vag(&audio, 48000);
+        let mut future = std::pin::pin!(Pcm::from_vag_spread(&audio, 48000));
+        let mut context = std::task::Context::from_waker(std::task::Waker::noop());
+        let mut polls = 0;
+        let spread = loop {
+            polls += 1;
+            if let std::task::Poll::Ready(pcm) = future.as_mut().poll(&mut context) {
+                break pcm;
+            }
+        };
+        assert!(polls > 2, "conversion is spread across frames");
+        assert_eq!(spread.frames, complete.frames);
+        assert_eq!(spread.loop_markers, complete.loop_markers);
+        assert!(
+            spread
+                .data
+                .iter()
+                .zip(&complete.data)
+                .all(|(a, b)| (a - b).abs() < 1e-5)
         );
     }
 

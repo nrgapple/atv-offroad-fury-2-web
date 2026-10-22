@@ -113,14 +113,36 @@ fn lights(venue: &Venue) -> ([f32; 3], [f32; 3], [f32; 3]) {
     (ambient, sun_color, direction)
 }
 
-impl VehiclePass {
-    pub fn new(
-        gpu: &Gpu,
-        venue: &Venue,
-        quad: &Model,
-        rider: &Model,
-        samples: u32,
-    ) -> Result<Self, String> {
+/// The vehicle pipeline, its bind group layouts, sampler and fallback
+/// texture: compiled once and shared by every rider drawn with it.
+#[derive(Clone)]
+pub struct VehicleShared {
+    globals_layout: wgpu::BindGroupLayout,
+    bones_layout: wgpu::BindGroupLayout,
+    material_layout: wgpu::BindGroupLayout,
+    pipeline: wgpu::RenderPipeline,
+    sampler: wgpu::Sampler,
+    fallback: wgpu::TextureView,
+    /// Uploaded material textures by name and content, so riders in the same
+    /// outfit (or on the same ATV) reuse one GPU texture and its mips.
+    uploads:
+        std::rc::Rc<std::cell::RefCell<std::collections::HashMap<TextureKey, wgpu::TextureView>>>,
+}
+
+type TextureKey = (String, u32, u32, u64);
+
+/// A cheap content fingerprint: the size and every 61st byte (the cache is
+/// keyed by material name too).
+fn fingerprint(image: &Image) -> u64 {
+    let mut hash = 0xcbf2_9ce4_8422_2325u64 ^ image.rgba.len() as u64;
+    for byte in image.rgba.iter().step_by(61) {
+        hash = (hash ^ u64::from(*byte)).wrapping_mul(0x0100_0000_01b3);
+    }
+    hash
+}
+
+impl VehicleShared {
+    pub fn new(gpu: &Gpu, samples: u32) -> Self {
         let device = &gpu.device;
         let uniform = |binding, visibility| wgpu::BindGroupLayoutEntry {
             binding,
@@ -172,6 +194,130 @@ impl VehiclePass {
                 },
             ],
         });
+        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("vehicle material"),
+            address_mode_u: wgpu::AddressMode::Repeat,
+            address_mode_v: wgpu::AddressMode::Repeat,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::MipmapFilterMode::Linear,
+            ..Default::default()
+        });
+        let white = Image {
+            width: 1,
+            height: 1,
+            rgba: vec![255; 4],
+        };
+        let fallback = upload(gpu, &white).create_view(&Default::default());
+        let shader = device.create_shader_module(wgpu::include_wgsl!("vehicle.wgsl"));
+        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("vehicle"),
+            bind_group_layouts: &[
+                Some(&globals_layout),
+                Some(&bones_layout),
+                Some(&material_layout),
+            ],
+            immediate_size: 0,
+        });
+        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("vehicle"),
+            layout: Some(&layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs"),
+                compilation_options: Default::default(),
+                buffers: &[Some(wgpu::VertexBufferLayout {
+                    array_stride: (FLOATS_PER_VERTEX * 4) as u64,
+                    step_mode: wgpu::VertexStepMode::Vertex,
+                    attributes: &wgpu::vertex_attr_array![
+                        0 => Float32x3, 1 => Float32x3, 2 => Float32x2, 3 => Float32
+                    ],
+                })],
+            },
+            primitive: wgpu::PrimitiveState {
+                cull_mode: None,
+                ..Default::default()
+            },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: DEPTH_FORMAT,
+                depth_write_enabled: Some(true),
+                depth_compare: Some(wgpu::CompareFunction::Less),
+                // Stencil ref 1 marks the player's own quad and rider so the
+                // speed-rush pass leaves them crisp (game.js rushMask).
+                stencil: {
+                    let face = wgpu::StencilFaceState {
+                        compare: wgpu::CompareFunction::Always,
+                        fail_op: wgpu::StencilOperation::Keep,
+                        depth_fail_op: wgpu::StencilOperation::Keep,
+                        pass_op: wgpu::StencilOperation::Replace,
+                    };
+                    wgpu::StencilState {
+                        front: face,
+                        back: face,
+                        read_mask: 0xff,
+                        write_mask: 0xff,
+                    }
+                },
+                bias: Default::default(),
+            }),
+            multisample: wgpu::MultisampleState {
+                count: samples,
+                ..Default::default()
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: Some("fs"),
+                compilation_options: Default::default(),
+                targets: &[Some(gpu.config.format.into())],
+            }),
+            multiview_mask: None,
+            cache: None,
+        });
+        Self {
+            globals_layout,
+            bones_layout,
+            material_layout,
+            pipeline,
+            sampler,
+            fallback,
+            uploads: Default::default(),
+        }
+    }
+}
+
+impl VehiclePass {
+    /// A pass using an existing pipeline, layouts and sampler: the player's and
+    /// other riders' passes share one so an arrival compiles no shader program.
+    pub fn with_shared(
+        gpu: &Gpu,
+        venue: &Venue,
+        quad: &Model,
+        rider: &Model,
+        shared: &VehicleShared,
+    ) -> Result<Self, String> {
+        let device = &gpu.device;
+        let VehicleShared {
+            globals_layout,
+            bones_layout,
+            material_layout,
+            pipeline,
+            sampler,
+            fallback,
+            uploads,
+        } = shared.clone();
+        let cached = |name: &str, image: &Image| {
+            let key = (
+                name.to_string(),
+                image.width,
+                image.height,
+                fingerprint(image),
+            );
+            uploads
+                .borrow_mut()
+                .entry(key)
+                .or_insert_with(|| upload(gpu, image).create_view(&Default::default()))
+                .clone()
+        };
         let fog = venue.scene.fog.as_ref();
         let (ambient, sun_color, sun_direction) = lights(venue);
         let [fr, fg, fb] = venue.scene.fog_color.map(|c| c / 255.);
@@ -223,21 +369,6 @@ impl VehiclePass {
             });
             (buffer, group)
         };
-        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("vehicle material"),
-            address_mode_u: wgpu::AddressMode::Repeat,
-            address_mode_v: wgpu::AddressMode::Repeat,
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
-            mipmap_filter: wgpu::MipmapFilterMode::Linear,
-            ..Default::default()
-        });
-        let white = Image {
-            width: 1,
-            height: 1,
-            rgba: vec![255; 4],
-        };
-        let fallback = upload(gpu, &white).create_view(&Default::default());
         let mut chunks = Vec::new();
         let (mut all_vertices, mut all_indices) = (Vec::<f32>::new(), Vec::<u32>::new());
         let mut triangles = 0;
@@ -258,13 +389,13 @@ impl VehiclePass {
                 let view = image.map(|image| {
                     views
                         .entry(name.clone())
-                        .or_insert_with(|| upload(gpu, image).create_view(&Default::default()))
+                        .or_insert_with(|| cached(name, image))
                         .clone()
                 });
                 let mud = texture.and_then(|t| t.mud.as_ref()).map(|image| {
                     mud_views
                         .entry(name.clone())
-                        .or_insert_with(|| upload(gpu, image).create_view(&Default::default()))
+                        .or_insert_with(|| cached(&format!("{name}#mud"), image))
                         .clone()
                 });
                 let flags = [
@@ -344,70 +475,6 @@ impl VehiclePass {
             all_vertices.resize(FLOATS_PER_VERTEX, 0.);
             all_indices.push(0);
         }
-        let shader = device.create_shader_module(wgpu::include_wgsl!("vehicle.wgsl"));
-        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("vehicle"),
-            bind_group_layouts: &[
-                Some(&globals_layout),
-                Some(&bones_layout),
-                Some(&material_layout),
-            ],
-            immediate_size: 0,
-        });
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("vehicle"),
-            layout: Some(&layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs"),
-                compilation_options: Default::default(),
-                buffers: &[Some(wgpu::VertexBufferLayout {
-                    array_stride: (FLOATS_PER_VERTEX * 4) as u64,
-                    step_mode: wgpu::VertexStepMode::Vertex,
-                    attributes: &wgpu::vertex_attr_array![
-                        0 => Float32x3, 1 => Float32x3, 2 => Float32x2, 3 => Float32
-                    ],
-                })],
-            },
-            primitive: wgpu::PrimitiveState {
-                cull_mode: None,
-                ..Default::default()
-            },
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: DEPTH_FORMAT,
-                depth_write_enabled: Some(true),
-                depth_compare: Some(wgpu::CompareFunction::Less),
-                // Stencil ref 1 marks the player's own quad and rider so the
-                // speed-rush pass leaves them crisp (game.js rushMask).
-                stencil: {
-                    let face = wgpu::StencilFaceState {
-                        compare: wgpu::CompareFunction::Always,
-                        fail_op: wgpu::StencilOperation::Keep,
-                        depth_fail_op: wgpu::StencilOperation::Keep,
-                        pass_op: wgpu::StencilOperation::Replace,
-                    };
-                    wgpu::StencilState {
-                        front: face,
-                        back: face,
-                        read_mask: 0xff,
-                        write_mask: 0xff,
-                    }
-                },
-                bias: Default::default(),
-            }),
-            multisample: wgpu::MultisampleState {
-                count: samples,
-                ..Default::default()
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("fs"),
-                compilation_options: Default::default(),
-                targets: &[Some(gpu.config.format.into())],
-            }),
-            multiview_mask: None,
-            cache: None,
-        });
         let (mut min, mut max) = ([f32::INFINITY; 3], [f32::NEG_INFINITY; 3]);
         for group in quad.mesh.lods.first().map_or(&[][..], |l| &l.groups[..]) {
             for vertex in &group.vertices {

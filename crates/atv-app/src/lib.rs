@@ -250,8 +250,13 @@ struct App {
     /// A room kept live while the frontend's garage or course picker is open
     /// over it (Change ATV and Rider, Select Track).
     held_room: Option<multiplayer::Net>,
+    /// The held room's ride, paused behind the frontend: its presence keeps
+    /// going out until the ride reloads.
+    held_ride: Option<atv_game::ride::Ride>,
     /// The held room the next frontend ride resumes.
     pending_room: Option<multiplayer::Net>,
+    /// Frame-spread loads (see `spawn_frame`).
+    frame_tasks: Vec<std::pin::Pin<Box<dyn std::future::Future<Output = Message>>>>,
     /// The Host/Join forms' browser inputs.
     #[cfg(target_arch = "wasm32")]
     text_inputs: text_inputs::TextInputs,
@@ -282,6 +287,14 @@ struct Meter {
     since: Option<Instant>,
     triangles: u32,
     draws: u32,
+    /// Room work (socket, poses, remote riders and loads) CPU, included in
+    /// `cpu`, and the longest frame interval this second.
+    net: f64,
+    last: Option<Instant>,
+    worst: f64,
+    /// Longest single load slice this second (remote riders' uploads are
+    /// timed by the room).
+    load_max: f64,
 }
 
 /// Load-time choices for the venue presentation and the ride.
@@ -662,6 +675,10 @@ impl App {
 
     /// One rendered frame of the ride: input, fixed steps, chase view.
     fn ride_frame(&mut self, dt: f32) {
+        // Other riders' models and engine banks load a slice per frame.
+        let loads = Instant::now();
+        self.poll_frame_tasks();
+        self.meter.net += loads.elapsed().as_secs_f64() * 1000.;
         let focused = self.effective_focused();
         let suspended = !self.visible || self.suspended;
         let now = Instant::now();
@@ -778,6 +795,7 @@ impl App {
         );
         // Alpha Air dark blur follows the director's big-air amount.
         ready.scene.set_air_blur(&ready.gpu, riding.air_blur());
+        let room_started = Instant::now();
         let mut loads = Vec::new();
         let mut engine_loads = Vec::new();
         let mut course = None;
@@ -829,14 +847,17 @@ impl App {
             publish_multiplayer(net, riding.contacts, &riding.ride, remote, tags);
         }
         for (quad, future) in engine_loads {
-            self.spawn(future, move |engine| {
+            self.spawn_frame(future, move |engine| {
                 Message::RemoteEngine(quad, Box::new(engine))
             });
         }
         for (content, key) in loads {
-            self.spawn(multiplayer::load_model(content, key), |model| {
+            self.spawn_frame(multiplayer::load_model(content, key), |model| {
                 Message::PeerModel(Box::new(model))
             });
+        }
+        if self.ready.as_ref().is_some_and(|r| r.net.is_some()) {
+            self.meter.net += room_started.elapsed().as_secs_f64() * 1000.;
         }
         if let Some(environment) = course {
             self.reload_room(environment);
@@ -942,6 +963,12 @@ impl App {
                 "alphaBigAirCamera": riding.alpha_big_air_camera,
                 "alphaAirBlur": riding.alpha_air_blur, "airBlur": riding.air_blur(),
                 "hypeBlur": riding.hype.blur,
+                "alphaMuffle": riding.alpha_muffle,
+                "hypeMuffle": riding.hype.muffle, "hypeWind": riding.hype.wind,
+                "musicMuffle": riding.sound.as_ref().map_or(0., |s| s.muffle()),
+                "musicStream": riding.sound.as_ref().and_then(|s| s.web_state())
+                    .map(|(graph, time, paused)| serde_json::json!({
+                        "graph": graph, "time": time, "paused": paused})),
                 "alphaLandingBurst": riding.alpha_landing_burst,
                 "burstLive": riding.burst.live, "thumps": riding.thumps,
                 "heavyMud": riding.dirt.heavy(),
@@ -950,6 +977,7 @@ impl App {
                 "skySmooth": graphics.sky_smooth, "fresnel": graphics.fresnel,
                 "contactShadows": graphics.contact_shadows, "anisotropy": graphics.anisotropy,
                 "dust": graphics.dust, "tireTracks": graphics.tire_tracks.0,
+                "shadowMap": graphics.shadow_map,
                 "wheelReprojection": riding.wheel_reprojection,
                 "hillOrbit": riding.hill_orbit(), "chaseAssist": riding.chase_assist,
                 "crashCameraTight": riding.crash_camera_tight,
@@ -1110,12 +1138,27 @@ impl App {
     fn meter_frame(&mut self, now: Instant, extra: &str) {
         let Some(ready) = &self.ready else { return };
         self.meter.frames += 1;
+        if let Some(last) = self.meter.last {
+            self.meter.worst = self.meter.worst.max((now - last).as_secs_f64() * 1000.);
+        }
+        self.meter.last = Some(now);
+        let room = if ready.net.is_some() {
+            format!(
+                " · {:.0} ms worst · {:.2} ms room · {:.1} ms load · {:.1} ms upload",
+                self.meter.worst,
+                self.meter.net / f64::from(self.meter.frames.max(1)),
+                self.meter.load_max,
+                ready.net.as_ref().map_or(0., |n| n.upload_max)
+            )
+        } else {
+            String::new()
+        };
         let since = *self.meter.since.get_or_insert(now);
         let elapsed = (now - since).as_secs_f64();
         if elapsed >= 1. {
             let info = &ready.gpu.adapter_info;
             status(&format!(
-                "{} · {:.0} fps · {:.1} ms frame · {:.2} ms CPU ({:.2} UI) · {} draws · {} tris · {:?} {}{extra}",
+                "{} · {:.0} fps · {:.1} ms frame · {:.2} ms CPU ({:.2} UI){room} · {} draws · {} tris · {:?} {}{extra}",
                 ready.venue.environment.to_uppercase(),
                 self.meter.frames as f64 / elapsed,
                 elapsed * 1000. / self.meter.frames as f64,
@@ -1126,9 +1169,13 @@ impl App {
                 info.backend,
                 info.name
             ));
+            if let Some(net) = self.ready.as_mut().and_then(|r| r.net.as_mut()) {
+                net.upload_max = 0.;
+            }
             self.meter = Meter {
                 triangles: self.meter.triangles,
                 draws: self.meter.draws,
+                last: self.meter.last,
                 ..Default::default()
             };
         }
@@ -1308,7 +1355,10 @@ impl App {
             Event::ChangeRide | Event::SelectTrack => {
                 let garage = event == Event::ChangeRide;
                 let Some(ready) = &mut self.ready else { return };
-                let (Some(mut net), Some(riding)) = (ready.net.take(), &ready.riding) else {
+                if ready.net.is_none() || ready.riding.is_none() {
+                    return;
+                }
+                let (Some(mut net), Some(riding)) = (ready.net.take(), ready.riding.take()) else {
                     return;
                 };
                 // Change ATV and Rider reloads in place (atv-web op 112's pose).
@@ -1326,11 +1376,13 @@ impl App {
                         f.state.track = index;
                     }
                 }
-                if !self.quit_to(Some(if garage { "garage" } else { "tracks" })) {
+                if self.quit_to(Some(if garage { "garage" } else { "tracks" })) {
+                    // The ride waits paused behind the frontend, still present.
+                    self.held_ride = Some(riding.ride);
+                } else if let Some(ready) = &mut self.ready {
                     // No frontend to show: keep riding in the room.
-                    if let (Some(ready), Some(net)) = (&mut self.ready, self.held_room.take()) {
-                        ready.net = Some(net);
-                    }
+                    ready.net = self.held_room.take();
+                    ready.riding = Some(riding);
                 }
             }
             Event::LeaveGame => {
@@ -1425,12 +1477,23 @@ impl App {
 
     /// The open menu's music view, and the Jukebox art on its first visit.
     fn update_jukebox(&mut self) {
-        let (Some(ready), Some(overlay)) = (&self.ready, &mut self.overlay) else {
+        let (Some(ready), Some(overlay)) = (&mut self.ready, &mut self.overlay) else {
             return;
         };
         if overlay.menu.is_none() {
             return;
         }
+        // jukebox.js drawBars: the analyser only while a song plays.
+        overlay.spectrum = if overlay.jukebox_open() {
+            ready
+                .riding
+                .as_mut()
+                .and_then(|r| r.sound.as_mut())
+                .and_then(|s| s.spectrum())
+                .map(|bytes| bytes.to_vec())
+        } else {
+            None
+        };
         overlay.music = ready
             .riding
             .as_ref()
@@ -1567,6 +1630,7 @@ impl App {
         riding.alpha_slowmo = prefs.alpha("air-slowmo");
         riding.alpha_big_air_camera = prefs.alpha("big-air-camera");
         riding.alpha_air_blur = prefs.alpha("air-blur");
+        riding.set_alpha_muffle(prefs.alpha("music-muffle"));
         if riding.alpha_landing_burst && !prefs.alpha("landing-burst") {
             riding.burst.reset();
         }
@@ -2580,6 +2644,50 @@ impl ApplicationHandler<Message> for App {
 const MOUSE: u64 = overlay::MOUSE;
 
 impl App {
+    /// Loads that must not hold up a ride frame (another rider's model or
+    /// engine bank): polled a slice at a time from the frame loop, on both
+    /// web and desktop; they `yield_frame` between their steps.
+    fn spawn_frame<T: 'static>(
+        &mut self,
+        future: impl std::future::Future<Output = T> + 'static,
+        message: impl FnOnce(T) -> Message + 'static,
+    ) {
+        self.frame_tasks
+            .push(Box::pin(async move { message(future.await) }));
+    }
+
+    /// Advances frame-spread loads for about 3 ms of this frame, starting
+    /// with a different load each frame.
+    fn poll_frame_tasks(&mut self) {
+        if self.frame_tasks.is_empty() {
+            return;
+        }
+        let started = Instant::now();
+        let mut cx = std::task::Context::from_waker(std::task::Waker::noop());
+        let mut index = 0;
+        while index < self.frame_tasks.len() {
+            if index > 0 && started.elapsed().as_secs_f64() > 0.003 {
+                break;
+            }
+            let slice = Instant::now();
+            let poll = self.frame_tasks[index].as_mut().poll(&mut cx);
+            self.meter.load_max = self
+                .meter
+                .load_max
+                .max(slice.elapsed().as_secs_f64() * 1000.);
+            match poll {
+                std::task::Poll::Ready(message) => {
+                    drop(self.frame_tasks.remove(index));
+                    let _ = self.proxy.send_event(message);
+                }
+                std::task::Poll::Pending => index += 1,
+            }
+        }
+        if !self.frame_tasks.is_empty() {
+            self.frame_tasks.rotate_left(1);
+        }
+    }
+
     /// Runs `future` (web: on the event loop; desktop: now) and posts its
     /// outcome as a message.
     fn spawn<T: 'static>(
@@ -2789,6 +2897,7 @@ impl App {
                 rider,
                 environment,
             } => {
+                self.held_ride = None;
                 let Some(mut net) = self.held_room.take() else {
                     // The room ended meanwhile: back to the main menu.
                     if let Some(front) = &self.front {
@@ -3036,11 +3145,16 @@ impl App {
     /// background tab; actual suspension sends paused presence).
     fn presence_tick(&mut self) {
         if let Some(net) = &mut self.held_room {
-            // The frontend over a held room: socket, reconnects and pings.
+            // The frontend over a held room: socket, reconnects and pings,
+            // and the paused ride's presence.
             net.tick(None, true);
+            if let Some(ride) = &self.held_ride {
+                net.hold(ride);
+            }
             if let Some(closed) = &net.closed {
                 status(&format!("Multiplayer ended: {closed}"));
                 self.held_room = None;
+                self.held_ride = None;
             }
             return;
         }
@@ -3060,10 +3174,11 @@ impl App {
         let content = net.content();
         let course = tick.course;
         for key in tick.loads {
-            self.spawn(multiplayer::load_model(content.clone(), key), |model| {
+            self.spawn_frame(multiplayer::load_model(content.clone(), key), |model| {
                 Message::PeerModel(Box::new(model))
             });
         }
+        self.poll_frame_tasks();
         if let Some(environment) = course {
             self.reload_room(environment);
         }
@@ -3745,7 +3860,9 @@ pub fn run(options: Options) {
         requested: HashSet::new(),
         riders_polled: None,
         held_room: None,
+        held_ride: None,
         pending_room: None,
+        frame_tasks: Vec::new(),
         #[cfg(target_arch = "wasm32")]
         text_inputs: Default::default(),
         #[cfg(not(target_arch = "wasm32"))]
@@ -3794,6 +3911,9 @@ pub fn start() {
     // `?venue=` rides at once (engine tests and parity tools); otherwise the
     // frontend opens and reads the page's ride link.
     // A room link (`?room=` / `?host=1`) rides at once too.
+    if let Some(ms) = param("pingMs").and_then(|v| v.parse::<u32>().ok()) {
+        multiplayer::PING_MS.store(ms.clamp(250, 15_000), std::sync::atomic::Ordering::Relaxed);
+    }
     let direct = param("venue").or_else(|| {
         (param("room").is_some() || param("host").is_some_and(|v| v == "1"))
             .then(|| "env01".to_string())

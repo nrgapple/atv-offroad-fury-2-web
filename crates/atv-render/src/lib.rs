@@ -394,6 +394,8 @@ pub struct SceneRenderer {
     /// Multiplayer riders by slot: their (quad, rider) model, pass and
     /// whether this frame presents them.
     peers: std::collections::BTreeMap<u8, (PeerLook, vehicle::VehiclePass, bool)>,
+    /// One vehicle pipeline for every other rider and race CPU.
+    shared_vehicle: Option<vehicle::VehicleShared>,
     profiler: profile::Profiler,
     /// Scene-pass GPU timestamps, while [`SceneRenderer::gpu_scene_ms`] runs.
     gpu_timer: Option<profile::GpuTimer>,
@@ -503,6 +505,7 @@ impl SceneRenderer {
             vehicle: None,
             cpus: Vec::new(),
             peers: Default::default(),
+            shared_vehicle: None,
             profiler: profile::Profiler::default(),
             gpu_timer: None,
             wheel_effects: None,
@@ -556,7 +559,7 @@ impl SceneRenderer {
     fn step_world(&mut self) {
         self.scenery.step();
         if let Some((_, shared)) = &self.train {
-            // An ATV ride steps the shared clock with its physics (collision
+            // A ride (ATV or bike) steps the shared clock with its physics (collision
             // heights, moving obstacles); otherwise the presentation does.
             let driven = shared.borrow().driven;
             if !driven
@@ -696,11 +699,34 @@ impl SceneRenderer {
         } else if !graphics.contact_shadows {
             self.contact_shadows = None;
         }
-        self.graphics = Graphics {
-            anisotropy: self.graphics.anisotropy,
-            shadow_map: self.graphics.shadow_map,
-            ..graphics
-        };
+        // applyAnisotropy: the terrain, scenery and vegetation samplers.
+        let shadow_changed = graphics.shadow_map != self.graphics.shadow_map;
+        if shadow_changed {
+            // shadowMap.size !== graphics.shadowMap: a new map (or none).
+            self.world
+                .set_shadow_size(gpu, u32::from(graphics.shadow_map));
+            self.shadow_map = match (&self.vehicle, graphics.shadow_map) {
+                (Some(vehicle), size) if size > 0 => {
+                    Some(shadows::ShadowMap::new(gpu, &self.world, vehicle))
+                }
+                _ => None,
+            };
+        }
+        if graphics.anisotropy != self.graphics.anisotropy || shadow_changed {
+            self.terrain.rebind(
+                gpu,
+                graphics.anisotropy,
+                (&self.world.shadow_view, &self.world.shadow_sampler),
+            );
+        }
+        if graphics.anisotropy != self.graphics.anisotropy {
+            self.scenery
+                .set_anisotropy(gpu, &self.world, graphics.anisotropy);
+            if let Some(vegetation) = &mut self.vegetation {
+                vegetation.set_anisotropy(gpu, &self.world, graphics.anisotropy);
+            }
+        }
+        self.graphics = graphics;
     }
 
     /// The presentation options in effect.
@@ -851,7 +877,13 @@ impl SceneRenderer {
         quad: &atv_game::ride::Model,
         rider: &atv_game::ride::Model,
     ) -> Result<(), String> {
-        let vehicle = vehicle::VehiclePass::new(gpu, venue, quad, rider, gpu.samples)?;
+        // The player's pass compiles the shared pipeline at ride start, so a
+        // rider joining later costs no shader compile.
+        let shared = self
+            .shared_vehicle
+            .get_or_insert_with(|| vehicle::VehicleShared::new(gpu, gpu.samples))
+            .clone();
+        let vehicle = vehicle::VehiclePass::with_shared(gpu, venue, quad, rider, &shared)?;
         if self.graphics.shadow_map > 0 {
             self.shadow_map = Some(shadows::ShadowMap::new(gpu, &self.world, &vehicle));
         }
@@ -869,10 +901,15 @@ impl SceneRenderer {
         venue: &Venue,
         models: &[(atv_game::ride::Model, atv_game::ride::Model)],
     ) -> Result<(), String> {
+        let shared = self
+            .shared_vehicle
+            .get_or_insert_with(|| vehicle::VehicleShared::new(gpu, gpu.samples))
+            .clone();
         self.cpus = models
             .iter()
             .map(|(quad, rider)| {
-                vehicle::VehiclePass::new(gpu, venue, quad, rider, gpu.samples).map(|v| (v, false))
+                vehicle::VehiclePass::with_shared(gpu, venue, quad, rider, &shared)
+                    .map(|v| (v, false))
             })
             .collect::<Result<_, _>>()?;
         Ok(())
@@ -906,7 +943,11 @@ impl SceneRenderer {
         (quad, rider): (&atv_game::ride::Model, &atv_game::ride::Model),
         paint: [f32; 2],
     ) -> Result<(), String> {
-        let mut pass = vehicle::VehiclePass::new(gpu, venue, quad, rider, gpu.samples)?;
+        let shared = self
+            .shared_vehicle
+            .get_or_insert_with(|| vehicle::VehicleShared::new(gpu, gpu.samples))
+            .clone();
+        let mut pass = vehicle::VehiclePass::with_shared(gpu, venue, quad, rider, &shared)?;
         pass.set_paint(paint);
         self.peers.insert(peer, (key, pass, false));
         Ok(())
