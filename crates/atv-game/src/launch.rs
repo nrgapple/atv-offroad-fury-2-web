@@ -29,6 +29,35 @@ pub struct CourseResource {
     pub placements: Option<String>,
 }
 
+/// The archives a ride reads, for prefetch (game.js `prefetchRide`): the
+/// course, the vehicle and its rider (an ATV's rider rig and motions),
+/// overlays, start events and the audio table; then the sound bank, whose
+/// first chunk (its directory) is fetched at low priority.
+pub fn ride_prefetch(
+    environment: &str,
+    racing: bool,
+    quad: u16,
+    rider: u16,
+) -> (Vec<String>, Vec<String>) {
+    let mut paths = Vec::new();
+    if let Ok(course) = course_resource(environment, racing) {
+        paths.push(course.archive);
+        paths.extend(course.placements);
+    }
+    if let Ok(model) = atv_core::player_models::selection(quad, rider) {
+        paths.push(model.quad);
+        paths.push(model.quad_materials);
+        if !model.motorcycle {
+            paths.push(model.rider);
+            paths.push("/ANIMSRDR.RES".into());
+            paths.push("/RIDER/RIDER_MT.RES".into());
+        }
+    }
+    paths.extend(["/OVERLAYS.RES", "/STARTEVT.RES", "/AUDIOTBL.RES"].map(String::from));
+    paths.dedup();
+    (paths, vec!["/AUDIO/AUDIO.RES".into()])
+}
+
 pub fn course_resource(environment: &str, racing: bool) -> crate::Result<CourseResource> {
     if !environments().iter().any(|id| id == environment)
         || (racing && !is_race_course(environment))
@@ -542,6 +571,19 @@ pub fn menu_shortcut(search: &str) -> Option<&'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ride_prefetch_lists_the_ride_archives() {
+        let (paths, bank) = ride_prefetch("env01", false, 1, 0);
+        let course = course_resource("env01", false).unwrap();
+        assert!(paths.contains(&course.archive));
+        assert!(paths.iter().any(|p| p == "/ANIMSRDR.RES"));
+        assert!(paths.iter().any(|p| p == "/AUDIOTBL.RES"));
+        assert_eq!(bank, ["/AUDIO/AUDIO.RES"]);
+        // Motorcycles carry their rider in the bike archive.
+        let (bike, _) = ride_prefetch("env01", false, 29, 0);
+        assert!(!bike.iter().any(|p| p == "/ANIMSRDR.RES"));
+    }
 
     #[test]
     fn ride_urls_match_build_ride_url() {

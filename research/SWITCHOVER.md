@@ -88,13 +88,15 @@ These would regress players at switch-over. Highest impact first.
       virtual pad steals Auto.
     - ~~The Fullscreen row shows even where the Fullscreen API is missing (iPhone).~~
       Closed: shown only where `document.fullscreenEnabled`.
-    - CPU racers and remote riders get no contact shadows and cast no High
-      shadow-map shadows.
+    - ~~CPU racers and remote riders get no contact shadows and cast no High
+      shadow-map shadows.~~ Closed: contact blobs within 240 ft and the shadow map
+      within 40 ft, as game.js.
     - No buzz when a touch flip arms.
     - No menu page transitions.
     - Non-standard pads get standard glyphs.
-    - Ride prefetch is serial: no parallel chunk fetch (load-time effect
-      unmeasured).
+    - ~~Ride prefetch is serial.~~ Closed: `Content::prefetch` (game.js
+      `prefetchRide`). With 150 ms request latency, env01 loaded in 4.6-5.2 s
+      against 5.8-6.4 s serial (host-only).
     - Web soundtrack falls back to silence (not VAG decoding) when a stream is
       missing.
 
@@ -208,7 +210,7 @@ main-menu Jukebox.
 | Manifest version/build-hash check | Ported | atv-content | |
 | Per-chunk SHA-256, chunked records | Ported | atv-content `chunk` (#252) | Yields every 512 KiB |
 | Archive directory reads, block inflate | Ported | atv-game/src/archive.rs | |
-| Parallel ride prefetch with fetch priority | Missing | — | Serial; unmeasured |
+| Parallel ride prefetch with fetch priority | Ported | atv-content `prefetch`, atv-game `ride_prefetch` | |
 | Soundtrack `.m4a` streams | Ported | atv-content `MediaStream`, sound.rs (#191) | |
 | Lazy music-chunk retention | Not needed | Rust LRU | |
 
@@ -350,7 +352,7 @@ main-menu Jukebox.
 | Dust/chunk/spray and wet births; motorcycle MX atlas | Ported | atv-render wheel_effects.rs (#197) | |
 | Gorn blood | Ported | blood.rs (#207) | |
 | Tire tracks Enhanced/High, mud zones | Ported | tire_tracks.rs (#201) | |
-| High sun shadow map | Partial | shadows.rs (#200) | Player only (blocking 14) |
-| Contact shadow blobs | Partial | shadows.rs | Player only (blocking 14) |
+| High sun shadow map | Ported | shadows.rs (#200) | Player, CPUs and riders within 40 ft |
+| Contact shadow blobs | Ported | shadows.rs | Player, CPUs within 240 ft, other riders |
 | TOY effects (smoke, fire); type-11 fountains | Ported | atv-render ambient.rs (#186) | |
 | Lingering dust Enhanced/High | Ported | lingering_dust.rs (#197) | |

@@ -324,6 +324,8 @@ struct Meter {
     since: Option<Instant>,
     triangles: u32,
     draws: u32,
+    /// Contact shadow blobs and High shadow-map vehicles in the last frame.
+    shadows: (u32, u32),
     /// Room work (socket, poses, remote riders and loads) CPU, included in
     /// `cpu`, and the longest frame interval this second.
     net: f64,
@@ -348,6 +350,9 @@ struct World {
     sound: Option<(atv_game::audio::ride::SoundMode, bool)>,
     autodrive: Option<replay::Script>,
 }
+
+/// Ride prefetch (`?prefetch=off` turns it off for load-time measurement).
+static PREFETCH: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
 
 /// A loading progress line (status bar, and the frontend's loader).
 type Progress = Box<dyn FnMut(&Gpu, &str)>;
@@ -390,6 +395,17 @@ async fn prepare(
         sound,
         autodrive,
     } = world;
+    // Every archive the ride reads downloads in parallel (game.js prefetchRide).
+    if ride && PREFETCH.load(std::sync::atomic::Ordering::Relaxed) {
+        let (paths, bank) = atv_game::launch::ride_prefetch(
+            &environment,
+            race.is_some(),
+            selection.quad,
+            selection.rider,
+        );
+        content.prefetch(&paths, false, false);
+        content.prefetch(&bank, true, true);
+    }
     progress(
         &gpu,
         &format!("Reading original {}…", environment.to_uppercase()),
@@ -702,6 +718,7 @@ impl App {
             Ok(stats) => {
                 self.meter.triangles = stats.triangles();
                 self.meter.draws = stats.draws();
+                self.meter.shadows = (stats.contact_casters, stats.shadow_casters);
                 acquire = stats.acquire_ms;
             }
             Err(error) => status(&error),
@@ -1008,6 +1025,10 @@ impl App {
             state["diagnostics"] = serde_json::json!({
                 "mode": self.diagnostics.mode.name(), "lines": self.diagnostics.lines});
             state["active"] = active.into();
+            state["shadows"] = serde_json::json!({
+                "contact": self.meter.shadows.0,
+                "map": self.meter.shadows.1,
+            });
             let applied = riding.ride.applied();
             state["controls"] = serde_json::json!({
                 "steer": applied.steer, "lean": applied.lean,
@@ -1085,6 +1106,7 @@ impl App {
             Ok(stats) => {
                 self.meter.triangles = stats.triangles();
                 self.meter.draws = stats.draws();
+                self.meter.shadows = (stats.contact_casters, stats.shadow_casters);
                 acquire = stats.acquire_ms;
             }
             Err(error) => status(&error),
@@ -4672,6 +4694,10 @@ pub fn start() {
     // `?venue=` rides at once (engine tests and parity tools); otherwise the
     // frontend opens and reads the page's ride link.
     // A room link (`?room=` / `?host=1`) rides at once too.
+    // Measurement hook: `?prefetch=off` loads rides one request at a time.
+    if param("prefetch").as_deref() == Some("off") {
+        PREFETCH.store(false, std::sync::atomic::Ordering::Relaxed);
+    }
     if let Some(ms) = param("pingMs").and_then(|v| v.parse::<u32>().ok()) {
         multiplayer::PING_MS.store(ms.clamp(250, 15_000), std::sync::atomic::Ordering::Relaxed);
     }

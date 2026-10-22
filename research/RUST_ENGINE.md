@@ -1546,6 +1546,34 @@ Switch-over items 3, 8 and 9 in SWITCHOVER.md.
     engine.html offline to its title.
   - `test_offline.mjs` still passes with the extra page.
 
+## Other riders' shadows and ride prefetch
+
+- **Shadows from CPUs and other riders.** Race CPUs and other riders cast
+  shadows as game.js draws them:
+  - Enhanced/High contact blobs: race CPUs within 240 ft of the camera and every
+    drawn rider, each with a detached rider's torso (`drawContactShadows`);
+  - High's sun shadow map: race CPUs and riders within 40 ft of the player
+    (`renderVehicleShadows`).
+
+  Each `VehiclePass` keeps its last pose's world matrix and detached torso. The
+  shadow map renders every caster through the shared vehicle bone layout.
+  `#ui-state` reports `shadows.contact` and `shadows.map`.
+- **Prefetch** (`Content::prefetch`, `atv_game::launch::ride_prefetch`): a ride
+  starts downloading every archive it reads at once (game.js `prefetchRide`).
+  These are the course and placements, vehicle, rider rig and motions,
+  overlays, start events and audio table. The sound bank's directory chunk is
+  fetched at low priority. Reads await the same request. `?prefetch=off` loads
+  serially for measurement.
+- **Observed** (`tools/test_engine_shadows_prefetch.mjs`, host-only, headless
+  Chromium):
+  - An env01 race grid with 3 CPUs drew 4 contact blobs on Enhanced and High.
+    High cast 4 vehicles into the shadow map; Enhanced cast none.
+  - With 150 ms latency per request, env01 reached riding in 4.6/4.7 s with
+    prefetch against 6.4/5.8 s serial (13 blobs against 11). A later run
+    measured 5.2 against 6.3 s.
+  - Inspected: `private/reports/devlog-images/rust-cpu-shadows-high.png`.
+  - Other riders' shadows share the code path; they were not browser-tested.
+
 ## Commands
 
 The browser build's debug strip (frame stats, load and error lines in `#status`) is hidden
