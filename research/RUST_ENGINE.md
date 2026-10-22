@@ -1140,9 +1140,23 @@ Ported:
 - Snapshots send the car the rider stands on (`platform`) and the train time.
   Received riders on a car are drawn, contact-tested, met and spawn-checked relative
   to this client's car (`rebase`).
-- "Train riding: Original" behaviour, as the JavaScript default:
-  `set_realistic_train(false)`. The Realistic setting is not read by the Rust
-  engine yet.
+- Settings → Train riding: Original by default. Realistic reaches the ride
+  through the saved settings (`RideOptions::realistic_train`, applied in solo and
+  room rides). The content test `crates/atv-game/tests/train_riding.rs`
+  (`FURY_CONTENT=... cargo test -p atv-game --test train_riding -- --ignored`)
+  repeats test_train_riding.mjs. A quad on flatbed car 6 through the long left
+  curve (44.7 ft/s) behaves as follows:
+  - coasting: drifts 0.3 ft with Realistic and 63.4 ft in Original;
+  - braked across the deck: drifts 0.0 ft and 174.5 ft.
+
+  These meet the browser test's bounds (under 2 ft and over 10 ft).
+- An arrival beside a rider standing on a car starts with that car's point
+  velocity at its spot, as atv-web's `spawn` returns it. `spawn::beside` returns
+  the velocity, and the placement applies it to the quad. The same test checks
+  this: the spot beside a parked flatbed rider got the car's
+  [-44.77, 0, 0.12] ft/s; without a platform the arrival starts at rest. The
+  shared clearance check rejects most spots beside a train rider, in both
+  engines. The clear spot found was on the ground beside the car.
 
 Observed:
 
@@ -1427,9 +1441,7 @@ Gaps, in planned slice order:
 
 1. The joining "Free Ride Lobby" page and Copy invite link from the frontend are
    not drawn; rides start at once.
-2. The Realistic train-riding setting, and an arrival's spawn velocity on a
-   moving car (the browser adds the car's point velocity).
-3. A phone measurement of a full room; arrival frames are 25-31 ms on this host.
+2. A phone measurement of a full room; arrival frames are 25-31 ms on this host.
 
 ## Commands
 

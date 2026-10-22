@@ -52,7 +52,7 @@ fn motorcycle_collides_with_the_moving_train() {
             } else {
                 [-m[0], -m[2]]
             };
-            ride.place_beside(origin, forward[0].atan2_d(forward[1]))
+            ride.place_beside(origin, forward[0].atan2_d(forward[1]), [0.; 3])
                 .unwrap();
             let controls = Controls {
                 throttle,
