@@ -5020,7 +5020,21 @@ pub fn run(options: Options) {
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen::prelude::wasm_bindgen(start)]
 pub fn start() {
-    console_error_panic_hook::set_once();
+    // A panic stops the engine; without this the page shows a frozen frame
+    // (the status line is hidden). Show the message, as a start-up failure
+    // does, so a phone screenshot says what broke; the console keeps the trace.
+    std::panic::set_hook(Box::new(|info| {
+        console_error_panic_hook::hook(info);
+        if let Some(element) = web_sys::window()
+            .and_then(|w| w.document())
+            .and_then(|d| d.get_element_by_id("status"))
+        {
+            element.set_text_content(Some(&format!(
+                "The game stopped: {info}. Reload to try again."
+            )));
+            element.set_class_name("fatal");
+        }
+    }));
     let search = web_sys::window()
         .and_then(|w| w.location().search().ok())
         .unwrap_or_default();
