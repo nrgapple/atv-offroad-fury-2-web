@@ -691,15 +691,22 @@ impl Sound {
     }
 
     /// Other riders' engines and body impacts this frame; returns the
-    /// remote quads whose engine banks should load.
+    /// remote quads whose engine banks should load. Like game.js's
+    /// multiplayer listener, they are heard from the drawn camera (after the
+    /// chase, crash and big-air presentation) moving with the player's
+    /// vehicle; the player's own and venue sounds keep the follow camera.
     pub fn remote_frame(
         &mut self,
         riders: &[atv_game::audio::remote::Rider],
         own: [f32; 3],
+        camera: &atv_render::Camera,
+        velocity: [f32; 3],
     ) -> Vec<u16> {
         let wanted = self.remote.wanted(riders);
-        let Some(listener) = self.ride.listener() else {
-            return wanted;
+        let listener = atv_core::spatial_audio::Listener {
+            position: camera.eye(),
+            forward: camera.axes().forward,
+            velocity,
         };
         let audible = self.output.started.get() && self.focused;
         if let Ok(mut mixer) = self.output.mixer.lock() {

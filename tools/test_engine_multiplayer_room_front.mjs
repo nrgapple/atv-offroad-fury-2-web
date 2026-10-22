@@ -1,9 +1,11 @@
 // Host-only gate: the Rust engine's Change ATV and Rider and Select Track over
 // a live room. A Rust browser hosts from its menus; a JavaScript guest joins.
-//   1. Pause → Change ATV and Rider opens the garage over the held room; the
-//      guest keeps seeing the paused host (not stale) behind it; the next ATV
-//      and Done reload the ride in place with the new look, which the guest
-//      sees.
+//   1. Pause → Change ATV and Rider opens the garage over the held room. As in
+//      game.js (a live room keeps simulating under a menu), the host's ride
+//      keeps riding with neutral input behind it: the guest keeps seeing it
+//      (not stale) coast on from its throttle run. The next ATV and Done
+//      reload the ride in place, where it came to rest, with the new look,
+//      which the guest sees.
 //   2. Pause → Select Track opens the course picker; the next course and
 //      Ride move everyone there.
 //   PLAYWRIGHT_MODULE=... ATV_TEST_URL=http://127.0.0.1:4187 node tools/test_engine_multiplayer_room_front.mjs
@@ -77,26 +79,37 @@ try {
   });
   await host.waitForFunction(() => JSON.parse(window.furyMultiplayer ?? 'null')?.drawn >= 1, null, { timeout: 60000 });
   await host.bringToFront();
-  const before = await engine(host);
 
-  // 1. Change ATV and Rider.
+  // 1. Change ATV and Rider, straight after a throttle run.
+  await host.mouse.click(640, 400);
+  await host.keyboard.down('KeyW');
+  await new Promise(resolve => setTimeout(resolve, 2500));
+  await host.keyboard.up('KeyW');
   await pauseRow(host, 'changeride');
   await onPage(host, 'garage');
-  // The ride waits paused behind the garage and stays present: the guest
-  // never sees the host go stale (moving poses go stale after 1 s, still ones
-  // after 2.5 s; paused presence lasts 15 s).
+  // The ride keeps riding behind the garage and stays present: the guest never
+  // sees the host go stale (moving poses go stale after 1 s, still ones after
+  // 2.5 s), and sees it coast on.
   const behind = [];
   for (let i = 0; i < 24; i++) {
     behind.push(
       await guest.evaluate(() => {
         const r = window.atvTerrainStatus.multiplayer?.remote?.find(p => p.peer === 0);
-        return r ? !r.stale : false;
+        return r && !r.stale ? r.position : null;
       })
     );
     await new Promise(resolve => setTimeout(resolve, 250));
   }
-  report.behindGarage = { seconds: 6, present: behind.filter(Boolean).length, samples: behind.length };
+  const seen = behind.filter(Boolean);
+  report.behindGarage = {
+    seconds: 6,
+    present: seen.length,
+    samples: behind.length,
+    coastedFt: seen.length ? distance(seen[0], seen.at(-1)) : 0
+  };
   assert.ok(behind.every(Boolean), `present behind the garage: ${JSON.stringify(report.behindGarage)}`);
+  assert.ok(report.behindGarage.coastedFt > 2, `rides on behind the garage: ${JSON.stringify(report.behindGarage)}`);
+  const before = { origin: seen.at(-1) };
   await key(host, 'ArrowRight');
   const quad = (await read(host)).front.quad;
   await key(host, 'Escape');

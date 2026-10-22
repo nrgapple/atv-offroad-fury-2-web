@@ -309,8 +309,8 @@ struct App {
     /// A room kept live while the frontend's garage or course picker is open
     /// over it (Change ATV and Rider, Select Track).
     held_room: Option<multiplayer::Net>,
-    /// The held room's ride, paused behind the frontend: its presence keeps
-    /// going out until the ride reloads.
+    /// The held room's ride, riding on with neutral input behind the
+    /// frontend: its presence keeps going out until the ride reloads.
     held_ride: Option<atv_game::ride::Ride>,
     /// The held room the next frontend ride resumes.
     pending_room: Option<multiplayer::Net>,
@@ -733,14 +733,7 @@ fn settle_room(ready: &mut Ready) {
         if let Some((origin, yaw, velocity)) = tick.place {
             let _ = riding.place_beside(origin, yaw, velocity);
         }
-        let eye = ready.camera.eye();
-        net.present(
-            &ready.gpu,
-            &mut ready.scene,
-            &ready.venue,
-            &riding.ride,
-            eye,
-        );
+        net.present(&ready.gpu, &mut ready.scene, &ready.venue, &riding.ride);
         if net.drawn as f32 >= peers {
             let since = *seen.get_or_insert_with(Instant::now);
             if since.elapsed().as_secs_f32() > 2. {
@@ -788,6 +781,7 @@ impl App {
         let dt = (now - self.last).as_secs_f32().min(0.1);
         self.last = now;
         let Some(ready) = &mut self.ready else {
+            self.held_frame(dt);
             self.front_frame();
             return;
         };
@@ -1036,19 +1030,18 @@ impl App {
                 overlay.lobby = net.menu_lobby();
             }
             riding.server_clock = net.server_clock();
-            let eye = ready.camera.eye();
-            net.present(
-                &ready.gpu,
-                &mut ready.scene,
-                &ready.venue,
-                &riding.ride,
-                eye,
-            );
+            net.present(&ready.gpu, &mut ready.scene, &ready.venue, &riding.ride);
             if was_open && let Some(closed) = &net.closed {
                 status(&format!("Multiplayer ended: {closed}"));
             }
             if let Some(sound) = &mut riding.sound {
-                for quad in sound.remote_frame(&net.riders, riding.ride.frame().origin) {
+                let motion = riding.ride.frame();
+                for quad in sound.remote_frame(
+                    &net.riders,
+                    motion.origin,
+                    &ready.camera,
+                    motion.linear_velocity,
+                ) {
                     engine_loads.push((quad, sound.load_remote_engine(quad)));
                 }
             }
@@ -1444,6 +1437,10 @@ impl App {
             return false;
         }
         let Some(ready) = &self.ready else {
+            // A room ride held behind the frontend keeps riding.
+            if self.held_room.is_some() && self.held_ride.is_some() {
+                return true;
+            }
             // The frontend draws on input, and continuously only while its
             // page animates; a ride loading from it presents its own frames.
             return match &self.front {
@@ -1644,7 +1641,7 @@ impl App {
                     }
                 }
                 if self.quit_to(Some(if garage { "garage" } else { "tracks" })) {
-                    // The ride waits paused behind the frontend, still present.
+                    // The ride keeps riding behind the frontend, still present.
                     self.held_ride = Some(riding.ride);
                 } else if let Some(ready) = &mut self.ready {
                     // No frontend to show: keep riding in the room.
@@ -4044,7 +4041,7 @@ impl App {
                 rider,
                 environment,
             } => {
-                self.held_ride = None;
+                let held = self.held_ride.take();
                 let Some(mut net) = self.held_room.take() else {
                     // The room ended meanwhile: back to the main menu.
                     if let Some(front) = &self.front {
@@ -4053,6 +4050,15 @@ impl App {
                     self.wake();
                     return;
                 };
+                // Change ATV and Rider reloads where the ride, still riding
+                // behind the garage, is now (multiplayer.js reads op 112's
+                // pose as the garage closes).
+                if net.resume_at.is_some()
+                    && let Some(ride) = &held
+                {
+                    let m = ride.rider_world();
+                    net.resume_at = Some((ride.frame().origin, m[8].atan2_d(m[10])));
+                }
                 let same = net
                     .session
                     .profile()
@@ -4553,17 +4559,38 @@ impl App {
                 })
     }
 
+    /// The frontend over a held room (Change ATV and Rider, Select Track):
+    /// like game.js under a menu in a live room, the ride keeps simulating
+    /// with neutral input and its unpaused pose goes out at the normal rate.
+    fn held_frame(&mut self, dt: f32) {
+        let (Some(net), Some(ride)) = (&mut self.held_room, &mut self.held_ride) else {
+            return;
+        };
+        net.tick(None, false);
+        if let Err(error) = net.ride_held(ride, dt) {
+            status(&format!("Simulation stopped: {error}"));
+            self.held_ride = None;
+            return;
+        }
+        net.hold(ride, false);
+    }
+
     /// Hidden or suspended: keep the room live without frames. The socket is
     /// drained, pings continue and a paused presence pose goes out at its
     /// 0.2 Hz cadence (web/multiplayer.js timers keep running in a
     /// background tab; actual suspension sends paused presence).
     fn presence_tick(&mut self) {
+        #[cfg(target_arch = "wasm32")]
+        let away = !self.visible || self.suspended || self.context.lost;
+        #[cfg(not(target_arch = "wasm32"))]
+        let away = !self.visible || self.suspended;
         if let Some(net) = &mut self.held_room {
             // The frontend over a held room: socket, reconnects and pings,
-            // and the paused ride's presence.
+            // and the ride's presence (paused only while actually away;
+            // frames ride it and send otherwise, see `held_frame`).
             net.tick(None, true);
             if let Some(ride) = &self.held_ride {
-                net.hold(ride);
+                net.hold(ride, away);
             }
             if let Some(closed) = &net.closed {
                 status(&format!("Multiplayer ended: {closed}"));

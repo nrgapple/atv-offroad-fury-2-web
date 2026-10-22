@@ -246,15 +246,16 @@ impl VegetationPass {
         let selection = &mut *selection;
         let forward = [f64::from(yaw.sin()), f64::from(yaw.cos())];
         let camera = [f64::from(eye[0]), f64::from(eye[2])];
-        // The browser passes a frame serial that stays 0, so 0012a1c0's
-        // stale-visibility reset only fires on a plant's first selection. Its
-        // first frame is followed by many more; select once ahead so a single
-        // captured frame shows the same transition billboards.
+        // A rising frame serial (the browser's rAF id) drives 0012a1c0's
+        // stale-visibility reset: a near plant unseen for more than three
+        // frames restarts at its full mesh. The browser's first frame is
+        // followed by many more; select once ahead so a single captured frame
+        // shows the same transition billboards.
         if !self.warmed {
-            selection.select(camera, forward, 0.);
+            selection.select_next(camera, forward);
             self.warmed = true;
         }
-        self.counts = selection.select(camera, forward, 0.);
+        self.counts = selection.select_next(camera, forward);
         let billboards = (self.counts.far + self.counts.transition) as usize * BILLBOARD_FLOATS;
         if billboards > 0 {
             gpu.queue.write_buffer(

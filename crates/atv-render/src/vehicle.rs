@@ -126,7 +126,12 @@ pub struct VehicleShared {
     globals_layout: wgpu::BindGroupLayout,
     bones_layout: wgpu::BindGroupLayout,
     material_layout: wgpu::BindGroupLayout,
+    /// The player's pipeline: writes stencil 1 (game.js rushMask).
     pipeline: wgpu::RenderPipeline,
+    /// Race CPUs' and other riders' pipeline: no stencil writes, as game.js
+    /// disables the stencil test before drawing them, so the speed rush blurs
+    /// and streaks them like the scenery.
+    unmasked: wgpu::RenderPipeline,
     sampler: wgpu::Sampler,
     fallback: wgpu::TextureView,
     /// Uploaded material textures by name and content, so riders in the same
@@ -225,70 +230,76 @@ impl VehicleShared {
             ],
             immediate_size: 0,
         });
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("vehicle"),
-            layout: Some(&layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs"),
-                compilation_options: Default::default(),
-                buffers: &[Some(wgpu::VertexBufferLayout {
-                    array_stride: (FLOATS_PER_VERTEX * 4) as u64,
-                    step_mode: wgpu::VertexStepMode::Vertex,
-                    attributes: &wgpu::vertex_attr_array![
-                        0 => Float32x3, 1 => Float32x3, 2 => Float32x2, 3 => Float32
-                    ],
-                })],
-            },
-            primitive: wgpu::PrimitiveState {
-                cull_mode: None,
-                ..Default::default()
-            },
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: DEPTH_FORMAT,
-                depth_write_enabled: Some(true),
-                depth_compare: Some(wgpu::CompareFunction::Less),
-                // Stencil ref 1 marks the player's own quad and rider so the
-                // speed-rush pass leaves them crisp (game.js rushMask).
-                stencil: {
-                    let face = wgpu::StencilFaceState {
-                        compare: wgpu::CompareFunction::Always,
-                        fail_op: wgpu::StencilOperation::Keep,
-                        depth_fail_op: wgpu::StencilOperation::Keep,
-                        pass_op: wgpu::StencilOperation::Replace,
-                    };
-                    wgpu::StencilState {
-                        front: face,
-                        back: face,
-                        read_mask: 0xff,
-                        write_mask: 0xff,
-                    }
+        let pipeline = |mask: bool| {
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some(if mask { "vehicle" } else { "vehicle unmasked" }),
+                layout: Some(&layout),
+                vertex: wgpu::VertexState {
+                    module: &shader,
+                    entry_point: Some("vs"),
+                    compilation_options: Default::default(),
+                    buffers: &[Some(wgpu::VertexBufferLayout {
+                        array_stride: (FLOATS_PER_VERTEX * 4) as u64,
+                        step_mode: wgpu::VertexStepMode::Vertex,
+                        attributes: &wgpu::vertex_attr_array![
+                            0 => Float32x3, 1 => Float32x3, 2 => Float32x2, 3 => Float32
+                        ],
+                    })],
                 },
-                bias: Default::default(),
-            }),
-            multisample: wgpu::MultisampleState {
-                count: samples,
-                ..Default::default()
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("fs"),
-                compilation_options: Default::default(),
-                // GS (Cs-Cd)*As+Cd for blended materials; opaque ones write As 1.
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: gpu.config.format,
-                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-            }),
-            multiview_mask: None,
-            cache: None,
-        });
+                primitive: wgpu::PrimitiveState {
+                    cull_mode: None,
+                    ..Default::default()
+                },
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    format: DEPTH_FORMAT,
+                    depth_write_enabled: Some(true),
+                    depth_compare: Some(wgpu::CompareFunction::Less),
+                    // Stencil ref 1 marks the player's own quad and rider so the
+                    // speed-rush pass leaves them crisp (game.js rushMask).
+                    // The unmasked pipeline leaves the stencil alone.
+                    stencil: if mask {
+                        let face = wgpu::StencilFaceState {
+                            compare: wgpu::CompareFunction::Always,
+                            fail_op: wgpu::StencilOperation::Keep,
+                            depth_fail_op: wgpu::StencilOperation::Keep,
+                            pass_op: wgpu::StencilOperation::Replace,
+                        };
+                        wgpu::StencilState {
+                            front: face,
+                            back: face,
+                            read_mask: 0xff,
+                            write_mask: 0xff,
+                        }
+                    } else {
+                        Default::default()
+                    },
+                    bias: Default::default(),
+                }),
+                multisample: wgpu::MultisampleState {
+                    count: samples,
+                    ..Default::default()
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &shader,
+                    entry_point: Some("fs"),
+                    compilation_options: Default::default(),
+                    // GS (Cs-Cd)*As+Cd for blended materials; opaque ones write As 1.
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: gpu.config.format,
+                        blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                }),
+                multiview_mask: None,
+                cache: None,
+            })
+        };
         Self {
             globals_layout,
             bones_layout,
             material_layout,
-            pipeline,
+            pipeline: pipeline(true),
+            unmasked: pipeline(false),
             sampler,
             fallback,
             uploads: Default::default(),
@@ -299,12 +310,15 @@ impl VehicleShared {
 impl VehiclePass {
     /// A pass using an existing pipeline, layouts and sampler: the player's and
     /// other riders' passes share one so an arrival compiles no shader program.
+    /// `rush_mask` (the player only) marks the pass's pixels with stencil 1
+    /// so the speed rush leaves them crisp.
     pub fn with_shared(
         gpu: &Gpu,
         venue: &Venue,
         quad: &Model,
         rider: &Model,
         shared: &VehicleShared,
+        rush_mask: bool,
     ) -> Result<Self, String> {
         let device = &gpu.device;
         let VehicleShared {
@@ -312,10 +326,12 @@ impl VehiclePass {
             bones_layout,
             material_layout,
             pipeline,
+            unmasked,
             sampler,
             fallback,
             uploads,
         } = shared.clone();
+        let pipeline = if rush_mask { pipeline } else { unmasked };
         let cached = |name: &str, image: &Image| {
             let key = (
                 name.to_string(),

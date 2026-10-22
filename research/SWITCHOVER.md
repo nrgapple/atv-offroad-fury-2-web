@@ -246,7 +246,7 @@ In progress elsewhere, not counted as gaps: the diagnostics overlay (F3).
 | Speed/air muffle, wind | Ported | audio/hype.rs (#255) | |
 | Heavy mud zones | Ported | dirt.rs (#251) | |
 | Landing burst; air dark blur | Ported | atv-render burst.rs, air_blur.rs (#251, #253) | |
-| Speed rush: curve, FOV kick, taps, stencil, lines, vignette; reduced-motion default | Ported | atv-render speed_rush.rs (#204, #228) | The main menu's Settings use the same default |
+| Speed rush: curve, FOV kick, taps, stencil, lines, vignette; reduced-motion default | Ported | atv-render speed_rush.rs (#204, #228) | The main menu's Settings use the same default. Only the player's vehicle writes the stencil; race CPUs and other riders blur |
 | Motorcycle and Enhanced/High ATV interpolation | Ported | ride/present.rs (#217) | |
 | Interpolation stretch under Alpha slow-mo | Unverified | — | |
 
@@ -311,10 +311,10 @@ In progress elsewhere, not counted as gaps: the diagnostics overlay (F3).
 | Reserved FREERDnn codes: refusal / redirect to Free Ride | Ported | multiplayer.rs `claim`, front/controller.rs | Hosting one is refused; an invite, lobby link or Join code opens Free Ride (`tools/test_engine_freeride.mjs`) |
 | Slot-key reconnect, 25 s window, backoff | Ported | multiplayer.rs (#234) | |
 | Meet a rider on arrival; Spawn beside (car velocity on trains) | Ported | multiplayer.rs, spawn.rs (#227, #238, #264) | Rider contacts sample each peer per step after the train step (atv-web op 50). Authored: a rider alone in a room sends a 1 Hz presence pose so an arrival can meet a host whose tab is in the background, and an arrival waits up to 15 s for a first pose (`tools/test_engine_multiplayer_idle_host.mjs`) |
-| Change ATV in place (kept present behind the garage), host Select Track | Ported | lib.rs (#242, #256) | |
+| Change ATV in place (kept present behind the garage), host Select Track | Ported | lib.rs (#242, #256) | Like game.js, the held ride keeps simulating behind the garage or course picker with neutral input and sends unpaused poses at 50 ms (`Net::ride_held`); Change ATV reloads where it came to rest. The scene and ride sounds are not drawn or played behind the frontend |
 | Copy invite link | Partial | `invite_url` | Blocking 4 |
 | Pose send, pings, remote models (frame-spread), remote engine audio | Ported | multiplayer.rs, sound.rs (#224, #233, #252) | Models evicted past 20 cached; engine voices ranked by distance to the player's vehicle; inbox guard (192 poses, 256 closes 1008) |
-| Name tags, peer dots | Ported | hud/peers.rs (#236) | |
+| Name tags, peer dots | Ported | hud/peers.rs (#236) | Riders draw at any distance, as their tags do (drawRemotePlayers); only race CPUs stop at 864 ft |
 | Shared train clock | Ported | ride/mod.rs (#232) | |
 | `atv-last-disconnect` record | Missing | — | Debug-only |
 
@@ -335,7 +335,7 @@ In progress elsewhere, not counted as gaps: the diagnostics overlay (F3).
 | Rain loop | Ported | audio/ride.rs | |
 | Crash boom (Crazy/Gorn) | Ported | audio/synth.rs, sound.rs | 0.3 s cooldown |
 | Alpha landing thump, muffle, wind | Ported | audio/synth.rs, hype.rs (#251, #255) | |
-| Remote engines and impacts | Ported | audio/remote.rs (#233) | |
+| Remote engines and impacts | Ported | audio/remote.rs (#233) | Heard from the drawn camera with the player's vehicle velocity (game.js multiplayer listener); the player's, venue and train sounds keep the follow camera |
 | Frontend menu music (UIMUSIC) | Ported | audio/menu.rs, lib.rs (#267) | |
 | Suspend on blur/hidden; no Media Session | Ported | sound.rs (#262) | |
 | Soundtrack: catalog, shuffle, history (`atv-soundtrack-v1`), AAC stream, park/resume, muffle, spectrum | Ported | audio/music.rs, sound.rs | |
@@ -367,5 +367,5 @@ In progress elsewhere, not counted as gaps: the diagnostics overlay (F3).
 | Tire tracks Enhanced/High, mud zones | Ported | tire_tracks.rs (#201) | |
 | High sun shadow map | Ported | shadows.rs (#200) | Player, CPUs and riders within 40 ft |
 | Contact shadow blobs | Ported | shadows.rs | Player, CPUs within 240 ft, other riders; resting lift measured every step |
-| TOY effects (smoke, fire); type-11 fountains | Ported | atv-render ambient.rs (#186) | |
+| TOY effects (smoke, fire); type-11 fountains | Ported | atv-render ambient.rs (#186) | Far distance: fog end, or 768 ft without fog |
 | Lingering dust Enhanced/High | Ported | lingering_dust.rs (#197) | |
