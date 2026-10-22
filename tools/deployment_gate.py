@@ -11,16 +11,20 @@ REPOSITORY = 'nrgapple/atv-offroad-fury-2-web'
 
 
 def decision(commit, main, live, relation, local_mode=False, main_compatible=False):
+    # A main build that advances production deploys even when newer merges
+    # are still building: requiring it to be main's tip starved production
+    # while merges landed faster than one build. Deploys are serialized, and
+    # an older build that reaches the gate after a newer deploy is 'behind'.
     if local_mode:
         return False, 'local release owner holds deployment'
-    if commit != main and not main_compatible:
-        return False, 'superseded main build'
     if live == commit:
         return False, 'checked commit already deployed'
     if relation == 'behind':
         return False, 'production already contains a newer release'
     if relation not in ('ahead', 'identical'):
         raise ValueError('candidate is not a descendant of production')
+    if commit != main and not main_compatible:
+        return True, 'main build advances production (newer merges follow)'
     return True, 'current main advances production'
 
 

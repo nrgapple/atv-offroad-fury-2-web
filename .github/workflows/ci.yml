@@ -11,11 +11,12 @@ permissions:
 
 jobs:
   web:
-    # A newer push supersedes an older build on the same branch, main included:
-    # each main build deploys the whole application, so only the latest matters.
+    # A newer push cancels an older PR build. Main builds run to completion
+    # (GitHub keeps only the latest pending one), so production keeps moving
+    # while merges land faster than a build; see tools/deployment_gate.py.
     concurrency:
       group: build-${{ github.ref }}
-      cancel-in-progress: true
+      cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
     outputs:
       publish: ${{ steps.plan.outputs.publish }}
     permissions:
