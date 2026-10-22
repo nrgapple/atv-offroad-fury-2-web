@@ -260,6 +260,52 @@ impl World {
         })
     }
 
+    /// A preset change resizes the High vehicle shadow map (0 leaves the
+    /// 1x1 placeholder); the globals group rebinds to it.
+    pub fn set_shadow_size(&mut self, gpu: &Gpu, size: u32) {
+        let size = size.max(1);
+        if size == self.shadow_size {
+            return;
+        }
+        self.shadow_view = gpu
+            .device
+            .create_texture(&wgpu::TextureDescriptor {
+                label: Some("vehicle shadow map"),
+                size: wgpu::Extent3d {
+                    width: size,
+                    height: size,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: SHADOW_FORMAT,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                    | wgpu::TextureUsages::TEXTURE_BINDING,
+                view_formats: &[],
+            })
+            .create_view(&Default::default());
+        self.shadow_size = size;
+        self.globals_group = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("world globals"),
+            layout: &self.globals_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: self.buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&self.shadow_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::Sampler(&self.shadow_sampler),
+                },
+            ],
+        });
+    }
+
     /// Slot size for dynamic-offset uniform arrays.
     pub fn slot(&self, size: usize) -> u64 {
         (size as u64).div_ceil(self.uniform_alignment) * self.uniform_alignment

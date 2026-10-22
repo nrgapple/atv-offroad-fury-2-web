@@ -442,7 +442,7 @@ the Rust ride, which until now only persisted them:
 
 | Setting (key) | play.html | Rust engine now |
 | --- | --- | --- |
-| Display → Graphics (`atv-graphics`, Auto = `detectGraphicsTier`) | preset at load; on change: interpolation, anisotropy, contact shadows, dust/tire pools, shadow map, smoothed sky, Fresnel, wheel re-projection, dirt | saved preset for rides from the frontend (Auto ports `detectGraphicsTier`; URL/CLI `graphics=` wins; direct `?venue=` parity rides keep Original); on change: interpolation, smoothed sky (when decoded at load), Fresnel, contact shadows, dust and tire-track pools. Wheel re-projection follows the preset (Enhanced/High). Anisotropy and shadow-map size apply from the next load; ATV dirt follows the preset |
+| Display → Graphics (`atv-graphics`, Auto = `detectGraphicsTier`) | preset at load; on change: interpolation, anisotropy, contact shadows, dust/tire pools, shadow map, smoothed sky, Fresnel, wheel re-projection, dirt | saved preset for rides from the frontend (Auto ports `detectGraphicsTier`; URL/CLI `graphics=` wins; direct `?venue=` parity rides keep Original); on change: interpolation, smoothed sky (when decoded at load), Fresnel, contact shadows, dust and tire-track pools. Wheel re-projection follows the preset (Enhanced/High). Anisotropy (terrain, scenery and vegetation samplers rebound) and the shadow map (resized, created or dropped with the terrain and world groups rebound) also apply on change, as applyAnisotropy and the shadowMap swap do (`tools/test_engine_settings.mjs`; `private/reports/rust-ui/graphics-live/switched-to-high.png` vs `loaded-high.png`); ATV dirt follows the preset |
 | Speed rush (`atv-speed-rush`) | FOV kick and screen pass intensity Off/Low/Normal/High; Off by default with reduced motion | applied at load and on change, same peaks and reduced-motion default |
 | Crashes (`atv-crash-mode`) | Original/Crazy/Gorn switch mid-ride | applied at load and on change (crash layer created or dropped) |
 | Flips (`atv-flips`) | `input.flips` each batch | `RideOptions::flips` each step |
@@ -523,8 +523,22 @@ throttle on Original after the spawn drop gave 50, 45 and 29 particles per landi
 in both games (`private/reports/rust-ui/alpha-landing/env05-{rust-web,javascript}.png`);
 `tools/test_engine_alpha_landing.mjs` (burst, thumps and soiling on, none off).
 
-Not run yet (rows listed, saved, no effect in the Rust ride): Speed & air muffle (the
-music lowpass and wind loop) and Air dark blur (screen pass). Evidence: `atv-game` unit test (a launched 40 ft/s jump fires
+- Speed & air muffle: `audio::hype::HypeAudio` in the mixer ports setHype for the
+  mixer's music bus (a lowpass from 22 kHz towards 320 Hz, Q 0.7 dB, and a level down
+  to 0.7, eased like setTargetAtTime per 128-frame block) and the wind rush (2 s of
+  leaky LCG noise, bandpass Q 0.6 at 380-1280 Hz, gain 0.32 w², on the SFX bus);
+  the riding loop sends the director's muffle and wind when either moves 0.004, open
+  in menus, and the toggle going off stops the wind. The web build's streamed
+  soundtrack moves into a Web Audio graph (MediaElementSource -> volume gain ->
+  lowpass -> level, as music.js MediaOutput) at the first muffle; until then it
+  plays from its element as before. Evidence: unit test (open bus untouched; fully
+  muffled a 2 kHz tone falls below 0.02 RMS while 100 Hz keeps about 0.7; wind
+  audible); `tools/test_engine_alpha_muffle.mjs` (host Chromium ENV05: director and
+  mixer muffle 0.47, the soundtrack graphed and still advancing; off: none sent).
+  Not measured: what the graphed soundtrack sounds like on phones.
+
+Not run yet (rows listed, saved, no effect in the Rust ride): Air dark blur (screen
+pass). Evidence: `atv-game` unit test (a launched 40 ft/s jump fires
 one apex, one slow motion reaching 0.3x and a landing over 30 ft/s);
 `tools/test_engine_alpha.mjs` (rows, saved toggles, applied ride flags); the presenter
 and interpolation tests are unchanged at scale 1. Host only.
@@ -564,9 +578,18 @@ timing), panel 7.90; 390x844 player 5.40, list 11.27, frame 8.53. Test:
 `tools/test_engine_jukebox.mjs` (21 songs, choice, Pause/Play, Next/Previous history,
 volume and the saved record, pause cleared on leaving).
 
-Not ported: the spectrum bars (the web stream plays through a media element outside
-the Rust audio graph, and desktop has no analyser yet; the bars area stays empty),
-the main-menu Jukebox (the Rust frontend has no soundtrack player outside rides; the
+Spectrum bars (2026-10-22): jukebox.js drawBars over the art (24 bars, 88% x 18% at
+the bottom, hidden when compact) from a music.js analyser (fftSize 64, smoothing
+0.78): the web build moves the streamed soundtrack into its Web Audio graph
+(`MusicGraph`, shared with Alpha muffle) and reads an AnalyserNode tapping the
+volume gain; desktop runs `atv_game::audio::spectrum::Analyser` (the AnalyserNode
+rules: Blackman window, smoothing, -100..-30 dB bytes) over the mixer's music tap.
+The bars repaint each frame on top of the cached panel layout. Evidence:
+`tools/test_engine_jukebox.mjs` waits for a lit spectrum; host Chromium 1280x720
+`private/reports/rust-ui/jukebox-bars/{rust-web,javascript}-1280.png` (same art box
+and bar geometry; levels differ with the song position).
+
+Not ported: the main-menu Jukebox (the Rust frontend has no soundtrack player outside rides; the
 row stays hidden there), dragging feedback before release, Media Session release
 (play.html keeps the soundtrack out of system media controls; the Rust web build
 never registers it).

@@ -23,6 +23,9 @@ reaches parity; then the JavaScript and its ABI operations are deleted.
 
 ## Migration rule
 
+New work lands in the Rust engine only; the JavaScript game is frozen as the parity
+reference until the switch-over (AGENTS.md "Rust only for new work").
+
 The Rust engine runs beside the live game at `/engine.html` until it matches. A
 subsystem moves when `tools/compare_engine.mjs` shows the same frame from the same
 camera in the JavaScript game, the Rust engine in the browser and the native build.
@@ -1122,8 +1125,15 @@ Ported:
 - An ATV ride on ENV08 installs the cars as moving scene obstacles (op 69). It then
   steps the shared train runtime before every vehicle step with the scene's
   collision heights, republishing each car's collision body (`step_train_scene`).
-  The renderer stops stepping a train the ride drives (`Train::driven`). Motorcycles
-  keep the presentation-only train; the bike scene does not install it yet.
+  The renderer stops stepping a train the ride drives (`Train::driven`).
+- A motorcycle ride does the same with the bike's own scene, as motorcycles.rs
+  does: the scene installs the train bodies and op 24 steps the train after the
+  race step. The content test `crates/atv-game/tests/motorcycle_train.rs` (bike
+  29; `FURY_CONTENT=... cargo test -p atv-game --test motorcycle_train --
+  --ignored`) repeats test_motorcycle_train.mjs's two cases. A broadside hit made
+  4 dynamic contacts and wrecked. A drop onto car 0 stood on the moving train
+  for 73 of 720 steps. Before this change the bike had no train (`train_car`
+  returned none).
 - In a room, every step's train phase follows the relay clock: the browser's
   `synchronize_train`, with gentle phase correction and a primed 16-step resync
   that carries a rider standing on a car along.
@@ -1308,9 +1318,14 @@ Observed (host-only, local relay):
     course.
 - A direct room link (`engine.html?room=`, `fury --room`) has no frontend, so both
   rows stay hidden there.
-- Difference: the browser keeps riding behind its garage. The Rust ride stops while
-  the garage is open, so for those seconds others see this rider go stale and
-  return after the reload.
+- Behind the garage or course picker the ride waits paused and stays present, as
+  in the browser (its simulation pauses under the menu while web/multiplayer.js
+  keeps sending). The app keeps the room's `Ride` (`held_ride`) and
+  `Net::hold` sends its paused presence (0.2 Hz; others keep a paused pose for
+  15 s) on the 1 s presence timer. The GPU scene is released for the frontend,
+  and the ride reloads after Done/Ride. During that reload no poses go out, as in
+  the browser while it loads. Before this change the ride was dropped, and the
+  guest saw the host go stale after about 1 s.
 - Observed (`tools/test_engine_multiplayer_room_front.mjs`, local relay,
   host-only):
   - A Rust browser hosted room JKSRF5Y8 from its menus with a JavaScript guest.
@@ -1318,6 +1333,9 @@ Observed (host-only, local relay):
     the guest saw slot 0's model become ATV 2.
   - Select Track → next course → Ride moved the room to env02. The Rust host reloaded
     there and drew the guest again.
+  - The guest kept the host present (not stale) in all 24 samples over 6 s
+    behind the garage. The same check on the previous build failed after 1 s
+    (4 of 24 samples).
 
 ### Full Free Ride room in the Rust engine (measurement)
 
@@ -1408,10 +1426,9 @@ outside the window; joins paced 250 ms; one Mac, headless Chromium/Metal,
 Gaps, in planned slice order:
 
 1. The joining "Free Ride Lobby" page and Copy invite link from the frontend are
-   not drawn; rides start at once. The ride does not keep running behind the
-   garage, as noted in slice 10.
-2. Train on a motorcycle ride, the Realistic train-riding setting, and an arrival's
-   spawn velocity on a moving car (the browser adds the car's point velocity).
+   not drawn; rides start at once.
+2. The Realistic train-riding setting, and an arrival's spawn velocity on a
+   moving car (the browser adds the car's point velocity).
 3. A phone measurement of a full room; arrival frames are 25-31 ms on this host.
 
 ## Commands

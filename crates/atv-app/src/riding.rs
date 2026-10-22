@@ -68,6 +68,9 @@ pub struct Riding {
     pub hype: atv_game::ride::hype::HypeDirector,
     pub alpha_slowmo: bool,
     pub alpha_big_air_camera: bool,
+    /// Alpha Speed & air muffle and the (muffle, wind) last sent.
+    pub alpha_muffle: bool,
+    hype_audio: [f32; 2],
     /// Alpha Landing burst: dust, clods and a thump at hard landings.
     pub alpha_landing_burst: bool,
     pub burst: atv_game::burst::BurstEmitter,
@@ -184,6 +187,8 @@ impl Riding {
             hype: Default::default(),
             alpha_slowmo: false,
             alpha_big_air_camera: false,
+            alpha_muffle: false,
+            hype_audio: [0.; 2],
             alpha_landing_burst: false,
             burst: atv_game::burst::BurstEmitter::new(192),
             dust_tint: atv_game::wheel_effects::DustTint::new(venue),
@@ -289,6 +294,7 @@ impl Riding {
         let started = web_time::Instant::now();
         self.clock += f64::from(dt) * 1000.;
         let result = self.frame_inner(input, touch, dt);
+        self.sync_hype_audio();
         if let Some(sound) = &mut self.sound {
             sound.maintain();
             sound.report(self.ride.steps());
@@ -875,6 +881,42 @@ impl Riding {
     /// The Assisted chase orbit (radians; `requestedHillOrbit`).
     pub fn hill_orbit(&self) -> f64 {
         self.sightline.lift
+    }
+
+    /// updateHype's sound: the director's muffle and wind while live, open
+    /// in menus; sent when either moves more than 0.004.
+    fn sync_hype_audio(&mut self) {
+        if !self.alpha_muffle {
+            return;
+        }
+        let live = self.focused && !self.menu_open && !self.paused;
+        let next = if live {
+            [self.hype.muffle, self.hype.wind]
+        } else {
+            [0.; 2]
+        };
+        if (next[0] - self.hype_audio[0]).abs() > 0.004
+            || (next[1] - self.hype_audio[1]).abs() > 0.004
+        {
+            if let Some(sound) = &mut self.sound {
+                sound.set_hype(next[0], next[1], self.hype.slam > 0.);
+            }
+            self.hype_audio = next;
+        }
+    }
+
+    /// Alpha Speed & air muffle on or off (stopHype when it goes off).
+    pub fn set_alpha_muffle(&mut self, on: bool) {
+        if self.alpha_muffle
+            && !on
+            && let Some(sound) = &mut self.sound
+        {
+            sound.stop_hype();
+        }
+        if !on {
+            self.hype_audio = [0.; 2];
+        }
+        self.alpha_muffle = on;
     }
 
     /// The visible terrain height (renderCore.terrainHeight).

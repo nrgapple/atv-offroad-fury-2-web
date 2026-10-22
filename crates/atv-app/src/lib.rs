@@ -250,6 +250,9 @@ struct App {
     /// A room kept live while the frontend's garage or course picker is open
     /// over it (Change ATV and Rider, Select Track).
     held_room: Option<multiplayer::Net>,
+    /// The held room's ride, paused behind the frontend: its presence keeps
+    /// going out until the ride reloads.
+    held_ride: Option<atv_game::ride::Ride>,
     /// The held room the next frontend ride resumes.
     pending_room: Option<multiplayer::Net>,
     /// Frame-spread loads (see `spawn_frame`).
@@ -956,6 +959,12 @@ impl App {
                 "arcadeFlips": riding.ride.options.arcade_flips,
                 "alphaSlowmo": riding.alpha_slowmo,
                 "alphaBigAirCamera": riding.alpha_big_air_camera,
+                "alphaMuffle": riding.alpha_muffle,
+                "hypeMuffle": riding.hype.muffle, "hypeWind": riding.hype.wind,
+                "musicMuffle": riding.sound.as_ref().map_or(0., |s| s.muffle()),
+                "musicStream": riding.sound.as_ref().and_then(|s| s.web_state())
+                    .map(|(graph, time, paused)| serde_json::json!({
+                        "graph": graph, "time": time, "paused": paused})),
                 "alphaLandingBurst": riding.alpha_landing_burst,
                 "burstLive": riding.burst.live, "thumps": riding.thumps,
                 "heavyMud": riding.dirt.heavy(),
@@ -964,6 +973,7 @@ impl App {
                 "skySmooth": graphics.sky_smooth, "fresnel": graphics.fresnel,
                 "contactShadows": graphics.contact_shadows, "anisotropy": graphics.anisotropy,
                 "dust": graphics.dust, "tireTracks": graphics.tire_tracks.0,
+                "shadowMap": graphics.shadow_map,
                 "wheelReprojection": riding.wheel_reprojection,
                 "hillOrbit": riding.hill_orbit(), "chaseAssist": riding.chase_assist,
                 "crashCameraTight": riding.crash_camera_tight,
@@ -1341,7 +1351,10 @@ impl App {
             Event::ChangeRide | Event::SelectTrack => {
                 let garage = event == Event::ChangeRide;
                 let Some(ready) = &mut self.ready else { return };
-                let (Some(mut net), Some(riding)) = (ready.net.take(), &ready.riding) else {
+                if ready.net.is_none() || ready.riding.is_none() {
+                    return;
+                }
+                let (Some(mut net), Some(riding)) = (ready.net.take(), ready.riding.take()) else {
                     return;
                 };
                 // Change ATV and Rider reloads in place (atv-web op 112's pose).
@@ -1359,11 +1372,13 @@ impl App {
                         f.state.track = index;
                     }
                 }
-                if !self.quit_to(Some(if garage { "garage" } else { "tracks" })) {
+                if self.quit_to(Some(if garage { "garage" } else { "tracks" })) {
+                    // The ride waits paused behind the frontend, still present.
+                    self.held_ride = Some(riding.ride);
+                } else if let Some(ready) = &mut self.ready {
                     // No frontend to show: keep riding in the room.
-                    if let (Some(ready), Some(net)) = (&mut self.ready, self.held_room.take()) {
-                        ready.net = Some(net);
-                    }
+                    ready.net = self.held_room.take();
+                    ready.riding = Some(riding);
                 }
             }
             Event::LeaveGame => {
@@ -1458,12 +1473,23 @@ impl App {
 
     /// The open menu's music view, and the Jukebox art on its first visit.
     fn update_jukebox(&mut self) {
-        let (Some(ready), Some(overlay)) = (&self.ready, &mut self.overlay) else {
+        let (Some(ready), Some(overlay)) = (&mut self.ready, &mut self.overlay) else {
             return;
         };
         if overlay.menu.is_none() {
             return;
         }
+        // jukebox.js drawBars: the analyser only while a song plays.
+        overlay.spectrum = if overlay.jukebox_open() {
+            ready
+                .riding
+                .as_mut()
+                .and_then(|r| r.sound.as_mut())
+                .and_then(|s| s.spectrum())
+                .map(|bytes| bytes.to_vec())
+        } else {
+            None
+        };
         overlay.music = ready
             .riding
             .as_ref()
@@ -1599,6 +1625,7 @@ impl App {
         // Settings → Alpha presentation (web/hype.js).
         riding.alpha_slowmo = prefs.alpha("air-slowmo");
         riding.alpha_big_air_camera = prefs.alpha("big-air-camera");
+        riding.set_alpha_muffle(prefs.alpha("music-muffle"));
         if riding.alpha_landing_burst && !prefs.alpha("landing-burst") {
             riding.burst.reset();
         }
@@ -2865,6 +2892,7 @@ impl App {
                 rider,
                 environment,
             } => {
+                self.held_ride = None;
                 let Some(mut net) = self.held_room.take() else {
                     // The room ended meanwhile: back to the main menu.
                     if let Some(front) = &self.front {
@@ -3112,11 +3140,16 @@ impl App {
     /// background tab; actual suspension sends paused presence).
     fn presence_tick(&mut self) {
         if let Some(net) = &mut self.held_room {
-            // The frontend over a held room: socket, reconnects and pings.
+            // The frontend over a held room: socket, reconnects and pings,
+            // and the paused ride's presence.
             net.tick(None, true);
+            if let Some(ride) = &self.held_ride {
+                net.hold(ride);
+            }
             if let Some(closed) = &net.closed {
                 status(&format!("Multiplayer ended: {closed}"));
                 self.held_room = None;
+                self.held_ride = None;
             }
             return;
         }
@@ -3822,6 +3855,7 @@ pub fn run(options: Options) {
         requested: HashSet::new(),
         riders_polled: None,
         held_room: None,
+        held_ride: None,
         pending_room: None,
         frame_tasks: Vec::new(),
         #[cfg(target_arch = "wasm32")]

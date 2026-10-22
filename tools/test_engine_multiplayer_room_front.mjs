@@ -1,8 +1,9 @@
 // Host-only gate: the Rust engine's Change ATV and Rider and Select Track over
 // a live room. A Rust browser hosts from its menus; a JavaScript guest joins.
 //   1. Pause → Change ATV and Rider opens the garage over the held room; the
-//      next ATV and Done reload the ride in place with the new look, which
-//      the guest sees.
+//      guest keeps seeing the paused host (not stale) behind it; the next ATV
+//      and Done reload the ride in place with the new look, which the guest
+//      sees.
 //   2. Pause → Select Track opens the course picker; the next course and
 //      Ride move everyone there.
 //   PLAYWRIGHT_MODULE=... ATV_TEST_URL=http://127.0.0.1:4187 node tools/test_engine_multiplayer_room_front.mjs
@@ -81,6 +82,21 @@ try {
   // 1. Change ATV and Rider.
   await pauseRow(host, 'changeride');
   await onPage(host, 'garage');
+  // The ride waits paused behind the garage and stays present: the guest
+  // never sees the host go stale (moving poses go stale after 1 s, still ones
+  // after 2.5 s; paused presence lasts 15 s).
+  const behind = [];
+  for (let i = 0; i < 24; i++) {
+    behind.push(
+      await guest.evaluate(() => {
+        const r = window.atvTerrainStatus.multiplayer?.remote?.find(p => p.peer === 0);
+        return r ? !r.stale : false;
+      })
+    );
+    await new Promise(resolve => setTimeout(resolve, 250));
+  }
+  report.behindGarage = { seconds: 6, present: behind.filter(Boolean).length, samples: behind.length };
+  assert.ok(behind.every(Boolean), `present behind the garage: ${JSON.stringify(report.behindGarage)}`);
   await key(host, 'ArrowRight');
   const quad = (await read(host)).front.quad;
   await key(host, 'Escape');
