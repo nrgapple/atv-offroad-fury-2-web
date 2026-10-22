@@ -137,6 +137,9 @@ pub struct El {
     pub id: Option<u32>,
     /// CSS `opacity` (applied to the element's own paint and descendants).
     pub opacity: f32,
+    /// CSS `transform: translate(x, y)`: the element, its descendants and
+    /// their hit targets move after layout (a transform does not reflow).
+    pub translate: [f32; 2],
     /// `overflow: auto` scroll position: children move up by this much and
     /// are clipped to the padding box (radius = the box's first radius).
     pub scroll: Option<f32>,
@@ -176,6 +179,10 @@ impl El {
     }
     pub fn opacity(mut self, opacity: f32) -> Self {
         self.opacity = opacity;
+        self
+    }
+    pub fn translate(mut self, x: f32, y: f32) -> Self {
+        self.translate = [x, y];
         self
     }
     pub fn text(text: impl Into<String>, style: TextStyle, line_height: f32) -> Self {
@@ -430,8 +437,8 @@ fn paint(
 ) {
     let layout = tree.layout(node).unwrap();
     let rect = Rect::new(
-        ox + layout.location.x,
-        oy + layout.location.y,
+        ox + layout.location.x + el.translate[0],
+        oy + layout.location.y + el.translate[1],
         layout.size.width,
         layout.size.height,
     );

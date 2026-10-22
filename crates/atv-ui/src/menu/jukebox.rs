@@ -1010,7 +1010,7 @@ pub fn element(
         [0.5, 0.45],
         &[(0., Color::hex("#0000004d")), (1., Color::hex("#000000b3"))],
     )))
-    .child(panel)
+    .child(super::slide(panel, state))
 }
 
 /// jukebox.js drawBars: 24 bars over a 192x48 canvas stretched across

@@ -147,6 +147,10 @@ pub struct Overlay {
     pub frontend: bool,
     /// The ride is a race (Pause → Restart Race).
     pub race: bool,
+    /// Pause pages slide in as they open (frontend.js `animatePage`), and
+    /// this frame's slide.
+    transition: atv_ui::transition::PageTransition,
+    menu_motion: Option<atv_ui::transition::Motion>,
 }
 
 impl Overlay {
@@ -215,12 +219,16 @@ impl Overlay {
             backdrop: None,
             frontend: false,
             race: false,
+            transition: Default::default(),
+            menu_motion: None,
         }
     }
 
     pub fn set_view(&mut self, view: Viewport) {
         if self.view != view {
             self.clear_input();
+            // frontend.js: a resize cancels the page's slide.
+            self.transition.cancel();
         }
         self.view = view;
         self.touch.coarse = view.coarse;
@@ -557,6 +565,10 @@ impl Overlay {
             );
         }
         let view = self.view;
+        // Each pause page shown slides in; closing the menu shows nothing.
+        self.transition
+            .observe(self.menu.as_ref().map(|m| m.shown), crate::reduced_motion());
+        self.menu_motion = self.transition.motion(now);
         if self.menu.is_some() {
             self.prepare_menu(device, queue, bindings);
             // drawBars: the spectrum repaints every frame over the cached panel.
@@ -565,11 +577,17 @@ impl Overlay {
                 .iter()
                 .find(|(_, id)| *id == atv_ui::menu::BARS)
             {
+                if let Some(m) = self.menu_motion {
+                    self.list.opacity(m.opacity);
+                }
                 atv_ui::menu::jukebox::paint_bars(
                     &mut self.list,
                     *area,
                     self.spectrum.as_deref().unwrap_or(&[]),
                 );
+                if self.menu_motion.is_some() {
+                    self.list.unopacity();
+                }
             }
             self.upload(device, queue, width, height);
             self.prepare_ms = started.elapsed().as_secs_f64() * 1000.;
@@ -897,6 +915,11 @@ impl Overlay {
         });
     }
 
+    /// A pause page is sliding in (frames keep coming until it rests).
+    pub fn sliding(&self) -> bool {
+        self.transition.active()
+    }
+
     /// The Jukebox page is open (it animates every frame).
     pub fn jukebox_open(&self) -> bool {
         self.menu.as_ref().is_some_and(|m| m.page == "jukebox")
@@ -958,6 +981,7 @@ impl Overlay {
         }) else {
             return;
         };
+        state.motion = self.menu_motion;
         if state.page == "jukebox" {
             // The original art loads on the first visit (jukebox.js loadArt).
             self.jukebox_art_wanted = true;
@@ -1079,6 +1103,8 @@ impl Overlay {
             "prepareMs": self.prepare_ms,
             "menu": self.menu.as_ref().map(|m| serde_json::json!({
                 "page": m.page,
+                // The panel's slide: [opacity, translateX px].
+                "motion": self.menu_motion.map(|m| [m.opacity, m.dx]),
                 "selection": m.selection,
                 "choices": m.rows.choices,
                 "scroll": m.scroll,

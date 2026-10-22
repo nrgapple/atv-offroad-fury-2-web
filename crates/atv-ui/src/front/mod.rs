@@ -182,6 +182,8 @@ pub struct Screen {
     pub notice: Option<String>,
     /// The Free Ride Lobby page's room code and status.
     pub lobby: Option<controller::Lobby>,
+    /// The page's slide-in while it opens (crate::transition).
+    pub motion: Option<crate::transition::Motion>,
 }
 
 /// Pages laid out like the main menu: rows on the left, the ride stage
@@ -391,8 +393,26 @@ impl Metrics {
     }
 }
 
-/// The full-viewport frontend page.
+/// The full-viewport frontend page. While it slides in (frontend.js
+/// `animatePage`), the whole HD screen moves and fades in `#menu-stage`
+/// over `#frontend`'s own background.
 pub fn element(view: &Viewport, s: &Screen) -> El {
+    let page = page_element(view, s);
+    match s.motion {
+        Some(m) => El::new(Style {
+            size: Size {
+                width: length(view.width),
+                height: length(view.height),
+            },
+            ..Default::default()
+        })
+        .paint(Paint::fill(Color::hex("#080606")))
+        .child(page.opacity(m.opacity).translate(m.dx, 0.)),
+        None => page,
+    }
+}
+
+fn page_element(view: &Viewport, s: &Screen) -> El {
     let m = Metrics::new(view);
     let (w, h) = (m.w, m.h);
     let mut root = El::new(Style {
@@ -2690,5 +2710,38 @@ mod tests {
         assert!((first.h - 48.).abs() < 0.5, "{first:?}");
         let back = hits.iter().find(|(_, id)| *id == BACK).unwrap().0;
         assert!(back.right() <= 1280. - 40.);
+    }
+
+    #[test]
+    fn a_sliding_page_moves_and_fades_with_its_buttons() {
+        let view = Viewport {
+            width: 1280.,
+            height: 720.,
+            scale: 1.,
+            ..Default::default()
+        };
+        let mut fonts = Fonts::new();
+        let render = |fonts: &mut Fonts, s: &Screen| {
+            let (mut list, mut hits) = (DisplayList::default(), Vec::new());
+            layout::render(&element(&view, s), fonts, 1280., 720., &mut list, &mut hits);
+            (list, hits)
+        };
+        let (rest, rest_hits) = render(&mut fonts, &screen("main"));
+        let mut moving = screen("main");
+        moving.motion = crate::transition::enter(40.);
+        let m = moving.motion.unwrap();
+        let (list, hits) = render(&mut fonts, &moving);
+        let row = |hits: &[(crate::Rect, u32)]| hits.iter().find(|(_, id)| *id == ROW).unwrap().0;
+        // Buttons follow the page (a transformed DOM button is hit there).
+        assert!((row(&hits).x - row(&rest_hits).x - m.dx).abs() < 1e-3);
+        assert_eq!(row(&hits).y, row(&rest_hits).y);
+        // `#frontend` stays behind at full strength; the stage fades.
+        let crate::paint::Item::Box(under) = &list.items[0] else {
+            panic!("{:?}", list.items[0]);
+        };
+        assert_eq!(under.rect, crate::Rect::new(0., 0., 1280., 720.));
+        assert_eq!(list.items[1], crate::paint::Item::PushOpacity(m.opacity));
+        assert_eq!(list.items.last(), Some(&crate::paint::Item::PopOpacity));
+        assert_eq!(list.items.len(), rest.items.len() + 3);
     }
 }

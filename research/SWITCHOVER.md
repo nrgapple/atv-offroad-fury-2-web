@@ -93,7 +93,9 @@ These would regress players at switch-over. Highest impact first.
       within 40 ft, as game.js.
     - ~~No buzz when a touch flip arms.~~ Closed: `vibrate(12)` once per armed
       zone where the binding exists.
-    - No menu page transitions.
+    - ~~No menu page transitions.~~ Closed: each page shown slides in (240 ms,
+      36 px, `cubic-bezier(.16,1,.3,1)`) on the frontend, over the main menu and in
+      pause menus, at rest under reduced motion (`tools/test_engine_menu_transitions.mjs`).
     - ~~Non-standard pads get standard glyphs.~~ Closed: an empty browser
       `mapping` (desktop: no gilrs layout) shows "Button N / Axis N".
     - ~~Ride prefetch is serial.~~ Closed: `Content::prefetch` (game.js
@@ -260,7 +262,7 @@ In progress elsewhere, not counted as gaps: the diagnostics overlay (F3).
 | Audio page song list and paging | Ported | menu/controller.rs | |
 | Controller Settings → pin a controller | Ported | menu/controller.rs, app/gamepad.rs | |
 | Binding capture, presets, reset | Ported | menu/controller.rs | Clear binding follows the highlighted row; a capture keeps its row; blur cancels it |
-| Page slide transitions | Missing | — | Cosmetic |
+| Page slide transitions | Ported | atv-ui transition.rs, `front::element`, `menu::slide` | animatePage's entry: the stage fades in from translateX(36px) over 240 ms, buttons move with it, input stays live; a resize cancels it; reduced motion shows pages at rest. Its 180 ms exit snapshot is of the cleared `#menu-canvas` (0 opaque pixels measured on play.html), so no exit is drawn. A stalled frame advances the slide by at most 33 ms; the loader opens at rest (it paints between load stages) |
 | `atv-player-selection` persistence | Ported | controller.rs `save` | |
 
 ### hud.js, minimap.js, keyboard-help.js, race.js
