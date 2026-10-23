@@ -25,7 +25,7 @@ try {
         axes: [0, 0, 0, 0], buttons: Array.from({ length: 17 }, () => ({ pressed: false, touched: false, value: 0 })), vibrationActuator: actuator };
       navigator.getGamepads = () => { const list = real ? [...real()] : []; list[0] = pad; return list; };
     }, vibration);
-    await page.goto(url(`/engine.html?venue=env03&crash=gorn&weather=off&uiDiagnostics=1&autodrive=${encodeURIComponent(JSON.stringify(script))}`));
+    await page.goto(url(`/play.html?venue=env03&crash=gorn&weather=off&uiDiagnostics=1&autodrive=${encodeURIComponent(JSON.stringify(script))}`));
     // Focus the canvas once the ride is up (impacts count only while focused).
     await page.waitForSelector('#ui-state', { state: 'attached', timeout: 120000 });
     await page.mouse.click(320, 180);
@@ -59,7 +59,7 @@ try {
       localStorage.setItem('atv-vibration', 'on');
       delete Navigator.prototype.vibrate;
     });
-    await page.goto(url(`/engine.html?venue=env03&crash=gorn&weather=off&uiDiagnostics=1&autodrive=${encodeURIComponent(JSON.stringify(script))}`));
+    await page.goto(url(`/play.html?venue=env03&crash=gorn&weather=off&uiDiagnostics=1&autodrive=${encodeURIComponent(JSON.stringify(script))}`));
     await page.waitForSelector('#ui-state', { state: 'attached', timeout: 120000 });
     assert.equal(await page.evaluate(() => matchMedia('(pointer: coarse)').matches && typeof navigator.vibrate), 'undefined');
     await page.mouse.click(195, 300);

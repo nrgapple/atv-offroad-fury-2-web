@@ -80,7 +80,7 @@ for (const engine of ['chromium', 'webkit']) {
           });
         };
       }, { gestureKind });
-      await page.goto(url('/engine.html?venue=env01&audioDiagnostics=1'));
+      await page.goto(url('/play.html?venue=env01&audioDiagnostics=1'));
       const state = () => page.evaluate(() => JSON.parse(document.documentElement.dataset.engineAudio));
       await page.waitForFunction(() => /\d+ fps/.test(document.querySelector('#status').textContent), null, {
         timeout: 120000

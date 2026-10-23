@@ -1,8 +1,9 @@
 // Host-only gate: the Rust engine's multiplayer client in a room with the
 // JavaScript game, on a local relay with original content.
 //   1. Native `fury --host` creates a room on env01 and keeps it running.
-//   2. A JavaScript guest opens play.html?room=CODE; both must see each other.
-//   3. A Rust browser guest opens engine.html?room=CODE; all three see each other.
+//   2. A JavaScript guest (the pinned reference at ATV_JS_URL) opens play.html?room=CODE;
+//      both must see each other.
+//   3. A Rust browser guest opens play.html?room=CODE; all three see each other.
 //   4. The JavaScript guest drives; the Rust browser guest sees it move.
 //   5. Native fury captures its view with both remote riders and reports.
 // Needs the relay stack of BROWSER_TESTS.md (relay group) and a native build:
@@ -11,7 +12,7 @@
 // ATV_MP_SCREENSHOT=out.png also saves the browser pages and the native capture.
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { assertNoErrors, base, holdKey, launch, watchErrors } from './browser/harness.mjs';
+import { assertNoErrors, base, holdKey, jsBase, launch, watchErrors } from './browser/harness.mjs';
 
 const fury = process.env.FURY_BIN;
 const content = process.env.FURY_CONTENT ?? 'private/reports/hosted-content';
@@ -72,7 +73,7 @@ const engineState = p => p.evaluate(() => JSON.parse(window.furyMultiplayer ?? '
 try {
   // 2. JavaScript guest by room link.
   const js = await page();
-  await js.goto(`${base}/play.html?room=${code}&quad=14&rider=1&player=JsGuest`);
+  await js.goto(`${jsBase}/play.html?room=${code}&quad=14&rider=1&player=JsGuest`);
   await js.waitForFunction(
     () => {
       const s = window.atvTerrainStatus;
@@ -89,7 +90,7 @@ try {
 
   // 3. Rust browser guest (WebGL2) by room link.
   const web = await page();
-  await web.goto(`${base}/engine.html?room=${code}&name=WebGuest&quad=5`);
+  await web.goto(`${base}/play.html?room=${code}&name=WebGuest&quad=5`);
   await web.waitForFunction(() => JSON.parse(window.furyMultiplayer ?? 'null')?.drawn >= 2, null, {
     timeout: 150000
   });

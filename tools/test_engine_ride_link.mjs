@@ -16,7 +16,7 @@ try {
     localStorage.setItem('atv2-keyboard-help-seen-v1', '1');
     localStorage.setItem('atv-player-selection', JSON.stringify({ quadId: 3, riderId: 1, playerName: 'Ada L' }));
   });
-  await page.goto(url('/engine.html?venue=env03&quad=3&rider=1&uiDiagnostics=1'));
+  await page.goto(url('/play.html?venue=env03&quad=3&rider=1&uiDiagnostics=1'));
   await page.waitForSelector('#ui-state', { state: 'attached', timeout: 120000 });
   await nextFrames(page, 20);
   await page.mouse.click(640, 400);
@@ -30,7 +30,7 @@ try {
   if (process.env.RIDE_LINK_SHOT) { await nextFrames(page, 3); await page.screenshot({ path: process.env.RIDE_LINK_SHOT }); }
   const copied = await page.evaluate(() => navigator.clipboard.readText());
   const link = new URL(copied);
-  assert.equal(link.pathname, '/engine.html');
+  assert.equal(link.pathname, '/play.html');
   assert.deepEqual(Object.fromEntries(link.searchParams), { mode: 'single', activity: 'freestyle', map: 'env03', quad: '3', rider: '1', player: 'Ada L', play: '1' });
   assertNoErrors(errors);
   console.log(`PASS: Rust Copy ride link: ${copied}`);

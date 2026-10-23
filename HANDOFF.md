@@ -56,19 +56,19 @@ build. Motorcycles use a separate MX vs. ATV Unleashed disc (`SLUS_211.04`); see
 | Path | Role |
 | --- | --- |
 | `crates/atv-core/` | Resource readers (RES/LSI, PST, PSG, MOT, TR2, COL, TDF, VAG, IPUM...) and the game simulation: vehicle, contacts, wrecks, rider, camera, race, water, train, HUD/menu logic |
-| `crates/atv-web/` | Plain-ABI WASM bridge (no `wasm-bindgen`): numbered operations and batched frames for the browser worker; CPU racers, motorcycles, multiplayer world |
+| `crates/atv-game/`, `atv-render/`, `atv-ui/`, `atv-content/`, `atv-app/` | The Rust engine: game layer, wgpu renderer, menus/HUD, content loading and the one winit app that builds the web page and the desktop `fury` binary (research/RUST_ENGINE.md) |
 | `crates/atv-net/` | Multiplayer snapshot codec, compaction and smoothing |
 | `crates/atv-relay/` | Rust Cloudflare Durable Object room relay (built with `worker-build`, config in `relay/`) |
 | `crates/atv-tools/` | Native tools for the private disc: audit, extraction, ELF reconnaissance |
-| `web/` | Browser game: `game.js` (render loop/WebGL), `worker.js` (WASM simulation worker), menus, HUD, audio, input/touch, effects; `/workbench.html` inspector |
+| `web/` | The game page `play.html` (the Rust engine, `crates/atv-app` built by `tools/build_engine.py`; `engine.html` is the same page under its pre-switch name) and its shell: landing, install, offline cache, analytics, dev log. The JavaScript game was retired at the 2026-10-23 switch-over (research/SWITCHOVER.md); a pinned pre-switch build remains a parity reference (`tools/js_reference.py`) |
 | `cloudflare/` | Production Worker: static assets, R2 runtime content, multiplayer admission guards |
 | `tools/` | Build, packaging, release, verification, analysis and browser test scripts (`test_*.mjs` need Playwright and a server) |
 | `research/` | Shareable notes per system, deployment record, dev-log metadata |
 | `private/`, `references/`, `work/` | Ignored: source disc, extracted data, analysis/Ghidra output, reference repos, intermediate outputs |
 
 Runtime resources reach the browser through a separate allowlisted R2 content
-manifest, never GitHub or CI. The simulation runs in a worker; the main thread
-renders the frames it publishes.
+manifest, never GitHub or CI. The Rust engine simulates and renders on the page's
+main thread (WebGL2 through wgpu); desktop builds embed the same content.
 
 ## Component status
 
@@ -110,7 +110,7 @@ make check          # secrets, repository hygiene, fmt, workspace tests, Clippy,
 make web            # build the browser app into web/dist
 make relay          # build the multiplayer relay Worker
 make serve          # host-only dev server on 127.0.0.1:4173 (BIND/PORT override)
-PLAYWRIGHT_MODULE=/path/to/node_modules/playwright make browser-check
+PLAYWRIGHT_MODULE=/path/to/node_modules/playwright make browser-smoke
 ```
 
 Focused browser suites are `tools/test_*.mjs`; run them with `ATV_TEST_URL`

@@ -42,19 +42,29 @@ for (const engine of ['chromium', 'webkit']) {
         return play.apply(this, args);
       };
     });
-    await page.goto(url('/engine.html?venue=env01&audioDiagnostics=1&uiDiagnostics=1'));
+    await page.goto(url('/play.html?venue=env01&audioDiagnostics=1&uiDiagnostics=1'));
     const state = () => page.evaluate(() => JSON.parse(document.documentElement.dataset.engineAudio));
+    // The engine pauses on the window's blur and focus, as game.js did (not
+    // the canvas's), so the canvas's focus changes come with the window's.
+    const pageBlur = () => page.evaluate(() => {
+      document.querySelector('canvas').blur();
+      window.dispatchEvent(new Event('blur'));
+    });
+    const pageFocus = () => page.evaluate(() => {
+      window.dispatchEvent(new Event('focus'));
+      document.querySelector('canvas').focus();
+    });
     const press = async key => {
       await page.keyboard.down(key);
       await page.waitForTimeout(100);
       await page.keyboard.up(key);
     };
-    // Actual canvas focus/blur before Ready: a late content load must not
+    // Focus and blur before Ready: a late content load must not
     // restore focus, begin simulation or start a late sound bank.
     await page.locator('canvas').waitFor({ state: 'visible' });
     await page.locator('canvas').focus();
     await page.waitForTimeout(100);
-    await page.evaluate(() => document.querySelector('canvas').blur());
+    await pageBlur();
     await page.waitForTimeout(100);
     releaseContent();
     // An unfocused ride draws its first frame and then sleeps (no fps meter).
@@ -70,6 +80,7 @@ for (const engine of ['chromium', 'webkit']) {
     assert.ok(!loadedAway.active && !loadedAway.musicActive, 'late sound install keeps inactive lifecycle');
     await page.waitForTimeout(350);
     assert.equal((await state()).steps, loadedAway.steps, 'sound readiness cannot wake an unfocused ride');
+    await pageFocus();
     await page.locator('canvas').click();
     await page.keyboard.down('KeyW');
     await page.waitForFunction(() => {
@@ -89,7 +100,7 @@ for (const engine of ['chromium', 'webkit']) {
     assert.equal(menu.steps, paused.steps, 'pause freezes simulation');
     assert.ok(menu.musicActive && !menu.musicPaused, 'soundtrack continues in pause');
     assert.ok(menu.musicTime > paused.musicTime + 0.2, 'paused music advances');
-    await page.evaluate(() => document.querySelector('canvas').blur());
+    await pageBlur();
     await page.waitForFunction(() => !JSON.parse(document.documentElement.dataset.engineAudio).musicActive);
     const blurred = await state();
     await page.waitForTimeout(350);
@@ -101,7 +112,7 @@ for (const engine of ['chromium', 'webkit']) {
     await page.evaluate(() => Promise.all([...window.__audioContexts].map(context => context.suspend())));
     assert.ok(await page.evaluate(() => [...window.__audioContexts].every(context => context.state === 'suspended')),
       'fixture suspends the previously activated audio context while blurred');
-    await page.evaluate(() => document.querySelector('canvas').focus());
+    await pageFocus();
     await page.waitForFunction(() => [...window.__audioContexts].every(context => context.state === 'running'));
     await page.waitForFunction(() => JSON.parse(document.documentElement.dataset.engineAudio).musicActive);
     await press('Escape');
@@ -114,12 +125,12 @@ for (const engine of ['chromium', 'webkit']) {
     });
     const resumed = await state();
     assert.ok(resumed.clock > away.clock, 'focus recovery advances the previously suspended mixer');
-    await page.evaluate(() => document.querySelector('canvas').blur());
+    await pageBlur();
     await page.waitForFunction(() => !JSON.parse(document.documentElement.dataset.engineAudio).musicActive);
     const unfocused = await state();
     await page.waitForTimeout(350);
     assert.equal((await state()).steps, unfocused.steps, 'blur also freezes an unpaused ride');
-    await page.evaluate(() => document.querySelector('canvas').focus());
+    await pageFocus();
     await page.waitForFunction(steps => JSON.parse(document.documentElement.dataset.engineAudio).steps > steps + 5, unfocused.steps);
     // Headless browsers do not provide a portable OS tab/background action.
     // Control the DOM visibilityState getter and emit the genuine event that
@@ -136,13 +147,13 @@ for (const engine of ['chromium', 'webkit']) {
     assert.equal(hiddenLater.steps, hidden.steps, 'visibility loss freezes an unpaused ride');
     assert.ok(hiddenLater.musicPaused, 'visibility loss pauses music');
     assert.ok(Math.abs(hiddenLater.clock - hidden.clock) < 0.05, 'hidden mixer clock freezes');
-    await page.evaluate(() => document.querySelector('canvas').blur());
+    await pageBlur();
     await visibility('visible');
     await page.waitForTimeout(350);
     const visibleBlurred = await state();
     assert.ok(!visibleBlurred.active && !visibleBlurred.musicActive, 'visibility regain cannot undo canvas blur');
     assert.equal(visibleBlurred.steps, hidden.steps);
-    await page.locator('canvas').focus();
+    await pageFocus();
     await page.waitForFunction(steps => {
       const s = JSON.parse(document.documentElement.dataset.engineAudio);
       return s.active && s.musicActive && !s.musicPaused && s.steps > steps + 5;

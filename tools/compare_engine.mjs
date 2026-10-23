@@ -21,13 +21,15 @@
 // Ride and static Rust browser captures load with `?ui=0` (scene only: no
 // toolbar, HUD, minimap or keyboard card), matching the JavaScript canvas
 // capture that leaves out its DOM overlays; race captures keep the HUD.
-// Environment: ATV_TEST_URL (served site with private content), FURY_BIN
+// Environment: ATV_TEST_URL (served site with private content; the Rust engine),
+// ATV_JS_URL (the JavaScript game: since the switch-over the pinned pre-switch
+// build, `python3 tools/js_reference.py serve`), FURY_BIN
 // (native binary; skipped when unset) and FURY_CONTENT (package directory).
 // Outputs belong in ignored private storage; they contain game imagery.
 import { execFileSync } from 'node:child_process';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { assertNoErrors, launch, newPage, url, waitForGame } from './browser/harness.mjs';
+import { assertNoErrors, jsUrl, launch, newPage, url, waitForGame } from './browser/harness.mjs';
 
 
 // Default script: settle, accelerate, turn both ways, brake into reverse.
@@ -108,7 +110,7 @@ async function scriptedGame(browser, venue, steps, viewport, errors, { measure =
   }, { steps, measure, graphics, crash, race, appearance, cameras });
   const session = measure ? await page.context().newCDPSession(page) : null;
   if (session) await session.send('Performance.enable');
-  await page.goto(url(race ? `/play.html?activity=race&map=${venue}&laps=${race.laps}&cpu=${race.cpu}&quad=${quad}&play=1` : `/play.html?drive=1&environment=${venue}&quad=${quad}`));
+  await page.goto(jsUrl(race ? `/play.html?activity=race&map=${venue}&laps=${race.laps}&cpu=${race.cpu}&quad=${quad}&play=1` : `/play.html?drive=1&environment=${venue}&quad=${quad}`));
   await waitForGame(page);
   let start;
   if (session) {
@@ -160,7 +162,7 @@ async function cpuBaseline(venue, script, steps, scriptFile, quad = 1) {
     });
     const session = await rust.context().newCDPSession(rust);
     await session.send('Performance.enable');
-    await rust.goto(url(`/engine.html?venue=${venue}&quad=${quad}&autodrive=${encodeURIComponent(JSON.stringify(script))}`));
+    await rust.goto(url(`/play.html?venue=${venue}&quad=${quad}&autodrive=${encodeURIComponent(JSON.stringify(script))}`));
     await rust.waitForFunction(() => /fps/.test(document.querySelector('#status').textContent), null, { timeout: 120000 });
     await rust.mouse.click(viewport.width / 2, viewport.height / 2);
     const start = await sample(rust, session);
@@ -301,7 +303,7 @@ async function rideMode() {
 
       const rustErrors = [];
       const rust = await newPage(browser, { viewport }, rustErrors);
-      await rust.goto(url(`/engine.html?venue=${venue}&quad=${quad}${dressWeb}&graphics=${graphics}&crash=${crash}&crashcam=${cameras.crash}&chase=${cameras.chase}&ui=0&script=${encodeURIComponent(JSON.stringify(script))}`));
+      await rust.goto(url(`/play.html?venue=${venue}&quad=${quad}${dressWeb}&graphics=${graphics}&crash=${crash}&crashcam=${cameras.crash}&chase=${cameras.chase}&ui=0&script=${encodeURIComponent(JSON.stringify(script))}`));
       await rust.waitForFunction(() => document.querySelector('#trace') && /fps/.test(document.querySelector('#status').textContent)
         || /fail|error|stopped/i.test(document.querySelector('#status').textContent), null, { timeout: 120000 });
       await rust.waitForTimeout(1000);
@@ -328,7 +330,7 @@ async function rideMode() {
       const rustErrors = [];
       const rust = await newPage(browser, { viewport: { width: 640, height: 360 } }, rustErrors);
       await rust.addInitScript(text => localStorage.setItem('furyScript', text), JSON.stringify(script));
-      await rust.goto(url(`/engine.html?venue=${venue}&quad=${quad}&graphics=${graphics}&weather=off&traceAll=1&script=storage`));
+      await rust.goto(url(`/play.html?venue=${venue}&quad=${quad}&graphics=${graphics}&weather=off&traceAll=1&script=storage`));
       await rust.waitForFunction(() => document.querySelector('#trace') || /fail|error|stopped/i.test(document.querySelector('#status').textContent), null, { timeout: 180000 });
       const webTrace = JSON.parse(await rust.locator('#trace').textContent());
       await writeFile(path.join(out, 'rust-web-trace.json'), JSON.stringify(webTrace));
@@ -383,7 +385,7 @@ async function raceMode() {
       const recorder = await newPage(browser, { viewport: { width: 640, height: 360 } }, errors);
       const frames = Number(process.env.RACE_AUTOPILOT);
       await recorder.addInitScript(script => localStorage.setItem('furyScript', script), JSON.stringify([{ frames, input: {} }]));
-      await recorder.goto(url(`/engine.html?venue=${venue}&race=1&laps=${race.laps}&cpu=${race.cpu}&seed=${race.seed}&quad=${quad}&weather=off&traceAll=1&autopilot=1&script=storage`));
+      await recorder.goto(url(`/play.html?venue=${venue}&race=1&laps=${race.laps}&cpu=${race.cpu}&seed=${race.seed}&quad=${quad}&weather=off&traceAll=1&autopilot=1&script=storage`));
       await recorder.waitForFunction(() => document.querySelector('#trace'), null, { timeout: 300000 });
       const recorded = JSON.parse(await recorder.locator('#trace').textContent());
       script.length = 0;
@@ -413,7 +415,7 @@ async function raceMode() {
     const web = await newPage(browser, { viewport: { width: 640, height: 360 } }, errors);
     // Long scripts exceed URL limits: hand them over through localStorage.
     await web.addInitScript(script => localStorage.setItem('furyScript', script), JSON.stringify(script));
-    await web.goto(url(`/engine.html?venue=${venue}&race=1&laps=${race.laps}&cpu=${race.cpu}&seed=${race.seed}&quad=${quad}&weather=off&traceAll=1&script=storage`));
+    await web.goto(url(`/play.html?venue=${venue}&race=1&laps=${race.laps}&cpu=${race.cpu}&seed=${race.seed}&quad=${quad}&weather=off&traceAll=1&script=storage`));
     await web.waitForFunction(() => document.querySelector('#trace') || /error|fail/i.test(document.querySelector('#status')?.textContent), null, { timeout: 300000 });
     const webTrace = [{ step: 0 }, ...JSON.parse(await web.locator('#trace').textContent())];
     assertNoErrors(errors);
@@ -507,7 +509,7 @@ try {
     window.atvParityView = { world };
   }, [graphics, !actors]);
   // --race: the National/Supercross course without CPU riders (race weather, Snow).
-  await page.goto(url(race ? `/play.html?play=1&map=${venue}&activity=race&cpu=0` : `/play.html?drive=1&environment=${venue}`));
+  await page.goto(jsUrl(race ? `/play.html?play=1&map=${venue}&activity=race&cpu=0` : `/play.html?drive=1&environment=${venue}`));
   await waitForGame(page);
   // Let the start camera settle, then hold the scene clocks.
   await page.waitForTimeout(2500);
@@ -527,7 +529,7 @@ try {
     console.log(`view ${index}: ${view}`);
     const rustErrors = [];
     const rust = await newPage(browser, { viewport }, rustErrors);
-    await rust.goto(url(`/engine.html?venue=${venue}&camera=${view}&weather=${state.weather ? 'on' : 'off'}&steps=${state.steps}&graphics=${graphics}&ui=0${actors ? '' : '&free=1'}${race ? '&race=1&cpu=0' : ''}`));
+    await rust.goto(url(`/play.html?venue=${venue}&camera=${view}&weather=${state.weather ? 'on' : 'off'}&steps=${state.steps}&graphics=${graphics}&ui=0${actors ? '' : '&free=1'}${race ? '&race=1&cpu=0' : ''}`));
     await rust.waitForFunction(() => /fps/.test(document.querySelector('#status').textContent) || /fail|error/i.test(document.querySelector('#status').textContent), null, { timeout: 180000 });
     await rust.waitForTimeout(2500);
     const status = await rust.locator('#status').textContent();

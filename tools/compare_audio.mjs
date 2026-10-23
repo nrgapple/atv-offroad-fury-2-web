@@ -8,10 +8,12 @@
 //   node tools/compare_audio.mjs [venue] [script.json] [out-dir] [original|enhanced] [quad]
 // Environment: ATV_TEST_URL (served site with private content), FURY_BIN,
 // FURY_CONTENT. Outputs (WAV, JSON) contain game audio: keep them private.
+// The JavaScript side loads from ATV_JS_URL: since the switch-over the pinned
+// pre-switch build (`python3 tools/js_reference.py serve`).
 import { execFileSync } from 'node:child_process';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { assertNoErrors, launch, newPage, url, waitForGame } from './browser/harness.mjs';
+import { assertNoErrors, jsUrl, launch, newPage, url, waitForGame } from './browser/harness.mjs';
 
 const venue = process.argv[2] ?? 'env01';
 const DEFAULT_SCRIPT = [
@@ -103,7 +105,7 @@ try {
       return post.call(this, { ...message, bytes: new TextEncoder().encode(JSON.stringify(request)) }, ...rest);
     };
   }, { steps, mode });
-  await page.goto(url(`/play.html?drive=1&environment=${venue}&quad=${quad}`));
+  await page.goto(jsUrl(`/play.html?drive=1&environment=${venue}&quad=${quad}`));
   await waitForGame(page);
   await page.waitForFunction(() => window.rideTrace.held, null, { timeout: 180000 });
   await page.waitForTimeout(1500);

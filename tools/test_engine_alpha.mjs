@@ -19,7 +19,7 @@ try {
   const errors = [];
   const page = await newPage(browser, { viewport: { width: 1280, height: 720 } }, errors);
   await page.addInitScript(() => { if (!sessionStorage.getItem('seeded')) { sessionStorage.setItem('seeded', '1'); localStorage.setItem('atv2-keyboard-help-seen-v1', '1'); localStorage.setItem('atv-alpha', '["arcade-flips"]'); } });
-  await page.goto(url('/engine.html?venue=env01&uiDiagnostics=1'));
+  await page.goto(url('/play.html?venue=env01&uiDiagnostics=1'));
   await page.waitForSelector('#ui-state', { state: 'attached', timeout: 120000 });
   await until(page, () => JSON.parse(document.querySelector('#ui-state').textContent).settings?.arcadeFlips === true);
   await page.mouse.click(640, 400);

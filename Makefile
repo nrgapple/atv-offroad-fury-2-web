@@ -8,7 +8,7 @@ PORT ?= 4173
 # Extra runner flags, e.g. BROWSER_ARGS='--only test_race.mjs --verbose'. See research/BROWSER_TESTS.md.
 BROWSER_ARGS ?=
 
-.PHONY: desktop verify verify-full inventory import check web relay serve audit code-map native-analyze browser-check browser-smoke browser-tests browser-native
+.PHONY: desktop verify verify-full inventory import check web relay serve audit code-map native-analyze browser-smoke browser-tests browser-native
 
 verify:
 	python3 tools/verify_setup.py
@@ -29,7 +29,7 @@ check:
 	$(CARGO) fmt --all -- --check
 	$(CARGO) test --locked --workspace
 	$(CARGO) clippy --locked --workspace --all-targets -- -D warnings
-	$(NODE) --test --test-timeout=120000 web/water.test.mjs web/scenery-materials.test.mjs web/ambient-effects.test.mjs web/ambient-streams.test.mjs web/input.test.mjs web/content.test.mjs web/touch.test.mjs web/bindings.test.mjs web/gamepads.test.mjs web/pad-glyphs.test.mjs web/music.test.mjs web/audio.test.mjs web/quad-sounds.test.mjs web/audio-enhance.test.mjs web/diagnostics.test.mjs web/multiplayer.test.mjs web/motorcycle-presentation.test.mjs web/graphics.test.mjs web/minimap.test.mjs web/frontend.test.mjs web/launch.test.mjs web/install.test.mjs web/render-support.test.mjs web/speed-rush.test.mjs web/hype.test.mjs web/blood.test.mjs web/keyboard-help.test.mjs web/analytics.test.mjs web/offline.test.mjs web/sw.test.mjs web/wake-lock.test.mjs tools/browser/manifest.test.mjs
+	$(NODE) --test --test-timeout=120000 web/install.test.mjs web/analytics.test.mjs web/offline.test.mjs web/sw.test.mjs tools/browser/manifest.test.mjs
 	python3 -m py_compile tools/*.py
 	python3 -m unittest discover -s tools -p 'test_worker_build_cache.py'
 	python3 -m unittest discover -s tools -p 'test_devlog.py'
@@ -63,9 +63,6 @@ native-analyze:
 	python3 tools/analyze_ps2.py
 
 # Browser groups start their own local server on a free port; build web/dist first.
-browser-check:
-	$(NODE) tools/run_browser_tests.mjs --only test_browser.mjs $(BROWSER_ARGS)
-
 browser-smoke:
 	$(NODE) tools/run_browser_tests.mjs --group content-free $(BROWSER_ARGS)
 

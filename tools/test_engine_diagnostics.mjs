@@ -18,7 +18,7 @@ try {
   const errors = [];
   const page = await newPage(browser, { viewport: { width: 1280, height: 720 } }, errors);
   await page.addInitScript(() => localStorage.setItem('atv2-keyboard-help-seen-v1', '1'));
-  await page.goto(url('/engine.html?venue=env01&uiDiagnostics=1'));
+  await page.goto(url('/play.html?venue=env01&uiDiagnostics=1'));
   await page.waitForSelector('#ui-state', { state: 'attached', timeout: 120000 });
   await until(page, () => JSON.parse(document.querySelector('#ui-state').textContent).diagnostics);
   assert.deepEqual(await mode(page), { mode: 'off', lines: [] });
@@ -46,7 +46,7 @@ try {
   // URL modes, on a ride and on the frontend.
   for (const [query, expected] of [['venue=env01&debug=1', 'performance'], ['venue=env01&debug=2', 'debug'], ['debug=1', 'performance']]) {
     const p = await newPage(browser, { viewport: { width: 1280, height: 720 } }, errors);
-    await p.goto(url(`/engine.html?${query}&uiDiagnostics=1`));
+    await p.goto(url(`/play.html?${query}&uiDiagnostics=1`));
     await until(p, expected => { const s = JSON.parse(document.querySelector('#ui-state')?.textContent || 'null'); return s?.diagnostics?.mode === expected && s.diagnostics.lines.length > 0; }, expected);
     assert.equal(await statusShown(p), false);
     await p.close();

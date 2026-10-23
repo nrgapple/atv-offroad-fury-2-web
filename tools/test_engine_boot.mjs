@@ -1,8 +1,8 @@
-// engine.html's startup, after play.html (tools/test_ui_polish.mjs): the
+// play.html's startup, as the JavaScript game had it (test_ui_polish.mjs): the
 // "Now Loading..." boot panel shows while the WebAssembly and content load and
 // fits phone portrait/landscape; it closes once the Rust frontend draws. A
 // failing content request closes it too and shows the error on #menu-notice
-// with #frontend[data-error=true] (frontend.js `fail`).
+// with #frontend[data-error=true] (the JavaScript game's frontend.js `fail`).
 // Host browser evidence. Content group.
 import assert from 'node:assert/strict';
 import { assertNoErrors, launch, newPage, optionalScreenshot, url } from './browser/harness.mjs';
@@ -24,7 +24,7 @@ try {
       await held;
       await route.continue();
     });
-    await page.goto(url('/engine.html'));
+    await page.goto(url('/play.html'));
     for (const size of sizes) {
       await page.setViewportSize(size);
       // install.js resizes the page's --app-width/--app-height on resize.
@@ -76,7 +76,7 @@ try {
   ]) {
     const page = await browser.newPage({ viewport: sizes[0] });
     await page.route('**/content/manifest.json', handle);
-    await page.goto(url('/engine.html'));
+    await page.goto(url('/play.html'));
     await page.waitForFunction(() => document.querySelector('#frontend').dataset.error === 'true', null, {
       timeout: 120000
     });

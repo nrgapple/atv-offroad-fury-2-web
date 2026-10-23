@@ -1,7 +1,7 @@
-// The Rust engine page's shell (engine.html): app manifest and icons, the
+// The Rust engine page's shell (play.html; engine.html is its pre-switch alias): app manifest and icons, the
 // install banner on the title screen (iPhone), anonymous usage events through
 // analytics.js, adaptive render resolution, and the offline service worker
-// precaching engine.html with atv_app_bg.wasm. Like test_offline.mjs it serves
+// precaching play.html with atv_app_bg.wasm. Like test_offline.mjs it serves
 // its own packaged copy of web/dist (the production ?v= rewrite) with the
 // ignored hosted content, then stops that server to relaunch offline.
 // Run: node tools/run_browser_tests.mjs --only test_engine_shell.mjs (content group).
@@ -73,7 +73,7 @@ const backing = () =>
 
 try {
   // 1. Title: manifest, icons, the banner and the shell's page mirror.
-  await page.goto(`${origin}/engine.html?uiDiagnostics=1`);
+  await page.goto(`${origin}/play.html?uiDiagnostics=1`);
   await wait(() => JSON.parse(document.querySelector('#ui-state')?.textContent || '{}').front?.page === 'title');
   const head = await page.evaluate(() => ({
     manifest: document.querySelector('link[rel=manifest]')?.getAttribute('href'),
@@ -102,7 +102,7 @@ try {
 
   // 2. A ride link: ride_start; the banner hides while riding.
   events.length = 0;
-  await page.goto(`${origin}/engine.html?map=env01&play=1&uiDiagnostics=1`);
+  await page.goto(`${origin}/play.html?map=env01&play=1&uiDiagnostics=1`);
   await wait(() => JSON.parse(document.querySelector('#ui-state')?.textContent || '{}').active === true);
   assert.equal(await page.evaluate(() => document.querySelector('#frontend').hidden), true);
   assert.equal(await page.evaluate(() => document.querySelector('#app-install-banner').hidden), true);
@@ -141,7 +141,7 @@ try {
   assert.ok(time && time.seconds >= 1 && time.map === 'env01', `ride_time: ${JSON.stringify(time)}`);
   report.rideTime = time.seconds;
 
-  // 5. Offline: the worker precached engine.html and the Rust module graph.
+  // 5. Offline: the worker precached play.html and the Rust module graph.
   await page.waitForFunction(() => navigator.serviceWorker.controller?.state === 'activated', null, { timeout: 120000 });
   const cached = await page.evaluate(async () => {
     const out = {};
@@ -152,12 +152,12 @@ try {
   const shell = cached[`fury-shell-v1-${COMMIT}`] ?? [];
   for (const name of ['engine.js', 'engine.css', 'atv_app.js', 'atv_app_bg.wasm', 'install.js', 'analytics.js', 'offline.js'])
     assert.ok(shell.includes(`/${name}?v=${COMMIT}`), `shell precaches ${name}`);
-  assert.ok((cached['fury-pages-v1'] ?? []).includes('/engine.html'), 'engine.html page cached');
+  assert.ok((cached['fury-pages-v1'] ?? []).includes('/play.html'), 'play.html page cached');
   report.shellFiles = shell.length;
   server.kill();
   await new Promise(resolve => server.once('exit', resolve));
   await context.setOffline(true);
-  await page.goto(`${origin}/engine.html?uiDiagnostics=1`);
+  await page.goto(`${origin}/play.html?uiDiagnostics=1`);
   await wait(() => JSON.parse(document.querySelector('#ui-state')?.textContent || '{}').front?.page === 'title');
   report.offlineTitle = true;
   assertNoErrors(errors);

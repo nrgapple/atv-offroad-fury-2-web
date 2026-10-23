@@ -25,7 +25,7 @@ try {
       };
       requestAnimationFrame(sample);
     }, [chase, crash]);
-    await page.goto(url(`/engine.html?venue=env05&weather=off&uiDiagnostics=1&autodrive=${encodeURIComponent(JSON.stringify(script))}`));
+    await page.goto(url(`/play.html?venue=env05&weather=off&uiDiagnostics=1&autodrive=${encodeURIComponent(JSON.stringify(script))}`));
     await page.mouse.click(320, 180);
     await page.waitForFunction(() => window.__orbit.frames > 900, null, { timeout: 240000 });
     const orbit = await page.evaluate(() => window.__orbit);

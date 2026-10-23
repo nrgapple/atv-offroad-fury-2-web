@@ -16,17 +16,20 @@ that recovered behavior.
 | `atv-content` | Hosted content package reader (`manifest.json` + SHA-256 chunks); HTTP on the web, a package directory on desktop |
 | `atv-game` | Platform-independent game layer: venue ids/archives (`launch.rs`, from `web/launch.js`), venue loading (`venue.rs`, from `terrainFromContent`), presentation terrain grid (`terrain_mesh.rs`, from `buildTerrainMesh`), the Freeride ride (`ride/`: loading, fixed-step simulation, default bindings, chase presentation) |
 | `atv-render` | wgpu renderer: Metal (macOS), DX12/Vulkan (Windows), Vulkan (Linux), WebGL2 (browsers). WGSL ports of the `game.js` shaders |
-| `atv-app` | One winit application for every target: `fury` desktop binary and the `engine.html` WebAssembly module |
+| `atv-app` | One winit application for every target: `fury` desktop binary and the `play.html` WebAssembly module (`engine.html` is its pre-switch alias) |
 
-`atv-web` (the current JavaScript game's Wasm ABI) is untouched until each subsystem
-reaches parity; then the JavaScript and its ABI operations are deleted.
+`atv-web` (the JavaScript game's Wasm ABI) and the JavaScript game were deleted at
+the switch-over on 2026-10-23 (research/SWITCHOVER.md): `/play.html` runs the Rust
+engine. The JavaScript game remains available as a pinned reference build
+(`tools/js_reference.py`).
 
 ## Migration rule
 
-New work lands in the Rust engine only; the JavaScript game is frozen as the parity
-reference until the switch-over (AGENTS.md "Rust only for new work").
+All game work lands in the Rust engine (AGENTS.md "Rust only"). Until the switch-over
+the JavaScript game was frozen as the parity reference, and the rest of this section
+describes how subsystems moved.
 
-The Rust engine runs beside the live game at `/engine.html` until it matches. A
+The Rust engine ran beside the live game at `/engine.html` until it matched. A
 subsystem moves when `tools/compare_engine.mjs` shows the same frame from the same
 camera in the JavaScript game, the Rust engine in the browser and the native build.
 `game.js` publishes its render camera as `atvTerrainStatus.renderCamera` for this.

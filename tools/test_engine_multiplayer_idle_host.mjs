@@ -43,7 +43,7 @@ try {
     localStorage.setItem('atv2-keyboard-help-seen-v1', '1');
     Object.defineProperty(document, 'hasFocus', { value: () => true });
   });
-  await guest.goto(`${base}/engine.html?mode=multiplayer&lobby=${code}&name=Guest&play=1&uiDiagnostics=1`);
+  await guest.goto(`${base}/play.html?mode=multiplayer&lobby=${code}&name=Guest&play=1&uiDiagnostics=1`);
   // 3. The guest meets the stopped host.
   await guest.waitForFunction(() => JSON.parse(window.furyMultiplayer ?? 'null')?.met, null, { timeout: 180000 });
   const e = await guest.evaluate(() => JSON.parse(window.furyMultiplayer));

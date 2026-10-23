@@ -232,7 +232,7 @@ pub struct RideLink<'a> {
     pub room: Option<&'a str>,
 }
 
-/// launch.js `buildRideUrl`: `page` (e.g. `https://host/engine.html`) with
+/// launch.js `buildRideUrl`: `page` (e.g. `https://host/play.html`) with
 /// the single-player setup's query, in the browser's key order.
 pub fn ride_url(page: &str, link: &RideLink) -> String {
     let mut pairs: Vec<(&str, String)> = vec![

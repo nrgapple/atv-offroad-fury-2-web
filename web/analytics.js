@@ -1,4 +1,9 @@
-import { ENVIRONMENTS } from './launch.js';
+// Course ids an event may name (the order and set of atv-game launch.rs
+// `environments`; formerly imported from the JavaScript game's launch.js).
+const ENVIRONMENTS = ['env01','env02','env03','env04','env05','env06','env07','env08','free05',
+  'free01','free02','free03','free04','free06',
+  ...Array.from({length:8},(_,i)=>`nat${String(i+1).padStart(2,'0')}`),
+  ...Array.from({length:16},(_,i)=>`sx${String(i+1).padStart(2,'0')}`),'training','game01'];
 // Anonymous usage counters for Cloudflare Workers Analytics Engine. Events
 // carry only the enumerated fields below: no cookies, identifiers, player
 // names, room codes, URLs or free text. The Worker re-validates every event

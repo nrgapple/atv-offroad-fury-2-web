@@ -89,7 +89,7 @@ let emptyContent = null;
 async function site(mode) {
   if (args.url) return args.url.replace(/\/+$/, '');
   if (servers.has(mode)) return servers.get(mode).url;
-  if (!existsSync(path.join(ROOT, 'web/dist/atv_web.wasm'))) throw new Error('web/dist is missing; run `make web` first.');
+  if (!existsSync(path.join(ROOT, 'web/dist/atv_app_bg.wasm'))) throw new Error('web/dist is missing; run `make web` first.');
   let content = CONTENT;
   if (mode === 'none') content = emptyContent ??= await mkdtemp(path.join(tmpdir(), 'atv-no-content-'));
   else if (!existsSync(path.join(CONTENT, 'manifest.json'))) {

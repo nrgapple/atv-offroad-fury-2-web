@@ -1,7 +1,10 @@
 # Switch-over readiness: JavaScript game → Rust engine
 
-Audit of 2026-10-21 against `origin/main`. It covers every JavaScript game module that
-will be deleted when `play.html` starts the Rust engine (`engine.html` today).
+**Switched on 2026-10-23.** `play.html` runs the Rust engine and the JavaScript game
+is retired; the user approved the switch after `/engine.html` played well on their
+iPhone, where the JavaScript `play.html` crashed. The tables below are the audit of
+2026-10-21 against `origin/main`, kept as the record of what each deleted JavaScript
+module did and where the Rust engine does it.
 
 Each row is a user-visible behaviour or URL parameter of the JavaScript game, with
 its status in the Rust engine:
@@ -15,9 +18,10 @@ its status in the Rust engine:
 Statuses were checked in the Rust code, not only in RUST_ENGINE.md. "Unverified"
 marks rows that were not confirmed either way.
 
-Nothing has been switched or deleted. `play.html`'s PWA, offline and analytics
-modules (`install.js`, `offline.js`, `sw.js`, `analytics.js`, `landing.js`) are not
-on the deletion list. The gaps below are about wiring them to the Rust page.
+The switch-over shipped from branch `switchover/rust-play-2`, which superseded the
+draft #284 (`switchover/rust-play`); see "The switch" below. `play.html`'s PWA, offline and
+analytics modules (`install.js`, `offline.js`, `sw.js`, `analytics.js`,
+`landing.js`) stay as the Rust page's shell.
 
 ## Blocking gaps
 
@@ -42,8 +46,8 @@ These would regress players at switch-over. Highest impact first.
 
    The frontend mirrors its page to `#frontend` for the banner. sw.js precaches
    and serves `/engine.html` with its module graph, including `atv_app_bg.wasm`.
-   Remaining at switch-over: the manifest's `start_url` and shortcuts still name
-   play.html.
+   Since the switch the manifest's `start_url` and shortcuts (`/play.html`) open
+   the Rust engine page.
 4. ~~**Multiplayer links.**~~ Closed: `mode=multiplayer`, `lobby=` and `action=create|host`
    links open Create/Join Lobby with the link's code and name (the saved name unless
    `player=` is given) and host or join with `play=1`, on the link's map; motorcycles get
@@ -116,6 +120,95 @@ These would regress players at switch-over. Highest impact first.
 
 In progress elsewhere, not counted as gaps: the diagnostics overlay (F3).
 
+## The switch
+
+The switch-over (branch `switchover/rust-play-2`, superseding draft #284) made these
+changes:
+
+- **One page.** `web/play.html` is the Rust engine page: the former `engine.html`
+  with its shell. `tools/build_engine.py` also writes it as `engine.html`, so
+  pre-switch engine links and tests keep working. Every existing URL keeps
+  working:
+  - `/`, `/index.html` and the landing redirect;
+  - `/play.html` with its query (ride, room and race links, `?menu=`);
+  - the installed app's `start_url` `/play.html` and its shortcuts.
+
+  None of these changed. sw.js precaches `/play.html`, `/index.html` and
+  `/engine.html`. Its deploy probe is now `'engine.js'` (packaging versions it;
+  `game.js` is gone).
+- **Deleted:**
+  - the JavaScript game: the 44 files listed above, their unit tests, and their
+    CSS (`game.css`, `menu-screens.css`, `jukebox.css`, `hud.css`, `touch.css`);
+  - the workbench (`workbench.html`, `app.js`, `controls.js`, `input.js`,
+    `style.css`);
+  - `worker.js`, `atv_web.wasm` and `crates/atv-web`;
+  - `tools/smoke_web_wasm.mjs`;
+  - the JavaScript game's 104 browser tests and their contact harness.
+- **Updated:**
+  - `make check` (JS unit tests: install, analytics, offline, sw); `make web`;
+  - the allowlists in `build_web.py`, `package_release.py` and `serve_web.py`;
+  - `deploy_local.py`; the release tests; the browser test manifest and runner;
+  - README, HANDOFF, BROWSER_TESTS and OFFLINE.
+
+  `analytics.js` now carries the course list it imported from `launch.js`.
+  The CI workflow needed no change: it runs `make check`, `make web` and the
+  content-free group.
+- **The JavaScript reference.** The pinned pre-switch build is
+  `tools/js_reference.py`, at the last pre-switch main
+  (`8e1b94ff3b07`, merged into the switch branch).
+  - `prepare` builds it in the ignored `work/js-reference` with its own
+    `make web`.
+  - `serve [--port 4178]` serves it with the private content.
+  - `test …` runs its own browser suite: the JavaScript game's tests.
+
+  Tools that drive both games read the JavaScript side from `ATV_JS_URL`
+  (`jsBase`/`jsUrl` in the harness). These are `compare_engine.mjs`,
+  `compare_audio.mjs` and the JavaScript guests in the relay tests.
+  `presentation_replay.mjs`, used by `compare_presentation.mjs` and
+  `test_engine_interpolation.mjs` (now manual), imports the reference's
+  presenters. `build_app_icons.mjs` uses the reference's `atv_web.wasm`.
+  `test_engine_arcade_touch.mjs` (added on main after the draft) compares touch
+  flips with the JavaScript game, so it moved to the manual group and requires
+  `ATV_JS_URL`.
+- **Tests and AGENTS.md.** The Rust browser tests open `/play.html`;
+  `test_engine_links.mjs` keeps one race link on `/engine.html` for the alias.
+  AGENTS.md "Rust only" describes the retired JavaScript game and its reference.
+
+### Go/no-go checklist
+
+The draft's pass (#284) was repeated on `switchover/rust-play-2` after merging
+main `8e1b94ff3b07`. Evidence from one pass at the end. Host-only: one Mac,
+headless Chromium (plus WebKit where the tests use it), local relay; not phone
+or Internet results.
+
+- [x] `make check`: fmt, workspace tests, Clippy, the shell's JS unit tests,
+  release and repository tests.
+- [x] `make web` and `make relay`.
+- [x] Release packaging: 30 files with the allowlist validated.
+- [x] Content-free group: 3/3 (app identity on `/play.html`, engine page
+  without content, dev log).
+- [x] Content group: 39/39, including the shell test on `/play.html` (install
+  banner, analytics, render scale, offline relaunch). `test_rust_audio.mjs`
+  failed on unmodified main too: it blurred the canvas, but since #299 the
+  engine pauses on the window's blur and focus, as game.js did. The test now
+  sends the window's events.
+- [x] Relay group: 13/13, with the JavaScript guests from the pinned reference
+  behind its own proxy (`RELAY_ORIGIN`) and a native `fury` for the hosts.
+- [x] JavaScript reference: `js_reference.py prepare` built `8e1b94ff3b07`;
+  `compare_engine.mjs env01` and `test_engine_arcade_touch.mjs` ran against it
+  (`ATV_JS_URL`).
+- [x] Manual-style pass on the packaged build: `/play.html` and `/engine.html`
+  load `engine.js` and no JavaScript game module; `/?menu=race` forwards to
+  `/play.html` and opens the race setup; `?menu=freeride`, `?room=`,
+  `mode=multiplayer&action=join` and `?map=env01&play=1` route; offline, the
+  service worker serves `/play.html` to the title screen.
+- [x] Remaining gaps 5 (context loss) and 14 (menu page transitions) closed on
+  main before the switch.
+- [x] The user confirmed `/engine.html` on their iPhone (2026-10-23), where the
+  JavaScript `play.html` crashed, and approved the switch.
+- [ ] After the deploy, on a phone: an installed Home Screen app updating to the
+  new shell and launching offline; a public multiplayer room.
+
 ## Can be dropped
 
 - **workbench.html with app.js, controls.js, input.js and style.css.** This is the
@@ -169,7 +262,7 @@ In progress elsewhere, not counted as gaps: the diagnostics overlay (F3).
 | Invite link | Partial | multiplayer.rs `invite_url` (#224, #268) | `quad=1&rider=0`, `/play.html` |
 | Manifest, icons, apple meta, theme-color | Ported | engine.html | |
 | Install banner, iOS help dialog, standalone viewport, launch screens (install.js) | Ported | engine.html, lib.rs `sync_shell` | |
-| Service worker and offline shell (offline.js, sw.js) | Ported | sw.js `PRECACHE_PAGES` | `start_url` still play.html |
+| Service worker and offline shell (offline.js, sw.js) | Ported | sw.js `PRECACHE_PAGES` | `start_url` `/play.html`, the Rust page since the switch |
 | Rust-only dev params | — | lib.rs `start()` | `venue, front, camera, weather, steps, graphics, crash, crashcam, chase, free, gear, paint, uibackdrop, sound, music, profile, autodrive, race=1, seed, host=1, name, dropAfter, trainPlace, script, pingMs, joinDelayMs, uiDiagnostics, ui=0, autopilot, presentTrace, traceAll, debug` |
 
 ### analytics.js (kept) and its callers in game.js

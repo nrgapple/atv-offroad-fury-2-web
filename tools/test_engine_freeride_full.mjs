@@ -161,7 +161,7 @@ try {
     Object.defineProperty(document, 'hasFocus', { value: () => true });
   });
   // Pings each second (the room default is 15 s) give a steady round trip.
-  await page.goto(url(`/engine.html?uiDiagnostics=1${PING ? `&pingMs=${PING}` : ''}`));
+  await page.goto(url(`/play.html?uiDiagnostics=1${PING ? `&pingMs=${PING}` : ''}`));
   await page.waitForFunction(
     () => JSON.parse(document.querySelector('#ui-state')?.textContent || '{}').front?.page === 'title',
     null,

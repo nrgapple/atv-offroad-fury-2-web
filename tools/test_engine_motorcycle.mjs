@@ -17,7 +17,7 @@ try {
   const errors = [];
   const page = await newPage(browser, { viewport: { width: 640, height: 360 } }, errors);
   await page.addInitScript(text => localStorage.setItem('furyScript', text), JSON.stringify(script));
-  await page.goto(url('/engine.html?venue=env01&quad=29&weather=off&traceAll=1&script=storage'));
+  await page.goto(url('/play.html?venue=env01&quad=29&weather=off&traceAll=1&script=storage'));
   await page.waitForFunction(() => document.querySelector('#trace') || /error|fail/i.test(document.querySelector('#status')?.textContent), null, { timeout: 180000 });
   const trace = JSON.parse(await page.locator('#trace').textContent());
   assert.equal(trace.length, 600);
@@ -31,7 +31,7 @@ try {
   // (compare_engine.mjs race ... 29 compares every step).
   const race = await newPage(browser, { viewport: { width: 640, height: 360 } }, errors);
   await race.addInitScript(() => localStorage.setItem('furyScript', JSON.stringify([{ frames: 800, input: { throttle: 1 } }])));
-  await race.goto(url('/engine.html?venue=env01&quad=29&race=1&laps=1&cpu=3&seed=12345&weather=off&traceAll=1&script=storage'));
+  await race.goto(url('/play.html?venue=env01&quad=29&race=1&laps=1&cpu=3&seed=12345&weather=off&traceAll=1&script=storage'));
   await race.waitForFunction(() => document.querySelector('#trace') || /error|fail/i.test(document.querySelector('#status')?.textContent), null, { timeout: 180000 });
   const racing = JSON.parse(await race.locator('#trace').textContent());
   assert.equal(racing[435].race.phase, 'countdown');

@@ -63,7 +63,7 @@ try {
   // 1. A single-player ride: held while lost, then on from the same place.
   const page = await newPage(browser, { viewport: { width: 1280, height: 720 } }, errors);
   await page.addInitScript(() => localStorage.setItem('atv2-keyboard-help-seen-v1', '1'));
-  await page.goto(url('/engine.html?venue=env01&uiDiagnostics=1'));
+  await page.goto(url('/play.html?venue=env01&uiDiagnostics=1'));
   await wait(page, () => JSON.parse(document.querySelector('#ui-state')?.textContent || '{}').toolbar, null, 120000);
   await nextFrames(page, 30);
   await page.mouse.click(640, 400);
@@ -109,7 +109,7 @@ try {
   // 3. A race with CPU riders: the race clock and roster carry on.
   const race = await newPage(browser, { viewport: { width: 1280, height: 720 } }, errors);
   await race.addInitScript(() => localStorage.setItem('atv2-keyboard-help-seen-v1', '1'));
-  await race.goto(url('/engine.html?venue=env01&race=1&laps=2&cpu=3&uiDiagnostics=1'));
+  await race.goto(url('/play.html?venue=env01&race=1&laps=2&cpu=3&uiDiagnostics=1'));
   await wait(race, () => JSON.parse(document.querySelector('#ui-state')?.textContent || '{}').toolbar, null, 120000);
   await race.mouse.click(640, 400);
   await race.keyboard.down('KeyW');
@@ -128,7 +128,7 @@ try {
 
   // 4. The frontend: the main menu and its 3D preview come back.
   const front = await newPage(browser, { viewport: { width: 1280, height: 720 } }, errors);
-  await front.goto(url('/engine.html?uiDiagnostics=1'));
+  await front.goto(url('/play.html?uiDiagnostics=1'));
   await wait(front, () => JSON.parse(document.querySelector('#ui-state')?.textContent || '{}').front?.page === 'title', null, 120000);
   await front.mouse.click(8, 8);
   await key(front, 'Enter');

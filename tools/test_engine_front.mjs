@@ -17,7 +17,7 @@ try {
   const errors = [];
   const page = await newPage(browser, { viewport: { width: 1280, height: 720 } }, errors);
   await page.addInitScript(() => { localStorage.setItem('atv2-keyboard-help-seen-v1', '1'); localStorage.removeItem('atv-player-selection'); });
-  await page.goto(url('/engine.html?uiDiagnostics=1'));
+  await page.goto(url('/play.html?uiDiagnostics=1'));
   await wait(page, () => JSON.parse(document.querySelector('#ui-state')?.textContent || '{}').front?.page === 'title', null, 120000);
   let f = await front(page);
   assert.deepEqual(f.choices, ['main', 'devlog']);
@@ -74,7 +74,7 @@ try {
 
   // A ride link starts its ride with the link's vehicle (a motorcycle here).
   const link = await newPage(browser, { viewport: { width: 390, height: 844 } }, []);
-  await link.goto(url('/engine.html?map=env03&quad=29&uiDiagnostics=1'));
+  await link.goto(url('/play.html?map=env03&quad=29&uiDiagnostics=1'));
   await wait(link, () => (document.querySelector('#status')?.textContent ?? '').startsWith('ENV03'), null, 180000);
   const linked = JSON.parse(await link.evaluate(() => localStorage.getItem('atv-player-selection')));
   assert.equal(linked.freestyleEnvironment, 'env03');

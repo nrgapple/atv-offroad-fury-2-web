@@ -12,7 +12,7 @@ from urllib.parse import unquote, urlsplit
 ROOT = Path(__file__).resolve().parents[1] / 'web/dist'
 PROJECT = Path(__file__).resolve().parents[1]
 CONTENT = PROJECT / 'private/reports/hosted-content'
-ALLOWED = {'engine.html', 'engine.css', 'engine.js', 'atv_app.js', 'atv_app_bg.wasm', 'fury-remastered-home-180-v1.png', 'fury-remastered-home-192-v1.png', 'fury-remastered-home-512-v1.png', 'fury-remastered-maskable-192-v1.png', 'fury-remastered-maskable-512-v1.png', 'favicon.ico', 'app-icon.svg', 'apple-touch-icon.png', 'app-icon-512.png', 'fury-remastered.svg', 'manifest.webmanifest', 'install.js', 'install.css', 'index.html', 'landing.css', 'landing.js', 'play.html', 'design-system.css', 'game.css', 'game.js', 'render-support.js', 'speed-rush.js', 'scenery-materials.js', 'race.js', 'multiplayer.js', 'water.js', 'fog.js', 'train.js', 'wheel-effects.js', 'weather.js', 'ambient-effects.js', 'ambient-streams.js', 'motorcycle-presentation.js', 'graphics.js', 'vehicle-shadows.js', 'tire-tracks.js', 'shadow-map.js', 'lingering-dust.js', 'alpha.js', 'hype.js', 'hype-gl.js', 'keyboard-help.js', 'analytics.js', 'menu-screens.js', 'jukebox.js', 'hud.js', 'minimap.js', 'diagnostics.js', 'frontend.js', 'launch.js', 'touch.js', 'touch.css', 'menu-screens.css', 'jukebox.css', 'hud.css', 'content.js', 'audio.js', 'quad-sounds.js', 'audio-enhance.js', 'music.js', 'wake-lock.js', 'deployment.json', 'devlog.html', 'devlog.css', 'devlog.js', 'devlog.json', 'workbench.html', 'style.css', 'app.js', 'worker.js', 'input.js', 'controls.js', 'bindings.js', 'gamepads.js', 'pad-glyphs.js', 'atv_web.wasm', 'offline.js', 'sw.js'}
+ALLOWED = {'play.html', 'engine.html', 'engine.css', 'engine.js', 'atv_app.js', 'atv_app_bg.wasm', 'fury-remastered-home-180-v1.png', 'fury-remastered-home-192-v1.png', 'fury-remastered-home-512-v1.png', 'fury-remastered-maskable-192-v1.png', 'fury-remastered-maskable-512-v1.png', 'favicon.ico', 'app-icon.svg', 'apple-touch-icon.png', 'app-icon-512.png', 'fury-remastered.svg', 'manifest.webmanifest', 'install.js', 'install.css', 'index.html', 'landing.css', 'landing.js', 'design-system.css', 'analytics.js', 'deployment.json', 'devlog.html', 'devlog.css', 'devlog.js', 'devlog.json', 'offline.js', 'sw.js'}
 
 class StaticServer(ThreadingHTTPServer):
     # ES-module startup opens more connections than Python's default five-slot
@@ -104,8 +104,8 @@ def main():
     ROOT = args.root.resolve()
     PROJECT = args.project.resolve()
     CONTENT = args.content.resolve()
-    if not (ROOT / 'atv_web.wasm').is_file(): parser.error('run make web first')
-    print(f'Static workbench listening on {args.bind}:{args.port}. Host verification only; remote access is not established.', flush=True)
+    if not (ROOT / 'atv_app_bg.wasm').is_file(): parser.error('run make web first')
+    print(f'Static site listening on {args.bind}:{args.port}. Host verification only; remote access is not established.', flush=True)
     StaticServer((args.bind, args.port), Handler).serve_forever()
 
 if __name__ == '__main__': main()

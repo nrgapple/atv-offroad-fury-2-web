@@ -18,7 +18,6 @@ make web
 make browser-smoke     # content-free group (also runs in CI)
 make browser-tests     # content-free + content groups (needs private hosted content)
 make browser-native    # native comparisons (needs ATV_*_NATIVE reports)
-make browser-check     # workbench test only
 make browser-tests BROWSER_ARGS='--only test_race.mjs,test_fog.mjs --verbose'
 node tools/run_browser_tests.mjs --list
 ```
@@ -45,8 +44,18 @@ against `make serve`.
 | `broken` | kept for reference; the manifest records why it fails | by name |
 
 Every game page (title screen included) loads the private content manifest, so
-only checks that never start the game are content-free: the workbench with an
-in-memory synthetic archive, app identity/icons and the dev log.
+only checks that never start the game are content-free: the engine page's start-up
+without content, app identity/icons and the dev log.
+
+After the switch-over play.html is the Rust engine. The JavaScript game's own
+browser tests (about 100 `tools/test_*.mjs`) were removed with it; they run from the
+pinned pre-switch build: `python3 tools/js_reference.py prepare`, then
+`python3 tools/js_reference.py test --group content` (its own runner and server).
+Tools that drive the JavaScript game next to the Rust engine (`compare_engine.mjs`, `compare_audio.mjs`,
+and the JavaScript guests in the `test_engine_multiplayer*` relay tests) load it from
+`ATV_JS_URL` (`jsBase`/`jsUrl` in `tools/browser/harness.mjs`), which defaults to
+`ATV_TEST_URL`. For relay tests, serve the reference behind its own relay proxy:
+`PORT=4188 ASSET_PORT=4178 node tools/serve_multiplayer.mjs`.
 
 Native comparisons (`test_fog`, `test_reflections`, `test_vegetation_billboards`,
 `test_vegetation_materials`) load their report with `nativeData()`. Run directly

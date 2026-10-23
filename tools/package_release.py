@@ -9,14 +9,14 @@ from pathlib import Path
 import shutil
 
 ROOT = Path(__file__).resolve().parents[1]
-STATIC_FILES = {'fury-remastered-home-180-v1.png', 'fury-remastered-home-192-v1.png', 'fury-remastered-home-512-v1.png', 'fury-remastered-maskable-192-v1.png', 'fury-remastered-maskable-512-v1.png', 'favicon.ico', 'fury-remastered.svg', 'manifest.webmanifest', 'install.js', 'install.css', 'index.html', 'landing.css', 'landing.js', 'play.html', 'design-system.css', 'game.css', 'game.js', 'render-support.js', 'speed-rush.js', 'scenery-materials.js', 'race.js', 'multiplayer.js', 'water.js', 'fog.js', 'train.js', 'wheel-effects.js', 'weather.js', 'ambient-effects.js', 'ambient-streams.js', 'motorcycle-presentation.js', 'graphics.js', 'vehicle-shadows.js', 'tire-tracks.js', 'shadow-map.js', 'lingering-dust.js', 'alpha.js', 'hype.js', 'hype-gl.js', 'keyboard-help.js', 'analytics.js', 'menu-screens.js', 'jukebox.js', 'hud.js', 'minimap.js', 'diagnostics.js', 'frontend.js', 'launch.js', 'touch.js', 'touch.css', 'menu-screens.css', 'jukebox.css', 'hud.css', 'content.js', 'audio.js', 'quad-sounds.js', 'audio-enhance.js', 'devlog.html',
-                'devlog.css', 'devlog.js', 'workbench.html', 'style.css', 'app.js',
-                'worker.js', 'input.js', 'controls.js', 'bindings.js', 'gamepads.js', 'pad-glyphs.js', 'atv_web.wasm', 'music.js', 'wake-lock.js',
-                'offline.js', 'sw.js',
-                # Shared Rust engine preview (crates/atv-app, tools/build_engine.py).
-                'engine.html', 'engine.css', 'engine.js', 'atv_app.js', 'atv_app_bg.wasm'}
-# Built into web/dist by tools/build_engine.py rather than authored in web/.
-GENERATED_FILES = {'atv_app.js', 'atv_app_bg.wasm'}
+STATIC_FILES = {'fury-remastered-home-180-v1.png', 'fury-remastered-home-192-v1.png', 'fury-remastered-home-512-v1.png', 'fury-remastered-maskable-192-v1.png', 'fury-remastered-maskable-512-v1.png', 'favicon.ico', 'fury-remastered.svg', 'manifest.webmanifest', 'install.js', 'install.css', 'index.html', 'landing.css', 'landing.js', 'design-system.css', 'analytics.js', 'devlog.html',
+                'devlog.css', 'devlog.js', 'offline.js', 'sw.js',
+                # The game: the shared Rust engine (crates/atv-app, tools/build_engine.py).
+                # play.html is its page; engine.html is the same page's pre-switch name.
+                'play.html', 'engine.html', 'engine.css', 'engine.js', 'atv_app.js', 'atv_app_bg.wasm'}
+# Built into web/dist by tools/build_engine.py rather than authored in web/
+# (engine.html is play.html under its pre-switch name).
+GENERATED_FILES = {'atv_app.js', 'atv_app_bg.wasm', 'engine.html'}
 RELEASE_STATIC_FILES = STATIC_FILES | {'deployment.json', 'devlog.json'}
 RELAY_FILES = {'index.js', 'index_bg.wasm'}
 EXPECTED_FILES = {'release.json'} | {'static/' + name for name in RELEASE_STATIC_FILES} | {'relay/' + name for name in RELAY_FILES}
@@ -42,7 +42,7 @@ def validate_release(root, expected_commit):
             raise ValueError(f'release checksum mismatch: {name}')
     if (root / 'relay/index_bg.wasm').read_bytes()[:4] != b'\0asm':
         raise ValueError('invalid relay WebAssembly header')
-    for wasm in ('static/atv_web.wasm', 'static/atv_app_bg.wasm'):
+    for wasm in ('static/atv_app_bg.wasm',):
         if (root / wasm).read_bytes()[:4] != b'\0asm':
             raise ValueError('invalid WebAssembly header')
     if json.loads((root / 'static/deployment.json').read_text())['commit'] != expected_commit:

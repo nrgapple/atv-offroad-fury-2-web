@@ -50,7 +50,7 @@ function worker({ version = V, files = {} } = {}) {
     const { status = 200, body = '' } = file === undefined ? { status: 404, body: 'Not found' } : typeof file === 'string' ? { body: file } : file;
     return new BasicResponse(body, { status });
   }
-  const source = version ? SOURCE.replace("'game.js'", `'game.js?v=${version}'`) : SOURCE;
+  const source = version ? SOURCE.replace("'engine.js'", `'engine.js?v=${version}'`) : SOURCE;
   const context = vm.createContext({ self, caches: storage, fetch, URL, Response, crypto, setTimeout, clearTimeout, console });
   vm.runInContext(source, context);
   context.PRUNE_DELAY_MS = 0;

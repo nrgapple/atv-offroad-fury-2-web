@@ -28,7 +28,7 @@ try {
     localStorage.setItem('atv2-keyboard-help-seen-v1', '1');
     localStorage.setItem('atv-soundtrack-v1', JSON.stringify({ v: 3, enabled: true, volume: 0.45, history: [], historyIndex: -1 }));
   });
-  await page.goto(url('/engine.html?venue=env01&uiDiagnostics=1&audioDiagnostics=1'));
+  await page.goto(url('/play.html?venue=env01&uiDiagnostics=1&audioDiagnostics=1'));
   await page.waitForSelector('#ui-state', { state: 'attached', timeout: 120000 });
   await nextFrames(page, 20);
   await page.mouse.click(640, 430);

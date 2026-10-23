@@ -10,7 +10,7 @@ try {
   const errors = [];
   const page = await newPage(browser, { viewport: { width: 640, height: 360 } }, errors);
   await page.addInitScript(() => localStorage.setItem('furyScript', JSON.stringify([{ frames: 1000, input: { keyboard_drive: { held: true, axis: 1 } } }])));
-  await page.goto(url('/engine.html?venue=env01&race=1&laps=1&cpu=3&seed=12345&weather=off&traceAll=1&script=storage'));
+  await page.goto(url('/play.html?venue=env01&race=1&laps=1&cpu=3&seed=12345&weather=off&traceAll=1&script=storage'));
   await page.waitForFunction(() => document.querySelector('#trace') || /error|fail/i.test(document.querySelector('#status')?.textContent), null, { timeout: 180000 });
   const trace = JSON.parse(await page.locator('#trace').textContent());
   const phase = step => trace[step - 1].race.phase;

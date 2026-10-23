@@ -49,7 +49,7 @@ const errors = [];
 try {
   const page = await newPage(browser, { viewport: { width: 1280, height: 720 } }, errors);
   await page.addInitScript(() => localStorage.setItem('atv2-keyboard-help-seen-v1', '1'));
-  await page.goto(url('/engine.html?uiDiagnostics=1'));
+  await page.goto(url('/play.html?uiDiagnostics=1'));
   await wait(page, () => JSON.parse(document.querySelector('#ui-state')?.textContent || '{}').front?.page === 'title', null, 120000);
   await wait(page, () => !JSON.parse(document.querySelector('#ui-state').textContent).front.motion);
   await page.mouse.click(8, 8);
@@ -78,7 +78,7 @@ try {
   assert.equal((await read(page)).front.menu, null);
 
   // Ride pause menu: Pause and each page it opens slide in.
-  await page.goto(url('/engine.html?venue=env01&uiDiagnostics=1'));
+  await page.goto(url('/play.html?venue=env01&uiDiagnostics=1'));
   await wait(page, () => JSON.parse(document.querySelector('#ui-state')?.textContent || '{}').toolbar, null, 120000);
   await nextFrames(page, 30);
   await page.mouse.click(640, 400);
@@ -92,7 +92,7 @@ try {
 
   // prefers-reduced-motion: pages open at rest.
   const reduced = await newPage(browser, { viewport: { width: 1280, height: 720 }, reducedMotion: 'reduce' }, errors);
-  await reduced.goto(url('/engine.html?uiDiagnostics=1'));
+  await reduced.goto(url('/play.html?uiDiagnostics=1'));
   await wait(reduced, () => JSON.parse(document.querySelector('#ui-state')?.textContent || '{}').front?.page === 'title', null, 120000);
   await reduced.mouse.click(8, 8);
   const rest = await record(reduced, 'front', () => reduced.keyboard.press('Enter'));

@@ -15,7 +15,7 @@
 //      it with the garage's current ATV.
 //   PLAYWRIGHT_MODULE=... ATV_TEST_URL=http://127.0.0.1:4187 node tools/test_engine_multiplayer_room_front.mjs
 import assert from 'node:assert/strict';
-import { assertNoErrors, base, launch, newPage, nextFrames, url } from './browser/harness.mjs';
+import { assertNoErrors, base, jsBase, launch, newPage, nextFrames, url } from './browser/harness.mjs';
 
 const report = {};
 const errors = [];
@@ -60,7 +60,7 @@ try {
     localStorage.removeItem('atv-player-selection');
     Object.defineProperty(document, 'hasFocus', { value: () => true });
   });
-  await host.goto(url('/engine.html?uiDiagnostics=1'));
+  await host.goto(url('/play.html?uiDiagnostics=1'));
   await onPage(host, 'title');
   await host.mouse.click(8, 8);
   await key(host, 'Enter');
@@ -78,7 +78,7 @@ try {
 
   const guest = await newPage(browser, { viewport: { width: 1280, height: 720 } }, errors);
   await guest.addInitScript(() => Object.defineProperty(document, 'hasFocus', { value: () => true }));
-  await guest.goto(`${base}/play.html?room=${code}&player=JsGuest`);
+  await guest.goto(`${jsBase}/play.html?room=${code}&player=JsGuest`);
   await guest.waitForFunction(() => window.atvTerrainStatus?.multiplayer?.remote?.some(r => !r.stale), null, {
     timeout: 180000
   });
@@ -164,7 +164,7 @@ try {
     localStorage.removeItem('atv-player-selection');
     Object.defineProperty(document, 'hasFocus', { value: () => true });
   });
-  await rust.goto(url(`/engine.html?uiDiagnostics=1&room=${code}&player=RustGuest`));
+  await rust.goto(url(`/play.html?uiDiagnostics=1&room=${code}&player=RustGuest`));
   await rust.waitForFunction(
     map => {
       const m = JSON.parse(window.furyMultiplayer ?? 'null');

@@ -20,7 +20,7 @@ try {
       performance.now = () => now;
       window.requestAnimationFrame = callback => setTimeout(() => { now += 1000 / 120; callback(now); }, 0);
     });
-    await page.goto(url(`/engine.html?venue=env01&quad=${quad}&graphics=${graphics}&weather=off&presentTrace=1&autodrive=${encodeURIComponent(JSON.stringify(script))}`));
+    await page.goto(url(`/play.html?venue=env01&quad=${quad}&graphics=${graphics}&weather=off&presentTrace=1&autodrive=${encodeURIComponent(JSON.stringify(script))}`));
     await page.mouse.click(320, 180);
     await page.waitForFunction(() => document.querySelector('#trace') || /error|fail/i.test(document.querySelector('#status')?.textContent), null, { timeout: 240000 });
     const log = JSON.parse(await page.locator('#trace').textContent());

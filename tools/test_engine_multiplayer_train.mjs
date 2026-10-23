@@ -4,7 +4,7 @@
 // the same deck-relative spot by the Rust host.
 //   PLAYWRIGHT_MODULE=... ATV_TEST_URL=http://127.0.0.1:4187 node tools/test_engine_multiplayer_train.mjs
 import assert from 'node:assert/strict';
-import { assertNoErrors, base, launch, newPage, waitForSteps } from './browser/harness.mjs';
+import { assertNoErrors, base, jsBase, launch, newPage, waitForSteps } from './browser/harness.mjs';
 
 const shots = process.env.ATV_MP_SCREENSHOT;
 const report = {};
@@ -19,7 +19,7 @@ try {
   // 1. Rust browser host on Arlington.
   const host = await newPage(browser, { viewport: { width: 1280, height: 720 } }, errors);
   await host.addInitScript(() => Object.defineProperty(document, 'hasFocus', { value: () => true }));
-  await host.goto(`${base}/engine.html?host=1&venue=env08&name=RustHost`);
+  await host.goto(`${base}/play.html?host=1&venue=env08&name=RustHost`);
   await host.waitForFunction(() => JSON.parse(window.furyMultiplayer ?? 'null')?.code, null, { timeout: 180000 });
   const code = (await engine(host)).code;
   report.code = code;
@@ -61,7 +61,7 @@ try {
         });
       });
   });
-  await guest.goto(`${base}/play.html?room=${code}&player=JsGuest`);
+  await guest.goto(`${jsBase}/play.html?room=${code}&player=JsGuest`);
   await guest.waitForFunction(
     () => {
       const s = window.atvTerrainStatus;
@@ -167,12 +167,18 @@ try {
       localStorage.setItem('atv-train-riding', 'realistic');
       Object.defineProperty(document, 'hasFocus', { value: () => true });
     });
-    await rider.goto(`${base}/engine.html?room=${code}&name=RustRider&trainPlace=6`);
+    await rider.goto(`${base}/play.html?room=${code}&name=RustRider&trainPlace=6`);
     await rider.waitForFunction(() => JSON.parse(window.furyMultiplayer ?? 'null')?.ownPlatform, null, {
       timeout: 180000
     });
-    const riderPeer = (await engine(rider)).peer;
-    const placed = (await engine(rider)).ownPlatform.car;
+    // One read: the rider may already have slid off by a second one.
+    const first = await engine(rider);
+    const riderPeer = first.peer;
+    const placed = first.ownPlatform?.car;
+    if (placed == null) {
+      riderAttempts.push({ placed: null });
+      continue;
+    }
     const seen = await guest
       .waitForFunction(
         peer => window.atvTerrainStatus.multiplayer?.remote?.some(r => r.peer === peer && r.platform != null),

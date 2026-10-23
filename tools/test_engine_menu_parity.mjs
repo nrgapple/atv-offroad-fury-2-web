@@ -58,23 +58,23 @@ try {
   });
 
   // A bad ride link: the main menu says why (frontend.js openLaunch).
-  await page.goto(url('/engine.html?uiDiagnostics=1&map=nowhere'));
+  await page.goto(url('/play.html?uiDiagnostics=1&map=nowhere'));
   await onFront(page, 'main');
   await wait(page, () => JSON.parse(document.querySelector('#ui-state').textContent).front.notice);
   assert.match((await front(page)).notice, /^Cannot open ride link\. Unsupported map: nowhere\./);
   // A bare room link joins through Join Lobby: code, player, vehicle alias.
-  await page.goto(url('/engine.html?uiDiagnostics=1&room=abcd1234&player=Ann&vehicle=4&play=0'));
+  await page.goto(url('/play.html?uiDiagnostics=1&room=abcd1234&player=Ann&vehicle=4&play=0'));
   await onFront(page, 'join-lobby');
   let f = await front(page);
   assert.deepEqual([f.roomCode, f.playerName, f.quad], ['ABCD1234', 'Ann', 4]);
   // ... and refuses a motorcycle, as launch.js does.
-  await page.goto(url('/engine.html?uiDiagnostics=1&room=abcd1234&quad=29'));
+  await page.goto(url('/play.html?uiDiagnostics=1&room=abcd1234&quad=29'));
   await onFront(page, 'main');
   await wait(page, () => JSON.parse(document.querySelector('#ui-state').textContent).front.notice);
   assert.match((await front(page)).notice, /motorcycles are Single Player only|Choose an ATV/);
   // A race link with cheats and play=0: Copy ride link keeps them.
   await page.goto(
-    url('/engine.html?uiDiagnostics=1&activity=race&map=env02&laps=2&cpu=3&cheats=eatdirt,bringit&play=0')
+    url('/play.html?uiDiagnostics=1&activity=race&map=env02&laps=2&cpu=3&cheats=eatdirt,bringit&play=0')
   );
   await onFront(page, 'race');
   await clickHit(
@@ -139,7 +139,7 @@ try {
 
   // A race ride: the first-ride keyboard card, Restart Race, bindings.
   await page.evaluate(() => localStorage.removeItem('atv2-keyboard-help-seen-v1'));
-  await page.goto(url('/engine.html?venue=env01&race=1&laps=1&cpu=0&uiDiagnostics=1'));
+  await page.goto(url('/play.html?venue=env01&race=1&laps=1&cpu=0&uiDiagnostics=1'));
   await wait(
     page,
     () => JSON.parse(document.querySelector('#ui-state')?.textContent ?? 'null')?.toolbar?.hud?.helpOpen === true
