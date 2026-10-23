@@ -516,7 +516,13 @@ mod web {
         let response =
             wasm_bindgen_futures::JsFuture::from(window.fetch_with_str_and_init(url, &init))
                 .await
-                .map_err(|_| "Unable to reach the multiplayer relay.".to_string())?;
+                // A refused request shows the browser's own message, as
+                // multiplayer.js's awaited fetch does ("Failed to fetch").
+                .map_err(|error| {
+                    error
+                        .dyn_ref::<js_sys::Error>()
+                        .map_or_else(|| "Failed to fetch".to_string(), |e| e.message().into())
+                })?;
         let response: web_sys::Response = response.dyn_into().map_err(|_| "fetch response")?;
         let text = wasm_bindgen_futures::JsFuture::from(response.text().map_err(|_| "body")?)
             .await

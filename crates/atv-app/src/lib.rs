@@ -4699,6 +4699,44 @@ impl App {
             return;
         }
         net.hold(ride, false);
+        self.follow_held_course();
+    }
+
+    /// The host moved the room to another course while this rider's garage
+    /// or course picker is open over it. multiplayer.js `follow` reloads at
+    /// once: the frontend goes to the new course's loading page and rides
+    /// it from the start line with the garage's current choice, as a ride
+    /// out of the garage would.
+    fn follow_held_course(&mut self) {
+        let Some(net) = &self.held_room else { return };
+        let moved = net.closed.is_none()
+            && net
+                .session
+                .environment()
+                .is_some_and(|environment| environment != net.environment);
+        if !moved || self.gpu.is_none() {
+            return;
+        }
+        let Some(front) = self.front.clone() else {
+            return;
+        };
+        let (quad, rider) = {
+            let mut f = front.borrow_mut();
+            f.state.room = None;
+            f.state.hosting = false;
+            // Rooms ride ATVs (frontend.js `onlineGarage`).
+            let quad = if f.state.quad_id >= 27 {
+                1
+            } else {
+                f.state.quad_id
+            };
+            (quad, f.state.rider_id)
+        };
+        self.front_event(atv_ui::front::controller::Event::RoomRide {
+            quad,
+            rider,
+            environment: None,
+        });
     }
 
     /// Hidden or suspended: keep the room live without frames. The socket is
@@ -4734,7 +4772,9 @@ impl App {
                     f.state.notice = Some(closed);
                 }
                 self.wake();
+                return;
             }
+            self.follow_held_course();
             return;
         }
         if !self.presence_due() {

@@ -14,6 +14,45 @@ use sha2::{Digest, Sha256};
 
 pub type Result<T> = std::result::Result<T, String>;
 
+/// A chunk whose bytes do not match its manifest digest (content.js).
+const INTEGRITY: &str = "Hosted content integrity check failed.";
+
+/// A file the package does not list, worded as game.js `archiveAt` reports
+/// it. Loaders with their own wording check [`Content::has`] first.
+pub fn missing_archive(path: &str) -> String {
+    format!("Original archive is missing: {path}")
+}
+
+/// What an HTTP read fetches, for content.js's status wording.
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Fetch {
+    /// `manifest.json`: "Original content package is unavailable (404)."
+    Manifest,
+    /// A chunk or stream: "Original game content could not load (503)."
+    Content,
+}
+
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+impl Fetch {
+    fn of(name: &str) -> Self {
+        if name == "manifest.json" {
+            Fetch::Manifest
+        } else {
+            Fetch::Content
+        }
+    }
+
+    /// The message for a response with HTTP `status` (content.js
+    /// `openHostedContent`).
+    fn status(self, status: u16) -> String {
+        match self {
+            Fetch::Manifest => format!("Original content package is unavailable ({status})."),
+            Fetch::Content => format!("Original game content could not load ({status})."),
+        }
+    }
+}
+
 /// SHA-256 of the USA v2.00 boot executable the package was extracted from.
 pub const SOURCE_BUILD: &str = "11b80faea827c5550df607d24c8c4f38a9e44cf55e3ecac9e1daeb3aca9d7c49";
 const MAX_FILES: usize = 512;
@@ -80,7 +119,7 @@ impl Manifest {
             || manifest.source_build_sha256 != SOURCE_BUILD
             || manifest.files.len() > MAX_FILES
         {
-            return Err("unsupported content package".into());
+            return Err("Unsupported hosted content package.".into());
         }
         for record in &manifest.files {
             let valid_path = record.path.starts_with('/')
@@ -92,22 +131,26 @@ impl Manifest {
                     .bytes()
                     .all(|b| b.is_ascii_alphanumeric() || b"/_.-".contains(&b));
             if !valid_path || record.bytes == 0 || record.bytes > MAX_FILE {
-                return Err(format!("invalid content record {}", record.path));
+                return Err("Invalid hosted content record.".into());
+            }
+            let chunks = record.chunks();
+            if chunks.is_empty() || chunks.len() > 128 {
+                return Err("Invalid hosted content chunks.".into());
             }
             let mut end = 0;
-            for chunk in record.chunks() {
+            for chunk in chunks {
                 let digest = chunk.sha256.len() == 64
                     && chunk
                         .sha256
                         .bytes()
                         .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase());
                 if !digest || chunk.offset != end || chunk.bytes == 0 || chunk.bytes > MAX_CHUNK {
-                    return Err(format!("invalid content chunk in {}", record.path));
+                    return Err("Invalid hosted content extent.".into());
                 }
                 end += chunk.bytes;
             }
             if end != record.bytes {
-                return Err(format!("truncated content record {}", record.path));
+                return Err("Truncated hosted content record.".into());
             }
         }
         Ok(manifest)
@@ -142,7 +185,7 @@ impl Store {
             #[cfg(not(target_arch = "wasm32"))]
             Store::Pack(pack) => pack.read(name),
             #[cfg(target_arch = "wasm32")]
-            Store::Http(base) => web::fetch(&format!("{base}{name}")).await,
+            Store::Http(base) => web::fetch(&format!("{base}{name}"), Fetch::of(name)).await,
         }
     }
 }
@@ -174,13 +217,18 @@ impl Content {
         })
     }
 
+    /// Whether the package lists `path`.
+    pub fn has(&self, path: &str) -> bool {
+        self.manifest.record(path).is_some()
+    }
+
     fn record_for(&self, path: &str) -> Result<&FileRecord> {
         self.manifest
             .record(path)
-            .ok_or_else(|| format!("content package lacks {path}"))
+            .ok_or_else(|| missing_archive(path))
     }
 
-    async fn chunk(&self, path: &str, chunk: &Chunk) -> Result<std::rc::Rc<Vec<u8>>> {
+    async fn chunk(&self, chunk: &Chunk) -> Result<std::rc::Rc<Vec<u8>>> {
         let cached = self
             .cache
             .borrow()
@@ -198,8 +246,8 @@ impl Content {
         let pending = self.inflight.borrow_mut().remove(&name);
         #[cfg(target_arch = "wasm32")]
         let bytes = match (pending, &self.store) {
-            (Some(response), Store::Http(base)) => {
-                match web::finish(response, &format!("{base}{name}")).await {
+            (Some(response), Store::Http(_)) => {
+                match web::finish(response, Fetch::Content).await {
                     Ok(bytes) => bytes,
                     // A failed prefetch is retried by the real read.
                     Err(_) => self.store.read(&name).await?,
@@ -217,7 +265,7 @@ impl Content {
             yield_once().await;
         }
         if bytes.len() != chunk.bytes || hex(&digest.finalize()) != chunk.sha256 {
-            return Err(format!("content integrity check failed for {path}"));
+            return Err(INTEGRITY.into());
         }
         let bytes = std::rc::Rc::new(bytes);
         let mut cache = self.cache.borrow_mut();
@@ -277,7 +325,7 @@ impl Content {
         let record = self.record_for(path)?;
         let mut out = Vec::with_capacity(record.bytes);
         for chunk in record.chunks() {
-            out.extend_from_slice(&self.chunk(path, &chunk).await?);
+            out.extend_from_slice(&self.chunk(&chunk).await?);
         }
         Ok(out)
     }
@@ -306,9 +354,7 @@ impl Content {
             yield_once().await;
         }
         if bytes.len() != stream.bytes || hex(&hash.finalize()) != digest {
-            return Err(format!(
-                "content integrity check failed for the {path} stream"
-            ));
+            return Err(INTEGRITY.into());
         }
         Ok(Some(bytes))
     }
@@ -325,7 +371,7 @@ impl Content {
         let end = offset
             .checked_add(count)
             .filter(|end| *end <= record.bytes)
-            .ok_or_else(|| format!("read outside {path}"))?;
+            .ok_or("Invalid content read.")?;
         let mut out = Vec::with_capacity(count);
         for chunk in record.chunks() {
             let (low, high) = (
@@ -335,7 +381,7 @@ impl Content {
             if low >= high {
                 continue;
             }
-            let bytes = self.chunk(path, &chunk).await?;
+            let bytes = self.chunk(&chunk).await?;
             out.extend_from_slice(&bytes[low - chunk.offset..high - chunk.offset]);
         }
         Ok(out)
@@ -370,11 +416,17 @@ fn hex(bytes: &[u8]) -> String {
 
 #[cfg(target_arch = "wasm32")]
 mod web {
+    use super::Fetch;
     use wasm_bindgen::JsCast;
     use wasm_bindgen_futures::JsFuture;
 
+    /// A rejection as frontend.js shows it: the Error's `message` (a refused
+    /// request is the browser's own "Failed to fetch" TypeError).
     fn js(error: wasm_bindgen::JsValue) -> String {
-        format!("{error:?}")
+        if let Some(error) = error.dyn_ref::<js_sys::Error>() {
+            return String::from(error.message());
+        }
+        error.as_string().unwrap_or_else(|| format!("{error:?}"))
     }
 
     /// Starts a fetch (optionally at low priority) and returns its promise.
@@ -388,14 +440,14 @@ mod web {
     }
 
     /// The bytes of a fetch started by [`start`].
-    pub async fn finish(request: js_sys::Promise, url: &str) -> super::Result<Vec<u8>> {
+    pub async fn finish(request: js_sys::Promise, kind: Fetch) -> super::Result<Vec<u8>> {
         let response: web_sys::Response = JsFuture::from(request)
             .await
             .map_err(js)?
             .dyn_into()
             .map_err(js)?;
         if !response.ok() {
-            return Err(format!("{url}: HTTP {}", response.status()));
+            return Err(kind.status(response.status()));
         }
         let buffer = JsFuture::from(response.array_buffer().map_err(js)?)
             .await
@@ -403,20 +455,9 @@ mod web {
         Ok(js_sys::Uint8Array::new(&buffer).to_vec())
     }
 
-    pub async fn fetch(url: &str) -> super::Result<Vec<u8>> {
+    pub async fn fetch(url: &str, kind: Fetch) -> super::Result<Vec<u8>> {
         let window = web_sys::window().ok_or("no window")?;
-        let response: web_sys::Response = JsFuture::from(window.fetch_with_str(url))
-            .await
-            .map_err(js)?
-            .dyn_into()
-            .map_err(js)?;
-        if !response.ok() {
-            return Err(format!("{url}: HTTP {}", response.status()));
-        }
-        let buffer = JsFuture::from(response.array_buffer().map_err(js)?)
-            .await
-            .map_err(js)?;
-        Ok(js_sys::Uint8Array::new(&buffer).to_vec())
+        finish(window.fetch_with_str(url), kind).await
     }
 }
 
@@ -452,5 +493,51 @@ mod tests {
         assert!(Manifest::parse(executable.as_bytes()).is_err());
         let foreign = r#"{"version":1,"source_build_sha256":"00","files":[]}"#;
         assert!(Manifest::parse(foreign.as_bytes()).is_err());
+    }
+
+    #[test]
+    fn failures_read_as_content_js_words_them() {
+        // The failed-load notice shows these (frontend.js `fail`).
+        let digest = "a".repeat(64);
+        let error = |files: String| Manifest::parse(manifest(&files).as_bytes()).unwrap_err();
+        assert_eq!(
+            error(format!(
+                r#"[{{"path":"/SCUS_972.11","bytes":4,"sha256":"{digest}"}}]"#
+            )),
+            "Invalid hosted content record."
+        );
+        assert_eq!(
+            error(r#"[{"path":"/A.RES","bytes":4}]"#.into()),
+            "Invalid hosted content chunks."
+        );
+        assert_eq!(
+            error(format!(
+                r#"[{{"path":"/A.RES","bytes":4,"chunks":[{{"offset":1,"bytes":4,"sha256":"{digest}"}}]}}]"#
+            )),
+            "Invalid hosted content extent."
+        );
+        assert_eq!(
+            error(format!(
+                r#"[{{"path":"/A.RES","bytes":6,"chunks":[{{"offset":0,"bytes":4,"sha256":"{digest}"}}]}}]"#
+            )),
+            "Truncated hosted content record."
+        );
+        let foreign = r#"{"version":1,"source_build_sha256":"00","files":[]}"#;
+        assert_eq!(
+            Manifest::parse(foreign.as_bytes()).unwrap_err(),
+            "Unsupported hosted content package."
+        );
+        assert_eq!(
+            Fetch::of("manifest.json").status(404),
+            "Original content package is unavailable (404)."
+        );
+        assert_eq!(
+            Fetch::of(&format!("{digest}.bin")).status(503),
+            "Original game content could not load (503)."
+        );
+        assert_eq!(
+            missing_archive("/ANIMSRDR.RES"),
+            "Original archive is missing: /ANIMSRDR.RES"
+        );
     }
 }
