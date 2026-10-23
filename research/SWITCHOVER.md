@@ -232,7 +232,7 @@ In progress elsewhere, not counted as gaps: the diagnostics overlay (F3).
 
 | Behaviour | Rust | Where | Notes |
 |---|---|---|---|
-| Wake lock: hold while riding, release in menus, re-acquire | Ported | wake.rs (#239) | Desktop: a display-sleep inhibitor (`keepawake`) under the same policy |
+| Wake lock: hold while riding, release in menus, re-acquire | Ported | wake.rs (#239) | Desktop: a display-sleep inhibitor (`keepawake`) under the same policy. A refused request retries on the next pointer or key gesture; a lock granted after leaving the ride is released (`tools/test_engine_wake_lock.mjs`) |
 | Presets Auto/Original/Enhanced/High (`atv-graphics`) | Ported | lib.rs, menu/prefs.rs (#183, #202) | |
 | `detectGraphicsTier` | Ported | lib.rs `detect_graphics_tier` (#228) | With `userAgentData.mobile` and `saveData`; main-menu Settings and rides share it (`device_preferences`). Desktop: from the GPU adapter (`desktop_tier`, PERFORMANCE.md) |
 | Vibration setting and rumble (pad, else `navigator.vibrate`) | Ported | prefs.rs, gamepad.rs (#202, #250) | Rumbles the pad in use: the pinned pad, else Auto's |
@@ -331,7 +331,7 @@ In progress elsewhere, not counted as gaps: the diagnostics overlay (F3).
 | Gesture unlock | Ported | sound.rs | |
 | Motorcycle bank; rider vocals; body and chassis impacts; terrain loops; water splash | Ported | ride.rs, bank.rs | |
 | Venue ambient, Soultree loops, crowd cue | Ported | ride.rs, audio/race.rs (#222) | |
-| Race lamp/GO/gate one-shots, IntOut stingers, soundtrack hold/fade | Ported | race.rs, sound.rs (#222) | The race-over fade shortens to 80% of a song's remainder near its end. Stingers play on the mixer's stinger bus at the music volume, past the Alpha muffle and the Jukebox analyser (audio.js `playIntOut`); INT001-INT004 is a uniform pick |
+| Race lamp/GO/gate one-shots, IntOut stingers, soundtrack hold/fade | Ported | race.rs, sound.rs (#222) | The race-over fade shortens to 80% of a song's remainder near its end. Stingers play on the mixer's stinger bus at the music volume, past the Alpha muffle and the Jukebox analyser (audio.js `playIntOut`); INT001-INT004 is a uniform pick. Sound that starts after a skipped intro still gets the intro's hold and stinger until GO, as game.js sends no `restart` then (`tools/test_engine_soundtrack.mjs`) |
 | ENV08 train sounds | Ported | audio/ride.rs `train_step` | |
 | Rain loop | Ported | audio/ride.rs | |
 | Crash boom (Crazy/Gorn) | Ported | audio/synth.rs, sound.rs | 0.3 s cooldown |
@@ -339,7 +339,7 @@ In progress elsewhere, not counted as gaps: the diagnostics overlay (F3).
 | Remote engines and impacts | Ported | audio/remote.rs (#233) | Heard from the drawn camera with the player's vehicle velocity (game.js multiplayer listener); the player's, venue and train sounds keep the follow camera |
 | Frontend menu music (UIMUSIC) | Ported | audio/menu.rs, lib.rs (#267) | |
 | Suspend on blur/hidden; no Media Session | Ported | sound.rs (#262) | |
-| Soundtrack: catalog, shuffle, history (`atv-soundtrack-v1`), AAC stream, park/resume, muffle, spectrum | Ported | audio/music.rs, sound.rs | Desktop plays the same `.m4a` songs from its content pack, decoded with Symphonia (audio/stream.rs) |
+| Soundtrack: catalog, shuffle, history (`atv-soundtrack-v1`), AAC stream, park/resume, muffle, spectrum | Ported | audio/music.rs, sound.rs | Desktop plays the same `.m4a` songs from its content pack, decoded with Symphonia (audio/stream.rs). Music Off pauses the song where it is and Music On resumes it; gestures never restart music turned off; a song that cannot be read stops reads with Music on until the next choice; a Jukebox choice switches the decoded-VAG fallback song too (`tools/test_engine_soundtrack.mjs`) |
 | Soundtrack VAG fallback on the web | Ported | soundtrack.rs `vag_fallback` | Desktop: a song whose file is missing plays its VAG; a decode error switches the session to the VAGs |
 | Pause → Jukebox (list, transport, seek, volume, PAGE14 art, spectrum) | Ported | menu/jukebox.rs (#235) | Desktop seeks the bundled remaster (the VAG fallback by block) |
 | Main-menu Jukebox; one soundtrack player for menus and rides | Ported | soundtrack.rs, lib.rs `sync_soundtrack` | `tools/test_engine_menu_jukebox.mjs` |
@@ -353,7 +353,7 @@ In progress elsewhere, not counted as gaps: the diagnostics overlay (F3).
 | Gorn severing, quad paint shader | Ported | crash_effects.rs, vehicle.wgsl (#207, #220) | |
 | `RenderScale` adaptive DPR | Ported | atv-app render_scale.rs | Desktop on Metal and DX12 too |
 | Water grid, normals, reflection, fog; Fresnel on Enhanced/High | Ported | atv-render/src/water.rs (#183, #219, #228) | Invalid water data fails the ride load with its error, as game.js `new WaterRenderer` does; a restored graphics context that refuses it rides on without the surface |
-| Weather selection; snow ring | Ported | venue.rs, snow.rs (#187) | The per-load sample is uniform (atv-app `random.rs`: `Math.random()` on the web, an OS-seeded SplitMix64 on desktop), so NAT06 rains 90% and SX13 80% of loads. The clock digits it replaced kept the sample in [0.5, 1) |
+| Weather selection; snow ring | Ported | venue.rs, snow.rs (#187) | The per-load sample is uniform (atv-app `random.rs`: `Math.random()` on the web, an OS-seeded SplitMix64 on desktop), so NAT06 rains 90% and SX13 80% of loads. The clock digits it replaced kept the sample in [0.5, 1). `tools/test_engine_weather.mjs` pins `Math.random` per venue, checks the rain model removal, one rain voice through pause, Reset and a lost context, and Caribou race Snow pausing |
 | Rain visuals | Unverified | — | Drawn as a scenery model by game.js |
 | GS fog | Ported | shaders `native_fog_coverage` (#179) | |
 | Multi-pass scenery materials | Ported | atv-game/src/materials.rs | |

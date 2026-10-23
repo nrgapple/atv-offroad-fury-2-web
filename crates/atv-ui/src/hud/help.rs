@@ -99,6 +99,28 @@ pub fn key_name(code: &str) -> String {
         .into()
 }
 
+/// Each action's keyboard keys as card labels (keyboard-help.js `keysFor`'s
+/// `(b.chord ?? [b]).map(a => keyName(a.key)).join('+')`), by action id.
+pub fn action_keys(bindings: &atv_game::ride::bindings::Bindings) -> Vec<(String, Vec<String>)> {
+    atv_game::ride::bindings::ACTIONS
+        .iter()
+        .map(|(action, id, _)| {
+            let labels = bindings
+                .keyboard_codes(*action)
+                .iter()
+                .map(|chord| {
+                    chord
+                        .iter()
+                        .map(|c| key_name(c))
+                        .collect::<Vec<_>>()
+                        .join("+")
+                })
+                .collect();
+            (id.to_string(), labels)
+        })
+        .collect()
+}
+
 /// keyboard-help.js `keysFor`: alternative key groups for `ids`.
 pub fn keys_for(keys: &dyn Fn(&str) -> Vec<String>, ids: &[&str]) -> Vec<Vec<String>> {
     let per: Vec<Vec<String>> = ids.iter().map(|id| keys(id)).collect();
@@ -308,4 +330,71 @@ pub fn element(view: &Viewport, key_names: &dyn Fn(&str) -> Vec<String>) -> El {
     )
     .child(header)
     .child(grid)
+}
+
+#[cfg(test)]
+mod tests {
+    //! web/keyboard-help.test.mjs.
+    use super::*;
+    use atv_game::ride::bindings::{Action, Atom, Binding, Bindings};
+
+    #[test]
+    fn controls_card_names_keys_players_recognise() {
+        let names: Vec<String> = [
+            "KeyW",
+            "ArrowUp",
+            "ShiftLeft",
+            "Space",
+            "Escape",
+            "Digit3",
+            "Backspace",
+        ]
+        .into_iter()
+        .map(key_name)
+        .collect();
+        assert_eq!(names, ["W", "↑", "Shift", "Space", "Esc", "3", "⌫"]);
+        assert_eq!(key_name("Numpad7"), "Num 7");
+    }
+
+    #[test]
+    fn controls_card_follows_live_remaps_and_pairs_steering_keys() {
+        let mut bindings = Bindings::default();
+        let groups = |bindings: &Bindings, ids: &[&str]| {
+            let keys = action_keys(bindings);
+            let lookup = |id: &str| {
+                keys.iter()
+                    .find(|(i, _)| i == id)
+                    .map(|(_, k)| k.clone())
+                    .unwrap_or_default()
+            };
+            keys_for(&lookup, ids)
+        };
+        let s = |rows: &[&[&str]]| -> Vec<Vec<String>> {
+            rows.iter()
+                .map(|r| r.iter().map(|k| k.to_string()).collect())
+                .collect()
+        };
+        assert_eq!(groups(&bindings, &["throttle"]), s(&[&["W"], &["↑"]]));
+        assert_eq!(
+            groups(&bindings, &["steerLeft", "steerRight"]),
+            s(&[&["A", "D"], &["←", "→"]])
+        );
+        assert_eq!(
+            groups(&bindings, &["stuntCircle", "stuntTriangle"]),
+            s(&[&["J", "K"]])
+        );
+        assert!(
+            groups(&bindings, &["reverse"]).is_empty(),
+            "Unbound rows are omitted"
+        );
+        bindings.set_binding(
+            true,
+            Action::Throttle,
+            vec![
+                Binding::One(Atom::Key("KeyT".into())),
+                Binding::Chord(vec![Atom::Key("KeyG".into()), Atom::Key("KeyH".into())]),
+            ],
+        );
+        assert_eq!(groups(&bindings, &["throttle"]), s(&[&["T"], &["G+H"]]));
+    }
 }

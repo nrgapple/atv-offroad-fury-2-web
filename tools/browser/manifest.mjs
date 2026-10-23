@@ -55,6 +55,9 @@ export const TESTS = {
   'test_engine_ride_songs.mjs': { group: 'content' },
   'test_engine_audio_page.mjs': { group: 'content' },
   'test_engine_boot.mjs': { group: 'content' },
+  'test_engine_lifecycle.mjs': { group: 'content' },
+  'test_engine_soundtrack.mjs': { group: 'content' },
+  'test_engine_weather.mjs': { group: 'content' },
   'test_engine_ride_link.mjs': { group: 'content' },
   'test_engine_freeride.mjs': {
     group: 'relay',

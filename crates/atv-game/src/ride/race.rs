@@ -176,6 +176,9 @@ pub struct RaceState {
     firework_positions: Vec<[f32; 3]>,
     lights: Option<u8>,
     music_phase: Option<&'static str>,
+    /// The countdown follows the intro (game.js sends no `restart`), so
+    /// the intro's hold and stinger still stand.
+    music_intro: bool,
     /// Grid pose before the first step: each CPU quad's rest matrices and
     /// the player's seated rider pose (drawRosterCpu in game.js).
     rest: Option<GridRest>,
@@ -214,6 +217,7 @@ impl RaceState {
         };
         match frame.phase {
             "intro" => Some(MusicEvent::Intro),
+            "countdown" if self.music_intro => Some(MusicEvent::Intro),
             "countdown" => Some(MusicEvent::Restart),
             "finished" => Some(MusicEvent::Over {
                 won: frame.position == 1,
@@ -398,6 +402,7 @@ impl Ride {
             firework_positions: Vec::new(),
             lights: None,
             music_phase: None,
+            music_intro: false,
             rest: Some(rest),
             events: StepEvents::default(),
         });
@@ -783,6 +788,11 @@ impl Ride {
                 }),
                 _ => None,
             };
+            match events.music {
+                Some(MusicEvent::Intro) => state.music_intro = true,
+                Some(_) => state.music_intro = false,
+                None => {}
+            }
         }
         state.events = events;
         state.rest = None;

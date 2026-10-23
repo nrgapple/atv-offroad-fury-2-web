@@ -402,6 +402,8 @@ struct Meter {
     draws: u32,
     /// Contact shadow blobs and High shadow-map vehicles in the last frame.
     shadows: (u32, u32),
+    /// Snow draw calls in the last frame (`?uiDiagnostics=1`).
+    snow_draws: u32,
     /// Room work (socket, poses, remote riders and loads) CPU, included in
     /// `cpu`, and the longest frame interval this second.
     net: f64,
@@ -849,6 +851,7 @@ impl App {
                 self.meter.triangles = stats.triangles();
                 self.meter.draws = stats.draws();
                 self.meter.shadows = (stats.contact_casters, stats.shadow_casters);
+                self.meter.snow_draws = stats.snow_draws;
                 acquire = stats.acquire_ms;
             }
             Err(error) => status(&error),
@@ -1187,6 +1190,37 @@ impl App {
             let frame = riding.ride.frame();
             state["flip"] = serde_json::json!(frame.flip);
             state["preloadArmed"] = frame.preload_armed.into();
+            // Weather (tools/test_engine_weather.mjs): the load's selection,
+            // whether its rain model stayed in the scene, and the Snow clock.
+            state["weather"] = ready
+                .venue
+                .weather
+                .as_ref()
+                .map_or(serde_json::Value::Null, |w| {
+                    let model = w
+                        .definition
+                        .as_ref()
+                        .map(|d| d.model.trim_end_matches(".slt").to_owned());
+                    serde_json::json!({
+                        "active": w.active, "sample": w.sample,
+                        "kind": w.definition.as_ref().map(|d| d.kind.clone()),
+                        "removedModel": w.removed_model, "screenRain": w.screen_rain,
+                        "playerCount": w.native_player_count,
+                        "modelPlaced": model.is_some_and(|m| ready
+                            .venue
+                            .scene
+                            .models
+                            .iter()
+                            .any(|x| x.name.eq_ignore_ascii_case(&m))),
+                    })
+                });
+            state["snow"] = ready
+                .scene
+                .snow_state()
+                .map_or(serde_json::Value::Null, |s| {
+                    serde_json::json!({"time": s.time, "activeEmitters": s.active_emitters,
+                    "emitted": s.total_emitted, "draws": self.meter.snow_draws})
+                });
             if let Some(overlay) = &self.overlay {
                 state["toolbar"] = overlay.diagnostics();
             }
@@ -1258,6 +1292,7 @@ impl App {
                 self.meter.triangles = stats.triangles();
                 self.meter.draws = stats.draws();
                 self.meter.shadows = (stats.contact_casters, stats.shadow_casters);
+                self.meter.snow_draws = stats.snow_draws;
                 acquire = stats.acquire_ms;
             }
             Err(error) => status(&error),
@@ -1433,6 +1468,7 @@ impl App {
             self.meter = Meter {
                 triangles: self.meter.triangles,
                 draws: self.meter.draws,
+                snow_draws: self.meter.snow_draws,
                 last: self.meter.last,
                 ..Default::default()
             };

@@ -643,6 +643,19 @@ impl SceneRenderer {
         (scene, water_error)
     }
 
+    /// Active Snow's latest frame: its clock and emitters (diagnostics).
+    pub fn snow_state(&self) -> Option<atv_core::weather::SnowFrame> {
+        let (_, shared) = self.snow.as_ref()?;
+        let weather = shared.borrow();
+        let frame = weather.snow.frame();
+        Some(atv_core::weather::SnowFrame {
+            time: frame.time,
+            births: Vec::new(),
+            active_emitters: frame.active_emitters,
+            total_emitted: frame.total_emitted,
+        })
+    }
+
     /// The graphics context came back (WebGL context restored, a new
     /// device): every GPU resource is rebuilt on `gpu` from the venue, which
     /// keeps its CPU data, while the presentation state carries over: the

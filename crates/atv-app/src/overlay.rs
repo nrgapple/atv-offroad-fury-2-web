@@ -417,23 +417,7 @@ impl Overlay {
 
     /// The keyboard card follows the live (possibly remapped) bindings.
     pub fn set_help_keys(&mut self, bindings: &atv_game::ride::bindings::Bindings) {
-        let keys: Vec<(String, Vec<String>)> = atv_game::ride::bindings::ACTIONS
-            .iter()
-            .map(|(action, id, _)| {
-                let labels = bindings
-                    .keyboard_codes(*action)
-                    .iter()
-                    .map(|chord| {
-                        chord
-                            .iter()
-                            .map(|c| help::key_name(c))
-                            .collect::<Vec<_>>()
-                            .join("+")
-                    })
-                    .collect();
-                (id.to_string(), labels)
-            })
-            .collect();
+        let keys = help::action_keys(bindings);
         if keys != self.help_keys {
             self.help_keys = keys;
             self.help_cache = None;
