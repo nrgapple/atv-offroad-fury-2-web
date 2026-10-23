@@ -29,11 +29,16 @@ addEventListener('error', event => {
   if (!(error instanceof WebAssembly.RuntimeError) && !/memory|unreachable|wasm/i.test(event.message ?? '')) return;
   const line = document.getElementById('status');
   if (line.classList.contains('fatal')) return;
+  document.getElementById('loading-screen')?.setAttribute('hidden', '');
   line.textContent = `The game stopped: ${error?.message ?? event.message}. Reload to try again.`;
   line.classList.add('fatal');
 });
+// A module that will not start closes the boot loader and shows its error
+// on the notice line, as play.html does for a startup failure.
 init().catch(error => {
-  const status = document.getElementById('status');
-  status.textContent = `Engine failed: ${error}`;
-  status.classList.add('fatal');
+  const text = `Engine failed: ${error?.message ?? error}`;
+  document.getElementById('status').textContent = text;
+  document.getElementById('loading-screen')?.setAttribute('hidden', '');
+  document.getElementById('frontend')?.setAttribute('data-error', 'true');
+  document.getElementById('menu-notice').textContent = text;
 });

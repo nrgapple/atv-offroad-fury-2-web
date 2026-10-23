@@ -486,16 +486,32 @@ pub struct SceneRenderer {
 }
 
 impl SceneRenderer {
-    pub fn new(gpu: &Gpu, venue: &Venue, fine_center: Option<[f32; 2]>) -> Self {
+    pub fn new(gpu: &Gpu, venue: &Venue, fine_center: Option<[f32; 2]>) -> Result<Self, String> {
         Self::with_graphics(gpu, venue, fine_center, Graphics::default())
     }
 
+    /// The ride's scene. Invalid original water data fails the load with its
+    /// error, as game.js's `new WaterRenderer` throws out of `loadGame`.
     pub fn with_graphics(
         gpu: &Gpu,
         venue: &Venue,
         fine_center: Option<[f32; 2]>,
         graphics: Graphics,
-    ) -> Self {
+    ) -> Result<Self, String> {
+        match Self::assemble(gpu, venue, fine_center, graphics) {
+            (scene, None) => Ok(scene),
+            (_, Some(error)) => Err(error),
+        }
+    }
+
+    /// The scene and, when the water surface was refused, its error.
+    fn assemble(
+        gpu: &Gpu,
+        venue: &Venue,
+        fine_center: Option<[f32; 2]>,
+        graphics: Graphics,
+    ) -> (Self, Option<String>) {
+        let mut water_error = None;
         let fog = venue.scene.fog.as_ref();
         let fog_color = venue.scene.fog_color.map(|c| c / 255.);
         let far = fog.map_or(
@@ -525,8 +541,7 @@ impl SceneRenderer {
             match water::WaterPass::new(gpu, &world, &shared.borrow(), graphics.fresnel) {
                 Ok(pass) => Some((pass, shared.clone())),
                 Err(error) => {
-                    // The browser reports and skips an unsupported surface.
-                    eprintln!("water: {error}");
+                    water_error = Some(error);
                     None
                 }
             }
@@ -625,7 +640,7 @@ impl SceneRenderer {
         // startSimulation's first follow-camera request (op 46, dt 1/60)
         // already advances the pre-race shots once.
         scene.step_intro();
-        scene
+        (scene, water_error)
     }
 
     /// The graphics context came back (WebGL context restored, a new
@@ -639,7 +654,12 @@ impl SceneRenderer {
     /// tracks, lingering dust, other riders) return at their next use.
     /// `fine_center`: the fine terrain patch around the rider (world x, z).
     pub fn rebuild(&mut self, gpu: &Gpu, venue: &Venue, fine_center: Option<[f32; 2]>) {
-        let fresh = Self::with_graphics(gpu, venue, fine_center, self.graphics);
+        // The venue's water passed when the ride loaded; a restored context
+        // that refuses it rides on without the surface.
+        let (fresh, water_error) = Self::assemble(gpu, venue, fine_center, self.graphics);
+        if let Some(error) = water_error {
+            eprintln!("water: {error}");
+        }
         let old = std::mem::replace(self, fresh);
         self.scenery.adopt(old.scenery);
         if let (Some((pass, _)), Some((previous, _))) = (&mut self.snow, old.snow) {

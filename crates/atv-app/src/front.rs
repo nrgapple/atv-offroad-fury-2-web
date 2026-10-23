@@ -137,12 +137,9 @@ pub struct Front {
     motion: Option<atv_ui::transition::Motion>,
 }
 
-/// Fixed-seed pick (tips do not need cryptographic randomness).
+/// frontend.js `Math.floor(Math.random() * tips.length)`.
 fn pick(len: usize) -> usize {
-    let nanos = web_time::SystemTime::now()
-        .duration_since(web_time::UNIX_EPOCH)
-        .map_or(0, |d| d.subsec_nanos() as usize);
-    nanos % len.max(1)
+    crate::random::below(len)
 }
 
 impl Front {

@@ -9,6 +9,7 @@ mod gamepad;
 mod multiplayer;
 mod net;
 mod overlay;
+mod random;
 mod render_scale;
 pub mod replay;
 mod riding;
@@ -525,12 +526,8 @@ async fn prepare(
     );
     let weather = match weather {
         Some(active) => venue::WeatherChoice::Active(active),
-        // Per-load sample, like the browser's Math.random() * 2^31.
-        None => venue::WeatherChoice::Random(
-            web_time::SystemTime::now()
-                .duration_since(web_time::UNIX_EPOCH)
-                .map_or(0, |d| d.subsec_nanos() ^ d.as_secs() as u32),
-        ),
+        // Per-load sample, like game.js `Math.floor(Math.random() * 0x80000000)`.
+        None => venue::WeatherChoice::Random(random::seed31()),
     };
     let venue = venue::load_with(
         &content,
@@ -572,7 +569,7 @@ async fn prepare(
     }
     // The browser centres the fine terrain patch on the rider at the start.
     let mut scene =
-        SceneRenderer::with_graphics(&gpu, &venue, Some([start[0], start[2]]), graphics);
+        SceneRenderer::with_graphics(&gpu, &venue, Some([start[0], start[2]]), graphics)?;
     atv_game::yield_frame().await;
     if let Some(steps) = steps {
         scene.set_weather_camera(camera);
@@ -2843,6 +2840,7 @@ impl ApplicationHandler<Message> for App {
                 self.wake();
             }
             Message::Ready(ready) => {
+                boot_loaded();
                 if let Some(front) = &self.front {
                     front.borrow_mut().release_gpu();
                 }
@@ -2931,7 +2929,7 @@ impl ApplicationHandler<Message> for App {
                     return;
                 }
                 // Nothing left to show: keep the error on screen without ?debug=1.
-                fatal();
+                fatal(&error);
                 if !cfg!(target_arch = "wasm32") {
                     event_loop.exit();
                 }
@@ -3861,6 +3859,7 @@ impl App {
         self.front = Some(Rc::new(RefCell::new(front)));
         self.gpu = Some(gpu);
         self.content = Some(content.clone());
+        boot_loaded();
         // Course photos, loader tips and ATV stats load behind the title.
         // Training ships no TP photo pair: play.html shows the approved
         // capture of the venue from the site's dev log images.
@@ -4116,7 +4115,7 @@ impl App {
                 // can tell them apart. Like frontend.js `playerName`, the
                 // number stays for the session and the next save keeps it.
                 let name = if name == "Rider" {
-                    let numbered = format!("Rider {}", 1000 + fresh_seed() % 9000);
+                    let numbered = format!("Rider {}", 1000 + random::below(9000));
                     if let Some(front) = &self.front {
                         front.borrow_mut().state.player_name.clone_from(&numbered);
                     }
@@ -5672,15 +5671,41 @@ impl App {
     }
 }
 
-/// Shows the status line even when the debug strip is hidden (engine.css
-/// `#status.fatal`): the engine could not start or load anything to draw.
-fn fatal() {
+/// The engine could not start or load anything to draw: like play.html
+/// (game.js's startup `catch`, frontend.js `fail`), the boot loader closes,
+/// `#frontend` is marked `data-error` and `#menu-notice` shows the error.
+fn fatal(error: &str) {
+    boot_loaded();
     #[cfg(target_arch = "wasm32")]
-    if let Some(element) = web_sys::window()
+    if let Some(document) = web_sys::window().and_then(|w| w.document()) {
+        if let Some(frontend) = document.get_element_by_id("frontend") {
+            let _ = frontend.set_attribute("data-error", "true");
+        }
+        match document.get_element_by_id("menu-notice") {
+            Some(notice) => notice.set_text_content(Some(error)),
+            // A page without the notice shows the status line instead.
+            None => {
+                if let Some(line) = document.get_element_by_id("status") {
+                    line.set_class_name("fatal");
+                }
+            }
+        }
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    let _ = error;
+}
+
+/// The frontend (or a direct ride) draws now: close engine.html's boot
+/// loader (frontend.js `setLoading(false)`).
+fn boot_loaded() {
+    #[cfg(target_arch = "wasm32")]
+    if let Some(screen) = web_sys::window()
         .and_then(|w| w.document())
-        .and_then(|d| d.get_element_by_id("status"))
+        .and_then(|d| d.get_element_by_id("loading-screen"))
+        .filter(|e| !e.has_attribute("hidden"))
     {
-        element.set_class_name("fatal");
+        let _ = screen.set_attribute("hidden", "");
+        let _ = screen.set_attribute("aria-busy", "false");
     }
 }
 
@@ -6123,12 +6148,9 @@ fn publish_ui_state(text: &str) {
     let _ = text;
 }
 
-/// A per-load roster draw seed (the browser's Math.random() * 2^31).
+/// A per-load roster draw seed (game.js `Math.floor(Math.random() * 2 ** 31)`).
 fn fresh_seed() -> u64 {
-    web_time::SystemTime::now()
-        .duration_since(web_time::UNIX_EPOCH)
-        .map_or(1, |d| u64::from(d.subsec_nanos()) ^ d.as_secs())
-        & 0x7fff_ffff
+    u64::from(random::seed31())
 }
 
 /// A same-origin image decoded by the browser into RGBA (None when it is

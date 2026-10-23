@@ -204,6 +204,7 @@ In progress elsewhere, not counted as gaps: the diagnostics overlay (F3).
 | Dirt buildup and water wash | Ported | atv-game/src/dirt.rs (#248) | |
 | Keyboard help card | Ported | overlay.rs, hud/help.rs (#196) | |
 | Status/loading line | Ported | `#status`, front `loading_stage` | |
+| Boot loader and startup failure | Ported | engine.html `#loading-screen`, lib.rs `boot_loaded`/`fatal` | play.html's "Now Loading..." panel shows until the frontend draws; a startup failure closes it and shows the error on `#menu-notice` with `#frontend[data-error=true]` (`tools/test_engine_boot.mjs`). The meter sweeps, as play.html's, without stage progress |
 | Static free camera | Ported (dev) | lib.rs `?free` | |
 | `?source=disc`, `#disc` | Missing | — | Can be dropped |
 | Diagnostics overlay (F3) | In progress | — | engine.js uses F3 for the debug strip; reconcile |
@@ -224,7 +225,7 @@ In progress elsewhere, not counted as gaps: the diagnostics overlay (F3).
 | Per-chunk SHA-256, chunked records | Ported | atv-content `chunk` (#252) | Yields every 512 KiB |
 | Archive directory reads, block inflate | Ported | atv-game/src/archive.rs | |
 | Parallel ride prefetch with fetch priority | Ported | atv-content `prefetch`, atv-game `ride_prefetch` | |
-| Soundtrack `.m4a` streams | Ported | atv-content `MediaStream`, sound.rs (#191) | |
+| Soundtrack `.m4a` streams | Ported | atv-content `MediaStream`, sound.rs (#191) | `Manifest::parse` rejects the package unless each stream is on an `/AUDIO/MUSIC/*.VAG` record, `audio/mp4`, 1 byte to 25 MiB, a lowercase SHA-256 and `/content/<sha256>.m4a`, with positive seconds (content.js). Jukebox seek clamps to the manifest's length − 0.25 s |
 | Lazy music-chunk retention | Not needed | Rust LRU | |
 
 ### wake-lock.js, graphics.js, alpha.js
@@ -262,7 +263,7 @@ In progress elsewhere, not counted as gaps: the diagnostics overlay (F3).
 | Rider Gear page | Ported | front/controller.rs `step_gear`, preview.wgsl paint | |
 | Host/Join forms, validation, motorcycle refusal | Ported | front/controller.rs (#241, #254) | Escape in a field goes back a page; desktop pastes with Cmd/Ctrl+V. Free Ride rides the name as typed; a blank or "Rider" name becomes "Rider NNNN" for the session and the next save keeps it. Only a Freestyle ride changes the saved last Freestyle course |
 | Free Ride Lobby page while connecting, then its riders | Ported | #268, this PR | |
-| Loading screen (shots, tips, staged bar) | Ported | controller.rs `loading_stage` | A failed load returns to its page with the error on the notice line (frontend.js `fail`): Freestyle → course select, Race → race setup, Free Ride → main menu, a room → Multiplayer (main for Free Ride rooms), which also forgets the slot key. The notice reads as frontend.js shows `error.message`: the browser's own text for a refused request ("Failed to fetch"), content.js's "Original content package is unavailable (N)." / "Original game content could not load (N)." / "Hosted content integrity check failed.", and game.js's missing-archive and missing-member messages (`tools/test_engine_menu_flows.mjs`) |
+| Loading screen (shots, tips, staged bar) | Ported | controller.rs `loading_stage` | A failed load returns to its page with the error on the notice line (frontend.js `fail`): Freestyle → course select, Race → race setup, Free Ride → main menu, a room → Multiplayer (main for Free Ride rooms), which also forgets the slot key. The notice reads as frontend.js shows `error.message`: the browser's own text for a refused request ("Failed to fetch"), content.js's "Original content package is unavailable (N)." / "Original game content could not load (N)." / "Hosted content integrity check failed.", and game.js's missing-archive and missing-member messages (`tools/test_engine_menu_flows.mjs`). The tip is a uniform pick of all 14 |
 | Pause menu (Resume, Reset, Players/Spawn, Change ATV, Select Track, Settings, Jukebox, Copy link, Quit/Leave) | Ported | menu/controller.rs (#202, #238, #242, #256) | Restart Race in races. Start and the rebindable Pause action resume; Start accepts in Settings over the main menu. Left/Right turn the Bindings and Audio pages and change Jukebox tracks. Only the Pause binding and Escape resume (a P no longer bound does nothing); Shift+Tab walks back. Jukebox always shows (the page waits for the catalog); desktop keeps Copy ride link (the site's play.html link) |
 | Settings pages and toggles (Display, Extras, Alpha, Race overlays, Minimap, Controls, Controller, Bindings) | Ported | menu/controller.rs, prefs.rs (#202) | Applied live |
 | Extras → Diagnostics | In progress | — | |
@@ -330,7 +331,7 @@ In progress elsewhere, not counted as gaps: the diagnostics overlay (F3).
 | Gesture unlock | Ported | sound.rs | |
 | Motorcycle bank; rider vocals; body and chassis impacts; terrain loops; water splash | Ported | ride.rs, bank.rs | |
 | Venue ambient, Soultree loops, crowd cue | Ported | ride.rs, audio/race.rs (#222) | |
-| Race lamp/GO/gate one-shots, IntOut stingers, soundtrack hold/fade | Ported | race.rs, sound.rs (#222) | The race-over fade shortens to 80% of a song's remainder near its end |
+| Race lamp/GO/gate one-shots, IntOut stingers, soundtrack hold/fade | Ported | race.rs, sound.rs (#222) | The race-over fade shortens to 80% of a song's remainder near its end. Stingers play on the mixer's stinger bus at the music volume, past the Alpha muffle and the Jukebox analyser (audio.js `playIntOut`); INT001-INT004 is a uniform pick |
 | ENV08 train sounds | Ported | audio/ride.rs `train_step` | |
 | Rain loop | Ported | audio/ride.rs | |
 | Crash boom (Crazy/Gorn) | Ported | audio/synth.rs, sound.rs | 0.3 s cooldown |
@@ -351,8 +352,8 @@ In progress elsewhere, not counted as gaps: the diagnostics overlay (F3).
 | Portrait chase, assisted chase, cinematic pre-race, tight crash camera | Ported | ride/view.rs, riding.rs (#203, #249) | |
 | Gorn severing, quad paint shader | Ported | crash_effects.rs, vehicle.wgsl (#207, #220) | |
 | `RenderScale` adaptive DPR | Ported | atv-app render_scale.rs | Desktop on Metal and DX12 too |
-| Water grid, normals, reflection, fog; Fresnel on Enhanced/High | Ported | atv-render/src/water.rs (#183, #219, #228) | |
-| Weather selection; snow ring | Ported | venue.rs, snow.rs (#187) | |
+| Water grid, normals, reflection, fog; Fresnel on Enhanced/High | Ported | atv-render/src/water.rs (#183, #219, #228) | Invalid water data fails the ride load with its error, as game.js `new WaterRenderer` does; a restored graphics context that refuses it rides on without the surface |
+| Weather selection; snow ring | Ported | venue.rs, snow.rs (#187) | The per-load sample is uniform (atv-app `random.rs`: `Math.random()` on the web, an OS-seeded SplitMix64 on desktop), so NAT06 rains 90% and SX13 80% of loads. The clock digits it replaced kept the sample in [0.5, 1) |
 | Rain visuals | Unverified | — | Drawn as a scenery model by game.js |
 | GS fog | Ported | shaders `native_fog_coverage` (#179) | |
 | Multi-pass scenery materials | Ported | atv-game/src/materials.rs | |

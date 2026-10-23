@@ -87,6 +87,40 @@ pub struct MediaStream {
     /// The encoded file's SHA-256 (its blob name, `<sha256>.m4a`).
     #[serde(default)]
     pub sha256: Option<String>,
+    /// The media type (`audio/mp4`).
+    #[serde(default, rename = "type")]
+    pub kind: Option<String>,
+}
+
+impl MediaStream {
+    /// content.js `contentSource`: a soundtrack song's stream is a
+    /// same-origin, hash-addressed AAC file of bounded size and positive length.
+    fn valid_on(&self, path: &str) -> bool {
+        let song = path
+            .strip_prefix("/AUDIO/MUSIC/")
+            .and_then(|name| name.strip_suffix(".VAG"))
+            .is_some_and(|name| {
+                !name.is_empty()
+                    && name
+                        .bytes()
+                        .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit() || b == b'_')
+            });
+        let digest = self.sha256.as_deref().filter(|d| is_digest(d));
+        song && self.kind.as_deref() == Some("audio/mp4")
+            && self.bytes > 0
+            && self.bytes <= MAX_CHUNK
+            && digest.is_some_and(|d| self.url == format!("/content/{d}.m4a"))
+            && self.seconds.is_finite()
+            && self.seconds > 0.
+    }
+}
+
+/// A lowercase 64-digit hex SHA-256.
+fn is_digest(text: &str) -> bool {
+    text.len() == 64
+        && text
+            .bytes()
+            .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -139,18 +173,24 @@ impl Manifest {
             }
             let mut end = 0;
             for chunk in chunks {
-                let digest = chunk.sha256.len() == 64
-                    && chunk
-                        .sha256
-                        .bytes()
-                        .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase());
-                if !digest || chunk.offset != end || chunk.bytes == 0 || chunk.bytes > MAX_CHUNK {
+                if !is_digest(&chunk.sha256)
+                    || chunk.offset != end
+                    || chunk.bytes == 0
+                    || chunk.bytes > MAX_CHUNK
+                {
                     return Err("Invalid hosted content extent.".into());
                 }
                 end += chunk.bytes;
             }
             if end != record.bytes {
                 return Err("Truncated hosted content record.".into());
+            }
+            if record
+                .stream
+                .as_ref()
+                .is_some_and(|s| !s.valid_on(&record.path))
+            {
+                return Err("Invalid hosted music stream.".into());
             }
         }
         Ok(manifest)
@@ -338,14 +378,11 @@ impl Content {
         let Some(stream) = self.record_for(path)?.stream.as_ref() else {
             return Ok(None);
         };
+        // Manifest::parse checked the record (`MediaStream::valid_on`).
         let digest = stream
             .sha256
             .as_deref()
-            .filter(|d| d.len() == 64 && d.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')))
             .ok_or_else(|| format!("invalid stream record for {path}"))?;
-        if stream.bytes == 0 || stream.bytes > MAX_FILE {
-            return Err(format!("invalid stream record for {path}"));
-        }
         // Read past the chunk cache: a song is several megabytes, read once.
         let bytes = self.store.read(&format!("{digest}.m4a")).await?;
         let mut hash = Sha256::new();
@@ -539,5 +576,60 @@ mod tests {
             missing_archive("/ANIMSRDR.RES"),
             "Original archive is missing: /ANIMSRDR.RES"
         );
+    }
+
+    /// web/content.test.mjs: music streams must be same-origin hash-addressed
+    /// AAC on soundtrack songs.
+    #[test]
+    fn music_streams_are_same_origin_hash_addressed_aac_on_songs() {
+        let digest = "a".repeat(64);
+        let with = |path: &str, stream: serde_json::Value| {
+            manifest(&format!(
+                r#"[{{"path":"{path}","bytes":4,"sha256":"{digest}","stream":{stream}}}]"#
+            ))
+        };
+        let good = serde_json::json!({
+            "url": format!("/content/{digest}.m4a"), "bytes": 3, "sha256": digest,
+            "type": "audio/mp4", "seconds": 187.8,
+        });
+        let parsed = Manifest::parse(with("/AUDIO/MUSIC/AMPFIED.VAG", good.clone()).as_bytes());
+        assert_eq!(
+            parsed
+                .unwrap()
+                .record("/AUDIO/MUSIC/AMPFIED.VAG")
+                .unwrap()
+                .stream
+                .as_ref()
+                .unwrap()
+                .url,
+            format!("/content/{digest}.m4a")
+        );
+        let changes = [
+            ("url", serde_json::json!("https://example.com/a.m4a")),
+            ("url", serde_json::json!(format!("/content/{digest}.bin"))),
+            ("type", serde_json::json!("audio/ogg")),
+            ("type", serde_json::Value::Null),
+            ("bytes", serde_json::json!(0)),
+            ("bytes", serde_json::json!(MAX_CHUNK + 1)),
+            ("seconds", serde_json::json!(0)),
+            ("seconds", serde_json::json!(-1)),
+            ("sha256", serde_json::json!("b".repeat(64))),
+            ("sha256", serde_json::json!("A".repeat(64))),
+        ];
+        for (key, value) in changes {
+            let mut altered = good.clone();
+            altered[key] = value.clone();
+            let error =
+                Manifest::parse(with("/AUDIO/MUSIC/AMPFIED.VAG", altered).as_bytes()).unwrap_err();
+            assert!(error.contains("music stream"), "{key}={value}: {error}");
+        }
+        for path in [
+            "/UI/RESOURCE/PAGEA/PAGE14.RES",
+            "/AUDIO/MUSIC/lower.VAG",
+            "/AUDIO/SFX/A.VAG",
+        ] {
+            let error = Manifest::parse(with(path, good.clone()).as_bytes()).unwrap_err();
+            assert!(error.contains("music stream"), "{path}: {error}");
+        }
     }
 }
