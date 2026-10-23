@@ -384,6 +384,7 @@ impl Net {
         };
         let deadline = Instant::now();
         let mut set_up = false;
+        let mut opened = false;
         loop {
             if deadline.elapsed().as_secs_f32() > 10. {
                 net.socket.close();
@@ -393,6 +394,7 @@ impl Net {
                 let now = now_ms(net.clock);
                 match event {
                     Event::Open => {
+                        opened = true;
                         net.socket.send(net.session.join(&code)?);
                         net.socket.send(net.session.ping(now)?);
                         net.last_ping = now as f64;
@@ -400,9 +402,14 @@ impl Net {
                     Event::Message(bytes, at) => {
                         net.session.receive(&bytes, arrival(net.clock, at, now))?
                     }
+                    // multiplayer.js: a socket that never opens rejects with
+                    // this; one closed later ends the room with its reason.
+                    Event::Closed { .. } if !opened => {
+                        return Err("Unable to connect to this lobby.".into());
+                    }
                     Event::Closed { code, reason } => {
                         return Err(if reason.is_empty() {
-                            format!("Unable to connect to this lobby ({code}).")
+                            format!("Connection lost ({code}).")
                         } else {
                             reason
                         });

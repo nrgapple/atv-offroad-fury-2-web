@@ -112,7 +112,7 @@ pub async fn load_with(
     options: LoadOptions,
 ) -> Result<Venue> {
     let course = course_resource(environment, racing)?;
-    let bytes = content.file(&course.archive).await?;
+    let bytes = crate::ride::load::course_archive(content, &course.archive, environment).await?;
     let archive = Resource::parse(&bytes)?;
     // The decode steps below are long: each yields to the host's loop
     // (desktop polls loads between events; the web resumes at once).
@@ -120,7 +120,7 @@ pub async fn load_with(
     let extract = |name: &str, what: &str| -> Result<Vec<u8>> {
         archive.extract(
             member_named(&archive, name)
-                .ok_or_else(|| format!("original {what} is missing ({name})"))?,
+                .ok_or_else(|| crate::ride::load::missing_member(what, name))?,
         )
     };
     let scene_text = extract(&format!("{}.scn", course.scene_stem), "start position")?;

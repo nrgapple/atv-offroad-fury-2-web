@@ -15,7 +15,12 @@ const read = page => page.evaluate(() => JSON.parse(document.querySelector('#ui-
 const front = async page => (await read(page)).front;
 const wait = (page, predicate, arg, timeout = 120000) => page.waitForFunction(predicate, arg, { timeout });
 const onFront = (page, name, timeout) =>
-  wait(page, name => JSON.parse(document.querySelector('#ui-state')?.textContent || '{}').front?.page === name, name, timeout);
+  wait(
+    page,
+    name => JSON.parse(document.querySelector('#ui-state')?.textContent || '{}').front?.page === name,
+    name,
+    timeout
+  );
 async function key(page, code) {
   await page.keyboard.down(code);
   await nextFrames(page, 2);
@@ -154,16 +159,22 @@ try {
     );
   await failed('tracks');
   f = await front(page);
-  assert.ok(f.notice, 'the course select says why the ride failed');
+  // frontend.js shows error.message: a refused fetch is the browser's TypeError.
+  assert.equal(f.notice, 'Failed to fetch', 'the course select says why the ride failed');
   console.log(`  Freestyle load failure: back on the course select with "${f.notice}"`);
   if (f.race.courses > 0) {
+    // An HTTP error reads as content.js words it.
+    await page.unroute('**/*.bin');
+    await page.route('**/*.bin', route => route.fulfill({ status: 503, body: '' }));
     await key(page, 'Escape');
     await onFront(page, 'single');
     await choose(page, 'race');
     await onFront(page, 'race');
     await choose(page, 'racestart');
     await failed('race');
-    console.log(`  Race load failure: back on the race setup with "${(await front(page)).notice}"`);
+    f = await front(page);
+    assert.equal(f.notice, 'Original game content could not load (503).');
+    console.log(`  Race load failure: back on the race setup with "${f.notice}"`);
   }
   await page.unroute('**/*.bin');
   // The refused requests' own rejections are expected; nothing else may fail.

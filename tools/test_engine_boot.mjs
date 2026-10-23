@@ -38,12 +38,19 @@ try {
       );
       const box = await page.locator('.loading-panel').boundingBox();
       assert(
-        box && box.x >= -1 && box.y >= -1 && box.x + box.width <= size.width + 1 && box.y + box.height <= size.height + 1,
+        box &&
+          box.x >= -1 &&
+          box.y >= -1 &&
+          box.x + box.width <= size.width + 1 &&
+          box.y + box.height <= size.height + 1,
         `.loading-panel fits ${JSON.stringify(size)}: ${JSON.stringify(box)}`
       );
       for (const selector of ['.loading-brand', '#loading-title', '.loading-meter']) {
         const part = await page.locator(selector).boundingBox();
-        assert(part && part.width > 0 && part.y + part.height <= size.height + 1, `${selector} at ${JSON.stringify(size)}`);
+        assert(
+          part && part.width > 0 && part.y + part.height <= size.height + 1,
+          `${selector} at ${JSON.stringify(size)}`
+        );
       }
       assert(await page.locator('#loading-screen').isVisible());
       assert.equal(await page.locator('#loading-title').textContent(), 'Now Loading...');
@@ -62,9 +69,10 @@ try {
     await page.close();
   }
   // A content package that cannot be read ends startup with its error.
-  for (const [name, handle] of [
-    ['abort', route => route.abort()],
-    ['404', route => route.fulfill({ status: 404, body: 'missing' })]
+  // Worded as play.html shows them (content.js, the browser's fetch error).
+  for (const [name, handle, wording] of [
+    ['abort', route => route.abort(), 'Failed to fetch'],
+    ['404', route => route.fulfill({ status: 404, body: 'missing' }), 'Original content package is unavailable (404).']
   ]) {
     const page = await browser.newPage({ viewport: sizes[0] });
     await page.route('**/content/manifest.json', handle);
@@ -75,7 +83,7 @@ try {
     assert.equal(await page.locator('#loading-screen').isVisible(), false, name);
     assert(await page.locator('#menu-notice').isVisible(), name);
     const notice = (await page.locator('#menu-notice').textContent()).trim();
-    assert(notice.length > 0, name);
+    assert.equal(notice, wording, name);
     const box = await page.locator('#menu-notice').boundingBox();
     assert(box.x >= 0 && box.x + box.width <= sizes[0].width && box.y + box.height <= sizes[0].height, name);
     console.log(`${name}: ${notice}`);
