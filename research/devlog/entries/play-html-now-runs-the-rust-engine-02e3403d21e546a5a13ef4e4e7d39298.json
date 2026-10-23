@@ -1,0 +1,15 @@
+{
+  "id": "play-html-now-runs-the-rust-engine-02e3403d21e546a5a13ef4e4e7d39298",
+  "timestamp": "2026-10-23T05:57:07.823121+00:00",
+  "recorded_at": "2026-10-23T05:57:07.823121+00:00",
+  "kind": "build",
+  "title": "play.html now runs the Rust engine",
+  "summary": "The main game page, play.html (and / which forwards to it), now runs the Rust engine that also builds the desktop apps. The JavaScript game is retired and kept only as a pinned reference for comparisons.",
+  "details": [
+    "Why: the user approved the switch on 2026-10-23 after the Rust page played well on their iPhone, where the old JavaScript page crashed.",
+    "Links: old links keep working. / and index.html forward to play.html, engine.html remains as an alias, ride/room/race links and ?menu= shortcuts are unchanged, and the installed app's start page (/play.html) and shortcuts are unchanged. The service worker precaches play.html, index.html and engine.html.",
+    "Retired: the 44 JavaScript game modules, their tests and styles, the workbench, the JavaScript worker and its WebAssembly module were deleted. The JavaScript game survives only as a pinned reference build used for comparison tests.",
+    "Verification (host-only, one Mac, headless Chromium and WebKit, local relay): make check, make web and make relay pass. Release packaging produced 30 files with the allowlist validated. Browser groups: content-free 3/3, content 39/39, relay 13/13. The packaged build was checked by hand: play.html and engine.html both load engine.js with no JavaScript game module, /?menu=race forwards to play.html and opens race setup, room and map links open the right page, and offline the service worker serves play.html up to the title screen. Production now serves engine.js from play.html at commit 9783bf8."
+  ],
+  "limitation": "Physical-phone checks are still pending: an installed Home Screen app updating to the new page and launching offline, and a public multiplayer room. All measurements so far are host-only."
+}
