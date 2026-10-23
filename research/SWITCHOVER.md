@@ -176,8 +176,10 @@ changes:
 
 ### Go/no-go checklist
 
-Evidence from one pass at the end. Host-only: one Mac, headless Chromium (plus
-WebKit where the tests use it), local relay; not phone or Internet results.
+The draft's pass (#284) was repeated on `switchover/rust-play-2` after merging
+main `8e1b94ff3b07`. Evidence from one pass at the end. Host-only: one Mac,
+headless Chromium (plus WebKit where the tests use it), local relay; not phone
+or Internet results.
 
 - [x] `make check`: fmt, workspace tests, Clippy, the shell's JS unit tests,
   release and repository tests.
@@ -185,32 +187,27 @@ WebKit where the tests use it), local relay; not phone or Internet results.
 - [x] Release packaging: 30 files with the allowlist validated.
 - [x] Content-free group: 3/3 (app identity on `/play.html`, engine page
   without content, dev log).
-- [x] Content group: 30/30, including the shell test on `/play.html` (install
-  banner, analytics, render scale, offline relaunch).
-- [x] Relay group: 10/10, with the JavaScript guests from the pinned reference
-  behind its own proxy (`RELAY_ORIGIN`). `test_engine_multiplayer_train` passed
-  in the final pass, but it failed 1 of its 3 earlier runs: once a train-phase
-  sample landed 0.31 s against the 0.3 s bound, and once on a read race that is
-  now fixed.
-- [x] JavaScript reference:
-  - `js_reference.py prepare` built `4783519a6f86`;
-  - `js_reference.py test --group content-free` passed 5/5 with its own suite;
-  - `compare_engine.mjs env01` ran against it (`ATV_JS_URL`).
-- [ ] Phone and production checks before shipping:
-  - an installed iPhone app updating to the new shell, then working offline;
-  - a phone ride with render scale;
-  - a public multiplayer room;
-  - the Cloudflare deploy of the new allowlist (`verify_ci_deployment.py`).
-- [ ] Remaining gaps, decide whether they block:
-  - context loss restarts a single-player ride instead of rebuilding in place
-    (5);
-  - no menu page transitions (14).
-- [ ] At the switch: update AGENTS.md (it still describes the JavaScript game as
-  frozen and tests targeting `/engine.html`). Rebase this branch on the latest
-  main and repeat the pass above.
-
-**No-go** if any of the open items above fails. **Go** once the phone and
-production checks pass and the two remaining gaps are accepted or closed.
+- [x] Content group: 39/39, including the shell test on `/play.html` (install
+  banner, analytics, render scale, offline relaunch). `test_rust_audio.mjs`
+  failed on unmodified main too: it blurred the canvas, but since #299 the
+  engine pauses on the window's blur and focus, as game.js did. The test now
+  sends the window's events.
+- [x] Relay group: 13/13, with the JavaScript guests from the pinned reference
+  behind its own proxy (`RELAY_ORIGIN`) and a native `fury` for the hosts.
+- [x] JavaScript reference: `js_reference.py prepare` built `8e1b94ff3b07`;
+  `compare_engine.mjs env01` and `test_engine_arcade_touch.mjs` ran against it
+  (`ATV_JS_URL`).
+- [x] Manual-style pass on the packaged build: `/play.html` and `/engine.html`
+  load `engine.js` and no JavaScript game module; `/?menu=race` forwards to
+  `/play.html` and opens the race setup; `?menu=freeride`, `?room=`,
+  `mode=multiplayer&action=join` and `?map=env01&play=1` route; offline, the
+  service worker serves `/play.html` to the title screen.
+- [x] Remaining gaps 5 (context loss) and 14 (menu page transitions) closed on
+  main before the switch.
+- [x] The user confirmed `/engine.html` on their iPhone (2026-10-23), where the
+  JavaScript `play.html` crashed, and approved the switch.
+- [ ] After the deploy, on a phone: an installed Home Screen app updating to the
+  new shell and launching offline; a public multiplayer room.
 
 ## Can be dropped
 
