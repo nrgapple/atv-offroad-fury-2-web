@@ -337,7 +337,7 @@ mod tests {
         let (song_sha, stream_sha) = (sha(song), sha(stream));
         let manifest = format!(
             r#"{{"version":1,"source_build_sha256":"{}","files":[
-            {{"path":"/AUDIO/MUSIC/A.VAG","bytes":{},"sha256":"{song_sha}","stream":{{"url":"/content/{stream_sha}.m4a","bytes":{},"sha256":"{stream_sha}","seconds":1.0}}}},
+            {{"path":"/AUDIO/MUSIC/A.VAG","bytes":{},"sha256":"{song_sha}","stream":{{"url":"/content/{stream_sha}.m4a","bytes":{},"sha256":"{stream_sha}","type":"audio/mp4","seconds":1.0}}}},
             {{"path":"/AUDIO/MUSIC/B.VAG","bytes":{},"sha256":"{song_sha}"}}]}}"#,
             crate::SOURCE_BUILD,
             song.len(),

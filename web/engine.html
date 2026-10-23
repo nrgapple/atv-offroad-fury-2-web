@@ -37,6 +37,17 @@
      for the install banner, which shows only on the title screen. -->
 <div id="frontend" data-page="" hidden></div>
 <canvas id="game" aria-label="Fury Remastered" tabindex="0"></canvas>
+<!-- play.html's boot loader, shown until the Rust frontend can draw. -->
+<section id="loading-screen" class="loading-screen" aria-label="Loading game" aria-busy="true">
+  <div class="loading-panel">
+    <img class="loading-brand" src="fury-remastered.svg" alt="Fury Remastered">
+    <h1 id="loading-title">Now Loading...</h1>
+    <p id="loading-detail" role="status">Preparing menus…</p>
+    <div class="loading-meter" aria-hidden="true"></div>
+  </div>
+</section>
+<!-- A startup failure's message (frontend.js `fail`: #frontend[data-error]). -->
+<p id="menu-notice" role="status"></p>
 <div id="status">Starting Rust engine…</div>
 <script type="module" src="offline.js"></script>
 </body>
