@@ -4,10 +4,34 @@ html.app-standalone, html.app-standalone body { background: #210504; }
 html, body, canvas, #status { user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; }
 canvas { display: block; width: var(--app-width, 100vw); height: var(--app-height, 100vh); touch-action: none; outline: none; }
 #frontend { display: none; }
+/* play.html sized its UI border-box (game.css); without it the install banner's
+   padding and border overflow its min(520px, 100% - 20px) width on phones. */
+#app-install-banner, #app-install-help { box-sizing: border-box; }
 /* Status line (frame stats, load and error lines): hidden; the diagnostics
    overlay (F3, ?debug=1) shows its text. Tests read it, so it stays current. */
 #status { display: none; position: fixed; left: 8px; bottom: 8px; font: 12px ui-monospace, monospace; color: #e8edf2;
   background: rgba(0, 0, 0, .55); padding: 4px 8px; border-radius: 4px; pointer-events: none; }
-#status.fatal { display: block; }
+#status.fatal { display: block; right: 8px; max-height: 40vh; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; pointer-events: auto; user-select: text; -webkit-user-select: text; }
 
 #safe-area-probe { position: fixed; visibility: hidden; pointer-events: none; padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); }
+
+/* Boot loader (play.html #loading-screen, game.css with menu-screens.css's
+   original ld_ui look): logo on red scenery, the "Now Loading..." strip and
+   the gold-in-pill bar, until the Rust frontend draws. */
+:root { --app-safe-top: env(safe-area-inset-top, 0px); --app-safe-right: env(safe-area-inset-right, 0px); --app-safe-bottom: env(safe-area-inset-bottom, 0px); --app-safe-left: env(safe-area-inset-left, 0px); }
+.loading-screen, .loading-screen * { box-sizing: border-box; }
+.loading-screen { position: fixed; inset: 0 auto auto 0; z-index: 5; width: var(--app-width, 100vw); height: var(--app-height, 100dvh); display: grid; place-items: center; padding: 0; color: #e4edff; background: radial-gradient(ellipse at 30% 35%, #7a1010 0, #4b0909 45%, #1d0303 100%); }
+.loading-screen[hidden] { display: none; }
+.loading-screen::before { content: ''; position: absolute; inset: 0; pointer-events: none; background: radial-gradient(ellipse at 18% 30%, #0000 0, #0000 40%, #12020299 100%); }
+.loading-panel { position: absolute; inset: 0; padding: max(14px, var(--app-safe-top)) max(16px, var(--app-safe-right)) max(20px, var(--app-safe-bottom)) max(16px, var(--app-safe-left)); display: grid; grid-template-rows: auto 1fr auto; }
+.loading-panel h1 { order: -1; margin: clamp(0px, 2vh, 14px) calc(-1 * max(16px, var(--app-safe-left))) 0; padding: 6px max(16px, var(--app-safe-left)) 8px; background: linear-gradient(90deg, #ffffff52 0, #ffffff26 55%, #fff0 100%); color: #f4f4f4; font: italic 800 clamp(26px, 3.6vw, 44px)/1.05 var(--atv-font-display); letter-spacing: .015em; text-shadow: 2px 3px 0 #000a; }
+.loading-brand { display: block; align-self: center; width: min(560px, 82vw); height: auto; margin: 0 auto; filter: drop-shadow(0 4px 0 #0009); }
+#loading-detail { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.loading-meter { justify-self: center; width: min(420px, 70vw); height: 28px; padding: 4px; border-radius: 999px; border: 2px solid #cfcfcf; background: #0b0b0b; overflow: hidden; }
+.loading-meter::after { content: ''; display: block; height: 100%; width: 40%; border-radius: 999px; background: linear-gradient(180deg, #e9d36a 0%, #c3a227 45%, #8f7410 55%, #6d5708 100%); animation: loading-sweep 1.4s ease-in-out infinite; }
+@keyframes loading-sweep { from { transform: translateX(-110%); } to { transform: translateX(360%); } }
+@media (prefers-reduced-motion: reduce) { .loading-meter::after { animation: none; width: 100%; opacity: .65; } }
+
+/* Startup failure notice (game.css #menu-notice, red-edged on data-error). */
+#menu-notice { position: fixed; z-index: 6; box-sizing: border-box; bottom: max(16px, var(--app-safe-bottom)); left: max(16px, var(--app-safe-left)); right: max(16px, var(--app-safe-right)); width: fit-content; max-width: calc(100% - 32px); margin: 0 auto; padding: 10px 18px; border-left: 3px solid #db5348; border-radius: 0 var(--ms-radius, 4px) var(--ms-radius, 4px) 0; background: #171717ed; color: #eee; text-align: center; font: 600 15px/1.35 var(--atv-font-display); box-shadow: 0 4px 24px #0008; overflow-wrap: anywhere; user-select: text; -webkit-user-select: text; }
+#menu-notice:empty { display: none; }

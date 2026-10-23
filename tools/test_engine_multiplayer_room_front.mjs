@@ -1,11 +1,18 @@
 // Host-only gate: the Rust engine's Change ATV and Rider and Select Track over
 // a live room. A Rust browser hosts from its menus; a JavaScript guest joins.
-//   1. Pause → Change ATV and Rider opens the garage over the held room; the
-//      guest keeps seeing the paused host (not stale) behind it; the next ATV
-//      and Done reload the ride in place with the new look, which the guest
-//      sees.
+//   1. Pause → Change ATV and Rider opens the garage over the held room. As in
+//      game.js (a live room keeps simulating under a menu), the host's ride
+//      keeps riding with neutral input behind it: the guest keeps seeing it
+//      (not stale) coast on from its throttle run. The next ATV and Done
+//      reload the ride in place, where it came to rest, with the new look,
+//      which the guest sees.
 //   2. Pause → Select Track opens the course picker; the next course and
 //      Ride move everyone there.
+//   3. A Rust guest's garage is open over the room: only the menu tune plays
+//      (the garage covers the ride; audio.js silences ride and rider sounds).
+//      The host moves the room again: like multiplayer.js `follow`, the guest
+//      leaves the garage for the new course's loading page at once and rides
+//      it with the garage's current ATV.
 //   PLAYWRIGHT_MODULE=... ATV_TEST_URL=http://127.0.0.1:4187 node tools/test_engine_multiplayer_room_front.mjs
 import assert from 'node:assert/strict';
 import { assertNoErrors, base, jsBase, launch, newPage, nextFrames, url } from './browser/harness.mjs';
@@ -77,26 +84,37 @@ try {
   });
   await host.waitForFunction(() => JSON.parse(window.furyMultiplayer ?? 'null')?.drawn >= 1, null, { timeout: 60000 });
   await host.bringToFront();
-  const before = await engine(host);
 
-  // 1. Change ATV and Rider.
+  // 1. Change ATV and Rider, straight after a throttle run.
+  await host.mouse.click(640, 400);
+  await host.keyboard.down('KeyW');
+  await new Promise(resolve => setTimeout(resolve, 2500));
+  await host.keyboard.up('KeyW');
   await pauseRow(host, 'changeride');
   await onPage(host, 'garage');
-  // The ride waits paused behind the garage and stays present: the guest
-  // never sees the host go stale (moving poses go stale after 1 s, still ones
-  // after 2.5 s; paused presence lasts 15 s).
+  // The ride keeps riding behind the garage and stays present: the guest never
+  // sees the host go stale (moving poses go stale after 1 s, still ones after
+  // 2.5 s), and sees it coast on.
   const behind = [];
   for (let i = 0; i < 24; i++) {
     behind.push(
       await guest.evaluate(() => {
         const r = window.atvTerrainStatus.multiplayer?.remote?.find(p => p.peer === 0);
-        return r ? !r.stale : false;
+        return r && !r.stale ? r.position : null;
       })
     );
     await new Promise(resolve => setTimeout(resolve, 250));
   }
-  report.behindGarage = { seconds: 6, present: behind.filter(Boolean).length, samples: behind.length };
+  const seen = behind.filter(Boolean);
+  report.behindGarage = {
+    seconds: 6,
+    present: seen.length,
+    samples: behind.length,
+    coastedFt: seen.length ? distance(seen[0], seen.at(-1)) : 0
+  };
   assert.ok(behind.every(Boolean), `present behind the garage: ${JSON.stringify(report.behindGarage)}`);
+  assert.ok(report.behindGarage.coastedFt > 2, `rides on behind the garage: ${JSON.stringify(report.behindGarage)}`);
+  const before = { origin: seen.at(-1) };
   await key(host, 'ArrowRight');
   const quad = (await read(host)).front.quad;
   await key(host, 'Escape');
@@ -138,6 +156,75 @@ try {
     { timeout: 240000 }
   );
   report.selectTrack = { to: next, drawn: (await engine(host)).drawn };
+
+  // 3. The host changes course while a Rust guest is in its garage.
+  const rust = await newPage(browser, { viewport: { width: 1280, height: 720 } }, errors);
+  await rust.addInitScript(() => {
+    localStorage.setItem('atv2-keyboard-help-seen-v1', '1');
+    localStorage.removeItem('atv-player-selection');
+    Object.defineProperty(document, 'hasFocus', { value: () => true });
+  });
+  await rust.goto(url(`/engine.html?uiDiagnostics=1&room=${code}&player=RustGuest`));
+  await rust.waitForFunction(
+    map => {
+      const m = JSON.parse(window.furyMultiplayer ?? 'null');
+      return m?.environment === map && m.drawn >= 1;
+    },
+    next,
+    { timeout: 240000 }
+  );
+  await rust.bringToFront();
+  await pauseRow(rust, 'changeride');
+  await onPage(rust, 'garage');
+  await rust.waitForFunction(
+    () => JSON.parse(document.querySelector('#ui-state')?.textContent || '{}').menuMusic?.playing === true,
+    null,
+    { timeout: 60000 }
+  );
+  await key(rust, 'ArrowRight');
+  const guestQuad = (await read(rust)).front.quad;
+  await host.bringToFront();
+  await pauseRow(host, 'hosttrack');
+  await onPage(host, 'tracks');
+  await key(host, 'ArrowRight');
+  const third = (await read(host)).front.track;
+  assert.notEqual(third, next);
+  // The loader's status lines, sampled from before the host's Ride.
+  await rust.evaluate(() => {
+    window.statusTrace = [];
+    const sample = () => {
+      const text = document.querySelector('#status')?.textContent ?? '';
+      if (text !== window.statusTrace.at(-1)?.[1]) window.statusTrace.push([performance.now(), text]);
+    };
+    sample();
+    window.statusTimer = setInterval(sample, 10);
+  });
+  const pressed = await rust.evaluate(() => performance.now());
+  await key(host, 'Enter');
+  await rust.bringToFront();
+  await rust.waitForFunction(
+    map => {
+      const m = JSON.parse(window.furyMultiplayer ?? 'null');
+      return m?.environment === map && m.drawn >= 1;
+    },
+    third,
+    { timeout: 240000 }
+  );
+  await guest.waitForFunction(
+    q => window.atvTerrainStatus.multiplayer?.state?.lobby?.players.find(p => p.name === 'RustGuest')?.atv_model === q,
+    guestQuad,
+    { timeout: 60000 }
+  );
+  const trace = await rust.evaluate(() => {
+    clearInterval(window.statusTimer);
+    return window.statusTrace;
+  });
+  const reading = trace.find(([, text]) => text.includes(`Reading original ${third.toUpperCase()}`));
+  report.followCourse = { to: third, loadingAfterMs: reading && Math.round(reading[0] - pressed), quad: guestQuad };
+  assert.ok(
+    reading && reading[0] - pressed < 10000,
+    `the garage went to the new course's loader: ${JSON.stringify(report.followCourse)}`
+  );
   assertNoErrors(errors);
   console.log(JSON.stringify(report, null, 2));
 } finally {

@@ -145,6 +145,12 @@ pub struct Overlay {
     pub backdrop: Option<[u8; 3]>,
     /// The engine's frontend can take the player back (Quit to Main Menu).
     pub frontend: bool,
+    /// The ride is a race (Pause → Restart Race).
+    pub race: bool,
+    /// Pause pages slide in as they open (frontend.js `animatePage`), and
+    /// this frame's slide.
+    transition: atv_ui::transition::PageTransition,
+    menu_motion: Option<atv_ui::transition::Motion>,
 }
 
 impl Overlay {
@@ -212,12 +218,17 @@ impl Overlay {
             diagnostics: Vec::new(),
             backdrop: None,
             frontend: false,
+            race: false,
+            transition: Default::default(),
+            menu_motion: None,
         }
     }
 
     pub fn set_view(&mut self, view: Viewport) {
         if self.view != view {
             self.clear_input();
+            // frontend.js: a resize cancels the page's slide.
+            self.transition.cancel();
         }
         self.view = view;
         self.touch.coarse = view.coarse;
@@ -230,6 +241,42 @@ impl Overlay {
             .rev()
             .find(|(r, _)| r.contains(x, y))
             .map(|(_, id)| *id)
+    }
+
+    /// The graphics context came back: a new UI renderer on `device` with
+    /// the HUD artwork registered again. The GPS map (a 2D canvas in
+    /// game.js, untouched by context loss) is rebuilt from the course;
+    /// glyphs and the Jukebox art return at their next use.
+    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+    pub fn rebuild_gpu(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        format: wgpu::TextureFormat,
+        venue: &atv_game::venue::Venue,
+    ) {
+        self.renderer = Renderer::new(device, format);
+        self.uploaded = DisplayList::default();
+        self.upload_size = (0, 0, 0.);
+        self.menu_cache = None;
+        self.toolbar_cache = None;
+        self.help_cache = None;
+        self.results_cache = None;
+        self.glyphs.clear();
+        self.jukebox_art = None;
+        self.jukebox_art_wanted = self.jukebox_open();
+        if let Some(meter) = &mut self.meter {
+            meter.images.clear();
+            for (name, image) in &meter.assets.images {
+                let id =
+                    self.renderer
+                        .add_image(device, queue, image.width, image.height, &image.rgba);
+                meter.images.insert(name.clone(), id);
+            }
+        }
+        self.minimap.image = None;
+        self.set_course(venue);
+        self.finish_course(&venue.terrain);
     }
 
     /// Starts the GPS map build for a course (minimap.js `setTerrain`).
@@ -255,9 +302,13 @@ impl Overlay {
             (true, false) => {
                 let mut menu = PauseMenu::new();
                 menu.frontend = self.frontend;
+                menu.race_active = self.race;
                 self.menu = Some(menu);
                 self.press = None;
                 self.touch.clear();
+                // keyboard-help.js setRiding(false): menus hide the card.
+                self.help_open = false;
+                self.help_until = None;
             }
             (false, true) => {
                 self.menu = None;
@@ -318,12 +369,8 @@ impl Overlay {
         bindings: Option<&mut atv_game::ride::bindings::Bindings>,
     ) -> Option<MenuEvent> {
         self.menu_reveal = true;
-        let buttons = pad.map_or([0.; 17], |p| p.buttons);
-        let axes = pad.map_or([0.; 4], |p| p.axes);
-        self.with_menu(bindings, |m, ctx, _, _| {
-            m.pad(buttons, axes, pad.is_some(), ctx)
-        })
-        .flatten()
+        self.with_menu(bindings, |m, ctx, _, _| m.pad(pad, ctx))
+            .flatten()
     }
 
     pub fn menu_press(
@@ -370,23 +417,7 @@ impl Overlay {
 
     /// The keyboard card follows the live (possibly remapped) bindings.
     pub fn set_help_keys(&mut self, bindings: &atv_game::ride::bindings::Bindings) {
-        let keys: Vec<(String, Vec<String>)> = atv_game::ride::bindings::ACTIONS
-            .iter()
-            .map(|(action, id, _)| {
-                let labels = bindings
-                    .keyboard_codes(*action)
-                    .iter()
-                    .map(|chord| {
-                        chord
-                            .iter()
-                            .map(|c| help::key_name(c))
-                            .collect::<Vec<_>>()
-                            .join("+")
-                    })
-                    .collect();
-                (id.to_string(), labels)
-            })
-            .collect();
+        let keys = help::action_keys(bindings);
         if keys != self.help_keys {
             self.help_keys = keys;
             self.help_cache = None;
@@ -498,6 +529,15 @@ impl Overlay {
         self.hovered = None;
     }
 
+    /// The page lost focus: input clears and a binding capture is cancelled
+    /// (frontend.js `blur` → `cancelCapture`).
+    pub fn blur(&mut self) {
+        self.clear_input();
+        if let Some(menu) = &mut self.menu {
+            menu.cancel_capture();
+        }
+    }
+
     pub fn touch_down(&mut self, id: u64, x: f32, y: f32, now: f64, active: bool) -> bool {
         self.touch.down(id, x, y, now, active, &mut self.settings)
     }
@@ -507,6 +547,11 @@ impl Overlay {
     }
 
     pub fn sample(&mut self, now: f64, active: bool) -> Controls {
+        // touch.js mountTouchControls: Extras flips and Alpha Arcade flips
+        // decide the thumb's flip zones and its 360 axis each frame.
+        let arcade = self.prefs.alpha("arcade-flips");
+        self.touch.input.flips = self.prefs.flips && !arcade;
+        self.touch.input.arcade = arcade;
         let controls = self.touch.sample(now, active, &mut self.settings);
         if active && self.touch.flip_buzz(now) {
             self.flip_buzzes += 1;
@@ -540,6 +585,10 @@ impl Overlay {
             );
         }
         let view = self.view;
+        // Each pause page shown slides in; closing the menu shows nothing.
+        self.transition
+            .observe(self.menu.as_ref().map(|m| m.shown), crate::reduced_motion());
+        self.menu_motion = self.transition.motion(now);
         if self.menu.is_some() {
             self.prepare_menu(device, queue, bindings);
             // drawBars: the spectrum repaints every frame over the cached panel.
@@ -548,11 +597,17 @@ impl Overlay {
                 .iter()
                 .find(|(_, id)| *id == atv_ui::menu::BARS)
             {
+                if let Some(m) = self.menu_motion {
+                    self.list.opacity(m.opacity);
+                }
                 atv_ui::menu::jukebox::paint_bars(
                     &mut self.list,
                     *area,
                     self.spectrum.as_deref().unwrap_or(&[]),
                 );
+                if self.menu_motion.is_some() {
+                    self.list.unopacity();
+                }
             }
             self.upload(device, queue, width, height);
             self.prepare_ms = started.elapsed().as_secs_f64() * 1000.;
@@ -781,7 +836,9 @@ impl Overlay {
         // Race over: the results panel or the Show Results button.
         match race {
             Some((frame, ..)) if frame.phase == "finished" => {
-                self.results.can_quit = self.frontend;
+                // race.js always offers Quit Event; a page without the
+                // engine's frontend leaves for its menus.
+                self.results.can_quit = self.frontend || cfg!(target_arch = "wasm32");
                 self.results.finish(frame);
             }
             // A race restarted in place starts without results.
@@ -878,6 +935,11 @@ impl Overlay {
         });
     }
 
+    /// A pause page is sliding in (frames keep coming until it rests).
+    pub fn sliding(&self) -> bool {
+        self.transition.active()
+    }
+
     /// The Jukebox page is open (it animates every frame).
     pub fn jukebox_open(&self) -> bool {
         self.menu.as_ref().is_some_and(|m| m.page == "jukebox")
@@ -892,12 +954,16 @@ impl Overlay {
         (taken, command.map(command_action))
     }
 
-    /// Controller A/B/X while the race results are up.
-    pub fn results_pad(&mut self, buttons: &[f32]) -> Option<Action> {
+    /// Controller A/B/X and the D-pad while the race results are up.
+    pub fn results_pad(&mut self, pad: Option<&atv_game::ride::bindings::Pad>) -> Option<Action> {
         if self.menu.is_some() {
             return None;
         }
-        self.results.pad(buttons).map(command_action)
+        let idle = atv_game::ride::bindings::Pad::default();
+        let pad = pad.unwrap_or(&idle);
+        self.results
+            .pad(&pad.buttons, &pad.axes)
+            .map(command_action)
     }
 
     fn upload(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, width: u32, height: u32) {
@@ -935,6 +1001,7 @@ impl Overlay {
         }) else {
             return;
         };
+        state.motion = self.menu_motion;
         if state.page == "jukebox" {
             // The original art loads on the first visit (jukebox.js loadArt).
             self.jukebox_art_wanted = true;
@@ -1056,6 +1123,8 @@ impl Overlay {
             "prepareMs": self.prepare_ms,
             "menu": self.menu.as_ref().map(|m| serde_json::json!({
                 "page": m.page,
+                // The panel's slide: [opacity, translateX px].
+                "motion": self.menu_motion.map(|m| [m.opacity, m.dx]),
                 "selection": m.selection,
                 "choices": m.rows.choices,
                 "scroll": m.scroll,
@@ -1088,8 +1157,8 @@ impl Overlay {
         })
     }
 
-    /// Finishes any pending GPS map build at once (parity captures).
-    #[cfg(not(target_arch = "wasm32"))]
+    /// Finishes any pending GPS map build at once (parity captures, a
+    /// restored graphics context).
     pub fn finish_course(&mut self, terrain: &atv_game::venue::Terrain) {
         while self.minimap.building() {
             self.minimap.build_slice(terrain, f64::INFINITY);

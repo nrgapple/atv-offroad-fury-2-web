@@ -34,3 +34,7 @@ Command line (optional): --venue ID (skip the menus), --quad 1-46, --rider 0|1,
 packed one.
 @NOTES@
 Project: https://github.com/nrgapple/atv-offroad-fury-2-web
+
+The soundtrack is decoded with Symphonia (https://github.com/pdeljanov/Symphonia),
+used unmodified under the Mozilla Public License 2.0
+(https://mozilla.org/MPL/2.0/); its source code is available there and on crates.io.

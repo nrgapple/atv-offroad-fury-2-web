@@ -399,6 +399,45 @@ async fn load_motorcycle(
     })
 }
 
+/// A bank of the given samples for voice tests (no engine, vocal, chassis
+/// or venue tables).
+#[cfg(test)]
+pub(crate) fn test_bank(
+    samples: &[(&str, Arc<Pcm>)],
+    effects: Option<sound_effects::Config>,
+) -> Bank {
+    Bank {
+        samples: samples
+            .iter()
+            .map(|(name, pcm)| (normal(name), pcm.clone()))
+            .collect(),
+        vocal_cache: VocalCache::default(),
+        rate: 48000,
+        rates: HashMap::new(),
+        engine: EngineAudioConfig {
+            engine_set: String::new(),
+            stroke: 4,
+            low_torque_speed: 0.,
+            mid_torque_speed: 0.,
+            airborne_time_to_decel: 0.,
+            overlap_time: 0.,
+            min_distance: 0.,
+            max_distance: 1.,
+            doppler_factor: 0.,
+            samples: Default::default(),
+            impact_samples: Vec::new(),
+        },
+        effects,
+        vocals: None,
+        chassis: None,
+        drive: Vec::new(),
+        ambient: Vec::new(),
+        soultree: Vec::new(),
+        crowd_venue: false,
+        decode_ms: 0.,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

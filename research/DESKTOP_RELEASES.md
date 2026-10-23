@@ -36,7 +36,8 @@ and reader: `crates/atv-content/src/pack.rs` (`Store::Pack`). Properties:
 
 - Only manifest records that pass the runtime allowlist are packed: absolute `/PATH/NAME`
   files ending `.RES`, `.VAG` or `.LSI`, the USA v2.00 build hash, contiguous chunks, no
-  `SCUS*`, ISO, BIOS, ELF, CUE, ZIP or `..` paths. Anything else fails the build. It also
+  `SCUS*`, ISO, BIOS, ELF, CUE, ZIP or `..` paths, plus each song record's `audio/mp4`
+  soundtrack stream. Anything else fails the build. It also
   refuses to write the pack anywhere inside the repository that Git does not ignore.
 - Chunks are deduplicated and verified against their SHA-256 while packing; `verify` re-hashes
   every blob. The reader checks the manifest digest on open, and `Content::file` re-hashes
@@ -44,10 +45,12 @@ and reader: `crates/atv-content/src/pack.rs` (`Store::Pack`). Properties:
 - The pack is uncompressed. Measured on this package: DEFLATE saves 9% overall (`.RES` 2%,
   `.LSI` 0.1%, `.VAG` 17%), so the pack costs nothing to open and the archives are only
   slightly smaller than the pack. Not worth startup time or code.
-- The 21 browser jukebox `.m4a` streams are not packed by default; the `.VAG` originals
-  required by the native Rust audio work are already in the pack. `--include-streams` adds
-  the browser streams.
-- 454 MB, 489 blobs, 219 files.
+- The 21 soundtrack `.m4a` songs the web streams are packed too (87.4 MB), because the
+  desktop app plays the same remaster (AUDIO.md, "Desktop soundtrack"). `--no-streams`
+  leaves them out (`fury-content-<hash>-nostreams.pack`); that app then plays the
+  original VAGs. `build_desktop.py` refuses a pack that lacks any song.
+- 541.9 MB, 510 blobs, 219 files plus 21 songs (454.4 MB and 489 blobs without the
+  songs).
 
 ```sh
 python3 tools/pack_content.py build            # -> ~/LargeFiles/fury-desktop/packs/fury-content-<hash>.pack
@@ -131,7 +134,9 @@ files (454 MB).
 | Windows x86_64 | Built and structurally verified only. Wine 8 (Debian 12) under qemu-user on this arm64 VM cannot start even a hello-world Rust `x86_64-pc-windows-gnu` executable ("failed to start"), so no runtime result either way. Needs a run on a real Windows machine. |
 
 Sizes: archives are about 417-419 MB each (the 454 MB pack plus a roughly 9-12 MB executable)
-(DEFLATE/gzip saves about 9%).
+(DEFLATE/gzip saves about 9%). Bundling the soundtrack songs (2026-10-22) adds about 87 MB
+to each archive (DEFLATE saves 0.6% on AAC), so expect about 505 MB each. That has not
+been measured on a release build yet.
 
 ## Publish
 
@@ -188,7 +193,8 @@ Try `python3 tools/desktop_release_watcher.py --dry-run` first. The job needs th
 
 ## Known gaps
 
-- Archives are about 415 MB each (about 1.7 GB per release). GitHub allows 2 GiB per asset.
+- Archives are about 505 MB each with the soundtrack songs (about 2 GB per release). GitHub
+  allows 2 GiB per asset.
 - The desktop app inherits the shared engine's current gaps; `RUST_ENGINE.md` tracks
   subsystem progress. The archive measurements above predate the in-progress audio and UI work.
 - Windows has not been run at all and Linux was only run on software Vulkan under Docker;

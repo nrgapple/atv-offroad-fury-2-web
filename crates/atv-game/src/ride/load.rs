@@ -21,10 +21,45 @@ const IDENTITY: [f32; 16] = [
 ];
 
 pub(crate) fn member<'a>(resource: &Resource<'a>, name: &str, what: &str) -> Result<Vec<u8>> {
-    resource.extract(
-        basename_index(resource, name)
-            .ok_or_else(|| format!("original {what} is missing ({name})"))?,
-    )
+    resource.extract(basename_index(resource, name).ok_or_else(|| missing_member(what, name))?)
+}
+
+/// A course or vehicle archive member that is not there, worded as
+/// game.js `terrainFromContent` reports it (the failed-load notice).
+pub(crate) fn missing_member(what: &str, name: &str) -> String {
+    match what {
+        "terrain" => "Original terrain is missing from the archive.".into(),
+        "camera presets" | "actor collision rays" | "terrain materials" => {
+            format!("Original {what} are missing.")
+        }
+        "start position" | "National course" | "CPU roster" | "ATV mesh" | "ATV physics"
+        | "chassis collision" => format!("Original {what} is missing."),
+        _ => format!("Original {what} is missing: {name}"),
+    }
+}
+
+/// The course's original archive, or game.js's message when the package
+/// lacks it ("Original ENV01 terrain archive is missing.").
+pub(crate) async fn course_archive(
+    content: &Content,
+    path: &str,
+    environment: &str,
+) -> Result<Vec<u8>> {
+    if !content.has(path) {
+        return Err(format!(
+            "Original {} terrain archive is missing.",
+            environment.to_ascii_uppercase()
+        ));
+    }
+    content.file(path).await
+}
+
+/// An original file the package must list, with game.js's message for it.
+async fn required(content: &Content, path: &str, missing: &str) -> Result<Vec<u8>> {
+    if !content.has(path) {
+        return Err(missing.into());
+    }
+    content.file(path).await
 }
 
 /// Member whose path ends with `suffix` (the rider loader's matching rule).
@@ -39,7 +74,7 @@ pub(crate) fn member_suffix<'a>(resource: &Resource<'a>, suffix: &str) -> Result
                 .to_ascii_lowercase()
                 .ends_with(&suffix)
         })
-        .ok_or_else(|| format!("original rider file is missing: {suffix}"))?;
+        .ok_or_else(|| format!("Original rider file is missing: {suffix}"))?;
     resource.extract(index)
 }
 
@@ -117,13 +152,13 @@ pub async fn load_with(
     let environment = venue.environment.as_str();
     let course = course_resource(environment, race.is_some())?;
     let models = player_models::selection(quad, rider)?;
-    let course_bytes = content.file(&course.archive).await?;
+    let course_bytes = course_archive(content, &course.archive, environment).await?;
     let archive = Resource::parse(&course_bytes)?;
     let (seed, vehicle_model, rider_model) = if models.motorcycle {
         progress("Reading original motorcycle…");
         // Op 100: the MX archive holds the bike, its rider, motions and
         // textures (atv_core::motorcycle::Model).
-        let bytes = content.file(&models.quad).await?;
+        let bytes = required(content, &models.quad, "Original ATV archive is missing.").await?;
         let model = atv_core::motorcycle::Model::load(&bytes, quad)?;
         let archive = Resource::parse(&bytes)?;
         // Drawn as atv-web op 102 returns them: the material-remapped bike
@@ -148,8 +183,8 @@ pub async fn load_with(
             let path = course
                 .placements
                 .as_deref()
-                .ok_or("original terrain materials are missing")?;
-            let bytes = content.file(path).await?;
+                .ok_or("Original terrain materials are missing.")?;
+            let bytes = required(content, path, "Original terrain materials are missing.").await?;
             member(
                 &Resource::parse(&bytes)?,
                 &format!("{environment}.toy"),
@@ -161,6 +196,8 @@ pub async fn load_with(
     progress("Reading original scene collisions…");
     let terrain =
         terrain::decode_tr2(&member(&archive, &format!("{environment}.tr2"), "terrain")?)?;
+    // Long decode steps yield to the host's loop between them.
+    crate::yield_frame().await;
     let scene = &venue.scene;
     let water = match &scene.water_file {
         None => None,
@@ -187,9 +224,11 @@ pub async fn load_with(
             )?)
         }
     };
+    crate::yield_frame().await;
     let ecosystem = basename_index(&archive, &format!("{environment}.esb"))
         .map(|index| archive.extract(index).and_then(|b| ecosystem::decode(&b)))
         .transpose()?;
+    crate::yield_frame().await;
     // 00206e90 ignores missing COL files; authored non-solid overlays have none.
     let mut meshes: Vec<(String, Rc<collision::CollisionMesh>)> = Vec::new();
     let mut obstacles = Vec::new();
@@ -219,6 +258,7 @@ pub async fn load_with(
             world_matrix: placement.world_matrix,
         });
     }
+    crate::yield_frame().await;
     let presets = camera::presets(
         &member(&archive, "followcampresets.pb", "camera presets")?,
         0,
@@ -263,6 +303,7 @@ pub async fn load_with(
             )
         }
     };
+    crate::yield_frame().await;
     let origin = atv_core::spawn::start_origin(&terrain, position, yaw, race.is_some(), None)?;
     let start = (origin.map(|v| v as f32), yaw as f32);
 
@@ -302,7 +343,7 @@ async fn load_quad(
     progress: &mut impl FnMut(&str),
 ) -> Result<(Seed, Model, Model)> {
     progress("Reading original ATV…");
-    let quad_bytes = content.file(&models.quad).await?;
+    let quad_bytes = required(content, &models.quad, "Original ATV archive is missing.").await?;
     let quad_archive = Resource::parse(&quad_bytes)?;
     let mesh_bytes = member(&quad_archive, &models.quad_mesh, "ATV mesh")?;
     let quad_mesh = mesh::decode_psg(&mesh_bytes)?;
@@ -320,7 +361,12 @@ async fn load_quad(
     if actor.transform != IDENTITY {
         return Err("unsupported actor collision header transform".into());
     }
-    let material_bytes = content.file(&models.quad_materials).await?;
+    let material_bytes = required(
+        content,
+        &models.quad_materials,
+        "Original ATV materials archive is missing.",
+    )
+    .await?;
     let quad_textures = textures::load(&quad_mesh, &Resource::parse(&material_bytes)?)?;
     let (rider_mesh, rider_textures, animator, wreck) =
         load_atv_rider(content, models, progress).await?;
@@ -480,7 +526,7 @@ async fn race_setup(
         None => Vec::new(),
     };
     if roster.len() < settings.cpu {
-        return Err("original CPU roster is incomplete".into());
+        return Err("Original CPU names are incomplete.".into());
     }
     let mut models = Vec::with_capacity(roster.len());
     let mut draw = Vec::with_capacity(roster.len());
@@ -519,6 +565,7 @@ async fn race_setup(
                 textures: rider_textures,
             },
         ));
+        crate::yield_frame().await;
     }
     // Grid RiderSpacing from the race mode TOY or, for Supercross, the scene TOY.
     let spacing_sources = mode
@@ -600,4 +647,33 @@ async fn pro_supercross(content: &Content, environment: &str) -> Result<bool> {
             .is_some_and(|d| !d.is_empty() && d.bytes().all(|b| b.is_ascii_digit()))
             && scn.as_deref() == Some(environment)
     }))
+}
+
+#[cfg(test)]
+mod missing_tests {
+    use super::missing_member;
+
+    #[test]
+    fn missing_members_read_as_game_js_words_them() {
+        assert_eq!(
+            missing_member("terrain", "env01.tr2"),
+            "Original terrain is missing from the archive."
+        );
+        assert_eq!(
+            missing_member("start position", "env01.scn"),
+            "Original start position is missing."
+        );
+        assert_eq!(
+            missing_member("camera presets", "followcampresets.pb"),
+            "Original camera presets are missing."
+        );
+        assert_eq!(
+            missing_member("ATV physics", "quad.pb"),
+            "Original ATV physics is missing."
+        );
+        assert_eq!(
+            missing_member("CPU quad resource", "q2.psg"),
+            "Original CPU quad resource is missing: q2.psg"
+        );
+    }
 }

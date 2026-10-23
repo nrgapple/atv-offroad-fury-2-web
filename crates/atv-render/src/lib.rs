@@ -32,6 +32,31 @@ pub use camera::Camera;
 /// Depth plus the stencil the speed-rush pass masks the player's vehicle with.
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth24PlusStencil8;
 
+#[cfg(target_arch = "wasm32")]
+thread_local! {
+    static CONTEXT_PROBE: std::cell::RefCell<Option<Box<dyn Fn() -> bool>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Web: how to ask the browser whether the canvas's WebGL context is lost
+/// (`isContextLost()`). WebGL calls fail from the moment of loss, before
+/// `webglcontextlost` reaches the app; their errors are then expected.
+#[cfg(target_arch = "wasm32")]
+pub fn set_context_probe(probe: impl Fn() -> bool + 'static) {
+    CONTEXT_PROBE.with_borrow_mut(|p| *p = Some(Box::new(probe)));
+}
+
+fn context_lost() -> bool {
+    #[cfg(target_arch = "wasm32")]
+    {
+        CONTEXT_PROBE.with_borrow(|p| p.as_ref().is_some_and(|probe| probe()))
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        false
+    }
+}
+
 pub struct Gpu {
     pub surface: wgpu::Surface<'static>,
     pub device: wgpu::Device,
@@ -43,9 +68,35 @@ pub struct Gpu {
     samples: u32,
     depth: wgpu::TextureView,
     msaa: Option<wgpu::TextureView>,
+    /// Why the device was lost (driver reset, GPU removed), once it is.
+    lost: std::sync::Arc<std::sync::Mutex<Option<String>>>,
 }
 
 impl Gpu {
+    /// The device is gone (desktop: a driver reset; web: a lost WebGL
+    /// context): its resources draw nothing, and the app rebuilds on a new
+    /// device. The reason, for the status line.
+    pub fn lost(&self) -> Option<String> {
+        // wgpu reports a destroyed or lost device from its maintenance pass.
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Err(error) = self.device.poll(wgpu::PollType::Poll)
+            && let Ok(mut lost) = self.lost.lock()
+        {
+            lost.get_or_insert_with(|| error.to_string());
+        }
+        self.lost.lock().ok().and_then(|l| l.clone())
+    }
+
+    /// The shared record behind [`Self::lost`]: the web app marks every
+    /// device it opened when the browser loses the WebGL context.
+    pub fn lost_flag(&self) -> std::sync::Arc<std::sync::Mutex<Option<String>>> {
+        self.lost.clone()
+    }
+
+    /// Test hook: destroys the device as a driver reset would lose it.
+    pub fn simulate_loss(&self) {
+        self.device.destroy();
+    }
     /// Presents a frame drawn only by `draw` over black (menus without a
     /// scene, e.g. the frontend).
     pub fn present_with(
@@ -178,6 +229,34 @@ impl Gpu {
             view_formats: vec![],
             color_space: wgpu::SurfaceColorSpace::Auto,
         };
+        let lost: std::sync::Arc<std::sync::Mutex<Option<String>>> = Default::default();
+        // A lost device (desktop: driver reset, eGPU unplugged; web: a lost
+        // WebGL context) is recorded for the app to recover from; its later
+        // errors are expected. Other errors still panic as wgpu's default
+        // handler does.
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let record = lost.clone();
+            device.set_device_lost_callback(move |reason, message| {
+                if let Ok(mut lost) = record.lock() {
+                    lost.get_or_insert_with(|| format!("{reason:?} {message}").trim().to_string());
+                }
+            });
+        }
+        {
+            let record = lost.clone();
+            device.on_uncaptured_error(std::sync::Arc::new(move |error: wgpu::Error| {
+                let text = error.to_string();
+                let gone = record.lock().is_ok_and(|l| l.is_some()) || context_lost();
+                if gone || text.to_ascii_lowercase().contains("lost") {
+                    if let Ok(mut lost) = record.lock() {
+                        lost.get_or_insert_with(|| text.clone());
+                    }
+                    return;
+                }
+                panic!("wgpu error: {text}");
+            }));
+        }
         surface.configure(&device, &config);
         let (depth, msaa) = targets(&device, &config, samples);
         Ok(Self {
@@ -190,6 +269,7 @@ impl Gpu {
             samples,
             depth,
             msaa,
+            lost,
         })
     }
 
@@ -406,16 +486,32 @@ pub struct SceneRenderer {
 }
 
 impl SceneRenderer {
-    pub fn new(gpu: &Gpu, venue: &Venue, fine_center: Option<[f32; 2]>) -> Self {
+    pub fn new(gpu: &Gpu, venue: &Venue, fine_center: Option<[f32; 2]>) -> Result<Self, String> {
         Self::with_graphics(gpu, venue, fine_center, Graphics::default())
     }
 
+    /// The ride's scene. Invalid original water data fails the load with its
+    /// error, as game.js's `new WaterRenderer` throws out of `loadGame`.
     pub fn with_graphics(
         gpu: &Gpu,
         venue: &Venue,
         fine_center: Option<[f32; 2]>,
         graphics: Graphics,
-    ) -> Self {
+    ) -> Result<Self, String> {
+        match Self::assemble(gpu, venue, fine_center, graphics) {
+            (scene, None) => Ok(scene),
+            (_, Some(error)) => Err(error),
+        }
+    }
+
+    /// The scene and, when the water surface was refused, its error.
+    fn assemble(
+        gpu: &Gpu,
+        venue: &Venue,
+        fine_center: Option<[f32; 2]>,
+        graphics: Graphics,
+    ) -> (Self, Option<String>) {
+        let mut water_error = None;
         let fog = venue.scene.fog.as_ref();
         let fog_color = venue.scene.fog_color.map(|c| c / 255.);
         let far = fog.map_or(
@@ -445,8 +541,7 @@ impl SceneRenderer {
             match water::WaterPass::new(gpu, &world, &shared.borrow(), graphics.fresnel) {
                 Ok(pass) => Some((pass, shared.clone())),
                 Err(error) => {
-                    // The browser reports and skips an unsupported surface.
-                    eprintln!("water: {error}");
+                    water_error = Some(error);
                     None
                 }
             }
@@ -545,7 +640,56 @@ impl SceneRenderer {
         // startSimulation's first follow-camera request (op 46, dt 1/60)
         // already advances the pre-race shots once.
         scene.step_intro();
-        scene
+        (scene, water_error)
+    }
+
+    /// Active Snow's latest frame: its clock and emitters (diagnostics).
+    pub fn snow_state(&self) -> Option<atv_core::weather::SnowFrame> {
+        let (_, shared) = self.snow.as_ref()?;
+        let weather = shared.borrow();
+        let frame = weather.snow.frame();
+        Some(atv_core::weather::SnowFrame {
+            time: frame.time,
+            births: Vec::new(),
+            active_emitters: frame.active_emitters,
+            total_emitted: frame.total_emitted,
+        })
+    }
+
+    /// The graphics context came back (WebGL context restored, a new
+    /// device): every GPU resource is rebuilt on `gpu` from the venue, which
+    /// keeps its CPU data, while the presentation state carries over: the
+    /// scenery clocks and stadium flashes, Snow flakes, pre-race shots, the
+    /// drop gate and the resting lift. Like game.js after
+    /// `webglcontextrestored`, the caller uploads the ride's models again
+    /// ([`Self::set_ride`], [`Self::set_race_cpus`], [`Self::set_wheel_effects`]);
+    /// on-demand passes (speed rush, air blur, blood, landing burst, tire
+    /// tracks, lingering dust, other riders) return at their next use.
+    /// `fine_center`: the fine terrain patch around the rider (world x, z).
+    pub fn rebuild(&mut self, gpu: &Gpu, venue: &Venue, fine_center: Option<[f32; 2]>) {
+        // The venue's water passed when the ride loaded; a restored context
+        // that refuses it rides on without the surface.
+        let (fresh, water_error) = Self::assemble(gpu, venue, fine_center, self.graphics);
+        if let Some(error) = water_error {
+            eprintln!("water: {error}");
+        }
+        let old = std::mem::replace(self, fresh);
+        self.scenery.adopt(old.scenery);
+        if let (Some((pass, _)), Some((previous, _))) = (&mut self.snow, old.snow) {
+            pass.adopt(previous);
+        }
+        if let Some(gate) = old.gate {
+            self.gate = Some(gate);
+            self.scenery.pose_gate(gpu, &gate);
+        }
+        self.weather_view = old.weather_view;
+        self.weather_camera = old.weather_camera;
+        self.intro = old.intro;
+        self.clock = old.clock;
+        self.rest_lift = old.rest_lift;
+        self.ride_pose = old.ride_pose;
+        self.rush_motion = old.rush_motion;
+        self.coarse_pointer = old.coarse_pointer;
     }
 
     /// Advances world animation (scenery UV scroll and ATM clocks) by
@@ -887,7 +1031,7 @@ impl SceneRenderer {
             .shared_vehicle
             .get_or_insert_with(|| vehicle::VehicleShared::new(gpu, gpu.samples))
             .clone();
-        let vehicle = vehicle::VehiclePass::with_shared(gpu, venue, quad, rider, &shared)?;
+        let vehicle = vehicle::VehiclePass::with_shared(gpu, venue, quad, rider, &shared, true)?;
         if self.graphics.shadow_map > 0 {
             self.shadow_map = Some(shadows::ShadowMap::new(gpu, &self.world, &vehicle));
         }
@@ -912,7 +1056,7 @@ impl SceneRenderer {
         self.cpus = models
             .iter()
             .map(|(quad, rider)| {
-                vehicle::VehiclePass::with_shared(gpu, venue, quad, rider, &shared)
+                vehicle::VehiclePass::with_shared(gpu, venue, quad, rider, &shared, false)
                     .map(|v| (v, false))
             })
             .collect::<Result<_, _>>()?;
@@ -951,7 +1095,7 @@ impl SceneRenderer {
             .shared_vehicle
             .get_or_insert_with(|| vehicle::VehicleShared::new(gpu, gpu.samples))
             .clone();
-        let mut pass = vehicle::VehiclePass::with_shared(gpu, venue, quad, rider, &shared)?;
+        let mut pass = vehicle::VehiclePass::with_shared(gpu, venue, quad, rider, &shared, false)?;
         pass.set_paint(paint);
         self.peers.insert(peer, (key, pass, false));
         Ok(())
@@ -967,22 +1111,15 @@ impl SceneRenderer {
         self.peers.retain(|peer, (key, ..)| keep(*peer, *key));
     }
 
-    /// Poses the presented multiplayer riders; others are hidden. Riders over
-    /// 864 ft from the eye are skipped like race CPUs. Returns those drawn.
-    pub fn pose_peers(
-        &mut self,
-        gpu: &Gpu,
-        poses: &[(u8, atv_game::ride::Pose)],
-        eye: [f32; 3],
-    ) -> usize {
+    /// Poses the presented multiplayer riders; others are hidden. Unlike race
+    /// CPUs, riders draw at any distance (drawRemotePlayers in game.js), as
+    /// their name tags do. Returns those drawn.
+    pub fn pose_peers(&mut self, gpu: &Gpu, poses: &[(u8, atv_game::ride::Pose)]) -> usize {
         let mut drawn = 0;
         for (peer, (_, pass, visible)) in &mut self.peers {
             let pose = poses.iter().find(|(id, _)| id == peer).map(|(_, p)| p);
-            *visible = pose.is_some_and(|pose| {
-                let [x, z] = [pose.quad_world[12], pose.quad_world[14]];
-                (x - eye[0]).hypot(z - eye[2]) <= 864.
-            });
-            if *visible && let Some(pose) = pose {
+            *visible = pose.is_some();
+            if let Some(pose) = pose {
                 pass.pose(gpu, pose);
                 drawn += 1;
             }
@@ -1003,6 +1140,12 @@ impl SceneRenderer {
                 None => rest,
             });
         }
+    }
+
+    /// The measured resting lift (None until a step rides with every wheel
+    /// down under contact shadows; drawing then assumes 1.5 ft).
+    pub fn rest_lift(&self) -> Option<f32> {
+        self.rest_lift
     }
 
     fn visible_ground(&self, x: f32, z: f32) -> f32 {
@@ -1249,9 +1392,16 @@ impl SceneRenderer {
             stats.water_draws = 1;
         }
         self.profiler.mark("prepare.water");
+        // Ambient effects, lingering dust and landing bursts fade out by the
+        // fog end, or 768 ft without fog (game.js farDistance/fogEnd).
+        let effects_far = if self.world.globals.fog[2] > 0.5 {
+            self.far
+        } else {
+            768.
+        };
         if let Some((pass, shared)) = &mut self.ambient {
             (stats.ambient_draws, stats.ambient_triangles) =
-                pass.prepare(gpu, &shared.borrow(), &view.camera, self.far);
+                pass.prepare(gpu, &shared.borrow(), &view.camera, effects_far);
         }
         self.profiler.mark("prepare.ambient");
         self.weather_camera = view.camera;
@@ -1267,22 +1417,12 @@ impl SceneRenderer {
             stats.wheel_triangles += triangles;
         }
         if let Some(pass) = &mut self.lingering_dust {
-            let fog_end = if self.world.globals.fog[2] > 0.5 {
-                self.far
-            } else {
-                768.
-            };
-            let (draws, triangles) = pass.prepare(gpu, &view.camera, fog_end);
+            let (draws, triangles) = pass.prepare(gpu, &view.camera, effects_far);
             stats.wheel_draws += draws;
             stats.wheel_triangles += triangles;
         }
         if let Some(pass) = &mut self.burst {
-            let fog_end = if self.world.globals.fog[2] > 0.5 {
-                self.far
-            } else {
-                768.
-            };
-            let (draws, triangles) = pass.prepare(gpu, &view.camera, fog_end);
+            let (draws, triangles) = pass.prepare(gpu, &view.camera, effects_far);
             stats.wheel_draws += draws;
             stats.wheel_triangles += triangles;
         }
@@ -1496,7 +1636,8 @@ impl SceneRenderer {
                 vegetation.draw(&mut pass, &self.world);
             }
             self.profiler.mark("encode.vegetation");
-            // The browser draws vehicles here, then water.
+            // The browser draws vehicles here, then water. Only the player's
+            // pass writes the speed-rush stencil.
             if let Some(vehicle) = &self.vehicle {
                 pass.set_stencil_reference(1);
                 vehicle.draw(&mut pass);

@@ -34,8 +34,14 @@ impl TextInputs {
                 .zip(fields)
                 .all(|(i, f)| i.action == f.action);
         if !same {
+            // A field leaving while it has the keyboard hands it back to the
+            // canvas (removing a focused input leaves focus on <body>).
+            let had_focus = self.has_focus();
             for input in self.inputs.drain(..) {
                 input.element.remove();
+            }
+            if had_focus {
+                focus_canvas();
             }
             let Some(document) = web_sys::window().and_then(|w| w.document()) else {
                 return;
@@ -91,11 +97,22 @@ impl TextInputs {
                         let Some(key) = event.dyn_ref::<web_sys::KeyboardEvent>() else {
                             return;
                         };
-                        // Enter or Escape hands the keyboard back to the menu.
-                        if key.key() == "Enter" || key.key() == "Escape" {
-                            let _ = element.blur();
-                            let _ = proxy.send_event(Message::FrontFocus(None));
-                        }
+                        // Enter or Escape hands the keyboard back to the menu
+                        // (the canvas, so its keys work at once); Escape also
+                        // goes back a page. Tab and Shift+Tab move along the
+                        // menu's own focus order.
+                        let message = match key.key().as_str() {
+                            "Enter" => Message::FrontFocus(None),
+                            "Escape" => Message::FrontEscape,
+                            "Tab" => {
+                                key.prevent_default();
+                                Message::FrontTab(key.shift_key())
+                            }
+                            _ => return,
+                        };
+                        let _ = element.blur();
+                        focus_canvas();
+                        let _ = proxy.send_event(message);
                     })
                 };
                 let _ = element
@@ -134,10 +151,40 @@ impl TextInputs {
     }
 }
 
+impl TextInputs {
+    /// One of the inputs has the page's keyboard focus.
+    fn has_focus(&self) -> bool {
+        let Some(active) = web_sys::window()
+            .and_then(|w| w.document())
+            .and_then(|d| d.active_element())
+        else {
+            return false;
+        };
+        self.inputs
+            .iter()
+            .any(|i| active == *i.element.unchecked_ref::<web_sys::Element>())
+    }
+}
+
+/// The game canvas takes the keyboard (winit listens on it).
+fn focus_canvas() {
+    if let Some(canvas) = web_sys::window()
+        .and_then(|w| w.document())
+        .and_then(|d| d.get_element_by_id("game"))
+        .and_then(|e| e.dyn_into::<web_sys::HtmlElement>().ok())
+    {
+        let _ = canvas.focus();
+    }
+}
+
 impl Drop for TextInputs {
     fn drop(&mut self) {
+        let had_focus = self.has_focus();
         for input in self.inputs.drain(..) {
             input.element.remove();
+        }
+        if had_focus {
+            focus_canvas();
         }
     }
 }

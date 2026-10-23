@@ -55,6 +55,31 @@ for (const engine of ['chromium', 'webkit']) {
         }
         await frames(page);
       }
+      // tools/test_mobile_utilities.mjs: an idle primary finger on a utility
+      // gives no riding input while held and acts once on release.
+      let preset = (await state(page)).camera.preset;
+      await pointer('down', 1, camera);
+      s = await state(page);
+      assert.equal(s.controls.touchHeld, false, 'utility press is not a riding touch');
+      assert.equal(s.controls.throttle, 0);
+      await pointer('up', 1, camera);
+      assert.notEqual((await state(page)).camera.preset, preset, 'primary utility tap acts on release');
+      // Moving away (and back), or a cancel, does not act; dragging from the
+      // toolbar onto the terrain does not start throttle.
+      preset = (await state(page)).camera.preset;
+      await pointer('down', 1, camera);
+      await pointer('move', 1, { x: camera.x, y: camera.y + 90 });
+      await pointer('move', 1, camera);
+      await pointer('up', 1, camera);
+      await pointer('down', 1, camera);
+      await pointer('move', 1, primary);
+      s = await state(page);
+      assert.equal(s.controls.touchHeld, false, 'a drag from the toolbar into the terrain does not ride');
+      assert.equal(s.controls.throttle, 0);
+      await pointer('up', 1, primary);
+      await pointer('down', 1, camera);
+      await pointer('cancel', 1, camera);
+      assert.equal((await state(page)).camera.preset, preset, 'moved-away and cancelled utility touches do not act');
       await pointer('down', 1, primary);
       await wait(page, () => JSON.parse(document.querySelector('#ui-state').textContent).controls.touchHeld);
       await pointer('move', 1, { x: primary.x + 35, y: primary.y + 35 });

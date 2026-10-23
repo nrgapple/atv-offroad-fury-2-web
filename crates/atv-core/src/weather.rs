@@ -387,6 +387,10 @@ impl Snow {
     pub fn config(&self) -> &SnowConfig {
         &self.config
     }
+    /// The latest step's clock and emission (diagnostics).
+    pub fn frame(&self) -> &SnowFrame {
+        &self.frame
+    }
     pub fn step(&mut self, position: [f32; 3], forward: [f32; 3]) -> Result<SnowFrame> {
         if position
             .iter()

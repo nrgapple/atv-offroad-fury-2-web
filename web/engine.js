@@ -20,23 +20,25 @@ for (const type of ['selectstart', 'contextmenu']) document.addEventListener(typ
 // F3 cycles the engine's diagnostics overlay (Off, Performance, Debug; drawn
 // by the Rust UI, ?debug=1 or ?debug=2 to open it). Keep the browser's own F3.
 addEventListener('keydown', event => { if (event.code === 'F3') event.preventDefault(); }, { capture: true });
-// A lost WebGL context (iOS backgrounding, GPU memory pressure) leaves every
-// GPU resource invalid. Ask the browser to restore it, say so, then reopen the
-// current ride's link (the engine keeps it in `fury-resume`; a room's invite
-// rejoins its slot) or this page. game.js rebuilt in place instead.
-const status = () => document.getElementById('status');
-document.addEventListener('webglcontextlost', event => {
-  event.preventDefault();
-  status().textContent = 'Restoring graphics…';
-  status().classList.add('fatal');
-}, true);
-document.addEventListener('webglcontextrestored', () => {
-  let resume = null;
-  try { resume = sessionStorage.getItem('fury-resume'); } catch { /* storage blocked */ }
-  location.replace(resume || location.href);
-}, true);
+// A lost WebGL context is the engine's: it rebuilds in place once the browser
+// restores it (crates/atv-app/src/context.rs).
+// A WebAssembly trap (out of memory, unreachable) stops the engine without a
+// Rust panic message: show it rather than a frozen frame.
+addEventListener('error', event => {
+  const error = event.error;
+  if (!(error instanceof WebAssembly.RuntimeError) && !/memory|unreachable|wasm/i.test(event.message ?? '')) return;
+  const line = document.getElementById('status');
+  if (line.classList.contains('fatal')) return;
+  document.getElementById('loading-screen')?.setAttribute('hidden', '');
+  line.textContent = `The game stopped: ${error?.message ?? event.message}. Reload to try again.`;
+  line.classList.add('fatal');
+});
+// A module that will not start closes the boot loader and shows its error
+// on the notice line, as play.html does for a startup failure.
 init().catch(error => {
-  const status = document.getElementById('status');
-  status.textContent = `Engine failed: ${error}`;
-  status.classList.add('fatal');
+  const text = `Engine failed: ${error?.message ?? error}`;
+  document.getElementById('status').textContent = text;
+  document.getElementById('loading-screen')?.setAttribute('hidden', '');
+  document.getElementById('frontend')?.setAttribute('data-error', 'true');
+  document.getElementById('menu-notice').textContent = text;
 });

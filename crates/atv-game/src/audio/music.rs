@@ -2,8 +2,10 @@
 //! non-repeating shuffle (atv_core::music), and a streaming decoder of the
 //! original VAG songs into the mixer's music bus. The browser JavaScript
 //! streams a hosted AAC re-encode of the same decoded PCM through a media
-//! element; the Rust web build does the same (atv-app), while desktop builds
-//! decode the original VAG with the decoder the JavaScript fallback uses.
+//! element; the Rust web build does the same (atv-app). Desktop builds decode
+//! the same AAC files, bundled in their content pack ([`super::stream`]),
+//! and fall back to the original VAG with the decoder the JavaScript fallback
+//! uses when a song's file is missing.
 use super::mixer::{Mixer, Resampler};
 use crate::{Result, archive::Archive};
 use atv_content::Content;
@@ -36,6 +38,13 @@ impl Catalog {
         })
     }
 
+    /// A new session's shuffle (music.js `load`: op 40 with a fresh
+    /// `sessionSeed()` for each ride).
+    pub fn reseed(&mut self, seed: u64) {
+        self.shuffle = MusicShuffle::new(&self.library);
+        self.random = OriginalRandom::with_seed(seed.max(1));
+    }
+
     pub fn next_song(&mut self) -> Result<Option<&Song>> {
         Ok(self
             .shuffle
@@ -65,6 +74,8 @@ pub struct VagMusic {
     stream: VagStream,
     offset: usize,
     resampler: Resampler,
+    /// The output rate the resampler converts to.
+    rate: u32,
     pub title: String,
 }
 
@@ -103,11 +114,22 @@ impl VagMusic {
         let stream = VagStream::new(&prefix, size)?;
         Ok(Self {
             resampler: Resampler::new(stream.info.sample_rate, rate, 2),
+            rate,
             path,
             stream,
             offset: 0,
             title,
         })
+    }
+
+    /// Jukebox seek: decoding continues from the block at `seconds` (the
+    /// caller drops what the mixer still has queued).
+    pub fn seek(&mut self, seconds: f32) -> Result<()> {
+        let offset = seek_offset(&self.stream.info, seconds);
+        self.stream.seek(offset)?;
+        self.offset = offset;
+        self.resampler = Resampler::new(self.stream.info.sample_rate, self.rate, 2);
+        Ok(())
     }
 
     pub fn finished(&self) -> bool {
@@ -146,5 +168,83 @@ impl VagMusic {
             let out = self.resampler.process(&samples, self.finished());
             mixer.lock().map_err(|_| "mixer lock")?.push_music(&out);
         }
+    }
+}
+
+/// A desktop soundtrack song: the bundled remaster (what the web streams)
+/// or the original VAG.
+#[cfg(not(target_arch = "wasm32"))]
+pub enum NativeSong {
+    Stream(super::stream::StreamMusic),
+    Vag(VagMusic),
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl NativeSong {
+    /// Seconds decoded so far and the song's length.
+    pub fn decoded_seconds(&self) -> (f32, f32) {
+        match self {
+            Self::Stream(song) => song.decoded_seconds(),
+            Self::Vag(song) => song.decoded_seconds(),
+        }
+    }
+
+    pub fn finished(&self) -> bool {
+        match self {
+            Self::Stream(song) => song.finished(),
+            Self::Vag(song) => song.finished(),
+        }
+    }
+
+    pub fn seek(&mut self, seconds: f32) -> Result<()> {
+        match self {
+            Self::Stream(song) => song.seek(seconds),
+            Self::Vag(song) => song.seek(seconds),
+        }
+    }
+
+    pub fn is_stream(&self) -> bool {
+        matches!(self, Self::Stream(_))
+    }
+
+    /// Decodes until `ahead` seconds are queued; false once the song ended.
+    pub async fn pump(
+        &mut self,
+        content: &Content,
+        mixer: &Arc<Mutex<Mixer>>,
+        ahead: f32,
+    ) -> Result<bool> {
+        match self {
+            Self::Stream(song) => song.pump(mixer, ahead),
+            Self::Vag(song) => song.pump(content, mixer, ahead).await,
+        }
+    }
+}
+
+/// The data byte of the whole interleaved block at `seconds`, before the
+/// song's last block.
+fn seek_offset(info: &atv_core::audio::StreamInfo, seconds: f32) -> usize {
+    let stride = info.channels as usize * 16;
+    let block = (seconds.max(0.) * info.sample_rate as f32 / 28.) as usize;
+    let last = (info.data_bytes / stride).saturating_sub(1);
+    block.min(last) * stride
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn seeks_land_on_whole_blocks_inside_the_song() {
+        let info = atv_core::audio::StreamInfo {
+            sample_rate: 28_000,
+            channels: 2,
+            data_offset: 2016,
+            data_bytes: 32 * 1000,
+            frames_max: 28_000,
+        };
+        // 1000 blocks of 28 frames at 28 kHz: one second, 1000 blocks/s.
+        assert_eq!(super::seek_offset(&info, 0.), 0);
+        assert_eq!(super::seek_offset(&info, 0.5), 500 * 32);
+        assert_eq!(super::seek_offset(&info, -3.), 0);
+        assert_eq!(super::seek_offset(&info, 9.), 999 * 32);
     }
 }

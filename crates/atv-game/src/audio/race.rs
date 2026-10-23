@@ -116,8 +116,15 @@ impl RaceAudio {
             } else {
                 Looping::Once
             };
-            self.voices
-                .push(mixer.play(&pcm, looping, [1., 1.], 1., Bus::Music, false, "intout"));
+            self.voices.push(mixer.play(
+                &pcm,
+                looping,
+                [1., 1.],
+                1.,
+                Bus::Stinger,
+                false,
+                "intout",
+            ));
         }
     }
 

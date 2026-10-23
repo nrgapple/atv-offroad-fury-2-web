@@ -79,6 +79,8 @@ pub struct Vegetation {
     pub group_counts: Vec<u32>,
     pub counts: Counts,
     next: Vec<usize>,
+    /// The last render frame serial `select_next` used.
+    frame: f64,
 }
 
 impl Vegetation {
@@ -190,6 +192,7 @@ impl Vegetation {
             output: vec![0.; CAPACITY * (BILLBOARD_FLOATS + MESH_FLOATS)],
             counts: Counts::default(),
             next: Vec::new(),
+            frame: 0.,
         })
     }
 
@@ -249,6 +252,14 @@ impl Vegetation {
             }
             heap[i] = (depth, index);
         }
+    }
+
+    /// `select` with a serial that rises by one per call, as the browser's
+    /// requestAnimationFrame id rises per drawn frame (drawEcosystem): a
+    /// plant unseen for more than three selections restarts its fade.
+    pub fn select_next(&mut self, camera: [f64; 2], forward: [f64; 2]) -> Counts {
+        self.frame += 1.;
+        self.select(camera, forward, self.frame)
     }
 
     /// Selects and writes this render frame's instances. `forward` is the
@@ -739,5 +750,27 @@ pub(crate) mod tests {
             vegetation.select([f64::NAN, 500.], [1., 0.], 2.),
             Counts::default()
         );
+    }
+
+    /// `select_next` is `select` with a serial rising by one per call (the
+    /// browser's rAF id), so a near plant unseen for more than three frames
+    /// restarts at its full mesh when it comes back into view.
+    #[test]
+    fn select_next_rises_one_frame_per_call() {
+        let (mut next, mut explicit) = (fixture(), fixture());
+        let near = ([500., 500.], [0., 1.]);
+        let away = ([76., 76.], [0., 1.]);
+        let views = [near, near, away, away, away, away, near];
+        let mut outputs = Vec::new();
+        for (index, (camera, forward)) in views.into_iter().enumerate() {
+            let counts = next.select_next(camera, forward);
+            assert_eq!(counts, explicit.select(camera, forward, (index + 1) as f64));
+            assert_eq!(next.selection(), explicit.selection());
+            outputs.push((counts, next.selection()));
+        }
+        // Frame 2 keeps the transition phases; frame 7, after four frames
+        // away, resets them as frame 1 (a first selection) did.
+        assert_ne!(outputs[1], outputs[0]);
+        assert_eq!(outputs[6], outputs[0]);
     }
 }

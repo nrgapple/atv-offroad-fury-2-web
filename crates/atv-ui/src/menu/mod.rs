@@ -142,6 +142,8 @@ pub struct State {
     pub music: Option<jukebox::MusicView>,
     pub jukebox_art: Option<jukebox::Art>,
     pub frame: usize,
+    /// The panel's slide-in while a page opens (crate::transition).
+    pub motion: Option<crate::transition::Motion>,
 }
 
 const FOOTER: [&str; 9] = [
@@ -168,9 +170,15 @@ fn display(size: f32, weight: u16, italic: bool) -> Font {
 
 /// The full-viewport layer: dim backdrop and the centred panel.
 pub fn element(view: &Viewport, state: &State, images: &glyphs::GlyphImages) -> El {
-    if state.page == "jukebox"
-        && let Some(music) = &state.music
-    {
+    if state.page == "jukebox" {
+        // Before the ride's soundtrack catalog arrives the page still opens
+        // (jukebox.js: "Loading the soundtrack…").
+        let waiting = jukebox::MusicView {
+            enabled: true,
+            volume: 0.7,
+            ..Default::default()
+        };
+        let music = state.music.as_ref().unwrap_or(&waiting);
         return jukebox::element(view, state, music, state.jukebox_art.as_ref(), state.frame)
             .children(notice(view, state));
     }
@@ -752,7 +760,7 @@ pub fn element(view: &Viewport, state: &State, images: &glyphs::GlyphImages) -> 
             },
             ..Default::default()
         })
-        .child(panel)
+        .child(slide(panel, state))
         .children(notice(view, state));
     }
     let panel = El::new(Style {
@@ -809,8 +817,17 @@ pub fn element(view: &Viewport, state: &State, images: &glyphs::GlyphImages) -> 
         [0.5, 0.45],
         &[(0., Color::hex("#0000004d")), (1., Color::hex("#000000b3"))],
     )))
-    .child(stage)
+    .child(slide(stage, state))
     .children(notice(view, state))
+}
+
+/// `#menu-stage` while a page slides in (frontend.js `animatePage`): the
+/// panel moves and fades; the dim backdrop and `#menu-notice` stay.
+pub fn slide(stage: El, state: &State) -> El {
+    match state.motion {
+        Some(m) => stage.opacity(m.opacity).translate(m.dx, 0.),
+        None => stage,
+    }
 }
 
 /// `#menu-notice` (game.css + hud.css): a fit-content line centred above the

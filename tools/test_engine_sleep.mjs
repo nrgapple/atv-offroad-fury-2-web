@@ -45,10 +45,11 @@ try {
   await press('Escape');
   await page.waitForTimeout(200);
   report.resumed = await window2s();
-  await page.evaluate(() => document.querySelector('canvas').blur());
+  // game.js pauses on the window's blur and focus (not the canvas's).
+  await page.evaluate(() => window.dispatchEvent(new Event('blur')));
   await page.waitForTimeout(200);
   report.blurred = await window2s();
-  await page.evaluate(() => document.querySelector('canvas').focus());
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
   await visibility('hidden');
   await page.waitForTimeout(200);
   report.hidden = await window2s();

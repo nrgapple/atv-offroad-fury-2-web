@@ -113,12 +113,6 @@ fn gains(command: &Command, volume: i32, rate: f32) -> Option<([f32; 2], f32)> {
 }
 
 impl RideAudio {
-    /// The listener of the latest audio step (the follow camera), for
-    /// sounds placed by the app such as other riders'.
-    pub fn listener(&self) -> Option<Listener> {
-        self.last.map(|(listener, ..)| listener)
-    }
-
     pub fn new(bank: Bank, mode: SoundMode) -> Self {
         let vocals = bank
             .vocals
@@ -829,5 +823,181 @@ impl RideAudio {
         self.commands += 1;
         self.stats.engine_commands += 1;
         self.stats.last_engine = Some(sound);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    //! web/audio.test.mjs: train body loops, the rain loop and the rider
+    //! impact guard, on the shared mixer.
+    use super::*;
+    use crate::ride::sound::{AudioStep, QuadFrame};
+    use atv_core::math::Det;
+
+    fn tone(seconds: f32, markers: Option<(f64, f64)>) -> Arc<Pcm> {
+        let frames = (seconds * 48000.) as usize;
+        Arc::new(Pcm {
+            channels: 1,
+            frames,
+            data: (0..frames)
+                .map(|i| ((i as f32) * 0.05).sin_d() * 0.5)
+                .collect(),
+            loop_markers: markers,
+            rate: 48000,
+        })
+    }
+
+    fn pose(x: f32, z: f32) -> [f32; 16] {
+        [1., 0., 0., 0., 0., 1., 0., 0., 0., 0., 1., 0., x, 0., z, 1.]
+    }
+
+    fn step(placement: u32, impact: f32, riding: bool, train: bool) -> AudioStep {
+        let cars = [pose(-20., 20.), pose(20., 20.)];
+        AudioStep {
+            quad: QuadFrame::default(),
+            rider_position: [0., 0., 10.],
+            rider_impact: [impact, 0., 0.],
+            rider_water: false,
+            riding,
+            throttle: 0.,
+            grounded: true,
+            speed: 0.,
+            camera: CameraPose {
+                position: [0., 0., 0.],
+                target: [0., 0., 1.],
+            },
+            placement,
+            bike: None,
+            train_cars: if train {
+                cars.iter().map(|c| (*c, *c)).collect()
+            } else {
+                Vec::new()
+            },
+        }
+    }
+
+    fn render(mixer: &mut Mixer, seconds: f32) -> Vec<f32> {
+        let mut out = vec![0.; 2 * (seconds * 48000.) as usize];
+        mixer.render(&mut out);
+        out
+    }
+
+    fn voices(mixer: &Mixer, label: &str) -> Vec<(f32, [f32; 2])> {
+        mixer
+            .snapshot()
+            .into_iter()
+            .filter(|v| v.0 == label)
+            .map(|v| (v.2, v.3))
+            .collect()
+    }
+
+    #[test]
+    fn train_loops_keep_their_loop_points_and_pan_through_reset_and_pause() {
+        let bank =
+            super::super::bank::test_bank(&[("train", tone(0.1, Some((480., 2400.))))], None);
+        let mut audio = RideAudio::new(bank, SoundMode::Original);
+        audio.train_sounds = (0..2)
+            .map(|car| spatial_audio::Definition {
+                car,
+                sample: "train".into(),
+                min_distance: 150.,
+                max_distance: 350.,
+                looping: true,
+                start_disabled: false,
+                position: None,
+            })
+            .collect();
+        let mut mixer = Mixer::new(48000);
+        audio.step(&mut mixer, &step(0, 0., true, true)).unwrap();
+        assert_eq!(audio.stats.train, 2);
+        let cars = voices(&mixer, "train");
+        assert_eq!(cars.len(), 2);
+        // Stationary cars play at their own pitch, panned to their sides.
+        for (rate, _) in &cars {
+            assert!((rate - 1.).abs() < 1e-4, "{rate}");
+        }
+        let ([l0, r0], [l1, r1]) = (cars[0].1, cars[1].1);
+        assert!((l0 - r1).abs() < 1e-6 && (r0 - l1).abs() < 1e-6, "{cars:?}");
+        assert!((l0 - r0).abs() > 0.05, "{cars:?}");
+        // Past the clip's end the loop runs between the VAG markers.
+        render(&mut mixer, 0.3);
+        assert_eq!(voices(&mixer, "train").len(), 2);
+        audio.step(&mut mixer, &step(0, 0., true, true)).unwrap();
+        // Reset ATV keeps the cars' voices (GameAudio.reset leaves them).
+        audio.step(&mut mixer, &step(1, 0., true, true)).unwrap();
+        assert_eq!(audio.stats.train, 2, "no voice restarts");
+        assert_eq!(voices(&mixer, "train").len(), 2);
+        // Pause mutes the effects bus (the engine gain at 0) and keeps the
+        // voices, which carry on when the ride resumes.
+        mixer.active = false;
+        assert!(render(&mut mixer, 0.05).iter().all(|v| *v == 0.));
+        assert_eq!(voices(&mixer, "train").len(), 2);
+        mixer.active = true;
+        audio.step(&mut mixer, &step(1, 0., true, true)).unwrap();
+        assert_eq!(audio.stats.train, 2);
+    }
+
+    #[test]
+    fn rain_keeps_its_phase_through_reset_and_is_silent_while_paused() {
+        let bank =
+            super::super::bank::test_bank(&[("rain.vag", tone(0.2, Some((0., 9600.))))], None);
+        let mut audio = RideAudio::new(bank, SoundMode::Original);
+        audio.rain = true;
+        let mut mixer = Mixer::new(48000);
+        let first = step(0, 0., true, false);
+        audio.step(&mut mixer, &first).unwrap();
+        audio.frame(&mut mixer, Some(&first)).unwrap();
+        assert_eq!(audio.stats.rain, 1);
+        let rain = audio.rain_voice.unwrap();
+        render(&mut mixer, 0.15);
+        let before = mixer.elapsed(rain).unwrap();
+        let reset = step(1, 0., true, false);
+        audio.step(&mut mixer, &reset).unwrap();
+        audio.frame(&mut mixer, Some(&reset)).unwrap();
+        assert_eq!(audio.rain_voice, Some(rain), "one rain voice through Reset");
+        assert_eq!(audio.stats.rain, 1);
+        render(&mut mixer, 0.15);
+        let after = mixer.elapsed(rain).unwrap();
+        assert!(after > before, "the loop continues: {before} -> {after}");
+        // Paused: silent, the same voice resumes.
+        mixer.active = false;
+        assert!(render(&mut mixer, 0.05).iter().all(|v| *v == 0.));
+        assert!(mixer.playing(Some(rain)));
+        mixer.active = true;
+        audio.frame(&mut mixer, Some(&reset)).unwrap();
+        assert_eq!(audio.stats.rain, 1);
+    }
+
+    #[test]
+    fn rider_impacts_obey_the_active_voice_guard_and_stop_on_reset() {
+        let config = atv_core::sound_effects::Config {
+            body_impact: vec!["body1".into(), "body2".into()],
+            min_distance: 30.,
+            max_distance: 100.,
+        };
+        let bank = super::super::bank::test_bank(
+            &[("body1", tone(0.25, None)), ("body2", tone(0.25, None))],
+            Some(config),
+        );
+        let mut audio = RideAudio::new(bank, SoundMode::Original);
+        let mut mixer = Mixer::new(48000);
+        audio.step(&mut mixer, &step(0, 3., false, false)).unwrap();
+        assert_eq!(audio.stats.impacts, 1);
+        let (rate, _) = voices(&mixer, "impact")[0];
+        assert!(rate > 0., "spatial pitch applies");
+        // A hard contact while the impact still plays starts nothing.
+        audio.step(&mut mixer, &step(0, 3., false, false)).unwrap();
+        audio.step(&mut mixer, &step(0, 0., false, false)).unwrap();
+        assert_eq!(audio.stats.impacts, 1);
+        assert_eq!(voices(&mixer, "impact").len(), 1);
+        // Once it ends, the next hard contact plays again.
+        render(&mut mixer, 0.3);
+        assert!(voices(&mixer, "impact").is_empty());
+        audio.step(&mut mixer, &step(0, 3., false, false)).unwrap();
+        assert_eq!(audio.stats.impacts, 2);
+        // Reset ATV stops the rider effect voice.
+        audio.step(&mut mixer, &step(1, 0., true, false)).unwrap();
+        assert!(voices(&mixer, "impact").is_empty());
+        assert!(audio.effect_voice.is_none());
     }
 }

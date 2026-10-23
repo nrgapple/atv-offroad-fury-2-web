@@ -141,7 +141,12 @@ def ensure_pack(args):
     else:
         pack = pack_content.build(pack_content.DEFAULT_SOURCE, None)
     count, size = pack_content.verify(pack)
-    print(f'content pack {pack}: {count} blobs, {size / 1e6:.1f} MB', flush=True)
+    # The desktop app plays the web's remaster soundtrack from the pack.
+    songs, listed = pack_content.stream_count(pack)
+    if songs < listed:
+        raise SystemExit(f'{pack} carries {songs} of {listed} soundtrack songs; '
+                         'build it with tools/pack_content.py build (streams are included by default)')
+    print(f'content pack {pack}: {count} blobs ({songs} soundtrack songs), {size / 1e6:.1f} MB', flush=True)
     return pack
 
 

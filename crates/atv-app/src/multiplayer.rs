@@ -73,6 +73,9 @@ pub struct Net {
     pub ride: RoomRide,
     /// Arriving while others ride: next meet attempt (ms) and attempts left.
     meet: Option<(f64, u32)>,
+    /// While no listed rider's pose has arrived yet, the meet keeps waiting
+    /// (until this time, ms) as long as the rider stays where it arrived.
+    meet_wait: Option<(f64, [f32; 3])>,
     /// A dropped socket retries its slot key: next attempt (ms), deadline,
     /// attempts so far.
     reconnect: Option<(f64, f64, u32)>,
@@ -88,6 +91,11 @@ pub struct Net {
     saved_key: String,
     /// The latest arrival beside another rider (tests): slot and distance.
     pub met: Option<(u8, f32)>,
+    /// The room was listed as a public (Free Ride) room before its state
+    /// was dropped by a closed socket.
+    public: bool,
+    /// Step accumulator of the ride held behind the frontend (s).
+    held_accumulator: f32,
 }
 
 /// What the app does after a room tick.
@@ -148,6 +156,34 @@ pub fn share_page(relay: &str) -> String {
     format!("{}/play.html", relay.trim_end_matches('/'))
 }
 
+/// Distinct remote quad/rider models kept loaded: one per possible rider
+/// (web/multiplayer.js `MAX_REMOTE_MODELS`).
+const MAX_REMOTE_MODELS: usize = 20;
+
+/// Before caching another remote model: once `MAX_REMOTE_MODELS` are held,
+/// drop every model no rider in the room still uses (game.js
+/// `remoteAssets`). Each rider's GPU upload is per slot and already released
+/// when it leaves or changes model (`SceneRenderer::retain_peers`).
+fn evict_models(models: &mut HashMap<Key, Loaded>, active: &[Key]) {
+    if models.len() >= MAX_REMOTE_MODELS {
+        models.retain(|key, _| active.contains(key));
+    }
+}
+
+/// multiplayer.js `host` for a FREERDnn code.
+pub const RESERVED_CODE: &str = "That code is reserved. Choose another.";
+
+/// The longest an arrival waits for the first pose of a rider to meet (ms).
+const MEET_WAIT_MS: f64 = 15_000.;
+
+fn distance(a: [f32; 3], b: [f32; 3]) -> f32 {
+    a.iter()
+        .zip(b)
+        .map(|(a, b)| (a - b) * (a - b))
+        .sum::<f32>()
+        .sqrt()
+}
+
 /// Close codes a rider with a slot key retries (web/multiplayer.js).
 fn retryable(code: u16, reason: &str) -> bool {
     matches!(code, 1001 | 1005 | 1006 | 1011 | 1012 | 1013)
@@ -167,7 +203,17 @@ fn arrival(clock: Instant, at: Instant, now: u64) -> u64 {
 /// returns its code and, when this rider becomes its creator, the slot key.
 async fn claim(start: &RoomStart) -> Result<(String, Option<String>), String> {
     let origin = net::origin(&start.relay);
-    if start.freeride {
+    // Shared Free Ride codes (FREERDnn) are the relay's: hosting one is
+    // refused, and opening one (an invite from a shared room) is Free Ride,
+    // which finds a shared room with space (multiplayer.js `host`).
+    let shared = start
+        .code
+        .as_deref()
+        .is_some_and(atv_game::multiplayer::is_shared_room);
+    if shared && start.host {
+        return Err(RESERVED_CODE.into());
+    }
+    if start.freeride || shared {
         // POST /multiplayer/freeride reserves a slot in the first shared
         // room with space (web/multiplayer.js `freeride`).
         let url = format!("{}/multiplayer/freeride", start.relay.trim_end_matches('/'));
@@ -324,6 +370,7 @@ impl Net {
             environment: String::new(),
             ride,
             meet: None,
+            meet_wait: None,
             reconnect: None,
             reconnects: 0,
             upload_max: 0.,
@@ -332,9 +379,12 @@ impl Net {
             train_place_at: start.train_place.map(|s| s * 1000.),
             saved_key: String::new(),
             met: None,
+            public: false,
+            held_accumulator: 0.,
         };
         let deadline = Instant::now();
         let mut set_up = false;
+        let mut opened = false;
         loop {
             if deadline.elapsed().as_secs_f32() > 10. {
                 net.socket.close();
@@ -344,6 +394,7 @@ impl Net {
                 let now = now_ms(net.clock);
                 match event {
                     Event::Open => {
+                        opened = true;
                         net.socket.send(net.session.join(&code)?);
                         net.socket.send(net.session.ping(now)?);
                         net.last_ping = now as f64;
@@ -351,9 +402,14 @@ impl Net {
                     Event::Message(bytes, at) => {
                         net.session.receive(&bytes, arrival(net.clock, at, now))?
                     }
+                    // multiplayer.js: a socket that never opens rejects with
+                    // this; one closed later ends the room with its reason.
+                    Event::Closed { .. } if !opened => {
+                        return Err("Unable to connect to this lobby.".into());
+                    }
                     Event::Closed { code, reason } => {
                         return Err(if reason.is_empty() {
-                            format!("Unable to connect to this lobby ({code}).")
+                            format!("Connection lost ({code}).")
                         } else {
                             reason
                         });
@@ -475,6 +531,9 @@ impl Net {
                 Event::Closed { code, reason } => {
                     let key = !self.session.key.is_empty() && !self.session.code.is_empty();
                     let until = self.reconnect.map_or(now_f + 25_000., |r| r.1);
+                    // multiplayer.js onclose: the other riders, the room state
+                    // and their sounds go at once, retry or not.
+                    self.forget_riders();
                     if key && retryable(code, &reason) && now_f < until {
                         let attempts = self.reconnect.map_or(0, |r| r.2);
                         let delay = (500. * 2f64.powi(attempts as i32)).min(3000.);
@@ -521,10 +580,25 @@ impl Net {
                 && self.ready_sent
                 && now_f >= at
             {
-                self.meet = (tries > 1).then_some((now_f + 250., tries - 1));
+                // A rider whose pose has not reached us yet (a host in a
+                // background tab sends on throttled timers) is waited for
+                // rather than given up after 3 s, while this rider stays put.
+                let origin = ride.frame().origin;
+                let (until, from) = *self.meet_wait.get_or_insert((now_f + MEET_WAIT_MS, origin));
+                let waiting = !self.session.heard_from_others()
+                    && now_f < until
+                    && distance(origin, from) < 3.;
+                self.meet = if waiting {
+                    Some((now_f + 250., tries))
+                } else {
+                    (tries > 1).then_some((now_f + 250., tries - 1))
+                };
                 let cars = |car| ride.train_car(car);
                 let others = self.session.positions(now, &cars);
-                for target in self.session.meet_candidates(now, now, &cars) {
+                for target in self
+                    .session
+                    .meet_candidates(now, crate::random::bits(), &cars)
+                {
                     if let Ok(spot) = atv_game::multiplayer::spawn::beside(ride, &target, &others) {
                         let d = spot
                             .0
@@ -567,24 +641,31 @@ impl Net {
             self.last_ping = now_f;
             self.last_traffic = now_f;
         }
-        for player in self.session.others() {
-            let key = (player.atv_model, player.rider_model, player.appearance);
-            if !self.models.contains_key(&key) && !tick.loads.contains(&key) {
-                tick.loads.push(key);
+        let active: Vec<Key> = self
+            .session
+            .others()
+            .map(|p| (p.atv_model, p.rider_model, p.appearance))
+            .collect();
+        for key in &active {
+            if !self.models.contains_key(key) && !tick.loads.contains(key) {
+                tick.loads.push(*key);
             }
         }
         for key in &tick.loads {
+            evict_models(&mut self.models, &active);
             self.models.insert(*key, Loaded::Loading);
         }
         tick
     }
 
-    /// The frontend over a held room (Change ATV and Rider, Select Track): the
-    /// ride waits paused behind it and its paused presence keeps going out, so
-    /// others do not see this rider go stale (web/multiplayer.js keeps `send`
-    /// running while the simulation is paused behind the garage). Call after
-    /// [`Net::tick`] without a ride, which keeps the socket and pings.
-    pub fn hold(&mut self, ride: &Ride) {
+    /// The frontend over a held room (Change ATV and Rider, Select Track):
+    /// the ride keeps riding behind it (see [`Net::ride_held`]) and its pose
+    /// goes out at the normal 50 ms cadence, unpaused, as web/multiplayer.js
+    /// sends while game.js keeps simulating a live room under a menu.
+    /// `paused` is actual suspension (hidden page, suspended app), which
+    /// sends the paused presence pose. Call after [`Net::tick`] without a
+    /// ride, which keeps the socket and pings.
+    pub fn hold(&mut self, ride: &Ride, paused: bool) {
         if self.closed.is_some() || self.reconnect.is_some() {
             return;
         }
@@ -601,7 +682,7 @@ impl Net {
             return;
         }
         self.last_send = now_f;
-        match self.session.snapshot(ride, now, true) {
+        match self.session.snapshot(ride, now, paused) {
             Ok(Some(bytes)) => {
                 if self.socket.send(bytes.clone()) {
                     let _ = self.session.sent(&bytes);
@@ -613,10 +694,54 @@ impl Net {
         }
     }
 
-    /// Other riders' bodies for this frame's contact steps.
-    pub fn contact_bodies(&self, ride: &Ride) -> Vec<atv_game::multiplayer::PeerBody> {
-        self.session
-            .contact_bodies(now_ms(self.clock), &|car| ride.train_car(car))
+    /// One rendered frame of the ride held behind the frontend. A live room
+    /// keeps simulating under a menu (game.js `simulationPaused` is false
+    /// and drivingInput is neutral): up to four fixed steps with neutral
+    /// controls, each touching the other riders at its own session time and
+    /// on the shared train clock, as [`crate::riding::Riding`] does online.
+    pub fn ride_held(&mut self, ride: &mut Ride, dt: f32) -> Result<(), String> {
+        if self.closed.is_some() {
+            return Ok(());
+        }
+        self.held_accumulator = (self.held_accumulator + dt.min(0.05)).min(0.1);
+        let count = ((self.held_accumulator * 60.).floor() as u32).min(4);
+        if count == 0 {
+            return Ok(());
+        }
+        self.held_accumulator -= count as f32 / 60.;
+        let server = self
+            .server_clock()
+            .map(|(origin, offset)| origin.elapsed().as_secs_f64() * 1000. + offset);
+        let now = self.session_now();
+        let controls = atv_game::ride::Controls::default();
+        for step in 0..count {
+            let behind = count - 1 - step;
+            ride.train_server_ms = server.map(|now| now - f64::from(behind) * 1000. / 60.);
+            let step_now = now.saturating_sub(u64::from(behind) * 1000 / 60);
+            let mut touch = |ride: &mut Ride| {
+                for peer in self.contact_bodies_at(step_now, ride) {
+                    ride.peer_contact(peer.position, peer.velocity, peer.orientation, peer.tie);
+                }
+            };
+            ride.step_with(&controls, 0., &mut touch)?;
+            // Rooms do not race; drain the step's (empty) race events.
+            let _ = ride.take_race_events();
+        }
+        Ok(())
+    }
+
+    /// The session clock (ms) that pose buffers and contacts read.
+    pub fn session_now(&self) -> u64 {
+        now_ms(self.clock)
+    }
+
+    /// Other riders' bodies at session time `now` (ms), rebased onto the
+    /// ride's current train cars (one step's contacts).
+    pub fn contact_bodies_at(&self, now: u64, ride: &Ride) -> Vec<atv_game::multiplayer::PeerBody> {
+        if self.closed.is_some() {
+            return Vec::new();
+        }
+        self.session.contact_bodies(now, &|car| ride.train_car(car))
     }
 
     /// The relay clock as (local clock origin, offset ms) once synced, so the
@@ -636,6 +761,7 @@ impl Net {
         // arrival meets a rider (web/multiplayer.js `ride`).
         self.met = None;
         self.meet = None;
+        self.meet_wait = None;
     }
 
     /// Simulates a dropped connection (tests: `?dropSocket` / reconnect gate).
@@ -650,15 +776,45 @@ impl Net {
     }
 
     pub fn model_loaded(&mut self, model: Result<RemoteModel, (Key, String)>) {
-        match model {
-            Ok(model) => {
-                self.models.insert(model.key, Loaded::Ready(Rc::new(model)));
-            }
-            Err((key, error)) => {
+        // A load whose rider left (and was evicted meanwhile) is dropped; a
+        // rider who comes back loads again.
+        let key = match &model {
+            Ok(model) => model.key,
+            Err((key, _)) => *key,
+        };
+        let Some(slot) = self.models.get_mut(&key) else {
+            return;
+        };
+        *slot = match model {
+            Ok(model) => Loaded::Ready(Rc::new(model)),
+            Err((_, error)) => {
                 crate::status(&format!("Remote rider model unavailable: {error}"));
-                self.models.insert(key, Loaded::Failed);
+                Loaded::Failed
             }
-        }
+        };
+    }
+
+    /// A closed socket (multiplayer.js onclose): the room's riders, state
+    /// and poses are dropped at once; a reconnect keeps the slot key and code.
+    fn forget_riders(&mut self) {
+        let (code, key) = (self.session.code.clone(), self.session.key.clone());
+        self.public |= self.session.lobby.as_ref().is_some_and(|l| l.public);
+        self.session.restart();
+        self.session.code = code;
+        self.session.key = key;
+        self.locals.clear();
+        self.presented.clear();
+        self.riders.clear();
+        self.meet = None;
+        self.meet_wait = None;
+    }
+
+    /// An Arlington Free Ride room (its Leave and end return to the main
+    /// menu; a private room's to the Multiplayer page).
+    pub fn shared(&self) -> bool {
+        self.public
+            || self.session.lobby.as_ref().is_some_and(|l| l.public)
+            || atv_game::multiplayer::is_shared_room(&self.session.code)
     }
 
     /// Uploads arrived models, then poses every presented remote rider.
@@ -668,8 +824,16 @@ impl Net {
         scene: &mut SceneRenderer,
         venue: &atv_game::venue::Venue,
         ride: &Ride,
-        eye: [f32; 3],
     ) {
+        // An ended room draws nobody (and its riders' sounds stop).
+        if self.closed.is_some() {
+            scene.retain_peers(|_, _| false);
+            self.locals.clear();
+            self.presented.clear();
+            self.riders.clear();
+            self.drawn = 0;
+            return;
+        }
         let own = ride.frame().origin;
         let now = now_ms(self.clock);
         let dt = self
@@ -771,7 +935,7 @@ impl Net {
                 Err(error) => crate::status(&format!("Remote rider pose: {error}")),
             }
         }
-        self.drawn = scene.pose_peers(gpu, &poses, eye);
+        self.drawn = scene.pose_peers(gpu, &poses);
     }
 
     /// The room as the pause menu shows it (frontend.js lobby fields).
@@ -896,6 +1060,7 @@ impl Net {
             "environment": self.session.environment(),
             "players": self.session.lobby.as_ref().map(|l| l.players.len()),
             "drawn": self.drawn,
+            "models": self.models.len(),
             "rttMs": self.session.rtt_ms,
             "rttSamples": self.session.rtt_history.iter().collect::<Vec<_>>(),
             "clockSynced": self.session.server_now(0).is_some(),
@@ -925,4 +1090,30 @@ pub async fn load_model(content: Rc<Content>, key: Key) -> Result<RemoteModel, (
     remote::load_model(&content, key)
         .await
         .map_err(|e| (key, e))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn key(quad: u16) -> Key {
+        (quad, 0, Default::default())
+    }
+
+    #[test]
+    fn remote_models_evict_departed_riders_once_twenty_are_held() {
+        let mut models: HashMap<Key, Loaded> = HashMap::new();
+        for quad in 1..=19 {
+            models.insert(key(quad), Loaded::Failed);
+        }
+        // Below the cap nothing is dropped.
+        evict_models(&mut models, &[key(1)]);
+        assert_eq!(models.len(), 19);
+        models.insert(key(20), Loaded::Loading);
+        // At the cap, only models a rider in the room still uses stay.
+        evict_models(&mut models, &[key(3), key(20)]);
+        let mut kept: Vec<u16> = models.keys().map(|k| k.0).collect();
+        kept.sort_unstable();
+        assert_eq!(kept, [3, 20]);
+    }
 }

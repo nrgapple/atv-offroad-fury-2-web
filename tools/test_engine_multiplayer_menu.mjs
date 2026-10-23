@@ -59,7 +59,8 @@ try {
   await onPage(host, 'create-lobby');
   await host.getByLabel('Rider name', { exact: true }).fill('RustHost');
   await host.getByLabel('Lobby code (8 letters/numbers, optional)').fill(code.toLowerCase());
-  await host.keyboard.press('Escape');
+  // Enter hands the keyboard back (Escape goes back a page, as in frontend.js).
+  await host.keyboard.press('Enter');
   await nextFrames(host, 3);
   if (shots) await host.screenshot({ path: shots.replace('.png', '-host-form.png') });
   await host.mouse.click(8, 8);
@@ -103,7 +104,7 @@ try {
   await onPage(guest, 'join-lobby');
   await guest.getByLabel('Rider name', { exact: true }).fill('RustGuest');
   await guest.getByLabel('Lobby code', { exact: true }).fill(code);
-  await guest.keyboard.press('Escape');
+  await guest.keyboard.press('Enter');
   await nextFrames(guest, 3);
   if (shots) await guest.screenshot({ path: shots.replace('.png', '-join-form.png') });
   await guest.mouse.click(8, 8);

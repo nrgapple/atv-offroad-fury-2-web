@@ -1,8 +1,9 @@
 //! Audio output for the ride: cpal pulls the shared mixer (CoreAudio,
 //! WASAPI, ALSA natively; Web Audio in browsers), started by the first key
 //! or pointer press as browser autoplay rules require. The soundtrack is the
-//! original VAG decoded in Rust on desktop and the hosted AAC stream in a
-//! media element on the web, as the JavaScript game plays it.
+//! hosted AAC stream in a media element on the web, as the JavaScript game
+//! plays it, and the same AAC files bundled with the desktop app and decoded
+//! in Rust there (soundtrack.rs).
 pub use crate::soundtrack::Soundtrack;
 use atv_content::Content;
 use atv_game::{
@@ -590,7 +591,7 @@ impl Sound {
         ride.train_sounds = settings.train_sounds.clone();
         ride.rain = settings.rain;
         ride.apply_mode(&mut *output.mixer.lock().map_err(|_| "mixer lock")?);
-        // The page's soundtrack carries on into the ride (one MusicStream).
+        // The page's player (the host started a new session for this ride).
         let music = match music {
             Some(music) => music,
             None => Rc::new(RefCell::new(
@@ -691,11 +692,22 @@ impl Sound {
     }
 
     /// Other riders' engines and body impacts this frame; returns the
-    /// remote quads whose engine banks should load.
-    pub fn remote_frame(&mut self, riders: &[atv_game::audio::remote::Rider]) -> Vec<u16> {
+    /// remote quads whose engine banks should load. Like game.js's
+    /// multiplayer listener, they are heard from the drawn camera (after the
+    /// chase, crash and big-air presentation) moving with the player's
+    /// vehicle; the player's own and venue sounds keep the follow camera.
+    pub fn remote_frame(
+        &mut self,
+        riders: &[atv_game::audio::remote::Rider],
+        own: [f32; 3],
+        camera: &atv_render::Camera,
+        velocity: [f32; 3],
+    ) -> Vec<u16> {
         let wanted = self.remote.wanted(riders);
-        let Some(listener) = self.ride.listener() else {
-            return wanted;
+        let listener = atv_core::spatial_audio::Listener {
+            position: camera.eye(),
+            forward: camera.axes().forward,
+            velocity,
         };
         let audible = self.output.started.get() && self.focused;
         if let Ok(mut mixer) = self.output.mixer.lock() {
@@ -706,6 +718,7 @@ impl Sound {
                 bank.effects.as_ref(),
                 &impact,
                 &listener,
+                Some(own),
                 riders,
                 audible,
             ) {
@@ -854,10 +867,7 @@ impl Sound {
             MusicEvent::Intro => {
                 self.music.borrow_mut().hold(0.);
                 // A random INT001-INT004 (Math.random in the browser).
-                let pick = web_time::SystemTime::now()
-                    .duration_since(web_time::UNIX_EPOCH)
-                    .map_or(0, |d| d.subsec_nanos())
-                    % 4;
+                let pick = crate::random::below(4);
                 vec![(format!("intout/int00{}.vag", pick + 1), false)]
             }
             MusicEvent::Restart => {
@@ -903,6 +913,7 @@ impl Sound {
                 "steps": steps, "started": self.output.started.get(),
                 "active": mixer.active, "musicActive": mixer.music_active,
                 "clock": mixer.seconds(), "voices": mixer.voices(),
+                "intOut": mixer.snapshot().iter().filter(|v| v.0 == "intout").count(),
                 "engineCommands": self.ride.stats.engine_commands,
                 // Event sounds started so far (the sound audit).
                 "events": {

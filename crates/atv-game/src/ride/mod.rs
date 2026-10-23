@@ -94,6 +94,9 @@ pub struct Controls {
     /// Alpha Arcade flips: the keyboard/controller steering that spins the
     /// quad in the air (game.js `input.arcade_spin`).
     pub arcade_spin: Option<f32>,
+    /// Touch Extras flip request (game.js `flip_request`, `flip_launch`,
+    /// `flip_hold`): "backflip", "left" or "right".
+    pub flip_request: Option<(&'static str, bool, f32)>,
 }
 
 /// Camera mode of the latest camera step.
@@ -775,7 +778,21 @@ impl Ride {
 
     /// One fixed step: vehicle and rider (op 24), then the camera (op 46).
     pub fn step(&mut self, controls: &Controls, orbit: f32) -> Result<()> {
+        self.step_with(controls, orbit, &mut |_| {})
+    }
+
+    /// [`Ride::step`] with a multiplayer hook: `contacts` applies the other
+    /// riders' contacts once the step's train has moved, before the vehicle
+    /// steps (atv-web op 50: train, `collide`, then the vehicle). Rooms ride
+    /// ATVs; a motorcycle takes its contacts before its own step.
+    pub fn step_with(
+        &mut self,
+        controls: &Controls,
+        orbit: f32,
+        contacts: &mut dyn FnMut(&mut Ride),
+    ) -> Result<()> {
         if self.is_motorcycle() {
+            contacts(self);
             self.step_bike(controls)?;
             self.step_race()?;
             self.step_train()?;
@@ -790,6 +807,7 @@ impl Ride {
             return Ok(());
         }
         self.step_train()?;
+        contacts(self);
         // During the countdown and after the finish the race supplies the
         // player's controls; tricks and touch/keyboard intents are dropped.
         match self.race_controls()? {
@@ -909,9 +927,16 @@ impl Ride {
             self.input_generation = Some(controls.generation);
         }
         vehicle.set_stunt_landing_safe(safe);
-        vehicle.set_realistic_train(self.options.realistic_train);
-        let arcade = self.options.arcade_flips;
-        vehicle.set_flips(self.options.flips && !arcade)?;
+        // Race-imposed controls (countdown, post-finish autopilot) carry only
+        // the drive axes and crash settings, so atv-web op 24 reads flips,
+        // Arcade flips and realistic train as off for those steps.
+        let options = |on: bool| on && !race_input;
+        vehicle.set_realistic_train(options(self.options.realistic_train));
+        let arcade = options(self.options.arcade_flips);
+        // Alpha Arcade flips imply flips regardless of the Extras row (atv-web
+        // op 24). Turning flips off here every step would drop the arcade
+        // controller each step, so its rotation never spun up past one step.
+        vehicle.set_flips(arcade || options(self.options.flips))?;
         vehicle.set_arcade_flips(arcade)?;
         vehicle.set_arcade_spin(controls.arcade_spin.filter(|_| arcade))?;
         if controls.stunt_modifiers > 7 {
@@ -921,6 +946,16 @@ impl Ride {
             controls.stunt_modifiers,
             [controls.stunt_x, controls.stunt_y],
         )?;
+        if let Some((request, launch, hold)) = controls.flip_request {
+            use atv_core::flip_tricks::Trick;
+            let trick = match request {
+                "backflip" => Trick::Backflip,
+                "left" => Trick::ThreeSixtyLeft,
+                "right" => Trick::ThreeSixtyRight,
+                _ => return Err("invalid flip request".into()),
+            };
+            vehicle.request_flip(trick, launch, hold);
+        }
         vehicle.set_rider_mode(self.rider_mode);
         vehicle.set_forced_landing(forced_landing);
         if let Some(water) = &mut sim.water {
