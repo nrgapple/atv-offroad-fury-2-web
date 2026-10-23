@@ -913,6 +913,7 @@ impl Sound {
                 "steps": steps, "started": self.output.started.get(),
                 "active": mixer.active, "musicActive": mixer.music_active,
                 "clock": mixer.seconds(), "voices": mixer.voices(),
+                "intOut": mixer.snapshot().iter().filter(|v| v.0 == "intout").count(),
                 "engineCommands": self.ride.stats.engine_commands,
                 // Event sounds started so far (the sound audit).
                 "events": {

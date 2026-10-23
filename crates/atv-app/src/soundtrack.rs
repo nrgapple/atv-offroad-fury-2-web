@@ -32,6 +32,10 @@ pub struct Soundtrack {
     /// whether a missing song file was reported.
     #[cfg(not(target_arch = "wasm32"))]
     streams: NativeStreams,
+    /// Desktop: a song could not be read (music.js `failed`); the next
+    /// selection, Next or Previous tries again.
+    #[cfg(not(target_arch = "wasm32"))]
+    read_failed: bool,
     #[cfg(target_arch = "wasm32")]
     pub(crate) web: Option<Rc<RefCell<WebMusic>>>,
     #[cfg(target_arch = "wasm32")]
@@ -103,6 +107,8 @@ impl Soundtrack {
             song: None,
             #[cfg(not(target_arch = "wasm32"))]
             streams: NativeStreams::default(),
+            #[cfg(not(target_arch = "wasm32"))]
+            read_failed: false,
             #[cfg(target_arch = "wasm32")]
             web: activation.web(),
             #[cfg(target_arch = "wasm32")]
@@ -178,10 +184,10 @@ impl Soundtrack {
     pub fn set_volume(&mut self, music: f32, enabled: bool) {
         self.music_volume = music.clamp(0., 1.);
         if enabled != self.music_enabled {
+            // music.js `setEnabled`: Off pauses the song where it is
+            // (`pauseQueue`); On resumes the same song from there.
             self.music_enabled = enabled;
-            if !enabled {
-                self.stop_song();
-            }
+            self.apply_pause();
         }
         #[cfg(target_arch = "wasm32")]
         if !self.held {
@@ -230,6 +236,10 @@ impl Soundtrack {
         self.player.started = false;
         self.held = false;
         self.hold_fade = None;
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.read_failed = false;
+        }
         #[cfg(target_arch = "wasm32")]
         {
             // The old fallback decoder (if any) keeps its own slot.
@@ -281,7 +291,8 @@ impl Soundtrack {
             "musicTime": self.web.as_ref().map(|w| w.borrow().element.current_time()),
             "musicPaused": self.web.as_ref().map(|w| w.borrow().element.paused()),
             "vagFallback": self.vag.fallback, "musicQueued": queued,
-            "soundtrackActive": self.active,
+            "soundtrackActive": self.active, "musicHeld": self.held,
+            "musicEnabled": self.music_enabled,
         });
         #[cfg(not(target_arch = "wasm32"))]
         {
@@ -292,6 +303,7 @@ impl Soundtrack {
                 .map_or((None, None), |(d, l)| (Some((d - queued).max(0.)), Some(l)));
             serde_json::json!({
                 "musicTitle": self.title, "musicQueued": queued, "soundtrackActive": self.active,
+                "musicHeld": self.held, "musicEnabled": self.music_enabled, "readFailed": self.read_failed,
                 "musicSource": self.song.as_ref().map(|s| if s.is_stream() { "stream" } else { "vag" }),
                 "musicTime": time, "musicDuration": duration, "streamsFailed": self.streams.failed,
             })
@@ -436,12 +448,24 @@ impl Soundtrack {
             let _ = web.element.pause();
             web.playing = false;
         }
+        // The decoded-VAG song ends too (music.js `request` clears the
+        // queue), so a Jukebox choice or a race hold starts afresh.
+        #[cfg(target_arch = "wasm32")]
+        if self.vag.fallback {
+            self.vag
+                .generation
+                .set(self.vag.generation.get().wrapping_add(1));
+            *self.vag.song.borrow_mut() = None;
+            if let Ok(mut mixer) = self.output.mixer.lock() {
+                mixer.clear_music();
+            }
+        }
         self.set_song_gain(1.);
     }
 
     #[cfg(not(target_arch = "wasm32"))]
     fn native_music(&mut self) {
-        if self.held || self.player.paused {
+        if self.held || self.player.paused || self.read_failed {
             return;
         }
         let Some(catalog) = &mut self.catalog else {
@@ -485,8 +509,11 @@ impl Soundtrack {
             }
         });
         if let Err(error) = result {
+            // music.js: `failed` stops reads (Music stays on) until the
+            // player picks a song again.
             eprintln!("music: {error}");
-            self.music_enabled = false;
+            self.read_failed = true;
+            self.song = None;
         }
     }
 
@@ -624,6 +651,9 @@ struct VagFallback {
     song: Rc<RefCell<Option<atv_game::audio::music::VagMusic>>>,
     busy: Rc<Cell<bool>>,
     failed: Rc<Cell<bool>>,
+    /// Bumped when the song stops; a decode that began before keeps none
+    /// of its song.
+    generation: Rc<Cell<u32>>,
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -659,11 +689,13 @@ impl Soundtrack {
             self.output.mixer.clone(),
             self.output.rate,
         );
-        let (slot, busy, failed) = (
+        let (slot, busy, failed, generation) = (
             self.vag.song.clone(),
             self.vag.busy.clone(),
             self.vag.failed.clone(),
+            self.vag.generation.clone(),
         );
+        let started = generation.get();
         busy.set(true);
         wasm_bindgen_futures::spawn_local(async move {
             let result: Result<(), String> = async {
@@ -671,19 +703,31 @@ impl Soundtrack {
                     let song =
                         atv_game::audio::music::VagMusic::open_path(&content, path, title, rate)
                             .await?;
+                    if generation.get() != started {
+                        return Ok(());
+                    }
                     *slot.borrow_mut() = Some(song);
                 }
                 // The song leaves the slot while it decodes (no borrow across awaits).
                 let taken = slot.borrow_mut().take();
                 if let Some(mut song) = taken {
                     let pumped = song.pump(&content, &mixer, 2.).await;
+                    if generation.get() != started {
+                        // Stopped meanwhile: drop what this decode queued.
+                        if let Ok(mut mixer) = mixer.lock() {
+                            mixer.clear_music();
+                        }
+                        return Ok(());
+                    }
                     *slot.borrow_mut() = Some(song);
                     pumped?;
                 }
                 Ok(())
             }
             .await;
-            if let Err(error) = result {
+            if let Err(error) = result
+                && generation.get() == started
+            {
                 web_sys::console::warn_1(&format!("music fallback: {error}").into());
                 failed.set(true);
             }
@@ -836,6 +880,13 @@ impl Soundtrack {
             return;
         };
         let request = |sound: &mut Self, pick: Pick| {
+            // music.js `request` clears `failed`: a new pick reads again.
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                sound.read_failed = false;
+            }
+            #[cfg(target_arch = "wasm32")]
+            sound.vag.failed.set(false);
             sound.player.pending = Some(pick);
             if let Pick::Select(i) | Pick::History(_, i) = pick {
                 sound.player.selected = Some(i);
@@ -846,6 +897,7 @@ impl Soundtrack {
             JukeboxAction::Select(i) if i < catalog.library.songs.len() => {
                 self.music_enabled = true;
                 self.set_paused(false);
+                self.apply_pause();
                 request(self, Pick::Select(i));
             }
             JukeboxAction::Select(_) => {}
@@ -855,6 +907,7 @@ impl Soundtrack {
                     self.music_enabled = true;
                 }
                 self.set_paused(playing);
+                self.apply_pause();
             }
             JukeboxAction::Next => {
                 let cursor = (self.player.playing_history_index(catalog) + 1) as usize;
@@ -953,8 +1006,9 @@ impl Soundtrack {
     }
 
     fn apply_pause(&mut self) {
-        // The menus also hold it paused (`set_active(false)`).
-        let paused = self.player.paused || !self.active;
+        // The menus also hold it paused (`set_active(false)`), and so does
+        // Music off.
+        let paused = self.player.paused || !self.active || !self.music_enabled;
         if let Ok(mut mixer) = self.output.mixer.lock() {
             mixer.stream_paused = paused;
         }

@@ -15,8 +15,8 @@ pub struct Gamepads {
     gilrs: Option<Gilrs>,
     /// The pad in use: the pin, else Auto's choice (`activeGamepad`).
     active: Option<GamepadId>,
-    /// Each pad's axis baselines (gamepads.js `baselines`).
-    baselines: HashMap<GamepadId, HashMap<gilrs::ev::Code, f32>>,
+    /// Auto's choice and each pad's axis baselines.
+    tracker: Tracker<GamepadId>,
     /// Controller Settings' pinned pad (name, index), or Auto.
     pin: Option<(String, u32)>,
     /// The playing rumble (dropping a gilrs effect stops it).
@@ -25,6 +25,92 @@ pub struct Gamepads {
     /// Swallows an unsupported effect's rejection (one closure, reused).
     #[cfg(target_arch = "wasm32")]
     ignore: wasm_bindgen::closure::Closure<dyn FnMut(wasm_bindgen::JsValue)>,
+}
+
+/// One connected pad as the tracker sees it: its key, name (browser `id`),
+/// index, standard mapping and this sample's input.
+struct PadView<K> {
+    key: K,
+    name: String,
+    index: u32,
+    standard: bool,
+    pressed: bool,
+    /// (axis code, value).
+    axes: Vec<(u32, f32)>,
+}
+
+/// gamepads.js `createPadTracker`: Auto follows the pad with fresh input.
+struct Tracker<K> {
+    current: Option<K>,
+    /// Each pad's axis baselines (gamepads.js `baselines`).
+    baselines: HashMap<K, HashMap<u32, f32>>,
+}
+
+impl<K> Default for Tracker<K> {
+    fn default() -> Self {
+        Self {
+            current: None,
+            baselines: HashMap::new(),
+        }
+    }
+}
+
+impl<K: Copy + Eq + std::hash::Hash> Tracker<K> {
+    /// gamepads.js `activeGamepad`: the pinned pad while connected, else a
+    /// pad with fresh input (the current one first), else the current pad,
+    /// a standard-mapped one, or the first.
+    fn choose(&mut self, pads: &[PadView<K>], pin: Option<&(String, u32)>) -> Option<K> {
+        self.baselines
+            .retain(|key, _| pads.iter().any(|p| p.key == *key));
+        // Every pad's baseline is taken at first sight, pinned or not.
+        let live: Vec<K> = pads
+            .iter()
+            .filter(|pad| {
+                let base = self.baselines.entry(pad.key).or_default();
+                let mut moved = pad.pressed;
+                for &(code, value) in &pad.axes {
+                    if !value.is_finite() {
+                        continue;
+                    }
+                    let rest =
+                        *base
+                            .entry(code)
+                            .or_insert(if value.abs() > RESTING { value } else { 0. });
+                    moved |= (value - rest).abs() > MOVED;
+                }
+                moved
+            })
+            .map(|pad| pad.key)
+            .collect();
+        let current = self
+            .current
+            .filter(|key| pads.iter().any(|p| p.key == *key));
+        let chosen = pinned(pads.iter().map(|p| (p.key, p.name.as_str(), p.index)), pin)
+            .or_else(|| current.filter(|key| live.contains(key)))
+            .or_else(|| live.first().copied())
+            .or(current)
+            .or_else(|| pads.iter().find(|p| p.standard).map(|p| p.key))
+            .or_else(|| pads.first().map(|p| p.key));
+        self.current = chosen;
+        chosen
+    }
+}
+
+/// gamepads.js `pinned`: among connected (key, name, index), the pinned
+/// name, preferring the pinned index.
+fn pinned<'a, K: Copy>(
+    pads: impl Iterator<Item = (K, &'a str, u32)>,
+    pin: Option<&(String, u32)>,
+) -> Option<K> {
+    let (name, index) = pin?;
+    let same: Vec<(K, u32)> = pads
+        .filter(|(_, n, _)| n == name)
+        .map(|(key, _, i)| (key, i))
+        .collect();
+    same.iter()
+        .find(|(_, i)| i == index)
+        .or_else(|| same.first())
+        .map(|(key, _)| *key)
 }
 
 const BUTTONS: [Button; 17] = [
@@ -52,7 +138,7 @@ impl Gamepads {
         Self {
             gilrs: Gilrs::new().ok(),
             active: None,
-            baselines: HashMap::new(),
+            tracker: Tracker::default(),
             pin: None,
             #[cfg(not(target_arch = "wasm32"))]
             effect: None,
@@ -86,17 +172,16 @@ impl Gamepads {
     /// gamepads.js `pinned`: the pinned pad while connected (same name,
     /// preferring the same index).
     fn pinned(&self) -> Option<GamepadId> {
-        let (name, index) = self.pin.as_ref()?;
         let gilrs = self.gilrs.as_ref()?;
-        let same: Vec<GamepadId> = gilrs
+        let pads: Vec<(GamepadId, String, u32)> = gilrs
             .gamepads()
-            .filter(|(_, pad)| pad.name() == name)
-            .map(|(id, _)| id)
+            .map(|(id, pad)| (id, pad.name().to_string(), usize::from(id) as u32))
             .collect();
-        same.iter()
-            .copied()
-            .find(|id| usize::from(*id) as u32 == *index)
-            .or_else(|| same.first().copied())
+        pinned(
+            pads.iter()
+                .map(|(id, name, index)| (*id, name.as_str(), *index)),
+            self.pin.as_ref(),
+        )
     }
 
     /// pad-glyphs.js `standardPad`: standard unless the active pad reports
@@ -130,45 +215,27 @@ impl Gamepads {
         }
     }
 
-    /// gamepads.js `activeGamepad`: the pinned pad while connected, else a
-    /// pad with fresh input (the current one first), else the current pad,
-    /// a standard-mapped one, or the first.
+    /// gamepads.js `activeGamepad` over the connected gilrs pads.
     fn choose(&mut self) -> Option<GamepadId> {
-        if let Some(id) = self.pinned() {
-            return Some(id);
-        }
         let gilrs = self.gilrs.as_ref()?;
-        let pads: Vec<GamepadId> = gilrs.gamepads().map(|(id, _)| id).collect();
-        self.baselines.retain(|id, _| pads.contains(id));
-        let mut live = Vec::new();
-        for &id in &pads {
-            let pad = gilrs.gamepad(id);
-            let state = pad.state();
-            let base = self.baselines.entry(id).or_default();
-            let mut moved = state.buttons().any(|(_, b)| b.is_pressed());
-            for (code, axis) in state.axes() {
-                let value = axis.value();
-                let rest =
-                    *base
-                        .entry(code)
-                        .or_insert(if value.abs() > RESTING { value } else { 0. });
-                moved |= (value - rest).abs() > MOVED;
-            }
-            if moved {
-                live.push(id);
-            }
-        }
-        let current = self.active.filter(|id| pads.contains(id));
-        current
-            .filter(|id| live.contains(id))
-            .or_else(|| live.first().copied())
-            .or(current)
-            .or_else(|| {
-                pads.iter()
-                    .copied()
-                    .find(|id| self.is_standard(*id) == Some(true))
+        let pads: Vec<PadView<GamepadId>> = gilrs
+            .gamepads()
+            .map(|(id, pad)| {
+                let state = pad.state();
+                PadView {
+                    key: id,
+                    name: pad.name().to_string(),
+                    index: usize::from(id) as u32,
+                    standard: self.is_standard(id) == Some(true),
+                    pressed: state.buttons().any(|(_, b)| b.is_pressed()),
+                    axes: state
+                        .axes()
+                        .map(|(code, axis)| (code.into_u32(), axis.value()))
+                        .collect(),
+                }
             })
-            .or_else(|| pads.first().copied())
+            .collect();
+        self.tracker.choose(&pads, self.pin.as_ref())
     }
 
     pub fn sample(&mut self) -> Option<Pad> {
@@ -398,4 +465,140 @@ fn browser_pads() -> Vec<wasm_bindgen::JsValue> {
         .iter()
         .filter(|p| browser_get(p, "connected").and_then(|c| c.as_bool()) == Some(true))
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    //! web/gamepads.test.mjs `createPadTracker` cases.
+    use super::*;
+
+    fn pad(index: u32, name: &str, standard: bool, axes: [f32; 4], pressed: bool) -> PadView<u32> {
+        PadView {
+            key: index,
+            name: name.into(),
+            index,
+            standard,
+            pressed,
+            axes: axes
+                .iter()
+                .enumerate()
+                .map(|(i, v)| (i as u32, *v))
+                .collect(),
+        }
+    }
+    const REST: [f32; 4] = [0.; 4];
+
+    #[test]
+    fn follows_the_pad_in_use_not_an_idle_pad_listed_first() {
+        let mut t = Tracker::default();
+        let steam = pad(0, "Steam Virtual Gamepad", true, REST, false);
+        let sense = |axes, pressed| pad(1, "DualSense Wireless Controller", true, axes, pressed);
+        assert_eq!(
+            t.choose(&[steam, sense(REST, false)], None),
+            Some(0),
+            "nothing pressed yet: first standard pad"
+        );
+        let steam = || pad(0, "Steam Virtual Gamepad", true, REST, false);
+        assert_eq!(
+            t.choose(&[steam(), sense(REST, true)], None),
+            Some(1),
+            "a button press selects the real controller"
+        );
+        assert_eq!(
+            t.choose(&[steam(), sense(REST, false)], None),
+            Some(1),
+            "released: stays on the last used controller"
+        );
+        assert_eq!(
+            t.choose(&[steam(), sense([-0.8, 0., 0., 0.], false)], None),
+            Some(1)
+        );
+        let moving = pad(0, "Steam Virtual Gamepad", true, [0.9, 0., 0., 0.], false);
+        assert_eq!(
+            t.choose(&[moving, sense([-0.8, 0., 0., 0.], false)], None),
+            Some(1),
+            "the current pad keeps priority while both are active"
+        );
+    }
+
+    #[test]
+    fn idle_devices_with_resting_axes_never_take_over() {
+        let mut t = Tracker::default();
+        let hid = |axes| pad(0, "Generic HID", false, axes, false);
+        let xbox = |pressed| pad(1, "Xbox Controller", true, REST, pressed);
+        let resting = [-1., 1.2857, 0., 0.];
+        assert_eq!(
+            t.choose(&[hid(resting), xbox(false)], None),
+            Some(1),
+            "prefers a standard-mapping pad when idle"
+        );
+        assert_eq!(t.choose(&[hid(resting), xbox(true)], None), Some(1));
+        assert_eq!(
+            t.choose(&[hid(resting), xbox(false)], None),
+            Some(1),
+            "resting -1 / hat axes are not activity"
+        );
+        assert_eq!(
+            t.choose(&[hid([0., 1.2857, 0., 0.]), xbox(false)], None),
+            Some(0),
+            "real movement on that device does count"
+        );
+    }
+
+    #[test]
+    fn disconnects_and_no_pads() {
+        let mut t = Tracker::default();
+        let pro = || pad(2, "Pro Controller", true, REST, false);
+        assert_eq!(
+            t.choose(&[pad(1, "Xbox Controller", true, REST, true), pro()], None),
+            Some(1)
+        );
+        assert_eq!(
+            t.choose(&[pro()], None),
+            Some(2),
+            "falls back when the current pad disconnects"
+        );
+        assert_eq!(t.choose(&[], None), None);
+        assert!(t.baselines.is_empty(), "departed pads drop their baselines");
+    }
+
+    #[test]
+    fn a_pinned_pad_wins_while_connected_then_auto() {
+        let mut t = Tracker::default();
+        let xbox = |pressed| pad(0, "Xbox Controller", true, REST, pressed);
+        let sense = || pad(1, "DualSense", true, REST, false);
+        assert_eq!(t.choose(&[xbox(false), sense()], None), Some(0));
+        let pin = ("DualSense".to_string(), 1);
+        assert_eq!(
+            t.choose(&[xbox(true), sense()], Some(&pin)),
+            Some(1),
+            "input on another pad does not steal a pinned pad"
+        );
+        assert_eq!(
+            t.choose(&[xbox(false)], Some(&pin)),
+            Some(0),
+            "absent pinned pad falls back to Auto"
+        );
+        // Same name elsewhere: the pinned index first, else the first of that name.
+        let twins = [
+            pad(3, "DualSense", true, REST, false),
+            pad(5, "DualSense", true, REST, false),
+        ];
+        assert_eq!(t.choose(&twins, Some(&("DualSense".into(), 5))), Some(5));
+        assert_eq!(t.choose(&twins, Some(&("DualSense".into(), 9))), Some(3));
+    }
+
+    #[test]
+    fn baselines_are_taken_while_a_pad_is_pinned() {
+        // gamepads.js measures every pad, pinned or not: a pedal centred when
+        // first seen under a pin and pressed far once the pin is cleared is
+        // fresh input, not a resting value.
+        let mut t = Tracker::default();
+        let wheel = |x| pad(0, "Wheel", false, [x, 0., 0., 0.], false);
+        let pin = ("Pad".to_string(), 1);
+        let pinned = pad(1, "Pad", true, REST, false);
+        assert_eq!(t.choose(&[wheel(0.), pinned], Some(&pin)), Some(1));
+        let other = pad(2, "Other", true, REST, false);
+        assert_eq!(t.choose(&[wheel(0.9), other], None), Some(0));
+    }
 }
