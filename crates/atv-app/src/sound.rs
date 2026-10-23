@@ -867,10 +867,7 @@ impl Sound {
             MusicEvent::Intro => {
                 self.music.borrow_mut().hold(0.);
                 // A random INT001-INT004 (Math.random in the browser).
-                let pick = web_time::SystemTime::now()
-                    .duration_since(web_time::UNIX_EPOCH)
-                    .map_or(0, |d| d.subsec_nanos())
-                    % 4;
+                let pick = crate::random::below(4);
                 vec![(format!("intout/int00{}.vag", pick + 1), false)]
             }
             MusicEvent::Restart => {

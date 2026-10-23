@@ -89,11 +89,8 @@ impl Soundtrack {
         music: bool,
     ) -> Result<Self, String> {
         let output = activation.output()?;
-        let seed = (web_time::SystemTime::now()
-            .duration_since(web_time::UNIX_EPOCH)
-            .map_or(1, |d| d.as_millis() as u64)
-            & 0x7fff_ffff)
-            .max(1);
+        // music.js `sessionSeed`: a random nonzero 32-bit seed per session.
+        let seed = (crate::random::bits() & 0xffff_ffff).max(1);
         let catalog = Catalog::load(&content, seed).await.ok();
         Ok(Self {
             output,
@@ -819,8 +816,7 @@ impl Soundtrack {
                 if web.playing && self.player.selected.is_some() {
                     // Quarter seconds: the Jukebox lays out at most at 4 Hz for it.
                     view.position = (web.element.current_time() as f32 * 4.).floor() / 4.;
-                    let d = web.element.duration();
-                    view.duration = if d.is_finite() { d as f32 } else { 0. };
+                    view.duration = self.stream_seconds(web.element.duration()) as f32;
                     view.seekable = true;
                     view.playing = !web.element.paused();
                 }
@@ -893,8 +889,10 @@ impl Soundtrack {
                 #[cfg(target_arch = "wasm32")]
                 if let Some(web) = &self.web {
                     let web = web.borrow();
-                    let d = web.element.duration();
-                    if web.playing && seconds.is_finite() && d.is_finite() {
+                    // music.js `seek`: the manifest's length (the element's
+                    // until it has one), a quarter second short of the end.
+                    let d = self.stream_seconds(web.element.duration());
+                    if web.playing && seconds.is_finite() {
                         web.element
                             .set_current_time(f64::from(seconds).clamp(0., (d - 0.25).max(0.)));
                     }
@@ -925,6 +923,26 @@ impl Soundtrack {
                 }
             }
         }
+    }
+
+    /// music.js `streams[selectedIndex]?.seconds ?? element.duration`: the
+    /// selected song's hosted stream length, else the element's (0 while it
+    /// has no metadata).
+    #[cfg(target_arch = "wasm32")]
+    fn stream_seconds(&self, element: f64) -> f64 {
+        let manifest = self
+            .catalog
+            .as_ref()
+            .zip(self.player.selected)
+            .and_then(|(catalog, index)| catalog.library.songs.get(index))
+            .and_then(|song| {
+                self.content
+                    .manifest
+                    .record(&atv_game::audio::music::path(song))
+            })
+            .and_then(|record| record.stream.as_ref())
+            .map(|stream| stream.seconds);
+        manifest.unwrap_or(if element.is_finite() { element } else { 0. })
     }
 
     fn set_paused(&mut self, paused: bool) {

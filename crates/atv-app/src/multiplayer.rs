@@ -588,7 +588,10 @@ impl Net {
                 };
                 let cars = |car| ride.train_car(car);
                 let others = self.session.positions(now, &cars);
-                for target in self.session.meet_candidates(now, now, &cars) {
+                for target in self
+                    .session
+                    .meet_candidates(now, crate::random::bits(), &cars)
+                {
                     if let Ok(spot) = atv_game::multiplayer::spawn::beside(ride, &target, &others) {
                         let d = spot
                             .0

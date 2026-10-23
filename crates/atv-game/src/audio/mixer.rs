@@ -1,5 +1,6 @@
 //! Software mixer with the browser game's Web Audio graph semantics: one SFX
-//! bus and one music bus into a 0.65 master, AudioBufferSourceNode playback
+//! bus, one music bus and the race stingers into a 0.65 master,
+//! AudioBufferSourceNode playback
 //! (samples resampled to the output rate once, as decodeAudioData does, then
 //! linear interpolation for playback-rate changes and loop points in
 //! seconds), per-voice stereo gains, the Enhanced engine crossfade and the
@@ -220,6 +221,10 @@ impl Pcm {
 pub enum Bus {
     Sfx,
     Music,
+    /// IntOut race stingers (audio.js `playIntOut`): at the music volume but
+    /// wired straight to the master, past the Alpha muffle lowpass and the
+    /// Jukebox analyser that the music bus feeds.
+    Stinger,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -371,6 +376,7 @@ pub struct Mixer {
     echo: Option<Echo>,
     sfx_scratch: Vec<[f32; 2]>,
     music_scratch: Vec<[f32; 2]>,
+    stinger_scratch: Vec<[f32; 2]>,
     pub meter: Meter,
     /// Streamed soundtrack frames at the output rate (the music bus).
     music: std::collections::VecDeque<[f32; 2]>,
@@ -404,6 +410,7 @@ impl Mixer {
             echo: None,
             sfx_scratch: Vec::new(),
             music_scratch: Vec::new(),
+            stinger_scratch: Vec::new(),
             meter: Meter::default(),
             music: Default::default(),
             stream_gain: 1.,
@@ -575,18 +582,19 @@ impl Mixer {
         let frames = out.len() / 2;
         let mut sfx = std::mem::take(&mut self.sfx_scratch);
         let mut music = std::mem::take(&mut self.music_scratch);
-        sfx.resize(frames, [0.; 2]);
-        music.resize(frames, [0.; 2]);
-        sfx.fill([0.; 2]);
-        music.fill([0.; 2]);
+        let mut stinger = std::mem::take(&mut self.stinger_scratch);
+        for bus in [&mut sfx, &mut music, &mut stinger] {
+            bus.resize(frames, [0.; 2]);
+            bus.fill([0.; 2]);
+        }
         for slot in self.voices.iter_mut() {
             let Some(voice) = slot.as_mut() else {
                 continue;
             };
-            let target = if voice.bus == Bus::Sfx {
-                &mut sfx
-            } else {
-                &mut music
+            let target = match voice.bus {
+                Bus::Sfx => &mut sfx,
+                Bus::Music => &mut music,
+                Bus::Stinger => &mut stinger,
             };
             let pcm = &*voice.pcm;
             let mut ended = false;
@@ -670,7 +678,11 @@ impl Mixer {
             let echo = self.echo.as_mut().map_or([0.; 2], |e| e.process(bus));
             for c in 0..2 {
                 let effects = if self.active { bus[c] + echo[c] } else { 0. };
-                let soundtrack = if self.music_active { music[i][c] } else { 0. };
+                let soundtrack = if self.music_active {
+                    music[i][c] + stinger[i][c]
+                } else {
+                    0.
+                };
                 let value = MASTER * (effects + self.music_volume * soundtrack);
                 out[c] = value;
                 self.meter.sum_squares[c] += f64::from(value * value);
@@ -681,6 +693,7 @@ impl Mixer {
         self.clock += frames as u64;
         self.sfx_scratch = sfx;
         self.music_scratch = music;
+        self.stinger_scratch = stinger;
     }
 
     /// Label, length (frames), playback rate and gains of every live voice.
@@ -771,6 +784,40 @@ mod tests {
         mixer.render(&mut out);
         assert!(out.iter().any(|v| *v > MASTER * MUSIC_VOLUME * 0.25));
         assert!(mixer.seconds() > clock);
+    }
+
+    /// audio.js `playIntOut`: stingers play at the music volume straight to
+    /// the master, so the Alpha muffle that closes the music lowpass leaves
+    /// them open, and the Jukebox analyser does not hear them.
+    #[test]
+    fn stingers_bypass_the_music_muffle_and_analyser() {
+        let constant = Arc::new(Pcm {
+            channels: 1,
+            frames: 48_000,
+            data: vec![0.5; 48_000],
+            loop_markers: None,
+            rate: 48000,
+        });
+        let level = |bus| {
+            let mut mixer = Mixer::new(48000);
+            mixer.play(&constant, Looping::Whole, [1.; 2], 1., bus, false, "t");
+            mixer.hype.set(1., 0., true);
+            let mut out = vec![0.; 2 * 4800];
+            for _ in 0..5 {
+                mixer.render(&mut out);
+            }
+            let heard = mixer.analysis.iter().any(|s| s.abs() > 1e-6);
+            (out[out.len() - 2], heard)
+        };
+        let (stinger, analysed) = level(Bus::Stinger);
+        assert!(
+            (stinger - MASTER * MUSIC_VOLUME * 0.5).abs() < 1e-5,
+            "{stinger}"
+        );
+        assert!(!analysed);
+        let (music, analysed) = level(Bus::Music);
+        assert!(music < stinger * 0.9, "the music bus is muffled: {music}");
+        assert!(analysed);
     }
 
     #[test]
