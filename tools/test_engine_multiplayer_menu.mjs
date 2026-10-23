@@ -42,7 +42,7 @@ async function open(page) {
     localStorage.removeItem('atv-player-selection');
     Object.defineProperty(document, 'hasFocus', { value: () => true });
   });
-  await page.goto(url('/engine.html?uiDiagnostics=1&joinDelayMs=1500'));
+  await page.goto(url('/play.html?uiDiagnostics=1&joinDelayMs=1500'));
   await onPage(page, 'title');
   await page.mouse.click(8, 8);
   await key(page, 'Enter');

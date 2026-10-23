@@ -26,7 +26,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 # origin/main before the switch-over: the last commit with the JavaScript game.
-REFERENCE = '4783519a6f86173e6afce9ce7a679dfe6a8169ed'
+REFERENCE = '8e1b94ff3b07f68ad2b0783c73af3eb4e4ea40a0'
 CHECKOUT = ROOT / 'work/js-reference'
 
 

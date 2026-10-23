@@ -58,7 +58,7 @@ try {
     localStorage.setItem('atv2-keyboard-help-seen-v1', '1');
     localStorage.removeItem('atv-player-selection');
   });
-  await page.goto(url('/engine.html?uiDiagnostics=1'));
+  await page.goto(url('/play.html?uiDiagnostics=1'));
   await onPage(page, 'title');
   await page.mouse.click(8, 8);
   await key(page, 'Enter');
@@ -82,7 +82,7 @@ try {
     localStorage.setItem('atv2-keyboard-help-seen-v1', '1');
     sessionStorage.setItem('atv-mp-session', record);
   }, record);
-  await thief.goto(url(`/engine.html?uiDiagnostics=1&room=${code}&player=Thief&play=1`));
+  await thief.goto(url(`/play.html?uiDiagnostics=1&room=${code}&player=Thief&play=1`));
   await wait(
     page,
     () => {

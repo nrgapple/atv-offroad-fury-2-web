@@ -33,7 +33,7 @@ try {
     localStorage.setItem('atv-audio-v1', JSON.stringify({ sfx: 0.5, mode: 'original', silent: 'play' }));
     localStorage.setItem('atv-soundtrack-v1', JSON.stringify({ v: 3, enabled: true, volume: 0.3 }));
   });
-  await page.goto(url('/engine.html?venue=env01&uiDiagnostics=1'));
+  await page.goto(url('/play.html?venue=env01&uiDiagnostics=1'));
   await wait(page, () => JSON.parse(document.querySelector('#ui-state')?.textContent ?? 'null')?.settings?.sfx != null);
   let s = await settings(page);
   assert.equal(s.speedRushPeak, 1); assert.equal(s.crashMode, 'gorn');
@@ -75,7 +75,7 @@ try {
   // A ride from the engine's frontend (a ride link) loads the saved preset.
   const link = await newPage(browser, { viewport: { width: 1280, height: 720 } }, errors);
   await link.addInitScript(() => { localStorage.setItem('atv-graphics', 'high'); localStorage.setItem('atv2-keyboard-help-seen-v1', '1'); });
-  await link.goto(url('/engine.html?map=env01&play=1&uiDiagnostics=1'));
+  await link.goto(url('/play.html?map=env01&play=1&uiDiagnostics=1'));
   await wait(link, () => JSON.parse(document.querySelector('#ui-state')?.textContent ?? 'null')?.settings != null);
   s = await settings(link);
   assert.deepEqual([s.interpolation, s.anisotropy, s.dust, s.tireTracks, s.contactShadows], [true, 16, 96, 3600, true]);

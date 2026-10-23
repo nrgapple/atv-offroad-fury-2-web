@@ -42,7 +42,7 @@ for (const engine of ['chromium', 'webkit']) {
         return play.apply(this, args);
       };
     });
-    await page.goto(url('/engine.html?venue=env01&audioDiagnostics=1&uiDiagnostics=1'));
+    await page.goto(url('/play.html?venue=env01&audioDiagnostics=1&uiDiagnostics=1'));
     const state = () => page.evaluate(() => JSON.parse(document.documentElement.dataset.engineAudio));
     const press = async key => {
       await page.keyboard.down(key);

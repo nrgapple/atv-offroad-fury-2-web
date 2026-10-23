@@ -1,7 +1,7 @@
 // Host-only gate: Rust engine drop-in multiplayer against the JavaScript
 // game on a local relay with original content.
 //   1. A JavaScript host rides env01 from the menus.
-//   2. A Rust browser guest (engine.html?room=) arrives beside the host.
+//   2. A Rust browser guest (play.html?room=) arrives beside the host.
 //   3. Its socket drops (?dropAfter test hook) and it reclaims its slot; a
 //      reload reclaims it from session storage.
 //   4. The host moves the room to another course; the Rust guest follows.
@@ -59,7 +59,7 @@ try {
 
   // 2. Rust guest arrives beside the host (dropping its socket after 25 s).
   const guest = await page();
-  await guest.goto(`${base}/engine.html?room=${code}&name=RustGuest&quad=7&dropAfter=25`);
+  await guest.goto(`${base}/play.html?room=${code}&name=RustGuest&quad=7&dropAfter=25`);
   await guest.waitForFunction(() => JSON.parse(window.furyMultiplayer ?? 'null')?.met, null, { timeout: 150000 });
   await guest.waitForFunction(() => JSON.parse(window.furyMultiplayer ?? 'null')?.drawn >= 1, null, { timeout: 30000 });
   await jsRiding(host, map);

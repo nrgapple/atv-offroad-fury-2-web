@@ -17,7 +17,7 @@ try {
   });
   const session = await page.context().newCDPSession(page);
   await session.send('Performance.enable');
-  await page.goto(url('/engine.html?venue=env01&uiDiagnostics=1'));
+  await page.goto(url('/play.html?venue=env01&uiDiagnostics=1'));
   await page.waitForFunction(() => /\d+ fps/.test(document.querySelector('#status').textContent), null, { timeout: 120000 });
   await page.locator('canvas').click();
   const sample = async () => {

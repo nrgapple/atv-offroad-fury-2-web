@@ -19,7 +19,7 @@ try {
       request: async type => { log.push(`request:${type}`); const lock = { released: false, release: async () => { lock.released = true; log.push('release'); } }; return lock; },
     } });
   });
-  await page.goto(url('/engine.html?venue=env01&uiDiagnostics=1'));
+  await page.goto(url('/play.html?venue=env01&uiDiagnostics=1'));
   await page.waitForSelector('#ui-state', { state: 'attached', timeout: 120000 });
   await until(page, () => JSON.parse(document.querySelector('#ui-state').textContent).wakeLock === true);
   assert.deepEqual(await page.evaluate(() => window.wakeLog), ['request:screen']);
@@ -47,7 +47,7 @@ try {
         },
       } });
     });
-    await refused.goto(url('/engine.html?venue=env01&uiDiagnostics=1'));
+    await refused.goto(url('/play.html?venue=env01&uiDiagnostics=1'));
     await refused.waitForSelector('#ui-state', { state: 'attached', timeout: 120000 });
     await until(refused, () => window.wakeLog.length === 1);
     await nextFrames(refused, 10);
@@ -75,7 +75,7 @@ try {
       },
     } });
   });
-  await late.goto(url('/engine.html?venue=env01&uiDiagnostics=1'));
+  await late.goto(url('/play.html?venue=env01&uiDiagnostics=1'));
   await late.waitForSelector('#ui-state', { state: 'attached', timeout: 120000 });
   await until(late, () => typeof window.grantWake === 'function');
   await late.mouse.click(640, 400);

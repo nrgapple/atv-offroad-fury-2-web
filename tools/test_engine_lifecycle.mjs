@@ -15,7 +15,7 @@ try {
   const errors = [];
   const page = await newPage(browser, { viewport: { width: 844, height: 390 } }, errors);
   await page.addInitScript(() => localStorage.setItem('atv2-keyboard-help-seen-v1', '1'));
-  await page.goto(url('/engine.html?venue=env01&uiDiagnostics=1'));
+  await page.goto(url('/play.html?venue=env01&uiDiagnostics=1'));
   await page.waitForSelector('#ui-state', { state: 'attached', timeout: 120000 });
   await nextFrames(page, 20);
   await page.mouse.click(420, 200);

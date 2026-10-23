@@ -54,8 +54,8 @@ partial (206), error and redirected responses never are. Storage failures
 
 ## Install
 
-Install fetches `/play.html`, `/index.html` and the Rust engine page
-`/engine.html` with `cache: 'reload'`, requires each to name exactly this
+Install fetches `/play.html` (the Rust engine page), `/index.html` and
+`/engine.html` (the same page under its pre-switch name) with `cache: 'reload'`, requires each to name exactly this
 worker's version (otherwise install fails and the
 browser picks up the newer worker on its next check), then discovers the shell by
 following quoted references: versioned `name.js|css|wasm?v=<commit>` strings (the

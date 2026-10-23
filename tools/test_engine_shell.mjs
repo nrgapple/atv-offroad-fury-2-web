@@ -1,7 +1,7 @@
-// The Rust engine page's shell (play.html; engine.html is the same page): app manifest and icons, the
+// The Rust engine page's shell (play.html; engine.html is its pre-switch alias): app manifest and icons, the
 // install banner on the title screen (iPhone), anonymous usage events through
 // analytics.js, adaptive render resolution, and the offline service worker
-// precaching engine.html with atv_app_bg.wasm. Like test_offline.mjs it serves
+// precaching play.html with atv_app_bg.wasm. Like test_offline.mjs it serves
 // its own packaged copy of web/dist (the production ?v= rewrite) with the
 // ignored hosted content, then stops that server to relaunch offline.
 // Run: node tools/run_browser_tests.mjs --only test_engine_shell.mjs (content group).
@@ -141,7 +141,7 @@ try {
   assert.ok(time && time.seconds >= 1 && time.map === 'env01', `ride_time: ${JSON.stringify(time)}`);
   report.rideTime = time.seconds;
 
-  // 5. Offline: the worker precached engine.html and the Rust module graph.
+  // 5. Offline: the worker precached play.html and the Rust module graph.
   await page.waitForFunction(() => navigator.serviceWorker.controller?.state === 'activated', null, { timeout: 120000 });
   const cached = await page.evaluate(async () => {
     const out = {};

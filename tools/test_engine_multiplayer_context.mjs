@@ -24,11 +24,11 @@ try {
     return page;
   };
   const host = await open();
-  await host.goto(`${base}/engine.html?venue=env01&host=1&name=LostHost&uiDiagnostics=1`);
+  await host.goto(`${base}/play.html?venue=env01&host=1&name=LostHost&uiDiagnostics=1`);
   await wait(host, () => JSON.parse(window.furyMultiplayer ?? 'null')?.code);
   const { code, peer } = await room(host);
   const guest = await open();
-  await guest.goto(`${base}/engine.html?room=${code}&name=Guest&uiDiagnostics=1`);
+  await guest.goto(`${base}/play.html?room=${code}&name=Guest&uiDiagnostics=1`);
   await wait(guest, () => JSON.parse(window.furyMultiplayer ?? 'null')?.drawn >= 1, null, 180000);
   await wait(host, () => JSON.parse(window.furyMultiplayer ?? 'null')?.drawn >= 1, null, 180000);
 

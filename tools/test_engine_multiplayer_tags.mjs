@@ -27,7 +27,7 @@ try {
     Object.defineProperty(document, 'hasFocus', { value: () => true });
     localStorage.setItem('atv2-keyboard-help-seen-v1', '1');
   });
-  await guest.goto(`${base}/engine.html?room=${code}&name=RustGuest&quad=3`);
+  await guest.goto(`${base}/play.html?room=${code}&name=RustGuest&quad=3`);
   await guest.waitForFunction(() => JSON.parse(window.furyMultiplayer ?? 'null')?.drawn >= 1, null, {
     timeout: 180000
   });

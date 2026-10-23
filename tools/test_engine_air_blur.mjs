@@ -16,7 +16,7 @@ try {
       localStorage.setItem('atv-alpha', JSON.stringify(on ? ['air-blur'] : []));
       localStorage.setItem('atv-graphics', 'original');
     }, on);
-    await page.goto(url('/engine.html?venue=env05&weather=off&uiDiagnostics=1'));
+    await page.goto(url('/play.html?venue=env05&weather=off&uiDiagnostics=1'));
     await page.waitForSelector('#ui-state', { state: 'attached', timeout: 120000 });
     await page.mouse.click(480, 300);
     await page.keyboard.down('ArrowUp');

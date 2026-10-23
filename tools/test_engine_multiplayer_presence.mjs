@@ -49,7 +49,7 @@ try {
       for (const callback of queued) native(callback);
     };
   });
-  await guest.goto(`${base}/engine.html?room=${code}&name=RustGuest`);
+  await guest.goto(`${base}/play.html?room=${code}&name=RustGuest`);
   await guest.waitForFunction(() => JSON.parse(window.furyMultiplayer ?? 'null')?.drawn >= 1, null, {
     timeout: 180000
   });

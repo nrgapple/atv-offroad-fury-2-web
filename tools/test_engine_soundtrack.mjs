@@ -33,7 +33,7 @@ const seed = () => {
   localStorage.setItem('atv-soundtrack-v1', JSON.stringify({ v: 3, enabled: true, volume: 0.45, history: [], historyIndex: -1 }));
 };
 async function ride(page) {
-  await page.goto(url('/engine.html?venue=env01&uiDiagnostics=1&audioDiagnostics=1'));
+  await page.goto(url('/play.html?venue=env01&uiDiagnostics=1&audioDiagnostics=1'));
   await page.waitForSelector('#ui-state', { state: 'attached', timeout: 120000 });
   await nextFrames(page, 20);
   await page.mouse.click(640, 430);
@@ -115,7 +115,7 @@ try {
     const page = await newPage(browser, { viewport: { width: 1280, height: 720 } }, errors);
     await page.addInitScript(seed);
     // A race link that plays at once still opens the frontend behind it.
-    await page.goto(url('/engine.html?mode=single&activity=race&map=env01&laps=1&cpu=0&play=1&uiDiagnostics=1&audioDiagnostics=1'));
+    await page.goto(url('/play.html?mode=single&activity=race&map=env01&laps=1&cpu=0&play=1&uiDiagnostics=1&audioDiagnostics=1'));
     await until(page, () => JSON.parse(document.querySelector('#ui-state')?.textContent || '{}').race?.phase === 'intro', null, 180000);
     // The first click also skips the intro; the hold lasts until GO.
     await page.mouse.click(640, 430);

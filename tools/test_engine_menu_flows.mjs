@@ -71,7 +71,7 @@ try {
     };
     navigator.getGamepads = () => [pad];
   });
-  await page.goto(url('/engine.html?uiDiagnostics=1'));
+  await page.goto(url('/play.html?uiDiagnostics=1'));
   await onFront(page, 'title');
   await page.mouse.click(8, 8);
   // A on the title opens the main menu.

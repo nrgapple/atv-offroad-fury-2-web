@@ -30,7 +30,7 @@ try {
     localStorage.setItem('atv2-keyboard-help-seen-v1', '1');
     localStorage.removeItem('atv-player-selection');
   });
-  await page.goto(url('/engine.html?uiDiagnostics=1'));
+  await page.goto(url('/play.html?uiDiagnostics=1'));
   await onPage(page, 'title');
   await page.mouse.click(8, 8);
   await key(page, 'Enter'); await onPage(page, 'main');
@@ -122,10 +122,10 @@ try {
 
   // `?menu=race` opens the setup; a race link without play shows its setup.
   const shortcut = await newPage(browser, { viewport: { width: 390, height: 844 } }, []);
-  await shortcut.goto(url('/engine.html?menu=race&uiDiagnostics=1'));
+  await shortcut.goto(url('/play.html?menu=race&uiDiagnostics=1'));
   await onPage(shortcut, 'race');
   if (shots) await shortcut.screenshot({ path: `${shots}/race-portrait.png` });
-  await shortcut.goto(url('/engine.html?mode=single&activity=race&map=nat02&laps=5&cpu=0&play=0&uiDiagnostics=1'));
+  await shortcut.goto(url('/play.html?mode=single&activity=race&map=nat02&laps=5&cpu=0&play=0&uiDiagnostics=1'));
   await onPage(shortcut, 'race');
   f = await front(shortcut);
   assert.deepEqual([f.race.course, f.race.laps, f.race.cpu], ['nat02', 5, 0]);

@@ -36,7 +36,7 @@ try {
       Object.defineProperty(Navigator.prototype, 'audioSession', { get: () => session, configurable: true });
       Object.defineProperty(Document.prototype, 'fullscreenEnabled', { get: () => false, configurable: true });
     });
-    await page.goto(url('/engine.html?venue=env01&uiDiagnostics=1'));
+    await page.goto(url('/play.html?venue=env01&uiDiagnostics=1'));
     await ready(page);
     assert.equal(await page.evaluate(() => navigator.audioSession.type), 'playback');
     assert.equal((await read(page)).settings.soundMode, 'Enhanced', 'saved-less ride plays Enhanced');
@@ -67,7 +67,7 @@ try {
       localStorage.setItem('atv2-keyboard-help-seen-v1', '1');
       localStorage.setItem('atv-audio-v1', JSON.stringify({ sfx: 1, mode: 'original', silent: 'play' }));
     });
-    await page.goto(url('/engine.html?venue=env01&uiDiagnostics=1'));
+    await page.goto(url('/play.html?venue=env01&uiDiagnostics=1'));
     await ready(page);
     assert.equal((await read(page)).settings.soundMode, 'Original', 'saved Original');
     await page.mouse.click(640, 400);
@@ -78,7 +78,7 @@ try {
     await key(page, 'Escape'); await onPage(page, 'settings');
     await click(page, 'extras'); await onPage(page, 'extras');
     assert.ok(!(await choices(page)).includes('silentmode'), 'no Silent switch row without a session');
-    await page.goto(url('/engine.html?venue=env01&uiDiagnostics=1&sound=enhanced'));
+    await page.goto(url('/play.html?venue=env01&uiDiagnostics=1&sound=enhanced'));
     await ready(page);
     assert.equal((await read(page)).settings.soundMode, 'Enhanced', '?sound= wins over the saved mode');
     assertNoErrors(errors);
@@ -97,7 +97,7 @@ try {
       window.pressPad = down => { buttons[0] = { pressed: down, touched: down, value: down ? 1 : 0 }; pad.timestamp++; };
       navigator.getGamepads = () => [pad];
     }, how);
-    await page.goto(url('/engine.html?venue=env01&race=1&laps=1&cpu=3&weather=off&uiDiagnostics=1&debug=1'));
+    await page.goto(url('/play.html?venue=env01&race=1&laps=1&cpu=3&weather=off&uiDiagnostics=1&debug=1'));
     await wait(page, () => /race intro/.test(document.querySelector('#status')?.textContent), null, 180000);
     if (how === 'click') await page.mouse.click(640, 400);
     else { await page.evaluate(() => window.pressPad(true)); await nextFrames(page, 4); await page.evaluate(() => window.pressPad(false)); }

@@ -31,7 +31,7 @@ try {
     Object.defineProperty(document, 'hidden', { configurable: true, get: () => state !== 'visible' });
     window.setVisibility = next => { state = next; document.dispatchEvent(new Event('visibilitychange')); };
   });
-  await page.goto(url('/engine.html?venue=env01&uiDiagnostics=1&audioDiagnostics=1'));
+  await page.goto(url('/play.html?venue=env01&uiDiagnostics=1&audioDiagnostics=1'));
   await page.waitForSelector('#ui-state', { state: 'attached', timeout: 120000 });
   await nextFrames(page, 20);
   await page.mouse.click(640, 430);

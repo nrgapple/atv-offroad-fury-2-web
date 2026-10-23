@@ -19,7 +19,7 @@ try {
   // 1. Rust browser host on Arlington.
   const host = await newPage(browser, { viewport: { width: 1280, height: 720 } }, errors);
   await host.addInitScript(() => Object.defineProperty(document, 'hasFocus', { value: () => true }));
-  await host.goto(`${base}/engine.html?host=1&venue=env08&name=RustHost`);
+  await host.goto(`${base}/play.html?host=1&venue=env08&name=RustHost`);
   await host.waitForFunction(() => JSON.parse(window.furyMultiplayer ?? 'null')?.code, null, { timeout: 180000 });
   const code = (await engine(host)).code;
   report.code = code;
@@ -167,7 +167,7 @@ try {
       localStorage.setItem('atv-train-riding', 'realistic');
       Object.defineProperty(document, 'hasFocus', { value: () => true });
     });
-    await rider.goto(`${base}/engine.html?room=${code}&name=RustRider&trainPlace=6`);
+    await rider.goto(`${base}/play.html?room=${code}&name=RustRider&trainPlace=6`);
     await rider.waitForFunction(() => JSON.parse(window.furyMultiplayer ?? 'null')?.ownPlatform, null, {
       timeout: 180000
     });

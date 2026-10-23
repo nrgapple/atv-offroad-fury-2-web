@@ -1,6 +1,6 @@
 // Alpha Arcade flips on touch, Rust engine against the JavaScript game (the
-// reference at ATV_JS_URL; it defaults to ATV_TEST_URL, which served both
-// before the switch-over). On env01's Caribou ramp each engine jumps from
+// pinned pre-switch reference at ATV_JS_URL: python3 tools/js_reference.py
+// serve; manual group). On env01's Caribou ramp each engine jumps from
 // the one-handed thumb (hold into the ramp, lift for the preload jump), then
 // in the air: (1) a new touch pulled down leans back into a backflip, and
 // (2) a sideways drag past full steering lock spins a 360 (touch.js
@@ -9,16 +9,16 @@
 // rates (atv-core arcade_flips) must match the JavaScript game's.
 //   PLAYWRIGHT_MODULE=... ATV_TEST_URL=<Rust site> ATV_JS_URL=<JS site> node tools/test_engine_arcade_touch.mjs
 import assert from 'node:assert/strict';
-import { assertNoErrors, base, launch, newPage } from './browser/harness.mjs';
+import { assertNoErrors, base, jsBase, launch, newPage } from './browser/harness.mjs';
 
-const jsBase = (process.env.ATV_JS_URL || base).replace(/\/+$/, '');
+if (!process.env.ATV_JS_URL) throw new Error('set ATV_JS_URL to the JavaScript reference (python3 tools/js_reference.py serve)');
 const report = {};
 const errors = [];
 
 // One engine's page and how to read its simulation frame.
 const ENGINES = {
   rust: {
-    url: `${base}/engine.html?venue=env01&weather=off&uiDiagnostics=1`,
+    url: `${base}/play.html?venue=env01&weather=off&uiDiagnostics=1`,
     read: () => {
       const s = JSON.parse(document.querySelector('#ui-state')?.textContent || '{}');
       return {

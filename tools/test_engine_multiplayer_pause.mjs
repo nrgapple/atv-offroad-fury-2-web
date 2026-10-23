@@ -55,7 +55,7 @@ try {
   await host.bringToFront();
   await holdKey(host, 'KeyW', 240);
   await guest.bringToFront();
-  await guest.goto(`${base}/engine.html?room=${code}&name=RustGuest&uiDiagnostics=1`);
+  await guest.goto(`${base}/play.html?room=${code}&name=RustGuest&uiDiagnostics=1`);
   await guest.waitForFunction(() => JSON.parse(window.furyMultiplayer ?? 'null')?.drawn >= 1, null, {
     timeout: 180000
   });

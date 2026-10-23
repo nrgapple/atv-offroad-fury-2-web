@@ -1724,7 +1724,7 @@ impl App {
                 }
                 #[cfg(target_arch = "wasm32")]
                 if let Some(window) = web_sys::window() {
-                    window.location().set_href("engine.html").ok();
+                    window.location().set_href("play.html").ok();
                 }
                 if let Some(ready) = &mut self.ready {
                     ready.net = None;
@@ -2539,7 +2539,7 @@ impl ApplicationHandler<Message> for App {
         let attributes = {
             use wasm_bindgen::JsCast;
             use winit::platform::web::WindowAttributesExtWebSys;
-            // engine.html's `#game` canvas (install.js sizes it for installed
+            // play.html's `#game` canvas (install.js sizes it for installed
             // iOS apps); a page without one gets an appended canvas.
             let canvas = web_sys::window()
                 .and_then(|w| w.document())
@@ -5731,7 +5731,7 @@ fn fatal(error: &str) {
     let _ = error;
 }
 
-/// The frontend (or a direct ride) draws now: close engine.html's boot
+/// The frontend (or a direct ride) draws now: close play.html's boot
 /// loader (frontend.js `setLoading(false)`).
 fn boot_loaded() {
     #[cfg(target_arch = "wasm32")]

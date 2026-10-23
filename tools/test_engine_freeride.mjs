@@ -35,7 +35,7 @@ try {
     localStorage.removeItem('atv-player-selection');
     Object.defineProperty(document, 'hasFocus', { value: () => true });
   });
-  await rust.goto(url('/engine.html?uiDiagnostics=1'));
+  await rust.goto(url('/play.html?uiDiagnostics=1'));
   await onPage(rust, 'title');
   await rust.mouse.click(8, 8);
   await key(rust, 'Enter');
@@ -92,7 +92,7 @@ try {
     localStorage.setItem('atv2-keyboard-help-seen-v1', '1');
     Object.defineProperty(document, 'hasFocus', { value: () => true });
   });
-  await invited.goto(url(`/engine.html?uiDiagnostics=1&mode=multiplayer&room=${e.code}&map=env01&play=1`));
+  await invited.goto(url(`/play.html?uiDiagnostics=1&mode=multiplayer&room=${e.code}&map=env01&play=1`));
   await wait(invited, () => JSON.parse(window.furyMultiplayer ?? 'null')?.environment === 'env08', null, 180000);
   const invite = await engine(invited);
   assert.match(invite.code, /^FREERD\d\d$/);

@@ -17,7 +17,7 @@ try {
   for (const graphics of ['high', 'enhanced']) {
     const page = await newPage(browser, { viewport: { width: 1280, height: 720 } }, errors);
     await page.addInitScript(() => Object.defineProperty(document, 'hasFocus', { value: () => true }));
-    await page.goto(url(`/engine.html?venue=env01&race=1&laps=1&cpu=3&seed=12345&weather=off&graphics=${graphics}&uiDiagnostics=1`));
+    await page.goto(url(`/play.html?venue=env01&race=1&laps=1&cpu=3&seed=12345&weather=off&graphics=${graphics}&uiDiagnostics=1`));
     await page.waitForFunction(() => JSON.parse(document.querySelector('#ui-state')?.textContent || '{}').shadows?.contact > 0, null, { timeout: 180000 });
     const samples = [];
     for (let i = 0; i < 10; i++) {
@@ -60,7 +60,7 @@ try {
     const requests = [];
     page.on('request', request => /\/content\/[a-f0-9]{64}\.bin$/.test(request.url()) && requests.push(request.url()));
     const started = Date.now();
-    await page.goto(url(`/engine.html?venue=env01&weather=off&uiDiagnostics=1${prefetch ? '' : '&prefetch=off'}`));
+    await page.goto(url(`/play.html?venue=env01&weather=off&uiDiagnostics=1${prefetch ? '' : '&prefetch=off'}`));
     await page.waitForFunction(() => JSON.parse(document.querySelector('#ui-state')?.textContent || '{}').active === true, null, { timeout: 300000 });
     const seconds = (Date.now() - started) / 1000;
     await context.close();

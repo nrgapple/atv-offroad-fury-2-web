@@ -14,7 +14,7 @@ try {
   for (const viewport of [{ width: 1280, height: 720 }, { width: 390, height: 844 }]) {
     const errors = [];
     const page = await newPage(browser, { viewport }, errors);
-    await page.goto(url('/engine.html?venue=env01&uiDiagnostics=1'));
+    await page.goto(url('/play.html?venue=env01&uiDiagnostics=1'));
     await page.waitForSelector('#ui-state', { state: 'attached', timeout: 120000 });
     await wait(page, () => { const h = JSON.parse(document.querySelector('#ui-state').textContent).toolbar?.hud; return h?.minimap.visible; });
     let s = await state(page);
@@ -44,7 +44,7 @@ try {
     // Minimap off: the original speed/preload meter replaces it.
     const meter = await newPage(browser, { viewport }, errors);
     await meter.addInitScript(() => { localStorage.setItem('atv-minimap-enabled', 'false'); localStorage.setItem('atv2-keyboard-help-seen-v1', '1'); });
-    await meter.goto(url('/engine.html?venue=env01&uiDiagnostics=1'));
+    await meter.goto(url('/play.html?venue=env01&uiDiagnostics=1'));
     await meter.waitForSelector('#ui-state', { state: 'attached', timeout: 120000 });
     await nextFrames(meter, 30);
     s = await state(meter);

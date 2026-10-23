@@ -31,7 +31,7 @@ try {
     const errors = [];
     const page = await newPage(browser, { viewport: mobile ? { width: 390, height: 844 } : { width: 960, height: 540 } }, errors);
     await page.addInitScript(seed, sample);
-    await page.goto(url(`/engine.html?venue=${venue}&uiDiagnostics=1&audioDiagnostics=1`));
+    await page.goto(url(`/play.html?venue=${venue}&uiDiagnostics=1&audioDiagnostics=1`));
     await page.waitForSelector('#ui-state', { state: 'attached', timeout: 120000 });
     await until(page, () => JSON.parse(document.querySelector('#ui-state').textContent).step > 2, null, 60000);
     let s = await state(page);
@@ -85,7 +85,7 @@ try {
     const errors = [];
     const page = await newPage(browser, { viewport: { width: 960, height: 540 } }, errors);
     await page.addInitScript(() => localStorage.setItem('atv2-keyboard-help-seen-v1', '1'));
-    await page.goto(url('/engine.html?venue=env01&race=1&laps=1&cpu=0&uiDiagnostics=1'));
+    await page.goto(url('/play.html?venue=env01&race=1&laps=1&cpu=0&uiDiagnostics=1'));
     await page.waitForSelector('#ui-state', { state: 'attached', timeout: 120000 });
     await until(page, () => JSON.parse(document.querySelector('#ui-state').textContent).snow?.time > 3, null, 120000);
     let s = await state(page);

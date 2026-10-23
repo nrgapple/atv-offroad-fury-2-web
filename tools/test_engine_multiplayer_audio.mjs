@@ -31,7 +31,7 @@ try {
 
   const guest = await newPage(browser, { viewport: { width: 1280, height: 720 } }, errors);
   await guest.addInitScript(() => Object.defineProperty(document, 'hasFocus', { value: () => true }));
-  await guest.goto(`${base}/engine.html?room=${code}&name=RustGuest&quad=12`);
+  await guest.goto(`${base}/play.html?room=${code}&name=RustGuest&quad=12`);
   await guest.waitForFunction(() => JSON.parse(window.furyMultiplayer ?? 'null')?.drawn >= 1, null, {
     timeout: 180000
   });

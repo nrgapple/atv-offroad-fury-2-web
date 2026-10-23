@@ -10,7 +10,7 @@ for (const engine of ['chromium', 'webkit']) {
   try {
     const errors = [];
     const page = await newPage(browser, { viewport: { width: 960, height: 540 } }, errors);
-    await page.goto(url('/engine.html?venue=env01'));
+    await page.goto(url('/play.html?venue=env01'));
     const status = () => page.locator('#status').textContent();
     if (contentAvailable) {
       await page.waitForFunction(() => /\d+ fps/.test(document.querySelector('#status').textContent), null, { timeout: 120000 });

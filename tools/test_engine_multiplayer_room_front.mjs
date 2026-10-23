@@ -60,7 +60,7 @@ try {
     localStorage.removeItem('atv-player-selection');
     Object.defineProperty(document, 'hasFocus', { value: () => true });
   });
-  await host.goto(url('/engine.html?uiDiagnostics=1'));
+  await host.goto(url('/play.html?uiDiagnostics=1'));
   await onPage(host, 'title');
   await host.mouse.click(8, 8);
   await key(host, 'Enter');
@@ -164,7 +164,7 @@ try {
     localStorage.removeItem('atv-player-selection');
     Object.defineProperty(document, 'hasFocus', { value: () => true });
   });
-  await rust.goto(url(`/engine.html?uiDiagnostics=1&room=${code}&player=RustGuest`));
+  await rust.goto(url(`/play.html?uiDiagnostics=1&room=${code}&player=RustGuest`));
   await rust.waitForFunction(
     map => {
       const m = JSON.parse(window.furyMultiplayer ?? 'null');

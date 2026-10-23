@@ -22,7 +22,7 @@ try {
   const errors = [];
   const page = await newPage(browser, { viewport: { width: 1280, height: 720 } }, errors);
   await page.addInitScript(() => localStorage.setItem('atv2-keyboard-help-seen-v1', '1'));
-  await page.goto(url('/engine.html?venue=env01&uiDiagnostics=1'));
+  await page.goto(url('/play.html?venue=env01&uiDiagnostics=1'));
   await page.waitForSelector('#ui-state', { state: 'attached', timeout: 120000 });
   await nextFrames(page, 30);
   await page.mouse.click(640, 400);
@@ -95,7 +95,7 @@ try {
 
   // Touch: the toolbar Pause opens the menu, Resume taps close it.
   const phone = await newPage(browser, { viewport: { width: 390, height: 844 }, deviceScaleFactor: 3, isMobile: true, hasTouch: true }, errors);
-  await phone.goto(url('/engine.html?venue=env01&uiDiagnostics=1'));
+  await phone.goto(url('/play.html?venue=env01&uiDiagnostics=1'));
   await phone.waitForSelector('#ui-state', { state: 'attached', timeout: 120000 });
   await nextFrames(phone, 30);
   const pause = (await read(phone)).toolbar.hits.find(h => h.id === 1);

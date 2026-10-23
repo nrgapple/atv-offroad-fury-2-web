@@ -151,8 +151,9 @@ See [research/BROWSER_TESTS.md](research/BROWSER_TESTS.md) for the groups, nativ
 | Folder | What's inside |
 | --- | --- |
 | `crates/atv-core/` | Shared Rust resource readers and game simulation |
+| `crates/atv-game/`, `atv-render/`, `atv-ui/`, `atv-content/`, `atv-app/` | The Rust engine: one codebase for the browser game and the desktop apps |
 | `crates/atv-tools/` | Native tools for private-disc inspection and extraction |
-| `web/` | The game page (`play.html`, the Rust engine) and its shell: landing, app install, offline cache, usage events, dev log |
+| `web/` | The game page (`play.html`, the Rust engine since the JavaScript game was retired on 2026-10-23) and its shell: landing, app install, offline cache, usage events, dev log |
 | `tools/` | Build, analysis, verification, and deployment helpers |
 | `research/` | Shareable discoveries, evidence, and dev-log metadata |
 | `private/`, `references/`, `work/` | Original source, analysis, references, and intermediate outputs; ignored by Git |
