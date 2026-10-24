@@ -1,4 +1,12 @@
 export CARGO_TARGET_DIR ?= $(CURDIR)/target
+# Local builds in every worktree share one sccache compiler cache when sccache is on
+# PATH; each worktree keeps its own target directory. Never in CI. Opt out with
+# FURY_SCCACHE=0, or set RUSTC_WRAPPER yourself. See research/CI_TOOL_CACHE.md.
+ifeq ($(origin RUSTC_WRAPPER)$(CI)$(filter 0,$(FURY_SCCACHE)),undefined)
+ifneq ($(shell command -v sccache 2>/dev/null),)
+export RUSTC_WRAPPER := $(CURDIR)/tools/sccache-rustc
+endif
+endif
 CARGO ?= $(HOME)/.cargo/bin/cargo
 NODE ?= node
 ISO ?= private/source/ATV Offroad Fury 2 (USA) (v2.00).iso
@@ -32,6 +40,7 @@ check:
 	$(NODE) --test --test-timeout=120000 web/install.test.mjs web/analytics.test.mjs web/offline.test.mjs web/sw.test.mjs tools/browser/manifest.test.mjs
 	python3 -m py_compile tools/*.py
 	python3 -m unittest discover -s tools -p 'test_worker_build_cache.py'
+	python3 -m unittest discover -s tools -p 'test_playwright_ci.py'
 	python3 -m unittest discover -s tools -p 'test_devlog.py'
 	python3 -m unittest discover -s tools -p 'test_ci_changes.py'
 	python3 -m unittest discover -s tools -p 'test_release_workflow.py'
