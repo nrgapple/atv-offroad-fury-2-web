@@ -159,7 +159,8 @@ config, `~/Library/Application Support/Mozilla.sccache/config`, puts the disk ca
 no `.cargo/config.toml` is committed, so other clones and platforms are unaffected.
 Recipes and the Python build scripts they run inherit it: `make check` (test and
 clippy), `make web` (wasm), `make desktop` (macOS host builds; the Docker Linux and
-Windows builds do not pass it in) and `make relay`. Direct `cargo` commands need
+Windows builds do not pass it in), `make relay` and `make android` (not yet
+exercised with sccache). Direct `cargo` commands need
 `RUSTC_WRAPPER="$PWD/tools/sccache-rustc"`.
 
 `tools/sccache-rustc` exists for two reasons found while measuring:
