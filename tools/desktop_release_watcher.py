@@ -1,26 +1,46 @@
 #!/usr/bin/env python3
-"""Build and publish the desktop archives when a `desktop-v*` tag appears on origin.
+"""Build and publish the desktop archives automatically, from the owner's machine.
 
-One pass per run, meant for a launchd StartInterval job (see research/DESKTOP_RELEASES.md;
-the job is not installed by default). For each new tag it checks out the tagged commit in
-a temporary worktree, runs tools/build_desktop.py there, then tools/publish_desktop_release.py
---tag <tag> --yes, which still refuses commits that are not on origin/main. Local only.
+One pass per run, meant for the launchd StartInterval job in tools/desktop/ (see
+research/DESKTOP_RELEASES.md). Each pass handles:
 
-    python3 tools/desktop_release_watcher.py --dry-run     # list the tags it would build
+- every `desktop-v*` tag on origin it has not handled yet, and
+- with `--auto-main`, the newest origin/main commit when it changed what goes into the
+  apps (RELEASE_PATHS) since the newest desktop release and that release is at least
+  `--min-hours` old. Its tag is `desktop-v<version>-<short commit>`.
+
+Each build checks out the commit in a temporary worktree, links `private`, runs
+tools/build_desktop.py --smoke, refuses a failed Linux launch, then runs
+tools/publish_desktop_release.py --tag <tag> --yes, which still refuses commits that are
+not on origin/main. Local only, never CI.
+
+    python3 tools/desktop_release_watcher.py --auto-main --dry-run   # what it would build
 """
 import argparse
+import fcntl
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
 import time
 
 ROOT = Path(__file__).resolve().parents[1]
-STATE = Path.home() / 'LargeFiles/fury-desktop/watcher-state.json'
+OUT_ROOT = Path.home() / 'LargeFiles/fury-desktop'
+STATE = OUT_ROOT / 'watcher-state.json'
 WORKTREES = Path.home() / 'Projects/atv-worktrees'
 PATTERN = 'refs/tags/desktop-v*'
+# What the desktop archives are built from. Documentation, the web shell and tests do not
+# start a release on their own.
+RELEASE_PATHS = ('crates', 'Cargo.toml', 'Cargo.lock', 'tools/build_desktop.py', 'tools/desktop',
+                 'tools/pack_content.py', 'tools/desktop_archive.py', 'web/fury-app-icons.json')
+KEEP_BUILDS = 3
+
+
+def git(repo, *args):
+    return subprocess.run(['git', *args], cwd=repo, check=True, capture_output=True, text=True).stdout.strip()
 
 
 def remote_tags(repo):
@@ -43,6 +63,33 @@ def pending(tags, state):
     return {tag: sha for tag, sha in sorted(tags.items()) if tag not in handled}
 
 
+def main_candidate(repo, tags, state, min_hours, now=None):
+    """`(tag, commit)` for origin/main when it is due for an automatic release, else `(None, reason)`.
+
+    Expects `origin/main` and the tagged commits to be fetched already.
+    """
+    now = time.time() if now is None else now
+    head = git(repo, 'rev-parse', 'origin/main')
+    short = git(repo, 'rev-parse', '--short=7', head)
+    version = next(line.split('"')[1] for line in git(repo, 'show', f'{head}:Cargo.toml').splitlines()
+                   if line.startswith('version = '))
+    tag = f'desktop-v{version}-{short}'
+    if tag in tags or tag in state.get('done', {}) or tag in state.get('failed', {}):
+        return None, f'{tag} is already handled'
+    released = [sha for sha in tags.values()
+                if subprocess.run(['git', 'merge-base', '--is-ancestor', sha, head], cwd=repo).returncode == 0]
+    if released:
+        last = max(released, key=lambda sha: int(git(repo, 'log', '-1', '--format=%ct', sha)))
+        if not git(repo, 'diff', '--name-only', last, head, '--', *RELEASE_PATHS):
+            return None, f'no app changes since {last[:7]}'
+        stamps = [int(git(repo, 'log', '-1', '--format=%ct', last))]
+        stamps += [entry.get('at', 0) for entry in state.get('done', {}).values()]
+        waited = (now - max(stamps)) / 3600
+        if waited < min_hours:
+            return None, f'last release {waited:.1f} h ago, waiting for {min_hours} h'
+    return tag, head
+
+
 def load_state(path):
     try:
         return json.loads(Path(path).read_text())
@@ -55,48 +102,107 @@ def notify(message):
                    capture_output=True)
 
 
-def process(repo, tag, sha, log):
+def verification(release):
+    """Release-note text from what the build actually launched."""
+    lines = ['Automated build (tools/desktop_release_watcher.py). Every archive passed the member allowlist and an end '
+             'to end check of the packed content.']
+    for platform, record in sorted(release['archives'].items()):
+        smoke = record.get('smoke')
+        if smoke:
+            where = 'under qemu emulation' if smoke.get('emulated') else 'natively'
+            lines.append(f'- {platform}: launched {where} in Docker (Xvfb, Mesa software Vulkan), content verified '
+                         f'and the first ride frame captured.')
+        else:
+            lines.append(f'- {platform}: built and structurally verified, not launched by the automated build.')
+    return '\n'.join(lines)
+
+
+def failed_smokes(release):
+    return sorted(p for p, r in release['archives'].items() if r.get('smoke') and not r['smoke'].get('ok'))
+
+
+def process(repo, tag, sha, log, fetch_tag=True):
     worktree = WORKTREES / f'desktop-release-{tag}'
-    subprocess.run(['git', 'fetch', '--quiet', 'origin', 'main', f'refs/tags/{tag}:refs/tags/{tag}'], cwd=repo, check=True)
+    refs = ['main'] + ([f'refs/tags/{tag}:refs/tags/{tag}'] if fetch_tag else [])
+    subprocess.run(['git', 'fetch', '--quiet', 'origin', *refs], cwd=repo, check=True)
     subprocess.run(['git', 'worktree', 'add', '--detach', str(worktree), sha], cwd=repo, check=True)
     try:
         os.symlink(Path(repo) / 'private', worktree / 'private')  # the private hosted content package
-        for script in (['tools/build_desktop.py'], ['tools/publish_desktop_release.py', '--tag', tag, '--yes']):
-            subprocess.run([sys.executable, *script], cwd=worktree, check=True, stdout=log, stderr=subprocess.STDOUT)
+        run = lambda *script: subprocess.run([sys.executable, *script], cwd=worktree, check=True,  # noqa: E731
+                                             stdout=log, stderr=subprocess.STDOUT)
+        out = OUT_ROOT / sha[:7]
+        run('tools/build_desktop.py', '--smoke', '--output', str(out))
+        release = json.loads((out / 'release.json').read_text())
+        if failed_smokes(release):
+            raise OSError(f'Linux launch failed for {", ".join(failed_smokes(release))}; not publishing')
+        run('tools/publish_desktop_release.py', '--dir', str(out), '--tag', tag, '--yes', '--verification', verification(release))
     finally:
         subprocess.run(['git', 'worktree', 'remove', '--force', str(worktree)], cwd=repo)
+
+
+def prune_builds(state, out_root=OUT_ROOT, keep=KEEP_BUILDS):
+    """Delete local archive folders of published releases beyond the newest `keep`.
+
+    Their archives stay on GitHub Releases and can be rebuilt from the commit. Folders of
+    unpublished, failed or manual builds are never touched.
+    """
+    published = {entry['commit'][:7] for entry in state.get('done', {}).values() if entry.get('commit')}
+    folders = [p for p in Path(out_root).iterdir()
+               if p.is_dir() and re.fullmatch(r'[0-9a-f]{7}', p.name) and p.name in published]
+    folders.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+    for folder in folders[keep:]:
+        shutil.rmtree(folder)
+        print(f'removed old local build {folder}')
 
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('--repo', type=Path, default=ROOT, help='checkout used to talk to origin (never modified)')
     parser.add_argument('--state', type=Path, default=STATE)
+    parser.add_argument('--auto-main', action='store_true', help='also release origin/main when the apps changed')
+    parser.add_argument('--min-hours', type=float, default=12, help='least time between automatic releases (default 12)')
     parser.add_argument('--dry-run', action='store_true')
     args = parser.parse_args(argv)
     if os.environ.get('GITHUB_ACTIONS') or os.environ.get('CI'):
         sys.exit('desktop_release_watcher: local machine only, never CI')
-    state = load_state(args.state)
-    todo = pending(remote_tags(args.repo), state)
-    if not todo:
-        print('no new desktop-v* tags')
+    args.state.parent.mkdir(parents=True, exist_ok=True)
+    lock = open(args.state.with_suffix('.lock'), 'w')
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        print('another watcher pass is running')
         return 0
-    for tag, sha in todo.items():
+    state = load_state(args.state)
+    tags = remote_tags(args.repo)
+    todo = {tag: (sha, True) for tag, sha in pending(tags, state).items()}
+    if args.auto_main:
+        subprocess.run(['git', 'fetch', '--quiet', 'origin', 'main', *(f'refs/tags/{t}:refs/tags/{t}' for t in tags)],
+                       cwd=args.repo, check=True)
+        tag, detail = main_candidate(args.repo, tags, state, args.min_hours)
+        if tag:
+            todo[tag] = (detail, False)
+        else:
+            print(f'origin/main: {detail}')
+    if not todo:
+        print('nothing to build')
+        return 0
+    for tag, (sha, from_remote) in todo.items():
         print(f'{"would build" if args.dry_run else "building"} {tag} ({sha})', flush=True)
         if args.dry_run:
             continue
         log_path = args.state.parent / f'watcher-{tag}.log'
-        log_path.parent.mkdir(parents=True, exist_ok=True)
         try:
             with open(log_path, 'w') as log:
-                process(args.repo, tag, sha, log)
+                process(args.repo, tag, sha, log, fetch_tag=from_remote)
             state.setdefault('done', {})[tag] = {'commit': sha, 'at': int(time.time())}
             notify(f'{tag} published')
-        except (subprocess.CalledProcessError, OSError) as e:
+        except (subprocess.CalledProcessError, OSError, ValueError) as e:
             # A failed tag is not retried automatically; fix it and delete its entry from the state file.
             state.setdefault('failed', {})[tag] = {'commit': sha, 'at': int(time.time()), 'error': str(e), 'log': str(log_path)}
             notify(f'{tag} failed, see {log_path.name}')
-        args.state.parent.mkdir(parents=True, exist_ok=True)
         args.state.write_text(json.dumps(state, indent=2) + '\n')
+    if not args.dry_run:
+        prune_builds(state)
     return 0
 
 
