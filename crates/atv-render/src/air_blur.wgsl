@@ -3,7 +3,7 @@
 // in big air; the rider in the middle stays sharp. Radially symmetric, so the
 // wgpu screen orientation needs no flip.
 struct Blur {
-  // resolution.xy, amount, unused
+  // resolution.xy, amount, taps
   params: vec4<f32>,
 };
 @group(0) @binding(0) var<uniform> b: Blur;
@@ -24,13 +24,15 @@ fn fs(@builtin(position) frag: vec4<f32>) -> @location(0) vec4<f32> {
   let d = (uv - 0.5) * vec2<f32>(resolution.x / resolution.y, 1.0);
   let r = length(d);
   let edge = smoothstep(0.18, 0.85, r) * amount;
-  // Zoom blur: ten taps stepping towards the centre, longer at the edges.
-  let step = (uv - 0.5) * edge * 0.035;
+  // Zoom blur: ten taps (six on phones) stepping towards the centre over
+  // the same length, longer at the edges.
+  let taps = i32(b.params.w);
+  let step = (uv - 0.5) * edge * 0.035 * 9.0 / f32(taps - 1);
   var c = vec3<f32>(0.0);
-  for (var i = 0; i < 10; i++) {
+  for (var i = 0; i < taps; i++) {
     c += textureSampleLevel(scene, scene_sampler, uv - step * f32(i), 0.0).rgb;
   }
-  c /= 10.0;
+  c /= f32(taps);
   let grey = dot(c, vec3<f32>(0.299, 0.587, 0.114));
   c = mix(c, vec3<f32>(grey), 0.45 * edge);
   c *= 1.0 - 0.7 * smoothstep(0.25, 1.0, r) * amount;

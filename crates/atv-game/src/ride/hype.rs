@@ -15,8 +15,12 @@ pub const RISE: [f32; 2] = [4., 10.];
 pub const APEX_MIN: f32 = 14.;
 pub const APEX_RISE: f32 = 8.;
 pub const MIN_AIR_TIME: f32 = 0.45;
-/// Slow motion (real seconds): scale, ease in, hold, ease out.
-pub const SLOWMO: [f32; 4] = [0.3, 0.12, 0.55, 0.3];
+/// The big-air moment (real seconds): ease in, hold, ease out. Fired at the
+/// apex, it drives slow motion, the chase camera, the blur and the muffle
+/// together so they rise and fall as one beat.
+pub const MOMENT: [f32; 3] = [0.2, 0.55, 0.4];
+/// Slow-motion time scale at the moment's peak.
+pub const SLOWMO_SCALE: f32 = 0.3;
 
 fn smooth(edge0: f32, edge1: f32, v: f32) -> f32 {
     let t = ((v - edge0) / (edge1 - edge0)).clamp(0., 1.);
@@ -56,7 +60,6 @@ pub struct HypeDirector {
     takeoff: f32,
     pub rise: f32,
     apex_fired: bool,
-    apex_age: f32,
     pub apexes: u32,
     pub landings: u32,
     pub landing: Option<Landing>,
@@ -65,11 +68,17 @@ pub struct HypeDirector {
     pub air: f32,
     pub blur: f32,
     pub muffle: f32,
+    muffle_speed: f32,
     pub wind: f32,
+    wind_speed: f32,
     pub slam: f32,
     pub dip: f32,
     dip_velocity: f32,
-    slow: Option<f32>,
+    /// The moment's age (real seconds) while it runs, and its strength.
+    moment: Option<f32>,
+    strength: f32,
+    /// The moment envelope (0..1) this frame.
+    pub envelope: f32,
     pub time_scale: f32,
     pub slowmos: u32,
     seen_apexes: u32,
@@ -87,7 +96,6 @@ impl Default for HypeDirector {
             takeoff: 0.,
             rise: 0.,
             apex_fired: false,
-            apex_age: f32::INFINITY,
             apexes: 0,
             landings: 0,
             landing: None,
@@ -96,11 +104,15 @@ impl Default for HypeDirector {
             air: 0.,
             blur: 0.,
             muffle: 0.,
+            muffle_speed: 0.,
             wind: 0.,
+            wind_speed: 0.,
             slam: 0.,
             dip: 0.,
             dip_velocity: 0.,
-            slow: None,
+            moment: None,
+            strength: 0.,
+            envelope: 0.,
             time_scale: 1.,
             slowmos: 0,
             seen_apexes: 0,
@@ -131,7 +143,6 @@ impl HypeDirector {
             self.peak = 0.;
             self.rise = 0.;
             self.apex_fired = false;
-            self.apex_age = f32::INFINITY;
             self.grounded = true;
             self.riding = false;
             return;
@@ -157,7 +168,6 @@ impl HypeDirector {
             self.peak = 0.;
             self.rise = 0.;
             self.apex_fired = false;
-            self.apex_age = f32::INFINITY;
             return;
         }
         if self.air_time == 0. {
@@ -166,9 +176,6 @@ impl HypeDirector {
         self.air_time += STEP;
         self.peak = self.peak.max(self.clearance);
         self.rise = self.rise.max(frame.origin[1] - self.takeoff);
-        if self.apex_fired {
-            self.apex_age += STEP;
-        }
         if !self.apex_fired
             && self.riding
             && old_vy > 0.
@@ -178,7 +185,6 @@ impl HypeDirector {
             && self.air_time > 0.25
         {
             self.apex_fired = true;
-            self.apex_age = 0.;
             self.apexes += 1;
         }
     }
@@ -199,49 +205,42 @@ impl HypeDirector {
         let landed = self.landings != self.seen_landings;
         self.seen_apexes = self.apexes;
         self.seen_landings = self.landings;
-        // Slow motion: one per jump, at its apex; touchdown or a wreck ends it.
-        if apex && slowmo && self.slow.is_none() {
-            self.slow = Some(0.);
-            self.slowmos += 1;
+        // One moment per jump, at its apex; touchdown or a wreck ends it.
+        if apex && self.moment.is_none() {
+            self.moment = Some(0.);
+            // A barely-qualifying apex still reads; the biggest air saturates.
+            self.strength = 0.5 + 0.5 * self.big();
+            if slowmo {
+                self.slowmos += 1;
+            }
         }
-        let [scale, ease_in, hold, ease_out] = SLOWMO;
-        if let Some(mut t) = self.slow {
-            if !slowmo || landed || !self.riding || (self.clearance < 4. && t < ease_in + hold) {
-                t = t.max(ease_in + hold);
+        let [ease_in, hold, ease_out] = MOMENT;
+        self.envelope = match self.moment {
+            Some(mut t) => {
+                if landed || !self.riding || (self.clearance < 4. && t < ease_in + hold) {
+                    t = t.max(ease_in + hold);
+                }
+                t += dt;
+                let out = t - ease_in - hold;
+                self.moment = (out < ease_out).then_some(t);
+                if t < ease_in {
+                    smooth(0., ease_in, t)
+                } else if out < 0. {
+                    1.
+                } else {
+                    1. - smooth(0., ease_out, out)
+                }
             }
-            t += dt;
-            let out = t - ease_in - hold;
-            self.time_scale = if t < ease_in {
-                1. - (1. - scale) * smooth(0., ease_in, t)
-            } else if out < 0. {
-                scale
-            } else {
-                scale + (1. - scale) * smooth(0., ease_out, out)
-            };
-            if out >= ease_out {
-                self.slow = None;
-                self.time_scale = 1.;
-            } else {
-                self.slow = Some(t);
-            }
+            None => 0.,
+        };
+        self.time_scale = if slowmo {
+            1. - (1. - SLOWMO_SCALE) * self.envelope
         } else {
-            self.time_scale = 1.;
-        }
-        let target = self.big();
-        self.air = approach(
-            self.air,
-            target,
-            dt,
-            if target > self.air { 0.4 } else { 0.22 },
-        );
-        let big = self.big();
-        let blur_target = big * (0.75 + 0.25 * if self.apex_age < 0.9 { 1. } else { 0. });
-        self.blur = approach(
-            self.blur,
-            blur_target,
-            dt,
-            if blur_target > self.blur { 0.3 } else { 0.12 },
-        );
+            1.
+        };
+        // Camera and blur ride the envelope directly (no lag of their own).
+        self.air = self.envelope * self.strength;
+        self.blur = self.air;
         if landed && let Some(l) = self.landing {
             let hit = l.severity.min(70.) * (0.4 + 0.6 * smooth(2., FULL_AIR, l.peak));
             self.dip_velocity -= hit * 0.42;
@@ -253,38 +252,30 @@ impl HypeDirector {
         self.dip = self.dip.clamp(-3., 1.5);
         self.slam = (self.slam - dt).max(0.);
         let fast = 0.5 * smooth(40. * MPH, 72. * MPH, self.speed);
-        let muffle_target = if self.slam > 0. {
-            0.
-        } else {
-            fast.max(0.85 * self.air).max(if self.slow.is_some() {
-                1. - self.time_scale
-            } else {
-                0.
-            })
-        };
-        self.muffle = approach(
-            self.muffle,
-            muffle_target,
+        self.muffle_speed = approach(
+            self.muffle_speed,
+            if self.slam > 0. { 0. } else { fast },
             dt,
-            if self.slam > 0. {
-                0.03
-            } else if muffle_target > self.muffle {
-                0.3
-            } else {
-                0.45
-            },
+            if self.slam > 0. { 0.03 } else { 0.4 },
         );
-        let wind_target = if self.slam > 0. {
+        // The moment's share holds only while airborne: touchdown's slam
+        // opens the sound at once.
+        let airborne = if self.grounded || self.slam > 0. {
             0.
         } else {
-            (2. * fast).max(self.air)
+            self.envelope
         };
-        self.wind = approach(
-            self.wind,
-            wind_target,
+        let slow = if slowmo { 1. - SLOWMO_SCALE } else { 0. };
+        self.muffle = self
+            .muffle_speed
+            .max(airborne * (0.85 * self.strength).max(slow));
+        self.wind_speed = approach(
+            self.wind_speed,
+            if self.slam > 0. { 0. } else { 2. * fast },
             dt,
             if self.slam > 0. { 0.05 } else { 0.35 },
         );
+        self.wind = self.wind_speed.max(airborne * self.strength);
         landed.then_some(self.landing).flatten()
     }
 
@@ -360,7 +351,36 @@ mod tests {
         assert_eq!(h.apexes, 1);
         assert_eq!(h.landings, 1);
         assert_eq!(h.slowmos, 1);
-        assert!(scales.iter().any(|s| (*s - SLOWMO[0]).abs() < 1e-6));
+        assert!(scales.iter().any(|s| (*s - SLOWMO_SCALE).abs() < 1e-6));
         assert!(h.landing.unwrap().severity > 30.);
+    }
+
+    #[test]
+    fn slow_motion_camera_blur_and_muffle_share_one_beat() {
+        let mut h = HypeDirector::default();
+        h.step(frame(0., 0., true), Some(0.));
+        let (mut y, mut vy) = (0., 40.);
+        let mut seen = false;
+        for _ in 0..600 {
+            vy -= 32. * STEP;
+            y += vy * STEP;
+            let grounded = y <= 0.;
+            if grounded {
+                y = 0.;
+            }
+            h.step(frame(y, vy, grounded), Some(0.));
+            h.update(STEP, true);
+            // Nothing leads or trails the slow motion.
+            assert_eq!(h.air > 0., h.time_scale < 1.);
+            assert_eq!(h.blur, h.air);
+            if h.envelope > 0. && !grounded {
+                assert!(h.muffle >= 0.7 * h.envelope - 1e-6);
+            }
+            seen |= h.envelope == 1.;
+            if grounded {
+                break;
+            }
+        }
+        assert!(seen);
     }
 }
