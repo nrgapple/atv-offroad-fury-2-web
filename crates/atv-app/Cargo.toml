@@ -34,10 +34,23 @@ pollster = "0.4"
 # Desktop multiplayer relay client (WebSocket and the room POST), rustls.
 tungstenite = { version = "0.28", default-features = false, features = ["handshake", "rustls-tls-webpki-roots"] }
 ureq = { version = "3", default-features = false, features = ["rustls"] }
+# Verifies downloaded content blobs (content_sync.rs, Android).
+sha2 = "0.11"
+
+# Desktop only: Android keeps the screen on through its activity window flag
+# and has no clipboard backend in arboard (research/ANDROID.md).
+[target.'cfg(not(any(target_arch = "wasm32", target_os = "android")))'.dependencies]
 # Display-sleep inhibit while riding (wake.rs; the web uses the Wake Lock API).
 keepawake = "0.6"
 # Copy ride/invite links and paste into the Host/Join fields.
 arboard = { version = "3", default-features = false }
+
+# Android: winit's NativeActivity backend (no Java or Gradle), see
+# research/ANDROID.md and src/android.rs.
+[target.'cfg(target_os = "android")'.dependencies]
+winit = { version = "0.30.13", features = ["android-native-activity"] }
+# stderr to logcat (android.rs).
+libc = "0.2"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 console_error_panic_hook = "0.1"

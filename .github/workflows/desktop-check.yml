@@ -42,6 +42,31 @@ jobs:
           python3 tools/pack_content.py fixture "$RUNNER_TEMP/mini.pack"
           FURY_PACK="$RUNNER_TEMP/mini.pack" cargo test --locked -p atv-content --features embedded
 
+  # Content-free Android compile: the engine library (cdylib, NativeActivity entry
+  # point) for arm64 phones with the runner's preinstalled NDK. The signed APK is
+  # built on the owner's machine only (tools/build_android.py, research/ANDROID.md).
+  android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    concurrency:
+      group: android-check-${{ github.ref }}
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Install Rust toolchain
+        run: |
+          rustup toolchain install stable --profile minimal --component clippy
+          rustup target add aarch64-linux-android
+      - name: Compile the Android library (no content)
+        run: |
+          bin="$ANDROID_NDK_LATEST_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="$bin/aarch64-linux-android26-clang"
+          export CC_aarch64_linux_android="$bin/aarch64-linux-android26-clang"
+          export AR_aarch64_linux_android="$bin/llvm-ar"
+          cargo clippy --locked -p atv-app --lib --target aarch64-linux-android -- -D warnings
+
   # Content-free determinism: the simulation's maths (atv_core::math) and a
   # scripted synthetic ride must reproduce the browser build's bit patterns on
   # every desktop OS and CPU architecture. See research/RUST_ENGINE.md.

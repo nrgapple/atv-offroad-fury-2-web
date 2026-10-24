@@ -151,7 +151,7 @@ See [research/BROWSER_TESTS.md](research/BROWSER_TESTS.md) for the groups, nativ
 | Folder | What's inside |
 | --- | --- |
 | `crates/atv-core/` | Shared Rust resource readers and game simulation |
-| `crates/atv-game/`, `atv-render/`, `atv-ui/`, `atv-content/`, `atv-app/` | The Rust engine: one codebase for the browser game and the desktop apps |
+| `crates/atv-game/`, `atv-render/`, `atv-ui/`, `atv-content/`, `atv-app/` | The Rust engine: one codebase for the browser game, the desktop apps and the Android app ([research/ANDROID.md](research/ANDROID.md)) |
 | `crates/atv-tools/` | Native tools for private-disc inspection and extraction |
 | `web/` | The game page (`play.html`, the Rust engine since the JavaScript game was retired on 2026-10-23) and its shell: landing, app install, offline cache, usage events, dev log |
 | `tools/` | Build, analysis, verification, and deployment helpers |
@@ -160,4 +160,4 @@ See [research/BROWSER_TESTS.md](research/BROWSER_TESTS.md) for the groups, nativ
 
 </details>
 
-GitHub holds authored code and shareable notes. Required recovered runtime resources and approved screenshots live separately in Cloudflare R2. Standalone desktop releases, zipped with those resources embedded, are published as GitHub Release assets from the owner's machine; the resources themselves are never committed. The disc image, BIOS, raw executable, reverse-engineering outputs, and reference checkouts stay private and outside GitHub/CI. GitHub Actions checks the authored build and deploys it to the public Cloudflare app; content uploads follow their own validation path.
+GitHub holds authored code and shareable notes. Required recovered runtime resources and approved screenshots live separately in Cloudflare R2. Standalone desktop releases, zipped with those resources embedded, are published as GitHub Release assets from the owner's machine; the resources themselves are never committed. The Android APK carries no resources: it downloads the same R2 package on first launch. The disc image, BIOS, raw executable, reverse-engineering outputs, and reference checkouts stay private and outside GitHub/CI. GitHub Actions checks the authored build and deploys it to the public Cloudflare app; content uploads follow their own validation path.
