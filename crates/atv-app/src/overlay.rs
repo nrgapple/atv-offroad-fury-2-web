@@ -1181,6 +1181,13 @@ pub fn viewport(width: u32, height: u32, scale: f64) -> Viewport {
         hover: true,
         ..Default::default()
     };
+    // Android: a touch-first phone or tablet, as its browser reports
+    // `(hover: none) and (pointer: coarse)`.
+    if cfg!(target_os = "android") {
+        view.hover = false;
+        view.coarse = true;
+        view.touch_first = true;
+    }
     #[cfg(target_arch = "wasm32")]
     {
         let window = web_sys::window();

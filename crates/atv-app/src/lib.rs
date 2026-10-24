@@ -1,7 +1,11 @@
 //! One game application for every build. The same event loop, loader and
 //! renderer run natively (Metal/DX12/Vulkan) and in browsers (WebGL2).
+#[cfg(target_os = "android")]
+mod android;
 #[cfg(not(target_arch = "wasm32"))]
 mod clipboard;
+#[cfg(any(target_os = "android", test))]
+mod content_sync;
 #[cfg(target_arch = "wasm32")]
 mod context;
 mod front;
@@ -376,6 +380,9 @@ struct App {
     /// Desktop: the rider count request in flight.
     #[cfg(not(target_arch = "wasm32"))]
     riders_pending: Option<std::sync::mpsc::Receiver<Option<u32>>>,
+    /// Android: the first-launch content download holding the boot.
+    #[cfg(target_os = "android")]
+    sync: Option<android::SyncScreen>,
 }
 
 /// Per-frame CPU while an autodrive script plays (vsync wait excluded).
@@ -442,6 +449,9 @@ async fn open_gpu(window: Arc<Window>, display: OwnedDisplayHandle) -> Result<Gp
     // Browsers get WebGL2 so the port runs on every phone the site supports.
     descriptor.backends = if cfg!(target_arch = "wasm32") {
         wgpu::Backends::GL
+    } else if cfg!(target_os = "android") {
+        // Vulkan where the phone has it, else OpenGL ES 3.
+        wgpu::Backends::VULKAN | wgpu::Backends::GL
     } else {
         wgpu::Backends::PRIMARY
     };
@@ -457,9 +467,13 @@ async fn open_gpu(window: Arc<Window>, display: OwnedDisplayHandle) -> Result<Gp
     {
         let info = &gpu.adapter_info;
         // Metal stretches a smaller drawable over the layer and DX12 creates
-        // its swap chain with DXGI_SCALING_STRETCH; Vulkan and GL swap chains
-        // must match the window, so they keep the native size.
-        let scales = matches!(info.backend, wgpu::Backend::Metal | wgpu::Backend::Dx12);
+        // its swap chain with DXGI_SCALING_STRETCH; Android's compositor
+        // scales a Vulkan swap chain smaller than the window, as phone
+        // browsers render the canvas (game.js renderScale). Desktop Vulkan
+        // and every GL swap chain (EGL pins the buffers to the window) must
+        // match the window, so they keep the native size.
+        let scales = matches!(info.backend, wgpu::Backend::Metal | wgpu::Backend::Dx12)
+            || (cfg!(target_os = "android") && info.backend == wgpu::Backend::Vulkan);
         SURFACE_SCALES.with(|s| s.set(scales));
         let cores = std::thread::available_parallelism().map_or(0, |n| n.get());
         let apple = cfg!(all(target_os = "macos", target_arch = "aarch64"));
@@ -578,6 +592,8 @@ async fn prepare(
         scene.advance_steps(steps);
     }
     // speedRushTaps: phones and tablets ((pointer: coarse)) get fewer taps.
+    #[cfg(target_os = "android")]
+    scene.set_coarse_pointer(true);
     #[cfg(target_arch = "wasm32")]
     scene.set_coarse_pointer(
         web_sys::window()
@@ -1592,6 +1608,16 @@ impl App {
         if let Some(riding) = self.ready.as_mut().and_then(|r| r.riding.as_mut()) {
             riding.set_focused(focused);
         }
+        // Android: an app out of focus stops its AAudio stream outright (the
+        // mixer's silence would keep it running in the background).
+        #[cfg(target_os = "android")]
+        if let Some(output) = self.activation.as_ref().and_then(|a| a.started_output()) {
+            if focused {
+                output.start();
+            } else {
+                output.suspend();
+            }
+        }
         self.sync_menu_music();
         self.last = Instant::now();
         self.wake();
@@ -2530,6 +2556,12 @@ impl ApplicationHandler<Message> for App {
             self.focused = document.has_focus().unwrap_or(true);
         }
         self.sync_activity();
+        // Android: the window, surfaces recreated after the background, and
+        // the content download that holds the boot.
+        #[cfg(target_os = "android")]
+        if self.android_resumed(event_loop) {
+            return;
+        }
         let Some(options) = self.options.take() else {
             return;
         };
@@ -2552,7 +2584,11 @@ impl ApplicationHandler<Message> for App {
         };
         #[cfg(not(target_arch = "wasm32"))]
         let attributes = attributes.with_inner_size(winit::dpi::LogicalSize::new(1280, 720));
-        let window = Arc::new(event_loop.create_window(attributes).expect("create window"));
+        // Android made the window before its content download.
+        let window = match self.window.clone() {
+            Some(window) => window,
+            None => Arc::new(event_loop.create_window(attributes).expect("create window")),
+        };
         self.window = Some(window.clone());
         #[cfg(target_arch = "wasm32")]
         context::watch(&window, self.proxy.clone());
@@ -2752,6 +2788,8 @@ impl ApplicationHandler<Message> for App {
     fn suspended(&mut self, _: &ActiveEventLoop) {
         self.suspended = true;
         self.sync_activity();
+        #[cfg(target_os = "android")]
+        self.android_suspended();
     }
 
     fn user_event(&mut self, event_loop: &ActiveEventLoop, message: Message) {
@@ -2904,7 +2942,7 @@ impl ApplicationHandler<Message> for App {
                 if let Some(window) = &self.window {
                     let size = render_size(window);
                     let ready = self.ready.as_mut().unwrap();
-                    ready.gpu.resize(size.width, size.height);
+                    fit_surface(window, &mut ready.gpu, size, self.suspended);
                     if ready.riding.is_some() {
                         let mut overlay = overlay::Overlay::new(
                             &ready.gpu.device,
@@ -3106,7 +3144,7 @@ impl ApplicationHandler<Message> for App {
                 let mut gpu = *gpu;
                 if let Some(window) = &self.window {
                     let size = render_size(window);
-                    gpu.resize(size.width, size.height);
+                    fit_surface(window, &mut gpu, size, self.suspended);
                 }
                 self.gpu = Some(gpu);
                 let (page, notice) = self
@@ -3127,6 +3165,25 @@ impl ApplicationHandler<Message> for App {
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _: WindowId, event: WindowEvent) {
+        #[cfg(target_os = "android")]
+        if self.sync.is_some() {
+            self.android_sync_event(event_loop, event);
+            return;
+        }
+        // Android's Back key is the keyboard's Escape.
+        #[cfg(target_os = "android")]
+        let event = match event {
+            WindowEvent::KeyboardInput {
+                device_id,
+                event,
+                is_synthetic,
+            } => WindowEvent::KeyboardInput {
+                device_id,
+                event: android::back_as_escape(&event).unwrap_or(event),
+                is_synthetic,
+            },
+            other => other,
+        };
         // A lost graphics context takes no input; the new device takes the
         // window's size then.
         #[cfg(target_arch = "wasm32")]
@@ -3366,6 +3423,11 @@ impl ApplicationHandler<Message> for App {
     }
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        #[cfg(target_os = "android")]
+        if self.sync.is_some() {
+            self.android_sync_tick(event_loop);
+            return;
+        }
         #[cfg(not(target_arch = "wasm32"))]
         let (loading, busy) = self.poll_background();
         #[cfg(not(target_arch = "wasm32"))]
@@ -3557,7 +3619,7 @@ impl App {
     fn gpu_restored(&mut self, mut gpu: Gpu) {
         if let Some(window) = &self.window {
             let size = render_size(window);
-            gpu.resize(size.width, size.height);
+            fit_surface(window, &mut gpu, size, self.suspended);
         }
         self.gpu = Some(gpu);
         let ride = self.restore.take().flatten();
@@ -3872,7 +3934,7 @@ impl App {
             return;
         };
         let size = render_size(&window);
-        gpu.resize(size.width, size.height);
+        fit_surface(&window, &mut gpu, size, self.suspended);
         let view = overlay::viewport(size.width, size.height, surface_scale(&window));
         let tracks = boot.tracks.clone();
         let mut front = front::Front::new(
@@ -4922,10 +4984,10 @@ impl App {
         let size = render_size(&window);
         let view = overlay::viewport(size.width, size.height, surface_scale(&window));
         if let Some(ready) = &mut self.ready {
-            ready.gpu.resize(size.width, size.height);
+            fit_surface(&window, &mut ready.gpu, size, self.suspended);
         }
         if let Some(gpu) = &mut self.gpu {
-            gpu.resize(size.width, size.height);
+            fit_surface(&window, gpu, size, self.suspended);
         }
         if let Some(front) = &self.front {
             front.borrow_mut().set_view(view);
@@ -5777,9 +5839,14 @@ pub fn run(options: Options) {
     #[cfg(not(target_arch = "wasm32"))]
     let bench_out = options.bench.clone();
     let profile = options.profile;
-    let event_loop = EventLoop::<Message>::with_user_event()
-        .build()
-        .expect("event loop");
+    #[allow(unused_mut)]
+    let mut builder = EventLoop::<Message>::with_user_event();
+    #[cfg(target_os = "android")]
+    if let Some(activity) = android::activity() {
+        use winit::platform::android::EventLoopBuilderExtAndroid;
+        builder.with_android_app(activity.clone());
+    }
+    let event_loop = builder.build().expect("event loop");
     let app = App {
         camera_choice: options.camera_choice,
         render_scale: Default::default(),
@@ -5860,6 +5927,8 @@ pub fn run(options: Options) {
         context: Default::default(),
         #[cfg(not(target_arch = "wasm32"))]
         riders_pending: None,
+        #[cfg(target_os = "android")]
+        sync: None,
     };
     #[cfg(target_arch = "wasm32")]
     {
@@ -6127,6 +6196,24 @@ fn surface_scale(window: &Window) -> f64 {
         RENDER_RATIO.with(|r| r.get()).min(device).max(0.1)
     } else {
         device
+    }
+}
+
+/// Sizes `gpu`'s surface to the window, first remaking it on the window's
+/// current native surface when the platform destroyed the old one (Android
+/// background); while suspended there is none to make.
+fn fit_surface(
+    window: &Arc<Window>,
+    gpu: &mut Gpu,
+    size: winit::dpi::PhysicalSize<u32>,
+    suspended: bool,
+) {
+    if !gpu.surface_stale() {
+        gpu.resize(size.width, size.height);
+    } else if !suspended
+        && let Err(error) = gpu.recreate_surface(window.clone(), size.width, size.height)
+    {
+        status(&format!("Graphics surface: {error}"));
     }
 }
 

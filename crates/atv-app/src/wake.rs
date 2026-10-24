@@ -8,7 +8,9 @@
 //! platform's display-sleep inhibitor under the same policy (`keepawake`:
 //! an IOKit assertion on macOS, `SetThreadExecutionState` on Windows,
 //! org.freedesktop.ScreenSaver/logind on Linux), released in menus and while
-//! the window is hidden or minimized.
+//! the window is hidden or minimized. Android keeps the activity window's
+//! `FLAG_KEEP_SCREEN_ON` for the whole foreground session instead (menus
+//! too); the system drops its effect while the app is in the background.
 #[cfg(target_arch = "wasm32")]
 use std::{cell::RefCell, rc::Rc};
 
@@ -17,8 +19,11 @@ pub struct ScreenWake {
     #[cfg(target_arch = "wasm32")]
     state: Rc<RefCell<State>>,
     /// The held desktop inhibitor; dropping it releases the screen.
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(not(any(target_arch = "wasm32", target_os = "android")))]
     inhibit: std::cell::RefCell<Option<keepawake::KeepAwake>>,
+    /// Android: a ride wants the screen on (the flag itself stays set).
+    #[cfg(target_os = "android")]
+    inhibit: std::cell::Cell<bool>,
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -87,7 +92,13 @@ impl ScreenWake {
                 self.acquire();
             }
         }
-        #[cfg(not(target_arch = "wasm32"))]
+        // Android: the activity window keeps `FLAG_KEEP_SCREEN_ON` while the
+        // game is in the foreground (set once before the event loop, see
+        // android.rs: android-activity 0.6 deadlocks when window flags change
+        // during its event dispatch). Only the intent is recorded here.
+        #[cfg(target_os = "android")]
+        self.inhibit.set(wanted && visible);
+        #[cfg(not(any(target_arch = "wasm32", target_os = "android")))]
         {
             let mut inhibit = self.inhibit.borrow_mut();
             if !(wanted && visible) {
@@ -123,7 +134,11 @@ impl ScreenWake {
         {
             self.state.borrow().sentinel.is_some()
         }
-        #[cfg(not(target_arch = "wasm32"))]
+        #[cfg(target_os = "android")]
+        {
+            self.inhibit.get()
+        }
+        #[cfg(not(any(target_arch = "wasm32", target_os = "android")))]
         {
             self.inhibit.borrow().is_some()
         }
