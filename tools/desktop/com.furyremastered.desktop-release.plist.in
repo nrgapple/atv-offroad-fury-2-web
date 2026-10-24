@@ -13,6 +13,7 @@
     <string>@REPO@/tools/desktop_release_watcher.py</string>
     <string>--repo</string><string>@REPO@</string>
     <string>--auto-main</string>
+    <string>--log</string><string>@HOME@/LargeFiles/fury-desktop/watcher.log</string>
   </array>
   <key>StartInterval</key><integer>900</integer>
   <key>RunAtLoad</key><true/>
@@ -20,7 +21,10 @@
   <dict>
     <key>PATH</key><string>@HOME@/.cargo/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
   </dict>
-  <key>StandardOutPath</key><string>@HOME@/LargeFiles/fury-desktop/watcher.log</string>
-  <key>StandardErrorPath</key><string>@HOME@/LargeFiles/fury-desktop/watcher.log</string>
+  <!-- launchd cannot open files on the external SSD (EX_CONFIG), so the watcher writes its
+       own log there with -\-log and launchd's output is discarded. If Python cannot start
+       (for example without Full Disk Access) only `launchctl print` shows the exit code. -->
+  <key>StandardOutPath</key><string>/dev/null</string>
+  <key>StandardErrorPath</key><string>/dev/null</string>
 </dict>
 </plist>
