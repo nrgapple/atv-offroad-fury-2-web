@@ -357,6 +357,14 @@ class WatcherTests(unittest.TestCase):
                 watcher.prune_builds(state, out_root=tmp, keep=2)
             self.assertEqual(sorted(p.name for p in tmp.iterdir()), ['ccccccc', 'ddddddd', 'eeeeeee', 'packs'])
 
+    def test_first_pass_adopts_published_tags(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            missing = Path(tmp) / 'state.json'
+            state = watcher.load_state(missing, {'desktop-v0.1.0-a': '1' * 40})
+            self.assertEqual(watcher.pending({'desktop-v0.1.0-a': '1' * 40}, state), {})
+            missing.write_text('{"done": {}, "failed": {}}')
+            self.assertEqual(watcher.load_state(missing, {'desktop-v0.1.0-a': '1' * 40})['done'], {})
+
 
 if __name__ == '__main__':
     unittest.main()

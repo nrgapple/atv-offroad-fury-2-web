@@ -90,9 +90,13 @@ def main_candidate(repo, tags, state, min_hours, now=None):
     return tag, head
 
 
-def load_state(path):
+def load_state(path, tags):
+    """The state file; a first pass (no file yet) adopts the tags already on origin as done,
+    because their releases were published before the watcher was installed."""
     try:
         return json.loads(Path(path).read_text())
+    except FileNotFoundError:
+        return {'done': {tag: {'commit': sha, 'adopted': True} for tag, sha in tags.items()}, 'failed': {}}
     except (OSError, ValueError):
         return {'done': {}, 'failed': {}}
 
@@ -161,10 +165,15 @@ def main(argv=None):
     parser.add_argument('--state', type=Path, default=STATE)
     parser.add_argument('--auto-main', action='store_true', help='also release origin/main when the apps changed')
     parser.add_argument('--min-hours', type=float, default=12, help='least time between automatic releases (default 12)')
+    parser.add_argument('--log', type=Path, help='append output here (launchd cannot open files on the SSD itself)')
     parser.add_argument('--dry-run', action='store_true')
     args = parser.parse_args(argv)
     if os.environ.get('GITHUB_ACTIONS') or os.environ.get('CI'):
         sys.exit('desktop_release_watcher: local machine only, never CI')
+    if args.log:
+        args.log.parent.mkdir(parents=True, exist_ok=True)
+        sys.stdout = sys.stderr = open(args.log, 'a', buffering=1)
+        print(f'--- {time.strftime("%Y-%m-%d %H:%M:%S")}')
     args.state.parent.mkdir(parents=True, exist_ok=True)
     lock = open(args.state.with_suffix('.lock'), 'w')
     try:
@@ -172,8 +181,8 @@ def main(argv=None):
     except BlockingIOError:
         print('another watcher pass is running')
         return 0
-    state = load_state(args.state)
     tags = remote_tags(args.repo)
+    state = load_state(args.state, tags)
     todo = {tag: (sha, True) for tag, sha in pending(tags, state).items()}
     if args.auto_main:
         subprocess.run(['git', 'fetch', '--quiet', 'origin', 'main', *(f'refs/tags/{t}:refs/tags/{t}' for t in tags)],

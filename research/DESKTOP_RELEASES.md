@@ -179,7 +179,9 @@ Each build adds a temporary worktree at the commit, links `private`, runs
 a Linux launch failed, then runs `publish_desktop_release.py --tag <tag> --yes` (still limited
 to commits on `origin/main`) with release notes stating exactly what was launched. Results go
 to `~/LargeFiles/fury-desktop/watcher-state.json` and a macOS notification; per-release logs are
-`watcher-<tag>.log` beside it, the job log is `watcher.log`. A failed release is not retried
+`watcher-<tag>.log` beside it, the job log is `watcher.log` (written by the watcher via `--log`,
+because launchd cannot open files on the external SSD and fails the job with `EX_CONFIG`). The
+first pass, with no state file yet, adopts the `desktop-v*` tags already on origin as published. A failed release is not retried
 until its entry is removed from the state file's `failed` map. A lock file stops overlapping
 passes. After each pass, local archive folders of published releases beyond the newest three
 are deleted (they remain on GitHub Releases and can be rebuilt from their commit).
@@ -198,6 +200,12 @@ launchctl bootout gui/$(id -u)/com.furyremastered.desktop-release 2>/dev/null
 launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.furyremastered.desktop-release.plist
 # stop: launchctl bootout gui/$(id -u)/com.furyremastered.desktop-release
 ```
+
+macOS privacy protection blocks a launchd job from reading the external SSD until Python
+has Full Disk Access: in System Settings, Privacy & Security, Full Disk Access, add
+`/usr/bin/python3` and Xcode's
+`Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/Resources/Python.app`.
+Without it the job exits with code 2 (`launchctl print gui/$(id -u)/com.furyremastered.desktop-release`).
 
 The job needs the SSD, Docker (Colima running), `gh` signed in and the private content
 package (`private/reports/hosted-content` in the shared checkout) when it fires; a pass
