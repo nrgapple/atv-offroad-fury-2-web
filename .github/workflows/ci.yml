@@ -127,14 +127,46 @@ jobs:
           python3 tools/package_release.py --commit "$GITHUB_SHA"
       # Only the content-free group runs here: the built web/dist is served with an
       # empty content directory. Game content never enters CI. See research/BROWSER_TESTS.md.
-      # PRs run it; the main build after merge relies on that PR result.
+      # PRs run it; the main build after merge relies on that PR result. PRs restore the
+      # trusted Playwright caches; main restores nothing, and installs and saves them only
+      # when a cache is missing. See research/CI_TOOL_CACHE.md.
+      - name: Identify Playwright caches
+        if: steps.prepare.outputs.build == 'true'
+        id: playwright-key
+        run: python3 tools/playwright_ci.py key
+      - name: Restore trusted Playwright package and browsers
+        if: steps.prepare.outputs.build == 'true'
+        id: playwright-cache
+        continue-on-error: true
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: |
+            ${{ runner.temp }}/fury-playwright/package
+            ~/.cache/ms-playwright
+          key: ${{ steps.playwright-key.outputs.browsers-key }}
+          lookup-only: ${{ github.event_name == 'push' }}
+      - name: Restore trusted Playwright system packages
+        if: steps.prepare.outputs.build == 'true'
+        id: playwright-apt-cache
+        continue-on-error: true
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ${{ runner.temp }}/fury-playwright/apt/*.deb
+          key: ${{ steps.playwright-key.outputs.apt-key }}
+          lookup-only: ${{ github.event_name == 'push' }}
+      # Every network attempt is bounded and retried once; see tools/playwright_ci.py.
       - name: Install pinned Playwright browsers
-        if: steps.prepare.outputs.build == 'true' && github.event_name != 'push'
-        timeout-minutes: 8
-        run: |
-          npm install --no-save --no-audit --no-fund --prefix "$RUNNER_TEMP/playwright" playwright@1.58.2
-          "$RUNNER_TEMP/playwright/node_modules/.bin/playwright" install --with-deps --only-shell chromium webkit
-          echo "PLAYWRIGHT_MODULE=$RUNNER_TEMP/playwright/node_modules/playwright" >> "$GITHUB_ENV"
+        if: >-
+          steps.prepare.outputs.build == 'true' && (github.event_name != 'push' ||
+          steps.playwright-cache.outputs.cache-hit != 'true' || steps.playwright-apt-cache.outputs.cache-hit != 'true')
+        id: playwright
+        timeout-minutes: 12
+        # On main this only produces caches; it must never block the deployment.
+        continue-on-error: ${{ github.event_name == 'push' }}
+        env:
+          BROWSERS_HIT: ${{ github.event_name != 'push' && steps.playwright-cache.outputs.cache-hit || 'false' }}
+          APT_HIT: ${{ github.event_name != 'push' && steps.playwright-apt-cache.outputs.cache-hit || 'false' }}
+        run: python3 tools/playwright_ci.py install --root "$RUNNER_TEMP/fury-playwright" --browsers-hit "$BROWSERS_HIT" --apt-hit "$APT_HIT"
       - name: Content-free browser smoke tests
         if: steps.prepare.outputs.build == 'true' && github.event_name != 'push'
         timeout-minutes: 5
@@ -173,6 +205,28 @@ jobs:
             ~/.cargo/registry/cache
             ~/.cargo/registry/src
           key: fury-rust-v1-${{ steps.rust-key.outputs.key }}-${{ hashFiles('**/Cargo.lock', '**/Cargo.toml') }}-${{ github.sha }}
+      - name: Save validated Playwright package and browsers
+        continue-on-error: true
+        if: >-
+          success() && steps.playwright.outcome == 'success' && github.ref == 'refs/heads/main' &&
+          (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
+          steps.playwright-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: |
+            ${{ runner.temp }}/fury-playwright/package
+            ~/.cache/ms-playwright
+          key: ${{ steps.playwright-key.outputs.browsers-key }}
+      - name: Save validated Playwright system packages
+        continue-on-error: true
+        if: >-
+          success() && steps.playwright.outcome == 'success' && github.ref == 'refs/heads/main' &&
+          (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
+          steps.playwright-apt-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ${{ runner.temp }}/fury-playwright/apt/*.deb
+          key: ${{ steps.playwright-key.outputs.apt-key }}
       - name: Record selected validation and publication lane
         if: always()
         env:

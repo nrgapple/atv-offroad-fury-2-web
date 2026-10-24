@@ -32,7 +32,8 @@ On pull requests the runtime lane also runs the content-free browser smoke group
 (`make browser-smoke`) against the freshly built `web/dist`; the main build after
 merge relies on that PR result. After deploying, CI verifies the commit, hashes and
 dev log on `https://furyremastered.com/` (the same Worker serves the workers.dev
-address). The smoke group serves an empty content directory and uses pinned Playwright 1.58.2 Chromium/WebKit. Content, native
+address). The smoke group serves an empty content directory and uses pinned Playwright 1.58.2 Chromium/WebKit, installed by
+`tools/playwright_ci.py` with bounded retries and trusted caches (`CI_TOOL_CACHE.md`). Content, native
 and relay browser groups stay local; see `BROWSER_TESTS.md`.
 
 A newer push cancels the superseded `web` build on a PR branch. On `main` the running

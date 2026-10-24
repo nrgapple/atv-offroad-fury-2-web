@@ -1,0 +1,21 @@
+#!/bin/sh
+# Local rustc wrapper (the Makefile sets it as RUSTC_WRAPPER when sccache is on PATH).
+# sccache hashes every CARGO_* variable it sees, so the per-worktree CARGO_TARGET_DIR
+# exported by the Makefile would make every worktree miss. rustc never reads it.
+unset CARGO_TARGET_DIR
+# macOS drops DYLD_* variables when it starts /bin/sh, including the library path the
+# rustup proxy sets so the toolchain's rust-lld (wasm linking) finds libLLVM.dylib.
+# Restore it from the compiler path ($1 is .../toolchains/<name>/bin/rustc or
+# clippy-driver) with dyld's default fallback directories.
+if [ "$(uname -s)" = Darwin ]; then
+  case "$1" in
+    */bin/*)
+      lib="${1%/bin/*}/lib"
+      if [ -d "$lib" ]; then
+        DYLD_FALLBACK_LIBRARY_PATH="$lib:$HOME/lib:/usr/local/lib:/usr/lib"
+        export DYLD_FALLBACK_LIBRARY_PATH
+      fi
+      ;;
+  esac
+fi
+exec sccache "$@"
