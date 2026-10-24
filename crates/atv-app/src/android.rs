@@ -61,7 +61,10 @@ fn android_main(app: AndroidApp) {
     // event dispatch holds, so changing them later from a ride deadlocks.
     {
         use winit::platform::android::activity::WindowManagerFlags;
-        app.set_window_flags(WindowManagerFlags::KEEP_SCREEN_ON, WindowManagerFlags::empty());
+        app.set_window_flags(
+            WindowManagerFlags::KEEP_SCREEN_ON,
+            WindowManagerFlags::empty(),
+        );
     }
     let _ = ACTIVITY.set(app);
     crate::run(crate::Options {
