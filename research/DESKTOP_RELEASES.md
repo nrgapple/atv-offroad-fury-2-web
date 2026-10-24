@@ -102,19 +102,28 @@ requires a clean tree (the commit is the version) and uses `git archive HEAD` fo
 - macOS builds natively for both architectures (`MACOSX_DEPLOYMENT_TARGET=11.0`), runs
   `lipo`, assembles the bundle (icon from the authored `web/fury-app-icons.json` 512 px art via
   `iconutil`), signs ad hoc and zips with `ditto` (bundle structure and symlinks preserved).
-- Linux and Windows link with thin LTO (`CARGO_PROFILE_RELEASE_LTO=thin`): the fat-LTO link of
-  `fury` for aarch64 was OOM-killed in the 4 GiB Colima VM on bd347cc (2026-10-24). macOS keeps
-  the workspace's fat LTO.
-- Linux and Windows run in the local image `fury-desktop-builder:bullseye-5` (built from
+- Linux and Windows build in a dedicated Colima VM, profile `fury-builder` (6 CPUs, 8 GiB, vz with
+  Rosetta for the x86_64 smoke run), kept on the SSD under `COLIMA_HOME=~/LargeFiles/colima`.
+  `build_desktop.py` starts it on demand, points `docker` at its socket (`DOCKER_HOST`) and stops
+  it afterwards to give the memory back (`FURY_KEEP_BUILDER_VM=1` keeps it running;
+  `--builder-vm none` uses the current docker instead). Only `~/.cargo/registry` is mounted.
+  Why: the owner's default 2 CPU / 4 GiB VM runs other services, and the fat-LTO link of `fury`
+  for aarch64 was OOM-killed there on bd347cc (2026-10-24). Cold builds in the new VM (fresh
+  target volumes): linux-x86_64 10m45s, linux-aarch64 10m57s, windows-x86_64 7m20s.
+- Windows: Rust hides a DLL's internal symbols with `-exclude-symbols` linker directives that
+  Debian 11's MinGW ld (binutils 2.35) ignores, so the `atv-app` cdylib (built alongside the
+  `fury` bin and unused on Windows) exported about 70 000 symbols and failed with "export ordinal
+  too large". The Windows build passes `-Wl,--exclude-all-symbols`.
+- Linux and Windows run in the image `fury-desktop-builder:bullseye-5` (built from
   `rust:1-bullseye` plus `gcc-x86-64-linux-gnu`, `gcc-aarch64-linux-gnu`, `gcc-mingw-w64-x86-64`,
   `libudev-dev` and `libasound2-dev` for both Linux architectures (gilrs reads controllers
-  through libudev; cpal sound output links ALSA) and the three Rust targets). Colima only
-  shares `$HOME` and the repo is on the SSD, so the
+  through libudev; cpal sound output links ALSA) and the three Rust targets). The VM shares
+  only the cargo registry and the repo is on the SSD, so the
   source is piped into the container as a tar on stdin, each target uses its own named Docker
   volume for `target/` (`fury-desktop-target-<triple>`; the older `fury-desktop-target` volume
   from earlier experiments can be removed), `$HOME/.cargo/registry` is mounted so crates are not
-  re-downloaded, and only the finished binary comes back out as a tar on stdout. Other
-  containers are untouched and no Colima setting changes.
+  re-downloaded, and only the finished binary comes back out as a tar on stdout. The owner's
+  default Colima VM and its containers are untouched.
 - Linux archives are `tar.gz` (the executable bit survives extraction); macOS and Windows are
   zips. Timestamps are the commit time and owners are normalized.
 - Every archive is checked after it is written (`tools/desktop_archive.py`): a strict member

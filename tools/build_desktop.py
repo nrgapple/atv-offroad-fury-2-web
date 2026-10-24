@@ -213,6 +213,55 @@ def build_macos(ctx, pack):
 
 # ----- Docker (Linux, Windows) ----------------------------------------------------------
 
+# A dedicated Colima VM for the Linux and Windows builds, so they get several cores and enough
+# memory without resizing the owner's default VM (which runs other services). Its disk lives on
+# the SSD (COLIMA_HOME). It starts on demand and stops after the build to give the memory back.
+BUILDER_VM = {'profile': 'fury-builder', 'home': Path.home() / 'LargeFiles/colima', 'cpus': 6, 'memory': 8, 'disk': 60}
+
+
+class BuilderVM:
+    """Points `docker` at the dedicated builder VM for the duration of a build."""
+
+    def __init__(self, profile):
+        self.profile = profile
+        self.started = False
+
+    def colima(self, *args, **kwargs):
+        env = dict(os.environ, COLIMA_HOME=str(BUILDER_VM['home']))
+        return subprocess.run(['colima', *args, '--profile', self.profile], env=env, **kwargs)
+
+    def socket(self):
+        result = self.colima('status', '--json', capture_output=True, text=True)
+        if result.returncode != 0:
+            return None
+        status = json.loads(result.stdout)
+        return status.get('docker_socket') or f"unix://{BUILDER_VM['home']}/{self.profile}/docker.sock"
+
+    def __enter__(self):
+        if not self.profile:
+            return self
+        if not shutil.which('colima'):
+            sys.exit('build_desktop: colima is not installed (or pass --builder-vm none to use the current docker)')
+        sock = self.socket()
+        if not sock:
+            BUILDER_VM['home'].mkdir(parents=True, exist_ok=True)
+            print(f'+ starting the {self.profile} Colima VM', flush=True)
+            # Only the cargo registry is shared with the VM; the source goes in as a tar on stdin.
+            self.colima('start', '--vm-type', 'vz', '--vz-rosetta', '--cpus', str(BUILDER_VM['cpus']),
+                        '--memory', str(BUILDER_VM['memory']), '--disk', str(BUILDER_VM['disk']),
+                        '--mount', f"{Path.home() / '.cargo/registry'}:w", check=True)
+            self.started = True
+            sock = self.socket()
+        os.environ['DOCKER_HOST'] = sock if sock.startswith('unix://') else f'unix://{sock}'
+        return self
+
+    def __exit__(self, *exc):
+        if self.started and not os.environ.get('FURY_KEEP_BUILDER_VM'):
+            print(f'+ stopping the {self.profile} Colima VM', flush=True)
+            self.colima('stop')
+        return False
+
+
 def docker_image(tag, dockerfile, platform=None):
     if subprocess.run(['docker', 'image', 'inspect', tag], capture_output=True).returncode == 0:
         return
@@ -239,22 +288,23 @@ def source_tar(ctx):
 CONTAINER_SCRIPT = r'''set -e
 mkdir -p /src && tar -xf - -C /src && cd /src
 export CARGO_TARGET_DIR=/target CARGO_TERM_COLOR=never
-# Fat LTO of fury outgrew the 4 GiB Colima VM (the aarch64 link was OOM-killed on bd347cc);
-# thin LTO links in far less memory. macOS keeps the workspace's fat LTO.
-export CARGO_PROFILE_RELEASE_LTO=thin
 case "$TRIPLE" in
   x86_64-unknown-linux-gnu) [ "$(uname -m)" = x86_64 ] && L=gcc || L=x86_64-linux-gnu-gcc
     LIBDIR=/usr/lib/x86_64-linux-gnu ;;
   aarch64-unknown-linux-gnu) [ "$(uname -m)" = aarch64 ] && L=gcc || L=aarch64-linux-gnu-gcc
     LIBDIR=/usr/lib/aarch64-linux-gnu ;;
-  x86_64-pc-windows-gnu) L=x86_64-w64-mingw32-gcc ;;
+  x86_64-pc-windows-gnu) L=x86_64-w64-mingw32-gcc
+    # Rust hides internal symbols from a DLL with `-exclude-symbols` directives, which this
+    # Debian 11 MinGW ld (binutils 2.35) ignores, so the atv-app cdylib (unused on Windows)
+    # exported ~70k symbols and failed with "export ordinal too large". Export nothing.
+    export CARGO_TARGET_X86_64_PC_WINDOWS_GNU_RUSTFLAGS="-C link-arg=-Wl,--exclude-all-symbols" ;;
 esac
 U=$(echo "$TRIPLE" | tr 'a-z-' 'A-Z_')
 export "CARGO_TARGET_${U}_LINKER=$L" "CC_$(echo "$TRIPLE" | tr - _)=$L"
 if [ -n "$LIBDIR" ]; then  # the target's libudev and ALSA (multiarch) for cross builds
   export PKG_CONFIG_ALLOW_CROSS=1 "PKG_CONFIG_PATH=$LIBDIR/pkgconfig" "CARGO_TARGET_${U}_RUSTFLAGS=-L $LIBDIR"
 fi
-cargo build --release --locked -p atv-app --bin fury --target "$TRIPLE" -j 2 >&2
+cargo build --release --locked -p atv-app --bin fury --target "$TRIPLE" -j "$(nproc)" >&2
 cd "/target/$TRIPLE/release" && tar -cf - "$BINARY"
 '''
 
@@ -348,7 +398,16 @@ def main(argv=None):
     parser.add_argument('--keep-work', action='store_true')
     parser.add_argument('--smoke-only', type=Path, metavar='ARCHIVE',
                         help='launch an existing Linux archive under Docker and exit')
+    parser.add_argument('--builder-vm', default=BUILDER_VM['profile'],
+                        help=f"Colima profile for the Docker builds, started on demand and stopped afterwards "
+                             f"(default {BUILDER_VM['profile']}, in {BUILDER_VM['home']}); 'none' uses the current docker")
     args = parser.parse_args(argv)
+    needs_docker = args.smoke_only or any(p != 'macos-universal' for p in args.platforms.split(',') if p)
+    with BuilderVM(args.builder_vm if needs_docker and args.builder_vm != 'none' else None):
+        return build(args, parser)
+
+
+def build(args, parser):
     if args.smoke_only:
         platform = desktop_archive.platform_of(args.smoke_only.name)
         if platform not in LINUX_TRIPLES:
