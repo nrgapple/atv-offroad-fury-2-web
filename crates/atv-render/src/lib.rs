@@ -1245,14 +1245,19 @@ impl SceneRenderer {
         self.rush_motion = (origin, velocity);
     }
 
-    /// Alpha Air dark blur amount (hype.blur; 0 when the toggle is off).
-    pub fn set_air_blur(&mut self, gpu: &Gpu, amount: f32) {
-        if amount <= 0.002 && self.air_blur.is_none() {
+    /// Alpha Air dark blur amount (hype.blur). With the toggle on the pass
+    /// and its frame texture exist before the first jump, so big air does
+    /// not stall on pipeline creation mid-flight.
+    pub fn set_air_blur(&mut self, gpu: &Gpu, enabled: bool, amount: f32) {
+        if !enabled && self.air_blur.is_none() {
             return;
         }
-        self.air_blur
-            .get_or_insert_with(|| air_blur::AirBlurPass::new(gpu))
-            .amount = amount;
+        let coarse = self.coarse_pointer;
+        let pass = self
+            .air_blur
+            .get_or_insert_with(|| air_blur::AirBlurPass::new(gpu));
+        pass.amount = if enabled { amount } else { 0. };
+        pass.coarse = coarse;
     }
 
     /// Phones and tablets get fewer blur taps (speedRushTaps).
@@ -1603,8 +1608,11 @@ impl SceneRenderer {
         };
         // Air blur: the frame (after speed rush) renders into its texture.
         let blur_scene = match &mut self.air_blur {
-            Some(blur) if blur.active() => Some(blur.scene_target(gpu, size)),
-            _ => None,
+            Some(blur) => {
+                let scene = blur.scene_target(gpu, size);
+                blur.active().then_some(scene)
+            }
+            None => None,
         };
         let output = blur_scene.as_ref().unwrap_or(target);
         self.profiler.mark("prepare.shadows_rush");

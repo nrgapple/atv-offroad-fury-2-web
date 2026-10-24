@@ -1,0 +1,12 @@
+{
+  "id": "alpha-big-air-slow-mo-camera-blur-and-muffle-now-hit-t-3ca10b55a0194ff2a2257cbff9e23c5e",
+  "timestamp": "2026-10-24T00:00:00Z",
+  "recorded_at": "2026-10-24T22:33:51.258847+00:00",
+  "kind": "verification",
+  "title": "Alpha big air: slow-mo, camera, blur and muffle now hit together",
+  "summary": "In Settings \u2192 Alpha, air slow-mo, the big-air camera, air blur and music muffle were driven separately (camera/blur eased in during the climb and held to touchdown; slow-mo started only at the apex), so they fired at different times. One apex \"moment\" (0.2 s ease in, 0.55 s hold, 0.4 s ease out) now drives all of them together, scaled by jump size. Slow-motion drawing now blends by the fixed-step accumulator phase instead of wall-clock segments, which froze and snapped on phones' uneven frames. The air-blur pass is built when its toggle is turned on rather than mid-jump, and uses six taps instead of ten on phones/tablets.",
+  "details": [
+    "atv-game unit tests (all four effects share one envelope frame by frame; slow-mo presenter moves exactly with scaled time at alternating 14.5/21 ms frames, where the old wall-clock blending fails); host Chromium ENV05 browser tests test_engine_air_blur, test_engine_alpha_muffle, test_engine_alpha pass; a host Chromium per-frame trace showed time scale, blur and muffle rising, holding and releasing on the same frames."
+  ],
+  "limitation": "host-only evidence; not yet measured on a physical phone. Particles and other per-step effects still advance at the slowed step rate during slow motion."
+}
