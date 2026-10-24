@@ -181,4 +181,5 @@ checkout): `private/reports/devlog-images/android-emulator-*.png`.
 - Download corruption found later at read time (a blob damaged on disk after it was
   verified) fails the load with the integrity error; a reinstall or clearing app data fixes
   it. Automatic repair is not implemented.
-- Not on Google Play; distribution is the signed APK (release wiring is a separate step).
+- Not on Google Play; distribution is the signed APK attached to each automatic GitHub
+  Release beside the desktop archives (DESKTOP_RELEASES.md, "Automatic releases").
