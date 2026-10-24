@@ -282,7 +282,7 @@ checksum = "1505bd5d3d116872e7271a6d4e16d81d0c8570876c8de68093a09ac269d8aac0"
 
 [[package]]
 name = "atv-app"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "arboard",
  "atv-content",
@@ -312,7 +312,7 @@ dependencies = [
 
 [[package]]
 name = "atv-content"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "js-sys",
  "serde",
@@ -325,7 +325,7 @@ dependencies = [
 
 [[package]]
 name = "atv-core"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "libm",
  "miniz_oxide 0.8.9",
@@ -335,7 +335,7 @@ dependencies = [
 
 [[package]]
 name = "atv-game"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "atv-content",
  "atv-core",
@@ -348,14 +348,14 @@ dependencies = [
 
 [[package]]
 name = "atv-net"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "atv-relay"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "atv-net",
  "serde",
@@ -366,7 +366,7 @@ dependencies = [
 
 [[package]]
 name = "atv-render"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "atv-core",
  "atv-game",
@@ -377,7 +377,7 @@ dependencies = [
 
 [[package]]
 name = "atv-tools"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "atv-core",
  "serde",
@@ -386,7 +386,7 @@ dependencies = [
 
 [[package]]
 name = "atv-ui"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "atv-content",
  "atv-core",

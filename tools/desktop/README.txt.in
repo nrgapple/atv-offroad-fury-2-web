@@ -8,13 +8,12 @@ run are packed into this download; you do not need the disc, an emulator or
 anything else installed. The packed resources remain the property of their
 owners. The software is provided as is, without warranty.
 
-This is an early build of the Rust engine's desktop app. It opens on the title
-screen: pick any of the 40 original venues, an ATV or motorcycle and a rider, then
-ride Freeride, or race the original CPU riders on ATVs. The venues' worlds, the
-recovered riding physics, audio, the HUD and minimap, the pause menu and settings
-(including key and controller remapping) are in. Not yet: multiplayer, progression,
-motorcycle races and some race extras (music, start lamps, fireworks). The web
-version at https://furyremastered.com/ plays the port in a browser.
+This is an early build. It runs the same Rust engine as the web version at
+https://furyremastered.com/ (which switched to it on 2026-10-23): the title screen
+and menus, the 40 original venues, the ATVs, motorcycles and riders, Freeride and
+races against the original CPU riders, online multiplayer, the HUD and minimap,
+audio and settings (including key and controller remapping). It is not finished;
+progress and known gaps are in the dev log at https://furyremastered.com/devlog.html.
 
 How to run
 ----------

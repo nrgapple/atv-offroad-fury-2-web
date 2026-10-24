@@ -8,10 +8,11 @@ owner's machine, never in CI, because they contain the extracted runtime resourc
 be published outside the R2 content package). The ISO, BIOS, raw boot executable
 (`SCUS_972.11`), unrelated disc content and reverse-engineering output never enter an archive.
 
-Status: the desktop app rides the original quad and rider in Freeride on the original venues
-with their worlds drawn, with audio (see `RUST_ENGINE.md` for what is and is not ported yet;
-menus, HUD, races and multiplayer are not in it), so releases are marked prerelease until the
-port is further along.
+Status: since the switch-over (2026-10-23, `SWITCHOVER.md`) the browser game and the desktop
+apps run the same Rust engine, so desktop releases carry the same menus, races, HUD and
+multiplayer as `play.html` (see `RUST_ENGINE.md` for what is and is not ported yet). Releases
+are marked prerelease until the port is further along, and are built automatically after app
+changes merge (see "Automatic releases").
 
 ## What is in an archive
 
@@ -154,27 +155,63 @@ marked prerelease (`--stable` changes that), with the four archives and `SHA256S
 The tests (`tools/test_desktop_release.py`, part of `make check`) cover the pack builder,
 allowlist, publish guards and the watcher with synthetic data only.
 
-The first publication is the owner's decision.
+The watcher below publishes automatically; run these by hand to release outside its schedule.
 
-## Automatic builds on a `desktop-v*` tag (optional, not installed)
+## Automatic releases (installed on the owner's Mac)
 
-`tools/desktop_release_watcher.py` makes one pass: it lists `desktop-v*` tags on origin
-(`git ls-remote`), and for each tag it has not handled it adds a temporary worktree at the
-tagged commit, links `private`, runs `build_desktop.py`, then `publish_desktop_release.py
---tag <tag> --yes` (still limited to commits on `origin/main`) and records the result in
-`~/LargeFiles/fury-desktop/watcher-state.json`; a failed tag is not retried until its entry is
-removed. A macOS notification reports each outcome. To run it every 15 minutes:
+Desktop releases are part of the delivery pipeline: GitHub Actions deploys the web game on
+every merge, and a LaunchAgent on the owner's Mac turns merged app changes into desktop
+releases, because the archives contain game content and must never be built in CI.
+
+`tools/desktop_release_watcher.py --auto-main` makes one pass every 15 minutes (and at login):
+
+- **New `desktop-v*` tags** on origin are built and published as before (push a tag to force
+  a release of a specific commit).
+- **origin/main** is released as `desktop-v<workspace version>-<short commit>` when it changed
+  anything the apps are built from since the newest desktop release (`RELEASE_PATHS`:
+  `crates/`, `Cargo.toml`/`Cargo.lock`, the desktop build and pack tools, the app icon art),
+  and that release is at least 12 hours old (`--min-hours`). Documentation, dev-log, web-shell
+  and test-only merges never start a release. The 12 hour floor keeps a busy merge day to
+  one or two roughly 2 GB releases instead of one per merge.
+
+Each build adds a temporary worktree at the commit, links `private`, runs
+`build_desktop.py --smoke --output ~/LargeFiles/fury-desktop/<short>`, refuses to publish when
+a Linux launch failed, then runs `publish_desktop_release.py --tag <tag> --yes` (still limited
+to commits on `origin/main`) with release notes stating exactly what was launched. Results go
+to `~/LargeFiles/fury-desktop/watcher-state.json` and a macOS notification; per-release logs are
+`watcher-<tag>.log` beside it, the job log is `watcher.log` (written by the watcher via `--log`,
+because launchd cannot open files on the external SSD and fails the job with `EX_CONFIG`). The
+first pass, with no state file yet, adopts the `desktop-v*` tags already on origin as published. A failed release is not retried
+until its entry is removed from the state file's `failed` map. A lock file stops overlapping
+passes. After each pass, local archive folders of published releases beyond the newest three
+are deleted (they remain on GitHub Releases and can be rebuilt from their commit).
+
+Bump the workspace `version` in `Cargo.toml` for a notable release; the next automatic pass
+publishes it under the new number.
+
+Install or update (from the shared checkout, which the job only fetches in):
 
 ```sh
+python3 tools/desktop_release_watcher.py --auto-main --dry-run   # what it would build now
 sed -e "s|@REPO@|$HOME/Projects/atv-offroad-fury-2-web|g" -e "s|@HOME@|$HOME|g" \
   tools/desktop/com.furyremastered.desktop-release.plist.in \
   > ~/Library/LaunchAgents/com.furyremastered.desktop-release.plist
+launchctl bootout gui/$(id -u)/com.furyremastered.desktop-release 2>/dev/null
 launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.furyremastered.desktop-release.plist
 # stop: launchctl bootout gui/$(id -u)/com.furyremastered.desktop-release
 ```
 
-Try `python3 tools/desktop_release_watcher.py --dry-run` first. The job needs the SSD, Docker
-(Colima) and the private content package to be available when it fires.
+macOS privacy protection blocks a launchd job from reading the external SSD until Python
+has Full Disk Access: in System Settings, Privacy & Security, Full Disk Access, add
+`/usr/bin/python3` and Xcode's
+`Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/Resources/Python.app`.
+Without it the job exits with code 2 (`launchctl print gui/$(id -u)/com.furyremastered.desktop-release`).
+
+The job needs the SSD, Docker (Colima running), `gh` signed in and the private content
+package (`private/reports/hosted-content` in the shared checkout) when it fires; a pass
+that finds one missing records a failure and notifies. The Mac must be awake, so releases
+follow merges by up to 15 minutes plus the build time (about 30 to 60 minutes for all four
+platforms) whenever the machine is on.
 
 ## Signing and first-launch warnings
 

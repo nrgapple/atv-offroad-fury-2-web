@@ -96,11 +96,9 @@ def notes(release, verification=''):
     return f'''**Unofficial, incomplete fan port.** Desktop build of the Fury Remastered Rust port of ATV Offroad Fury 2,
 commit `{release['short']}`. It is an early preview, not the finished game.
 
-**What works:** the title screen and menus, all 40 original venues with their worlds drawn, every original ATV and
-motorcycle with the recovered riding physics, single-player ATV races against the original CPU riders, audio, the
-HUD and GPS minimap, the pause menu and settings with key and controller remapping, graphics presets and the optional
-Crazy/Gorn crash modes. **Not in the desktop app yet:** multiplayer, progression, motorcycle races, race music, start
-lamps and fireworks. The browser game at https://furyremastered.com/ still has the most complete feature set.
+**Same engine as the browser game.** Since 2026-10-23 https://furyremastered.com/ runs this Rust engine too, so the
+desktop apps have the same menus, venues, vehicles, races, HUD, settings and multiplayer, built natively for each
+platform. Progress and known gaps: https://furyremastered.com/devlog.html.
 
 Each archive is self-contained: the original game's runtime resources the port needs are packed in, so nothing else
 is required (no disc, emulator or install step). Read the `README.txt` inside for controls and options.
