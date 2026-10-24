@@ -116,7 +116,9 @@ supported. GitHub's production environment and deployment history remain visible
 CI verifies authored application hashes and committed dev-log text. Runtime
 resources and inspected PNGs remain in the separate allowlisted private-to-R2
 package, never GitHub source or CI. Zipped desktop builds that embed those resources
-may be GitHub Release assets, built and uploaded locally, never by CI. Never publish WIP, ISO/BIOS/raw executable,
+may be GitHub Release assets, built and uploaded locally, never by CI. Merged app changes become desktop
+releases automatically through the owner's-Mac LaunchAgent (`desktop_release_watcher.py
+--auto-main`, at most every 12 hours; DESKTOP_RELEASES.md, "Automatic releases"). Never publish WIP, ISO/BIOS/raw executable,
 unrelated disc content, reverse-engineering output or reference repositories.
 
 ## Historical checkpoint

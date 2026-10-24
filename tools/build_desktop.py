@@ -239,6 +239,9 @@ def source_tar(ctx):
 CONTAINER_SCRIPT = r'''set -e
 mkdir -p /src && tar -xf - -C /src && cd /src
 export CARGO_TARGET_DIR=/target CARGO_TERM_COLOR=never
+# Fat LTO of fury outgrew the 4 GiB Colima VM (the aarch64 link was OOM-killed on bd347cc);
+# thin LTO links in far less memory. macOS keeps the workspace's fat LTO.
+export CARGO_PROFILE_RELEASE_LTO=thin
 case "$TRIPLE" in
   x86_64-unknown-linux-gnu) [ "$(uname -m)" = x86_64 ] && L=gcc || L=x86_64-linux-gnu-gcc
     LIBDIR=/usr/lib/x86_64-linux-gnu ;;

@@ -57,8 +57,28 @@ fn context_lost() -> bool {
     }
 }
 
+/// The window's native surface generation. Android destroys the window's
+/// surface whenever the app goes to the background and gives it a new one on
+/// return ([`window_surface_lost`]); a device keeps every other resource, and
+/// only its surface is made again ([`Gpu::recreate_surface`]).
+static SURFACE_GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// The platform destroyed the window's surface (Android `Suspended`): every
+/// device's surface is stale and presents nothing until it is recreated.
+pub fn window_surface_lost() {
+    SURFACE_GENERATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+}
+
+fn surface_generation() -> u64 {
+    SURFACE_GENERATION.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 pub struct Gpu {
-    pub surface: wgpu::Surface<'static>,
+    /// None after [`Gpu::release_surface`], until [`Gpu::recreate_surface`].
+    surface: Option<wgpu::Surface<'static>>,
+    /// The [`SURFACE_GENERATION`] the surface was made for.
+    generation: u64,
+    instance: wgpu::Instance,
     pub device: wgpu::Device,
     pub queue: wgpu::Queue,
     pub config: wgpu::SurfaceConfiguration,
@@ -93,6 +113,49 @@ impl Gpu {
         self.lost.clone()
     }
 
+    /// The surface to present to: None once released or made for a window
+    /// surface the platform has since destroyed.
+    fn live_surface(&self) -> Option<&wgpu::Surface<'static>> {
+        self.surface
+            .as_ref()
+            .filter(|_| self.generation == surface_generation())
+    }
+
+    /// The surface belongs to a destroyed window surface (or was released):
+    /// [`Gpu::recreate_surface`] before presenting again.
+    pub fn surface_stale(&self) -> bool {
+        self.live_surface().is_none()
+    }
+
+    /// Drops the surface (Android: before the window's surface goes away).
+    /// Frames present nothing until [`Gpu::recreate_surface`].
+    pub fn release_surface(&mut self) {
+        self.surface = None;
+    }
+
+    /// A new surface on the window's current native surface, configured as
+    /// the old one at `width` x `height`; the device and every resource stay.
+    pub fn recreate_surface(
+        &mut self,
+        target: impl Into<wgpu::SurfaceTarget<'static>>,
+        width: u32,
+        height: u32,
+    ) -> Result<(), String> {
+        // The old surface goes first: a native window takes one swap chain.
+        self.surface = None;
+        let surface = self
+            .instance
+            .create_surface(target)
+            .map_err(|e| format!("surface: {e}"))?;
+        self.config.width = width.max(1);
+        self.config.height = height.max(1);
+        surface.configure(&self.device, &self.config);
+        (self.depth, self.msaa) = targets(&self.device, &self.config, self.samples);
+        self.surface = Some(surface);
+        self.generation = surface_generation();
+        Ok(())
+    }
+
     /// Test hook: destroys the device as a driver reset would lose it.
     pub fn simulate_loss(&self) {
         self.device.destroy();
@@ -103,11 +166,14 @@ impl Gpu {
         &self,
         draw: &mut dyn FnMut(&mut wgpu::CommandEncoder, &wgpu::TextureView),
     ) -> Result<(), String> {
-        let frame = match self.surface.get_current_texture() {
+        let Some(surface) = self.live_surface() else {
+            return Ok(());
+        };
+        let frame = match surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(frame)
             | wgpu::CurrentSurfaceTexture::Suboptimal(frame) => frame,
             wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
-                self.surface.configure(&self.device, &self.config);
+                surface.configure(&self.device, &self.config);
                 return Ok(());
             }
             wgpu::CurrentSurfaceTexture::Timeout | wgpu::CurrentSurfaceTexture::Occluded => {
@@ -260,7 +326,9 @@ impl Gpu {
         surface.configure(&device, &config);
         let (depth, msaa) = targets(&device, &config, samples);
         Ok(Self {
-            surface,
+            surface: Some(surface),
+            generation: surface_generation(),
+            instance: instance.clone(),
             device,
             queue,
             config,
@@ -279,7 +347,9 @@ impl Gpu {
         }
         self.config.width = width;
         self.config.height = height;
-        self.surface.configure(&self.device, &self.config);
+        if let Some(surface) = self.live_surface() {
+            surface.configure(&self.device, &self.config);
+        }
         (self.depth, self.msaa) = targets(&self.device, &self.config, self.samples);
     }
 
@@ -1276,11 +1346,14 @@ impl SceneRenderer {
         overlay: &mut dyn FnMut(&mut wgpu::CommandEncoder, &wgpu::TextureView),
     ) -> Result<FrameStats, String> {
         let acquire = web_time::Instant::now();
-        let frame = match gpu.surface.get_current_texture() {
+        let Some(surface) = gpu.live_surface() else {
+            return Ok(FrameStats::default());
+        };
+        let frame = match surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(frame)
             | wgpu::CurrentSurfaceTexture::Suboptimal(frame) => frame,
             wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
-                gpu.surface.configure(&gpu.device, &gpu.config);
+                surface.configure(&gpu.device, &gpu.config);
                 return Ok(FrameStats::default());
             }
             wgpu::CurrentSurfaceTexture::Timeout | wgpu::CurrentSurfaceTexture::Occluded => {

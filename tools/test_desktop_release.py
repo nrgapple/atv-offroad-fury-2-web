@@ -269,10 +269,34 @@ class PublishTests(unittest.TestCase):
     def test_notes_state_status_and_verification(self):
         release = {'short': 'abc1234', 'archives': {'linux-x86_64': {'file': 'f.tar.gz', 'bytes': 5, 'sha256': '1' * 64}}}
         text = publish.notes(release, 'Launched on Linux only.')
-        for phrase in ('Unofficial, incomplete', 'Not in the desktop app yet', 'Unsigned builds', 'What was tested',
+        for phrase in ('Unofficial, incomplete', 'Same engine as the browser game', 'Unsigned builds', 'What was tested',
                        'Launched on Linux only.'):
             self.assertIn(phrase, text)
         self.assertNotIn('What was tested', publish.notes(release))
+
+    def test_android_apk_is_verified_and_described(self):
+        import build_android
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            apk = tmp / 'fury-remastered-0.3.0-abc1234-android-arm64.apk'
+            apk.write_bytes(b'apk')
+            record = {'commit': 'a' * 40, 'short': 'abc1234',
+                      'artifacts': [{'name': apk.name, 'sha256': desktop_archive.sha256(apk)}]}
+            (tmp / 'release.json').write_text(json.dumps(record))
+            with patch.object(build_android, 'check_apk', return_value=3) as checked:
+                path, row = publish.load_android(tmp, 'a' * 40)
+            checked.assert_called_once_with(apk)
+            self.assertEqual((path, row['bytes']), (apk, 3))
+            with self.assertRaises(publish.PublishError):
+                publish.load_android(tmp, 'b' * 40)  # built from another commit
+            apk.write_bytes(b'changed')
+            with self.assertRaises(publish.PublishError):
+                publish.load_android(tmp, 'a' * 40)
+            release = {'short': 'abc1234', 'archives': {'linux-x86_64': {'file': 'f.tar.gz', 'bytes': 5, 'sha256': '1' * 64}}}
+            text = publish.notes(release, '', row)
+            self.assertIn('android-arm64', text)
+            self.assertIn('contains no game content', text)
+            self.assertNotIn('android-arm64', publish.notes(release))
 
 
 class WatcherTests(unittest.TestCase):
@@ -287,6 +311,83 @@ class WatcherTests(unittest.TestCase):
         self.assertEqual(watcher.pending(tags, state), {'desktop-v0.1.1-b': '3' * 40})
         state['failed']['desktop-v0.1.1-b'] = {}
         self.assertEqual(watcher.pending(tags, state), {})
+
+    def make_repo(self, tmp):
+        """A throwaway repo: a release commit, a docs-only commit, then optionally an app change."""
+        import subprocess
+        run = lambda *a: subprocess.run(['git', *a], cwd=tmp, check=True, capture_output=True, text=True).stdout.strip()  # noqa: E731
+        run('init', '-q', '-b', 'main')
+        run('config', 'user.email', 't@example.com')
+        run('config', 'user.name', 't')
+        (tmp / 'Cargo.toml').write_text('[workspace.package]\nversion = "0.3.0"\n')
+        (tmp / 'crates').mkdir()
+        (tmp / 'crates/a.rs').write_text('1')
+        run('add', '.')
+        import os
+        subprocess.run(['git', 'commit', '-qm', 'release'], cwd=tmp, check=True,
+                       env={**os.environ, 'GIT_COMMITTER_DATE': '@1000000000 +0000'})
+        released = run('rev-parse', 'HEAD')
+        (tmp / 'README.md').write_text('docs')
+        run('add', '.')
+        run('commit', '-qm', 'docs')
+        run('update-ref', 'refs/remotes/origin/main', 'HEAD')
+        return run, released
+
+    def test_main_is_released_only_after_app_changes_and_the_interval(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            run, released = self.make_repo(tmp)
+            tags = {'desktop-v0.2.0-' + released[:7]: released}
+            tag, why = watcher.main_candidate(tmp, tags, {}, 12)
+            self.assertIsNone(tag)
+            self.assertIn('no app changes', why)
+            (tmp / 'crates/a.rs').write_text('2')
+            run('commit', '-qam', 'app')
+            run('update-ref', 'refs/remotes/origin/main', 'HEAD')
+            head = run('rev-parse', 'HEAD')
+            tag, commit = watcher.main_candidate(tmp, tags, {}, 12, now=1000000000 + 3600)
+            self.assertIsNone(tag)
+            self.assertIn('waiting', commit)
+            tag, commit = watcher.main_candidate(tmp, tags, {}, 12, now=1000000000 + 13 * 3600)
+            self.assertEqual((tag, commit), (f'desktop-v0.3.0-{head[:7]}', head))
+            state = {'done': {tag: {'commit': head, 'at': 1}}, 'failed': {}}
+            self.assertIsNone(watcher.main_candidate(tmp, tags, state, 12)[0])
+
+    def test_main_without_any_release_is_due(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            run, _ = self.make_repo(tmp)
+            self.assertTrue(watcher.main_candidate(tmp, {}, {}, 12)[0].startswith('desktop-v0.3.0-'))
+
+    def test_failed_launches_block_publication_and_notes_say_what_ran(self):
+        release = {'archives': {'linux-x86_64': {'smoke': {'ok': False, 'emulated': True}},
+                                'linux-aarch64': {'smoke': {'ok': True, 'emulated': False}},
+                                'macos-universal': {}}}
+        self.assertEqual(watcher.failed_smokes(release), ['linux-x86_64'])
+        text = watcher.verification(release)
+        self.assertIn('linux-aarch64: launched natively', text)
+        self.assertIn('macos-universal: built and structurally verified, not launched', text)
+
+    def test_only_published_builds_beyond_the_newest_are_pruned(self):
+        import os
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            names = ['aaaaaaa', 'bbbbbbb', 'ccccccc', 'ddddddd', 'eeeeeee', 'packs']
+            for i, name in enumerate(names):
+                (tmp / name).mkdir()
+                os.utime(tmp / name, (i, i))
+            state = {'done': {f't{n}': {'commit': n * 40} for n in 'abcd'}}  # eeeeeee is not published
+            with patch('sys.stdout', new_callable=io.StringIO):
+                watcher.prune_builds(state, out_root=tmp, keep=2)
+            self.assertEqual(sorted(p.name for p in tmp.iterdir()), ['ccccccc', 'ddddddd', 'eeeeeee', 'packs'])
+
+    def test_first_pass_adopts_published_tags(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            missing = Path(tmp) / 'state.json'
+            state = watcher.load_state(missing, {'desktop-v0.1.0-a': '1' * 40})
+            self.assertEqual(watcher.pending({'desktop-v0.1.0-a': '1' * 40}, state), {})
+            missing.write_text('{"done": {}, "failed": {}}')
+            self.assertEqual(watcher.load_state(missing, {'desktop-v0.1.0-a': '1' * 40})['done'], {})
 
 
 if __name__ == '__main__':
