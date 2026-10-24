@@ -22,6 +22,8 @@ pub enum Event {
     },
     /// Open the browser dev log (web).
     DevLog,
+    /// Open the desktop and Android downloads (GitHub Releases) in a new tab (web).
+    Downloads,
     /// Open Settings over the frontend.
     Settings,
     /// Main menu → Jukebox: the soundtrack player over the frontend.
@@ -450,7 +452,7 @@ impl Frontend {
             .choices
             .iter()
             .filter(|a| !UNSUPPORTED.contains(&a.as_str()))
-            .filter(|a| self.web || a.as_str() != "devlog")
+            .filter(|a| self.web || !matches!(a.as_str(), "devlog" | "downloads"))
             .map(|a| (a.clone(), label(a)))
             .collect();
         self.selection = self.selection.min(self.choices.len().saturating_sub(1));
@@ -1025,6 +1027,7 @@ impl Frontend {
             }
             "back" => return self.back(view),
             "devlog" => return Some(Event::DevLog),
+            "downloads" => return Some(Event::Downloads),
             "freeride" => {
                 // frontend.js: no setup; motorcycles fall back to ATV01. The
                 // current name rides (also one typed but not yet saved); the
@@ -1939,7 +1942,12 @@ mod tests {
             r#"{"quadId":46,"riderId":1,"playerName":"Sam"}"#,
         );
         let mut front = Frontend::new(tracks(), &settings, false);
-        assert!(front.choices().iter().all(|(a, _)| a != "devlog"));
+        assert!(
+            front
+                .choices()
+                .iter()
+                .all(|(a, _)| a != "devlog" && a != "downloads")
+        );
         front.show("single", &view);
         let garage = front
             .choices()

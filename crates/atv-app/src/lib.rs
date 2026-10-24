@@ -3654,6 +3654,9 @@ impl App {
 
 /// The frontend's mouse pointer id (touches use their own ids).
 const MOUSE: u64 = overlay::MOUSE;
+/// Title → Downloads: the desktop archives and Android APK (prereleases, so not `/latest`).
+#[cfg(target_arch = "wasm32")]
+const DOWNLOADS_URL: &str = "https://github.com/nrgapple/atv-offroad-fury-2-web/releases";
 
 impl App {
     /// Loads that must not hold up a ride frame (another rider's model or
@@ -4355,6 +4358,15 @@ impl App {
                 #[cfg(target_arch = "wasm32")]
                 if let Some(window) = web_sys::window() {
                     window.location().set_href("devlog.html").ok();
+                }
+            }
+            Event::Downloads => {
+                // A new tab, so the game keeps running behind it.
+                #[cfg(target_arch = "wasm32")]
+                if let Some(window) = web_sys::window() {
+                    window
+                        .open_with_url_and_target(DOWNLOADS_URL, "_blank")
+                        .ok();
                 }
             }
             Event::Fullscreen => {
