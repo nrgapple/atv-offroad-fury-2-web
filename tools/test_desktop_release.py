@@ -274,6 +274,30 @@ class PublishTests(unittest.TestCase):
             self.assertIn(phrase, text)
         self.assertNotIn('What was tested', publish.notes(release))
 
+    def test_android_apk_is_verified_and_described(self):
+        import build_android
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            apk = tmp / 'fury-remastered-0.3.0-abc1234-android-arm64.apk'
+            apk.write_bytes(b'apk')
+            record = {'commit': 'a' * 40, 'short': 'abc1234',
+                      'artifacts': [{'name': apk.name, 'sha256': desktop_archive.sha256(apk)}]}
+            (tmp / 'release.json').write_text(json.dumps(record))
+            with patch.object(build_android, 'check_apk', return_value=3) as checked:
+                path, row = publish.load_android(tmp, 'a' * 40)
+            checked.assert_called_once_with(apk)
+            self.assertEqual((path, row['bytes']), (apk, 3))
+            with self.assertRaises(publish.PublishError):
+                publish.load_android(tmp, 'b' * 40)  # built from another commit
+            apk.write_bytes(b'changed')
+            with self.assertRaises(publish.PublishError):
+                publish.load_android(tmp, 'a' * 40)
+            release = {'short': 'abc1234', 'archives': {'linux-x86_64': {'file': 'f.tar.gz', 'bytes': 5, 'sha256': '1' * 64}}}
+            text = publish.notes(release, '', row)
+            self.assertIn('android-arm64', text)
+            self.assertIn('contains no game content', text)
+            self.assertNotIn('android-arm64', publish.notes(release))
+
 
 class WatcherTests(unittest.TestCase):
     def test_new_tags_are_found_once_and_annotated_tags_are_peeled(self):

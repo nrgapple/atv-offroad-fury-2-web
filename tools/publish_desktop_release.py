@@ -89,9 +89,41 @@ def check_archives(directory, release, scratch=None):
     return files
 
 
-def notes(release, verification=''):
+def load_android(directory, head):
+    """The APK built by tools/build_android.py for `head`, verified. Returns its path."""
+    directory = Path(directory)
+    try:
+        record = json.loads((directory / 'release.json').read_text())
+    except (OSError, ValueError) as e:
+        raise PublishError(f'{directory} has no readable Android release.json') from e
+    if record.get('commit') != head or str(record.get('short', '')).endswith('-dirty'):
+        raise PublishError(f'the APK was built from {record.get("commit")} ({record.get("short")}), not clean HEAD {head}')
+    apks = [a for a in record.get('artifacts', []) if a.get('name', '').endswith('.apk')]
+    if len(apks) != 1:
+        raise PublishError(f'expected one APK in {directory}/release.json')
+    path = directory / apks[0]['name']
+    if not path.is_file() or desktop_archive.sha256(path) != apks[0].get('sha256'):
+        raise PublishError(f'missing APK or checksum mismatch for {path}')
+    import build_android
+    try:
+        build_android.check_apk(path)  # member allowlist: no game content in the APK
+    except SystemExit as e:
+        raise PublishError(str(e)) from e
+    return path, {'file': path.name, 'bytes': path.stat().st_size, 'sha256': apks[0]['sha256']}
+
+
+def notes(release, verification='', android=None):
+    archives = dict(release['archives'])
+    if android:
+        archives['android-arm64'] = android
     rows = '\n'.join(f'| {p} | `{r["file"]}` | {r["bytes"] / 1e6:.0f} MB | `{r["sha256"][:16]}...` |'
-                     for p, r in sorted(release['archives'].items()))
+                     for p, r in sorted(archives.items()))
+    phone = '''
+**Android (arm64, Android 8.0 or newer).** The APK contains no game content: on first launch it downloads the
+runtime resources (about 540 MB, once) from furyremastered.com, exactly as the browser does, and plays offline after
+that. It is sideloaded: open the APK on the phone and allow installs from that app when asked. Later APKs install over
+it (same signing key) and keep the downloaded content.
+''' if android else ''
     tested = f'\n## What was tested\n\n{verification.strip()}\n' if verification.strip() else ''
     return f'''**Unofficial, incomplete fan port.** Desktop build of the Fury Remastered Rust port of ATV Offroad Fury 2,
 commit `{release['short']}`. It is an early preview, not the finished game.
@@ -100,9 +132,9 @@ commit `{release['short']}`. It is an early preview, not the finished game.
 desktop apps have the same menus, venues, vehicles, races, HUD, settings and multiplayer, built natively for each
 platform. Progress and known gaps: https://furyremastered.com/devlog.html.
 
-Each archive is self-contained: the original game's runtime resources the port needs are packed in, so nothing else
-is required (no disc, emulator or install step). Read the `README.txt` inside for controls and options.
-
+Each desktop archive is self-contained: the original game's runtime resources the port needs are packed in, so
+nothing else is required (no disc, emulator or install step). Read the `README.txt` inside for controls and options.
+{phone}
 **Unsigned builds.** They are not code signed or notarized: macOS asks you to Control-click the app and choose Open
 (or run `xattr -dr com.apple.quarantine "Fury Remastered.app"`), and Windows SmartScreen asks you to choose
 More info, Run anyway.
@@ -111,7 +143,8 @@ More info, Run anyway.
 | --- | --- | --- | --- |
 {rows}
 
-Full checksums are in `SHA256SUMS.txt`. Built locally from the commit above with `tools/build_desktop.py`.
+Full desktop checksums are in `SHA256SUMS.txt`. Built locally from the commit above with `tools/build_desktop.py`
+{'and `tools/build_android.py`' if android else ''}.
 {tested}'''
 
 
@@ -123,6 +156,7 @@ def main(argv=None):
     parser.add_argument('--stable', action='store_true', help='mark the release as a full release instead of a prerelease')
     parser.add_argument('--verification', default='', help='what was actually launched/tested, added to the release notes')
     parser.add_argument('--tag', help='override the tag (default desktop-v<version>-<short commit>)')
+    parser.add_argument('--android', type=Path, metavar='DIR', help='also attach the APK that tools/build_android.py wrote to DIR')
     args = parser.parse_args(argv)
     try:
         refuse_in_ci()
@@ -130,15 +164,19 @@ def main(argv=None):
         directory = args.dir or OUT_ROOT / git('rev-parse', '--short', 'HEAD')
         release = load_release(directory, head)
         files = check_archives(directory, release, scratch=directory)
+        android = None
+        if args.android:
+            apk, android = load_android(args.android, head)
+            files.append(apk)
         tag = args.tag or f'desktop-v{release["version"]}-{release["short"]}'
         if subprocess.run(['gh', 'release', 'view', tag], cwd=ROOT, capture_output=True).returncode == 0:
             raise PublishError(f'release {tag} already exists')
         command = ['gh', 'release', 'create', tag, *[str(f) for f in files], '--target', head,
-                   '--title', f'Fury Remastered desktop {release["version"]} ({release["short"]})',
-                   '--notes', notes(release, args.verification)]
+                   '--title', f'Fury Remastered {"desktop and Android" if android else "desktop"} {release["version"]} ({release["short"]})',
+                   '--notes', notes(release, args.verification, android)]
         if not args.stable:
             command.append('--prerelease')
-        print(f'checks passed for {len(files) - 1} archives from {release["short"]} ({head})')
+        print(f'checks passed for {len(files) - 1} files from {release["short"]} ({head})')
         if args.dry_run:
             print('dry run, not publishing:\n  ' + ' '.join(c if '\n' not in c else '<notes>' for c in command))
             return 0

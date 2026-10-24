@@ -102,6 +102,9 @@ requires a clean tree (the commit is the version) and uses `git archive HEAD` fo
 - macOS builds natively for both architectures (`MACOSX_DEPLOYMENT_TARGET=11.0`), runs
   `lipo`, assembles the bundle (icon from the authored `web/fury-app-icons.json` 512 px art via
   `iconutil`), signs ad hoc and zips with `ditto` (bundle structure and symlinks preserved).
+- Linux and Windows link with thin LTO (`CARGO_PROFILE_RELEASE_LTO=thin`): the fat-LTO link of
+  `fury` for aarch64 was OOM-killed in the 4 GiB Colima VM on bd347cc (2026-10-24). macOS keeps
+  the workspace's fat LTO.
 - Linux and Windows run in the local image `fury-desktop-builder:bullseye-5` (built from
   `rust:1-bullseye` plus `gcc-x86-64-linux-gnu`, `gcc-aarch64-linux-gnu`, `gcc-mingw-w64-x86-64`,
   `libudev-dev` and `libasound2-dev` for both Linux architectures (gilrs reads controllers
@@ -169,15 +172,19 @@ releases, because the archives contain game content and must never be built in C
   a release of a specific commit).
 - **origin/main** is released as `desktop-v<workspace version>-<short commit>` when it changed
   anything the apps are built from since the newest desktop release (`RELEASE_PATHS`:
-  `crates/`, `Cargo.toml`/`Cargo.lock`, the desktop build and pack tools, the app icon art),
+  `crates/`, `Cargo.toml`/`Cargo.lock`, the desktop, Android and pack build tools, the app icon art),
   and that release is at least 12 hours old (`--min-hours`). Documentation, dev-log, web-shell
   and test-only merges never start a release. The 12 hour floor keeps a busy merge day to
   one or two roughly 2 GB releases instead of one per merge.
 
 Each build adds a temporary worktree at the commit, links `private`, runs
 `build_desktop.py --smoke --output ~/LargeFiles/fury-desktop/<short>`, refuses to publish when
-a Linux launch failed, then runs `publish_desktop_release.py --tag <tag> --yes` (still limited
-to commits on `origin/main`) with release notes stating exactly what was launched. Results go
+a Linux launch failed, builds the Android APK with `build_android.py --output <out>/android`
+(ANDROID.md; it carries no content), then runs `publish_desktop_release.py --tag <tag> --yes
+--android <out>/android` (still limited to commits on `origin/main`; the APK must come from the
+same clean commit, match its checksum and pass the APK member allowlist) with release notes
+stating exactly what was launched. A failed Android build still publishes the desktop archives;
+the state entry records `android_error` and the notification says so. Results go
 to `~/LargeFiles/fury-desktop/watcher-state.json` and a macOS notification; per-release logs are
 `watcher-<tag>.log` beside it, the job log is `watcher.log` (written by the watcher via `--log`,
 because launchd cannot open files on the external SSD and fails the job with `EX_CONFIG`). The

@@ -35,7 +35,8 @@ PATTERN = 'refs/tags/desktop-v*'
 # What the desktop archives are built from. Documentation, the web shell and tests do not
 # start a release on their own.
 RELEASE_PATHS = ('crates', 'Cargo.toml', 'Cargo.lock', 'tools/build_desktop.py', 'tools/desktop',
-                 'tools/pack_content.py', 'tools/desktop_archive.py', 'web/fury-app-icons.json')
+                 'tools/pack_content.py', 'tools/desktop_archive.py', 'tools/build_android.py',
+                 'web/fury-app-icons.json')
 KEEP_BUILDS = 3
 
 
@@ -126,6 +127,7 @@ def failed_smokes(release):
 
 
 def process(repo, tag, sha, log, fetch_tag=True):
+    """Build and publish one release. Returns a note when the optional Android APK failed."""
     worktree = WORKTREES / f'desktop-release-{tag}'
     refs = ['main'] + ([f'refs/tags/{tag}:refs/tags/{tag}'] if fetch_tag else [])
     subprocess.run(['git', 'fetch', '--quiet', 'origin', *refs], cwd=repo, check=True)
@@ -139,7 +141,21 @@ def process(repo, tag, sha, log, fetch_tag=True):
         release = json.loads((out / 'release.json').read_text())
         if failed_smokes(release):
             raise OSError(f'Linux launch failed for {", ".join(failed_smokes(release))}; not publishing')
-        run('tools/publish_desktop_release.py', '--dir', str(out), '--tag', tag, '--yes', '--verification', verification(release))
+        # The APK carries no content (it downloads it from R2 on first launch). It is optional:
+        # a failed Android build still publishes the desktop archives and is reported.
+        android, android_error = out / 'android', None
+        try:
+            run('tools/build_android.py', '--output', str(android))
+        except (subprocess.CalledProcessError, OSError) as e:
+            android_error = f'Android build failed: {e}'
+            print(android_error, file=log, flush=True)
+        extra = [] if android_error else ['--android', str(android)]
+        tested = verification(release) + ('' if android_error else
+                                         '\n- android-arm64: built, signed and checked against the APK member allowlist '
+                                         '(no game content), not launched by the automated build.')
+        run('tools/publish_desktop_release.py', '--dir', str(out), '--tag', tag, '--yes', *extra,
+            '--verification', tested)
+        return android_error
     finally:
         subprocess.run(['git', 'worktree', 'remove', '--force', str(worktree)], cwd=repo)
 
@@ -202,9 +218,11 @@ def main(argv=None):
         log_path = args.state.parent / f'watcher-{tag}.log'
         try:
             with open(log_path, 'w') as log:
-                process(args.repo, tag, sha, log, fetch_tag=from_remote)
+                android_error = process(args.repo, tag, sha, log, fetch_tag=from_remote)
             state.setdefault('done', {})[tag] = {'commit': sha, 'at': int(time.time())}
-            notify(f'{tag} published')
+            if android_error:
+                state['done'][tag]['android_error'] = android_error
+            notify(f'{tag} published' + (' without Android, see ' + log_path.name if android_error else ''))
         except (subprocess.CalledProcessError, OSError, ValueError) as e:
             # A failed tag is not retried automatically; fix it and delete its entry from the state file.
             state.setdefault('failed', {})[tag] = {'commit': sha, 'at': int(time.time()), 'error': str(e), 'log': str(log_path)}
