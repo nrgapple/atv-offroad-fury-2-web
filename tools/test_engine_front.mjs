@@ -20,10 +20,21 @@ try {
   await page.goto(url('/play.html?uiDiagnostics=1'));
   await wait(page, () => JSON.parse(document.querySelector('#ui-state')?.textContent || '{}').front?.page === 'title', null, 120000);
   let f = await front(page);
-  assert.deepEqual(f.choices, ['main', 'devlog']);
+  assert.deepEqual(f.choices, ['main', 'devlog', 'downloads']);
   assert.equal(f.tracks, 40, 'every venue is listed');
-  // Canvas focus for key events, on an empty part of the title.
+  // Downloads opens the GitHub releases (desktop and Android) in a new tab; the game stays.
+  await page.context().route('https://github.com/**', route => route.fulfill({ contentType: 'text/html', body: 'releases' }));
+  const downloads = await wait(page, () => JSON.parse(document.querySelector('#ui-state').textContent).front.hits?.find(h => h.id === 2002), null)
+    .then(handle => handle.jsonValue());
+  const [popup] = await Promise.all([page.waitForEvent('popup'), page.mouse.click(centre(downloads).x, centre(downloads).y)]);
+  await popup.waitForLoadState();
+  assert.equal(popup.url(), 'https://github.com/nrgapple/atv-offroad-fury-2-web/releases');
+  await popup.close();
+  assert.equal((await front(page)).page, 'title', 'the game stays on the title');
+  // Canvas focus for key events, on an empty part of the title; back up to Start.
   await page.mouse.click(8, 8);
+  await key(page, 'ArrowUp'); await key(page, 'ArrowUp');
+  assert.equal((await front(page)).selection, 0, 'Start is selected again');
   await key(page, 'Enter'); await onPage(page, 'main');
   f = await front(page);
   assert.ok(f.choices.includes('single') && f.choices.includes('settings'), f.choices.join());
