@@ -608,7 +608,8 @@ pub fn layout(request: Request) -> Result<Frame> {
     }
     match request.page.as_str() {
         "title" => {
-            f.choices.extend(["main", "devlog"].map(String::from));
+            f.choices
+                .extend(["main", "devlog", "downloads"].map(String::from));
             let y = (h * 0.30).max(95.);
             if request.menu_logo {
                 let width = (w - 60.).min(540.);
@@ -631,13 +632,21 @@ pub fn layout(request: Request) -> Result<Frame> {
                 "Press START",
                 "main",
                 [24., h - 135., list_w.max(290.), 60.],
-                request.selection.is_multiple_of(2),
+                request.selection.is_multiple_of(3),
             );
+            // Dev log and Downloads (the GitHub releases) share the row below Start.
+            let half = (list_w.max(290.) - 8.) / 2.;
             f.button(
                 "Dev log",
                 "devlog",
-                [24., h - 74., list_w.max(290.), 56.],
-                request.selection % 2 == 1,
+                [24., h - 74., half, 56.],
+                request.selection % 3 == 1,
+            );
+            f.button(
+                "Downloads",
+                "downloads",
+                [32. + half, h - 74., half, 56.],
+                request.selection % 3 == 2,
             );
         }
         "main" | "single" => {

@@ -2418,6 +2418,7 @@ fn title(m: &Metrics, s: &Screen, mut root: El) -> El {
     }
     let start_index = s.choices.iter().position(|(a, _)| a == "main");
     let devlog_index = s.choices.iter().position(|(a, _)| a == "devlog");
+    let downloads_index = s.choices.iter().position(|(a, _)| a == "downloads");
     let mut actions = El::new(Style {
         grid_row: taffy::Line {
             start: line(2),
@@ -2460,42 +2461,64 @@ fn title(m: &Metrics, s: &Screen, mut root: El) -> El {
         }
         actions = actions.child(start);
     }
-    if let Some(index) = devlog_index {
-        let selected = s.selection == index;
-        let hovered = s.hovered == Some(ROW + index as u32);
-        let mut paint = Paint::default().radius(5.);
-        if selected {
-            paint = paint.shadow(BoxShadow {
-                spread: 3.,
-                ..BoxShadow::outer(0., 0., 0., Color::hex("#f6e061b3"))
-            });
+    // DEV LOG and DOWNLOADS (the desktop and Android releases) share a row under Start.
+    let links: Vec<El> = [(devlog_index, "DEV LOG"), (downloads_index, "DOWNLOADS")]
+        .into_iter()
+        .filter_map(|(index, label)| index.map(|index| title_link(s, index, label)))
+        .collect();
+    if !links.is_empty() {
+        let mut row = El::new(Style {
+            display: Display::Flex,
+            flex_direction: FlexDirection::Row,
+            flex_wrap: FlexWrap::Wrap,
+            justify_content: JustifyContent::CENTER,
+            gap: Size {
+                width: px(6.),
+                height: px(0.),
+            },
+            ..Default::default()
+        });
+        for link in links {
+            row = row.child(link);
         }
-        actions = actions.child(
-            El::new(Style {
-                display: Display::Flex,
-                align_items: AlignItems::CENTER,
-                min_size: Size {
-                    width: auto(),
-                    height: length(46.),
-                },
-                padding: sides(0., 22., 0., 22.),
-                ..Default::default()
-            })
-            .paint(paint)
-            .id(ROW + index as u32)
-            .child(text(
-                "DEV LOG",
-                TextStyle::new(
-                    display(16., 700, false),
-                    Color::hex(if hovered { "#fffaa1" } else { "#f2f2f2" }),
-                )
-                .spacing(1.28)
-                .shadow(0., 1., 3., Color::BLACK),
-                16.,
-            )),
-        );
+        actions = actions.child(row);
     }
     root.child(lockup).child(actions)
+}
+
+/// A quiet text button under the title's Start (DEV LOG, DOWNLOADS).
+fn title_link(s: &Screen, index: usize, label: &str) -> El {
+    let selected = s.selection == index;
+    let hovered = s.hovered == Some(ROW + index as u32);
+    let mut paint = Paint::default().radius(5.);
+    if selected {
+        paint = paint.shadow(BoxShadow {
+            spread: 3.,
+            ..BoxShadow::outer(0., 0., 0., Color::hex("#f6e061b3"))
+        });
+    }
+    El::new(Style {
+        display: Display::Flex,
+        align_items: AlignItems::CENTER,
+        min_size: Size {
+            width: auto(),
+            height: length(46.),
+        },
+        padding: sides(0., 22., 0., 22.),
+        ..Default::default()
+    })
+    .paint(paint)
+    .id(ROW + index as u32)
+    .child(text(
+        label,
+        TextStyle::new(
+            display(16., 700, false),
+            Color::hex(if hovered { "#fffaa1" } else { "#f2f2f2" }),
+        )
+        .spacing(1.28)
+        .shadow(0., 1., 3., Color::BLACK),
+        16.,
+    ))
 }
 
 /// `.ms-shot`: the course action shot, crossfading between frames.
