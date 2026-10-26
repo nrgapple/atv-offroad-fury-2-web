@@ -38,13 +38,20 @@ for the scalar branches, not whole-race replay):
 - Start slots: the `001f6350` pair shuffle and the `001f8410` race-mode row
   (slot − n/2 spacings across the start, side from section 0's first turn),
   for the player and every CPU. See "Start slots" below.
+- Track window and finish gate: the 200ft forward/backward route window
+  (Track +0x34/+0x38, constructor `00179330`), the `001a95b0` gate crossing
+  test on the tag 16 box, and the TDF tag 41 Track flags 4 (first crossing
+  only arms the rider) and 8 (first lap is no best lap). See "Finish gate and
+  track window" below.
 
 **Authored** (integration adaptations, not original behavior):
 
-- Race rules: countdown, laps, timing, ranking and HUD. Progress follows
-  the racing line inside the TDF edge polygon with an authored window (150ft
-  ahead, 60ft behind); the original Track +0x34/+0x38 values and the native
-  `001a95b0` finish-box test are not ported.
+- Race rules: countdown, timing, ranking and HUD. Progress follows the
+  racing line inside the TDF edge polygon within the recovered 200ft window;
+  laps count through the recovered finish gate test. The skip of Track flag 4
+  is treated as used up at the start on env07 and sx13, whose start row
+  stands just past the gate (see below).
+- CPU racing-line projection keeps its authored 60ft/150ft window.
 - Route projection near each racer's station and ground/contact mapping; host
   Rust `sin`/`atan2` instead of PS2 trigonometry/VU precision.
 - Per-CPU random streams seeded `97211 + 47 × index` instead of the native
@@ -890,3 +897,73 @@ loads ENV01 with four CPUs for four seeds and checks that every rider stands in
 its slot of one evenly spaced row, and that the player's slot changes with the
 seed (slots 3, 3, 2 and 4 in host Chromium).
 
+## Finish gate and track window — 2026-10-26
+
+Exact-build evidence (private exports of the Track constructor `00179330`,
+loader `00179680`, track query `0017be80`, route distance `0017d3c0`, box
+constructor `001a9400`, box placement `0017da40`, gate test `001a95b0` with
+its line intersection `0012b6d0`, and RaceStatus reset `00247900` and update
+`00248b20`; bounded reading, no instruction comparison):
+
+- **Track window.** The Track constructor sets +0x34 and +0x38 to 200ft. The
+  TDF loader never writes them. RaceStatus passes them to `0017be80` as the
+  forward and backward route limits of the on-track query, so a rider can
+  move up to 200ft along the route between updates in either direction. The
+  port's old window was 150ft ahead and 60ft behind.
+- **Gate line.** Tags 15, 16 and 25 build boxes with flags 3; after loading
+  each box gets a 150ft ceiling (+0x74). For such a box `001a95b0` treats the
+  segment from center − half extents to center + half extents in x/z as the
+  gate line (the authored half extents point across the track), and
+  intersects it with the rider's motion from its previous position (+0x70) to
+  its current one (+0x60). It returns 1 when the crossing lies within the
+  motion and within the gate, no higher than the ceiling above the gate
+  center, and the motion has a non-negative dot product with the box
+  direction; 2 when the motion crosses the gate's line beside the gate; 0
+  otherwise, including when the previous position is exactly zero.
+- **Laps.** Each update RaceStatus measures the forward route distance
+  (`0017d3c0`, −1 on alternate sections) from the rider's previous track
+  position to the finish box's track position (`0017da40`, where the route
+  crosses the gate line). Only when that distance is in [0, 200ft) does a
+  gate result of 1 count: lap counter +0x2c increases, the lap time is
+  elapsed time less the lap start (a negative time is clamped to zero and
+  skips the best-lap update), and the rider finishes when the counter reaches
+  the race's laps. A pass beside the gate (result 2) counts nothing, so that
+  lap needs another circuit.
+- **Track flags (TDF tag 41, Track +0x30).** Reset `00247900` sets rider flag
+  0x10000 for Track flag 4 and 0x20000 for flag 8. Flag 0x10000 turns the
+  next gate crossing into a no-lap crossing that only clears it; flag 0x20000
+  keeps the next counted lap out of the best-lap comparison and is then
+  cleared. All 32 race TDFs set flag 8; env07, sx06, sx11, sx13 and sx16 also
+  set flag 4. On sx06, sx11 and sx16 the gate lies 700–1,860ft ahead of the
+  start row, so the partial first pass is not a lap.
+
+Port:
+
+- `race::TRACK_AHEAD`/`TRACK_BEHIND` are 200ft. `Gate::crossing` is the gate
+  test; `Course::gate_distance` finds where the main racing line first
+  crosses the gate line (`finish_at`). `Progress` counts a lap when the
+  rider's previous race distance lies less than 200ft before the next gate
+  position and its motion crosses the gate; it applies flags 4 and 8 as
+  above. Hand-built courses without a finish gate keep the old
+  distance-to-checkpoint rule. The race frame and script trace report
+  `finish_at`, `track_flags` and each rider's laps and race distance.
+- The `0.0 <= +0x70` guard before the lap test (the previous position's x) is
+  not reproduced; all shipped race coordinates are positive.
+- **Assumption.** On env07 and sx13 the start row stands about 20ft past the
+  finish gate while Track flag 4 is set. Read literally, the skipped crossing
+  would come only after a full circuit and the first lap would be two
+  circuits long. The port treats the skip as already used when the grid lies
+  within 200ft past the gate. The original may instead clear the flag through
+  a crossing during start placement; this is not established.
+- CPU steering keeps its authored projection window (60ft behind, 2 × 150ft
+  ahead); the original CPU driver's use of the Track window is not ported.
+
+Checks: unit tests cover the gate test (through, backward, beside, short,
+above the ceiling, zero previous position, slanted gate), the window values,
+flags 4 and 8 on a synthetic course, and a pass beside the gate. The private
+all-courses test drives a two-lap race along the racing line on all 32 TDFs:
+each finishes at the second counted gate crossing within 150ft of the
+predicted distance, and all 60 alternate lines still rejoin in order.
+`test_engine_race_finish_gate.mjs` races SX06 with three CPUs for about 105s
+in host Chromium: CPUs past the gate for the first time have 0 laps, and CPUs
+past it a second time (5,632–6,041ft) have 1.
