@@ -7,6 +7,7 @@ mod authored_text;
 pub mod boundary_launch;
 pub mod browser_input;
 pub mod camera;
+pub mod championship;
 pub mod collision;
 pub mod contact;
 pub mod crash_effects;

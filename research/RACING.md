@@ -70,7 +70,8 @@ for the scalar branches, not whole-race replay):
 - Championship-only difficulty effects (see "CPU difficulty" below), the All
   Out AI filters and angular-rate write, scene query category/order and actor
   update ordering.
-- Championship points, firework triggers and whole-race PS2 replay parity.
+- Firework triggers and whole-race PS2 replay parity. Championship points
+  and series are in `CHAMPIONSHIPS.md` (Nationals and Supercross only).
 - The Supercross start gate rotation and the race-load announcer cue. See
   "Race start and race over" and "Pre-race camera and 321 lights" below.
 - Results show Stunt Score and Profile Points (`001f1e30`, see `PROFILE.md`);

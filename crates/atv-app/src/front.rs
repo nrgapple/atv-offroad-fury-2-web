@@ -345,6 +345,7 @@ impl Front {
                 page,
                 "main"
                     | "single"
+                    | "championship"
                     | "garage"
                     | "gear"
                     | "multiplayer"
@@ -748,7 +749,13 @@ impl Front {
         let mut logo = None;
         if matches!(
             page.as_str(),
-            "title" | "main" | "single" | "multiplayer" | "create-lobby" | "join-lobby"
+            "title"
+                | "main"
+                | "single"
+                | "championship"
+                | "multiplayer"
+                | "create-lobby"
+                | "join-lobby"
         ) {
             let drawn = self.image(device, queue, &logo_key, |_| Some(logo::raster(px)));
             let shadow_alpha = if page == "title" { 0.6 } else { 0.4 };
@@ -1177,6 +1184,7 @@ impl Front {
                 page.as_str(),
                 "main"
                     | "single"
+                    | "championship"
                     | "garage"
                     | "gear"
                     | "multiplayer"

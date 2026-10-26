@@ -567,6 +567,9 @@ async fn race_setup(
         ));
         crate::yield_frame().await;
     }
+    let awards = mode
+        .as_deref()
+        .and_then(atv_core::profile::CourseAwards::parse);
     // Grid RiderSpacing from the race mode TOY or, for Supercross, the scene TOY.
     let spacing_sources = mode
         .into_iter()
@@ -612,6 +615,7 @@ async fn race_setup(
             crowd,
             gate: venue.drop_gate.clone(),
             fireworks,
+            awards,
         },
     })
 }

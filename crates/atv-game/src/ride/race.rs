@@ -48,6 +48,9 @@ pub struct Settings {
     pub seed: u64,
     /// Play the pre-race camera (Restart Race reloads without it).
     pub intro: bool,
+    /// A championship round: the series (index into
+    /// `atv_core::championship::SERIES`) and Expert.
+    pub championship: Option<(usize, bool)>,
 }
 
 impl Default for Settings {
@@ -60,6 +63,7 @@ impl Default for Settings {
             all_out: false,
             seed: 1,
             intro: true,
+            championship: None,
         }
     }
 }
@@ -123,6 +127,8 @@ pub struct Stage {
     pub crowd: Option<race_crowd::Sounds>,
     pub gate: Option<DropGate>,
     pub fireworks: Fireworks,
+    /// The race TOY `[ChampionshipInfo]` Profile Points tables.
+    pub awards: Option<atv_core::profile::CourseAwards>,
 }
 
 /// What a race load reads besides the ride itself.
@@ -825,6 +831,18 @@ impl Ride {
                 too_deep,
             },
         ));
+        frame.championship = state.settings.championship.and_then(|(index, expert)| {
+            let series = atv_core::championship::SERIES.get(index)?;
+            Some(atv_core::championship::Round {
+                series: series.key,
+                expert,
+                awards: state
+                    .stage
+                    .awards
+                    .map(|a| *a.table(series.pro, expert))
+                    .unwrap_or_default(),
+            })
+        });
         state.frame = Some(frame);
         Ok(())
     }

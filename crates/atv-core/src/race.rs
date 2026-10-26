@@ -1318,6 +1318,9 @@ pub struct Frame {
     /// National drop gate world matrix, attached by the simulation.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub gate: Option<[f32; 16]>,
+    /// A championship round's context, attached by the simulation.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub championship: Option<crate::championship::Round>,
 }
 pub struct Race {
     pub course: Course,
@@ -1760,6 +1763,7 @@ impl Race {
             hud: None,
             crowd: None,
             gate: None,
+            championship: None,
             opponents: self.opponents.clone(),
             standings: order
                 .into_iter()

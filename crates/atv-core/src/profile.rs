@@ -130,6 +130,8 @@ pub struct Profile {
     pub wins: u32,
     /// Best single-race stunt score.
     pub best_stunt: i64,
+    /// Championship rounds, standings, trophies and opened series.
+    pub championships: crate::championship::Championships,
 }
 
 impl Profile {

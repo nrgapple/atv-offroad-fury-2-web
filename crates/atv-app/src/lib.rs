@@ -2085,9 +2085,19 @@ impl App {
             overlay::Action::Camera => riding.cycle_requested = true,
             overlay::Action::RaceRetry => self.restart_race(),
             overlay::Action::RaceQuit => {
-                // race.js quit: Single Player; a page without the engine's
+                // race.js quit: Single Player (a championship round returns
+                // to its Championship page); a page without the engine's
                 // frontend (a direct ride) opens its menus instead.
-                if !self.quit_to(Some("single")) {
+                let page = if riding
+                    .ride
+                    .race()
+                    .is_some_and(|r| r.settings().championship.is_some())
+                {
+                    "championship"
+                } else {
+                    "single"
+                };
+                if !self.quit_to(Some(page)) {
                     #[cfg(target_arch = "wasm32")]
                     if let Some(window) = web_sys::window() {
                         let location = window.location();
@@ -4222,8 +4232,10 @@ impl App {
                 cpu,
                 difficulty,
                 cheats: (aggressive, all_out),
+                championship,
             } => {
                 let settings = atv_game::ride::race::Settings {
+                    championship,
                     laps,
                     cpu: cpu as usize,
                     difficulty,

@@ -878,6 +878,16 @@ impl Overlay {
         };
         let mut profile = load_profile(&self.settings);
         profile.record_race(place, points, stunt);
+        if let Some((round, places)) = self.results.championship.clone()
+            && let Some(series) = atv_core::championship::series(round.series)
+        {
+            let outcome = profile.championships.record(series, round.expert, &places);
+            if let Some((_, reward, _)) = &outcome.finished {
+                profile.points = profile.points.saturating_add(*reward);
+            }
+            self.results.championship_line =
+                Some(results::Results::describe_round(series, &outcome));
+        }
         save_profile(&mut self.settings, &profile);
         self.results.profile_total = Some(profile.points);
     }
