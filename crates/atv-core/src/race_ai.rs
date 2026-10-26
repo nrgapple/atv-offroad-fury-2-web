@@ -9,6 +9,10 @@ use crate::{
     vehicle::{VehicleFrame, VehicleInput},
 };
 
+/// Authored route window of `Course::project_near`.
+const PROJECTION_BEHIND: f32 = 60.;
+const PROJECTION_AHEAD: f32 = 150.;
+
 #[derive(Clone, Copy, Debug)]
 pub struct RoutePosition {
     pub segment: usize,
@@ -54,11 +58,13 @@ impl Course {
     /// race station. Native 0017be80 tracks the current node instead of
     /// searching the whole course, so a course that passes beside itself
     /// (e.g. nat01's lap beside its start straight) cannot capture the CPU.
+    /// This projection is authored; it keeps its own window (60ft behind,
+    /// 2 × 150ft ahead) rather than the recovered Track +0x34/+0x38 values.
     pub fn project_near(&self, origin: [f32; 3], station: crate::race::Station) -> RoutePosition {
         let in_cycle = station.segment >= self.loop_start;
         let mut first = station.segment;
         let mut behind = station.fraction * self.segment(first);
-        while behind < crate::race::TRACK_BEHIND {
+        while behind < PROJECTION_BEHIND {
             let Some(previous) = self.previous(first, in_cycle) else {
                 break;
             };
@@ -96,7 +102,7 @@ impl Course {
                 };
             }
             covered += length;
-            if covered > behind + crate::race::TRACK_AHEAD * 2. {
+            if covered > behind + PROJECTION_AHEAD * 2. {
                 break;
             }
             total = if self.next(segment) == self.loop_start {

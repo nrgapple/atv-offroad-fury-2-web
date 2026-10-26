@@ -159,8 +159,8 @@ the worktree's `target/`; keep bulk output on the SSD.
 - Whole-game parity is unverified: no PS2 hardware or deterministic full replay
   comparison exists. Trigonometry and VU arithmetic use host approximations.
 - Progression, championships, unlocks, saves and split-screen are missing.
-- Race rules are authored; original track windows, finish-box test, start slots,
-  firework triggers and points are open (`RACING.md`).
+- Race rules are authored around recovered start slots, track window and
+  finish-gate laps; firework triggers and points are open (`RACING.md`).
 - Rendering lacks original LOD/visibility policy, point lights, shadows, light
   lens effects and native GS precision (`MAP_FIDELITY.md`). ScreenRain lens drops
   are dormant in shipped content and intentionally not drawn (`WEATHER.md`).
