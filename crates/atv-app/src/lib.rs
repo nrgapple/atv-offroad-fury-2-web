@@ -3412,6 +3412,34 @@ impl ApplicationHandler<Message> for App {
         }
     }
 
+    /// Android controllers: the patched winit's gamepad button (key code)
+    /// and axis events. A change reaches a sleeping menu at once.
+    #[cfg(target_os = "android")]
+    fn device_event(
+        &mut self,
+        _: &ActiveEventLoop,
+        device_id: winit::event::DeviceId,
+        event: winit::event::DeviceEvent,
+    ) {
+        use winit::{event::DeviceEvent, platform::android::DeviceIdExtAndroid};
+        let id = device_id.android_device_id();
+        match event {
+            DeviceEvent::Button { button, state } => {
+                self.gamepad
+                    .button(id, button, state == ElementState::Pressed);
+            }
+            DeviceEvent::Motion { axis, value } => self.gamepad.axis(id, axis, value as f32),
+            _ => return,
+        }
+        if self.asleep && self.sync.is_none() {
+            let signature = self.pad_signature();
+            if signature != self.pad_buttons {
+                self.pad_buttons = signature;
+                self.wake();
+            }
+        }
+    }
+
     fn new_events(&mut self, _: &ActiveEventLoop, cause: StartCause) {
         if matches!(cause, StartCause::ResumeTimeReached { .. }) {
             if self.asleep {

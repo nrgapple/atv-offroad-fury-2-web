@@ -493,6 +493,7 @@ impl Front {
     pub fn pad(&mut self, pad: Option<&atv_game::ride::bindings::Pad>) -> Option<Event> {
         if self.menu.is_some() {
             self.menu_reveal = true;
+            self.state.hold_pad();
             let event = self.with_menu(|m, ctx, _, _| m.pad(pad, ctx)).flatten();
             return self.menu_event(event);
         }

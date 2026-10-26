@@ -1,6 +1,8 @@
 [workspace]
 members = ["crates/atv-core", "crates/atv-tools", "crates/atv-net", "crates/atv-relay", "crates/atv-content", "crates/atv-game", "crates/atv-render", "crates/atv-app", "crates/atv-ui"]
 resolver = "2"
+# Vendored, patched dependencies (see third_party/README.md); not members.
+exclude = ["third_party/winit"]
 
 [workspace.package]
 edition = "2024"
@@ -15,3 +17,7 @@ miniz_oxide = "0.8"
 [profile.release]
 lto = true
 opt-level = "s"
+
+# winit 0.30.13 with Android gamepad input (third_party/README.md).
+[patch.crates-io]
+winit = { path = "third_party/winit" }

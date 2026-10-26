@@ -34,7 +34,7 @@ WORKTREES = Path.home() / 'Projects/atv-worktrees'
 PATTERN = 'refs/tags/desktop-v*'
 # What the desktop archives are built from. Documentation, the web shell and tests do not
 # start a release on their own.
-RELEASE_PATHS = ('crates', 'Cargo.toml', 'Cargo.lock', 'tools/build_desktop.py', 'tools/desktop',
+RELEASE_PATHS = ('crates', 'third_party', 'Cargo.toml', 'Cargo.lock', 'tools/build_desktop.py', 'tools/desktop',
                  'tools/pack_content.py', 'tools/desktop_archive.py', 'tools/build_android.py',
                  'web/fury-app-icons.json')
 KEEP_BUILDS = 3

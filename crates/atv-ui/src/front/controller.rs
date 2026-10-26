@@ -1347,6 +1347,13 @@ impl Frontend {
         self.hovered = None;
     }
 
+    /// A menu over the page takes the pad: a button still held when it
+    /// closes (the Back that closed Settings) acts on the page only after a
+    /// release.
+    pub fn hold_pad(&mut self) {
+        self.pad = u32::MAX;
+    }
+
     /// The page lost focus or was hidden (frontend.js `padBlocked`): a pad
     /// button held across it acts only after a release, and held keys end.
     pub fn blur(&mut self) {
@@ -2226,6 +2233,25 @@ mod tests {
         front.pad(&idle, &[0.; 4], false, &view, &mut settings);
         front.pad(&idle, &[0., 0.9, 0., 0.], false, &view, &mut settings);
         assert_eq!(front.selection, 1);
+    }
+
+    #[test]
+    fn back_held_as_a_menu_closes_does_not_also_leave_the_page() {
+        let view = view(1280., 720.);
+        let mut settings = Settings::memory();
+        let mut front = Frontend::new(tracks(), &settings, true);
+        let idle = [0f32; 17];
+        let mut b = [0f32; 17];
+        b[1] = 1.;
+        front.show("main", &view);
+        front.pad(&idle, &[0.; 4], false, &view, &mut settings);
+        // Settings (a menu over the page) took the Back press and closed.
+        front.hold_pad();
+        front.pad(&b, &[0.; 4], false, &view, &mut settings);
+        assert_eq!(front.page, "main", "the held Back stays with the menu");
+        front.pad(&idle, &[0.; 4], false, &view, &mut settings);
+        front.pad(&b, &[0.; 4], false, &view, &mut settings);
+        assert_eq!(front.page, "title", "a fresh Back acts on the page");
     }
 
     #[test]
