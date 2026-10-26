@@ -134,6 +134,7 @@ pub fn record(ride: &Ride, step: u64) -> Value {
         "race": ride.race().and_then(|r| r.frame.as_ref()).map(|f| json!({
             "phase": f.phase, "elapsed": f.elapsed, "lap": f.lap, "position": f.position,
             "countdown": f.countdown, "contacts": f.contacts, "off_track": f.off_track,
+            "grid_slots": f.grid_slots,
             "opponents": f.opponents.iter().map(|o| json!({"origin": o.origin, "distance": o.distance, "finished": o.finished})).collect::<Vec<_>>(),
             "standings": f.standings.iter().map(|s| json!({"name": s.name, "time": s.time, "position": s.position})).collect::<Vec<_>>(),
         })),
