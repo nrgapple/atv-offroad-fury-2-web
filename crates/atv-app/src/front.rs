@@ -279,6 +279,7 @@ impl Front {
         crate::sound::sync_audio_session(&mut self.prefs);
         self.minimap = MinimapSettings::load(&self.settings);
         self.bindings = pause::controller::load_bindings(&mut self.settings);
+        self.state.profile = atv_ui::settings::load_profile(&self.settings);
         self.state.loading = None;
         self.state.show(page, &self.view);
     }
@@ -1391,6 +1392,7 @@ impl Front {
                 "code": l.code, "status": l.status,
             })),
             "notice": self.state.notice,
+            "profile": atv_ui::front::controller::profile_line(&self.state.profile),
             "labels": self.state.choices().iter().map(|(_, l)| l).collect::<Vec<_>>(),
             "race": {
                 "courses": self.state.race_courses.len(), "course": self.state.race.course,

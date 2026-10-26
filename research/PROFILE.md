@@ -51,10 +51,13 @@ tricks, so CPU rows read 0).
 - **Authored:** the original requires a loaded profile. The port keeps one
   implicit local profile, saved as JSON under `fury-profile` (browser
   `localStorage`, desktop settings file) and credited once when the results
-  open. Original profile creation, names, multiple profiles, the Profile
+  open. Single Player shows "Profile Points N · R races · W wins" under its
+  rows (the original's "Current Profile Points:" readout lives on its
+  profile pages). Original profile creation, names, multiple profiles, the Profile
   Store and memory-card saves remain missing.
 
 Checks: `atv-core` profile and race tests (table parsing, award rule,
 stunt window); `tools/test_engine_race_profile_points.mjs` drives the player
 with the race path driver through a one-lap SX01 race and checks the trace
-standings, the award and the saved profile.
+standings, the award and the saved profile; `tools/test_engine_profile_menu.mjs`
+checks the Single Player readout for a saved and an unreadable record.

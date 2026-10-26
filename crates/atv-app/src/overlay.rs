@@ -65,9 +65,6 @@ pub const MOUSE: u64 = u64::MAX;
 /// A laid-out menu: view, state, paint, hits and scroll range.
 type MenuCache = (Viewport, pause::State, DisplayList, Vec<(Rect, u32)>, f32);
 
-/// The saved player profile (Profile Points and race record).
-pub const PROFILE_KEY: &str = "fury-profile";
-
 /// Laid-out race results: inputs (view, state, summary), paint and hits.
 type ResultsCache = (Viewport, Results, String, DisplayList, Vec<(Rect, u32)>);
 
@@ -875,19 +872,13 @@ impl Overlay {
     /// Credits the finished race to the saved profile (`001f1e30` →
     /// `00323440`/`00322080`) once per race.
     fn credit_profile(&mut self) {
-        use atv_core::profile::Profile;
+        use atv_ui::settings::{load_profile, save_profile};
         let Some((place, stunt, points)) = self.results.award else {
             return;
         };
-        let mut profile: Profile = self
-            .settings
-            .get(PROFILE_KEY)
-            .and_then(|text| serde_json::from_str(&text).ok())
-            .unwrap_or_default();
+        let mut profile = load_profile(&self.settings);
         profile.record_race(place, points, stunt);
-        if let Ok(text) = serde_json::to_string(&profile) {
-            self.settings.set(PROFILE_KEY, &text);
-        }
+        save_profile(&mut self.settings, &profile);
         self.results.profile_total = Some(profile.points);
     }
 

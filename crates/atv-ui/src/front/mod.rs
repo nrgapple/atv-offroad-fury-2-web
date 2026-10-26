@@ -180,6 +180,8 @@ pub struct Screen {
     pub fields: Vec<(String, String, bool)>,
     /// A form error under the rows (`#menu-notice`).
     pub notice: Option<String>,
+    /// Single Player: the saved profile's points and race record.
+    pub profile: Option<String>,
     /// The Free Ride Lobby page's room code and status.
     pub lobby: Option<controller::Lobby>,
     /// The page's slide-in while it opens (crate::transition).
@@ -1209,6 +1211,25 @@ fn left(m: &Metrics, s: &Screen) -> El {
                 rows = rows.child(menu_row(m, s, index, action, label));
             }
             left = left.child(rows);
+            if let Some(profile) = &s.profile {
+                left = left.child(
+                    El::new(Style {
+                        flex_shrink: 0.,
+                        margin: margins(12., 0., 0., if m.portrait { 0. } else { 8. }),
+                        ..Default::default()
+                    })
+                    .child(text(
+                        profile.clone(),
+                        TextStyle::new(display(16., 700, false), Color::hex("#f1d84e")).shadow(
+                            1.,
+                            2.,
+                            0.,
+                            Color::hex("#000a"),
+                        ),
+                        20.,
+                    )),
+                );
+            }
             // `#menu-notice`, e.g. why a ride link could not open.
             if let Some(notice) = &s.notice {
                 left = left.child(
