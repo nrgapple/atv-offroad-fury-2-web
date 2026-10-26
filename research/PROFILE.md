@@ -54,7 +54,8 @@ tricks, so CPU rows read 0).
   open. Single Player shows "Profile Points N · R races · W wins" under its
   rows (the original's "Current Profile Points:" readout lives on its
   profile pages). Original profile creation, names, multiple profiles, the Profile
-  Store and memory-card saves remain missing.
+  Store and memory-card saves remain missing. Championship progress is kept
+  in the same record (`CHAMPIONSHIPS.md`).
 
 Checks: `atv-core` profile and race tests (table parsing, award rule,
 stunt window); `tools/test_engine_race_profile_points.mjs` drives the player

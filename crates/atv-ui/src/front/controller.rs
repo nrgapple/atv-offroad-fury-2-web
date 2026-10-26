@@ -75,6 +75,8 @@ pub enum Event {
         difficulty: u32,
         /// A race link's EATDIRT / BRINGIT cheats (aggressive, all out).
         cheats: (bool, bool),
+        /// A championship round: the series index and Expert.
+        championship: Option<(usize, bool)>,
     },
     /// Single Race → Copy ride link: the race setup's link.
     CopyRaceLink,
@@ -143,7 +145,7 @@ const GEAR_ROWS: [(&str, &str); 7] = [
 pub fn stepper(action: &str) -> bool {
     matches!(
         action,
-        "racetrack" | "racelaps" | "racecpu" | "racedifficulty"
+        "racetrack" | "racelaps" | "racecpu" | "racedifficulty" | "champdifficulty"
     ) || GEAR_ROWS.iter().any(|(a, _)| *a == action)
 }
 
@@ -284,6 +286,8 @@ pub struct Frontend {
     pub notice: Option<String>,
     /// The saved profile, shown on Single Player (PROFILE.md).
     pub profile: atv_core::profile::Profile,
+    /// The Championship page lists Expert progress.
+    pub champ_expert: bool,
     /// The garage ("garage") or course picker ("tracks") is open over a
     /// held room ride; leaving it rides again.
     pub room: Option<&'static str>,
@@ -348,6 +352,7 @@ impl Frontend {
             hosting: false,
             notice: None,
             profile: crate::settings::load_profile(settings),
+            champ_expert: false,
             room: None,
             lobby: None,
             race_courses: Vec::new(),
@@ -397,6 +402,11 @@ impl Frontend {
 
     /// ui_menu rows for the page (labels and keyboard order).
     pub fn refresh(&mut self, view: &Viewport) {
+        if self.page == "championship" {
+            self.choices = self.championship_choices();
+            self.selection = self.selection.min(self.choices.len().saturating_sub(1));
+            return;
+        }
         let page = match self.page.as_str() {
             "tracks" | "loading" => "tracks",
             other => other,
@@ -458,6 +468,16 @@ impl Frontend {
             .filter(|a| self.web || !matches!(a.as_str(), "devlog" | "downloads"))
             .map(|a| (a.clone(), label(a)))
             .collect();
+        // Single Player → Championship, after Race.
+        if page == "single" && !self.race_courses.is_empty() {
+            let at = self
+                .choices
+                .iter()
+                .position(|(a, _)| a == "race")
+                .map_or(self.choices.len(), |i| i + 1);
+            self.choices
+                .insert(at, ("championship".into(), "Championship".into()));
+        }
         self.selection = self.selection.min(self.choices.len().saturating_sub(1));
     }
 
@@ -593,6 +613,10 @@ impl Frontend {
     /// A value row stepped by Left/Right, its arrows or a tap (+1).
     fn step(&mut self, action: &str, direction: i32, view: &Viewport, settings: &mut Settings) {
         match action {
+            "champdifficulty" => {
+                self.champ_expert = !self.champ_expert;
+                self.notice = None;
+            }
             "racetrack" => {
                 let order = self.race_order();
                 if !order.is_empty() {
@@ -644,6 +668,81 @@ impl Frontend {
             cpu: self.race.cpu,
             difficulty: self.race.difficulty,
             cheats: self.race.cheats,
+            championship: None,
+        })
+    }
+
+    /// The Championship page rows: each series with its progress, then the
+    /// difficulty (PROFILE.md, CHAMPIONSHIPS.md).
+    fn championship_choices(&self) -> Vec<(String, String)> {
+        use atv_core::championship::SERIES;
+        let champ = &self.profile.championships;
+        let expert = self.champ_expert;
+        let mut rows: Vec<(String, String)> = SERIES
+            .iter()
+            .map(|s| {
+                let label = if !champ.is_open(s, expert) {
+                    format!("{} · Locked", s.name)
+                } else {
+                    let p = champ.progress(s, expert);
+                    let rounds = s.rounds[usize::from(expert)];
+                    let mut label = format!(
+                        "{} · Round {} of {} · {} pts",
+                        s.name,
+                        p.round + 1,
+                        rounds,
+                        p.points[0]
+                    );
+                    if let Some(t) = p.trophy {
+                        label += &format!(" · {}", t.name());
+                    }
+                    label
+                };
+                (format!("champ:{}", s.key), label)
+            })
+            .collect();
+        rows.push((
+            "champdifficulty".into(),
+            format!("Difficulty: {}", if expert { "Expert" } else { "Normal" }),
+        ));
+        rows.push(("back".into(), "Back".into()));
+        rows
+    }
+
+    /// Starts the selected series' next round: five laps against four CPUs,
+    /// Expert CPUs on Expert (`00289d50`).
+    fn championship_event(&mut self, key: &str) -> Option<Event> {
+        use atv_core::championship::SERIES;
+        let index = SERIES.iter().position(|s| s.key == key)?;
+        let series = &SERIES[index];
+        let expert = self.champ_expert;
+        let champ = &self.profile.championships;
+        if !champ.is_open(series, expert) {
+            self.notice = Some(match (series.opened_by, expert) {
+                (_, true) => format!("Win gold in {} on Normal to open Expert.", series.name),
+                (Some(am), false) => format!(
+                    "Win a trophy in {} to open {}.",
+                    atv_core::championship::series(am).map_or(am, |s| s.name),
+                    series.name
+                ),
+                (None, false) => "Locked.".into(),
+            });
+            return None;
+        }
+        let course = champ.next_course(series, expert);
+        if !self.race_courses.iter().any(|c| c == course) {
+            self.notice = Some(format!("{} is not available.", self.course_name(course)));
+            return None;
+        }
+        Some(Event::Race {
+            environment: course.into(),
+            quad: self.quad_id,
+            rider: self.rider_id,
+            laps: series.laps,
+            cpu: 4,
+            difficulty: if expert { 2 } else { 1 },
+            cheats: (false, false),
+            championship: Some((index, expert)),
         })
     }
 
@@ -911,7 +1010,7 @@ impl Frontend {
             "main" => "title".to_string(),
             "single" => "main".into(),
             "tracks" if self.hosting => "create-lobby".into(),
-            "tracks" | "race" => "single".into(),
+            "tracks" | "race" | "championship" => "single".into(),
             "gear" => "garage".into(),
             "garage" => self.garage_return.clone(),
             "multiplayer" => "main".into(),
@@ -963,6 +1062,15 @@ impl Frontend {
                 self.show(action, view)
             }
             "racestart" => return self.race_event(settings),
+            "championship" => self.show(action, view),
+            "champdifficulty" => {
+                self.champ_expert = !self.champ_expert;
+                self.notice = None;
+                self.refresh(view);
+            }
+            _ if action.starts_with("champ:") => {
+                return self.championship_event(&action["champ:".len()..]);
+            }
             "copyride" if self.page == "race" => return Some(Event::CopyRaceLink),
             _ if stepper(action) => self.step(action, 1, view, settings),
             "create-lobby" | "join-lobby" => {
@@ -1996,6 +2104,67 @@ mod tests {
     }
 
     #[test]
+    fn championship_page_starts_the_next_round() {
+        let view = view(1280., 720.);
+        let mut settings = Settings::memory();
+        let mut front = Frontend::new(tracks(), &settings, true);
+        front.show("single", &view);
+        assert!(front.choices().iter().all(|(a, _)| a != "championship"));
+        front.set_race_courses(
+            ["env05", "env02", "sx08", "nat01"]
+                .map(String::from)
+                .to_vec(),
+            &view,
+        );
+        let choices: Vec<_> = front.choices().iter().map(|(a, _)| a.as_str()).collect();
+        assert_eq!(&choices[..4], ["tracks", "race", "championship", "garage"]);
+        front.selection = 2;
+        front.key("Enter", &view, &mut settings);
+        assert_eq!(front.page, "championship");
+        assert_eq!(
+            front.choices()[0].1,
+            "Amateur Nationals · Round 1 of 5 · 0 pts"
+        );
+        assert_eq!(front.choices()[1].1, "Pro Nationals · Locked");
+        // Amateur Nationals: env05, five laps, four CPUs.
+        assert_eq!(
+            front.key("Enter", &view, &mut settings),
+            Some(Event::Race {
+                environment: "env05".into(),
+                quad: 1,
+                rider: 0,
+                laps: 5,
+                cpu: 4,
+                difficulty: 1,
+                cheats: (false, false),
+                championship: Some((0, false)),
+            })
+        );
+        // A locked series explains how it opens.
+        front.selection = 1;
+        assert_eq!(front.key("Enter", &view, &mut settings), None);
+        assert!(
+            front
+                .notice
+                .as_deref()
+                .unwrap()
+                .contains("Amateur Nationals")
+        );
+        // Expert progress is separate; Back returns to Single Player.
+        let at = front
+            .choices()
+            .iter()
+            .position(|(a, _)| a == "champdifficulty")
+            .unwrap();
+        front.selection = at;
+        front.key("Enter", &view, &mut settings);
+        assert_eq!(front.choices()[at].1, "Difficulty: Expert");
+        assert!(front.choices()[0].1.ends_with("Locked"));
+        front.key("Escape", &view, &mut settings);
+        assert_eq!(front.page, "single");
+    }
+
+    #[test]
     fn single_race_setup_steps_and_starts_a_race() {
         let view = view(1280., 720.);
         let mut settings = Settings::memory();
@@ -2054,6 +2223,7 @@ mod tests {
                 cpu: 0,
                 difficulty: 2,
                 cheats: (false, false),
+                championship: None,
             })
         );
         let saved: Value = serde_json::from_str(&settings.get(SELECTION_KEY).unwrap()).unwrap();

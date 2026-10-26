@@ -20,6 +20,7 @@ pub const HIDE: u32 = 31;
 pub const RETRY: u32 = 32;
 pub const QUIT: u32 = 33;
 pub const SHOW: u32 = 34;
+pub const NEXT_ROUND: u32 = 35;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum Menu {
@@ -33,8 +34,21 @@ pub enum Menu {
 pub enum Command {
     /// Restart: reload the event (a new roster draw, no pre-race camera).
     Retry,
-    /// Quit Event: back to Single Player.
+    /// Quit Event: back to Single Player (or the Championship page).
     Quit,
+    /// Continue Championship: the series' next round.
+    NextRound,
+}
+
+/// Where a recorded championship round leaves the series.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Round {
+    /// Short of the points: Restart replays it.
+    Replay,
+    /// Advanced: Continue Championship races the next round.
+    Next,
+    /// The series ended.
+    Over,
 }
 
 /// race.js `raceTime`: M:SS.hh, dashes when unknown.
@@ -75,6 +89,14 @@ pub struct Results {
     pub award: Option<(usize, f32, i32)>,
     /// The profile's Profile Points after this race, once the host saved it.
     pub profile_total: Option<i64>,
+    /// A championship round: its context and each slot's place (the
+    /// player, then the CPUs).
+    pub championship: Option<(atv_core::championship::Round, Vec<usize>)>,
+    /// What the round did, once the host recorded it.
+    pub championship_line: Option<String>,
+    /// The recorded round's next step (the original ChampionshipRaceOver
+    /// menu: Continue Championship / Quit to Championship Menu).
+    pub round: Option<Round>,
 }
 
 impl Results {
@@ -82,10 +104,27 @@ impl Results {
     /// frame) with the standings of that moment. True the first time, when
     /// the host credits the award to the profile.
     pub fn finish(&mut self, frame: &atv_core::race::Frame) -> bool {
-        use atv_core::profile::{Event, race_award};
+        use atv_core::profile::{CourseAwards, Event, race_award};
         if self.shown {
             return false;
         }
+        self.championship = frame.championship.map(|round| (round, frame.ranks.clone()));
+        self.championship_line = None;
+        self.round = None;
+        // A championship round's course table, already chosen for the
+        // series and difficulty.
+        let course = self.championship.as_ref().map(|(round, _)| CourseAwards {
+            am_normal: round.awards,
+            ..Default::default()
+        });
+        let event = match &course {
+            Some(awards) => Event::Championship {
+                awards,
+                pro: false,
+                hard: false,
+            },
+            None => Event::Single,
+        };
         self.shown = true;
         self.hidden = false;
         self.menu = Menu::Results;
@@ -93,13 +132,11 @@ impl Results {
         self.pad_armed = false;
         self.player_row = frame.standings.iter().position(|s| s.player);
         // 001f1e30: only the human racer earns Profile Points.
-        self.award = frame.standings.iter().find(|s| s.player).map(|s| {
-            (
-                s.position,
-                s.stunt,
-                race_award(Event::Single, s.position, s.stunt),
-            )
-        });
+        self.award = frame
+            .standings
+            .iter()
+            .find(|s| s.player)
+            .map(|s| (s.position, s.stunt, race_award(event, s.position, s.stunt)));
         self.profile_total = None;
         self.rows = frame
             .standings
@@ -122,12 +159,52 @@ impl Results {
 
     /// The original "and %d Profile Points!" line after the summary.
     pub fn points_line(&self) -> String {
-        match (self.award, self.profile_total) {
-            (Some((.., points)), Some(total)) => {
-                format!(" · +{points} Profile Points ({total} total)")
+        let championship = self
+            .championship_line
+            .as_deref()
+            .map_or(String::new(), |line| format!(" · {line}"));
+        championship
+            + &match (self.award, self.profile_total) {
+                (Some((.., points)), Some(total)) => {
+                    format!(" · +{points} Profile Points ({total} total)")
+                }
+                (Some((.., points)), None) => format!(" · +{points} Profile Points"),
+                _ => String::new(),
             }
-            (Some((.., points)), None) => format!(" · +{points} Profile Points"),
-            _ => String::new(),
+    }
+
+    /// The championship line for a recorded round.
+    pub fn describe_round(
+        series: &atv_core::championship::Series,
+        outcome: &atv_core::championship::Outcome,
+    ) -> String {
+        let name = series.name;
+        let round = outcome.round + 1;
+        match &outcome.finished {
+            Some((Some(trophy), reward, opened)) => {
+                let mut line = format!("{name} over: {} trophy", trophy.name());
+                if *reward > 0 {
+                    line += &format!(" and {reward} Profile Points!");
+                }
+                for key in opened {
+                    line += &format!(" {} unlocked.", unlocked_name(key));
+                }
+                line
+            }
+            Some((None, ..)) => format!(
+                "{name} over: not enough championship points for a trophy ({} pts).",
+                outcome.total
+            ),
+            None if outcome.advanced => format!(
+                "{name} round {round} of {}: +{} championship points ({} total).",
+                outcome.rounds, outcome.race_points[0], outcome.total
+            ),
+            None => format!(
+                "{name} round {round} of {}: {} of {} points needed to advance. Restart to try again.",
+                outcome.rounds,
+                outcome.total + outcome.race_points[0],
+                outcome.required
+            ),
         }
     }
 
@@ -141,10 +218,14 @@ impl Results {
         if self.hidden {
             return vec![SHOW];
         }
-        match self.menu {
-            Menu::Results => vec![CONTINUE, HIDE],
-            Menu::Quit if self.can_quit => vec![RETRY, QUIT],
-            Menu::Quit => vec![RETRY],
+        match (self.menu, self.round) {
+            (Menu::Results, _) => vec![CONTINUE, HIDE],
+            // An advanced or finished round cannot be raced again.
+            (Menu::Quit, Some(Round::Next)) if self.can_quit => vec![NEXT_ROUND, QUIT],
+            (Menu::Quit, Some(Round::Next)) => vec![NEXT_ROUND],
+            (Menu::Quit, Some(Round::Over)) if self.can_quit => vec![QUIT],
+            (Menu::Quit, _) if self.can_quit => vec![RETRY, QUIT],
+            (Menu::Quit, _) => vec![RETRY],
         }
     }
 
@@ -169,6 +250,7 @@ impl Results {
             HIDE => self.hidden = true,
             SHOW => self.hidden = false,
             RETRY => return Some(Command::Retry),
+            NEXT_ROUND => return Some(Command::NextRound),
             QUIT if self.can_quit => return Some(Command::Quit),
             _ => return None,
         }
@@ -261,6 +343,17 @@ impl Results {
             self.focused()
         };
         self.act(id)
+    }
+}
+
+/// "Pro Supercross" or "Amateur Supercross Expert" for a save key.
+fn unlocked_name(key: &str) -> String {
+    let (series, difficulty) = key.split_once('-').unwrap_or((key, "normal"));
+    let name = atv_core::championship::series(series).map_or(series, |s| s.name);
+    if difficulty == "expert" {
+        format!("{name} Expert")
+    } else {
+        name.to_string()
     }
 }
 
@@ -440,12 +533,14 @@ pub fn element(view: &Viewport, state: &Results, summary: &str, fonts: &mut Font
                 CONTINUE => "Continue",
                 HIDE => "Hide Menu",
                 RETRY => "Restart",
+                NEXT_ROUND => "Continue Championship",
+                _ if state.championship.is_some() => "Quit to Championship Menu",
                 _ => "Quit Event",
             };
             button(
                 id,
                 label,
-                matches!(id, CONTINUE | RETRY),
+                matches!(id, CONTINUE | RETRY | NEXT_ROUND),
                 focused == Some(id),
             )
         })
@@ -572,6 +667,23 @@ mod tests {
         p.pad(&[0., 0., 0.], &[]);
         p.pad(&[1., 0., 0.], &[]);
         assert!(!p.hidden);
+    }
+
+    #[test]
+    fn championship_rounds_offer_the_original_choices() {
+        let mut r = Results {
+            shown: true,
+            can_quit: true,
+            menu: Menu::Quit,
+            round: Some(Round::Next),
+            ..Default::default()
+        };
+        assert_eq!(r.buttons(), vec![NEXT_ROUND, QUIT]);
+        assert_eq!(r.key("Enter"), (true, Some(Command::NextRound)));
+        r.round = Some(Round::Over);
+        assert_eq!(r.buttons(), vec![QUIT]);
+        r.round = Some(Round::Replay);
+        assert_eq!(r.buttons(), vec![RETRY, QUIT]);
     }
 
     #[test]
