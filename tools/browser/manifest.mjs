@@ -124,7 +124,7 @@ export const TESTS = {
   'test_engine_race_finish_gate.mjs': { group: 'content' },
   'test_engine_race_profile_points.mjs': { group: 'content' },
   'test_engine_profile_menu.mjs': { group: 'content' },
-  'test_engine_championship.mjs': { group: 'content' },
+  'test_engine_championship.mjs': { group: 'content', timeout: 1500 },
   'test_engine_sleep.mjs': { group: 'content' },
   'test_engine_motorcycle.mjs': { group: 'content' },
   'test_engine_interpolation.mjs': {

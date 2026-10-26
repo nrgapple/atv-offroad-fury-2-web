@@ -1240,6 +1240,14 @@ impl App {
             if let Some(overlay) = &self.overlay {
                 state["toolbar"] = overlay.diagnostics();
             }
+            // The ride's course and championship round, and the results
+            // buttons (tools/test_engine_championship.mjs).
+            state["ride"] = serde_json::json!({
+                "environment": ready.venue.environment,
+                "championship": riding.ride.race().and_then(|r| r.settings().championship),
+                "results": self.overlay.as_ref().filter(|o| o.results.shown)
+                    .map(|o| o.results.buttons()),
+            });
             // The saved settings the ride applies (tools/test_engine_settings.mjs).
             let graphics = ready.scene.graphics();
             let mixer = riding.sound.as_ref().and_then(|s| {
@@ -2084,6 +2092,7 @@ impl App {
             }
             overlay::Action::Camera => riding.cycle_requested = true,
             overlay::Action::RaceRetry => self.restart_race(),
+            overlay::Action::RaceNextRound => self.next_round(),
             overlay::Action::RaceQuit => {
                 // race.js quit: Single Player (a championship round returns
                 // to its Championship page); a page without the engine's
@@ -2114,6 +2123,42 @@ impl App {
     /// draw, no pre-race camera). With the engine's frontend the event
     /// reloads through the course loader; a direct ride restarts in place
     /// with the loaded roster.
+    /// Continue Championship: load the series' next round from the saved
+    /// profile, with the pre-race camera.
+    fn next_round(&mut self) {
+        let Some(riding) = self.ready.as_ref().and_then(|r| r.riding.as_ref()) else {
+            return;
+        };
+        let Some(settings) = riding.ride.race().map(|r| r.settings()) else {
+            return;
+        };
+        let Some((index, expert)) = settings.championship else {
+            return;
+        };
+        let Some(series) = atv_core::championship::SERIES.get(index) else {
+            return;
+        };
+        let profile = atv_ui::settings::load_profile(&atv_ui::settings::Settings::load());
+        let course = profile
+            .championships
+            .next_course(series, expert)
+            .to_string();
+        let selection = riding.ride.selection();
+        if self.front.is_some() && self.quit_to(None) {
+            self.start_ride(
+                course,
+                selection.quad,
+                selection.rider,
+                Some(atv_game::ride::race::Settings {
+                    seed: fresh_seed(),
+                    intro: true,
+                    ..settings
+                }),
+                None,
+            );
+        }
+    }
+
     fn restart_race(&mut self) {
         let Some(riding) = self.ready.as_mut().and_then(|r| r.riding.as_mut()) else {
             return;
@@ -4236,7 +4281,9 @@ impl App {
             } => {
                 let settings = atv_game::ride::race::Settings {
                     championship,
-                    laps,
+                    // `?raceLaps=1` (test tooling): one-lap menu races, so a
+                    // browser test can race championship rounds in turn.
+                    laps: if url_flag("raceLaps=1") { 1 } else { laps },
                     cpu: cpu as usize,
                     difficulty,
                     aggressive,

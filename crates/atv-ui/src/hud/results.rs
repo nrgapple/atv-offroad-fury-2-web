@@ -20,6 +20,7 @@ pub const HIDE: u32 = 31;
 pub const RETRY: u32 = 32;
 pub const QUIT: u32 = 33;
 pub const SHOW: u32 = 34;
+pub const NEXT_ROUND: u32 = 35;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum Menu {
@@ -33,8 +34,21 @@ pub enum Menu {
 pub enum Command {
     /// Restart: reload the event (a new roster draw, no pre-race camera).
     Retry,
-    /// Quit Event: back to Single Player.
+    /// Quit Event: back to Single Player (or the Championship page).
     Quit,
+    /// Continue Championship: the series' next round.
+    NextRound,
+}
+
+/// Where a recorded championship round leaves the series.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Round {
+    /// Short of the points: Restart replays it.
+    Replay,
+    /// Advanced: Continue Championship races the next round.
+    Next,
+    /// The series ended.
+    Over,
 }
 
 /// race.js `raceTime`: M:SS.hh, dashes when unknown.
@@ -80,6 +94,9 @@ pub struct Results {
     pub championship: Option<(atv_core::championship::Round, Vec<usize>)>,
     /// What the round did, once the host recorded it.
     pub championship_line: Option<String>,
+    /// The recorded round's next step (the original ChampionshipRaceOver
+    /// menu: Continue Championship / Quit to Championship Menu).
+    pub round: Option<Round>,
 }
 
 impl Results {
@@ -93,6 +110,7 @@ impl Results {
         }
         self.championship = frame.championship.map(|round| (round, frame.ranks.clone()));
         self.championship_line = None;
+        self.round = None;
         // A championship round's course table, already chosen for the
         // series and difficulty.
         let course = self.championship.as_ref().map(|(round, _)| CourseAwards {
@@ -200,10 +218,14 @@ impl Results {
         if self.hidden {
             return vec![SHOW];
         }
-        match self.menu {
-            Menu::Results => vec![CONTINUE, HIDE],
-            Menu::Quit if self.can_quit => vec![RETRY, QUIT],
-            Menu::Quit => vec![RETRY],
+        match (self.menu, self.round) {
+            (Menu::Results, _) => vec![CONTINUE, HIDE],
+            // An advanced or finished round cannot be raced again.
+            (Menu::Quit, Some(Round::Next)) if self.can_quit => vec![NEXT_ROUND, QUIT],
+            (Menu::Quit, Some(Round::Next)) => vec![NEXT_ROUND],
+            (Menu::Quit, Some(Round::Over)) if self.can_quit => vec![QUIT],
+            (Menu::Quit, _) if self.can_quit => vec![RETRY, QUIT],
+            (Menu::Quit, _) => vec![RETRY],
         }
     }
 
@@ -228,6 +250,7 @@ impl Results {
             HIDE => self.hidden = true,
             SHOW => self.hidden = false,
             RETRY => return Some(Command::Retry),
+            NEXT_ROUND => return Some(Command::NextRound),
             QUIT if self.can_quit => return Some(Command::Quit),
             _ => return None,
         }
@@ -510,12 +533,14 @@ pub fn element(view: &Viewport, state: &Results, summary: &str, fonts: &mut Font
                 CONTINUE => "Continue",
                 HIDE => "Hide Menu",
                 RETRY => "Restart",
+                NEXT_ROUND => "Continue Championship",
+                _ if state.championship.is_some() => "Quit to Championship Menu",
                 _ => "Quit Event",
             };
             button(
                 id,
                 label,
-                matches!(id, CONTINUE | RETRY),
+                matches!(id, CONTINUE | RETRY | NEXT_ROUND),
                 focused == Some(id),
             )
         })
@@ -642,6 +667,23 @@ mod tests {
         p.pad(&[0., 0., 0.], &[]);
         p.pad(&[1., 0., 0.], &[]);
         assert!(!p.hidden);
+    }
+
+    #[test]
+    fn championship_rounds_offer_the_original_choices() {
+        let mut r = Results {
+            shown: true,
+            can_quit: true,
+            menu: Menu::Quit,
+            round: Some(Round::Next),
+            ..Default::default()
+        };
+        assert_eq!(r.buttons(), vec![NEXT_ROUND, QUIT]);
+        assert_eq!(r.key("Enter"), (true, Some(Command::NextRound)));
+        r.round = Some(Round::Over);
+        assert_eq!(r.buttons(), vec![QUIT]);
+        r.round = Some(Round::Replay);
+        assert_eq!(r.buttons(), vec![RETRY, QUIT]);
     }
 
     #[test]

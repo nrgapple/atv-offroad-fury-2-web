@@ -73,19 +73,22 @@ round-to-course mapping, and whether a lesser trophy after a better one pays.
   its next round: five laps, four CPUs, Expert CPUs on Expert. The race
   results add a championship line (points and total, the shortfall and a
   replay prompt, or the trophy, reward and unlocks), and Profile Points use
-  the course table for the series and difficulty. Quit Event returns to the
-  Championship page.
+  the course table for the series and difficulty. Like the original
+  ChampionshipRaceOver menu, an advanced round offers Continue Championship
+  (the next round's course) and Quit to Championship Menu; a short round
+  offers Restart; a finished series only Quit to Championship Menu.
 
 **Authored or approximate:** a better trophy than the best so far pays its own
 reward once; the CPU slots of the standings are the race's CPU slots, whose
 roster is drawn per race (the original keeps its championship roster);
 Amateur Nationals races use the port's Environment race courses (the National
-mode files); there is no championship loading screen, Continue Championship
-item, memory-card save or trophy page. Enduro, Freestyle and Short Tracks
+mode files); there is no championship loading screen, memory-card save or trophy
+page. Enduro, Freestyle and Short Tracks
 championships are not offered: their course variants or objectives are not
 ported.
 
 Checks: `atv-core` championship tests (lists, short round replay, final
 round trophy/reward/unlocks, tie rule); `atv-ui` controller test for the
-page; `tools/test_engine_championship.mjs` races the final Amateur
-Supercross round from the menu and checks the saved profile and the page.
+page and the results choices; `tools/test_engine_championship.mjs` races
+Amateur Supercross rounds 5 and 6 from the menu through Continue
+Championship and checks the saved profile and the page.

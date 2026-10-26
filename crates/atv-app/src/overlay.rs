@@ -33,6 +33,8 @@ pub enum Action {
     RaceRetry,
     /// Race over → Quit Event (Single Player).
     RaceQuit,
+    /// Race over → Continue Championship (the next round).
+    RaceNextRound,
 }
 
 /// Hit target of the minimap (tap toggles north-up / heading-up).
@@ -508,6 +510,7 @@ impl Overlay {
                     return Some(self.results.act(p.button).map(|command| match command {
                         results::Command::Retry => Action::RaceRetry,
                         results::Command::Quit => Action::RaceQuit,
+                        results::Command::NextRound => Action::RaceNextRound,
                     }));
                 }
                 match toolbar::Button::from_id(p.button) {
@@ -887,6 +890,13 @@ impl Overlay {
             }
             self.results.championship_line =
                 Some(results::Results::describe_round(series, &outcome));
+            self.results.round = Some(if outcome.finished.is_some() {
+                results::Round::Over
+            } else if outcome.advanced {
+                results::Round::Next
+            } else {
+                results::Round::Replay
+            });
         }
         save_profile(&mut self.settings, &profile);
         self.results.profile_total = Some(profile.points);
@@ -1298,6 +1308,7 @@ fn command_action(command: results::Command) -> Action {
     match command {
         results::Command::Retry => Action::RaceRetry,
         results::Command::Quit => Action::RaceQuit,
+        results::Command::NextRound => Action::RaceNextRound,
     }
 }
 
