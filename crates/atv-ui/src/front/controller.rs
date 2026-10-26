@@ -245,6 +245,8 @@ pub struct Loading {
     pub status: String,
     pub progress: f32,
     pub tip: Vec<String>,
+    /// A championship round's briefing (the original loading screen).
+    pub championship: Vec<String>,
 }
 
 pub struct Frontend {
@@ -982,7 +984,15 @@ impl Frontend {
             status: "Preparing course…".into(),
             progress: 0.,
             tip: Vec::new(),
+            championship: Vec::new(),
         });
+    }
+
+    /// The loading round's championship briefing (`002591f0`).
+    pub fn set_briefing(&mut self, lines: Vec<String>) {
+        if let Some(loading) = &mut self.loading {
+            loading.championship = lines;
+        }
     }
 
     /// A loader progress line; the bar never moves backwards.
@@ -1739,6 +1749,10 @@ impl Frontend {
                 .as_ref()
                 .map_or(String::new(), |l| l.track.clone()),
             tip: self.loading.as_ref().map_or(Vec::new(), |l| l.tip.clone()),
+            briefing: self
+                .loading
+                .as_ref()
+                .map_or(Vec::new(), |l| l.championship.clone()),
             progress: self.loading.as_ref().map_or(0., |l| l.progress),
             shot: shot.0,
             previous_shot: shot.1,

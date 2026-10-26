@@ -4782,11 +4782,18 @@ impl App {
         ));
         #[cfg(target_arch = "wasm32")]
         self.text_inputs.sync(&[], &[], &self.proxy);
+        let championship = race.as_ref().and_then(|r| r.championship);
         let (world, ride) = self.ride_setup(&front, quad, rider, race);
         {
             let mut f = front.borrow_mut();
             f.begin_loading(&environment);
+            f.championship_briefing(championship);
             paint_front(&gpu, &mut f);
+            // The loader paints between load stages only; publish its state
+            // now (tools/test_engine_championship_loading.mjs).
+            if self.ui_diagnostics {
+                publish_ui_state(&serde_json::json!({ "front": f.diagnostics() }).to_string());
+            }
         }
         // The original loader's action shots for this course.
         let key = format!("shots:{environment}");

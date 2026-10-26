@@ -295,6 +295,20 @@ impl Front {
         self.choose_tip();
     }
 
+    /// A championship round's loading screen (`002591f0`): the round, the
+    /// saved points and what the round needs.
+    pub fn championship_briefing(&mut self, round: Option<(usize, bool)>) {
+        let lines = round
+            .and_then(|(index, expert)| {
+                let series = atv_core::championship::SERIES.get(index)?;
+                let profile = atv_ui::settings::load_profile(&Settings::load());
+                let progress = profile.championships.progress(series, expert);
+                Some(atv_core::championship::briefing(series, &progress, expert))
+            })
+            .unwrap_or_default();
+        self.state.set_briefing(lines);
+    }
+
     fn choose_tip(&mut self) {
         if !self.tip_chosen
             && !self.art.tips.is_empty()
@@ -1414,6 +1428,7 @@ impl Front {
             },
             "loading": self.state.loading.as_ref().map(|l| serde_json::json!({
                 "environment": l.environment, "status": l.status, "progress": l.progress,
+                "championship": l.championship,
             })),
             "menu": self.menu.as_ref().map(|m| serde_json::json!({
                 "page": m.page, "choices": m.rows.choices,

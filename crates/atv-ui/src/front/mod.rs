@@ -162,6 +162,8 @@ pub struct Screen {
     /// Loader.
     pub loading_track: String,
     pub tip: Vec<String>,
+    /// Loader: a championship round's briefing lines (title first).
+    pub briefing: Vec<String>,
     pub progress: f32,
     pub shot: Option<Img>,
     pub previous_shot: Option<(Img, f32)>,
@@ -2618,7 +2620,10 @@ fn loading_info(m: &Metrics, s: &Screen) -> El {
             .child(text("Track:", style.clone(), track_size * 1.2))
             .child(text(s.loading_track.clone(), style, track_size * 1.2)),
     );
-    if !s.tip.is_empty() {
+    for (label, lines) in [("Championship:", &s.briefing), ("Tips:", &s.tip)] {
+        if lines.is_empty() {
+            continue;
+        }
         let label_size = clamp(17., m.w * 0.018, 21.);
         let tip_size = clamp(16., m.w * 0.017, 20.);
         let (pad_v, pad_h) = if m.short { (10., 14.) } else { (16., 20.) };
@@ -2635,14 +2640,14 @@ fn loading_info(m: &Metrics, s: &Screen) -> El {
         )
         .child(
             El::new(Style::default()).content(Content::Text {
-                text: "Tips:".into(),
+                text: label.into(),
                 style: TextStyle::new(display(label_size, 700, false), Color::hex("#e8c832"))
                     .spacing(label_size * 0.03),
                 line_height: label_size * 1.3,
                 wrap: false,
             }),
         );
-        for line in &s.tip {
+        for line in lines {
             tips = tips.child(
                 El::new(Style::default()).content(Content::Text {
                     text: line.clone(),
