@@ -124,6 +124,56 @@ pub fn required(round: u32) -> i32 {
     4 * round as i32 + 2
 }
 
+/// `00322d80`: the place a round needs, from the points still missing;
+/// None is "N/A" (eight or more missing, or the final round).
+pub fn required_place(points: i32, round: u32, rounds: u32) -> Option<usize> {
+    if round + 1 >= rounds {
+        return None;
+    }
+    match (required(round) - points).max(0) {
+        0 => Some(5),
+        1 => Some(4),
+        2 => Some(3),
+        3..=4 => Some(2),
+        5..=7 => Some(1),
+        _ => None,
+    }
+}
+
+/// The championship loading screen (`002591f0`): the round, the points and
+/// what the round needs.
+pub fn briefing(series: &Series, progress: &Progress, expert: bool) -> Vec<String> {
+    let rounds = series.rounds[usize::from(expert)];
+    let round = progress.round.min(rounds - 1);
+    let points = progress.points[0];
+    let place = match required_place(points, round, rounds) {
+        Some(place) => format!(
+            "{place}{}",
+            match place {
+                1 => "st",
+                2 => "nd",
+                3 => "rd",
+                _ => "th",
+            }
+        ),
+        None => "N/A".into(),
+    };
+    vec![
+        format!(
+            "{} ({})",
+            series.name,
+            if expert { "Expert" } else { "Normal" }
+        ),
+        format!("You Are Currently On Track: {} of {rounds}", round + 1),
+        format!("Current Championship Points: {points}"),
+        format!(
+            "Points Required to Advance: {}",
+            (required(round) - points).max(0)
+        ),
+        format!("Place Required to Advance: {place}"),
+    ]
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum Trophy {
     Gold,
@@ -344,6 +394,31 @@ mod tests {
         }
         let (_, reward, opened) = c.record(s, false, &[1, 2, 3, 4, 5]).finished.unwrap();
         assert_eq!((reward, opened.len()), (0, 0));
+    }
+
+    #[test]
+    fn briefing_follows_the_loading_screen() {
+        let s = series("amsx").unwrap();
+        let p = Progress {
+            round: 2,
+            points: [7, 0, 0, 0, 0],
+            trophy: None,
+        };
+        // Round 3 needs 10: 3 missing is 2nd place.
+        assert_eq!(
+            briefing(s, &p, false)[1..],
+            [
+                "You Are Currently On Track: 3 of 6",
+                "Current Championship Points: 7",
+                "Points Required to Advance: 3",
+                "Place Required to Advance: 2nd",
+            ]
+        );
+        assert_eq!(required_place(10, 2, 6), Some(5));
+        assert_eq!(required_place(9, 2, 6), Some(4));
+        assert_eq!(required_place(5, 2, 6), Some(1));
+        assert_eq!(required_place(2, 2, 6), None);
+        assert_eq!(required_place(0, 5, 6), None);
     }
 
     #[test]

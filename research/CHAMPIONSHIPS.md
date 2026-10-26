@@ -69,7 +69,8 @@ round-to-course mapping, and whether a lesser trophy after a better one pays.
   trophies, first-trophy rewards and unlocks. Progress per series and
   difficulty lives in the saved profile (`fury-profile`, `PROFILE.md`).
 - Single Player → Championship lists each series with its round, points and
-  best trophy (or Locked), and a Normal/Expert row. Choosing a series starts
+  best trophy (or Locked), and a Normal/Expert row; under the rows the
+  highlighted series' next course and the five standings. Choosing a series starts
   its next round: five laps, four CPUs, Expert CPUs on Expert. The race
   results add a championship line (points and total, the shortfall and a
   replay prompt, or the trophy, reward and unlocks), and Profile Points use
@@ -77,13 +78,18 @@ round-to-course mapping, and whether a lesser trophy after a better one pays.
   ChampionshipRaceOver menu, an advanced round offers Continue Championship
   (the next round's course) and Quit to Championship Menu; a short round
   offers Restart; a finished series only Quit to Championship Menu.
+- The loading screen of a round shows the original briefing (`002591f0`):
+  the series, "You Are Currently On Track: N of M", the current points, the
+  points required and the place required to advance (`00322d80`: 0 missing
+  is 5th, 1 is 4th, 2 is 3rd, 3–4 is 2nd, 5–7 is 1st, 8 or more and the
+  final round are N/A), above the usual tip.
 
 **Authored or approximate:** a better trophy than the best so far pays its own
-reward once; the CPU slots of the standings are the race's CPU slots, whose
-roster is drawn per race (the original keeps its championship roster);
+reward once; the standings keep four CPU slots whose riders are drawn for
+each race, as the original's race creation draws its roster (`00210d20`,
+`0021f680`) for every race (a reading, not traced across rounds);
 Amateur Nationals races use the port's Environment race courses (the National
-mode files); there is no championship loading screen, memory-card save or trophy
-page. Enduro, Freestyle and Short Tracks
+mode files); there is no memory-card save or trophy page. Enduro, Freestyle and Short Tracks
 championships are not offered: their course variants or objectives are not
 ported.
 
@@ -91,4 +97,5 @@ Checks: `atv-core` championship tests (lists, short round replay, final
 round trophy/reward/unlocks, tie rule); `atv-ui` controller test for the
 page and the results choices; `tools/test_engine_championship.mjs` races
 Amateur Supercross rounds 5 and 6 from the menu through Continue
-Championship and checks the saved profile and the page.
+Championship and checks the saved profile and the page;
+`tools/test_engine_championship_loading.mjs` checks the loading briefing.
