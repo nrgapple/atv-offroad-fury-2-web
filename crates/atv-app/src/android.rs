@@ -11,7 +11,9 @@
 //!   the screen. `Suspended` releases every GPU surface (the devices and their
 //!   resources stay); `Resumed` makes new surfaces on the new window.
 //! - Touch is the control scheme (the viewport reports a coarse, hover-less
-//!   pointer, like a phone browser); the Back key acts as Escape.
+//!   pointer, like a phone browser); the Back key acts as Escape. Controllers
+//!   (a handheld's built-in pad too) come through the patched winit's device
+//!   events (`gamepad/android.rs`).
 //!
 //! See research/ANDROID.md.
 use crate::content_sync::{self, Background, Progress};

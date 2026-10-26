@@ -86,10 +86,21 @@ adb push hosted-content /sdcard/Android/data/com.furyremastered.android/files/co
   android-activity 0.6 takes a write lock to change window flags that its event dispatch
   already holds, so changing them from inside the app deadlocks (observed on the emulator,
   both directly and from a helper thread).
+- **Controllers** (`gamepad/android.rs`; gilrs has no Android backend). Stock winit 0.30
+  turns joystick motion into touches and gamepad buttons into unidentified keys, so the
+  workspace patches winit (`third_party/winit`, see `third_party/README.md`): a
+  joystick-class motion event goes out as `DeviceEvent::Motion` per gamepad axis, and a
+  gamepad button (`KeyEvent.isGamepadButton`) or a gamepad's d-pad as
+  `DeviceEvent::Button` with the Android key code; keyboards, TV-remote d-pads and Back
+  stay keys. The app lays them out in the standard order as Chrome on Android does (A/B/X/Y,
+  L1/R1, L2/R2 as the max of key, trigger and pedal axes, X/Y and Z/RZ sticks, the hat as
+  the d-pad; RX/RY, C/Z and BUTTON_1-16 as extras), so Auto, the pin, bindings and presets
+  work as elsewhere. A pad appears once it reports input; its name and presence come from
+  `InputDevice` over JNI (checked once a second). Verified on the emulator with injected
+  `input gamepad` keys and `input joystick` motion (Start, A/B/Y, d-pad, left stick in the
+  menus; touch unaffected). Not yet verified on a physical handheld. No controller rumble.
 - **Not on Android:** the clipboard (arboard has no Android backend: Copy ride link reports
-  failure, paste finds nothing), the `keepawake` inhibitor, and game controllers (gilrs
-  compiles but has no Android backend; winit delivers pad buttons as unidentified key
-  codes, which are not mapped yet).
+  failure, paste finds nothing) and the `keepawake` inhibitor.
 
 ## Toolchain (owner's Mac)
 
@@ -177,7 +188,8 @@ checkout): `private/reports/devlog-images/android-emulator-*.png`.
 - Safe-area insets are zero (winit does not report Android insets); the fullscreen theme
   hides the status bar, and the gesture bar overlays the bottom edge.
 - No immersive mode (needs Java-side calls on the UI thread).
-- Clipboard, controllers and the riding-only screen-wake policy as listed above.
+- Clipboard, controller rumble and the riding-only screen-wake policy as listed above;
+  controllers on a physical handheld (Retroid, AYN, Anbernic) are unverified.
 - Download corruption found later at read time (a blob damaged on disk after it was
   verified) fails the load with the integrity error; a reinstall or clearing app data fixes
   it. Automatic repair is not implemented.

@@ -1,9 +1,19 @@
-//! Controllers through gilrs, in the W3C standard-gamepad order the browser
-//! bindings use. The pad with fresh input is the active one, like
-//! web/gamepads.js "Auto", unless Controller Settings pins a connected pad.
+//! Controllers through gilrs (Android: [`android`]), in the W3C
+//! standard-gamepad order the browser bindings use. The pad with fresh input
+//! is the active one, like web/gamepads.js "Auto", unless Controller Settings
+//! pins a connected pad.
+#[cfg(not(target_os = "android"))]
 use atv_game::ride::bindings::Pad;
+#[cfg(not(target_os = "android"))]
 use gilrs::{Axis, Button, GamepadId, Gilrs};
 use std::collections::HashMap;
+
+// Host tests cover the Android layout; only Android calls all of it.
+#[cfg(any(target_os = "android", test))]
+#[cfg_attr(not(target_os = "android"), allow(dead_code))]
+mod android;
+#[cfg(target_os = "android")]
+pub use android::Gamepads;
 
 /// gamepads.js: axes resting far from centre (idle triggers, hat switches,
 /// pedals) are measured from their first-seen value, so they never count as
@@ -11,6 +21,7 @@ use std::collections::HashMap;
 const RESTING: f32 = 0.5;
 const MOVED: f32 = 0.35;
 
+#[cfg(not(target_os = "android"))]
 pub struct Gamepads {
     gilrs: Option<Gilrs>,
     /// The pad in use: the pin, else Auto's choice (`activeGamepad`).
@@ -113,6 +124,7 @@ fn pinned<'a, K: Copy>(
         .map(|(key, _)| *key)
 }
 
+#[cfg(not(target_os = "android"))]
 const BUTTONS: [Button; 17] = [
     Button::South,
     Button::East,
@@ -133,6 +145,7 @@ const BUTTONS: [Button; 17] = [
     Button::Mode,
 ];
 
+#[cfg(not(target_os = "android"))]
 impl Gamepads {
     pub fn new() -> Self {
         Self {
@@ -414,7 +427,7 @@ fn extra_inputs(pad: &gilrs::Gamepad, out: &mut Pad) {
 
 /// Inputs past the standard 17 buttons and 4 axes (gamepads.js reads every
 /// index): the pad's unmapped buttons and axes, in event-code order.
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(any(target_arch = "wasm32", target_os = "android")))]
 fn extra_inputs(pad: &gilrs::Gamepad, out: &mut Pad) {
     use gilrs::ev::AxisOrBtn;
     let unmapped = |code: gilrs::ev::Code| {

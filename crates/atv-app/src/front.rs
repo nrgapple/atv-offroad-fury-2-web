@@ -476,6 +476,7 @@ impl Front {
         }
         if self.menu.is_some() {
             self.menu_reveal = true;
+            self.state.hold_pad();
             let event = self.with_menu(|m, ctx, _, _| m.key(code, ctx)).flatten();
             return self.menu_event(event);
         }
