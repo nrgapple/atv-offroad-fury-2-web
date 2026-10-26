@@ -63,28 +63,44 @@ pub struct Results {
     pad_armed: bool,
     /// Controller left/right held (focus moves on a new press).
     pad_steer: i32,
-    /// The standings, fixed when the race ended: (text, total, best, player).
-    pub rows: Vec<[String; 3]>,
+    /// The standings, fixed when the race ended: rider, total time, best
+    /// lap, stunt score and Profile Points (the original RaceOver Menu rows).
+    pub rows: Vec<[String; 5]>,
     pub player_row: Option<usize>,
     /// A failed restart's message (shown in the summary).
     pub error: Option<String>,
     /// The host can return to the menus (Quit Event shown).
     pub can_quit: bool,
+    /// The player's place, race stunt score and awarded Profile Points.
+    pub award: Option<(usize, f32, i32)>,
+    /// The profile's Profile Points after this race, once the host saved it.
+    pub profile_total: Option<i64>,
 }
 
 impl Results {
     /// The race finished: show the results once (`draw`'s first finished
-    /// frame) with the standings of that moment.
-    pub fn finish(&mut self, frame: &atv_core::race::Frame) {
+    /// frame) with the standings of that moment. True the first time, when
+    /// the host credits the award to the profile.
+    pub fn finish(&mut self, frame: &atv_core::race::Frame) -> bool {
+        use atv_core::profile::{Event, race_award};
         if self.shown {
-            return;
+            return false;
         }
         self.shown = true;
         self.hidden = false;
         self.menu = Menu::Results;
         self.focus = 0;
         self.pad_armed = false;
-        self.player_row = frame.standings.iter().position(|s| s.name == "YOU");
+        self.player_row = frame.standings.iter().position(|s| s.player);
+        // 001f1e30: only the human racer earns Profile Points.
+        self.award = frame.standings.iter().find(|s| s.player).map(|s| {
+            (
+                s.position,
+                s.stunt,
+                race_award(Event::Single, s.position, s.stunt),
+            )
+        });
+        self.profile_total = None;
         self.rows = frame
             .standings
             .iter()
@@ -93,9 +109,26 @@ impl Results {
                     format!("{}. {}", s.position, s.name),
                     race_time(s.time),
                     race_time(s.best),
+                    format!("{}", s.stunt.max(0.) as i64),
+                    match self.award.filter(|_| s.player) {
+                        Some((.., points)) => points.to_string(),
+                        None => "-".into(),
+                    },
                 ]
             })
             .collect();
+        true
+    }
+
+    /// The original "and %d Profile Points!" line after the summary.
+    pub fn points_line(&self) -> String {
+        match (self.award, self.profile_total) {
+            (Some((.., points)), Some(total)) => {
+                format!(" · +{points} Profile Points ({total} total)")
+            }
+            (Some((.., points)), None) => format!(" · +{points} Profile Points"),
+            _ => String::new(),
+        }
     }
 
     /// The panel or the Show Results button is up.
@@ -336,7 +369,7 @@ pub fn element(view: &Viewport, state: &Results, summary: &str, fonts: &mut Font
             .child(text(label, style, 16.)),
         );
     }
-    let width = 440f32.min(view.width - 32.);
+    let width = 620f32.min(view.width - 32.);
     let heading = TextStyle::new(display(26., 800, true), Color::hex("#f6f6f6"))
         .spacing(0.39)
         .shadow(2., 3., 0., Color::hex("#000a"));
@@ -344,8 +377,14 @@ pub fn element(view: &Viewport, state: &Results, summary: &str, fonts: &mut Font
     // max-content width (cells pad 6px each side).
     let cell = TextStyle::new(display(16., 700, false), Color::hex("#e8e8e8"));
     let head = TextStyle::new(display(13., 700, false), Color::hex("#bdbdbd")).spacing(0.52);
-    let headers = ["RIDER", "TOTAL TIME", "BEST LAP"];
-    let mut widths = [0f32; 3];
+    let headers = [
+        "RIDER",
+        "TOTAL TIME",
+        "BEST LAP",
+        "STUNT SCORE",
+        "PROFILE POINTS",
+    ];
+    let mut widths = [0f32; 5];
     for (c, label) in headers.iter().enumerate() {
         widths[c] = fonts.measure(label, &head.font, head.letter_spacing).width + 12.;
     }

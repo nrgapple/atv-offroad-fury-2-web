@@ -1122,6 +1122,8 @@ struct Progress {
     skip_crossing: bool,
     /// Rider flag 0x20000: the next counted lap is not a best-lap candidate.
     skip_best: bool,
+    /// Stunt points scored since GO, frozen at the finish.
+    stunt: f32,
 }
 impl Progress {
     fn new(start: [f32; 3], course: &Course) -> Self {
@@ -1150,6 +1152,7 @@ impl Progress {
             off_track: 0.,
             skip_crossing: course.track_flags & 4 != 0 && !course.grid_past_finish(station),
             skip_best: course.track_flags & 8 != 0,
+            stunt: 0.,
         }
     }
     fn update(&mut self, p: [f32; 3], course: &Course, time: f32, laps: u32, dt: f32) {
@@ -1259,6 +1262,11 @@ pub struct Standing {
     pub estimated: bool,
     /// Race distance along the racing line from the grid.
     pub progress: f32,
+    /// Race stunt score (`001f1e30` reads rider +0x104; the port scores
+    /// only the player's tricks, CPUs hold 0).
+    pub stunt: f32,
+    /// The human rider's row.
+    pub player: bool,
 }
 #[derive(Serialize)]
 pub struct Frame {
@@ -1331,6 +1339,8 @@ pub struct Race {
     /// Finish-line crossings since the last `take_finishes` (`00216190`):
     /// (is the player, finishing place). Race-over estimates do not cross.
     finishes: Vec<(bool, usize)>,
+    /// The player's committed stunt points when the race went live.
+    stunt_base: f32,
 }
 impl Race {
     /// A race with the riders in slot order (player in slot 1), as when the
@@ -1420,6 +1430,7 @@ impl Race {
             estimated: vec![false; progress.len() + 1],
             progress,
             contacts: 0,
+            stunt_base: 0.,
             random: crate::engine_audio::OriginalRandom::with_seed(97211 + 5 * 47),
             finishes: Vec::new(),
         })
@@ -1450,6 +1461,15 @@ impl Race {
         self.intro = false;
     }
     /// The player has finished; their quad continues under CPU control.
+    /// The player's committed stunt points this step: the race stunt score
+    /// counts what was scored after GO and stops at the finish.
+    pub fn record_player_stunt(&mut self, committed: f32) {
+        if self.intro || self.countdown > 0. {
+            self.stunt_base = committed;
+        } else if self.player.finish.is_none() {
+            self.player.stunt = (committed - self.stunt_base).max(0.);
+        }
+    }
     pub fn player_finished(&self) -> bool {
         self.player.finish.is_some()
     }
@@ -1752,6 +1772,8 @@ impl Race {
                     best: p.best,
                     estimated,
                     progress: p.distance,
+                    stunt: p.stunt,
+                    player: std::ptr::eq(p, &self.player),
                 })
                 .collect(),
         }
@@ -2048,6 +2070,28 @@ mod tests {
         assert_eq!(r.station(None).segment, 0);
         assert!(r.station(None).fraction > 0.5);
         assert_eq!(r.elapsed, 4.);
+    }
+    #[test]
+    fn race_stunt_score_counts_from_go_to_the_finish() {
+        let mut r = Race::new(course(), 1, vec!["Cpu".into()], 1).unwrap();
+        // Points held before GO are not race points.
+        r.record_player_stunt(500.);
+        r.countdown = 0.;
+        r.record_player_stunt(2500.);
+        for p in [[0., 0., 100.], [100., 0., 100.], [100., 0., 0.], [0.; 3]] {
+            r.step(p, 1.);
+        }
+        assert!(r.player_finished());
+        r.record_player_stunt(9000.);
+        let f = r.frame(0.);
+        let you = f.standings.iter().find(|s| s.player).unwrap();
+        assert_eq!((you.name.as_str(), you.stunt), ("YOU", 2000.));
+        assert!(
+            f.standings
+                .iter()
+                .filter(|s| !s.player)
+                .all(|s| s.stunt == 0.)
+        );
     }
     #[test]
     fn race_over_estimates_unfinished_cpus_from_the_leader_pace() {

@@ -97,7 +97,7 @@ section is authoritative.
 | Motorcycles | Riding controller recovered component by component from MX vs. ATV Unleashed (steer/bank, tires/suspension, engine/clutch, wheelie/stoppie, air control, preload, flips, wreck rules) through authored terrain/surface/input adapters; native whole-step parity unmeasured; Single Player only | `MOTORCYCLES.md` |
 | Crash effects | Optional authored presentation layer (Crazy/Gorn); enhancement-isolation checks show it leaves the simulation unchanged | `CRASH_EFFECTS.md` |
 | Input | Remappable keyboard/controller bindings; one-handed and two-thumb touch are authored adaptations | `CONTROLS.md`, `TOUCH.md` |
-| Progression and saves | Not implemented; Garage selections and settings persist locally | — |
+| Progression and saves | Recovered race Profile Points award (single race and championship tables) credited to one implicit local profile; original profiles, store, championships and memory-card saves missing. Garage selections and settings persist locally | `PROFILE.md` |
 
 ## Build and test
 
@@ -158,7 +158,9 @@ the worktree's `target/`; keep bulk output on the SSD.
 
 - Whole-game parity is unverified: no PS2 hardware or deterministic full replay
   comparison exists. Trigonometry and VU arithmetic use host approximations.
-- Progression, championships, unlocks, saves and split-screen are missing.
+- Original profiles, championships, unlocks, saves and split-screen are
+  missing; races credit Profile Points to one implicit local profile
+  (`PROFILE.md`).
 - Race rules are authored around recovered start slots, track window and
   finish-gate laps; firework triggers and points are open (`RACING.md`).
 - Rendering lacks original LOD/visibility policy, point lights, shadows, light

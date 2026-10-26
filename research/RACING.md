@@ -71,9 +71,10 @@ for the scalar branches, not whole-race replay):
   Out AI filters and angular-rate write, scene query category/order and actor
   update ordering.
 - Championship points, firework triggers and whole-race PS2 replay parity.
-- The Supercross start gate rotation, the race-load
-  announcer cue and the Stunt Score and Profile Points results columns. See
+- The Supercross start gate rotation and the race-load announcer cue. See
   "Race start and race over" and "Pre-race camera and 321 lights" below.
+- Results show Stunt Score and Profile Points (`001f1e30`, see `PROFILE.md`);
+  CPU stunt scores read 0 because the port does not score CPU tricks.
 
 ## Initial preview (historical)
 
@@ -494,9 +495,11 @@ Port:
   takeover is not identified; `001f9690` creates no driver for human racers,
   and `001f1990` changes their rider state without an identified driver.
   Player input, tricks and Reset are ignored until Restart.
-- The results table shows rider, total time and best lap, with Continue →
-  Restart / Quit Event and Hide Menu / Show Results. Stunt Score and Profile
-  Points are omitted: the port has no per-race stunt total or profiles.
+- The results table shows rider, total time, best lap, stunt score and
+  Profile Points, with Continue → Restart / Quit Event and Hide Menu / Show
+  Results. Since 2026-10-26 the stunt score is the player's points scored
+  between GO and the finish and Profile Points follow `001f1e30`
+  (`PROFILE.md`).
   Keyboard: Enter continues or confirms, Escape hides, shows or goes back.
   Controller: A continues/confirms, B goes back or hides, X hides/shows.
 

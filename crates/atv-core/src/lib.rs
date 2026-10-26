@@ -33,6 +33,7 @@ pub mod motorcycle_tire;
 pub mod music;
 pub mod obstacle;
 pub mod physics_data;
+pub mod profile;
 pub mod psr;
 pub mod quad_pose;
 pub mod quad_sounds;

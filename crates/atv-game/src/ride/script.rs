@@ -137,7 +137,7 @@ pub fn record(ride: &Ride, step: u64) -> Value {
             "grid_slots": f.grid_slots, "finish_at": f.finish_at, "track_flags": f.track_flags,
             "opponents": f.opponents.iter().map(|o| json!({"origin": o.origin, "distance": o.distance, "finished": o.finished})).collect::<Vec<_>>(),
             "standings": f.standings.iter().map(|s| json!({"name": s.name, "time": s.time, "position": s.position,
-                "laps": s.laps, "progress": s.progress})).collect::<Vec<_>>(),
+                "laps": s.laps, "progress": s.progress, "stunt": s.stunt, "player": s.player})).collect::<Vec<_>>(),
         })),
     })
 }
