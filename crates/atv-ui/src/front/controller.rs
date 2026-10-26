@@ -711,6 +711,35 @@ impl Frontend {
         rows
     }
 
+    /// The line under the rows: the profile on Single Player, the
+    /// highlighted series on Championship.
+    pub fn profile_text(&self) -> Option<String> {
+        match self.page.as_str() {
+            "single" => Some(profile_line(&self.profile)),
+            "championship" => self.series_line(),
+            _ => None,
+        }
+    }
+
+    /// The highlighted series' next course and standings (the player, then
+    /// the four CPU slots).
+    fn series_line(&self) -> Option<String> {
+        let (action, _) = self.choices.get(self.selection)?;
+        let series = atv_core::championship::series(action.strip_prefix("champ:")?)?;
+        let champ = &self.profile.championships;
+        if !champ.is_open(series, self.champ_expert) {
+            return None;
+        }
+        let p = champ.progress(series, self.champ_expert);
+        let cpus: Vec<String> = p.points[1..].iter().map(i32::to_string).collect();
+        Some(format!(
+            "Next: {} · Standings: You {}, CPUs {}",
+            self.course_name(champ.next_course(series, self.champ_expert)),
+            p.points[0],
+            cpus.join(" / ")
+        ))
+    }
+
     /// Starts the selected series' next round: five laps against four CPUs,
     /// Expert CPUs on Expert (`00289d50`).
     fn championship_event(&mut self, key: &str) -> Option<Event> {
@@ -1672,7 +1701,7 @@ impl Frontend {
                     .collect()
             },
             notice: self.notice.clone(),
-            profile: (self.page == "single").then(|| profile_line(&self.profile)),
+            profile: self.profile_text(),
             lobby: self.lobby.clone(),
             motion: None,
             backdrop,
@@ -2140,6 +2169,10 @@ mod tests {
             "Amateur Nationals · Round 1 of 5 · 0 pts"
         );
         assert_eq!(front.choices()[1].1, "Pro Nationals · Locked");
+        assert_eq!(
+            front.series_line().as_deref(),
+            Some("Next: ENV05 · Standings: You 0, CPUs 0 / 0 / 0 / 0")
+        );
         // Amateur Nationals: env05, five laps, four CPUs.
         assert_eq!(
             front.key("Enter", &view, &mut settings),

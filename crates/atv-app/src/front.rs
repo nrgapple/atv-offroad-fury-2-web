@@ -1414,7 +1414,7 @@ impl Front {
                 "code": l.code, "status": l.status,
             })),
             "notice": self.state.notice,
-            "profile": atv_ui::front::controller::profile_line(&self.state.profile),
+            "profile": self.state.profile_text(),
             "labels": self.state.choices().iter().map(|(_, l)| l).collect::<Vec<_>>(),
             "race": {
                 "courses": self.state.race_courses.len(), "course": self.state.race.course,

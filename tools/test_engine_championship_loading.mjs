@@ -27,6 +27,8 @@ try {
   await key(page, 'Enter'); await onPage(page, 'championship');
   front = (await read(page)).front;
   for (let i = front.selection; i < front.choices.indexOf('champ:amsx'); i++) await key(page, 'ArrowDown');
+  // The highlighted series' next course and standings.
+  assert.equal((await read(page)).front.profile, 'Next: Sausalito · Standings: You 7, CPUs 9 / 4 / 2 / 0');
   await key(page, 'Enter');
   await onPage(page, 'loading');
   const loading = (await read(page)).front.loading;
