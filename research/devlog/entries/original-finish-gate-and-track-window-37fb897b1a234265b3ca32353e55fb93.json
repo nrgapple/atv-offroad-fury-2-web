@@ -1,0 +1,14 @@
+{
+  "id": "original-finish-gate-and-track-window-37fb897b1a234265b3ca32353e55fb93",
+  "timestamp": "2026-10-26T18:31:34.045813+00:00",
+  "recorded_at": "2026-10-26T18:36:13.505622+00:00",
+  "kind": "verification",
+  "title": "Original finish gate and track window",
+  "summary": "Race laps now count using the original finish-gate test; the on-track route window is the original 200ft both ways.",
+  "details": [
+    "Changed: race laps now count the way the original RaceStatus does: when a rider's motion crosses the course's finish gate line (TDF tag 16 box, gate test 001a95b0) while the rider was less than 200ft before the gate. The on-track route window is the original 200ft both ways (Track constructor 00179330), replacing the authored 150ft/60ft. TDF tag 41 Track flags are read: flag 4 makes the first gate pass only arm the rider (sx06, sx11, sx16 start 700\u20131,860ft before the gate), flag 8 keeps the first lap out of Best Lap (all 32 courses).\n\nDiscoveries: the finish \"box\" is really a gate line across the track from center minus to center plus its half extents; passing beside the gate counts nothing; all 32 race TDFs set flag 8, five set flag 4.\n\nVerification: atv-core tests (512 pass) incl. new gate/flag unit tests; private test driving a two-lap race on all 32 original courses finishes each at the second counted gate crossing and keeps all 60 alternate lines in order; browser test test_engine_race_finish_gate.mjs on SX06 (CPUs past the gate once have 0 laps, past it twice have 1); test_engine_race, race_grid and race_gear browser tests pass. Host Chromium only, not a verified public release."
+  ],
+  "limitation": "On env07 and sx13 the start row sits ~20ft past the gate with flag 4 set; the port treats the skip as already used there (assumption, not established from the exact build). CPU steering keeps its authored projection window. No whole-race PS2 replay comparison.",
+  "image": "/devlog-images/original-finish-gate-and-track-window-37fb897b1a234265b3ca32353e55fb93.png",
+  "caption": "SX06 Supercross race at 1:45 in host Chromium: lap counting now follows the original finish-gate test."
+}
