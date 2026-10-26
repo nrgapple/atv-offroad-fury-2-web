@@ -35,6 +35,9 @@ for the scalar branches, not whole-race replay):
 - CPU wreck decision, passive body, wreck clips and rider controller reuse the
   player's Vehicle path. Grid fallback 4.66ft behind the start gate (`001f8410`)
   with the course `RiderSpacing`.
+- Start slots: the `001f6350` pair shuffle and the `001f8410` race-mode row
+  (slot − n/2 spacings across the start, side from section 0's first turn),
+  for the player and every CPU. See "Start slots" below.
 
 **Authored** (integration adaptations, not original behavior):
 
@@ -45,7 +48,8 @@ for the scalar branches, not whole-race replay):
 - Route projection near each racer's station and ground/contact mapping; host
   Rust `sin`/`atan2` instead of PS2 trigonometry/VU precision.
 - Per-CPU random streams seeded `97211 + 47 × index` instead of the native
-  global random stream.
+  global random stream; the start-slot shuffle draws from its own stream on
+  the race seed.
 - Off-track (5 s) and stuck (under 3ft/s for 4 s) CPU recovery to the race
   checkpoint; the original consumer of the off-track timer is unrecovered.
   The stuck clock runs only after GO: counting the braked grid hold reset
@@ -56,8 +60,6 @@ for the scalar branches, not whole-race replay):
 
 **Missing or unverified:**
 
-- Native start slots (`001f8410` cases 3–10, slot table `001f6350`): recovered
-  below but not connected; the grid keeps the symmetric row.
 - Championship-only difficulty effects (see "CPU difficulty" below), the All
   Out AI filters and angular-rate write, scene query category/order and actor
   update ordering.
@@ -799,14 +801,7 @@ the direction to it. All Out AI requests direction × target speed and
 frame. Its write to quad +0x294 and the AI +0x90/+0x94/+0x98 filters are not
 reproduced. The port exposes both only as `cheats=eatdirt,bringit` links.
 
-**Start slots** (not connected). `001f6350` fills a slot table 1…n and,
-unless settings+0x7d8, swaps each pair with probability 0.5, so the player can
-start in any slot. For race modes 3–10 `001f8410` places rider k at the tag 15
-box center − 4.66 × forward + sign × (slot − n/2) × RiderSpacing × (fz, 0,
-−fx). The sign is −1 when the first two node directions of section 0 turn
-with a positive cross-product y, else 1. Race scenes declare no extra start
-markers. Connecting this needs the player's own start slot in the browser
-spawn and restart path, so the port keeps its symmetric row.
+**Start slots.** See "Original start slots — 2026-10-26" below.
 
 Private comparisons (finite binary32 interpreter over the original bytes,
 delay slots included, no hooks; `private/reports/racing/cpu-ai-probes.json`)
@@ -836,4 +831,62 @@ These cover the interpreter's binary32 model, not PS2 hardware rounding.
 The port finds the nearest probe segment in the station window instead of the
 whole section and tests the four-corner edge quad instead of the native
 hexagon. It does not prove whole-race behavior.
+
+## Original start slots — 2026-10-26
+
+Exact-build evidence (private exports of `001f6350`, `001f6c60`, `001f80e0`,
+`001f8410` and `0017d980`; bounded reading, no instruction comparison):
+
+- **Slot table `001f6350`.** Race setup stores the rider count (+0x88) and
+  fills a table of slots 1…n. Unless settings +0x7d8 is set, it visits every
+  pair i < j once, in order, and swaps the two entries when libc rand × 2⁻³¹
+  exceeds 0.5. Rider k (1-based) later reads `table[k − 1]`.
+- **Rider order `001f6c60`.** The human racers (settings +0x84) are created
+  first, then the CPUs, so in single player the player is rider 1 and takes
+  `table[0]`. Settings +0x7d8 also selects a per-player creation path in
+  `001f6c60` and `001f80e0`; it is probably the network/link race flag, but
+  this is not confirmed. Single races here take the shuffled branch.
+- **Grid row `001f8410`, race modes 3–10.** With a track start box (Track
+  +0x54, TDF tag 15) the rider stands at the box center with y = 0, facing
+  the box forward f, then moves 4.66ft back and
+  `sign × (slot − n × 0.5) × RiderSpacing` along (fz, 0, −fx). The product
+  uses floats: with five riders the slots sit −1.5, −0.5, 0.5, 1.5 and 2.5
+  spacings from the center line, so the row is one spacing wider on one side.
+- **Row side.** `sign` comes from section 0's first node and its next two
+  nodes. `0017d980` returns the normalized vector from a node to its next
+  node; the sign is −1 when the cross product of the first two such vectors
+  has a positive y, else 1, and −1 when the track or either next node is
+  missing. Of the 32 race TDFs, 11 give −1 and 21 give 1.
+- Scene start markers (+0x348 list) take precedence for slots below their
+  count; race scenes declare none.
+
+Port:
+
+- `race::start_slots` draws the table and `Course::grid` places a slot;
+  `Race::seeded` gives the player `table[0]` and each CPU the next entries.
+  The player is placed in its slot before the grid settles (`place_racer`),
+  so the player can start anywhere in the row instead of always in the
+  middle.
+- The draw uses `OriginalRandom` (the recovered libc generator) on the race
+  seed with a fixed stream offset, not the native global random stream, so
+  the original's sequence of draws is not reproduced. Restart Race reuses
+  the same seed and therefore the same slots; whether the original reshuffles
+  on restart is not established.
+- The row height still comes from the route (then ground placement), not the
+  native y = 0 followed by its ground drop.
+- Section 0 is the TDF's section id 0. The `0017d980` node-length check
+  (node +0x40 > 0) is assumed to pass on shipped courses.
+- The race modes 3–10 mapping to Environment, National and Supercross races
+  follows the earlier start-box reading, not a separate recovery of the mode
+  numbers.
+
+Checks: unit tests cover the shuffle against a per-pair reference (every slot
+reachable for the player), the row offsets and side, slot validation and the
+seeded race. The private all-courses test reports each course's side and how
+many of five slots lie inside the track polygon: 30 of 32 courses keep all five
+at 8ft spacing; env01 keeps 3 and env06 none (its start box was already outside
+the polygon; the old symmetric row had the same misses). `test_engine_race_grid.mjs`
+loads ENV01 with four CPUs for four seeds and checks that every rider stands in
+its slot of one evenly spaced row, and that the player's slot changes with the
+seed (slots 3, 3, 2 and 4 in host Chromium).
 

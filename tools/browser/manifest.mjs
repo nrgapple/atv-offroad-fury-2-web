@@ -120,6 +120,7 @@ export const TESTS = {
   },
   'test_engine_preview.mjs': { group: 'content-free' },
   'test_engine_race.mjs': { group: 'content' },
+  'test_engine_race_grid.mjs': { group: 'content' },
   'test_engine_sleep.mjs': { group: 'content' },
   'test_engine_motorcycle.mjs': { group: 'content' },
   'test_engine_interpolation.mjs': {

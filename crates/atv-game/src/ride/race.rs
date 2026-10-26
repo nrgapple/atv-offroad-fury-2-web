@@ -30,6 +30,8 @@ use atv_core::{
 const CPU_OFF_TRACK_RESET: f32 = 5.;
 /// Seconds a riding CPU may stay below 3 ft/s before recovering.
 const CPU_STUCK_RESET: f32 = 4.;
+/// Separates the start-slot draw from the roster draw on the same seed.
+const GRID_STREAM: u64 = 0x001f_6350;
 
 /// Race setup chosen in the Race menu (`normalizedRace` in web/frontend.js).
 #[derive(Clone, Copy, Debug)]
@@ -320,7 +322,15 @@ impl Ride {
             .take(settings.cpu)
             .map(|e| e.name.clone())
             .collect();
-        let mut race = Race::new(course, settings.laps, names, settings.difficulty)?;
+        // 001f6350 shuffles the start slots per race; the roster seed gives
+        // this race its own stream (the original draws from libc rand).
+        let mut race = Race::seeded(
+            course,
+            settings.laps,
+            names,
+            settings.difficulty,
+            settings.seed ^ GRID_STREAM,
+        )?;
         // Race creation 001f9690: difficulty plus the EATDIRT/BRINGIT flags.
         let options = Options {
             aggressive: settings.aggressive,
@@ -363,7 +373,9 @@ impl Ride {
             intro_camera = Some(Intro::new(setup.shots.clone()));
             race.begin_intro();
         }
-        // 001dd440 grounds an ATV on the grid; the bike keeps its op 23 drop.
+        // The player takes its own start slot (001f8410); 001dd440 grounds an
+        // ATV on the grid, and the bike keeps its op 23 drop.
+        self.place_at(race.player_grid())?;
         if let Mount::Quad { vehicle, .. } = &mut self.mount {
             super::race::place_racer(vehicle, &self.sim.terrain)?;
             self.frame = vehicle.frame();

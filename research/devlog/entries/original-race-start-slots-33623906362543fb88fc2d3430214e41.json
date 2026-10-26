@@ -1,0 +1,14 @@
+{
+  "id": "original-race-start-slots-33623906362543fb88fc2d3430214e41",
+  "timestamp": "2026-10-26T15:20:40.470927+00:00",
+  "recorded_at": "2026-10-26T15:23:52.598194+00:00",
+  "kind": "verification",
+  "title": "Original race start slots",
+  "summary": "Races now place every rider, including the player, in a shuffled start slot of the original grid row. Before, the port used an authored symmetric row that always put the player in the middle.",
+  "details": [
+    "The slot table routine fills slots 1..n and swaps each pair once with 50% chance (libc rand), unless a settings flag (probably network races) is set; humans are created first so the player takes the first table entry. The grid helper places slot k at the start box center, 4.66 ft back, and (slot - n/2) \u00d7 RiderSpacing across, using float math, so a five-rider row is one spacing wider on one side. The side comes from the turn direction of the course's first two route segments (11 of 32 courses use one side, 21 the other). Unit tests cover the shuffle, row offsets/side and slot validation; a private all-courses test validates all 32 race courses; browser test tools/test_engine_race_grid.mjs (ENV01, four CPUs, four seeds) validates every rider stands in its slot of one evenly spaced row, with player slots 3, 3, 2, 4; the existing test_engine_race.mjs passes in host Chromium."
+  ],
+  "limitation": "The shuffle uses the recovered generator on a per-race seed, not the original's global random sequence; Restart Race keeps the same slots (original restart behavior unknown); row height comes from the route then ground placement; host Chromium only, not a verified public release yet.",
+  "image": "/devlog-images/original-race-start-slots-33623906362543fb88fc2d3430214e41.png",
+  "caption": "ENV01 National grid during countdown: five quads in one row, player in slot 4 (seed 14) stands in the original shuffled start position."
+}

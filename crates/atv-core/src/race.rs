@@ -56,6 +56,8 @@ pub struct Course {
     /// TDF tag 25, the third oriented box (Track +0x5c).
     pub tag25_gate: Option<Gate>,
     pub rider_spacing: f32,
+    /// `001f8410` side of the start row, from section 0's first turn.
+    pub grid_sign: f32,
     pub sections: usize,
     /// Authored tag 10/11 edge points; consecutive pairs bound the track
     /// polygon tested by the native on-track query (0017bb50).
@@ -110,6 +112,7 @@ impl Default for Course {
             finish_gate: None,
             tag25_gate: None,
             rider_spacing: 8.,
+            grid_sign: -1.,
             sections: 1,
             edges: vec![],
             alternates: vec![],
@@ -518,6 +521,7 @@ impl Course {
             finish_gate: gates[1],
             tag25_gate: gates[2],
             rider_spacing: 8.,
+            grid_sign: grid_sign(&sections[0].points),
             sections: sections.len(),
             edges,
             alternates: vec![],
@@ -881,6 +885,52 @@ impl Course {
             None => (a, (b[0] - a[0]).atan2_d(b[2] - a[2])),
         }
     }
+    /// Race grid helper `001f8410` (race modes 3–10): rider slot `slot` of
+    /// `riders` stands `sign × (slot − riders/2) × RiderSpacing` across the
+    /// start, along (fz, 0, −fx).
+    pub fn grid(&self, slot: u32, riders: usize) -> ([f32; 3], f32) {
+        let (start, yaw) = self.start();
+        let across = self.grid_sign * (slot as f32 - riders as f32 * 0.5) * self.rider_spacing;
+        (
+            [
+                start[0] + yaw.cos_d() * across,
+                start[1],
+                start[2] - yaw.sin_d() * across,
+            ],
+            yaw,
+        )
+    }
+}
+/// `001f8410` row side: −1 when section 0's first two node directions
+/// (`0017d980`, normalized node-to-next vectors) turn with a positive
+/// cross-product y, otherwise 1; −1 without three nodes.
+fn grid_sign(points: &[[f32; 3]]) -> f32 {
+    let [p0, p1, p2] = match points {
+        [a, b, c, ..] => [*a, *b, *c],
+        _ => return -1.,
+    };
+    let d0 = [p1[0] - p0[0], p1[2] - p0[2]];
+    let d1 = [p2[0] - p1[0], p2[2] - p1[2]];
+    // Normalization does not change the sign of the y component.
+    if d0[1] * d1[0] - d0[0] * d1[1] > 0. {
+        -1.
+    } else {
+        1.
+    }
+}
+/// Start slot table `001f6350`: slots 1…n, then for each pair i < j a swap
+/// whenever rand × 2⁻³¹ > 0.5 (skipped when settings +0x7d8 is set). Rider k
+/// (the human first, then the CPUs) starts in slot `table[k]`.
+pub fn start_slots(riders: usize, random: &mut crate::engine_audio::OriginalRandom) -> Vec<u32> {
+    let mut table: Vec<u32> = (1..=riders as u32).collect();
+    for i in 0..riders.saturating_sub(1) {
+        for j in i + 1..riders {
+            if random.next_u31() as f32 * 4.656613e-10 > 0.5 {
+                table.swap(i, j);
+            }
+        }
+    }
+    table
 }
 fn normalize_flat(v: [f32; 3]) -> Option<[f32; 3]> {
     let length = (v[0] * v[0] + v[2] * v[2]).sqrt();
@@ -1081,6 +1131,8 @@ pub struct Frame {
     pub lead: f32,
     /// Rank of each rider slot: the player, then each CPU.
     pub ranks: Vec<usize>,
+    /// Original start slot (1…n, `001f6350`) of the player, then each CPU.
+    pub grid_slots: Vec<u32>,
     /// Original race overlays, attached by the simulation.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub hud: Option<crate::race_hud::Frame>,
@@ -1099,6 +1151,9 @@ pub struct Race {
     intro: bool,
     pub elapsed: f32,
     player: Progress,
+    /// The player's grid origin and heading in its start slot.
+    player_grid: ([f32; 3], f32),
+    grid_slots: Vec<u32>,
     opponents: Vec<Opponent>,
     progress: Vec<Progress>,
     pub contacts: u32,
@@ -1110,7 +1165,34 @@ pub struct Race {
     finishes: Vec<(bool, usize)>,
 }
 impl Race {
+    /// A race with the riders in slot order (player in slot 1), as when the
+    /// original skips the shuffle (settings +0x7d8).
     pub fn new(course: Course, laps: u32, names: Vec<String>, difficulty: u32) -> Result<Self> {
+        let slots = (1..=names.len() as u32 + 1).collect();
+        Self::with_slots(course, laps, names, difficulty, slots)
+    }
+    /// A race whose start slots are drawn by the original shuffle from a
+    /// per-race seed.
+    pub fn seeded(
+        course: Course,
+        laps: u32,
+        names: Vec<String>,
+        difficulty: u32,
+        seed: u64,
+    ) -> Result<Self> {
+        let mut random = crate::engine_audio::OriginalRandom::with_seed(seed);
+        let slots = start_slots(names.len() + 1, &mut random);
+        Self::with_slots(course, laps, names, difficulty, slots)
+    }
+    /// `slots[0]` is the player's start slot, then one per CPU: a
+    /// permutation of 1…n.
+    pub fn with_slots(
+        course: Course,
+        laps: u32,
+        names: Vec<String>,
+        difficulty: u32,
+        slots: Vec<u32>,
+    ) -> Result<Self> {
         if course.points.len() < 4
             || course.points.len() > 4096
             || course.widths.len() != course.points.len()
@@ -1129,30 +1211,33 @@ impl Race {
         {
             return Err("invalid race setup".into());
         }
-        let (start, yaw) = course.start();
-        // Course RiderSpacing from the mode or scene TOY (8–15ft originals).
-        let spacing = course.rider_spacing;
+        let riders = names.len() + 1;
+        let mut sorted = slots.clone();
+        sorted.sort_unstable();
+        if sorted != (1..=riders as u32).collect::<Vec<_>>() {
+            return Err("invalid race start slots".into());
+        }
+        let player_grid = course.grid(slots[0], riders);
         let opponents: Vec<_> = names
             .into_iter()
-            .enumerate()
-            .map(|(i, name)| Opponent {
-                name,
-                origin: [
-                    start[0] + yaw.cos_d() * [-2., -1., 1., 2.][i] * spacing,
-                    start[1],
-                    start[2] - yaw.sin_d() * [-2., -1., 1., 2.][i] * spacing,
-                ],
-                yaw,
-                distance: 0.,
-                finished: false,
-                physical: None,
+            .zip(&slots[1..])
+            .map(|(name, &slot)| {
+                let (origin, yaw) = course.grid(slot, riders);
+                Opponent {
+                    name,
+                    origin,
+                    yaw,
+                    distance: 0.,
+                    finished: false,
+                    physical: None,
+                }
             })
             .collect();
         let progress: Vec<_> = opponents
             .iter()
             .map(|o| Progress::new(o.origin, &course))
             .collect();
-        let player = Progress::new(start, &course);
+        let player = Progress::new(player_grid.0, &course);
         Ok(Self {
             course,
             laps,
@@ -1161,6 +1246,8 @@ impl Race {
             intro: false,
             elapsed: 0.,
             player,
+            player_grid,
+            grid_slots: slots,
             opponents,
             estimated: vec![false; progress.len() + 1],
             progress,
@@ -1168,6 +1255,14 @@ impl Race {
             random: crate::engine_audio::OriginalRandom::with_seed(97211 + 5 * 47),
             finishes: Vec::new(),
         })
+    }
+    /// The player's grid origin and heading in its start slot.
+    pub fn player_grid(&self) -> ([f32; 3], f32) {
+        self.player_grid
+    }
+    /// Start slot of the player, then each CPU.
+    pub fn grid_slots(&self) -> &[u32] {
+        &self.grid_slots
     }
     /// The intro and countdown hold every racer on the grid; physics still
     /// settles.
@@ -1474,6 +1569,7 @@ impl Race {
                         .map_or(0, |i| i + 1)
                 })
                 .collect(),
+            grid_slots: self.grid_slots.clone(),
             hud: None,
             crowd: None,
             gate: None,
@@ -1516,6 +1612,65 @@ pub fn rider_spacing<'a>(sources: impl IntoIterator<Item = &'a str>) -> Option<f
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn start_slots_shuffle_pairs_like_001f6350() {
+        use crate::engine_audio::OriginalRandom;
+        assert_eq!(start_slots(1, &mut OriginalRandom::with_seed(3)), vec![1]);
+        let mut player = [0; 5];
+        for seed in 0..400 {
+            let slots = start_slots(5, &mut OriginalRandom::with_seed(seed));
+            // Reference: the same draw order, one draw per pair i < j.
+            let mut random = OriginalRandom::with_seed(seed);
+            let mut table = [1, 2, 3, 4, 5];
+            for i in 0..4 {
+                for j in i + 1..5 {
+                    if random.next_u31() as f32 / 2_147_483_648. > 0.5 {
+                        table.swap(i, j);
+                    }
+                }
+            }
+            assert_eq!(slots, table);
+            let mut sorted = slots.clone();
+            sorted.sort_unstable();
+            assert_eq!(sorted, [1, 2, 3, 4, 5]);
+            player[slots[0] as usize - 1] += 1;
+        }
+        // The human can start in any slot.
+        assert!(player.iter().all(|&n| n > 20), "{player:?}");
+    }
+    #[test]
+    fn grid_rows_follow_001f8410() {
+        // Moving +z then turning toward +x: positive cross y, sign −1.
+        assert_eq!(grid_sign(&[[0.; 3], [0., 0., 10.], [10., 0., 20.]]), -1.);
+        assert_eq!(grid_sign(&[[0.; 3], [0., 0., 10.], [-10., 0., 20.]]), 1.);
+        assert_eq!(grid_sign(&[[0.; 3], [0., 0., 10.], [0., 0., 20.]]), 1.);
+        assert_eq!(grid_sign(&[[0.; 3], [0., 0., 10.]]), -1.);
+        let mut c = Course::parse(&graph_course()).unwrap();
+        c.rider_spacing = 10.;
+        let (start, yaw) = c.start();
+        for sign in [-1., 1.] {
+            c.grid_sign = sign;
+            // Five riders: slot − 2.5 spacings across, one row behind the gate.
+            for slot in 1..=5 {
+                let (p, y) = c.grid(slot, 5);
+                assert_eq!(y, yaw);
+                assert_eq!(p[2], start[2]);
+                assert!((p[0] - (start[0] + sign * (slot as f32 - 2.5) * 10.)).abs() < 1e-4);
+            }
+        }
+        let race =
+            Race::with_slots(c.clone(), 1, vec!["A".into(), "B".into()], 1, vec![3, 1, 2]).unwrap();
+        assert_eq!(race.player_grid(), c.grid(3, 3));
+        assert_eq!(race.opponents()[0].origin, c.grid(1, 3).0);
+        assert_eq!(race.opponents()[1].origin, c.grid(2, 3).0);
+        assert_eq!(race.frame(0.).grid_slots, vec![3, 1, 2]);
+        for bad in [vec![1, 1, 2], vec![1, 2], vec![0, 1, 2], vec![1, 2, 4]] {
+            assert!(Race::with_slots(c.clone(), 1, vec!["A".into(), "B".into()], 1, bad).is_err());
+        }
+        let seeded = Race::seeded(c, 1, vec!["A".into(), "B".into()], 1, 9).unwrap();
+        let expected = start_slots(3, &mut crate::engine_audio::OriginalRandom::with_seed(9));
+        assert_eq!(seeded.grid_slots(), expected.as_slice());
+    }
     #[test]
     fn rider_spacing_reads_the_first_valid_authored_toy() {
         // Former browser expression results for the same text.
@@ -1561,6 +1716,25 @@ mod tests {
                 course.cycle_length(),
                 course.route_length(0, course.finish),
                 distance(start, gate.center),
+            );
+            // 001f8410 rows of five at 8ft and 15ft RiderSpacing: slots
+            // inside the track polygon (or the start apron).
+            let on_track = |spacing: f32| {
+                let mut c = course.clone();
+                c.rider_spacing = spacing;
+                let origin = Station {
+                    segment: 0,
+                    fraction: 0.,
+                };
+                (1..=5)
+                    .filter(|&slot| c.locate(c.grid(slot, 5).0, origin, false).is_some())
+                    .count()
+            };
+            eprintln!(
+                "  grid_sign={} on_track(8ft)={}/5 on_track(15ft)={}/5",
+                course.grid_sign,
+                on_track(8.),
+                on_track(15.)
             );
             assert!(course.finish_gate.is_some());
             assert!(course.loop_start + 3 <= course.points.len());
@@ -2033,8 +2207,12 @@ mod tests {
         }
         let mut c = c;
         c.rider_spacing = 10.;
+        let sign = c.grid_sign;
         let mut r = Race::new(c, 2, vec!["CPU".into()], 1).unwrap();
-        assert_eq!(r.opponents()[0].origin[0], -20.);
+        // Unshuffled: the player in slot 1 (centered), the CPU one spacing over.
+        assert_eq!(r.grid_slots(), &[1, 2]);
+        assert_eq!(r.player_grid().0[0], start[0]);
+        assert_eq!(r.opponents()[0].origin[0], start[0] + sign * 10.);
         r.countdown = 0.;
         // Start straight, then the finish gate completes the short first lap.
         for p in [[0., 0., -50.], [0., 0., 0.], [0., 0., 100.]] {
