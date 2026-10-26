@@ -65,6 +65,9 @@ pub const MOUSE: u64 = u64::MAX;
 /// A laid-out menu: view, state, paint, hits and scroll range.
 type MenuCache = (Viewport, pause::State, DisplayList, Vec<(Rect, u32)>, f32);
 
+/// The saved player profile (Profile Points and race record).
+pub const PROFILE_KEY: &str = "fury-profile";
+
 /// Laid-out race results: inputs (view, state, summary), paint and hits.
 type ResultsCache = (Viewport, Results, String, DisplayList, Vec<(Rect, u32)>);
 
@@ -839,7 +842,9 @@ impl Overlay {
                 // race.js always offers Quit Event; a page without the
                 // engine's frontend leaves for its menus.
                 self.results.can_quit = self.frontend || cfg!(target_arch = "wasm32");
-                self.results.finish(frame);
+                if self.results.finish(frame) {
+                    self.credit_profile();
+                }
             }
             // A race restarted in place starts without results.
             _ if self.results.shown => self.results = Results::default(),
@@ -867,12 +872,38 @@ impl Overlay {
         self.prepare_ms = started.elapsed().as_secs_f64() * 1000.;
     }
 
+    /// Credits the finished race to the saved profile (`001f1e30` →
+    /// `00323440`/`00322080`) once per race.
+    fn credit_profile(&mut self) {
+        use atv_core::profile::Profile;
+        let Some((place, stunt, points)) = self.results.award else {
+            return;
+        };
+        let mut profile: Profile = self
+            .settings
+            .get(PROFILE_KEY)
+            .and_then(|text| serde_json::from_str(&text).ok())
+            .unwrap_or_default();
+        profile.record_race(place, points, stunt);
+        if let Ok(text) = serde_json::to_string(&profile) {
+            self.settings.set(PROFILE_KEY, &text);
+        }
+        self.results.profile_total = Some(profile.points);
+    }
+
     /// Lays out the results (`translate(-50%, -50%)`: measured, then
     /// centred) and adds their paint and buttons.
     fn paint_results(&mut self, frame: Option<&atv_core::race::Frame>) {
         let view = self.view;
         let summary = frame
-            .map(|f| results::summary(f, self.results.error.as_deref()))
+            .map(|f| {
+                let line = results::summary(f, self.results.error.as_deref());
+                if self.results.error.is_some() {
+                    line
+                } else {
+                    line + &self.results.points_line()
+                }
+            })
             .unwrap_or_default();
         let fresh = self
             .results_cache

@@ -556,6 +556,7 @@ impl Ride {
 
     /// Race progress, CPU racers and rider contact after the player's step.
     pub(super) fn step_race(&mut self) -> Result<()> {
+        let committed = self.committed_points();
         let Some(state) = &mut self.race else {
             return Ok(());
         };
@@ -575,6 +576,7 @@ impl Ride {
             .map(|r| race.laps_completed(r))
             .collect();
         race.step(player.origin, STEP);
+        race.record_player_stunt(committed);
         let terrain = &self.sim.terrain;
         let hold = race.holding();
         let snapshots: Vec<_> = state

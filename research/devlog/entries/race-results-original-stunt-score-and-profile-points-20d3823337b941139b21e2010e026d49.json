@@ -1,0 +1,17 @@
+{
+  "id": "race-results-original-stunt-score-and-profile-points-20d3823337b941139b21e2010e026d49",
+  "timestamp": "2026-10-26T21:20:31.265759+00:00",
+  "recorded_at": "2026-10-26T21:24:17.196692+00:00",
+  "kind": "build",
+  "title": "Race results: original Stunt Score and Profile Points",
+  "summary": "Race Results now show the original Stunt Score and Profile Points columns. Profile Points follow the exact-build single-race award rule and accumulate in a local player profile.",
+  "details": [
+    "Exact-build evidence: the race-over award routine 001f1e30 gives a human racer 10, 5 and 1 Profile Points for 1st, 2nd and 3rd in a single race, adds the race stunt score / 1000, and gives nothing in 5th or without a profile; championship rounds instead use the course TOY [ChampionshipInfo] tables (Am/Pro x Normal/Hard, places 1-5) read by 0020a8d0.",
+    "The race stunt score counts the player's stunt points between GO and the finish.",
+    "One implicit local profile (browser localStorage / desktop settings, key fury-profile) is credited once when the results open: points, races, wins, best race stunt score; the summary line shows \"+N Profile Points (T total)\".",
+    "Verification: atv-core profile/race unit tests; new browser test test_engine_race_profile_points.mjs drives the player with the race path driver through a one-lap SX01 race (player won, +10, profile 100 -> 110, credited once); test_engine_race and test_engine_race_finish_gate pass."
+  ],
+  "limitation": "Championship mode itself is not implemented yet.",
+  "image": "/devlog-images/race-results-original-stunt-score-and-profile-points-20d3823337b941139b21e2010e026d49.png",
+  "caption": "Race Results on SX01 with the new Stunt Score and Profile Points columns (host Chromium, autopilot run)."
+}
