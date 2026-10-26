@@ -282,6 +282,8 @@ pub struct Frontend {
     pub hosting: bool,
     /// A form error (`#menu-notice` / the thrown message in frontend.js).
     pub notice: Option<String>,
+    /// The saved profile, shown on Single Player (PROFILE.md).
+    pub profile: atv_core::profile::Profile,
     /// The garage ("garage") or course picker ("tracks") is open over a
     /// held room ride; leaving it rides again.
     pub room: Option<&'static str>,
@@ -345,6 +347,7 @@ impl Frontend {
             focus: None,
             hosting: false,
             notice: None,
+            profile: crate::settings::load_profile(settings),
             room: None,
             lobby: None,
             race_courses: Vec::new(),
@@ -1551,6 +1554,7 @@ impl Frontend {
                     .collect()
             },
             notice: self.notice.clone(),
+            profile: (self.page == "single").then(|| profile_line(&self.profile)),
             lobby: self.lobby.clone(),
             motion: None,
             backdrop,
@@ -2263,5 +2267,34 @@ mod tests {
         let loading = front.loading.as_ref().unwrap();
         assert_eq!(loading.progress, 0.7);
         assert_eq!(loading.track, "ENV02");
+    }
+}
+
+/// The Single Player profile readout: the original's "Current Profile
+/// Points:" with the race record.
+pub fn profile_line(profile: &atv_core::profile::Profile) -> String {
+    let plural = |n: u32, one: &str, many: &str| format!("{n} {}", if n == 1 { one } else { many });
+    format!(
+        "Profile Points {} · {} · {}",
+        profile.points,
+        plural(profile.races, "race", "races"),
+        plural(profile.wins, "win", "wins")
+    )
+}
+
+#[cfg(test)]
+mod profile_tests {
+    #[test]
+    fn profile_line_reads_the_record() {
+        let mut p = atv_core::profile::Profile::default();
+        assert_eq!(
+            super::profile_line(&p),
+            "Profile Points 0 · 0 races · 0 wins"
+        );
+        p.record_race(1, 12, 2400.);
+        assert_eq!(
+            super::profile_line(&p),
+            "Profile Points 12 · 1 race · 1 win"
+        );
     }
 }

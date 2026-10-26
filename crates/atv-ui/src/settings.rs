@@ -125,6 +125,22 @@ fn read_file(path: &std::path::Path) -> BTreeMap<String, String> {
         .unwrap_or_default()
 }
 
+/// The saved player profile (Profile Points and race record, PROFILE.md).
+pub const PROFILE_KEY: &str = "fury-profile";
+
+/// The saved profile; a missing or unreadable record reads as a new one.
+pub fn load_profile(settings: &Settings) -> atv_core::profile::Profile {
+    settings
+        .get(PROFILE_KEY)
+        .and_then(|text| serde_json::from_str(&text).ok())
+        .unwrap_or_default()
+}
+
+/// Saves the profile; false when it lasts only for this session.
+pub fn save_profile(settings: &mut Settings, profile: &atv_core::profile::Profile) -> bool {
+    serde_json::to_string(profile).is_ok_and(|text| settings.set(PROFILE_KEY, &text))
+}
+
 /// bindings.js `storageError`: the notice when a binding cannot be saved.
 pub const STORAGE_ERROR: &str = "Settings work for this session; browser storage is unavailable.";
 
