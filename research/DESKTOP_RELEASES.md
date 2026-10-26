@@ -181,7 +181,7 @@ releases, because the archives contain game content and must never be built in C
   a release of a specific commit).
 - **origin/main** is released as `desktop-v<workspace version>-<short commit>` when it changed
   anything the apps are built from since the newest desktop release (`RELEASE_PATHS`:
-  `crates/`, `Cargo.toml`/`Cargo.lock`, the desktop, Android and pack build tools, the app icon art),
+  `crates/`, `third_party/` (patched winit), `Cargo.toml`/`Cargo.lock`, the desktop, Android and pack build tools, the app icon art),
   and that release is at least 12 hours old (`--min-hours`). Documentation, dev-log, web-shell
   and test-only merges never start a release. The 12 hour floor keeps a busy merge day to
   one or two roughly 2 GB releases instead of one per merge.
