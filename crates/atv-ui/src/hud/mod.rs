@@ -8,6 +8,7 @@ pub mod peers;
 pub mod race;
 pub mod results;
 pub mod toolbar;
+pub mod training;
 
 /// The viewport in CSS pixels and the device traits media queries test.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]

@@ -116,6 +116,8 @@ pub struct PauseMenu {
     /// The ride is a race: Pause's second row is Restart Race
     /// (frontend.js `raceActive`).
     pub race_active: bool,
+    /// The ride is the Training Course (Restart Training).
+    pub training_active: bool,
     /// Keys held while the menu is open (frontend.js `menuKeys`), for the
     /// rebindable Pause action.
     held: Vec<String>,
@@ -165,6 +167,7 @@ impl PauseMenu {
             notice: None,
             seek_to: None,
             race_active: false,
+            training_active: false,
             held: Vec::new(),
             shown: crate::transition::next_show(),
         }
@@ -271,6 +274,7 @@ impl PauseMenu {
             "height": ctx.view.height.clamp(240., 16384.),
             "selection": self.selection,
             "race_active": self.race_active,
+            "training_active": self.training_active,
             "race_overlays_off": p.overlays_off,
             "race_position": p.race_position,
             "funny_crashes": p.crash_mode != "original",

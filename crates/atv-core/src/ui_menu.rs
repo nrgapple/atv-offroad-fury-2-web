@@ -111,6 +111,10 @@ pub struct Request {
     pub race_course: String,
     #[serde(default)]
     pub race_active: bool,
+    /// The ride is the Training Course: Pause's second row is the
+    /// original's Restart Training (`002de690` entry 6).
+    #[serde(default)]
+    pub training_active: bool,
     #[serde(default)]
     pub funny_crashes: bool,
     #[serde(default)]
@@ -1230,6 +1234,8 @@ pub fn layout(request: Request) -> Result<Frame> {
                 (
                     if request.race_active {
                         "Restart Race"
+                    } else if request.training_active {
+                        "Restart Training"
                     } else {
                         "Reset ATV"
                     },
@@ -2083,6 +2089,7 @@ mod tests {
             race_available: false,
             race_course: "env01".into(),
             race_active: false,
+            training_active: false,
         }
     }
     #[test]
@@ -2333,6 +2340,15 @@ mod tests {
                 .hits
                 .iter()
                 .any(|h| h.label == "Restart Race")
+        );
+        let mut r = request("pause", 1280., 720.);
+        r.training_active = true;
+        assert!(
+            layout(r)
+                .unwrap()
+                .hits
+                .iter()
+                .any(|h| h.label == "Restart Training")
         );
     }
     #[test]

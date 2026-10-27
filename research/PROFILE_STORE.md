@@ -113,9 +113,10 @@ whether G-Ride is listed in the store.
   host's unlocks online; the port has no profile exchange), ride links
   (`?venue=`/`?race=` URLs), the motorcycles and ATV06 (never in the
   original store), and the games (the port has no mini-games).
-- **Limits.** The port has no Training Course objectives, so the coloured
-  Talons and ATV2 gear are reachable only through SHOWROOM/THREADS/IGIVEUP;
-  the session cheats WIDESCRN, FLYPAPER, GETONUP, STOPCAM and SYNC30HZ
+- **Training reward.** Completing Main Menu → Training Course grants the
+  coloured Talons and ATV2 gear to the loaded profile (`0021f440`,
+  [TRAINING.md](TRAINING.md)); SHOWROOM/THREADS/IGIVEUP also open them.
+- **Limits.** The session cheats WIDESCRN, FLYPAPER, GETONUP, STOPCAM and SYNC30HZ
   report "(not available in this port)"; EATDIRT and BRINGIT arm the next
   Single Race's AI cheats; no G-Ride memory-card reward.
 

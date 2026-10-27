@@ -22,6 +22,9 @@ pub struct Riding {
     pub paused: bool,
     /// A replayed parity state: input never resumes it.
     pub held: bool,
+    /// The Training Course holds the ATV while a line plays (+0x94c): the
+    /// player's drive input is replaced by a full brake.
+    pub locked: bool,
     /// Fine terrain patch centre, in terrain cells.
     center: [f32; 2],
     pub steps_last_frame: u32,
@@ -172,6 +175,7 @@ impl Riding {
             rush: SpeedRush::default(),
             paused: false,
             held: false,
+            locked: false,
             center: cells(venue, origin),
             steps_last_frame: 0,
             cycle_requested: false,
@@ -458,6 +462,12 @@ impl Riding {
         if cycle {
             self.orbit = 0.;
             self.ride.cycle_camera();
+        }
+        if self.locked {
+            read.controls = Controls {
+                brake: 1.,
+                ..Controls::default()
+            };
         }
         self.run_with(&read.controls, count, peers)?;
         // A camera cycle snaps.
