@@ -136,7 +136,7 @@ pub fn record(ride: &Ride, step: u64) -> Value {
             "countdown": f.countdown, "contacts": f.contacts, "off_track": f.off_track,
             "grid_slots": f.grid_slots, "finish_at": f.finish_at, "track_flags": f.track_flags,
             "enduro_gate": f.enduro_gate, "target": f.target, "player_stunts": f.player_stunts,
-            "opponents": f.opponents.iter().map(|o| json!({"origin": o.origin, "distance": o.distance, "finished": o.finished})).collect::<Vec<_>>(),
+            "opponents": f.opponents.iter().map(|o| json!({"name": o.name, "origin": o.origin, "distance": o.distance, "finished": o.finished})).collect::<Vec<_>>(),
             "standings": f.standings.iter().map(|s| json!({"name": s.name, "time": s.time, "position": s.position,
                 "laps": s.laps, "progress": s.progress, "stunt": s.stunt, "player": s.player})).collect::<Vec<_>>(),
         })),
@@ -164,9 +164,16 @@ pub async fn trace(
     script: &Script,
     autopilot: bool,
 ) -> Result<Trace> {
+    // A race course id names the venue and its race (`env05ends`).
+    let (venue, variant) = match race {
+        Some(_) => crate::launch::split_race_course(venue)
+            .unwrap_or((venue, crate::launch::RaceVariant::National)),
+        None => (venue, crate::launch::RaceVariant::National),
+    };
     let options = crate::venue::LoadOptions {
         // Race traces hold weather off (the browser draws it per load).
         weather: crate::venue::WeatherChoice::Active(false),
+        race: variant,
         ..Default::default()
     };
     let venue = crate::venue::load_with(content, venue, race.is_some(), options).await?;

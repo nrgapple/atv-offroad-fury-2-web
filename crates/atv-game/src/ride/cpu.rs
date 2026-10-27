@@ -135,7 +135,8 @@ impl CpuRacer {
         player_speed: f32,
         peers: &[Peer],
         gap: f32,
-        station: Station,
+        // The race station, RaceStatus +0x3c and the Enduro next gate.
+        (station, on_track, enduro): (Station, bool, Option<atv_core::race_ai::EnduroTarget>),
         world: &World<'_>,
     ) -> Result<(VehicleFrame, CpuPose, bool)> {
         const DT: f32 = 1. / 60.;
@@ -167,6 +168,8 @@ impl CpuRacer {
                 clearance: contact.as_ref().map_or(0., |c| before.origin[1] - c.height),
                 terrain_normal: predicted.as_ref().map_or([0., 1., 0.], |c| c.normal),
                 station: Some(station),
+                on_track,
+                enduro,
             },
         )?;
         let stunt_input = stunt::Input {
