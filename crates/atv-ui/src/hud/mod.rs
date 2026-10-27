@@ -3,6 +3,7 @@ pub mod assets;
 pub mod help;
 pub mod meter;
 pub mod minimap;
+pub mod objective;
 pub mod peers;
 pub mod race;
 pub mod results;

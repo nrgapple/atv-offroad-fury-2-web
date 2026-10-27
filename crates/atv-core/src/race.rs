@@ -1336,12 +1336,23 @@ impl Progress {
             // RaceStatus `00248b20`: a lap counts when the rider's motion
             // crosses the finish gate (`001a95b0`) while its previous station
             // lies less than Track +0x34 before the gate on the route.
-            let ahead = if previous_distance <= at {
-                at - previous_distance
+            //
+            // `at` is where the main racing line meets the gate line. A rider
+            // off the line crosses a skewed gate a little later on the route
+            // (sx03: 0.6ft past `at`, env01 and sx13 similar), and its
+            // accumulated distance can lead the station slightly, so once a
+            // rider has reached the gate's distance, a previous distance up
+            // to Track +0x38 past it also counts (authored; read literally
+            // the crossing would wrap to a whole lap ahead and never count).
+            // A grid just past the gate (env01, 4ft) has not reached it.
+            let cycle = course.cycle_length();
+            let near = if previous_distance <= at {
+                at - previous_distance < TRACK_AHEAD
             } else {
-                (at - previous_distance).rem_euclid(course.cycle_length())
+                let past = (previous_distance - at).rem_euclid(cycle);
+                cycle - past < TRACK_AHEAD || past < TRACK_BEHIND
             };
-            if ahead < TRACK_AHEAD && gate.crossing(p, previous) == Crossing::Through {
+            if near && gate.crossing(p, previous) == Crossing::Through {
                 if self.skip_crossing {
                     self.skip_crossing = false;
                 } else {
@@ -2287,6 +2298,25 @@ mod tests {
         assert!(late.offset > -75. && late.offset < 0., "{late:?}");
         // Its start lies about 320ft behind the rider's station: not found.
         assert!(c.locate([30., 0., 105.], near_rejoin, true).is_none());
+    }
+    #[test]
+    fn rider_off_the_line_counts_a_skewed_finish_gate() {
+        // Gate on the west side, turned 30° from square: the racing line
+        // (x = 0) meets it 50ft from the grid, a rider at x = -10 about
+        // 5.8ft later, when its race distance is already past the gate.
+        let mut c = course();
+        let (sin, cos) = (0.5, 0.866_025_4);
+        let matrix = [
+            cos, 0., -sin, 0., 0., 1., 0., 0., sin, 0., cos, 0., 0., 0., 50., 1.,
+        ];
+        assert!(c.set_finish_gate(&matrix, 15.));
+        assert!((c.finish_at.unwrap() - 50.).abs() < 0.01);
+        let mut r = Race::new(c, 1, vec![], 0).unwrap();
+        r.countdown = 0.;
+        for z in 0..=70 {
+            r.step([-10., 0., z as f32], 0.1);
+        }
+        assert!(r.player_finished(), "{}", r.player.distance);
     }
     fn course() -> Course {
         Course {

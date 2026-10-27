@@ -3,8 +3,8 @@
 // on. Riders passing that crossing must keep their race distance instead of
 // being mapped back near the fork. The race path driver rides the player
 // (`autopilot=1`) with three CPUs; every traced frame's standings may only
-// move forward apart from small on-track wobbles. Riders reach the crossing
-// at checkpoint 57 (~1,545ft); they currently stall just past it (RACING.md).
+// move forward apart from small on-track wobbles, and riders must carry on
+// over the bridge past checkpoint 57 (~1,545ft).
 import assert from 'node:assert/strict';
 import { assertNoErrors, launch, newPage, optionalScreenshot, url } from './browser/harness.mjs';
 
@@ -33,7 +33,7 @@ try {
     previous = now;
   }
   assert.deepEqual(drops, [], 'no rider loses race distance');
-  assert.ok(furthest > 1530, `a rider reached the 12->57 crossing (furthest ${Math.round(furthest)}ft)`);
+  assert.ok(furthest > 1700, `a rider passed the 12->57 crossing and the bridge (furthest ${Math.round(furthest)}ft)`);
   await optionalScreenshot(page, 'ATV_RACE_ALTERNATES_SCREENSHOT', 'sx14');
   assertNoErrors(errors);
   const last = trace.at(-1).race.standings.map(s => `${s.name} ${Math.round(s.progress)}ft`).join(', ');

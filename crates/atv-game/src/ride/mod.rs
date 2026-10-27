@@ -217,6 +217,10 @@ pub struct Ride {
     /// Finished stunt chains (success, events, points sum) for the race's
     /// stunt records (`001f22a0`).
     race_chains: Vec<(bool, usize, f32)>,
+    /// Stunt ids of the open chain, and finished chains (success, ids) for
+    /// Freestyle objectives (`002fc050` counts combos by their stunts).
+    chain_ids: Vec<usize>,
+    chains: Vec<(bool, Vec<usize>)>,
     /// Settings → Extras choices the simulation reads each step (game.js
     /// `input.flips`, `input.realistic_train`).
     pub options: RideOptions,
@@ -410,6 +414,8 @@ impl Ride {
             stunt_landed: false,
             stunt_result: None,
             race_chains: Vec::new(),
+            chain_ids: Vec::new(),
+            chains: Vec::new(),
             options: RideOptions::default(),
             selection,
             appearance: gear::Appearance::default(),
@@ -699,6 +705,12 @@ impl Ride {
     /// The quad paint (`playerPaint`: mode and hue), original on a bike.
     pub fn paint(&self) -> [f32; 2] {
         gear::PAINT_PALETTE[usize::from(self.appearance.paint)]
+    }
+
+    /// Finished stunt chains since the last call: success and the stunt ids
+    /// in order (Freestyle objectives).
+    pub fn take_chains(&mut self) -> Vec<(bool, Vec<usize>)> {
+        std::mem::take(&mut self.chains)
     }
 
     /// The player's committed stunt points (the race SCORE overlay; the
@@ -1206,6 +1218,7 @@ impl Ride {
                 stunt_score::Notification::DisplayUpdated { id, .. } => {
                     hud.name_event(stunt::NAMES[id]);
                 }
+                stunt_score::Notification::Started { id, .. } => self.chain_ids.push(id),
                 stunt_score::Notification::ChainFinished {
                     success,
                     chain_count,
@@ -1215,6 +1228,10 @@ impl Ride {
                 } => {
                     if self.race.is_some() {
                         self.race_chains.push((success, chain_count, sum_points));
+                    }
+                    let ids = std::mem::take(&mut self.chain_ids);
+                    if self.chains.len() < 64 {
+                        self.chains.push((success, ids));
                     }
                     self.stunt_landed |= success;
                     self.stunt_result = Some(success);

@@ -247,6 +247,98 @@ struct Defaults {
     relay: String,
 }
 
+/// A Freestyle objective attempt (`atv_core::freestyle`): the series,
+/// difficulty, course and objective, and the run once the ride is loaded.
+struct ObjectiveSession {
+    series: usize,
+    expert: bool,
+    course: String,
+    objective: usize,
+    run: Option<atv_core::freestyle::Run>,
+    /// The ride's step count last counted (the run's clock).
+    steps: u64,
+    recorded: bool,
+}
+
+impl ObjectiveSession {
+    /// Advances the run with the ride: simulated time, finished stunt
+    /// chains and committed points. Returns the results summary once, when
+    /// the run ends (its bits recorded in the saved profile).
+    fn update(&mut self, ride: &mut atv_game::ride::Ride, player: &str) -> Option<String> {
+        use atv_core::freestyle::{Run, SERIES, course_objectives};
+        let series = SERIES.get(self.series)?;
+        if self.run.is_none() {
+            let objective = course_objectives(&self.course)?
+                .into_iter()
+                .nth(self.objective)?;
+            let mut run = Run::new(objective, self.objective, ride.committed_points());
+            // Test tooling: `objectiveTest=score` credits the last point level,
+            // `objectiveTest=timeout` leaves two seconds.
+            if url_flag("objectiveTest=score")
+                && let atv_core::freestyle::Kind::Stunt { levels } = &run.objective.kind
+            {
+                let top = levels.last().copied().unwrap_or(0.);
+                run = Run::new(
+                    run.objective.clone(),
+                    self.objective,
+                    ride.committed_points() - top,
+                );
+            }
+            if url_flag("objectiveTest=timeout") {
+                run.time_left = 2.;
+            }
+            ride.take_chains();
+            self.steps = ride.steps();
+            self.run = Some(run);
+        }
+        let run = self.run.as_mut()?;
+        let steps = ride.steps();
+        let dt = steps.saturating_sub(self.steps) as f32 * atv_game::ride::STEP;
+        self.steps = steps;
+        for (success, ids) in ride.take_chains() {
+            run.chain(success, &ids);
+        }
+        run.tick(dt, ride.committed_points());
+        if !run.finished() || self.recorded {
+            return None;
+        }
+        self.recorded = true;
+        let mut settings = atv_ui::settings::Settings::load();
+        let mut profile = atv_ui::settings::load_profile(&settings);
+        let champ = &mut profile.championships;
+        let mask = champ.record_objective(series, self.expert, &self.course, run.earned_bits());
+        let total = champ.completed_objectives(series, self.expert);
+        atv_ui::settings::save_profile(&mut settings, &profile);
+        let completed = run.outcome == Some(atv_core::freestyle::Outcome::Completed);
+        // `002ddc50` / `002dde00` / `0025a100`.
+        Some(format!(
+            "{}, {player}! {} Score {} · Completed Course Objectives: {} of 6 · Completed Total Objectives: {} of {}",
+            if completed {
+                "Congratulations"
+            } else {
+                "Sorry"
+            },
+            run.result_line(),
+            atv_ui::hud::objective::grouped(run.score as i64),
+            mask.count_ones(),
+            total,
+            atv_core::freestyle::total_objectives(series)
+        ))
+    }
+
+    /// The HUD panel.
+    fn view(&self) -> Option<atv_ui::hud::objective::View> {
+        let run = self.run.as_ref()?;
+        Some(atv_ui::hud::objective::View {
+            description: run.objective.description.clone(),
+            time_left: run.time_left,
+            progress: run.progress(),
+            score: run.score as i64,
+            message: run.messages.last().cloned(),
+        })
+    }
+}
+
 struct App {
     /// Crash camera Tight, Chase camera Assisted (Options::camera_choice).
     camera_choice: (bool, bool),
@@ -331,6 +423,8 @@ struct App {
     /// The held room's ride, riding on with neutral input behind the
     /// frontend: its presence keeps going out until the ride reloads.
     held_ride: Option<atv_game::ride::Ride>,
+    /// A Freestyle championship objective attempt on the current ride.
+    objective: Option<ObjectiveSession>,
     /// The held room the next frontend ride resumes.
     pending_room: Option<multiplayer::Net>,
     /// `pending_room` was just joined (it meets a rider; a held room
@@ -1130,6 +1224,25 @@ impl App {
         let Some(riding) = &mut ready.riding else {
             return;
         };
+        // A Freestyle objective runs on the ride's clock; its end opens the
+        // objective results.
+        let objective_view = match &mut self.objective {
+            Some(session) => {
+                let player = self
+                    .front
+                    .as_ref()
+                    .map(|f| f.borrow().state.player_name.trim().to_string())
+                    .filter(|n| !n.is_empty())
+                    .unwrap_or_else(|| "Rider".into());
+                if let Some(summary) = session.update(&mut riding.ride, &player)
+                    && let Some(overlay) = &mut self.overlay
+                {
+                    overlay.results.show_objective(summary);
+                }
+                session.view()
+            }
+            None => None,
+        };
         if let Some(overlay) = &mut self.overlay {
             if riding.input_cleared {
                 overlay.clear_input();
@@ -1178,6 +1291,7 @@ impl App {
                     peers: hud_peers
                         .as_deref()
                         .map(|peers| (peers, frame.origin, view_projection)),
+                    objective: objective_view,
                 }),
                 Some(&mut riding.bindings),
             );
@@ -1249,6 +1363,13 @@ impl App {
             state["ride"] = serde_json::json!({
                 "environment": ready.venue.environment,
                 "championship": riding.ride.race().and_then(|r| r.settings().championship),
+                "objective": self.objective.as_ref().map(|o| serde_json::json!({
+                    "series": o.series, "expert": o.expert, "course": o.course,
+                    "objective": o.objective, "recorded": o.recorded,
+                    "timeLeft": o.run.as_ref().map(|r| r.time_left),
+                    "score": o.run.as_ref().map(|r| r.score),
+                    "progress": o.run.as_ref().map(|r| r.progress()),
+                })),
                 "results": self.overlay.as_ref().filter(|o| o.results.shown)
                     .map(|o| o.results.buttons()),
             });
@@ -2095,6 +2216,12 @@ impl App {
                 }
             }
             overlay::Action::Camera => riding.cycle_requested = true,
+            overlay::Action::RaceRetry if self.objective.is_some() => self.restart_objective(),
+            overlay::Action::RaceQuit if self.objective.is_some() => {
+                // Continue: back to Select Objective.
+                self.objective = None;
+                self.quit_to(Some("objectives"));
+            }
             overlay::Action::RaceRetry => self.restart_race(),
             overlay::Action::RaceNextRound => self.next_round(),
             overlay::Action::RaceQuit => {
@@ -2160,6 +2287,23 @@ impl App {
                 }),
                 None,
             );
+        }
+    }
+
+    /// Restart Objective: ride the same objective again from its start.
+    fn restart_objective(&mut self) {
+        let Some(riding) = self.ready.as_ref().and_then(|r| r.riding.as_ref()) else {
+            return;
+        };
+        let selection = riding.ride.selection();
+        let Some(session) = &mut self.objective else {
+            return;
+        };
+        session.run = None;
+        session.recorded = false;
+        let course = session.course.clone();
+        if self.front.is_some() && self.quit_to(None) {
+            self.start_ride(course, selection.quad, selection.rider, None, None);
         }
     }
 
@@ -4333,7 +4477,29 @@ impl App {
 
     fn front_event(&mut self, event: atv_ui::front::controller::Event) {
         use atv_ui::front::controller::Event;
+        if !matches!(event, Event::Objective { .. }) {
+            self.objective = None;
+        }
         match event {
+            Event::Objective {
+                environment,
+                quad,
+                rider,
+                series,
+                expert,
+                objective,
+            } => {
+                self.objective = Some(ObjectiveSession {
+                    series,
+                    expert,
+                    course: environment.clone(),
+                    objective,
+                    run: None,
+                    steps: 0,
+                    recorded: false,
+                });
+                self.start_ride(environment, quad, rider, None, None);
+            }
             Event::Ride {
                 environment,
                 quad,
@@ -5592,6 +5758,7 @@ fn capture(ready: &mut Ready, path: &std::path::Path, width: u32, height: u32, u
                         .and_then(|r| r.frame.as_ref())
                         .map(|f| (f, ride.committed_points(), ride.frame().origin)),
                     peers: None,
+                    objective: None,
                 }),
                 None,
             );
@@ -6102,6 +6269,7 @@ pub fn run(options: Options) {
         riders_polled: None,
         held_room: None,
         held_ride: None,
+        objective: None,
         pending_room: None,
         pending_fresh: false,
         joining: None,
