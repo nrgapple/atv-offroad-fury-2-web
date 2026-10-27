@@ -431,6 +431,7 @@ impl HockeySession {
             // screen_marker lifts tags 7 ft.
             position: [x, y - 5., z],
             stale: false,
+            pill: None,
         }]
     }
 
