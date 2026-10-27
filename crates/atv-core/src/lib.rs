@@ -53,6 +53,7 @@ pub mod sound_effects;
 pub mod spatial_audio;
 pub mod spawn;
 pub mod stunt;
+pub mod stunt_records;
 pub mod stunt_score;
 pub mod terrain;
 pub mod texture;

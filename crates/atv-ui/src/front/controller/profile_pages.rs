@@ -135,8 +135,14 @@ pub fn grouped(n: i64) -> String {
     if n < 0 { format!("-{out}") } else { out }
 }
 
-/// Not measured by the port (jumps, combos and Freestyle objectives).
+/// Not measured by the port (Freestyle objectives).
 const UNMEASURED: &str = "-";
+
+/// A jump length as the original prints it: "%d %s" with "Feet" (the
+/// value truncated; the Meters setting is not ported).
+pub fn feet(length: f32) -> String {
+    format!("{} Feet", length.max(0.) as i64)
+}
 
 impl Frontend {
     /// Reloads the profile book and the loaded profile (on start, and back
@@ -392,10 +398,10 @@ impl Frontend {
             line("Total Victories:", grouped(i64::from(p.wins))),
             line("Win Percentage:", format!("{:3.0}%", p.win_percentage())),
             line("Most Winning ATV:", self.vehicle_name(p.most_winning_atv())),
-            line("Longest Jump:", UNMEASURED.into()),
+            line("Longest Jump:", feet(p.stunts.longest_jump)),
             line("Most Stunt Points In An Objective:", UNMEASURED.into()),
-            line("Most Combos:", UNMEASURED.into()),
-            line("Most Points In One Jump:", UNMEASURED.into()),
+            line("Most Combos:", grouped(i64::from(p.stunts.most_combos))),
+            line("Most Points In One Jump:", grouped(p.stunts.most_points)),
             line("Highest Race Stunt Score:", grouped(p.best_stunt)),
         ]
     }
@@ -420,7 +426,7 @@ impl Frontend {
                 format!("Best {laps}-Lap Time:"),
                 race_time(record.best_total_ms),
             ),
-            ("Longest Jump:".into(), UNMEASURED.into()),
+            ("Longest Jump:".into(), feet(record.stunts.longest_jump)),
             (
                 "Most Winning ATV:".into(),
                 self.vehicle_name(record.most_winning_atv()),
@@ -835,6 +841,11 @@ mod tests {
                 best_lap: Some(41.5),
                 total: Some(212.25),
                 full_length: true,
+                stunts: atv_core::profile::StuntRecords {
+                    longest_jump: 87.9,
+                    most_combos: 4,
+                    most_points: 12_345,
+                },
             });
         save_book(&mut settings, &book);
         let mut front = Frontend::new(Vec::new(), &settings, true);
@@ -850,6 +861,22 @@ mod tests {
         assert_eq!(details[1].1, "1");
         assert_eq!(details[3].1, "00:41.50");
         assert_eq!(details[4], ("Best 5-Lap Time:".into(), "03:32.25".into()));
+        assert_eq!(details[5].1, "87 Feet");
         assert_eq!(details[6].1, "Vehicle 3");
+        front.show("profile-overview", &view);
+        let overview = front.profile_details();
+        let value = |label: &str| {
+            overview
+                .iter()
+                .find(|(l, _)| l == label)
+                .map(|(_, v)| v.clone())
+        };
+        assert_eq!(value("Longest Jump:").as_deref(), Some("87 Feet"));
+        assert_eq!(value("Most Combos:").as_deref(), Some("4"));
+        assert_eq!(value("Most Points In One Jump:").as_deref(), Some("12,345"));
+        assert_eq!(
+            value("Most Stunt Points In An Objective:").as_deref(),
+            Some("-")
+        );
     }
 }

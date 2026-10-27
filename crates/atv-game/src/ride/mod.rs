@@ -214,6 +214,9 @@ pub struct Ride {
     /// `stunt_landed`/`stunt_result`, for flash bursts and crowd cues).
     stunt_landed: bool,
     stunt_result: Option<bool>,
+    /// Finished stunt chains (success, events, points sum) for the race's
+    /// stunt records (`001f22a0`).
+    race_chains: Vec<(bool, usize, f32)>,
     /// Settings → Extras choices the simulation reads each step (game.js
     /// `input.flips`, `input.realistic_train`).
     pub options: RideOptions,
@@ -406,6 +409,7 @@ impl Ride {
             race: None,
             stunt_landed: false,
             stunt_result: None,
+            race_chains: Vec::new(),
             options: RideOptions::default(),
             selection,
             appearance: gear::Appearance::default(),
@@ -1204,9 +1208,14 @@ impl Ride {
                 }
                 stunt_score::Notification::ChainFinished {
                     success,
+                    chain_count,
+                    sum_points,
                     display_count,
                     ..
                 } => {
+                    if self.race.is_some() {
+                        self.race_chains.push((success, chain_count, sum_points));
+                    }
                     self.stunt_landed |= success;
                     self.stunt_result = Some(success);
                     hud.finish_event(success, display_count)

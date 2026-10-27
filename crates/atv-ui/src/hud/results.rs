@@ -106,7 +106,7 @@ impl Results {
     /// frame) with the standings of that moment. True the first time, when
     /// the host credits the award to the profile.
     pub fn finish(&mut self, frame: &atv_core::race::Frame) -> bool {
-        use atv_core::profile::{CourseAwards, Event, race_award};
+        use atv_core::profile::{CourseAwards, Event, race_award_with_combos};
         if self.shown {
             return false;
         }
@@ -135,11 +135,11 @@ impl Results {
         self.pad_armed = false;
         self.player_row = frame.standings.iter().position(|s| s.player);
         // 001f1e30: only the human racer earns Profile Points.
-        self.award = frame
-            .standings
-            .iter()
-            .find(|s| s.player)
-            .map(|s| (s.position, s.stunt, race_award(event, s.position, s.stunt)));
+        self.award = frame.standings.iter().find(|s| s.player).map(|s| {
+            let combos = frame.player_stunts.combo_points;
+            let award = race_award_with_combos(event, s.position, s.stunt, combos);
+            (s.position, s.stunt, award)
+        });
         self.profile_total = None;
         self.rows = frame
             .standings

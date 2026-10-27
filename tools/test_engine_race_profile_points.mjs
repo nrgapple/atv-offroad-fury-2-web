@@ -2,7 +2,7 @@
 // driver rides the player (`autopilot=1`) through a one-lap Supercross race.
 // At the finish the results carry each rider's stunt score, the player's
 // Profile Points follow the original single-race rule (001f1e30: 10/5/1 for
-// 1st–3rd plus stunt score / 1000, nothing for 5th) and the saved profile
+// 1st–3rd plus stunt score / 1000 and combo points, nothing for 5th) and the saved profile
 // (`fury-profile`) is credited once, keeping earlier points.
 import assert from 'node:assert/strict';
 import { assertNoErrors, launch, newPage, optionalScreenshot, url } from './browser/harness.mjs';
@@ -29,7 +29,9 @@ try {
   assert.equal(you.position, race.position);
   for (const s of race.standings) assert.ok(s.stunt >= 0 && Number.isFinite(s.stunt), `stunt score ${riders}`);
   const place = [10, 5, 1][you.position - 1] ?? 0;
-  const award = you.position === 5 ? 0 : place + Math.trunc(you.stunt / 1000);
+  // 001f22a0: each landed combo of n tricks also adds n - 1.
+  const combos = race.player_stunts?.combo_points ?? 0;
+  const award = you.position === 5 ? 0 : place + Math.trunc(you.stunt / 1000) + combos;
   // The results are drawn on the next frames; the profile is saved then.
   await page.waitForFunction(() => JSON.parse(localStorage.getItem('fury-profile') || '{}').races === 5, null, { timeout: 30000 });
   const profile = JSON.parse(await page.evaluate(() => localStorage.getItem('fury-profile')));

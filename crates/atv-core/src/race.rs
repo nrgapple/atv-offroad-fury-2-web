@@ -1463,6 +1463,8 @@ pub struct Frame {
     pub contacts: u32,
     pub opponents: Vec<Opponent>,
     pub standings: Vec<Standing>,
+    /// The player's race stunt records and combo Profile Points.
+    pub player_stunts: crate::stunt_records::RaceStunts,
     /// The player's completed lap times and the best one's index.
     pub lap_times: Vec<f32>,
     pub best_lap: Option<usize>,
@@ -1508,6 +1510,10 @@ pub struct Race {
     finishes: Vec<(bool, usize)>,
     /// The player's committed stunt points when the race went live.
     stunt_base: f32,
+    /// The player's jump measurement (`0024df70`) and race stunt records.
+    player_jump: crate::stunt_records::JumpTracker,
+    player_stunts: crate::stunt_records::RaceStunts,
+    player_resets: u32,
 }
 impl Race {
     /// A race with the riders in slot order (player in slot 1), as when the
@@ -1598,6 +1604,9 @@ impl Race {
             progress,
             contacts: 0,
             stunt_base: 0.,
+            player_jump: Default::default(),
+            player_stunts: Default::default(),
+            player_resets: 0,
             random: crate::engine_audio::OriginalRandom::with_seed(97211 + 5 * 47),
             finishes: Vec::new(),
         })
@@ -1636,6 +1645,32 @@ impl Race {
         } else if self.player.finish.is_none() {
             self.player.stunt = (committed - self.stunt_base).max(0.);
         }
+    }
+    /// The player's grounded state, position and reset count this step
+    /// (`0024df70`): jumps between GO and the finish feed the race's
+    /// Longest Jump. A reset (a new `resets`) drops the jump in progress so
+    /// a respawn is not measured as flight (authored safeguard).
+    pub fn record_player_jump(&mut self, grounded: bool, position: [f32; 3], resets: u32, dt: f32) {
+        if std::mem::replace(&mut self.player_resets, resets) != resets {
+            self.player_jump = Default::default();
+        }
+        if self.intro || self.countdown > 0. || self.player.finish.is_some() {
+            return;
+        }
+        if let Some(feet) = self.player_jump.step(grounded, position, dt) {
+            self.player_stunts.jump(feet);
+        }
+    }
+    /// A finished stunt chain of the player's (`001f22a0`), between GO and
+    /// the finish as the race stunt score counts.
+    pub fn record_player_chain(&mut self, success: bool, count: usize, sum: f32) {
+        if self.intro || self.countdown > 0. || self.player.finish.is_some() {
+            return;
+        }
+        self.player_stunts.chain(success, count, sum);
+    }
+    pub fn player_stunts(&self) -> crate::stunt_records::RaceStunts {
+        self.player_stunts
     }
     pub fn player_finished(&self) -> bool {
         self.player.finish.is_some()
@@ -1953,6 +1988,7 @@ impl Race {
             gate: None,
             championship: None,
             opponents: self.opponents.clone(),
+            player_stunts: self.player_stunts,
             standings: order
                 .into_iter()
                 .enumerate()
@@ -2411,6 +2447,32 @@ mod tests {
         assert_eq!(r.station(None).segment, 0);
         assert!(r.station(None).fraction > 0.5);
         assert_eq!(r.elapsed, 4.);
+    }
+    #[test]
+    fn race_stunt_records_count_from_go_and_drop_resets() {
+        let mut r = Race::new(course(), 1, vec!["Cpu".into()], 1).unwrap();
+        let dt = 1. / 60.;
+        let fly = |r: &mut Race, from: [f32; 3], to: [f32; 3], resets: u32| {
+            r.record_player_jump(false, from, resets, dt);
+            r.record_player_jump(true, to, resets, dt);
+            for _ in 0..40 {
+                r.record_player_jump(true, to, resets, dt);
+            }
+        };
+        // Before GO nothing counts.
+        fly(&mut r, [0.; 3], [0., 0., 80.], 0);
+        r.record_player_chain(true, 3, 400.);
+        assert_eq!(r.player_stunts(), Default::default());
+        r.countdown = 0.;
+        fly(&mut r, [0.; 3], [0., 0., 55.], 0);
+        r.record_player_chain(true, 3, 400.);
+        // A reset mid-air drops the flight.
+        r.record_player_jump(false, [0.; 3], 0, dt);
+        fly(&mut r, [0., 0., 200.], [0., 0., 210.], 1);
+        let s = r.frame(0.).player_stunts;
+        assert_eq!(s.records.longest_jump, 55.);
+        assert_eq!((s.records.most_combos, s.records.most_points), (3, 1200));
+        assert_eq!(s.combo_points, 2);
     }
     #[test]
     fn race_stunt_score_counts_from_go_to_the_finish() {

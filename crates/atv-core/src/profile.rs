@@ -16,6 +16,8 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
+pub use crate::stunt_records::StuntRecords;
+
 /// Course Profile Points by finishing place 1–5 (`0020a8d0`).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct CourseAwards {
@@ -120,6 +122,16 @@ pub fn race_award(event: Event, place: usize, stunt_score: f32) -> i32 {
     placed.saturating_add((stunt_score / 1000.) as i32)
 }
 
+/// [`race_award`] plus the combo Profile Points the race's landed chains
+/// added to the same accumulator (`001f22a0`: `n - 1` per chain of `n` >
+/// 1), which place 5 also zeroes.
+pub fn race_award_with_combos(event: Event, place: usize, stunt_score: f32, combos: i32) -> i32 {
+    match race_award(event, place, stunt_score) {
+        _ if place == 5 || place == 0 => 0,
+        award => award.saturating_add(combos.max(0)),
+    }
+}
+
 /// One course's record in the profile (the 0x94-byte course record that
 /// `001f1e30` fills and `00322080` stores): races and victories, the best
 /// lap and best full-length race time, and victories per ATV. Times are
@@ -138,6 +150,10 @@ pub struct CourseRecord {
     /// Victories per vehicle id.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub atv_wins: BTreeMap<u16, u32>,
+    /// Longest jump (+0x88, kept over 40 ft by `00324cc0`), most combos
+    /// (+0x8c) and most points in one jump (+0x90).
+    #[serde(skip_serializing_if = "StuntRecords::is_empty")]
+    pub stunts: StuntRecords,
 }
 
 impl CourseRecord {
@@ -171,6 +187,8 @@ pub struct RaceResult {
     pub total: Option<f32>,
     /// The race ran the series' default laps (3 Enduro, 5 otherwise).
     pub full_length: bool,
+    /// The player's race stunt records.
+    pub stunts: StuntRecords,
 }
 
 /// Longest name a profile takes: the name entry's eight cells
@@ -203,6 +221,10 @@ pub struct Profile {
     pub wins: u32,
     /// Best single-race stunt score.
     pub best_stunt: i64,
+    /// Longest Jump (+0x1c), Most Combos (+0x24) and Most Points In One
+    /// Jump (+0x28): the maxima of the course records (`00322080`).
+    #[serde(skip_serializing_if = "StuntRecords::is_empty")]
+    pub stunts: StuntRecords,
     /// Championship rounds, standings, trophies and opened series.
     pub championships: crate::championship::Championships,
     /// Victories per vehicle id (profile +0x2c, one counter per ATV).
@@ -263,6 +285,9 @@ impl Profile {
             (Some(o), Some(n)) => Some(o.min(n)),
             (o, n) => o.or(n),
         };
+        course.stunts.merge(&result.stunts);
+        let course_stunts = course.stunts;
+        self.stunts.merge(&course_stunts);
         course.best_lap_ms = better(course.best_lap_ms, result.best_lap.and_then(ms));
         if result.full_length {
             course.best_total_ms = better(course.best_total_ms, result.total.and_then(ms));
@@ -506,6 +531,9 @@ mod tests {
         // Fourth earns only the stunt share; fifth earns nothing.
         assert_eq!(race_award(Event::Single, 4, 2500.), 2);
         assert_eq!(race_award(Event::Single, 5, 9000.), 0);
+        // 001f22a0: landed combos add n - 1 each; place 5 still earns 0.
+        assert_eq!(race_award_with_combos(Event::Single, 2, 1999., 3), 9);
+        assert_eq!(race_award_with_combos(Event::Single, 5, 0., 3), 0);
     }
 
     #[test]
@@ -550,6 +578,11 @@ mod tests {
             best_lap: Some(lap),
             total: Some(total),
             full_length: full,
+            stunts: StuntRecords {
+                longest_jump: lap + 20.,
+                most_combos: quad as u32,
+                most_points: (total * 10.) as i64,
+            },
         };
         p.record_course(&race(1, 4, 41.25, 210.5, true));
         p.record_course(&race(2, 4, 40.0, 205.0, false));
@@ -558,6 +591,16 @@ mod tests {
         let c = &p.courses["sx01"];
         assert_eq!((c.races, c.wins), (4, 3));
         assert_eq!(c.best_lap_ms, Some(40_000));
+        // 00322080: the profile keeps the course records' maxima.
+        assert_eq!(
+            c.stunts,
+            StuntRecords {
+                longest_jump: 63.,
+                most_combos: 7,
+                most_points: 2300
+            }
+        );
+        assert_eq!(p.stunts, c.stunts);
         // The short race's time is not a full-length record.
         assert_eq!(c.best_total_ms, Some(210_500));
         assert_eq!(c.most_winning_atv(), Some(7));

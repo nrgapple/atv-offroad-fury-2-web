@@ -127,6 +127,7 @@ export const TESTS = {
   'test_engine_race_profile_points.mjs': { group: 'content' },
   'test_engine_profile_menu.mjs': { group: 'content' },
   'test_engine_profile_editor.mjs': { group: 'content', timeout: 900 },
+  'test_engine_profile_stunts.mjs': { group: 'content', timeout: 900 },
   'test_engine_text_fields_touch.mjs': { group: 'content' },
   'test_engine_championship.mjs': { group: 'content', timeout: 1500 },
   'test_engine_championship_loading.mjs': { group: 'content' },
