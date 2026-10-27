@@ -332,6 +332,11 @@ pub struct RideOptions {
     /// Alpha Arcade flips (authored analog air rotation; replaces the
     /// Unleashed gestures while on).
     pub arcade_flips: bool,
+    /// Game Settings → Measurement: Metric (Kph speedometer).
+    pub metric: bool,
+    /// Game Settings → Ecosystem Collision: Off (quads, riders and CPUs
+    /// pass through vegetation). Multiplayer rooms keep it on.
+    pub ecosystem_collision_off: bool,
 }
 
 /// World pose of the player's quad and rider for drawing.
@@ -818,6 +823,28 @@ impl Ride {
         self.step_with(controls, orbit, &mut |_| {})
     }
 
+    /// Game Settings: the speedometer factor (`0020f780` stores 0.68182 or
+    /// 1.08 at settings +0x564; the HUD multiplies ft/s by it, `002e2030`)
+    /// and Ecosystem Collision for the quad and every CPU racer.
+    fn apply_game_settings(&mut self) -> Result<()> {
+        let units = if self.options.metric {
+            atv_core::hall_of_fame::Units::Metric
+        } else {
+            atv_core::hall_of_fame::Units::Standard
+        };
+        self.hud.set_speed_factor(units.speed().0)?;
+        let ecosystem = !self.options.ecosystem_collision_off;
+        if let Mount::Quad { vehicle, .. } = &mut self.mount {
+            vehicle.set_ecosystem_collision(ecosystem);
+        }
+        if let Some(state) = &mut self.race {
+            for cpu in &mut state.cpus {
+                cpu.vehicle.set_ecosystem_collision(ecosystem);
+            }
+        }
+        Ok(())
+    }
+
     /// [`Ride::step`] with a multiplayer hook: `contacts` applies the other
     /// riders' contacts once the step's train has moved, before the vehicle
     /// steps (atv-web op 50: train, `collide`, then the vehicle). Rooms ride
@@ -828,6 +855,7 @@ impl Ride {
         orbit: f32,
         contacts: &mut dyn FnMut(&mut Ride),
     ) -> Result<()> {
+        self.apply_game_settings()?;
         if self.is_motorcycle() {
             contacts(self);
             self.step_bike(controls)?;

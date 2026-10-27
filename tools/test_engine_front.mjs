@@ -54,9 +54,9 @@ try {
   await wait(page, () => !JSON.parse(document.querySelector('#ui-state').textContent).front.menu);
   for (let i = 0; i < f.choices.indexOf('settings'); i++) await key(page, 'ArrowUp');
   await key(page, 'Enter'); await onPage(page, 'single');
-  assert.deepEqual((await front(page)).choices, ['tracks', 'race', 'championship', 'games', 'garage']);
+  assert.deepEqual((await front(page)).choices, ['tracks', 'objective-courses', 'race', 'championship', 'games', 'garage']);
   // Garage: Right steps the ATV, the rider switch toggles; both persist.
-  for (let i = 0; i < 4; i++) await key(page, 'ArrowDown');
+  for (let i = 0; i < 5; i++) await key(page, 'ArrowDown');
   await key(page, 'Enter'); await onPage(page, 'garage');
   // The 3D previews: the ATV and the original menu rider (animated idle).
   await wait(page, () => { const m = JSON.parse(document.querySelector('#ui-state').textContent).front.models; return m[0]?.startsWith('vehicle:1:') && m[1] === 'rider:0'; }, null, 120000);

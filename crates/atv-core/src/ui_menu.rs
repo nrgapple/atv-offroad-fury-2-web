@@ -8,6 +8,20 @@ use serde::{Deserialize, Serialize};
 const FONT: &str = "tradegothic_boldcondensed_22s";
 const SELECTED_FONT: &str = "tradegothic_boldcondensed_22soff";
 const HEADER_FONT: &str = "tradegothic_boldcondenseditalic_-1fs_32ds";
+/// The original's Warning alert 0x90 (`0025e120`) shown before Ecosystem
+/// Collision turns off, line by line.
+pub const ECOSYSTEM_WARNING: [&str; 6] = [
+    "If Ecosystem Collision is turned off freestyle",
+    "records will still be kept, but race records will not.",
+    "NOTE: In i.LINK, LAN, and online play,",
+    "Ecosystem Collision is always on.",
+    "Are you sure you wish to turn off",
+    "Ecosystem Collision?",
+];
+
+fn on() -> bool {
+    true
+}
 fn full_volume() -> usize {
     100
 }
@@ -134,6 +148,14 @@ pub struct Request {
     /// Authored train riding relative to the moving support; off is original.
     #[serde(default)]
     pub realistic_train: bool,
+    /// Game Settings (Settings_Game, PAGE15): Measurement Metric,
+    /// Ecosystem Collision and Sound Configuration.
+    #[serde(default)]
+    pub metric: bool,
+    #[serde(default = "on")]
+    pub ecosystem_collision: bool,
+    #[serde(default)]
+    pub sound_configuration: String,
     #[serde(default)]
     pub speed_rush: String,
     /// Display → Graphics choice (auto/original/enhanced/high) and, for Auto,
@@ -484,6 +506,8 @@ pub fn layout(request: Request) -> Result<Frame> {
         request.page.as_str(),
         "settings"
             | "extras"
+            | "game-settings"
+            | "ecosystem-warning"
             | "alpha"
             | "pause"
             | "players"
@@ -563,6 +587,8 @@ pub fn layout(request: Request) -> Result<Frame> {
         "pause" => "Pause",
         "settings" => "Settings",
         "extras" => "Extras",
+        "game-settings" => "Game Settings",
+        "ecosystem-warning" => "Warning",
         "alpha" => "Alpha",
         "players" => "Lobby Players",
         "hud-settings" => "Display",
@@ -1305,7 +1331,29 @@ pub fn layout(request: Request) -> Result<Frame> {
                 );
             }
         }
-        "settings" | "extras" | "hud-settings" => {
+        "ecosystem-warning" => {
+            // The original's Warning alert 0x90 (`0025e120`) before
+            // Ecosystem Collision turns off.
+            for (i, line) in ECOSYSTEM_WARNING.iter().enumerate() {
+                let y = 96. + (i + i / 4) as f32 * 24.;
+                f.text(*line, [24., y], 0.72, FONT, "235,235,235", w - 48.);
+            }
+            let top = 96. + 7. * 24. + 12.;
+            let row = 54f32.min((h - top - 8.) / 2.);
+            for (i, (label, action)) in [("Yes", "ecosystem-yes"), ("No", "ecosystem-no")]
+                .iter()
+                .enumerate()
+            {
+                f.choices.push((*action).into());
+                f.button(
+                    label,
+                    action,
+                    [24., top + i as f32 * row, w - 48., row],
+                    request.selection % 2 == i,
+                );
+            }
+        }
+        "settings" | "extras" | "hud-settings" | "game-settings" => {
             let crash_label = match request.crash_mode.as_str() {
                 "gorn" => "Crashes: Gorn (blood & limbs)",
                 "crazy" => "Crashes: Crazy",
@@ -1325,6 +1373,7 @@ pub fn layout(request: Request) -> Result<Frame> {
             let graphics_label = graphics_label(&request);
             let mut choices = match request.page.as_str() {
                 "settings" => vec![
+                    ("Game Settings", "game-settings"),
                     ("Controls", "controls"),
                     ("Display", "hud-settings"),
                     ("Audio", "music"),
@@ -1366,6 +1415,33 @@ pub fn layout(request: Request) -> Result<Frame> {
                         "train-riding",
                     ),
                     (diagnostics, "diagnostics"),
+                ],
+                "game-settings" => vec![
+                    (
+                        if request.metric {
+                            "Measurement: Metric"
+                        } else {
+                            "Measurement: Standard (U.S. system)"
+                        },
+                        "measurement",
+                    ),
+                    (
+                        if request.ecosystem_collision {
+                            "Ecosystem Collision: On"
+                        } else {
+                            "Ecosystem Collision: Off"
+                        },
+                        "ecosystem",
+                    ),
+                    (
+                        match request.sound_configuration.as_str() {
+                            "swapped" => "Sound Configuration: Stereo (Swapped)",
+                            "dolby" => "Sound Configuration: Dolby",
+                            "mono" => "Sound Configuration: Mono",
+                            _ => "Sound Configuration: Stereo",
+                        },
+                        "sound-configuration",
+                    ),
                 ],
                 _ => vec![
                     (graphics_label.as_str(), "graphics"),
@@ -1957,6 +2033,43 @@ pub fn layout(request: Request) -> Result<Frame> {
 mod tests {
     use super::*;
     #[test]
+    fn game_settings_rows_and_ecosystem_warning() {
+        let labels = |r: Request| -> Vec<String> {
+            layout(r)
+                .unwrap()
+                .draw
+                .iter()
+                .filter_map(|d| match d {
+                    Draw::Text { text, .. } => Some(text.clone()),
+                    _ => None,
+                })
+                .collect()
+        };
+        let settings = labels(request("settings", 390., 844.));
+        assert!(settings.iter().any(|t| t == "Game Settings"));
+        let mut r = request("game-settings", 390., 844.);
+        r.metric = true;
+        r.sound_configuration = "swapped".into();
+        let game = labels(r);
+        for row in [
+            "Game Settings",
+            "Measurement: Metric",
+            "Ecosystem Collision: On",
+            "Sound Configuration: Stereo (Swapped)",
+            "Back",
+        ] {
+            assert!(game.iter().any(|t| t == row), "{row}: {game:?}");
+        }
+        let warning = layout(request("ecosystem-warning", 390., 844.)).unwrap();
+        assert_eq!(warning.choices, ["ecosystem-yes", "ecosystem-no"]);
+        let text = labels(request("ecosystem-warning", 640., 448.));
+        assert!(
+            text.iter()
+                .any(|t| t == "Ecosystem Collision is always on.")
+        );
+    }
+
+    #[test]
     fn audio_page_has_separate_sfx_volume_and_sound_mode() {
         let mut r = request("music", 390., 844.);
         r.sfx_volume = 75;
@@ -2071,6 +2184,9 @@ mod tests {
             chase_assist: false,
             flips: false,
             realistic_train: false,
+            metric: false,
+            ecosystem_collision: true,
+            sound_configuration: String::new(),
             speed_rush: "normal".into(),
             graphics_preset: String::new(),
             graphics_resolved: String::new(),

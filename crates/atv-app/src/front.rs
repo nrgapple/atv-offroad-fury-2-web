@@ -314,8 +314,14 @@ impl Front {
     pub fn fame_briefing(&mut self, race: Option<(String, bool)>) {
         let lines = race
             .map(|(course, expert)| {
-                let hall = atv_ui::settings::load_hall_of_fame(&Settings::load());
-                atv_core::hall_of_fame::briefing(hall.course(&course, expert), &course, expert)
+                let saved = Settings::load();
+                let hall = atv_ui::settings::load_hall_of_fame(&saved);
+                atv_core::hall_of_fame::briefing(
+                    hall.course(&course, expert),
+                    &course,
+                    expert,
+                    atv_ui::settings::units(&saved),
+                )
             })
             .unwrap_or_default();
         self.state.set_fame_briefing(lines);
@@ -373,6 +379,7 @@ impl Front {
                     | "single"
                     | "championship"
                     | "objectives"
+                    | "objective-courses"
                     | "profile"
                     | "profile-view"
                     | "garage"
@@ -783,6 +790,7 @@ impl Front {
                 | "single"
                 | "championship"
                 | "objectives"
+                | "objective-courses"
                 | "profile"
                 | "profile-view"
                 | "multiplayer"
@@ -1219,6 +1227,7 @@ impl Front {
                     | "single"
                     | "championship"
                     | "objectives"
+                    | "objective-courses"
                     | "profile"
                     | "profile-view"
                     | "garage"

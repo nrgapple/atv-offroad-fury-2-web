@@ -237,6 +237,8 @@ pub struct Trigger {
     pub position: [f32; 3],
     /// `Box`: the extents about `position` (read as half sizes).
     pub extents: [f32; 3],
+    /// `Radius`: a sphere trigger (Freestyle targets), 0 for a box.
+    pub radius: f32,
     pub one_time: bool,
     /// Each action's `ActionType` and its other keys (lowercase).
     pub actions: Vec<(String, BTreeMap<String, String>)>,
@@ -292,6 +294,11 @@ pub fn parse_triggers(toy: &Toy) -> Vec<Trigger> {
             name: toy.get(&section, "Name").unwrap_or_default().to_string(),
             position,
             extents,
+            radius: toy
+                .get(&section, "Radius")
+                .and_then(|r| r.trim().parse::<f32>().ok())
+                .filter(|r| r.is_finite() && *r > 0.)
+                .unwrap_or(0.),
             one_time: toy
                 .get(&section, "OneTimeOnly")
                 .is_some_and(|v| v.eq_ignore_ascii_case("t")),
@@ -618,6 +625,56 @@ mod tests {
                     }
                 }
             }
+        }
+    }
+
+    /// Private probe: the King of the Hills scenes add only the `kohbase`
+    /// and `kohflag` models, and no game archive ships a collision mesh for
+    /// them (the original's static collision skips models without a COL,
+    /// `00206e90`); every COL a game archive carries is the Freeride one.
+    #[test]
+    fn hill_scene_objects_have_no_collision_meshes() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../private/extracted");
+        if !root.join("TRACKS/TRACKSA/ENV05/E05_FR.RES").exists() {
+            eprintln!("skipped: private archives are not extracted");
+            return;
+        }
+        for venue in [
+            "env01", "env02", "env03", "env04", "env05", "env06", "env07", "env08", "free01",
+            "free02", "free03", "free04", "free05", "free06",
+        ] {
+            let path = game_archive(GameKind::KingOfTheHills, venue).unwrap();
+            let bytes = std::fs::read(root.join(&path[1..])).unwrap();
+            let archive = crate::resource::Resource::parse(&bytes).unwrap();
+            for name in ["geometry/kohbase.col", "geometry/kohflag.col"] {
+                assert!(
+                    !archive
+                        .members
+                        .iter()
+                        .any(|m| m.name.eq_ignore_ascii_case(name)),
+                    "{venue} {name}"
+                );
+            }
+        }
+        let read = |p: &str| std::fs::read(root.join(p)).unwrap();
+        let (kh, fr) = (
+            read("TRACKS/TRACKSA/ENV05/E05_KH.RES"),
+            read("TRACKS/TRACKSA/ENV05/E05_FR.RES"),
+        );
+        let (kh, fr) = (
+            crate::resource::Resource::parse(&kh).unwrap(),
+            crate::resource::Resource::parse(&fr).unwrap(),
+        );
+        for (i, m) in kh.members.iter().enumerate() {
+            if !m.name.to_ascii_lowercase().ends_with(".col") {
+                continue;
+            }
+            let j = fr
+                .members
+                .iter()
+                .position(|f| f.name.eq_ignore_ascii_case(&m.name))
+                .unwrap_or_else(|| panic!("{} only in the game archive", m.name));
+            assert_eq!(kh.extract(i).unwrap(), fr.extract(j).unwrap(), "{}", m.name);
         }
     }
 

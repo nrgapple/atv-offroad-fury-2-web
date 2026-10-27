@@ -220,7 +220,7 @@ tricks, so CPU rows read 0).
   courses the content holds, grouped as the PAGE27–35 event pages: Total
   Races, Total Victories, Best Lap Time, Best 5-Lap or 3-Lap Time, Most
   Winning ATV, and Longest Jump). Longest Jump reads "N Feet" (truncated;
-  the Meters setting is not ported), Most Combos and Most Points In One
+  Meters follows Game Settings → Measurement, MENU_SCREENS.md), Most Combos and Most Points In One
   Jump read the profile's records; the port has no Freestyle objective, so
   Most Stunt Points In An Objective reads "-"; Overview adds the port's
   Highest Race Stunt Score. Percent Complete is +0x6c1 over the
@@ -263,7 +263,9 @@ tricks, so CPU rows read 0).
   loading screen adds a "Hall of Fame:" panel with the `002585c0` lines.
   Online rooms keep no records (+0x7d8). Not ported: the +0x514 vehicle
   exclusions (which vehicles 1 and 0x15 are is unverified), the overall
-  records and Meters. A controller edits the name with an authored letter
+  records. Meters follow Game Settings → Measurement and Ecosystem
+  Collision Off stops race records (+0x674; MENU_SCREENS.md "Game
+  Settings"). A controller edits the name with an authored letter
   picker (Up/Down step the last letter, Right adds one, Left deletes one);
   touch players keep the default name (no on-screen keyboard here).
 - **Freestyle records and Hall of Fame.** Outside races the ride measures
@@ -299,8 +301,8 @@ tricks, so CPU rows read 0).
   and the profile keep the maxima. Authored: a reset drops a jump in
   progress so a respawn is not measured as flight. The in-race "New
   Personal …" messages come with the Hall of Fame (below). Not ported: the
-  vehicle-index and world +0x674 gates, the Freestyle record
-  (the port has no Freestyle results), Meters, and highest jump / air time
+  vehicle-index gate, the Freestyle record
+  (the port has no Freestyle results) and highest jump / air time
   (no page shows them).
 - **No profile loaded.** As `001f1e30` gives a rider without a profile
   nothing, a race then earns no points, is not recorded and its results add

@@ -4,6 +4,8 @@ use crate::{Result, engine_audio::OriginalRandom, ui::Document};
 use serde::Serialize;
 
 pub const MPH_FACTOR: f32 = 0.68182;
+/// The Metric speed factor `0020f780` stores (0x3f8a3d71), shown as Kph.
+pub const KPH_FACTOR: f32 = 1.08;
 
 #[derive(Debug, Clone, Copy)]
 pub struct Config {

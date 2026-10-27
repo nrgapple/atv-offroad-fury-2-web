@@ -145,6 +145,7 @@ fn parent(page: &str) -> &'static str {
         "settings" => "pause",
         "minimap-config" | "race-overlays" => "hud-settings",
         "controller-settings" | "bindings" => "controls",
+        "ecosystem-warning" => "game-settings",
         "pause" | "players" | "jukebox" => "pause",
         _ => "settings",
     }
@@ -289,6 +290,9 @@ impl PauseMenu {
             "chase_assist": p.chase_assist,
             "flips": p.flips,
             "realistic_train": p.realistic_train,
+            "metric": p.metric,
+            "ecosystem_collision": p.ecosystem_collision,
+            "sound_configuration": p.sound_configuration,
             "speed_rush": p.speed_rush,
             "graphics_preset": p.graphics,
             "graphics_resolved": p.graphics_resolved(),
@@ -531,9 +535,27 @@ impl PauseMenu {
             }
             "main" => return Some(Event::Leave("play.html")),
             "settings" | "extras" | "alpha" | "hud-settings" | "minimap-config"
-            | "race-overlays" | "controls" | "music" => {
+            | "race-overlays" | "controls" | "music" | "game-settings" => {
                 self.show(action);
                 return None;
+            }
+            // Turning Ecosystem Collision off asks first (Warning 0x90);
+            // turning it on does not.
+            "ecosystem" => {
+                if ctx.prefs.ecosystem_collision {
+                    self.show("ecosystem-warning");
+                    return None;
+                }
+                ctx.prefs.set_ecosystem_collision(true, ctx.settings);
+                Event::Changed
+            }
+            "ecosystem-yes" | "ecosystem-no" => {
+                if action == "ecosystem-yes" {
+                    ctx.prefs.set_ecosystem_collision(false, ctx.settings);
+                }
+                self.show("game-settings");
+                self.selection = 1;
+                Event::Changed
             }
             "keyboard" | "padbindings" => {
                 self.keyboard = action == "keyboard";
@@ -1442,6 +1464,39 @@ mod parity_tests {
         assert_eq!((menu.page.as_str(), menu.selection), ("settings", 0));
         fx.with(&mut menu, |m, ctx| m.key("Escape", ctx));
         assert_eq!((menu.page.as_str(), menu.selection), ("pause", 0));
+    }
+
+    #[test]
+    fn ecosystem_collision_asks_before_turning_off() {
+        let mut fx = Fixture::new();
+        let mut menu = PauseMenu::new();
+        fx.with(&mut menu, |m, ctx| m.run("settings", 1, false, ctx));
+        fx.with(&mut menu, |m, ctx| m.run("game-settings", 1, false, ctx));
+        assert_eq!(
+            menu.rows.choices,
+            ["measurement", "ecosystem", "sound-configuration", "back"]
+        );
+        fx.with(&mut menu, |m, ctx| m.run("ecosystem", 1, false, ctx));
+        assert_eq!(menu.page, "ecosystem-warning");
+        fx.with(&mut menu, |m, ctx| m.run("ecosystem-no", 1, false, ctx));
+        assert_eq!((menu.page.as_str(), menu.selection), ("game-settings", 1));
+        assert!(fx.prefs.ecosystem_collision);
+        fx.with(&mut menu, |m, ctx| m.run("ecosystem", 1, false, ctx));
+        fx.with(&mut menu, |m, ctx| m.run("ecosystem-yes", 1, false, ctx));
+        assert!(!fx.prefs.ecosystem_collision);
+        assert_eq!(
+            fx.settings.get("atv-ecosystem-collision").as_deref(),
+            Some("off")
+        );
+        // Turning it back on does not ask.
+        fx.with(&mut menu, |m, ctx| m.run("ecosystem", 1, false, ctx));
+        assert_eq!(menu.page, "game-settings");
+        assert!(fx.prefs.ecosystem_collision);
+        fx.with(&mut menu, |m, ctx| m.run("ecosystem", 1, false, ctx));
+        fx.with(&mut menu, |m, ctx| m.key("Escape", ctx));
+        assert_eq!(menu.page, "game-settings");
+        fx.with(&mut menu, |m, ctx| m.key("Escape", ctx));
+        assert_eq!(menu.page, "settings");
     }
 
     #[test]

@@ -137,6 +137,20 @@ pub const PROFILES_KEY: &str = "fury-profiles";
 /// implicit profile becomes the loaded "PLAYER1". The `fury-profile` mirror
 /// is authoritative for the loaded profile's record (it is what races
 /// credit and what older tools write).
+/// Game Settings → Measurement (`atv-measurement`, see menu::prefs).
+pub fn units(settings: &Settings) -> atv_core::hall_of_fame::Units {
+    if settings.get("atv-measurement").as_deref() == Some("metric") {
+        atv_core::hall_of_fame::Units::Metric
+    } else {
+        atv_core::hall_of_fame::Units::Standard
+    }
+}
+
+/// Game Settings → Ecosystem Collision (`atv-ecosystem-collision`).
+pub fn ecosystem_collision(settings: &Settings) -> bool {
+    settings.get("atv-ecosystem-collision").as_deref() != Some("off")
+}
+
 pub fn load_book(settings: &Settings) -> atv_core::profile::ProfileBook {
     use atv_core::profile::{Profile, ProfileBook};
     let mirror: Option<Profile> = settings

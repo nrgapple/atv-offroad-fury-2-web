@@ -38,6 +38,9 @@ use crate::championship::{Championships, Series, Trophy, save_key};
 /// `00289d50` +0x57c: the Freestyle event's time limit, seconds.
 pub const TIME_LIMIT: f32 = 120.0;
 
+/// `2fd980`: score per whole second left when an objective completes.
+pub const TIME_BONUS_PER_SECOND: f32 = 100.;
+
 /// Objectives per course counted by the championship (`0025a100`).
 pub const BITS_PER_COURSE: u32 = 6;
 
@@ -105,6 +108,9 @@ pub enum Kind {
 pub struct Objective {
     pub description: String,
     pub kind: Kind,
+    /// `DefaultStartPosition` / `DefaultStartDirection`: where the
+    /// objective places the rider (absent from the built-in table).
+    pub start: Option<crate::games::Start>,
 }
 
 impl Objective {
@@ -117,9 +123,10 @@ impl Objective {
         }
     }
 
-    /// The port loads no target TOYs yet (they ship in the OB archives).
-    pub fn playable(&self) -> bool {
-        !matches!(self.kind, Kind::CherryPick { .. })
+    /// Whether the objective rides on the hosted package: the target runs
+    /// need the course's OB archive (`has_archive`).
+    pub fn playable(&self, has_archive: bool) -> bool {
+        has_archive || !matches!(self.kind, Kind::CherryPick { .. })
     }
 }
 
@@ -193,9 +200,21 @@ pub fn parse_objectives(text: &str) -> Result<Vec<Objective>> {
             }
             other => return Err(format!("[{s}] unknown objective type {other:?}")),
         };
+        let vector = |key: &str| -> Option<[f32; 3]> {
+            let v: Vec<f32> = get(&s, key)?
+                .split(',')
+                .map(|c| c.trim().parse::<f32>())
+                .collect::<std::result::Result<_, _>>()
+                .ok()?;
+            (v.len() == 3 && v.iter().all(|c| c.is_finite())).then(|| [v[0], v[1], v[2]])
+        };
         objectives.push(Objective {
             description: get(&s, "description").unwrap_or_default(),
             kind,
+            start: vector("defaultstartposition").map(|position| crate::games::Start {
+                position,
+                direction: vector("defaultstartdirection").unwrap_or([0., 0., 1.]),
+            }),
         });
     }
     Ok(objectives)
@@ -230,6 +249,7 @@ pub fn course_objectives(course: &str) -> Option<Vec<Objective>> {
                 bonus_seconds: 10.,
                 toy: format!("{course}gcp"),
             },
+            start: None,
         },
         Objective {
             description: "Hit Every Red Target".into(),
@@ -239,18 +259,100 @@ pub fn course_objectives(course: &str) -> Option<Vec<Objective>> {
                 bonus_seconds: 5.,
                 toy: format!("{course}rcp"),
             },
+            start: None,
         },
         Objective {
             description: "Bust 10 Different Combos".into(),
             kind: Kind::ComboMambo { combos: 10 },
+            start: None,
         },
         Objective {
             description: "Score Stunt Points".into(),
             kind: Kind::Stunt {
                 levels: levels.to_vec(),
             },
+            start: None,
         },
     ])
+}
+
+/// A championship course's objective archive (`TRACKS/*/<x>_OB.RES`):
+/// the course `.obj`, the green/red target TOYs and the cherry models.
+pub fn objective_archive(course: &str) -> Option<String> {
+    course_objectives(course)?;
+    let (folder, stem) = if let Some(n) = course.strip_prefix("env") {
+        (format!("ENV{n}"), format!("E{n}"))
+    } else {
+        let n = course.strip_prefix("free")?;
+        (format!("FREE{n}"), format!("F{n}"))
+    };
+    Some(format!("/TRACKS/TRACKSA/{folder}/{stem}_OB.RES"))
+}
+
+/// One target of a CherryPick TOY: a one-time trigger sphere whose
+/// actions hide its cherry animation, run the `Cherry` action and start
+/// its explosion emitter.
+#[derive(Clone, Debug, PartialEq, serde::Serialize)]
+pub struct Target {
+    pub name: String,
+    /// The trigger sphere (`Position`, `Radius`).
+    pub position: [f32; 3],
+    pub radius: f32,
+    /// The hidden animation (`AnimationNameRef`) and its `[AnimationN]`
+    /// model (`MCF`, the cherry PSG stem) at `Offset`.
+    pub animation: String,
+    pub model: String,
+    pub offset: [f32; 3],
+    /// `Particles` action: `EmitterNumber` (1-based).
+    pub emitter: Option<u32>,
+}
+
+/// The targets of a CherryPick TOY (`[Triggers]` with a `Cherry` action;
+/// `0023ff80`), in trigger order.
+pub fn parse_targets(text: &str) -> Vec<Target> {
+    use crate::games::{Toy, parse_triggers};
+    let toy = Toy::parse(text);
+    let animations = toy
+        .int("Animations", "NumberOfAnimations")
+        .unwrap_or(0)
+        .clamp(0, 512);
+    let animation = |reference: &str| {
+        (1..=animations).find_map(|n| {
+            let section = format!("Animation{n}");
+            toy.get(&section, "ReferenceName")
+                .filter(|r| r.eq_ignore_ascii_case(reference))?;
+            let mcf = toy.get(&section, "MCF")?;
+            let stem = mcf.rsplit_once('.').map_or(mcf, |(stem, _)| stem);
+            Some((
+                stem.to_ascii_lowercase(),
+                toy.vec3(&section, "Offset").unwrap_or([0.; 3]),
+            ))
+        })
+    };
+    parse_triggers(&toy)
+        .into_iter()
+        .filter(|t| t.action("Cherry").is_some())
+        .map(|t| {
+            let reference = t
+                .action("HideAnimation")
+                .and_then(|a| a.get("animationnameref"))
+                .cloned()
+                .unwrap_or_default();
+            let (model, offset) = animation(&reference).unwrap_or_default();
+            Target {
+                name: t.name.clone(),
+                position: t.position,
+                radius: if t.radius > 0. { t.radius } else { 5. },
+                animation: reference,
+                model,
+                offset,
+                emitter: t
+                    .action("Particles")
+                    .and_then(|a| a.get("emitternumber"))
+                    .and_then(|n| n.trim().parse().ok()),
+            }
+        })
+        .collect()
 }
 
 /// How a finished objective ended.
@@ -314,9 +416,14 @@ impl Run {
         self.outcome.is_some()
     }
 
+    /// Completes the run: `2fd980` adds the whole seconds left x 100 to
+    /// the score of a completed objective (every type).
     fn complete(&mut self) {
         if self.outcome.is_none() {
             self.outcome = Some(Outcome::Completed);
+            let bonus = self.time_left.max(0.).floor() * TIME_BONUS_PER_SECOND;
+            self.bonus += bonus;
+            self.score += bonus;
         }
     }
 
@@ -388,9 +495,35 @@ impl Run {
         self.bonus += bonus_points;
         self.score += bonus_points;
         self.time_left += bonus_seconds;
+        // `2fab40` signs (Overlays.pb `[Single-Sign-8/9]`, `-10/11]`).
         if self.hits.iter().all(|h| *h) {
+            self.messages.push("All Targets Collected".into());
             self.complete();
+        } else {
+            self.messages.push("Target Collected".into());
         }
+    }
+
+    /// The rider at `point` touches the targets' spheres (grown by
+    /// `reach`): each untouched one is hit once. Returns the new hits.
+    pub fn touch(&mut self, targets: &[Target], point: [f32; 3], reach: f32) -> Vec<usize> {
+        let mut hit = Vec::new();
+        for (i, t) in targets.iter().enumerate() {
+            if self.finished() || self.hits.get(i).is_none_or(|h| *h) {
+                continue;
+            }
+            let d: f32 = (0..3).map(|a| (point[a] - t.position[a]).powi(2)).sum();
+            if d <= (t.radius + reach).powi(2) {
+                self.hit(i);
+                hit.push(i);
+            }
+        }
+        hit
+    }
+
+    /// Targets hit so far.
+    pub fn targets_hit(&self) -> usize {
+        self.hits.iter().filter(|h| **h).count()
     }
 
     /// Combos counted so far.
@@ -583,7 +716,8 @@ mod tests {
 
     const OBJ: &str = "[Objectives]\r\nNumObjectives = 4\r\n\r\n;---\r\n; Hit\r\n[Objective0]\r\n\
 Type=CherryPick\r\nNumberOfTargets=13\r\nBonusPointsPerTarget=500\r\nBonusTimePerTargetInSec=10\r\n\
-Description=\"Hit Every Green Target\"\r\nTOYFile=env05gcp\r\n[Objective1]\r\nType=CherryPick\r\n\
+Description=\"Hit Every Green Target\"\r\nTOYFile=env05gcp\r\nDefaultStartPosition=2256,137,3269.44\r\n\
+DefaultStartDirection=.996,0,-.088\r\n[Objective1]\r\nType=CherryPick\r\n\
 NumberOfTargets=8\r\nBonusPointsPerTarget=1000\r\nBonusTimePerTargetInSec=5\r\n\
 Description=\"Hit Every Red Target\"\r\nTOYFile=env05rcp\r\n[Objective2]\r\nType=ComboMambo\r\n\
 CombosToWin=10\r\nDescription=\"Bust 10 Different Combos\"\r\nTOYFile=\r\n[Objective3]\r\n\
@@ -592,7 +726,18 @@ Description=\"Score Stunt Points\"\r\nTOYFile=\r\n";
 
     #[test]
     fn parses_the_obj_layout_and_matches_the_course_table() {
-        let parsed = parse_objectives(OBJ).unwrap();
+        let mut parsed = parse_objectives(OBJ).unwrap();
+        assert_eq!(
+            parsed[0].start,
+            Some(crate::games::Start {
+                position: [2256., 137., 3269.44],
+                direction: [0.996, 0., -0.088]
+            })
+        );
+        assert_eq!(parsed[1].start, None);
+        for o in &mut parsed {
+            o.start = None;
+        }
         assert_eq!(parsed, course_objectives("env05").unwrap());
         assert!(
             parse_objectives("[Objectives]\nNumObjectives=1\n[Objective0]\nType=Foo\n").is_err()
@@ -681,6 +826,67 @@ Description=\"Score Stunt Points\"\r\nTOYFile=\r\n";
         }
         assert_eq!(run.outcome, Some(Outcome::Completed));
         assert_eq!(run.earned_bits(), 0b10);
+    }
+
+    /// The layout of the OB archives' target TOYs (`env01gcp.toy`).
+    const TARGETS: &str = "[Triggers]\r\nNumberOfTriggers=2\r\n[Trigger1]\r\nName=Cherry1\r\n\
+NumberOfActions=3\r\nZone=1\r\nOneTimeOnly=T\r\nPosition=100,20,300\r\nRadius=5.0\r\n\
+[Trigger1Action1]\r\nActionType=HideAnimation\r\nAnimationNameRef=cherry1r\r\n\
+[Trigger1Action2]\r\nActionType=Cherry\r\n[Trigger1Action3]\r\nActionType=Particles\r\n\
+EmitterNumber=1\r\nInstanceNumber=1\r\nTurnOn=T\r\n[Trigger2]\r\nName=Cherry2\r\n\
+NumberOfActions=2\r\nOneTimeOnly=T\r\nPosition=200,20,300\r\nRadius=5.0\r\n\
+[Trigger2Action1]\r\nActionType=HideAnimation\r\nAnimationNameRef=cherry2r\r\n\
+[Trigger2Action2]\r\nActionType=Cherry\r\n[Animations]\r\nNumberOfAnimations=2\r\n\
+[Animation1]\r\nMCF=cherryr.mcf\r\nIsGlobal=T\r\nOffset=100,20,300\r\nReferenceName=cherry1r\r\n\
+[Animation2]\r\nMCF=cherryr.mcf\r\nOffset=200,20,300\r\nReferenceName=cherry2r\r\n";
+
+    #[test]
+    fn targets_come_from_the_toy_and_hit_once() {
+        let targets = parse_targets(TARGETS);
+        assert_eq!(targets.len(), 2);
+        assert_eq!(targets[0].model, "cherryr");
+        assert_eq!(targets[0].animation, "cherry1r");
+        assert_eq!(targets[0].emitter, Some(1));
+        assert_eq!(
+            (targets[1].offset, targets[1].radius),
+            ([200., 20., 300.], 5.)
+        );
+        assert_eq!(
+            objective_archive("free06").as_deref(),
+            Some("/TRACKS/TRACKSA/FREE06/F06_OB.RES")
+        );
+        assert_eq!(
+            objective_archive("env01").as_deref(),
+            Some("/TRACKS/TRACKSA/ENV01/E01_OB.RES")
+        );
+        assert_eq!(objective_archive("env03"), None);
+        let mut objective = course_objectives("free06").unwrap().remove(1);
+        objective.kind = Kind::CherryPick {
+            targets: 2,
+            bonus_points: 1000.,
+            bonus_seconds: 5.,
+            toy: "x".into(),
+        };
+        let mut run = Run::new(objective, 1, 0.);
+        assert!(run.touch(&targets, [106., 20., 300.], 0.).is_empty());
+        assert_eq!(run.touch(&targets, [104., 21., 301.], 0.), [0]);
+        // One-time: touching it again counts nothing.
+        assert!(run.touch(&targets, [100., 20., 300.], 0.).is_empty());
+        assert_eq!((run.targets_hit(), run.score), (1, 1000.));
+        assert_eq!(run.progress(), "Targets 1 of 2");
+        assert_eq!(run.messages.last().unwrap(), "Target Collected");
+        assert_eq!(run.touch(&targets, [207., 20., 300.], 2.5), [1]);
+        assert_eq!(run.outcome, Some(Outcome::Completed));
+        assert_eq!(run.messages.last().unwrap(), "All Targets Collected");
+        // `2fd980`: the 130 whole seconds left x 100.
+        assert_eq!(run.score, 2000. + 13000.);
+        assert_eq!(run.earned_bits(), 0b10);
+        assert!(objective_playable_rules());
+    }
+
+    fn objective_playable_rules() -> bool {
+        let o = course_objectives("env01").unwrap();
+        !o[0].playable(false) && o[0].playable(true) && o[2].playable(false)
     }
 
     #[test]

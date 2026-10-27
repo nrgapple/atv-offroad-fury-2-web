@@ -97,7 +97,10 @@ pub fn load(
             continue;
         }
         let path = format!("geometry/{}.psg", model.name);
+        // Animated TOY models (the Freestyle targets' cherries) ship under
+        // `anim/`.
         let index = member_at(archive, &path)
+            .or_else(|| member_at(archive, &format!("anim/{}.psg", model.name)))
             .ok_or_else(|| format!("Original scene mesh is missing: {}", model.name))?;
         match model_chunks(archive, index, &mut materials, &mut scenery) {
             Ok(chunks) => geometry.push((model.name.clone(), chunks)),

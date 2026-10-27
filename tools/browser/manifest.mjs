@@ -39,6 +39,7 @@ export const TESTS = {
       'Compares with the JavaScript game: serve the pinned reference (python3 tools/js_reference.py serve) and set ATV_JS_URL'
   },
   'test_engine_settings.mjs': { group: 'content' },
+  'test_engine_game_settings.mjs': { group: 'content' },
   'test_engine_session_settings.mjs': { group: 'content' },
   'test_engine_links.mjs': { group: 'content' },
   'test_engine_wake_lock.mjs': { group: 'content' },
@@ -143,6 +144,7 @@ export const TESTS = {
   'test_engine_championship_loading.mjs': { group: 'content' },
   'test_engine_championship_enduro.mjs': { group: 'content', timeout: 900 },
   'test_engine_freestyle_objectives.mjs': { group: 'content', timeout: 900 },
+  'test_engine_freestyle_targets.mjs': { group: 'content', timeout: 900 },
   'test_engine_training.mjs': { group: 'content', timeout: 900 },
   'test_engine_games.mjs': { group: 'content', timeout: 900 },
   'test_engine_hockey_tag.mjs': { group: 'content', timeout: 600 },

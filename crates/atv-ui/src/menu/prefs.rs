@@ -9,6 +9,8 @@ pub const SPEED_RUSH: [&str; 4] = ["off", "low", "normal", "high"];
 pub const CRASH_MODES: [&str; 3] = ["original", "crazy", "gorn"];
 pub const DIAGNOSTICS: [&str; 3] = ["off", "performance", "debug"];
 pub const OVERLAY_GROUPS: [&str; 6] = ["timing", "lap", "score", "info", "speed", "radar"];
+/// Settings_Game (PAGE15) "Sound Configuration" values, in the page's order.
+pub const SOUND_CONFIGURATIONS: [&str; 4] = ["stereo", "swapped", "dolby", "mono"];
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Preferences {
@@ -38,6 +40,15 @@ pub struct Preferences {
     pub race_position: String,
     /// Settings → Alpha: the experiments switched on (`atv-alpha`).
     pub alpha: Vec<String>,
+    /// Game Settings → Measurement: Metric (profile +0x6b0 clear in the
+    /// original; `0020f780` then sets the speed factor to 1.08, Kph and
+    /// Meters). Off is Standard (U.S. system).
+    pub metric: bool,
+    /// Game Settings → Ecosystem Collision (settings +0x674). Off lets the
+    /// quads and riders pass through vegetation and stops race records.
+    pub ecosystem_collision: bool,
+    /// Game Settings → Sound Configuration (one of [`SOUND_CONFIGURATIONS`]).
+    pub sound_configuration: String,
 }
 
 /// web/alpha.js `ALPHA_FEATURES`: authored experiments, each off by default.
@@ -114,7 +125,30 @@ impl Preferences {
                 .into_iter()
                 .filter(|id| ALPHA_FEATURES.iter().any(|(f, _)| f == id))
                 .collect(),
+            metric: get("atv-measurement").as_deref() == Some("metric"),
+            ecosystem_collision: get("atv-ecosystem-collision").as_deref() != Some("off"),
+            sound_configuration: one_of(
+                get("atv-sound-configuration"),
+                &SOUND_CONFIGURATIONS,
+                "stereo",
+            ),
         }
+    }
+
+    /// The record and speed units the original picks from the speed factor
+    /// (`00332810`, `002585c0`, `002e2030`).
+    pub fn units(&self) -> atv_core::hall_of_fame::Units {
+        if self.metric {
+            atv_core::hall_of_fame::Units::Metric
+        } else {
+            atv_core::hall_of_fame::Units::Standard
+        }
+    }
+
+    /// Turns Ecosystem Collision on or off (the page asks before off).
+    pub fn set_ecosystem_collision(&mut self, on: bool, settings: &mut Settings) {
+        self.ecosystem_collision = on;
+        settings.set("atv-ecosystem-collision", if on { "on" } else { "off" });
     }
 
     pub fn alpha(&self, id: &str) -> bool {
@@ -228,6 +262,16 @@ impl Preferences {
                 };
                 settings.set("atv-train-riding", v);
             }
+            "measurement" => {
+                self.metric = !self.metric;
+                let v = if self.metric { "metric" } else { "standard" };
+                settings.set("atv-measurement", v);
+            }
+            "sound-configuration" => {
+                self.sound_configuration =
+                    cycle(&SOUND_CONFIGURATIONS, &self.sound_configuration, direction).into();
+                settings.set("atv-sound-configuration", &self.sound_configuration);
+            }
             "diagnostics" => {
                 self.diagnostics = cycle(&DIAGNOSTICS, &self.diagnostics, direction).into();
                 settings.set("atv.diagnostics.v1", &self.diagnostics);
@@ -340,5 +384,25 @@ mod tests {
             Some(r#"["radar"]"#)
         );
         assert_eq!(Preferences::load(&settings, true).overlays_off, ["radar"]);
+    }
+
+    #[test]
+    fn game_settings_default_to_the_original_and_persist() {
+        let mut settings = Settings::memory();
+        let mut prefs = Preferences::load(&settings, false);
+        assert!(!prefs.metric && prefs.ecosystem_collision);
+        assert_eq!(prefs.sound_configuration, "stereo");
+        prefs.apply("measurement", 1, false, &mut settings);
+        prefs.apply("sound-configuration", -1, true, &mut settings);
+        prefs.set_ecosystem_collision(false, &mut settings);
+        let loaded = Preferences::load(&settings, false);
+        assert!(loaded.metric && !loaded.ecosystem_collision);
+        assert_eq!(loaded.sound_configuration, "mono");
+        assert_eq!(loaded.units(), atv_core::hall_of_fame::Units::Metric);
+        settings.set("atv-sound-configuration", "surround");
+        assert_eq!(
+            Preferences::load(&settings, false).sound_configuration,
+            "stereo"
+        );
     }
 }

@@ -999,6 +999,16 @@ impl SceneRenderer {
         }
     }
 
+    /// Poses a scene model (a Freestyle target's cherry).
+    pub fn pose_model(&mut self, gpu: &Gpu, model: usize, matrix: &[f32; 16]) {
+        self.scenery.pose_model(gpu, model, matrix);
+    }
+
+    /// Hides or shows a scene model (a hit Freestyle target).
+    pub fn hide_model(&mut self, model: usize, hidden: bool) {
+        self.scenery.hide_model(model, hidden);
+    }
+
     /// Poses the venue's posed model outside a race (the Hockey puck),
     /// through the drop gate's path; unchanged matrices write nothing.
     pub fn pose_prop(&mut self, gpu: &Gpu, matrix: &[f32; 16]) {
