@@ -21,10 +21,119 @@ pub fn is_race_course(environment: &str) -> bool {
     matches!(family, "env" | "nat" | "sx") && environment.len() == family.len() + 2
 }
 
+/// The race archive a venue's race reads. Every Environment, National and
+/// Supercross venue ships a National-rules race (`*_NAT.RES`); each
+/// Environment also ships long and short Enduro courses (`E0n_ENDL.RES`,
+/// `E0n_ENDS.RES`) and Rockbridge Park, Caribou Peak and San Jacinto Isles
+/// a Short Track (`E0n_ST.RES`). Each variant has its own scene, mode TOY and
+/// TDF (`<venue><stem>.scn|.toy`, `<venue><stem>E.tdf`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum RaceVariant {
+    #[default]
+    National,
+    EnduroLong,
+    EnduroShort,
+    ShortTrack,
+}
+
+impl RaceVariant {
+    pub const ALL: [RaceVariant; 4] = [
+        RaceVariant::National,
+        RaceVariant::EnduroLong,
+        RaceVariant::EnduroShort,
+        RaceVariant::ShortTrack,
+    ];
+
+    /// Member stem after the venue id (`env05endl.toy`).
+    pub fn stem(self) -> &'static str {
+        match self {
+            RaceVariant::National => "nat",
+            RaceVariant::EnduroLong => "endl",
+            RaceVariant::EnduroShort => "ends",
+            RaceVariant::ShortTrack => "st",
+        }
+    }
+
+    /// Ride-link value (`course=`).
+    pub fn key(self) -> &'static str {
+        match self {
+            RaceVariant::National => "national",
+            RaceVariant::EnduroLong => "enduro-long",
+            RaceVariant::EnduroShort => "enduro-short",
+            RaceVariant::ShortTrack => "short-track",
+        }
+    }
+
+    pub fn from_key(key: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|v| v.key() == key)
+    }
+
+    /// Course-name suffix in menus.
+    pub fn label(self) -> Option<&'static str> {
+        match self {
+            RaceVariant::National => None,
+            RaceVariant::EnduroLong => Some("Enduro Long"),
+            RaceVariant::EnduroShort => Some("Enduro Short"),
+            RaceVariant::ShortTrack => Some("Short Track"),
+        }
+    }
+
+    pub fn is_enduro(self) -> bool {
+        matches!(self, RaceVariant::EnduroLong | RaceVariant::EnduroShort)
+    }
+
+    /// Whether `environment` ships this race.
+    pub fn exists(self, environment: &str) -> bool {
+        is_race_course(environment)
+            && match self {
+                RaceVariant::National => true,
+                RaceVariant::EnduroLong | RaceVariant::EnduroShort => {
+                    environment.starts_with("env")
+                }
+                RaceVariant::ShortTrack => matches!(environment, "env01" | "env06" | "env07"),
+            }
+    }
+}
+
+/// A race course id: the venue for its National race, else the venue and
+/// the variant's stem (`env05ends`, `env05endl`, `env06st`).
+pub fn race_course_id(environment: &str, variant: RaceVariant) -> String {
+    match variant {
+        RaceVariant::National => environment.to_string(),
+        _ => format!("{environment}{}", variant.stem()),
+    }
+}
+
+/// The venue and race of a race course id ([`race_course_id`]).
+pub fn split_race_course(id: &str) -> Option<(&str, RaceVariant)> {
+    for variant in [
+        RaceVariant::EnduroLong,
+        RaceVariant::EnduroShort,
+        RaceVariant::ShortTrack,
+    ] {
+        if let Some(venue) = id.strip_suffix(variant.stem())
+            && variant.exists(venue)
+        {
+            return Some((venue, variant));
+        }
+    }
+    is_race_course(id).then_some((id, RaceVariant::National))
+}
+
+/// The venue of a race course id (the id itself when it is not one).
+pub fn race_venue(id: &str) -> &str {
+    split_race_course(id).map_or(id, |(venue, _)| venue)
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CourseResource {
     pub archive: String,
+    /// A variant race's own members, hosted as a small archive under the
+    /// original variant path and read over `archive` (the venue's National
+    /// race archive, whose terrain, scenery and roster the variants share).
+    pub overlay: Option<String>,
     pub scene_stem: String,
+    /// Mode TOY stem; a race also reads `<mode_stem>E.tdf` and `<mode_stem>.tv`.
     pub mode_stem: String,
     pub placements: Option<String>,
 }
@@ -35,13 +144,18 @@ pub struct CourseResource {
 /// first chunk (its directory) is fetched at low priority.
 pub fn ride_prefetch(
     environment: &str,
-    racing: bool,
+    race: Option<RaceVariant>,
     quad: u16,
     rider: u16,
 ) -> (Vec<String>, Vec<String>) {
     let mut paths = Vec::new();
-    if let Ok(course) = course_resource(environment, racing) {
+    let course = match race {
+        Some(variant) => race_resource(environment, variant),
+        None => course_resource(environment, false),
+    };
+    if let Ok(course) = course {
         paths.push(course.archive);
+        paths.extend(course.overlay);
         paths.extend(course.placements);
     }
     if let Ok(model) = atv_core::player_models::selection(quad, rider) {
@@ -56,6 +170,29 @@ pub fn ride_prefetch(
     paths.extend(["/OVERLAYS.RES", "/STARTEVT.RES", "/AUDIOTBL.RES"].map(String::from));
     paths.dedup();
     (paths, vec!["/AUDIO/AUDIO.RES".into()])
+}
+
+/// A variant race's resources (`course_resource(environment, true)` for the
+/// National race). The overlay path is the original variant archive.
+pub fn race_resource(environment: &str, variant: RaceVariant) -> crate::Result<CourseResource> {
+    let mut course = course_resource(environment, true)?;
+    if variant == RaceVariant::National {
+        return Ok(course);
+    }
+    if !variant.exists(environment) {
+        return Err("unsupported course".into());
+    }
+    let number = &environment[environment.len() - 2..];
+    let suffix = variant.stem().to_ascii_uppercase();
+    course.overlay = Some(format!(
+        "/TRACKS/TRACKSA/ENV{number}/E{number}_{suffix}.RES"
+    ));
+    course.mode_stem = format!("{environment}{}", variant.stem());
+    // Short Tracks keep the venue scene (the same bytes as the National one).
+    if variant.is_enduro() {
+        course.scene_stem = course.mode_stem.clone();
+    }
+    Ok(course)
 }
 
 pub fn course_resource(environment: &str, racing: bool) -> crate::Result<CourseResource> {
@@ -103,6 +240,7 @@ pub fn course_resource(environment: &str, racing: bool) -> crate::Result<CourseR
             "/TRACKS/TRACKS{group}/{}/{stem}_{suffix}.RES",
             environment.to_uppercase()
         ),
+        overlay: None,
         mode_stem: if racing {
             format!("{environment}nat")
         } else {
@@ -254,7 +392,7 @@ pub fn ride_url(page: &str, link: &RideLink) -> String {
             }
             .into(),
         ),
-        ("map", link.map.into()),
+        ("map", race_venue(link.map).into()),
         ("quad", link.quad.to_string()),
         ("rider", link.rider.to_string()),
     ];
@@ -266,6 +404,12 @@ pub fn ride_url(page: &str, link: &RideLink) -> String {
         pairs.push(("player", link.player.into()));
     }
     if let Some((laps, cpu, difficulty, aggressive, all_out)) = link.race {
+        // An Enduro or Short Track race names its course (`map` is the venue).
+        if let Some((_, variant)) = split_race_course(link.map)
+            && variant != RaceVariant::National
+        {
+            pairs.push(("course", variant.key().into()));
+        }
         pairs.push(("laps", laps.to_string()));
         pairs.push(("cpu", cpu.to_string()));
         if difficulty == 2 {
@@ -304,7 +448,7 @@ pub fn ride_url(page: &str, link: &RideLink) -> String {
 
 /// launch.js `parseLaunch`: `tracks` are (id, display name) for map names.
 pub fn parse_launch(search: &str, tracks: &[(String, String)]) -> Launch {
-    const ALIASES: [(&str, &[&str]); 13] = [
+    const ALIASES: [(&str, &[&str]); 14] = [
         ("map", &["map", "environment"]),
         ("quad", &["quad", "vehicle", "atv"]),
         ("rider", &["rider"]),
@@ -318,6 +462,7 @@ pub fn parse_launch(search: &str, tracks: &[(String, String)]) -> Launch {
         ("cpu", &["cpu"]),
         ("difficulty", &["difficulty"]),
         ("cheats", &["cheats", "cheat"]),
+        ("course", &["course"]),
     ];
     let params = query_pairs(search);
     let mut errors = Vec::new();
@@ -542,12 +687,36 @@ pub fn parse_launch(search: &str, tracks: &[(String, String)]) -> Launch {
     {
         errors.push("Laps/cpu/difficulty/cheats requires activity=race.".into());
     }
+    let variant = match value("course") {
+        None => RaceVariant::National,
+        Some(key) => match RaceVariant::from_key(&key.to_lowercase()) {
+            Some(variant) if launch.activity == "race" => variant,
+            _ => {
+                errors.push(format!("Unsupported course: {}.", shown(&key)));
+                RaceVariant::National
+            }
+        },
+    };
+    if supported
+        && variant != RaceVariant::National
+        && !variant.exists(map.as_deref().unwrap_or(""))
+    {
+        errors.push(format!(
+            "{} has no {} race.",
+            map.as_deref().unwrap_or(""),
+            variant.label().unwrap_or("National")
+        ));
+    }
     launch.map = map.filter(|_| supported).unwrap_or_else(|| "env01".into());
     launch.race = RaceLink {
         laps,
         cpu,
         difficulty,
-        course: launch.map.clone(),
+        course: if variant.exists(&launch.map) {
+            race_course_id(&launch.map, variant)
+        } else {
+            launch.map.clone()
+        },
         aggressive,
         all_out,
     };
@@ -578,14 +747,14 @@ mod tests {
 
     #[test]
     fn ride_prefetch_lists_the_ride_archives() {
-        let (paths, bank) = ride_prefetch("env01", false, 1, 0);
+        let (paths, bank) = ride_prefetch("env01", None, 1, 0);
         let course = course_resource("env01", false).unwrap();
         assert!(paths.contains(&course.archive));
         assert!(paths.iter().any(|p| p == "/ANIMSRDR.RES"));
         assert!(paths.iter().any(|p| p == "/AUDIOTBL.RES"));
         assert_eq!(bank, ["/AUDIO/AUDIO.RES"]);
         // Motorcycles carry their rider in the bike archive.
-        let (bike, _) = ride_prefetch("env01", false, 29, 0);
+        let (bike, _) = ride_prefetch("env01", None, 29, 0);
         assert!(!bike.iter().any(|p| p == "/ANIMSRDR.RES"));
     }
 
@@ -645,6 +814,80 @@ mod tests {
         );
     }
 
+    #[test]
+    fn variant_races_read_their_archive_over_the_national_one() {
+        let long = race_resource("env05", RaceVariant::EnduroLong).unwrap();
+        assert_eq!(long.archive, "/TRACKS/TRACKSA/ENV05/E05_NAT.RES");
+        assert_eq!(
+            long.overlay.as_deref(),
+            Some("/TRACKS/TRACKSA/ENV05/E05_ENDL.RES")
+        );
+        assert_eq!(
+            (long.scene_stem.as_str(), long.mode_stem.as_str()),
+            ("env05endl", "env05endl")
+        );
+        let st = race_resource("env06", RaceVariant::ShortTrack).unwrap();
+        assert_eq!(
+            st.overlay.as_deref(),
+            Some("/TRACKS/TRACKSA/ENV06/E06_ST.RES")
+        );
+        assert_eq!(
+            (st.scene_stem.as_str(), st.mode_stem.as_str()),
+            ("env06", "env06st")
+        );
+        assert!(race_resource("env05", RaceVariant::ShortTrack).is_err());
+        assert!(race_resource("nat01", RaceVariant::EnduroShort).is_err());
+        assert_eq!(
+            race_resource("sx01", RaceVariant::National).unwrap(),
+            course_resource("sx01", true).unwrap()
+        );
+        assert_eq!(
+            race_course_id("env05", RaceVariant::EnduroShort),
+            "env05ends"
+        );
+        assert_eq!(
+            split_race_course("env05ends"),
+            Some(("env05", RaceVariant::EnduroShort))
+        );
+        assert_eq!(
+            split_race_course("env07st"),
+            Some(("env07", RaceVariant::ShortTrack))
+        );
+        assert_eq!(
+            split_race_course("nat03"),
+            Some(("nat03", RaceVariant::National))
+        );
+        assert_eq!(split_race_course("env05st"), None);
+        assert_eq!(split_race_course("free01"), None);
+        assert_eq!(race_venue("env08endl"), "env08");
+        let (paths, _) = ride_prefetch("env05", Some(RaceVariant::EnduroShort), 1, 0);
+        assert!(paths.contains(&"/TRACKS/TRACKSA/ENV05/E05_ENDS.RES".to_string()));
+        // Links name the venue and the race.
+        let url = ride_url(
+            "https://x/play.html",
+            &RideLink {
+                map: "env05ends",
+                quad: 1,
+                rider: 0,
+                player: "",
+                race: Some((3, 3, 1, false, false)),
+                room: None,
+            },
+        );
+        assert!(
+            url.contains("map=env05&") && url.contains("course=enduro-short"),
+            "{url}"
+        );
+        let launch = parse_launch(url.split_once('?').unwrap().1, &[]);
+        assert!(launch.errors.is_empty(), "{:?}", launch.errors);
+        assert_eq!(
+            (launch.map.as_str(), launch.race.course.as_str()),
+            ("env05", "env05ends")
+        );
+        let bad = parse_launch("activity=race&map=nat01&course=enduro-long", &[]);
+        assert!(!bad.errors.is_empty());
+        assert_eq!(bad.race.course, "nat01");
+    }
     #[test]
     fn matches_browser_course_paths() {
         let env = course_resource("env01", false).unwrap();

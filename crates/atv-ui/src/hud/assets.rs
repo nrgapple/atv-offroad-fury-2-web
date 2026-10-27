@@ -4,6 +4,7 @@
 use atv_content::Content;
 use atv_core::{texture, ui};
 use atv_game::archive::Archive;
+use atv_game::launch::RaceVariant;
 use std::collections::HashMap;
 
 pub const FONT_DEFAULT: &str = "tradegothic_boldcondensed_22s";
@@ -86,12 +87,14 @@ pub struct RaceAssets {
     pub layout: HashMap<u32, Section>,
     /// `Single-Sign-N` by sign id.
     pub signs: HashMap<u8, Section>,
-    /// Radar map image name and its world bounds (left, top, right, bottom).
-    pub radar: (String, [f32; 4]),
+    /// Radar map image name and its world bounds (left, top, right, bottom);
+    /// none on Enduro courses, whose mode TOYs have no [Radar].
+    pub radar: Option<(String, [f32; 4])>,
 }
 
 /// The race overlay objects hud.js draws.
-pub const RACE_OBJECTS: [u32; 8] = [1, 2, 3, 4, 7, 11, 14, 41];
+/// Object 40 is the Enduro gate indicator (Overlay Set 11).
+pub const RACE_OBJECTS: [u32; 9] = [1, 2, 3, 4, 7, 11, 14, 40, 41];
 /// Sign ids and their sections (hud.js `SIGNS`).
 pub const SIGNS: [(u8, &str); 7] = [
     (1, "Single-Sign-1"),
@@ -139,7 +142,7 @@ pub fn section(bytes: &[u8], name: &str) -> Option<Section> {
 
 /// Archives in the order the browser registers member names; the first
 /// archive holding a name wins. A race adds its course archive last.
-fn archives(environment: &str, racing: bool) -> Vec<String> {
+fn archives(environment: &str, race: Option<RaceVariant>) -> Vec<String> {
     let mut list = vec![
         "/STARTAPP.RES".to_string(),
         "/UI/RESOURCE/PAGEA/PAGE01.RES".to_string(),
@@ -149,8 +152,11 @@ fn archives(environment: &str, racing: bool) -> Vec<String> {
         list.push(course.archive);
     }
     list.push("/OVERLAYS.RES".to_string());
-    if racing && let Ok(course) = atv_game::launch::course_resource(environment, true) {
+    if let Some(variant) = race
+        && let Ok(course) = atv_game::launch::race_resource(environment, variant)
+    {
         list.push(course.archive);
+        list.extend(course.overlay);
     }
     list
 }
@@ -242,12 +248,12 @@ impl Opened<'_> {
 pub async fn load(
     content: &Content,
     environment: &str,
-    racing: bool,
+    race: Option<RaceVariant>,
 ) -> Result<OverlayAssets, String> {
     let mut opened = Opened {
         archives: Vec::new(),
     };
-    for path in archives(environment, racing) {
+    for path in archives(environment, race) {
         if content.manifest.record(&path).is_some() {
             opened.archives.push(Archive::open(content, &path).await?);
         }
@@ -269,8 +275,17 @@ pub async fn load(
     for name in LAMPS {
         lamps &= opened.image(&mut images, name).await?;
     }
-    let race = if racing {
-        match race_assets(&opened, &overlays, environment, &mut fonts, &mut images).await {
+    let race = if let Some(variant) = race {
+        match race_assets(
+            &opened,
+            &overlays,
+            environment,
+            variant,
+            &mut fonts,
+            &mut images,
+        )
+        .await
+        {
             Ok(race) => Some(race),
             Err(error) => {
                 // The browser keeps riding without the race overlays.
@@ -295,6 +310,7 @@ async fn race_assets(
     opened: &Opened<'_>,
     overlays: &[u8],
     environment: &str,
+    variant: RaceVariant,
     fonts: &mut HashMap<String, CelFont>,
     images: &mut HashMap<String, HudImage>,
 ) -> Result<RaceAssets, String> {
@@ -312,10 +328,16 @@ async fn race_assets(
         signs.insert(id, found);
     }
     let toy = opened
-        .member(&format!("{environment}nat.toy"))
+        .member(&format!("{environment}{}.toy", variant.stem()))
         .await?
         .ok_or("race TOY missing")?;
-    let radar = section(&toy, "Radar").ok_or("Radar missing")?;
+    let Some(radar) = section(&toy, "Radar").filter(|_| !variant.is_enduro()) else {
+        return Ok(RaceAssets {
+            layout,
+            signs,
+            radar: None,
+        });
+    };
     let texture = radar.text("texture").ok_or("Radar texture missing")?;
     let stem = texture
         .trim_end_matches(".tga")
@@ -346,7 +368,7 @@ async fn race_assets(
     Ok(RaceAssets {
         layout,
         signs,
-        radar: (
+        radar: Some((
             stem,
             [
                 bound("left")?,
@@ -354,7 +376,7 @@ async fn race_assets(
                 bound("right")?,
                 bound("bottom")?,
             ],
-        ),
+        )),
     })
 }
 
@@ -378,7 +400,8 @@ mod tests {
         let dir = std::env::var("FURY_CONTENT").expect("FURY_CONTENT");
         let content =
             pollster::block_on(Content::open(atv_content::Store::Directory(dir.into()))).unwrap();
-        let assets = pollster::block_on(load(&content, "env01", true)).unwrap();
+        let assets =
+            pollster::block_on(load(&content, "env01", Some(RaceVariant::National))).unwrap();
         let mut keys: Vec<_> = assets.speed.fields.iter().collect();
         keys.sort();
         println!("speed {keys:#?}");

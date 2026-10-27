@@ -724,7 +724,7 @@ impl Front {
         {
             let key = format!("bg:track:{id}");
             backdrop = self.image(device, queue, &key, |art| {
-                let photo = art.photos.get(id)?;
+                let photo = art.photos.get(atv_game::launch::race_venue(id))?;
                 let (shrink, sigma) = Self::blur_plan(photo, box_w, box_h, 16.);
                 let mut image = photo.shrink(shrink);
                 image.filter(&[
@@ -805,7 +805,7 @@ impl Front {
             };
             for id in &ids {
                 if let Some(img) = self.image(device, queue, &format!("thumb:{id}"), |art| {
-                    let photo = art.photos.get(id)?;
+                    let photo = art.photos.get(atv_game::launch::race_venue(id))?;
                     let shrink = ((photo.width as f32 / thumb_px).floor() as u32).max(1);
                     Some(photo.shrink(shrink))
                 }) {
@@ -815,7 +815,7 @@ impl Front {
             if let Some(id) = &track_id {
                 let key = format!("hero:{id}");
                 let hero = self.image(device, queue, &key, |art| {
-                    let mut photo = art.photos.get(id)?.clone();
+                    let mut photo = art.photos.get(atv_game::launch::race_venue(id))?.clone();
                     photo.filter(&[Filter::Saturate(1.08), Filter::Contrast(1.04)]);
                     Some(photo)
                 });
@@ -884,7 +884,7 @@ impl Front {
             } else if let Some(id) = &track_id {
                 // Training has no action shots: the course photo instead.
                 shot.0 = self.image(device, queue, &format!("hero:{id}"), |art| {
-                    art.photos.get(id).cloned()
+                    art.photos.get(atv_game::launch::race_venue(id)).cloned()
                 });
             }
         }

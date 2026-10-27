@@ -103,6 +103,7 @@ pub mod wreck_animation;
 pub mod player_models;
 
 pub mod cpu_avoidance;
+pub mod enduro;
 pub mod race;
 pub mod race_ai;
 pub mod race_crowd;

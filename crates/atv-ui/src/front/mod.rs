@@ -90,6 +90,8 @@ pub const GROUPS: [(&str, &str); 6] = [
 ];
 
 pub fn course_group(id: &str) -> &'static str {
+    // Enduro and Short Track races list with their Environment venue.
+    let id = atv_game::launch::race_venue(id);
     match id.trim_end_matches(|c: char| c.is_ascii_digit()) {
         "env" => "env",
         "free" => "free",

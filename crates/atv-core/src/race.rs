@@ -57,6 +57,9 @@ pub struct Course {
     pub branches: Vec<(usize, usize)>,
     pub start_gate: Option<Gate>,
     pub finish_gate: Option<Gate>,
+    /// Enduro gates in race order (`crate::enduro`); the last is the finish.
+    /// Empty on TDF-gated races.
+    pub enduro: Vec<Gate>,
     /// Race distance from the grid to where the main racing line first
     /// crosses the finish gate line (the box's track position, `0017da40`).
     pub finish_at: Option<f32>,
@@ -123,6 +126,16 @@ impl Gate {
     /// box diagonal from center − half extents to center + half extents in
     /// x/z (`0012b6d0`). A zero previous position never crosses.
     pub fn crossing(&self, current: [f32; 3], previous: [f32; 3]) -> Crossing {
+        self.crossing_with(current, previous, true)
+    }
+    /// `001a95b0` with box flag 4 clear (`directional`) or set: an Enduro
+    /// gate (flags 5) counts a crossing in either direction.
+    pub fn crossing_with(
+        &self,
+        current: [f32; 3],
+        previous: [f32; 3],
+        directional: bool,
+    ) -> Crossing {
         if previous == [0.; 3] {
             return Crossing::None;
         }
@@ -151,7 +164,7 @@ impl Gate {
         let height = previous[1] + t * (current[1] - previous[1]) - self.center[1];
         let along =
             self.facing[0] * dx + self.facing[1] * (current[1] - previous[1]) + self.facing[2] * dz;
-        if height <= GATE_CEILING && along >= 0. {
+        if height <= GATE_CEILING && (along >= 0. || !directional) {
             Crossing::Through
         } else {
             Crossing::None
@@ -177,6 +190,7 @@ impl Default for Course {
             branches: vec![],
             start_gate: None,
             finish_gate: None,
+            enduro: vec![],
             finish_at: None,
             tag25_gate: None,
             rider_spacing: 8.,
@@ -595,6 +609,7 @@ impl Course {
             branches: vec![],
             start_gate: gates[0],
             finish_gate: gates[1],
+            enduro: vec![],
             finish_at: None,
             tag25_gate: gates[2],
             rider_spacing: 8.,
@@ -987,8 +1002,32 @@ impl Course {
             .map(|i| self.segment(i))
             .sum()
     }
+    /// Make this an Enduro waypoint race (EnduroRaceEvent): the gates
+    /// replace the TDF start and finish boxes, and `001f8410` lines the grid
+    /// up in one row past the last gate, slots across its direction.
+    pub fn set_enduro(&mut self, gates: Vec<Gate>) -> Result<()> {
+        if !(2..=crate::enduro::MAX_WAYPOINTS).contains(&gates.len()) {
+            return Err("invalid Enduro gates".into());
+        }
+        self.enduro = gates;
+        self.start_gate = None;
+        self.finish_gate = None;
+        self.finish_at = None;
+        self.track_flags = 0;
+        self.grid_sign = 1.;
+        Ok(())
+    }
+    pub fn is_enduro(&self) -> bool {
+        !self.enduro.is_empty()
+    }
     /// Grid origin and heading: behind the original start gate when present.
     pub fn start(&self) -> ([f32; 3], f32) {
+        if let Some(last) = self.enduro.last() {
+            let [dx, _, dz] = last.forward;
+            let [x, y, z] = last.center;
+            let past = crate::enduro::GRID_PAST_FINISH;
+            return ([x + past * dx, y, z + past * dz], dx.atan2_d(dz));
+        }
         let a = self.points[0];
         let b = self.points[self.next(0)];
         match self.start_gate {
@@ -1124,12 +1163,35 @@ struct Progress {
     skip_best: bool,
     /// Stunt points scored since GO, frozen at the finish.
     stunt: f32,
+    /// Enduro (`0024a490`): the next gate (+0xb0/+0xb4), gates crossed
+    /// (+0x34) and the gate-to-gate distance credited so far (+0x20).
+    next_gate: usize,
+    gates_passed: u32,
+    gate_distance: f32,
+}
+fn gate_gap(a: &Gate, b: &Gate) -> f32 {
+    let d = [0, 1, 2].map(|i| a.center[i] - b.center[i]);
+    (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt()
 }
 impl Progress {
     fn new(start: [f32; 3], course: &Course) -> Self {
         let entered = course.loop_start == 0;
+        // An Enduro grid stands past the finish gate, anywhere on the TDF
+        // route: start the station search at the nearest route segment.
+        let segment = if course.is_enduro() {
+            (0..course.points.len())
+                .min_by(|&a, &b| {
+                    let d = |i: usize| {
+                        segment_distance(start, course.points[i], course.points[course.next(i)])
+                    };
+                    d(a).total_cmp(&d(b))
+                })
+                .unwrap_or(0)
+        } else {
+            0
+        };
         let origin = Station {
-            segment: 0,
+            segment,
             fraction: 0.,
         };
         let station = course
@@ -1153,7 +1215,49 @@ impl Progress {
             skip_crossing: course.track_flags & 4 != 0 && !course.grid_past_finish(station),
             skip_best: course.track_flags & 8 != 0,
             stunt: 0.,
+            next_gate: 0,
+            gates_passed: 0,
+            // `00247900`: the distance from the finish gate to gate 0.
+            gate_distance: match (course.enduro.first(), course.enduro.last()) {
+                (Some(first), Some(last)) => gate_gap(first, last),
+                _ => 0.,
+            },
         }
+        .with_enduro_distance(start, course)
+    }
+    fn with_enduro_distance(mut self, p: [f32; 3], course: &Course) -> Self {
+        if let Some(next) = course.enduro.get(self.next_gate) {
+            self.distance = self.gate_distance - distance(next.center, p);
+            self.furthest = self.distance;
+        }
+        self
+    }
+    /// RaceStatus type 1 (`0024a490`): only the next gate is tested; a
+    /// crossing either way advances to the following gate, and crossing the
+    /// last gate counts a lap and wraps to gate 0. Passing beside the gate
+    /// does nothing, so a missed gate must be ridden back to. Race distance
+    /// is the credited gate distance less the distance to the next gate.
+    fn update_enduro(
+        &mut self,
+        p: [f32; 3],
+        previous: [f32; 3],
+        course: &Course,
+        time: f32,
+        laps: u32,
+    ) {
+        let gates = &course.enduro;
+        let next = self.next_gate;
+        if previous[0] >= 0. && gates[next].crossing_with(p, previous, false) == Crossing::Through {
+            let following = (next + 1) % gates.len();
+            self.gate_distance += gate_gap(&gates[following], &gates[next]);
+            self.next_gate = following;
+            if following == 0 {
+                self.complete_lap(time, laps);
+            }
+            self.gates_passed += 1;
+        }
+        self.distance = self.gate_distance - distance(gates[self.next_gate].center, p);
+        self.furthest = self.furthest.max(self.distance);
     }
     fn update(&mut self, p: [f32; 3], course: &Course, time: f32, laps: u32, dt: f32) {
         // Progress only moves inside the track polygon and the route window, so
@@ -1162,6 +1266,19 @@ impl Progress {
         // driving under CPU control, but the race result is settled.
         let previous_distance = self.distance;
         let previous = self.last;
+        if course.is_enduro() {
+            // Type 1 runs no on-track query (no Off Track or route window);
+            // the station only follows the rider for the CPU drivers.
+            if let Some(located) = course.locate(p, self.station, self.entered) {
+                self.station = located.station;
+                self.entered = located.entered;
+            }
+            self.last = p;
+            if self.finish.is_none() {
+                self.update_enduro(p, previous, course, time, laps);
+            }
+            return;
+        }
         match course.locate(p, self.station, self.entered) {
             Some(located) => {
                 self.station = located.station;
@@ -1285,6 +1402,10 @@ pub struct Frame {
     pub target: [f32; 3],
     pub checkpoint: usize,
     pub checkpoints: usize,
+    /// Enduro "GATE %d of %d" (`002df0b0`): the player's next gate (1-based)
+    /// and the gate count.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub enduro_gate: Option<[usize; 2]>,
     /// Race distance from the grid to the finish gate and the TDF tag 41
     /// Track flags that shape lap counting.
     pub finish_at: Option<f32>,
@@ -1697,7 +1818,10 @@ impl Race {
             .unwrap()
             + 1;
         let station = self.player.station;
-        let target = self.course.point_at(self.course.advance(station, 60.));
+        let target = match self.course.enduro.get(self.player.next_gate) {
+            Some(gate) => gate.center,
+            None => self.course.point_at(self.course.advance(station, 60.)),
+        };
         let heading = self.course.heading_at(station);
         Frame {
             phase: if self.intro {
@@ -1733,13 +1857,18 @@ impl Race {
             target,
             checkpoint: station.segment,
             checkpoints: self.course.points.len(),
+            enduro_gate: self
+                .course
+                .is_enduro()
+                .then(|| [self.player.next_gate + 1, self.course.enduro.len()]),
             finish_at: self.course.finish_at,
             track_flags: self.course.track_flags,
-            wrong_way: self.countdown == 0.
+            wrong_way: !self.course.is_enduro()
+                && self.countdown == 0.
                 && self.player.finish.is_none()
                 && self.player.off_track < 0.5
                 && (heading - yaw).cos_d() < -0.4,
-            off_track: self.player.off_track > 0.5,
+            off_track: !self.course.is_enduro() && self.player.off_track > 0.5,
             off_track_time: self.player.off_track,
             track_point: self.course.point_at(station),
             track_heading: heading,
@@ -2039,6 +2168,76 @@ mod tests {
             widths: vec![30.; 4],
             ..Course::default()
         }
+    }
+    /// Square course with gates at the middle of three sides; the finish
+    /// gate is on the west side heading south.
+    fn enduro_course() -> Course {
+        let mut c = course();
+        let w = |x: f32, z: f32, dx: f32, dz: f32| crate::enduro::Waypoint {
+            x,
+            z,
+            direction: [dx, dz],
+        };
+        let gates = crate::enduro::gates(
+            &[
+                w(0., 50., 0., 1.),
+                w(50., 100., 1., 0.),
+                w(100., 50., 0., -1.),
+            ],
+            15.,
+            |_, _| 0.,
+        )
+        .unwrap();
+        c.set_enduro(gates).unwrap();
+        c
+    }
+    #[test]
+    fn enduro_gates_count_in_order_and_last_gate_laps() {
+        let c = enduro_course();
+        // `001f8410`: 10ft past the finish gate, facing its direction.
+        let (start, yaw) = c.start();
+        assert_eq!(start, [100., 0., 40.]);
+        assert!((yaw.abs() - std::f32::consts::PI).abs() < 1e-3);
+        let mut r = Race::new(c, 2, vec!["CPU".into()], 1).unwrap();
+        r.countdown = 0.;
+        let step = |r: &mut Race, p: [f32; 3]| r.step(p, 1.);
+        step(&mut r, [100., 0., 40.]);
+        assert_eq!(r.frame(0.).enduro_gate, Some([1, 3]));
+        // Missing gate 1 (passing beside it) and crossing gate 2 do nothing.
+        step(&mut r, [-30., 0., 45.]);
+        step(&mut r, [-30., 0., 55.]);
+        step(&mut r, [55., 0., 95.]);
+        step(&mut r, [45., 0., 105.]);
+        assert_eq!(r.frame(0.).enduro_gate, Some([1, 3]));
+        // Gate 1 counts against its direction too (flags 5).
+        step(&mut r, [0., 0., 55.]);
+        step(&mut r, [0., 0., 45.]);
+        assert_eq!(r.frame(0.).enduro_gate, Some([2, 3]));
+        let before = r.frame(0.).standings[0].progress;
+        step(&mut r, [45., 0., 100.]);
+        step(&mut r, [55., 0., 100.]);
+        step(&mut r, [100., 0., 55.]);
+        assert_eq!(r.laps_completed(None), 0);
+        step(&mut r, [100., 0., 45.]);
+        let f = r.frame(0.);
+        assert_eq!(r.laps_completed(None), 1);
+        assert_eq!(f.enduro_gate, Some([1, 3]));
+        assert_eq!(f.lap_times, [11.]);
+        assert!(!f.wrong_way && !f.off_track);
+        let player = f.standings.iter().find(|s| s.player).unwrap();
+        assert!(player.progress > before, "race distance follows the gates");
+        assert_eq!(player.position, 1);
+        for p in [
+            [0., 0., 55.],
+            [0., 0., 45.],
+            [45., 0., 100.],
+            [55., 0., 100.],
+            [100., 0., 55.],
+            [100., 0., 45.],
+        ] {
+            step(&mut r, p);
+        }
+        assert!(r.player_finished());
     }
     #[test]
     fn countdown_then_finish_hand_over_the_player() {

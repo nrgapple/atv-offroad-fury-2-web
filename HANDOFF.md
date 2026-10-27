@@ -92,7 +92,7 @@ section is authoritative.
 | HUD and minimap | Authored controller using original layout/fonts/atlases; GPS minimap is authored | `HUD.md`, `MINIMAP.md` |
 | Menus and UI | Browser-native screens driven by Rust menu logic; profiles, championships, unlocks and saves missing | `UI.md`, `MENU_SCREENS.md`, `DESIGN_SYSTEM.md` |
 | Audio | Recovered VAG decoding, 21-song catalog/shuffle streamed as AAC with VAG fallback, Jukebox player, engine banks, impacts, train; SPU2 mixer/reverb not reproduced | `AUDIO.md` |
-| Racing | All 32 race courses; recovered CPU driver decisions (Normal/Expert, jump preload, track-edge and cheat flags) inside authored race rules | `RACING.md` |
+| Racing | All 32 National-rules race courses plus the 16 original Enduro courses (gate races) and 3 Short Tracks; recovered CPU driver decisions (Normal/Expert, jump preload, track-edge and cheat flags) inside authored race rules | `RACING.md` |
 | Multiplayer | Authored four-player Freeride through the Rust relay; authored rider contacts; no split-screen or original protocol | `MULTIPLAYER.md`, `MULTIPLAYER_ORIGINAL.md`, `SECURITY.md` |
 | Motorcycles | Riding controller recovered component by component from MX vs. ATV Unleashed (steer/bank, tires/suspension, engine/clutch, wheelie/stoppie, air control, preload, flips, wreck rules) through authored terrain/surface/input adapters; native whole-step parity unmeasured; Single Player only | `MOTORCYCLES.md` |
 | Crash effects | Optional authored presentation layer (Crazy/Gorn); enhancement-isolation checks show it leaves the simulation unchanged | `CRASH_EFFECTS.md` |
@@ -164,6 +164,8 @@ the worktree's `target/`; keep bulk output on the SSD.
   (`PROFILE.md`, `CHAMPIONSHIPS.md`).
 - Race rules are authored around recovered start slots, track window and
   finish-gate laps; firework triggers and points are open (`RACING.md`).
+  Enduro gates are opaque without the original next-gate arrows, compass or
+  GPS overlays, and CPUs drive the Enduro route line (`RACING.md` "Enduro").
 - Rendering lacks original LOD/visibility policy, point lights, shadows, light
   lens effects and native GS precision (`MAP_FIDELITY.md`). ScreenRain lens drops
   are dormant in shipped content and intentionally not drawn (`WEATHER.md`).

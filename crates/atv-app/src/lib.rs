@@ -529,7 +529,7 @@ async fn prepare(
     if ride && PREFETCH.load(std::sync::atomic::Ordering::Relaxed) {
         let (paths, bank) = atv_game::launch::ride_prefetch(
             &environment,
-            race.is_some(),
+            race.map(|r| r.course),
             selection.quad,
             selection.rider,
         );
@@ -552,6 +552,7 @@ async fn prepare(
         venue::LoadOptions {
             weather,
             sky_smooth: graphics.sky_smooth,
+            race: race.map(|r| r.course).unwrap_or_default(),
         },
     )
     .await?;
@@ -712,7 +713,7 @@ async fn prepare(
         None
     };
     let hud_assets = if riding.is_some() {
-        match atv_ui::hud::assets::load(&content, &environment, race.is_some()).await {
+        match atv_ui::hud::assets::load(&content, &environment, race.map(|r| r.course)).await {
             Ok(assets) => Some(assets),
             Err(error) => {
                 status(&format!("HUD resources unavailable: {error}"));
@@ -4032,11 +4033,22 @@ impl App {
         );
         // Each course's race archive is offered once its record exists
         // (frontend.js `raceCourses`).
+        // Enduro and Short Track races follow their venue's National race
+        // once their own archive is published.
         let race_courses = atv_game::launch::environments()
             .into_iter()
-            .filter(|id| {
-                atv_game::launch::course_resource(id, true)
-                    .is_ok_and(|r| content.manifest.record(&r.archive).is_some())
+            .flat_map(|id| {
+                atv_game::launch::RaceVariant::ALL
+                    .into_iter()
+                    .filter(|variant| {
+                        atv_game::launch::race_resource(&id, *variant).is_ok_and(|r| {
+                            std::iter::once(&r.archive)
+                                .chain(&r.overlay)
+                                .all(|path| content.manifest.record(path).is_some())
+                        })
+                    })
+                    .map(|variant| atv_game::launch::race_course_id(&id, variant))
+                    .collect::<Vec<_>>()
             })
             .collect();
         front.state.set_race_courses(race_courses, &view);
@@ -4218,7 +4230,7 @@ impl App {
             // Only race links change the race setup (frontend.js).
             f.state.show_race(
                 atv_ui::front::controller::RaceSetup {
-                    course: setup.map.clone(),
+                    course: setup.race.course.clone(),
                     laps: setup.race.laps,
                     cpu: setup.race.cpu,
                     difficulty: setup.race.difficulty,
@@ -4258,7 +4270,9 @@ impl App {
             }
         });
         drop(f);
-        self.start_ride(setup.map, setup.quad_id, setup.rider_id, settings, None);
+        // A race starts its course (an Enduro or Short Track id from `course=`).
+        let map = if race { setup.race.course } else { setup.map };
+        self.start_ride(map, setup.quad_id, setup.rider_id, settings, None);
     }
 
     fn front_event(&mut self, event: atv_ui::front::controller::Event) {
@@ -4731,6 +4745,22 @@ impl App {
     ) {
         let (Some(front), Some(content)) = (self.front.clone(), self.content.clone()) else {
             return;
+        };
+        // A race course id names the venue and which of its races
+        // (`env05ends` is Prospect Springs' short Enduro).
+        let (environment, race) = match (race, atv_game::launch::split_race_course(&environment)) {
+            (Some(settings), Some((venue, variant)))
+                if variant != atv_game::launch::RaceVariant::National =>
+            {
+                (
+                    venue.to_string(),
+                    Some(atv_game::ride::race::Settings {
+                        course: variant,
+                        ..settings
+                    }),
+                )
+            }
+            (race, _) => (environment, race),
         };
         // Every ride load starts a new song (game.js `loadGame` builds a new
         // GameAudio and MusicStream): Freestyle, races, Restart Race, a
@@ -6219,6 +6249,11 @@ pub fn start() {
                 cpu: number("cpu").map_or(defaults.cpu, |v| v as usize),
                 difficulty: number("difficulty").map_or(defaults.difficulty, |v| v as u32),
                 seed: number("seed").unwrap_or(defaults.seed),
+                // `course=enduro-long|enduro-short|short-track`: the venue's
+                // other races.
+                course: param("course")
+                    .and_then(|v| atv_game::launch::RaceVariant::from_key(&v))
+                    .unwrap_or_default(),
                 ..defaults
             }
         }),

@@ -182,6 +182,15 @@ impl Meter {
             let value = format!("{}", (race.score + 0.5).floor());
             text(list, &value, at(178., 23.), l, 2, None, 1., None, [0.; 2]);
         }
+        // Enduro GATE indicator (Overlay Set 11 object 40, value 22
+        // `002df0b0` "%d of %d").
+        if let (Some(l), Some([gate, gates])) = (layout(40), frame.enduro_gate)
+            && shown("lap")
+        {
+            text(list, "GATE", at(25., 270.), l, 1, None, 1., None, [0.; 2]);
+            let value = format!("{gate} of {gates}");
+            text(list, &value, at(25., 270.), l, 2, None, 1., None, [0.; 2]);
+        }
         // Position: the name tree (object 4) or the place number (object 41).
         if let Some(l) = layout(41).filter(|_| position == "place") {
             text(list, "PLACE", at(20., 23.), l, 1, None, 1., None, [0.; 2]);
@@ -373,7 +382,9 @@ impl Meter {
         if !shown("radar") {
             return;
         }
-        let (map, [left, north, right, _]) = &assets.radar;
+        let Some((map, [left, north, right, _])) = &assets.radar else {
+            return;
+        };
         let (Some(&map_id), Some(map_image)) = (self.images.get(map), self.assets.images.get(map))
         else {
             return;
