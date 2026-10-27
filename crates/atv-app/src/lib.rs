@@ -1891,6 +1891,8 @@ impl App {
             // Game Settings (tools/test_engine_game_settings.mjs).
             let game = &mut state["settings"];
             game["soundConfiguration"] = mixer.as_ref().map(|m| m.2.clone()).into();
+            // The streamed soundtrack's routing (web: a graph once not Stereo).
+            game["musicRoute"] = riding.sound.as_ref().and_then(|s| s.music_route()).into();
             game["speedUnits"] = riding.ride.hud().units.into();
             game["vegetationQuery"] = (!riding.ride.frame().skip_vegetation_query).into();
             game["ecosystemCollisionOff"] = riding.ride.options.ecosystem_collision_off.into();
@@ -4666,6 +4668,21 @@ impl App {
             .as_ref()
             .filter(|_| front_shown)
             .map_or((false, 0.), |f| f.borrow().music());
+        // Game Settings → Sound Configuration also shapes the menus' tune
+        // and the Jukebox (the ride sets its own from the overlay prefs).
+        let configuration = self
+            .front
+            .as_ref()
+            .filter(|_| front_shown)
+            .map(|f| f.borrow().sound_configuration());
+        if let Some(configuration) = configuration {
+            if let Ok(mut mixer) = output.mixer.lock() {
+                mixer.configuration = configuration;
+            }
+            if let Some(music) = &self.soundtrack {
+                music.borrow_mut().set_configuration(configuration);
+            }
+        }
         // The Jukebox (or an Audio page song) plays the soundtrack instead of
         // the menu tune (setMusicPreview's `originalMenu`).
         let preview = front_shown
