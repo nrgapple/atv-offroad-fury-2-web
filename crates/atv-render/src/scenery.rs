@@ -69,6 +69,8 @@ struct Draw {
     flash: Option<usize>,
     /// The race drop gate's chunk-local bounds (posed after GO).
     gate: Option<([f32; 3], [f32; 3])>,
+    /// Enduro gate index (its alpha follows the rider's next gate).
+    enduro_gate: Option<usize>,
     min: [f32; 3],
     max: [f32; 3],
 }
@@ -276,6 +278,7 @@ impl SceneryPass {
                 record: 0,
                 flash: draw.flash,
                 gate: draw.gate.then_some((local.min, local.max)),
+                enduro_gate: draw.enduro_gate,
                 min: draw.min,
                 max: draw.max,
             });
@@ -298,7 +301,8 @@ impl SceneryPass {
             let source = &scenery.draws[index];
             let instance = DrawUniform {
                 model: source.matrix,
-                flags: [source.unlit as u8 as f32, 0., 0., 0.],
+                // y: the model's colour alpha (`001b42e0`, model +0x19c).
+                flags: [source.unlit as u8 as f32, 1., 0., 0.],
             };
             let mut push = |m: MaterialUniform| {
                 let at = record_bytes.len();
@@ -412,6 +416,31 @@ impl SceneryPass {
             for pass in 0..passes {
                 let at = (draw.record as usize + pass) * self.record_slot as usize + offset;
                 // The animated block is rewritten from its CPU copy each frame.
+                if let Some(copy) = self.animated_records.get_mut(at..at + bytes.len()) {
+                    copy.copy_from_slice(bytes);
+                }
+                gpu.queue.write_buffer(&self.records, at as u64, bytes);
+            }
+        }
+    }
+
+    /// Enduro gate alpha (`00228ea0`): the rider's next gate draws opaque,
+    /// every other gate at 0.4.
+    pub fn fade_enduro_gates(&mut self, gpu: &Gpu, next: usize) {
+        let offset = std::mem::offset_of!(Record, d) + std::mem::offset_of!(DrawUniform, flags) + 4;
+        for draw in &self.draws {
+            let Some(gate) = draw.enduro_gate else {
+                continue;
+            };
+            let alpha: f32 = if gate == next {
+                1.
+            } else {
+                atv_core::enduro::FADED_GATE_ALPHA
+            };
+            let bytes = bytemuck::bytes_of(&alpha);
+            let passes = 1 + usize::from(self.chunks[draw.chunk].alpha_fail);
+            for pass in 0..passes {
+                let at = (draw.record as usize + pass) * self.record_slot as usize + offset;
                 if let Some(copy) = self.animated_records.get_mut(at..at + bytes.len()) {
                     copy.copy_from_slice(bytes);
                 }

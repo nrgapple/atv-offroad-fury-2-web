@@ -1437,6 +1437,12 @@ pub struct Frame {
     /// and the gate count.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub enduro_gate: Option<[usize; 2]>,
+    /// The next Enduro gate's position and direction (x, z): the compass
+    /// shows it (`002e6e80`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub enduro_next: Option<([f32; 3], [f32; 2])>,
+    /// The player's heading (radians, atan2 of forward x and z).
+    pub yaw: f32,
     /// Race distance from the grid to the finish gate and the TDF tag 41
     /// Track flags that shape lap counting.
     pub finish_at: Option<f32>,
@@ -1902,6 +1908,12 @@ impl Race {
                 .course
                 .is_enduro()
                 .then(|| [self.player.next_gate + 1, self.course.enduro.len()]),
+            enduro_next: self
+                .course
+                .enduro
+                .get(self.player.next_gate)
+                .map(|g| (g.center, [g.forward[0], g.forward[2]])),
+            yaw,
             finish_at: self.course.finish_at,
             track_flags: self.course.track_flags,
             wrong_way: !self.course.is_enduro()

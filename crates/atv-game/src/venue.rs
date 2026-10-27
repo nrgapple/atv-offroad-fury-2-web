@@ -315,7 +315,20 @@ pub async fn load_with(
     } else {
         Vec::new()
     };
-    let scenery = crate::scenery::load(&archive, &scene, toy.as_deref(), gate_model)?;
+    // Gate banners point at the next gate; the gates are the last scene models.
+    let first_gate = scene.models.len() - enduro_gates.len();
+    let enduro_dress: Vec<_> = (0..enduro_gates.len())
+        .map(|i| {
+            let (front, back) = atv_core::enduro::arrow_textures(&enduro_gates, i);
+            crate::scenery::EnduroDress {
+                model: first_gate + i,
+                front: format!("{environment}{front}"),
+                back: format!("{environment}{back}"),
+            }
+        })
+        .collect();
+    let scenery =
+        crate::scenery::load(&archive, &scene, toy.as_deref(), gate_model, &enduro_dress)?;
     crate::yield_frame().await;
     let vegetation = crate::vegetation::load(&archive, environment, &scene, &ground)?;
     crate::yield_frame().await;

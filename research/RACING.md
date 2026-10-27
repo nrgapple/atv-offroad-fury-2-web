@@ -1067,10 +1067,40 @@ Port:
 **Authored or approximate:** the gate width is the `endwgate` PSG's stored
 half extent across the gate (model +0x110, as the original reads it);
 the gate ceiling is the National 150 ft; the CPUs still drive the Enduro
-TDF route (how the original CPU uses the guidance vector is not read); gates are drawn opaque with their default arrow
-textures (the original fades all but the next gate to 0.4 alpha and picks
-arrow textures toward the next gate, `00229e90`); the compass and GPS
-overlays are not drawn.
+TDF route (how the original CPU uses the guidance vector is not read).
+
+**Gate banners, fading and compass (2026-10-27).** Exact-build reading
+(`00229e90`, `00229670`, `00229cb0`, `00228ea0`, `001b42e0`, `002e68e0`,
+`002e6e80`; not traced):
+
+- Each gate's banners show the turn to the next gate (the last gate points
+  at gate 0): θ = atan2(D·right, D·forward) with D the next gate minus this
+  one and right (dz, 0, −dx). 22.5° bins pick the front face's
+  `<venue>arrow1` (straight), `2`/`3`/`4` (45°/90°/135° right),
+  `8`/`7`/`6` (left) or `5r`/`5l` (U-turn), and the back face the same turn
+  seen riding the other way. They replace the gate models' `frontarrow` and
+  `backarrow` placeholder textures, per gate.
+- Every frame the rider's next gate draws with model alpha 1.0 and every
+  other gate with 0.4 (the model colour multiplier; all gate materials
+  alpha-blend), so the gates ahead read as one highlighted target.
+- The Compass overlay (`QuadzillaCompass`, Overlay Set 11 object 31 at
+  70,375) is a heading-up radar, not a guidance arrow: the `compassbkg`
+  face turns by −heading, the `compassarrow` player marker stays at the
+  centre pointing up, other riders are `radaricon_racer` dots clamped to a
+  33 px rim (10.09 ft per pixel in single player, about 333 ft), and the next
+  gate is a `radaricon_gate` icon at its relative position, turned by its
+  direction less the heading, drawn only inside the rim.
+- "Cheesy GPS" (object 32) is never created in retail (its factory case
+  clears the object); it would print a debug position.
+
+Port: `enduro::arrow_textures` picks the banners and the venue dresses each
+gate with its own banner chunks; the scenery shader multiplies its output
+alpha by a per-draw model alpha that the race sets from the next gate
+(`SceneryPass::fade_enduro_gates`). The HUD draws the compass from the race
+frame's heading, the opponents and the next gate. The compass arrow keeps
+its white art: the participant tint (0xff0000 read in GS byte order may be
+blue) is unverified. Fading only applies to the gates out of the rider's
+view in the captured frames, so it is not visually confirmed.
 
 Checks: `atv-core` `enduro` and `race::tests::enduro_gates_count_in_order_and_last_gate_laps`,
 `resource` overlay test, `atv-game` launch variant test,
