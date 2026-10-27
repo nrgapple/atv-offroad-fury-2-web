@@ -1,4 +1,4 @@
-// The Host/Join text fields take a phone's tap: the page cancels native touch
+// Every Host/Join text field takes a phone's tap: the page cancels native touch
 // gestures (engine.js) but not on the fields, so a tap focuses the <input>
 // (opening the soft keyboard) and typed text reaches the Rust form. Runs in
 // Chromium and WebKit (iOS Safari's engine) with touch emulation.
@@ -59,6 +59,19 @@ for (const engine of ['chromium', 'webkit']) {
     await onPage(page, 'main');
     await choose(page, 'multiplayer');
     await onPage(page, 'multiplayer');
+    // Host Game: the name and the optional custom code.
+    await choose(page, 'create-lobby');
+    await onPage(page, 'create-lobby');
+    await tapAndType(page, 'Rider name', 'Hostess');
+    await tapAndType(page, 'Lobby code (8 letters/numbers, optional)', 'host2345');
+    await page.waitForFunction(
+      () => /"createCode":"HOST2345"/.test(document.querySelector('#ui-state')?.textContent ?? ''),
+      null,
+      { timeout: 5000 }
+    );
+    await key(page, 'Escape');
+    await onPage(page, 'multiplayer');
+    // Join Game: the name and the code.
     await choose(page, 'join-lobby');
     await onPage(page, 'join-lobby');
     await tapAndType(page, 'Rider name', 'Thumbs');
@@ -71,7 +84,7 @@ for (const engine of ['chromium', 'webkit']) {
       null,
       { timeout: 5000 }
     );
-    report[engine] = 'tap focused both fields; the form has the code';
+    report[engine] = 'tap focused all Host and Join fields; the forms have the name and codes';
   } finally {
     await browser.close();
   }
