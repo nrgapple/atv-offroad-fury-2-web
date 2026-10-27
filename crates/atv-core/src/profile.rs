@@ -168,7 +168,10 @@ impl Profile {
         if let Some((Some(Trophy::Gold | Trophy::Silver), ..)) = outcome.finished {
             open.push(series.rounds[0] as u16);
         }
-        if let Some(key) = crate::store::EVENT_LISTS.get(usize::from(series.kind)) {
+        if let Some(key) = crate::store::EVENT_LISTS
+            .get(usize::from(series.kind))
+            .filter(|_| !open.is_empty())
+        {
             let list = self.store.courses.entry(key.to_string()).or_default();
             for index in open {
                 if !list.contains(&index) {
@@ -223,6 +226,22 @@ mod tests {
         assert_eq!(race_award(hard, 1, 0.), 60);
         assert_eq!(race_award(hard, 3, 1000.), 16);
         assert_eq!(race_award(hard, 4, 1000.), 1);
+    }
+
+    #[test]
+    fn championship_rounds_unlock_courses() {
+        let series = crate::championship::series("unspnat").unwrap();
+        let mut p = Profile::default();
+        // A replayed round unlocks nothing; an advanced one the next course.
+        p.record_championship(series, false, &[5, 1, 2, 3, 4]);
+        assert!(p.store.courses.is_empty());
+        p.record_championship(series, false, &[1, 2, 3, 4, 5]);
+        assert_eq!(p.store.courses["unspnat"], [1]);
+        for _ in 0..4 {
+            p.record_championship(series, false, &[1, 2, 3, 4, 5]);
+        }
+        // Gold also opens the course after the five Normal rounds.
+        assert_eq!(p.store.courses["unspnat"], [1, 2, 3, 4, 5]);
     }
 
     #[test]

@@ -6,7 +6,7 @@
 // trophy and its first-time Profile Points and opens Pro Enduro (003238a0),
 // whose first round is Prospect Springs' long Enduro.
 import assert from 'node:assert/strict';
-import { assertNoErrors, launch, newPage, nextFrames, optionalScreenshot, url } from './browser/harness.mjs';
+import { UNLOCKED_PROFILE, assertNoErrors, launch, newPage, nextFrames, optionalScreenshot, url } from './browser/harness.mjs';
 
 const manifest = await (await fetch(url('/content/manifest.json'))).json();
 if (!manifest.files.some(f => f.path === '/TRACKS/TRACKSA/ENV04/E04_ENDS.RES')) {
@@ -24,6 +24,8 @@ try {
   const page = await newPage(browser, { viewport: { width: 1280, height: 720 } }, errors);
   const start = {
     points: 40, races: 4, wins: 4,
+    // The garage ATV stays as chosen (PROFILE_STORE.md unlocks).
+    store: UNLOCKED_PROFILE.store,
     championships: { progress: { 'send-normal': { round: 4, points: [28, 16, 8, 4, 0] } }, opened: [] },
   };
   await page.addInitScript(start => {

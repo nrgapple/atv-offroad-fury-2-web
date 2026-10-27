@@ -4,7 +4,7 @@
 // look), plus the `?menu=race` shortcut and a `play=0` race link opening the
 // setup. Host browser evidence (frontend.js race/gear pages).
 import assert from 'node:assert/strict';
-import { assertNoErrors, launch, newPage, nextFrames, url } from './browser/harness.mjs';
+import { assertNoErrors, launch, newPage, nextFrames, unlockStore, url } from './browser/harness.mjs';
 
 const read = page => page.evaluate(() => JSON.parse(document.querySelector('#ui-state')?.textContent || '{}'));
 const front = async page => (await read(page)).front;
@@ -24,6 +24,8 @@ const browser = await launch();
 try {
   const errors = [];
   const page = await newPage(browser, { viewport: { width: 1280, height: 720 } }, errors);
+  // Single Player picks follow the profile's unlocks (PROFILE_STORE.md).
+  await unlockStore(page);
   await page.addInitScript(() => {
     if (sessionStorage.getItem('seeded')) return;
     sessionStorage.setItem('seeded', '1');
@@ -36,7 +38,7 @@ try {
   await key(page, 'Enter'); await onPage(page, 'main');
   await key(page, 'Enter'); await onPage(page, 'single');
   let f = await front(page);
-  assert.deepEqual(f.choices, ['tracks', 'race', 'championship', 'garage']);
+  assert.deepEqual(f.choices, ['tracks', 'race', 'championship', 'garage', 'store']);
   assert.ok(f.race.courses >= 30, `race courses ${f.race.courses}`);
   await key(page, 'ArrowDown'); await key(page, 'Enter'); await onPage(page, 'race');
   f = await front(page);
@@ -122,6 +124,8 @@ try {
 
   // `?menu=race` opens the setup; a race link without play shows its setup.
   const shortcut = await newPage(browser, { viewport: { width: 390, height: 844 } }, []);
+  // Single Player picks follow the profile's unlocks (PROFILE_STORE.md).
+  await unlockStore(shortcut);
   await shortcut.goto(url('/play.html?menu=race&uiDiagnostics=1'));
   await onPage(shortcut, 'race');
   if (shots) await shortcut.screenshot({ path: `${shots}/race-portrait.png` });

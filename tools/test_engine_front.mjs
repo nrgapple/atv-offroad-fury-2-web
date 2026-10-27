@@ -3,7 +3,7 @@
 // the ATV and rider under the browser game's key; ride links start a ride.
 // Host browser evidence; parity images come from work capture scripts.
 import assert from 'node:assert/strict';
-import { assertNoErrors, launch, newPage, nextFrames, url } from './browser/harness.mjs';
+import { assertNoErrors, launch, newPage, nextFrames, unlockStore, url } from './browser/harness.mjs';
 
 const read = page => page.evaluate(() => JSON.parse(document.querySelector('#ui-state')?.textContent || '{}'));
 const front = async page => (await read(page)).front;
@@ -16,6 +16,8 @@ const browser = await launch();
 try {
   const errors = [];
   const page = await newPage(browser, { viewport: { width: 1280, height: 720 } }, errors);
+  // Single Player picks follow the profile's unlocks (PROFILE_STORE.md).
+  await unlockStore(page);
   await page.addInitScript(() => { localStorage.setItem('atv2-keyboard-help-seen-v1', '1'); localStorage.removeItem('atv-player-selection'); });
   await page.goto(url('/play.html?uiDiagnostics=1'));
   await wait(page, () => JSON.parse(document.querySelector('#ui-state')?.textContent || '{}').front?.page === 'title', null, 120000);
@@ -46,7 +48,7 @@ try {
   await key(page, 'Escape');
   await wait(page, () => !JSON.parse(document.querySelector('#ui-state').textContent).front.menu);
   await key(page, 'ArrowUp'); await key(page, 'ArrowUp'); await key(page, 'ArrowUp'); await key(page, 'Enter'); await onPage(page, 'single');
-  assert.deepEqual((await front(page)).choices, ['tracks', 'race', 'championship', 'garage']);
+  assert.deepEqual((await front(page)).choices, ['tracks', 'race', 'championship', 'garage', 'store']);
   // Garage: Right steps the ATV, the rider switch toggles; both persist.
   await key(page, 'ArrowDown'); await key(page, 'ArrowDown'); await key(page, 'ArrowDown'); await key(page, 'Enter'); await onPage(page, 'garage');
   // The 3D previews: the ATV and the original menu rider (animated idle).
