@@ -115,6 +115,33 @@ pub const RACER_PLAYER: &str = "radaricon_racer#255,0,0";
 /// King of the Hills' hill score pill (`002eac20`): only the KH game
 /// archives carry it.
 pub const PILL: &str = "koh_pillbkg";
+/// The compass icon each mode passes `002e68e0` (`002edf00`): a Freestyle
+/// target run's untouched cherries, King of the Hills' hills and Treasure
+/// Hunt's live treasures. Only that mode's archive carries its icon.
+pub const RADAR_TARGET: &str = "radaricon_target";
+pub const RADAR_HILL: &str = "radaricon_hill";
+pub const RADAR_FLAG: &str = "radaricon_flag";
+
+/// `<icon>#<slot>`: an icon tinted with a participant colour (`002e76e0`
+/// colours each hill by its owner's slot).
+pub fn tinted_name(icon: &str, slot: u8) -> String {
+    format!("{icon}#{slot}")
+}
+
+/// hud.js `tinted`: the icon multiplied by `color`, keeping its alpha.
+pub fn tinted(image: &HudImage, color: crate::color::Color) -> HudImage {
+    let mut rgba = image.rgba.clone();
+    for px in rgba.as_chunks_mut::<4>().0 {
+        px[0] = (f32::from(px[0]) * color.r).round() as u8;
+        px[1] = (f32::from(px[1]) * color.g).round() as u8;
+        px[2] = (f32::from(px[2]) * color.b).round() as u8;
+    }
+    HudImage {
+        width: image.width,
+        height: image.height,
+        rgba,
+    }
+}
 
 /// The section's original bytes (hud.js/frontend.js `document(name, section)`):
 /// Overlays.pb has a stray authoring note outside the sections.
@@ -285,6 +312,26 @@ pub async fn load(
         lamps &= opened.image(&mut images, name).await?;
     }
     opened.image(&mut images, PILL).await?;
+    // Target runs and mini-games show the compass (Overlay Sets 5-7).
+    if game.is_some() {
+        for name in COMPASS
+            .into_iter()
+            .chain([RACER, RADAR_TARGET, RADAR_HILL, RADAR_FLAG])
+        {
+            opened.image(&mut images, name).await?;
+        }
+        if let Some(hill) = images.get(RADAR_HILL) {
+            let copies: Vec<_> = (0..4)
+                .map(|slot| {
+                    (
+                        tinted_name(RADAR_HILL, slot),
+                        tinted(hill, super::peers::color(slot)),
+                    )
+                })
+                .collect();
+            images.extend(copies);
+        }
+    }
     let race = if let Some(variant) = race {
         match race_assets(
             &opened,

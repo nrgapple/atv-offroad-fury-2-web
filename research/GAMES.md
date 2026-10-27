@@ -199,6 +199,23 @@ game's end (`002d10d0`, `002210e0`).
   reading follows the texture's shape and the constructor's 30 x 31 /
   10 x 11 values, and the pill height stays the 31 units of the
   constructor rather than `002eb0e0`'s text height − 9.
+- **Compass.** Overlay Sets 6 and 7 place object 31 (`QuadzillaCompass`)
+  at 70,375; Tag (Set 10) and Hockey (Set 9) have none, and Coonce's
+  archive ships no compass art. `002edf00` passes the mode's icon:
+  event type 7 (King of the Hills) `RadarIcon_Hill`, 10 (Treasure Hunt)
+  `RadarIcon_Flag` (8, `RadarIcon_Ball`, and 0/1, `RadarIcon_Gate`, are
+  the other cases). King of the Hills fills the icon list once with every
+  scene model whose name contains `hill` (`002e7610`) and colours each by
+  its owner (`002e76e0`: participant colours 0-3, white unowned) at the
+  start and on every capture. Treasure Hunt refills it with the live
+  group's treasures when a group starts and after each pickup
+  (`002e7590` from `002d1280`/`002d0d70`). The port draws it from the
+  game archive's art: one `radaricon_hill` per hill marker (tinted copies
+  per owner slot) and one `radaricon_flag` per live, uncollected treasure,
+  all clamped to the rim. Assumptions: hill icons sit at the port's hill
+  marker points rather than the `hill` models' origins, and collected
+  treasures are dropped from the list (whether `002d17c0`'s group list
+  still holds them was not traced).
 - **Treasure wait flag.** During the 6 s wait the original sets rider flag
   0x40000 (meaning not traced); the port only hides the treasures.
 
