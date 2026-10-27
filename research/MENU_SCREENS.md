@@ -122,14 +122,17 @@ that have an effect on a browser or desktop build. Exact-build evidence
   edge launch already used), keeps it on in multiplayer rooms, and skips
   race records while it is off.
 - **Sound Configuration.** Stereo, Stereo (Swapped) and Mono apply to the
-  port's mixed output (all effects and the desktop soundtrack). Dolby is
+  port's mixed output (all effects, the menu tune and the desktop
+  soundtrack) and to the web's streamed soundtrack, whose Web Audio graph
+  then routes a splitter/merger crossover (Swapped) or a one-channel
+  speakers down-mix ((L + R) / 2, Mono); the menus apply it as well as
+  rides. Stereo keeps the song playing straight from its element. Dolby is
   the PS2's Pro Logic matrix surround; there is no matrix decoder behind a
   browser or desktop output, so it renders as Stereo.
 
 Authored or not ported: the original keeps Measurement in the profile
 (+0x6b0) and saves the settings with it; the port keeps one device-wide
-choice like its other settings. The web soundtrack element plays outside
-the mixer, so Swapped/Mono do not reach the web soundtrack. Split Screen
+choice like its other settings. Split Screen
 (no split screen) and Display Mode (480p/480i) have no counterpart; the
 volumes stay on Settings → Audio. Where the original stores +0x674 between
 sessions was not traced. The port's motorcycles (not in the original
