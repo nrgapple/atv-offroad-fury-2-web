@@ -189,6 +189,6 @@ Freestyle objectives mode (`Freestyle Prep` → Objectives) is not offered.
 Checks: `atv-core` freestyle tests (parser, levels and time-out, combos,
 targets, rounds/trophy/unlock); `atv-ui` controller test for the page
 flow; `tools/test_engine_freestyle_objectives.mjs` fails a Combos run on a
-shortened clock (`objectiveTest=timeout`), completes Score Stunt Points
+shortened clock (`objectiveTest=timeout`, five seconds), restarts it from Pause, completes Score Stunt Points
 (`objectiveTest=score` credits the top level) and finishes Amateur
 Freestyle for silver, its reward and the Pro Freestyle unlock.

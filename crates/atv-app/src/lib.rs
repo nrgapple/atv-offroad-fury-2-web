@@ -271,25 +271,8 @@ impl ObjectiveSession {
             let objective = course_objectives(&self.course)?
                 .into_iter()
                 .nth(self.objective)?;
-            let mut run = Run::new(objective, self.objective, ride.committed_points());
-            // Test tooling: `objectiveTest=score` credits the last point level,
-            // `objectiveTest=timeout` leaves two seconds.
-            if url_flag("objectiveTest=score")
-                && let atv_core::freestyle::Kind::Stunt { levels } = &run.objective.kind
-            {
-                let top = levels.last().copied().unwrap_or(0.);
-                run = Run::new(
-                    run.objective.clone(),
-                    self.objective,
-                    ride.committed_points() - top,
-                );
-            }
-            if url_flag("objectiveTest=timeout") {
-                run.time_left = 2.;
-            }
-            ride.take_chains();
-            self.steps = ride.steps();
-            self.run = Some(run);
+            self.run = Some(Run::new(objective, self.objective, ride.committed_points()));
+            self.start(ride);
         }
         let run = self.run.as_mut()?;
         let steps = ride.steps();
@@ -324,6 +307,26 @@ impl ObjectiveSession {
             total,
             atv_core::freestyle::total_objectives(series)
         ))
+    }
+
+    /// The run (re)starts on the ride's current clock and points.
+    fn start(&mut self, ride: &mut atv_game::ride::Ride) {
+        let Some(run) = &mut self.run else { return };
+        run.restart(ride.committed_points());
+        // Test tooling: `objectiveTest=score` credits the last point level,
+        // `objectiveTest=timeout` leaves five seconds.
+        if url_flag("objectiveTest=score")
+            && let atv_core::freestyle::Kind::Stunt { levels } = &run.objective.kind
+        {
+            let top = levels.last().copied().unwrap_or(0.);
+            run.restart(ride.committed_points() - top);
+        }
+        if url_flag("objectiveTest=timeout") {
+            run.time_left = 5.;
+        }
+        ride.take_chains();
+        self.steps = ride.steps();
+        self.recorded = false;
     }
 
     /// The HUD panel.
@@ -1784,6 +1787,20 @@ impl App {
             Event::Reset if riding.ride.race().is_some() => {
                 self.menu_event(Event::Resume);
                 self.restart_race();
+            }
+            // Restart Objective: the ride resets and the run starts over
+            // (timer, score, combos and levels), its results closed.
+            Event::Reset if self.objective.is_some() => {
+                if let Err(error) = riding.reset() {
+                    status(&format!("Reset failed: {error}"));
+                }
+                if let Some(session) = &mut self.objective {
+                    session.start(&mut riding.ride);
+                }
+                if let Some(overlay) = &mut self.overlay {
+                    overlay.results = Default::default();
+                }
+                self.menu_event(Event::Resume);
             }
             Event::Resume | Event::Reset => {
                 // Leaving the menu ends a Jukebox pause (stopJukebox).

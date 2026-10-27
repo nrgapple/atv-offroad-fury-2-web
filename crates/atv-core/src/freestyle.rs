@@ -304,6 +304,12 @@ impl Run {
         }
     }
 
+    /// Restart: the same objective from its start (timer, score, combos,
+    /// levels and targets), on the rider's current committed points.
+    pub fn restart(&mut self, committed: f32) {
+        *self = Self::new(self.objective.clone(), self.index, committed);
+    }
+
     pub fn finished(&self) -> bool {
         self.outcome.is_some()
     }
@@ -638,6 +644,28 @@ Description=\"Score Stunt Points\"\r\nTOYFile=\r\n";
         assert_eq!(run.outcome, Some(Outcome::Completed));
         assert_eq!(run.earned_bits(), 0b100);
         assert_eq!(run.progress(), "Combos 10 of 10");
+    }
+
+    #[test]
+    fn restart_starts_the_run_over() {
+        let mut run = Run::new(course_objectives("env01").unwrap().remove(2), 2, 100.);
+        run.tick(50., 2600.);
+        run.chain(true, &[1, 2]);
+        run.chain(true, &[1, 2]);
+        assert_eq!((run.combos(), run.score), (1, 2500.));
+        run.restart(2600.);
+        assert_eq!(run.time_left, TIME_LIMIT);
+        assert_eq!((run.combos(), run.score, run.levels), (0, 0., 0));
+        assert!(run.messages.is_empty() && run.outcome.is_none());
+        // The counted combo counts again.
+        run.chain(true, &[1, 2]);
+        assert_eq!(run.combos(), 1);
+        let mut run = Run::new(course_objectives("env01").unwrap().remove(3), 3, 0.);
+        run.tick(1., 30000.);
+        assert_eq!(run.levels, 2);
+        run.restart(30000.);
+        run.tick(1., 30000.);
+        assert_eq!((run.levels, run.earned_bits()), (0, 0));
     }
 
     #[test]
