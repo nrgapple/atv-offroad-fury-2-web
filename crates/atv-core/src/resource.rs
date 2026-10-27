@@ -157,6 +157,71 @@ impl<'a> Resource<'a> {
         Ok(out)
     }
 
+    /// `base` with `overlay`'s members added, replacing base members of the
+    /// same path (case-insensitive). Compressed archives keep their zlib
+    /// blocks: the overlay's blocks follow the base's, so nothing is inflated.
+    pub fn overlay(base: &Resource, overlay: &Resource) -> Result<Vec<u8>> {
+        if !base.compressed || !overlay.compressed {
+            return Err("resource overlay needs block-compressed archives".into());
+        }
+        let shift = base.blocks.len() * BLOCK_SIZE;
+        let replaced = |name: &str| {
+            overlay
+                .members
+                .iter()
+                .any(|m| m.name.eq_ignore_ascii_case(name))
+        };
+        let members: Vec<(&str, usize, usize)> = base
+            .members
+            .iter()
+            .filter(|m| !replaced(&m.name))
+            .map(|m| (m.name.as_str(), m.offset, m.bytes))
+            .chain(
+                overlay
+                    .members
+                    .iter()
+                    .map(|m| (m.name.as_str(), m.offset + shift, m.bytes)),
+            )
+            .collect();
+        let blocks: Vec<&[u8]> = base
+            .blocks
+            .iter()
+            .map(|&(at, len)| &base.data[at..at + len])
+            .chain(
+                overlay
+                    .blocks
+                    .iter()
+                    .map(|&(at, len)| &overlay.data[at..at + len]),
+            )
+            .collect();
+        let mut directory = Vec::new();
+        for (name, offset, bytes) in &members {
+            let to_u32 = |v: usize| u32::try_from(v).map_err(|_| "resource overlay too large");
+            directory.extend(to_u32(name.len())?.to_le_bytes());
+            directory.extend(name.as_bytes());
+            directory.extend(to_u32(*offset)?.to_le_bytes());
+            directory.extend(to_u32(*bytes)?.to_le_bytes());
+        }
+        let table_size = blocks.len() * 2 + 2;
+        let mut out = Vec::with_capacity(
+            20 + table_size + 8 + directory.len() + blocks.iter().map(|b| b.len()).sum::<usize>(),
+        );
+        for word in [3, 12 + table_size, 0x340, 0, table_size] {
+            out.extend((word as u32).to_le_bytes());
+        }
+        for block in &blocks {
+            out.extend(((block.len() - 1) as u16).to_le_bytes());
+        }
+        out.extend(0u16.to_le_bytes());
+        out.extend((members.len() as u32).to_le_bytes());
+        out.extend((directory.len() as u32).to_le_bytes());
+        out.extend(directory);
+        for block in blocks {
+            out.extend(block);
+        }
+        Ok(out)
+    }
+
     pub fn validate_blocks(&self) -> Result<usize> {
         for i in 0..self.blocks.len() {
             self.decode_block(i)?;
@@ -215,6 +280,42 @@ mod tests {
             assert_eq!(r.members[0].name, "folder/test.txt");
             assert_eq!(r.extract(0).unwrap(), b"hello");
         }
+    }
+    #[test]
+    fn overlay_appends_blocks_and_replaces_same_paths() {
+        let base = fixture(true, "a/Shared.txt");
+        let mut over = fixture(true, "a/shared.txt");
+        // The overlay member reads "olleh" instead.
+        let mut plain = vec![0; BLOCK_SIZE * 2];
+        plain[BLOCK_SIZE - 2..BLOCK_SIZE + 3].copy_from_slice(b"olleh");
+        let chunks: Vec<Vec<u8>> = plain
+            .chunks(BLOCK_SIZE)
+            .map(|c| miniz_oxide::deflate::compress_to_vec_zlib(c, 6))
+            .collect();
+        let header = 20 + 6 + 8 + 4 + 12 + 8;
+        over.truncate(header);
+        over[20..22].copy_from_slice(&((chunks[0].len() - 1) as u16).to_le_bytes());
+        over[22..24].copy_from_slice(&((chunks[1].len() - 1) as u16).to_le_bytes());
+        over.extend(chunks.concat());
+        let other = fixture(true, "b/new.txt");
+        let (base, over, other) = (
+            Resource::parse(&base).unwrap(),
+            Resource::parse(&over).unwrap(),
+            Resource::parse(&other).unwrap(),
+        );
+        let merged = Resource::overlay(&base, &over).unwrap();
+        let merged = Resource::parse(&merged).unwrap();
+        assert_eq!(merged.members.len(), 1);
+        assert_eq!(merged.extract(0).unwrap(), b"olleh");
+        let both = Resource::overlay(&base, &other).unwrap();
+        let both = Resource::parse(&both).unwrap();
+        let names: Vec<&str> = both.members.iter().map(|m| m.name.as_str()).collect();
+        assert_eq!(names, ["a/Shared.txt", "b/new.txt"]);
+        assert_eq!(both.extract(0).unwrap(), b"hello");
+        assert_eq!(both.extract(1).unwrap(), b"hello");
+        assert_eq!(both.validate_blocks().unwrap(), 4);
+        let raw = fixture(false, "c");
+        assert!(Resource::overlay(&Resource::parse(&raw).unwrap(), &other).is_err());
     }
     #[test]
     fn rejects_truncation_corruption_and_traversal() {

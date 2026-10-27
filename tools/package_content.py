@@ -53,6 +53,13 @@ STARTUP += ('/TRACKS/TRACKSB/TRAINING/T00_TR.RES', '/TRACKS/TRACKSA/GAME01/G01_S
 STARTUP += tuple(f'/TRACKS/TRACKSA/ENV{i:02}/E{i:02}_NAT.RES' for i in range(2,9))
 STARTUP += tuple(f'/TRACKS/TRACKSA/NAT{i:02}/N{i:02}_NAT.RES' for i in range(1,9))
 STARTUP += tuple(f'/TRACKS/TRACKSB/SX{i:02}/S{i:02}_NAT.RES' for i in range(1,17))
+# Original Enduro (long ENDL, short ENDS) and Short Track (ST) races. Each
+# variant archive repeats its venue's National race data; the package keeps
+# only the members that differ (compact_race_variant) and the engine reads
+# them over the venue's NAT archive. ENDL is listed above for placements.
+VARIANTS = tuple(f'/TRACKS/TRACKSA/ENV{i:02}/E{i:02}_ENDS.RES' for i in range(1, 9))
+VARIANTS += tuple(f'/TRACKS/TRACKSA/ENV{i:02}/E{i:02}_ST.RES' for i in (1, 6, 7))
+STARTUP += VARIANTS
 # Original Profile Store gear catalog (uiRider.txt only) for rider customization.
 STARTUP += ('/UI/RESOURCE/RIDEINFO.RES',)
 STARTUP += tuple(f'/UI/RESOURCE/TP/TP_{group}.RES' for group in ('PNAT','ASX','PSX','HOCK'))
@@ -426,15 +433,42 @@ def compact_rider_motions(data, catalogs):
     return pack_resource(selected)
 
 
-def compact_map_placements(data, environment):
-    """ENDL supplies only the common placement TOY; FR owns map rendering data."""
+def compact_map_placements(data, environment, national=None):
+    """ENDL supplies the common placement TOY (FR owns map rendering data) and,
+    given the venue's National race archive, its own Enduro race members."""
     resource = Resource(data)
     matches = [i for i, (name, _, _) in enumerate(resource.members)
                if name.lower().split('/')[-1] == f'{environment.lower()}.toy']
     if len(matches) != 1:
         raise ValueError('expected one common map placement member')
     index = matches[0]
-    return pack_resource([(resource.members[index][0], resource.extract(index))])
+    members = [(resource.members[index][0], resource.extract(index))]
+    if national is not None:
+        members += [m for m in race_variant_members(resource, national) if m[0] != members[0][0]]
+    return pack_resource(members)
+
+
+def race_variant_members(resource, national):
+    """Members of a variant race archive absent from, or different in, the
+    venue's National race archive, which the engine reads underneath."""
+    base = Resource(national)
+    shared = {}
+    for i, (name, _, size) in enumerate(base.members):
+        shared[name.lower()] = (size, i)
+    selected = []
+    for i, (name, _, size) in enumerate(resource.members):
+        data = resource.extract(i)
+        match = shared.get(name.lower())
+        if match and match[0] == size and base.extract(match[1]) == data:
+            continue
+        selected.append((name, data))
+    if not any(name.lower().endswith('e.tdf') for name, _ in selected):
+        raise ValueError('race variant has no course of its own')
+    return selected
+
+
+def compact_race_variant(data, national):
+    return pack_resource(race_variant_members(Resource(data), national))
 
 
 def compact_vancouver_thumbnail(data):
@@ -614,6 +648,9 @@ def main():
             return {'bytes': len(data), 'sha256': digest, 'url': f'/content/{digest}.bin'}
         records = []
         originals = {}
+        def national(path):
+            folder, name = path.rsplit('/', 1)
+            return source(f'{folder}/{name.split("_")[0]}_NAT.RES')
         for path in STARTUP:
             data = source(path)
             originals[path] = data
@@ -629,12 +666,14 @@ def main():
             elif path == '/UI/RESOURCE/RIDEINFO.RES':
                 data = compact_gear_catalog(data)
             elif path.endswith('_ENDL.RES'):
-                data = compact_map_placements(data, path.split('/')[-2])
+                data = compact_map_placements(data, path.split('/')[-2], national(path))
+            elif path in VARIANTS:
+                data = compact_race_variant(data, national(path))
             elif path == '/RIDER/RIDER_MT.RES':
                 outfits = ai_outfit_names(Resource(originals['/TRACKS/TRACKSA/ENV01/E01_NAT.RES']).named('airiders.pb'))
                 outfits |= gear_catalog_names(source('/UI/RESOURCE/RIDEINFO.RES'))
                 data = compact_rider_materials(originals['/RIDER/MRIDER.RES'], data, (originals['/RIDER/FRIDER.RES'],), outfits)
-            record = {'path': path, 'lba': by_path[path.lower()]['lba'], 'directory': False, 'lazy': path.startswith(('/QUAD/', '/UI/LOADICON/')) or path in ('/RIDER/FRIDER.RES', JUKEBOX), **blob(data)}
+            record = {'path': path, 'lba': by_path[path.lower()]['lba'], 'directory': False, 'lazy': path.startswith(('/QUAD/', '/UI/LOADICON/')) or path in ('/RIDER/FRIDER.RES', JUKEBOX) or path in VARIANTS, **blob(data)}
             if data != originals[path]:
                 record.update(repacked=True, member_count=len(Resource(data).members))
             records.append(record)

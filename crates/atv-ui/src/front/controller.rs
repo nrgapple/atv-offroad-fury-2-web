@@ -485,10 +485,17 @@ impl Frontend {
 
     /// A course's display name (its id upper-cased when unlisted).
     pub fn course_name(&self, id: &str) -> String {
-        self.tracks
+        let (venue, variant) = atv_game::launch::split_race_course(id)
+            .unwrap_or((id, atv_game::launch::RaceVariant::National));
+        let name = self
+            .tracks
             .iter()
-            .find(|t| t.id == id)
-            .map_or_else(|| id.to_uppercase(), |t| t.name.clone())
+            .find(|t| t.id == venue)
+            .map_or_else(|| venue.to_uppercase(), |t| t.name.clone());
+        match variant.label() {
+            Some(label) => format!("{name} {label}"),
+            None => name,
+        }
     }
 
     /// The race courses under the race event tab (frontend.js `raceOrder`).
@@ -1744,13 +1751,20 @@ impl Frontend {
             } else {
                 track.and_then(|t| photo(&t.id))
             },
+            // The hero names the venue; the mode line names an Enduro or
+            // Short Track race.
             hero_name: if race {
-                self.course_name(&self.race.course)
+                self.course_name(atv_game::launch::race_venue(&self.race.course))
             } else {
                 track.map_or(String::new(), |t| t.name.clone())
             },
             hero_mode: if race {
-                format!("{} race", group_label(&self.race.course))
+                match atv_game::launch::split_race_course(&self.race.course)
+                    .and_then(|(_, variant)| variant.label())
+                {
+                    Some(label) => format!("{label} race"),
+                    None => format!("{} race", group_label(&self.race.course)),
+                }
             } else {
                 String::new()
             },

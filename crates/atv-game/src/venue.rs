@@ -50,6 +50,8 @@ impl Terrain {
 
 pub struct Venue {
     pub environment: String,
+    /// The race a race load read (National for free ride).
+    pub race: crate::launch::RaceVariant,
     pub scene: Scene,
     pub terrain: Terrain,
     pub sky: Option<Sky>,
@@ -65,6 +67,8 @@ pub struct Venue {
     pub ambient: Option<std::rc::Rc<std::cell::RefCell<crate::ambient::Ambient>>>,
     /// A race's National drop gate (drawn as the last scene model).
     pub drop_gate: Option<atv_core::race_gate::DropGate>,
+    /// An Enduro race's gates in order, the finish gate last (`0022a340`).
+    pub enduro_gates: Vec<atv_core::race::Gate>,
     /// The dense render-grid ground (renderCore.terrainHeight): cameras and
     /// presentation follow the visible terrain; gameplay uses contact().
     pub visible: std::rc::Rc<atv_core::terrain::Heightfield>,
@@ -87,6 +91,8 @@ pub struct LoadOptions {
     pub weather: WeatherChoice,
     /// Decode the Enhanced/High smoothed sky tiles as well.
     pub sky_smooth: bool,
+    /// Which of the venue's races a race load reads.
+    pub race: crate::launch::RaceVariant,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -111,8 +117,12 @@ pub async fn load_with(
     racing: bool,
     options: LoadOptions,
 ) -> Result<Venue> {
-    let course = course_resource(environment, racing)?;
-    let bytes = crate::ride::load::course_archive(content, &course.archive, environment).await?;
+    let course = if racing {
+        crate::launch::race_resource(environment, options.race)?
+    } else {
+        course_resource(environment, false)?
+    };
+    let bytes = crate::ride::load::course_archive(content, &course, environment).await?;
     let archive = Resource::parse(&bytes)?;
     // The decode steps below are long: each yields to the host's loop
     // (desktop polls loads between events; the web resumes at once).
@@ -266,6 +276,51 @@ pub async fn load_with(
         options.sky_smooth,
     )?);
     crate::yield_frame().await;
+    // Enduro gates (`0022a340`): a `<venue>endwgate` at every waypoint but
+    // the last, which holds the `<venue>endfgate` finish gate; both collide.
+    let enduro_gates = if racing && options.race.is_enduro() {
+        let stem = &course.mode_stem;
+        let waypoints =
+            atv_core::enduro::parse_wpt(&extract(&format!("{stem}e.wpt"), "Enduro gates")?)?;
+        let model = |kind: &str| format!("{environment}end{kind}gate");
+        // The race box spans the gate model's width (model +0x110, read here
+        // as the collision mesh's half extent across the gate).
+        let mesh = atv_core::collision::decode_col(&extract(
+            &format!("{}.col", model("w")),
+            "Enduro gate",
+        )?)?;
+        let half_width = mesh
+            .vertices
+            .iter()
+            .map(|v| v[0].abs())
+            .fold(0f32, f32::max);
+        let gates = atv_core::enduro::gates(&waypoints, half_width, |x, z| {
+            ground.height(x as f64, z as f64) as f32
+        })?;
+        for (i, gate) in gates.iter().enumerate() {
+            let name = model(if i + 1 == gates.len() { "f" } else { "w" });
+            let matrix = atv_core::enduro::model_matrix(gate);
+            scene.models.push(atv_core::scene::StaticModel {
+                name: name.clone(),
+                position: [matrix[12], matrix[13], matrix[14]],
+                look: [matrix[8], matrix[9], matrix[10]],
+                up: Some([0., 1., 0.]),
+                use_lighting: true,
+                dynamic_lighting: false,
+                world_matrix: matrix,
+            });
+            scene
+                .collision_models
+                .push(atv_core::scene::CollisionModel {
+                    name,
+                    world_matrix: matrix,
+                    material: 0,
+                });
+        }
+        gates
+    } else {
+        Vec::new()
+    };
     let scenery = crate::scenery::load(&archive, &scene, toy.as_deref(), gate_model)?;
     crate::yield_frame().await;
     let vegetation = crate::vegetation::load(&archive, environment, &scene, &ground)?;
@@ -309,6 +364,11 @@ pub async fn load_with(
     };
     Ok(Venue {
         environment: environment.to_string(),
+        race: if racing {
+            options.race
+        } else {
+            Default::default()
+        },
         sky,
         scenery,
         vegetation,
@@ -322,6 +382,7 @@ pub async fn load_with(
             .map(|toy| crate::lingering_dust::dust_zones(&String::from_utf8_lossy(toy)))
             .unwrap_or_default(),
         drop_gate,
+        enduro_gates,
         visible: std::rc::Rc::new(ground),
         terrain_zones: toy
             .as_deref()

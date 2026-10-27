@@ -971,3 +971,80 @@ predicted distance, and all 60 alternate lines still rejoin in order.
 `test_engine_race_finish_gate.mjs` races SX06 with three CPUs for about 105s
 in host Chromium: CPUs past the gate for the first time have 0 laps, and CPUs
 past it a second time (5,632–6,041ft) have 1.
+
+## Enduro and Short Track races — 2026-10-27
+
+Each Environment venue ships two more race archives besides `E0n_NAT.RES`:
+a long and a short Enduro (`E0n_ENDL.RES`, `E0n_ENDS.RES`), and Rockbridge
+Park, Caribou Peak and San Jacinto Isles a Short Track (`E0n_ST.RES`). Each
+repeats the venue's National archive (terrain, scenery, roster) and adds its
+own scene, mode TOY and TDF (`<venue><endl|ends|st>.scn|.toy`,
+`<venue><stem>E.tdf`). Enduro archives also carry `<venue><stem>E.wpt`,
+the `<venue>endwgate`/`endfgate` gate models, gate arrow textures
+(`<venue>arrow1..8`), the compass art and the radar gate icon; their TDFs
+have no tag 15/16 start or finish box.
+
+Exact-build evidence (private reading of `SCUS_972.11`, nothing traced):
+
+- **Variant.** `002f65e0` maps the event type to the track variant;
+  `0021d8b0` builds `tracks\<venue><suffix>E`: Amateur Enduro reads the
+  short course (`ends`), Pro Enduro, the Waypoint Editor and User Created
+  Enduro the long one (`endl`), Short Tracks `st`. Enduro laps are 3
+  (`00289d50`). The event factory `001dfb00` builds an EnduroRaceEvent for
+  Enduro and a NationalRaceEvent for Short Tracks.
+- **Waypoints (`0022a340`).** The `.wpt` holds 0x18 bytes of names, a u32
+  count, then `count` records of x, z, dirx, dirz (shipped files are padded
+  to the editor's 50 records). Every waypoint but the last places a
+  `endwgate` model (with collision) 2 ft above the ground, oriented right
+  (dz, 0, −dx) and forward (dx, 0, dz); the last places the `endfgate`
+  finish gate. Each gate gets a race box with flags 5: the direction test
+  is skipped, so a gate counts in either direction.
+- **Rules (RaceStatus type 1, `0024a490`).** Only a rider's next gate is
+  tested. Crossing it credits the distance to the following gate and moves
+  on; crossing the last gate counts a lap (lap time, best lap with no
+  first-lap exclusion) and wraps to gate 0. Passing beside a gate does
+  nothing, so a missed gate must be ridden back to; there is no penalty.
+  Race distance is the credited gate distance less the distance to the next
+  gate; places sort by gates passed, then by that distance. Type 1 runs no
+  on-track query (no route window, Off Track or Wrong Way).
+- **Grid (`001f8410`).** One row 10 ft past the last gate, facing its
+  direction, slots `RiderSpacing × (slot − n/2)` across it.
+- **HUD (Overlays.pb set 11).** The race overlays without the radar, plus
+  a compass (object 31), "Cheesy GPS" (32) and "GATE n of m" (object 40,
+  value 22 `002df0b0`, at 25,270).
+- **Short Tracks** use the National rules (RaceStatus type 2) with their
+  own TDF (gates 15/16) and 5 laps.
+
+Port:
+
+- `atv_game::launch::RaceVariant` names the venue's races; course ids are
+  the venue for its National race and `<venue><stem>` otherwise
+  (`env05ends`), and ride links add `course=enduro-long|enduro-short|short-track`.
+  The content package keeps only each variant archive's members that differ
+  from the National archive (`tools/package_content.py`
+  `compact_race_variant`, about 45–70 KB per Enduro, 11–14 KB per Short
+  Track; ENDL keeps its placement TOY too), and the engine reads them over
+  the National archive (`Resource::overlay`, which joins the two block
+  tables without inflating anything).
+- `atv_core::enduro` parses the waypoints and builds the gate boxes and
+  model matrices; `Course::set_enduro` switches a race to the gate rules
+  above and the Enduro grid. The venue draws and collides with the gate
+  models. The HUD drops the radar and shows "GATE n of m".
+- Single Race lists each published variant under its venue's tab
+  ("Prospect Springs Enduro Short").
+
+**Authored or approximate:** the gate width is the `endwgate` collision
+mesh's half extent across the gate (the original reads model field +0x110);
+the gate ceiling is the National 150 ft; the CPUs still drive the Enduro
+TDF route (how the original CPU uses the guidance vector is not read); the
+race still ends when the player finishes (the original also ends it 30 s
+after the first finisher); gates are drawn opaque with their default arrow
+textures (the original fades all but the next gate to 0.4 alpha and picks
+arrow textures toward the next gate, `00229e90`); the compass and GPS
+overlays are not drawn.
+
+Checks: `atv-core` `enduro` and `race::tests::enduro_gates_count_in_order_and_last_gate_laps`,
+`resource` overlay test, `atv-game` launch variant test,
+`tools/test_release_content.py`; `tools/test_engine_enduro_race.mjs` races
+env05's short Enduro (13 gates, a one-lap finish) and loads env06's Short
+Track (it skips when the content package predates the variant archives).

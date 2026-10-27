@@ -42,16 +42,27 @@ pub(crate) fn missing_member(what: &str, name: &str) -> String {
 /// lacks it ("Original ENV01 terrain archive is missing.").
 pub(crate) async fn course_archive(
     content: &Content,
-    path: &str,
+    course: &crate::launch::CourseResource,
     environment: &str,
 ) -> Result<Vec<u8>> {
-    if !content.has(path) {
-        return Err(format!(
+    let missing = || {
+        format!(
             "Original {} terrain archive is missing.",
             environment.to_ascii_uppercase()
-        ));
+        )
+    };
+    if !content.has(&course.archive) {
+        return Err(missing());
     }
-    content.file(path).await
+    let base = content.file(&course.archive).await?;
+    let Some(path) = &course.overlay else {
+        return Ok(base);
+    };
+    if !content.has(path) {
+        return Err("Original race course archive is missing.".into());
+    }
+    let overlay = content.file(path).await?;
+    Resource::overlay(&Resource::parse(&base)?, &Resource::parse(&overlay)?)
 }
 
 /// An original file the package must list, with game.js's message for it.
@@ -150,9 +161,12 @@ pub async fn load_with(
     mut progress: impl FnMut(&str),
 ) -> Result<Ride> {
     let environment = venue.environment.as_str();
-    let course = course_resource(environment, race.is_some())?;
+    let course = match race {
+        Some(_) => crate::launch::race_resource(environment, venue.race)?,
+        None => course_resource(environment, false)?,
+    };
     let models = player_models::selection(quad, rider)?;
-    let course_bytes = course_archive(content, &course.archive, environment).await?;
+    let course_bytes = course_archive(content, &course, environment).await?;
     let archive = Resource::parse(&course_bytes)?;
     let (seed, vehicle_model, rider_model) = if models.motorcycle {
         progress("Reading original motorcycle…");
@@ -471,13 +485,16 @@ async fn race_setup(
     settings: super::race::Settings,
 ) -> Result<super::race::Setup> {
     let environment = venue.environment.as_str();
-    let course = atv_core::race::Course::parse(&member(
-        archive,
-        &format!("{environment}nate.tdf"),
-        "National course",
-    )?)?;
+    let stem = format!("{environment}{}", venue.race.stem());
+    let mut course =
+        atv_core::race::Course::parse(&member(archive, &format!("{stem}e.tdf"), "race course")?)?;
+    // An Enduro race counts its gates instead of the TDF boxes; the TDF
+    // still guides the CPU drivers.
+    if !venue.enduro_gates.is_empty() {
+        course.set_enduro(venue.enduro_gates.clone())?;
+    }
     // After the finish a director cuts between these trackside cameras.
-    let tv = basename_index(archive, &format!("{environment}nat.tv"))
+    let tv = basename_index(archive, &format!("{stem}.tv"))
         .map(|index| {
             let bytes = archive.extract(index)?;
             atv_core::race_director::parse_tv(
@@ -485,7 +502,7 @@ async fn race_setup(
             )
         })
         .transpose()?;
-    let mode = basename_index(archive, &format!("{environment}nat.toy"))
+    let mode = basename_index(archive, &format!("{stem}.toy"))
         .map(|index| archive.extract(index))
         .transpose()?
         .map(|bytes| String::from_utf8_lossy(&bytes).into_owned());

@@ -11,6 +11,19 @@ def mesh(material):
 
 
 class ContentTests(unittest.TestCase):
+    def test_race_variant_keeps_only_members_beside_the_national_race(self):
+        from package_content import compact_race_variant
+        national = pack_resource([('tracks/env05/env05.tr2', b'terrain'), ('geometry/gate.psg', b'nat')])
+        variant = pack_resource([('tracks/env05/env05.tr2', b'terrain'), ('geometry/gate.psg', b'end'),
+                                 ('tracks/env05/env05endsE.tdf', b'route')])
+        kept = Resource(compact_race_variant(variant, national))
+        self.assertEqual([name for name, _, _ in kept.members], ['geometry/gate.psg', 'tracks/env05/env05endsE.tdf'])
+        placements = Resource(compact_map_placements(pack_resource([('tracks/env05/env05.toy', b'toy'),
+            ('tracks/env05/env05endlE.tdf', b'route')]), 'ENV05', national))
+        self.assertEqual(len(placements.members), 2)
+        with self.assertRaises(ValueError):
+            compact_race_variant(national, national)
+
     def test_motorcycle_package_rejects_executable_and_wrong_source(self):
         record = {'source_build_sha256': MX_SOURCE_SHA, 'repacked': True, 'member_count': 1}
         validate_motorcycle_resource(record, pack_resource([('Veh/Anim/authored.psg', b'model')]))

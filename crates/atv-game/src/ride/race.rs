@@ -51,6 +51,8 @@ pub struct Settings {
     /// A championship round: the series (index into
     /// `atv_core::championship::SERIES`) and Expert.
     pub championship: Option<(usize, bool)>,
+    /// Which of the venue's races (National, Enduro long/short, Short Track).
+    pub course: crate::launch::RaceVariant,
 }
 
 impl Default for Settings {
@@ -64,6 +66,7 @@ impl Default for Settings {
             seed: 1,
             intro: true,
             championship: None,
+            course: Default::default(),
         }
     }
 }
