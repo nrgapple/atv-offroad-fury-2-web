@@ -132,6 +132,37 @@ Event `QuadzillaEventHockey.cpp`, vtable `00460770`; camera
   120 s default. The puck model also rests at the `[Ball]` start when
   Coonce Arena is ridden as authored Freestyle.
 
+### Online (authored)
+
+The original plays Games on one console (split screen). The port's
+replacement for split screen is its relay room, so a room ridden on Coonce
+Arena plays Hockey with human opponents. This is an authored adaptation,
+not the original's network play (no original Games protocol was
+recovered):
+
+- **Host-owned game.** The room host runs `atv_core::hockey` and the puck
+  for the roster in peer order, teams alternating Red/Blue (Team Select
+  is not reproduced). Each rider still owns its ATV; the host pushes the
+  puck with its own ATV and the others' latest relayed poses, so remote
+  touches carry relay latency.
+- **`Packet::Game`** (`atv_net::GameState`, codec kind 13): phase and its
+  timer, clock, scores, banner, puck position/velocity/spin and a phase
+  serial; sent at most every third step (20 Hz) and on every phase
+  change. The relay forwards it only from the host of a started private
+  room to riders on the map.
+- **Guests** mirror the state (score, clock, banners, the puck model),
+  face off at their own spot on each new face-off serial, play the siren,
+  crowd and game-over sounds on the matching changes, and open Hockey
+  Results when the host's game ends. A room with one rider waits at the
+  face-off ("Waiting for riders"); a roster change starts a new game.
+- Check: `tools/test_engine_multiplayer_hockey.mjs` (relay group: Rust
+  host and Rust guest on a local relay; roster, Blue face-off spot, a
+  shared goal, the puck within 15 units on both, both reach Hockey
+  Results).
+- Limits: guests' goal counts and hat-trick credit are only the host's;
+  older clients do not understand the new packet; the puck is not
+  predicted between state packets.
+
 ## Tag
 
 Event `QuadzillaEventTag.cpp`, vtable `00459300`. Tag is ball tag: the

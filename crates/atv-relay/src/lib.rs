@@ -1146,6 +1146,22 @@ impl DurableObject for LobbyRoom {
                 );
                 self.broadcast(&Packet::Lobby(self.lobby(None)?), None)?;
             }
+            // A room mini-game's state (research/GAMES.md "Online"): only
+            // the host of a started private room runs it; riders on the map
+            // receive it.
+            Packet::Game(state)
+                if connection.player.is_some()
+                    && !room.public
+                    && room.started
+                    && connection.ready_map == room.map
+                    && self.lobby(None)?.host == connection.peer =>
+            {
+                for (peer, other) in self.connections()? {
+                    if peer != ws && other.ready_map == room.map {
+                        send(&peer, &Packet::Game(state.clone()))?;
+                    }
+                }
+            }
             Packet::Leave { .. } => return self.close_socket(&ws, 1000, "Left room"),
             // A former host's map command can race a handoff; resynchronize it.
             Packet::SetLobby { .. } if connection.player.is_some() => {
