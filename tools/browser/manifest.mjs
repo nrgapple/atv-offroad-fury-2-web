@@ -39,6 +39,7 @@ export const TESTS = {
       'Compares with the JavaScript game: serve the pinned reference (python3 tools/js_reference.py serve) and set ATV_JS_URL'
   },
   'test_engine_settings.mjs': { group: 'content' },
+  'test_engine_game_settings.mjs': { group: 'content' },
   'test_engine_session_settings.mjs': { group: 'content' },
   'test_engine_links.mjs': { group: 'content' },
   'test_engine_wake_lock.mjs': { group: 'content' },

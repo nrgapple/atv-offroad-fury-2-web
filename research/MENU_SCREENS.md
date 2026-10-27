@@ -86,6 +86,59 @@ frontend backdrop and keep the original menu tune. The racing soundtrack plays
 there only after a song is chosen or music is toggled on the Audio page. From
 Pause they keep the ride panel and soundtrack.
 
+## Game Settings (2026-10-27)
+
+The original Options → Game Settings page (`Settings_Game`, PAGE15 labels:
+Split Screen Horizontal/Vertical, Music and Sound FX Volume, Sound
+Configuration Stereo / Stereo (Swapped) / Dolby / Mono, Measurement
+Standard (U.S. system) / Metric, Display Mode 480p/480i, Ecosystem
+Collision On/Off) is Settings → Game Settings in the port, with the rows
+that have an effect on a browser or desktop build. Exact-build evidence
+(bounded reading of the private Ghidra exports):
+
+- **Measurement.** `0020f780` stores the speed factor at settings +0x564
+  from the profile's flag +0x6b0: clear → 1.08 (`0x3f8a3d71`), set →
+  0.68182. The speedometer multiplies ft/s by it and labels "Kph" unless
+  the factor is 0.68182 ("Mph", `002e2030`). Every jump record line tests
+  the factor: the race and Freestyle record hooks (`00332810`,
+  `00332e30`) print "New Longest Jump %d %s!" with ft × 0.3048 and
+  "Meters", and the Hall of Fame / loading pages (`002585c0`) print "%d %s"
+  the same way. The port applies all of these (`hall_of_fame::Units`).
+- **Ecosystem Collision** (settings +0x674). Off sets query bit 0 on the
+  quad's, rider's and wheels' collision objects at setup (`001e1fd0`,
+  `001e4c90`, `001e92c0`); the broad phase (`0011f2c0`, `0011f9a0`) skips
+  objects of class "Vegetation" for objects with that bit. The edge launch
+  sets the same bit for one second and clears it only when +0x674 is set
+  (`001e5260`), so with collision off it stays set. Every race record hook
+  returns early when +0x674 is clear (`00324b40`, `00324cc0`, `00324e60`,
+  `00324f50`, `003249c0`, `00332810`); Freestyle's (`00332e30`) does not.
+  Network play forces it on (`0020f780`, +0x7d8). Turning it off shows the
+  Warning alert 0x90 (`0025e120`): "If Ecosystem Collision is turned off
+  freestyle / records will still be kept, but race records will not. /
+  NOTE: In i.LINK, LAN, and online play, / Ecosystem Collision is always
+  on. / Are you sure you wish to turn off / Ecosystem Collision?" with
+  Yes/No. The port asks the same, applies the setting to the player's quad
+  and every CPU quad (the vehicle's vegetation query flag, the one the
+  edge launch already used), keeps it on in multiplayer rooms, and skips
+  race records while it is off.
+- **Sound Configuration.** Stereo, Stereo (Swapped) and Mono apply to the
+  port's mixed output (all effects and the desktop soundtrack). Dolby is
+  the PS2's Pro Logic matrix surround; there is no matrix decoder behind a
+  browser or desktop output, so it renders as Stereo.
+
+Authored or not ported: the original keeps Measurement in the profile
+(+0x6b0) and saves the settings with it; the port keeps one device-wide
+choice like its other settings. The web soundtrack element plays outside
+the mixer, so Swapped/Mono do not reach the web soundtrack. Split Screen
+(no split screen) and Display Mode (480p/480i) have no counterpart; the
+volumes stay on Settings → Audio. Where the original stores +0x674 between
+sessions was not traced. The port's motorcycles (not in the original
+game) keep their vegetation collision.
+
+Checks: `atv-core` `hall_of_fame` units test (Meters/Kph lines, record
+messages), `atv-ui` preference and menu tests, mixer configuration test,
+and `tools/test_engine_game_settings.mjs`.
+
 ## Loading screens
 
 Both loaders follow the originals recovered privately from the disc (front-end
