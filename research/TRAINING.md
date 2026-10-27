@@ -84,7 +84,13 @@ disc's `AUDIO/TRAINING/DIALOGUE.AUD`. Observed facts:
   and ATV2 gear." on a first completion. Pause shows Restart Training;
   leaving mid-course keeps nothing, as the original.
 - The HUD panel shows "Lesson n of 6: name", the line's caption, the distance
-  to the marked circle and the original banners.
+  to the marked circle and the original banners. The recovered arrow
+  positions (25 ft over the goal, and Steering's first circle until passed)
+  show as screen tags with an edge arrow and as minimap markers, through the
+  multiplayer tag renderer.
+- Pitch is the body's forward-axis climb (nose down negative); in the
+  browser a plain ramp jump flies at about +0.43 rad and fails Jump and Land,
+  while leaning forward reaches −0.2 to −0.3 rad and passes it.
 
 ## Adaptations and open items
 
@@ -93,15 +99,18 @@ disc's `AUDIO/TRAINING/DIALOGUE.AUD`. Observed facts:
   length-based time. Hosting the lines through the R2 package and playing
   them would restore the original timing.
 - **No demonstration replay or arrow model.** The jumbotron VCR replays and the
-  `arrow.slt` marker are not drawn; the HUD distance stands in for the arrow.
+  `arrow.slt` model are not drawn; a screen tag and minimap marker at the
+  recovered arrow position stand in for it.
   The dialogue markers' jumbotron/preload cues are not reproduced.
 - **Field mappings (assumptions).** The drive command (+0x9e4) is read as gas,
   or brake once the ATV no longer rolls forward; +0x198 +0x34 and +0x904 as
   any wheel touching the ground; +0x198 +0x38, which arms the jump watch, as
   the first ground contact after placement; the rider-crash and wreck fields
   as the port's wreck phase; stunting as an unfinished stunt chain.
-- **Pad mapping.** Accept is keyboard Enter/Space, the pad's South button or
-  a tap; button 7's replay is implemented in the core but not bound.
+- **Pad mapping.** Accept is keyboard Enter, the pad's South button or a tap
+  (`00121cb0` resolves abstract action ids; the original's in-ride binding
+  of action 4 was not traced, it may be the gas button); action 7's replay is
+  implemented in the core but not bound.
 - **Order of the introduction.** The original also waits for +0x20c (set
   elsewhere, likely the opening camera) before lesson 1; the port starts once
   the lines end.
@@ -111,4 +120,9 @@ Checks: `cargo test -p atv-core training`, `atv-ui`
 `tools/test_engine_training.mjs` (content group): lesson 1 failed by
 reversing and then ridden to a stop, lessons 2–6 passed by the
 `trainingPass=1` hook, the Talons owned and shown Unlocked, a second visit
-without the prize line, Restart Training and Quit to Main Menu.
+at the original pace without the prize line (Accept skip, Restart Training,
+Quit to Main Menu), and every other lesson ridden from its start
+(`trainingStart=N`) with keyboard input: Steering, Reverse, Jump and Land
+(lean forward), Stunt (a stunt button) and Preload pass, plain jumps fail the
+last three with lines 20, 26 and 34. These are host Chromium checks; the
+public deployment and physical devices are separate gates.

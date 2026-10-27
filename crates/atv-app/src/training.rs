@@ -155,15 +155,7 @@ impl TrainingSession {
         let recovered = resets != self.resets;
         self.resets = resets;
         self.last = input;
-        if let Some((line, _)) = self.course.caption
-            && self.last_line != Some(line.id)
-        {
-            self.last_line = Some(line.id);
-            if self.lines.len() == 32 {
-                self.lines.remove(0);
-            }
-            self.lines.push(line.id);
-        }
+        self.note_line();
         if self.fast {
             self.course.hurry();
         }
@@ -185,6 +177,7 @@ impl TrainingSession {
                 },
             );
         }
+        self.note_line();
         for command in commands {
             match command {
                 Command::Place { .. } => {
@@ -196,6 +189,19 @@ impl TrainingSession {
             }
         }
         self.course.phase == Phase::Done && self.finished
+    }
+
+    /// Records a newly shown line (diagnostics).
+    fn note_line(&mut self) {
+        if let Some((line, _)) = self.course.caption
+            && self.last_line != Some(line.id)
+        {
+            self.last_line = Some(line.id);
+            if self.lines.len() == 32 {
+                self.lines.remove(0);
+            }
+            self.lines.push(line.id);
+        }
     }
 
     /// The HUD panel.
