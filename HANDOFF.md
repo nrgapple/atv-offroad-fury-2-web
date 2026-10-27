@@ -167,6 +167,9 @@ the worktree's `target/`; keep bulk output on the SSD.
   `PROFILE_STORE.md`).
 - Race rules are authored around recovered start slots, track window and
   finish-gate laps; firework triggers and points are open (`RACING.md`).
+  Reset points, the off-track reset and the committed station are recovered;
+  CPUs still loop at env04's water crossing and once on sx15 (`RACING.md`
+  "CPU reset points and the committed station").
   Enduro CPUs drive the TDF route line, not the waypoint guidance
   (`RACING.md` "Enduro").
 - Rendering lacks original LOD/visibility policy, point lights, shadows, light
