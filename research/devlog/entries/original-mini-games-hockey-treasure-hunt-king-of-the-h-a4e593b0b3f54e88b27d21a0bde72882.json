@@ -1,0 +1,16 @@
+{
+  "id": "original-mini-games-hockey-treasure-hunt-king-of-the-h-a4e593b0b3f54e88b27d21a0bde72882",
+  "timestamp": "2026-10-27T09:49:18.902281+00:00",
+  "recorded_at": "2026-10-27T10:29:25.743019+00:00",
+  "kind": "build",
+  "title": "Original mini-games: Hockey, Treasure Hunt, King of the Hills",
+  "summary": "Three original mini-game titles restored and playable: Hockey on Coonce Arena with the original puck model and sounds, Treasure Hunt and King of the Hills with 28 new courses, plus a new Games menu page. Single player only; Treasure Hunt and King of the Hills require release-owner R2 publication.",
+  "details": [
+    "Hockey recovered from QuadzillaEventHockey.cpp with face-off geometry, drop, goals, hat tricks, crowd/siren/puck sound events and restart. PR #345 added hockey::hockey and hockey::tag core rules; #346 brought the puck 3D model, original sounds and results page; #347 unified Hockey with Treasure Hunt and King of the Hills into a new Games framework (atv_core::games) with the Games menu, course selection and time-limit options.",
+    "Treasure Hunt and King of the Hills rules recovered from QuadzillaEventTreasureHunt and QuadzillaEventKingOfTheHill with exact-build evidence. Treasure Hunt collects treasures in groups (6 s wait between groups); King of the Hills captures hilltops by landing grounded. Single Player \u2192 Games page now launches Hockey (Coonce Arena), Treasure Hunt (14 courses), or King of the Hills (14 courses). Profile Store gates the two locked games; Hockey and Tag are open on a new profile.",
+    "Browser tests (test_engine_hockey_tag, test_engine_games) pass with the full content package. Hockey one-shot sounds (siren02.vag, gameover.vag, puck1/puck2.vag, crowd reactions) play with the regenerated AUDIO.RES. Treasure Hunt and King of the Hills game archives are packaged as lazy deltas (7\u201310 KB each) awaiting release-owner R2 publication."
+  ],
+  "limitation": "Single player only (original mini-games are split-screen/online; CPU logic not implemented). Tag is core-only but not yet playable without opponents and archived courses. Hockey sounds depend on release-owner publishing the regenerated content package; other games work silently with the current hosted package. Treasure Hunt and King of the Hills courses and collision triggers remain unverified for physical play without release-owner archive publication. Team Select, Time Limit row, team marker quads, hockey camera, hat emitters and treasure/hill score pills are not drawn. Puck drawn as screen tag and 3D model (larger than contact radius); bomb/flag/spotlight particle effects not emitted.",
+  "image": "/devlog-images/original-mini-games-hockey-treasure-hunt-king-of-the-h-a4e593b0b3f54e88b27d21a0bde72882.png",
+  "caption": "Games menu showing Treasure Hunt selected, with course and time limit options"
+}
