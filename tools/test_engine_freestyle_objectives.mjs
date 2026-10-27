@@ -2,9 +2,9 @@
 // (research/CHAMPIONSHIPS.md "Freestyle objectives"). A profile on the final
 // round of Amateur Freestyle (env01) with every objective of the first five
 // courses done (30 of 36) opens Championship → Amateur Freestyle → Select
-// Objective. `objectiveTest=timeout` leaves the Combos run two seconds: the
+// Objective. `objectiveTest=timeout` leaves the Combos run five seconds: the
 // HUD panel counts down and the run fails ("Sorry"); Continue returns to
-// Select Objective. A second load with `objectiveTest=score` credits the last
+// Select Objective (Pause → Restart first restarts the run's clock). A second load with `objectiveTest=score` credits the last
 // point level: Score Stunt Points completes, its three level bits count
 // (33 of 36), and Finish Championship awards silver (30+), its 500 Profile
 // Points (00322650) and opens Pro Freestyle.
@@ -84,6 +84,22 @@ try {
   let state = (await read(page)).ride;
   assert.equal(state.environment, 'env01');
   assert.equal(state.objective.progress, 'Combos 0 of 10');
+  // Pause → Restart starts the run over: the clock is back at its start.
+  await page.waitForFunction(() => JSON.parse(document.querySelector('#ui-state')?.textContent || '{}').ride?.objective?.timeLeft < 4.5, null, { timeout: 30000 });
+  await key(page, 'Escape');
+  await page.waitForFunction(() => JSON.parse(document.querySelector('#ui-state')?.textContent || '{}').toolbar?.menu?.page === 'pause', null, { timeout: 30000 });
+  const menu = (await read(page)).toolbar.menu;
+  assert.equal(menu.choices[1], 'reset');
+  const before = (await read(page)).ride.objective.timeLeft;
+  assert.ok(before > 0 && before < 4.5, `paused at ${before}`);
+  await key(page, 'ArrowDown');
+  await key(page, 'Enter');
+  await page.waitForFunction(before => {
+    const s = JSON.parse(document.querySelector('#ui-state')?.textContent || '{}');
+    return !s.paused && s.ride?.objective?.timeLeft > before + 0.2 && !s.ride.objective.recorded;
+  }, before, { timeout: 30000 });
+  state = (await read(page)).ride;
+  assert.equal(state.objective.score, 0);
   await nextFrames(page, 20);
   await optionalScreenshot(page, 'ATV_FREESTYLE_SCREENSHOT', 'hud');
   await waitResults(page);
