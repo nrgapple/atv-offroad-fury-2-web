@@ -3149,7 +3149,12 @@ impl ApplicationHandler<Message> for App {
                     match *piece {
                         ArtPiece::Photos(photos) => front.art.photos.extend(photos),
                         ArtPiece::Tips(tips) => front.set_tips(tips),
-                        ArtPiece::Quads(quads) => front.art.quads = Some(quads),
+                        ArtPiece::Quads(quads) => {
+                            front.state.store.atvs = quads.atvs.clone();
+                            front.art.quads = Some(quads);
+                            let view = front.view;
+                            front.state.refresh(&view);
+                        }
                         ArtPiece::TopSpeed(quad, speed) => {
                             front.art.top_speed.insert(quad, speed);
                         }
@@ -4024,6 +4029,7 @@ impl App {
         fit_surface(&window, &mut gpu, size, self.suspended);
         let view = overlay::viewport(size.width, size.height, surface_scale(&window));
         let tracks = boot.tracks.clone();
+        let courses = boot.courses.clone();
         let mut front = front::Front::new(
             &gpu.device,
             gpu.config.format,
@@ -4051,6 +4057,7 @@ impl App {
                     .collect::<Vec<_>>()
             })
             .collect();
+        front.state.store.courses = courses;
         front.state.set_race_courses(race_courses, &view);
         self.front = Some(Rc::new(RefCell::new(front)));
         self.gpu = Some(gpu);
@@ -5446,6 +5453,7 @@ fn capture_front(booted: Booted, page: &str, path: &std::path::Path, width: u32,
                 .unwrap_or_default(),
         );
         if let Ok(quads) = atv_ui::front::assets::quad_catalog(&content).await {
+            front.state.store.atvs = quads.atvs.clone();
             front.art.quads = Some(quads);
         }
         if let Ok(speed) = atv_ui::front::assets::top_speed(&content, 1).await {

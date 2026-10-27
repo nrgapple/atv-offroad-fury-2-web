@@ -132,6 +132,9 @@ pub struct Profile {
     pub best_stunt: i64,
     /// Championship rounds, standings, trophies and opened series.
     pub championships: crate::championship::Championships,
+    /// Profile Store purchases, earned unlocks and the points spent
+    /// (`store`, research/PROFILE_STORE.md).
+    pub store: crate::store::Unlocks,
 }
 
 impl Profile {
@@ -143,6 +146,37 @@ impl Profile {
             self.wins = self.wins.saturating_add(1);
         }
         self.best_stunt = self.best_stunt.max(stunt_score.max(0.) as i64);
+    }
+
+    /// Records a championship round and its course unlocks: an advanced
+    /// round opens the series' next course for other modes and a gold or
+    /// silver trophy the first course beyond the Normal series (`003222b0`,
+    /// `00322650` → `00323640`; the games' lists the port lacks are not
+    /// cascaded).
+    pub fn record_championship(
+        &mut self,
+        series: &crate::championship::Series,
+        expert: bool,
+        places: &[usize],
+    ) -> crate::championship::Outcome {
+        use crate::championship::Trophy;
+        let outcome = self.championships.record(series, expert, places);
+        let mut open = Vec::new();
+        if outcome.advanced && outcome.finished.is_none() {
+            open.push(outcome.round as u16 + 1);
+        }
+        if let Some((Some(Trophy::Gold | Trophy::Silver), ..)) = outcome.finished {
+            open.push(series.rounds[0] as u16);
+        }
+        if let Some(key) = crate::store::EVENT_LISTS.get(usize::from(series.kind)) {
+            let list = self.store.courses.entry(key.to_string()).or_default();
+            for index in open {
+                if !list.contains(&index) {
+                    list.push(index);
+                }
+            }
+        }
+        outcome
     }
 }
 

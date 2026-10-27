@@ -198,7 +198,7 @@ fn stage_page(page: &str) -> bool {
     matches!(
         page,
         "main" | "single" | "multiplayer" | "championship" | "create-lobby" | "join-lobby"
-    )
+    ) || controller::store_page(page)
 }
 
 fn display(size: f32, weight: u16, italic: bool) -> Font {
@@ -637,6 +637,12 @@ fn page_title(page: &str) -> &'static str {
         "tracks" => "Select Track",
         "race" => "Single Race",
         "championship" => "Championship",
+        "store" => "Unlock Items",
+        "store-atv" => "ATVs",
+        "store-gear" => "Rider Equipment",
+        "store-games" => "Games",
+        "store-tracks" => "Tracks",
+        "store-cheats" => "Enter Cheats",
         "gear" => "Rider Gear",
         "loading" => "Now Loading...",
         "settings" => "Settings",
@@ -1205,7 +1211,12 @@ fn left(m: &Metrics, s: &Screen) -> El {
                 ));
             }
         }
-        "main" | "single" | "multiplayer" | "championship" => {
+        page if matches!(page, "main" | "single" | "multiplayer" | "championship")
+            || controller::store_page(page) =>
+        {
+            if page == "store-cheats" {
+                left = left.child(form(m, s));
+            }
             let mut rows = El::new(column(2.));
             rows.style.flex_shrink = 0.;
             rows.style.padding = sides(0., if m.portrait { 0. } else { 8. }, 0., 0.);
@@ -1213,7 +1224,11 @@ fn left(m: &Metrics, s: &Screen) -> El {
                 if action == "back" {
                     continue;
                 }
-                rows = rows.child(menu_row(m, s, index, action, label));
+                rows = rows.child(if action == "storeitem" {
+                    stepper_row(m, s, index, label)
+                } else {
+                    menu_row(m, s, index, action, label)
+                });
             }
             left = left.child(rows);
             if let Some(profile) = &s.profile {
@@ -1223,16 +1238,22 @@ fn left(m: &Metrics, s: &Screen) -> El {
                         margin: margins(12., 0., 0., if m.portrait { 0. } else { 8. }),
                         ..Default::default()
                     })
-                    .child(text(
-                        profile.clone(),
-                        TextStyle::new(display(16., 700, false), Color::hex("#f1d84e")).shadow(
-                            1.,
-                            2.,
-                            0.,
-                            Color::hex("#000a"),
-                        ),
-                        20.,
-                    )),
+                    .child(
+                        El::new(Style {
+                            max_size: Size {
+                                width: length(m.w.min(460.)),
+                                height: auto(),
+                            },
+                            ..Default::default()
+                        })
+                        .content(Content::Text {
+                            text: profile.clone(),
+                            style: TextStyle::new(display(16., 700, false), Color::hex("#f1d84e"))
+                                .shadow(1., 2., 0., Color::hex("#000a")),
+                            line_height: 20.,
+                            wrap: true,
+                        }),
+                    ),
                 );
             }
             // `#menu-notice`, e.g. why a ride link could not open.
@@ -1258,6 +1279,14 @@ fn left(m: &Metrics, s: &Screen) -> El {
         }
         "tracks" => {
             left = left.child(tabs(m, s)).child(course_list(m, s));
+            // A locked Freestyle course (the profile's unlocks).
+            if let Some(notice) = &s.notice {
+                left = left.child(text(
+                    notice.clone(),
+                    TextStyle::new(display(15., 700, false), Color::hex("#ffd166")),
+                    20.,
+                ));
+            }
         }
         "race" => {
             // `.ms-race-settings`: the value rows under the course list.
@@ -2038,7 +2067,23 @@ fn garage_left(m: &Metrics, s: &Screen, mut left: El) -> El {
                 .child(arrow(false, 14., color, false)),
         );
     }
-    left.child(actions.child(done))
+    let mut left = left.child(actions.child(done));
+    // A locked vehicle or a locked selection replaced (the profile's unlocks).
+    if let Some(notice) = &s.notice {
+        left = left.child(
+            El::new(Style {
+                flex_shrink: 0.,
+                ..Default::default()
+            })
+            .content(Content::Text {
+                text: notice.clone(),
+                style: TextStyle::new(display(14., 700, false), Color::hex("#ffd166")),
+                line_height: 18.,
+                wrap: true,
+            }),
+        );
+    }
+    left
 }
 
 fn bullet_slot(selected: bool) -> El {
