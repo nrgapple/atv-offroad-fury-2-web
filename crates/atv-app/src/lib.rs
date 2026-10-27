@@ -1308,7 +1308,26 @@ impl App {
             );
             let gpu = &ready.gpu;
             // Other riders' tags and map markers project with the scene camera.
-            let hud_peers = ready.net.as_ref().map(|net| net.hud_peers());
+            // The Training arrows (`00224860`, 25 ft over the marked
+            // circles) as screen tags and map markers.
+            let training_markers = self.training.as_ref().map(|t| {
+                t.course
+                    .markers()
+                    .into_iter()
+                    .map(|[x, y, z]| atv_ui::hud::peers::Peer {
+                        slot: 3,
+                        name: "Marker".into(),
+                        // screen_marker lifts tags 7 ft.
+                        position: [x, y - 7., z],
+                        stale: false,
+                    })
+                    .collect::<Vec<_>>()
+            });
+            let hud_peers = ready
+                .net
+                .as_ref()
+                .map(|net| net.hud_peers())
+                .or(training_markers);
             let view_projection =
                 ready
                     .camera

@@ -46,11 +46,22 @@ fn line(value: String, size: f32, weight: u16, color: &str, wrap: bool) -> El {
 
 /// The panel at the top centre and the banner across the middle.
 pub fn element(view: &Viewport, state: &View, top: f32) -> El {
-    let width = 420f32.min(view.width - 24.);
+    // Wide views keep the centre clear for the marker tag: the panel sits
+    // at the left under the toolbar.
+    let width = if view.width >= 900. {
+        380.
+    } else {
+        420f32.min(view.width - 24.)
+    };
+    let left = if view.width >= 900. {
+        16.
+    } else {
+        (view.width - width) / 2.
+    };
     let mut panel = El::new(Style {
         position: Position::Absolute,
         inset: taffy::Rect {
-            left: LengthPercentageAuto::length((view.width - width) / 2.),
+            left: LengthPercentageAuto::length(left),
             top: LengthPercentageAuto::length(top),
             right: LengthPercentageAuto::auto(),
             bottom: LengthPercentageAuto::auto(),
