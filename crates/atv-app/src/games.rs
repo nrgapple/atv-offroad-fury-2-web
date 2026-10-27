@@ -8,6 +8,20 @@ use atv_game::ride::Ride;
 /// The start lights' seconds before a game begins (Overlays.pb 321 lights).
 pub const COUNTDOWN: f32 = 3.;
 
+/// The 321 LIGHTS step a game's start shows (`002e79a0`, `002e81f0`): one
+/// more red lamp each counted second (with its beep), green at GO for a
+/// second. The port's 3 s hold starts on the first red lamp, so the
+/// original's all-off step is not shown.
+fn lamp_step(started: bool, countdown: f32, go: f32) -> Option<u8> {
+    if !started {
+        Some((4 - countdown.ceil().clamp(1., 3.) as i32) as u8)
+    } else if go > 0. {
+        Some(4)
+    } else {
+        None
+    }
+}
+
 pub struct GameSession {
     pub kind: GameKind,
     pub venue: String,
@@ -21,6 +35,8 @@ pub struct GameSession {
     starts: Vec<Start>,
     /// Seconds left on the start countdown.
     pub countdown: f32,
+    /// The green lamp's second after GO (`002e81f0` hides it 1 s later).
+    go: f32,
     placed: bool,
     steps: u64,
     committed: f32,
@@ -63,6 +79,7 @@ impl GameSession {
             error: None,
             starts: Vec::new(),
             countdown: COUNTDOWN,
+            go: 0.,
             placed: false,
             steps: 0,
             committed: 0.,
@@ -112,6 +129,7 @@ impl GameSession {
         self.steps = ride.steps();
         self.committed = ride.committed_points();
         self.countdown = COUNTDOWN;
+        self.go = 0.;
     }
 
     /// Restart Game (`00220d10`, `002d1450`): the rules and clock start
@@ -158,7 +176,9 @@ impl GameSession {
         let Some(session) = &mut self.session else {
             return;
         };
-        if !session.started {
+        if session.started {
+            self.go = (self.go - dt).max(0.);
+        } else {
             // The race start's 3-2-1 beeps and go (`002e79a0`).
             if self.countdown >= COUNTDOWN {
                 self.sounds.push("beep01.vag");
@@ -168,6 +188,7 @@ impl GameSession {
             if self.countdown <= 0. {
                 self.countdown = 0.;
                 session.begin();
+                self.go = 1.;
                 self.sounds.push("go.vag");
             } else if self.countdown.ceil() < before {
                 self.sounds.push("beep01.vag");
@@ -340,6 +361,7 @@ impl GameSession {
             start: session
                 .filter(|s| !s.started)
                 .map(|_| (self.countdown.ceil() as u32).max(1)),
+            lights: session.and_then(|s| lamp_step(s.started, self.countdown, self.go)),
             sign: match session {
                 None => Some(
                     self.error
@@ -423,6 +445,7 @@ impl GameSession {
             "loaded": session.is_some(),
             "error": self.error,
             "countdown": self.countdown,
+            "lights": session.and_then(|s| lamp_step(s.started, self.countdown, self.go)),
             "started": session.is_some_and(|s| s.started),
             "timeLeft": session.map(|s| s.time_left),
             "end": session.and_then(|s| s.end),
@@ -457,4 +480,18 @@ pub fn mode_toy(bytes: &[u8], kind: GameKind, venue: &str) -> Result<String, Str
         .ok_or_else(|| format!("The game archive lacks {name}."))?;
     let bytes = archive.extract(index).map_err(|e| e.to_string())?;
     Ok(bytes.iter().map(|&b| char::from(b)).collect())
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn start_lamps_light_one_red_per_second_then_green_for_a_second() {
+        use super::lamp_step;
+        assert_eq!(lamp_step(false, 3., 0.), Some(1));
+        assert_eq!(lamp_step(false, 2.5, 0.), Some(1));
+        assert_eq!(lamp_step(false, 1.5, 0.), Some(2));
+        assert_eq!(lamp_step(false, 0.2, 0.), Some(3));
+        assert_eq!(lamp_step(true, 0., 0.6), Some(4));
+        assert_eq!(lamp_step(true, 0., 0.), None);
+    }
 }

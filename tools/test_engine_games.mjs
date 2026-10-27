@@ -196,6 +196,11 @@ try {
   await start(page, 'env02');
   g = await game(page);
   assert.equal(g.kind, 'koth');
+  // The race's 321 lamps count the start in (002e79a0): red steps, then
+  // green for a second after GO, then none.
+  assert.ok(g.started || (g.lights >= 1 && g.lights <= 3), `start lamps ${g.lights}`);
+  await shot(page, 'koth-lights');
+  await until(page, g => g.started && g.lights === null, 20000);
   assert.equal(g.rules.hills, 5);
   assert.equal(g.markers.length, 5);
   assert.ok(g.markers.every(m => m.owner === null));

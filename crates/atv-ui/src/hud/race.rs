@@ -489,6 +489,11 @@ impl Meter {
         dot(list, race.origin, RACER_PLAYER);
     }
 
+    /// The course archive carries the 321 lamp art.
+    pub fn has_lamps(&self) -> bool {
+        self.assets.lamps
+    }
+
     /// 321 LIGHTS: four 32x32 lamps from (256,208) in 640x448, centred on
     /// wide screens; three red lamps light one per second, then green at GO.
     pub fn paint_lamps(&self, list: &mut DisplayList, lights: u8, width: f32, height: f32) {
