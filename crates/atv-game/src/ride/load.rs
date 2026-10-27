@@ -492,6 +492,28 @@ async fn race_setup(
     // still guides the CPU drivers.
     if !venue.enduro_gates.is_empty() {
         course.set_enduro(venue.enduro_gates.clone())?;
+    } else {
+        // 00215900: the finish box follows the scene's finish gate model
+        // (the last `natfgate`, or `stfgate` on a Short Track), as wide as
+        // the model's stored half extent across it (PSG node bounds,
+        // model +0x110).
+        let key = match venue.race {
+            crate::launch::RaceVariant::ShortTrack => "stfgate",
+            _ => "natfgate",
+        };
+        if let Some(model) = venue
+            .scene
+            .models
+            .iter()
+            .rev()
+            .find(|m| m.name.to_ascii_lowercase().contains(key))
+            && let Some(index) = basename_index(archive, &format!("{}.psg", model.name))
+        {
+            let mesh = mesh::decode_psg(&archive.extract(index)?)?;
+            if let Some(node) = mesh.nodes.first() {
+                course.set_finish_gate(&model.world_matrix, node.bounds[3]);
+            }
+        }
     }
     // After the finish a director cuts between these trackside cameras.
     let tv = basename_index(archive, &format!("{stem}.tv"))
