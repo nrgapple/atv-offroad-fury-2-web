@@ -17,6 +17,8 @@ var CACHES = [PAGES, CONTENT, MANIFESTS];
 // Written last by install; a shell cache without it is incomplete.
 var COMPLETE = '/__fury-offline/shell-complete';
 var PAGE_TIMEOUT_MS = 4000;
+// Network attempts for a cache-first file the worker answers itself (see fetchWhole).
+var FETCH_ATTEMPTS = 2;
 var PRUNE_DELAY_MS = 20000;
 var MAX_SHELL_FILES = 400;
 
@@ -103,8 +105,9 @@ function unreferenced(cachedUrls, referenced) {
 // Network-first: the network answer unless it fails, is a server error or takes
 // longer than `timeout` while a cached copy exists. Without a cached copy it
 // waits for the network.
-async function networkFirst(network, lookup, timeout) {
+async function networkFirst(network, find, timeout) {
   var timer;
+  var lookup = function () { return lookupSafely(find); };
   var expired = new Promise(function (resolve) { timer = setTimeout(resolve, timeout, null); });
   try {
     var first = await Promise.race([network, expired]);
@@ -116,6 +119,35 @@ async function networkFirst(network, lookup, timeout) {
   } finally {
     clearTimeout(timer);
   }
+}
+
+// The network answer for a cache-first miss, read whole before the page sees it.
+// A body passed through while still downloading fails the page's request when
+// the transfer drops (WebKit: "FetchEvent.respondWith received an error: Load
+// failed"), and WebKit counts a worker with no pending event as idle mid-transfer.
+// Reading it here keeps the event pending and lets one dropped transfer be
+// retried. Returns { response, bytes } (bytes null for an answer that is not a
+// cacheable 200, passed on as the network sent it); rejects when every attempt failed.
+async function fetchWhole(request) {
+  for (var attempt = 1; ; attempt++) {
+    try {
+      var response = await fetch(request);
+      if (!cacheable(response)) return { response: response, bytes: null };
+      var bytes = await response.arrayBuffer();
+      // The bytes are already decoded: drop the transfer encoding and length.
+      var headers = new Headers(response.headers);
+      headers.delete('content-encoding');
+      headers.delete('content-length');
+      return { response: new Response(bytes, { status: response.status, statusText: response.statusText, headers: headers }), bytes: bytes };
+    } catch (error) {
+      if (attempt >= FETCH_ATTEMPTS) throw error;
+    }
+  }
+}
+
+// A cache lookup; a storage failure counts as a miss rather than rejecting respondWith.
+async function lookupSafely(lookup) {
+  try { return (await lookup()) || null; } catch (error) { return null; }
 }
 
 async function sha256(bytes) {
@@ -136,9 +168,12 @@ async function quietly(work) {
 
 // Content blobs are content-addressed: keep only bytes that hash to their name.
 async function storeBlob(href, response) {
-  var bytes = await response.arrayBuffer();
+  await storeBlobBytes(href, await response.arrayBuffer(), response.headers);
+}
+
+async function storeBlobBytes(href, bytes, headers) {
   if ((await sha256(bytes)) !== BLOB.exec(new URL(href).pathname)[1]) return;
-  await (await caches.open(CONTENT)).put(href, new Response(bytes, { status: 200, headers: response.headers }));
+  await (await caches.open(CONTENT)).put(href, new Response(bytes, { status: 200, headers: headers }));
 }
 
 async function storePage(key, response) {
@@ -195,18 +230,23 @@ function respond(event, kind, request) {
     return networkFirst(file, function () { return caches.match(request.url, { ignoreVary: true }); }, PAGE_TIMEOUT_MS);
   }
   return (async function () {
-    var cache = kind === 'blob' ? await caches.open(CONTENT) : null;
-    var hit = cache ? await cache.match(request.url, { ignoreVary: true }) : await caches.match(request.url, { ignoreVary: true });
+    var hit = await lookupSafely(function () {
+      return kind === 'blob'
+        ? caches.open(CONTENT).then(function (cache) { return cache.match(request.url, { ignoreVary: true }); })
+        : caches.match(request.url, { ignoreVary: true });
+    });
     if (hit) return hit;
-    var response;
+    var fetched;
     // A plain network error, not a rejected respondWith (which WebKit logs as a page error).
-    try { response = await fetch(request); } catch (error) { return Response.error(); }
-    if (cacheable(response)) {
+    try { fetched = await fetchWhole(request); } catch (error) { return Response.error(); }
+    var response = fetched.response;
+    if (fetched.bytes) {
       // The Worker serves any ?v= with the current bytes, so only this
       // deploy's version is written; other versions are read-only here.
-      if (kind === 'blob') event.waitUntil(quietly(storeBlob(request.url, response.clone())));
+      if (kind === 'blob') event.waitUntil(quietly(storeBlobBytes(request.url, fetched.bytes, response.headers)));
       else if (VERSIONED.exec(new URL(request.url).search)[1] === VERSION) {
-        event.waitUntil(quietly(caches.open(shellName(VERSION)).then(function (shell) { return shell.put(request.url, response.clone()); })));
+        var copy = response.clone();
+        event.waitUntil(quietly(caches.open(shellName(VERSION)).then(function (shell) { return shell.put(request.url, copy); })));
       }
     }
     return response;
@@ -327,7 +367,8 @@ if (typeof self !== 'undefined' && typeof self.addEventListener === 'function') 
     if (!VERSION) return;
     var request = event.request;
     var kind = route(request.method, request.url, request.mode, request.headers.has('range'), self.location.origin);
-    if (kind) event.respondWith(respond(event, kind, request));
+    // Never reject respondWith: anything unexpected falls back to the network.
+    if (kind) event.respondWith(respond(event, kind, request).catch(function () { return fetch(request).catch(function () { return Response.error(); }); }));
   });
   self.addEventListener('message', function (event) {
     var data = event.data;

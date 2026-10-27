@@ -32,6 +32,7 @@ export const TESTS = {
   'test_engine_alpha_landing.mjs': { group: 'content' },
   'test_engine_air_blur.mjs': { group: 'content' },
   'test_engine_shell.mjs': { group: 'content' },
+  'test_engine_sw_update.mjs': { group: 'content' },
   'test_engine_shadows_prefetch.mjs': { group: 'content' },
   'test_engine_arcade_touch.mjs': {
     group: 'manual',

@@ -47,8 +47,16 @@ Other `fury-*` cache names (older schemas) are deleted on activation.
 | `/manifest.webmanifest`, `/favicon.ico`, `/fury-remastered.svg`, `/fury-remastered-{home,maskable}-*-v*.png`, `/apple-touch-icon*.png` | network-first with cache fallback |
 | everything else | not intercepted: non-GET, any `Range` request, `/content/*.m4a` streams, `/multiplayer/*` (including WebSocket upgrades), `/api/events`, `/devlog.json`, `/devlog-images/*`, `/deployment.json`, cross-origin (Cloudflare beacon) |
 
-A cache miss while offline answers a plain network error (`Response.error()`),
-not a rejected `respondWith`. Only 200, non-redirected, same-origin (`basic`) responses are stored. Opaque,
+A cache miss for a versioned shell file or a content blob is fetched whole
+before the worker answers: the page never receives a body that is still
+downloading, and one dropped transfer is retried (two attempts). Passing a
+body through while it downloads let a dropped cellular transfer stop the page:
+on 2026-10-27 a returning iPhone visitor whose worker predated the deploy got
+`Engine failed: FetchEvent.respondWith received an error: Load failed` for the
+new `atv_app_bg.wasm` (WebKit's message for a worker-returned body that errors
+mid-stream). A miss that still fails, offline or not, answers a plain network
+error (`Response.error()`). `respondWith` never rejects: a storage failure is a
+cache miss, and anything unexpected falls back to the network. Only 200, non-redirected, same-origin (`basic`) responses are stored. Opaque,
 partial (206), error and redirected responses never are. Storage failures
 (quota) are swallowed; play continues from the network.
 
@@ -77,6 +85,11 @@ player loads is kept.
 
 - No `skipWaiting`. A new worker waits until every page of the old worker has
   closed, then activates. An open game is never reloaded or switched mid-run.
+- A page whose module or WASM fails to start reloads once per tab session
+  (`recoverFailedStart` in `offline.js`), unregistering a controlling worker
+  first so the reload loads straight from the network; a successful start
+  re-arms it. A phone stuck on an older or broken worker therefore recovers by
+  itself on its next launch of the current page.
 - `clients.claim()` on activation takes control of an uncontrolled first-visit
   page. At that point no page of another worker version can be open.
 - HTML is network-first, so an online launch runs the newest deploy immediately,
