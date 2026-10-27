@@ -10,6 +10,8 @@
 // Serves two packaged copies of web/dist (versions A and B, the production ?v=
 // rewrite) with the ignored hosted content; the proxy keeps serving version A's
 // sw.js so the old worker stays in control, as on a phone whose tab stays open.
+// On the previous shell code WebKit (Playwright, iPhone user agent) fails step 1
+// with the production message verbatim; Chromium says "Response body loading was aborted".
 // Run: node tools/run_browser_tests.mjs --only test_engine_sw_update.mjs (content group).
 import assert from 'node:assert/strict';
 import { execFileSync, spawn } from 'node:child_process';
@@ -137,7 +139,8 @@ try {
   assert.equal(site.dropped, 2);
   assert.equal(navigations, 2, 'exactly one recovery reload');
   report.recoveredByReload = true;
-  assertNoErrors(errors.filter(error => !/Load failed|network error|Failed to fetch|ERR_/i.test(String(error))));
+  // The cut transfers and the loads cancelled by leaving a page are expected failures (Chromium and WebKit wording).
+  assertNoErrors(errors.filter(error => !/Load failed|network error|Failed to fetch|ERR_|served by service worker is an error|access control checks/i.test(String(error))));
   console.log(JSON.stringify(report));
   console.log('PASS: a returning visitor\'s older worker survives a dropped WASM transfer (retry) and a dead one (reload without the worker).');
 } finally {
