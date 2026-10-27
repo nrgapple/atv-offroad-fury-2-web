@@ -169,6 +169,8 @@ pub struct RaceState {
     director: Option<(f32, Director, usize)>,
     autopilot: Option<Driver>,
     autopilot_stuck: f32,
+    /// The player's vehicle reset count at the last race update.
+    player_resets: Option<u32>,
     pub(super) autopilot_reset: bool,
     hud: RaceHud,
     pub frame: Option<Frame>,
@@ -414,6 +416,7 @@ impl Ride {
             director: None,
             autopilot: None,
             autopilot_stuck: 0.,
+            player_resets: None,
             autopilot_reset: false,
             hud: RaceHud::default(),
             frame: None,
@@ -601,6 +604,15 @@ impl Ride {
             .chain((0..race.opponents().len()).map(Some))
             .map(|r| race.laps_completed(r))
             .collect();
+        // A player reset (wreck recovery, deep water, Reset) returns the
+        // race stations to the accepted reset point first.
+        if state
+            .player_resets
+            .replace(player.reset_count)
+            .is_some_and(|count| count != player.reset_count)
+        {
+            race.restore_checkpoint(None, player.origin);
+        }
         race.step(player.origin, STEP);
         race.record_player_stunt(committed);
         race.record_player_jump(
@@ -648,9 +660,36 @@ impl Ride {
                 .map_or(point[1], |c| c.height);
             Ok(([point[0], height, point[2]], heading))
         };
+        // Each on-track racer offers its reset point; the vehicle keeps it
+        // only where 001ea4d0 finds it clear (offer_race_checkpoint). A new
+        // race's first point (the grid, 001f80e0) is set as is.
+        let offer =
+            |v: &mut Vehicle, race: &mut atv_core::race::Race, cpu: Option<usize>| -> Result<()> {
+                let (point, heading) = on_line(race.checkpoint(cpu))?;
+                if !race.has_checkpoint(cpu) {
+                    v.set_race_checkpoint(Some((point, heading)));
+                    race.accept_checkpoint(cpu);
+                } else if race.on_track(cpu) && v.offer_race_checkpoint(terrain, point, heading)? {
+                    race.accept_checkpoint(cpu);
+                }
+                Ok(())
+            };
         let (point, heading) = on_line(race.checkpoint(None))?;
+        let positions: Vec<[f32; 3]> = std::iter::once(player.origin)
+            .chain(snapshots.iter().map(|p| p.origin))
+            .collect();
+        let others = |own: usize| {
+            positions
+                .iter()
+                .enumerate()
+                .filter(move |(i, _)| *i != own)
+                .map(|(_, p)| *p)
+        };
         match &mut vehicle {
-            Player::Quad(v) => v.set_race_checkpoint(Some((point, heading))),
+            Player::Quad(v) => {
+                v.set_reset_peers(others(0));
+                offer(v, race, None)?;
+            }
             // The motorcycle reset keeps the authored 2.5ft course drop.
             Player::Bike(bike) => bike.set_race_checkpoint(Some((
                 [
@@ -664,8 +703,8 @@ impl Ride {
         // RaceStatus +0x150: the human's track direction (aggression branch).
         let player_track = race.course.tangent(race.station(None).segment);
         for (index, cpu) in state.cpus.iter_mut().enumerate() {
-            cpu.vehicle
-                .set_race_checkpoint(Some(on_line(race.checkpoint(Some(index)))?));
+            cpu.vehicle.set_reset_peers(others(index + 1));
+            offer(&mut cpu.vehicle, race, Some(index))?;
             let peers: Vec<_> = std::iter::once(Peer {
                 origin: player.origin,
                 velocity: player.linear_velocity,
@@ -691,6 +730,9 @@ impl Ride {
             // Settling on the grid earns no race distance.
             if repositioned || hold {
                 race.reposition_cpu(index, frame.origin, cpu_yaw, Some(physical));
+                if repositioned && !hold {
+                    race.restore_checkpoint(Some(index), frame.origin);
+                }
             } else {
                 race.observe_cpu(index, frame.origin, cpu_yaw, Some(physical.clone()));
                 // Authored recovery: a CPU off the course or pinned in place
@@ -707,6 +749,7 @@ impl Ride {
                         yaw(reset.orientation),
                         Some(physical),
                     );
+                    race.restore_checkpoint(Some(index), reset.origin);
                 }
             }
         }
