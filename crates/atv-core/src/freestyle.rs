@@ -383,7 +383,14 @@ pub struct Run {
     pub outcome: Option<Outcome>,
     /// Messages for the HUD's centre line, newest last.
     pub messages: Vec<String>,
+    /// A timed sign (`002e9510`): the target signs show for 1 s, the last
+    /// for 5 s; seconds left.
+    pub sign: Option<(String, f32)>,
 }
+
+/// `002fab40`: "Target Collected" and "All Targets Collected" seconds.
+pub const TARGET_SIGN: f32 = 1.;
+pub const ALL_TARGETS_SIGN: f32 = 5.;
 
 impl Run {
     pub fn new(objective: Objective, index: usize, committed: f32) -> Self {
@@ -403,6 +410,7 @@ impl Run {
             hits: vec![false; targets],
             outcome: None,
             messages: Vec::new(),
+            sign: None,
         }
     }
 
@@ -430,6 +438,12 @@ impl Run {
     /// Advances the clock with the rider's committed stunt points; the
     /// run fails when time runs out short of the goal.
     pub fn tick(&mut self, dt: f32, committed: f32) {
+        if let Some((_, left)) = &mut self.sign {
+            *left -= dt.max(0.);
+            if *left <= 0. {
+                self.sign = None;
+            }
+        }
         if self.finished() {
             return;
         }
@@ -497,10 +511,10 @@ impl Run {
         self.time_left += bonus_seconds;
         // `2fab40` signs (Overlays.pb `[Single-Sign-8/9]`, `-10/11]`).
         if self.hits.iter().all(|h| *h) {
-            self.messages.push("All Targets Collected".into());
+            self.sign = Some(("All Targets Collected".into(), ALL_TARGETS_SIGN));
             self.complete();
         } else {
-            self.messages.push("Target Collected".into());
+            self.sign = Some(("Target Collected".into(), TARGET_SIGN));
         }
     }
 
@@ -524,6 +538,14 @@ impl Run {
     /// Targets hit so far.
     pub fn targets_hit(&self) -> usize {
         self.hits.iter().filter(|h| **h).count()
+    }
+
+    /// The HUD's notice: a showing sign, else the latest message.
+    pub fn notice(&self) -> Option<&str> {
+        self.sign
+            .as_ref()
+            .map(|(text, _)| text.as_str())
+            .or(self.messages.last().map(String::as_str))
     }
 
     /// Combos counted so far.
@@ -959,12 +981,22 @@ NumberOfActions=2\r\nOneTimeOnly=T\r\nPosition=200,20,300\r\nRadius=5.0\r\n\
         assert!(run.touch(&targets, [100., 20., 300.], 0.).is_empty());
         assert_eq!((run.targets_hit(), run.score), (1, 1000.));
         assert_eq!(run.progress(), "Targets 1 of 2");
-        assert_eq!(run.messages.last().unwrap(), "Target Collected");
+        assert_eq!(run.notice(), Some("Target Collected"));
+        // The sign shows for one second.
+        run.tick(0.5, 0.);
+        assert_eq!(run.notice(), Some("Target Collected"));
+        run.tick(0.6, 0.);
+        assert_eq!(run.notice(), None);
+        assert!(run.messages.is_empty());
         assert_eq!(run.touch(&targets, [207., 20., 300.], 2.5), [1]);
         assert_eq!(run.outcome, Some(Outcome::Completed));
-        assert_eq!(run.messages.last().unwrap(), "All Targets Collected");
-        // `2fd980`: the 130 whole seconds left x 100.
-        assert_eq!(run.score, 2000. + 13000.);
+        assert_eq!(run.notice(), Some("All Targets Collected"));
+        run.tick(4.9, 0.);
+        assert_eq!(run.notice(), Some("All Targets Collected"));
+        run.tick(0.2, 0.);
+        assert_eq!(run.notice(), None);
+        // `2fd980`: the 128 whole seconds left (120 - 1.1 + 2 x 5) x 100.
+        assert_eq!(run.score, 2000. + 12800.);
         assert_eq!(run.earned_bits(), 0b10);
         assert!(objective_playable_rules());
     }
