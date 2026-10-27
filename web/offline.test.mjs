@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { persistStorage, registerOffline, releaseBuild, standalone, uncachedContent } from './offline.js';
+import { persistStorage, recoverFailedStart, registerOffline, releaseBuild, standalone, startSucceeded, uncachedContent } from './offline.js';
 
 const V = 'f'.repeat(40);
 const media = matches => query => ({ matches: matches.includes(query) });
@@ -53,4 +53,25 @@ test('persistent storage is requested only for an installed app, once, and refus
   assert.equal(await persistStorage(win([], storage(false, new Error('denied')), true)), false);
   assert.equal(asked, 2);
   assert.equal(await persistStorage(win(['(display-mode: standalone)'], undefined)), false);
+});
+
+test('a failed start reloads once (without its service worker), then shows its error', async () => {
+  const store = new Map();
+  const sessionStorage = { getItem: key => store.get(key) ?? null, setItem: (key, value) => store.set(key, String(value)), removeItem: key => store.delete(key) };
+  let unregistered = 0, reloads = 0;
+  const registration = { unregister: async () => { unregistered++; return true; } };
+  const page = controller => ({
+    navigator: { serviceWorker: { controller, getRegistrations: async () => [registration] } },
+    sessionStorage, location: { reload: () => { reloads++; } }
+  });
+  assert.equal(await recoverFailedStart(page({})), true);
+  assert.deepEqual([unregistered, reloads], [1, 1], 'a controlled page drops its worker before reloading');
+  assert.equal(await recoverFailedStart(page({})), false, 'a second failure in the session does not loop');
+  assert.equal(reloads, 1);
+  startSucceeded(page({}));
+  assert.equal(await recoverFailedStart(page(null)), true, 'a successful start re-arms recovery');
+  assert.deepEqual([unregistered, reloads], [1, 2], 'an uncontrolled page just reloads');
+  const blocked = { ...page({}), sessionStorage: { getItem: () => { throw new Error('denied'); } } };
+  assert.equal(await recoverFailedStart(blocked), false, 'without session storage it never reloads');
+  assert.equal(await recoverFailedStart({ navigator: {} }), false);
 });
