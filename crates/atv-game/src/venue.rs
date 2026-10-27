@@ -63,6 +63,9 @@ pub struct Venue {
     pub train: Option<std::rc::Rc<std::cell::RefCell<crate::train::Train>>>,
     /// The train cars' sound sources (the mode TOY's procedural animations).
     pub train_sounds: Vec<atv_core::spatial_audio::Definition>,
+    /// Keyframed TOY actors (crows, fish, windmills, blimps...), posed by
+    /// their looping motions on the 60 Hz scene clock.
+    pub actors: Option<std::rc::Rc<std::cell::RefCell<crate::actors::Actors>>>,
     /// Placed TOY particle effects (smoke, fountains, fog), stepped at 60 Hz.
     pub ambient: Option<std::rc::Rc<std::cell::RefCell<crate::ambient::Ambient>>>,
     /// A race's National drop gate (drawn as the last scene model).
@@ -551,6 +554,30 @@ pub async fn load_with(
         None
     })
     .map(|ambient| std::rc::Rc::new(std::cell::RefCell::new(ambient)));
+    // Keyframed actors of the common and mode TOYs. Treasure Hunt's bombs
+    // and the locomotive wheels are drawn by their own systems.
+    let treasure_refs: Vec<String> = treasures
+        .iter()
+        .flat_map(|t| t.targets.iter().map(|t| t.animation.to_ascii_lowercase()))
+        .collect();
+    let has_train = environment == "env08";
+    // A mode TOY that is the common TOY itself (Freeride on National and
+    // Supercross venues) declares its actors once.
+    let mode_toy = mode.as_deref().filter(|_| mode_index != toy_index);
+    let toys: Vec<&[u8]> = toy.as_deref().into_iter().chain(mode_toy).collect();
+    let actors = crate::actors::load(&archive, &toys, &|d| {
+        (!d.reference_name.is_empty()
+            && treasure_refs.contains(&d.reference_name.to_ascii_lowercase()))
+            || (has_train && d.mcf == "loco_wheels.mcf")
+    })
+    .unwrap_or_else(|error| {
+        eprintln!("toy actors: {error}");
+        Default::default()
+    });
+    for (name, error) in &actors.unresolved {
+        eprintln!("toy actor {name}: {error}");
+    }
+    let actors = (!actors.is_empty()).then(|| std::rc::Rc::new(std::cell::RefCell::new(actors)));
     let snow = crate::snow::load(&archive, weather.as_ref())?
         .map(|snow| std::rc::Rc::new(std::cell::RefCell::new(snow)));
     let train = if environment == "env08" {
@@ -584,6 +611,7 @@ pub async fn load_with(
         water,
         train,
         train_sounds,
+        actors,
         ambient,
         snow,
         dust_zones: toy

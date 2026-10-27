@@ -2,6 +2,7 @@
 //! Windows, Vulkan on Linux and WebGL2 in browsers.
 // Presentation only: not part of the deterministic simulation (clippy.toml).
 #![allow(clippy::disallowed_methods)]
+mod actors;
 mod air_blur;
 mod ambient;
 mod blood;
@@ -408,6 +409,11 @@ pub struct FrameStats {
     pub water_draws: u32,
     pub train_draws: u32,
     pub train_triangles: u32,
+    /// Keyframed TOY actors: draws, triangles, posed and culled actors.
+    pub actor_draws: u32,
+    pub actor_triangles: u32,
+    pub actors_visible: u32,
+    pub actors_culled: u32,
     pub ambient_draws: u32,
     pub ambient_triangles: u32,
     pub snow_draws: u32,
@@ -432,6 +438,7 @@ impl FrameStats {
             + self.vegetation_draws
             + self.water_draws
             + self.train_draws
+            + self.actor_draws
             + self.ambient_draws
             + self.snow_draws
             + self.wheel_draws
@@ -443,6 +450,7 @@ impl FrameStats {
             + self.scenery_triangles
             + self.vegetation_triangles
             + self.train_triangles
+            + self.actor_triangles
             + self.ambient_triangles
             + self.snow_triangles
             + self.wheel_triangles
@@ -489,6 +497,10 @@ pub struct SceneRenderer {
     train: Option<(
         train::TrainPass,
         std::rc::Rc<std::cell::RefCell<atv_game::train::Train>>,
+    )>,
+    actors: Option<(
+        actors::ActorPass,
+        std::rc::Rc<std::cell::RefCell<atv_game::actors::Actors>>,
     )>,
     ambient: Option<(
         ambient::AmbientPass,
@@ -629,6 +641,12 @@ impl SceneRenderer {
                 }
             }
         });
+        let actors = venue.actors.as_ref().map(|shared| {
+            (
+                actors::ActorPass::new(gpu, &world, &shared.borrow()),
+                shared.clone(),
+            )
+        });
         let ambient = venue.ambient.as_ref().map(|shared| {
             (
                 ambient::AmbientPass::new(gpu, &world, &shared.borrow()),
@@ -649,6 +667,7 @@ impl SceneRenderer {
             scenery,
             vegetation,
             train,
+            actors,
             ambient,
             snow,
             weather_view: None,
@@ -756,6 +775,9 @@ impl SceneRenderer {
         }
         let old = std::mem::replace(self, fresh);
         self.scenery.adopt(old.scenery);
+        if let (Some((pass, _)), Some((previous, _))) = (&mut self.actors, old.actors) {
+            pass.adopt(previous);
+        }
         if let (Some((pass, _)), Some((previous, _))) = (&mut self.snow, old.snow) {
             pass.adopt(previous);
         }
@@ -795,6 +817,10 @@ impl SceneRenderer {
     /// live water field (which physics will share).
     fn step_world(&mut self) {
         self.scenery.step();
+        if let Some((pass, shared)) = &mut self.actors {
+            shared.borrow_mut().step();
+            pass.step();
+        }
         if let Some((_, shared)) = &self.train {
             // A ride (ATV or bike) steps the shared clock with its physics (collision
             // heights, moving obstacles); otherwise the presentation does.
@@ -1497,6 +1523,14 @@ impl SceneRenderer {
             (stats.train_draws, stats.train_triangles) = pass.prepare(gpu, &shared.borrow());
         }
         self.profiler.mark("prepare.train");
+        if let Some((pass, shared)) = &mut self.actors {
+            let a = pass.prepare(gpu, &shared.borrow(), &cull);
+            stats.actor_draws = a.draws;
+            stats.actor_triangles = a.triangles;
+            stats.actors_visible = a.visible;
+            stats.actors_culled = a.culled;
+        }
+        self.profiler.mark("prepare.actors");
         if let Some(vegetation) = &mut self.vegetation {
             let v = vegetation.prepare(gpu, eye, view.camera.yaw);
             stats.vegetation_draws = v.draws;
@@ -1666,6 +1700,7 @@ impl SceneRenderer {
             ("vegetation", stats.vegetation_draws),
             ("water", stats.water_draws),
             ("train", stats.train_draws),
+            ("actors", stats.actor_draws),
             ("ambient", stats.ambient_draws),
             ("snow", stats.snow_draws),
             ("wheel", stats.wheel_draws),
@@ -1748,6 +1783,9 @@ impl SceneRenderer {
             self.profiler.mark("encode.scenery");
             if let Some((train, _)) = &self.train {
                 train.draw(&mut pass, &self.world);
+            }
+            if let Some((actors, _)) = &self.actors {
+                actors.draw(&mut pass, &self.world);
             }
             if let Some(contact) = &self.contact_shadows {
                 contact.draw(&mut pass, &self.world);

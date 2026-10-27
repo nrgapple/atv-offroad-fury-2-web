@@ -87,7 +87,7 @@ section is authoritative.
 | Rider and animation | Recovered MOT decoding, pose selection, crouch, stunt, wreck and hard-landing clips; the recovered hand solver stays gated off as in normal riding; foot IK, the event system and female hair unfinished | `ANIMATION.md` |
 | Stunts and scoring | Recovered scoring tick/finalization and repeat rollback for single-player driving; full chaining/modes incomplete | `HUD.md`, `TOUCH.md` |
 | Camera | Recovered follow camera and wreck camera; widescreen, portrait, uphill and tight-crash framing are browser adaptations | `CAMERA.md`, `HILL_CAMERA.md` |
-| Water, weather, ambient | Recovered buoyancy kernel and dynamic heights, visible surfaces; weather/emitters from source TOY records with bounded GPU adaptations | `WATER.md`, `WEATHER.md`, `AMBIENT_EFFECTS.md`, `WHEEL_EFFECTS.md` |
+| Water, weather, ambient | Recovered buoyancy kernel and dynamic heights, visible surfaces; weather/emitters from source TOY records with bounded GPU adaptations; keyframed TOY actors (crows, fish, windmills, blimps, twisters...) load, loop and draw on every venue route; their looping sounds, moving collision and trigger-driven sequences (SX10 roofs) are open | `WATER.md`, `WEATHER.md`, `AMBIENT_EFFECTS.md`, `AMBIENT_ACTORS.md`, `WHEEL_EFFECTS.md` |
 | Arlington train | Route, wheel motion, collision, sound and locomotive smoke connected | `TRAIN.md`, `TRAIN_CONTACT.md` |
 | HUD and minimap | Authored controller using original layout/fonts/atlases; GPS minimap is authored | `HUD.md`, `MINIMAP.md` |
 | Menus and UI | Browser-native screens driven by Rust menu logic; Profile Editor and View Profile pages over a local profile book; Profile Store unlocks and memory-card UI missing | `UI.md`, `MENU_SCREENS.md`, `DESIGN_SYSTEM.md` |

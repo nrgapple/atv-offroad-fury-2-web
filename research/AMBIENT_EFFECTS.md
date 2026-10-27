@@ -315,5 +315,6 @@ the same lifecycle gate also passes on motorcycles at desktop and portrait
 one private JS alpha gate are opt-in); formatting, strict Clippy, WASM build,
 `make verify` and 35 release tests (one skipped) pass. Public release remains
 owned by the release coordinator. Moving Arlington locomotive smoke was later
-connected (TRAIN.md). Callback-gated hockey hats, zone-visibility gating and
-other animated actor families remain explicit gaps.
+connected (TRAIN.md). Callback-gated hockey hats and zone-visibility gating
+remain explicit gaps. The keyframed actor records themselves (crows, fish,
+windmills, blimps...) are drawn and animated; see [AMBIENT_ACTORS.md](AMBIENT_ACTORS.md).

@@ -722,6 +722,8 @@ struct Meter {
     shadows: (u32, u32),
     /// Snow draw calls in the last frame (`?uiDiagnostics=1`).
     snow_draws: u32,
+    /// TOY actors drawn and culled, and their draw calls, in the last frame.
+    actors: (u32, u32, u32),
     /// Room work (socket, poses, remote riders and loads) CPU, included in
     /// `cpu`, and the longest frame interval this second.
     net: f64,
@@ -1206,6 +1208,7 @@ impl App {
                 self.meter.draws = stats.draws();
                 self.meter.shadows = (stats.contact_casters, stats.shadow_casters);
                 self.meter.snow_draws = stats.snow_draws;
+                self.meter.actors = (stats.actors_visible, stats.actors_culled, stats.actor_draws);
                 acquire = stats.acquire_ms;
             }
             Err(error) => status(&error),
@@ -1940,6 +1943,34 @@ impl App {
                     serde_json::json!({"time": s.time, "activeEmitters": s.active_emitters,
                     "emitted": s.total_emitted, "draws": self.meter.snow_draws})
                 });
+            // Keyframed TOY actors (tools/test_engine_toy_actors.mjs): the
+            // scene clock, draw statistics and each actor's posed root.
+            state["actors"] =
+                ready
+                    .venue
+                    .actors
+                    .as_ref()
+                    .map_or(serde_json::Value::Null, |shared| {
+                        let actors = shared.borrow();
+                        let (visible, culled, draws) = self.meter.actors;
+                        let list: Vec<_> = (0..actors.actors.len())
+                            .map(|i| {
+                                let a = &actors.actors[i];
+                                let root = actors.pose(i).map(|p| {
+                                    let m = atv_game::actors::multiply(&p.placement, &p.nodes[0]);
+                                    [m[12], m[13], m[14]]
+                                });
+                                serde_json::json!({"mcf": a.definition.mcf,
+                                "model": actors.models[a.model].name,
+                                "offset": a.definition.offset, "root": root,
+                                "time": actors.motion_time(i)})
+                            })
+                            .collect();
+                        serde_json::json!({"count": actors.actors.len(),
+                        "models": actors.models.len(), "clips": actors.clips.len(),
+                        "steps": actors.steps(), "visible": visible, "culled": culled,
+                        "draws": draws, "list": list})
+                    });
             if let Some(overlay) = &self.overlay {
                 state["toolbar"] = overlay.diagnostics();
             }
@@ -2054,6 +2085,7 @@ impl App {
                 self.meter.draws = stats.draws();
                 self.meter.shadows = (stats.contact_casters, stats.shadow_casters);
                 self.meter.snow_draws = stats.snow_draws;
+                self.meter.actors = (stats.actors_visible, stats.actors_culled, stats.actor_draws);
                 acquire = stats.acquire_ms;
             }
             Err(error) => status(&error),
@@ -2230,6 +2262,7 @@ impl App {
                 triangles: self.meter.triangles,
                 draws: self.meter.draws,
                 snow_draws: self.meter.snow_draws,
+                actors: self.meter.actors,
                 last: self.meter.last,
                 ..Default::default()
             };
