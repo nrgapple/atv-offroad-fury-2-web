@@ -55,6 +55,8 @@ pub struct HudInput<'a> {
     pub objective: Option<atv_ui::hud::objective::View>,
     /// The Training Course's lesson panel.
     pub training: Option<atv_ui::hud::training::View>,
+    /// A mini-game's panel (research/GAMES.md).
+    pub game: Option<atv_ui::hud::games::View>,
 }
 
 /// A press on a toolbar button or the minimap (utility pointers in touch.js).
@@ -901,6 +903,22 @@ impl Overlay {
             let mut list = DisplayList::default();
             layout::render(
                 &atv_ui::hud::training::element(&view, training, top),
+                &mut self.fonts,
+                view.width,
+                view.height,
+                &mut list,
+                &mut Vec::new(),
+            );
+            self.list.items.extend_from_slice(&list.items);
+        }
+        // A mini-game's panel, under the toolbar.
+        if let Some(game) = shown.and_then(|h| h.game.as_ref()) {
+            let top = self.toolbar_cache.as_ref().map_or(0., |(.., hits)| {
+                hits.iter().map(|(r, _)| r.bottom()).fold(0., f32::max)
+            }) + 8.;
+            let mut list = DisplayList::default();
+            layout::render(
+                &atv_ui::hud::games::element(&view, game, top),
                 &mut self.fonts,
                 view.width,
                 view.height,

@@ -212,6 +212,7 @@ fn stage_page(page: &str) -> bool {
             | "multiplayer"
             | "championship"
             | "objectives"
+            | "games"
             | "create-lobby"
             | "join-lobby"
             | "profile"
@@ -672,6 +673,7 @@ fn page_title(page: &str) -> &'static str {
         "race" => "Single Race",
         "championship" => "Championship",
         "objectives" => "Select Objective",
+        "games" => "Games",
         "store" => "Unlock Items",
         "store-atv" => "ATVs",
         "store-gear" => "Rider Equipment",
@@ -1353,6 +1355,7 @@ fn left(m: &Metrics, s: &Screen) -> El {
                 | "multiplayer"
                 | "championship"
                 | "objectives"
+                | "games"
                 | "profile"
                 | "profile-name"
                 | "profile-slots"
