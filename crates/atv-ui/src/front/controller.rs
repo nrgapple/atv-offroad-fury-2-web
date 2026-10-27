@@ -909,7 +909,7 @@ impl Frontend {
         let course = champ.next_course(series, expert);
         let p = champ.progress(series, expert);
         Some(format!(
-            "{} · Round {} of {} · Completed Course Objectives: {} of 6 · Completed Total Objectives: {} of {}",
+            "{} · Round {} of {} · Course objectives {}/6 · Total {}/{}",
             self.course_name(course),
             p.round + 1,
             series.rounds[usize::from(expert)],
