@@ -10,6 +10,7 @@ mod content_sync;
 mod context;
 mod front;
 mod gamepad;
+mod hockey;
 mod multiplayer;
 mod net;
 mod overlay;
@@ -481,6 +482,8 @@ struct App {
     objective: Option<ObjectiveSession>,
     /// The Training Course on the current ride.
     training: Option<training::TrainingSession>,
+    /// Hockey on Coonce Arena (`atv_core::hockey`).
+    hockey: Option<hockey::HockeySession>,
     /// The held room the next frontend ride resumes.
     pending_room: Option<multiplayer::Net>,
     /// `pending_room` was just joined (it meets a rider; a held room
@@ -1292,6 +1295,16 @@ impl App {
             }
             return;
         }
+        // Hockey ended (the HockeyOver menu): back to the main menu with
+        // the result on the notice line.
+        if let Some(session) = self.hockey.take_if(|h| h.finished) {
+            if self.quit_to(Some("main"))
+                && let Some(front) = &self.front
+            {
+                front.borrow_mut().state.notice = Some(session.result());
+            }
+            return;
+        }
         let Some(ready) = &mut self.ready else { return };
         let Some(riding) = &mut ready.riding else {
             return;
@@ -1326,19 +1339,26 @@ impl App {
         };
         // The Training Course: its lessons run on the ride's clock and hold
         // the ATV while a line plays; its end returns to the main menu.
-        let training_view = match &mut self.training {
-            Some(session) => {
+        let training_view = match (&mut self.training, &mut self.hockey) {
+            (Some(session), _) => {
                 session.update(&mut riding.ride);
                 riding.locked = session.course.locked();
                 Some(session.view(riding.ride.frame().origin))
             }
-            None => {
+            // Hockey holds the rider at the face-off (`00336c90`).
+            (None, Some(session)) => {
+                session.update(&mut riding.ride);
+                riding.locked = session.held();
+                Some(session.view(riding.ride.frame().origin))
+            }
+            (None, None) => {
                 riding.locked = false;
                 None
             }
         };
         if let Some(overlay) = &mut self.overlay {
             overlay.training = self.training.is_some();
+            overlay.game = self.hockey.is_some();
             if riding.input_cleared {
                 overlay.clear_input();
             }
@@ -1379,7 +1399,8 @@ impl App {
                 .net
                 .as_ref()
                 .map(|net| net.hud_peers())
-                .or(training_markers);
+                .or(training_markers)
+                .or_else(|| self.hockey.as_ref().map(|h| h.markers()));
             let view_projection =
                 ready
                     .camera
@@ -1479,6 +1500,7 @@ impl App {
                 "environment": ready.venue.environment,
                 "championship": riding.ride.race().and_then(|r| r.settings().championship),
                 "training": self.training.as_ref().map(|t| t.state(riding.ride.frame().origin)),
+                "hockey": self.hockey.as_ref().map(|h| h.state(riding.ride.frame().origin)),
                 "objective": self.objective.as_ref().map(|o| serde_json::json!({
                     "series": o.series, "expert": o.expert, "course": o.course,
                     "objective": o.objective, "recorded": o.recorded,
@@ -1907,6 +1929,13 @@ impl App {
             }
             // Restart Training (`00226d60`): the introduction and lesson 1
             // again; nothing earned is taken back.
+            // Restart (`003377f0`): scores and clock reset, a new face-off.
+            Event::Reset if self.hockey.is_some() => {
+                if let Some(session) = &mut self.hockey {
+                    session.restart(&mut riding.ride);
+                }
+                self.menu_event(Event::Resume);
+            }
             Event::Reset if self.training.is_some() => {
                 if let Some(session) = &mut self.training {
                     session.restart(&mut riding.ride);
@@ -4635,7 +4664,12 @@ impl App {
             self.objective = None;
         }
         self.training = None;
+        self.hockey = None;
         match event {
+            Event::Hockey { quad, rider } => {
+                self.hockey = Some(hockey::HockeySession::new());
+                self.start_ride("game01".into(), quad, rider, None, None);
+            }
             Event::Training { quad, rider } => {
                 let catalog = self
                     .front
@@ -5594,6 +5628,7 @@ impl App {
         // Leaving mid-course keeps nothing (the original saves only the
         // ending's reward).
         self.training = None;
+        self.hockey = None;
         let Some(ready) = self.ready.take() else {
             return false;
         };
@@ -6480,6 +6515,7 @@ pub fn run(options: Options) {
         held_ride: None,
         objective: None,
         training: None,
+        hockey: None,
         pending_room: None,
         pending_fresh: false,
         joining: None,

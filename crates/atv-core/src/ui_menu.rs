@@ -115,6 +115,9 @@ pub struct Request {
     /// original's Restart Training (`002de690` entry 6).
     #[serde(default)]
     pub training_active: bool,
+    /// The ride is a mini-game (Hockey): Pause's second row restarts it.
+    #[serde(default)]
+    pub game_active: bool,
     #[serde(default)]
     pub funny_crashes: bool,
     #[serde(default)]
@@ -1236,6 +1239,8 @@ pub fn layout(request: Request) -> Result<Frame> {
                         "Restart Race"
                     } else if request.training_active {
                         "Restart Training"
+                    } else if request.game_active {
+                        "Restart Game"
                     } else {
                         "Reset ATV"
                     },
@@ -2090,6 +2095,7 @@ mod tests {
             race_course: "env01".into(),
             race_active: false,
             training_active: false,
+            game_active: false,
         }
     }
     #[test]

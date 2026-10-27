@@ -155,6 +155,8 @@ pub struct Overlay {
     pub race: bool,
     /// The ride is the Training Course (Pause → Restart Training).
     pub training: bool,
+    /// The ride is a mini-game (Pause → Restart Game).
+    pub game: bool,
     /// The race's course id, the player's vehicle and whether it runs the
     /// default laps: what the profile's course record keeps (`001f1e30`).
     pub race_entry: Option<(String, u16, bool)>,
@@ -236,6 +238,7 @@ impl Overlay {
             frontend: false,
             race: false,
             training: false,
+            game: false,
             race_entry: None,
             fame_watch: None,
             fame_name: String::new(),
@@ -324,6 +327,7 @@ impl Overlay {
                 menu.frontend = self.frontend;
                 menu.race_active = self.race;
                 menu.training_active = self.training;
+                menu.game_active = self.game;
                 self.menu = Some(menu);
                 self.press = None;
                 self.touch.clear();
