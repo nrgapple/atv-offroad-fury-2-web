@@ -143,9 +143,12 @@ game's end (`002d10d0`, `002210e0`).
   original `kohbase` bases, `kohflag` flags and spotlights stand at the
   hills; each hill's flag (the nearest `kohflag`, as the Hilltop action's
   `SpecificObject` binds it) takes its owner's colour through a per-model
-  colour (`001b4280`) and returns to white on Restart Game. The bases have
-  no collision in the port (the ride's collision still reads the Freeride
-  scene). Treasure Hunt still rides the Freeride scene: its `bomb.mcf`
+  colour (`001b4280`) and returns to white on Restart Game. Collision
+  matches the original: the ride's static collision and scene partition
+  come from the loaded (game) scene, and no game archive ships a COL for
+  `kohbase` or `kohflag` (the original skips models without one,
+  `00206e90`), so the bases and flags are not solid in either; every COL a
+  game archive carries is the Freeride one. Treasure Hunt still rides the Freeride scene: its `bomb.mcf`
   treasures are mode-TOY keyframed animations the port does not draw, and
   the sparks and `bomb_explosion.emt` bursts are not emitted; screen tags
   and minimap markers stand in for the treasures.
