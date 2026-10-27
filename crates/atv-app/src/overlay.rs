@@ -877,9 +877,19 @@ impl Overlay {
         }
         // The Training Course's lesson panel, under the toolbar.
         if let Some(training) = shown.and_then(|h| h.training.as_ref()) {
-            let top = self.toolbar_cache.as_ref().map_or(0., |(.., hits)| {
+            let mut top = self.toolbar_cache.as_ref().map_or(0., |(.., hits)| {
                 hits.iter().map(|(r, _)| r.bottom()).fold(0., f32::max)
             }) + 8.;
+            // Narrow views centre the panel: below a top GPS map it would cover.
+            let half = 420f32.min(view.width - 24.) / 2.;
+            if view.width < 900.
+                && map_visible
+                && map.y < top + 120.
+                && map.x < view.width / 2. + half
+                && map.right() > view.width / 2. - half
+            {
+                top = top.max(map.bottom() + 8.);
+            }
             let mut list = DisplayList::default();
             layout::render(
                 &atv_ui::hud::training::element(&view, training, top),
