@@ -40,7 +40,7 @@ try {
   let f = await front(page);
   assert.deepEqual(f.choices, ['tracks', 'objective-courses', 'race', 'championship', 'games', 'garage']);
   assert.ok(f.race.courses >= 30, `race courses ${f.race.courses}`);
-  await key(page, 'ArrowDown'); await key(page, 'Enter'); await onPage(page, 'race');
+  await key(page, 'ArrowDown'); await key(page, 'ArrowDown'); await key(page, 'Enter'); await onPage(page, 'race');
   f = await front(page);
   assert.deepEqual(f.choices.filter(c => c !== 'back'), ['racetrack', 'racelaps', 'racecpu', 'racedifficulty', 'racestart', 'copyride']);
   assert.deepEqual([f.race.course, f.race.laps, f.race.cpu, f.race.difficulty], ['env01', 3, 3, 1]);
@@ -78,7 +78,7 @@ try {
   // Garage → Rider Gear: steppers and the dressed previews.
   // Back opens Single Player on its first row (frontend.js `show`).
   await key(page, 'Escape'); await onPage(page, 'single');
-  for (let i = 0; i < 4; i++) await key(page, 'ArrowDown');
+  for (let i = 0; i < 5; i++) await key(page, 'ArrowDown');
   await key(page, 'Enter'); await onPage(page, 'garage');
   f = await front(page);
   await click(page, ROW + f.choices.indexOf('gear')); await onPage(page, 'gear');
@@ -112,7 +112,7 @@ try {
 
   // Start Race: the race loads with the chosen laps and CPU riders.
   await key(page, 'Escape'); await onPage(page, 'single');
-  await key(page, 'ArrowDown'); await key(page, 'Enter'); await onPage(page, 'race');
+  await key(page, 'ArrowDown'); await key(page, 'ArrowDown'); await key(page, 'Enter'); await onPage(page, 'race');
   f = await front(page);
   assert.deepEqual([f.race.course, f.race.laps, f.race.cpu], [course, 2, 4]);
   await click(page, START);
