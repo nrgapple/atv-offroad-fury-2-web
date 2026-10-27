@@ -4,7 +4,9 @@
 // the far goal: the score and the scorer's goal count rise, "Red scores!" shows,
 // and after the 4 s pause the rider is back at the face-off. Pause → Restart
 // Game zeroes the score; `hockeyTest=fast` (a 20 s clock) then runs the game
-// to "Game over!" and the result on the main menu. Keyboard driving moves the
+// to "Game over!", the HockeyOver results page (Quit to Main Menu) and the
+// result on the main menu. ATV_HOCKEY_SOUNDS=1 also requires the hockey
+// one-shots (a content package with them). Keyboard driving moves the
 // rider off the face-off once the puck drops. Tag's rules are core-only
 // (crates/atv-core/src/tag.rs unit tests) until its CPU riders land.
 // ATV_GAMES_SHOTS=<dir> saves HUD captures.
@@ -125,6 +127,23 @@ try {
   assert.deepEqual(h.scores, [1, 0]);
   assert.ok(h.log.includes('GameOverSound') && h.log.includes('Crowd(4)'), JSON.stringify(h.log));
   await shot(page, 'hockey-game-over');
+  // The HockeyOver page: Restart Game and Quit to Main Menu.
+  await page.waitForFunction(() => {
+    const ride = JSON.parse(document.querySelector('#ui-state')?.textContent || '{}').ride;
+    return ride?.hockey?.finished && ride?.results?.length === 2;
+  }, null, { timeout: 30000 });
+  await shot(page, 'hockey-results');
+  // The original sounds play when the hosted package carries them
+  // (siren02, gameover and Crowd\hockey; tools/package_content.py).
+  const shots_ = (await state(page)).ride.oneShots ?? [];
+  if (process.env.ATV_HOCKEY_SOUNDS === '1') {
+    for (const name of ['siren02.vag', 'gameover.vag', 'crowd/hockey/hockyend.vag']) {
+      assert.ok(shots_.includes(name), `${name} in ${shots_}`);
+    }
+  }
+  console.log(`one-shots: ${shots_.join(', ')}`);
+  await key(page, 'ArrowDown');
+  await key(page, 'Enter');
   await onPage(page, 'main', 60000);
   const notice = (await state(page)).front?.notice ?? '';
   assert.equal(notice, 'Hockey: Red 1 – 0 Blue. Red wins! Your goals: 1.');
