@@ -96,6 +96,9 @@ The release owner then:
    content-addressed and inert until the manifest names them, so an additive
    package (one the live app can still load) can go first, in parallel with CI:
    `python3 tools/upload_cloudflare_content.py --content-only`.
+   Build the package with `python3 tools/package_content.py` followed by
+   `python3 tools/package_motorcycles.py`; the second step appends the `/MX/`
+   motorcycle archives the live manifest already serves.
    It refuses a manifest that drops any runtime path the live site serves; when
    it refuses because the local package is behind live, rebuild from the live
    manifest instead of publishing the stale one. The gallery still follows the
