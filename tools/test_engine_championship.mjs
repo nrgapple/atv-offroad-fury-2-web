@@ -9,7 +9,7 @@
 // 00322650) and opens Pro Supercross (003238a0); Quit to Championship Menu
 // returns to the page, which shows the new state.
 import assert from 'node:assert/strict';
-import { assertNoErrors, launch, newPage, nextFrames, optionalScreenshot, url } from './browser/harness.mjs';
+import { UNLOCKED_PROFILE, assertNoErrors, launch, newPage, nextFrames, optionalScreenshot, url } from './browser/harness.mjs';
 
 const read = page => page.evaluate(() => JSON.parse(document.querySelector('#ui-state')?.textContent || '{}'));
 const onPage = (page, name, timeout = 60000) => page.waitForFunction(name => JSON.parse(document.querySelector('#ui-state')?.textContent || '{}').front?.page === name, name, { timeout });
@@ -22,6 +22,8 @@ try {
   const page = await newPage(browser, { viewport: { width: 1280, height: 720 } }, errors);
   const start = {
     points: 40, races: 5, wins: 5,
+    // The garage ATV stays as chosen (PROFILE_STORE.md unlocks).
+    store: UNLOCKED_PROFILE.store,
     championships: { progress: { 'amsx-normal': { round: 4, points: [31, 20, 10, 5, 0] } }, opened: [] },
   };
   await page.addInitScript(start => {

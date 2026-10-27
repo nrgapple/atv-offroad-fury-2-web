@@ -115,7 +115,7 @@ tricks, so CPU rows read 0).
 - **Profile Editor.** Main Menu → Profile Editor sits after the ride modes
   and before Settings (the original's fourth row, before Hall of Fame and
   Options). Rows: Create New Profile, Load Profile, View Current Profile,
-  Unlock Items (the Profile Store entry, `open_store`, for the store work),
+  Unlock Items (the Profile Store, `PROFILE_STORE.md`),
   Copy Profile, Delete Profile; the line under them reads "Current Profile:
   NAME · Current Profile Points: N". Create and Copy open Profile Name
   Entry: up to eight characters, upper case letters, digits, space and
@@ -137,12 +137,14 @@ tricks, so CPU rows read 0).
   Winning ATV). The port measures no jump length, combo count or Freestyle
   objective, so Longest Jump, Most Combos, Most Points In One Jump and Most
   Stunt Points In An Objective read "-"; Overview adds the port's Highest
-  Race Stunt Score. Percent Complete counts championship trophy score (gold
-  3, silver 2, bronze 1, as +0x6c1 does) over gold in every offered series
-  on both difficulties; the original also counts unlocked items, which the
-  store adds. Profile Points Earned is a lifetime total (`earned`) beside the
-  spendable `points` (Remaining). ATVs, Rider Equipment and Games list store
-  ownership and are left to the store work.
+  Race Stunt Score. Percent Complete is +0x6c1 over the
+  original total 201 (`00320db0` sets +0x6c0 to 0xc9): each item unlocked
+  one by one (`00323a00`) plus the championship trophy score (gold 3,
+  silver 2, bronze 1); items opened by an unlock cheat, which the port keeps
+  as flags, are not counted. Profile Points Earned is a lifetime total
+  (`earned`) beside the spendable `points` (Remaining), which the store
+  spends. ATVs, Rider Equipment and Games show the store's pages without
+  Purchase Item (`PROFILE_STORE.md`).
 - **Course record.** Each race adds to the loaded profile's record for its
   course id: races, victories, victories per vehicle, best lap and, only at
   the default laps (3 Enduro, 5 otherwise), best total time (one best, not

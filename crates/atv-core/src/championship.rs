@@ -44,9 +44,10 @@ pub struct Series {
 
 /// The racing series the port can run, in event-type order. Amateur Enduro
 /// races each venue's short Enduro and Pro Enduro its long one (`002f65e0`,
-/// `0021d8b0`), three laps. Short Tracks (no known unlock) and the Freestyle
-/// championships (objectives) are not offered.
-pub const SERIES: [Series; 6] = [
+/// `0021d8b0`), three laps. Short Tracks opens only with the GOLDCUPS or
+/// IGIVEUP cheat (`003238a0` is called for type 8 by nothing else found);
+/// the Freestyle championships (objectives) are not offered.
+pub const SERIES: [Series; 7] = [
     Series {
         kind: 0,
         key: "send",
@@ -128,6 +129,17 @@ pub const SERIES: [Series; 6] = [
         courses: &["sx03", "sx07", "sx16", "sx04", "sx10", "sx15", "sx14"],
         opened_by: Some("amsx"),
         rewards: [[1000, 500, 250], [2000, 1000, 500]],
+    },
+    Series {
+        kind: 8,
+        key: "st",
+        name: "Short Tracks",
+        pro: false,
+        rounds: [3, 3],
+        laps: 5,
+        courses: &["env06st", "env01st", "env07st"],
+        opened_by: None,
+        rewards: [[0, 0, 0], [0, 0, 0]],
     },
 ];
 
@@ -288,9 +300,11 @@ pub struct Championships {
 }
 
 impl Championships {
-    /// `00320db0`: the Amateur series start open on Normal.
+    /// `00320db0`: the Amateur series start open on Normal (Short Tracks
+    /// does not).
     pub fn is_open(&self, series: &Series, expert: bool) -> bool {
-        (!series.pro && !expert) || self.opened.contains(&save_key(series, expert))
+        (!series.pro && !expert && series.kind != 8)
+            || self.opened.contains(&save_key(series, expert))
     }
 
     pub fn progress(&self, series: &Series, expert: bool) -> Progress {

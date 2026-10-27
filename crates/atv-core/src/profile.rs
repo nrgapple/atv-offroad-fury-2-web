@@ -205,6 +205,9 @@ pub struct Profile {
     pub best_stunt: i64,
     /// Championship rounds, standings, trophies and opened series.
     pub championships: crate::championship::Championships,
+    /// Profile Store purchases, earned unlocks and the points spent
+    /// (`store`, research/PROFILE_STORE.md).
+    pub store: crate::store::Unlocks,
     /// Victories per vehicle id (profile +0x2c, one counter per ATV).
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub atv_wins: BTreeMap<u16, u32>,
@@ -242,6 +245,40 @@ impl Profile {
             self.wins = self.wins.saturating_add(1);
         }
         self.best_stunt = self.best_stunt.max(stunt_score.max(0.) as i64);
+    }
+
+    /// Records a championship round and its course unlocks: an advanced
+    /// round opens the series' next course for other modes and a gold or
+    /// silver trophy the first course beyond the Normal series (`003222b0`,
+    /// `00322650` → `00323640`; the games' lists the port lacks are not
+    /// cascaded).
+    pub fn record_championship(
+        &mut self,
+        series: &crate::championship::Series,
+        expert: bool,
+        places: &[usize],
+    ) -> crate::championship::Outcome {
+        use crate::championship::Trophy;
+        let outcome = self.championships.record(series, expert, places);
+        let mut open = Vec::new();
+        if outcome.advanced && outcome.finished.is_none() {
+            open.push(outcome.round as u16 + 1);
+        }
+        if let Some((Some(Trophy::Gold | Trophy::Silver), ..)) = outcome.finished {
+            open.push(series.rounds[0] as u16);
+        }
+        if let Some(key) = crate::store::EVENT_LISTS
+            .get(usize::from(series.kind))
+            .filter(|_| !open.is_empty())
+        {
+            let list = self.store.courses.entry(key.to_string()).or_default();
+            for index in open {
+                if !list.contains(&index) {
+                    list.push(index);
+                }
+            }
+        }
+        outcome
     }
 
     /// Records the race on its course and vehicle (`001f1e30`'s course
@@ -283,14 +320,13 @@ impl Profile {
         }
     }
 
-    /// "Percent Complete" over what the port offers: the championship
-    /// trophy score (gold 3, silver 2, bronze 1, as profile +0x6c1 counts
-    /// it) out of gold in every offered series on both difficulties. The
-    /// original also counts unlocked items; the port adds them once the
-    /// Profile Store exists.
+    /// "Percent Complete" (`00320db0` sets the total at +0x6c0 to 201;
+    /// +0x6c1 counts each item unlocked, `00323a00`, and the trophy score,
+    /// gold 3, silver 2, bronze 1). Unlocks the port records one by one
+    /// count; the unlock cheats, which the port keeps as flags, do not.
     pub fn percent_complete(&self) -> f32 {
         use crate::championship::{SERIES, Trophy};
-        let mut score = 0;
+        let mut score = self.store.unlocked_count();
         for series in &SERIES {
             for expert in [false, true] {
                 score += match self.championships.progress(series, expert).trophy {
@@ -301,9 +337,12 @@ impl Profile {
                 };
             }
         }
-        score as f32 * 100. / (SERIES.len() * 2 * 3) as f32
+        (score as f32 * 100. / COMPLETE_TOTAL as f32).min(100.)
     }
 }
+
+/// `00320db0`: the Percent Complete total (+0x6c0 = 0xc9).
+pub const COMPLETE_TOTAL: usize = 201;
 
 /// Why a profile name or book change was refused.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -519,6 +558,22 @@ mod tests {
         assert_eq!(race_award(hard, 1, 0.), 60);
         assert_eq!(race_award(hard, 3, 1000.), 16);
         assert_eq!(race_award(hard, 4, 1000.), 1);
+    }
+
+    #[test]
+    fn championship_rounds_unlock_courses() {
+        let series = crate::championship::series("unspnat").unwrap();
+        let mut p = Profile::default();
+        // A replayed round unlocks nothing; an advanced one the next course.
+        p.record_championship(series, false, &[5, 1, 2, 3, 4]);
+        assert!(p.store.courses.is_empty());
+        p.record_championship(series, false, &[1, 2, 3, 4, 5]);
+        assert_eq!(p.store.courses["unspnat"], [1]);
+        for _ in 0..4 {
+            p.record_championship(series, false, &[1, 2, 3, 4, 5]);
+        }
+        // Gold also opens the course after the five Normal rounds.
+        assert_eq!(p.store.courses["unspnat"], [1, 2, 3, 4, 5]);
     }
 
     #[test]

@@ -936,7 +936,7 @@ impl Overlay {
         if let Some((round, places)) = self.results.championship.clone()
             && let Some(series) = atv_core::championship::series(round.series)
         {
-            let outcome = profile.championships.record(series, round.expert, &places);
+            let outcome = profile.record_championship(series, round.expert, &places);
             if let Some((_, reward, _)) = &outcome.finished {
                 profile.credit(*reward);
             }
