@@ -163,8 +163,10 @@ the worktree's `target/`; keep bulk output on the SSD.
 - Freestyle objectives: Select Objective is a front-end page and the round
   ends with Next Course (the original picks in-game and ends a round by
   quitting the event); target hits test the
-  ATV origin and rider root rather than every wheel/chassis/rider body
-  (`CHAMPIONSHIPS.md`). Target, Treasure Hunt bomb and Hockey hat-trick
+  quad's wheel spheres, hull points and actor rays (`002fae60` registers no
+  rider body) but not the chassis rigid body's or `f.col`'s own shapes;
+  Treasure Hunt and King of the Hills keep the ATV origin test
+  (`CHAMPIONSHIPS.md`, `GAMES.md`). Target, Treasure Hunt bomb and Hockey hat-trick
   emitters run from their TOYs (`AMBIENT_EFFECTS.md`).
 - The mini-games have no opponents: the original runs them split screen
   (or online) with human riders only. Single Player → Games plays Treasure

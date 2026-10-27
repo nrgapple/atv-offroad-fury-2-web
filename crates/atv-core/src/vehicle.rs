@@ -645,6 +645,34 @@ impl Vehicle {
     pub fn applied_drive_controls(&self) -> (f32, f32, bool) {
         self.applied_drive_controls
     }
+    /// The quad's bodies a CherryPick reset registers with the target
+    /// triggers (`002fae60`), in world space: the four wheel spheres at
+    /// their rest centres, the `ao.col` chassis hull points and the
+    /// `ar.col` actor rays. The chassis rigid body and the passive `f.col`
+    /// actor have no separate port shape (the hull covers the chassis).
+    pub fn trigger_bodies(&self) -> Vec<crate::freestyle::TriggerBody> {
+        use crate::freestyle::TriggerBody;
+        let b = self.body.basis();
+        let origin = self.body.origin(&self.body_config);
+        let world = |local: Vec3| add(origin, transform(b, local));
+        let mut bodies: Vec<TriggerBody> = (0..4)
+            .map(|i| TriggerBody::Sphere {
+                center: world(self.wheel_rest[i]),
+                radius: self.wheel_config[i].radius,
+            })
+            .collect();
+        bodies.extend(self.chassis_points.iter().map(|&p| TriggerBody::Sphere {
+            center: world(p),
+            radius: 0.,
+        }));
+        if let Some(rays) = &self.obstacle_rays {
+            bodies.extend(rays.rays.iter().map(|r| TriggerBody::Segment {
+                start: world(r.start),
+                end: world(r.end),
+            }));
+        }
+        bodies
+    }
     ///Presentation-only original tire values; reading this does not step physics.
     pub fn wheel_effect_state(&self) -> WheelEffectState {
         WheelEffectState {
@@ -3675,6 +3703,33 @@ mod tests {
         assert_eq!(bypassed.scene_query.vegetation_proxy_queries, 0);
         assert_eq!(bypassed.obstacle_contact_count, 0);
         assert!(bypassed.linear_velocity[2] > 9.);
+    }
+
+    #[test]
+    fn trigger_bodies_are_the_wheels_and_hull_in_world_space() {
+        use crate::freestyle::TriggerBody;
+        let (mut vehicle, _) = fixture();
+        vehicle.set_chassis_points(&[[0., 1., 0.]]).unwrap();
+        let origin = vehicle.body.origin(&vehicle.body_config);
+        let bodies = vehicle.trigger_bodies();
+        // Four wheel spheres, then the hull point; no rider body.
+        assert_eq!(bodies.len(), 5);
+        for (i, body) in bodies[..4].iter().enumerate() {
+            let TriggerBody::Sphere { center, radius } = *body else {
+                panic!("wheel {i} is not a sphere");
+            };
+            let expected = add(
+                origin,
+                transform(vehicle.body.basis(), vehicle.wheel_rest[i]),
+            );
+            assert!((0..3).all(|a| (center[a] - expected[a]).abs() < 1e-4));
+            assert_eq!(radius, vehicle.wheel_config[i].radius);
+        }
+        let TriggerBody::Sphere { center, radius: 0. } = bodies[4] else {
+            panic!("hull point");
+        };
+        let expected = add(origin, transform(vehicle.body.basis(), [0., 1., 0.]));
+        assert!((0..3).all(|a| (center[a] - expected[a]).abs() < 1e-4));
     }
 
     #[test]

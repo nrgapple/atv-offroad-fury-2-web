@@ -281,8 +281,6 @@ struct ObjectiveSession {
     championship: bool,
 }
 
-/// The reach added to a target's 5 ft sphere around the ATV origin.
-const TARGET_REACH: f32 = 0.;
 /// A target hit's sound.
 const TARGET_SOUND: &str = "iconhit.vag";
 
@@ -342,16 +340,13 @@ impl ObjectiveSession {
         for (success, ids) in ride.take_chains() {
             run.chain(success, &ids);
         }
-        // CherryPick: the ATV or its rider touching an untouched target's
-        // sphere (`002fae60` registers the player's ATV and rider bodies;
-        // the port tests the ATV origin and the rider's root).
+        // CherryPick: any body `002fae60` registers (the quad's wheels,
+        // chassis hull and actor rays; not the rider) touching an
+        // untouched target's sphere.
         if !self.targets.is_empty() && !run.finished() {
-            let rider = ride.rider_world();
-            for point in [ride.frame().origin, [rider[12], rider[13], rider[14]]] {
-                for target in run.touch(&self.targets, point, TARGET_REACH) {
-                    self.sounds.push(TARGET_SOUND);
-                    self.triggered.push(target);
-                }
+            for target in run.touch_bodies(&self.targets, &ride.trigger_bodies()) {
+                self.sounds.push(TARGET_SOUND);
+                self.triggered.push(target);
             }
         }
         let (jumps, chains) = ride.take_free_records();

@@ -167,7 +167,12 @@ game's end (`002d10d0`, `002210e0`).
   for King of the Hills.
 - **Trigger contact.** The original tests the ATV's collision body against
   the box; the port tests the ATV origin against the box grown by 3 ft
-  (1.5 ft vertically). `Box` is read as half extents.
+  (1.5 ft vertically). `Box` is read as half extents. Freestyle's target
+  reset `002fae60` is the only caller of the trigger body registration
+  `00172440` found; Treasure Hunt and King of the Hills do not register
+  bodies, so their triggers keep the default collision pairing (which
+  bodies that admits was not traced) and the port keeps the origin test
+  rather than the Freestyle body set (CHAMPIONSHIPS.md "Trigger bodies").
 - **Start countdown.** The original runs the shared 321 LIGHTS overlay
   (Overlays.pb object 10, `002e79a0`/`002e81f0`). The port holds the ATV
   for 3 s with the beeps and draws the race's original lamps from the

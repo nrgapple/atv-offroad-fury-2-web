@@ -160,8 +160,8 @@ runtime traces):
   (the objective's `DefaultStartPosition`/`DefaultStartDirection`, parsed by
   `002fa3c0`, placed through `002fa680`), stop `002faa10` (hides every
   cherry, disables the triggers), reset `002fae60` (shows the cherries,
-  re-arms the triggers, registers each player's ATV and rider bodies with
-  them), hit `002fab40`. Event type 2 reads the `ob` scene suffix
+  re-arms the triggers, registers each player's quad bodies with them),
+  hit `002fab40`. Event type 2 reads the `ob` scene suffix
   (`0021ca20`) and `tracks\<course>.obj` (`002fcd98`); the OB archive
   holds the `.obj`, the two target TOYs, the cherry models and motion, the
   explosion emitters and the radar icon. Each target is a TOY trigger
@@ -236,10 +236,26 @@ count when reached even if the run then times out (a reading of
 
 Target runs ride the course's OB archive (the hosted package carries the 11
 archives' differing members, about 17-34 KB each, read over the Freeride
-archive). The port tests the trigger sphere against the ATV's origin and the
-rider's root (a thrown rider counts); the original tests the ATV's wheels,
-chassis and rider bodies, so a hit at the sphere's edge can register a
-little later. The panel's notice line shows the
+archive). **Trigger bodies.** `002fae60` registers, for each player in the
+event, nine bodies of the quad entity with every target trigger through
+`00172440` (which clears the pair's mutual collision exclusions,
+`001201c0`; stop `002fb0a0` puts them back with `001723e0`): the `f.col`
+passive actor (+0x984, listed twice), the `ar.col` actor rays (+0x980), the
+`ao.col` chassis hull (+0x97c), the chassis rigid body (+0x18c) and the four
+wheel collision bodies (+0x168..+0x174); offsets identified from the quad
+setup `001e1fd0` (`ar.col`/`ao.col`/`f.col` suffixes at 0x427c18/20/28) and
+the wheel pairing in `001e4c90`. The rider (+0x884, attached by
+`001e4c90`) is not registered, so a thrown rider does not hit a target. A
+`Radius` trigger is a sphere collision object (`00171f90`, class
+`0032d840`, else a box); the generic collision pass reports the contact
+(`00172bc0`). The port tests the quad's four wheel spheres (rest centres,
+wheel radius), its `ao.col` hull points and its `ar.col` rays as segments
+against the trigger sphere (`TriggerBody`, `Vehicle::trigger_bodies`); a
+motorcycle (port extra) tests its origin. Not modelled: the chassis rigid
+body's and `f.col`'s own shapes (the hull covers the chassis; `f.col`'s
+extent was not traced), wheel suspension travel (centres sit at rest), and
+the exact sphere-versus-ray-tree contact rule of the collision pass (the
+port takes any point of a ray inside the sphere). The panel's notice line shows the
 signs for their original 1 s / 5 s. A hit starts its target's cherry
 explosion from the appended target TOY (AMBIENT_EFFECTS.md "Triggered
 bursts"). The `RadarIcon_Target` compass is drawn as described above. Settings
