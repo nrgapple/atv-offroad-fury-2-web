@@ -995,6 +995,24 @@ impl Course {
         }
         best.map(|(_, l)| l)
     }
+    /// Station at the start of the route segment nearest `p`, moved on to
+    /// `p`'s place when the track query finds it there (the Enduro grid and
+    /// resets, which may stand anywhere beside the route).
+    pub fn nearest_station(&self, p: [f32; 3]) -> Station {
+        let segment = (0..self.points.len())
+            .min_by(|&a, &b| {
+                let d = |i: usize| segment_distance(p, self.points[i], self.points[self.next(i)]);
+                d(a).total_cmp(&d(b))
+            })
+            .unwrap_or(0);
+        let origin = Station {
+            segment,
+            fraction: 0.,
+        };
+        self.locate(p, origin, self.loop_start == 0)
+            .filter(|l| l.offset >= 0.)
+            .map_or(origin, |l| l.station)
+    }
     /// Whether `p` lies inside the authored edge polygon of `segment` alone
     /// (`0017bb50`), without the start-apron allowance of the race query.
     pub fn within(&self, p: [f32; 3], segment: usize) -> bool {
@@ -1267,26 +1285,18 @@ impl Progress {
         let entered = course.loop_start == 0;
         // An Enduro grid stands past the finish gate, anywhere on the TDF
         // route: start the station search at the nearest route segment.
-        let segment = if course.is_enduro() {
-            (0..course.points.len())
-                .min_by(|&a, &b| {
-                    let d = |i: usize| {
-                        segment_distance(start, course.points[i], course.points[course.next(i)])
-                    };
-                    d(a).total_cmp(&d(b))
-                })
-                .unwrap_or(0)
+        let station = if course.is_enduro() {
+            course.nearest_station(start)
         } else {
-            0
+            let origin = Station {
+                segment: 0,
+                fraction: 0.,
+            };
+            course
+                .locate(start, origin, entered)
+                .filter(|l| l.offset >= 0.)
+                .map_or(origin, |l| l.station)
         };
-        let origin = Station {
-            segment,
-            fraction: 0.,
-        };
-        let station = course
-            .locate(start, origin, entered)
-            .filter(|l| l.offset >= 0.)
-            .map_or(origin, |l| l.station);
         let distance = course.segment(0) * station.fraction * f32::from(station.segment == 0);
         Self {
             station,
@@ -1998,15 +2008,59 @@ impl Race {
     /// rider's committed station, moved past nodes flagged as no-reset
     /// ([`Course::reset_station`]).
     pub fn checkpoint(&self, cpu: Option<usize>) -> ([f32; 3], f32) {
-        let s = self.course.reset_station(self.rider(cpu).committed);
+        let p = self.rider(cpu);
+        if let Some(guidance) = self.enduro_guidance(cpu) {
+            // Enduro (`0024a490`): every racer offers its own position and
+            // the guidance vector RaceStatus +0x1a0 through interface +0x20,
+            // so a reset faces the next gate wherever the rider last stood.
+            return (p.last, guidance[0].atan2_d(guidance[2]));
+        }
+        let s = self.course.reset_station(p.committed);
         (self.course.point_at(s), self.course.heading_at(s))
+    }
+    /// Enduro guidance vector RaceStatus +0x1a0 (`0024a490`): towards the
+    /// next gate while it lies more than 50ft away, then towards a point
+    /// that slides on to the gate after it, by (50 - d) × 0.02 of the
+    /// gap at distance d. Horizontal and normalized here (the original
+    /// normalizes all three axes; the reset heading reads x and z only).
+    pub fn enduro_guidance(&self, cpu: Option<usize>) -> Option<[f32; 3]> {
+        let gates = &self.course.enduro;
+        let p = self.rider(cpu);
+        let next = gates.get(p.next_gate)?;
+        let following = &gates[(p.next_gate + 1) % gates.len()];
+        let d = distance(next.center, p.last);
+        let target = if d > 50. {
+            next.center
+        } else {
+            let t = (50. - d) * 0.02;
+            std::array::from_fn(|i| next.center[i] + t * (following.center[i] - next.center[i]))
+        };
+        let v = [target[0] - p.last[0], 0., target[2] - p.last[2]];
+        let length = (v[0] * v[0] + v[2] * v[2]).sqrt();
+        (length > 0.).then(|| v.map(|c| c / length))
+    }
+    /// Enduro: the rider's next gate (RaceStatus +0xb0) and whether it has
+    /// finished (rider flag 1), for the CPU waypoint driver.
+    pub fn enduro_target(&self, cpu: Option<usize>) -> Option<crate::race_ai::EnduroTarget> {
+        let p = self.rider(cpu);
+        self.course
+            .is_enduro()
+            .then_some(crate::race_ai::EnduroTarget {
+                gate: p.next_gate,
+                finished: p.finish.is_some(),
+            })
     }
     /// The vehicle accepted the reset point of [`Self::checkpoint`]; keep
     /// the matching race state for [`Self::restore_checkpoint`].
     pub fn accept_checkpoint(&mut self, cpu: Option<usize>) {
         let course = &self.course;
         let p = cpu.map_or(&mut self.player, |i| &mut self.progress[i]);
-        let station = course.reset_station(p.committed);
+        // Enduro keeps no committed station (type 1 runs no track query).
+        let station = if course.is_enduro() {
+            p.station
+        } else {
+            course.reset_station(p.committed)
+        };
         p.checkpoint = Some(Kept {
             station,
             entered: p.committed_entered,
@@ -2022,11 +2076,19 @@ impl Race {
     /// a counted crossing; without this a reset before the gate recounts).
     pub fn restore_checkpoint(&mut self, cpu: Option<usize>, origin: [f32; 3]) {
         let enduro = self.course.is_enduro();
+        let nearest = enduro.then(|| self.course.nearest_station(origin));
         let p = cpu.map_or(&mut self.player, |i| &mut self.progress[i]);
         p.last = origin;
         let Some(kept) = p.checkpoint else {
             return;
         };
+        if let Some(nearest) = nearest {
+            // The reset point is wherever the rider stood: search the
+            // route around it afresh (the original's +0xd0 is null in
+            // Enduro, so the CPU driver re-initializes its stations).
+            p.station = nearest;
+            return;
+        }
         p.station = kept.station;
         p.entered = kept.entered;
         p.committed = kept.station;
@@ -2513,6 +2575,29 @@ mod tests {
         .unwrap();
         c.set_enduro(gates).unwrap();
         c
+    }
+    #[test]
+    fn enduro_reset_point_is_the_rider_facing_its_next_gate() {
+        let c = enduro_course();
+        let mut r = Race::new(c, 2, vec!["CPU".into()], 1).unwrap();
+        r.countdown = 0.;
+        r.step([100., 0., 40.], 1. / 60.);
+        // Gate 0 at (0, 50) lies more than 50ft away: aim straight at it.
+        let (point, heading) = r.checkpoint(None);
+        assert_eq!(point, [100., 0., 40.]);
+        assert!((heading - (-100f32).atan2_d(10.)).abs() < 1e-4, "{heading}");
+        // 30ft from it the aim slides 40% of the way on to gate 1 (50, 100).
+        r.step([0., 0., 20.], 1. / 60.);
+        let (_, heading) = r.checkpoint(None);
+        let target: [f32; 2] = [20., 70.];
+        assert!(
+            (heading - target[0].atan2_d(target[1] - 20.)).abs() < 1e-4,
+            "{heading}"
+        );
+        r.accept_checkpoint(None);
+        // A restore searches the route afresh at the reset place.
+        r.restore_checkpoint(None, [50., 0., 102.]);
+        assert_eq!(r.station(None).segment, 1);
     }
     #[test]
     fn enduro_gates_count_in_order_and_last_gate_laps() {

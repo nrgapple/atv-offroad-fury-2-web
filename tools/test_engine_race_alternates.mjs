@@ -4,7 +4,10 @@
 // being mapped back near the fork. The race path driver rides the player
 // (`autopilot=1`) with three CPUs; every traced frame's standings may only
 // move forward apart from small on-track wobbles, and riders must carry on
-// over the bridge past checkpoint 57 (~1,545ft).
+// over the bridge past checkpoint 57 (~1,545ft). A wreck reset legitimately
+// returns a rider's distance to its accepted reset point; it is told apart
+// by the rider's own jump in position in the same frame (a remap keeps the
+// rider where it is).
 import assert from 'node:assert/strict';
 import { assertNoErrors, launch, newPage, optionalScreenshot, url } from './browser/harness.mjs';
 
@@ -19,25 +22,32 @@ try {
   const trace = JSON.parse(await page.locator('#trace').textContent());
   assert.ok(Array.isArray(trace) && trace.length > 2000, 'per-frame trace');
   let previous = null;
+  let previousAt = null;
   let furthest = 0;
   const drops = [];
+  let resets = 0;
+  const gap = (a, b) => Math.hypot(a[0] - b[0], a[2] - b[2]);
   for (const record of trace) {
     if (!record.race) continue;
     const now = Object.fromEntries(record.race.standings.map(s => [s.name, s.progress]));
+    const at = Object.fromEntries([['YOU', record.origin], ...record.race.opponents.map(o => [o.name, o.origin])]);
     if (previous) {
       for (const [name, progress] of Object.entries(now)) {
-        if (progress < previous[name] - 100) drops.push(`${name} ${Math.round(previous[name])}->${Math.round(progress)} at step ${record.step}`);
+        if (progress >= previous[name] - 100) continue;
+        if (at[name] && previousAt[name] && gap(at[name], previousAt[name]) > 40) resets++;
+        else drops.push(`${name} ${Math.round(previous[name])}->${Math.round(progress)} at step ${record.step}`);
       }
     }
     furthest = Math.max(furthest, ...Object.values(now));
     previous = now;
+    previousAt = at;
   }
-  assert.deepEqual(drops, [], 'no rider loses race distance');
+  assert.deepEqual(drops, [], 'no rider loses race distance without a reset');
   assert.ok(furthest > 1700, `a rider passed the 12->57 crossing and the bridge (furthest ${Math.round(furthest)}ft)`);
   await optionalScreenshot(page, 'ATV_RACE_ALTERNATES_SCREENSHOT', 'sx14');
   assertNoErrors(errors);
   const last = trace.at(-1).race.standings.map(s => `${s.name} ${Math.round(s.progress)}ft`).join(', ');
-  console.log(`PASS: Rust engine race distance on sx14 alternates: ${last}`);
+  console.log(`PASS: Rust engine race distance on sx14 alternates: ${last} (${resets} wreck resets)`);
 } finally {
   await browser.close();
 }

@@ -403,13 +403,15 @@ pub(crate) fn document(data: &[u8]) -> Result<PhysicsData> {
         .into_iter()
         // Native indexed readers return their default for blank template keys.
         // FREE05 deliberately leaves WaterFile empty: it is a dry venue.
+        // A line without a key (E01_ST's `[Radar]` has "=65.0") can never
+        // be looked up either.
         .filter(|line| {
             // Shipped venue templates contain bare authoring notes. Indexed
             // config lookup ignores those lines; keep the generic PHY strict.
             (line.is_empty() || line.starts_with('[') || line.contains('='))
                 && !line
                     .split_once('=')
-                    .is_some_and(|(_, value)| value.is_empty())
+                    .is_some_and(|(key, value)| key.trim().is_empty() || value.is_empty())
         })
         .collect::<Vec<_>>()
         .join("\n");
@@ -564,6 +566,9 @@ mod tests {
         let scene = parse_with_start(SOURCE.as_bytes(), Some(mode)).unwrap();
         assert_eq!(scene.start_position, [5., 6., 7.]);
         assert!(PhysicsData::parse(mode).is_err());
+        let keyless = b"[SceneInfo]\nDefaultStartPosition=5,6,7\nDefaultStartDirection=1,0,0\n[Radar]\n=65.0\n";
+        let scene = parse_with_start(SOURCE.as_bytes(), Some(keyless)).unwrap();
+        assert_eq!(scene.start_position, [5., 6., 7.]);
         assert!(
             document(b"[SceneInfo]\nDefaultStartPosition=NaN,0,0\n")
                 .unwrap()

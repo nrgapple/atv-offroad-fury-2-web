@@ -26,11 +26,6 @@ pub struct Response {
 /// Track-edge probe distance along the requested heading (constructor
 /// +0x2f4, 20ft).
 pub const TRACK_EDGE_PROBE: f32 = 20.;
-/// Authored: avoidance ignores ray hits on a ramp within about 32° of level
-/// (normal y ≥ 0.85) that rises against the ray (horizontal normal
-/// component against it beyond `RISING`, about 3°), which the quad climbs.
-const DRIVABLE_NORMAL_Y: f32 = 0.85;
-const RISING: f32 = 0.05;
 fn dot(a: Vec3, b: Vec3) -> f32 {
     (a[0] * b[0] + a[1] * b[1]) + a[2] * b[2]
 }
@@ -264,17 +259,6 @@ pub fn direction(
             };
             for hit in crate::wreck::query_static_segments(&rays, std::slice::from_ref(object), 8)?
             {
-                // Authored: a ray that meets a drivable ramp rising ahead of
-                // it (sx14's bridge approach) is not an obstacle. Every one
-                // of the eight flat rays meets that 11° ramp about 36ft
-                // ahead, and the successive attenuation turned the CPUs 90°
-                // off the course. Flat ground a dipping ray meets still
-                // counts, as in the original.
-                let n = hit.world_normal;
-                let d = directions[hit.ray_index];
-                if n[1] >= DRIVABLE_NORMAL_Y && n[0] * d[0] + n[2] * d[2] < -RISING {
-                    continue;
-                }
                 let direction = directions[hit.ray_index];
                 let distance = dot(sub(hit.world_point, origin), direction);
                 corrected = attenuate(corrected, direction, distance);
@@ -348,35 +332,6 @@ mod tests {
         let away = direction([0.; 3], [0., 0., -50.], &[], 0, Some(&scene), false).unwrap();
         assert_eq!(away.obstacle_hits, 0);
         assert_eq!(away.velocity, [0., 0., -50.]);
-    }
-    #[test]
-    fn a_ramp_rising_ahead_is_driven_over_but_a_wall_is_avoided() {
-        let scene = |triangle| {
-            SceneCollision::new(
-                crate::scene_partition::Config {
-                    min_x: -128.,
-                    max_x: 128.,
-                    min_z: -128.,
-                    max_z: 128.,
-                    cell_size: 32.,
-                },
-                vec![crate::wreck::tests::surface(triangle)],
-                None,
-                false,
-                |_| Ok(0.),
-            )
-            .unwrap()
-        };
-        // An 11° ramp starting 20ft ahead meets every ray, like sx14's
-        // bridge approach.
-        let ramp = scene([[40., -2., 20.], [-40., -2., 20.], [0., 14., 100.]]);
-        let result = direction([0.; 3], [0., 0., 50.], &[], 0, Some(&ramp), false).unwrap();
-        assert_eq!(result.obstacle_hits, 0);
-        assert_eq!(result.velocity, [0., 0., 50.]);
-        // A wall at the same place still turns the heading.
-        let wall = scene([[40., -10., 20.], [-40., -10., 20.], [0., 20., 20.]]);
-        let result = direction([0.; 3], [0., 0., 50.], &[], 0, Some(&wall), false).unwrap();
-        assert!(result.obstacle_hits > 0);
     }
     #[test]
     fn nearby_peer_velocity_and_source_distance_boundaries() {

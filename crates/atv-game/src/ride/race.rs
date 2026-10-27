@@ -578,6 +578,8 @@ impl Ride {
                 clearance: contact.as_ref().map_or(0., |c| pose.origin[1] - c.height),
                 terrain_normal: contact.as_ref().map_or([0., 1., 0.], |c| c.normal),
                 station: Some(race.station(None)),
+                on_track: race.on_track(None),
+                enduro: race.enduro_target(None),
             },
         )?;
         Ok(Some(input))
@@ -723,7 +725,11 @@ impl Ride {
                 player.speed_magnitude,
                 &peers,
                 race.progress_difference(index),
-                race.station(Some(index)),
+                (
+                    race.station(Some(index)),
+                    race.on_track(Some(index)),
+                    race.enduro_target(Some(index)),
+                ),
                 &world,
             )?;
             let cpu_yaw = yaw(frame.orientation);
