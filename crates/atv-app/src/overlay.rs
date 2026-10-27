@@ -59,6 +59,8 @@ pub struct HudInput<'a> {
     pub training: Option<atv_ui::hud::training::View>,
     /// A mini-game's panel (research/GAMES.md).
     pub game: Option<atv_ui::hud::games::View>,
+    /// A target run's or mini-game's compass (Overlay Sets 5-7).
+    pub compass: Option<atv_ui::hud::race::CompassView>,
 }
 
 /// A press on a toolbar button or the minimap (utility pointers in touch.js).
@@ -86,6 +88,8 @@ pub struct Overlay {
     pub lobby: Option<atv_ui::menu::controller::Lobby>,
     /// Name tags drawn on the latest frame (tests).
     pub tags: usize,
+    /// The compass icons drawn on the latest frame, if a compass was (tests).
+    compass_icons: Option<Vec<String>>,
     pub fonts: Fonts,
     renderer: Renderer,
     pub settings: Settings,
@@ -213,6 +217,7 @@ impl Overlay {
             results_cache: None,
             help_open: false,
             tags: 0,
+            compass_icons: None,
             lobby: None,
             help_until: None,
             ride_started: false,
@@ -293,13 +298,7 @@ impl Overlay {
         self.jukebox_art = None;
         self.jukebox_art_wanted = self.jukebox_open();
         if let Some(meter) = &mut self.meter {
-            meter.images.clear();
-            for (name, image) in &meter.assets.images {
-                let id =
-                    self.renderer
-                        .add_image(device, queue, image.width, image.height, &image.rgba);
-                meter.images.insert(name.clone(), id);
-            }
+            upload_meter(&mut self.renderer, device, queue, meter);
         }
         self.minimap.image = None;
         self.set_course(venue);
@@ -314,12 +313,7 @@ impl Overlay {
     /// Uploads the original speed meter and stunt text resources.
     pub fn set_meter(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, assets: OverlayAssets) {
         let mut meter = Meter::new(assets);
-        for (name, image) in &meter.assets.images {
-            let id = self
-                .renderer
-                .add_image(device, queue, image.width, image.height, &image.rgba);
-            meter.images.insert(name.clone(), id);
-        }
+        upload_meter(&mut self.renderer, device, queue, &mut meter);
         self.meter = Some(meter);
     }
 
@@ -804,6 +798,13 @@ impl Overlay {
                     meter.paint_lamps(&mut items, lights, view.width, view.height);
                 }
             }
+            self.compass_icons = None;
+            if race.is_none()
+                && let Some(compass) = h.compass.as_ref().filter(|_| meter.has_compass())
+            {
+                meter.paint_compass(&mut items, compass, view.width, view.height);
+                self.compass_icons = Some(compass.icons.iter().map(|(_, i)| i.clone()).collect());
+            }
             if race.is_none() || self.race_overlays.shown("info") {
                 meter.paint_stunt(&mut self.fonts, &mut items, &h.hud, view.width, view.height);
             }
@@ -840,6 +841,7 @@ impl Overlay {
                 &visible,
                 origin,
                 &vp,
+                self.meter.as_ref().and_then(|m| m.pills.as_ref()),
             );
         } else {
             self.tags = 0;
@@ -1387,6 +1389,10 @@ impl Overlay {
                 "helpOpen": self.help_open,
                 // Tags and King of the Hills pills drawn last frame.
                 "tags": self.tags,
+                // A target run's or mini-game's compass icons; whether the
+                // King of the Hills pills use the original art.
+                "compass": self.compass_icons,
+                "pillArt": self.meter.as_ref().is_some_and(|m| m.pills.is_some()),
                 "meter": self.meter.is_some() && !self.minimap.settings.enabled,
                 "compact": self.toolbar_cache.as_ref().is_some_and(|(_, s, ..)| s.compact),
                 "minimap": {
@@ -1543,6 +1549,33 @@ fn buzz(ms: u32) {
     }
     #[cfg(not(target_arch = "wasm32"))]
     let _ = ms;
+}
+
+/// Uploads the HUD's original icons, and King of the Hills' pill art in
+/// each pill colour (`peers::pill_tints`).
+fn upload_meter(
+    renderer: &mut Renderer,
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    meter: &mut Meter,
+) {
+    meter.images.clear();
+    for (name, image) in &meter.assets.images {
+        let id = renderer.add_image(device, queue, image.width, image.height, &image.rgba);
+        meter.images.insert(name.clone(), id);
+    }
+    meter.pills = meter
+        .assets
+        .images
+        .get(atv_ui::hud::assets::PILL)
+        .map(|image| {
+            let tints = atv_ui::hud::peers::pill_tints(&image.rgba)
+                .map(|rgba| renderer.add_image(device, queue, image.width, image.height, &rgba));
+            atv_ui::hud::peers::PillArt {
+                tints,
+                size: [image.width as f32, image.height as f32],
+            }
+        });
 }
 
 /// Whether the terrain rises above the segment from `from` to `to`

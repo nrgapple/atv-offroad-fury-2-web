@@ -78,6 +78,16 @@ async function rideTargets(page, action, count, shots) {
     null,
     { timeout: 60000 }
   );
+  // The Overlay Set 5 compass: one RadarIcon_Target per untouched target
+  // (002e77f0; a hit removes its icon, 002e78d0).
+  for (let tries = 0; ; tries++) {
+    const now = await read(page);
+    const hud = now.toolbar?.hud ?? now.hud ?? {};
+    const left = now.ride.objective.hits.filter(h => !h).length;
+    if (hud.compass?.length === left && hud.compass.every(i => i === 'radaricon_target')) break;
+    if (tries > 50) throw new Error(`compass ${JSON.stringify(hud.compass)} for ${left} targets`);
+    await page.waitForTimeout(100);
+  }
   state = (await read(page)).ride.objective;
   assert.match(state.progress, /^Targets [12] of \d+$/);
   assert.ok(state.score >= 500, `score ${state.score}`);
