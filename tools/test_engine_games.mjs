@@ -100,6 +100,19 @@ async function start(page, venue) {
     { timeout: 300000 }
   );
 }
+// The HUD diagnostics (toolbar hud): tags, the compass icons, pill art.
+async function hudUntil(page, predicate, timeout = 10000) {
+  const deadline = Date.now() + timeout;
+  for (;;) {
+    const hud = await page.evaluate(() => {
+      const s = JSON.parse(document.querySelector('#ui-state')?.textContent || '{}');
+      return s.toolbar?.hud ?? s.hud ?? {};
+    });
+    if (predicate(hud)) return hud;
+    if (Date.now() > deadline) throw new Error(`timed out: ${predicate} ${JSON.stringify(hud)}`);
+    await page.waitForTimeout(100);
+  }
+}
 async function results(page) {
   await page.waitForFunction(
     () => (JSON.parse(document.querySelector('#ui-state')?.textContent || '{}').ride?.results?.length ?? 0) === 2,
@@ -163,6 +176,9 @@ try {
   assert.equal(g.rules.groups, 5);
   assert.equal(g.markers.length, 5, 'group 1 shows five treasures');
   await until(page, g => g.started);
+  // The compass (Overlay Set 6 object 31) shows the live group's
+  // treasures as RadarIcon_Flag (002edf00, 002e7590).
+  await hudUntil(page, h => h.compass?.length === 5 && h.compass.every(i => i === 'radaricon_flag'));
   await shot(page, 'treasure-start');
   g = await until(page, g => g.rules.wait > 0, 60000);
   assert.equal(g.scores[0], 5, 'group 1 collected');
@@ -219,6 +235,12 @@ try {
   const hud = await page.evaluate(() => JSON.parse(document.querySelector('#ui-state').textContent).toolbar?.hud
     ?? JSON.parse(document.querySelector('#ui-state').textContent).hud);
   assert.ok(hud && hud.tags <= 5, `hill pills drawn: ${JSON.stringify(hud)}`);
+  // The original koh_pillbkg art; the compass's RadarIcon_Hill per hill,
+  // the captured one in ATV 1's colour (002e76e0).
+  const compassHud = await hudUntil(page, h => h.compass?.includes('radaricon_hill#0'));
+  assert.equal(compassHud.pillArt, true);
+  assert.equal(compassHud.compass.length, 5);
+  assert.equal(compassHud.compass.filter(i => i === 'radaricon_hill').length, 4);
   await shot(page, 'koth-captured');
   await page.waitForTimeout(4000);
   await shot(page, 'koth-flag');
@@ -230,9 +252,8 @@ try {
   await page.waitForTimeout(1500);
   await shot(page, 'koth-restart-pills');
   // From the start the hills ahead are in view and above the terrain line.
-  const restartHud = await page.evaluate(() => JSON.parse(document.querySelector('#ui-state').textContent).toolbar?.hud
-    ?? JSON.parse(document.querySelector('#ui-state').textContent).hud);
-  assert.ok(restartHud.tags >= 1 && restartHud.tags <= 5, `hill pills after restart: ${restartHud.tags}`);
+  // (Polled: the diagnostics can lag the drawn frame.)
+  await hudUntil(page, h => h.tags >= 1 && h.tags <= 5);
 
   // The real stunt path (`gameTest=hillride`): set on hill 1, the ATV is
   // launched across the hilltop at 40 ft/s (a 12 ft/s lip) and rides off it; a keyboard
