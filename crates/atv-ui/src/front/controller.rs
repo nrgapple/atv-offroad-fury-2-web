@@ -86,6 +86,9 @@ pub enum Event {
     },
     /// Single Race → Copy ride link: the race setup's link.
     CopyRaceLink,
+    /// Main Menu → Training Course: the original's six lessons on the
+    /// Training venue (`atv_core::training`) with the garage selection.
+    Training { quad: u16, rider: u16 },
     /// Select Objective: ride a Freestyle championship course's objective
     /// (the series index into `atv_core::freestyle::SERIES`, Expert and the
     /// objective index).
@@ -539,6 +542,12 @@ impl Frontend {
                 .map_or(0, |i| i + 1);
             self.choices
                 .insert(at, ("profile".into(), "Profile Editor".into()));
+            // Training Course, the original's third row, before the
+            // Profile Editor when its venue is available.
+            if self.tracks.iter().any(|t| t.id == "training") {
+                self.choices
+                    .insert(at, ("training".into(), "Training Course".into()));
+            }
         }
         // Single Player → Championship, after Race.
         if page == "single" && !self.race_courses.is_empty() {
@@ -1563,6 +1572,15 @@ impl Frontend {
                     name,
                 });
             }
+            "training" => {
+                // The garage choice rides it under the Single Player unlocks.
+                self.notice = self.enforce_unlocks(settings);
+                self.save(settings);
+                return Some(Event::Training {
+                    quad: self.quad_id,
+                    rider: self.rider_id,
+                });
+            }
             "settings" => return Some(Event::Settings),
             "jukebox" => return Some(Event::Jukebox),
             "quadprev" | "quadnext" => {
@@ -2430,6 +2448,31 @@ mod tests {
             Some(Event::LeaveLobby)
         );
         assert_eq!(front.page, "multiplayer");
+    }
+
+    #[test]
+    fn training_course_row_rides_the_training_venue() {
+        let view = view(1280., 720.);
+        let mut settings = Settings::memory();
+        let mut front = Frontend::new(tracks(), &settings, true);
+        front.show("main", &view);
+        assert!(front.choices().iter().all(|(a, _)| a != "training"));
+        let mut list = tracks();
+        list.push(Track {
+            id: "training".into(),
+            name: "Training Course".into(),
+            image: String::new(),
+        });
+        let mut front = Frontend::new(list, &settings, true);
+        front.show("main", &view);
+        let choices: Vec<&str> = front.choices().iter().map(|(a, _)| a.as_str()).collect();
+        let at = choices.iter().position(|a| *a == "training").unwrap();
+        assert_eq!(choices[at + 1], "profile");
+        assert_eq!(front.choices()[at].1, "Training Course");
+        assert!(matches!(
+            front.run("training", &view, &mut settings),
+            Some(Event::Training { .. })
+        ));
     }
 
     #[test]

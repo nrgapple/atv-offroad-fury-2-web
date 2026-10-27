@@ -713,6 +713,12 @@ impl Ride {
         std::mem::take(&mut self.chains)
     }
 
+    /// A stunt chain is in progress (started, not yet finished): the
+    /// Training Stunt lesson's +0x30 +8 & 0x20 and +0x230.
+    pub fn stunting(&self) -> bool {
+        !self.chain_ids.is_empty()
+    }
+
     /// The player's committed stunt points (the race SCORE overlay; the
     /// motorcycle's frame carries none, as in atv-web).
     pub fn committed_points(&self) -> f32 {

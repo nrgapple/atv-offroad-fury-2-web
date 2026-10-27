@@ -21,6 +21,7 @@ mod sound;
 mod soundtrack;
 #[cfg(target_arch = "wasm32")]
 mod text_inputs;
+mod training;
 mod usage;
 mod wake;
 use atv_core::math::Det;
@@ -428,6 +429,8 @@ struct App {
     held_ride: Option<atv_game::ride::Ride>,
     /// A Freestyle championship objective attempt on the current ride.
     objective: Option<ObjectiveSession>,
+    /// The Training Course on the current ride.
+    training: Option<training::TrainingSession>,
     /// The held room the next frontend ride resumes.
     pending_room: Option<multiplayer::Net>,
     /// `pending_room` was just joined (it meets a rider; a held room
@@ -1052,6 +1055,14 @@ impl App {
             .is_some_and(|p| p.buttons.iter().any(|b| *b > 0.5));
         if pad_pressed && !self.intro_pad_held {
             riding.ride.skip_intro();
+            // The pad's Accept (South) skips a Training line (00225200).
+            if pad
+                .as_ref()
+                .is_some_and(|p| p.buttons.first().is_some_and(|b| *b > 0.5))
+                && let Some(session) = &mut self.training
+            {
+                session.course.skip();
+            }
         }
         self.intro_pad_held = pad_pressed;
         let names: HashSet<String> = self.keys.iter().map(|k| format!("{k:?}")).collect();
@@ -1215,6 +1226,21 @@ impl App {
             self.reload_room(environment);
             return;
         }
+        // The Training Course ended (`00225980` phase 3): back to the main
+        // menu with the reward on the notice line.
+        if let Some(session) = self.training.take_if(|t| t.finished) {
+            if self.quit_to(Some("main"))
+                && let Some(front) = &self.front
+            {
+                front.borrow_mut().state.notice =
+                    Some(if session.rewarded && !session.course.completed_before {
+                        "Training Course complete! Unlocked the Ravage Talons and ATV2 gear.".into()
+                    } else {
+                        "Training Course complete!".into()
+                    });
+            }
+            return;
+        }
         let Some(ready) = &mut self.ready else { return };
         let Some(riding) = &mut ready.riding else {
             return;
@@ -1246,7 +1272,21 @@ impl App {
             }
             None => None,
         };
+        // The Training Course: its lessons run on the ride's clock and hold
+        // the ATV while a line plays; its end returns to the main menu.
+        let training_view = match &mut self.training {
+            Some(session) => {
+                session.update(&mut riding.ride);
+                riding.locked = session.course.locked();
+                Some(session.view(riding.ride.frame().origin))
+            }
+            None => {
+                riding.locked = false;
+                None
+            }
+        };
         if let Some(overlay) = &mut self.overlay {
+            overlay.training = self.training.is_some();
             if riding.input_cleared {
                 overlay.clear_input();
             }
@@ -1295,6 +1335,7 @@ impl App {
                         .as_deref()
                         .map(|peers| (peers, frame.origin, view_projection)),
                     objective: objective_view,
+                    training: training_view,
                 }),
                 Some(&mut riding.bindings),
             );
@@ -1366,6 +1407,7 @@ impl App {
             state["ride"] = serde_json::json!({
                 "environment": ready.venue.environment,
                 "championship": riding.ride.race().and_then(|r| r.settings().championship),
+                "training": self.training.as_ref().map(|t| t.state(riding.ride.frame().origin)),
                 "objective": self.objective.as_ref().map(|o| serde_json::json!({
                     "series": o.series, "expert": o.expert, "course": o.course,
                     "objective": o.objective, "recorded": o.recorded,
@@ -1787,6 +1829,14 @@ impl App {
             Event::Reset if riding.ride.race().is_some() => {
                 self.menu_event(Event::Resume);
                 self.restart_race();
+            }
+            // Restart Training (`00226d60`): the introduction and lesson 1
+            // again; nothing earned is taken back.
+            Event::Reset if self.training.is_some() => {
+                if let Some(session) = &mut self.training {
+                    session.restart(&mut riding.ride);
+                }
+                self.menu_event(Event::Resume);
             }
             // Restart Objective: the ride resets and the run starts over
             // (timer, score, combos and levels), its results closed.
@@ -2430,9 +2480,13 @@ impl App {
             TouchPhase::Started => {
                 if !overlay.press(id, x, y) {
                     overlay.touch_down(id, x, y, now, active);
-                    // A tap off the toolbar skips the race intro (game.js).
+                    // A tap off the toolbar skips the race intro (game.js)
+                    // and a Training line.
                     if let Some(riding) = self.ready.as_mut().and_then(|r| r.riding.as_mut()) {
                         riding.ride.skip_intro();
+                        if let Some(session) = &mut self.training {
+                            session.course.skip();
+                        }
                     }
                 }
             }
@@ -2720,6 +2774,14 @@ impl App {
             riding.key_pressed(&format!("{code:?}"), now, &|c: &str| names.contains(c));
             // Any key skips the pre-race camera (00212d40).
             riding.ride.skip_intro();
+            // Accept skips a Training demonstration or Chase line (00225200).
+            if matches!(
+                format!("{code:?}").as_str(),
+                "Enter" | "NumpadEnter" | "Space"
+            ) && let Some(session) = &mut self.training
+            {
+                session.course.skip();
+            }
             // H stays a gameplay key when the player bound it (usesKey),
             // and Ctrl/Alt/Meta shortcuts leave the card alone.
             let free = !riding.bindings.uses_key("KeyH");
@@ -4497,7 +4559,18 @@ impl App {
         if !matches!(event, Event::Objective { .. }) {
             self.objective = None;
         }
+        self.training = None;
         match event {
+            Event::Training { quad, rider } => {
+                let catalog = self
+                    .front
+                    .as_ref()
+                    .map(|f| f.borrow().state.store.atvs.clone())
+                    .unwrap_or_default();
+                let completed = training::completed(&catalog);
+                self.training = Some(training::TrainingSession::new(completed, catalog));
+                self.start_ride("training".into(), quad, rider, None, None);
+            }
             Event::Objective {
                 environment,
                 quad,
@@ -5434,6 +5507,9 @@ impl App {
         let Some(front) = self.front.clone() else {
             return false;
         };
+        // Leaving mid-course keeps nothing (the original saves only the
+        // ending's reward).
+        self.training = None;
         let Some(ready) = self.ready.take() else {
             return false;
         };
@@ -5776,6 +5852,7 @@ fn capture(ready: &mut Ready, path: &std::path::Path, width: u32, height: u32, u
                         .map(|f| (f, ride.committed_points(), ride.frame().origin)),
                     peers: None,
                     objective: None,
+                    training: None,
                 }),
                 None,
             );
@@ -5987,7 +6064,7 @@ fn saved_setting(key: &str) -> Option<String> {
     }
 }
 
-fn url_flag(pair: &str) -> bool {
+pub(crate) fn url_flag(pair: &str) -> bool {
     #[cfg(target_arch = "wasm32")]
     {
         web_sys::window()
@@ -6287,6 +6364,7 @@ pub fn run(options: Options) {
         held_room: None,
         held_ride: None,
         objective: None,
+        training: None,
         pending_room: None,
         pending_fresh: false,
         joining: None,

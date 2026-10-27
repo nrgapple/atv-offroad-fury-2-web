@@ -53,6 +53,8 @@ pub struct HudInput<'a> {
     pub peers: Option<(&'a [atv_ui::hud::peers::Peer], [f32; 3], [f32; 16])>,
     /// A Freestyle objective's panel (time left, progress, score).
     pub objective: Option<atv_ui::hud::objective::View>,
+    /// The Training Course's lesson panel.
+    pub training: Option<atv_ui::hud::training::View>,
 }
 
 /// A press on a toolbar button or the minimap (utility pointers in touch.js).
@@ -151,6 +153,8 @@ pub struct Overlay {
     pub frontend: bool,
     /// The ride is a race (Pause → Restart Race).
     pub race: bool,
+    /// The ride is the Training Course (Pause → Restart Training).
+    pub training: bool,
     /// The race's course id, the player's vehicle and whether it runs the
     /// default laps: what the profile's course record keeps (`001f1e30`).
     pub race_entry: Option<(String, u16, bool)>,
@@ -226,6 +230,7 @@ impl Overlay {
             backdrop: None,
             frontend: false,
             race: false,
+            training: false,
             race_entry: None,
             transition: Default::default(),
             menu_motion: None,
@@ -311,6 +316,7 @@ impl Overlay {
                 let mut menu = PauseMenu::new();
                 menu.frontend = self.frontend;
                 menu.race_active = self.race;
+                menu.training_active = self.training;
                 self.menu = Some(menu);
                 self.press = None;
                 self.touch.clear();
@@ -861,6 +867,22 @@ impl Overlay {
             let mut list = DisplayList::default();
             layout::render(
                 &atv_ui::hud::objective::element(&view, objective, top),
+                &mut self.fonts,
+                view.width,
+                view.height,
+                &mut list,
+                &mut Vec::new(),
+            );
+            self.list.items.extend_from_slice(&list.items);
+        }
+        // The Training Course's lesson panel, under the toolbar.
+        if let Some(training) = shown.and_then(|h| h.training.as_ref()) {
+            let top = self.toolbar_cache.as_ref().map_or(0., |(.., hits)| {
+                hits.iter().map(|(r, _)| r.bottom()).fold(0., f32::max)
+            }) + 8.;
+            let mut list = DisplayList::default();
+            layout::render(
+                &atv_ui::hud::training::element(&view, training, top),
                 &mut self.fonts,
                 view.width,
                 view.height,
