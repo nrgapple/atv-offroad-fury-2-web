@@ -185,8 +185,13 @@ try {
   assert.equal(g.markers.length, 0, 'none shown while waiting');
   assert.equal(g.rules.remaining, 20);
   await shot(page, 'treasure-more');
-  g = await until(page, g => g.rules.wait === 0 && g.markers.length === 5, 15000);
+  // The next group shows once the wait ends. The visit hook can collect
+  // its first treasure within a frame of it appearing, so check the
+  // group's standing treasures against its collected count rather than
+  // waiting for all five at once.
+  g = await until(page, g => g.rules.wait === 0 && g.rules.usedGroups >= 2, 15000);
   assert.notEqual(g.rules.group, 0, 'a random unused group follows');
+  assert.equal(g.markers.length + (g.scores[0] - 5), 5, 'the new group shows its uncollected treasures');
   g = await until(page, g => g.end === 'Complete', 180000);
   assert.equal(g.notice, 'All Treasures Collected');
   assert.equal(g.scores[0], 25);
