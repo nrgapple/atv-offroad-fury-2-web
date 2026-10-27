@@ -60,7 +60,8 @@ fn reward(catalog: &[atv_core::store::Atv]) -> bool {
 /// (forward) axis's climb, nose down negative.
 fn pitch(orientation: [f32; 4]) -> f32 {
     let [w, x, y, z] = orientation;
-    (2. * (y * z - w * x)).clamp(-1., 1.).asin()
+    use atv_core::math::Det;
+    (2. * (y * z - w * x)).clamp(-1., 1.).asin_d()
 }
 
 impl TrainingSession {

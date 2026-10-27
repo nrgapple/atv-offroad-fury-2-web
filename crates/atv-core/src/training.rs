@@ -106,7 +106,8 @@ pub struct Lesson {
 impl Lesson {
     /// The start yaw, as rides face (atan2 of x over z).
     pub fn yaw(&self) -> f32 {
-        self.facing[0].atan2(self.facing[2])
+        use crate::math::Det;
+        self.facing[0].atan2_d(self.facing[2])
     }
 }
 
