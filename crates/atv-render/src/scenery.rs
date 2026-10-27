@@ -73,6 +73,8 @@ struct Draw {
     gate: Option<([f32; 3], [f32; 3])>,
     /// Enduro gate index (its alpha follows the rider's next gate).
     enduro_gate: Option<usize>,
+    /// Chunk-local bounds (a posed model's world bounds follow its matrix).
+    local: ([f32; 3], [f32; 3]),
     min: [f32; 3],
     max: [f32; 3],
 }
@@ -110,6 +112,8 @@ pub struct SceneryPass {
     pub flashes: Option<atv_core::race_crowd::Flashes>,
     /// Farthest world-bounds diagonal, for the depth range.
     pub reach: f32,
+    /// Scene models not drawn (hit Freestyle targets).
+    hidden: std::collections::HashSet<usize>,
 }
 
 const STRIDE: u64 = 36;
@@ -282,6 +286,7 @@ impl SceneryPass {
                 flash: draw.flash,
                 gate: draw.gate.then_some((local.min, local.max)),
                 enduro_gate: draw.enduro_gate,
+                local: (local.min, local.max),
                 min: draw.min,
                 max: draw.max,
             });
@@ -380,6 +385,7 @@ impl SceneryPass {
                 atv_core::race_crowd::Flashes::new(config, pool, 97211 + 8 * 47)
             }),
             reach,
+            hidden: Default::default(),
         }
     }
 
@@ -403,6 +409,7 @@ impl SceneryPass {
         self.clocks = old.clocks;
         self.flashes = old.flashes;
         self.lit_flashes = old.lit_flashes;
+        self.hidden = old.hidden;
     }
 
     /// Poses the race's drop gate (poseGate in game.js): its draws' model
@@ -424,6 +431,37 @@ impl SceneryPass {
                 }
                 gpu.queue.write_buffer(&self.records, at as u64, bytes);
             }
+        }
+    }
+
+    /// Poses one scene model (a Freestyle target's cherry): its draws'
+    /// matrix and world bounds.
+    pub fn pose_model(&mut self, gpu: &Gpu, model: usize, matrix: &[f32; 16]) {
+        let offset = std::mem::offset_of!(Record, d) + std::mem::offset_of!(DrawUniform, model);
+        let bytes = bytemuck::bytes_of(matrix);
+        for draw in &mut self.draws {
+            if draw.model != model {
+                continue;
+            }
+            (draw.min, draw.max) =
+                atv_game::scenery::world_bounds(draw.local.0, draw.local.1, matrix);
+            let passes = 1 + usize::from(self.chunks[draw.chunk].alpha_fail);
+            for pass in 0..passes {
+                let at = (draw.record as usize + pass) * self.record_slot as usize + offset;
+                if let Some(copy) = self.animated_records.get_mut(at..at + bytes.len()) {
+                    copy.copy_from_slice(bytes);
+                }
+                gpu.queue.write_buffer(&self.records, at as u64, bytes);
+            }
+        }
+    }
+
+    /// Hides or shows a scene model (`HideAnimation`: a hit target).
+    pub fn hide_model(&mut self, model: usize, hidden: bool) {
+        if hidden {
+            self.hidden.insert(model);
+        } else {
+            self.hidden.remove(&model);
         }
     }
 
@@ -499,7 +537,9 @@ impl SceneryPass {
         self.visible.clear();
         let mut stats = Stats::default();
         for (index, draw) in self.draws.iter().enumerate() {
-            if draw.flash.is_some_and(|f| !self.lit_flashes.contains(&f)) {
+            if draw.flash.is_some_and(|f| !self.lit_flashes.contains(&f))
+                || (!self.hidden.is_empty() && self.hidden.contains(&draw.model))
+            {
                 continue;
             }
             if cull::outside(cull_planes, draw.min, draw.max) {

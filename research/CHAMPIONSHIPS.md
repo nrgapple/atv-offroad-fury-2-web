@@ -144,7 +144,33 @@ runtime traces):
   Reached"; the last completes it. ComboMambo: a successful chain of two or
   more stunts whose stunt sequence differs from every counted combo adds one
   ("Repeated Combos Do Not Count"; compared by the recorded stunt ids, up to
-  25). CherryPick: each target adds its bonus points and seconds.
+  25). Any objective that completes adds its whole seconds left x 100 to
+  the score (`2fd980`) before the score / 1000 payout.
+- **Target runs (CherryPick).** Class vtable 0x45f550 (base
+  `QuadzillaObjective` 0x45f5f0): load `002fa840` (0xa8 NumberOfTargets,
+  0xc4 BonusPointsPerTarget default 1000, 0xc8 BonusTimePerTargetInSec
+  default 2, 0xe0 red when the `TOYFile` contains "RCP"), start `002fa9c0`
+  (the objective's `DefaultStartPosition`/`DefaultStartDirection`, parsed by
+  `002fa3c0`, placed through `002fa680`), stop `002faa10` (hides every
+  cherry, disables the triggers), reset `002fae60` (shows the cherries,
+  re-arms the triggers, registers each player's ATV and rider bodies with
+  them), hit `002fab40`. Event type 2 reads the `ob` scene suffix
+  (`0021ca20`) and `tracks\<course>.obj` (`002fcd98`); the OB archive
+  holds the `.obj`, the two target TOYs, the cherry models and motion, the
+  explosion emitters and the radar icon. Each target is a TOY trigger
+  (`Radius=5`, `OneTimeOnly=T`) whose actions hide its cherry
+  (`HideAnimation`), run `Cherry` (action 0xe, `00208a90` → `002fc610` →
+  `002fda20` → the objective's hit) and start its explosion (`Particles`).
+  A hit adds the bonus points and the bonus seconds to the time left, plays
+  `iconhit.vag` and shows "Target Collected" for 1 s (Overlays.pb
+  `[Single-Sign-8/9]`); the last shows "All Targets Collected" for 5 s
+  (`[Single-Sign-10/11]`) and ends the run without waiting for the clock.
+  Airborne or not does not matter. The cherry (`cherryg.psg`/`cherryr.psg`,
+  a 10 ft flat target) loops `cherry.MOT` (1.67 s: one turn about +Y and a
+  2 ft bob); the cherries show only during a target run. The Overlay Set 5
+  HUD shows TARGETS n/total, TIME and SCORE and a Compass with one
+  `RadarIcon_Target` dot per untouched target (`002e68e0`, `002e77f0`,
+  `002e6e80`).
 - **Menus.** In-game Overlays.pb `[Objectives Menu]` ("Select Objective",
   six objective rows with check icons and point-level sub-rows),
   `[Objective Results Menu]` and `[Objective Championship Results Menu]`
@@ -172,25 +198,53 @@ progress, score, the latest level/combo notice); when it completes or time
 runs out the Objectives results show the original lines, the course and
 total counts, Restart Objective and Continue (back to Select Objective).
 
-**Authored or approximate:** the original picks objectives in-game from an
-overlay; the port's Select Objective is a front-end page, and the round
-ends with Next Course rather than a recovered in-game end (the round end
-condition was not found). The completion bits of a course persist across
+**Authored or approximate:** the original picks objectives in-game from the
+`[Objectives Menu]` overlay (Select / Quit; Continue on the results returns
+to it, `002ec310` mode 2); the port's Select Objective is a front-end page,
+and its round ends with Next Course. The original has no such row: a round
+ends when the rider quits the event (an inference from `00322c60`, which
+always advances; the QuitEvent path was not traced), and `003230f0` awards
+the trophy, its reward and unlocks the moment the completed count crosses a
+threshold rather than after the last round; the port still awards it at
+Finish Championship. The completion bits of a course persist across
 championship runs (the mask is per profile, course and difficulty, as
-`00321ff0` reads it; resetting at a new run was not found). Point levels
+`00321ff0` reads it). Saving (`00322080` type 2) requires single player and
+the 120 s limit, and does not check the championship flag. Point levels
 count when reached even if the run then times out (a reading of
-`002fb720`). The target runs are listed but **not playable**: their
-trigger TOYs and cherry models ship only in the OB archives, which the
-hosted runtime package does not include yet, so 24 of 36 (Amateur) and 18
-of 30 (Pro) objectives are reachable today: bronze at most. An objective's
-end pays score / 1000 plus its combo points (`002fce00`, see PROFILE.md
-"Freestyle records and Hall of Fame"; an earlier note said none was found);
-the standalone Single Player
-Freestyle objectives mode (`Freestyle Prep` → Objectives) is not offered.
+`002fb720`). An objective's end pays score / 1000 plus its combo points
+(`002fce00`, see PROFILE.md "Freestyle records and Hall of Fame").
 
-Checks: `atv-core` freestyle tests (parser, levels and time-out, combos,
-targets, rounds/trophy/unlock); `atv-ui` controller test for the page
-flow; `tools/test_engine_freestyle_objectives.mjs` fails a Combos run on a
+Target runs ride the course's OB archive (the hosted package carries the 11
+archives' differing members, about 17-34 KB each, read over the Freeride
+archive). The port tests the trigger sphere against the ATV's origin; the
+original tests the ATV's wheels, chassis and rider bodies, so a hit
+registers a little later at the edge. The explosions, the 1 s/5 s sign
+timing and the Compass are presented through the port's HUD: the panel's
+notice line shows the signs, and untouched targets are green or red screen
+tags and minimap dots instead of the `RadarIcon_Target` compass. Settings
+word 0 == 1 skips the bonus seconds (mode not identified; the port always
+adds them).
+
+**Standalone mode.** The original offers Objectives as an event type on
+Freestyle Prep (`0026a720` mode 2, cycled by `0026d010`/`0026d150`, offline
+only; Tracks.dat `SponsoredStuntRaceTypeMask=88`). The port's Single Player
+→ Freestyle Objectives lists the 11 courses with an OB archive (env03,
+env07 and free05 ship none), then the same Select Objective page without a
+round row. Standalone runs save to the course's mask under its series
+(Amateur for the Environment venues, Pro for the Freestyle venues) on
+Normal: the original keys `00321ff0` by the event category (settings +8),
+believed but not proven to be the same series. The menu's check marks show
+the saved bits; the original marks them only in a championship (`002fc840`,
+settings +0x36d).
+
+Checks: `atv-core` freestyle tests (parser and objective starts, target
+TOYs and one-time hits, levels and time-out, combos, the seconds-left
+bonus, rounds/trophy/unlock); `atv-ui` controller tests for the
+championship and standalone page flows;
+`tools/test_engine_freestyle_targets.mjs` rides Amateur round 1's green
+target run and a standalone red run on Tioga Valley to completion
+(`objectiveTest=targets` sets the ATV down 8 ft short of the next target
+and rolls it through, so the real sphere test takes each hit); `tools/test_engine_freestyle_objectives.mjs` fails a Combos run on a
 shortened clock (`objectiveTest=timeout`, five seconds), restarts it from Pause, completes Score Stunt Points
 (`objectiveTest=score` credits the top level) and finishes Amateur
 Freestyle for silver, its reward and the Pro Freestyle unlock.
