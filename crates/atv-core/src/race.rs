@@ -705,6 +705,34 @@ impl Course {
             && course.route_length(0, course.finish) < 0.25 * course.cycle_length();
         Ok(course)
     }
+    /// The race track loader `00215900` rebuilds the finish box from the
+    /// scene's finish gate object (`natfgate`, `stfgate` on Short Tracks):
+    /// centered on the model, across its right axis by `half_width`, facing
+    /// its look vector. Re-places it on the route (`0017b290`); a box the
+    /// main racing line does not cross keeps the TDF box.
+    pub fn set_finish_gate(&mut self, matrix: &[f32; 16], half_width: f32) -> bool {
+        let right = [matrix[0], matrix[1], matrix[2]];
+        let facing = [matrix[8], matrix[9], matrix[10]];
+        let (Some(forward), true) = (
+            normalize_flat(facing),
+            half_width.is_finite() && (1. ..=200.).contains(&half_width),
+        ) else {
+            return false;
+        };
+        let gate = Gate {
+            center: [matrix[12], matrix[13], matrix[14]],
+            forward,
+            facing,
+            half_width: right.map(|v| v * half_width),
+            width: half_width,
+        };
+        let Some(at) = self.gate_distance(&gate) else {
+            return false;
+        };
+        self.finish_gate = Some(gate);
+        self.finish_at = Some(at);
+        true
+    }
     /// Race distance from the grid to the first point where the main racing
     /// line crosses `gate`'s line within the gate, like the box track position
     /// `0017da40` finds by intersecting the box diagonal with route segments.
@@ -2277,6 +2305,23 @@ mod tests {
         assert!(r.player_finished(), "race over 30s after the CPU finished");
         let f = r.frame(0.);
         assert!(f.standings.iter().find(|s| s.player).unwrap().estimated);
+    }
+    #[test]
+    fn scene_finish_gate_replaces_the_tdf_box_on_the_route() {
+        let mut c = course();
+        // A gate model across the first side, facing +z (00215900).
+        let mut m = [0f32; 16];
+        (m[0], m[5], m[10], m[15]) = (1., 1., 1., 1.);
+        (m[12], m[13], m[14]) = (0., 0., 50.);
+        assert!(c.set_finish_gate(&m, 15.));
+        assert_eq!(c.finish_at, Some(50.));
+        let g = c.finish_gate.unwrap();
+        assert_eq!((g.half_width, g.forward), ([15., 0., 0.], [0., 0., 1.]));
+        // A model the racing line does not cross keeps the box.
+        m[12] = 500.;
+        assert!(!c.set_finish_gate(&m, 15.));
+        assert_eq!(c.finish_at, Some(50.));
+        assert!(!c.set_finish_gate(&m, f32::NAN));
     }
     #[test]
     fn countdown_then_finish_hand_over_the_player() {

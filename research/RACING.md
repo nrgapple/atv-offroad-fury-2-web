@@ -954,9 +954,31 @@ Port:
   above. Hand-built courses without a finish gate keep the old
   distance-to-checkpoint rule. The race frame and script trace report
   `finish_at`, `track_flags` and each rider's laps and race distance.
-- `00215900` also rebuilds the start and finish boxes from the scene's
-  `natsgate` and `natfgate`/`stfgate` objects (center, model axes × half
-  width, ceiling); the port keeps the TDF tag 15/16 boxes (not compared).
+- **Scene gate boxes (2026-10-27).** After loading, `00215900` walks the
+  scene's static models and, for one whose name contains `natsgate`,
+  overwrites the start box (Track +0x54); for one containing `natfgate`
+  (`stfgate` on a Short Track) the finish box (+0x58): center = the model's
+  position (+0xf0), half extents = its right axis (+0xc0) × model +0x110,
+  +0x70 = model +0x110, ceiling +0x74 = model +0x114, direction = its look
+  axis (+0xe0); then `0017b290` re-places the box on the route. The last
+  matching model wins. Environment scenes have no `natsgate`, so their start
+  box stays the TDF one. Compared with the TDF tag 16 boxes on all 35 courses
+  (private probe), the scene finish gates sit within about 1–30 ft on most
+  courses, but env05's is 11 ft past the grid instead of 1,517 ft into the
+  lap, sx13's is 11 ft ahead of the grid instead of 24 ft behind it (its
+  Track flag 4 then arms on that first crossing, so the old env07/sx13
+  assumption below is no longer needed there), and sx14's lies 145 ft
+  further on.
+- Model +0x100/+0x110/+0x154 are copied from the PSG node header without
+  arithmetic (`00166d10`): the model-space bounding-box centre, its half
+  extents (+0x110 across the model's x, +0x114 its y) and a sphere radius.
+- The port uses the scene finish gate for every National-rules race
+  (`Course::set_finish_gate`), as wide as the gate PSG's stored half extent.
+  The ceiling stays 150 ft (the original's +0x114 half height is not
+  ported); the start box keeps the TDF tag 15 box, since moving it would
+  also move the grid and the route order. Racing env05 and sx13 one lap
+  with the scene gates finishes after one full circuit (1,759 ft and
+  3,957 ft; sx13's flag 4 arms the first crossing).
 - The `0.0 <= +0x70` guard before the lap test (the previous position's x) is
   not reproduced; all shipped race coordinates are positive.
 - **Assumption.** On env07 and sx13 the start row stands about 20ft past the
@@ -1042,8 +1064,8 @@ Port:
 - Single Race lists each published variant under its venue's tab
   ("Prospect Springs Enduro Short").
 
-**Authored or approximate:** the gate width is the `endwgate` collision
-mesh's half extent across the gate (the original reads model field +0x110);
+**Authored or approximate:** the gate width is the `endwgate` PSG's stored
+half extent across the gate (model +0x110, as the original reads it);
 the gate ceiling is the National 150 ft; the CPUs still drive the Enduro
 TDF route (how the original CPU uses the guidance vector is not read); gates are drawn opaque with their default arrow
 textures (the original fades all but the next gate to 0.4 alpha and picks

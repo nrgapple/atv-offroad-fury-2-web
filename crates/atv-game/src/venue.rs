@@ -283,17 +283,11 @@ pub async fn load_with(
         let waypoints =
             atv_core::enduro::parse_wpt(&extract(&format!("{stem}e.wpt"), "Enduro gates")?)?;
         let model = |kind: &str| format!("{environment}end{kind}gate");
-        // The race box spans the gate model's width (model +0x110, read here
-        // as the collision mesh's half extent across the gate).
-        let mesh = atv_core::collision::decode_col(&extract(
-            &format!("{}.col", model("w")),
-            "Enduro gate",
-        )?)?;
-        let half_width = mesh
-            .vertices
-            .iter()
-            .map(|v| v[0].abs())
-            .fold(0f32, f32::max);
+        // The race box spans the gate model's stored half extent across it
+        // (PSG node bounds, model +0x110).
+        let mesh =
+            atv_core::mesh::decode_psg(&extract(&format!("{}.psg", model("w")), "Enduro gate")?)?;
+        let half_width = mesh.nodes.first().map_or(0., |n| n.bounds[3]);
         let gates = atv_core::enduro::gates(&waypoints, half_width, |x, z| {
             ground.height(x as f64, z as f64) as f32
         })?;
