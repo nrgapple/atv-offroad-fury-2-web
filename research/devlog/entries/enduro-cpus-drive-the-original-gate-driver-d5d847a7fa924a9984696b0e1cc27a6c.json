@@ -1,0 +1,24 @@
+{
+  "id": "enduro-cpus-drive-the-original-gate-driver-d5d847a7fa924a9984696b0e1cc27a6c",
+  "timestamp": "2026-10-27T16:50:41.323028+00:00",
+  "recorded_at": "2026-10-27T17:12:44.918389+00:00",
+  "kind": "build",
+  "title": "Enduro CPUs drive the original gate driver",
+  "summary": "CPU driver in mode 4 that aims the route lookahead through the next gate, commits only while the gate is over 60 ft ahead, turns back for a missed gate, and keeps a 45 ft/s leader speed floor (60 elsewhere). An Enduro reset puts the rider where it last stood, facing the next gate.",
+  "details": [
+    "Recovered from the exact build: Enduro races put the CPU driver in its own mode (mode 4) that aims the route lookahead through the next gate, commits only while the gate is over 60 ft ahead, turns back for a missed gate, and keeps a 45 ft/s leader speed floor (60 elsewhere). An Enduro reset puts the rider where it last stood, facing the next gate. The static avoidance rays run only when a CPU is off the track (their 1 ft height was confirmed); off-track lookahead is capped at 62.5 ft. Caribou Peak's Short Track now loads (a setup line without a key is skipped).",
+    "Headless sweep (3 CPUs, 1 lap, seeds 7/11/23): Enduro courses where every CPU finishes 6/5/6 \u2192 15/16/16 of 16; National-rules courses 30/30/29 \u2192 31/29/31 of 32; Short Tracks 2 \u2192 3 of 3. env04's water-crossing loop is gone.",
+    "Verification: unit tests, the sweep, browser Enduro/race/alternate-line tests pass on host Chromium. PR #361."
+  ],
+  "limitation": "sx15 still loops (the CPU takes a big jump too slowly and lands nose-first); sx03/sx05 regressed on one seed (follow-up in progress); one env05 long Enduro CPU did not finish on one seed; original CPU wreck spots unverified.",
+  "images": [
+    {
+      "path": "/devlog-images/enduro-cpus-drive-the-original-gate-driver-d5d847a7fa924a9984696b0e1cc27a6c.png",
+      "caption": "Three CPUs head for gate 1 on Grand Canyon's short Enduro \u2014 use the course id env03 if unsure of the name; say \"env03 short Enduro\""
+    },
+    {
+      "path": "/devlog-images/enduro-cpus-2-d5d847a7fa924a9984696b0e1cc27a6c.png",
+      "caption": "env05 short Enduro, gate 6 of 13"
+    }
+  ]
+}
