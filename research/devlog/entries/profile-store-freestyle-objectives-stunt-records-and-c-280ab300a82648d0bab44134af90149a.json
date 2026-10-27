@@ -1,0 +1,17 @@
+{
+  "id": "profile-store-freestyle-objectives-stunt-records-and-c-280ab300a82648d0bab44134af90149a",
+  "timestamp": "2026-10-27T04:18:33.672955+00:00",
+  "recorded_at": "2026-10-27T05:20:07.306619+00:00",
+  "kind": "build",
+  "title": "Profile Store, Freestyle objectives, stunt records and CPUs that finish their races",
+  "summary": "Profile Store with original catalogs, purchase rules, and 8 cheats; Freestyle objectives with Amateur/Pro championships and 120 s runs; stunt records (Longest Jump, Most Combos, Most Points); CPUs now finish all 26+ race courses.",
+  "details": [
+    "PR #333 Profile Store: original catalogs (25 ATVs 250\u201310,000 points; helmets 50, jerseys 75, other gear 25; courses 100\u20132,500; games 500), purchase rule (spend only if result stays \u2265 0), original cheats (GIMMEPTS, IGIVEUP, SHOWROOM, TRLBLAZR, THREADS, GAMEON, GOLDCUPS, GABRIEL), Short Tracks championship unlocked by GOLDCUPS/IGIVEUP, Single Player gating of locked ATVs/gear/courses like the original, View Profile ATVs/Rider Equipment/Games, Percent Complete out of 201. Rust unit tests and browser tests verify purchase logic and unlocks.",
+    "PR #334 + #337 Freestyle objectives and Amateur/Pro Freestyle championships: four objectives per course (green/red targets, Bust 10 Different Combos, Score Stunt Points with three levels), 120 s timer, six completion bits per course, trophies by completed objectives (Amateur 24/30/36, Pro 18/24/30), objective HUD and results; Pause \u2192 Restart restarts the run. Browser tests profile_store, freestyle_objectives, and profile_stunts cover core functionality.",
+    "PR #336 stunt records: Longest Jump (original 0024df70 measurement, 40 ft minimum for course records), Most Combos, Most Points In One Jump on View Profile, plus combo Profile Points in race awards. Verified by unit tests; autopilot combo coverage pending live gameplay.",
+    "PR #335 CPUs finishing races: a rider off the racing line crossing a skewed finish gate was 0.6 ft 'past' it and the lap never counted (sx03, env01, sx13); and CPUs on sx14 turned 90\u00b0 away from the bridge ramp. Headless sweep of all 32 race courses: all CPUs finish on 26 (13 before). Still open: env04, env06, nat02, sx11 CPUs loop off the line."
+  ],
+  "limitation": "Limitations: Training Course Talon rewards only via cheats; multiplayer/free ride/ride links not gated; mini-games sold but not playable; purchase messages authored (original plays sounds). Freestyle target objectives 'Unavailable' until their data is packaged (bronze is reachable). Autopilot does no tricks, so combos verified by unit tests only. Four race courses still have CPU issues (env04, env06, nat02, sx11).",
+  "image": "/devlog-images/profile-store-freestyle-objectives-stunt-records-and-c-280ab300a82648d0bab44134af90149a.png",
+  "caption": "Profile Store menu at 1280\u00d7720: ATVs, Gear, Tracks, Games, and Cheats categories available from the main menu."
+}
