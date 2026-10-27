@@ -37,7 +37,14 @@ pub struct GameSession {
     /// `gameTest=hill`: a landed chain's points for the next sample (an
     /// ATV placed in the air opens no stunt).
     inject: Option<f32>,
+    /// One-shot sounds for the ride's mixer (start beeps, pickups).
+    sounds: Vec<&'static str>,
+    /// Each hill's `kohflag` scene model (`00208840` binds the nearest).
+    pub flags: Option<Vec<Option<usize>>>,
 }
+
+/// The player colours at +0x210 (`00220220`): red, blue, green, yellow.
+pub const OWNER_COLORS: [[f32; 3]; 4] = [[1., 0., 0.], [0., 0., 1.], [0., 1., 0.], [1., 1., 0.]];
 
 impl GameSession {
     pub fn new(kind: GameKind, venue: String, course: String, minutes: u32) -> Self {
@@ -59,6 +66,8 @@ impl GameSession {
             hill: u8::from(crate::url_flag("gameTest=hill")),
             test_clock: 0.,
             inject: None,
+            sounds: Vec::new(),
+            flags: None,
         }
     }
 
@@ -137,12 +146,21 @@ impl GameSession {
             return;
         };
         if !session.started {
+            // The race start's 3-2-1 beeps and go (`002e79a0`).
+            if self.countdown >= COUNTDOWN {
+                self.sounds.push("beep01.vag");
+            }
+            let before = self.countdown.ceil();
             self.countdown -= dt;
             if self.countdown <= 0. {
                 self.countdown = 0.;
                 session.begin();
+                self.sounds.push("go.vag");
+            } else if self.countdown.ceil() < before {
+                self.sounds.push("beep01.vag");
             }
         }
+        let collected: i32 = session.rules.scores().iter().sum();
         let committed = ride.committed_points();
         let chains = ride.take_chains();
         // A landed chain scores what it added to the committed stunt score.
@@ -163,6 +181,12 @@ impl GameSession {
             chain,
         };
         session.tick(dt, &[rider], &[committed]);
+        // `002d0d70` plays iconhit.vag for each treasure.
+        if self.kind == GameKind::TreasureHunt
+            && session.rules.scores().iter().sum::<i32>() > collected
+        {
+            self.sounds.push("iconhit.vag");
+        }
         self.test_hooks(ride, dt);
     }
 
@@ -222,6 +246,13 @@ impl GameSession {
             {
                 self.inject = Some(1500.);
                 self.hill = 5;
+                self.test_clock = 0.;
+            }
+            // Captured: set down south of the hill facing its flag.
+            5 if self.test_clock > 2. && markers.first().is_some_and(|m| m.owner == Some(0)) => {
+                let ground = ride.frame().origin[1].max(hill[1] - raise);
+                let _ = ride.place_beside([hill[0], ground + 2., hill[2] - 45.], 0., [0.; 3]);
+                self.hill = 6;
             }
             _ => {}
         }
@@ -298,6 +329,56 @@ impl GameSession {
         })
     }
 
+    pub fn take_sounds(&mut self) -> Vec<&'static str> {
+        std::mem::take(&mut self.sounds)
+    }
+
+    /// Each hill's flag model and colour (`00220b50` colours the captured
+    /// hill's flag; `00220d10` resets them to white). The flags come from
+    /// the King of the Hills scene: the `kohflag` model nearest each hill.
+    pub fn flag_colors(
+        &mut self,
+        models: &[atv_core::scene::StaticModel],
+    ) -> Vec<(usize, Option<[f32; 3]>)> {
+        let Some(session) = &self.session else {
+            return Vec::new();
+        };
+        if self.kind != GameKind::KingOfTheHills {
+            return Vec::new();
+        }
+        let markers = session.rules.markers();
+        let flags = self.flags.get_or_insert_with(|| {
+            markers
+                .iter()
+                .map(|m| {
+                    models
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, s)| s.name.eq_ignore_ascii_case("kohflag"))
+                        .map(|(i, s)| {
+                            let (dx, dz) =
+                                (s.position[0] - m.position[0], s.position[2] - m.position[2]);
+                            let d = dx * dx + dz * dz;
+                            (i, d)
+                        })
+                        .filter(|(_, d)| *d < 1600.)
+                        .min_by(|a, b| a.1.total_cmp(&b.1))
+                        .map(|(i, _)| i)
+                })
+                .collect()
+        });
+        markers
+            .iter()
+            .zip(flags.iter())
+            .filter_map(|(m, flag)| {
+                Some((
+                    flag.as_ref().copied()?,
+                    m.owner.map(|o| OWNER_COLORS[o % 4]),
+                ))
+            })
+            .collect()
+    }
+
     /// World markers (hill flags, treasures) for the screen tags and map.
     pub fn markers(&self) -> Vec<atv_core::games::Marker> {
         self.session
@@ -333,6 +414,7 @@ impl GameSession {
                 .map(|(k, v)| (k.to_string(), serde_json::json!(v)))
                 .collect::<serde_json::Map<_, _>>()),
             "reported": self.reported,
+            "flags": self.flags,
         })
     }
 }

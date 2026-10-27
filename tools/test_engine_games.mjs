@@ -199,6 +199,10 @@ try {
   assert.equal(g.rules.hills, 5);
   assert.equal(g.markers.length, 5);
   assert.ok(g.markers.every(m => m.owner === null));
+  // The King of the Hills scene draws each hill's base and flag (env02kh.scn).
+  g = await until(page, g => Array.isArray(g.flags), 20000);
+  assert.equal(g.flags.length, 5);
+  assert.ok(g.flags.every(f => Number.isInteger(f)), `flag models ${g.flags}`);
   // Armed off hill 1 in the air (the real trigger enter and leave); the
   // hook lands a 1,500-point chain, which beats the hill's 0 (00220b50).
   g = await until(page, g => g.markers[0].owner === 0, 60000);
@@ -206,6 +210,8 @@ try {
   assert.equal(g.markers[0].score, 1500);
   assert.equal(g.notice, 'ATV 1 captured hill 1');
   await shot(page, 'koth-captured');
+  await page.waitForTimeout(4000);
+  await shot(page, 'koth-flag');
   // Pause → Restart Game (0043a9e8, 00220d10): every hill unowned again.
   await key(page, 'Escape');
   await key(page, 'ArrowDown');

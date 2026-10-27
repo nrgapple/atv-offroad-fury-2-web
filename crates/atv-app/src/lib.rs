@@ -595,6 +595,8 @@ struct World {
     script: Option<replay::Script>,
     sound: Option<(atv_game::audio::ride::SoundMode, bool)>,
     autodrive: Option<replay::Script>,
+    /// A mini-game's scene over the Freeride archive (King of the Hills).
+    game_scene: Option<(String, String)>,
 }
 
 /// Ride prefetch (`?prefetch=off` turns it off for load-time measurement).
@@ -685,6 +687,7 @@ async fn prepare(
         script,
         sound,
         autodrive,
+        game_scene,
     } = world;
     // Every archive the ride reads downloads in parallel (game.js prefetchRide).
     if ride && PREFETCH.load(std::sync::atomic::Ordering::Relaxed) {
@@ -714,6 +717,7 @@ async fn prepare(
             weather,
             sky_smooth: graphics.sky_smooth,
             race: race.map(|r| r.course).unwrap_or_default(),
+            game_scene,
         },
     )
     .await?;
@@ -1377,6 +1381,15 @@ impl App {
             Some(game) => {
                 game.update(&mut riding.ride);
                 riding.locked |= game.locked();
+                for (model, rgb) in game.flag_colors(&ready.venue.scene.models) {
+                    ready.scene.tint_model(&ready.gpu, model, rgb);
+                }
+                let sounds = game.take_sounds();
+                if let Some(sound) = &mut riding.sound {
+                    for name in sounds {
+                        sound.one_shot(name);
+                    }
+                }
                 let player = self
                     .front
                     .as_ref()
@@ -3160,6 +3173,7 @@ impl ApplicationHandler<Message> for App {
             script: options.script,
             sound: options.sound,
             autodrive: options.autodrive,
+            game_scene: None,
         };
         let future = async move {
             let gpu = open_gpu(window, display).await?;
@@ -5280,6 +5294,14 @@ impl App {
             script: None,
             sound,
             autodrive: None,
+            // King of the Hills rides its own scene (the hill bases, flags
+            // and spotlights of `env05kh.scn`) over the Freeride archive.
+            game_scene: self.game.as_ref().and_then(|g| {
+                let path = atv_core::games::game_archive(g.kind, &g.venue)?;
+                (g.kind == atv_core::games::GameKind::KingOfTheHills
+                    && self.content.as_ref().is_some_and(|c| c.has(&path)))
+                .then(|| (path, format!("{}kh", g.venue)))
+            }),
             selection: atv_game::ride::Selection { quad, rider },
             // The saved Garage appearance dresses the ride (game.js
             // rideAppearance = frontend.appearance).
@@ -6493,6 +6515,7 @@ impl App {
             script: None,
             sound: net.ride.sound,
             autodrive: None,
+            game_scene: None,
         };
         let future = async move {
             let mut ready = match prepare(

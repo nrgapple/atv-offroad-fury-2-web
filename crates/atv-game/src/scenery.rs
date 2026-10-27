@@ -47,6 +47,8 @@ impl Chunk {
 
 pub struct Draw {
     pub chunk: usize,
+    /// The scene model this draw belongs to (index into `Scene::models`).
+    pub model: usize,
     pub matrix: [f32; 16],
     pub unlit: bool,
     /// Stadium camera-flash pool index (hidden until lit), or None.
@@ -167,6 +169,7 @@ pub fn load(
             let (min, max) = world_bounds(c.min, c.max, &model.world_matrix);
             scenery.draws.push(Draw {
                 chunk,
+                model: index,
                 matrix: model.world_matrix,
                 unlit: prelit || !model.use_lighting,
                 flash,

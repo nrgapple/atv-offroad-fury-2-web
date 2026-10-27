@@ -533,6 +533,8 @@ pub struct SceneRenderer {
     ride_pose: Option<([f32; 16], Option<[f32; 16]>)>,
     /// The drop gate matrix last posed.
     gate: Option<[f32; 16]>,
+    /// Scene model colours set by `tint_model`.
+    tints: std::collections::HashMap<usize, Option<[f32; 3]>>,
     /// The Enduro gate drawn opaque (the rest fade).
     enduro_next: Option<usize>,
     /// Authored speed-rush screen pass, and the travel state it reads.
@@ -708,6 +710,7 @@ impl SceneRenderer {
             blood: None,
             ride_pose: None,
             gate: None,
+            tints: Default::default(),
             enduro_next: None,
         };
         // startSimulation's first follow-camera request (op 46, dt 1/60)
@@ -754,6 +757,10 @@ impl SceneRenderer {
         if let Some(gate) = old.gate {
             self.gate = Some(gate);
             self.scenery.pose_gate(gpu, &gate);
+        }
+        for (model, rgb) in old.tints {
+            self.tints.insert(model, rgb);
+            self.scenery.tint_model(gpu, model, rgb);
         }
         if let Some(next) = old.enduro_next {
             self.enduro_next = Some(next);
@@ -984,6 +991,14 @@ impl SceneRenderer {
     /// One race step's world presentation, applied before that step's world
     /// clocks advance (atv-web steps the ambient emitters and flashes after
     /// the race): flash bursts, firework emitter commands, the drop gate.
+    /// Colours a scene model (`001b4280`): the King of the Hills flags.
+    pub fn tint_model(&mut self, gpu: &Gpu, model: usize, rgb: Option<[f32; 3]>) {
+        if self.tints.get(&model) != Some(&rgb) {
+            self.tints.insert(model, rgb);
+            self.scenery.tint_model(gpu, model, rgb);
+        }
+    }
+
     /// Poses the venue's posed model outside a race (the Hockey puck),
     /// through the drop gate's path; unchanged matrices write nothing.
     pub fn pose_prop(&mut self, gpu: &Gpu, matrix: &[f32; 16]) {

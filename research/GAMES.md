@@ -138,18 +138,30 @@ game's end (`002d10d0`, `002210e0`).
 - **One player, no opponents.** The original is split-screen or online only;
   the port plays it alone (scores, ranking and results work for more
   riders, but nothing else rides).
-- **Freeride scene.** The port rides the Freeride scene with the game's
-  mode TOY; the game scenes (`env05kh.scn`, Treasure Hunt's Enduro scenes),
-  the `bomb.mcf` treasures with their sparks and explosion, the `kohflag`
-  flags, `kohbase` and spotlights are not drawn; screen tags and minimap
-  markers stand in for them. `iconhit.vag` is not played.
+- **Scenes and models.** King of the Hills rides its own scene
+  (`env05kh.scn`, read with its mode TOY over the Freeride archive), so the
+  original `kohbase` bases, `kohflag` flags and spotlights stand at the
+  hills; each hill's flag (the nearest `kohflag`, as the Hilltop action's
+  `SpecificObject` binds it) takes its owner's colour through a per-model
+  colour (`001b4280`) and returns to white on Restart Game. The bases have
+  no collision in the port (the ride's collision still reads the Freeride
+  scene). Treasure Hunt still rides the Freeride scene: its `bomb.mcf`
+  treasures are mode-TOY keyframed animations the port does not draw, and
+  the sparks and `bomb_explosion.emt` bursts are not emitted; screen tags
+  and minimap markers stand in for the treasures.
+- **Sounds.** The start countdown plays the race start's `beep01`/`go`
+  (`002e79a0`); each treasure plays `iconhit.vag` (`002d0d70`), which the
+  packager now adds to the hosted `AUDIO.RES`. No capture sound was found
+  for King of the Hills.
 - **Trigger contact.** The original tests the ATV's collision body against
   the box; the port tests the ATV origin against the box grown by 3 ft
   (1.5 ft vertically). `Box` is read as half extents.
-- **Start countdown.** The original runs the shared 3-2-1 start; the port
-  holds the ATV for 3 s with a number in the panel.
-- **Hill HUD.** The per-hill score pills are not drawn; each hill's tag
-  shows its number in its owner's colour.
+- **Start countdown.** The original runs the shared 3-2-1 start lights
+  (Overlays.pb object 10); the port holds the ATV for 3 s with the number
+  in its panel and the start beeps, not the light sprites.
+- **Hill HUD.** The original pills (`koh_pillbkg`, `002eafc0`) sit at each
+  visible hill's screen position in the owner's colour; the port's hill
+  tags do the same job with the port's tag style.
 - **Treasure wait flag.** During the 6 s wait the original sets rider flag
   0x40000 (meaning not traced); the port only hides the treasures.
 
