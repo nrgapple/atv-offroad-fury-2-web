@@ -50,6 +50,13 @@ try {
   for (let i = front.selection; i < front.choices.indexOf('champ:amsx'); i++) await key(page, 'ArrowDown');
   await key(page, 'Enter');
   const ride = async () => (await read(page)).ride ?? {};
+  // The results' buttons: the name entry's Select (36) when a record broke.
+  async function passNameEntry() {
+    await page.waitForFunction(() => (JSON.parse(document.querySelector('#ui-state')?.textContent || '{}').ride?.results?.length ?? 0) > 0, null, { timeout: 30000 });
+    if ((await ride()).results[0] !== 36) return;
+    await key(page, 'Enter');
+    await page.waitForFunction(() => JSON.parse(document.querySelector('#ui-state')?.textContent || '{}').ride?.results?.[0] === 30, null, { timeout: 10000 });
+  }
   // Round 5 loads and races; the results record it once.
   await page.waitForFunction(() => JSON.parse(localStorage.getItem('fury-profile') || '{}').races === 6, null, { timeout: 600000 });
   let state = await ride();
@@ -60,6 +67,9 @@ try {
   assert.ok(mid.points[0] >= 31 + 1, `points ${mid.points}`);
   await nextFrames(page, 10);
   await optionalScreenshot(page, 'ATV_CHAMPIONSHIP_SCREENSHOT', 'round');
+  // A broken Hall of Fame record opens the name entry first (94d33b6,
+  // Overlays.pb [NameEntry Menu]); Select returns to the results.
+  await passNameEntry();
   // Continue → Continue Championship: the final round on sx06.
   await key(page, 'Enter');
   await page.waitForFunction(() => JSON.parse(document.querySelector('#ui-state')?.textContent || '{}').ride?.results?.[0] === 35, null, { timeout: 10000 });
@@ -79,6 +89,7 @@ try {
   assert.equal(after.championships.opened.includes('amsx-expert'), progress.trophy === 'Gold');
   await nextFrames(page, 10);
   await optionalScreenshot(page, 'ATV_CHAMPIONSHIP_SCREENSHOT', 'results');
+  await passNameEntry();
   // Continue → Quit to Championship Menu (the only choice): the page.
   await key(page, 'Enter');
   assert.deepEqual((await ride()).results, [33]);
