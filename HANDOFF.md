@@ -162,9 +162,8 @@ the worktree's `target/`; keep bulk output on the SSD.
   comparison exists. Trigonometry and VU arithmetic use host approximations.
 - Freestyle objectives: Select Objective is a front-end page and the round
   ends with Next Course (the original picks in-game and ends a round by
-  quitting the event); the trophy is awarded at Finish Championship, not the
-  moment the count crosses a threshold (`003230f0`); target hits test the
-  ATV origin rather than its wheel/chassis/rider bodies, and the target
+  quitting the event); target hits test the
+  ATV origin and rider root rather than every wheel/chassis/rider body, and the target
   explosions and compass are not drawn (`CHAMPIONSHIPS.md`).
 - The mini-games have no opponents: the original runs them split screen
   (or online) with human riders only. Single Player → Games plays Treasure

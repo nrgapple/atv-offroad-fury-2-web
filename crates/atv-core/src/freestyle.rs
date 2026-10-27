@@ -578,6 +578,38 @@ fn course_key(series: &Series, expert: bool, course: &str) -> String {
     format!("{}:{course}", save_key(series, expert))
 }
 
+/// A trophy `003230f0` awarded mid-championship.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Award {
+    pub trophy: Trophy,
+    /// Profile Points paid (`00323440`; one reward per level reached).
+    pub reward: i64,
+    /// Objectives completed in the series.
+    pub completed: u32,
+    /// Series opened (save keys).
+    pub opened: Vec<String>,
+}
+
+impl Award {
+    /// The Objective Championship Results line (`002ddee0`).
+    pub fn line(&self) -> String {
+        let mut line = format!(
+            "You have won a {} trophy! (+{} Profile Points)",
+            self.trophy.name().to_ascii_lowercase(),
+            self.reward
+        );
+        for key in &self.opened {
+            if let Some(s) = key.strip_suffix("-normal").and_then(series) {
+                line += &format!(" {} opened.", s.name);
+            }
+            if let Some(s) = key.strip_suffix("-expert").and_then(series) {
+                line += &format!(" {} Expert opened.", s.name);
+            }
+        }
+        line
+    }
+}
+
 /// What a finished Freestyle round did.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RoundOutcome {
@@ -619,6 +651,59 @@ impl Championships {
             .or_default();
         *mask |= bits & 0x3f;
         *mask
+    }
+
+    /// A championship objective's bits (`003230f0`): each newly set bit
+    /// adds one to the series' count, and the count reaching a trophy
+    /// threshold awards that trophy at once, pays its reward (each level
+    /// reached pays) and opens what a trophy opens. Returns the course's
+    /// new mask and the award, if any.
+    pub fn award_objective(
+        &mut self,
+        series: &Series,
+        expert: bool,
+        course: &str,
+        bits: u8,
+    ) -> (u8, Option<Award>) {
+        let before = self.completed_objectives(series, expert);
+        let mask = self.record_objective(series, expert, course, bits);
+        let after = self.completed_objectives(series, expert);
+        let thresholds = trophy_thresholds(series);
+        let levels = [Trophy::Bronze, Trophy::Silver, Trophy::Gold];
+        let mut award: Option<Award> = None;
+        for (level, threshold) in levels.into_iter().zip(thresholds) {
+            if before < threshold && after >= threshold {
+                let reward = series.rewards[usize::from(expert)][level as usize];
+                let a = award.get_or_insert(Award {
+                    trophy: level,
+                    reward: 0,
+                    completed: after,
+                    opened: Vec::new(),
+                });
+                a.trophy = level;
+                a.reward += reward;
+            }
+        }
+        let Some(mut award) = award else {
+            return (mask, None);
+        };
+        let progress = self.progress.entry(save_key(series, expert)).or_default();
+        if progress.trophy.is_none_or(|best| award.trophy < best) {
+            progress.trophy = Some(award.trophy);
+        }
+        let mut opened = Vec::new();
+        if !expert {
+            if award.trophy == Trophy::Gold {
+                opened.push(save_key(series, true));
+            }
+            if let Some(pro) = SERIES.iter().find(|s| s.opened_by == Some(series.key)) {
+                opened.push(save_key(pro, false));
+            }
+        }
+        opened.retain(|k| !self.opened.contains(k) && !(k.ends_with("-expert") && !series.pro));
+        self.opened.extend(opened.iter().cloned());
+        award.opened = opened;
+        (mask, Some(award))
     }
 
     /// Objectives completed over the series' courses.
@@ -887,6 +972,55 @@ NumberOfActions=2\r\nOneTimeOnly=T\r\nPosition=200,20,300\r\nRadius=5.0\r\n\
     fn objective_playable_rules() -> bool {
         let o = course_objectives("env01").unwrap();
         !o[0].playable(false) && o[0].playable(true) && o[2].playable(false)
+    }
+
+    #[test]
+    fn reaching_a_threshold_awards_the_trophy_at_once() {
+        let am = series("unspstunt").unwrap();
+        let mut c = Championships::default();
+        for course in &am.courses[..3] {
+            assert_eq!(c.award_objective(am, false, course, 0x3f).1, None);
+        }
+        // 18 -> 23: nothing; the stunt run's last level is the 24th.
+        assert_eq!(c.award_objective(am, false, "env04", 0b11111).1, None);
+        let (mask, award) = c.award_objective(am, false, "env04", 0b111000);
+        assert_eq!(mask, 0x3f);
+        let award = award.unwrap();
+        assert_eq!(
+            (award.trophy, award.reward, award.completed),
+            (Trophy::Bronze, 250, 24)
+        );
+        assert_eq!(award.opened, ["spstunt-normal"]);
+        assert_eq!(
+            award.line(),
+            "You have won a bronze trophy! (+250 Profile Points) Pro Freestyle opened."
+        );
+        assert_eq!(c.progress(am, false).trophy, Some(Trophy::Bronze));
+        // A bit already set counts nothing.
+        assert_eq!(c.award_objective(am, false, "env04", 0x3f).1, None);
+        // 28, then 30: silver; 36: gold.
+        assert_eq!(c.award_objective(am, false, "env01", 0x0f).1, None);
+        let award = c.award_objective(am, false, "env01", 0x30).1.unwrap();
+        assert_eq!((award.trophy, award.reward), (Trophy::Silver, 500));
+        assert!(award.opened.is_empty());
+        let award = c.award_objective(am, false, "env06", 0x3f).1.unwrap();
+        assert_eq!((award.trophy, award.reward), (Trophy::Gold, 1000));
+        // Amateur Freestyle Expert is open from the start (`00320db0`).
+        assert!(award.opened.is_empty());
+        assert_eq!(c.completed_objectives(am, false), 36);
+        let mut d = Championships::default();
+        for course in am.courses {
+            d.record_objective(am, false, course, 0x3f);
+        }
+        d.objectives.insert("unspstunt-normal:env01".into(), 0x1f);
+        let award = d.award_objective(am, false, "env01", 0x20).1.unwrap();
+        assert_eq!((award.trophy, award.reward), (Trophy::Gold, 1000));
+        assert_eq!(award.opened, ["spstunt-normal"]);
+        // Finishing the series pays nothing more for the same trophy.
+        for _ in 0..6 {
+            d.finish_freestyle_round(am, false);
+        }
+        assert_eq!(d.progress(am, false).trophy, Some(Trophy::Gold));
     }
 
     #[test]
