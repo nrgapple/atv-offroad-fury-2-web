@@ -63,6 +63,9 @@ pub struct Venue {
     pub train: Option<std::rc::Rc<std::cell::RefCell<crate::train::Train>>>,
     /// The train cars' sound sources (the mode TOY's procedural animations).
     pub train_sounds: Vec<atv_core::spatial_audio::Definition>,
+    /// The keyframed actors' loop sounds (`Actors::sounds`), `car` indexing
+    /// `Actors::sound_emitters`.
+    pub actor_sounds: Vec<atv_core::spatial_audio::Definition>,
     /// Keyframed TOY actors (crows, fish, windmills, blimps...), posed by
     /// their looping motions on the 60 Hz scene clock.
     pub actors: Option<std::rc::Rc<std::cell::RefCell<crate::actors::Actors>>>,
@@ -566,6 +569,7 @@ pub async fn load_with(
     for (name, error) in &actors.unresolved {
         eprintln!("toy actor {name}: {error}");
     }
+    let actor_sounds = actors.sounds.iter().map(|s| s.definition.clone()).collect();
     let actors = (!actors.is_empty()).then(|| std::rc::Rc::new(std::cell::RefCell::new(actors)));
     let snow = crate::snow::load(&archive, weather.as_ref())?
         .map(|snow| std::rc::Rc::new(std::cell::RefCell::new(snow)));
@@ -600,6 +604,7 @@ pub async fn load_with(
         water,
         train,
         train_sounds,
+        actor_sounds,
         actors,
         ambient,
         snow,

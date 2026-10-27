@@ -9,8 +9,11 @@ are described in [TRAIN.md](TRAIN.md). The particle emitters that share the
 TOY files are described in [AMBIENT_EFFECTS.md](AMBIENT_EFFECTS.md).
 
 Status: host component. Placement, playback and drawing follow the recovered
-loader and update. Trigger-driven sequences, looping sounds, moving collision
-and zone visibility are not connected (see [Not connected](#not-connected)).
+loader and update. The actors' looping engine sounds play through the train's
+body-attached sound path (see [Loop sounds](#loop-sounds)); their samples need
+a content upload before the public site plays them. Trigger-driven
+sequences, moving collision and zone visibility are not connected (see
+[Not connected](#not-connected)).
 
 ## Recovered behavior (USA v2.00)
 
@@ -79,6 +82,57 @@ these routines. Inferences are labeled as such.
   (`0020c940`) switches by `NameOfSequence`. `ResetAnimationTriggerAction`
   (`0020d720`) restores the initial state. `HideAnimationTriggerAction`
   (`0020c990`) disables the actor; Treasure Hunt's bombs use this.
+
+## Loop sounds
+
+Facts:
+
+- The keyframed blimps, planes and the helicopter carry
+  `NumberOfLoopingSounds` and `[AnimationNLoopSoundM]` sections with
+  `SoundResourceFile`, `Looping`, `MinDistance`, `MaxDistance`,
+  `StartDisabled` and `AttachToObject`. These are the same keys as the
+  procedural train's loops. The executable reads the count and formats
+  `%sLoopSound%d` in one shared reader, `00205640` (strings at `0042a0e0`
+  and `0042a0f8`). That reader allocates 16-byte elements (constructor
+  `00204dd0`) and calls each element's reader through its vtable.
+- `AttachToObject` names a node of the actor's PSG: `blimp`, `p_plane`,
+  `tour_plane` or `chopper`. Every shipped actor sound names an existing node.
+  The train's sounds use `Body`.
+- `00173b20` and `00173cc0` allocate a sound emitter (0x1f0 or 0x310 bytes),
+  optionally attach it to an object (`001c1840`), and append it to the sound
+  manager's emitter list at +0x7c (`001745f0`). The manager update `001736f0`
+  walks that list.
+- The census below finds 36 actor loops over the 72 routes (each venue's
+  common TOY is counted for both its Freeride and race routes). There are
+  26 `soultree\b\blimp.vag` loops on 12 blimp models, 6 `soultree\p\plane.vag`
+  loops on `p_plane` and `tour_plane`, and 2 `soultree\h\helicptr.vag` loops on
+  `chopper`. All loop, none start disabled, and all resolve their node.
+
+Implementation:
+
+- `atv_core::toy_actors` reads the sounds. A sound without a sample or with
+  an inverted distance interval is skipped.
+- `Actors::sound_emitters` places each attached node at its posed position
+  for this step and the step before. A missing node falls back to the actor
+  root, but no shipped record needs that fallback.
+- `RideAudio` plays these sounds through the train's code path. That path
+  uses the original stereo, `MinDistance`/`MaxDistance` attenuation and
+  Doppler commands (`spatial_audio::command`), restarts a finished one-shot,
+  and keeps loops through Reset and pause.
+- The page's audio diagnostics report `actorSounds` (defined, samples
+  present and voices playing) and `events.actor`.
+
+Inference: the attenuation is assumed to match the train's. Both use the
+same keys and the same shared reader. The element vtable (`00456bc4` family)
+and the per-frame setter were not separately decompiled for the actor case.
+
+Packaging: `tools/package_content.py` now adds every keyframed record's
+loop sample from each packaged track archive's TOYs to `/AUDIO/AUDIO.RES`
+(`selected_actor_loop_names`). The three samples are `soultree/b/blimp.vag`,
+`soultree/p/plane.vag` and `soultree/h/helicptr.vag`. They are not in the
+current public package (`5dde4eb8…`), so the browser stays silent there until
+the package is rebuilt and uploaded. Missing samples are skipped without
+error.
 
 ## Census (all routes)
 
@@ -161,10 +215,9 @@ Cost (host only, not a physical-phone result):
 - The SX10 stadium roofs' trigger-driven open/close sequences
   (`AnimationTriggerAction`, `ChangeAnimSequence`) are not connected. The roofs
   hold their t=0 pose, as the original does before a trigger fires.
-- The 28 looping sounds are not played. These are the blimp, airliner, plane
-  and helicopter loops: `TriggeredAnimObjectSound` with `AttachToObject`
-  (default `body`), `MinDistance` and `MaxDistance`. Their emitter attachment
-  (`00173b20`/`00173cc0`) was not traced.
+- The actor loop sounds are implemented (see [Loop sounds](#loop-sounds)),
+  but their samples await a content upload. The emitter's own per-frame
+  setter was not decompiled, so the train's recovered attenuation is reused.
 - Moving collision from `UseCollision` is not connected. The windmills,
   sawmill and other actors with this flag load `anim\<mcf>.col` in the
   original and move it with the animation (`0011eca0`/`0011ee00`). Which node

@@ -338,6 +338,10 @@ pub async fn load_with(
         } else {
             venue.train.clone()
         },
+        actors: venue
+            .actors
+            .clone()
+            .filter(|a| !a.borrow().sounds.is_empty()),
     };
     Ride::start(
         simulation,

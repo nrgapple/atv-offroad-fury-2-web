@@ -66,6 +66,18 @@ pub struct Actor {
     pub phase: f64,
 }
 
+/// A keyframed actor's looping sound (the blimp, airliner, plane and
+/// helicopter engines). `definition.car` is this sound's index in
+/// `Actors::sounds` and in `Actors::sound_emitters`.
+#[derive(Clone, Debug)]
+pub struct ActorSound {
+    pub actor: usize,
+    /// The `AttachToObject` PSG node; None when the model has no node of
+    /// that name (the sound then follows the actor root).
+    pub node: Option<usize>,
+    pub definition: atv_core::spatial_audio::Definition,
+}
+
 /// A resolved actor's pose for drawing.
 pub struct Pose {
     pub placement: [f32; 16],
@@ -82,6 +94,8 @@ pub struct Actors {
     pub actors: Vec<Actor>,
     /// Records that could not be resolved: `[AnimationN]` MCF and reason.
     pub unresolved: Vec<(String, String)>,
+    /// Every actor's `[AnimationNLoopSoundM]`, in actor order.
+    pub sounds: Vec<ActorSound>,
     /// Scene clock: whole 60 Hz steps.
     steps: u64,
     /// Poses of the current step, shared by actors on the same model,
@@ -130,6 +144,45 @@ impl Actors {
             }
             _ => 0.,
         }
+    }
+
+    /// Each sound's emitter world matrix at this step and one step before
+    /// (the attached node posed by the actor's motion, then placed).
+    pub fn sound_emitters(&self) -> Vec<([f32; 16], [f32; 16])> {
+        self.sounds
+            .iter()
+            .map(|sound| {
+                let at = |steps: u64| self.emitter(sound, steps);
+                (at(self.steps), at(self.steps.saturating_sub(1)))
+            })
+            .collect()
+    }
+
+    fn emitter(&self, sound: &ActorSound, steps: u64) -> [f32; 16] {
+        let a = &self.actors[sound.actor];
+        let Some(node) = sound.node else {
+            return a.placement;
+        };
+        let model = &self.models[a.model];
+        let time = match a.clip.map(|c| &self.clips[c]) {
+            Some(clip) if a.playing => toy_actors::motion_time(
+                steps as f64 * STEP + a.phase,
+                clip.animation.duration,
+                a.looping,
+            ),
+            _ => 0.,
+        };
+        let local = a
+            .clip
+            .and_then(|c| {
+                self.clips[c]
+                    .animation
+                    .sample_pose(&model.nodes, time, Sampling::default())
+                    .ok()
+            })
+            .and_then(|p| p.world_matrices.get(node).copied())
+            .unwrap_or(model.nodes[node].world_matrix);
+        multiply(&a.placement, &local)
     }
 
     /// `actor`'s placement, node matrices and world bounds at this step.
@@ -267,6 +320,25 @@ pub fn load(
                 }
             };
             let looping = clip.is_some_and(|c| actors.clips[c].looping) || sequence_loops;
+            for sound in &definition.loop_sounds {
+                let node = actors.models[model]
+                    .nodes
+                    .iter()
+                    .position(|n| n.name.eq_ignore_ascii_case(&sound.attach));
+                actors.sounds.push(ActorSound {
+                    actor: actors.actors.len(),
+                    node,
+                    definition: atv_core::spatial_audio::Definition {
+                        car: actors.sounds.len(),
+                        sample: sound.sample.clone(),
+                        min_distance: sound.min_distance,
+                        max_distance: sound.max_distance,
+                        looping: sound.looping,
+                        start_disabled: sound.start_disabled,
+                        position: None,
+                    },
+                });
+            }
             actors.actors.push(Actor {
                 definition,
                 model,

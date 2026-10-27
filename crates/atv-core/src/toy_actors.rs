@@ -21,6 +21,21 @@ pub struct Sequence {
     pub active: bool,
 }
 
+/// One `[AnimationNLoopSoundM]` of a keyframed record (`NumberOfLoopingSounds`,
+/// read by the shared loop-sound list reader `00205640`, format
+/// `%sLoopSound%d`): a sample attached to a model node.
+#[derive(Clone, Debug, PartialEq)]
+pub struct LoopSound {
+    /// `SoundResourceFile` as authored (`soultree\\b\\blimp.vag`).
+    pub sample: String,
+    pub min_distance: f32,
+    pub max_distance: f32,
+    pub looping: bool,
+    pub start_disabled: bool,
+    /// `AttachToObject`: a PSG node name (`blimp`, `p_plane`, `chopper`).
+    pub attach: String,
+}
+
 /// A keyframed `[AnimationN]` record.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Definition {
@@ -40,6 +55,8 @@ pub struct Definition {
     /// `MotionToPlay%d`: `[MOTION n] NAME`s of the MCF.
     pub motions: Vec<String>,
     pub sequences: Vec<Sequence>,
+    /// `NumberOfLoopingSounds` sounds that follow the posed model.
+    pub loop_sounds: Vec<LoopSound>,
 }
 
 impl Definition {
@@ -199,9 +216,48 @@ pub fn parse(text: &str) -> Vec<Definition> {
             use_collision: flag(&toy, &section, "UseCollision", false),
             motions,
             sequences,
+            loop_sounds: loop_sounds(&toy, &section),
         });
     }
     out
+}
+
+/// `[<section>LoopSoundM]` for M in 1..=`NumberOfLoopingSounds`. A sound
+/// without a sample or with an invalid distance interval is skipped.
+fn loop_sounds(toy: &Toy, section: &str) -> Vec<LoopSound> {
+    let count = int(toy, section, "NumberOfLoopingSounds", 0).clamp(0, 32);
+    (1..=count)
+        .filter_map(|m| {
+            let s = format!("{section}LoopSound{m}");
+            let sample = toy.get(&s, "SoundResourceFile")?.trim();
+            if sample.is_empty() || sample.contains("..") || sample.len() > 260 {
+                return None;
+            }
+            let distance = |key: &str| -> Option<f32> {
+                toy.get(&s, key)?
+                    .trim()
+                    .parse::<f32>()
+                    .ok()
+                    .filter(|v| v.is_finite())
+            };
+            let (min_distance, max_distance) = (distance("MinDistance")?, distance("MaxDistance")?);
+            if min_distance < 0. || max_distance <= min_distance {
+                return None;
+            }
+            Some(LoopSound {
+                sample: sample.to_string(),
+                min_distance,
+                max_distance,
+                looping: flag(toy, &s, "Looping", false),
+                start_disabled: flag(toy, &s, "StartDisabled", false),
+                attach: toy
+                    .get(&s, "AttachToObject")
+                    .unwrap_or("body")
+                    .trim()
+                    .to_string(),
+            })
+        })
+        .collect()
 }
 
 /// One `[MOTION n]` of an `.mcf` motion catalog.
@@ -286,6 +342,40 @@ mod tests {
         BlendSequence1=F\nProbabilityList1=100\nLoopSequence1=F\nSequenceActive1=F\n\
         NameOfSequence2=close\nNumberInSequence2=2\nMotionSequence2=2,1\nLoopSequence2=no\nSequenceActive2=F\n\
         [Animation4]\nMCF=windmill.mcf\nAnimationType=KeyFramed\nUseCollision=t\n";
+
+    #[test]
+    fn loop_sounds_attach_to_named_nodes() {
+        let toy = "[Animations]\nNumberOfAnimations=1\n[Animation1]\nMCF=p_plane.mcf\n\
+            AnimationType=KeyFramed\nNumberOfMotions=1\nMotionToPlay1=p_plane\n\n\
+            NumberOfLoopingSounds=3\n[Animation1LoopSound1]\nSoundResourceFile=soultree\\p\\plane.vag\n\
+            Looping=TRUE\nMaxDistance=850.0\nMinDistance=55.0\nStartDisabled=FALSE\nAttachToObject=p_plane\n\
+            [Animation1LoopSound2]\nSoundResourceFile=x.vag\nMaxDistance=10\nMinDistance=20\n\
+            [Animation1LoopSound3]\nSoundResourceFile=y.vag\nMaxDistance=20\nMinDistance=0\n";
+        let actors = parse(toy);
+        assert_eq!(
+            actors[0].loop_sounds,
+            vec![
+                LoopSound {
+                    sample: "soultree\\p\\plane.vag".into(),
+                    min_distance: 55.,
+                    max_distance: 850.,
+                    looping: true,
+                    start_disabled: false,
+                    attach: "p_plane".into(),
+                },
+                // An inverted interval is skipped; absent keys take defaults.
+                LoopSound {
+                    sample: "y.vag".into(),
+                    min_distance: 0.,
+                    max_distance: 20.,
+                    looping: false,
+                    start_disabled: false,
+                    attach: "body".into(),
+                },
+            ]
+        );
+        assert!(parse(TOY).iter().all(|a| a.loop_sounds.is_empty()));
+    }
 
     #[test]
     fn keyframed_records_skip_procedural_and_use_reader_defaults() {

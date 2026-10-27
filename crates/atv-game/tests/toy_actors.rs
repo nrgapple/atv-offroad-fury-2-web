@@ -29,6 +29,7 @@ fn every_venue_route_resolves_its_keyframed_actors() {
         let content = Content::open(Store::Directory(dir.into())).await.unwrap();
         let mut report = Vec::new();
         let (mut total, mut unresolved) = (0, 0);
+        let mut sounds = std::collections::BTreeMap::new();
         for environment in environments() {
             let mut routes = vec![(false, RaceVariant::National)];
             if is_race_course(&environment) {
@@ -49,6 +50,26 @@ fn every_venue_route_resolves_its_keyframed_actors() {
                 };
                 let mut actors = actors.borrow_mut();
                 total += actors.actors.len();
+                // Every loop sound attaches to a node of its model and its
+                // emitter stays finite.
+                assert_eq!(venue.actor_sounds.len(), actors.sounds.len());
+                for sound in &actors.sounds {
+                    let model = &actors.models[actors.actors[sound.actor].model];
+                    assert!(
+                        sound.node.is_some(),
+                        "{environment}: {} has no node for its loop sound",
+                        model.name
+                    );
+                    *sounds
+                        .entry((
+                            sound.definition.sample.to_ascii_lowercase(),
+                            model.name.clone(),
+                        ))
+                        .or_insert(0) += 1;
+                }
+                for (now, before) in actors.sound_emitters() {
+                    assert!(now.iter().chain(&before).all(|v| v.is_finite()));
+                }
                 unresolved += actors.unresolved.len();
                 // Every actor poses finitely over its motion and moves.
                 let mut moving = 0;
@@ -140,7 +161,7 @@ fn every_venue_route_resolves_its_keyframed_actors() {
                 }));
             }
         }
-        println!("total actors {total}, unresolved {unresolved}");
+        println!("total actors {total}, unresolved {unresolved}, loop sounds {sounds:?}");
         if let Some(path) = std::env::var_os("ATV_ACTORS_REPORT") {
             std::fs::write(path, serde_json::to_string_pretty(&report).unwrap()).unwrap();
         }

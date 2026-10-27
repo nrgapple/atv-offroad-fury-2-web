@@ -544,6 +544,8 @@ pub struct Settings {
     pub race_samples: Vec<String>,
     /// ENV08's train car sounds (`Venue::train_sounds`).
     pub train_sounds: Vec<atv_core::spatial_audio::Definition>,
+    /// The keyframed actors' loop sounds (`Venue::actor_sounds`).
+    pub actor_sounds: Vec<atv_core::spatial_audio::Definition>,
     /// Active Rain weather (the rain loop).
     pub rain: bool,
 }
@@ -587,8 +589,21 @@ impl Sound {
         if let Err(error) = bank.load_samples(&content, &world).await {
             crate::status(&format!("Train/rain sound: {error}"));
         }
+        // The actors' engine loops load on their own so a package without
+        // them keeps the train and rain.
+        let actors: Vec<String> = settings
+            .actor_sounds
+            .iter()
+            .map(|d| d.sample.clone())
+            .collect();
+        if !actors.is_empty()
+            && let Err(error) = bank.load_samples(&content, &actors).await
+        {
+            crate::status(&format!("Actor sound: {error}"));
+        }
         let mut ride = RideAudio::new(bank, settings.mode);
         ride.train_sounds = settings.train_sounds.clone();
+        ride.actor_sounds = settings.actor_sounds.clone();
         ride.rain = settings.rain;
         ride.apply_mode(&mut *output.mixer.lock().map_err(|_| "mixer lock")?);
         // The page's player (the host started a new session for this ride).
@@ -933,12 +948,21 @@ impl Sound {
                 "clock": mixer.seconds(), "voices": mixer.voices(),
                 "intOut": mixer.snapshot().iter().filter(|v| v.0 == "intout").count(),
                 "engineCommands": self.ride.stats.engine_commands,
+                // Keyframed actor loops: defined, their samples in the
+                // package, and voices playing now.
+                "actorSounds": {
+                    "defined": self.ride.actor_sounds.len(),
+                    "samples": self.ride.actor_sounds.iter()
+                        .filter(|d| self.ride.bank.get(&d.sample).is_some()).count(),
+                    "voices": mixer.snapshot().iter().filter(|v| v.0 == "actor").count(),
+                },
                 // Event sounds started so far (the sound audit).
                 "events": {
                     "vocals": self.ride.stats.vocals, "chassis": self.ride.stats.chassis,
                     "drive": self.ride.stats.drive, "impacts": self.ride.stats.impacts,
                     "ambient": self.ride.stats.ambient, "soultree": self.ride.stats.soultree,
-                    "train": self.ride.stats.train, "rain": self.ride.stats.rain,
+                    "train": self.ride.stats.train, "actor": self.ride.stats.actor,
+                    "rain": self.ride.stats.rain,
                     "crashBooms": self.boom.1, "history": self.ride.stats.history,
                 },
             });

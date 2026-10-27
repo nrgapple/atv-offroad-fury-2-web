@@ -125,6 +125,9 @@ struct Simulation {
     /// ENV08's train, shared with the renderer; an ATV ride steps it with
     /// its physics (collision heights, moving obstacles) as atv-web does.
     train: Option<Rc<std::cell::RefCell<crate::train::Train>>>,
+    /// The venue's keyframed actors when any has a loop sound (the renderer
+    /// steps their clock; the sounds follow the posed nodes).
+    actors: Option<Rc<std::cell::RefCell<crate::actors::Actors>>>,
 }
 
 /// The train cars as moving scene obstacles (atv-web
@@ -976,7 +979,16 @@ impl Ride {
             placement: self.placement,
             bike: None,
             train_cars: self.train_cars(),
+            actor_emitters: self.actor_emitters(),
         })
+    }
+
+    /// Every keyframed actor loop sound's emitter now and one step before.
+    pub(super) fn actor_emitters(&self) -> Vec<([f32; 16], [f32; 16])> {
+        self.sim
+            .actors
+            .as_ref()
+            .map_or_else(Vec::new, |a| a.borrow().sound_emitters())
     }
 
     /// Every train car's matrix now and one step before (train sounds).
