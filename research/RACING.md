@@ -44,6 +44,12 @@ for the scalar branches, not whole-race replay):
   only arms the rider) and 8 (first lap is no best lap). See "Finish gate and
   track window" below.
 
+- Reset points (`00248b20` → interface +0x20 → `001ea860`/`001ea4d0`), the
+  tag 23 flag-1 no-reset nodes, the off-track reset (`001eb0a0`, 5s, RaceStatus
+  +0xcc), reset placement flags (`001e35d0`) and the forward-only committed
+  station that centres the track window. See "CPU reset points and the
+  committed station" below.
+
 **Authored** (integration adaptations, not original behavior):
 
 - Race rules: countdown, timing, ranking and HUD. Progress follows the
@@ -57,10 +63,11 @@ for the scalar branches, not whole-race replay):
 - Per-CPU random streams seeded `97211 + 47 × index` instead of the native
   global random stream; the start-slot shuffle draws from its own stream on
   the race seed.
-- Off-track (5 s) and stuck (under 3ft/s for 4 s) CPU recovery to the race
-  checkpoint; the original consumer of the off-track timer is unrecovered.
-  The stuck clock runs only after GO: counting the braked grid hold reset
-  every CPU at GO onto one shared checkpoint, stacked on each other.
+- Stuck (under 3ft/s for 4 s) CPU recovery to the race checkpoint: the
+  original has no stuck reset. The stuck clock runs only after GO: counting
+  the braked grid hold reset every CPU at GO onto one shared checkpoint.
+  The off-track reset (5 s) and the reset point itself are now recovered
+  ("CPU reset points and the committed station" below).
 - Rider-to-rider contact through the multiplayer `peer_contact` proxy.
 - The motorcycle race preview is kinematic route following at fixed speeds; it
   never runs for ATV racers.
@@ -1141,3 +1148,71 @@ Checks: `atv-core` `enduro` and `race::tests::enduro_gates_count_in_order_and_la
 `tools/test_release_content.py`; `tools/test_engine_enduro_race.mjs` races
 env05's short Enduro (13 gates, a one-lap finish) and loads env06's Short
 Track (it skips when the content package predates the variant archives).
+
+## CPU reset points and the committed station — 2026-10-27
+
+Headless sweeps (determinism example, 1 lap, 3 CPUs, 18,000 frames) left CPUs
+looping on env04, env06, nat02 and sx11. The exact build explains most of it:
+
+- **Reset points are validated.** RaceStatus `00248b20` offers each on-track
+  racer its reset point every update through vehicle interface +0x20
+  (vtable `0x456054`, thunk `001eba70` → `001ea860`). The vehicle keeps it only
+  when `001ea4d0` accepts: all four wheels down (+0x904, set in `001e5260`), not
+  wrecked (+0x7f0), up axis y ≥ 0.8, ground above the cached water height,
+  no Vegetation within 20ft and no CollisionObject across the eight 20ft rays
+  at 3ft (`001ea050`); a hit under the point raises it. Otherwise the previous
+  point stays. The port called `set_race_checkpoint` unconditionally, so a CPU
+  that wrecked against a static object was put back on that spot (sx11 node
+  34, ~(236, 89, 490)) and wrecked again.
+- **No-reset nodes.** Before the callback the reset node walks forward past
+  nodes whose TDF tag 23 point flags (node +4, Track loader case 0x17) have bit
+  1, stopping at the finish box's node (+0x58 → +0x84). sx11 flags nodes 28 and
+  34–35 (its big jump), env04 24–31 and env06 1–3, 71–75, 79–83.
+- **Off-track reset.** When RaceStatus flag 0x100 is set and a racer's
+  off-track clock (+0xf0) reaches +0xcc (5s, constructor `00247570`), it calls
+  interface +0x50 → `001eb9d0` → `001eb0a0` → `001e8f90(vehicle, 3)`.
+- **Placement** (`001e35d0`): flag 1 steps the point 5ft sideways
+  (perpendicular to the reset direction, away from the racer) while any other
+  racer lies within 5ft; flag 2 then tries rings of radius 1, 6, 11 … 1000ft
+  (21 samples, x = r·c, z = r·√(1 − c) — the original formula) until
+  `001ea4d0` (forced: water and clearance only) accepts. Wreck recovery
+  (`001e8d10`) uses flag 1; off-track and deep water (`001e5260`) use 3. The
+  reset copies RaceStatus +0xd0 into the racer's stations (+0xb8/+0xc4).
+- **Committed station.** `0017be80` searches the 125/75ft window around the
+  committed station +0xc4 and returns the current one (+0xb8); +0xc4 takes it
+  only when it lies ahead (0 < +0x18 < window). Reset points use +0xc4. The
+  port's station followed riders backwards; on nat02's hairpin (nodes 91–96,
+  legs 60ft apart) vegetation pushed CPUs onto the other leg and the station
+  drifted down it, so they circled for minutes.
+
+Port: `Vehicle::offer_race_checkpoint`, `Course::reset_station`,
+`Race::{accept_checkpoint, restore_checkpoint}`, `Progress::committed`.
+
+Authored around it: on a reset the race distance returns to the accepted
+point (the original keeps lap distance separately); a finish crossing
+counted or skipped since the accepted point only re-arms the skip flag
+(without this sx11's CPUs, reset before the gate after its jump, finished the
+1-lap race at 760ft); the 4s stuck reset stays (no original); the
+`+0x10 < 10` pull-back of reset points just past the finish and RaceStatus
++0x64 mode 2 (which skips validation) are not ported. The water height in the
+validation is the vehicle's cached height at its own position, as in the
+original.
+
+Sweep, all CPUs finish (courses of 32; base = origin/main b002182):
+
+| seed | base | now | still failing |
+| --- | --- | --- | --- |
+| 7 | 29 (env04, env06, sx11) | 30 | env04 (2 CPUs), sx15 (1) |
+| 11 | 27 (env04, env06, env07, nat02, sx11) | 30 | env04 (1), sx15 (2) |
+| 23 | 27 (env04, env06, env07, nat02, sx11) | 29 | env04 (1), nat02 (1), sx15 (2) |
+
+Without the committed station (reset points only) seeds 11 and 23 reached 29
+each, with nat02 still circling at its hairpin.
+
+Remaining loops: env04's CPUs drown at its water crossing near
+(3154, 115, 3259) (node 68, flag 0x80) and are reset to the same accepted
+point every 5.5s; on sx15 a CPU reset at node 41 (621, 170) is turned south-west
+by the static avoidance rays (6–8 hits against the jump south of it), leaves
+the track and returns there after 5s off track. Points at node 42 are
+rejected because the 20ft rays meet that jump. Both depend on the
+unrecovered avoidance ray height (+0x3c8) and water-crossing behavior.
