@@ -125,6 +125,10 @@ struct Simulation {
     /// ENV08's train, shared with the renderer; an ATV ride steps it with
     /// its physics (collision heights, moving obstacles) as atv-web does.
     train: Option<Rc<std::cell::RefCell<crate::train::Train>>>,
+    /// The venue's keyframed actors when any has a loop sound or an
+    /// animation trigger (the renderer steps their clock; the sounds follow
+    /// the posed nodes and the ride's vehicle fires the triggers).
+    actors: Option<Rc<std::cell::RefCell<crate::actors::Actors>>>,
 }
 
 /// The train cars as moving scene obstacles (atv-web
@@ -867,6 +871,7 @@ impl Ride {
                 self.frame = bike::summary(bike.frame());
             }
             self.step_camera(orbit)?;
+            self.step_actor_triggers();
             self.steps += 1;
             self.sound = Some(self.capture_bike_sound(controls));
             return Ok(());
@@ -891,9 +896,18 @@ impl Ride {
         self.step_race()?;
         self.step_free_jump();
         self.step_camera(orbit)?;
+        self.step_actor_triggers();
         self.steps += 1;
         self.sound = Some(self.capture_sound()?);
         Ok(())
+    }
+
+    /// The player's vehicle touching a TOY animation trigger starts its
+    /// actors (SX10's stadium roofs open, research/AMBIENT_ACTORS.md).
+    fn step_actor_triggers(&mut self) {
+        if let Some(actors) = &self.sim.actors {
+            actors.borrow_mut().contact(self.frame.origin);
+        }
     }
 
     /// Outside races, measures the player's jumps as the race does
@@ -976,7 +990,16 @@ impl Ride {
             placement: self.placement,
             bike: None,
             train_cars: self.train_cars(),
+            actor_emitters: self.actor_emitters(),
         })
+    }
+
+    /// Every keyframed actor loop sound's emitter now and one step before.
+    pub(super) fn actor_emitters(&self) -> Vec<([f32; 16], [f32; 16])> {
+        self.sim
+            .actors
+            .as_ref()
+            .map_or_else(Vec::new, |a| a.borrow().sound_emitters())
     }
 
     /// Every train car's matrix now and one step before (train sounds).

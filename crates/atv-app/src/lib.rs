@@ -1019,6 +1019,7 @@ async fn prepare(
                         .map(|r| r.samples())
                         .unwrap_or_else(|| hockey::samples(&venue.environment)),
                     train_sounds: venue.train_sounds.clone(),
+                    actor_sounds: venue.actor_sounds.clone(),
                     // loadWeather: active Rain weather loops rain.vag.
                     rain: venue.weather.as_ref().is_some_and(|w| {
                         w.active
@@ -1973,13 +1974,31 @@ impl App {
                                 serde_json::json!({"mcf": a.definition.mcf,
                                 "model": actors.models[a.model].name,
                                 "offset": a.definition.offset, "root": root,
-                                "time": actors.motion_time(i)})
+                                "playing": a.playing, "time": actors.motion_time(i)})
+                            })
+                            .collect();
+                        // Loop sounds: sample, owning actor and the attached
+                        // node's world position this step.
+                        let sounds: Vec<_> = actors
+                            .sounds
+                            .iter()
+                            .zip(actors.sound_emitters())
+                            .map(|(sound, (m, _))| {
+                                serde_json::json!({"sample": sound.definition.sample,
+                                "actor": sound.actor, "attached": sound.node.is_some(),
+                                "emitter": [m[12], m[13], m[14]]})
                             })
                             .collect();
                         serde_json::json!({"count": actors.actors.len(),
                         "models": actors.models.len(), "clips": actors.clips.len(),
                         "steps": actors.steps(), "visible": visible, "culled": culled,
-                        "draws": draws, "list": list})
+                        "draws": draws, "list": list, "sounds": sounds,
+                        "triggers": actors.triggers.iter().zip(&actors.fired)
+                            .map(|((t, targets), fired)| serde_json::json!({
+                                "name": t.name, "position": t.position, "box": t.extents,
+                                "enabled": t.enabled, "percent": t.percent,
+                                "targets": targets, "fired": fired}))
+                            .collect::<Vec<_>>()})
                     });
             if let Some(overlay) = &self.overlay {
                 state["toolbar"] = overlay.diagnostics();

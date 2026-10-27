@@ -21,6 +21,21 @@ pub struct Sequence {
     pub active: bool,
 }
 
+/// One `[AnimationNLoopSoundM]` of a keyframed record (`NumberOfLoopingSounds`,
+/// read by the shared loop-sound list reader `00205640`, format
+/// `%sLoopSound%d`): a sample attached to a model node.
+#[derive(Clone, Debug, PartialEq)]
+pub struct LoopSound {
+    /// `SoundResourceFile` as authored (`soultree\\b\\blimp.vag`).
+    pub sample: String,
+    pub min_distance: f32,
+    pub max_distance: f32,
+    pub looping: bool,
+    pub start_disabled: bool,
+    /// `AttachToObject`: a PSG node name (`blimp`, `p_plane`, `chopper`).
+    pub attach: String,
+}
+
 /// A keyframed `[AnimationN]` record.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Definition {
@@ -40,6 +55,8 @@ pub struct Definition {
     /// `MotionToPlay%d`: `[MOTION n] NAME`s of the MCF.
     pub motions: Vec<String>,
     pub sequences: Vec<Sequence>,
+    /// `NumberOfLoopingSounds` sounds that follow the posed model.
+    pub loop_sounds: Vec<LoopSound>,
 }
 
 impl Definition {
@@ -199,9 +216,130 @@ pub fn parse(text: &str) -> Vec<Definition> {
             use_collision: flag(&toy, &section, "UseCollision", false),
             motions,
             sequences,
+            loop_sounds: loop_sounds(&toy, &section),
         });
     }
     out
+}
+
+/// `[<section>LoopSoundM]` for M in 1..=`NumberOfLoopingSounds`. A sound
+/// without a sample or with an invalid distance interval is skipped.
+fn loop_sounds(toy: &Toy, section: &str) -> Vec<LoopSound> {
+    let count = int(toy, section, "NumberOfLoopingSounds", 0).clamp(0, 32);
+    (1..=count)
+        .filter_map(|m| {
+            let s = format!("{section}LoopSound{m}");
+            let sample = toy.get(&s, "SoundResourceFile")?.trim();
+            if sample.is_empty() || sample.contains("..") || sample.len() > 260 {
+                return None;
+            }
+            let distance = |key: &str| -> Option<f32> {
+                toy.get(&s, key)?
+                    .trim()
+                    .parse::<f32>()
+                    .ok()
+                    .filter(|v| v.is_finite())
+            };
+            let (min_distance, max_distance) = (distance("MinDistance")?, distance("MaxDistance")?);
+            if min_distance < 0. || max_distance <= min_distance {
+                return None;
+            }
+            Some(LoopSound {
+                sample: sample.to_string(),
+                min_distance,
+                max_distance,
+                looping: flag(toy, &s, "Looping", false),
+                start_disabled: flag(toy, &s, "StartDisabled", false),
+                attach: toy
+                    .get(&s, "AttachToObject")
+                    .unwrap_or("body")
+                    .trim()
+                    .to_string(),
+            })
+        })
+        .collect()
+}
+
+/// A TOY `[TriggerN]` with `ActionType=Animation` actions
+/// (`AnimationTriggerAction`, `0023dec0`): touching it starts each named
+/// actor's first sequence (`0020c910` → `0020d260`). SX10's stadium roofs
+/// are the only shipped users.
+#[derive(Clone, Debug, PartialEq)]
+pub struct AnimationTrigger {
+    pub name: String,
+    pub position: [f32; 3],
+    /// `Box` half extents about `position`.
+    pub extents: [f32; 3],
+    /// `StartEnabled` (default 1, `0023ff80`).
+    pub enabled: bool,
+    pub one_time: bool,
+    /// `RandomTriggerPercent` (default 100, `0023ff80`).
+    pub percent: f32,
+    /// `AnimationNameRef`s: the actors' `ReferenceName`s.
+    pub targets: Vec<String>,
+    /// Whether the rider touched the box on the previous step.
+    pub inside: bool,
+}
+
+impl AnimationTrigger {
+    /// One step of contact: on entering the box an enabled trigger rolls
+    /// `RandomTriggerPercent` with `random` (0..=0x7fff_ffff) and fires on
+    /// success; a fired `OneTimeOnly` trigger disables itself. Returns
+    /// whether it fired. Rolling once per entry is an inference; the
+    /// original roll site was not decompiled (research/AMBIENT_ACTORS.md).
+    pub fn contact(&mut self, point: [f32; 3], random: impl FnOnce() -> u32) -> bool {
+        let inside = (0..3).all(|i| (point[i] - self.position[i]).abs() <= self.extents[i]);
+        let entered = inside && !self.inside;
+        self.inside = inside;
+        if !entered || !self.enabled {
+            return false;
+        }
+        let roll = random() as f32 / 0x8000_0000u32 as f32 * 100.;
+        if roll >= self.percent {
+            return false;
+        }
+        if self.one_time {
+            self.enabled = false;
+        }
+        true
+    }
+}
+
+/// The TOY's triggers that start actors (`[Triggers] NumberOfTriggers`,
+/// only the first `NumberOfActions` actions of each are read).
+pub fn animation_triggers(text: &str) -> Vec<AnimationTrigger> {
+    let toy = Toy::parse(text);
+    let count = int(&toy, "Triggers", "NumberOfTriggers", 0).clamp(0, 512);
+    (1..=count)
+        .filter_map(|n| {
+            let section = format!("Trigger{n}");
+            let position = toy.vec3(&section, "Position")?;
+            let actions = int(&toy, &section, "NumberOfActions", 0).clamp(0, 16);
+            let targets: Vec<String> = (1..=actions)
+                .map(|a| format!("Trigger{n}Action{a}"))
+                .filter(|action| {
+                    toy.get(action, "ActionType")
+                        .is_some_and(|k| k.trim().eq_ignore_ascii_case("Animation"))
+                })
+                .filter_map(|action| toy.get(&action, "AnimationNameRef"))
+                .map(|name| name.trim().trim_matches('"').to_string())
+                .collect();
+            (!targets.is_empty()).then(|| AnimationTrigger {
+                name: toy.get(&section, "Name").unwrap_or("").trim().to_string(),
+                position,
+                extents: toy.vec3(&section, "Box").unwrap_or([0.; 3]),
+                enabled: flag(&toy, &section, "StartEnabled", true),
+                one_time: flag(&toy, &section, "OneTimeOnly", false),
+                percent: toy
+                    .get(&section, "RandomTriggerPercent")
+                    .and_then(|v| v.trim().parse::<f32>().ok())
+                    .filter(|v| v.is_finite())
+                    .unwrap_or(100.),
+                targets,
+                inside: false,
+            })
+        })
+        .collect()
 }
 
 /// One `[MOTION n]` of an `.mcf` motion catalog.
@@ -286,6 +424,72 @@ mod tests {
         BlendSequence1=F\nProbabilityList1=100\nLoopSequence1=F\nSequenceActive1=F\n\
         NameOfSequence2=close\nNumberInSequence2=2\nMotionSequence2=2,1\nLoopSequence2=no\nSequenceActive2=F\n\
         [Animation4]\nMCF=windmill.mcf\nAnimationType=KeyFramed\nUseCollision=t\n";
+
+    #[test]
+    fn sx10_roof_trigger_reads_only_its_counted_actions_and_fires_on_entry() {
+        let toy = "[Triggers]\nNumberOfTriggers=1\n[Trigger1]\nName=openroof\nNumberOfActions=2\n\
+            Zone=1\nPosition=340,105,225\nBox=40,25,30\nStartEnabled = TRUE\nOneTimeOnly = TRUE\n\
+            RandomTriggerPercent = 15.000000\n[Trigger1Action1]\nActionType=Animation\n\
+            AnimationNameRef=southroof\n[Trigger1Action2]\nActionType=Animation\nAnimationNameRef=northroof\n\
+            [Trigger1Action3]\nActionType = EnableTrigger\nTriggerNameRef = closeroof\n\
+            [Trigger2]\nName=closeroof\nNumberOfActions=2\nPosition=420,105,680\nBox=30,25,25\n\
+            [Trigger2Action1]\nActionType=ChangeAnimSequence\nAnimationNameRef=southroof\n";
+        let mut triggers = animation_triggers(toy);
+        assert_eq!(
+            triggers.len(),
+            1,
+            "NumberOfTriggers=1 leaves closeroof unread"
+        );
+        let t = &mut triggers[0];
+        assert_eq!(t.targets, ["southroof", "northroof"]);
+        assert!(t.enabled && t.one_time && t.percent == 15.);
+        let outside = [340., 105., 300.];
+        let inside = [370., 120., 200.];
+        assert!(!t.contact(outside, || 0));
+        // A failed roll (>= 15%) leaves it armed; staying inside rolls no more.
+        assert!(!t.contact(inside, || 0x2000_0000));
+        assert!(!t.contact(inside, || panic!("no roll while inside")));
+        assert!(!t.contact(outside, || 0));
+        // The next entry succeeds and disarms the one-time trigger.
+        assert!(t.contact(inside, || 0x1000_0000));
+        assert!(!t.enabled);
+        t.contact(outside, || 0);
+        assert!(!t.contact(inside, || 0));
+    }
+
+    #[test]
+    fn loop_sounds_attach_to_named_nodes() {
+        let toy = "[Animations]\nNumberOfAnimations=1\n[Animation1]\nMCF=p_plane.mcf\n\
+            AnimationType=KeyFramed\nNumberOfMotions=1\nMotionToPlay1=p_plane\n\n\
+            NumberOfLoopingSounds=3\n[Animation1LoopSound1]\nSoundResourceFile=soultree\\p\\plane.vag\n\
+            Looping=TRUE\nMaxDistance=850.0\nMinDistance=55.0\nStartDisabled=FALSE\nAttachToObject=p_plane\n\
+            [Animation1LoopSound2]\nSoundResourceFile=x.vag\nMaxDistance=10\nMinDistance=20\n\
+            [Animation1LoopSound3]\nSoundResourceFile=y.vag\nMaxDistance=20\nMinDistance=0\n";
+        let actors = parse(toy);
+        assert_eq!(
+            actors[0].loop_sounds,
+            vec![
+                LoopSound {
+                    sample: "soultree\\p\\plane.vag".into(),
+                    min_distance: 55.,
+                    max_distance: 850.,
+                    looping: true,
+                    start_disabled: false,
+                    attach: "p_plane".into(),
+                },
+                // An inverted interval is skipped; absent keys take defaults.
+                LoopSound {
+                    sample: "y.vag".into(),
+                    min_distance: 0.,
+                    max_distance: 20.,
+                    looping: false,
+                    start_disabled: false,
+                    attach: "body".into(),
+                },
+            ]
+        );
+        assert!(parse(TOY).iter().all(|a| a.loop_sounds.is_empty()));
+    }
 
     #[test]
     fn keyframed_records_skip_procedural_and_use_reader_defaults() {

@@ -160,6 +160,7 @@ impl Ride {
                 clutch: controls.clutch,
             }),
             train_cars: self.train_cars(),
+            actor_emitters: self.actor_emitters(),
         }
     }
 

@@ -9,8 +9,12 @@ are described in [TRAIN.md](TRAIN.md). The particle emitters that share the
 TOY files are described in [AMBIENT_EFFECTS.md](AMBIENT_EFFECTS.md).
 
 Status: host component. Placement, playback and drawing follow the recovered
-loader and update. Trigger-driven sequences, looping sounds, moving collision
-and zone visibility are not connected (see [Not connected](#not-connected)).
+loader and update. The actors' looping engine sounds play through the train's
+body-attached sound path (see [Loop sounds](#loop-sounds)); their samples need
+a content upload before the public site plays them. SX10's roof trigger
+starts the roofs (see [Roof trigger](#roof-trigger)). Sequence changes,
+moving collision and zone visibility are not connected (see
+[Not connected](#not-connected)).
 
 ## Recovered behavior (USA v2.00)
 
@@ -79,6 +83,109 @@ these routines. Inferences are labeled as such.
   (`0020c940`) switches by `NameOfSequence`. `ResetAnimationTriggerAction`
   (`0020d720`) restores the initial state. `HideAnimationTriggerAction`
   (`0020c990`) disables the actor; Treasure Hunt's bombs use this.
+
+## Loop sounds
+
+Facts:
+
+- The keyframed blimps, planes and the helicopter carry
+  `NumberOfLoopingSounds` and `[AnimationNLoopSoundM]` sections with
+  `SoundResourceFile`, `Looping`, `MinDistance`, `MaxDistance`,
+  `StartDisabled` and `AttachToObject`. These are the same keys as the
+  procedural train's loops. The executable reads the count and formats
+  `%sLoopSound%d` in one shared reader, `00205640` (strings at `0042a0e0`
+  and `0042a0f8`). That reader allocates 16-byte elements (constructor
+  `00204dd0`) and calls each element's reader through its vtable.
+- `AttachToObject` names a node of the actor's PSG: `blimp`, `p_plane`,
+  `tour_plane` or `chopper`. Every shipped actor sound names an existing node.
+  The train's sounds use `Body`.
+- `00173b20` and `00173cc0` allocate a sound emitter (0x1f0 or 0x310 bytes),
+  optionally attach it to an object (`001c1840`), and append it to the sound
+  manager's emitter list at +0x7c (`001745f0`). The manager update `001736f0`
+  walks that list.
+- The census below finds 36 actor loops over the 72 routes (each venue's
+  common TOY is counted for both its Freeride and race routes). There are
+  26 `soultree\b\blimp.vag` loops on 12 blimp models, 6 `soultree\p\plane.vag`
+  loops on `p_plane` and `tour_plane`, and 2 `soultree\h\helicptr.vag` loops on
+  `chopper`. All loop, none start disabled, and all resolve their node.
+
+Implementation:
+
+- `atv_core::toy_actors` reads the sounds. A sound without a sample or with
+  an inverted distance interval is skipped.
+- `Actors::sound_emitters` places each attached node at its posed position
+  for this step and the step before. A missing node falls back to the actor
+  root, but no shipped record needs that fallback.
+- `RideAudio` plays these sounds through the train's code path. That path
+  uses the original stereo, `MinDistance`/`MaxDistance` attenuation and
+  Doppler commands (`spatial_audio::command`), restarts a finished one-shot,
+  and keeps loops through Reset and pause.
+- The page's audio diagnostics report `actorSounds` (defined, samples
+  present and voices playing) and `events.actor`.
+
+Inference: the attenuation is assumed to match the train's. Both use the
+same keys and the same shared reader. The element vtable (`00456bc4` family)
+and the per-frame setter were not separately decompiled for the actor case.
+
+Packaging: `tools/package_content.py` now adds every keyframed record's
+loop sample from each packaged track archive's TOYs to `/AUDIO/AUDIO.RES`
+(`selected_actor_loop_names`). The three samples are `soultree/b/blimp.vag`,
+`soultree/p/plane.vag` and `soultree/h/helicptr.vag`. They are not in the
+current public package (`5dde4eb8…`), so the browser stays silent there until
+the package is rebuilt and uploaded. Missing samples are skipped without
+error.
+
+## Roof trigger
+
+Facts from SX10's common TOY (`sx10.toy`) and the readers:
+
+- `[Triggers] NumberOfTriggers=1`. Only `openroof` is read. Its
+  `NumberOfActions=2` reads `Animation` actions for `southroof` and
+  `northroof`. The authored `Trigger1Action3` (`EnableTrigger closeroof`)
+  and `[Trigger2]` (`closeroof`, `ChangeAnimSequence` to `stdmbroofclose`)
+  lie beyond those counts and are never loaded. Both roof records also say
+  `NumberOfSequences=1`, so the close sequence is never read either. In the
+  original, the roofs open once and stay open.
+- The trigger reader `0023ff80` reads `Name`, `NumberOfActions`, `Zone`
+  (stored minus 1), `StartEnabled` (default 1; 0 disables the trigger after
+  construction) and `RandomTriggerPercent` (default 100, string
+  `0042f100`). Per action it reads `ActionType` (via a factory),
+  `TriggerActionDelayTimer` (a positive delay defers the callback in
+  `00172bc0`) and two integer keys.
+- `AnimationTriggerAction` (`0023dec0`) finds the target by
+  `ReferenceName`. It clears that target's `SequenceActive[0]` and registers
+  the callback `0020c910`. On contact the callback calls `0020d260` with
+  sequence 0, which marks the sequence active, restarts its first motion
+  from t=0 (`0013d7a0` with time 0), and re-registers the zone (`0011e5c0`).
+  `0020d260` only starts the motion when its fourth argument is set or when
+  the model's +0x10 flag is set; that flag was not traced.
+- `ChangeAnimSequence` (`0020c940`), `ResetAnimationTriggerAction`
+  (`0020d720`) and `HideAnimationTriggerAction` (`0020c990`) have no
+  reachable keyframed users outside Treasure Hunt.
+
+Implementation:
+
+- `toy_actors::animation_triggers` reads triggers that have `Animation`
+  actions, within the counted triggers and actions.
+- `actors::load` links each trigger to its actors by `ReferenceName`.
+- After each ride step, the player's vehicle origin is tested against the
+  box (`Position` ± `Box`). On entry, an enabled trigger rolls
+  `RandomTriggerPercent`. On success it starts its actors at t=0, and a
+  `OneTimeOnly` trigger disarms. `stdmbroofopen` does not loop, so the roofs
+  hold open.
+- The page diagnostics list each trigger (`actors.triggers`) and each
+  actor's `playing` flag.
+
+Inferences and limits:
+
+- The roll site was not found. The port rolls once per entry, and a failed
+  roll leaves a one-time trigger armed. It uses a local seed, not the game's
+  shared `rand()` order.
+- The port tests only the player's vehicle origin. The original tests
+  collision bodies, and AI riders are not ignored (`IgnoreTrigger` is
+  commented out), so CPU riders may also open the roof in the original.
+- The common TOY's triggers are read on every route, races included. Whether
+  the original arms them in races was not confirmed.
 
 ## Census (all routes)
 
@@ -158,13 +265,12 @@ Cost (host only, not a physical-phone result):
 
 ## Not connected
 
-- The SX10 stadium roofs' trigger-driven open/close sequences
-  (`AnimationTriggerAction`, `ChangeAnimSequence`) are not connected. The roofs
-  hold their t=0 pose, as the original does before a trigger fires.
-- The 28 looping sounds are not played. These are the blimp, airliner, plane
-  and helicopter loops: `TriggeredAnimObjectSound` with `AttachToObject`
-  (default `body`), `MinDistance` and `MaxDistance`. Their emitter attachment
-  (`00173b20`/`00173cc0`) was not traced.
+- `ChangeAnimSequence`, `ResetAnimationTriggerAction` and
+  `HideAnimationTriggerAction` are not connected for keyframed actors. No
+  loaded venue trigger uses them, because SX10's `closeroof` is never read.
+- The actor loop sounds are implemented (see [Loop sounds](#loop-sounds)),
+  but their samples await a content upload. The emitter's own per-frame
+  setter was not decompiled, so the train's recovered attenuation is reused.
 - Moving collision from `UseCollision` is not connected. The windmills,
   sawmill and other actors with this flag load `anim\<mcf>.col` in the
   original and move it with the animation (`0011eca0`/`0011ee00`). Which node

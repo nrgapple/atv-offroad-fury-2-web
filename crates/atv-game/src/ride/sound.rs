@@ -89,6 +89,9 @@ pub struct AudioStep {
     /// The ENV08 train's car matrices this step and the step before
     /// (captureSpatial's `cars`/`previous_cars`); empty without a train.
     pub train_cars: Vec<([f32; 16], [f32; 16])>,
+    /// Each keyframed actor loop sound's emitter matrix this step and the
+    /// step before (`Actors::sound_emitters`); empty without such sounds.
+    pub actor_emitters: Vec<([f32; 16], [f32; 16])>,
 }
 
 /// The motorcycle frame fields web/audio.js reads besides the engine inputs.

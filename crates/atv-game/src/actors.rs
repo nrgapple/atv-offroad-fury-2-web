@@ -66,6 +66,18 @@ pub struct Actor {
     pub phase: f64,
 }
 
+/// A keyframed actor's looping sound (the blimp, airliner, plane and
+/// helicopter engines). `definition.car` is this sound's index in
+/// `Actors::sounds` and in `Actors::sound_emitters`.
+#[derive(Clone, Debug)]
+pub struct ActorSound {
+    pub actor: usize,
+    /// The `AttachToObject` PSG node; None when the model has no node of
+    /// that name (the sound then follows the actor root).
+    pub node: Option<usize>,
+    pub definition: atv_core::spatial_audio::Definition,
+}
+
 /// A resolved actor's pose for drawing.
 pub struct Pose {
     pub placement: [f32; 16],
@@ -82,6 +94,14 @@ pub struct Actors {
     pub actors: Vec<Actor>,
     /// Records that could not be resolved: `[AnimationN]` MCF and reason.
     pub unresolved: Vec<(String, String)>,
+    /// Every actor's `[AnimationNLoopSoundM]`, in actor order.
+    pub sounds: Vec<ActorSound>,
+    /// The TOYs' animation triggers and the actors each one starts.
+    pub triggers: Vec<(toy_actors::AnimationTrigger, Vec<usize>)>,
+    /// How many times each trigger fired (diagnostics).
+    pub fired: Vec<u32>,
+    /// The trigger roll stream (local seed, research/AMBIENT_ACTORS.md).
+    random: Option<atv_core::engine_audio::OriginalRandom>,
     /// Scene clock: whole 60 Hz steps.
     steps: u64,
     /// Poses of the current step, shared by actors on the same model,
@@ -130,6 +150,76 @@ impl Actors {
             }
             _ => 0.,
         }
+    }
+
+    /// Starts `actor`'s motion from t=0 now (`0020d260`: the sequence
+    /// becomes active and its first motion restarts).
+    pub fn start(&mut self, actor: usize) {
+        let time = self.time();
+        if let Some(a) = self.actors.get_mut(actor) {
+            a.playing = true;
+            a.phase = -time;
+            self.cache.get_mut().clear();
+        }
+    }
+
+    /// One step of the vehicle at `point` against the animation triggers;
+    /// returns how many fired.
+    pub fn contact(&mut self, point: [f32; 3]) -> usize {
+        let mut started = Vec::new();
+        let random = self
+            .random
+            .get_or_insert_with(|| atv_core::engine_audio::OriginalRandom::with_seed(97211));
+        for (i, (trigger, targets)) in self.triggers.iter_mut().enumerate() {
+            if trigger.contact(point, || random.next_u31()) {
+                self.fired[i] += 1;
+                started.extend(targets.iter().copied());
+            }
+        }
+        let fired = started.len();
+        for actor in started {
+            self.start(actor);
+        }
+        fired
+    }
+
+    /// Each sound's emitter world matrix at this step and one step before
+    /// (the attached node posed by the actor's motion, then placed).
+    pub fn sound_emitters(&self) -> Vec<([f32; 16], [f32; 16])> {
+        self.sounds
+            .iter()
+            .map(|sound| {
+                let at = |steps: u64| self.emitter(sound, steps);
+                (at(self.steps), at(self.steps.saturating_sub(1)))
+            })
+            .collect()
+    }
+
+    fn emitter(&self, sound: &ActorSound, steps: u64) -> [f32; 16] {
+        let a = &self.actors[sound.actor];
+        let Some(node) = sound.node else {
+            return a.placement;
+        };
+        let model = &self.models[a.model];
+        let time = match a.clip.map(|c| &self.clips[c]) {
+            Some(clip) if a.playing => toy_actors::motion_time(
+                steps as f64 * STEP + a.phase,
+                clip.animation.duration,
+                a.looping,
+            ),
+            _ => 0.,
+        };
+        let local = a
+            .clip
+            .and_then(|c| {
+                self.clips[c]
+                    .animation
+                    .sample_pose(&model.nodes, time, Sampling::default())
+                    .ok()
+            })
+            .and_then(|p| p.world_matrices.get(node).copied())
+            .unwrap_or(model.nodes[node].world_matrix);
+        multiply(&a.placement, &local)
     }
 
     /// `actor`'s placement, node matrices and world bounds at this step.
@@ -267,6 +357,25 @@ pub fn load(
                 }
             };
             let looping = clip.is_some_and(|c| actors.clips[c].looping) || sequence_loops;
+            for sound in &definition.loop_sounds {
+                let node = actors.models[model]
+                    .nodes
+                    .iter()
+                    .position(|n| n.name.eq_ignore_ascii_case(&sound.attach));
+                actors.sounds.push(ActorSound {
+                    actor: actors.actors.len(),
+                    node,
+                    definition: atv_core::spatial_audio::Definition {
+                        car: actors.sounds.len(),
+                        sample: sound.sample.clone(),
+                        min_distance: sound.min_distance,
+                        max_distance: sound.max_distance,
+                        looping: sound.looping,
+                        start_disabled: sound.start_disabled,
+                        position: None,
+                    },
+                });
+            }
             actors.actors.push(Actor {
                 definition,
                 model,
@@ -277,6 +386,28 @@ pub fn load(
                 // `0023cdc0` starts every motion at t=0: no random phase.
                 phase: 0.,
             });
+        }
+    }
+    // Animation triggers name their actors by `ReferenceName`; a trigger
+    // whose actors are all missing is dropped.
+    for toy in toys {
+        for trigger in toy_actors::animation_triggers(&String::from_utf8_lossy(toy)) {
+            let targets: Vec<usize> = trigger
+                .targets
+                .iter()
+                .filter_map(|name| {
+                    actors.actors.iter().position(|a| {
+                        a.definition
+                            .reference_name
+                            .trim_matches('"')
+                            .eq_ignore_ascii_case(name)
+                    })
+                })
+                .collect();
+            if !targets.is_empty() {
+                actors.triggers.push((trigger, targets));
+                actors.fired.push(0);
+            }
         }
     }
     Ok(actors)

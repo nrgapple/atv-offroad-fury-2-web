@@ -266,6 +266,27 @@ def selected_train_names(toy):
     return names
 
 
+def selected_actor_loop_names(toy):
+    """Keyframed TOY actors' [AnimationNLoopSoundM] samples (blimps, planes)."""
+    data = config(toy)
+    count = int(re.match(r'-?\d*', data.get('animations', {}).get('numberofanimations', '0')).group() or 0)
+    if not 0 <= count <= 4096:
+        raise ValueError('invalid TOY animation count')
+    names = set()
+    for index in range(1, count + 1):
+        section = data.get(f'animation{index}', {})
+        if section.get('animationtype', '').lower() != 'keyframed':
+            continue
+        sounds = int(re.match(r'-?\d*', section.get('numberofloopingsounds', '0')).group() or 0)
+        if not 0 <= sounds <= 32:
+            raise ValueError('invalid actor loop count')
+        for sound in range(1, sounds + 1):
+            loop = data.get(f'animation{index}loopsound{sound}', {})
+            if loop.get('soundresourcefile', '').strip():
+                names.add(sound_path(loop['soundresourcefile']))
+    return names
+
+
 def selected_body_impact_names(table):
     """Rider BodyImpact samples only; unused voice/wreck banks stay excluded."""
     section = config(table).get('bodyimpact', {})
@@ -769,6 +790,9 @@ def main():
                 lowered = name.replace('\\', '/').lower()
                 if lowered.startswith('tracks/') and lowered.endswith('.aud'):
                     venue_names |= selected_venue_sound_names(venue.extract(i))
+                elif lowered.endswith('.toy'):
+                    # Keyframed actors' engine loops (research/AMBIENT_ACTORS.md).
+                    venue_names |= selected_actor_loop_names(venue.extract(i))
         names = engine_names | train_names | body_names | menu_names | weather_names | race_names | game_names | crowd_names | chassis_names | venue_names
         audio = Resource(source('/AUDIO/AUDIO.RES'))
         samples = [(name, audio.extract(i)) for i, (name, _, _) in enumerate(audio.members) if name.lower().removeprefix('audio/') in names]

@@ -210,9 +210,17 @@ pub fn render_audio(
             world.push("rain.vag".into());
         }
         bank.load_samples(&content, &world).await?;
+        let actors: Vec<String> = venue
+            .actor_sounds
+            .iter()
+            .map(|d| d.sample.clone())
+            .collect();
+        // A package without the actor loops still renders the ride.
+        let _ = bank.load_samples(&content, &actors).await;
         let load_ms = started.elapsed().as_secs_f64() * 1000.;
         let mut audio = RideAudio::new(bank, mode);
         audio.train_sounds = venue.train_sounds.clone();
+        audio.actor_sounds = venue.actor_sounds.clone();
         audio.rain = rain;
         let mut mixer = Mixer::new(RATE);
         mixer.log = Some(Vec::new());

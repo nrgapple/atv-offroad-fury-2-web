@@ -8,6 +8,14 @@
 // 2. A motorcycle on env02 with a fixed camera on the windmill: the actor
 //    pass poses and draws it inside the view and culls the rest.
 // 3. A National race on nat03 loads the race archive's 26 seagulls.
+// 4. ATV Freeride on env03: the plane's `[Animation30LoopSound1]` loop
+//    attaches to its `p_plane` node, the emitter flies with the motion and,
+//    when the package carries soultree/p/plane.vag, one looping actor voice
+//    plays (the audio diagnostics count it).
+// 5. Supercross Freeride on sx10: the TOY's one animation trigger
+//    (`openroof`, RandomTriggerPercent 15, one time) links both stadium
+//    roofs, which hold their closed t=0 pose until it fires. Firing is
+//    covered by crates/atv-game/tests/toy_actors.rs.
 // ATV_ACTORS_SCREENSHOT=<prefix> saves the windmill view.
 import assert from 'node:assert/strict';
 import { assertNoErrors, launch, newPage, nextFrames, optionalScreenshot, url } from './browser/harness.mjs';
@@ -28,7 +36,7 @@ async function key(page, code) {
 const actorSteps = (page, above) =>
   until(page, n => JSON.parse(document.querySelector('#ui-state').textContent).actors.steps > n, above, 60000);
 
-const browser = await launch();
+const browser = await launch({ args: ['--autoplay-policy=no-user-gesture-required'] });
 try {
   const errors = [];
   const page = await newPage(browser, { viewport: { width: 960, height: 540 } }, errors);
@@ -96,7 +104,47 @@ try {
   assert.ok(s.actors.list.every(a => a.model === 'seagull'));
   await actorSteps(page, s.actors.steps + 30);
   assertNoErrors(errors);
-  console.log('TOY actors: env02 crows and windmill animate and pause, motorcycle view draws, nat03 race seagulls');
+
+  // 4. env03's plane engine loop follows the plane.
+  await page.goto(url('/play.html?venue=env03&uiDiagnostics=1&audioDiagnostics=1&weather=off'));
+  await ready(page);
+  await page.mouse.click(480, 300);
+  s = await state(page);
+  const sounds = s.actors.sounds;
+  assert.ok(sounds.length >= 1, JSON.stringify(sounds));
+  const plane = sounds.find(x => /plane\.vag$/i.test(x.sample));
+  assert.ok(plane && plane.attached, JSON.stringify(sounds));
+  assert.equal(s.actors.list[plane.actor].model, 'p_plane');
+  await actorSteps(page, s.actors.steps + 60);
+  const flown = (await state(page)).actors.sounds.find(x => x.actor === plane.actor);
+  assert.ok(Math.hypot(...flown.emitter.map((v, k) => v - plane.emitter[k])) > 1, 'the emitter flies with the plane');
+  const audio = () => page.evaluate(() => JSON.parse(document.documentElement.getAttribute('data-engine-audio') ?? 'null'));
+  await until(page, () => JSON.parse(document.documentElement.getAttribute('data-engine-audio') ?? 'null')?.actorSounds, null, 60000);
+  let a = await audio();
+  assert.equal(a.actorSounds.defined, sounds.length);
+  let heard = 'the package lacks the actor samples (upload pending)';
+  if (a.actorSounds.samples > 0) {
+    await until(page, () => JSON.parse(document.documentElement.getAttribute('data-engine-audio')).actorSounds.voices >= 1, null, 30000);
+    a = await audio();
+    assert.ok(a.events.actor >= 1, JSON.stringify(a.events));
+    heard = `${a.actorSounds.voices} looping actor voice(s)`;
+  }
+  assertNoErrors(errors);
+
+  // 5. SX10's roofs wait for their trigger.
+  await page.goto(url('/play.html?venue=sx10&uiDiagnostics=1&weather=off'));
+  await ready(page);
+  s = await state(page);
+  assert.equal(s.actors.count, 2, JSON.stringify(s.actors.list.map(a => a.mcf)));
+  assert.equal(s.actors.triggers.length, 1, JSON.stringify(s.actors.triggers));
+  const roof = s.actors.triggers[0];
+  assert.equal(roof.name, 'openroof');
+  assert.equal(roof.percent, 15);
+  assert.deepEqual([...roof.targets].sort(), [0, 1]);
+  assert.ok(roof.enabled && roof.fired === 0, JSON.stringify(roof));
+  assert.ok(s.actors.list.every(a => !a.playing && a.time === 0), 'closed roofs hold t=0');
+  assertNoErrors(errors);
+  console.log(`TOY actors: env02 crows and windmill animate and pause, motorcycle view draws, nat03 race seagulls, env03 plane loop (${heard}), sx10 roof trigger armed`);
 } finally {
   await browser.close();
 }

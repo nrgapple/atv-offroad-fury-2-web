@@ -79,6 +79,9 @@ pub struct RideAudio {
     /// ENV08's train car sounds (loadSpatial/updateSpatial) and their voices.
     pub train_sounds: Vec<spatial_audio::Definition>,
     train_voices: HashMap<usize, VoiceId>,
+    /// The keyframed actors' loop sounds (`Actors::sounds`) and voices.
+    pub actor_sounds: Vec<spatial_audio::Definition>,
+    actor_voices: HashMap<usize, VoiceId>,
     /// Active Rain weather: `rain.vag` loops on the effects bus (playWeather).
     pub rain: bool,
     rain_voice: Option<VoiceId>,
@@ -95,9 +98,19 @@ pub struct Stats {
     pub soultree: u32,
     pub impacts: u32,
     pub train: u32,
+    pub actor: u32,
     pub rain: u32,
     pub history: Vec<String>,
 }
+
+/// Body-attached sounds, their voices, emitter matrices (now, one step
+/// before) and the mixer label.
+type SpatialList<'a> = (
+    &'a [spatial_audio::Definition],
+    &'a mut HashMap<usize, VoiceId>,
+    &'a [([f32; 16], [f32; 16])],
+    &'static str,
+);
 
 fn gains(command: &Command, volume: i32, rate: f32) -> Option<([f32; 2], f32)> {
     if command.pitch < -1 || command.pitch >= 0x4000 {
@@ -166,6 +179,8 @@ impl RideAudio {
             race: Default::default(),
             train_sounds: Vec::new(),
             train_voices: HashMap::new(),
+            actor_sounds: Vec::new(),
+            actor_voices: HashMap::new(),
             rain: false,
             rain_voice: None,
         }
@@ -174,6 +189,8 @@ impl RideAudio {
     /// updateSpatial for one step: each train car's sound starts (looping
     /// where authored) and follows the car with the original stereo,
     /// attenuation and Doppler commands; a finished one-shot starts again.
+    /// The keyframed actors' loop sounds (blimps, airliners, planes, the
+    /// helicopter) follow their attached node the same way.
     fn train_step(
         &mut self,
         mixer: &mut Mixer,
@@ -181,37 +198,70 @@ impl RideAudio {
         camera: &CameraPose,
         previous: &CameraPose,
     ) -> Result<()> {
-        if self.train_sounds.is_empty() || step.train_cars.is_empty() {
-            return Ok(());
+        let definitions = std::mem::take(&mut self.train_sounds);
+        let mut voices = std::mem::take(&mut self.train_voices);
+        let started = self.spatial_step(
+            mixer,
+            (&definitions, &mut voices, &step.train_cars, "train"),
+            camera,
+            previous,
+        );
+        (self.train_sounds, self.train_voices) = (definitions, voices);
+        self.stats.train += started?;
+        let definitions = std::mem::take(&mut self.actor_sounds);
+        let mut voices = std::mem::take(&mut self.actor_voices);
+        let started = self.spatial_step(
+            mixer,
+            (&definitions, &mut voices, &step.actor_emitters, "actor"),
+            camera,
+            previous,
+        );
+        (self.actor_sounds, self.actor_voices) = (definitions, voices);
+        self.stats.actor += started?;
+        Ok(())
+    }
+
+    /// One list of body-attached sounds: returns how many voices started.
+    fn spatial_step(
+        &mut self,
+        mixer: &mut Mixer,
+        (definitions, voices, cars, label): SpatialList<'_>,
+        camera: &CameraPose,
+        previous: &CameraPose,
+    ) -> Result<u32> {
+        if definitions.is_empty() || cars.is_empty() {
+            return Ok(0);
         }
         let commands = spatial_audio::scene_commands(spatial_audio::SceneInput {
             dt: crate::ride::STEP,
             camera: camera.clone(),
             previous_camera: previous.clone(),
-            cars: step.train_cars.iter().map(|c| c.0).collect(),
-            previous_cars: step.train_cars.iter().map(|c| c.1).collect(),
-            definitions: self.train_sounds.clone(),
+            cars: cars.iter().map(|c| c.0).collect(),
+            previous_cars: cars.iter().map(|c| c.1).collect(),
+            definitions: definitions.to_vec(),
         })?;
+        let mut started = 0;
         for (index, command) in commands.iter().enumerate() {
-            let playing = mixer.playing(self.train_voices.get(&index).copied());
+            let playing = mixer.playing(voices.get(&index).copied());
             if !playing {
-                self.train_voices.remove(&index);
-                let definition = &self.train_sounds[index];
+                voices.remove(&index);
+                let definition = &definitions[index];
                 if !definition.start_disabled {
-                    let (sample, looping) = (definition.sample.clone(), definition.looping);
-                    let looping = if looping {
+                    let looping = if definition.looping {
                         Looping::Markers
                     } else {
                         Looping::Once
                     };
-                    if let Some(id) = self.start(mixer, &sample, looping, [0., 0.], "train") {
-                        self.train_voices.insert(index, id);
-                        self.stats.train += 1;
+                    if let Some(id) =
+                        self.start(mixer, &definition.sample, looping, [0., 0.], label)
+                    {
+                        voices.insert(index, id);
+                        started += 1;
                     }
                 }
             }
             // The original setter keeps the last parameters on an invalid pitch.
-            if let Some(&id) = self.train_voices.get(&index)
+            if let Some(&id) = voices.get(&index)
                 && !(command.pitch < -1 || command.pitch >= 0x4000)
             {
                 mixer.set_gains(
@@ -221,7 +271,7 @@ impl RideAudio {
                 mixer.set_rate(id, command.pitch.max(0) as f32 / 4096.);
             }
         }
-        Ok(())
+        Ok(started)
     }
 
     /// Venue echo type for Enhanced sound (op 172 index 2): stadiums from
@@ -873,6 +923,7 @@ mod tests {
             } else {
                 Vec::new()
             },
+            actor_emitters: Vec::new(),
         }
     }
 
@@ -935,6 +986,53 @@ mod tests {
         mixer.active = true;
         audio.step(&mut mixer, &step(1, 0., true, true)).unwrap();
         assert_eq!(audio.stats.train, 2);
+    }
+
+    #[test]
+    fn actor_loops_follow_their_emitters_and_fade_out_of_range() {
+        let bank =
+            super::super::bank::test_bank(&[("blimp", tone(0.1, Some((480., 2400.))))], None);
+        let mut audio = RideAudio::new(bank, SoundMode::Original);
+        audio.actor_sounds = vec![spatial_audio::Definition {
+            car: 0,
+            sample: "blimp".into(),
+            min_distance: 55.,
+            max_distance: 850.,
+            looping: true,
+            start_disabled: false,
+            position: None,
+        }];
+        let mut mixer = Mixer::new(48000);
+        let mut frame = step(0, 0., true, false);
+        // A blimp node 100 ft away to the left of the camera.
+        frame.actor_emitters = vec![(pose(-100., 20.), pose(-100., 20.))];
+        audio.step(&mut mixer, &frame).unwrap();
+        assert_eq!((audio.stats.actor, audio.stats.train), (1, 0));
+        let [(rate, [left, right])] = voices(&mixer, "actor")[..] else {
+            panic!("one actor voice");
+        };
+        assert!(
+            (rate - 1.).abs() < 1e-4 && (left - right).abs() > 0.05,
+            "{left} {right}"
+        );
+        // Beyond MaxDistance the same looping voice falls silent.
+        frame.actor_emitters = vec![(pose(-2000., 20.), pose(-2000., 20.))];
+        audio.step(&mut mixer, &frame).unwrap();
+        let [(_, gains)] = voices(&mixer, "actor")[..] else {
+            panic!("one actor voice");
+        };
+        assert_eq!(gains, [0., 0.]);
+        assert_eq!(audio.stats.actor, 1, "the loop is not restarted");
+        // No emitters (no actors on this route): nothing starts.
+        let mut quiet = RideAudio::new(
+            super::super::bank::test_bank(&[("blimp", tone(0.1, None))], None),
+            SoundMode::Original,
+        );
+        quiet.actor_sounds = audio.actor_sounds.clone();
+        quiet
+            .step(&mut Mixer::new(48000), &step(0, 0., true, false))
+            .unwrap();
+        assert_eq!(quiet.stats.actor, 0);
     }
 
     #[test]
