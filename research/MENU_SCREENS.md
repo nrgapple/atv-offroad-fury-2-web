@@ -28,8 +28,11 @@ used; these are approximate composites, not captures.
 | Pause | Near-black translucent rounded panel, italic title strip, gold pill | Same, as one compact list over the frozen ride |
 | 3D previews | Lit original models on the gray panel | Drawn opaque. The UI rider textures (`RIDEINFO.RES` `atv2_*_ui`) keep a specular/reflection mask in alpha (about 50/255 on shirt, pants and sleeves); treating it as transparency let the silver panel show through and turned the black jersey gray. Rider materials never alpha-cut |
 
-Original stats sliders, gear rows, profile pages and the four-player colour
-columns are not reproduced; the port has no matching systems yet.
+Original stats sliders, gear rows and the four-player colour columns are not
+reproduced; the port has no matching systems yet. The Profile Editor and View
+Profile pages use the main-menu layout (rows left, ride stage on the editor and
+view menus) with a label/value table on the silver panel for the name entry,
+profile lists, alerts, Overview, Trophies and Records (`PROFILE.md`).
 
 ## Navigation and value rows
 

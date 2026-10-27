@@ -189,6 +189,11 @@ pub struct Screen {
     pub notice: Option<String>,
     /// Single Player: the saved profile's points and race record.
     pub profile: Option<String>,
+    /// Profile Editor pages: the panel's table (label, value; a line
+    /// without a value spans the panel).
+    pub details: Vec<(String, String)>,
+    /// A page title in place of the page's own (Load/Copy/Delete Profile).
+    pub heading: Option<String>,
     /// The Free Ride Lobby page's room code and status.
     pub lobby: Option<controller::Lobby>,
     /// The page's slide-in while it opens (crate::transition).
@@ -207,6 +212,8 @@ fn stage_page(page: &str) -> bool {
             | "objectives"
             | "create-lobby"
             | "join-lobby"
+            | "profile"
+            | "profile-view"
     )
 }
 
@@ -456,6 +463,22 @@ fn page_element(view: &Viewport, s: &Screen) -> El {
     if m.portrait {
         style.grid_template_columns = vec![minmax(length(0.), fr(1.))];
         let stage = match page {
+            // Seven main rows and the six Profile Editor rows with its
+            // status line need more of the height than the others.
+            "main" => {
+                if h <= 640. {
+                    0.26
+                } else {
+                    0.36
+                }
+            }
+            "profile" | "profile-view" => {
+                if h <= 640. {
+                    0.2
+                } else {
+                    0.36
+                }
+            }
             page if stage_page(page) => {
                 if h <= 640. {
                     0.4
@@ -647,6 +670,13 @@ fn page_title(page: &str) -> &'static str {
         "race" => "Single Race",
         "championship" => "Championship",
         "objectives" => "Select Objective",
+        "profile" => "Profile Editor",
+        "profile-name" => "Profile Name Entry",
+        "profile-view" => "View Profile",
+        "profile-overview" => "Profile Overview",
+        "profile-trophies" => "Trophies",
+        "profile-records" => "Records",
+        "profile-slots" | "profile-confirm" => "Profile Editor",
         "gear" => "Rider Gear",
         "loading" => "Now Loading...",
         "settings" => "Settings",
@@ -709,7 +739,10 @@ fn heading(m: &Metrics, s: &Screen) -> El {
     })
     .paint(Paint::fill(fill))
     .content(Content::Text {
-        text: page_title(&s.page).into(),
+        text: s
+            .heading
+            .clone()
+            .unwrap_or_else(|| page_title(&s.page).into()),
         style,
         line_height: size * 1.05,
         wrap: false,
@@ -859,9 +892,98 @@ fn panel(m: &Metrics, s: &Screen, loading: bool) -> El {
             }
         }
         "loading" => panel = panel.child(loading_info(m, s)),
+        page if controller::profile_pages::DETAIL_PAGES.contains(&page) => {
+            panel = panel.child(details(m, s));
+        }
         _ => {}
     }
     panel
+}
+
+/// The Profile Editor pages' table on the silver panel (the original
+/// ProfileView pages' label/value rows).
+fn details(m: &Metrics, s: &Screen) -> El {
+    let size = if m.short {
+        15.
+    } else if m.portrait {
+        clamp(15., m.w * 0.04, 18.)
+    } else {
+        clamp(15., m.h * 0.026, 21.)
+    };
+    let mut table = El::new(Style {
+        padding: if m.portrait {
+            sides(6., 0., 4., 0.)
+        } else {
+            sides(clamp(8., m.h * 0.05, 48.), 0., 8., 0.)
+        },
+        max_size: Size {
+            width: length(640.),
+            height: auto(),
+        },
+        ..column(if m.short { 2. } else { 5. })
+    });
+    for (i, (label, value)) in s.details.iter().enumerate() {
+        let lead = i == 0 && !value.is_empty();
+        let label_style = TextStyle::new(
+            display(
+                size,
+                if value.is_empty() || lead { 800 } else { 700 },
+                false,
+            ),
+            Color::hex(if value.is_empty() || lead {
+                "#111"
+            } else {
+                "#3a3a3a"
+            }),
+        );
+        let wrap_text = |text: &str, style: TextStyle, grow: f32| {
+            El::new(Style {
+                flex_grow: grow,
+                flex_shrink: 1.,
+                min_size: Size {
+                    width: length(0.),
+                    height: auto(),
+                },
+                ..Default::default()
+            })
+            .content(Content::Text {
+                text: text.to_string(),
+                style,
+                line_height: size * 1.2,
+                wrap: true,
+            })
+        };
+        let mut line = El::new(Style {
+            align_items: AlignItems::FLEX_START,
+            padding: sides(2., 8., 2., 8.),
+            ..row(12.)
+        });
+        if !value.is_empty() {
+            line.paint.border = [0., 0., 1., 0.];
+            line.paint.border_color = Color::hex("#0000001f");
+            line.style.border = sides(0., 0., 1., 0.);
+        }
+        line = line.child(wrap_text(label, label_style, 1.));
+        if !value.is_empty() {
+            line = line.child(
+                El::new(Style {
+                    flex_shrink: 0.,
+                    max_size: Size {
+                        width: percent(0.55),
+                        height: auto(),
+                    },
+                    ..Default::default()
+                })
+                .content(Content::Ellipsis {
+                    text: value.clone(),
+                    style: TextStyle::new(display(size, 800, false), Color::hex("#111")),
+                    line_height: size * 1.2,
+                }),
+            );
+        }
+        table = table.child(line);
+    }
+    table
 }
 
 fn panel_logo(m: &Metrics, s: &Screen) -> Option<El> {
@@ -1215,15 +1337,27 @@ fn left(m: &Metrics, s: &Screen) -> El {
                 ));
             }
         }
-        "main" | "single" | "multiplayer" | "championship" | "objectives" => {
+        "main" | "single" | "multiplayer" | "championship" | "objectives" | "profile"
+        | "profile-name" | "profile-slots" | "profile-confirm" | "profile-view"
+        | "profile-overview" | "profile-trophies" | "profile-records" => {
+            if s.page == "profile-name" {
+                left = left.child(form(m, s));
+            }
             let mut rows = El::new(column(2.));
             rows.style.flex_shrink = 0.;
             rows.style.padding = sides(0., if m.portrait { 0. } else { 8. }, 0., 0.);
+            // A page with nothing but Back (the Overview and Trophies)
+            // keeps Back as its row.
+            let only_back = s.choices.iter().all(|(a, _)| a == "back");
             for (index, (action, label)) in s.choices.iter().enumerate() {
-                if action == "back" {
+                if action == "back" && !only_back {
                     continue;
                 }
-                rows = rows.child(menu_row(m, s, index, action, label));
+                rows = rows.child(if controller::stepper(action) {
+                    stepper_row(m, s, index, label)
+                } else {
+                    menu_row(m, s, index, action, label)
+                });
             }
             left = left.child(rows);
             if let Some(profile) = &s.profile {
@@ -1233,16 +1367,14 @@ fn left(m: &Metrics, s: &Screen) -> El {
                         margin: margins(12., 0., 0., if m.portrait { 0. } else { 8. }),
                         ..Default::default()
                     })
-                    .child(text(
-                        profile.clone(),
-                        TextStyle::new(display(16., 700, false), Color::hex("#f1d84e")).shadow(
-                            1.,
-                            2.,
-                            0.,
-                            Color::hex("#000a"),
-                        ),
-                        20.,
-                    )),
+                    // Wraps on narrow phones rather than running under Back.
+                    .content(Content::Text {
+                        text: profile.clone(),
+                        style: TextStyle::new(display(16., 700, false), Color::hex("#f1d84e"))
+                            .shadow(1., 2., 0., Color::hex("#000a")),
+                        line_height: 20.,
+                        wrap: true,
+                    }),
                 );
             }
             // `#menu-notice`, e.g. why a ride link could not open.
