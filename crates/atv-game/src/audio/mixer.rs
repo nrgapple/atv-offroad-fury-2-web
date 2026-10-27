@@ -394,6 +394,48 @@ pub struct Mixer {
     /// The latest soundtrack samples at its volume, mono, oldest first (the
     /// Jukebox analyser's tap on the music gain).
     pub analysis: [f32; super::spectrum::FFT],
+    /// Game Settings → Sound Configuration applied to the mixed output.
+    pub configuration: Configuration,
+}
+
+/// Settings_Game (PAGE15) "Sound Configuration". Dolby is the original's
+/// Pro Logic matrix-surround mode; a browser or desktop output has no
+/// matrix decoder to feed, so it renders as Stereo.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Configuration {
+    #[default]
+    Stereo,
+    Swapped,
+    Dolby,
+    Mono,
+}
+
+impl Configuration {
+    pub fn parse(value: &str) -> Self {
+        match value {
+            "swapped" => Self::Swapped,
+            "dolby" => Self::Dolby,
+            "mono" => Self::Mono,
+            _ => Self::Stereo,
+        }
+    }
+
+    /// Applies the configuration to interleaved stereo frames.
+    pub fn apply(self, out: &mut [f32]) {
+        match self {
+            Self::Stereo | Self::Dolby => {}
+            Self::Swapped => out
+                .as_chunks_mut::<2>()
+                .0
+                .iter_mut()
+                .for_each(|f| f.swap(0, 1)),
+            Self::Mono => out.as_chunks_mut::<2>().0.iter_mut().for_each(|f| {
+                let m = 0.5 * (f[0] + f[1]);
+                f[0] = m;
+                f[1] = m;
+            }),
+        }
+    }
 }
 
 impl Mixer {
@@ -420,6 +462,7 @@ impl Mixer {
             log: None,
             hype: super::hype::HypeAudio::new(rate),
             analysis: [0.; super::spectrum::FFT],
+            configuration: Configuration::Stereo,
         }
     }
 
@@ -571,6 +614,7 @@ impl Mixer {
     pub fn render(&mut self, out: &mut [f32]) {
         let started = web_time::Instant::now();
         self.mix(out);
+        self.configuration.apply(out);
         self.render_seconds += started.elapsed().as_secs_f64();
     }
 
@@ -708,6 +752,20 @@ impl Mixer {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn sound_configuration_swaps_or_folds_the_output() {
+        use super::Configuration as C;
+        let mut out = [1., 0., 0.25, 0.75];
+        C::Swapped.apply(&mut out);
+        assert_eq!(out, [0., 1., 0.75, 0.25]);
+        C::Mono.apply(&mut out);
+        assert_eq!(out, [0.5, 0.5, 0.5, 0.5]);
+        let mut out = [1., 0.];
+        C::parse("dolby").apply(&mut out);
+        assert_eq!(out, [1., 0.]);
+        assert_eq!(C::parse("surround"), C::Stereo);
+    }
+
     use super::*;
 
     fn tone(frames: usize) -> Arc<Pcm> {

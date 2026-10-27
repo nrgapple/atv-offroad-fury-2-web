@@ -160,10 +160,11 @@ pub fn grouped(n: i64) -> String {
 /// Not measured by the port (Freestyle objectives).
 const UNMEASURED: &str = "-";
 
-/// A jump length as the original prints it: "%d %s" with "Feet" (the
-/// value truncated; the Meters setting is not ported).
-pub fn feet(length: f32) -> String {
-    format!("{} Feet", length.max(0.) as i64)
+/// A jump length as the original prints it: "%d %s" with "Feet", or
+/// "Meters" (× 0.3048) under Game Settings → Measurement: Metric; the value
+/// truncated (`002585c0`).
+pub fn feet(length: f32, units: atv_core::hall_of_fame::Units) -> String {
+    units.jump(length.max(0.))
 }
 
 impl Frontend {
@@ -171,6 +172,7 @@ impl Frontend {
     /// from a ride, which may have credited a race), and the Hall of Fame.
     pub fn load_profiles(&mut self, settings: &Settings) {
         self.hall = crate::settings::load_hall_of_fame(settings);
+        self.units = crate::settings::units(settings);
         self.book = load_book(settings);
         self.profile = self.book.current_profile().cloned().unwrap_or_default();
     }
@@ -455,7 +457,7 @@ impl Frontend {
             line("Total Victories:", grouped(i64::from(p.wins))),
             line("Win Percentage:", format!("{:3.0}%", p.win_percentage())),
             line("Most Winning ATV:", self.vehicle_name(p.most_winning_atv())),
-            line("Longest Jump:", feet(p.stunts.longest_jump)),
+            line("Longest Jump:", feet(p.stunts.longest_jump, self.units)),
             line(
                 "Most Stunt Points In An Objective:",
                 p.best_objective().map_or(UNMEASURED.into(), grouped),
@@ -496,7 +498,10 @@ impl Frontend {
                     "Highest Objective Score:".into(),
                     grouped(record.objectives.first().copied().unwrap_or(0)),
                 ),
-                ("Longest Jump:".into(), feet(record.longest_jump())),
+                (
+                    "Longest Jump:".into(),
+                    feet(record.longest_jump(), self.units),
+                ),
             ];
         }
         let record = p.courses.get(id).cloned().unwrap_or_default();
@@ -510,7 +515,10 @@ impl Frontend {
                 format!("Best {laps}-Lap Time:"),
                 race_time(record.best_total_ms),
             ),
-            ("Longest Jump:".into(), feet(record.stunts.longest_jump)),
+            (
+                "Longest Jump:".into(),
+                feet(record.stunts.longest_jump, self.units),
+            ),
             (
                 "Most Winning ATV:".into(),
                 self.vehicle_name(record.most_winning_atv()),
@@ -572,7 +580,7 @@ impl Frontend {
             let jump = fame.longest_jump.as_ref();
             lines.push((
                 format!("Longest Jump: {}", who(jump.map(|e| &e.name))),
-                feet(jump.map_or(0., |e| e.value)),
+                feet(jump.map_or(0., |e| e.value), self.units),
             ));
             let combos = fame.most_combos.as_ref();
             lines.push((
@@ -619,7 +627,7 @@ impl Frontend {
         let jump = fame.longest_jump.as_ref();
         lines.push((
             format!("Longest Jump: {}", who(jump.map(|e| &e.name))),
-            feet(jump.map_or(0., |e| e.value)),
+            feet(jump.map_or(0., |e| e.value), self.units),
         ));
         let combos = fame.most_combos.as_ref();
         lines.push((

@@ -319,13 +319,15 @@ impl ObjectiveSession {
             let personal = atv_ui::settings::load_book(&saved)
                 .current_profile()
                 .map(|p| p.freestyle.get(&key).cloned().unwrap_or_default());
-            self.fame_start = Some(atv_core::hall_of_fame::FreestyleWatch::new(
+            let mut fame = atv_core::hall_of_fame::FreestyleWatch::new(
                 series.key,
                 &self.course,
                 ride.selection().quad,
                 Some(&atv_ui::settings::load_hall_of_fame(&saved)),
                 personal,
-            ));
+            );
+            fame.units = atv_ui::settings::units(&saved);
+            self.fame_start = Some(fame);
             self.start(ride);
         }
         if !self.targets.is_empty() && url_flag("objectiveTest=targets") {
@@ -1799,11 +1801,13 @@ impl App {
             // The saved settings the ride applies (tools/test_engine_settings.mjs).
             let graphics = ready.scene.graphics();
             let mixer = riding.sound.as_ref().and_then(|s| {
-                s.output
-                    .mixer
-                    .lock()
-                    .ok()
-                    .map(|m| (m.sfx_volume, m.music_volume))
+                s.output.mixer.lock().ok().map(|m| {
+                    (
+                        m.sfx_volume,
+                        m.music_volume,
+                        format!("{:?}", m.configuration),
+                    )
+                })
             });
             state["settings"] = serde_json::json!({
                 "speedRushPeak": riding.speed_rush_peak(),
@@ -1840,9 +1844,16 @@ impl App {
                 "wheelLift": riding.wheel_lift.get(),
                 "dirtLevel": riding.dirt.level(),
                 "dirtApplied": if riding.dirt_enabled { riding.dirt.amount() } else { 0. },
-                "sfx": mixer.map(|m| m.0), "music": mixer.map(|m| m.1),
+                "sfx": mixer.as_ref().map(|m| m.0), "music": mixer.as_ref().map(|m| m.1),
+
                 "soundMode": riding.sound.as_ref().map(|s| format!("{:?}", s.ride.mode)),
             });
+            // Game Settings (tools/test_engine_game_settings.mjs).
+            let game = &mut state["settings"];
+            game["soundConfiguration"] = mixer.as_ref().map(|m| m.2.clone()).into();
+            game["speedUnits"] = riding.ride.hud().units.into();
+            game["vegetationQuery"] = (!riding.ride.frame().skip_vegetation_query).into();
+            game["ecosystemCollisionOff"] = riding.ride.options.ecosystem_collision_off.into();
             publish_ui_state(&state.to_string());
         }
         let overlay = self.overlay.as_ref().filter(|_| !self.hide_ui);
@@ -2616,6 +2627,10 @@ impl App {
             flips: prefs.flips,
             realistic_train: prefs.realistic_train,
             arcade_flips: prefs.alpha("arcade-flips"),
+            metric: prefs.metric,
+            // "In i.LINK, LAN, and online play, Ecosystem Collision is
+            // always on" (`0020f780` sets +0x674 for network play).
+            ecosystem_collision_off: !prefs.ecosystem_collision && !riding.online,
         };
         // Settings → Alpha presentation (web/hype.js).
         riding.alpha_slowmo = prefs.alpha("air-slowmo");
@@ -2653,6 +2668,7 @@ impl App {
         }
         if let Some(sound) = &mut riding.sound {
             sound.set_volumes(prefs.sfx_volume, prefs.music_volume, prefs.music_enabled);
+            sound.set_configuration(&prefs.sound_configuration);
         }
         // A preset changed in the menu applies at once where it can.
         if self.graphics_pref.as_deref() != Some(prefs.graphics.as_str()) {
@@ -3593,6 +3609,11 @@ impl ApplicationHandler<Message> for App {
                             prefs.music_volume,
                             prefs.music_enabled,
                         );
+                    }
+                    // Game Settings → Sound Configuration, even for a held
+                    // or replayed ride (it is an output choice).
+                    if let Some(prefs) = self.overlay.as_ref().map(|o| &o.prefs) {
+                        sound.set_configuration(&prefs.sound_configuration);
                     }
                     // A race already under way holds the soundtrack now.
                     if let Some(music) = riding.ride.race().and_then(|r| r.music_now()) {
@@ -6659,6 +6680,13 @@ fn attach_records(ride: &mut atv_game::ride::Ride, course: &str) {
     let enduro = atv_game::launch::split_race_course(course).is_some_and(|(_, v)| v.is_enduro());
     let full = settings.laps == if enduro { 3 } else { 5 };
     let saved = Settings::load();
+    // "If Ecosystem Collision is turned off freestyle records will still be
+    // kept, but race records will not." Every race record hook tests
+    // settings +0x674 (`00324b40`..`00324f50`, `00332810`); Freestyle's
+    // (`00332e30`) does not.
+    if !atv_ui::settings::ecosystem_collision(&saved) {
+        return;
+    }
     let hall = load_hall_of_fame(&saved);
     let personal = load_book(&saved).current_profile().map(|p| {
         p.courses
@@ -6666,14 +6694,16 @@ fn attach_records(ride: &mut atv_game::ride::Ride, course: &str) {
             .map(|c| c.personal())
             .unwrap_or_default()
     });
-    race.set_records(atv_core::hall_of_fame::RecordWatch::new(
+    let mut records = atv_core::hall_of_fame::RecordWatch::new(
         course,
         settings.difficulty == 2,
         quad,
         full,
         Some(&hall),
         personal,
-    ));
+    );
+    records.units = atv_ui::settings::units(&saved);
+    race.set_records(records);
 }
 
 /// The replayed state, for the browser parity tool (`#trace`).

@@ -309,6 +309,8 @@ pub struct Vehicle {
     /// moving support (the Arlington train) and its body contacts keep
     /// friction. Off retains the recovered world-frame 001d8540 path.
     realistic_train: bool,
+    /// Game Settings → Ecosystem Collision (settings +0x674).
+    ecosystem_collision: bool,
 }
 impl Vehicle {
     pub fn new(mesh: &Mesh, data: &PhysicsData, origin: Vec3, yaw: f32) -> Result<Self> {
@@ -517,6 +519,7 @@ impl Vehicle {
             arcade_spin: None,
             flip_events: Vec::new(),
             realistic_train: false,
+            ecosystem_collision: true,
         })
     }
     /// Optional Extras flips (authored, from MX vs. ATV Unleashed). Off drops
@@ -546,6 +549,19 @@ impl Vehicle {
     /// Optional Extras realistic train riding (authored). Off is original.
     pub fn set_realistic_train(&mut self, enabled: bool) {
         self.realistic_train = enabled;
+    }
+    /// Game Settings → Ecosystem Collision. Off sets query bit 0 (skip
+    /// "Vegetation" objects) on the quad's and rider's collision objects at
+    /// setup (`001e1fd0`, `001e4c90`, `001e92c0`), and the edge launch's
+    /// one-second vegetation skip is then never cleared (`001e5260`).
+    pub fn set_ecosystem_collision(&mut self, on: bool) {
+        if self.ecosystem_collision == on {
+            return;
+        }
+        self.ecosystem_collision = on;
+        if !self.boundary_launch.active {
+            self.skip_vegetation_query = !on;
+        }
     }
     /// Touch flip request (see flip_tricks::Request); ignored while off.
     pub fn request_flip(&mut self, trick: crate::flip_tricks::Trick, launch: bool, hold: f32) {
@@ -904,7 +920,7 @@ impl Vehicle {
         self.body_config.center_of_mass = self.base_center;
         self.body_config.max_speed_squared = crate::boundary_launch::NORMAL_MAX_SPEED_SQUARED;
         self.boundary_launch.reset();
-        self.skip_vegetation_query = false;
+        self.skip_vegetation_query = !self.ecosystem_collision;
         self.body = BodyState::new(
             reset_origin,
             [(reset_yaw * 0.5).cos_d(), 0., (reset_yaw * 0.5).sin_d(), 0.],
@@ -2053,7 +2069,7 @@ impl Vehicle {
         );
         //001e5260 runs edge launch after physics and before impact/wreck gates.
         // Query bit0 excludes vegetation expansion, not terrain/static objects.
-        if self.boundary_launch.tick(dt, true)? {
+        if self.boundary_launch.tick(dt, self.ecosystem_collision)? {
             self.skip_vegetation_query = false;
         }
         if !self.boundary_launch.active
@@ -2484,6 +2500,39 @@ mod tests {
             vehicle.body_config.max_speed_squared,
             crate::boundary_launch::NORMAL_MAX_SPEED_SQUARED
         );
+    }
+    #[test]
+    fn ecosystem_collision_off_keeps_the_vegetation_query_bit() {
+        let (mut vehicle, terrain) = fixture();
+        enable_test_wrecks(&mut vehicle);
+        vehicle.set_ecosystem_collision(false);
+        assert!(vehicle.frame().skip_vegetation_query);
+        let config = crate::boundary_launch::Config {
+            terrain_width: 4.,
+            terrain_breadth: 4.,
+            width_scale: 1.,
+            breadth_scale: 1.,
+        };
+        vehicle.set_boundary(config, false).unwrap();
+        vehicle.body =
+            BodyState::new([100., 100., 500.], [1., 0., 0., 0.], &vehicle.body_config).unwrap();
+        vehicle.body.linear_velocity = [-50., -10., 0.];
+        for _ in 0..62 {
+            vehicle
+                .step_with_boundary_random(&terrain, VehicleInput::default(), 1. / 60., || [0; 4])
+                .unwrap();
+        }
+        // 001e5260 clears the launch's bit after a second only with +0x674.
+        assert!(vehicle.frame().boundary_launch.active);
+        assert!(vehicle.frame().skip_vegetation_query);
+        for _ in 0..600 {
+            if vehicle.advance_wreck(1. / 60., true).unwrap() {
+                break;
+            }
+        }
+        assert!(vehicle.frame().skip_vegetation_query);
+        vehicle.set_ecosystem_collision(true);
+        assert!(!vehicle.frame().skip_vegetation_query);
     }
     #[test]
     fn crowd_boundary_allows_the_original_extended_margin() {

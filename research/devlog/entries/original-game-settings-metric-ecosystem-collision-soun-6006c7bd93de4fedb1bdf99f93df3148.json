@@ -1,0 +1,14 @@
+{
+  "id": "original-game-settings-metric-ecosystem-collision-soun-6006c7bd93de4fedb1bdf99f93df3148",
+  "timestamp": "2026-10-27T16:03:35.721019+00:00",
+  "recorded_at": "2026-10-27T16:23:04.524806+00:00",
+  "kind": "build",
+  "title": "Original Game Settings: Metric, Ecosystem Collision, Sound Configuration",
+  "summary": "Settings \u2192 Game Settings ports the original Options \u2192 Game Settings page, restoring Measurement, Ecosystem Collision, and Sound Configuration options from the exact PS2 build.",
+  "details": [
+    "Measurement: Standard (U.S. system) or Metric. The game keeps one speed factor (0.68182 Mph or 1.08 Kph); Metric shows the speedometer in Kph and every jump record in Meters.\n\nEcosystem Collision On/Off: Off lets quads and riders ride through vegetation, stops race records (Freestyle records still count), and stays on in multiplayer. Turning it off shows the original Warning text with Yes/No.\n\nSound Configuration: Stereo, Stereo (Swapped), Dolby, Mono; Swapped and Mono apply to the mixed game audio; Dolby plays as Stereo.\n\nAdditional: King of the Hills hill bases and flags confirmed non-solid like the original (no collision mesh ships). Unit tests in atv-core/atv-ui/atv-game; browser test test_engine_game_settings.mjs covers warning No/Yes, Kph speedometer, vegetation skipped, Mono mixer, and persistence over reload. Settings, menu flows, menu parity and profile menu tests pass on host Chromium. PRs #355 and #356."
+  ],
+  "limitation": "Device-wide setting (original stores Measurement in the profile); web soundtrack element not affected by Swapped/Mono; motorcycles keep vegetation collision; Split Screen and Display Mode rows have no counterpart.",
+  "image": "/devlog-images/original-game-settings-metric-ecosystem-collision-soun-6006c7bd93de4fedb1bdf99f93df3148.png",
+  "caption": "Metric: the speedometer reads Kph"
+}
