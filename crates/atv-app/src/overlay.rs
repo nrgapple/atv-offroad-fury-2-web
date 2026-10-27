@@ -59,6 +59,8 @@ pub struct HudInput<'a> {
     pub training: Option<atv_ui::hud::training::View>,
     /// A mini-game's panel (research/GAMES.md).
     pub game: Option<atv_ui::hud::games::View>,
+    /// A target run's or mini-game's compass (Overlay Sets 5-7).
+    pub compass: Option<atv_ui::hud::race::CompassView>,
 }
 
 /// A press on a toolbar button or the minimap (utility pointers in touch.js).
@@ -86,6 +88,8 @@ pub struct Overlay {
     pub lobby: Option<atv_ui::menu::controller::Lobby>,
     /// Name tags drawn on the latest frame (tests).
     pub tags: usize,
+    /// The compass icons drawn on the latest frame, if a compass was (tests).
+    compass_icons: Option<Vec<String>>,
     pub fonts: Fonts,
     renderer: Renderer,
     pub settings: Settings,
@@ -213,6 +217,7 @@ impl Overlay {
             results_cache: None,
             help_open: false,
             tags: 0,
+            compass_icons: None,
             lobby: None,
             help_until: None,
             ride_started: false,
@@ -792,6 +797,13 @@ impl Overlay {
                 if let Some(lights) = frame.lights {
                     meter.paint_lamps(&mut items, lights, view.width, view.height);
                 }
+            }
+            self.compass_icons = None;
+            if race.is_none()
+                && let Some(compass) = h.compass.as_ref().filter(|_| meter.has_compass())
+            {
+                meter.paint_compass(&mut items, compass, view.width, view.height);
+                self.compass_icons = Some(compass.icons.iter().map(|(_, i)| i.clone()).collect());
             }
             if race.is_none() || self.race_overlays.shown("info") {
                 meter.paint_stunt(&mut self.fonts, &mut items, &h.hud, view.width, view.height);
@@ -1377,6 +1389,10 @@ impl Overlay {
                 "helpOpen": self.help_open,
                 // Tags and King of the Hills pills drawn last frame.
                 "tags": self.tags,
+                // A target run's or mini-game's compass icons; whether the
+                // King of the Hills pills use the original art.
+                "compass": self.compass_icons,
+                "pillArt": self.meter.as_ref().is_some_and(|m| m.pills.is_some()),
                 "meter": self.meter.is_some() && !self.minimap.settings.enabled,
                 "compact": self.toolbar_cache.as_ref().is_some_and(|(_, s, ..)| s.compact),
                 "minimap": {
