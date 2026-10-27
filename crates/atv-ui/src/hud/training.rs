@@ -112,6 +112,8 @@ pub fn element(view: &Viewport, state: &View, top: f32) -> El {
                     width: length(view.width),
                     height: auto(),
                 },
+                display: Display::Flex,
+                justify_content: JustifyContent::CENTER,
                 ..Default::default()
             })
             .child(line(banner.clone(), 34., 900, color, false)),

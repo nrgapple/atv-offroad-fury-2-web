@@ -8,7 +8,8 @@ simulation and original-game equivalence are separate gates.
 
 The all-venue FR/TR/SO census finds 105 raw emitter sections and 435 actor
 animation records across 40 venues. Native NumberOfEmitters indexes 80 declarations: NAT06's
-13 additional cloud sections and Training's 12 objective sections are dormant.
+13 additional cloud sections and Training's 12 objective sections are dormant
+(the lesson rules themselves are in [TRAINING.md](TRAINING.md)).
 Declarations can expand to multiple attachments; neither count means active
 browser effects. The private report retains common and mode sidecars separately.
 FREE06 FR adds 13 dust-wall records, Arlington FR adds locomotive smoke, and

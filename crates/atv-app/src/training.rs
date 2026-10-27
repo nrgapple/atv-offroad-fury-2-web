@@ -27,6 +27,8 @@ pub struct TrainingSession {
     /// The latest sample and line (diagnostics).
     last: Input,
     last_line: Option<u16>,
+    /// The lines shown, newest last (at most 32).
+    lines: Vec<u16>,
 }
 
 /// Whether the loaded profile owns store ATV 8, the blue Ravage Talon
@@ -68,6 +70,7 @@ impl TrainingSession {
             fast: crate::url_flag("trainingTest=fast"),
             last: Input::default(),
             last_line: None,
+            lines: Vec::new(),
             pass_from: (0..6).find(|n| crate::url_flag(&format!("trainingPass={n}"))),
             course: Course::new(completed_before),
             steps: 0,
@@ -119,9 +122,14 @@ impl TrainingSession {
         self.stunting = stunting;
         // Forward drive is gas; brake counts as reverse once the ATV no
         // longer rolls forward (the original's signed drive command).
-        let drive = if applied.throttle > 0.05 {
+        // The held ATV (a line playing) has no drive command.
+        let drive = if self.course.locked() {
+            0.
+        } else if applied.reverse {
+            -applied.throttle.max(applied.brake)
+        } else if applied.throttle > 0.05 {
             applied.throttle
-        } else if applied.brake > 0.05 && (applied.reverse || frame.speed <= 1.) {
+        } else if applied.brake > 0.05 && frame.speed <= 1. {
             -applied.brake
         } else {
             0.
@@ -143,8 +151,14 @@ impl TrainingSession {
         let recovered = resets != self.resets;
         self.resets = resets;
         self.last = input;
-        if let Some((line, _)) = self.course.caption {
+        if let Some((line, _)) = self.course.caption
+            && self.last_line != Some(line.id)
+        {
             self.last_line = Some(line.id);
+            if self.lines.len() == 32 {
+                self.lines.remove(0);
+            }
+            self.lines.push(line.id);
         }
         if self.fast {
             self.course.hurry();
@@ -204,6 +218,7 @@ impl TrainingSession {
         serde_json::json!({
             "origin": origin,
             "lastLine": self.last_line,
+            "lines": self.lines,
             "drive": self.last.drive,
             "grounded": self.last.grounded,
             "pitch": self.last.pitch,

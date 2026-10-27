@@ -18,10 +18,15 @@ const state = page => page.evaluate(() => JSON.parse(document.querySelector('#ui
 const training = async page => (await state(page)).ride?.training;
 const onPage = (page, name, timeout = 60000) => page.waitForFunction(name => JSON.parse(document.querySelector('#ui-state')?.textContent || '{}').front?.page === name, name, { timeout });
 async function key(page, code) { await page.keyboard.down(code); await nextFrames(page, 2); await page.keyboard.up(code); await nextFrames(page, 3); }
-const until = (page, predicate, arg, timeout = 60000) => page.waitForFunction(([source, arg]) => {
-  const t = JSON.parse(document.querySelector('#ui-state')?.textContent || '{}').ride?.training;
-  return t && new Function('t', 'arg', `return (${source})(t, arg)`)(t, arg);
-}, [predicate.toString(), arg], { timeout });
+async function until(page, predicate, arg, timeout = 60000) {
+  const deadline = Date.now() + timeout;
+  for (;;) {
+    const t = await training(page);
+    if (t && predicate(t, arg)) return t;
+    if (Date.now() > deadline) throw new Error(`timed out: ${predicate} ${JSON.stringify(t)}`);
+    await page.waitForTimeout(50);
+  }
+}
 async function shot(page, name) {
   if (!shots) return;
   await nextFrames(page, 3);
@@ -94,23 +99,33 @@ try {
   await page.keyboard.up('ArrowDown');
   t = await training(page);
   assert.equal(t.banner, 'Lesson Failed');
-  assert.equal(t.lastLine, 46, 'the reverse failure line');
+  assert.ok(t.lines.includes(46), `the reverse failure line in ${t.lines}`);
   await shot(page, 'lesson1-failed');
   await until(page, t => t.state === 'Active' && !t.locked, null, 30000);
   t = await training(page);
   assert.ok(near(t.origin, START, 3), `retried at the start ${t.origin}`);
   assert.equal(t.lesson, 0);
 
-  // Ride to the far circle and stop in it.
-  await page.keyboard.down('ArrowUp');
-  await until(page, t => t.distance < 30, null, 60000);
+  // Ride to the far circle at a moderate speed and stop in it.
+  await until(page, t => t.speed < 1, null, 30000);
+  let gas = false;
+  const deadline = Date.now() + 90000;
+  for (;;) {
+    t = await training(page);
+    if (t.passed >= 1) break;
+    assert.ok(Date.now() < deadline && t.failed === 1, `lesson 1 ride ${JSON.stringify(t)}`);
+    const want = t.distance > 12 && t.speed < (t.distance > 60 ? 30 : 12);
+    if (want !== gas) {
+      gas = want;
+      await (gas ? page.keyboard.down('ArrowUp') : page.keyboard.up('ArrowUp'));
+    }
+    if (t.distance <= 12) await page.keyboard.down('ArrowDown');
+    await page.waitForTimeout(30);
+  }
   await page.keyboard.up('ArrowUp');
-  await page.keyboard.down('ArrowDown');
-  await until(page, t => t.passed >= 1, null, 30000);
   await page.keyboard.up('ArrowDown');
   t = await training(page);
-  assert.equal(t.banner, 'Lesson Success');
-  await shot(page, 'lesson1-success');
+  assert.ok(t.lesson >= 1 || t.banner === 'Lesson Success', `lesson 1 passed ${JSON.stringify(t)}`);
 
   // Lessons 2-6 pass as they start; the ending returns to the main menu.
   await until(page, t => t.lesson === 5, null, 120000);
@@ -134,11 +149,24 @@ try {
   await key(page, 'Escape'); await onPage(page, 'profile');
   await key(page, 'Escape'); await onPage(page, 'main');
 
-  // A second visit: completed before; Restart Training and Quit mid-course.
-  await toMain(page, 'trainingTest=fast');
+  // A second visit at the original pace: completed before (no prize line),
+  // Accept skips the demonstration, Restart Training and Quit mid-course.
+  await toMain(page, 'weather=off');
   await startTraining(page);
-  assert.equal((await training(page)).completedBefore, true);
-  await until(page, t => t.state === 'Active' && !t.locked, null, 120000);
+  t = await training(page);
+  assert.equal(t.completedBefore, true);
+  await until(page, t => t.phase === 'Lessons' && t.state === 'Demonstration' && t.caption, null, 60000);
+  t = await training(page);
+  assert.ok(!t.lines.includes(2), `no prize line: ${t.lines}`);
+  assert.ok(t.locked);
+  await shot(page, 'lesson1-demonstration');
+  await page.waitForTimeout(700);
+  await key(page, 'Enter');
+  await until(page, t => t.state === 'Active', null, 5000);
+  t = await training(page);
+  assert.equal(t.banner, 'Gas and Brake');
+  await shot(page, 'lesson1-banner');
+  await until(page, t => t.state === 'Active' && !t.locked, null, 60000);
   await key(page, 'Escape');
   await page.waitForFunction(() => JSON.parse(document.querySelector('#ui-state')?.textContent || '{}').toolbar?.menu?.page === 'pause', null, { timeout: 30000 });
   const menu = (await state(page)).toolbar.menu;

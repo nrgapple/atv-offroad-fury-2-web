@@ -432,7 +432,7 @@ impl Course {
         out
     }
 
-    /// Random line, as `FUN_0036e7a0` picks from a list.
+    /// Random line, as `0036e7a0` picks from a list.
     fn pick(&mut self, lines: &[Line]) -> Line {
         self.rng = self.rng.wrapping_mul(1_103_515_245).wrapping_add(12_345);
         lines[(self.rng >> 16) as usize % lines.len()]
@@ -453,7 +453,7 @@ impl Course {
         };
     }
 
-    /// Stops the spoken lines (`FUN_00150bd0`).
+    /// Stops the spoken lines (`00150bd0`).
     fn hush(&mut self) {
         self.queue.clear();
         self.caption = None;
