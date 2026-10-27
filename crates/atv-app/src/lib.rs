@@ -1897,7 +1897,7 @@ impl App {
                                 serde_json::json!({"mcf": a.definition.mcf,
                                 "model": actors.models[a.model].name,
                                 "offset": a.definition.offset, "root": root,
-                                "time": actors.motion_time(i)})
+                                "playing": a.playing, "time": actors.motion_time(i)})
                             })
                             .collect();
                         // Loop sounds: sample, owning actor and the attached
@@ -1915,7 +1915,13 @@ impl App {
                         serde_json::json!({"count": actors.actors.len(),
                         "models": actors.models.len(), "clips": actors.clips.len(),
                         "steps": actors.steps(), "visible": visible, "culled": culled,
-                        "draws": draws, "list": list, "sounds": sounds})
+                        "draws": draws, "list": list, "sounds": sounds,
+                        "triggers": actors.triggers.iter().zip(&actors.fired)
+                            .map(|((t, targets), fired)| serde_json::json!({
+                                "name": t.name, "position": t.position, "box": t.extents,
+                                "enabled": t.enabled, "percent": t.percent,
+                                "targets": targets, "fired": fired}))
+                            .collect::<Vec<_>>()})
                     });
             if let Some(overlay) = &self.overlay {
                 state["toolbar"] = overlay.diagnostics();

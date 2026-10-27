@@ -67,6 +67,33 @@ fn every_venue_route_resolves_its_keyframed_actors() {
                         ))
                         .or_insert(0) += 1;
                 }
+                // SX10's roof trigger starts both roofs on a successful entry.
+                if environment == "sx10" {
+                    assert_eq!(actors.triggers.len(), 1, "openroof only");
+                    let (trigger, targets) = actors.triggers[0].clone();
+                    assert_eq!(targets.len(), 2);
+                    let before: Vec<_> = targets
+                        .iter()
+                        .map(|&a| actors.pose(a).unwrap().nodes)
+                        .collect();
+                    let mut entries = 0;
+                    while actors.fired[0] == 0 {
+                        actors.contact(trigger.position);
+                        actors.contact([0., -1000., 0.]);
+                        entries += 1;
+                        assert!(entries < 1000);
+                    }
+                    for _ in 0..120 {
+                        actors.step();
+                    }
+                    for (i, &a) in targets.iter().enumerate() {
+                        assert!(actors.actors[a].playing);
+                        assert_ne!(actors.pose(a).unwrap().nodes, before[i], "the roof opens");
+                    }
+                    println!("sx10 racing={racing}: roofs opened after {entries} entries");
+                } else {
+                    assert!(actors.triggers.is_empty(), "{environment}");
+                }
                 for (now, before) in actors.sound_emitters() {
                     assert!(now.iter().chain(&before).all(|v| v.is_finite()));
                 }

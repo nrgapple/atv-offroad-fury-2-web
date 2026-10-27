@@ -260,6 +260,88 @@ fn loop_sounds(toy: &Toy, section: &str) -> Vec<LoopSound> {
         .collect()
 }
 
+/// A TOY `[TriggerN]` with `ActionType=Animation` actions
+/// (`AnimationTriggerAction`, `0023dec0`): touching it starts each named
+/// actor's first sequence (`0020c910` → `0020d260`). SX10's stadium roofs
+/// are the only shipped users.
+#[derive(Clone, Debug, PartialEq)]
+pub struct AnimationTrigger {
+    pub name: String,
+    pub position: [f32; 3],
+    /// `Box` half extents about `position`.
+    pub extents: [f32; 3],
+    /// `StartEnabled` (default 1, `0023ff80`).
+    pub enabled: bool,
+    pub one_time: bool,
+    /// `RandomTriggerPercent` (default 100, `0023ff80`).
+    pub percent: f32,
+    /// `AnimationNameRef`s: the actors' `ReferenceName`s.
+    pub targets: Vec<String>,
+    /// Whether the rider touched the box on the previous step.
+    pub inside: bool,
+}
+
+impl AnimationTrigger {
+    /// One step of contact: on entering the box an enabled trigger rolls
+    /// `RandomTriggerPercent` with `random` (0..=0x7fff_ffff) and fires on
+    /// success; a fired `OneTimeOnly` trigger disables itself. Returns
+    /// whether it fired. Rolling once per entry is an inference; the
+    /// original roll site was not decompiled (research/AMBIENT_ACTORS.md).
+    pub fn contact(&mut self, point: [f32; 3], random: impl FnOnce() -> u32) -> bool {
+        let inside = (0..3).all(|i| (point[i] - self.position[i]).abs() <= self.extents[i]);
+        let entered = inside && !self.inside;
+        self.inside = inside;
+        if !entered || !self.enabled {
+            return false;
+        }
+        let roll = random() as f32 / 0x8000_0000u32 as f32 * 100.;
+        if roll >= self.percent {
+            return false;
+        }
+        if self.one_time {
+            self.enabled = false;
+        }
+        true
+    }
+}
+
+/// The TOY's triggers that start actors (`[Triggers] NumberOfTriggers`,
+/// only the first `NumberOfActions` actions of each are read).
+pub fn animation_triggers(text: &str) -> Vec<AnimationTrigger> {
+    let toy = Toy::parse(text);
+    let count = int(&toy, "Triggers", "NumberOfTriggers", 0).clamp(0, 512);
+    (1..=count)
+        .filter_map(|n| {
+            let section = format!("Trigger{n}");
+            let position = toy.vec3(&section, "Position")?;
+            let actions = int(&toy, &section, "NumberOfActions", 0).clamp(0, 16);
+            let targets: Vec<String> = (1..=actions)
+                .map(|a| format!("Trigger{n}Action{a}"))
+                .filter(|action| {
+                    toy.get(action, "ActionType")
+                        .is_some_and(|k| k.trim().eq_ignore_ascii_case("Animation"))
+                })
+                .filter_map(|action| toy.get(&action, "AnimationNameRef"))
+                .map(|name| name.trim().trim_matches('"').to_string())
+                .collect();
+            (!targets.is_empty()).then(|| AnimationTrigger {
+                name: toy.get(&section, "Name").unwrap_or("").trim().to_string(),
+                position,
+                extents: toy.vec3(&section, "Box").unwrap_or([0.; 3]),
+                enabled: flag(&toy, &section, "StartEnabled", true),
+                one_time: flag(&toy, &section, "OneTimeOnly", false),
+                percent: toy
+                    .get(&section, "RandomTriggerPercent")
+                    .and_then(|v| v.trim().parse::<f32>().ok())
+                    .filter(|v| v.is_finite())
+                    .unwrap_or(100.),
+                targets,
+                inside: false,
+            })
+        })
+        .collect()
+}
+
 /// One `[MOTION n]` of an `.mcf` motion catalog.
 #[derive(Clone, Debug, PartialEq)]
 pub struct McfMotion {
@@ -342,6 +424,38 @@ mod tests {
         BlendSequence1=F\nProbabilityList1=100\nLoopSequence1=F\nSequenceActive1=F\n\
         NameOfSequence2=close\nNumberInSequence2=2\nMotionSequence2=2,1\nLoopSequence2=no\nSequenceActive2=F\n\
         [Animation4]\nMCF=windmill.mcf\nAnimationType=KeyFramed\nUseCollision=t\n";
+
+    #[test]
+    fn sx10_roof_trigger_reads_only_its_counted_actions_and_fires_on_entry() {
+        let toy = "[Triggers]\nNumberOfTriggers=1\n[Trigger1]\nName=openroof\nNumberOfActions=2\n\
+            Zone=1\nPosition=340,105,225\nBox=40,25,30\nStartEnabled = TRUE\nOneTimeOnly = TRUE\n\
+            RandomTriggerPercent = 15.000000\n[Trigger1Action1]\nActionType=Animation\n\
+            AnimationNameRef=southroof\n[Trigger1Action2]\nActionType=Animation\nAnimationNameRef=northroof\n\
+            [Trigger1Action3]\nActionType = EnableTrigger\nTriggerNameRef = closeroof\n\
+            [Trigger2]\nName=closeroof\nNumberOfActions=2\nPosition=420,105,680\nBox=30,25,25\n\
+            [Trigger2Action1]\nActionType=ChangeAnimSequence\nAnimationNameRef=southroof\n";
+        let mut triggers = animation_triggers(toy);
+        assert_eq!(
+            triggers.len(),
+            1,
+            "NumberOfTriggers=1 leaves closeroof unread"
+        );
+        let t = &mut triggers[0];
+        assert_eq!(t.targets, ["southroof", "northroof"]);
+        assert!(t.enabled && t.one_time && t.percent == 15.);
+        let outside = [340., 105., 300.];
+        let inside = [370., 120., 200.];
+        assert!(!t.contact(outside, || 0));
+        // A failed roll (>= 15%) leaves it armed; staying inside rolls no more.
+        assert!(!t.contact(inside, || 0x2000_0000));
+        assert!(!t.contact(inside, || panic!("no roll while inside")));
+        assert!(!t.contact(outside, || 0));
+        // The next entry succeeds and disarms the one-time trigger.
+        assert!(t.contact(inside, || 0x1000_0000));
+        assert!(!t.enabled);
+        t.contact(outside, || 0);
+        assert!(!t.contact(inside, || 0));
+    }
 
     #[test]
     fn loop_sounds_attach_to_named_nodes() {

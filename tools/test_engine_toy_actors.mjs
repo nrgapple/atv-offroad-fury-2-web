@@ -12,6 +12,10 @@
 //    attaches to its `p_plane` node, the emitter flies with the motion and,
 //    when the package carries soultree/p/plane.vag, one looping actor voice
 //    plays (the audio diagnostics count it).
+// 5. Supercross Freeride on sx10: the TOY's one animation trigger
+//    (`openroof`, RandomTriggerPercent 15, one time) links both stadium
+//    roofs, which hold their closed t=0 pose until it fires. Firing is
+//    covered by crates/atv-game/tests/toy_actors.rs.
 // ATV_ACTORS_SCREENSHOT=<prefix> saves the windmill view.
 import assert from 'node:assert/strict';
 import { assertNoErrors, launch, newPage, nextFrames, optionalScreenshot, url } from './browser/harness.mjs';
@@ -126,7 +130,21 @@ try {
     heard = `${a.actorSounds.voices} looping actor voice(s)`;
   }
   assertNoErrors(errors);
-  console.log(`TOY actors: env02 crows and windmill animate and pause, motorcycle view draws, nat03 race seagulls, env03 plane loop (${heard})`);
+
+  // 5. SX10's roofs wait for their trigger.
+  await page.goto(url('/play.html?venue=sx10&uiDiagnostics=1&weather=off'));
+  await ready(page);
+  s = await state(page);
+  assert.equal(s.actors.count, 2, JSON.stringify(s.actors.list.map(a => a.mcf)));
+  assert.equal(s.actors.triggers.length, 1, JSON.stringify(s.actors.triggers));
+  const roof = s.actors.triggers[0];
+  assert.equal(roof.name, 'openroof');
+  assert.equal(roof.percent, 15);
+  assert.deepEqual([...roof.targets].sort(), [0, 1]);
+  assert.ok(roof.enabled && roof.fired === 0, JSON.stringify(roof));
+  assert.ok(s.actors.list.every(a => !a.playing && a.time === 0), 'closed roofs hold t=0');
+  assertNoErrors(errors);
+  console.log(`TOY actors: env02 crows and windmill animate and pause, motorcycle view draws, nat03 race seagulls, env03 plane loop (${heard}), sx10 roof trigger armed`);
 } finally {
   await browser.close();
 }

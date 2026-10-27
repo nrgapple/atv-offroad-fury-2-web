@@ -96,6 +96,12 @@ pub struct Actors {
     pub unresolved: Vec<(String, String)>,
     /// Every actor's `[AnimationNLoopSoundM]`, in actor order.
     pub sounds: Vec<ActorSound>,
+    /// The TOYs' animation triggers and the actors each one starts.
+    pub triggers: Vec<(toy_actors::AnimationTrigger, Vec<usize>)>,
+    /// How many times each trigger fired (diagnostics).
+    pub fired: Vec<u32>,
+    /// The trigger roll stream (local seed, research/AMBIENT_ACTORS.md).
+    random: Option<atv_core::engine_audio::OriginalRandom>,
     /// Scene clock: whole 60 Hz steps.
     steps: u64,
     /// Poses of the current step, shared by actors on the same model,
@@ -144,6 +150,37 @@ impl Actors {
             }
             _ => 0.,
         }
+    }
+
+    /// Starts `actor`'s motion from t=0 now (`0020d260`: the sequence
+    /// becomes active and its first motion restarts).
+    pub fn start(&mut self, actor: usize) {
+        let time = self.time();
+        if let Some(a) = self.actors.get_mut(actor) {
+            a.playing = true;
+            a.phase = -time;
+            self.cache.get_mut().clear();
+        }
+    }
+
+    /// One step of the vehicle at `point` against the animation triggers;
+    /// returns how many fired.
+    pub fn contact(&mut self, point: [f32; 3]) -> usize {
+        let mut started = Vec::new();
+        let random = self
+            .random
+            .get_or_insert_with(|| atv_core::engine_audio::OriginalRandom::with_seed(97211));
+        for (i, (trigger, targets)) in self.triggers.iter_mut().enumerate() {
+            if trigger.contact(point, || random.next_u31()) {
+                self.fired[i] += 1;
+                started.extend(targets.iter().copied());
+            }
+        }
+        let fired = started.len();
+        for actor in started {
+            self.start(actor);
+        }
+        fired
     }
 
     /// Each sound's emitter world matrix at this step and one step before
@@ -349,6 +386,28 @@ pub fn load(
                 // `0023cdc0` starts every motion at t=0: no random phase.
                 phase: 0.,
             });
+        }
+    }
+    // Animation triggers name their actors by `ReferenceName`; a trigger
+    // whose actors are all missing is dropped.
+    for toy in toys {
+        for trigger in toy_actors::animation_triggers(&String::from_utf8_lossy(toy)) {
+            let targets: Vec<usize> = trigger
+                .targets
+                .iter()
+                .filter_map(|name| {
+                    actors.actors.iter().position(|a| {
+                        a.definition
+                            .reference_name
+                            .trim_matches('"')
+                            .eq_ignore_ascii_case(name)
+                    })
+                })
+                .collect();
+            if !targets.is_empty() {
+                actors.triggers.push((trigger, targets));
+                actors.fired.push(0);
+            }
         }
     }
     Ok(actors)
