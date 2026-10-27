@@ -214,6 +214,9 @@ pub struct Ride {
     /// `stunt_landed`/`stunt_result`, for flash bursts and crowd cues).
     stunt_landed: bool,
     stunt_result: Option<bool>,
+    /// Finished stunt chains (success, events, points sum) for the race's
+    /// stunt records (`001f22a0`).
+    race_chains: Vec<(bool, usize, f32)>,
     /// Stunt ids of the open chain, and finished chains (success, ids) for
     /// Freestyle objectives (`002fc050` counts combos by their stunts).
     chain_ids: Vec<usize>,
@@ -410,6 +413,7 @@ impl Ride {
             race: None,
             stunt_landed: false,
             stunt_result: None,
+            race_chains: Vec::new(),
             chain_ids: Vec::new(),
             chains: Vec::new(),
             options: RideOptions::default(),
@@ -1217,9 +1221,14 @@ impl Ride {
                 stunt_score::Notification::Started { id, .. } => self.chain_ids.push(id),
                 stunt_score::Notification::ChainFinished {
                     success,
+                    chain_count,
+                    sum_points,
                     display_count,
                     ..
                 } => {
+                    if self.race.is_some() {
+                        self.race_chains.push((success, chain_count, sum_points));
+                    }
                     let ids = std::mem::take(&mut self.chain_ids);
                     if self.chains.len() < 64 {
                         self.chains.push((success, ids));

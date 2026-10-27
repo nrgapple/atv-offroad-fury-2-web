@@ -588,6 +588,15 @@ impl Ride {
             .collect();
         race.step(player.origin, STEP);
         race.record_player_stunt(committed);
+        race.record_player_jump(
+            player.grounded.iter().any(|g| *g),
+            player.origin,
+            player.reset_count,
+            STEP,
+        );
+        for (success, count, sum) in self.race_chains.drain(..) {
+            race.record_player_chain(success, count, sum);
+        }
         let terrain = &self.sim.terrain;
         let hold = race.holding();
         let snapshots: Vec<_> = state

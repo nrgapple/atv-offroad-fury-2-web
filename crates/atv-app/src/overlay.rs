@@ -931,6 +931,7 @@ impl Overlay {
                 best_lap: you.best,
                 total: you.time.filter(|_| !you.estimated),
                 full_length,
+                stunts: frame.player_stunts.records,
             });
         }
         if let Some((round, places)) = self.results.championship.clone()
