@@ -35,6 +35,14 @@ try {
   const profile = JSON.parse(await page.evaluate(() => localStorage.getItem('fury-profile')));
   assert.equal(profile.points, 100 + award, `profile ${JSON.stringify(profile)} after place ${you.position}, award ${award}`);
   assert.equal(profile.wins, 1 + (you.position === 1 ? 1 : 0));
+  // The migrated PLAYER1 keeps the course record (00322080): one sx01 race,
+  // no best lap (Track flag 8 skips the first lap, 00248b20) and no
+  // full-length time for a one-lap race.
+  assert.equal(profile.name, 'PLAYER1');
+  assert.equal(profile.courses?.sx01?.races, 1, JSON.stringify(profile));
+  assert.equal(profile.courses.sx01.best_lap_ms, undefined);
+  assert.equal(profile.courses.sx01.best_total_ms, undefined);
+  assert.equal(JSON.parse(await page.evaluate(() => localStorage.getItem('fury-profiles'))).profiles[0].races, 5);
   // Credited once: later frames leave the record alone.
   await page.waitForTimeout(1500);
   const again = JSON.parse(await page.evaluate(() => localStorage.getItem('fury-profile')));

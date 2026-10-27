@@ -97,6 +97,8 @@ pub struct Results {
     /// The recorded round's next step (the original ChampionshipRaceOver
     /// menu: Continue Championship / Quit to Championship Menu).
     pub round: Option<Round>,
+    /// No profile was loaded: the race earned nothing and nothing was saved.
+    pub no_profile: bool,
 }
 
 impl Results {
@@ -111,6 +113,7 @@ impl Results {
         self.championship = frame.championship.map(|round| (round, frame.ranks.clone()));
         self.championship_line = None;
         self.round = None;
+        self.no_profile = false;
         // A championship round's course table, already chosen for the
         // series and difficulty.
         let course = self.championship.as_ref().map(|(round, _)| CourseAwards {
@@ -157,8 +160,24 @@ impl Results {
         true
     }
 
+    /// No profile is loaded: `001f1e30` gives the rider no Profile Points
+    /// and nothing is recorded.
+    pub fn mark_no_profile(&mut self) {
+        self.no_profile = true;
+        if let Some(award) = &mut self.award {
+            award.2 = 0;
+        }
+        if let Some(row) = self.player_row.and_then(|i| self.rows.get_mut(i)) {
+            row[4] = "0".into();
+        }
+    }
+
     /// The original "and %d Profile Points!" line after the summary.
     pub fn points_line(&self) -> String {
+        if self.no_profile {
+            // The original's alert (0x431440).
+            return " · Remember, your progress is not being saved!".into();
+        }
         let championship = self
             .championship_line
             .as_deref()

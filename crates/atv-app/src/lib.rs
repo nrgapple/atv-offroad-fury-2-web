@@ -3038,6 +3038,24 @@ impl ApplicationHandler<Message> for App {
                             .riding
                             .as_ref()
                             .is_some_and(|r| r.ride.race().is_some());
+                        // The profile's course record (`001f1e30` keeps lap
+                        // and race times only at the default 3 Enduro / 5
+                        // other laps).
+                        overlay.race_entry = ready.riding.as_ref().and_then(|r| {
+                            let laps = r.ride.race()?.settings().laps;
+                            let course = ready.venue.environment.clone();
+                            let enduro = atv_game::launch::split_race_course(&course).is_some_and(
+                                |(_, v)| {
+                                    matches!(
+                                        v,
+                                        atv_game::launch::RaceVariant::EnduroLong
+                                            | atv_game::launch::RaceVariant::EnduroShort
+                                    )
+                                },
+                            );
+                            let full = laps == if enduro { 3 } else { 5 };
+                            Some((course, r.ride.selection().quad, full))
+                        });
                         self.graphics_pref = Some(overlay.prefs.graphics.clone());
                         self.overlay = Some(overlay);
                     }
