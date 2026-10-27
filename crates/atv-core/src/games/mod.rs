@@ -621,6 +621,56 @@ mod tests {
         }
     }
 
+    /// Private probe: the King of the Hills scenes add only the `kohbase`
+    /// and `kohflag` models, and no game archive ships a collision mesh for
+    /// them (the original's static collision skips models without a COL,
+    /// `00206e90`); every COL a game archive carries is the Freeride one.
+    #[test]
+    fn hill_scene_objects_have_no_collision_meshes() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../private/extracted");
+        if !root.join("TRACKS/TRACKSA/ENV05/E05_FR.RES").exists() {
+            eprintln!("skipped: private archives are not extracted");
+            return;
+        }
+        for venue in [
+            "env01", "env02", "env03", "env04", "env05", "env06", "env07", "env08", "free01",
+            "free02", "free03", "free04", "free05", "free06",
+        ] {
+            let path = game_archive(GameKind::KingOfTheHills, venue).unwrap();
+            let bytes = std::fs::read(root.join(&path[1..])).unwrap();
+            let archive = crate::resource::Resource::parse(&bytes).unwrap();
+            for name in ["geometry/kohbase.col", "geometry/kohflag.col"] {
+                assert!(
+                    !archive
+                        .members
+                        .iter()
+                        .any(|m| m.name.eq_ignore_ascii_case(name)),
+                    "{venue} {name}"
+                );
+            }
+        }
+        let read = |p: &str| std::fs::read(root.join(p)).unwrap();
+        let (kh, fr) = (
+            read("TRACKS/TRACKSA/ENV05/E05_KH.RES"),
+            read("TRACKS/TRACKSA/ENV05/E05_FR.RES"),
+        );
+        let (kh, fr) = (
+            crate::resource::Resource::parse(&kh).unwrap(),
+            crate::resource::Resource::parse(&fr).unwrap(),
+        );
+        for (i, m) in kh.members.iter().enumerate() {
+            if !m.name.to_ascii_lowercase().ends_with(".col") {
+                continue;
+            }
+            let j = fr
+                .members
+                .iter()
+                .position(|f| f.name.eq_ignore_ascii_case(&m.name))
+                .unwrap_or_else(|| panic!("{} only in the game archive", m.name));
+            assert_eq!(kh.extract(i).unwrap(), fr.extract(j).unwrap(), "{}", m.name);
+        }
+    }
+
     #[test]
     fn time_limit_steps_two_to_twenty_and_wraps() {
         assert_eq!(step_minutes(DEFAULT_MINUTES, 1), 6);
