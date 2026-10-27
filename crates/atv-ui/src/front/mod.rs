@@ -459,6 +459,22 @@ fn page_element(view: &Viewport, s: &Screen) -> El {
     if m.portrait {
         style.grid_template_columns = vec![minmax(length(0.), fr(1.))];
         let stage = match page {
+            // Seven main rows and the six Profile Editor rows with its
+            // status line need more of the height than the others.
+            "main" => {
+                if h <= 640. {
+                    0.26
+                } else {
+                    0.36
+                }
+            }
+            "profile" | "profile-view" => {
+                if h <= 640. {
+                    0.2
+                } else {
+                    0.36
+                }
+            }
             page if stage_page(page) => {
                 if h <= 640. {
                     0.4
@@ -1325,8 +1341,11 @@ fn left(m: &Metrics, s: &Screen) -> El {
             let mut rows = El::new(column(2.));
             rows.style.flex_shrink = 0.;
             rows.style.padding = sides(0., if m.portrait { 0. } else { 8. }, 0., 0.);
+            // A page with nothing but Back (the Overview and Trophies)
+            // keeps Back as its row.
+            let only_back = s.choices.iter().all(|(a, _)| a == "back");
             for (index, (action, label)) in s.choices.iter().enumerate() {
-                if action == "back" {
+                if action == "back" && !only_back {
                     continue;
                 }
                 rows = rows.child(if controller::stepper(action) {
@@ -1343,16 +1362,14 @@ fn left(m: &Metrics, s: &Screen) -> El {
                         margin: margins(12., 0., 0., if m.portrait { 0. } else { 8. }),
                         ..Default::default()
                     })
-                    .child(text(
-                        profile.clone(),
-                        TextStyle::new(display(16., 700, false), Color::hex("#f1d84e")).shadow(
-                            1.,
-                            2.,
-                            0.,
-                            Color::hex("#000a"),
-                        ),
-                        20.,
-                    )),
+                    // Wraps on narrow phones rather than running under Back.
+                    .content(Content::Text {
+                        text: profile.clone(),
+                        style: TextStyle::new(display(16., 700, false), Color::hex("#f1d84e"))
+                            .shadow(1., 2., 0., Color::hex("#000a")),
+                        line_height: 20.,
+                        wrap: true,
+                    }),
                 );
             }
             // `#menu-notice`, e.g. why a ride link could not open.

@@ -284,24 +284,28 @@ impl Frontend {
         let current = self.book.current_profile();
         match self.page.as_str() {
             "profile-name" => vec![
-                line("Enter Player Profile Save File Name:", String::new()),
                 line(
                     match self.profile_ui.name_for {
                         NameFor::Create => "New profile",
                         NameFor::Copy(_) => "Copy of",
                     },
                     match self.profile_ui.name_for {
-                        NameFor::Create => format!(
-                            "Save file {} of {}",
-                            self.book.profiles.len() + 1,
-                            atv_core::profile::SLOTS
-                        ),
+                        NameFor::Create => String::new(),
                         NameFor::Copy(i) => self
                             .book
                             .profiles
                             .get(i)
                             .map_or(String::new(), |p| p.name.clone()),
                     },
+                ),
+                line("Name", self.profile_ui.name.clone()),
+                line(
+                    "Player Profile save file",
+                    format!(
+                        "{} of {}",
+                        (self.book.profiles.len() + 1).min(atv_core::profile::SLOTS),
+                        atv_core::profile::SLOTS
+                    ),
                 ),
             ],
             "profile-slots" => {
