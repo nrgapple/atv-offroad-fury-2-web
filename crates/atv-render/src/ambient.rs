@@ -350,6 +350,11 @@ impl AmbientPass {
         (draws, triangles)
     }
 
+    /// The CPU sprites the last prepare drew: [alpha, additive] instances.
+    pub fn sprite_counts(&self) -> [u32; 2] {
+        self.sprites.as_ref().map_or([0; 2], |s| s.counts)
+    }
+
     pub fn draw(&self, pass: &mut wgpu::RenderPass<'_>, world: &World) {
         pass.set_bind_group(0, &world.globals_group, &[]);
         pass.set_bind_group(2, &self.draw_group, &[0, 0]);

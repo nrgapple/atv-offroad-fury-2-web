@@ -240,9 +240,9 @@ archive). The port tests the trigger sphere against the ATV's origin and the
 rider's root (a thrown rider counts); the original tests the ATV's wheels,
 chassis and rider bodies, so a hit at the sphere's edge can register a
 little later. The panel's notice line shows the
-signs for their original 1 s / 5 s; the explosions are not drawn and the
-Compass is presented through the port's HUD: untouched targets are green or red screen
-tags and minimap dots instead of the `RadarIcon_Target` compass. Settings
+signs for their original 1 s / 5 s. A hit starts its target's cherry
+explosion from the appended target TOY (AMBIENT_EFFECTS.md "Triggered
+bursts"). The `RadarIcon_Target` compass is drawn as described above. Settings
 word 0 == 1 skips the bonus seconds (mode not identified; the port always
 adds them).
 

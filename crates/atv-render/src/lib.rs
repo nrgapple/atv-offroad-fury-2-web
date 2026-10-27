@@ -739,6 +739,11 @@ impl SceneRenderer {
     }
 
     /// Active Snow's latest frame: its clock and emitters (diagnostics).
+    /// Placed-emitter CPU sprites drawn last frame: [alpha, additive].
+    pub fn ambient_sprites(&self) -> Option<[u32; 2]> {
+        self.ambient.as_ref().map(|(pass, _)| pass.sprite_counts())
+    }
+
     pub fn snow_state(&self) -> Option<atv_core::weather::SnowFrame> {
         let (_, shared) = self.snow.as_ref()?;
         let weather = shared.borrow();
