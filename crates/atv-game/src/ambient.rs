@@ -3,7 +3,7 @@
 //! gathers their sources and atlases from the course archive.
 use crate::{Result, materials::last_component, venue::Image};
 use atv_core::{
-    ambient_effects::{Effects, Frame, Metadata, Source, plan},
+    ambient_effects::{Effects, Frame, Metadata, ParticleAction, Source, Toy, plan},
     resource::Resource,
     texture,
 };
@@ -17,6 +17,8 @@ pub struct Ambient {
     pub gpu_atlas: Option<Image>,
     /// The mode TOY the emitters came from (race fireworks read it).
     pub mode: Option<String>,
+    /// Hockey's `[HatTrickEmitters]` (mode TOY emitter, instance).
+    pub hat_trick: Vec<(usize, usize)>,
 }
 
 impl Ambient {
@@ -32,6 +34,29 @@ impl Ambient {
 
     pub fn frame(&self) -> &Frame {
         self.effects.frame()
+    }
+
+    /// A trigger's `Particles` actions (`0023f460`): a Treasure Hunt bomb's
+    /// or a Freestyle target's explosion. `at` is the triggering model's
+    /// current position for animation-attached emitters. Returns how many
+    /// actions matched an emitter.
+    pub fn trigger(&mut self, toy: Toy, actions: &[ParticleAction], at: Option<[f32; 3]>) -> usize {
+        actions
+            .iter()
+            .filter(|a| self.effects.trigger(toy, **a, at))
+            .count()
+    }
+
+    /// Hockey's hat-trick group: start (`0020eb90`) or stop (`0020ec20`).
+    pub fn hat_trick(&mut self, on: bool) {
+        for &(emitter, instance) in &self.hat_trick {
+            let action = ParticleAction {
+                emitter,
+                instance,
+                on,
+            };
+            self.effects.trigger(Toy::Mode, action, None);
+        }
     }
 }
 
@@ -91,17 +116,35 @@ pub(crate) fn gpu_atlas(archive: &Resource) -> Result<Image> {
     image(archive, &format!("{binding}.pst"))
 }
 
+/// The TOYs a load appends after the venue's common TOY.
+#[derive(Clone, Copy, Default)]
+pub struct Sources<'a> {
+    /// The mode TOY and its archive index.
+    pub mode: Option<&'a [u8]>,
+    pub mode_index: Option<usize>,
+    /// A mini-game load: its own mode TOY (`env05th.toy`) is the one the
+    /// original appends, not the Freeride TOY the overlay also carries.
+    pub game: bool,
+    /// A Freestyle objective's target TOY (`env05gcp.toy`).
+    pub targets: Option<&'a [u8]>,
+}
+
 pub fn load(
     archive: &Resource,
     environment: &str,
     scene: &[u8],
     common: Option<&[u8]>,
     toy_index: Option<usize>,
-    mode: Option<&[u8]>,
-    mode_index: Option<usize>,
+    sources: Sources,
 ) -> Result<Option<Ambient>> {
+    let Sources {
+        mode,
+        mode_index,
+        game,
+        targets,
+    } = sources;
     let suffix = if environment == "game01" { "so" } else { "fr" };
-    let ambient_mode = named(archive, &format!("{environment}{suffix}.toy"));
+    let ambient_mode = named(archive, &format!("{environment}{suffix}.toy")).filter(|_| !game);
     let mode = match ambient_mode {
         Some(index) if Some(index) != toy_index => Some(text(archive, index)?),
         _ if mode_index != toy_index => mode.map(|m| String::from_utf8_lossy(m).into_owned()),
@@ -114,6 +157,7 @@ pub fn load(
             .map(|c| String::from_utf8_lossy(c).into_owned())
             .unwrap_or_default(),
         mode,
+        targets: targets.map(|t| String::from_utf8_lossy(t).into_owned()),
         prt: String::new(),
         emts: Default::default(),
     };
@@ -122,7 +166,7 @@ pub fn load(
         return Ok(None);
     }
     for placement in &layout.placements {
-        if [0, 2, 8, 11, 12].contains(&placement.type_id)
+        if [0, 2, 8, 9, 11, 12].contains(&placement.type_id)
             && !source.emts.contains_key(&placement.filename)
             && let Some(index) = named(archive, &placement.filename)
         {
@@ -138,9 +182,26 @@ pub fn load(
     {
         source.prt = text(archive, index)?;
     }
-    let (effects, metadata) = Effects::from_source(&source)?;
+    let (mut effects, metadata) = Effects::from_source(&source)?;
     if metadata.active == 0 {
         return Ok(None);
+    }
+    // Hockey's setup (`00335590`) deactivates the hat-trick group; Coonce
+    // Arena is only ever the Hockey venue in the original.
+    let hat_trick = mode_text
+        .as_deref()
+        .map(atv_core::hockey::hat_trick_emitters)
+        .unwrap_or_default();
+    for &(emitter, instance) in &hat_trick {
+        effects.trigger(
+            Toy::Mode,
+            ParticleAction {
+                emitter,
+                instance,
+                on: false,
+            },
+            None,
+        );
     }
     let atlas = match &metadata.atlas {
         Some(atlas) => {
@@ -176,5 +237,6 @@ pub fn load(
         atlas,
         gpu_atlas,
         mode: mode_text,
+        hat_trick,
     }))
 }

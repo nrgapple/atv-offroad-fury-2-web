@@ -308,6 +308,9 @@ pub struct Target {
     pub offset: [f32; 3],
     /// `Particles` action: `EmitterNumber` (1-based).
     pub emitter: Option<u32>,
+    /// Every `Particles` action within `NumberOfActions`, in order (the
+    /// target's explosion; `0023f3c0`).
+    pub particles: Vec<crate::ambient_effects::ParticleAction>,
 }
 
 /// The targets of a CherryPick TOY (`[Triggers]` with a `Cherry` action;
@@ -360,6 +363,12 @@ pub fn parse_animated_triggers(text: &str, action: &str) -> Vec<Target> {
                     .action("Particles")
                     .and_then(|a| a.get("emitternumber"))
                     .and_then(|n| n.trim().parse().ok()),
+                particles: t
+                    .actions
+                    .iter()
+                    .filter(|(kind, _)| kind.eq_ignore_ascii_case("Particles"))
+                    .filter_map(|(_, fields)| crate::ambient_effects::ParticleAction::parse(fields))
+                    .collect(),
             }
         })
         .collect()

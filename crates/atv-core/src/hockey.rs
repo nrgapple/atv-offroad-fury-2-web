@@ -407,6 +407,33 @@ pub struct Puck {
     pub yaw: f32,
 }
 
+/// The mode TOY's `[HatTrickEmitters]` (`00335de0`): `NumberOfEmitters`
+/// (EmitterNumber, InstanceNumber) pairs, numbered within that TOY (the
+/// loader adds the TOY's emitter base +0x3e4). `003360f0` gathers them into
+/// a ParticleGroupController; setup (`00335590`) deactivates it, a hat
+/// trick (`003368c0`) starts it (`0020eb90`) and the pause's end
+/// (`00336200`) and Restart Game (`003377f0`) deactivate it (`0020ec20`).
+pub fn hat_trick_emitters(toy: &str) -> Vec<(usize, usize)> {
+    let toy = crate::games::Toy::parse(toy);
+    let count = toy
+        .int("HatTrickEmitters", "NumberOfEmitters")
+        .unwrap_or(0)
+        .clamp(0, 64);
+    (1..=count)
+        .filter_map(|n| {
+            let section = format!("HatTrickEmitter{n}");
+            let number = |key| {
+                toy.get(&section, key)
+                    .and_then(|v| v.trim().parse::<usize>().ok())
+                    .unwrap_or(0)
+            };
+            toy.get(&section, "EmitterNumber")
+                .is_some()
+                .then(|| (number("EmitterNumber"), number("InstanceNumber")))
+        })
+        .collect()
+}
+
 /// Puck radius (authored).
 pub const PUCK_RADIUS: f32 = 1.5;
 /// Board restitution (authored; the body's 0.7 contact value).
@@ -585,6 +612,88 @@ mod tests {
 
     fn game(teams: &[usize]) -> Game {
         Game::new(Arena::COONCE, teams.to_vec(), DEFAULT_TIME_LIMIT)
+    }
+
+    #[test]
+    fn hat_trick_emitters_parse_their_toy_local_numbers() {
+        let toy = "[ParticleEmitters]\nNumberOfEmitters=2\n[HatTrickEmitters]\nNumberOfEmitters=3\n\
+                   [HatTrickEmitter1]\nEmitterNumber=1\nInstanceNumber=1\n\
+                   [HatTrickEmitter2]\nEmitterNumber=4 ; east\nInstanceNumber=2\n";
+        // The third entry is absent and skipped.
+        assert_eq!(hat_trick_emitters(toy), [(1, 1), (4, 2)]);
+        assert!(hat_trick_emitters("[Triggers]\nNumberOfTriggers=0\n").is_empty());
+    }
+
+    /// Private probe: Coonce Arena's `[HatTrickEmitters]` name its four
+    /// type9 `hats*.emt` emitters, which load, stay off, and throw hats of
+    /// the hat atlas group once started. Skips without the disc files.
+    #[test]
+    fn coonce_hat_trick_emitters_resolve() {
+        use crate::ambient_effects::{Effects, ParticleAction, Source, Toy};
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../private/extracted/TRACKS/TRACKSA/GAME01/G01_SO.RES");
+        let Ok(bytes) = std::fs::read(path) else {
+            eprintln!("skipped: G01_SO.RES is not extracted");
+            return;
+        };
+        let archive = crate::resource::Resource::parse(&bytes).unwrap();
+        let member = |name: &str| {
+            let i = archive
+                .members
+                .iter()
+                .position(|m| m.name.to_ascii_lowercase().ends_with(name))
+                .unwrap_or_else(|| panic!("{name}"));
+            String::from_utf8_lossy(&archive.extract(i).unwrap()).into_owned()
+        };
+        let mode = member("game01so.toy");
+        let hats = hat_trick_emitters(&mode);
+        assert_eq!(hats, [(1, 1), (2, 1), (3, 1), (4, 1)]);
+        let mut source = Source {
+            scene: "[StaticModels]\nNumberOfStaticModels=0\n".into(),
+            common: member("game01.toy"),
+            mode: Some(mode),
+            targets: None,
+            prt: member("game01particles.prt"),
+            emts: Default::default(),
+        };
+        for name in ["hatse.emt", "hatsn.emt", "hatss.emt"] {
+            source.emts.insert(name.into(), member(name));
+        }
+        let (mut effects, metadata) = Effects::from_source(&source).unwrap();
+        assert!(
+            metadata.unsupported.is_empty(),
+            "{:?}",
+            metadata.unsupported
+        );
+        assert_eq!(metadata.cpu_active, 4);
+        let action = |on| {
+            hats.iter().map(move |&(emitter, instance)| ParticleAction {
+                emitter,
+                instance,
+                on,
+            })
+        };
+        for a in action(false) {
+            assert!(effects.trigger(Toy::Mode, a, None));
+        }
+        for _ in 0..120 {
+            effects.step(1. / 60.).unwrap();
+        }
+        assert_eq!(effects.frame().total_emitted, 0, "off until a hat trick");
+        for a in action(true) {
+            assert!(effects.trigger(Toy::Mode, a, None));
+        }
+        for _ in 0..120 {
+            effects.step(1. / 60.).unwrap();
+        }
+        let frame = effects.frame();
+        assert!(frame.total_emitted >= 4, "{}", frame.total_emitted);
+        assert!(
+            frame
+                .particles
+                .iter()
+                .all(|p| (224..=231).contains(&p.frame))
+        );
     }
 
     fn run(g: &mut Game, seconds: f32) -> Vec<Event> {

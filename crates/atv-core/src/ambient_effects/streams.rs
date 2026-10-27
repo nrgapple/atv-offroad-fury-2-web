@@ -1,4 +1,5 @@
-//! Finite static type11 stream births,0019f580; packet quantization001d1910.
+//! Finite static type11 stream births: the GPU path 0019f580 and the CPU
+//! sprite path 001a0130 (`UseGpuParticles` off); packet quantization 001d1910.
 use super::{Emitter, OriginalRandom, PhysicsData, Result, boolean, number, random, vector};
 use serde::{Deserialize, Serialize};
 #[derive(Clone, Deserialize)]
@@ -138,8 +139,21 @@ pub struct Raw {
     pub size: f32,
     pub growth: f32,
     pub mirror: u32,
+    /// The stream's index in its step (its atlas frame advances per stream).
+    pub stream: usize,
+}
+/// Streams one step emits: both paths take `EmitRate` × dt but at least
+/// `MinParticlesPerFrame` (0x18c), counting `i < n` (the ceiling).
+pub fn count(rate: f32, min_per_frame: f32, dt: f32) -> usize {
+    let n = (rate * dt).max(min_per_frame);
+    if n > 0. {
+        n.ceil().min(4096.) as usize
+    } else {
+        0
+    }
 }
 /// Static finite branch. MovingEmitter policy and native packet batching remain separate.
+#[cfg(test)]
 pub fn births(
     config: &Config,
     base: &Emitter,
@@ -148,9 +162,37 @@ pub fn births(
     dt: f32,
     random_source: &mut OriginalRandom,
 ) -> Vec<Raw> {
-    let count = (base.rate * dt).ceil() as usize;
-    let mut result = Vec::with_capacity(count * 16);
-    for _ in 0..count {
+    let count = count(base.rate, 0., dt);
+    births_with(
+        config,
+        base,
+        spread,
+        position,
+        dt,
+        count,
+        false,
+        usize::MAX,
+        random_source,
+    )
+    .0
+}
+/// `count` streams. The CPU path (`001a0130`) draws growth before life and
+/// stops the whole emission once `limit` particles are written (the native
+/// manager is full); the result says whether it stopped.
+#[allow(clippy::too_many_arguments)]
+pub fn births_with(
+    config: &Config,
+    base: &Emitter,
+    spread: [[f32; 3]; 2],
+    position: [f32; 3],
+    dt: f32,
+    count: usize,
+    cpu: bool,
+    limit: usize,
+    random_source: &mut OriginalRandom,
+) -> (Vec<Raw>, bool) {
+    let mut result = Vec::with_capacity((count * 16).min(limit).min(4096));
+    for stream in 0..count {
         let rx = random(random_source);
         let ry = random(random_source);
         let rz = random(random_source);
@@ -158,10 +200,15 @@ pub fn births(
             base.velocity[axis]
                 + (spread[0][axis] + [rx, ry, rz][axis] * (spread[1][axis] - spread[0][axis]))
         });
-        let life = base.life * random(random_source);
+        let (life, growth) = if cpu {
+            let growth = base.growth * random(random_source);
+            (base.life * random(random_source), growth)
+        } else {
+            let life = base.life * random(random_source);
+            (life, base.growth * random(random_source))
+        };
         let mut position: [f32; 3] =
             std::array::from_fn(|axis| position[axis] - dt * base.velocity[axis]);
-        let growth = base.growth * random(random_source);
         let squared =
             velocity[0] * velocity[0] + velocity[1] * velocity[1] + velocity[2] * velocity[2];
         // Finite rsqrt contract rounds the reciprocal once; hardware precision is open.
@@ -187,6 +234,9 @@ pub fn births(
             let factor = ((section + 1) as f32 / length as f32).max(0.1);
             let life = life - (1. - factor) * (config.tail_life * life);
             for _ in 0..thickness {
+                if result.len() >= limit {
+                    return (result, true);
+                }
                 result.push(Raw {
                     position,
                     velocity,
@@ -194,6 +244,7 @@ pub fn births(
                     size: base.size,
                     growth,
                     mirror: u32::from(rx > 0.5) | (u32::from(ry > 0.5) << 1),
+                    stream,
                 });
             }
             for axis in 0..3 {
@@ -205,7 +256,7 @@ pub fn births(
             velocity[1] -= step[1] * factor;
         }
     }
-    result
+    (result, false)
 }
 impl Birth {
     pub fn packet(raw: Raw, config: &Config, id: u64, time: f32, tile: usize) -> Self {

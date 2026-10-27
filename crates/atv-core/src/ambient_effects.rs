@@ -19,6 +19,13 @@ pub const CAPACITY: usize = 600;
 /// 600-slot static budget would otherwise let Arlington's waterfalls starve
 /// the locomotive smoke, which the larger native pool does not.
 pub const ACTOR_CAPACITY: usize = 128;
+/// Separate bounded slots for CPU type11 streams (bomb, cherry and firework
+/// bursts: `UseGpuParticles` off, `001a0130`). Their `MinParticlesPerFrame`
+/// floor (50 for the bursts, 500 for fireworks) fills the native 1500-slot
+/// manager at once, and `001a0130` stops a burst when it is full. The static
+/// 600 plus these 900 slots match that native pool, so a burst neither
+/// starves placed smoke nor grows without bound.
+pub const STREAM_CAPACITY: usize = 900;
 #[derive(Deserialize)]
 pub struct Source {
     pub scene: String,
@@ -26,6 +33,11 @@ pub struct Source {
     pub common: String,
     #[serde(default)]
     pub mode: Option<String>,
+    /// A further TOY appended after the mode TOY: a Freestyle objective's
+    /// target TOY (`envNNgcp.toy`/`envNNrcp.toy`), whose cherry explosions
+    /// its `Particles` trigger actions start.
+    #[serde(default)]
+    pub targets: Option<String>,
     #[serde(default)]
     pub prt: String,
     #[serde(default)]
@@ -123,12 +135,54 @@ fn vector(d: &PhysicsData, s: &str, k: &str) -> Result<[f32; 3]> {
     }
     Ok(result)
 }
+/// Which appended TOY declared an emitter. `002427b0` appends every TOY's
+/// `[ParticleEmitterN]` sections in load order; before a TOY's sections
+/// load, `001fe070` records how many emitters are already declared
+/// (+0x3e4), and its `Particles` trigger actions (`0023f3c0`) and Hockey's
+/// `[HatTrickEmitters]` (`00335de0`) add that base, so an `EmitterNumber`
+/// counts within its own TOY.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+pub enum Toy {
+    Common,
+    Mode,
+    Targets,
+}
+/// A trigger's `Particles` action (`0023f3c0` reads `EmitterNumber`,
+/// `InstanceNumber`, `TurnOn`; `0023f460` queues the emitter's start or
+/// stop when a rider enters the trigger).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+pub struct ParticleAction {
+    pub emitter: usize,
+    pub instance: usize,
+    pub on: bool,
+}
+impl ParticleAction {
+    /// From a trigger action's lower-case keys (`TurnOn` defaults to true).
+    pub fn parse(fields: &BTreeMap<String, String>) -> Option<Self> {
+        let int = |key: &str, default: usize| {
+            fields
+                .get(key)
+                .map_or(Some(default), |v| v.trim().parse::<usize>().ok())
+        };
+        Some(Self {
+            emitter: int("emitternumber", 0)?,
+            instance: int("instancenumber", 0)?,
+            on: fields.get("turnon").is_none_or(|v| {
+                matches!(v.trim().to_ascii_lowercase().as_str(), "t" | "1" | "true")
+            }),
+        })
+    }
+}
 #[derive(Clone, Debug, Serialize)]
 pub struct Placement {
     pub filename: String,
     pub type_id: usize,
     pub position: [f32; 3],
     pub start_on: bool,
+    /// The declaring TOY and its 1-based `[ParticleEmitterN]` number and
+    /// instance (trigger actions and hat tricks address these).
+    pub toy: Toy,
+    pub number: (usize, usize),
     /// The race/mode TOY `[ParticleEmitterN]` number and 1-based instance
     /// that firework triggers address; None for the common TOY.
     pub mode_emitter: Option<(usize, usize)>,
@@ -160,6 +214,29 @@ fn model_key(name: &str) -> String {
         .to_ascii_lowercase();
     name.strip_suffix(".slt").unwrap_or(&name).to_owned()
 }
+/// The scene's keyframed TOY animations in load order (`[AnimationN]`
+/// `MCF` and `Offset`): `00241120` attaches an emitter whose
+/// `AttachToSoultree` names an MCF to the Nth matching animation's model.
+fn animations(texts: &[&str]) -> Vec<(String, [f32; 3])> {
+    let mut out = Vec::new();
+    for text in texts {
+        let toy = crate::games::Toy::parse(text);
+        let count = toy
+            .int("Animations", "NumberOfAnimations")
+            .unwrap_or(0)
+            .clamp(0, 512);
+        for n in 1..=count {
+            let section = format!("Animation{n}");
+            if let Some(mcf) = toy.get(&section, "MCF") {
+                out.push((
+                    model_key(mcf),
+                    toy.vec3(&section, "Offset").unwrap_or([0.; 3]),
+                ));
+            }
+        }
+    }
+    out
+}
 pub fn plan(source: &Source) -> Result<Plan> {
     // Particle sidecars never supply the gameplay spawn.
     let models = crate::scene::static_models(source.scene.as_bytes())?;
@@ -169,14 +246,18 @@ pub fn plan(source: &Source) -> Result<Plan> {
         unresolved: vec![],
     };
     //002427b0 appends sections from successive TOYs; mode is not a replacement.
-    for (from_mode, source_text) in [
-        (false, Some(source.common.as_str())),
-        (true, source.mode.as_deref()),
+    let sources: Vec<(Toy, &str)> = [
+        (Toy::Common, Some(source.common.as_str())),
+        (Toy::Mode, source.mode.as_deref()),
+        (Toy::Targets, source.targets.as_deref()),
     ]
     .into_iter()
-    .filter_map(|(m, s)| s.map(|s| (m, s)))
+    .filter_map(|(t, s)| s.map(|s| (t, s)))
     .filter(|(_, s)| !s.is_empty())
-    {
+    .collect();
+    let mut animated: Option<Vec<(String, [f32; 3])>> = None;
+    for &(toy, source_text) in &sources {
+        let from_mode = toy == Toy::Mode;
         let Some(d) = emitter_document(source_text)? else {
             continue;
         };
@@ -193,10 +274,41 @@ pub fn plan(source: &Source) -> Result<Plan> {
             let type_id = integer(&d, &section, "TypeID", 0, 13)?;
             let start_on = boolean(&d, &section, "StartOn", true)?;
             let attach = value(&d, &section, "AttachToSoultree").filter(|s| !s.is_empty());
+            let placement = |position, instance, actor| Placement {
+                filename: filename.clone(),
+                type_id,
+                position,
+                start_on,
+                toy,
+                number: (i, instance),
+                mode_emitter: from_mode.then_some((i, instance)),
+                actor,
+            };
             if let Some(attach) = attach {
                 let offset = vector(&d, &section, "OffsetFromSoultree")?;
                 let name = attach.trim_end_matches(".slt");
                 let limit = integer(&d, &section, "NumberOfInstances", 1, 256)?;
+                if model_key(attach).ends_with(".mcf") {
+                    // A keyframed TOY animation (Treasure Hunt's bomb.mcf):
+                    // its Offset stands for the model root until a trigger
+                    // supplies the posed position.
+                    let key = model_key(attach);
+                    let animated = animated.get_or_insert_with(|| {
+                        animations(&sources.iter().map(|(_, s)| *s).collect::<Vec<_>>())
+                    });
+                    let mut found = 0;
+                    for (_, at) in animated.iter().filter(|(m, _)| *m == key).take(limit) {
+                        found += 1;
+                        let position = std::array::from_fn(|a| at[a] + offset[a]);
+                        result.placements.push(placement(position, found, None));
+                    }
+                    if found < limit {
+                        result
+                            .unresolved
+                            .push(format!("{filename}: {found}/{limit} animation {attach}"));
+                    }
+                    continue;
+                }
                 let mut found = 0;
                 for model in models
                     .iter()
@@ -211,14 +323,7 @@ pub fn plan(source: &Source) -> Result<Plan> {
                             + m[8 + axis] * offset[2]
                     });
                     found += 1;
-                    result.placements.push(Placement {
-                        filename: filename.clone(),
-                        type_id,
-                        position,
-                        start_on,
-                        mode_emitter: from_mode.then_some((i, found)),
-                        actor: None,
-                    });
+                    result.placements.push(placement(position, found, None));
                 }
                 if found < limit {
                     result
@@ -228,28 +333,20 @@ pub fn plan(source: &Source) -> Result<Plan> {
                 //00241120 resolves animated scene objects too; their pose is
                 //supplied each step instead of inventing a static position.
                 for instance in found..limit {
-                    result.placements.push(Placement {
-                        filename: filename.clone(),
-                        type_id,
-                        position: [0.; 3],
-                        start_on,
-                        mode_emitter: from_mode.then_some((i, instance + 1)),
-                        actor: Some(Actor {
+                    result.placements.push(placement(
+                        [0.; 3],
+                        instance + 1,
+                        Some(Actor {
                             model: model_key(attach),
                             instance: instance - found,
                             offset,
                         }),
-                    });
+                    ));
                 }
             } else {
-                result.placements.push(Placement {
-                    filename,
-                    type_id,
-                    position: vector(&d, &section, "Position")?,
-                    start_on,
-                    mode_emitter: from_mode.then_some((i, 1)),
-                    actor: None,
-                });
+                result
+                    .placements
+                    .push(placement(vector(&d, &section, "Position")?, 1, None));
             }
         }
     }
@@ -397,6 +494,12 @@ struct Definition {
     on_range: [f32; 2],
     off_range: [f32; 2],
     delay: f32,
+    /// A type11 stream built as CPU sprites (`001a0130`).
+    cpu_stream: bool,
+    /// `MinParticlesPerFrame` (0x18c): the stream/type9 count floor.
+    min_per_frame: f32,
+    /// `AgeAtBirth` (0x1a4): type9's birth age.
+    age_at_birth: f32,
 }
 #[derive(Clone)]
 struct Runtime {
@@ -414,6 +517,20 @@ struct Runtime {
     previous: [f32; 3],
     /// Actor placements stay dormant until their first supplied pose.
     posed: bool,
+}
+impl Runtime {
+    /// A GPU-ring type11 stream (`0019f580`, `UseGpuParticles`).
+    fn gpu(&self) -> bool {
+        self.definition.stream.is_some() && !self.definition.cpu_stream
+    }
+    /// The particle pool class: static, moving actor, CPU stream.
+    fn class(&self) -> usize {
+        if self.definition.cpu_stream {
+            2
+        } else {
+            usize::from(self.placement.actor.is_some())
+        }
+    }
 }
 #[derive(Clone)]
 struct Particle {
@@ -472,6 +589,9 @@ pub struct Effects {
     particles: Vec<Particle>,
     random: OriginalRandom,
     serial: u32,
+    /// Type9's shared birth serial (`00497ba0`).
+    hat_serial: u32,
+    triggered: u64,
     time: f32,
     total: u64,
     dropped: u64,
@@ -512,7 +632,7 @@ impl Effects {
         for placement in &plan.placements {
             // Placed raindrops and fog use the CPU atlas; Weather selection/Snow are separate.
             // Moving actor attachment is connected for the type0 smoke path only.
-            if ![0, 2, 8, 11, 12].contains(&placement.type_id)
+            if ![0, 2, 8, 9, 11, 12].contains(&placement.type_id)
                 || (placement.actor.is_some() && placement.type_id != 0)
             {
                 unsupported.push(format!(
@@ -633,6 +753,12 @@ impl Effects {
                 } else {
                     None
                 },
+                //0019f1f0/001a0a70 read UseGpuParticles (default off): without
+                //it, 001a0130 builds the streams as CPU atlas sprites.
+                cpu_stream: placement.type_id == 11
+                    && !boolean(&d, "General Info", "UseGpuParticles", false)?,
+                min_per_frame: number(&d, "General Info", "MinParticlesPerFrame", 0.)?,
+                age_at_birth: number(&d, "General Info", "AgeAtBirth", 0.)?,
                 on_range: ranges[0],
                 off_range: ranges[1],
                 delay: number(&d, "General Info", "DelayTime", 0.)?,
@@ -676,10 +802,12 @@ impl Effects {
             if sequenced {
                 return true;
             }
-            let Some(c) = r.definition.stream.as_ref() else {
+            let Some(c) = r.definition.stream.as_ref().filter(|_| r.gpu()) else {
                 return true;
             };
-            let cost = (r.definition.base.rate * 0.1).ceil() as usize
+            let cost = (r.definition.base.rate * 0.1)
+                .max(r.definition.min_per_frame)
+                .ceil() as usize
                 * c.length[1].ceil() as usize
                 * (c.thickness[1].ceil() as usize + usize::from(c.bright_head));
             if stream_budget + cost > GPU_CAPACITY {
@@ -694,8 +822,8 @@ impl Effects {
         });
         let metadata = Metadata {
             active: runtime.len(),
-            cpu_active: runtime.iter().filter(|r| r.placement.type_id != 11).count(),
-            gpu_active: runtime.iter().filter(|r| r.placement.type_id == 11).count(),
+            cpu_active: runtime.iter().filter(|r| !r.gpu()).count(),
+            gpu_active: runtime.iter().filter(|r| r.gpu()).count(),
             gpu_capacity: GPU_CAPACITY,
             atlas,
             plan,
@@ -710,6 +838,11 @@ impl Effects {
                     ACTOR_CAPACITY
                 } else {
                     0
+                }
+                + if runtime.iter().any(|r| r.definition.cpu_stream) {
+                    STREAM_CAPACITY
+                } else {
+                    0
                 },
         };
         let mut effects = Self {
@@ -717,6 +850,8 @@ impl Effects {
             particles: Vec::with_capacity(CAPACITY),
             random: random_source,
             serial: 0,
+            hat_serial: 0,
+            triggered: 0,
             time: 0.,
             total: 0,
             dropped: 0,
@@ -829,12 +964,10 @@ impl Effects {
         });
         let mut emitted = 0;
         let mut gpu_births = vec![];
-        let actor_live = self
-            .particles
-            .iter()
-            .filter(|p| self.runtime[p.emitter].placement.actor.is_some())
-            .count();
-        let mut live = [self.particles.len() - actor_live, actor_live];
+        let mut live = [0usize; 3];
+        for p in &self.particles {
+            live[self.runtime[p.emitter].class()] += 1;
+        }
         for (index, r) in self.runtime.iter_mut().enumerate() {
             if r.definition.fog.is_some() || !r.posed {
                 continue;
@@ -858,20 +991,81 @@ impl Effects {
             let d = &r.definition;
             let base = &d.base;
             if let Some(config) = &d.stream {
+                let count = streams::count(base.rate, d.min_per_frame, dt);
+                if d.emit_mode == 1 && count >= 1 {
+                    r.timer.emitted = true;
+                }
+                if d.cpu_stream {
+                    //001a0130: CPU sprites until the manager is full.
+                    let (raws, full) = streams::births_with(
+                        config,
+                        base,
+                        d.spread,
+                        r.placement.position,
+                        dt,
+                        count,
+                        true,
+                        STREAM_CAPACITY - live[2],
+                        &mut self.random,
+                    );
+                    let mut advanced = 0;
+                    let advance = |frame: &mut usize| {
+                        *frame += 1;
+                        if *frame > d.group[1] {
+                            *frame = d.group[0];
+                        }
+                    };
+                    for raw in raws {
+                        while advanced < raw.stream {
+                            advance(&mut r.frame);
+                            advanced += 1;
+                        }
+                        live[2] += 1;
+                        self.particles.push(Particle {
+                            position: raw.position,
+                            velocity: raw.velocity,
+                            size: raw.size,
+                            initial_size: raw.size,
+                            growth: raw.growth,
+                            life: raw.life.max(0.001),
+                            age: 0.,
+                            frame: r.frame,
+                            set_first: r.frame,
+                            emitter: index,
+                            mirror: [
+                                d.mirror[0] && raw.mirror & 1 != 0,
+                                d.mirror[1] && raw.mirror & 2 != 0,
+                            ],
+                        });
+                        emitted += 1;
+                        self.total += 1;
+                    }
+                    if full {
+                        self.dropped += 1;
+                    } else {
+                        while advanced < count {
+                            advance(&mut r.frame);
+                            advanced += 1;
+                        }
+                    }
+                    continue;
+                }
                 if !self.gpu_initialized {
                     self.gpu_initialized = true;
                     continue;
                 }
-                let births = streams::births(
+                let (births, _) = streams::births_with(
                     config,
                     base,
                     d.spread,
                     r.placement.position,
                     dt,
+                    count,
+                    false,
+                    usize::MAX,
                     &mut self.random,
                 );
-                let streams = (base.rate * dt).ceil() as usize;
-                for _ in 0..streams {
+                for _ in 0..count {
                     r.frame += 1;
                     if r.frame > d.group[1] {
                         r.frame = d.group[0];
@@ -886,7 +1080,10 @@ impl Effects {
                 }
                 continue;
             }
-            let factor = if r.placement.type_id == 8 {
+            //0019eb60 (type9) scales nothing; 0019dfa0 (type8) by 0.6.
+            let factor = if r.placement.type_id == 9 {
+                1.
+            } else if r.placement.type_id == 8 {
                 0.6
             } else if d.spread_velocity {
                 let speed = base.velocity.iter().map(|v| v * v).sum::<f32>().sqrt();
@@ -934,6 +1131,8 @@ impl Effects {
                     ));
                     count
                 }
+            } else if r.placement.type_id == 9 {
+                emission_count(&mut r.phase, base.rate * dt).max(d.min_per_frame as usize)
             } else {
                 emission_count(&mut r.phase, base.rate * dt * factor)
             };
@@ -941,9 +1140,9 @@ impl Effects {
                 r.timer.emitted = true;
             }
             let mut position = r.placement.position;
-            let class = usize::from(r.placement.actor.is_some());
+            let class = r.class();
             for _ in 0..count {
-                if live[class] == [CAPACITY, ACTOR_CAPACITY][class] {
+                if live[class] == [CAPACITY, ACTOR_CAPACITY, STREAM_CAPACITY][class] {
                     self.dropped += 1;
                     break;
                 }
@@ -990,7 +1189,35 @@ impl Effects {
                 let spread = std::array::from_fn::<_, 3, _>(|axis| {
                     d.spread[0][axis] + [rx, ry, rz][axis] * (d.spread[1][axis] - d.spread[0][axis])
                 });
-                let (position, velocity, life, growth, frame) = if r.placement.type_id == 8 {
+                let (position, velocity, life, growth, frame) = if r.placement.type_id == 9 {
+                    //0019eb60: X/Z spread, authored velocity plus Y noise, a
+                    //random group frame (or a forced set) and the serial
+                    //life shortening.
+                    self.hat_serial = self.hat_serial.wrapping_add(1);
+                    let frame = if d.frames_per_set > 1 {
+                        d.group[0] + usize::from(rz > 0.5) * d.frames_per_set
+                    } else {
+                        d.group[0]
+                            + ((d.group[1] - d.group[0] + 1) as f32 * random(&mut self.random))
+                                as usize
+                    }
+                    .min(d.group[1]);
+                    let mut velocity = base.velocity;
+                    if d.spread_velocity {
+                        velocity[1] += base.velocity[1] * ry;
+                    }
+                    (
+                        [
+                            r.placement.position[0] + spread[0],
+                            r.placement.position[1],
+                            r.placement.position[2] + spread[2],
+                        ],
+                        velocity,
+                        (base.life - base.life * (self.hat_serial & 3) as f32 * 0.125).max(0.001),
+                        base.growth,
+                        frame,
+                    )
+                } else if r.placement.type_id == 8 {
                     self.serial = self.serial.wrapping_add(1);
                     let set = if rz > 0.66 { 2 } else { usize::from(rz > 0.33) };
                     let frame = (d.group[0] + set * d.frames_per_set).min(d.group[1]);
@@ -1030,7 +1257,11 @@ impl Effects {
                     initial_size: base.size,
                     growth,
                     life,
-                    age: 0.,
+                    age: if r.placement.type_id == 9 {
+                        d.age_at_birth
+                    } else {
+                        0.
+                    },
                     frame,
                     set_first: frame,
                     emitter: index,
@@ -1113,6 +1344,73 @@ impl Effects {
             }
         }
     }
+    /// A TOY emitter's start or stop by gameplay: a trigger's `Particles`
+    /// action (`0023f460`) or Hockey's hat-trick group (`0020eb90` start,
+    /// `0020ec20` stop). Start runs the emitter's timer reset (`0019ac30`:
+    /// DelayTime, then OneShotTime, a random on-time or TimedTimeOn by
+    /// EmitMode, the one-shot's emitted flag cleared), switches it on with
+    /// a fresh accumulator (`0019abc0`) and activates it. Stop switches it
+    /// off (`0019abe0`; type9's `0019f300` lets a running one-shot finish)
+    /// and deactivates it. `at` places an animation-attached emitter at its
+    /// model's current pose (the bomb's bob). False when no emitter matches.
+    pub fn trigger(&mut self, toy: Toy, action: ParticleAction, at: Option<[f32; 3]>) -> bool {
+        let mut found = false;
+        for r in &mut self.runtime {
+            if r.placement.toy != toy || r.placement.number != (action.emitter, action.instance) {
+                continue;
+            }
+            found = true;
+            if action.on {
+                if let Some(at) = at.filter(|p| p.iter().all(|v| v.is_finite()))
+                    && r.placement.actor.is_none()
+                {
+                    r.placement.position = at;
+                    r.previous = at;
+                }
+                let [low, high] = r.definition.on_range;
+                r.timer.delay = r.definition.delay;
+                match r.definition.emit_mode {
+                    1 => {
+                        r.timer.remaining = high;
+                        r.timer.emitted = false;
+                    }
+                    2 => r.timer.remaining = low + (high - low) * random(&mut self.random),
+                    3 => r.timer.remaining = high,
+                    _ => {}
+                }
+                r.timer.on = true;
+                r.phase = 0.;
+                r.active = true;
+            } else {
+                let finishing = r.placement.type_id == 9
+                    && r.definition.emit_mode == 1
+                    && r.timer.on
+                    && r.timer.remaining > 0.;
+                if !finishing {
+                    r.timer.on = false;
+                    r.previous = r.placement.position;
+                    r.phase = 0.;
+                }
+                r.active = false;
+            }
+        }
+        if found && action.on {
+            self.triggered += 1;
+        }
+        found
+    }
+    /// Gameplay starts applied so far (diagnostics).
+    pub fn triggered(&self) -> u64 {
+        self.triggered
+    }
+    /// Live CPU particles per pool: static, moving actor, CPU stream.
+    pub fn live(&self) -> [usize; 3] {
+        let mut live = [0; 3];
+        for p in &self.particles {
+            live[self.runtime[p.emitter].class()] += 1;
+        }
+        live
+    }
     /// ParticleGroupController Deactivate (`0020ec20`): stop every race
     /// TOY emitter, as the countdown does for the pre-race fireworks.
     pub fn stop_mode_emitters(&mut self, emitters: &[(usize, usize)]) {
@@ -1182,6 +1480,7 @@ mod tests {
             scene: scene.into(),
             common: common.into(),
             mode: Some(mode.into()),
+            targets: None,
             prt: String::new(),
             emts: BTreeMap::new(),
         };
@@ -1205,6 +1504,7 @@ mod tests {
             scene: "[StaticModels]\nNumberOfStaticModels=0\n".into(),
             common: String::new(),
             mode: Some("[ParticleEmitters]\nNumberOfEmitters=1\n[ParticleEmitter1]\nTypeID=0\nAttachToSoultree=Puffer.slt\nOffsetFromSoultree=0,4,0\nEmitterFilename=puff.emt\nNumberOfInstances=1\n".into()),
+            targets: None,
             prt: atlas.into(),
             emts: BTreeMap::from([("puff.emt".into(), emt.into())]),
         };
@@ -1267,6 +1567,7 @@ mod tests {
             scene: "[StaticModels]\nNumberOfStaticModels=0\n".into(),
             common: "[ParticleEmitters]\nNumberOfEmitters=1\n[ParticleEmitter1]\nTypeID=12\nPosition=0,0,0\nStartOn=F\nEmitterFilename=synthetic.emt\n".into(),
             mode: None,
+            targets: None,
             prt: "[General Info]\nTextureMap=synthetic.tga\nNumFrames=1\nNumGroups=1\n[Frame0]\nUVLeft=0\nUVTop=0\nUVRight=1\nUVBottom=1\n[Group0]\nFirstFrame=0\nLastFrame=0\n".into(),
             emts: BTreeMap::from([("synthetic.emt".into(), "[General Info]\nParticleLife=100\nInitialSize=1\nGrowth=1\nEmitRate=500\nAgeAtBirth=0.5\nVelocity=0,0,0\nParticlesInVolume=700\nMinSize=2\nMaxSize=3\nDistanceToFade=10\nOscillationSpeed=-1\nMinRange=-1,-1,-1\nMaxRange=1,1,1\n[Properties]\nGrows=T\n".into())]),
         };
@@ -1329,6 +1630,288 @@ mod tests {
         assert_eq!(phase, 0.);
         assert_eq!(emission_count(&mut phase, 2.7), 2);
         assert_eq!(phase, 0.);
+    }
+    const BURST_ATLAS: &str = "[General Info]\nTextureMap=synthetic.tga\nNumFrames=3\nNumGroups=3\n[Frame0]\nUVLeft=0\nUVTop=0\nUVRight=1\nUVBottom=1\n[Frame1]\nUVLeft=1\nUVTop=0\nUVRight=2\nUVBottom=1\n[Frame2]\nUVLeft=2\nUVTop=0\nUVRight=3\nUVBottom=1\n[Group0]\nFirstFrame=0\nLastFrame=0\n[Group1]\nFirstFrame=1\nLastFrame=1\n[Group2]\nFirstFrame=2\nLastFrame=2\n";
+    /// The shipped burst EMT's values (bomb_explosion.emt; the cherry
+    /// explosions differ only in group and size).
+    const BURST_EMT: &str = "[General Info]\nParticleGroup=1\nEmitRate=100\nMinParticlesPerFrame=50\nParticleLife=1000\nAgeAtBirth=0\nInitialSize=0.3\nGrowth=0.1\nVelocity=0,0,0\nGravityMultiplier=1.5\nEmitMode=1\nDelayTime=0\nOneShotTime=0.1\nRandomMinTimeOn=0.05\nRandomMaxTimeOn=0.1\nMinStreamLength=1\nMaxStreamLength=2\nTailThickness=1\nHeadThickness=2\nParticleSeparationFactor=1.75\nTailLifeModifier=0.4\nMinRange=-40,-40,-40\nMaxRange=40,40,40\nSuperbrightHead=T\nMovingEmitter=F\n[Properties]\nHasVelocity=T\nGrows=F\nFades=T\nFadeNonLinear=T\nAdditive=T\nGravity=T\nLit=T\nRandomMirrorAboutX=T\nRandomMirrorAboutY=T\n[Animation]\nFramesPerSet=1\n";
+    fn burst_source(mode: &str, targets: Option<&str>, emts: &[(&str, &str)]) -> Source {
+        Source {
+            scene: "[StaticModels]\nNumberOfStaticModels=0\n".into(),
+            common: String::new(),
+            mode: Some(mode.into()),
+            targets: targets.map(String::from),
+            prt: BURST_ATLAS.into(),
+            emts: emts
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect(),
+        }
+    }
+    fn on(emitter: usize, instance: usize) -> ParticleAction {
+        ParticleAction {
+            emitter,
+            instance,
+            on: true,
+        }
+    }
+    #[test]
+    fn particle_actions_parse_with_native_defaults() {
+        let fields = |pairs: &[(&str, &str)]| {
+            pairs
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect::<BTreeMap<_, _>>()
+        };
+        assert_eq!(
+            ParticleAction::parse(&fields(&[("emitternumber", "3"), ("instancenumber", "2")])),
+            Some(on(3, 2)),
+            "TurnOn defaults on"
+        );
+        assert_eq!(
+            ParticleAction::parse(&fields(&[("emitternumber", "2"), ("turnon", "F")])),
+            Some(ParticleAction {
+                emitter: 2,
+                instance: 0,
+                on: false
+            })
+        );
+        assert_eq!(
+            ParticleAction::parse(&fields(&[("emitternumber", "x")])),
+            None
+        );
+    }
+    #[test]
+    fn treasure_bomb_burst_follows_its_trigger_on_the_bounded_cpu_pool() {
+        // Treasure Hunt: emitter 1 attaches to every bomb.mcf animation in
+        // load order (a crow first is skipped); StartOn=F.
+        let mode = "[Animations]\nNumberOfAnimations=3\n[Animation1]\nMCF=crow.mcf\nOffset=1,1,1\n[Animation2]\nMCF=bomb.mcf\nOffset=10,0,0\nReferenceName=TreasureObj1\n[Animation3]\nMCF=bomb.mcf\nOffset=20,0,0\n[ParticleEmitters]\nNumberOfEmitters=1\n[ParticleEmitter1]\nTypeID=11\nAttachToSoultree=bomb.mcf\nPosition=0.0,0.0,0.0\nEmitterFilename=bomb_explosion.emt\nNumberOfInstances=2\nStartOn=F\n";
+        let source = burst_source(mode, None, &[("bomb_explosion.emt", BURST_EMT)]);
+        let layout = plan(&source).unwrap();
+        assert!(layout.unresolved.is_empty(), "{:?}", layout.unresolved);
+        assert_eq!(
+            layout
+                .placements
+                .iter()
+                .map(|p| (p.toy, p.number, p.position))
+                .collect::<Vec<_>>(),
+            [
+                (Toy::Mode, (1, 1), [10., 0., 0.]),
+                (Toy::Mode, (1, 2), [20., 0., 0.])
+            ]
+        );
+        let (mut effects, metadata) = Effects::from_source(&source).unwrap();
+        assert!(
+            metadata.unsupported.is_empty(),
+            "{:?}",
+            metadata.unsupported
+        );
+        // UseGpuParticles is off: CPU sprites (001a0130), not the GPU ring.
+        assert_eq!((metadata.cpu_active, metadata.gpu_active), (2, 0));
+        assert_eq!(metadata.capacity, CAPACITY + STREAM_CAPACITY);
+        for _ in 0..30 {
+            assert_eq!(effects.step(1. / 60.).unwrap().total_emitted, 0);
+        }
+        // The second bomb's Particles action, at the bomb's bobbing pose.
+        let at = [21., 5., -1.];
+        assert!(effects.trigger(Toy::Mode, on(1, 2), Some(at)));
+        assert!(!effects.trigger(Toy::Mode, on(2, 1), None), "no emitter 2");
+        assert!(
+            !effects.trigger(Toy::Targets, on(1, 1), None),
+            "TOY-local numbers"
+        );
+        assert_eq!(effects.triggered(), 1);
+        let mut per_step = vec![];
+        let mut peak = 0;
+        for _ in 0..12 {
+            per_step.push(effects.step(1. / 60.).unwrap().emitted);
+            peak = peak.max(effects.live()[2]);
+            assert_eq!(effects.live()[0], 0);
+        }
+        // MinParticlesPerFrame: 50 streams (1-2 sections, 2-4 sprites) per
+        // step, for the 0.1 s one-shot, until the 900 slots are full.
+        assert!(per_step[0] >= 100 && per_step[0] <= 200, "{per_step:?}");
+        assert_eq!(peak, STREAM_CAPACITY, "{per_step:?}");
+        assert!(
+            per_step[7..].iter().all(|n| *n == 0),
+            "one-shot over {per_step:?}"
+        );
+        assert!(effects.frame.dropped >= 1, "the full pool stops a burst");
+        let frame = effects.frame();
+        assert!(frame.particles.iter().all(|p| p.additive && p.frame == 1));
+        // Streams leave the bomb at up to 40 ft/s in every direction.
+        let near = |p: &Sprite| (0..3).all(|a| (p.position[a] - at[a]).abs() < 20.);
+        assert!(frame.particles.iter().all(near));
+        let spread = frame
+            .particles
+            .iter()
+            .map(|p| (p.position[0] - at[0]).abs())
+            .fold(0f32, f32::max);
+        assert!(spread > 1., "the burst spreads out ({spread})");
+        // Life is at most ParticleLife (1 s); then the one-shot stays off.
+        for _ in 0..60 {
+            effects.step(1. / 60.).unwrap();
+        }
+        assert!(effects.frame().particles.is_empty());
+        let before = effects.frame().total_emitted;
+        for _ in 0..30 {
+            effects.step(1. / 60.).unwrap();
+        }
+        assert_eq!(effects.frame().total_emitted, before);
+        // The other bomb bursts at its own authored offset.
+        assert!(effects.trigger(Toy::Mode, on(1, 1), None));
+        effects.step(1. / 60.).unwrap();
+        assert!(
+            effects
+                .frame()
+                .particles
+                .iter()
+                .all(|p| (p.position[0] - 10.).abs() < 2. && p.position[1].abs() < 2.)
+        );
+    }
+    #[test]
+    fn target_toy_emitters_count_within_their_toy_and_start_on_bursts_once() {
+        // A Freestyle target TOY appended after the mode TOY: its emitter 1
+        // waits for its target (StartOn=F); emitter 2 is StartOn=T (as the
+        // shipped green targets 2..N are) and bursts once after load.
+        let mode = "[ParticleEmitters]\nNumberOfEmitters=1\n[ParticleEmitter1]\nTypeID=11\nPosition=500,0,0\nEmitterFilename=bomb_explosion.emt\nStartOn=F\n";
+        let targets = "[ParticleEmitters]\nNumberOfEmitters=2\n[ParticleEmitter1]\nTypeID=11\nPosition=100,0,0\nEmitterFilename=cherryg_explosion.emt\nNumberOfInstances=1\nStartOn=F\n[ParticleEmitter2]\nTypeID=11\nPosition=200,0,0\nEmitterFilename=cherryg_explosion.emt\nNumberOfInstances=1\n";
+        let cherry = BURST_EMT
+            .replace("ParticleGroup=1", "ParticleGroup=2")
+            .replace("InitialSize=0.3", "InitialSize=0.2");
+        let source = burst_source(
+            mode,
+            Some(targets),
+            &[
+                ("bomb_explosion.emt", BURST_EMT),
+                ("cherryg_explosion.emt", &cherry),
+            ],
+        );
+        let (mut effects, metadata) = Effects::from_source(&source).unwrap();
+        assert_eq!(metadata.plan.declared, 3);
+        assert_eq!(
+            metadata
+                .plan
+                .placements
+                .iter()
+                .map(|p| (p.toy, p.number, p.mode_emitter))
+                .collect::<Vec<_>>(),
+            [
+                (Toy::Mode, (1, 1), Some((1, 1))),
+                (Toy::Targets, (1, 1), None),
+                (Toy::Targets, (2, 1), None)
+            ]
+        );
+        // The constructor's dirty step, then the one-shot's 0.1 s.
+        assert_eq!(effects.step(1. / 60.).unwrap().emitted, 0);
+        let mut burst = 0;
+        for _ in 0..90 {
+            let frame = effects.step(1. / 60.).unwrap();
+            burst += frame.emitted;
+            // At most 40 ft/s of spread for at most a second.
+            assert!(
+                frame
+                    .particles
+                    .iter()
+                    .all(|p| (p.position[0] - 200.).abs() < 60.)
+            );
+        }
+        assert!(burst > 0);
+        assert!(effects.frame().particles.is_empty(), "burst once, then off");
+        // The first target's hit addresses the target TOY's emitter 1.
+        assert!(effects.trigger(Toy::Targets, on(1, 1), None));
+        effects.step(1. / 60.).unwrap();
+        let frame = effects.frame();
+        assert!(!frame.particles.is_empty());
+        assert!(
+            frame
+                .particles
+                .iter()
+                .all(|p| (p.position[0] - 100.).abs() < 2. && p.frame == 2 && p.size < 0.25)
+        );
+    }
+    #[test]
+    fn gpu_streams_keep_the_ring_and_take_the_per_frame_floor() {
+        let emt = BURST_EMT.replace("MovingEmitter=F", "MovingEmitter=F\nUseGpuParticles=T");
+        let mode = "[ParticleEmitters]\nNumberOfEmitters=1\n[ParticleEmitter1]\nTypeID=11\nPosition=0,0,0\nEmitterFilename=gpu.emt\n";
+        let source = burst_source(mode, None, &[("gpu.emt", &emt)]);
+        let (mut effects, metadata) = Effects::from_source(&source).unwrap();
+        assert_eq!((metadata.cpu_active, metadata.gpu_active), (0, 1));
+        assert_eq!(metadata.capacity, CAPACITY);
+        effects.step(1. / 60.).unwrap();
+        effects.step(1. / 60.).unwrap();
+        let frame = effects.step(1. / 60.).unwrap();
+        assert!(frame.particles.is_empty());
+        // 50 streams of 2-4 packets: the MinParticlesPerFrame floor.
+        assert!(frame.gpu_births.len() >= 100, "{}", frame.gpu_births.len());
+        assert_eq!(streams::count(100., 50., 1. / 60.), 50);
+        assert_eq!(streams::count(50., 0., 1. / 60.), 1);
+        assert_eq!(streams::count(0., 0., 1. / 60.), 0);
+    }
+    #[test]
+    fn hockey_hats_start_after_their_delay_and_stop_at_the_face_off() {
+        // game01so.toy's hatsE.emt values (type9, EmitMode 0, StartOn default).
+        let hats = "[General Info]\nParticleGroup=0\nEmitRate=1\nMinParticlesPerFrame=0\nParticleLife=4000\nAgeAtBirth=0\nInitialSize=1\nGrowth=0\nVelocity=-40,60,0\nGravityMultiplier=3\nGroundLevel=91\nRestitution=0.2\nEmitMode=0\nDelayTime=0.5\nMinRange=-10,0,-15\nMaxRange=10,0,15\nApplySpreadToVelocity=F\n[Properties]\nHasVelocity=T\nGrows=F\nFades=F\nGravity=T\nLit=F\nRandomMirrorAboutX=T\nRandomMirrorAboutY=F\n[Animation]\nFramesPerSet=1\n";
+        let mode = "[ParticleEmitters]\nNumberOfEmitters=1\n[ParticleEmitter1]\nTypeID=9\nPosition=435.5,99.6,404.4\nEmitterFilename=hatse.emt\nNumberOfInstances=1\n[HatTrickEmitters]\nNumberOfEmitters=1\n[HatTrickEmitter1]\nEmitterNumber=1\nInstanceNumber=1\n";
+        let source = burst_source(mode, None, &[("hatse.emt", hats)]);
+        let (mut effects, metadata) = Effects::from_source(&source).unwrap();
+        assert!(
+            metadata.unsupported.is_empty(),
+            "{:?}",
+            metadata.unsupported
+        );
+        let off = ParticleAction {
+            emitter: 1,
+            instance: 1,
+            on: false,
+        };
+        // Hockey's setup deactivates the group (00335590).
+        assert_eq!(crate::hockey::hat_trick_emitters(mode), [(1, 1)]);
+        effects.trigger(Toy::Mode, off, None);
+        for _ in 0..120 {
+            assert_eq!(effects.step(1. / 60.).unwrap().total_emitted, 0);
+        }
+        // A hat trick: nothing for DelayTime, then one hat a second.
+        effects.trigger(Toy::Mode, on(1, 1), None);
+        let mut births = vec![];
+        for step in 0..180 {
+            if effects.step(1. / 60.).unwrap().emitted > 0 {
+                births.push(step);
+            }
+        }
+        assert_eq!(births.len(), 2, "{births:?}");
+        assert!(births[0] >= 30, "the 0.5 s delay {births:?}");
+        // X/Z spread about the emitter, thrown along the authored -X.
+        let p = &effects.particles[0];
+        assert!((p.position[2] - 404.4).abs() <= 15. && p.position[0] < 445.5);
+        // -40 ft/s, scaled by the 0.2 restitution after it lands.
+        assert!(
+            p.velocity[0] == -40. || p.velocity[0] == -8.,
+            "{:?}",
+            p.velocity
+        );
+        assert_eq!(p.life, 4000. - 4000. * 0.125, "serial 1 shortens life");
+        assert!(
+            effects
+                .frame()
+                .particles
+                .iter()
+                .all(|s| !s.additive && !s.lit)
+        );
+        // Thrown out and up, they fall back onto the authored ground.
+        for _ in 0..120 {
+            effects.step(1. / 60.).unwrap();
+        }
+        assert!(effects.particles.iter().all(|p| p.position[1] > 85.));
+        // The face-off stops the group; the hats already thrown remain.
+        effects.trigger(Toy::Mode, off, None);
+        let live = effects.particles.len();
+        let total = effects.frame().total_emitted;
+        for _ in 0..60 {
+            effects.step(1. / 60.).unwrap();
+        }
+        assert_eq!(effects.frame().total_emitted, total);
+        assert!(effects.particles.len() <= live);
     }
     #[test]
     fn no_unbounded_or_invalid_atlas_values() {
@@ -1399,6 +1982,9 @@ mod tests {
                 on_range: [0.; 2],
                 off_range: [0.; 2],
                 delay: 0.,
+                cpu_stream: false,
+                min_per_frame: 0.,
+                age_at_birth: 0.,
             };
             let runtime = Runtime {
                 placement: Placement {
@@ -1406,6 +1992,8 @@ mod tests {
                     type_id: c.kind,
                     position: c.position,
                     start_on: true,
+                    toy: Toy::Common,
+                    number: (1, 1),
                     mode_emitter: None,
                     actor: None,
                 },
@@ -1427,6 +2015,8 @@ mod tests {
                 particles: vec![],
                 random: OriginalRandom::with_seed(c.seed),
                 serial: 0,
+                hat_serial: 0,
+                triggered: 0,
                 time: 0.,
                 total: 0,
                 dropped: 0,

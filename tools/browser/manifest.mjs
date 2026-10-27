@@ -147,6 +147,7 @@ export const TESTS = {
   'test_engine_freestyle_targets.mjs': { group: 'content', timeout: 900 },
   'test_engine_training.mjs': { group: 'content', timeout: 900 },
   'test_engine_games.mjs': { group: 'content', timeout: 900 },
+  'test_engine_toy_explosions.mjs': { group: 'content', timeout: 900 },
   'test_engine_hockey_tag.mjs': { group: 'content', timeout: 600 },
   'test_engine_sleep.mjs': { group: 'content' },
   'test_engine_motorcycle.mjs': { group: 'content' },

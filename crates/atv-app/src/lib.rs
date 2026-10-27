@@ -272,6 +272,8 @@ struct ObjectiveSession {
     targets: Vec<atv_core::freestyle::Target>,
     /// One-shot sounds for the ride's mixer (target hits).
     sounds: Vec<&'static str>,
+    /// Targets hit since the presentation last ran their explosions.
+    triggered: Vec<usize>,
     /// `objectiveTest=targets`: the ride step of the last placement.
     visit_clock: u64,
     /// A championship round (else Single Player → Freestyle Objectives):
@@ -346,8 +348,9 @@ impl ObjectiveSession {
         if !self.targets.is_empty() && !run.finished() {
             let rider = ride.rider_world();
             for point in [ride.frame().origin, [rider[12], rider[13], rider[14]]] {
-                for _ in run.touch(&self.targets, point, TARGET_REACH) {
+                for target in run.touch(&self.targets, point, TARGET_REACH) {
                     self.sounds.push(TARGET_SOUND);
+                    self.triggered.push(target);
                 }
             }
         }
@@ -1483,6 +1486,21 @@ impl App {
                         }
                     }
                 }
+                // A hit target's `Particles` action starts its cherry
+                // explosion (the target TOY's emitter; `0023f460`).
+                if let (Some(objective), Some(ambient)) =
+                    (&ready.venue.objective, &ready.venue.ambient)
+                {
+                    for target in std::mem::take(&mut session.triggered) {
+                        if let Some(t) = objective.targets.get(target) {
+                            ambient.borrow_mut().trigger(
+                                atv_core::ambient_effects::Toy::Targets,
+                                &t.particles,
+                                None,
+                            );
+                        }
+                    }
+                }
                 let sounds = session.take_sounds();
                 if let Some(sound) = &mut riding.sound {
                     for name in sounds {
@@ -1555,6 +1573,13 @@ impl App {
                 }
                 riding.locked = session.held();
                 ready.scene.pose_prop(&ready.gpu, &session.puck_matrix());
+                // The hat-trick group (`003368c0` starts it, the next
+                // face-off and Restart Game stop it).
+                if let Some(ambient) = &ready.venue.ambient {
+                    for on in session.take_hats() {
+                        ambient.borrow_mut().hat_trick(on);
+                    }
+                }
                 let sounds = session.take_sounds();
                 if let Some(sound) = &mut riding.sound {
                     for name in sounds {
@@ -1598,6 +1623,30 @@ impl App {
                         if shown && let Some(matrix) = treasures.cherry_matrix(i, time) {
                             ready.scene.pose_model(&ready.gpu, model, &matrix);
                         }
+                    }
+                }
+                // A collected treasure's trigger: its `Particles` action
+                // starts the bomb's `bomb_explosion.emt` at the bomb.
+                if let (Some(treasures), Some(ambient)) =
+                    (&ready.venue.treasures, &ready.venue.ambient)
+                {
+                    let time = riding.ride.steps() as f32 * atv_game::ride::STEP;
+                    for name in game.take_triggered() {
+                        let Some(i) = treasures
+                            .targets
+                            .iter()
+                            .position(|t| t.name.eq_ignore_ascii_case(&name))
+                        else {
+                            continue;
+                        };
+                        let at = treasures
+                            .cherry_matrix(i, time)
+                            .map(|m| [m[12], m[13], m[14]]);
+                        ambient.borrow_mut().trigger(
+                            atv_core::ambient_effects::Toy::Mode,
+                            &treasures.targets[i].particles,
+                            at,
+                        );
                     }
                 }
                 let sounds = game.take_sounds();
@@ -1786,6 +1835,24 @@ impl App {
                             .models
                             .iter()
                             .any(|x| x.name.eq_ignore_ascii_case(&m))),
+                    })
+                });
+            // Placed TOY emitters: gameplay starts (bomb/cherry bursts, hat
+            // tricks) and the live CPU particles per pool (static, moving
+            // actor, CPU stream) (tools/test_engine_toy_explosions.mjs).
+            state["ambient"] = ready
+                .venue
+                .ambient
+                .as_ref()
+                .map_or(serde_json::Value::Null, |a| {
+                    let a = a.borrow();
+                    let frame = a.frame();
+                    serde_json::json!({
+                        "triggered": a.effects.triggered(), "live": a.effects.live(),
+                        "particles": frame.particles.len(), "emitted": frame.total_emitted,
+                        "dropped": frame.dropped, "capacity": a.metadata.capacity,
+                        "hatTrick": a.hat_trick.len(),
+                        "drawn": ready.scene.ambient_sprites(),
                     })
                 });
             state["snow"] = ready
@@ -5168,6 +5235,7 @@ impl App {
                     fame_start: None,
                     targets: Vec::new(),
                     sounds: Vec::new(),
+                    triggered: Vec::new(),
                     visit_clock: 0,
                     championship,
                 });
