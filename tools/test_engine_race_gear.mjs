@@ -54,7 +54,9 @@ try {
   assert.equal((await front(page)).race.difficulty, 2);
   await click(page, NEXT);
   f = await front(page);
-  assert.equal(f.race.course, 'env02');
+  // The next course follows env01 in the list: env02, or env01's Enduro
+  // variants when the content package carries them.
+  assert.ok(['env02', 'env01endl', 'env01ends'].includes(f.race.course), f.race.course);
   assert.equal(f.choices[f.selection], 'racetrack');
   // Event tabs: Supercross lists only its courses.
   await key(page, 'PageUp');
