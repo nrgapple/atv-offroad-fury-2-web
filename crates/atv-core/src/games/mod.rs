@@ -222,7 +222,11 @@ impl Toy {
 
 fn vec3(text: &str) -> Option<[f32; 3]> {
     let mut parts = text.split(',').map(|p| p.trim().parse::<f32>());
-    let v = [parts.next()?.ok()?, parts.next()?.ok()?, parts.next()?.ok()?];
+    let v = [
+        parts.next()?.ok()?,
+        parts.next()?.ok()?,
+        parts.next()?.ok()?,
+    ];
     v.iter().all(|c| c.is_finite()).then_some(v)
 }
 
@@ -261,7 +265,10 @@ impl Trigger {
 /// `[Triggers] NumberOfTriggers`, `[Trigger%d]` and `[Trigger%dAction%d]`
 /// up to each trigger's `NumberOfActions` (`0023ff80`).
 pub fn parse_triggers(toy: &Toy) -> Vec<Trigger> {
-    let count = toy.int("Triggers", "NumberOfTriggers").unwrap_or(0).clamp(0, 512);
+    let count = toy
+        .int("Triggers", "NumberOfTriggers")
+        .unwrap_or(0)
+        .clamp(0, 512);
     let mut out = Vec::new();
     for n in 1..=count {
         let section = format!("Trigger{n}");
@@ -269,7 +276,10 @@ pub fn parse_triggers(toy: &Toy) -> Vec<Trigger> {
             continue;
         };
         let extents = toy.vec3(&section, "Box").unwrap_or([0.; 3]);
-        let actions = toy.int(&section, "NumberOfActions").unwrap_or(0).clamp(0, 16);
+        let actions = toy
+            .int(&section, "NumberOfActions")
+            .unwrap_or(0)
+            .clamp(0, 16);
         let actions = (1..=actions)
             .filter_map(|a| {
                 let name = format!("Trigger{n}Action{a}").to_ascii_lowercase();
@@ -301,14 +311,18 @@ pub struct Start {
 impl Start {
     /// Heading about +Y from the direction (0 faces +Z).
     pub fn yaw(&self) -> f32 {
-        self.direction[0].atan2(self.direction[2])
+        use crate::math::Det;
+        self.direction[0].atan2_d(self.direction[2])
     }
 }
 
 /// `[SceneInfo] NumStartPositions` / `Start%d` / `Direction%d` (one per
 /// player slot). Courses without them keep the venue's own start.
 pub fn parse_starts(toy: &Toy) -> Vec<Start> {
-    let count = toy.int("SceneInfo", "NumStartPositions").unwrap_or(0).clamp(0, 8);
+    let count = toy
+        .int("SceneInfo", "NumStartPositions")
+        .unwrap_or(0)
+        .clamp(0, 8);
     (1..=count)
         .filter_map(|n| {
             Some(Start {
@@ -341,6 +355,8 @@ pub struct Marker {
     pub label: String,
     /// The rider holding it (King of the Hills flag colour).
     pub owner: Option<usize>,
+    /// The score to beat (King of the Hills).
+    pub score: f32,
 }
 
 /// A timed sign (Overlays.pb signage, `002e9510`).
@@ -353,6 +369,8 @@ pub struct Notice {
 /// A game's rules over its riders (0 is the local player).
 pub trait Rules {
     fn kind(&self) -> GameKind;
+    /// Seeds the rules' random choices (the original's `rand`).
+    fn seed(&mut self, _seed: u32) {}
     /// The event started (after the start countdown).
     fn begin(&mut self);
     /// One step; returns signs to show.
@@ -370,8 +388,8 @@ pub trait Rules {
     fn markers(&self) -> Vec<Marker>;
     /// Restart Game (`00220d10`, `002d1450`).
     fn restart(&mut self);
-    /// Diagnostics.
-    fn state(&self) -> serde_json::Value;
+    /// Diagnostics (name, value) for tests.
+    fn diagnostics(&self) -> Vec<(&'static str, f32)>;
 }
 
 /// Why the game ended.
@@ -528,7 +546,10 @@ pub fn rules(kind: GameKind, toy: &str) -> crate::Result<Box<dyn Rules>> {
     match kind {
         GameKind::KingOfTheHills => Ok(Box::new(king_of_the_hill::KingOfTheHill::new(&toy)?)),
         GameKind::TreasureHunt => Ok(Box::new(treasure_hunt::TreasureHunt::new(&toy, 1)?)),
-        _ => Err(format!("{} is not available in this port yet.", kind.name()).into()),
+        _ => Err(format!(
+            "{} is not available in this port yet.",
+            kind.name()
+        )),
     }
 }
 
@@ -618,9 +639,14 @@ mod tests {
         let triggers = parse_triggers(&toy);
         assert_eq!(triggers.len(), 1);
         let t = &triggers[0];
-        assert_eq!((t.name.as_str(), t.one_time, t.actions.len()), ("Hill1", true, 1));
         assert_eq!(
-            t.action("hilltop").and_then(|a| a.get("hillnumber")).map(String::as_str),
+            (t.name.as_str(), t.one_time, t.actions.len()),
+            ("Hill1", true, 1)
+        );
+        assert_eq!(
+            t.action("hilltop")
+                .and_then(|a| a.get("hillnumber"))
+                .map(String::as_str),
             Some("1")
         );
         assert!(t.touches([29., 20., 49.], 0.));

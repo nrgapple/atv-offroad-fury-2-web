@@ -29,7 +29,6 @@
 //! - The event ends on its time limit; the most hills wins, ties by stunt
 //!   score.
 use super::{GameKind, Marker, Notice, Rider, Rules, Toy, parse_triggers};
-use serde_json::json;
 
 /// `002e9510(3.0, ..)`: the capture sign's seconds.
 pub const CAPTURE_SIGN: f32 = 3.;
@@ -67,11 +66,19 @@ impl KingOfTheHill {
     }
 
     pub fn with_riders(toy: &Toy, riders: usize) -> crate::Result<Self> {
-        let count = toy.int("KingOfTheHill", "NumberOfHills").unwrap_or(0).clamp(0, 64) as usize;
+        let count = toy
+            .int("KingOfTheHill", "NumberOfHills")
+            .unwrap_or(0)
+            .clamp(0, 64) as usize;
         let mut hills: Vec<Hill> = parse_triggers(toy)
             .into_iter()
             .filter_map(|t| {
-                let number: usize = t.action("Hilltop")?.get("hillnumber")?.trim().parse().ok()?;
+                let number: usize = t
+                    .action("Hilltop")?
+                    .get("hillnumber")?
+                    .trim()
+                    .parse()
+                    .ok()?;
                 (1..=count).contains(&number).then_some(Hill {
                     number,
                     position: t.position,
@@ -190,6 +197,7 @@ impl Rules for KingOfTheHill {
                 position: [h.position[0], h.position[1] + MARKER_RAISE, h.position[2]],
                 label: format!("Hill {}", h.number),
                 owner: h.owner,
+                score: h.score,
             })
             .collect()
     }
@@ -206,14 +214,11 @@ impl Rules for KingOfTheHill {
         }
     }
 
-    fn state(&self) -> serde_json::Value {
-        json!({
-            "state": self.state,
-            "held": self.held,
-            "hills": self.hills.iter().map(|h| json!({
-                "number": h.number, "position": h.position, "owner": h.owner, "score": h.score,
-            })).collect::<Vec<_>>(),
-        })
+    fn diagnostics(&self) -> Vec<(&'static str, f32)> {
+        vec![
+            ("hills", self.hills.len() as f32),
+            ("state", self.state[0] as f32),
+        ]
     }
 }
 
@@ -270,7 +275,10 @@ mod tests {
         let notices = jump(&mut g, 0, 500.);
         assert_eq!(notices[0].text, "ATV 1 captured hill 1");
         assert_eq!((g.held.clone(), g.hills[0].owner), (vec![1, 0], Some(0)));
-        assert!(jump(&mut g, 1, 400.).is_empty(), "a lower score keeps the hill");
+        assert!(
+            jump(&mut g, 1, 400.).is_empty(),
+            "a lower score keeps the hill"
+        );
         let notices = jump(&mut g, 1, 600.);
         assert_eq!(notices[0].text, "ATV 2 captured hill 1");
         assert_eq!(g.held, vec![0, 1]);

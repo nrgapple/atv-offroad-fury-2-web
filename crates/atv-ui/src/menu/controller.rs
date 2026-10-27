@@ -118,6 +118,8 @@ pub struct PauseMenu {
     pub race_active: bool,
     /// The ride is the Training Course (Restart Training).
     pub training_active: bool,
+    /// The ride is a mini-game (Restart Game).
+    pub game_active: bool,
     /// Keys held while the menu is open (frontend.js `menuKeys`), for the
     /// rebindable Pause action.
     held: Vec<String>,
@@ -168,6 +170,7 @@ impl PauseMenu {
             seek_to: None,
             race_active: false,
             training_active: false,
+            game_active: false,
             held: Vec::new(),
             shown: crate::transition::next_show(),
         }
@@ -275,6 +278,7 @@ impl PauseMenu {
             "selection": self.selection,
             "race_active": self.race_active,
             "training_active": self.training_active,
+            "game_active": self.game_active,
             "race_overlays_off": p.overlays_off,
             "race_position": p.race_position,
             "funny_crashes": p.crash_mode != "original",

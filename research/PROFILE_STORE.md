@@ -111,8 +111,9 @@ whether G-Ride is listed in the store.
   or IGIVEUP.
 - **Not gated:** multiplayer and Arlington Free Ride (the original uses the
   host's unlocks online; the port has no profile exchange), ride links
-  (`?venue=`/`?race=` URLs), the motorcycles and ATV06 (never in the
-  original store), and the games (the port has no mini-games).
+  (`?venue=`/`?race=` URLs), and the motorcycles and ATV06 (never in the
+  original store). Single Player → Games refuses locked games and game
+  courses ([GAMES.md](GAMES.md)).
 - **Training reward.** Completing Main Menu → Training Course grants the
   coloured Talons and ATV2 gear to the loaded profile (`0021f440`,
   [TRAINING.md](TRAINING.md)); SHOWROOM/THREADS/IGIVEUP also open them.

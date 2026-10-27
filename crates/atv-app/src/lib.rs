@@ -10,6 +10,7 @@ mod content_sync;
 mod context;
 mod front;
 mod gamepad;
+mod games;
 mod multiplayer;
 mod net;
 mod overlay;
@@ -151,6 +152,8 @@ enum Message {
     #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
     Notice(String),
     SoundFailed(String),
+    /// A mini-game's mode TOY loaded (or why not).
+    GameToy(Result<String, String>),
     Failed(String),
     /// The frontend's GPU, content and venue list are ready.
     FrontReady(Box<Booted>),
@@ -481,6 +484,8 @@ struct App {
     objective: Option<ObjectiveSession>,
     /// The Training Course on the current ride.
     training: Option<training::TrainingSession>,
+    /// A mini-game on the current ride (research/GAMES.md).
+    game: Option<games::GameSession>,
     /// The held room the next frontend ride resumes.
     pending_room: Option<multiplayer::Net>,
     /// `pending_room` was just joined (it meets a rider; a held room
@@ -1337,8 +1342,31 @@ impl App {
                 None
             }
         };
+        // A mini-game: its rules run on the ride's clock; the ATV is held
+        // through the start countdown and after the end, whose standings
+        // open the results.
+        let game_view = match &mut self.game {
+            Some(game) => {
+                game.update(&mut riding.ride);
+                riding.locked |= game.locked();
+                let player = self
+                    .front
+                    .as_ref()
+                    .map(|f| f.borrow().state.player_name.trim().to_string())
+                    .filter(|n| !n.is_empty())
+                    .unwrap_or_else(|| "You".into());
+                if let Some(summary) = game.results(&player)
+                    && let Some(overlay) = &mut self.overlay
+                {
+                    overlay.results.show_game(summary);
+                }
+                game.view()
+            }
+            None => None,
+        };
         if let Some(overlay) = &mut self.overlay {
             overlay.training = self.training.is_some();
+            overlay.game = self.game.is_some();
             if riding.input_cleared {
                 overlay.clear_input();
             }
@@ -1375,11 +1403,29 @@ impl App {
                     })
                     .collect::<Vec<_>>()
             });
+            // A game's hill flags (the owner's colour, white unowned,
+            // `00220d10`) and treasures.
+            let game_markers = self.game.as_ref().map(|g| {
+                g.markers()
+                    .into_iter()
+                    .map(|m| atv_ui::hud::peers::Peer {
+                        slot: m
+                            .owner
+                            .map_or(if m.label == "Treasure" { 19 } else { 9 }, |o| {
+                                o.min(3) as u8
+                            }),
+                        name: m.label,
+                        position: [m.position[0], m.position[1] - 7., m.position[2]],
+                        stale: false,
+                    })
+                    .collect::<Vec<_>>()
+            });
             let hud_peers = ready
                 .net
                 .as_ref()
                 .map(|net| net.hud_peers())
-                .or(training_markers);
+                .or(training_markers)
+                .or(game_markers);
             let view_projection =
                 ready
                     .camera
@@ -1407,6 +1453,7 @@ impl App {
                         .map(|peers| (peers, frame.origin, view_projection)),
                     objective: objective_view,
                     training: training_view,
+                    game: game_view,
                 }),
                 Some(&mut riding.bindings),
             );
@@ -1479,6 +1526,7 @@ impl App {
                 "environment": ready.venue.environment,
                 "championship": riding.ride.race().and_then(|r| r.settings().championship),
                 "training": self.training.as_ref().map(|t| t.state(riding.ride.frame().origin)),
+                "game": self.game.as_ref().map(games::GameSession::state),
                 "objective": self.objective.as_ref().map(|o| serde_json::json!({
                     "series": o.series, "expert": o.expert, "course": o.course,
                     "objective": o.objective, "recorded": o.recorded,
@@ -1907,6 +1955,17 @@ impl App {
             }
             // Restart Training (`00226d60`): the introduction and lesson 1
             // again; nothing earned is taken back.
+            // Restart Game (`00220d10`, `002d1450`): the game starts over
+            // at its start, in place.
+            Event::Reset if self.game.is_some() => {
+                if let Some(game) = &mut self.game {
+                    game.restart(&mut riding.ride);
+                }
+                if let Some(overlay) = &mut self.overlay {
+                    overlay.results = Default::default();
+                }
+                self.menu_event(Event::Resume);
+            }
             Event::Reset if self.training.is_some() => {
                 if let Some(session) = &mut self.training {
                     session.restart(&mut riding.ride);
@@ -2358,6 +2417,20 @@ impl App {
                 }
             }
             overlay::Action::Camera => riding.cycle_requested = true,
+            overlay::Action::RaceRetry if self.game.is_some() => {
+                if let Some(game) = &mut self.game {
+                    game.restart(&mut riding.ride);
+                }
+                if let Some(overlay) = &mut self.overlay {
+                    overlay.results = Default::default();
+                }
+            }
+            overlay::Action::RaceQuit if self.game.is_some() => {
+                // Continue: back to the Games page (the original returns to
+                // its Games Prep).
+                self.game = None;
+                self.quit_to(Some("games"));
+            }
             overlay::Action::RaceRetry if self.objective.is_some() => self.restart_objective(),
             overlay::Action::RaceQuit if self.objective.is_some() => {
                 // Continue: back to Select Objective.
@@ -3228,6 +3301,11 @@ impl ApplicationHandler<Message> for App {
                 self.wake();
             }
             Message::SoundFailed(error) => status(&format!("Sound unavailable: {error}")),
+            Message::GameToy(toy) => {
+                if let Some(game) = &mut self.game {
+                    game.load(toy);
+                }
+            }
             Message::SoundtrackReady(result) => {
                 match result {
                     Ok(music) if self.soundtrack.is_none() => {
@@ -4635,7 +4713,47 @@ impl App {
             self.objective = None;
         }
         self.training = None;
+        self.game = None;
         match event {
+            Event::Game {
+                kind,
+                venue,
+                course,
+                minutes,
+                quad,
+                rider,
+            } => {
+                let Some(content) = self.content.clone() else {
+                    return;
+                };
+                self.game = Some(games::GameSession::new(
+                    kind,
+                    venue.clone(),
+                    course,
+                    minutes,
+                ));
+                match atv_core::games::game_archive(kind, &venue).filter(|p| content.has(p)) {
+                    Some(path) => {
+                        let at = venue.clone();
+                        self.spawn(
+                            async move {
+                                let bytes = content.file(&path).await.map_err(|e| e.to_string())?;
+                                games::mode_toy(&bytes, kind, &at)
+                            },
+                            Message::GameToy,
+                        );
+                    }
+                    None => {
+                        if let Some(game) = &mut self.game {
+                            game.load(Err(format!(
+                                "The original {} archive is missing.",
+                                kind.name()
+                            )));
+                        }
+                    }
+                }
+                self.start_ride(venue, quad, rider, None, None);
+            }
             Event::Training { quad, rider } => {
                 let catalog = self
                     .front
@@ -5594,6 +5712,7 @@ impl App {
         // Leaving mid-course keeps nothing (the original saves only the
         // ending's reward).
         self.training = None;
+        self.game = None;
         let Some(ready) = self.ready.take() else {
             return false;
         };
@@ -5937,6 +6056,7 @@ fn capture(ready: &mut Ready, path: &std::path::Path, width: u32, height: u32, u
                     peers: None,
                     objective: None,
                     training: None,
+                    game: None,
                 }),
                 None,
             );
@@ -6480,6 +6600,7 @@ pub fn run(options: Options) {
         held_ride: None,
         objective: None,
         training: None,
+        game: None,
         pending_room: None,
         pending_fresh: false,
         joining: None,

@@ -117,6 +117,10 @@ pub struct Results {
     /// Menu]`): the summary lines replace the standings; Restart Objective
     /// and Continue (back to Select Objective) replace the race choices.
     pub objective: Option<String>,
+    /// The objective summary is a mini-game's results (Overlays.pb
+    /// `[TreasureOver Menu]`/`[HillKingOver Menu]`, titled "Race Results"):
+    /// Restart Game and Continue.
+    pub game: bool,
     /// No profile was loaded: the race earned nothing and nothing was saved.
     pub no_profile: bool,
     /// Hall of Fame records this race set, and their name.
@@ -260,6 +264,12 @@ impl Results {
             objective: Some(summary),
             ..Default::default()
         };
+    }
+
+    /// A finished mini-game: its standings with Restart Game and Continue.
+    pub fn show_game(&mut self, summary: String) {
+        self.show_objective(summary);
+        self.game = true;
     }
 
     /// The race set Hall of Fame records: the name entry comes first,
@@ -713,6 +723,7 @@ pub fn element(view: &Viewport, state: &Results, summary: &str, fonts: &mut Font
             let label = match id {
                 CONTINUE => "Continue",
                 HIDE => "Hide Menu",
+                RETRY if state.game => "Restart Game",
                 RETRY if state.objective.is_some() => "Restart Objective",
                 RETRY => "Restart",
                 NEXT_ROUND => "Continue Championship",
@@ -777,6 +788,8 @@ pub fn element(view: &Viewport, state: &Results, summary: &str, fonts: &mut Font
         .child(text(
             if naming.is_some() {
                 "Congratulations"
+            } else if state.game {
+                "Race Results"
             } else if state.objective.is_some() {
                 "Objectives"
             } else {

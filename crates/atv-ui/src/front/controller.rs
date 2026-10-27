@@ -14,6 +14,7 @@ use serde_json::{Value, json};
 #[path = "store.rs"]
 pub mod store;
 pub use store::{StoreView, store_page};
+pub mod games_page;
 pub mod profile_pages;
 use profile_pages::NO_PROFILE;
 
@@ -89,6 +90,16 @@ pub enum Event {
     /// Main Menu → Training Course: the original's six lessons on the
     /// Training venue (`atv_core::training`) with the garage selection.
     Training { quad: u16, rider: u16 },
+    /// Single Player → Games → Start Game: an original mini-game
+    /// (`atv_core::games`) on a course of its Tracks.dat list.
+    Game {
+        kind: atv_core::games::GameKind,
+        venue: String,
+        course: String,
+        minutes: u32,
+        quad: u16,
+        rider: u16,
+    },
     /// Select Objective: ride a Freestyle championship course's objective
     /// (the series index into `atv_core::freestyle::SERIES`, Expert and the
     /// objective index).
@@ -177,7 +188,8 @@ pub fn stepper(action: &str) -> bool {
             | "famecourse"
             | "famedifficulty"
             | "storeitem"
-    ) || GEAR_ROWS.iter().any(|(a, _)| *a == action)
+    ) || games_page::game_row(action)
+        || GEAR_ROWS.iter().any(|(a, _)| *a == action)
 }
 
 /// The original catalog names pants and sleeves generically ("pants 10").
@@ -331,6 +343,8 @@ pub struct Frontend {
     pub hall: atv_core::hall_of_fame::HallOfFame,
     /// The Profile Editor pages' working state.
     pub profile_ui: profile_pages::ProfileUi,
+    /// Single Player → Games' selection.
+    pub games: games_page::GamesUi,
     /// The Championship page lists Expert progress.
     pub champ_expert: bool,
     /// The Freestyle championship on Select Objective: its index into
@@ -406,6 +420,7 @@ impl Frontend {
             book: Default::default(),
             hall: Default::default(),
             profile_ui: Default::default(),
+            games: Default::default(),
             champ_expert: false,
             freestyle: None,
             room: None,
@@ -461,6 +476,11 @@ impl Frontend {
     pub fn refresh(&mut self, view: &Viewport) {
         if store_page(&self.page) {
             self.choices = self.store_choices();
+            self.selection = self.selection.min(self.choices.len().saturating_sub(1));
+            return;
+        }
+        if self.page == "games" {
+            self.choices = self.game_choices();
             self.selection = self.selection.min(self.choices.len().saturating_sub(1));
             return;
         }
@@ -569,6 +589,23 @@ impl Frontend {
                 .map_or(self.choices.len(), |i| i + 1);
             self.choices
                 .insert(at, ("championship".into(), "Championship".into()));
+        }
+        // Single Player → Games, after Championship: the original's Games
+        // live under Multiplayer → Split Screen, which the port lacks.
+        if page == "single" && self.store.courses.iter().any(|l| l.kind == 12) {
+            let at = self
+                .choices
+                .iter()
+                .position(|(a, _)| a == "championship" || a == "race")
+                .map_or(self.choices.len(), |i| {
+                    i + 1
+                        + usize::from(
+                            self.choices
+                                .get(i + 1)
+                                .is_some_and(|(a, _)| a == "championship"),
+                        )
+                });
+            self.choices.insert(at, ("games".into(), "Games".into()));
         }
         self.selection = self.selection.min(self.choices.len().saturating_sub(1));
     }
@@ -732,6 +769,7 @@ impl Frontend {
             return;
         }
         match action {
+            _ if games_page::game_row(action) => self.step_game(action, direction),
             "champdifficulty" => {
                 self.champ_expert = !self.champ_expert;
                 self.notice = None;
@@ -865,6 +903,7 @@ impl Frontend {
                 None => "No profile loaded · Remember, your progress is not being saved!".into(),
             }),
             "championship" => self.series_line(),
+            "games" => self.games_line(),
             "objectives" => self.objectives_line(),
             page if store_page(page) => self.store_text(),
             _ => self.profile_status(),
@@ -1436,7 +1475,7 @@ impl Frontend {
             "main" => "title".to_string(),
             "single" => "main".into(),
             "tracks" if self.hosting => "create-lobby".into(),
-            "tracks" | "race" | "championship" => "single".into(),
+            "tracks" | "race" | "championship" | "games" => "single".into(),
             "objectives" => "championship".into(),
             "gear" => "garage".into(),
             "garage" => self.garage_return.clone(),
@@ -1495,6 +1534,8 @@ impl Frontend {
                 self.show(action, view)
             }
             "racestart" => return self.race_event(settings),
+            "games" => self.show(action, view),
+            "gamestart" => return self.game_event(settings),
             // Championship progress lives in the profile: it needs one loaded.
             "championship" if self.book.current.is_none() => {
                 self.notice = Some(NO_PROFILE.into());
@@ -1702,8 +1743,8 @@ impl Frontend {
                 return self.race_event(settings);
             }
             (
-                "race" | "gear" | "profile-name" | "profile-records" | "hall-of-fame" | "store-atv"
-                | "store-gear" | "store-games" | "store-tracks",
+                "race" | "gear" | "games" | "profile-name" | "profile-records" | "hall-of-fame"
+                | "store-atv" | "store-gear" | "store-games" | "store-tracks",
                 "left" | "right",
             ) => {
                 // Only value rows step; Start Race, the link and Back do not.
@@ -2241,7 +2282,7 @@ impl Frontend {
 mod tests {
     use super::*;
 
-    fn tracks() -> Vec<Track> {
+    pub(super) fn tracks() -> Vec<Track> {
         ["env01", "env02", "free01", "nat01", "sx01"]
             .iter()
             .map(|id| Track {
@@ -2252,7 +2293,7 @@ mod tests {
             .collect()
     }
 
-    fn view(width: f32, height: f32) -> Viewport {
+    pub(super) fn view(width: f32, height: f32) -> Viewport {
         Viewport {
             width,
             height,

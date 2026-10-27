@@ -25,7 +25,6 @@
 //! - Restart Game (`002d1450` → `002d1550`): every treasure and count
 //!   resets and group 1 is shown again.
 use super::{GameKind, Marker, Notice, Rider, Rules, Toy, parse_triggers};
-use serde_json::json;
 
 /// `002d0a20`: the wait before the next group, seconds.
 pub const NEXT_GROUP_DELAY: f32 = 6.;
@@ -62,12 +61,18 @@ pub struct TreasureHunt {
 
 impl TreasureHunt {
     pub fn new(toy: &Toy, riders: usize) -> crate::Result<Self> {
-        let groups = toy.int("TreasureHunt", "NumberOfGroups").unwrap_or(1).clamp(1, 64) as usize;
+        let groups = toy
+            .int("TreasureHunt", "NumberOfGroups")
+            .unwrap_or(1)
+            .clamp(1, 64) as usize;
         let triggers = parse_triggers(toy);
         let mut treasures = Vec::new();
         for g in 0..groups {
             let section = format!("TreasureGroup{}", g + 1);
-            let count = toy.int(&section, "NumberOfTriggers").unwrap_or(0).clamp(0, 256);
+            let count = toy
+                .int(&section, "NumberOfTriggers")
+                .unwrap_or(0)
+                .clamp(0, 256);
             for n in 1..=count {
                 let Some(name) = toy.get(&section, &format!("Trigger{n}")) else {
                     continue;
@@ -111,12 +116,6 @@ impl TreasureHunt {
         Ok(hunt)
     }
 
-    /// The random generator's seed (the original's `rand`); tests fix it.
-    pub fn seed(&mut self, seed: u32) {
-        self.seed = seed | 1;
-        self.rng = self.seed;
-    }
-
     fn reset(&mut self) {
         for t in &mut self.treasures {
             t.collected_by = None;
@@ -133,7 +132,8 @@ impl TreasureHunt {
 
     /// Treasures still to collect (+0x1d4).
     pub fn remaining(&self) -> usize {
-        self.targets.saturating_sub(self.collected.iter().sum::<i32>().max(0) as usize)
+        self.targets
+            .saturating_sub(self.collected.iter().sum::<i32>().max(0) as usize)
     }
 
     /// The shown group's treasures still standing (+0x1d8).
@@ -166,6 +166,11 @@ impl TreasureHunt {
 impl Rules for TreasureHunt {
     fn kind(&self) -> GameKind {
         GameKind::TreasureHunt
+    }
+
+    fn seed(&mut self, seed: u32) {
+        self.seed = seed | 1;
+        self.rng = self.seed;
     }
 
     fn begin(&mut self) {
@@ -251,6 +256,7 @@ impl Rules for TreasureHunt {
                 position: t.position,
                 label: "Treasure".into(),
                 owner: None,
+                score: 0.,
             })
             .collect()
     }
@@ -259,22 +265,20 @@ impl Rules for TreasureHunt {
         self.reset();
     }
 
-    fn state(&self) -> serde_json::Value {
-        json!({
-            "targets": self.targets,
-            "groups": self.groups,
-            "group": self.group,
-            "used": self.used,
-            "active": self.active,
-            "wait": self.wait,
-            "remaining": self.remaining(),
-            "groupRemaining": self.group_remaining(),
-            "collected": self.collected,
-            "treasures": self.treasures.iter().map(|t| json!({
-                "name": t.name, "position": t.position, "group": t.group,
-                "collectedBy": t.collected_by,
-            })).collect::<Vec<_>>(),
-        })
+    fn diagnostics(&self) -> Vec<(&'static str, f32)> {
+        vec![
+            ("targets", self.targets as f32),
+            ("groups", self.groups as f32),
+            ("group", self.group as f32),
+            (
+                "usedGroups",
+                self.used.iter().filter(|u| **u).count() as f32,
+            ),
+            ("active", f32::from(u8::from(self.active))),
+            ("wait", self.wait),
+            ("remaining", self.remaining() as f32),
+            ("groupRemaining", self.group_remaining() as f32),
+        ]
     }
 }
 
@@ -298,7 +302,11 @@ mod tests {
         );
         let mut triggers = Vec::new();
         for (g, names) in groups.iter().enumerate() {
-            text += &format!("[TreasureGroup{}]\nNumberOfTriggers={}\n", g + 1, names.len());
+            text += &format!(
+                "[TreasureGroup{}]\nNumberOfTriggers={}\n",
+                g + 1,
+                names.len()
+            );
             for (i, n) in names.iter().enumerate() {
                 text += &format!("Trigger{}={n}\n", i + 1);
                 triggers.push(*n);
@@ -334,7 +342,11 @@ mod tests {
         assert_eq!(hunt.collected[0], 0, "group 2 is hidden");
         hunt.update(0.1, &[at(100.)]);
         hunt.update(0.1, &[at(100.)]);
-        assert_eq!((hunt.collected[0], hunt.remaining()), (1, 2), "one time only");
+        assert_eq!(
+            (hunt.collected[0], hunt.remaining()),
+            (1, 2),
+            "one time only"
+        );
         assert_eq!(hunt.progress(0), "1 / 3");
     }
 
@@ -372,7 +384,10 @@ mod tests {
         hunt.update(0.1, &[at(0.), at(100.)]);
         assert_eq!(hunt.scores(), vec![0, 1]);
         hunt.restart();
-        assert_eq!((hunt.scores(), hunt.group, hunt.active), (vec![0, 0], 0, false));
+        assert_eq!(
+            (hunt.scores(), hunt.group, hunt.active),
+            (vec![0, 0], 0, false)
+        );
         assert_eq!(hunt.markers().len(), 1);
     }
 }

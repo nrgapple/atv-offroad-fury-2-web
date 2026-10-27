@@ -60,6 +60,14 @@ STARTUP += tuple(f'/TRACKS/TRACKSB/SX{i:02}/S{i:02}_NAT.RES' for i in range(1,17
 VARIANTS = tuple(f'/TRACKS/TRACKSA/ENV{i:02}/E{i:02}_ENDS.RES' for i in range(1, 9))
 VARIANTS += tuple(f'/TRACKS/TRACKSA/ENV{i:02}/E{i:02}_ST.RES' for i in (1, 6, 7))
 STARTUP += VARIANTS
+# Original King of the Hills (KH) and Treasure Hunt (TH) game archives for
+# the 14 Environment and Freestyle venues (research/GAMES.md). Each repeats
+# its venue's Freeride archive; the package keeps only the members that
+# differ (compact_game_archive), which the engine reads for the game's mode
+# TOY (hills, treasures and starts) over the Freeride ride.
+GAME_VENUES = tuple((f'ENV{i:02}', f'E{i:02}') for i in range(1, 9)) + tuple((f'FREE{i:02}', f'F{i:02}') for i in range(1, 7))
+GAMES = tuple(f'/TRACKS/TRACKSA/{folder}/{stem}_{suffix}.RES' for folder, stem in GAME_VENUES for suffix in ('KH', 'TH'))
+STARTUP += GAMES
 # Original Profile Store gear catalog (uiRider.txt only) for rider customization.
 STARTUP += ('/UI/RESOURCE/RIDEINFO.RES',)
 STARTUP += tuple(f'/UI/RESOURCE/TP/TP_{group}.RES' for group in ('PNAT','ASX','PSX','HOCK'))
@@ -467,6 +475,24 @@ def race_variant_members(resource, national):
     return selected
 
 
+def compact_game_archive(data, freeride):
+    """A game archive's members absent from, or different in, the venue's
+    Freeride archive; it must carry its own mode TOY."""
+    base = Resource(freeride)
+    shared = {name.lower(): (size, i) for i, (name, _, size) in enumerate(base.members)}
+    resource = Resource(data)
+    selected = []
+    for i, (name, _, size) in enumerate(resource.members):
+        member = resource.extract(i)
+        match = shared.get(name.lower())
+        if match and match[0] == size and base.extract(match[1]) == member:
+            continue
+        selected.append((name, member))
+    if not any(name.lower().endswith(('kh.toy', 'th.toy')) for name, _ in selected):
+        raise ValueError('game archive has no mode TOY of its own')
+    return pack_resource(selected)
+
+
 def compact_race_variant(data, national):
     return pack_resource(race_variant_members(Resource(data), national))
 
@@ -669,11 +695,14 @@ def main():
                 data = compact_map_placements(data, path.split('/')[-2], national(path))
             elif path in VARIANTS:
                 data = compact_race_variant(data, national(path))
+            elif path in GAMES:
+                folder, name = path.rsplit('/', 1)
+                data = compact_game_archive(data, source(f'{folder}/{name.split("_")[0]}_FR.RES'))
             elif path == '/RIDER/RIDER_MT.RES':
                 outfits = ai_outfit_names(Resource(originals['/TRACKS/TRACKSA/ENV01/E01_NAT.RES']).named('airiders.pb'))
                 outfits |= gear_catalog_names(source('/UI/RESOURCE/RIDEINFO.RES'))
                 data = compact_rider_materials(originals['/RIDER/MRIDER.RES'], data, (originals['/RIDER/FRIDER.RES'],), outfits)
-            record = {'path': path, 'lba': by_path[path.lower()]['lba'], 'directory': False, 'lazy': path.startswith(('/QUAD/', '/UI/LOADICON/')) or path in ('/RIDER/FRIDER.RES', JUKEBOX) or path in VARIANTS, **blob(data)}
+            record = {'path': path, 'lba': by_path[path.lower()]['lba'], 'directory': False, 'lazy': path.startswith(('/QUAD/', '/UI/LOADICON/')) or path in ('/RIDER/FRIDER.RES', JUKEBOX) or path in VARIANTS or path in GAMES, **blob(data)}
             if data != originals[path]:
                 record.update(repacked=True, member_count=len(Resource(data).members))
             records.append(record)
