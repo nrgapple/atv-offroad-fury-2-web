@@ -154,6 +154,11 @@ pub struct Overlay {
     /// The race's course id, the player's vehicle and whether it runs the
     /// default laps: what the profile's course record keeps (`001f1e30`).
     pub race_entry: Option<(String, u16, bool)>,
+    /// The finished race's Hall of Fame records, until named.
+    /// (and the name they are stored under).
+    fame_watch: Option<(atv_core::hall_of_fame::RecordWatch, String)>,
+    /// The last name entered for the Hall of Fame (the next default).
+    fame_name: String,
     /// Pause pages slide in as they open (frontend.js `animatePage`), and
     /// this frame's slide.
     transition: atv_ui::transition::PageTransition,
@@ -227,6 +232,8 @@ impl Overlay {
             frontend: false,
             race: false,
             race_entry: None,
+            fame_watch: None,
+            fame_name: String::new(),
             transition: Default::default(),
             menu_motion: None,
         }
@@ -511,13 +518,10 @@ impl Overlay {
                 self.minimap.settings.save(&mut self.settings);
                 None
             } else {
-                if (results::CONTINUE..=results::SHOW).contains(&p.button) {
+                if (results::CONTINUE..=results::FAME_SELECT).contains(&p.button) {
                     self.results.focus_visible = false;
-                    return Some(self.results.act(p.button).map(|command| match command {
-                        results::Command::Retry => Action::RaceRetry,
-                        results::Command::Quit => Action::RaceQuit,
-                        results::Command::NextRound => Action::RaceNextRound,
-                    }));
+                    let command = self.results.act(p.button);
+                    return Some(command.and_then(|c| self.command_action(c)));
                 }
                 match toolbar::Button::from_id(p.button) {
                     Some(toolbar::Button::Pause) => Some(Action::Pause),
@@ -877,6 +881,9 @@ impl Overlay {
                 self.results.can_quit = self.frontend || cfg!(target_arch = "wasm32");
                 if self.results.finish(frame) {
                     self.credit_profile(frame);
+                    if self.lobby.is_none() {
+                        self.record_fame(frame);
+                    }
                 }
             }
             // A race restarted in place starts without results.
@@ -932,6 +939,7 @@ impl Overlay {
                 total: you.time.filter(|_| !you.estimated),
                 full_length,
                 stunts: frame.player_stunts.records,
+                personal: frame.records.as_ref().and_then(|r| r.personal.clone()),
             });
         }
         if let Some((round, places)) = self.results.championship.clone()
@@ -1051,7 +1059,7 @@ impl Overlay {
             return (false, None);
         }
         let (taken, command) = self.results.key(code);
-        (taken, command.map(command_action))
+        (taken, command.and_then(|c| self.command_action(c)))
     }
 
     /// Controller A/B/X and the D-pad while the race results are up.
@@ -1061,9 +1069,58 @@ impl Overlay {
         }
         let idle = atv_game::ride::bindings::Pad::default();
         let pad = pad.unwrap_or(&idle);
-        self.results
-            .pad(&pad.buttons, &pad.axes)
-            .map(command_action)
+        let command = self.results.pad(&pad.buttons, &pad.axes);
+        command.and_then(|c| self.command_action(c))
+    }
+
+    /// A results command's host action; the Hall of Fame name is kept here.
+    fn command_action(&mut self, command: results::Command) -> Option<Action> {
+        Some(match command {
+            results::Command::Retry => Action::RaceRetry,
+            results::Command::Quit => Action::RaceQuit,
+            results::Command::NextRound => Action::RaceNextRound,
+            results::Command::FameName => {
+                if let (Some((watch, stored)), Some(fame)) = (&self.fame_watch, &self.results.fame)
+                {
+                    self.fame_name = atv_core::hall_of_fame::clean_name(&fame.name);
+                    let mut hall = atv_ui::settings::load_hall_of_fame(&self.settings);
+                    hall.rename(watch, stored, &self.fame_name);
+                    atv_ui::settings::save_hall_of_fame(&mut self.settings, &hall);
+                    self.fame_watch = Some((watch.clone(), self.fame_name.clone()));
+                }
+                return None;
+            }
+        })
+    }
+
+    /// The race set Hall of Fame records (`00217e40`): keep them under a
+    /// default name at once (so leaving keeps them) and open the name
+    /// entry, which renames them. Online races keep none (+0x7d8).
+    fn record_fame(&mut self, frame: &atv_core::race::Frame) {
+        self.fame_watch = None;
+        let Some(watch) = frame.records.clone() else {
+            return;
+        };
+        let broken = watch.broken();
+        if broken.is_empty() {
+            return;
+        }
+        // Authored default: the last Hall of Fame name, else the loaded
+        // profile's (the original's starting text is not recovered).
+        let name = if self.fame_name.is_empty() {
+            atv_ui::settings::load_book(&self.settings)
+                .current_profile()
+                .map(|p| p.name.clone())
+                .filter(|n| !n.is_empty())
+                .unwrap_or_else(|| atv_core::profile::DEFAULT_NAME.into())
+        } else {
+            self.fame_name.clone()
+        };
+        let mut hall = atv_ui::settings::load_hall_of_fame(&self.settings);
+        hall.commit(&watch, &name);
+        atv_ui::settings::save_hall_of_fame(&mut self.settings, &hall);
+        self.results.enter_fame(broken, &name);
+        self.fame_watch = Some((watch, atv_core::hall_of_fame::clean_name(&name)));
     }
 
     fn upload(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, width: u32, height: u32) {
@@ -1360,14 +1417,6 @@ fn safe_area() -> [f32; 4] {
         px("padding-bottom"),
         px("padding-left"),
     ]
-}
-
-fn command_action(command: results::Command) -> Action {
-    match command {
-        results::Command::Retry => Action::RaceRetry,
-        results::Command::Quit => Action::RaceQuit,
-        results::Command::NextRound => Action::RaceNextRound,
-    }
 }
 
 /// Moves a laid-out item down by `dy` CSS pixels.

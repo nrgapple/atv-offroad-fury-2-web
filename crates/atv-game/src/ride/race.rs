@@ -199,6 +199,17 @@ pub struct RaceState {
     rest: Option<GridRest>,
     /// The latest step's presentation, until the host takes it.
     pub events: StepEvents,
+    /// The Hall of Fame and personal records as the event started; a
+    /// restart keeps them for its fresh race.
+    records_start: Option<atv_core::hall_of_fame::RecordWatch>,
+}
+
+impl RaceState {
+    /// The player's Hall of Fame and personal records for this event.
+    pub fn set_records(&mut self, records: atv_core::hall_of_fame::RecordWatch) {
+        self.records_start = Some(records.clone());
+        self.race.set_records(records);
+    }
 }
 
 impl RaceState {
@@ -431,6 +442,7 @@ impl Ride {
             music_intro: false,
             rest: Some(rest),
             events: StepEvents::default(),
+            records_start: None,
         });
         Ok(())
     }
@@ -462,6 +474,9 @@ impl Ride {
             stage: state.stage,
         };
         self.begin_race(setup, state.settings, false)?;
+        if let (Some(records), Some(race)) = (state.records_start, &mut self.race) {
+            race.set_records(records);
+        }
         self.step_camera(0.)
     }
 
@@ -874,6 +889,12 @@ impl Ride {
         }
         state.events = events;
         state.rest = None;
+        // Hall of Fame and personal record messages (`002e2cf0`, 1.5 s).
+        for message in state.race.take_record_messages() {
+            state
+                .hud
+                .say(message, atv_core::hall_of_fame::MESSAGE_SECONDS);
+        }
         frame.hud = Some(state.hud.step(
             STEP,
             &race_hud::Input {
