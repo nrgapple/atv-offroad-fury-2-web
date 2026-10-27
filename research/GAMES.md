@@ -156,8 +156,11 @@ game's end (`002d10d0`, `002210e0`).
   path), shows only the live group's uncollected treasures and hides a
   bomb when collected or during the group wait. A private probe checks all
   14 venues: one bomb per `NumberOfTargets`, and the PSG and MOT ship. The
-  screen tags and minimap markers stay; the sparks and
-  `bomb_explosion.emt` bursts are still not emitted.
+  screen tags and minimap markers stay. A collect starts that bomb's
+  `bomb_explosion.emt` instance (the trigger's `Particles` action) at the
+  bomb, drawn as the original's CPU spark streams; the authored
+  `bombsparks.emt` is undeclared and absent from every archive
+  (AMBIENT_EFFECTS.md "Triggered bursts").
 - **Sounds.** The start countdown plays the race start's `beep01`/`go`
   (`002e79a0`); each treasure plays `iconhit.vag` (`002d0d70`), which the
   packager now adds to the hosted `AUDIO.RES`. No capture sound was found
@@ -354,8 +357,10 @@ Event `QuadzillaEventHockey.cpp`, vtable `00460770`; camera
   race CPU riders) are not connected.
 - The puck model is posed but not physically its rigid body; its drawn
   size is the original model's, larger than the authored 1.5-unit
-  contact radius. The team marker quads, team rider textures, hockey
-  camera and hat emitters are not drawn.
+  contact radius. The team marker quads, team rider textures and hockey
+  camera are not drawn. The four `hats*.emt` type9 emitters are
+  deactivated at setup, start on a hat trick and stop at the next
+  face-off or Restart Game (AMBIENT_EFFECTS.md "Triggered bursts").
 - Team Select and the Time Limit row are not shown; the port uses the
   120 s default. The puck model also rests at the `[Ball]` start when
   Coonce Arena is ridden as authored Freestyle.

@@ -229,6 +229,15 @@ impl GameSession {
         self.test_hooks(ride, dt);
     }
 
+    /// The TOY triggers the rules took since the last call (Treasure
+    /// Hunt's collected treasures, whose explosions the ride starts).
+    pub fn take_triggered(&mut self) -> Vec<String> {
+        self.session
+            .as_mut()
+            .map(|s| s.rules.take_triggered())
+            .unwrap_or_default()
+    }
+
     /// The `gameTest` placements (test tooling only).
     fn test_hooks(&mut self, ride: &mut Ride, dt: f32) {
         let Some(session) = &mut self.session else {

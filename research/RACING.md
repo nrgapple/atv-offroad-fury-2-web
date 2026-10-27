@@ -84,7 +84,8 @@ for the scalar branches, not whole-race replay):
 - Championship-only difficulty effects (see "CPU difficulty" below), the All
   Out AI filters and angular-rate write, scene query category/order and actor
   update ordering.
-- Firework triggers and whole-race PS2 replay parity. Championship points
+- Whole-race PS2 replay parity (firework triggers and their CPU spark
+  streams are connected; see "Supercross fireworks"). Championship points
   and series are in `CHAMPIONSHIPS.md` (Nationals and Supercross only).
 - The Supercross start gate rotation and the race-load announcer cue. See
   "Race start and race over" and "Pre-race camera and 321 lights" below.
@@ -362,10 +363,9 @@ progress, the course menu in three layouts and page/GL errors.
 Limitations: CPU corner speed is not original on courses whose TDF speeds are all
 the 150ft/s sentinel (e.g. `env02`, `nat01`). The recovered driver has no corner
 braking and the project does not guess one, so CPUs can overshoot early corners
-and use the existing wreck/recovery path. Supercross firework streams beyond the
-ambient GPU packet budget are reported as unsupported instead of failing the
-load; firework triggers, championship points and original finish-line box tests
-remain unconnected. Race resources need the updated R2 content package.
+and use the existing wreck/recovery path. Supercross firework triggers and streams
+were connected later ("Supercross fireworks"); championship points and the
+original finish-line box tests are covered in their own sections. Race resources need the updated R2 content package.
 
 ## Track progress, off-track, recovery and rider contact — 2026-10-15
 
@@ -736,9 +736,14 @@ instance and `[FireworkTriggers]`.
   the field crosses after GO. Trigger 1 is the finish gate on the last lap.
 
 Port: `race_fireworks::Controller` runs the triggers and sequence and drives
-the ambient emitters by race TOY emitter and instance. A race with firework
-triggers keeps every stream emitter instead of the static packet budget; the
-bounded GPU ring takes the bursts. The gate test is an authored plane
+the ambient emitters by race TOY emitter and instance. The firework EMTs
+lack `UseGpuParticles`, so the original builds their streams as CPU atlas
+sprites (`001a0130`; at least `MinParticlesPerFrame` streams per step, 500
+for an explosion) in the coloured spark frames of the course's
+Particles.prt; the port now does the same in its bounded 900-slot stream
+pool, which a full explosion fills as the native 1,500-slot manager does
+(AMBIENT_EFFECTS.md "Triggered bursts"). Earlier builds drew them through
+the fountain GPU ring with tile 0 of the GPU atlas. The gate test is an authored plane
 crossing, not the RaceStatus gate (`002487c0`); the gate drop rotation is
 still not reproduced.
 

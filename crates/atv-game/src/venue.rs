@@ -340,6 +340,9 @@ pub async fn load_with(
     });
     // A Freestyle objective (`<course>.obj`) and its targets' cherries,
     // posed by the run (they spin and bob, and hide when hit).
+    // The objective's target TOY: its cherry explosions are appended
+    // emitters (`002427b0`) that its `Particles` actions start.
+    let mut target_toy = None;
     let objective = match &options.objective {
         Some((_, toy)) if !racing => {
             let text = String::from_utf8_lossy(&extract(
@@ -349,9 +352,13 @@ pub async fn load_with(
             .into_owned();
             let objectives = atv_core::freestyle::parse_objectives(&text)?;
             let targets = match toy {
-                Some(stem) => atv_core::freestyle::parse_targets(&String::from_utf8_lossy(
-                    &extract(&format!("{stem}.toy"), "objective targets")?,
-                )),
+                Some(stem) => {
+                    let bytes = extract(&format!("{stem}.toy"), "objective targets")?;
+                    let targets =
+                        atv_core::freestyle::parse_targets(&String::from_utf8_lossy(&bytes));
+                    target_toy = Some(bytes);
+                    targets
+                }
                 None => Vec::new(),
             };
             let (models, motion) = animated_models(&archive, &mut scene, &targets, "cherry.mot")?;
@@ -534,8 +541,12 @@ pub async fn load_with(
         &scene_text,
         toy.as_deref(),
         toy_index,
-        mode.as_deref(),
-        mode_index,
+        crate::ambient::Sources {
+            mode: mode.as_deref(),
+            mode_index,
+            game: options.game_scene.is_some() && !racing,
+            targets: target_toy.as_deref(),
+        },
     )
     .unwrap_or_else(|error| {
         // The browser skips effects it cannot configure.

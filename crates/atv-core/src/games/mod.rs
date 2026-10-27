@@ -397,6 +397,13 @@ pub trait Rules {
     fn restart(&mut self);
     /// Diagnostics (name, value) for tests.
     fn diagnostics(&self) -> Vec<(&'static str, f32)>;
+    /// The TOY triggers riders entered since the last call whose other
+    /// actions (`HideAnimation`, `Particles`) the presentation runs:
+    /// Treasure Hunt's collected treasures (`00172bc0` calls a trigger's
+    /// action callbacks in order; the `Treasure` action counts it).
+    fn take_triggered(&mut self) -> Vec<String> {
+        Vec::new()
+    }
 }
 
 /// Why the game ended.
@@ -671,6 +678,117 @@ mod tests {
                 "{venue}"
             );
         }
+    }
+
+    /// Private sweep: every Treasure Hunt treasure and every Freestyle
+    /// target (green and red) on every course starts its explosion: each
+    /// `Particles` action names an emitter of its own TOY whose EMT, atlas
+    /// group and (for bombs) `bomb.mcf` animation instance resolve, and the
+    /// started one-shot draws CPU sprites. Skips without the disc files.
+    #[test]
+    fn every_treasure_and_target_explosion_resolves() {
+        use crate::ambient_effects::{Effects, Source, Toy};
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../private/extracted");
+        if !root.join("TRACKS/TRACKSA/ENV05/E05_TH.RES").exists() {
+            eprintln!("skipped: private archives are not extracted");
+            return;
+        }
+        let venues = [
+            "env01", "env02", "env03", "env04", "env05", "env06", "env07", "env08", "free01",
+            "free02", "free03", "free04", "free05", "free06",
+        ];
+        let mut checked = 0;
+        let mut runs = Vec::new();
+        for venue in venues {
+            runs.push((
+                game_archive(GameKind::TreasureHunt, venue).unwrap(),
+                format!("{venue}th"),
+                Toy::Mode,
+            ));
+            if let Some(ob) = crate::freestyle::objective_archive(venue) {
+                for colour in ["gcp", "rcp"] {
+                    runs.push((ob.clone(), format!("{venue}{colour}"), Toy::Targets));
+                }
+            }
+        }
+        for (path, stem, toy) in runs {
+            let bytes = std::fs::read(root.join(&path[1..])).unwrap();
+            let archive = crate::resource::Resource::parse(&bytes).unwrap();
+            let member = |name: &str| {
+                archive
+                    .members
+                    .iter()
+                    .position(|m| {
+                        m.name
+                            .replace('\\', "/")
+                            .rsplit('/')
+                            .next()
+                            .unwrap()
+                            .eq_ignore_ascii_case(name)
+                    })
+                    .map(|i| String::from_utf8_lossy(&archive.extract(i).unwrap()).into_owned())
+            };
+            let Some(text) = member(&format!("{stem}.toy")) else {
+                panic!("{path} lacks {stem}.toy");
+            };
+            let targets = if toy == Toy::Mode {
+                crate::freestyle::parse_animated_triggers(&text, "Treasure")
+            } else {
+                crate::freestyle::parse_targets(&text)
+            };
+            assert!(!targets.is_empty(), "{stem}");
+            let prt = archive
+                .members
+                .iter()
+                .position(|m| m.name.to_ascii_lowercase().ends_with("particles.prt"))
+                .map(|i| String::from_utf8_lossy(&archive.extract(i).unwrap()).into_owned())
+                .unwrap();
+            let mut source = Source {
+                scene: "[StaticModels]\nNumberOfStaticModels=0\n".into(),
+                common: String::new(),
+                mode: (toy == Toy::Mode).then(|| text.clone()),
+                targets: (toy == Toy::Targets).then(|| text.clone()),
+                prt,
+                emts: Default::default(),
+            };
+            for p in crate::ambient_effects::plan(&source).unwrap().placements {
+                if let Some(emt) = member(&p.filename) {
+                    source.emts.insert(p.filename.clone(), emt);
+                }
+            }
+            let (mut effects, metadata) = Effects::from_source(&source).unwrap();
+            assert!(
+                metadata
+                    .unsupported
+                    .iter()
+                    .all(|u| u.starts_with("locosmoke")),
+                "{stem}: {:?}",
+                metadata.unsupported
+            );
+            for (i, target) in targets.iter().enumerate() {
+                assert_eq!(target.particles.len(), 1, "{stem} {}", target.name);
+                let action = target.particles[0];
+                assert!(action.on);
+                // Let earlier bursts (StartOn one-shots, the last target) end.
+                for _ in 0..70 {
+                    effects.step(1. / 60.).unwrap();
+                }
+                assert!(effects.trigger(toy, action, None), "{stem} {}", target.name);
+                effects.step(1. / 60.).unwrap();
+                let frame = effects.frame();
+                assert!(frame.emitted > 0, "{stem} {}", target.name);
+                // The burst starts at the trigger (the env04 green target 12
+                // is authored 2 ft from its emitter).
+                let near = frame
+                    .particles
+                    .iter()
+                    .any(|p| (0..3).all(|a| (p.position[a] - target.position[a]).abs() < 3.));
+                assert!(near, "{stem} {} #{i}", target.name);
+                checked += 1;
+            }
+        }
+        // 14 Treasure Hunts (25 or 15 treasures) and 13 objective courses.
+        assert_eq!(checked, 581);
     }
 
     #[test]
