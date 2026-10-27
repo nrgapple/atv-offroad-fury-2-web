@@ -156,7 +156,7 @@ pub struct Overlay {
     pub race_entry: Option<(String, u16, bool)>,
     /// The finished race's Hall of Fame records, until named.
     /// (and the name they are stored under).
-    fame_watch: Option<(atv_core::hall_of_fame::RecordWatch, String)>,
+    fame_watch: Option<(atv_core::hall_of_fame::Watch, String)>,
     /// The last name entered for the Hall of Fame (the next default).
     fame_name: String,
     /// Pause pages slide in as they open (frontend.js `animatePage`), and
@@ -1084,7 +1084,7 @@ impl Overlay {
                 {
                     self.fame_name = atv_core::hall_of_fame::clean_name(&fame.name);
                     let mut hall = atv_ui::settings::load_hall_of_fame(&self.settings);
-                    hall.rename(watch, stored, &self.fame_name);
+                    hall.rename_run(watch, stored, &self.fame_name);
                     atv_ui::settings::save_hall_of_fame(&mut self.settings, &hall);
                     self.fame_watch = Some((watch.clone(), self.fame_name.clone()));
                 }
@@ -1098,9 +1098,16 @@ impl Overlay {
     /// entry, which renames them. Online races keep none (+0x7d8).
     fn record_fame(&mut self, frame: &atv_core::race::Frame) {
         self.fame_watch = None;
-        let Some(watch) = frame.records.clone() else {
-            return;
-        };
+        if let Some(watch) = frame.records.clone() {
+            self.offer_fame(atv_core::hall_of_fame::Watch::Race(watch));
+        }
+    }
+
+    /// A finished race or Freestyle objective (`002fce00` → `00217e40`):
+    /// its Hall of Fame records are stored under a default name and the
+    /// name entry opens.
+    pub fn offer_fame(&mut self, watch: atv_core::hall_of_fame::Watch) {
+        self.fame_watch = None;
         let broken = watch.broken();
         if broken.is_empty() {
             return;
@@ -1117,7 +1124,7 @@ impl Overlay {
             self.fame_name.clone()
         };
         let mut hall = atv_ui::settings::load_hall_of_fame(&self.settings);
-        hall.commit(&watch, &name);
+        hall.commit_run(&watch, &name);
         atv_ui::settings::save_hall_of_fame(&mut self.settings, &hall);
         self.results.enter_fame(broken, &name);
         self.fame_watch = Some((watch, atv_core::hall_of_fame::clean_name(&name)));

@@ -265,6 +265,10 @@ pub struct Profile {
     /// Per-course records by course id.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub courses: BTreeMap<String, CourseRecord>,
+    /// Freestyle records by `HallOfFame::freestyle_key` (the 0x28-byte
+    /// Freestyle record).
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub freestyle: BTreeMap<String, crate::hall_of_fame::FreestyleRecord>,
 }
 
 impl Profile {
@@ -363,6 +367,26 @@ impl Profile {
             course.top_laps_ms = top(&personal.laps);
             course.top_races_ms = top(&personal.races);
         }
+    }
+
+    /// Keeps a finished Freestyle objective's record and, as `00322080`
+    /// does for mode 2, the profile's stunt maxima.
+    pub fn record_freestyle(&mut self, key: &str, record: crate::hall_of_fame::FreestyleRecord) {
+        self.stunts.merge(&StuntRecords {
+            longest_jump: record.longest_jump(),
+            most_combos: record.most_combos,
+            most_points: record.stunts.first().copied().unwrap_or(0),
+        });
+        self.freestyle.insert(key.to_string(), record);
+    }
+
+    /// "Most Stunt Points In An Objective": the highest objective score of
+    /// any Freestyle course.
+    pub fn best_objective(&self) -> Option<i64> {
+        self.freestyle
+            .values()
+            .filter_map(|r| r.objectives.first().copied())
+            .max()
     }
 
     /// The ATV with the most victories ("Most Winning ATV").

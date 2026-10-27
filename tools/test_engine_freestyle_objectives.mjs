@@ -40,11 +40,13 @@ async function rideObjective(page, action) {
   await page.waitForFunction(() => JSON.parse(document.querySelector('#ui-state')?.textContent || '{}').ride?.objective?.timeLeft != null, null, { timeout: 300000 });
 }
 
-async function waitResults(page) {
-  await page.waitForFunction(() => {
+// The results' buttons: the objective's two, or the Hall of Fame name
+// entry's Select first.
+async function waitResults(page, count = 2) {
+  await page.waitForFunction(count => {
     const ride = JSON.parse(document.querySelector('#ui-state')?.textContent || '{}').ride;
-    return ride?.objective?.recorded && ride?.results?.length === 2;
-  }, null, { timeout: 120000 });
+    return ride?.objective?.recorded && ride?.results?.length === count;
+  }, count, { timeout: 120000 });
 }
 
 const browser = await launch();
@@ -112,15 +114,30 @@ try {
   await key(page, 'Enter');
   await onPage(page, 'objectives', 120000);
 
-  // Score Stunt Points completes: three level bits.
+  // Score Stunt Points completes: three level bits. Its score is the
+  // course's first Highest Objective Score (00332c50): the name entry opens
+  // first and the objective earns score / 1000 Profile Points (002fce00).
   await toObjectives(page, 'objectiveTest=score');
   await choose(page, 'free:unspstunt'); await onPage(page, 'objectives');
   await rideObjective(page, 'obj:3');
+  await waitResults(page, 1);
+  state = (await read(page)).ride;
+  assert.deepEqual(state.fame.broken.slice(0, 1), ['Highest Objective Score'], JSON.stringify(state.fame));
+  assert.equal(state.fame.name, 'PLAYER1');
+  await nextFrames(page, 5);
+  await optionalScreenshot(page, 'ATV_FREESTYLE_SCREENSHOT', 'name-entry');
+  const score = Math.trunc(state.objective.score);
+  const hall = await page.evaluate(() => JSON.parse(localStorage.getItem('fury-hall-of-fame')));
+  assert.equal(hall.freestyle['unspstunt:env01'].objectives[0].value, score, JSON.stringify(hall));
+  await key(page, 'Enter');
   await waitResults(page);
   await nextFrames(page, 5);
   await optionalScreenshot(page, 'ATV_FREESTYLE_SCREENSHOT', 'completed');
   let saved = await profile(page);
   assert.equal(saved.championships.objectives['unspstunt-normal:env01'], 0b111000);
+  const earned = Math.trunc(score / 1000);
+  assert.equal(saved.points, 40 + earned, `objective Profile Points for ${score}`);
+  assert.equal(saved.freestyle['unspstunt:env01'].objectives[0], score);
   await key(page, 'ArrowDown');
   await key(page, 'Enter');
   await onPage(page, 'objectives', 120000);
@@ -133,7 +150,7 @@ try {
   assert.match(labels(front)['free:unspstunt'], /Round 1 of 6 · 33\/36 · Silver/);
   assert.match(labels(front)['free:spstunt'], /^Pro Freestyle · Round 1 of 5/);
   saved = await profile(page);
-  assert.equal(saved.points, 540);
+  assert.equal(saved.points, 540 + earned);
   assert.ok(saved.championships.opened.includes('spstunt-normal'));
   await optionalScreenshot(page, 'ATV_FREESTYLE_SCREENSHOT', 'trophy');
   assertNoErrors(errors);

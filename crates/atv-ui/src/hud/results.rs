@@ -39,6 +39,8 @@ pub struct Fame {
     /// "Fastest Lap Time", "2nd Fastest 5 Lap Race Time"… (`00333360`).
     pub broken: Vec<String>,
     pub name: String,
+    /// The menu the entry returns to (Race Results, or an objective's).
+    pub then: Menu,
 }
 
 /// What the host runs for the player.
@@ -269,6 +271,11 @@ impl Results {
         self.fame = Some(Fame {
             broken,
             name: name.into(),
+            then: if self.menu == Menu::NameEntry {
+                Menu::Results
+            } else {
+                self.menu
+            },
         });
         self.menu = Menu::NameEntry;
         self.hidden = false;
@@ -332,7 +339,7 @@ impl Results {
             RETRY => return Some(Command::Retry),
             NEXT_ROUND => return Some(Command::NextRound),
             FAME_SELECT if self.menu == Menu::NameEntry => {
-                self.menu = Menu::Results;
+                self.menu = self.fame.as_ref().map_or(Menu::Results, |f| f.then);
                 self.focus = 0;
                 return Some(Command::FameName);
             }
