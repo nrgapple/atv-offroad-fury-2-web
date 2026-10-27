@@ -97,7 +97,7 @@ section is authoritative.
 | Motorcycles | Riding controller recovered component by component from MX vs. ATV Unleashed (steer/bank, tires/suspension, engine/clutch, wheelie/stoppie, air control, preload, flips, wreck rules) through authored terrain/surface/input adapters; native whole-step parity unmeasured; Single Player only | `MOTORCYCLES.md` |
 | Crash effects | Optional authored presentation layer (Crazy/Gorn); enhancement-isolation checks show it leaves the simulation unchanged | `CRASH_EFFECTS.md` |
 | Input | Remappable keyboard/controller bindings; one-handed and two-thumb touch are authored adaptations | `CONTROLS.md`, `TOUCH.md` |
-| Progression and saves | Recovered race Profile Points award, per-course race record and racing championships (Am/Pro Enduro, Nationals and Supercross: rounds, 7/4/2/1/0 points, advance rule, trophies, rewards, unlocks); up to four named local profiles (the old implicit save migrates to PLAYER1) with the original Profile Editor (create, load, copy, delete) and View Profile (Overview, Trophies, Records); store, jump/combo records, Freestyle/Short Tracks championships and memory-card UI missing. Garage selections and settings persist locally | `PROFILE.md`, `CHAMPIONSHIPS.md` |
+| Progression and saves | Recovered race Profile Points award, per-course race record and racing championships (Am/Pro Enduro, Nationals and Supercross: rounds, 7/4/2/1/0 points, advance rule, trophies, rewards, unlocks); up to four named local profiles (the old implicit save migrates to PLAYER1) with the original Profile Editor (create, load, copy, delete) and View Profile (Overview, Trophies, Records); Amateur/Pro Freestyle championships with the Stunt and Combo objectives (target runs need the OB archives); store, jump/combo records, Short Tracks championships and memory-card UI missing. Garage selections and settings persist locally | `PROFILE.md`, `CHAMPIONSHIPS.md` |
 
 ## Build and test
 
@@ -158,7 +158,9 @@ the worktree's `target/`; keep bulk output on the SSD.
 
 - Whole-game parity is unverified: no PS2 hardware or deterministic full replay
   comparison exists. Trigonometry and VU arithmetic use host approximations.
-- The Profile Store, Freestyle/Short Tracks championships, jump/combo and
+- The Freestyle championships run the Stunt and Combo objectives; the
+  green/red target runs need the OB archives in the hosted package.
+- The Profile Store, Short Tracks championships, jump/combo and
   Freestyle profile records, memory-card UI and split-screen are missing;
   races and the Enduro/Nationals/Supercross championships save to the loaded
   profile of a local four-profile book (`PROFILE.md`, `CHAMPIONSHIPS.md`).

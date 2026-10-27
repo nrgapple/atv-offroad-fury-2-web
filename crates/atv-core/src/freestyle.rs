@@ -559,7 +559,7 @@ pub fn trophy_line(series: &Series, outcome: &RoundOutcome) -> String {
         Some((Some(t), reward, _)) => {
             let mut line = format!("You have won a {} trophy!", t.name().to_ascii_lowercase());
             if *reward > 0 {
-                line += &format!(" and {reward} Profile Points!");
+                line += &format!(" (+{reward} Profile Points)");
             }
             line
         }
@@ -677,7 +677,7 @@ Description=\"Score Stunt Points\"\r\nTOYFile=\r\n";
         assert!(c.freestyle_open(pro, false));
         assert_eq!(
             trophy_line(am, &o),
-            "You have won a silver trophy! and 500 Profile Points!"
+            "You have won a silver trophy! (+500 Profile Points)"
         );
         // The bits stay: the next run starts over at round 1 with them.
         assert_eq!(c.progress(am, false).round, 0);

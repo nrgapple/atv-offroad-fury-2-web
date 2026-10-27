@@ -780,7 +780,7 @@ impl Frontend {
             } else {
                 let p = champ.progress(s, expert);
                 let mut label = format!(
-                    "{} · Round {} of {} · {}/{} objectives",
+                    "{} · Round {} of {} · {}/{}",
                     s.name,
                     p.round + 1,
                     s.rounds[usize::from(expert)],
@@ -2496,7 +2496,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             front.choices()[at].1,
-            "Amateur Freestyle · Round 2 of 6 · 2/36 objectives"
+            "Amateur Freestyle · Round 2 of 6 · 2/36"
         );
         assert_eq!(front.choices()[at + 1].1, "Pro Freestyle · Locked");
         front.selection = at;
