@@ -480,6 +480,7 @@ impl ObjectiveSession {
                 name: "Target".into(),
                 position: [t.position[0], t.position[1] - 7., t.position[2]],
                 stale: false,
+                pill: None,
             })
             .collect()
     }
