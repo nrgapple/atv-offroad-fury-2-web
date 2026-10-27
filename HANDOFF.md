@@ -144,13 +144,14 @@ the worktree's `target/`; keep bulk output on the SSD.
   `tools/ci_changes.py` and `research/CI_CHECKPOINTS.md`.
 - Record each checkpoint with `tools/update_devlog.py` as one new file under
   `research/devlog/entries/` (`research/devlog/README.md`). Screenshots stay in
-  ignored `private/reports/devlog-images/` and reach R2 only through the
-  release owner.
-- One release owner per combined checkpoint tracks implementation-ready, merged,
-  live and gallery-complete with `tools/release_checkpoint.py`, fetches the
-  deployed artifact with `tools/fetch_site_release.py --deployed`, uploads R2
-  content with `tools/upload_cloudflare_content.py` and verifies with
-  `tools/verify_cloudflare.py`.
+  ignored `private/reports/devlog-images/` and reach R2 through
+  `tools/upload_cloudflare_content.py`.
+- Any chat may upload to R2 when its work needs it; no release owner is
+  required. Runtime resources go first with `--content-only` (additive,
+  locked). Screenshots/gallery follow the deployed artifact from
+  `tools/fetch_site_release.py --deployed`; verify with
+  `tools/verify_cloudflare.py`. `tools/release_checkpoint.py` remains optional
+  coordination for combined checkpoints.
 - `tools/deploy_local.py --user-requested` is a fallback only when the user
   explicitly asks for a host deployment. No Mistakes stays disabled; the
   experimental local release queue was removed.
