@@ -164,8 +164,8 @@ the worktree's `target/`; keep bulk output on the SSD.
   (`PROFILE.md`, `CHAMPIONSHIPS.md`).
 - Race rules are authored around recovered start slots, track window and
   finish-gate laps; firework triggers and points are open (`RACING.md`).
-  Enduro gates are opaque without the original next-gate arrows, compass or
-  GPS overlays, and CPUs drive the Enduro route line (`RACING.md` "Enduro").
+  Enduro CPUs drive the TDF route line, not the waypoint guidance
+  (`RACING.md` "Enduro").
 - Rendering lacks original LOD/visibility policy, point lights, shadows, light
   lens effects and native GS precision (`MAP_FIDELITY.md`). ScreenRain lens drops
   are dormant in shipped content and intentionally not drawn (`WEATHER.md`).

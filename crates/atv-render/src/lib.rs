@@ -533,6 +533,8 @@ pub struct SceneRenderer {
     ride_pose: Option<([f32; 16], Option<[f32; 16]>)>,
     /// The drop gate matrix last posed.
     gate: Option<[f32; 16]>,
+    /// The Enduro gate drawn opaque (the rest fade).
+    enduro_next: Option<usize>,
     /// Authored speed-rush screen pass, and the travel state it reads.
     speed_rush: Option<speed_rush::SpeedRushPass>,
     /// Alpha Air dark blur, created at the first blurred frame.
@@ -706,6 +708,7 @@ impl SceneRenderer {
             blood: None,
             ride_pose: None,
             gate: None,
+            enduro_next: None,
         };
         // startSimulation's first follow-camera request (op 46, dt 1/60)
         // already advances the pre-race shots once.
@@ -751,6 +754,10 @@ impl SceneRenderer {
         if let Some(gate) = old.gate {
             self.gate = Some(gate);
             self.scenery.pose_gate(gpu, &gate);
+        }
+        if let Some(next) = old.enduro_next {
+            self.enduro_next = Some(next);
+            self.scenery.fade_enduro_gates(gpu, next);
         }
         self.weather_view = old.weather_view;
         self.weather_camera = old.weather_camera;
@@ -1002,6 +1009,11 @@ impl SceneRenderer {
         {
             self.gate = Some(*gate);
             self.scenery.pose_gate(gpu, gate);
+        }
+        if events.enduro_next.is_some() && self.enduro_next != events.enduro_next {
+            self.enduro_next = events.enduro_next;
+            self.scenery
+                .fade_enduro_gates(gpu, events.enduro_next.unwrap_or(0));
         }
     }
 

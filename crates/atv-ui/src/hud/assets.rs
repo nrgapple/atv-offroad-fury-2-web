@@ -106,6 +106,9 @@ pub const SIGNS: [(u8, &str); 7] = [
     (15, "Single-Sign-15"),
 ];
 pub const LAMPS: [&str; 4] = ["321ron", "321roff", "321gon", "321goff"];
+/// The Enduro compass (Overlay Set 11 object 31, `QuadzillaCompass`): its
+/// face, the player's arrow and the next-gate icon.
+pub const COMPASS: [&str; 3] = ["compassbkg", "compassarrow", "radaricon_gate"];
 /// The radar racer icon; the player's copy is tinted red (`tinted`).
 pub const RACER: &str = "radaricon_racer";
 pub const RACER_PLAYER: &str = "radaricon_racer#255,0,0";
@@ -331,6 +334,11 @@ async fn race_assets(
         .member(&format!("{environment}{}.toy", variant.stem()))
         .await?
         .ok_or("race TOY missing")?;
+    if variant.is_enduro() {
+        for name in COMPASS.into_iter().chain([RACER]) {
+            opened.image(images, name).await?;
+        }
+    }
     let Some(radar) = section(&toy, "Radar").filter(|_| !variant.is_enduro()) else {
         return Ok(RaceAssets {
             layout,

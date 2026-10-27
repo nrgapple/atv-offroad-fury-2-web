@@ -125,7 +125,8 @@ fn fs(in: Varyings) -> @location(0) vec4<f32> {
   let lit = select(base * (g.ambient.xyz + g.sun_color.xyz * sunlight), base, r.d.flags.x > 0.5)
     * vehicle_shadow(in.world);
   let coverage = select(1.0, clamp(in.fog.x / in.fog.y, 0.0, 1.0), in.fog.y != 0.0);
-  return vec4<f32>(mix(g.fog_color.rgb, lit, coverage), source_alpha);
+  // The model's colour alpha (Enduro gates fade, 00228ea0).
+  return vec4<f32>(mix(g.fog_color.rgb, lit, coverage), source_alpha * r.d.flags.y);
 }
 
 // High preset vehicle shadow map (shadowReceiverGlsl in web/shadow-map.js):

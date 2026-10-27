@@ -103,6 +103,8 @@ pub struct StepEvents {
     pub fireworks: Vec<(usize, usize, bool)>,
     /// The drop gate's world matrix this step.
     pub gate: Option<[f32; 16]>,
+    /// An Enduro race: the player's next gate (0-based), drawn opaque.
+    pub enduro_next: Option<usize>,
     /// One-shot samples: `beep01.vag`/`go.vag` with the lamps, `gate.vag`.
     pub sounds: Vec<&'static str>,
     pub music: Option<MusicEvent>,
@@ -781,6 +783,7 @@ impl Ride {
             .collect();
         state.firework_positions = current;
         events.fireworks = controller.step(STEP, frame.phase == "countdown", &racers);
+        events.enduro_next = frame.enduro_gate.map(|[next, _]| next - 1);
         // National drop gate: standing until GO, then its linear swing.
         if let Some(gate) = &state.stage.gate {
             let live = matches!(frame.phase, "racing" | "finished");

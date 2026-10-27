@@ -83,6 +83,65 @@ pub struct RaceView<'a> {
 }
 
 impl Meter {
+    /// Enduro compass (`QuadzillaCompass`, `002e6e80`): a heading-up face
+    /// (turned by −yaw), the player's arrow fixed at the centre, the other
+    /// riders clamped to the 33px rim (10.09 ft per pixel, single player) and
+    /// the next gate's icon, turned to the gate's direction, only within it.
+    fn compass(
+        &self,
+        list: &mut DisplayList,
+        frame: &Frame,
+        origin: [f32; 3],
+        center: [f32; 2],
+        unit: f32,
+    ) {
+        const FEET_PER_PIXEL: f32 = 333. / 33.;
+        const RADIUS: f32 = 33.;
+        let [face, arrow, gate] = super::assets::COMPASS;
+        let (h, z) = (frame.yaw.sin(), frame.yaw.cos());
+        // angle(h, t): positive toward the rider's right, clockwise on screen.
+        let angle = |t: [f32; 2]| (z * t[0] - h * t[1]).atan2(h * t[0] + z * t[1]);
+        let sprite = |list: &mut DisplayList, name: &str, at: [f32; 2], rotation: f32| {
+            let (Some(&id), Some(image)) = (self.images.get(name), self.assets.images.get(name))
+            else {
+                return;
+            };
+            let (w, h) = (image.width as f32, image.height as f32);
+            list.push(Item::Image {
+                image: id,
+                src: Rect::new(0., 0., w, h),
+                dst: Rect::new(
+                    (at[0] - w / 2.) * unit,
+                    (at[1] - h / 2.) * unit,
+                    w * unit,
+                    h * unit,
+                ),
+                rotation,
+                pivot: [at[0] * unit, at[1] * unit],
+            });
+        };
+        sprite(list, face, center, -frame.yaw);
+        let place = |p: [f32; 3], clamp: bool| {
+            let d = [p[0] - origin[0], p[2] - origin[2]];
+            let r = (d[0].hypot(p[1] - origin[1]).hypot(d[1])) / FEET_PER_PIXEL;
+            let r = if clamp { r.min(RADIUS) } else { r };
+            let a = angle(d);
+            (r, [center[0] + r * a.sin(), center[1] - r * a.cos()])
+        };
+        for cpu in &frame.opponents {
+            let (_, at) = place(cpu.origin, true);
+            sprite(list, super::assets::RACER, at, 0.);
+        }
+        if let Some((position, direction)) = frame.enduro_next {
+            let (r, at) = place(position, false);
+            if r < RADIUS {
+                let gate_yaw = direction[0].atan2(direction[1]);
+                sprite(list, gate, at, gate_yaw - frame.yaw);
+            }
+        }
+        sprite(list, arrow, center, 0.);
+    }
+
     /// Race overlays for a `width` x `height` CSS-pixel viewport.
     pub fn paint_race(
         &self,
@@ -380,6 +439,10 @@ impl Meter {
         }
         // Radar: north-up course map at native size, racer dots drawn last-first.
         if !shown("radar") {
+            return;
+        }
+        if frame.enduro_gate.is_some() {
+            self.compass(list, frame, race.origin, at(70., 375.), unit);
             return;
         }
         let Some((map, [left, north, right, _])) = &assets.radar else {
