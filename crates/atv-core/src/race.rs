@@ -949,7 +949,13 @@ impl Course {
                         offset: fork_offset + mapped,
                         entered: fork_cycle || crosses,
                     };
-                    if best.is_none_or(|(o, _)| located.offset.abs() < o) {
+                    // The native query only searches the route window, on
+                    // alternates as on the main line. Without this an
+                    // alternate that crosses a later part of the circuit
+                    // (sx14's 12->57 line) maps a rider there back to near
+                    // its fork, about 1,000ft behind.
+                    let in_window = (-TRACK_BEHIND..=TRACK_AHEAD).contains(&located.offset);
+                    if in_window && best.is_none_or(|(o, _)| located.offset.abs() < o) {
                         best = Some((located.offset.abs(), located));
                     }
                 }
@@ -2209,6 +2215,42 @@ mod tests {
             }
             eprintln!("{label}: {} alternates driven", course.alternates.len());
         }
+    }
+    #[test]
+    fn alternate_overlap_outside_the_route_window_is_off_track() {
+        // A square circuit with an alternate across the middle from
+        // checkpoint 1 to 5, like sx14's 12->57 line crossing a later part
+        // of the course.
+        let mut c = Course {
+            points: vec![
+                [0., 0., 0.],
+                [0., 0., 100.],
+                [0., 0., 200.],
+                [100., 0., 200.],
+                [200., 0., 200.],
+                [200., 0., 100.],
+                [200., 0., 0.],
+                [100., 0., 0.],
+            ],
+            widths: vec![20.; 8],
+            ..Course::default()
+        };
+        let across = |x: f32| [[x, 0., 110.], [x, 0., 90.]];
+        c.alternates.push(Alternate {
+            from: 1,
+            to: 5,
+            points: vec![[0., 0., 100.], [100., 0., 100.], [200., 0., 100.]],
+            edges: vec![across(0.), across(100.), across(200.)],
+        });
+        let near_rejoin = Station {
+            segment: 4,
+            fraction: 0.8,
+        };
+        // Near the rejoin the alternate is inside the window.
+        let late = c.locate([170., 0., 105.], near_rejoin, true).unwrap();
+        assert!(late.offset > -75. && late.offset < 0., "{late:?}");
+        // Its start lies about 320ft behind the rider's station: not found.
+        assert!(c.locate([30., 0., 105.], near_rejoin, true).is_none());
     }
     fn course() -> Course {
         Course {
