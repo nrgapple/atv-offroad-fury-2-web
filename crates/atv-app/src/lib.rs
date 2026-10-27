@@ -1699,6 +1699,7 @@ impl App {
                     hud: ride.hud(),
                     rider_world: ride.rider_world(),
                     terrain: &ready.venue.terrain,
+                    eye: Some(ready.camera.eye()),
                     race: ride
                         .race()
                         .and_then(|r| r.frame.as_ref())
@@ -6441,6 +6442,7 @@ fn capture(ready: &mut Ready, path: &std::path::Path, width: u32, height: u32, u
                     hud: ride.hud(),
                     rider_world: ride.rider_world(),
                     terrain: &ready.venue.terrain,
+                    eye: Some(ready.camera.eye()),
                     race: ride
                         .race()
                         .and_then(|r| r.frame.as_ref())

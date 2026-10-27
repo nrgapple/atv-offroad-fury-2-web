@@ -178,9 +178,12 @@ game's end (`002d10d0`, `002210e0`).
   owner's colour (white unowned) with the score to beat ("0" before the
   first capture) at the same raised point, only while it projects inside
   the view (off-screen hills are hidden, not pinned to the edge like rider
-  tags), and keeps the hills on the minimap. Not ported: the occlusion
-  ray (a hill behind terrain still shows its pill) and the
-  `koh_pillbkg` artwork itself (a drawn pill stands in).
+  tags), and keeps the hills on the minimap. The occlusion ray
+  (`00169b60` on the world's terrain object) is ported as a terrain line
+  of sight from the drawn camera to the pill point, sampled every half
+  cell; scene objects do not block it (whether the original's ray tests
+  only the heightfield was read from the call, not traced). Not ported:
+  the `koh_pillbkg` artwork itself (a drawn pill stands in).
 - **Treasure wait flag.** During the 6 s wait the original sets rider flag
   0x40000 (meaning not traced); the port only hides the treasures.
 
