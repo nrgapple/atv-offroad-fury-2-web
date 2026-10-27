@@ -263,8 +263,9 @@ tricks, so CPU rows read 0).
   loading screen adds a "Hall of Fame:" panel with the `002585c0` lines.
   Online rooms keep no records (+0x7d8). Not ported: the +0x514 vehicle
   exclusions (which vehicles 1 and 0x15 are is unverified), the overall
-  records, Meters, and a controller/touch letter picker in the name entry
-  (the default name stands in).
+  records and Meters. A controller edits the name with an authored letter
+  picker (Up/Down step the last letter, Right adds one, Left deletes one);
+  touch players keep the default name (no on-screen keyboard here).
 - **Freestyle records and Hall of Fame.** Outside races the ride measures
   jumps as the race does (`0024df70`; authored: measuring starts once the
   vehicle has been grounded 0.5 s after the ride starts or resets, so the
