@@ -101,26 +101,36 @@ Event `QuadzillaEventHockey.cpp`, vtable `00460770`; camera
   placed and held at its face-off spot, the HUD panel shows "Red n – m
   Blue" with the clock, the original banners ("Red scores!", "Hat
   trick!", "Sudden Death!", "Game over!") and the distance to the puck,
-  and the puck shows as a screen tag and map marker. Pause shows Restart
-  Game. The end returns to the main menu with the result line.
+  and the puck draws as its own `hockeypuck.psg` model (a scene model
+  posed each frame through the drop gate's posed-model path), plus a
+  screen tag and map marker. The goal siren (`siren02.vag`), puck hits
+  (`puck1`/`puck2.vag`, 13 units/s), `gameover.vag` and the four
+  `Crowd\hockey.aud` reactions play as one-shots. Pause shows Restart
+  Game. The end opens the HockeyOver page ("Hockey Results": score,
+  winner, goals; Restart Game, Quit to Main Menu).
+- `tools/package_content.py` adds the five event samples to the packed
+  `AUDIO.RES` and the four loose `AUDIO/CROWD/HOCKEY` clips; the release
+  owner must publish the regenerated package before they play publicly
+  (older packages leave Hockey silent).
 - Browser test `tools/test_engine_hockey_tag.mjs` (content group): face-
   off hold and drop, keyboard driving, a goal (`hockeyGoal=1` slides each
   dropped puck off the rider into the far goal), the pause and next
   face-off, Restart Game, and a 20 s game (`hockeyTest=fast`) to Game
-  over! and the result.
+  over!, the HockeyOver page and the result; `ATV_HOCKEY_SOUNDS=1` also
+  requires the siren, game-over and crowd one-shots.
 
 ### Open
 
 - **No opponents.** The original has no CPU hockey; a single human plays
   an empty net. CPU skaters (an authored chase of `hockey::cpu_target`
   with the race CPU riders) and split screen are not connected.
-- **Puck not drawn as its model.** `hockeypuck.psg` is in the hosted
-  `G01_SO.RES` but the renderer has no free dynamic-model path yet; a
-  screen tag stands in. The team marker quads, team rider textures,
-  hockey camera, hat emitters, siren and crowd sounds are not played or
-  drawn.
-- Team Select, time-limit options and the HockeyOver page are not shown;
-  the port uses the 120 s default.
+- The puck model is posed but not physically its rigid body; its drawn
+  size is the original model's, larger than the authored 1.5-unit
+  contact radius. The team marker quads, team rider textures, hockey
+  camera and hat emitters are not drawn.
+- Team Select and the Time Limit row are not shown; the port uses the
+  120 s default. The puck model also rests at the `[Ball]` start when
+  Coonce Arena is ridden as authored Freestyle.
 
 ## Tag
 

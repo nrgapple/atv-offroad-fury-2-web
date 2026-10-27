@@ -117,6 +117,9 @@ pub struct Results {
     /// Menu]`): the summary lines replace the standings; Restart Objective
     /// and Continue (back to Select Objective) replace the race choices.
     pub objective: Option<String>,
+    /// A mini-game's over page (`HockeyOver Menu`): its title; the summary
+    /// is `objective`'s, with Restart Game and Quit to Main Menu.
+    pub game: Option<String>,
     /// No profile was loaded: the race earned nothing and nothing was saved.
     pub no_profile: bool,
     /// Hall of Fame records this race set, and their name.
@@ -260,6 +263,14 @@ impl Results {
             objective: Some(summary),
             ..Default::default()
         };
+    }
+
+    /// A finished mini-game (the original `HockeyOver Menu`/`TagOver
+    /// Menu`): `title`, the summary lines, Restart Game and Quit to Main
+    /// Menu.
+    pub fn show_game(&mut self, title: &str, summary: String) {
+        self.show_objective(summary);
+        self.game = Some(title.into());
     }
 
     /// The race set Hall of Fame records: the name entry comes first,
@@ -713,10 +724,12 @@ pub fn element(view: &Viewport, state: &Results, summary: &str, fonts: &mut Font
             let label = match id {
                 CONTINUE => "Continue",
                 HIDE => "Hide Menu",
+                RETRY if state.game.is_some() => "Restart Game",
                 RETRY if state.objective.is_some() => "Restart Objective",
                 RETRY => "Restart",
                 NEXT_ROUND => "Continue Championship",
                 FAME_SELECT => "Select",
+                _ if state.game.is_some() => "Quit to Main Menu",
                 _ if state.objective.is_some() => "Continue",
                 _ if state.championship.is_some() => "Quit to Championship Menu",
                 _ => "Quit Event",
@@ -777,6 +790,8 @@ pub fn element(view: &Viewport, state: &Results, summary: &str, fonts: &mut Font
         .child(text(
             if naming.is_some() {
                 "Congratulations"
+            } else if let Some(title) = &state.game {
+                title.as_str()
             } else if state.objective.is_some() {
                 "Objectives"
             } else {

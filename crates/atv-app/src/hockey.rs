@@ -9,7 +9,34 @@ use atv_core::hockey::{Arena, Event, Game, Puck, State};
 use atv_core::math::Det;
 use atv_game::ride::Ride;
 
+/// `00335590`: the event's sounds and `Crowd\hockey.aud`'s four events
+/// (bank names; research/GAMES.md).
+const SIREN: &str = "siren02.vag";
+const GAME_OVER: &str = "gameover.vag";
+const PUCK: [&str; 2] = ["puck1.vag", "puck2.vag"];
+const CROWD: [&str; 4] = [
+    "crowd/hockey/hcheer01.vag",
+    "crowd/hockey/hcheer04.vag",
+    "crowd/hockey/hockywin.vag",
+    "crowd/hockey/hockyend.vag",
+];
+
+/// Samples a Coonce Arena ride loads (none elsewhere).
+pub fn samples(environment: &str) -> Vec<String> {
+    if environment != "game01" {
+        return Vec::new();
+    }
+    [SIREN, GAME_OVER]
+        .into_iter()
+        .chain(PUCK)
+        .chain(CROWD)
+        .map(String::from)
+        .collect()
+}
+
 pub struct HockeySession {
+    /// One-shots raised since the host last took them.
+    sounds: Vec<&'static str>,
     pub game: Game,
     pub puck: Puck,
     steps: u64,
@@ -43,6 +70,7 @@ impl HockeySession {
             placed: false,
             finished: false,
             log: Vec::new(),
+            sounds: Vec::new(),
             fast,
             tee: crate::url_flag("hockeyGoal=1"),
         }
@@ -72,8 +100,9 @@ impl HockeySession {
         self.game.touch(PLAYER);
     }
 
-    /// Advances the game with the ride's clock.
-    pub fn update(&mut self, ride: &mut Ride) {
+    /// Advances the game with the ride's clock. True once, when the game
+    /// ends.
+    pub fn update(&mut self, ride: &mut Ride) -> bool {
         if !self.placed {
             self.placed = true;
             self.face_off(ride);
@@ -83,9 +112,10 @@ impl HockeySession {
         let n = steps.saturating_sub(self.steps);
         self.steps = steps;
         if n == 0 || self.finished {
-            return;
+            return false;
         }
         let dt = atv_game::ride::STEP;
+        let mut ended = false;
         let frame = ride.frame();
         let rider = (frame.origin, frame.linear_velocity);
         for _ in 0..n {
@@ -118,8 +148,20 @@ impl HockeySession {
                             self.tee_up();
                         }
                     }
-                    Event::Over => self.finished = true,
+                    Event::Over => {
+                        self.finished = true;
+                        ended = true;
+                    }
                     other => {
+                        if let Some(name) = match other {
+                            Event::Siren => Some(SIREN),
+                            Event::GameOverSound => Some(GAME_OVER),
+                            Event::PuckHit => Some(PUCK[crate::random::below(2)]),
+                            Event::Crowd(n) => CROWD.get(usize::from(n).wrapping_sub(1)).copied(),
+                            _ => None,
+                        } {
+                            self.sounds.push(name);
+                        }
                         if self.log.len() == 32 {
                             self.log.remove(0);
                         }
@@ -128,6 +170,19 @@ impl HockeySession {
                 }
             }
         }
+        ended
+    }
+
+    /// The puck model's world matrix (yaw spin about +Y).
+    pub fn puck_matrix(&self) -> [f32; 16] {
+        let (s, c) = self.puck.yaw.sin_cos_d();
+        let [x, y, z] = self.puck.position;
+        [c, 0., -s, 0., 0., 1., 0., 0., s, 0., c, 0., x, y, z, 1.]
+    }
+
+    /// The one-shots to play this frame.
+    pub fn take_sounds(&mut self) -> Vec<&'static str> {
+        std::mem::take(&mut self.sounds)
     }
 
     pub fn held(&self) -> bool {
@@ -173,6 +228,20 @@ impl HockeySession {
             position: [x, y - 5., z],
             stale: false,
         }]
+    }
+
+    /// The HockeyOver page's lines: the score, the winner and the goals.
+    pub fn summary(&self) -> String {
+        let [red, blue] = self.game.scores;
+        let outcome = match self.game.winner() {
+            Some(0) => "Red wins!",
+            Some(_) => "Blue wins!",
+            None => "Tied.",
+        };
+        format!(
+            "Red {red} – {blue} Blue. {outcome} Your goals: {}.",
+            self.game.goals[PLAYER]
+        )
     }
 
     /// The HockeyOver result line.

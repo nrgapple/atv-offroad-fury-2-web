@@ -688,6 +688,9 @@ def main():
         weather_names = {'rain.vag'} #00213bf0, only the active scene Rain loop.
         # Race start: 321 countdown beep/go (002e79a0) and the Supercross gate drop.
         race_names = {'beep01.vag', 'go.vag', 'gate.vag'}
+        # Hockey (00335590): goal siren, game-over horn and the puck hits;
+        # Tag's possession beep (00244d20).
+        game_names = {'siren02.vag', 'gameover.vag', 'puck1.vag', 'puck2.vag', 'tagbeep.vag'}
         # Supercross stadium crowd (CrowdPresent): the venue Soultree ambient
         # loops (<venue>.aud); crowd.aud itself ships in each race archive.
         crowd_names = {'crowd/crowdf1/crdloop3.vag', 'crowd/crowdf1/crdloop4.vag',
@@ -703,7 +706,7 @@ def main():
                 lowered = name.replace('\\', '/').lower()
                 if lowered.startswith('tracks/') and lowered.endswith('.aud'):
                     venue_names |= selected_venue_sound_names(venue.extract(i))
-        names = engine_names | train_names | body_names | menu_names | weather_names | race_names | crowd_names | chassis_names | venue_names
+        names = engine_names | train_names | body_names | menu_names | weather_names | race_names | game_names | crowd_names | chassis_names | venue_names
         audio = Resource(source('/AUDIO/AUDIO.RES'))
         samples = [(name, audio.extract(i)) for i, (name, _, _) in enumerate(audio.members) if name.lower().removeprefix('audio/') in names]
         if len(samples) != len(names):
@@ -713,6 +716,11 @@ def main():
         if len(crowd_clips) != 18:
             raise ValueError('exact-build crowd reactions expected 18 clips')
         samples += [(path.removeprefix('/'), source(by_path[path]['path'])) for path in crowd_clips]
+        # Crowd\hockey.aud's four reactions (HCHEER01/04, HOCKYWIN, HOCKYEND).
+        hockey_clips = sorted(path for path in by_path if re.fullmatch(r'/audio/crowd/hockey/[a-z0-9]+\.vag', path))
+        if len(hockey_clips) != 4:
+            raise ValueError('exact-build hockey crowd expected four clips')
+        samples += [(path.removeprefix('/'), source(by_path[path]['path'])) for path in hockey_clips]
         # Race intro/outro stingers (IntOut\intout.aud): INT001-INT006 at race
         # load, OUT004 (win) and the OUT001 loop at race over (00217bb0, 00216260).
         intout = sorted(path for path in by_path if re.fullmatch(r'/audio/intout/(int00[1-6]|out00[14])\.vag', path))
