@@ -1209,9 +1209,14 @@ fn distance(a: [f32; 3], b: [f32; 3]) -> f32 {
 }
 #[derive(Clone)]
 struct Progress {
-    /// Last on-track station on the main racing line.
+    /// Last on-track station on the main racing line (RaceStatus +0xb8).
     station: Station,
     entered: bool,
+    /// The committed station (+0xc4): it only moves forward, and the track
+    /// query searches its window around it. Its race distance.
+    committed: Station,
+    committed_entered: bool,
+    committed_distance: f32,
     /// Race distance along the racing line from the grid, and its maximum.
     distance: f32,
     furthest: f32,
@@ -1283,6 +1288,9 @@ impl Progress {
         Self {
             station,
             entered,
+            committed: station,
+            committed_entered: entered,
+            committed_distance: distance,
             distance,
             furthest: distance,
             completed: 0,
@@ -1362,12 +1370,24 @@ impl Progress {
             }
             return;
         }
-        match course.locate(p, self.station, self.entered) {
+        // 00248b20: 0017be80 searches the window around the committed
+        // station (+0xc4) for the current one (+0xb8), which becomes the
+        // committed station only when it lies ahead (0 < +0x18 < window).
+        // A rider who strays back onto a neighbouring section more than
+        // the window behind its furthest station is therefore off track
+        // (nat02's hairpin 91-96: the legs lie 60ft apart, and a station
+        // that followed the rider backwards drifted down the other leg).
+        match course.locate(p, self.committed, self.committed_entered) {
             Some(located) => {
                 self.station = located.station;
                 self.entered = located.entered;
                 if self.finish.is_none() {
-                    self.distance += located.offset;
+                    self.distance = self.committed_distance + located.offset;
+                }
+                if located.offset > 0. {
+                    self.committed = located.station;
+                    self.committed_entered = located.entered;
+                    self.committed_distance = self.distance;
                 }
                 self.off_track = 0.;
             }
@@ -1934,10 +1954,10 @@ impl Race {
         self.rider(cpu).off_track
     }
     /// Race reset pose on the racing line, facing the race direction: the
-    /// rider's station, moved past nodes flagged as no-reset
+    /// rider's committed station, moved past nodes flagged as no-reset
     /// ([`Course::reset_station`]).
     pub fn checkpoint(&self, cpu: Option<usize>) -> ([f32; 3], f32) {
-        let s = self.course.reset_station(self.rider(cpu).station);
+        let s = self.course.reset_station(self.rider(cpu).committed);
         (self.course.point_at(s), self.course.heading_at(s))
     }
     /// The vehicle accepted the reset point of [`Self::checkpoint`]; keep
@@ -1945,11 +1965,11 @@ impl Race {
     pub fn accept_checkpoint(&mut self, cpu: Option<usize>) {
         let course = &self.course;
         let p = cpu.map_or(&mut self.player, |i| &mut self.progress[i]);
-        let station = course.reset_station(p.station);
+        let station = course.reset_station(p.committed);
         p.checkpoint = Some(Kept {
             station,
-            entered: p.entered,
-            distance: p.distance + course.forward_distance(p.station, station),
+            entered: p.committed_entered,
+            distance: p.committed_distance + course.forward_distance(p.committed, station),
             crossings: p.crossings,
         });
     }
@@ -1968,8 +1988,11 @@ impl Race {
         };
         p.station = kept.station;
         p.entered = kept.entered;
+        p.committed = kept.station;
+        p.committed_entered = kept.entered;
         if !enduro && p.finish.is_none() {
             p.distance = kept.distance;
+            p.committed_distance = kept.distance;
             if p.crossings > kept.crossings {
                 p.skip_crossing = true;
                 p.crossings = kept.crossings;
@@ -3087,6 +3110,30 @@ mod tests {
         // …but never past the finish gate's node (finish 0: node 3).
         c.flags = vec![1, 1, 1, 1];
         assert_eq!(c.reset_station(at(1, 0.5)), at(3, 0.));
+    }
+    #[test]
+    fn the_track_window_follows_the_committed_station_forward_only() {
+        let mut r = Race::new(course(), 1, vec![], 1).unwrap();
+        r.countdown = 0.;
+        for z in [10., 40., 70., 99.] {
+            r.step([0., 0., z], 1.);
+        }
+        r.step([50., 0., 100.], 1.);
+        r.step([90., 0., 100.], 1.);
+        // Riding back along the line: the station follows within 75ft of
+        // the furthest (committed) station, then the rider is off track.
+        for x in [80., 60., 40., 20., 10.] {
+            r.step([x, 0., 100.], 1.);
+            assert!(r.on_track(None), "{x}");
+        }
+        assert!((r.player.distance - 110.).abs() < 0.1);
+        // The previous section lies wholly outside that window (the query
+        // walks whole segments), though only 40ft behind the current one.
+        r.step([0., 0., 70.], 1.);
+        assert!(!r.on_track(None));
+        // Its reset point stays at the committed station.
+        let (point, _) = r.checkpoint(None);
+        assert!((point[0] - 90.).abs() < 0.1 && (point[2] - 100.).abs() < 0.1);
     }
     #[test]
     fn a_reset_behind_a_handled_finish_crossing_cannot_count_it_again() {
