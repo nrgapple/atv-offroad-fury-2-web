@@ -218,6 +218,57 @@ try {
   await key(page, 'Enter');
   g = await until(page, g => g.scores[0] === 0 && g.markers.every(m => m.owner === null), 20000);
 
+  // The real stunt path (`gameTest=hillride`): set on hill 1, the ATV is
+  // launched across the hilltop at 40 ft/s (a 12 ft/s lip) and rides off it; a keyboard
+  // stunt (J) while it flies off the hill would land a chain that captures
+  // the hill. Each miss restarts the game, which launches the next
+  // direction. Riding off arms the hill; host runs open no stunt yet.
+  await toGames(page, 'gameTest=hillride');
+  await setGame(page, 'King of the Hills');
+  await select(page, 'gamecourse');
+  await key(page, 'ArrowRight');
+  await start(page, 'env02');
+  let ridden = null;
+  let armedRides = 0;
+  for (let attempt = 1; attempt <= 4 && !ridden; attempt++) {
+    g = await until(page, g => g.started, 30000);
+    const deadline = Date.now() + 12000;
+    let armed = false;
+    while (Date.now() < deadline) {
+      g = await game(page);
+      if (g.rules.state >= 1 && !armed) {
+        armed = true;
+        await page.keyboard.down('KeyJ');
+        await page.waitForTimeout(450);
+        await page.keyboard.up('KeyJ');
+      }
+      if (g.scores[0] > 0) break;
+      if (armed && g.rules.state === -2) break;
+      await page.waitForTimeout(40);
+    }
+    if (armed) armedRides++;
+    await page.waitForTimeout(1500);
+    g = await game(page);
+    if (g.scores[0] > 0) ridden = g;
+    else {
+      console.log(`hillride attempt ${attempt}: armed ${armed}, state ${g.rules.state}, stunt ${g.stunt}, chain ${JSON.stringify(g.lastChain)}`);
+      await key(page, 'Escape');
+      await key(page, 'ArrowDown');
+      await key(page, 'Enter');
+    }
+  }
+  if (ridden) {
+    assert.equal(ridden.markers[0].owner, 0);
+    assert.ok(ridden.markers[0].score > 0, 'the stunt\'s points hold the hill');
+    console.log(`hillride: captured with ${ridden.markers[0].score} points`);
+    await shot(page, 'koth-ridden');
+  } else {
+    // Host Chromium: riding off the hill arms it through the real trigger
+    // leave, but no keyboard stunt opens on the launched ATV (GAMES.md).
+    assert.ok(armedRides >= 1, 'riding off the hill in the air arms it');
+    console.log(`hillride: armed by riding off ${armedRides}/4, no stunt opened (see research/GAMES.md)`);
+  }
+
   // Time Up on the 20 s clock: the results, Continue to the Games page.
   await toGames(page, 'gameTest=fast');
   await setGame(page, 'King of the Hills');

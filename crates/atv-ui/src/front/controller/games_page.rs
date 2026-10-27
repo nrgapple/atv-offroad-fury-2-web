@@ -122,7 +122,7 @@ impl Frontend {
                 "Jump off a hill and land a stunt that beats its score to capture it.".into()
             }
             GameKind::Hockey => "Score in the far goal before the time runs out.".into(),
-            kind => format!("{} is not available in this port yet.", kind.name()),
+            GameKind::Tag => "Keep the ball away; tag the carrier to take it. Plays in Multiplayer rooms (Pause → Play Tag).".into(),
         })
     }
 
@@ -147,8 +147,10 @@ impl Frontend {
     pub(super) fn game_event(&mut self, settings: &mut Settings) -> Option<Event> {
         let kind = self.game_kind();
         if !kind.playable() {
+            // Tag needs opponents: it plays in multiplayer rooms (the
+            // host's Pause → Play Tag, research/GAMES.md "Tag").
             self.notice = Some(format!(
-                "{} is not available in this port yet.",
+                "{} needs other riders: host a Multiplayer room and choose Pause → Play Tag.",
                 kind.name()
             ));
             return None;

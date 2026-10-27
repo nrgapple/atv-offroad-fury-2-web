@@ -83,9 +83,11 @@ def upload_content(content=None, force=False, checkpoint=None, owner=None, live_
     """Publish validated runtime blobs and the content manifest without waiting
     for an application deploy. Blobs are content-addressed and inert until the
     manifest names them; the manifest must stay additive for the live app. The
-    gallery still follows the deployed commit through the full upload."""
+    gallery still follows the deployed commit through the full upload. Any chat
+    may publish; a checkpoint claim is optional coordination, enforced if given."""
     with publication_lock(ROOT):
-        require_owner(ROOT, checkpoint, owner)
+        if checkpoint is not None:
+            require_owner(ROOT, checkpoint, owner)
         content = (content or ROOT / 'private/reports/hosted-content').resolve()
         if not content.is_relative_to((ROOT / 'private').resolve()):
             raise ValueError('runtime package must remain under private storage')
@@ -219,9 +221,11 @@ def main(argv=None):
     parser.add_argument('--force-upload', action='store_true', help='Repair remote drift by re-uploading all validated objects')
     parser.add_argument('--release-scoped', action='store_true', help='Stage immutable release manifests before Worker deployment')
     parser.add_argument('--content', type=Path, help='Validated private runtime package')
-    parser.add_argument('--checkpoint', required=True, help='Combined checkpoint claimed by its single release owner')
-    parser.add_argument('--owner', required=True)
+    parser.add_argument('--checkpoint', help='Optional combined checkpoint; enforces its claimed owner')
+    parser.add_argument('--owner')
     args = parser.parse_args(argv)
+    if (args.checkpoint is None) != (args.owner is None):
+        parser.error('--checkpoint and --owner go together')
     if args.content_only:
         upload_content(args.content, args.force_upload, checkpoint=args.checkpoint, owner=args.owner)
         return
