@@ -274,6 +274,9 @@ struct ObjectiveSession {
     sounds: Vec<&'static str>,
     /// `objectiveTest=targets`: the ride step of the last placement.
     visit_clock: u64,
+    /// A championship round (else Single Player → Freestyle Objectives):
+    /// its trophy can come mid-event (`003230f0`).
+    championship: bool,
 }
 
 /// The reach added to a target's 5 ft sphere around the ATV origin.
@@ -335,11 +338,15 @@ impl ObjectiveSession {
         for (success, ids) in ride.take_chains() {
             run.chain(success, &ids);
         }
-        // CherryPick: the ATV touching an untouched target's sphere.
+        // CherryPick: the ATV or its rider touching an untouched target's
+        // sphere (`002fae60` registers the player's ATV and rider bodies;
+        // the port tests the ATV origin and the rider's root).
         if !self.targets.is_empty() && !run.finished() {
-            let origin = ride.frame().origin;
-            for _ in run.touch(&self.targets, origin, TARGET_REACH) {
-                self.sounds.push(TARGET_SOUND);
+            let rider = ride.rider_world();
+            for point in [ride.frame().origin, [rider[12], rider[13], rider[14]]] {
+                for _ in run.touch(&self.targets, point, TARGET_REACH) {
+                    self.sounds.push(TARGET_SOUND);
+                }
             }
         }
         let (jumps, chains) = ride.take_free_records();
@@ -371,8 +378,18 @@ impl ObjectiveSession {
             }
         }
         let champ = &mut profile.championships;
-        let mask = champ.record_objective(series, self.expert, &self.course, run.earned_bits());
+        let (mask, trophy) = if self.championship {
+            champ.award_objective(series, self.expert, &self.course, run.earned_bits())
+        } else {
+            let mask = champ.record_objective(series, self.expert, &self.course, run.earned_bits());
+            (mask, None)
+        };
         let total = champ.completed_objectives(series, self.expert);
+        if let Some(trophy) = &trophy
+            && loaded
+        {
+            profile.credit(trophy.reward);
+        }
         atv_ui::settings::save_profile(&mut settings, &profile);
         let completed = run.outcome == Some(atv_core::freestyle::Outcome::Completed);
         let award = if loaded {
@@ -394,6 +411,11 @@ impl ObjectiveSession {
             total,
             atv_core::freestyle::total_objectives(series)
         );
+        // The Objective Championship Results line (`002ddee0`).
+        let summary = match trophy {
+            Some(trophy) => format!("{summary} · {}", trophy.line()),
+            None => summary,
+        };
         Some((summary, fame))
     }
 
@@ -5078,6 +5100,10 @@ impl App {
                 expert,
                 objective,
             } => {
+                let championship = self
+                    .front
+                    .as_ref()
+                    .is_some_and(|f| f.borrow().state.freestyle.is_some());
                 self.objective = Some(ObjectiveSession {
                     series,
                     expert,
@@ -5091,6 +5117,7 @@ impl App {
                     targets: Vec::new(),
                     sounds: Vec::new(),
                     visit_clock: 0,
+                    championship,
                 });
                 self.start_ride(environment, quad, rider, None, None);
             }

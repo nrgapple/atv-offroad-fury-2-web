@@ -178,9 +178,10 @@ runtime traces):
   (`002ddc50`), "You have completed the objective!" / "You have failed the
   objective." (`002dde00`), and the championship line (`002ddee0`): the
   trophy, else "You have completed %d/36 objectives." (Pro /30).
-- **Championship.** Freestyle rounds always advance (`00322c60`). After the
-  last round the trophy (`00322440`) counts completed objectives: Amateur
-  24/30/36, Pro 18/24/30 for bronze/silver/gold. Rewards (`00322650`)
+- **Championship.** Freestyle rounds always advance (`00322c60`). The
+  trophy counts completed objectives: Amateur 24/30/36, Pro 18/24/30 for
+  bronze/silver/gold (`003230f0` awards each when a new bit brings the
+  count to it; `00322440` evaluates the same thresholds). Rewards (`00322650`)
   Amateur 1000/500/250 and Pro 2000/1000/500 on both difficulties; the
   unlocks are the racing ones (gold opens Expert, a trophy in Amateur
   Freestyle opens Pro Freestyle); a new profile has Amateur Freestyle open
@@ -203,10 +204,13 @@ total counts, Restart Objective and Continue (back to Select Objective).
 to it, `002ec310` mode 2); the port's Select Objective is a front-end page,
 and its round ends with Next Course. The original has no such row: a round
 ends when the rider quits the event (an inference from `00322c60`, which
-always advances; the QuitEvent path was not traced), and `003230f0` awards
-the trophy, its reward and unlocks the moment the completed count crosses a
-threshold rather than after the last round; the port still awards it at
-Finish Championship. The completion bits of a course persist across
+always advances; the QuitEvent path was not traced). `003230f0` awards the
+trophy, its reward (`00323440`) and unlocks the moment a championship
+objective's new bit brings the series' count to a threshold; the port does
+the same when a championship run is recorded (the results add the
+Objective Championship Results line) and Finish Championship then pays
+only a better trophy not yet awarded (a profile that already sat past a
+threshold, as the original's counter could not). The completion bits of a course persist across
 championship runs (the mask is per profile, course and difficulty, as
 `00321ff0` reads it). Saving (`00322080` type 2) requires single player and
 the 120 s limit, and does not check the championship flag. Point levels
@@ -216,9 +220,10 @@ count when reached even if the run then times out (a reading of
 
 Target runs ride the course's OB archive (the hosted package carries the 11
 archives' differing members, about 17-34 KB each, read over the Freeride
-archive). The port tests the trigger sphere against the ATV's origin; the
-original tests the ATV's wheels, chassis and rider bodies, so a hit
-registers a little later at the edge. The explosions, the 1 s/5 s sign
+archive). The port tests the trigger sphere against the ATV's origin and the
+rider's root (a thrown rider counts); the original tests the ATV's wheels,
+chassis and rider bodies, so a hit at the sphere's edge can register a
+little later. The explosions, the 1 s/5 s sign
 timing and the Compass are presented through the port's HUD: the panel's
 notice line shows the signs, and untouched targets are green or red screen
 tags and minimap dots instead of the `RadarIcon_Target` compass. Settings
