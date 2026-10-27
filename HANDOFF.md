@@ -163,8 +163,9 @@ the worktree's `target/`; keep bulk output on the SSD.
 - Freestyle objectives: Select Objective is a front-end page and the round
   ends with Next Course (the original picks in-game and ends a round by
   quitting the event); target hits test the
-  ATV origin and rider root rather than every wheel/chassis/rider body, and the target
-  explosions and compass are not drawn (`CHAMPIONSHIPS.md`).
+  ATV origin and rider root rather than every wheel/chassis/rider body, and the
+  compass is not drawn (`CHAMPIONSHIPS.md`). Target, Treasure Hunt bomb and
+  Hockey hat-trick emitters run from their TOYs (`AMBIENT_EFFECTS.md`).
 - The mini-games have no opponents: the original runs them split screen
   (or online) with human riders only. Single Player → Games plays Treasure
   Hunt and King of the Hills alone (screen tags instead of the bomb and flag
@@ -177,7 +178,8 @@ the worktree's `target/`; keep bulk output on the SSD.
   of a local four-profile book (`PROFILE.md`, `CHAMPIONSHIPS.md`,
   `PROFILE_STORE.md`).
 - Race rules are authored around recovered start slots, track window and
-  finish-gate laps; firework triggers and points are open (`RACING.md`).
+  finish-gate laps; points are open (`RACING.md`); firework triggers run with
+  the original CPU spark streams (`AMBIENT_EFFECTS.md`).
   Reset points, the off-track reset, the committed station, the Enduro CPU
   driver (VehicleAI mode 4, aimed through the next gate) and off-track-only
   static avoidance are recovered. In the idle-player headless sweep CPUs
