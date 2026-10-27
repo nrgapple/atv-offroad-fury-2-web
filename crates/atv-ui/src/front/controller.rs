@@ -282,6 +282,9 @@ pub struct Frontend {
     pub room_code: String,
     /// The focused form field, by index in [`Frontend::fields`].
     pub focus: Option<usize>,
+    /// Android's soft keyboard is up over the lower screen: the form shows
+    /// only the focused field, in the top slot above it.
+    pub soft_keyboard: bool,
     /// The course select picks the room's course (Host Game → Select Track).
     pub hosting: bool,
     /// A form error (`#menu-notice` / the thrown message in frontend.js).
@@ -351,6 +354,7 @@ impl Frontend {
             create_code: String::new(),
             room_code: String::new(),
             focus: None,
+            soft_keyboard: false,
             hosting: false,
             notice: None,
             profile: crate::settings::load_profile(settings),
@@ -1707,6 +1711,7 @@ impl Frontend {
                     .map(|(i, f)| (f.label.to_string(), f.value, self.focus == Some(i)))
                     .collect()
             },
+            typing: self.soft_keyboard && self.focus.is_some(),
             notice: self.notice.clone(),
             profile: self.profile_text(),
             lobby: self.lobby.clone(),

@@ -99,6 +99,15 @@ adb push hosted-content /sdcard/Android/data/com.furyremastered.android/files/co
   `InputDevice` over JNI (checked once a second). Verified on the emulator with injected
   `input gamepad` keys and `input joystick` motion (Start, A/B/Y, d-pad, left stick in the
   menus; touch unaffected). Not yet verified on a physical handheld. No controller rumble.
+- **Soft keyboard** (Host/Join name and lobby code). Tapping a field opens the system
+  keyboard (`android.rs` `SoftKeyboard`: `show_soft_input` forced, since NativeActivity's view
+  is not a text editor and ignores an implicit request); typed keys arrive as winit key events
+  with text and type into the form like a desktop keyboard. The landscape keyboard covers the
+  lower screen, so while it is up the form shows only the focused field, in the first field's
+  place. Enter moves on or closes it; Back (which the keyboard consumes) is noticed through
+  `WindowInsets.isVisible(ime)` on Android 11+, checked every 250 ms while the keyboard is up,
+  and unfocuses the field. Verified on the emulator 2026-10-26 (Gboard: typing, Backspace,
+  Enter, Back, re-tap; a Host code typed on Android hosted a room a web player joined).
 - **Not on Android:** the clipboard (arboard has no Android backend: Copy ride link reports
   failure, paste finds nothing) and the `keepawake` inhibitor.
 

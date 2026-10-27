@@ -182,6 +182,9 @@ pub struct Screen {
     pub model_status: [Option<&'static str>; 2],
     /// Host/Join form fields: (label, value, focused).
     pub fields: Vec<(String, String, bool)>,
+    /// A soft keyboard covers the lower screen while a field has focus: the
+    /// form shows that field alone, where the first field sits.
+    pub typing: bool,
     /// A form error under the rows (`#menu-notice`).
     pub notice: Option<String>,
     /// Single Player: the saved profile's points and race record.
@@ -1511,6 +1514,9 @@ fn form(m: &Metrics, s: &Screen) -> El {
     fields.style.flex_shrink = 0.;
     fields.style.padding = sides(0., if m.portrait { 0. } else { 12. }, 0., 0.);
     for (index, (label, value, focused)) in s.fields.iter().enumerate() {
+        if s.typing && !focused {
+            continue;
+        }
         let mut field = El::new(column(6.));
         field = field.child(text(
             label.clone(),
@@ -2762,6 +2768,44 @@ mod tests {
         assert!((first.h - 48.).abs() < 0.5, "{first:?}");
         let back = hits.iter().find(|(_, id)| *id == BACK).unwrap().0;
         assert!(back.right() <= 1280. - 40.);
+    }
+
+    #[test]
+    fn a_soft_keyboard_leaves_the_focused_field_alone_in_the_top_slot() {
+        let view = Viewport {
+            width: 1280.,
+            height: 720.,
+            scale: 1.,
+            ..Default::default()
+        };
+        let mut fonts = Fonts::new();
+        let fields = |s: &Screen, fonts: &mut Fonts| {
+            let (mut list, mut hits) = (DisplayList::default(), Vec::new());
+            layout::render(&element(&view, s), fonts, 1280., 720., &mut list, &mut hits);
+            let mut fields: Vec<_> = hits
+                .into_iter()
+                .filter(|(_, id)| (FIELD..FIELD + 4).contains(id))
+                .collect();
+            fields.sort_by_key(|(_, id)| *id);
+            fields
+        };
+        let mut join = screen("join-lobby");
+        join.fields = vec![
+            ("Rider name".into(), "Rider".into(), false),
+            ("Lobby code".into(), "AB".into(), true),
+        ];
+        let form = fields(&join, &mut fonts);
+        assert_eq!(form.len(), 2);
+        join.typing = true;
+        let typing = fields(&join, &mut fonts);
+        // The code field keeps its id (taps still focus it) and takes the
+        // name field's place.
+        assert_eq!(typing.len(), 1);
+        assert_eq!(typing[0].1, FIELD + 1);
+        assert!(
+            (typing[0].0.y - form[0].0.y).abs() < 0.5,
+            "{typing:?} {form:?}"
+        );
     }
 
     #[test]
