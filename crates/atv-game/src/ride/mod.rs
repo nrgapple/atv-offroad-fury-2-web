@@ -1399,6 +1399,18 @@ impl Ride {
         }
     }
 
+    /// The bodies the objective triggers test (`002fae60`): the quad's
+    /// wheels, chassis hull and actor rays; a motorcycle's origin.
+    pub fn trigger_bodies(&self) -> Vec<atv_core::freestyle::TriggerBody> {
+        match &self.mount {
+            Mount::Quad { vehicle, .. } => vehicle.trigger_bodies(),
+            Mount::Bike(_) => vec![atv_core::freestyle::TriggerBody::Sphere {
+                center: self.frame.origin,
+                radius: 0.,
+            }],
+        }
+    }
+
     /// The ATV's wheel presentation state (radii, slip, surfaces); None on a
     /// motorcycle, whose wheel particles are its own (motorcycle_effects).
     pub fn wheel_effect_state(&self) -> Option<atv_core::vehicle::WheelEffectState> {

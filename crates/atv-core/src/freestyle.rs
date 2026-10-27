@@ -292,6 +292,43 @@ pub fn objective_archive(course: &str) -> Option<String> {
     Some(format!("/TRACKS/TRACKSA/{folder}/{stem}_OB.RES"))
 }
 
+/// A collision body registered with the objective's triggers, in world
+/// space. `002fae60` (CherryPick reset) registers, per player, the quad's
+/// four wheel bodies (+0x168..+0x174), its chassis rigid body (+0x18c),
+/// the `ao.col` chassis hull (+0x97c), the `ar.col` actor rays (+0x980)
+/// and the passive `f.col` actor (+0x984) with each trigger (`00172440`
+/// clears their mutual exclusions); the rider's own bodies are not
+/// registered. The wheels are spheres and the ray bundles segments.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum TriggerBody {
+    Sphere { center: [f32; 3], radius: f32 },
+    Segment { start: [f32; 3], end: [f32; 3] },
+}
+
+impl TriggerBody {
+    /// The body touches the trigger sphere at `center` with `radius`.
+    pub fn touches(&self, center: [f32; 3], radius: f32) -> bool {
+        let d2 = |p: [f32; 3]| -> f32 { (0..3).map(|a| (p[a] - center[a]).powi(2)).sum() };
+        match *self {
+            Self::Sphere {
+                center: c,
+                radius: r,
+            } => d2(c) <= (radius + r).powi(2),
+            Self::Segment { start, end } => {
+                let d: [f32; 3] = std::array::from_fn(|a| end[a] - start[a]);
+                let len2: f32 = d.iter().map(|v| v * v).sum();
+                let t = if len2 > 0. {
+                    ((0..3).map(|a| (center[a] - start[a]) * d[a]).sum::<f32>() / len2)
+                        .clamp(0., 1.)
+                } else {
+                    0.
+                };
+                d2(std::array::from_fn(|a| start[a] + d[a] * t)) <= radius * radius
+            }
+        }
+    }
+}
+
 /// One target of a CherryPick TOY: a one-time trigger sphere whose
 /// actions hide its cherry animation, run the `Cherry` action and start
 /// its explosion emitter.
@@ -537,16 +574,28 @@ impl Run {
         }
     }
 
-    /// The rider at `point` touches the targets' spheres (grown by
-    /// `reach`): each untouched one is hit once. Returns the new hits.
-    pub fn touch(&mut self, targets: &[Target], point: [f32; 3], reach: f32) -> Vec<usize> {
+    /// A point touching the targets' spheres: each untouched one is hit
+    /// once. Returns the new hits.
+    pub fn touch(&mut self, targets: &[Target], point: [f32; 3]) -> Vec<usize> {
+        self.touch_bodies(
+            targets,
+            &[TriggerBody::Sphere {
+                center: point,
+                radius: 0.,
+            }],
+        )
+    }
+
+    /// Any of the player's registered bodies (`002fae60`) touching an
+    /// untouched target's sphere hits it once (`00172bc0`, `OneTimeOnly`).
+    /// Returns the new hits.
+    pub fn touch_bodies(&mut self, targets: &[Target], bodies: &[TriggerBody]) -> Vec<usize> {
         let mut hit = Vec::new();
         for (i, t) in targets.iter().enumerate() {
             if self.finished() || self.hits.get(i).is_none_or(|h| *h) {
                 continue;
             }
-            let d: f32 = (0..3).map(|a| (point[a] - t.position[a]).powi(2)).sum();
-            if d <= (t.radius + reach).powi(2) {
+            if bodies.iter().any(|b| b.touches(t.position, t.radius)) {
                 self.hit(i);
                 hit.push(i);
             }
@@ -967,6 +1016,25 @@ NumberOfActions=2\r\nOneTimeOnly=T\r\nPosition=200,20,300\r\nRadius=5.0\r\n\
 [Animation2]\r\nMCF=cherryr.mcf\r\nOffset=200,20,300\r\nReferenceName=cherry2r\r\n";
 
     #[test]
+    fn registered_bodies_touch_the_trigger_sphere() {
+        let c = [0., 0., 0.];
+        // Wheel spheres: centre distance within both radii.
+        let wheel = |x| TriggerBody::Sphere {
+            center: [x, 0., 0.],
+            radius: 1.,
+        };
+        assert!(wheel(6.).touches(c, 5.));
+        assert!(!wheel(6.01).touches(c, 5.));
+        // Ray segments: any point of the ray inside the sphere, including a
+        // ray passing straight through it with both ends outside.
+        let ray = |a: [f32; 3], b: [f32; 3]| TriggerBody::Segment { start: a, end: b };
+        assert!(ray([-9., 4., 0.], [9., 4., 0.]).touches(c, 5.));
+        assert!(!ray([-9., 5.1, 0.], [9., 5.1, 0.]).touches(c, 5.));
+        assert!(!ray([6., 0., 0.], [9., 0., 0.]).touches(c, 5.));
+        assert!(ray([4., 0., 0.], [4., 0., 0.]).touches(c, 5.));
+    }
+
+    #[test]
     fn targets_come_from_the_toy_and_hit_once() {
         let targets = parse_targets(TARGETS);
         assert_eq!(targets.len(), 2);
@@ -994,10 +1062,10 @@ NumberOfActions=2\r\nOneTimeOnly=T\r\nPosition=200,20,300\r\nRadius=5.0\r\n\
             toy: "x".into(),
         };
         let mut run = Run::new(objective, 1, 0.);
-        assert!(run.touch(&targets, [106., 20., 300.], 0.).is_empty());
-        assert_eq!(run.touch(&targets, [104., 21., 301.], 0.), [0]);
+        assert!(run.touch(&targets, [106., 20., 300.]).is_empty());
+        assert_eq!(run.touch(&targets, [104., 21., 301.]), [0]);
         // One-time: touching it again counts nothing.
-        assert!(run.touch(&targets, [100., 20., 300.], 0.).is_empty());
+        assert!(run.touch(&targets, [100., 20., 300.]).is_empty());
         assert_eq!((run.targets_hit(), run.score), (1, 1000.));
         assert_eq!(run.progress(), "Targets 1 of 2");
         assert_eq!(run.notice(), Some("Target Collected"));
@@ -1007,7 +1075,14 @@ NumberOfActions=2\r\nOneTimeOnly=T\r\nPosition=200,20,300\r\nRadius=5.0\r\n\
         run.tick(0.6, 0.);
         assert_eq!(run.notice(), None);
         assert!(run.messages.is_empty());
-        assert_eq!(run.touch(&targets, [207., 20., 300.], 2.5), [1]);
+        // A wheel sphere reaching the trigger's edge hits it; the ATV
+        // origin far outside does not matter.
+        let wheel = TriggerBody::Sphere {
+            center: [207., 20., 300.],
+            radius: 2.5,
+        };
+        assert!(run.touch(&targets, [230., 20., 300.]).is_empty());
+        assert_eq!(run.touch_bodies(&targets, &[wheel]), [1]);
         assert_eq!(run.outcome, Some(Outcome::Completed));
         assert_eq!(run.notice(), Some("All Targets Collected"));
         run.tick(4.9, 0.);
