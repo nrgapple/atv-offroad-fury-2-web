@@ -112,6 +112,9 @@ pub const COMPASS: [&str; 3] = ["compassbkg", "compassarrow", "radaricon_gate"];
 /// The radar racer icon; the player's copy is tinted red (`tinted`).
 pub const RACER: &str = "radaricon_racer";
 pub const RACER_PLAYER: &str = "radaricon_racer#255,0,0";
+/// King of the Hills' hill score pill (`002eac20`): only the KH game
+/// archives carry it.
+pub const PILL: &str = "koh_pillbkg";
 
 /// The section's original bytes (hud.js/frontend.js `document(name, section)`):
 /// Overlays.pb has a stray authoring note outside the sections.
@@ -144,8 +147,9 @@ pub fn section(bytes: &[u8], name: &str) -> Option<Section> {
 }
 
 /// Archives in the order the browser registers member names; the first
-/// archive holding a name wins. A race adds its course archive last.
-fn archives(environment: &str, race: Option<RaceVariant>) -> Vec<String> {
+/// archive holding a name wins. A race adds its course archive last; a
+/// mini-game adds its game archive (`E05_KH.RES`) after the overlays.
+fn archives(environment: &str, race: Option<RaceVariant>, game: Option<&str>) -> Vec<String> {
     let mut list = vec![
         "/STARTAPP.RES".to_string(),
         "/UI/RESOURCE/PAGEA/PAGE01.RES".to_string(),
@@ -155,6 +159,7 @@ fn archives(environment: &str, race: Option<RaceVariant>) -> Vec<String> {
         list.push(course.archive);
     }
     list.push("/OVERLAYS.RES".to_string());
+    list.extend(game.map(str::to_string));
     if let Some(variant) = race
         && let Ok(course) = atv_game::launch::race_resource(environment, variant)
     {
@@ -252,11 +257,12 @@ pub async fn load(
     content: &Content,
     environment: &str,
     race: Option<RaceVariant>,
+    game: Option<&str>,
 ) -> Result<OverlayAssets, String> {
     let mut opened = Opened {
         archives: Vec::new(),
     };
-    for path in archives(environment, race) {
+    for path in archives(environment, race, game) {
         if content.manifest.record(&path).is_some() {
             opened.archives.push(Archive::open(content, &path).await?);
         }
@@ -278,6 +284,7 @@ pub async fn load(
     for name in LAMPS {
         lamps &= opened.image(&mut images, name).await?;
     }
+    opened.image(&mut images, PILL).await?;
     let race = if let Some(variant) = race {
         match race_assets(
             &opened,
@@ -409,7 +416,7 @@ mod tests {
         let content =
             pollster::block_on(Content::open(atv_content::Store::Directory(dir.into()))).unwrap();
         let assets =
-            pollster::block_on(load(&content, "env01", Some(RaceVariant::National))).unwrap();
+            pollster::block_on(load(&content, "env01", Some(RaceVariant::National), None)).unwrap();
         let mut keys: Vec<_> = assets.speed.fields.iter().collect();
         keys.sort();
         println!("speed {keys:#?}");

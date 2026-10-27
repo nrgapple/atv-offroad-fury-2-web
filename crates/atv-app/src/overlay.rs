@@ -293,13 +293,7 @@ impl Overlay {
         self.jukebox_art = None;
         self.jukebox_art_wanted = self.jukebox_open();
         if let Some(meter) = &mut self.meter {
-            meter.images.clear();
-            for (name, image) in &meter.assets.images {
-                let id =
-                    self.renderer
-                        .add_image(device, queue, image.width, image.height, &image.rgba);
-                meter.images.insert(name.clone(), id);
-            }
+            upload_meter(&mut self.renderer, device, queue, meter);
         }
         self.minimap.image = None;
         self.set_course(venue);
@@ -314,12 +308,7 @@ impl Overlay {
     /// Uploads the original speed meter and stunt text resources.
     pub fn set_meter(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, assets: OverlayAssets) {
         let mut meter = Meter::new(assets);
-        for (name, image) in &meter.assets.images {
-            let id = self
-                .renderer
-                .add_image(device, queue, image.width, image.height, &image.rgba);
-            meter.images.insert(name.clone(), id);
-        }
+        upload_meter(&mut self.renderer, device, queue, &mut meter);
         self.meter = Some(meter);
     }
 
@@ -840,6 +829,7 @@ impl Overlay {
                 &visible,
                 origin,
                 &vp,
+                self.meter.as_ref().and_then(|m| m.pills.as_ref()),
             );
         } else {
             self.tags = 0;
@@ -1543,6 +1533,33 @@ fn buzz(ms: u32) {
     }
     #[cfg(not(target_arch = "wasm32"))]
     let _ = ms;
+}
+
+/// Uploads the HUD's original icons, and King of the Hills' pill art in
+/// each pill colour (`peers::pill_tints`).
+fn upload_meter(
+    renderer: &mut Renderer,
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    meter: &mut Meter,
+) {
+    meter.images.clear();
+    for (name, image) in &meter.assets.images {
+        let id = renderer.add_image(device, queue, image.width, image.height, &image.rgba);
+        meter.images.insert(name.clone(), id);
+    }
+    meter.pills = meter
+        .assets
+        .images
+        .get(atv_ui::hud::assets::PILL)
+        .map(|image| {
+            let tints = atv_ui::hud::peers::pill_tints(&image.rgba)
+                .map(|rgba| renderer.add_image(device, queue, image.width, image.height, &rgba));
+            atv_ui::hud::peers::PillArt {
+                tints,
+                size: [image.width as f32, image.height as f32],
+            }
+        });
 }
 
 /// Whether the terrain rises above the segment from `from` to `to`
