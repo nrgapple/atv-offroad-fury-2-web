@@ -33,10 +33,16 @@ pub struct GameSession {
     fast: bool,
     visit: bool,
     hill: u8,
+    /// `gameTest=hillride`: instead of lifting the ATV, launch it across
+    /// the hilltop at 40 ft/s with a 12 ft/s lip (direction N of four, the next on each restart)
+    /// so it rides off the hill for a real stunt.
+    ride_off: Option<u8>,
     test_clock: f32,
     /// `gameTest=hill`: a landed chain's points for the next sample (an
     /// ATV placed in the air opens no stunt).
     inject: Option<f32>,
+    /// The last finished chain: landed, committed delta, stunt sum.
+    last_chain: Option<(bool, f32, f32)>,
     /// One-shot sounds for the ride's mixer (start beeps, pickups).
     sounds: Vec<&'static str>,
     /// Each hill's `kohflag` scene model (`00208840` binds the nearest).
@@ -63,11 +69,15 @@ impl GameSession {
             reported: false,
             fast: crate::url_flag("gameTest=fast"),
             visit: crate::url_flag("gameTest=visit"),
-            hill: u8::from(crate::url_flag("gameTest=hill")),
+            hill: u8::from(
+                crate::url_flag("gameTest=hill") || crate::url_flag("gameTest=hillride"),
+            ),
+            ride_off: crate::url_flag("gameTest=hillride").then_some(0),
             test_clock: 0.,
             inject: None,
             sounds: Vec::new(),
             flags: None,
+            last_chain: None,
         }
     }
 
@@ -117,6 +127,9 @@ impl GameSession {
         if self.hill != 0 {
             self.hill = 1;
         }
+        if let Some(n) = &mut self.ride_off {
+            *n = (*n + 1) % 4;
+        }
         self.place(ride);
     }
 
@@ -164,11 +177,16 @@ impl GameSession {
         let committed = ride.committed_points();
         let chains = ride.take_chains();
         // A landed chain scores what it added to the committed stunt score.
+        // The chain's points: what it added to the committed score, else
+        // its stunts' sum (`00221020`).
+        let (_, free) = ride.take_free_records();
         let chain = chains
             .last()
             .map(|(success, _)| {
+                let sum = free.last().map_or(0., |c| c.2);
                 let points = (committed - self.committed).max(0.);
-                (*success, points)
+                self.last_chain = Some((*success, points, sum));
+                (*success, if points > 0. { points } else { sum })
             })
             .or(self.inject.take().map(|points| (true, points)));
         self.committed = committed;
@@ -232,6 +250,14 @@ impl GameSession {
                 .iter()
                 .any(|(k, v)| *k == "state" && *v == -1.) =>
             {
+                if let Some(n) = self.ride_off {
+                    let yaw = f32::from(n) * std::f32::consts::FRAC_PI_2;
+                    let (s, c) = [(0., 1.), (1., 0.), (0., -1.), (-1., 0.)][usize::from(n)];
+                    let origin = ride.frame().origin;
+                    let _ = ride.place_beside(origin, yaw, [s * 40., 12., c * 40.]);
+                    self.hill = 7;
+                    return;
+                }
                 // Off the hill's side in the air, moving away (a jump).
                 let ground = ride.frame().origin[1];
                 let _ =
@@ -415,6 +441,7 @@ impl GameSession {
                 .collect::<serde_json::Map<_, _>>()),
             "reported": self.reported,
             "flags": self.flags,
+            "lastChain": self.last_chain,
         })
     }
 }

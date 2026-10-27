@@ -176,6 +176,14 @@ Restart Game; King of the Hills on Tioga Valley armed through the real hill
 enter/leave and captured by a landed chain the `gameTest=hill` hook
 supplies (an ATV placed in the air opens no stunt), Pause → Restart Game,
 and Time Up on the 20 s `gameTest=fast` clock with Continue back to Games.
+`gameTest=hillride` instead launches the ATV across the hilltop (40 ft/s
+with a 12 ft/s lip, a new direction per Restart Game) so it rides off the
+hill: that arms the hill through the real trigger leave in three of four
+directions, but in host runs no keyboard stunt (J, held 0.45 s after the
+arming) opened on the launched ATV, so no chain finished and the capture
+from a real stunt remains covered by the unit tests only. A ride placed
+by a hook may lack the take-off the stunt system needs; driving there
+from the start would need a scripted route per course.
 These are host Chromium checks with a private test package.
 
 ## Shared facts
