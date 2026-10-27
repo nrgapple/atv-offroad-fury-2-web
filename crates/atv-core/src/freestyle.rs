@@ -313,6 +313,13 @@ pub struct Target {
 /// The targets of a CherryPick TOY (`[Triggers]` with a `Cherry` action;
 /// `0023ff80`), in trigger order.
 pub fn parse_targets(text: &str) -> Vec<Target> {
+    parse_animated_triggers(text, "Cherry")
+}
+
+/// A TOY's triggers carrying `action` (Freestyle's `Cherry`, Treasure
+/// Hunt's `Treasure`) with the animation their `HideAnimation` hides: its
+/// `MCF` stem (the PSG/MOT pair) and `Offset`.
+pub fn parse_animated_triggers(text: &str, action: &str) -> Vec<Target> {
     use crate::games::{Toy, parse_triggers};
     let toy = Toy::parse(text);
     let animations = toy
@@ -334,7 +341,7 @@ pub fn parse_targets(text: &str) -> Vec<Target> {
     };
     parse_triggers(&toy)
         .into_iter()
-        .filter(|t| t.action("Cherry").is_some())
+        .filter(|t| t.action(action).is_some())
         .map(|t| {
             let reference = t
                 .action("HideAnimation")

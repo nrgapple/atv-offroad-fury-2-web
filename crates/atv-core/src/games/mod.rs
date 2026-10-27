@@ -632,6 +632,47 @@ mod tests {
     /// and `kohflag` models, and no game archive ships a collision mesh for
     /// them (the original's static collision skips models without a COL,
     /// `00206e90`); every COL a game archive carries is the Freeride one.
+    /// Private probe: every Treasure Hunt treasure trigger hides a `bomb`
+    /// animation whose PSG and the `bomb.MOT` loop ship in the archive.
+    #[test]
+    fn every_treasure_hides_a_bomb_model() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../private/extracted");
+        if !root.join("TRACKS/TRACKSA/ENV05/E05_TH.RES").exists() {
+            eprintln!("skipped: private archives are not extracted");
+            return;
+        }
+        for venue in [
+            "env01", "env02", "env03", "env04", "env05", "env06", "env07", "env08", "free01",
+            "free02", "free03", "free04", "free05", "free06",
+        ] {
+            let path = game_archive(GameKind::TreasureHunt, venue).unwrap();
+            let bytes = std::fs::read(root.join(&path[1..])).unwrap();
+            let archive = crate::resource::Resource::parse(&bytes).unwrap();
+            let member = |name: &str| {
+                archive.members.iter().position(|m| {
+                    m.name
+                        .replace('\\', "/")
+                        .to_ascii_lowercase()
+                        .ends_with(name)
+                })
+            };
+            let toy = archive
+                .extract(member(&format!("{venue}th.toy")).unwrap())
+                .unwrap();
+            let text = String::from_utf8_lossy(&toy);
+            let bombs = crate::freestyle::parse_animated_triggers(&text, "Treasure");
+            let expected = Toy::parse(&text)
+                .int("TreasureHunt", "NumberOfTargets")
+                .unwrap();
+            assert_eq!(bombs.len() as i64, expected, "{venue}");
+            assert!(bombs.iter().all(|b| b.model == "bomb"), "{venue}");
+            assert!(
+                member("bomb.psg").is_some() && member("bomb.mot").is_some(),
+                "{venue}"
+            );
+        }
+    }
+
     #[test]
     fn hill_scene_objects_have_no_collision_meshes() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../private/extracted");

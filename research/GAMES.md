@@ -148,10 +148,16 @@ game's end (`002d10d0`, `002210e0`).
   come from the loaded (game) scene, and no game archive ships a COL for
   `kohbase` or `kohflag` (the original skips models without one,
   `00206e90`), so the bases and flags are not solid in either; every COL a
-  game archive carries is the Freeride one. Treasure Hunt still rides the Freeride scene: its `bomb.mcf`
-  treasures are mode-TOY keyframed animations the port does not draw, and
-  the sparks and `bomb_explosion.emt` bursts are not emitted; screen tags
-  and minimap markers stand in for the treasures.
+  game archive carries is the Freeride one. Treasure Hunt has no scene of its own (`env05th.toy`, no
+  `env05th.scn`): it rides the Freeride scene with its mode TOY read over
+  the TH archive. Each `Treasure` trigger's `HideAnimation` names a `bomb`
+  animation (`MCF` `bomb.mcf`, `Offset`); the port appends one `bomb.psg`
+  per treasure at its offset, loops `bomb.MOT` on it (the Freestyle cherry
+  path), shows only the live group's uncollected treasures and hides a
+  bomb when collected or during the group wait. A private probe checks all
+  14 venues: one bomb per `NumberOfTargets`, and the PSG and MOT ship. The
+  screen tags and minimap markers stay; the sparks and
+  `bomb_explosion.emt` bursts are still not emitted.
 - **Sounds.** The start countdown plays the race start's `beep01`/`go`
   (`002e79a0`); each treasure plays `iconhit.vag` (`002d0d70`), which the
   packager now adds to the hosted `AUDIO.RES`. No capture sound was found
