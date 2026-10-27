@@ -2,6 +2,7 @@
 //!
 //! The browser previously orchestrated loading and presentation in
 //! JavaScript; that logic moves here so every build runs the same code.
+pub mod actors;
 pub mod ambient;
 pub mod archive;
 pub mod audio;

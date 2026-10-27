@@ -30,7 +30,7 @@ pub struct Definition {
     pub use_collision: bool,
     pub use_lighting: bool,
 }
-fn integer(text: &str) -> Result<i32> {
+pub(crate) fn integer(text: &str) -> Result<i32> {
     match text.as_bytes().first().map(u8::to_ascii_uppercase) {
         Some(b'T' | b'Y') => return Ok(1),
         Some(b'F' | b'N') => return Ok(0),
