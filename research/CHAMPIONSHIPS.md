@@ -134,7 +134,11 @@ runtime traces):
   (`CombosToWin`; `002fbe30`, `002fc050`) and Score Stunt Points
   (`NumPointLevels` 3, `Points%d`; 10k/25k/50k, St. Croix Sound
   10k/25k/100k, Wheeler Junction 25k/50k/100k; `002fb720`). Target counts
-  per course are in `atv_core::freestyle::course_objectives`.
+  per course are in `atv_core::freestyle::course_objectives`; an
+  all-course check of the 11 OB archives found each target TOY's `Cherry`
+  triggers equal to its `NumberOfTargets`. Tracks.dat's per-course
+  `pointObjective%d` repeat the `.obj` levels for those 11 courses; it also
+  lists env03, env07 (four levels) and free05, which ship no OB archive.
 - **Completion bits.** `00321ff0` returns a per-course, per-difficulty mask
   of six bits; `0025a100` shows "Completed Course Objectives: %d of 6" and
   "Completed Total Objectives: %d of 36/30" (profile +0x1e0 + type*0x3c).
