@@ -29,6 +29,8 @@ pub struct View {
     pub place: usize,
     /// The start countdown's number, before the game begins.
     pub start: Option<u32>,
+    /// The 321 LIGHTS step (1-3 red, 4 green for a second after GO).
+    pub lights: Option<u8>,
     /// The current sign.
     pub sign: Option<String>,
 }

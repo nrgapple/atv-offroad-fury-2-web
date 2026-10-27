@@ -51,6 +51,8 @@ pub struct HudInput<'a> {
     /// Other riders in a multiplayer room, the player's origin and the
     /// scene's view-projection (name tags and map markers).
     pub peers: Option<(&'a [atv_ui::hud::peers::Peer], [f32; 3], [f32; 16])>,
+    /// The drawn camera's eye (King of the Hills pill line of sight).
+    pub eye: Option<[f32; 3]>,
     /// A Freestyle objective's panel (time left, progress, score).
     pub objective: Option<atv_ui::hud::objective::View>,
     /// The Training Course's lesson panel.
@@ -819,11 +821,23 @@ impl Overlay {
             .filter(|t| *t < 1.);
         // Name tags over other riders, under the map and menus.
         if let Some((peers, origin, vp)) = shown.and_then(|h| h.peers) {
+            // `002207e0` hides a hill pill whose point the camera's ray to
+            // it does not reach (`00169b60` against the terrain).
+            let hidden = |p: &&atv_ui::hud::peers::Peer| {
+                p.pill.is_some()
+                    && shown
+                        .and_then(|h| h.eye.map(|eye| (h.terrain, eye)))
+                        .is_some_and(|(terrain, eye)| {
+                            let to = [p.position[0], p.position[1] + 7., p.position[2]];
+                            terrain_blocks(terrain, eye, to)
+                        })
+            };
+            let visible: Vec<_> = peers.iter().filter(|p| !hidden(p)).cloned().collect();
             self.tags = atv_ui::hud::peers::paint_tags(
                 &mut self.fonts,
                 &mut self.list,
                 &view,
-                peers,
+                &visible,
                 origin,
                 &vp,
             );
@@ -917,8 +931,16 @@ impl Overlay {
                 hits.iter().map(|(r, _)| r.bottom()).fold(0., f32::max)
             }) + 8.;
             let mut list = DisplayList::default();
+            // The original 321 lamps replace the countdown digits when the
+            // course archive has their art.
+            let lamps = self.meter.as_ref().filter(|m| m.has_lamps());
+            let mut game = game.clone();
+            if let (Some(meter), Some(lights)) = (lamps, game.lights) {
+                meter.paint_lamps(&mut list, lights, view.width, view.height);
+                game.start = None;
+            }
             layout::render(
-                &atv_ui::hud::games::element(&view, game, top),
+                &atv_ui::hud::games::element(&view, &game, top),
                 &mut self.fonts,
                 view.width,
                 view.height,
@@ -1521,4 +1543,77 @@ fn buzz(ms: u32) {
     }
     #[cfg(not(target_arch = "wasm32"))]
     let _ = ms;
+}
+
+/// Whether the terrain rises above the segment from `from` to `to`
+/// (sampled every half cell, ends excluded): the hill pills' line of sight.
+pub(crate) fn terrain_blocks(
+    terrain: &atv_game::venue::Terrain,
+    from: [f32; 3],
+    to: [f32; 3],
+) -> bool {
+    if terrain.width < 2 || terrain.depth < 2 || terrain.spacing <= 0. {
+        return false;
+    }
+    let ground = |x: f32, z: f32| {
+        let gx = (x / terrain.spacing).clamp(0., (terrain.width - 1) as f32 - 1e-3);
+        let gz = (z / terrain.spacing).clamp(0., (terrain.depth - 1) as f32 - 1e-3);
+        let (ix, iz) = (gx as usize, gz as usize);
+        let (fx, fz) = (gx - ix as f32, gz - iz as f32);
+        let h = |x, z| terrain.height(x, z);
+        let top = h(ix, iz) * (1. - fx) + h(ix + 1, iz) * fx;
+        let bottom = h(ix, iz + 1) * (1. - fx) + h(ix + 1, iz + 1) * fx;
+        top * (1. - fz) + bottom * fz
+    };
+    let length = ((to[0] - from[0]).powi(2) + (to[2] - from[2]).powi(2)).sqrt();
+    let steps = ((length / (terrain.spacing * 0.5)).ceil() as usize).clamp(2, 512);
+    (1..steps).any(|i| {
+        let t = i as f32 / steps as f32;
+        let p: [f32; 3] = std::array::from_fn(|k| from[k] + (to[k] - from[k]) * t);
+        ground(p[0], p[2]) > p[1]
+    })
+}
+
+#[cfg(test)]
+mod pill_tests {
+    #[test]
+    fn a_ridge_between_camera_and_hill_blocks_the_pill() {
+        // 5 x 5 vertices, 10 ft apart; a 30 ft ridge along x = 20.
+        let heights = (0..25)
+            .map(|i| if i % 5 == 2 { 30. } else { 0. })
+            .collect::<Vec<f32>>();
+        let image = atv_game::venue::Image {
+            width: 0,
+            height: 0,
+            rgba: Vec::new(),
+        };
+        let terrain = atv_game::venue::Terrain {
+            width: 5,
+            depth: 5,
+            spacing: 10.,
+            heights,
+            min: 0.,
+            max: 30.,
+            layers: Vec::new(),
+            mapping: Vec::new(),
+            mapping_width: 0,
+            mapping_height: 0,
+            detail: image,
+        };
+        assert!(super::terrain_blocks(
+            &terrain,
+            [2., 5., 20.],
+            [38., 5., 20.]
+        ));
+        assert!(!super::terrain_blocks(
+            &terrain,
+            [2., 40., 20.],
+            [38., 40., 20.]
+        ));
+        assert!(!super::terrain_blocks(
+            &terrain,
+            [2., 5., 20.],
+            [12., 5., 20.]
+        ));
+    }
 }

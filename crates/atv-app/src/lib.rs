@@ -519,7 +519,7 @@ impl ObjectiveSession {
             time_left: run.time_left,
             progress: run.progress(),
             score: run.score as i64,
-            message: run.messages.last().cloned(),
+            message: run.notice().map(str::to_string),
         })
     }
 }
@@ -1699,6 +1699,7 @@ impl App {
                     hud: ride.hud(),
                     rider_world: ride.rider_world(),
                     terrain: &ready.venue.terrain,
+                    eye: Some(ready.camera.eye()),
                     race: ride
                         .race()
                         .and_then(|r| r.frame.as_ref())
@@ -1792,7 +1793,7 @@ impl App {
                     "score": o.run.as_ref().map(|r| r.score),
                     "progress": o.run.as_ref().map(|r| r.progress()),
                     "outcome": o.run.as_ref().and_then(|r| r.outcome).map(|x| format!("{x:?}")),
-                    "message": o.run.as_ref().and_then(|r| r.messages.last().cloned()),
+                    "message": o.run.as_ref().and_then(|r| r.notice().map(str::to_string)),
                     "targets": o.targets,
                     "hits": o.run.as_ref().map(|r| r.hits.clone()),
                     "start": o.run.as_ref().and_then(|r| r.objective.start),
@@ -6441,6 +6442,7 @@ fn capture(ready: &mut Ready, path: &std::path::Path, width: u32, height: u32, u
                     hud: ride.hud(),
                     rider_world: ride.rider_world(),
                     terrain: &ready.venue.terrain,
+                    eye: Some(ready.camera.eye()),
                     race: ride
                         .race()
                         .and_then(|r| r.frame.as_ref())

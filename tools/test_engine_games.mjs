@@ -196,6 +196,11 @@ try {
   await start(page, 'env02');
   g = await game(page);
   assert.equal(g.kind, 'koth');
+  // The race's 321 lamps count the start in (002e79a0): red steps, then
+  // green for a second after GO, then none.
+  assert.ok(g.started || (g.lights >= 1 && g.lights <= 3), `start lamps ${g.lights}`);
+  await shot(page, 'koth-lights');
+  await until(page, g => g.started && g.lights === null, 20000);
   assert.equal(g.rules.hills, 5);
   assert.equal(g.markers.length, 5);
   assert.ok(g.markers.every(m => m.owner === null));
@@ -213,7 +218,7 @@ try {
   // the five hills (off-screen hills are hidden, not pinned).
   const hud = await page.evaluate(() => JSON.parse(document.querySelector('#ui-state').textContent).toolbar?.hud
     ?? JSON.parse(document.querySelector('#ui-state').textContent).hud);
-  assert.ok(hud && hud.tags >= 1 && hud.tags <= 5, `hill pills drawn: ${JSON.stringify(hud)}`);
+  assert.ok(hud && hud.tags <= 5, `hill pills drawn: ${JSON.stringify(hud)}`);
   await shot(page, 'koth-captured');
   await page.waitForTimeout(4000);
   await shot(page, 'koth-flag');
@@ -224,6 +229,10 @@ try {
   g = await until(page, g => g.scores[0] === 0 && g.markers.every(m => m.owner === null), 20000);
   await page.waitForTimeout(1500);
   await shot(page, 'koth-restart-pills');
+  // From the start the hills ahead are in view and above the terrain line.
+  const restartHud = await page.evaluate(() => JSON.parse(document.querySelector('#ui-state').textContent).toolbar?.hud
+    ?? JSON.parse(document.querySelector('#ui-state').textContent).hud);
+  assert.ok(restartHud.tags >= 1 && restartHud.tags <= 5, `hill pills after restart: ${restartHud.tags}`);
 
   // The real stunt path (`gameTest=hillride`): set on hill 1, the ATV is
   // launched across the hilltop at 40 ft/s (a 12 ft/s lip) and rides off it; a keyboard

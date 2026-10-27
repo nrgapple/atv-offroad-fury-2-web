@@ -1,0 +1,23 @@
+{
+  "id": "king-of-the-hills-hill-score-pills-and-the-321-start-l-1f054b354b0e454fb8b2c0c303666ace",
+  "timestamp": "2026-10-27T16:54:21.133133+00:00",
+  "recorded_at": "2026-10-27T17:13:13.784339+00:00",
+  "kind": "build",
+  "title": "King of the Hills: hill score pills and the 321 start lamps",
+  "summary": "The original hill HUD draws a pill at each hill (12 ft above it) showing the stunt score needed to take it, in the owner's colour (white unowned), only when the hill is on screen and the camera's line of sight to it is not blocked by terrain. The mini-games' start now shows the race's original 321 lamps (one red lamp per second with its beep, green at GO for a second) instead of digits.",
+  "details": [
+    "Recovered: the original hill HUD draws a pill at each hill (12 ft above it) showing the stunt score needed to take it, in the owner's colour (white unowned), only when the hill is on screen and the camera's line of sight to it is not blocked by terrain. The mini-games' start now shows the race's original 321 lamps (one red lamp per second with its beep, green at GO for a second) instead of digits.",
+    "Verification: unit tests and the browser games test (pills drawn after restart, lamp steps then none) pass on host Chromium. PRs #360, #363, #364."
+  ],
+  "limitation": "a drawn pill stands in for the original koh_pillbkg artwork; scene objects don't block the line of sight (terrain only); the original's all-off lamp step is not shown; Treasure Hunt treasures are still screen tags (bomb models need an animated-object renderer).",
+  "images": [
+    {
+      "path": "/devlog-images/king-of-the-hills-hill-score-pills-and-the-321-start-l-1f054b354b0e454fb8b2c0c303666ace.png",
+      "caption": "The original 321 lamps and the five hill pills on Tioga Valley"
+    },
+    {
+      "path": "/devlog-images/king-of-the-hills-2-1f054b354b0e454fb8b2c0c303666ace.png",
+      "caption": "Hills behind the ridge hide their pills"
+    }
+  ]
+}

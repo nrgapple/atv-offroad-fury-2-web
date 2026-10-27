@@ -159,9 +159,13 @@ game's end (`002d10d0`, `002210e0`).
 - **Trigger contact.** The original tests the ATV's collision body against
   the box; the port tests the ATV origin against the box grown by 3 ft
   (1.5 ft vertically). `Box` is read as half extents.
-- **Start countdown.** The original runs the shared 3-2-1 start lights
-  (Overlays.pb object 10); the port holds the ATV for 3 s with the number
-  in its panel and the start beeps, not the light sprites.
+- **Start countdown.** The original runs the shared 321 LIGHTS overlay
+  (Overlays.pb object 10, `002e79a0`/`002e81f0`). The port holds the ATV
+  for 3 s with the beeps and draws the race's original lamps from the
+  course archive: one more red lamp each second, green at GO for one second
+  (the panel's digits show only when the lamp art is missing). The 3 s
+  hold starts on the first red lamp, so the original's all-off step is not
+  shown.
 - **Hill HUD** (`QuadzillaHillScoreHud`). `002eac20` builds one
   `koh_pillbkg` widget per hill (30 x 31 with a 10 x 11 inset, white,
   alpha 0x80) and one text per hill whose callback (`002df040`) prints
@@ -174,9 +178,12 @@ game's end (`002d10d0`, `002210e0`).
   owner's colour (white unowned) with the score to beat ("0" before the
   first capture) at the same raised point, only while it projects inside
   the view (off-screen hills are hidden, not pinned to the edge like rider
-  tags), and keeps the hills on the minimap. Not ported: the occlusion
-  ray (a hill behind terrain still shows its pill) and the
-  `koh_pillbkg` artwork itself (a drawn pill stands in).
+  tags), and keeps the hills on the minimap. The occlusion ray
+  (`00169b60` on the world's terrain object) is ported as a terrain line
+  of sight from the drawn camera to the pill point, sampled every half
+  cell; scene objects do not block it (whether the original's ray tests
+  only the heightfield was read from the call, not traced). Not ported:
+  the `koh_pillbkg` artwork itself (a drawn pill stands in).
 - **Treasure wait flag.** During the 6 s wait the original sets rider flag
   0x40000 (meaning not traced); the port only hides the treasures.
 
