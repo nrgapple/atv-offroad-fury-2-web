@@ -861,6 +861,17 @@ impl Course {
         false
     }
 
+    /// Test tooling: start at lesson `index`'s demonstration.
+    pub fn begin_at(&mut self, index: usize) {
+        self.phase = Phase::Lessons;
+        self.lesson = index.min(LESSONS.len() - 1);
+        self.state = State::Demonstration;
+        self.demo = 0;
+        self.speech = Speech::Queue;
+        self.hush();
+        self.reset_lesson();
+    }
+
     /// Test tooling: every caption ends now.
     pub fn hurry(&mut self) {
         if self.speech == Speech::Playing {

@@ -6,9 +6,13 @@
 // its start), then driving to the far circle and stopping passes it. The
 // ending grants the four Ravage Talons and the ATV2 gear to the loaded
 // profile (0021f440): they are owned in the saved profile and shown Unlocked
-// in Unlock Items. A second visit skips the prize line, Pause → Restart
-// Training returns to the introduction, and Quit to Main Menu leaves
-// mid-course. ATV_TRAINING_SHOTS=<dir> saves HUD captures.
+// in Unlock Items. A second visit at the original pace skips the prize line,
+// Accept skips the demonstration, Pause → Restart Training returns to the
+// introduction, and Quit to Main Menu leaves mid-course. Then every other
+// lesson is ridden from its start (`trainingStart=N`) with keyboard input:
+// Steering, Reverse, Jump and Land, Stunt and Preload pass, and the plain
+// jumps fail the last three with their own lines.
+// ATV_TRAINING_SHOTS=<dir> saves HUD captures.
 import assert from 'node:assert/strict';
 import { mkdir } from 'node:fs/promises';
 import { assertNoErrors, launch, newPage, nextFrames, url } from './browser/harness.mjs';
@@ -128,7 +132,6 @@ try {
   assert.ok(t.lesson >= 1 || t.banner === 'Lesson Success', `lesson 1 passed ${JSON.stringify(t)}`);
 
   // Lessons 2-6 pass as they start; the ending returns to the main menu.
-  await until(page, t => t.lesson === 5, null, 120000);
   await onPage(page, 'main', 180000);
   let front = (await state(page)).front;
   assert.match(front.notice ?? '', /Training Course complete! Unlocked the Ravage Talons/);
@@ -185,8 +188,73 @@ try {
   await key(page, 'Enter');
   await onPage(page, 'main', 60000);
   assert.equal((await state(page)).ride?.training ?? null, null);
+  // Lessons ridden for real from their starts (`trainingStart=N`): Reverse
+  // backs into the start circle of lesson 1; Jump and Land, Stunt and Preload
+  // jump their ramps with the original inputs (lean forward in the air, a
+  // stunt button, preload before the lip), and the plain jumps fail them.
+  async function ride(lesson, keys, air = {}) {
+    await toMain(page, `trainingTest=fast&trainingStart=${lesson}`);
+    await startTraining(page);
+    await until(page, t => t.state === 'Active' && !t.locked && t.lesson === lesson, null, 60000);
+    for (const k of keys) await page.keyboard.down(k);
+    const held = new Set(keys);
+    const press = async (k, on) => {
+      if (on === held.has(k)) return;
+      if (on) { held.add(k); await page.keyboard.down(k); } else { held.delete(k); await page.keyboard.up(k); }
+    };
+    let flown = false;
+    let last = null;
+    const deadline = Date.now() + 40000;
+    let t;
+    for (;;) {
+      t = await training(page);
+      if (t.passed > 0 || t.failed > 0) break;
+      assert.ok(Date.now() < deadline, `lesson ${lesson} ${JSON.stringify(t)}`);
+      if (!t.grounded) flown = true;
+      if (air.lean) await press('KeyQ', !t.grounded && t.pitch > -0.15);
+      if (air.stunt) await press('KeyJ', !t.grounded && t.pitch > -0.05);
+      if (air.preload) await press('Space', t.grounded && !flown && t.distance < 200);
+      if (air.steer) {
+        // Steer the travel direction toward the next circle (circle 0, then
+        // the goal once passed).
+        const target = t.flags[1] ? [294.56, 396.25] : [89.0, 433.48];
+        if (last) {
+          const v = [t.origin[0] - last[0], t.origin[2] - last[2]];
+          const to = [target[0] - t.origin[0], target[1] - t.origin[2]];
+          const cross = v[0] * to[1] - v[1] * to[0];
+          const angle = Math.atan2(cross, v[0] * to[0] + v[1] * to[1]);
+          const turn = Math.hypot(...v) > 0.2 && Math.abs(angle) > 0.08;
+          await press(air.steer, turn && angle > 0);
+          await press(air.steer === 'ArrowLeft' ? 'ArrowRight' : 'ArrowLeft', turn && angle < 0);
+          await press('ArrowUp', !(turn && Math.abs(angle) > 0.6 && t.speed > 15));
+        }
+        last = t.origin;
+      }
+      await page.waitForTimeout(30);
+    }
+    for (const k of [...held]) await page.keyboard.up(k);
+    return t;
+  }
+  t = await ride(2, ['ArrowUp'], { steer: process.env.ATV_STEER || 'ArrowLeft' });
+  assert.equal(t.passed, 1, `Steering ${JSON.stringify(t)}`);
+  t = await ride(1, ['ArrowDown']);
+  assert.equal(t.passed, 1, `Reverse ${JSON.stringify(t)}`);
+  t = await ride(3, ['ArrowUp']);
+  assert.ok(t.failed === 1 && t.lines.includes(20), `flat jump fails Jump and Land ${t.lines}`);
+  t = await ride(3, ['ArrowUp'], { lean: true });
+  assert.equal(t.passed, 1, `Jump and Land ${JSON.stringify(t)}`);
+  t = await ride(4, ['ArrowUp'], { lean: true });
+  assert.ok(t.failed === 1 && t.lines.includes(26), `no stunt fails Stunt ${t.lines}`);
+  t = await ride(4, ['ArrowUp'], { lean: true, stunt: true });
+  assert.equal(t.passed, 1, `Stunt ${JSON.stringify(t)}`);
+  t = await ride(5, ['ArrowUp'], { lean: true });
+  assert.ok(t.failed === 1 && t.lines.includes(34), `no preload fails Preload ${t.lines}`);
+  t = await ride(5, ['ArrowUp'], { lean: true, preload: true });
+  assert.equal(t.passed, 1, `Preload ${JSON.stringify(t)}`);
+  await key(page, 'Escape');
+
   assertNoErrors(errors);
-  console.log('Training Course: lesson 1 failed and passed, all six lessons, Talons unlocked, restart and quit');
+  console.log('Training Course: lesson 1 failed and passed, all six lessons, Talons unlocked, restart and quit; all six lessons ridden');
 } finally {
   await browser.close();
 }

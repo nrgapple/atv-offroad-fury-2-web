@@ -104,6 +104,9 @@ impl TrainingSession {
     pub fn update(&mut self, ride: &mut Ride) -> bool {
         if !self.placed {
             self.placed = true;
+            if let Some(n) = (1..6).find(|n| crate::url_flag(&format!("trainingStart={n}"))) {
+                self.course.begin_at(n);
+            }
             Self::place(ride, self.course.start());
             ride.take_chains();
             self.steps = ride.steps();
