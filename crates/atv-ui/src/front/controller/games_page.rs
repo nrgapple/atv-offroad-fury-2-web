@@ -121,6 +121,7 @@ impl Frontend {
             GameKind::KingOfTheHills => {
                 "Jump off a hill and land a stunt that beats its score to capture it.".into()
             }
+            GameKind::Hockey => "Score in the far goal before the time runs out.".into(),
             kind => format!("{} is not available in this port yet.", kind.name()),
         })
     }
@@ -157,6 +158,15 @@ impl Frontend {
             return None;
         }
         let (venue, course) = self.game_courses().get(self.games.course)?.clone();
+        // Hockey runs its own Coonce Arena session (`atv_core::hockey`).
+        if kind == GameKind::Hockey {
+            self.notice = self.enforce_unlocks(settings);
+            self.save(settings);
+            return Some(Event::Hockey {
+                quad: self.quad_id,
+                rider: self.rider_id,
+            });
+        }
         if !self.tracks.iter().any(|t| t.id == venue) {
             self.notice = Some(format!("{course} is not available."));
             return None;

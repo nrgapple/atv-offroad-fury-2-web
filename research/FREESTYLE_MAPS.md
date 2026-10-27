@@ -89,7 +89,8 @@ hockey venue in authored Freestyle, the required-runtime packager aggregates the
 five original ENV01 preload PSTs into the small shared OVERLAYS archive (42,385
 bytes). This avoids loading a second full environment for HUD art. The arena's
 terrain/scenery remain its own source resources; this is a Freestyle HUD adaptation,
-not a recovered hockey-mode HUD or rules implementation.
+not a recovered hockey-mode HUD. The Hockey rules and its single-player
+entry are recovered separately in [GAMES.md](GAMES.md).
 
 White Sands uses eleven 4-fps animated water signature frames. All source frames
 remain resident in GPU atlases and the Rust source clock selects frame pairs.

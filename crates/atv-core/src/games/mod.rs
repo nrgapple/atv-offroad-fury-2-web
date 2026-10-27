@@ -119,9 +119,9 @@ impl GameKind {
         }
     }
 
-    /// The port has rules for this game.
+    /// The port plays this game (Hockey through `crate::hockey`).
     pub fn playable(self) -> bool {
-        matches!(self, GameKind::KingOfTheHills | GameKind::TreasureHunt)
+        !matches!(self, GameKind::Tag)
     }
 
     /// The results column (Overlays.pb `[TreasureOver Menu]` "Tokens

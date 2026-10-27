@@ -115,7 +115,8 @@ pub struct Request {
     /// original's Restart Training (`002de690` entry 6).
     #[serde(default)]
     pub training_active: bool,
-    /// The ride is a mini-game: Restart Game (`0043a9e8`).
+    /// The ride is a mini-game: Pause's second row is Restart Game
+    /// (`0043a9e8`).
     #[serde(default)]
     pub game_active: bool,
     #[serde(default)]

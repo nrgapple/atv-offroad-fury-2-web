@@ -100,6 +100,9 @@ pub enum Event {
         quad: u16,
         rider: u16,
     },
+    /// Main Menu → Hockey (temporary entry until the Games menu): the
+    /// original Hockey on Coonce Arena (`atv_core::hockey`).
+    Hockey { quad: u16, rider: u16 },
     /// Select Objective: ride a Freestyle championship course's objective
     /// (the series index into `atv_core::freestyle::SERIES`, Expert and the
     /// objective index).
@@ -578,6 +581,17 @@ impl Frontend {
             if self.tracks.iter().any(|t| t.id == "training") {
                 self.choices
                     .insert(at, ("training".into(), "Training Course".into()));
+            }
+            // Hockey (a Games mini-game, under Multiplayer in the original;
+            // a temporary row after the ride modes) when Coonce Arena is
+            // available.
+            if self.tracks.iter().any(|t| t.id == "game01") {
+                let at = self
+                    .choices
+                    .iter()
+                    .position(|(a, _)| a == "training" || a == "profile")
+                    .unwrap_or(at);
+                self.choices.insert(at, ("hockey".into(), "Hockey".into()));
             }
         }
         // Single Player → Championship, after Race.
@@ -1645,6 +1659,14 @@ impl Frontend {
                 self.notice = self.enforce_unlocks(settings);
                 self.save(settings);
                 return Some(Event::Training {
+                    quad: self.quad_id,
+                    rider: self.rider_id,
+                });
+            }
+            "hockey" => {
+                self.notice = self.enforce_unlocks(settings);
+                self.save(settings);
+                return Some(Event::Hockey {
                     quad: self.quad_id,
                     rider: self.rider_id,
                 });

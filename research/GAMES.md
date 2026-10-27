@@ -1,12 +1,25 @@
-# The original mini-games ("Games")
+# Games: the original mini-games
 
-ATV Offroad Fury 2 has four mini-games: King of the Hills, Tag, Hockey and
-Treasure Hunt (event types 9-12). This note records the exact-build evidence
-for the shared Games framework and the two games the port plays, King of the
-Hills and Treasure Hunt, and what remains open. Tag and Hockey plug into the
-same framework separately.
+ATV Offroad Fury 2 ships four mini-games ("Games"): Tag, Hockey, King of
+the Hills and Treasure Hunt. The manual (p. 17) labels Games "Split Screen
+Only": two are open on a new profile and two are bought in the Profile
+Store. `0021add0` leaves every event type open except King of the Hills (9)
+and Treasure Hunt (12), so Tag and Hockey are the two open games
+([PROFILE_STORE.md](PROFILE_STORE.md)). This note records the exact-build
+evidence for Hockey and Tag, what the port implements and what remains open.
 
-## Evidence
+Evidence comes from private Ghidra exports of the exact USA v2.00
+`SCUS_972.11` (bounded reading, no runtime traces), the disc's `Tracks.dat`,
+the Coonce Arena and Tag mode archives, and `AUDIO/CROWD/HOCKEY.AUD`.
+Addresses are guest addresses in that executable.
+
+## Framework, King of the Hills and Treasure Hunt
+
+The shared framework (`atv_core::games`) and the two bought games. The
+Games Prep page sets the time limit to 5 minutes (`002f6060`) whatever
+the profile default; Hockey (below) still uses the 120 s profile value.
+
+### Evidence
 
 Private Ghidra exports of the exact USA v2.00 `SCUS_972.11` (bounded reading,
 no runtime traces), the course lists in the front end's `Tracks.dat`, the
@@ -48,7 +61,7 @@ facts:
   Tokens Collected or Hills, Stunt Score, and Continue. Pause offers
   "Restart Game" (`0043a9e8`).
 
-### Treasure Hunt (`QuadzillaEventTreasure.cpp`, vtable `0045e4e0`)
+#### Treasure Hunt (`QuadzillaEventTreasure.cpp`, vtable `0045e4e0`)
 
 - `002d0750` reads `[TreasureHunt] NumberOfTargets` and `NumberOfGroups`;
   each `[TreasureGroup%d]` names its triggers. A treasure is a one-time
@@ -67,7 +80,7 @@ facts:
   of ten) and 15 in one group on Tempe, Nassau and Crescent Hills; every
   group name resolves to a treasure trigger.
 
-### King of the Hills (`QuadzillaEventHillKing.cpp`, vtable `004578b0`)
+#### King of the Hills (`QuadzillaEventHillKing.cpp`, vtable `004578b0`)
 
 - `00220640`/`002203d0`: `[KingOfTheHill] NumberOfHills` hills (3-16 per
   course), each a `Box=20,20,20` trigger (Arlington Stream `15,15,2`) with a
@@ -90,7 +103,7 @@ facts:
 No Profile Points, records or Hall of Fame writes were found in either
 game's end (`002d10d0`, `002210e0`).
 
-## Port
+### Port
 
 - `atv_core::games` (`crates/atv-core/src/games/`): `GameKind` (all four,
   event types, Tracks.dat lists, archive and mode TOY names), the TOY
@@ -102,8 +115,9 @@ game's end (`002d10d0`, `002210e0`).
   screen, so one player starts the games here. The page has Game, Course,
   Time Limit (2:00-20:00, default 5:00) and Start Game, and works with
   keyboard (Left/Right steps), controller and touch. Locked games and
-  courses are marked and refused with the store's lines; Tag and Hockey
-  are listed but not playable yet.
+  courses are marked and refused with the store's lines. Hockey starts
+  the Coonce Arena session described below (also on its Main Menu row);
+  Tag is listed but not playable yet.
 - `atv-app/src/games.rs` loads the game archive's mode TOY, rides the
   venue's Freeride scene, places the ATV at the TOY's `Start1` (else the
   venue start), holds it for a 3 s start countdown, samples position,
@@ -119,7 +133,7 @@ game's end (`002d10d0`, `002210e0`).
   venue's Freeride archive (about 7-10 KB each). The release owner's next
   R2 upload must include them before the public site can play the games.
 
-## Adaptations and open items
+### Adaptations and open items
 
 - **One player, no opponents.** The original is split-screen or online only;
   the port plays it alone (scores, ranking and results work for more
@@ -151,3 +165,174 @@ enter/leave and captured by a landed chain the `gameTest=hill` hook
 supplies (an ATV placed in the air opens no stunt), Pause → Restart Game,
 and Time Up on the 20 s `gameTest=fast` clock with Continue back to Games.
 These are host Chromium checks with a private test package.
+
+## Shared facts
+
+- **Courses.** `Tracks.dat` lists one Hockey course (`[hoc1]` Coonce
+  Arena, `game01`, open) and fourteen Tag courses (`[tag1]`–`[tag14]`:
+  Prospect Springs and Tioga Valley open; Arlington Stream, Rockbridge
+  Park, Freeport Harbor, Caribou Peak, Sonora Dunes, Tempe, St. Croix
+  Sound, Nassau, Wheeler Junction, Crescent Hills, Vancouver Ridge and San
+  Jacinto Isles opened by course unlocks, `00323640`). Both type masks are
+  1; the picture resources are `TP_hock` and `TP_tag`.
+- **Archives.** Hockey rides `TRACKS/TRACKSA/GAME01/G01_SO.RES` (scene,
+  `game01so.toy` with the goal triggers and `[Ball] StartPosition`, the
+  puck model and collision hulls, the `HockPlyr1`–`4` team markers, the
+  `icon_hockeyred`/`icon_hockeyblue` HUD icons). Each Tag course has its
+  own `*_TG.RES` (for example `E05_TG.RES`: the course scene, `tagball.psg`
+  with its hulls, the ball radar icon); its mode TOY only sets the default
+  start.
+- **Riders.** Both events build their riders from the session's players
+  (controller slots). Neither event creates CPU riders, and no CPU logic
+  for either game was found; the manual's "two players include computer
+  riders" applies to races.
+- **Time limit.** Settings +0x57c, 120 s on a new profile (`0021add0`);
+  the Track Select page has a Time Limit row and the manual gives 2 to 20
+  minutes.
+- **Results.** The in-game menu pages `TagOver Menu` and `HockeyOver Menu`
+  (`002ec310`) follow each game.
+
+## Hockey
+
+Event `QuadzillaEventHockey.cpp`, vtable `00460770`; camera
+`QuadzillaHockeyCamera` (`00337e60`, `003383a0`).
+
+- **Setup `00335590`.** Sounds `siren02.vag` (goal), `gameover.vag`,
+  `puck1`/`puck2.vag`, `Crowd\hockey.aud`. Two team records at +0x1c4 +
+  team × 0x38 (rider count, score, per-rider goal counts, last toucher,
+  riders). Each session rider joins the team chosen on the Hockey Team
+  Select page (`QuadzillaUIPageHockeyTeamSelect`, `bk_hockey.tga`) and
+  gets a `HockPlyr%d` marker quad on the ice. The goals are the scene's
+  `goal1` and `goal2` objects; the TOY's two `Goal` triggers (boxes 7 ×
+  3.5 × 1.5 half extents at z 437.5 and 330.5) fire
+  `HockeyGoalTriggerAction`. `HatTrickEmitters` lists the arena's hat
+  emitters (the four `hats*.emt` type 9 emitters in `game01so.toy`).
+- **Face-off `00336c90`.** The centre is the goals' midpoint, grounded.
+  Riders stand on a 30-unit semicircle: rider *i* of *n* on team *t* at
+  angle *t*·π − π/(*n*+1)·(*i*+1) from the rink axis turned −90°, which
+  puts team 0 on the goal-2 half and team 1 on the goal-1 half, all
+  facing the centre and held. The puck waits 5 units over the centre;
+  the countdown is 2 s.
+- **Drop `00337150`.** The puck appears at a random point within 10 units
+  of the centre, 3–11 units up, pushed at up to 6 units/s with a random
+  spin; riders are released; play (state 3).
+- **Play `00336200`.** The clock runs only in play and sudden death. Each
+  rider contact with the puck makes that rider its team's last toucher. A
+  puck moving at 13 units/s or more plays a puck hit. At zero: tied scores
+  start **Sudden Death** (5 s banner, play continues); otherwise
+  **Game over!** (2 s), the end siren, crowd event 4 (HOCKYEND) and a
+  2.5 s pause, then the game ends (`003379a0`).
+- **Goal `003368c0`.** The team whose attacking goal is nearer the puck
+  scores (nearer goal 2: team 1). The goal is credited to that team's
+  last toucher only when the toucher is on it; an own goal credits nobody.
+  Every third credited goal is a **Hat trick!** (3 s banner, crowd event 3
+  HOCKYWIN, hat emitters, 6 s pause); other goals play crowd event 1 or 2
+  (HCHEER01/HCHEER04) and pause 4 s. A team HUD message shows for 4 s,
+  last touchers reset and the goal siren plays. After the pause a new
+  face-off follows while time remains; in sudden death the game ends.
+- **Restart `003377f0`.** Scores and goal counts reset, the clock returns
+  to the time limit, face-off.
+- **Puck body `00337be0`.** A generic rigid body (`hockeypuck.psg`,
+  `hockeypuckm.col`/`hockeypuckf.col`) with parameters 100, 1, 2, 0.2 and
+  0.02 and contact values 0.7 and 0.25 (meanings unverified).
+
+### Port
+
+- `atv_core::hockey`: the state machine (face-off, drop, play, sudden
+  death, pause, over), goal attribution, hat tricks, crowd/siren/puck
+  events, restart, face-off spots and the Coonce Arena goals with unit
+  tests for each rule, ties, time-out and goals in the last second.
+- `Puck` is an authored flat-ice body: gravity onto the ice, a 3 units/s²
+  slide drag, board bounces with restitution 0.7 against the rink outline
+  taken from the arena's board placements (x 346.5–421.5, z 334–434,
+  10-unit corner chamfers, 14-unit goal mouths opening into 7.5-unit
+  pockets), and ATV contact as an infinite-mass push within 3.5 + 1.5
+  units. It does not use the original rigid body or the puck hulls.
+- Main Menu → **Hockey** (a temporary row after the ride modes, before
+  Training Course, while Coonce Arena is available) rides `game01` with the garage ATV. The
+  human plays Red alone; Blue has no riders (see below). The rider is
+  placed and held at its face-off spot, the HUD panel shows "Red n – m
+  Blue" with the clock, the original banners ("Red scores!", "Hat
+  trick!", "Sudden Death!", "Game over!") and the distance to the puck,
+  and the puck shows as a screen tag and map marker. Pause shows Restart
+  Game. The end returns to the main menu with the result line.
+- Browser test `tools/test_engine_hockey_tag.mjs` (content group): face-
+  off hold and drop, keyboard driving, a goal (`hockeyGoal=1` slides each
+  dropped puck off the rider into the far goal), the pause and next
+  face-off, Restart Game, and a 20 s game (`hockeyTest=fast`) to Game
+  over! and the result.
+
+### Open
+
+- **No opponents.** The original has no CPU hockey; a single human plays
+  an empty net. CPU skaters (an authored chase of `hockey::cpu_target`
+  with the race CPU riders) and split screen are not connected.
+- **Puck not drawn as its model.** `hockeypuck.psg` is in the hosted
+  `G01_SO.RES` but the renderer has no free dynamic-model path yet; a
+  screen tag stands in. The team marker quads, team rider textures,
+  hockey camera, hat emitters, siren and crowd sounds are not played or
+  drawn.
+- Team Select, time-limit options and the HockeyOver page are not shown;
+  the port uses the 120 s default.
+
+## Tag
+
+Event `QuadzillaEventTag.cpp`, vtable `00459300`. Tag is ball tag: the
+carrier is "it" and scores while holding the ball.
+
+- **Setup `00244ac0`/`00244d20`.** Four rider records (+0x1cc + rider ×
+  0x10: current possession, total possession, longest possession, points
+  awarded), the carrier and its index, a drop time stamp (ms), the
+  `tagball.psg` body and `tagBeep.vag`; each viewport's radar tracks the
+  ball.
+- **Per frame `00244ef0`.** The carrier's current and total possession
+  grow by the frame time; every whole second of total possession is 250
+  points. A wrecked carrier drops the ball ("%s dropped the ball!"). For
+  2 s after a change of carrier the ball cannot change hands. After that,
+  any other upright rider whose body touches the ball or the carrier
+  takes it, except the rider who lost it within the last 500 ms. A loose
+  ball goes to whoever touches it.
+- **Carrying.** A newly gained ball is tossed 3 units over the new
+  carrier with its velocity plus 11 units/s up; it homes on the carrier
+  (at most 2.3 units a step) and rides on the ATV once it falls back
+  within 3 units. While carried, a random 25 % chance on some condition
+  of the carrier's ATV knocks it loose 2 units up with 3 units/s up (the
+  condition, rider +0x30 flag 0x40 against a time threshold, is
+  unidentified).
+- **Gain `00246310`.** "You are it!" (1.6 s) for the carrier, "%s has the
+  ball!" (2 s) for the others, the beep; the carrier's ATV gets a
+  handicap (+0x178 +0x68 = −0.34, reset on drop; meaning unverified).
+- **Drop `00246000`.** The longest possession keeps the larger of itself
+  and the current one; the current one resets.
+- **Ball `00246da0`, `00246500`, `00246ec0`.** A carried ball resting on
+  the ground for 2.5 s is lost ("You have lost the ball!"); after 5 s the
+  ball is thrown back into play toward the nearest open ground. A ball
+  past the course boundary (110-unit margin) is thrown toward the map
+  centre at 170.47 units/s and 112.15 units/s up.
+- **End `00247160`.** Riders are sorted by score (a second pass orders
+  equal scores by a comparator not yet read) and numbered from first
+  place; the TagOver menu shows the result.
+
+### Port
+
+- `atv_core::tag`: the possession rules, scoring, immunity, re-grab
+  guard, wreck drop, ground loss and respawn, time-out and standings,
+  plus an authored `Ball` (toss, homing catch, carry, bounce, throw-in)
+  with unit tests.
+- Not yet playable: Tag needs opponents, and the original has none for a
+  single player. CPU chasers through the race CPU riders, the
+  `*_TG.RES` archives in the hosted package (the packager does not
+  include them; the release owner would publish the fourteen archives or
+  the port could ride the Freestyle venues) and a ball model are the
+  remaining work. The carrier handicap and the random knock-loose rule
+  are not implemented.
+
+## Uncertainty
+
+- Team colours: team 0 is read as Red and team 1 as Blue from the
+  `Hockey_Red_Default`/`Hockey_Blue_Default` order; the team select page
+  was not traced.
+- The goal triggers' `Box` values are read as half extents (the box then
+  spans the ice to the crossbar).
+- Tag's tie order, the knock-loose condition and the carrier handicap are
+  unread.

@@ -93,6 +93,7 @@ section is authoritative.
 | Menus and UI | Browser-native screens driven by Rust menu logic; Profile Editor and View Profile pages over a local profile book; Profile Store unlocks and memory-card UI missing | `UI.md`, `MENU_SCREENS.md`, `DESIGN_SYSTEM.md` |
 | Audio | Recovered VAG decoding, 21-song catalog/shuffle streamed as AAC with VAG fallback, Jukebox player, engine banks, impacts, train; SPU2 mixer/reverb not reproduced | `AUDIO.md` |
 | Racing | All 32 National-rules race courses plus the 16 original Enduro courses (gate races) and 3 Short Tracks; recovered CPU driver decisions (Normal/Expert, jump preload, track-edge and cheat flags) inside authored race rules | `RACING.md` |
+| Games (mini-games) | Hockey rules recovered (face-off, drop, goals, hat tricks, sudden death, game over) and playable from a temporary Main Menu row on Coonce Arena by one human against an empty net, the puck an authored flat-ice body shown as a screen tag; Tag's ball-tag rules recovered in core only (no opponents or TG archives yet); King of the Hills and Treasure Hunt are separate work | `GAMES.md` |
 | Multiplayer | Authored four-player Freeride through the Rust relay; authored rider contacts; no split-screen or original protocol | `MULTIPLAYER.md`, `MULTIPLAYER_ORIGINAL.md`, `SECURITY.md` |
 | Motorcycles | Riding controller recovered component by component from MX vs. ATV Unleashed (steer/bank, tires/suspension, engine/clutch, wheelie/stoppie, air control, preload, flips, wreck rules) through authored terrain/surface/input adapters; native whole-step parity unmeasured; Single Player only | `MOTORCYCLES.md` |
 | Crash effects | Optional authored presentation layer (Crazy/Gorn); enhancement-isolation checks show it leaves the simulation unchanged | `CRASH_EFFECTS.md` |
@@ -160,9 +161,11 @@ the worktree's `target/`; keep bulk output on the SSD.
   comparison exists. Trigonometry and VU arithmetic use host approximations.
 - The Freestyle championships run the Stunt and Combo objectives; the
   green/red target runs need the OB archives in the hosted package.
-- The mini-games run for one player without split screen; Treasure Hunt and
-  King of the Hills draw screen tags instead of the bomb and flag models, and
-  their KH/TH archives must reach the hosted R2 package (`GAMES.md`).
+- The mini-games have no opponents: the original runs them split screen
+  (or online) with human riders only. Single Player → Games plays Treasure
+  Hunt and King of the Hills alone (screen tags instead of the bomb and flag
+  models; their KH/TH archives must reach the hosted R2 package), Hockey is
+  a one-human practice and Tag is not yet playable (`GAMES.md`).
 - Memory-card UI and split-screen are missing; the Training Course shows
   captions for its 46 spoken lines and lacks the jumbotron replays and arrow
   models (`TRAINING.md`);
