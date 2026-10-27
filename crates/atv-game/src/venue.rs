@@ -85,7 +85,7 @@ pub struct Venue {
 }
 
 /// Presentation choices made at load time.
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct LoadOptions {
     /// Weather RNG sample (0..2^31), or a forced outcome for parity captures.
     pub weather: WeatherChoice,
@@ -93,6 +93,10 @@ pub struct LoadOptions {
     pub sky_smooth: bool,
     /// Which of the venue's races a race load reads.
     pub race: crate::launch::RaceVariant,
+    /// A mini-game's archive and scene stem (`E05_KH.RES`, `env05kh`):
+    /// a Freeride load reads that scene and mode TOY over the venue's
+    /// Freeride archive (research/GAMES.md).
+    pub game_scene: Option<(String, String)>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -120,7 +124,13 @@ pub async fn load_with(
     let course = if racing {
         crate::launch::race_resource(environment, options.race)?
     } else {
-        course_resource(environment, false)?
+        let mut course = course_resource(environment, false)?;
+        if let Some((archive, stem)) = &options.game_scene {
+            course.overlay = Some(archive.clone());
+            course.scene_stem = stem.clone();
+            course.mode_stem = stem.clone();
+        }
+        course
     };
     let bytes = crate::ride::load::course_archive(content, &course, environment).await?;
     let archive = Resource::parse(&bytes)?;

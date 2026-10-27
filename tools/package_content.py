@@ -720,6 +720,8 @@ def main():
         # Hockey (00335590): goal siren, game-over horn and the puck hits;
         # Tag's possession beep (00244d20).
         game_names = {'siren02.vag', 'gameover.vag', 'puck1.vag', 'puck2.vag', 'tagbeep.vag'}
+        # Treasure Hunt's pickup (002d0590 loads iconhit.vag, 002d0d70 plays it).
+        game_names |= {'iconhit.vag'}
         # Supercross stadium crowd (CrowdPresent): the venue Soultree ambient
         # loops (<venue>.aud); crowd.aud itself ships in each race archive.
         crowd_names = {'crowd/crowdf1/crdloop3.vag', 'crowd/crowdf1/crdloop4.vag',

@@ -64,6 +64,8 @@ struct Chunk {
 
 struct Draw {
     chunk: usize,
+    /// Scene model index (model colour, `001b4280`).
+    model: usize,
     /// Record slot (material + instance); the alpha-failure pass follows.
     record: u32,
     flash: Option<usize>,
@@ -275,6 +277,7 @@ impl SceneryPass {
             let local = &scenery.chunks[draw.chunk];
             draws.push(Draw {
                 chunk: draw.chunk,
+                model: draw.model,
                 record: 0,
                 flash: draw.flash,
                 gate: draw.gate.then_some((local.min, local.max)),
@@ -416,6 +419,31 @@ impl SceneryPass {
             for pass in 0..passes {
                 let at = (draw.record as usize + pass) * self.record_slot as usize + offset;
                 // The animated block is rewritten from its CPU copy each frame.
+                if let Some(copy) = self.animated_records.get_mut(at..at + bytes.len()) {
+                    copy.copy_from_slice(bytes);
+                }
+                gpu.queue.write_buffer(&self.records, at as u64, bytes);
+            }
+        }
+    }
+
+    /// A scene model's colour (`001b4280`; the King of the Hills flag in
+    /// its owner's colour, `00220b50`): `None` restores the white default.
+    pub fn tint_model(&mut self, gpu: &Gpu, model: usize, rgb: Option<[f32; 3]>) {
+        let offset = std::mem::offset_of!(Record, d) + std::mem::offset_of!(DrawUniform, flags) + 8;
+        let packed = rgb.map_or(0., |c| {
+            let byte = |v: f32| (v.clamp(0., 1.) * 255.).round() as u32;
+            ((byte(c[0]) << 16) | (byte(c[1]) << 8) | byte(c[2])) as f32
+        });
+        let value: [f32; 2] = [packed, f32::from(u8::from(rgb.is_some()))];
+        let bytes = bytemuck::bytes_of(&value);
+        for draw in &self.draws {
+            if draw.model != model {
+                continue;
+            }
+            let passes = 1 + usize::from(self.chunks[draw.chunk].alpha_fail);
+            for pass in 0..passes {
+                let at = (draw.record as usize + pass) * self.record_slot as usize + offset;
                 if let Some(copy) = self.animated_records.get_mut(at..at + bytes.len()) {
                     copy.copy_from_slice(bytes);
                 }
