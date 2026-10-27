@@ -433,6 +433,15 @@ impl Course {
         out
     }
 
+    /// The arrows' resting points and directions (`00224860`): the goal's
+    /// points down (0, −1, 0), Steering's first circle's along +X.
+    pub fn arrows(&self) -> Vec<([f32; 3], [f32; 3])> {
+        self.markers()
+            .into_iter()
+            .zip([[0., -1., 0.], [1., 0., 0.]])
+            .collect()
+    }
+
     /// Random line, as `0036e7a0` picks from a list.
     fn pick(&mut self, lines: &[Line]) -> Line {
         self.rng = self.rng.wrapping_mul(1_103_515_245).wrapping_add(12_345);
@@ -893,9 +902,76 @@ impl Course {
     }
 }
 
+/// `arrow.slt` pointer (`002ea3d0`/`002ea490`/`002ea500`): scaled ×4, it
+/// moves 16 ft/s along its direction for 0.45 s and back for 0.45 s
+/// (a 7.2 ft bob, 0.9 s period), looks along that direction and turns
+/// its up vector half a turn about it each period: up = cos θ · a +
+/// sin θ · b with θ = π · phase / 0.9, a = unit(dir × ref) and
+/// b = unit(a × dir) (`002ea880`). `ref` is a stored constant chosen by
+/// whether the direction is vertical (|y| > 0.99); its values were not
+/// read, so +Z (vertical) and +Y stand in. The object starts at the end
+/// of a period, so `time` 0 is at rest.
+pub fn arrow_matrix(base: [f32; 3], dir: [f32; 3], time: f32) -> crate::Result<[f32; 16]> {
+    const PERIOD: f32 = 0.9;
+    const SPEED: f32 = 16.;
+    const SCALE: f32 = 4.;
+    let cross = |a: [f32; 3], b: [f32; 3]| {
+        [
+            a[1] * b[2] - a[2] * b[1],
+            a[2] * b[0] - a[0] * b[2],
+            a[0] * b[1] - a[1] * b[0],
+        ]
+    };
+    let unit = |v: [f32; 3]| {
+        let l = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
+        v.map(|c| c / l)
+    };
+    let dir = unit(dir);
+    let phase = time.rem_euclid(PERIOD);
+    let travel = SPEED * phase.min(PERIOD - phase);
+    let reference = if dir[1].abs() > 0.99 {
+        [0., 0., 1.]
+    } else {
+        [0., 1., 0.]
+    };
+    let a = unit(cross(dir, reference));
+    let b = unit(cross(a, dir));
+    let theta = std::f32::consts::PI * phase / PERIOD;
+    let (sin, cos) = crate::math::Det::sin_cos_d(theta);
+    let up = [0, 1, 2].map(|i| cos * a[i] + sin * b[i]);
+    let position = [0, 1, 2].map(|i| base[i] + travel * dir[i]);
+    let mut m = crate::scene::placement_matrix(position, dir, up)?;
+    for v in &mut m[..12] {
+        *v *= SCALE;
+    }
+    Ok(m)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn arrows_bob_turn_and_scale_along_their_direction() {
+        let base = [10., 20., 30.];
+        let down = [0., -1., 0.];
+        // At rest at the start of a period: at the base, looking down,
+        // scaled ×4.
+        let m = arrow_matrix(base, down, 0.).unwrap();
+        assert!((m[12] - 10.).abs() < 1e-4 && (m[13] - 20.).abs() < 1e-4);
+        assert!((m[9] + 4.).abs() < 1e-4, "look column is 4 × (0, -1, 0)");
+        // Half way (0.45 s): 7.2 ft down, the up vector turned a quarter.
+        let half = arrow_matrix(base, down, 0.45).unwrap();
+        assert!((half[13] - (20. - 7.2)).abs() < 1e-3);
+        let dot: f32 = (0..3).map(|i| m[4 + i] * half[4 + i]).sum();
+        assert!(dot.abs() < 1e-3, "quarter turn about the look axis");
+        // Back at the base after 0.9 s.
+        let back = arrow_matrix(base, down, 0.9).unwrap();
+        assert!((back[13] - 20.).abs() < 1e-3);
+        // Steering's arrow lies along +X.
+        let side = arrow_matrix(base, [1., 0., 0.], 0.2).unwrap();
+        assert!((side[8] - 4.).abs() < 1e-4 && (side[12] - (10. + 3.2)).abs() < 1e-3);
+    }
 
     fn at(c: usize) -> Input {
         Input {
