@@ -97,7 +97,7 @@ section is authoritative.
 | Motorcycles | Riding controller recovered component by component from MX vs. ATV Unleashed (steer/bank, tires/suspension, engine/clutch, wheelie/stoppie, air control, preload, flips, wreck rules) through authored terrain/surface/input adapters; native whole-step parity unmeasured; Single Player only | `MOTORCYCLES.md` |
 | Crash effects | Optional authored presentation layer (Crazy/Gorn); enhancement-isolation checks show it leaves the simulation unchanged | `CRASH_EFFECTS.md` |
 | Input | Remappable keyboard/controller bindings; one-handed and two-thumb touch are authored adaptations | `CONTROLS.md`, `TOUCH.md` |
-| Progression and saves | Recovered race Profile Points award and racing championships (Am/Pro Nationals and Supercross: rounds, 7/4/2/1/0 points, advance rule, trophies, rewards, unlocks) saved in one implicit local profile; original profile screens, store, Enduro/Freestyle/Short Tracks championships and memory-card saves missing. Garage selections and settings persist locally | `PROFILE.md`, `CHAMPIONSHIPS.md` |
+| Progression and saves | Recovered race Profile Points award and racing championships (Am/Pro Enduro, Nationals and Supercross: rounds, 7/4/2/1/0 points, advance rule, trophies, rewards, unlocks) saved in one implicit local profile; original profile screens, store, Freestyle/Short Tracks championships and memory-card saves missing. Garage selections and settings persist locally | `PROFILE.md`, `CHAMPIONSHIPS.md` |
 
 ## Build and test
 
@@ -158,9 +158,9 @@ the worktree's `target/`; keep bulk output on the SSD.
 
 - Whole-game parity is unverified: no PS2 hardware or deterministic full replay
   comparison exists. Trigonometry and VU arithmetic use host approximations.
-- Original profile screens, the Profile Store, Enduro/Freestyle/Short Tracks
+- Original profile screens, the Profile Store, Freestyle/Short Tracks
   championships, memory-card saves and split-screen are missing; races and
-  the Nationals/Supercross championships save to one implicit local profile
+  the Enduro/Nationals/Supercross championships save to one implicit local profile
   (`PROFILE.md`, `CHAMPIONSHIPS.md`).
 - Race rules are authored around recovered start slots, track window and
   finish-gate laps; firework triggers and points are open (`RACING.md`).

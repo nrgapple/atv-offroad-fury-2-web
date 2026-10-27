@@ -42,11 +42,47 @@ pub struct Series {
     pub rewards: [[i64; 3]; 2],
 }
 
-/// The racing series the port can run: their Environment (National mode),
-/// National and Supercross courses are all ported. Enduro and Short Tracks
-/// use course variants the port does not load; Freestyle championships
-/// score objectives the port does not have.
-pub const SERIES: [Series; 4] = [
+/// The racing series the port can run, in event-type order. Amateur Enduro
+/// races each venue's short Enduro and Pro Enduro its long one (`002f65e0`,
+/// `0021d8b0`), three laps. Short Tracks (no known unlock) and the Freestyle
+/// championships (objectives) are not offered.
+pub const SERIES: [Series; 6] = [
+    Series {
+        kind: 0,
+        key: "send",
+        name: "Amateur Enduro",
+        pro: false,
+        rounds: [5, 6],
+        laps: 3,
+        courses: &[
+            "env05ends",
+            "env02ends",
+            "env08ends",
+            "env06ends",
+            "env04ends",
+            "env01ends",
+        ],
+        opened_by: None,
+        rewards: [[500, 250, 125], [1500, 750, 375]],
+    },
+    Series {
+        kind: 1,
+        key: "lend",
+        name: "Pro Enduro",
+        pro: true,
+        rounds: [5, 6],
+        laps: 3,
+        courses: &[
+            "env05endl",
+            "env02endl",
+            "env08endl",
+            "env06endl",
+            "env04endl",
+            "env01endl",
+        ],
+        opened_by: Some("send"),
+        rewards: [[1000, 500, 250], [2000, 1000, 500]],
+    },
     Series {
         kind: 5,
         key: "unspnat",
@@ -346,6 +382,9 @@ mod tests {
             );
         }
         assert_eq!(series("amsx").unwrap().courses[2], "sx01");
+        assert_eq!(series("send").unwrap().courses[0], "env05ends");
+        assert_eq!(series("lend").unwrap().opened_by, Some("send"));
+        assert_eq!(series("lend").unwrap().laps, 3);
         assert_eq!(
             (1..=5).map(place_points).collect::<Vec<_>>(),
             [7, 4, 2, 1, 0]
