@@ -21,7 +21,14 @@ for the scalar branches, not whole-race replay):
   ahead-only leader speed policy with its 60ft/s floor (`002536b0`).
 - Direction avoidance `0024f840` → `00252080`: peer near/far relative velocity,
   eight-ray static attenuation, vegetation response and the track-edge tail
-  (AI flag 0x400000). The 0x10 response scale reads the aim node.
+  (AI flag 0x400000). The 0x10 response scale reads the aim node. The rays
+  (origin raised 1ft, VehicleAI +0x3c8) and plants are queried only while
+  the racer is off the track; on it only peers and the track-edge tail act.
+- Enduro CPUs: VehicleAI mode 4 (`00250ae0`), the National driver whose
+  lookahead is aimed through the next gate from its own route stations, the
+  45ft/s Enduro leader floor and the Enduro reset point (the rider's own
+  position facing the next gate). The off-track lookahead limit is half the
+  Track window (62.5ft). See "Enduro CPU driver and off-track avoidance".
 - Difficulty: race creation `001f9690` sets AI flag 0x400 (the leader speed
   limit) for every difficulty except Expert. Race setup offers Normal/Expert.
 - Jump hook `0024ebb0` and preload release `001ebb10` (flag 0x40 jumps), the
@@ -394,17 +401,17 @@ riders could miss and which stalled their progress:
   to ~518ft between 1,700 and 2,400 frames). The native query `0017be80`
   searches only the window, so the rule follows it; how it walks alternate
   sections internally was not traced.
-- CPU avoidance and ramps (authored). sx14's main line climbs onto the
-  `sx14bridge` static object just past checkpoint 57. All eight flat
-  avoidance rays (`00252080`, 100ft, origin raised 1ft) meet its 11° approach
-  ramp about 36ft ahead, and the successive attenuation turned every CPU and
-  the race path driver 90° south, where they stalled. `00252080` itself tests
-  every STATICOBJECT CollisionObject (it skips only VEHICLE/RIDER bodies that
-  are not PHYSICSBODY; mask names from the registry at `0x44c570`), so the
-  exact build gives no reason the original CPUs drive over it; the ray height
-  (+0x3c8) and the CPU's requested direction were not traced further. The port
-  ignores a hit whose surface faces up (normal y ≥ 0.85) and rises against
-  the ray; walls, hay bales and flat ground met by a dipping ray still count.
+- CPU avoidance and ramps. sx14's main line climbs onto the `sx14bridge`
+  static object just past checkpoint 57. All eight flat avoidance rays
+  (`00252080`, 100ft, origin raised 1ft) meet its 11° approach ramp about
+  36ft ahead, and the successive attenuation turned every CPU and the race
+  path driver 90° south, where they stalled. `00252080` tests every
+  STATICOBJECT CollisionObject (it skips only VEHICLE/RIDER bodies that are
+  not PHYSICSBODY; mask names from the registry at `0x44c570`), but only
+  while the racer is off the track (2026-10-27, "Enduro CPU driver and
+  off-track avoidance" below), so an on-track CPU never casts them at the
+  ramp. The earlier authored rule that ignored upward-facing rising hits is
+  removed.
 - Progress is the race distance along the racing line, so laps count when the
   furthest distance passes the finish gate. Cutting across the infield,
   teleporting or reversing cannot skip or re-count the course. Alternate lines
@@ -1107,8 +1114,9 @@ Port:
 
 **Authored or approximate:** the gate width is the `endwgate` PSG's stored
 half extent across the gate (model +0x110, as the original reads it);
-the gate ceiling is the National 150 ft; the CPUs still drive the Enduro
-TDF route (how the original CPU uses the guidance vector is not read).
+the gate ceiling is the National 150 ft. The CPUs drive the Enduro TDF
+route aimed by their next gate, as the original's VehicleAI mode 4 does
+("Enduro CPU driver and off-track avoidance" below).
 
 **Gate banners, fading and compass (2026-10-27).** Exact-build reading
 (`00229e90`, `00229670`, `00229cb0`, `00228ea0`, `001b42e0`, `002e68e0`,
@@ -1216,3 +1224,105 @@ by the static avoidance rays (6–8 hits against the jump south of it), leaves
 the track and returns there after 5s off track. Points at node 42 are
 rejected because the 20ft rays meet that jump. Both depend on the
 unrecovered avoidance ray height (+0x3c8) and water-crossing behavior.
+Both are resolved by the next section: the ray height is the original 1ft,
+but the rays run only off the track, and the off-track lookahead is 62.5ft.
+
+## Enduro CPU driver and off-track avoidance — 2026-10-27
+
+Exact-build reading of `SCUS_972.11` (private Ghidra exports; nothing traced
+or executed):
+
+- **Mode.** Race creation `001f9690` sets VehicleAI +0xd0 from the track
+  variant: Enduro (variants 0/1) mode **4**, Nationals, Supercross and Short
+  Tracks (3–5) mode 2, Freestyle 3 (no driver). The mode dispatch `0024ee40`
+  runs `0024f9d0` for mode 2 and `00250ae0` for mode 4. The same switch sets
+  the leader speed floor +0x414: 45ft/s in Enduro, 60ft/s otherwise
+  (`002536b0` reads it). The lookahead constants are set after it for every
+  mode: +0x240 = 25, +0x248 = 4, +0x244 = 60.
+- **`00250ae0` is the National driver aimed by the next gate.** Its steering,
+  lane, speed, jump, trick and lean tail is the same code as `0024f9d0`
+  (`0024f840` heading wrapper included); only the lookahead base and length
+  differ. With a Track (every race: `0020f780` loads it unless the Waypoint
+  Editor is open) it keeps its own route stations, because RaceStatus type 1
+  runs no track query:
+  - +0xb8 (current) is initialized from the rider position (`0017b290`) and
+    +0xc4 (committed) copies it.
+  - Entry +0x14 / +0x10 are re-measured as the route distance (`0017d3c0`)
+    from +0xb8 / +0xc4 to the next gate's route position (gate box +0x84,
+    from `0017da40`).
+  - Unless the rider has finished, +0xc4 takes +0xb8 (and +0x310 the rider
+    position) only when 60 < +0x14 < +0x10. `0017be80` then searches the
+    125/75ft window around +0xc4 for +0xb8; its result is the on-track flag
+    +0x3c.
+  - Off the track: `0017e420` looks for a point inside the track polygon on
+    any section; if found it is driven to with the ordinary lookahead (25 + 4
+    × distance, at most 60ft), otherwise the base is +0xc4 with the lookahead
+    limited to Track +0x34 × 0.5 = 62.5ft.
+  - On the track, while the gate is still ahead (x/z dot of gate − +0x310
+    and gate − rider ≥ 0): beyond 60ft of the gate the ordinary lookahead
+    from +0xb8; within 60ft the base is +0xc4 and the lookahead 120 − +0x14,
+    which carries the aim through the gate. A rider that has passed beside
+    the gate (the gate lies between it and +0x310) aims from +0xc4 by the
+    route distance from the gate to +0xb8: back before the gate, so it turns
+    round to take the gate it missed.
+  - On a flag-0x10 node mode 4 keeps the lane offset but applies it mirrored
+    (−1), where mode 2 keeps it unmirrored.
+  - Without a Track (the Waypoint Editor), it aims straight at the next gate
+    from the side it approaches (not ported).
+- **The guidance vector +0x1a0 is the Enduro reset point**, not a steering
+  input. `0024a490` passes every racer's position (+0x60) and +0x1a0 to
+  interface +0x20, which for a quad is `001eba70` → `001ea860`: the vehicle
+  keeps them as its reset point when `001ea4d0` accepts. So an Enduro reset
+  returns the rider where it last stood validly, facing the next gate (or,
+  within 50ft of it, a point sliding on to the gate after it). A reset's
+  stations come back null (rider entry +0xd0 is cleared by `00247900` and
+  type 1 never sets it), so mode 4 searches the route again. Type 1 sets no
+  RaceStatus flag 0x100, so Enduro has no off-track reset.
+- **Static avoidance runs only off the track.** In `00252080` the scene
+  query (the eight 100ft rays and the vegetation response) sits behind
+  `lw v0,0x3c(v0)` / `bne v0,zero` at `002524a0`/`002524a4`: with race entry
+  +0x3c set (on the track) it skips to the peer loop at `00252e28`. The peer
+  correction and the track-edge tail (flag 0x400000) run either way.
+- **Ray origin height.** +0x3c8 is 1.0ft: the VehicleAI constructor
+  `0024ef20` stores `lui t5,0x3f80` at `0024f5d4` (with +0x3c4 = 8 rays and
+  +0x3cc = 100ft). No other VehicleAI writer touches it (race creation
+  `001f9690` and `0024f6e0` do not), so the port's 1ft was already the
+  original value.
+- **Off-track lookahead (mode 2).** `0024f9d0` limits the off-track
+  lookahead to Track +0x34 × 0.5 = 62.5ft. The port had used half the lap.
+
+Port: `race_ai::Driver` (mode 4 in `enduro_guidance`, `Context::on_track`,
+`Context::enduro`), `Race::{enduro_guidance, enduro_target, checkpoint}`,
+`Course::nearest_station`; the scene query in `cpu_avoidance::direction` is
+skipped while the racer is on the track.
+
+Also found by the sweep: Caribou Peak's Short Track (`env01st`) failed to
+load ("unsupported physics assignment"): its mode TOY's `[Radar]` section has
+a line `=65.0` without a key. The scene/TOY reader now drops keyless lines
+as it drops valueless ones (an indexed lookup can never match them).
+
+Headless sweep (`determinism` example, 1 lap, 3 CPUs, 18,000 frames, the
+player idle on the grid; courses where every CPU finishes; base = origin/main
+97a7cd0):
+
+| seed | National rules (32) base → now | Enduro (16) base → now | Short Tracks (3) base → now |
+| --- | --- | --- | --- |
+| 7 | 30 → 31 (sx15) | 6 → 15 (env05endl) | 2 → 3 |
+| 11 | 30 → 29 (sx03, sx05, sx15) | 5 → 16 | 2 → 3 |
+| 23 | 29 → 31 (sx15) | 6 → 16 | 2 → 3 |
+
+env04 (all seeds) and nat02 (seed 23) now finish; every Enduro course
+finishes on at least two seeds (base: 6 of 16). CPUs also finish sooner, for
+example env03 seed 7 at 4,506 instead of 6,414 frames.
+
+Remaining failures, all wreck loops: on sx15 (every seed) a CPU limited by
+the leader policy to 75ft/s (150 × 0.5, the player idle 1,500ft behind) takes
+the 220ft/s jump at nodes 32–34 too slowly, lands on its face, wrecks, is
+reset to the accepted point at node 30 and repeats. On sx05 and sx03 (seed
+11) a CPU reset at a corner just before a flag-0x40 jump (sx05 node 44)
+cuts inside, about 20ft off the line but within the 72–87ft-wide track,
+meets the jump off line and wrecks again; with the static rays no longer
+cast on the track nothing steers it back. On env05endl (seed 7) one CPU
+stays behind. The idle player makes the leader limit act all race long,
+which a real race does not; whether the original's CPUs wreck in the same
+places is unverified.

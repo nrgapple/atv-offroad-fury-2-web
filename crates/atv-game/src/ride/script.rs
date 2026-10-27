@@ -164,9 +164,16 @@ pub async fn trace(
     script: &Script,
     autopilot: bool,
 ) -> Result<Trace> {
+    // A race course id names the venue and its race (`env05ends`).
+    let (venue, variant) = match race {
+        Some(_) => crate::launch::split_race_course(venue)
+            .unwrap_or((venue, crate::launch::RaceVariant::National)),
+        None => (venue, crate::launch::RaceVariant::National),
+    };
     let options = crate::venue::LoadOptions {
         // Race traces hold weather off (the browser draws it per load).
         weather: crate::venue::WeatherChoice::Active(false),
+        race: variant,
         ..Default::default()
     };
     let venue = crate::venue::load_with(content, venue, race.is_some(), options).await?;

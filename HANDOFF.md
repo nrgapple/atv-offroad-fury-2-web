@@ -92,7 +92,7 @@ section is authoritative.
 | HUD and minimap | Authored controller using original layout/fonts/atlases; GPS minimap is authored | `HUD.md`, `MINIMAP.md` |
 | Menus and UI | Browser-native screens driven by Rust menu logic; Profile Editor and View Profile pages over a local profile book; Profile Store unlocks and memory-card UI missing | `UI.md`, `MENU_SCREENS.md`, `DESIGN_SYSTEM.md` |
 | Audio | Recovered VAG decoding, 21-song catalog/shuffle streamed as AAC with VAG fallback, Jukebox player, engine banks, impacts, train; SPU2 mixer/reverb not reproduced | `AUDIO.md` |
-| Racing | All 32 National-rules race courses plus the 16 original Enduro courses (gate races) and 3 Short Tracks; recovered CPU driver decisions (Normal/Expert, jump preload, track-edge and cheat flags) inside authored race rules | `RACING.md` |
+| Racing | All 32 National-rules race courses plus the 16 original Enduro courses (gate races) and 3 Short Tracks; recovered CPU driver decisions (Normal/Expert, jump preload, track-edge and cheat flags, the Enduro gate driver and off-track-only static avoidance) inside authored race rules | `RACING.md` |
 | Games (mini-games) | Hockey rules recovered (face-off, drop, goals, hat tricks, sudden death, game over) and playable from a temporary Main Menu row on Coonce Arena by one human against an empty net, the puck an authored flat-ice body shown as a screen tag; Tag's ball-tag rules recovered in core only (no opponents or TG archives yet); King of the Hills and Treasure Hunt are separate work | `GAMES.md` |
 | Multiplayer | Authored four-player Freeride through the Rust relay; authored rider contacts; no split-screen or original protocol | `MULTIPLAYER.md`, `MULTIPLAYER_ORIGINAL.md`, `SECURITY.md` |
 | Motorcycles | Riding controller recovered component by component from MX vs. ATV Unleashed (steer/bank, tires/suspension, engine/clutch, wheelie/stoppie, air control, preload, flips, wreck rules) through authored terrain/surface/input adapters; native whole-step parity unmeasured; Single Player only | `MOTORCYCLES.md` |
@@ -175,11 +175,11 @@ the worktree's `target/`; keep bulk output on the SSD.
   `PROFILE_STORE.md`).
 - Race rules are authored around recovered start slots, track window and
   finish-gate laps; firework triggers and points are open (`RACING.md`).
-  Reset points, the off-track reset and the committed station are recovered;
-  CPUs still loop at env04's water crossing and once on sx15 (`RACING.md`
-  "CPU reset points and the committed station").
-  Enduro CPUs drive the TDF route line, not the waypoint guidance
-  (`RACING.md` "Enduro").
+  Reset points, the off-track reset, the committed station, the Enduro CPU
+  driver (VehicleAI mode 4, aimed through the next gate) and off-track-only
+  static avoidance are recovered. In the idle-player headless sweep CPUs
+  still wreck-loop on sx15's jump and occasionally on sx03/sx05 and
+  env05endl (`RACING.md` "Enduro CPU driver and off-track avoidance").
 - Rendering lacks original LOD/visibility policy, point lights, shadows, light
   lens effects and native GS precision (`MAP_FIDELITY.md`). ScreenRain lens drops
   are dormant in shipped content and intentionally not drawn (`WEATHER.md`).
