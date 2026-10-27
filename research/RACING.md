@@ -1325,4 +1325,12 @@ meets the jump off line and wrecks again; with the static rays no longer
 cast on the track nothing steers it back. On env05endl (seed 7) one CPU
 stays behind. The idle player makes the leader limit act all race long,
 which a real race does not; whether the original's CPUs wreck in the same
-places is unverified.
+places is unverified. With the race path driver riding for the player
+(`determinism --autopilot`, seed 7) every CPU finishes on all 51 courses.
+
+In `tools/test_engine_race_alternates.mjs` (sx14, seed 7, autopilot) the
+player and a CPU now collide at the corner after the bridge and are reset
+about 360ft back, to the last reset point accepted before the bridge (the
+bridge's own points fail `001ea4d0`'s clearance rays). The test now tells
+such a reset (the rider's position jumps) from the alternate-line remap it
+guards against (the rider stays in place).
