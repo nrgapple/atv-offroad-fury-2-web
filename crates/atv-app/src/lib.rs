@@ -259,13 +259,22 @@ struct ObjectiveSession {
     /// The ride's step count last counted (the run's clock).
     steps: u64,
     recorded: bool,
+    /// The run's Hall of Fame and Freestyle records, and as it started
+    /// (a restart begins from it again).
+    fame: Option<atv_core::hall_of_fame::FreestyleWatch>,
+    fame_start: Option<atv_core::hall_of_fame::FreestyleWatch>,
 }
 
 impl ObjectiveSession {
     /// Advances the run with the ride: simulated time, finished stunt
     /// chains and committed points. Returns the results summary once, when
-    /// the run ends (its bits recorded in the saved profile).
-    fn update(&mut self, ride: &mut atv_game::ride::Ride, player: &str) -> Option<String> {
+    /// the run ends (its bits, Profile Points and Freestyle record saved in
+    /// the profile), with the run's Hall of Fame records.
+    fn update(
+        &mut self,
+        ride: &mut atv_game::ride::Ride,
+        player: &str,
+    ) -> Option<(String, atv_core::hall_of_fame::FreestyleWatch)> {
         use atv_core::freestyle::{Run, SERIES, course_objectives};
         let series = SERIES.get(self.series)?;
         if self.run.is_none() {
@@ -273,6 +282,18 @@ impl ObjectiveSession {
                 .into_iter()
                 .nth(self.objective)?;
             self.run = Some(Run::new(objective, self.objective, ride.committed_points()));
+            let saved = atv_ui::settings::Settings::load();
+            let key = atv_core::hall_of_fame::HallOfFame::freestyle_key(series.key, &self.course);
+            let personal = atv_ui::settings::load_book(&saved)
+                .current_profile()
+                .map(|p| p.freestyle.get(&key).cloned().unwrap_or_default());
+            self.fame_start = Some(atv_core::hall_of_fame::FreestyleWatch::new(
+                series.key,
+                &self.course,
+                ride.selection().quad,
+                Some(&atv_ui::settings::load_hall_of_fame(&saved)),
+                personal,
+            ));
             self.start(ride);
         }
         let run = self.run.as_mut()?;
@@ -282,21 +303,47 @@ impl ObjectiveSession {
         for (success, ids) in ride.take_chains() {
             run.chain(success, &ids);
         }
+        let (jumps, chains) = ride.take_free_records();
+        if let Some(fame) = self.fame.as_mut().filter(|_| !run.finished()) {
+            for feet in jumps {
+                fame.jump(feet);
+            }
+            for (success, count, sum) in chains {
+                fame.chain(success, count, sum);
+            }
+            run.messages.extend(fame.take_messages());
+        }
         run.tick(dt, ride.committed_points());
         if !run.finished() || self.recorded {
             return None;
         }
         self.recorded = true;
+        let mut fame = self.fame.take()?;
+        // `002fce00`: score / 1000 plus the combo points.
+        let points = fame.finish(run.score);
+        run.messages.extend(fame.take_messages());
         let mut settings = atv_ui::settings::Settings::load();
+        let loaded = atv_ui::settings::profile_loaded(&settings);
         let mut profile = atv_ui::settings::load_profile(&settings);
+        if loaded {
+            profile.credit(points);
+            if let Some(record) = fame.personal.clone() {
+                profile.record_freestyle(&fame.key, record);
+            }
+        }
         let champ = &mut profile.championships;
         let mask = champ.record_objective(series, self.expert, &self.course, run.earned_bits());
         let total = champ.completed_objectives(series, self.expert);
         atv_ui::settings::save_profile(&mut settings, &profile);
         let completed = run.outcome == Some(atv_core::freestyle::Outcome::Completed);
+        let award = if loaded {
+            format!(" · +{points} Profile Points ({} total)", profile.points)
+        } else {
+            " · Remember, your progress is not being saved!".into()
+        };
         // `002ddc50` / `002dde00` / `0025a100`.
-        Some(format!(
-            "{}, {player}! {} Score {} · Completed Course Objectives: {} of 6 · Completed Total Objectives: {} of {}",
+        let summary = format!(
+            "{}, {player}! {} Score {} · Completed Course Objectives: {} of 6 · Completed Total Objectives: {} of {}{award}",
             if completed {
                 "Congratulations"
             } else {
@@ -307,7 +354,8 @@ impl ObjectiveSession {
             mask.count_ones(),
             total,
             atv_core::freestyle::total_objectives(series)
-        ))
+        );
+        Some((summary, fame))
     }
 
     /// The run (re)starts on the ride's current clock and points.
@@ -326,6 +374,8 @@ impl ObjectiveSession {
             run.time_left = 5.;
         }
         ride.take_chains();
+        ride.take_free_records();
+        self.fame = self.fame_start.clone();
         self.steps = ride.steps();
         self.recorded = false;
     }
@@ -1264,10 +1314,11 @@ impl App {
                     .map(|f| f.borrow().state.player_name.trim().to_string())
                     .filter(|n| !n.is_empty())
                     .unwrap_or_else(|| "Rider".into());
-                if let Some(summary) = session.update(&mut riding.ride, &player)
+                if let Some((summary, fame)) = session.update(&mut riding.ride, &player)
                     && let Some(overlay) = &mut self.overlay
                 {
                     overlay.results.show_objective(summary);
+                    overlay.offer_fame(atv_core::hall_of_fame::Watch::Freestyle(fame));
                 }
                 session.view()
             }
@@ -1437,6 +1488,10 @@ impl App {
                 })),
                 "results": self.overlay.as_ref().filter(|o| o.results.shown)
                     .map(|o| o.results.buttons()),
+                // The Hall of Fame name entry: records broken and the name.
+                "fame": self.overlay.as_ref().filter(|o| o.results.shown)
+                    .and_then(|o| o.results.fame.as_ref())
+                    .map(|f| serde_json::json!({"broken": f.broken, "name": f.name})),
             });
             // The saved settings the ride applies (tools/test_engine_settings.mjs).
             let graphics = ready.scene.graphics();
@@ -4607,6 +4662,8 @@ impl App {
                     run: None,
                     steps: 0,
                     recorded: false,
+                    fame: None,
+                    fame_start: None,
                 });
                 self.start_ride(environment, quad, rider, None, None);
             }

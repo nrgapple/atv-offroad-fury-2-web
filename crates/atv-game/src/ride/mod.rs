@@ -217,6 +217,16 @@ pub struct Ride {
     /// Finished stunt chains (success, events, points sum) for the race's
     /// stunt records (`001f22a0`).
     race_chains: Vec<(bool, usize, f32)>,
+    /// Outside races: the jump measurement (`0024df70`), settled jumps and
+    /// finished chains for Freestyle objectives' records (`002fd7c0`,
+    /// `002fd350`), until the host takes them.
+    free_jump: atv_core::stunt_records::JumpTracker,
+    free_resets: u32,
+    /// Seconds grounded since the ride started or reset; jumps count once
+    /// the vehicle has settled (authored: the spawn drop is not a jump).
+    free_settle: f32,
+    free_jumps: Vec<f32>,
+    free_chains: Vec<(bool, usize, f32)>,
     /// Stunt ids of the open chain, and finished chains (success, ids) for
     /// Freestyle objectives (`002fc050` counts combos by their stunts).
     chain_ids: Vec<usize>,
@@ -414,6 +424,11 @@ impl Ride {
             stunt_landed: false,
             stunt_result: None,
             race_chains: Vec::new(),
+            free_jump: Default::default(),
+            free_resets: 0,
+            free_settle: 0.,
+            free_jumps: Vec::new(),
+            free_chains: Vec::new(),
             chain_ids: Vec::new(),
             chains: Vec::new(),
             options: RideOptions::default(),
@@ -846,10 +861,47 @@ impl Ride {
             None => self.step_vehicle(controls, false)?,
         }
         self.step_race()?;
+        self.step_free_jump();
         self.step_camera(orbit)?;
         self.steps += 1;
         self.sound = Some(self.capture_sound()?);
         Ok(())
+    }
+
+    /// Outside races, measures the player's jumps as the race does
+    /// (`0024df70`); a reset drops a jump in progress.
+    fn step_free_jump(&mut self) {
+        if self.race.is_some() {
+            return;
+        }
+        let frame = &self.frame;
+        if std::mem::replace(&mut self.free_resets, frame.reset_count) != frame.reset_count {
+            self.free_jump = Default::default();
+            self.free_settle = 0.;
+        }
+        let grounded = frame.grounded.iter().any(|g| *g);
+        if self.free_settle < atv_core::stunt_records::SETTLE_SECONDS {
+            self.free_settle = if grounded {
+                self.free_settle + STEP
+            } else {
+                0.
+            };
+            return;
+        }
+        if let Some(feet) = self.free_jump.step(grounded, frame.origin, STEP)
+            && self.free_jumps.len() < 64
+        {
+            self.free_jumps.push(feet);
+        }
+    }
+
+    /// Settled jumps (feet) and finished chains (success, events, points
+    /// sum) since the last call, outside races.
+    pub fn take_free_records(&mut self) -> (Vec<f32>, Vec<(bool, usize, f32)>) {
+        (
+            std::mem::take(&mut self.free_jumps),
+            std::mem::take(&mut self.free_chains),
+        )
     }
 
     /// The step's sound inputs (simulation_frame's audio fields).
@@ -1234,6 +1286,8 @@ impl Ride {
                 } => {
                     if self.race.is_some() {
                         self.race_chains.push((success, chain_count, sum_points));
+                    } else if self.free_chains.len() < 64 {
+                        self.free_chains.push((success, chain_count, sum_points));
                     }
                     let ids = std::mem::take(&mut self.chain_ids);
                     if self.chains.len() < 64 {

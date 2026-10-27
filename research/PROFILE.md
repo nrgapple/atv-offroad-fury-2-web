@@ -263,9 +263,30 @@ tricks, so CPU rows read 0).
   loading screen adds a "Hall of Fame:" panel with the `002585c0` lines.
   Online rooms keep no records (+0x7d8). Not ported: the +0x514 vehicle
   exclusions (which vehicles 1 and 0x15 are is unverified), the overall
-  records, Freestyle records (stunt and objective scores), Meters, and a
-  controller/touch letter picker in the name entry (the default name
-  stands in).
+  records, Meters, and a controller/touch letter picker in the name entry
+  (the default name stands in).
+- **Freestyle records and Hall of Fame.** Outside races the ride measures
+  jumps as the race does (`0024df70`; authored: measuring starts once the
+  vehicle has been grounded 0.5 s after the ride starts or resets, so the
+  spawn drop is no jump) and keeps finished chains' events and points. A
+  Freestyle objective run (`atv_core::hall_of_fame::FreestyleWatch`) feeds
+  them to the course's Freestyle Hall of Fame (one record per Amateur or
+  Pro Freestyle course: three highest objective scores, three highest
+  stunt scores, longest jump, most combos) and, with a profile loaded, the
+  profile's Freestyle record (`Profile::freestyle`), raising the original
+  "New …" / "New Personal …" messages on the objective HUD's message line.
+  At the run's end (`002fce00`) the objective score enters both, the
+  profile is credited score / 1000 plus the run's combo points (n − 1 per
+  landed chain of n), its stunt maxima absorb the record (`00322080` mode
+  2), and the results append "+N Profile Points (T total)" (or the
+  not-saved reminder). Records the run set open the same name entry before
+  the objective's Restart/Continue. Hall of Fame shows Amateur and Pro
+  Freestyle after the race event types (Highest Objective Scores, Highest
+  Stunt Scores, Longest Jump, Most Combos; the Difficulty row does not
+  apply), View Profile → Records adds the PAGE33/34 rows (Most Combos,
+  Highest Stunt Score, Highest Objective Score, Longest Jump) and Overview
+  shows Most Stunt Points In An Objective. Not ported: the free-ride
+  sessions outside objectives (no Freestyle mode results there).
 - **Stunt records.** `atv_core::stunt_records` implements the
   `0024df70` jump measurement (`JumpTracker`: takeoff and landing
   positions from the player's vehicle origin, grounded on any wheel
