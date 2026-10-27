@@ -82,7 +82,47 @@ pub struct Venue {
     pub terrain_zones: [crate::tire_tracks::TerrainZone; 8],
     /// Source Weather selection for this load (00208cc0).
     pub weather: Option<atv_core::weather::Selection>,
+    /// A Freestyle objective's course file and targets (the OB archive).
+    pub objective: Option<Objective>,
 }
+
+/// A Freestyle objective's data from the course's OB archive
+/// (research/CHAMPIONSHIPS.md "Freestyle objectives").
+pub struct Objective {
+    /// The course `.obj` (`[Objectives]`), parsed.
+    pub objectives: Vec<atv_core::freestyle::Objective>,
+    /// The target TOY's targets (empty for Combo and Stunt runs) and each
+    /// one's cherry: its scene model index (appended after the scene's).
+    pub targets: Vec<atv_core::freestyle::Target>,
+    pub models: Vec<Option<usize>>,
+    /// The cherry loop (`cherry.MOT`, `cherryg.mcf` Looping=yes) and the
+    /// cherry PSG's nodes it poses.
+    pub motion: Option<(atv_core::animation::Animation, Vec<atv_core::mesh::Node>)>,
+}
+
+impl Objective {
+    /// A cherry's world matrix at `time` seconds: the TOY offset and the
+    /// looping motion's root pose (a turn about +Y and a 2 ft bob).
+    pub fn cherry_matrix(&self, target: usize, time: f32) -> Option<[f32; 16]> {
+        let t = self.targets.get(target)?;
+        let mut matrix = match &self.motion {
+            Some((mot, nodes)) if mot.duration > 0. => mot
+                .sample_pose(nodes, time.rem_euclid(mot.duration), Default::default())
+                .ok()
+                .and_then(|p| p.world_matrices.first().copied())
+                .unwrap_or(IDENTITY),
+            _ => IDENTITY,
+        };
+        for a in 0..3 {
+            matrix[12 + a] += t.offset[a];
+        }
+        Some(matrix)
+    }
+}
+
+const IDENTITY: [f32; 16] = [
+    1., 0., 0., 0., 0., 1., 0., 0., 0., 0., 1., 0., 0., 0., 0., 1.,
+];
 
 /// Presentation choices made at load time.
 #[derive(Clone, Debug, Default)]
@@ -97,6 +137,9 @@ pub struct LoadOptions {
     /// a Freeride load reads that scene and mode TOY over the venue's
     /// Freeride archive (research/GAMES.md).
     pub game_scene: Option<(String, String)>,
+    /// A Freestyle objective: the course's OB archive (read over the
+    /// Freeride archive) and the objective's target TOY stem, if any.
+    pub objective: Option<(String, Option<String>)>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -129,6 +172,8 @@ pub async fn load_with(
             course.overlay = Some(archive.clone());
             course.scene_stem = stem.clone();
             course.mode_stem = stem.clone();
+        } else if let Some((archive, _)) = &options.objective {
+            course.overlay = Some(archive.clone());
         }
         course
     };
@@ -227,6 +272,63 @@ pub async fn load_with(
                 scene.models.len() - 1
             })
     });
+    // A Freestyle objective (`<course>.obj`) and its targets' cherries,
+    // posed by the run (they spin and bob, and hide when hit).
+    let objective = match &options.objective {
+        Some((_, toy)) if !racing => {
+            let text = String::from_utf8_lossy(&extract(
+                &format!("{environment}.obj"),
+                "objective course file",
+            )?)
+            .into_owned();
+            let objectives = atv_core::freestyle::parse_objectives(&text)?;
+            let targets = match toy {
+                Some(stem) => atv_core::freestyle::parse_targets(&String::from_utf8_lossy(
+                    &extract(&format!("{stem}.toy"), "objective targets")?,
+                )),
+                None => Vec::new(),
+            };
+            let mut models = Vec::with_capacity(targets.len());
+            for t in &targets {
+                if t.model.is_empty() {
+                    models.push(None);
+                    continue;
+                }
+                let [x, y, z] = t.offset;
+                let mut matrix = IDENTITY;
+                matrix[12..15].copy_from_slice(&[x, y, z]);
+                scene.models.push(atv_core::scene::StaticModel {
+                    name: t.model.clone(),
+                    position: t.offset,
+                    look: [0., 0., 1.],
+                    up: Some([0., 1., 0.]),
+                    use_lighting: true,
+                    dynamic_lighting: false,
+                    world_matrix: matrix,
+                });
+                models.push(Some(scene.models.len() - 1));
+            }
+            let motion = match (
+                member_named(&archive, "cherry.mot"),
+                targets
+                    .first()
+                    .and_then(|t| member_named(&archive, &format!("{}.psg", t.model))),
+            ) {
+                (Some(mot), Some(psg)) => Some((
+                    atv_core::animation::decode_mot(&archive.extract(mot)?)?,
+                    atv_core::mesh::decode_psg(&archive.extract(psg)?)?.nodes,
+                )),
+                _ => None,
+            };
+            Some(Objective {
+                objectives,
+                targets,
+                models,
+                motion,
+            })
+        }
+        _ => None,
+    };
     let tr2 = extract(&format!("{environment}.tr2"), "terrain")?;
     let decoded = terrain::decode_tr2(&tr2)?;
     crate::yield_frame().await;
@@ -436,6 +538,7 @@ pub async fn load_with(
             Vec::new()
         },
         weather,
+        objective,
         scene,
         terrain: Terrain {
             width,

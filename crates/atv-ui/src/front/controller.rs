@@ -353,6 +353,12 @@ pub struct Frontend {
     /// The Freestyle championship on Select Objective: its index into
     /// `atv_core::freestyle::SERIES` and Expert.
     pub freestyle: Option<(usize, bool)>,
+    /// Courses whose objective (OB) archive is published: their target
+    /// runs are playable.
+    pub objective_courses: Vec<String>,
+    /// Single Player → Freestyle Objectives: the course picked outside a
+    /// championship (Freestyle Prep's Objectives event).
+    pub objective_course: Option<String>,
     /// The garage ("garage") or course picker ("tracks") is open over a
     /// held room ride; leaving it rides again.
     pub room: Option<&'static str>,
@@ -426,6 +432,8 @@ impl Frontend {
             games: Default::default(),
             champ_expert: false,
             freestyle: None,
+            objective_courses: Vec::new(),
+            objective_course: None,
             room: None,
             lobby: None,
             race_courses: Vec::new(),
@@ -487,9 +495,14 @@ impl Frontend {
             self.selection = self.selection.min(self.choices.len().saturating_sub(1));
             return;
         }
-        if self.page == "championship" || self.page == "objectives" {
+        if matches!(
+            self.page.as_str(),
+            "championship" | "objectives" | "objective-courses"
+        ) {
             self.choices = if self.page == "objectives" {
                 self.objective_choices()
+            } else if self.page == "objective-courses" {
+                self.objective_course_choices()
             } else {
                 self.championship_choices()
             };
@@ -592,6 +605,19 @@ impl Frontend {
                 .map_or(self.choices.len(), |i| i + 1);
             self.choices
                 .insert(at, ("championship".into(), "Championship".into()));
+        }
+        // Single Player → Freestyle Objectives, after Freestyle: the
+        // original's Freestyle Prep Objectives event (`26a720`, `26d010`).
+        if page == "single" && !self.objective_courses.is_empty() {
+            let at = self
+                .choices
+                .iter()
+                .position(|(a, _)| a == "tracks")
+                .map_or(0, |i| i + 1);
+            self.choices.insert(
+                at,
+                ("objective-courses".into(), "Freestyle Objectives".into()),
+            );
         }
         // Single Player → Games, after Championship: the original's Games
         // live under Multiplayer → Split Screen, which the port lacks.
@@ -908,6 +934,9 @@ impl Frontend {
             "championship" => self.series_line(),
             "games" => self.games_line(),
             "objectives" => self.objectives_line(),
+            "objective-courses" => {
+                Some("Ride any Freestyle course's objectives outside a championship.".into())
+            }
             page if store_page(page) => self.store_text(),
             _ => self.profile_status(),
         }
@@ -953,13 +982,54 @@ impl Frontend {
         Some((atv_core::freestyle::SERIES.get(index)?, expert))
     }
 
+    /// The objective page's series, difficulty and course: the
+    /// championship round's, or the standalone course (its series' Normal
+    /// mask: `322080` saves standalone runs to the same per-course bits).
+    fn objective_target(&self) -> Option<(&'static atv_core::championship::Series, bool, &str)> {
+        if let Some((series, expert)) = self.freestyle_series() {
+            return Some((
+                series,
+                expert,
+                self.profile.championships.next_course(series, expert),
+            ));
+        }
+        let course = self.objective_course.as_deref()?;
+        let series = atv_core::freestyle::SERIES
+            .iter()
+            .find(|s| s.courses.contains(&course))?;
+        Some((series, false, course))
+    }
+
+    /// Single Player → Freestyle Objectives: every course with an
+    /// objective archive, Amateur venues first, with its completed count.
+    fn objective_course_choices(&self) -> Vec<(String, String)> {
+        let champ = &self.profile.championships;
+        let mut rows: Vec<(String, String)> = atv_core::freestyle::SERIES
+            .iter()
+            .flat_map(|s| s.courses.iter().map(move |c| (s, *c)))
+            .filter(|(_, c)| self.objective_courses.iter().any(|o| o == c))
+            .filter(|(_, c)| self.tracks.iter().any(|t| t.id == *c))
+            .map(|(s, c)| {
+                (
+                    format!("objcourse:{c}"),
+                    format!(
+                        "{} · {}/6",
+                        self.course_name(c),
+                        champ.course_mask(s, false, c).count_ones()
+                    ),
+                )
+            })
+            .collect();
+        rows.push(("back".into(), "Back".into()));
+        rows
+    }
+
     /// Select Objective (Overlays.pb `[Objectives Menu]`): the round
     /// course's objectives, completed ones checked, then Finish Course.
     fn objective_choices(&self) -> Vec<(String, String)> {
         let mut rows = Vec::new();
-        if let Some((series, expert)) = self.freestyle_series() {
+        if let Some((series, expert, course)) = self.objective_target() {
             let champ = &self.profile.championships;
-            let course = champ.next_course(series, expert);
             let mask = champ.course_mask(series, expert, course);
             let done = |bit: u32| mask & (1 << bit) != 0;
             for (i, o) in atv_core::freestyle::course_objectives(course)
@@ -976,11 +1046,16 @@ impl Frontend {
                         levels.len()
                     ),
                     _ if bits.iter().all(|b| done(*b)) => format!("{} · Done", o.description),
-                    _ if !o.playable() => format!("{} · Unavailable", o.description),
+                    _ if !o.playable(self.objective_courses.iter().any(|c| c == course)) => {
+                        format!("{} · Unavailable", o.description)
+                    }
                     _ => o.description.clone(),
                 };
                 rows.push((format!("obj:{i}"), label));
             }
+        }
+        if let Some((series, expert)) = self.freestyle_series() {
+            let champ = &self.profile.championships;
             let last =
                 champ.progress(series, expert).round + 1 == series.rounds[usize::from(expert)];
             rows.push((
@@ -1000,6 +1075,16 @@ impl Frontend {
     /// Select Objective's line: the course, round and counts (the
     /// original ProfileView_FreestyleEvent readouts, `0025a100`).
     fn objectives_line(&self) -> Option<String> {
+        if self.freestyle.is_none() {
+            let (series, expert, course) = self.objective_target()?;
+            let champ = &self.profile.championships;
+            return Some(format!(
+                "{} · {} · Course objectives {}/6",
+                self.course_name(course),
+                series.name.replace(" Freestyle", " course"),
+                champ.course_mask(series, expert, course).count_ones(),
+            ));
+        }
         let (series, expert) = self.freestyle_series()?;
         let champ = &self.profile.championships;
         let course = champ.next_course(series, expert);
@@ -1036,19 +1121,21 @@ impl Frontend {
         }
         self.notice = None;
         self.freestyle = Some((index, expert));
+        self.objective_course = None;
         self.show("objectives", view);
     }
 
     /// Select Objective → an objective: ride it on the round's course.
     fn objective_event(&mut self, objective: usize) -> Option<Event> {
-        let (series, expert) = self.freestyle_series()?;
-        let course = self.profile.championships.next_course(series, expert);
+        let (series, expert, course) = self.objective_target()?;
+        let course = course.to_string();
+        let course = course.as_str();
         let o = atv_core::freestyle::course_objectives(course)?
             .into_iter()
             .nth(objective)?;
-        if !o.playable() {
+        if !o.playable(self.objective_courses.iter().any(|c| c == course)) {
             self.notice = Some(format!(
-                "{} needs the course's target set, which the port does not load yet.",
+                "{} needs the course's original target set, which is not published.",
                 o.description
             ));
             return None;
@@ -1062,7 +1149,9 @@ impl Frontend {
             environment: course.into(),
             quad: self.quad_id,
             rider: self.rider_id,
-            series: self.freestyle?.0,
+            series: atv_core::freestyle::SERIES
+                .iter()
+                .position(|s| s.key == series.key)?,
             expert,
             objective,
         })
@@ -1479,7 +1568,9 @@ impl Frontend {
             "single" => "main".into(),
             "tracks" if self.hosting => "create-lobby".into(),
             "tracks" | "race" | "championship" | "games" => "single".into(),
+            "objectives" if self.freestyle.is_none() => "objective-courses".into(),
             "objectives" => "championship".into(),
+            "objective-courses" => "single".into(),
             "gear" => "garage".into(),
             "garage" => self.garage_return.clone(),
             "multiplayer" => "main".into(),
@@ -1554,6 +1645,15 @@ impl Frontend {
             }
             _ if action.starts_with("free:") => {
                 self.freestyle_event(&action["free:".len()..], view);
+            }
+            "objective-courses" => {
+                self.freestyle = None;
+                self.show(action, view);
+            }
+            _ if action.starts_with("objcourse:") => {
+                self.freestyle = None;
+                self.objective_course = Some(action["objcourse:".len()..].to_string());
+                self.show("objectives", view);
             }
             _ if action.starts_with("obj:") => {
                 return self.objective_event(action["obj:".len()..].parse().ok()?);
@@ -2827,6 +2927,15 @@ mod tests {
         front.selection = 0;
         assert_eq!(front.key("Enter", &view, &mut settings), None);
         assert!(front.notice.is_some());
+        // Its OB archive published, the target run rides.
+        front.objective_courses = vec!["env02".into()];
+        front.refresh(&view);
+        assert_eq!(front.choices()[0].1, "Hit Every Green Target");
+        front.selection = 0;
+        assert!(matches!(
+            front.key("Enter", &view, &mut settings),
+            Some(Event::Objective { objective: 0, .. })
+        ));
         front.selection = 3;
         assert_eq!(
             front.key("Enter", &view, &mut settings),
@@ -2851,6 +2960,86 @@ mod tests {
         );
         front.key("Escape", &view, &mut settings);
         assert_eq!(front.page, "championship");
+    }
+
+    #[test]
+    fn standalone_objectives_pick_a_course_and_save_its_bits() {
+        let view = view(1280., 720.);
+        let mut settings = Settings::memory();
+        let mut front = Frontend::new(tracks(), &settings, true);
+        front.show("single", &view);
+        assert!(
+            !front
+                .choices()
+                .iter()
+                .any(|(a, _)| a == "objective-courses")
+        );
+        front.objective_courses = vec!["env01".into(), "free01".into(), "env04".into()];
+        front
+            .profile
+            .championships
+            .objectives
+            .insert("spstunt-normal:free01".into(), 0b11);
+        front.refresh(&view);
+        let at = front
+            .choices()
+            .iter()
+            .position(|(a, _)| a == "objective-courses")
+            .unwrap();
+        assert_eq!(front.choices()[at - 1].0, "tracks");
+        front.selection = at;
+        assert_eq!(front.key("Enter", &view, &mut settings), None);
+        assert_eq!(front.page, "objective-courses");
+        // Courses with an OB archive and a published venue (env04 has
+        // none here), Amateur first.
+        let rows: Vec<_> = front.choices().to_vec();
+        assert_eq!(
+            rows,
+            [
+                ("objcourse:env01".to_string(), "ENV01 · 0/6".to_string()),
+                ("objcourse:free01".into(), "FREE01 · 2/6".into()),
+                ("back".into(), "Back".into()),
+            ]
+        );
+        front.selection = 1;
+        front.key("Enter", &view, &mut settings);
+        assert_eq!(front.page, "objectives");
+        let labels: Vec<_> = front.choices().iter().map(|(_, l)| l.as_str()).collect();
+        // No round row outside a championship.
+        assert_eq!(
+            labels,
+            [
+                "Hit Every Green Target · Done",
+                "Hit Every Red Target · Done",
+                "Bust 10 Different Combos",
+                "Score Stunt Points · 0 of 3 levels",
+                "Back",
+            ]
+        );
+        assert_eq!(
+            front.objectives_line().unwrap(),
+            "FREE01 · Pro course · Course objectives 2/6"
+        );
+        front.selection = 2;
+        assert_eq!(
+            front.key("Enter", &view, &mut settings),
+            Some(Event::Objective {
+                environment: "free01".into(),
+                quad: 1,
+                rider: 0,
+                series: 1,
+                expert: false,
+                objective: 2,
+            })
+        );
+        front.key("Escape", &view, &mut settings);
+        assert_eq!(front.page, "objective-courses");
+        front.key("Escape", &view, &mut settings);
+        assert_eq!(front.page, "single");
+        // A championship later clears the standalone course.
+        front.freestyle_event("unspstunt", &view);
+        assert_eq!(front.objective_course, None);
+        assert_eq!(front.page, "objectives");
     }
 
     #[test]

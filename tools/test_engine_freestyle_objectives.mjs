@@ -73,8 +73,8 @@ try {
   await choose(page, 'free:unspstunt'); await onPage(page, 'objectives');
   front = (await read(page)).front;
   assert.deepEqual(front.labels.slice(0, 5), [
-    'Hit Every Green Target · Unavailable',
-    'Hit Every Red Target · Unavailable',
+    'Hit Every Green Target',
+    'Hit Every Red Target',
     'Bust 10 Different Combos',
     'Score Stunt Points · 0 of 3 levels',
     'Finish Championship',
