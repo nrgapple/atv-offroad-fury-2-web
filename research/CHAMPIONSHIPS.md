@@ -136,7 +136,10 @@ runtime traces):
   10k/25k/100k, Wheeler Junction 25k/50k/100k; `002fb720`). Target counts
   per course are in `atv_core::freestyle::course_objectives`; an
   all-course check of the 11 OB archives found each target TOY's `Cherry`
-  triggers equal to its `NumberOfTargets`. Tracks.dat's per-course
+  triggers equal to its `NumberOfTargets`, and every target run loads its
+  targets and cherries in the port. Env04's green start ships
+  `2428.03,149,4460,47`; the port reads the first three components (assumed
+  to match a three-float read in `002fa3c0`, not traced). Tracks.dat's per-course
   `pointObjective%d` repeat the `.obj` levels for those 11 courses; it also
   lists env03, env07 (four levels) and free05, which ship no OB archive.
 - **Completion bits.** `00321ff0` returns a per-course, per-difficulty mask
@@ -227,9 +230,9 @@ archives' differing members, about 17-34 KB each, read over the Freeride
 archive). The port tests the trigger sphere against the ATV's origin and the
 rider's root (a thrown rider counts); the original tests the ATV's wheels,
 chassis and rider bodies, so a hit at the sphere's edge can register a
-little later. The explosions, the 1 s/5 s sign
-timing and the Compass are presented through the port's HUD: the panel's
-notice line shows the signs, and untouched targets are green or red screen
+little later. The panel's notice line shows the
+signs for their original 1 s / 5 s; the explosions are not drawn and the
+Compass is presented through the port's HUD: untouched targets are green or red screen
 tags and minimap dots instead of the `RadarIcon_Target` compass. Settings
 word 0 == 1 skips the bonus seconds (mode not identified; the port always
 adds them).
