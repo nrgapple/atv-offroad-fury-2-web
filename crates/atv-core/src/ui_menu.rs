@@ -1257,6 +1257,8 @@ pub fn layout(request: Request) -> Result<Frame> {
                 choices.insert(3, ("Change ATV and Rider", "changeride"));
                 if request.lobby_host && !request.lobby_public {
                     choices.insert(4, ("Select Track", "hosttrack"));
+                    // Tag on the room's course (research/GAMES.md "Online").
+                    choices.insert(5, ("Play Tag", "playtag"));
                 }
             }
             // Shared Free Ride rooms have no invite: everyone just drops in.

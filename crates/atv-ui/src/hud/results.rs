@@ -120,6 +120,9 @@ pub struct Results {
     /// A mini-game's over page (`HockeyOver Menu`): its title; the summary
     /// is `objective`'s, with Restart Game and Quit to Main Menu.
     pub game: Option<String>,
+    /// A room game's page closes with Continue (riding on in the room)
+    /// instead of Quit to Main Menu.
+    pub game_continue: bool,
     /// No profile was loaded: the race earned nothing and nothing was saved.
     pub no_profile: bool,
     /// Hall of Fame records this race set, and their name.
@@ -729,6 +732,7 @@ pub fn element(view: &Viewport, state: &Results, summary: &str, fonts: &mut Font
                 RETRY => "Restart",
                 NEXT_ROUND => "Continue Championship",
                 FAME_SELECT => "Select",
+                _ if state.game_continue => "Continue",
                 _ if state.game.is_some() => "Quit to Main Menu",
                 _ if state.objective.is_some() => "Continue",
                 _ if state.championship.is_some() => "Quit to Championship Menu",

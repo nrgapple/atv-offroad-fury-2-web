@@ -20,6 +20,7 @@ pub mod replay;
 mod riding;
 mod sound;
 mod soundtrack;
+mod tag;
 #[cfg(target_arch = "wasm32")]
 mod text_inputs;
 mod training;
@@ -484,6 +485,8 @@ struct App {
     training: Option<training::TrainingSession>,
     /// Hockey on Coonce Arena (`atv_core::hockey`).
     hockey: Option<hockey::HockeySession>,
+    /// Tag in a multiplayer room (`atv_core::tag`).
+    tag: Option<tag::TagSession>,
     /// The held room the next frontend ride resumes.
     pending_room: Option<multiplayer::Net>,
     /// `pending_room` was just joined (it meets a rider; a held room
@@ -1342,6 +1345,38 @@ impl App {
                 self.hockey = None;
             }
         }
+        // Tag: the host starts it from Pause; guests join when its state
+        // arrives. Leaving the room ends it.
+        if ready.net.is_none() {
+            self.tag = None;
+        } else if self.tag.is_none()
+            && ready.venue.environment != "game01"
+            && ready
+                .net
+                .as_ref()
+                .and_then(|n| n.game_state())
+                .is_some_and(|g| g.game == 2 && g.phase == 0)
+        {
+            self.tag = Some(tag::TagSession::new(false));
+        }
+        let tag_view = match (&mut self.tag, ready.net.as_mut()) {
+            (Some(session), Some(net)) => {
+                if session.update(&riding.ride, net)
+                    && let Some(overlay) = &mut self.overlay
+                {
+                    overlay.results.show_game("Tag Results", session.summary());
+                    overlay.results.game_continue = true;
+                }
+                let sounds = session.take_sounds();
+                if let Some(sound) = &mut riding.sound {
+                    for name in sounds {
+                        sound.one_shot(name);
+                    }
+                }
+                Some(session.view())
+            }
+            _ => None,
+        };
         let training_view = match (&mut self.training, &mut self.hockey) {
             (Some(session), _) => {
                 session.update(&mut riding.ride);
@@ -1371,7 +1406,7 @@ impl App {
             }
             (None, None) => {
                 riding.locked = false;
-                None
+                tag_view
             }
         };
         if let Some(overlay) = &mut self.overlay {
@@ -1417,6 +1452,12 @@ impl App {
                 .net
                 .as_ref()
                 .map(|net| net.hud_peers())
+                .map(|mut peers| {
+                    if let Some(tag) = &self.tag {
+                        peers.extend(tag.markers());
+                    }
+                    peers
+                })
                 .or(training_markers)
                 .or_else(|| self.hockey.as_ref().map(|h| h.markers()));
             let view_projection =
@@ -1519,6 +1560,7 @@ impl App {
                 "championship": riding.ride.race().and_then(|r| r.settings().championship),
                 "training": self.training.as_ref().map(|t| t.state(riding.ride.frame().origin)),
                 "hockey": self.hockey.as_ref().map(|h| h.state(riding.ride.frame().origin)),
+                "tag": self.tag.as_ref().map(|t| t.state()),
                 "oneShots": riding.sound.as_ref().map(|s| s.ride.race.stats.one_shots.clone()),
                 "objective": self.objective.as_ref().map(|o| serde_json::json!({
                     "series": o.series, "expert": o.expert, "course": o.course,
@@ -2027,6 +2069,19 @@ impl App {
                     }
                 }
             }
+            // Play Tag (room host): a Tag game for the room on this course.
+            Event::PlayTag => {
+                let ok = self.ready.as_ref().is_some_and(|r| {
+                    r.venue.environment != "game01" && r.net.as_ref().is_some_and(|n| n.is_host())
+                });
+                if ok {
+                    self.tag = Some(tag::TagSession::new(true));
+                    if let Some(overlay) = &mut self.overlay {
+                        overlay.results = Default::default();
+                    }
+                }
+                self.menu_event(Event::Resume);
+            }
             Event::ChangeRide | Event::SelectTrack => {
                 let garage = event == Event::ChangeRide;
                 let Some(ready) = &mut self.ready else { return };
@@ -2406,6 +2461,25 @@ impl App {
                 }
             }
             overlay::Action::Camera => riding.cycle_requested = true,
+            overlay::Action::RaceRetry if self.tag.is_some() => {
+                if self
+                    .ready
+                    .as_ref()
+                    .and_then(|r| r.net.as_ref())
+                    .is_some_and(|n| n.is_host())
+                {
+                    self.tag = Some(tag::TagSession::new(true));
+                }
+                if let Some(overlay) = &mut self.overlay {
+                    overlay.results = Default::default();
+                }
+            }
+            overlay::Action::RaceQuit if self.tag.is_some() => {
+                self.tag = None;
+                if let Some(overlay) = &mut self.overlay {
+                    overlay.results = Default::default();
+                }
+            }
             overlay::Action::RaceRetry if self.hockey.is_some() => {
                 if let Some(session) = &mut self.hockey {
                     session.restart(&mut riding.ride);
@@ -4700,6 +4774,7 @@ impl App {
         }
         self.training = None;
         self.hockey = None;
+        self.tag = None;
         match event {
             Event::Hockey { quad, rider } => {
                 self.hockey = Some(hockey::HockeySession::new());
@@ -5664,6 +5739,7 @@ impl App {
         // ending's reward).
         self.training = None;
         self.hockey = None;
+        self.tag = None;
         let Some(ready) = self.ready.take() else {
             return false;
         };
@@ -6551,6 +6627,7 @@ pub fn run(options: Options) {
         objective: None,
         training: None,
         hockey: None,
+        tag: None,
         pending_room: None,
         pending_fresh: false,
         joining: None,

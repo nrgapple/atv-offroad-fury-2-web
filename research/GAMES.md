@@ -207,13 +207,31 @@ carrier is "it" and scores while holding the ball.
   guard, wreck drop, ground loss and respawn, time-out and standings,
   plus an authored `Ball` (toss, homing catch, carry, bounce, throw-in)
   with unit tests.
-- Not yet playable: Tag needs opponents, and the original has none for a
-  single player. CPU chasers through the race CPU riders, the
-  `*_TG.RES` archives in the hosted package (the packager does not
-  include them; the release owner would publish the fourteen archives or
-  the port could ride the Freestyle venues) and a ball model are the
-  remaining work. The carrier handicap and the random knock-loose rule
-  are not implemented.
+- **Online (authored).** Tag plays in multiplayer rooms, the port's
+  replacement for split screen. The room host's Pause → **Play Tag**
+  starts a game on the room's course (any venue but Coonce Arena): the
+  host runs `atv_core::tag` and the ball for the roster in peer order and
+  broadcasts `Packet::Game` (game 2: carrier, scores by slot, clock, ball)
+  at 20 Hz and on every change of carrier; guests join the game when its
+  state arrives and mirror it. A tag is two ATVs within 7 units centre
+  to centre, or a rider within 5 units of a loose ball (authored contact
+  sizes). "You are it!" / "%s has the ball!" / "%s dropped the ball!"
+  banners and `tagBeep.vag` play; the end opens Tag Results (places by
+  score, Restart Game for the host, Continue). Check:
+  `tools/test_engine_multiplayer_tag.mjs` (relay group: Pause → Play
+  Tag, the host carries and scores, the guest takes the ball with the
+  `tagReach=60` test hook, both reach the same results).
+- **Courses.** The original's Tag rides its fourteen `*_TG.RES` course
+  archives (their own scene variants; the mode TOY only sets a start).
+  They are not in the hosted package, so the port rides the room's
+  Freestyle venue instead. Hosting them would mean adding the fourteen
+  archives to `tools/package_content.py` (each a full environment copy)
+  and a Tag course list in room setup; the ball model `tagball.psg`
+  ships only there, so the ball shows as a screen tag.
+- Not implemented: single-player Tag (the original has no CPU riders),
+  the carrier handicap, the random knock-loose rule, the boundary
+  throw-in toward the map centre (the ball is thrown back toward the
+  host), Tag's time-limit option and tie order.
 
 ## Uncertainty
 
