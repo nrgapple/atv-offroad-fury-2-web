@@ -38,7 +38,7 @@ try {
   await key(page, 'Enter'); await onPage(page, 'main');
   await key(page, 'Enter'); await onPage(page, 'single');
   let f = await front(page);
-  assert.deepEqual(f.choices, ['tracks', 'race', 'championship', 'garage']);
+  assert.deepEqual(f.choices, ['tracks', 'race', 'championship', 'games', 'garage']);
   assert.ok(f.race.courses >= 30, `race courses ${f.race.courses}`);
   await key(page, 'ArrowDown'); await key(page, 'Enter'); await onPage(page, 'race');
   f = await front(page);
@@ -78,7 +78,8 @@ try {
   // Garage → Rider Gear: steppers and the dressed previews.
   // Back opens Single Player on its first row (frontend.js `show`).
   await key(page, 'Escape'); await onPage(page, 'single');
-  await key(page, 'ArrowDown'); await key(page, 'ArrowDown'); await key(page, 'ArrowDown'); await key(page, 'Enter'); await onPage(page, 'garage');
+  for (let i = 0; i < 4; i++) await key(page, 'ArrowDown');
+  await key(page, 'Enter'); await onPage(page, 'garage');
   f = await front(page);
   await click(page, ROW + f.choices.indexOf('gear')); await onPage(page, 'gear');
   await wait(page, () => JSON.parse(document.querySelector('#ui-state').textContent).front.gear.catalog === 7);

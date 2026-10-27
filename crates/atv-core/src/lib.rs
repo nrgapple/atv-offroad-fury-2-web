@@ -19,6 +19,7 @@ pub mod engine_audio;
 pub mod flip_tricks;
 pub mod fog;
 pub mod freestyle;
+pub mod games;
 pub mod gore;
 pub mod grip;
 pub mod hall_of_fame;

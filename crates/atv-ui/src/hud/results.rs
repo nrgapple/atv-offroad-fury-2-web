@@ -729,6 +729,8 @@ pub fn element(view: &Viewport, state: &Results, summary: &str, fonts: &mut Font
                 RETRY => "Restart",
                 NEXT_ROUND => "Continue Championship",
                 FAME_SELECT => "Select",
+                // Treasure Hunt / King of the Hills return to Games (Continue).
+                _ if state.game.as_deref() == Some("Race Results") => "Continue",
                 _ if state.game.is_some() => "Quit to Main Menu",
                 _ if state.objective.is_some() => "Continue",
                 _ if state.championship.is_some() => "Quit to Championship Menu",
