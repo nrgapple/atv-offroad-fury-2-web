@@ -321,8 +321,9 @@ This covers the crowd ambience sets: FREE01–03 and all Supercross venues use
 the amateur `crowdf1` / pro `sx` Soultree loops (previously only CrowdPresent
 venues played them), and GAME01 (Coonce Arena) plays the indoor/hockey-arena
 `icrowd01`/`icrowd02` ambient loops. `Crowd\hockey.aud` (HCHEER/HOCKYEND/
-HOCKYWIN) belongs to the hockey event mode (`00335590`), which the port does
-not implement. The amateur/pro crowd reactions are described in `RACING.md`.
+HOCKYWIN) belongs to the hockey event mode (`00335590`); the port's Hockey
+([GAMES.md](GAMES.md)) raises its crowd events but does not play these
+sounds yet. The amateur/pro crowd reactions are described in `RACING.md`.
 
 ## Separate SFX volume
 
