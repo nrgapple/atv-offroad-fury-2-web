@@ -60,9 +60,11 @@ try {
   const profile = JSON.parse(await page.evaluate(() => localStorage.getItem('fury-profile')));
   const course = profile.courses?.sx01;
   assert.ok(course, JSON.stringify(profile));
-  assert.equal(course.stunts?.longest_jump, jump, JSON.stringify(course));
+  // The trace widens the f32 to f64; the save prints the f32.
+  const near = (a, b) => Math.abs(a - b) < 1e-3 * Math.max(1, b);
+  assert.ok(near(course.stunts?.longest_jump, jump), `${JSON.stringify(course)} vs ${jump}`);
   const best = Math.max(jump, old.stunts.longest_jump);
-  assert.equal(profile.stunts.longest_jump, best);
+  assert.ok(near(profile.stunts.longest_jump, best), JSON.stringify(profile.stunts));
   assert.equal(profile.stunts.most_combos ?? 0, combos);
   assert.equal(profile.stunts.most_points ?? 0, points);
 
