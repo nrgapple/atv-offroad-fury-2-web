@@ -283,6 +283,8 @@ pub struct Championships {
     pub progress: BTreeMap<String, Progress>,
     /// Series opened beyond a new profile's (`save_key`s).
     pub opened: Vec<String>,
+    /// Freestyle objective bits per `save_key:course` (`00321ff0`).
+    pub objectives: BTreeMap<String, u8>,
 }
 
 impl Championships {

@@ -200,7 +200,13 @@ pub struct Screen {
 fn stage_page(page: &str) -> bool {
     matches!(
         page,
-        "main" | "single" | "multiplayer" | "championship" | "create-lobby" | "join-lobby"
+        "main"
+            | "single"
+            | "multiplayer"
+            | "championship"
+            | "objectives"
+            | "create-lobby"
+            | "join-lobby"
     )
 }
 
@@ -640,6 +646,7 @@ fn page_title(page: &str) -> &'static str {
         "tracks" => "Select Track",
         "race" => "Single Race",
         "championship" => "Championship",
+        "objectives" => "Select Objective",
         "gear" => "Rider Gear",
         "loading" => "Now Loading...",
         "settings" => "Settings",
@@ -1208,7 +1215,7 @@ fn left(m: &Metrics, s: &Screen) -> El {
                 ));
             }
         }
-        "main" | "single" | "multiplayer" | "championship" => {
+        "main" | "single" | "multiplayer" | "championship" | "objectives" => {
             let mut rows = El::new(column(2.));
             rows.style.flex_shrink = 0.;
             rows.style.padding = sides(0., if m.portrait { 0. } else { 8. }, 0., 0.);

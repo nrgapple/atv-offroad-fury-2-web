@@ -80,6 +80,17 @@ pub enum Event {
     },
     /// Single Race → Copy ride link: the race setup's link.
     CopyRaceLink,
+    /// Select Objective: ride a Freestyle championship course's objective
+    /// (the series index into `atv_core::freestyle::SERIES`, Expert and the
+    /// objective index).
+    Objective {
+        environment: String,
+        quad: u16,
+        rider: u16,
+        series: usize,
+        expert: bool,
+        objective: usize,
+    },
 }
 
 /// Race setup offers 1-5 laps, 0, 3 or 4 CPU riders and the original
@@ -293,6 +304,9 @@ pub struct Frontend {
     pub profile: atv_core::profile::Profile,
     /// The Championship page lists Expert progress.
     pub champ_expert: bool,
+    /// The Freestyle championship on Select Objective: its index into
+    /// `atv_core::freestyle::SERIES` and Expert.
+    pub freestyle: Option<(usize, bool)>,
     /// The garage ("garage") or course picker ("tracks") is open over a
     /// held room ride; leaving it rides again.
     pub room: Option<&'static str>,
@@ -359,6 +373,7 @@ impl Frontend {
             notice: None,
             profile: crate::settings::load_profile(settings),
             champ_expert: false,
+            freestyle: None,
             room: None,
             lobby: None,
             race_courses: Vec::new(),
@@ -408,8 +423,12 @@ impl Frontend {
 
     /// ui_menu rows for the page (labels and keyboard order).
     pub fn refresh(&mut self, view: &Viewport) {
-        if self.page == "championship" {
-            self.choices = self.championship_choices();
+        if self.page == "championship" || self.page == "objectives" {
+            self.choices = if self.page == "objectives" {
+                self.objective_choices()
+            } else {
+                self.championship_choices()
+            };
             self.selection = self.selection.min(self.choices.len().saturating_sub(1));
             return;
         }
@@ -714,6 +733,27 @@ impl Frontend {
                 (format!("champ:{}", s.key), label)
             })
             .collect();
+        // The Freestyle championships (objectives, FREESTYLE notes).
+        rows.extend(atv_core::freestyle::SERIES.iter().map(|s| {
+            let label = if !champ.freestyle_open(s, expert) {
+                format!("{} · Locked", s.name)
+            } else {
+                let p = champ.progress(s, expert);
+                let mut label = format!(
+                    "{} · Round {} of {} · {}/{} objectives",
+                    s.name,
+                    p.round + 1,
+                    s.rounds[usize::from(expert)],
+                    champ.completed_objectives(s, expert),
+                    atv_core::freestyle::total_objectives(s)
+                );
+                if let Some(t) = p.trophy {
+                    label += &format!(" · {}", t.name());
+                }
+                label
+            };
+            (format!("free:{}", s.key), label)
+        }));
         rows.push((
             "champdifficulty".into(),
             format!("Difficulty: {}", if expert { "Expert" } else { "Normal" }),
@@ -728,6 +768,7 @@ impl Frontend {
         match self.page.as_str() {
             "single" => Some(profile_line(&self.profile)),
             "championship" => self.series_line(),
+            "objectives" => self.objectives_line(),
             _ => None,
         }
     }
@@ -736,6 +777,21 @@ impl Frontend {
     /// the four CPU slots).
     fn series_line(&self) -> Option<String> {
         let (action, _) = self.choices.get(self.selection)?;
+        if let Some(key) = action.strip_prefix("free:") {
+            let series = atv_core::freestyle::series(key)?;
+            let champ = &self.profile.championships;
+            if !champ.freestyle_open(series, self.champ_expert) {
+                return None;
+            }
+            let course = champ.next_course(series, self.champ_expert);
+            return Some(format!(
+                "Next: {} · Completed Course Objectives: {} of 6",
+                self.course_name(course),
+                champ
+                    .course_mask(series, self.champ_expert, course)
+                    .count_ones()
+            ));
+        }
         let series = atv_core::championship::series(action.strip_prefix("champ:")?)?;
         let champ = &self.profile.championships;
         if !champ.is_open(series, self.champ_expert) {
@@ -749,6 +805,175 @@ impl Frontend {
             p.points[0],
             cpus.join(" / ")
         ))
+    }
+
+    /// The Freestyle championship on Select Objective.
+    fn freestyle_series(&self) -> Option<(&'static atv_core::championship::Series, bool)> {
+        let (index, expert) = self.freestyle?;
+        Some((atv_core::freestyle::SERIES.get(index)?, expert))
+    }
+
+    /// Select Objective (Overlays.pb `[Objectives Menu]`): the round
+    /// course's objectives, completed ones checked, then Finish Course.
+    fn objective_choices(&self) -> Vec<(String, String)> {
+        let mut rows = Vec::new();
+        if let Some((series, expert)) = self.freestyle_series() {
+            let champ = &self.profile.championships;
+            let course = champ.next_course(series, expert);
+            let mask = champ.course_mask(series, expert, course);
+            let done = |bit: u32| mask & (1 << bit) != 0;
+            for (i, o) in atv_core::freestyle::course_objectives(course)
+                .unwrap_or_default()
+                .iter()
+                .enumerate()
+            {
+                let bits = o.bits(i);
+                let label = match &o.kind {
+                    atv_core::freestyle::Kind::Stunt { levels } => format!(
+                        "{} · {} of {} levels",
+                        o.description,
+                        bits.iter().filter(|b| done(**b)).count(),
+                        levels.len()
+                    ),
+                    _ if bits.iter().all(|b| done(*b)) => format!("{} · Done", o.description),
+                    _ if !o.playable() => format!("{} · Unavailable", o.description),
+                    _ => o.description.clone(),
+                };
+                rows.push((format!("obj:{i}"), label));
+            }
+            let last =
+                champ.progress(series, expert).round + 1 == series.rounds[usize::from(expert)];
+            rows.push((
+                "objfinish".into(),
+                if last {
+                    "Finish Championship"
+                } else {
+                    "Next Course"
+                }
+                .into(),
+            ));
+        }
+        rows.push(("back".into(), "Back".into()));
+        rows
+    }
+
+    /// Select Objective's line: the course, round and counts (the
+    /// original ProfileView_FreestyleEvent readouts, `0025a100`).
+    fn objectives_line(&self) -> Option<String> {
+        let (series, expert) = self.freestyle_series()?;
+        let champ = &self.profile.championships;
+        let course = champ.next_course(series, expert);
+        let p = champ.progress(series, expert);
+        Some(format!(
+            "{} · Round {} of {} · Completed Course Objectives: {} of 6 · Completed Total Objectives: {} of {}",
+            self.course_name(course),
+            p.round + 1,
+            series.rounds[usize::from(expert)],
+            champ.course_mask(series, expert, course).count_ones(),
+            champ.completed_objectives(series, expert),
+            atv_core::freestyle::total_objectives(series)
+        ))
+    }
+
+    /// A Freestyle championship from the Championship page: Select
+    /// Objective for its next course.
+    fn freestyle_event(&mut self, key: &str, view: &Viewport) {
+        let Some(index) = atv_core::freestyle::SERIES
+            .iter()
+            .position(|s| s.key == key)
+        else {
+            return;
+        };
+        let series = &atv_core::freestyle::SERIES[index];
+        let expert = self.champ_expert;
+        if !self.profile.championships.freestyle_open(series, expert) {
+            self.notice = Some(if expert {
+                format!("Win gold in {} on Normal to open Expert.", series.name)
+            } else {
+                "Win a trophy in Amateur Freestyle to open Pro Freestyle.".into()
+            });
+            return;
+        }
+        self.notice = None;
+        self.freestyle = Some((index, expert));
+        self.show("objectives", view);
+    }
+
+    /// Select Objective → an objective: ride it on the round's course.
+    fn objective_event(&mut self, objective: usize) -> Option<Event> {
+        let (series, expert) = self.freestyle_series()?;
+        let course = self.profile.championships.next_course(series, expert);
+        let o = atv_core::freestyle::course_objectives(course)?
+            .into_iter()
+            .nth(objective)?;
+        if !o.playable() {
+            self.notice = Some(format!(
+                "{} needs the course's target set, which the port does not load yet.",
+                o.description
+            ));
+            return None;
+        }
+        if !self.tracks.iter().any(|t| t.id == course) {
+            self.notice = Some(format!("{} is not available.", self.course_name(course)));
+            return None;
+        }
+        self.notice = None;
+        Some(Event::Objective {
+            environment: course.into(),
+            quad: self.quad_id,
+            rider: self.rider_id,
+            series: self.freestyle?.0,
+            expert,
+            objective,
+        })
+    }
+
+    /// Next Course / Finish Championship: the round always advances
+    /// (`00322c60`); the last one awards the trophy (`00322440`).
+    fn finish_objectives(&mut self, view: &Viewport, settings: &mut Settings) {
+        let Some((series, expert)) = self.freestyle_series() else {
+            return;
+        };
+        let mut profile = crate::settings::load_profile(settings);
+        let outcome = profile.championships.finish_freestyle_round(series, expert);
+        if let Some((_, reward, opened)) = &outcome.finished {
+            profile.points = profile.points.saturating_add(*reward);
+            let mut line = atv_core::freestyle::trophy_line(series, &outcome);
+            for key in opened {
+                if let Some(s) = key
+                    .strip_suffix("-normal")
+                    .and_then(atv_core::freestyle::series)
+                {
+                    line += &format!(" {} opened.", s.name);
+                }
+                if let Some(s) = key
+                    .strip_suffix("-expert")
+                    .and_then(atv_core::freestyle::series)
+                {
+                    line += &format!(" {} Expert opened.", s.name);
+                }
+            }
+            self.notice = Some(line);
+        } else {
+            self.notice = Some(format!(
+                "{} round {} of {} done: {} objectives completed.",
+                series.name,
+                outcome.round + 1,
+                outcome.rounds,
+                outcome.completed
+            ));
+        }
+        crate::settings::save_profile(settings, &profile);
+        self.profile = profile;
+        if outcome.finished.is_some() {
+            // The series ended: back to the Championship page with the line
+            // (`show` clears the notice of the page it leaves).
+            let line = self.notice.take();
+            self.show("championship", view);
+            self.notice = line;
+        } else {
+            self.refresh(view);
+        }
     }
 
     /// Starts the selected series' next round: five laps against four CPUs,
@@ -1061,6 +1286,7 @@ impl Frontend {
             "single" => "main".into(),
             "tracks" if self.hosting => "create-lobby".into(),
             "tracks" | "race" | "championship" => "single".into(),
+            "objectives" => "championship".into(),
             "gear" => "garage".into(),
             "garage" => self.garage_return.clone(),
             "multiplayer" => "main".into(),
@@ -1121,6 +1347,13 @@ impl Frontend {
             _ if action.starts_with("champ:") => {
                 return self.championship_event(&action["champ:".len()..]);
             }
+            _ if action.starts_with("free:") => {
+                self.freestyle_event(&action["free:".len()..], view);
+            }
+            _ if action.starts_with("obj:") => {
+                return self.objective_event(action["obj:".len()..].parse().ok()?);
+            }
+            "objfinish" => self.finish_objectives(view, settings),
             "copyride" if self.page == "race" => return Some(Event::CopyRaceLink),
             _ if stepper(action) => self.step(action, 1, view, settings),
             "create-lobby" | "join-lobby" => {
