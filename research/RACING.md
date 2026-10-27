@@ -376,9 +376,23 @@ The port now follows this model. It replaces the radius checkpoints, which
 riders could miss and which stalled their progress:
 
 - `Course` keeps the authored edge pairs and every alternate polyline.
-- `Course::locate` accepts a rider only inside an edge polygon within 150ft
-  ahead or 60ft behind its station. These window values are authored; the
-  original Track +0x34/+0x38 values are unrecovered.
+- `Course::locate` accepts a rider only inside an edge polygon within the
+  Track window, 125ft ahead or 75ft behind its station (Track +0x34/+0x38,
+  "Finish gate and track window" below). The window applies to alternate
+  lines too: a rider inside an alternate's polygon counts only when the
+  mapped route position lies in the window. sx14's 12→57 alternate crosses
+  the circuit about 1,000ft further on; before this rule every rider passing
+  there was mapped back to near the fork and lost about 1,000ft of race
+  distance (observed in host Chromium: all four riders dropped from ~1,545ft
+  to ~518ft between 1,700 and 2,400 frames). The native query `0017be80`
+  searches only the window, so the rule follows it; how it walks alternate
+  sections internally was not traced. Open: on sx14 the CPUs and the race
+  path driver then leave the line just past checkpoint 57 (the junction where
+  both alternates rejoin, beside a stadium jump): they turn south from about
+  (322, 658) and stop near (316, 602) although the driver's route aim points
+  east along checkpoints 58–64. Without scene collision the driver steers east
+  in a core probe, so the turn likely comes from scene avoidance or the jump;
+  not yet resolved.
 - Progress is the race distance along the racing line, so laps count when the
   furthest distance passes the finish gate. Cutting across the infield,
   teleporting or reversing cannot skip or re-count the course. Alternate lines

@@ -122,6 +122,7 @@ export const TESTS = {
   'test_engine_race.mjs': { group: 'content' },
   'test_engine_race_grid.mjs': { group: 'content' },
   'test_engine_race_finish_gate.mjs': { group: 'content' },
+  'test_engine_race_alternates.mjs': { group: 'content', timeout: 900 },
   'test_engine_enduro_race.mjs': { group: 'content', timeout: 900 },
   'test_engine_race_profile_points.mjs': { group: 'content' },
   'test_engine_profile_menu.mjs': { group: 'content' },
