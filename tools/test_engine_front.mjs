@@ -3,7 +3,7 @@
 // the ATV and rider under the browser game's key; ride links start a ride.
 // Host browser evidence; parity images come from work capture scripts.
 import assert from 'node:assert/strict';
-import { assertNoErrors, launch, newPage, nextFrames, url } from './browser/harness.mjs';
+import { assertNoErrors, launch, newPage, nextFrames, unlockStore, url } from './browser/harness.mjs';
 
 const read = page => page.evaluate(() => JSON.parse(document.querySelector('#ui-state')?.textContent || '{}'));
 const front = async page => (await read(page)).front;
@@ -16,6 +16,8 @@ const browser = await launch();
 try {
   const errors = [];
   const page = await newPage(browser, { viewport: { width: 1280, height: 720 } }, errors);
+  // Single Player picks follow the profile's unlocks (PROFILE_STORE.md).
+  await unlockStore(page);
   await page.addInitScript(() => { localStorage.setItem('atv2-keyboard-help-seen-v1', '1'); localStorage.removeItem('atv-player-selection'); });
   await page.goto(url('/play.html?uiDiagnostics=1'));
   await wait(page, () => JSON.parse(document.querySelector('#ui-state')?.textContent || '{}').front?.page === 'title', null, 120000);

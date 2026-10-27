@@ -213,7 +213,7 @@ fn stage_page(page: &str) -> bool {
             | "join-lobby"
             | "profile"
             | "profile-view"
-    )
+    ) || controller::store_page(page)
 }
 
 fn display(size: f32, weight: u16, italic: bool) -> Font {
@@ -668,6 +668,12 @@ fn page_title(page: &str) -> &'static str {
         "tracks" => "Select Track",
         "race" => "Single Race",
         "championship" => "Championship",
+        "store" => "Unlock Items",
+        "store-atv" => "ATVs",
+        "store-gear" => "Rider Equipment",
+        "store-games" => "Games",
+        "store-tracks" => "Tracks",
+        "store-cheats" => "Enter Cheats",
         "profile" => "Profile Editor",
         "profile-name" => "Profile Name Entry",
         "profile-view" => "View Profile",
@@ -1335,10 +1341,23 @@ fn left(m: &Metrics, s: &Screen) -> El {
                 ));
             }
         }
-        "main" | "single" | "multiplayer" | "championship" | "profile" | "profile-name"
-        | "profile-slots" | "profile-confirm" | "profile-view" | "profile-overview"
-        | "profile-trophies" | "profile-records" => {
-            if s.page == "profile-name" {
+        page if matches!(
+            page,
+            "main"
+                | "single"
+                | "multiplayer"
+                | "championship"
+                | "profile"
+                | "profile-name"
+                | "profile-slots"
+                | "profile-confirm"
+                | "profile-view"
+                | "profile-overview"
+                | "profile-trophies"
+                | "profile-records"
+        ) || controller::store_page(page) =>
+        {
+            if matches!(page, "profile-name" | "store-cheats") {
                 left = left.child(form(m, s));
             }
             let mut rows = El::new(column(2.));
@@ -1398,6 +1417,14 @@ fn left(m: &Metrics, s: &Screen) -> El {
         }
         "tracks" => {
             left = left.child(tabs(m, s)).child(course_list(m, s));
+            // A locked Freestyle course (the profile's unlocks).
+            if let Some(notice) = &s.notice {
+                left = left.child(text(
+                    notice.clone(),
+                    TextStyle::new(display(15., 700, false), Color::hex("#ffd166")),
+                    20.,
+                ));
+            }
         }
         "race" => {
             // `.ms-race-settings`: the value rows under the course list.
@@ -2181,7 +2208,23 @@ fn garage_left(m: &Metrics, s: &Screen, mut left: El) -> El {
                 .child(arrow(false, 14., color, false)),
         );
     }
-    left.child(actions.child(done))
+    let mut left = left.child(actions.child(done));
+    // A locked vehicle or a locked selection replaced (the profile's unlocks).
+    if let Some(notice) = &s.notice {
+        left = left.child(
+            El::new(Style {
+                flex_shrink: 0.,
+                ..Default::default()
+            })
+            .content(Content::Text {
+                text: notice.clone(),
+                style: TextStyle::new(display(14., 700, false), Color::hex("#ffd166")),
+                line_height: 18.,
+                wrap: true,
+            }),
+        );
+    }
+    left
 }
 
 fn bullet_slot(selected: bool) -> El {
