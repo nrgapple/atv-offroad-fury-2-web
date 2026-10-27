@@ -200,9 +200,12 @@ pub fn parse_objectives(text: &str) -> Result<Vec<Objective>> {
             }
             other => return Err(format!("[{s}] unknown objective type {other:?}")),
         };
+        // Three leading components, as a "%f,%f,%f" read takes them:
+        // env04's green start ships "2428.03,149,4460,47".
         let vector = |key: &str| -> Option<[f32; 3]> {
             let v: Vec<f32> = get(&s, key)?
                 .split(',')
+                .take(3)
                 .map(|c| c.trim().parse::<f32>())
                 .collect::<std::result::Result<_, _>>()
                 .ok()?;
@@ -823,7 +826,7 @@ mod tests {
 
     const OBJ: &str = "[Objectives]\r\nNumObjectives = 4\r\n\r\n;---\r\n; Hit\r\n[Objective0]\r\n\
 Type=CherryPick\r\nNumberOfTargets=13\r\nBonusPointsPerTarget=500\r\nBonusTimePerTargetInSec=10\r\n\
-Description=\"Hit Every Green Target\"\r\nTOYFile=env05gcp\r\nDefaultStartPosition=2256,137,3269.44\r\n\
+Description=\"Hit Every Green Target\"\r\nTOYFile=env05gcp\r\nDefaultStartPosition=2256,137,3269.44,7\r\n\
 DefaultStartDirection=.996,0,-.088\r\n[Objective1]\r\nType=CherryPick\r\n\
 NumberOfTargets=8\r\nBonusPointsPerTarget=1000\r\nBonusTimePerTargetInSec=5\r\n\
 Description=\"Hit Every Red Target\"\r\nTOYFile=env05rcp\r\n[Objective2]\r\nType=ComboMambo\r\n\
