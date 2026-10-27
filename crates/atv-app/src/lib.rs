@@ -374,6 +374,9 @@ struct App {
     /// The Host/Join forms' browser inputs.
     #[cfg(target_arch = "wasm32")]
     text_inputs: text_inputs::TextInputs,
+    /// Android: the soft keyboard for the same forms.
+    #[cfg(target_os = "android")]
+    soft_keyboard: android::SoftKeyboard,
     /// Web: WebGL context loss, recovered in place (context.rs).
     #[cfg(target_arch = "wasm32")]
     context: context::Loss,
@@ -2217,6 +2220,16 @@ impl App {
         }
         let (x, y) = self.css((touch.location.x, touch.location.y));
         if self.front_pointer(touch.id, touch.phase, x, y) {
+            // A tap on a Host/Join field opens the soft keyboard.
+            #[cfg(target_os = "android")]
+            if touch.phase == TouchPhase::Ended
+                && let Some(front) = self.front_input()
+            {
+                let mut front = front.borrow_mut();
+                let focused = front.state.focus.is_some();
+                self.soft_keyboard.follow(focused, focused);
+                front.state.soft_keyboard = focused;
+            }
             return;
         }
         let now = (Instant::now() - self.started).as_secs_f64() * 1000.;
@@ -3593,6 +3606,24 @@ impl App {
             let poll = if self.pad_seen { 16 } else { 50 };
             at(now + std::time::Duration::from_millis(poll));
         }
+        // Android: while the soft keyboard is up, check that it still is; the
+        // player closing it (Back) unfocuses the field and restores the form.
+        #[cfg(target_os = "android")]
+        if self.soft_keyboard.watching() {
+            if self.soft_keyboard.closed() {
+                if let Some(front) = &self.front {
+                    let mut front = front.borrow_mut();
+                    front.state.focus_field(None);
+                    front.state.soft_keyboard = false;
+                }
+                self.wake();
+                if let Some(window) = &self.window {
+                    window.request_redraw();
+                }
+            } else {
+                at(now + std::time::Duration::from_millis(250));
+            }
+        }
         event_loop.set_control_flow(wake.map_or(ControlFlow::Wait, ControlFlow::WaitUntil));
     }
 }
@@ -4812,6 +4843,8 @@ impl App {
         ));
         #[cfg(target_arch = "wasm32")]
         self.text_inputs.sync(&[], &[], &self.proxy);
+        #[cfg(target_os = "android")]
+        self.soft_keyboard.follow(false, false);
         let championship = race.as_ref().and_then(|r| r.championship);
         let (world, ride) = self.ride_setup(&front, quad, rider, race);
         {
@@ -5236,6 +5269,12 @@ impl App {
             let (fields, rects) = (f.state.fields(), f.field_rects());
             let fields = if f.menu.is_none() { fields } else { Vec::new() };
             self.text_inputs.sync(&fields, &rects, &self.proxy);
+        }
+        #[cfg(target_os = "android")]
+        {
+            let focused = f.menu.is_none() && f.state.focus.is_some();
+            self.soft_keyboard.follow(focused, false);
+            f.state.soft_keyboard = focused;
         }
         if self.ui_diagnostics {
             // The output's peak since the last frame (audible menu tune).
@@ -6059,6 +6098,8 @@ pub fn run(options: Options) {
         ),
         #[cfg(target_arch = "wasm32")]
         text_inputs: Default::default(),
+        #[cfg(target_os = "android")]
+        soft_keyboard: Default::default(),
         #[cfg(target_arch = "wasm32")]
         context: Default::default(),
         #[cfg(not(target_arch = "wasm32"))]
