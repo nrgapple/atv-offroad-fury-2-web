@@ -1574,6 +1574,21 @@ impl App {
             (Some(session), _) => {
                 session.update(&mut riding.ride);
                 riding.locked = session.course.locked();
+                // The `arrow.slt` pointers bob and turn over the marked
+                // circles (`002ea500`); hidden when not placed.
+                if let Some(models) = ready.venue.training_arrows {
+                    let arrows = session.course.arrows();
+                    let time = riding.ride.steps() as f32 * atv_game::ride::STEP;
+                    for (i, model) in models.into_iter().enumerate() {
+                        let pose = arrows.get(i).and_then(|&(base, dir)| {
+                            atv_core::training::arrow_matrix(base, dir, time).ok()
+                        });
+                        ready.scene.hide_model(model, pose.is_none());
+                        if let Some(matrix) = pose {
+                            ready.scene.pose_model(&ready.gpu, model, &matrix);
+                        }
+                    }
+                }
                 Some(session.view(riding.ride.frame().origin))
             }
             // Hockey holds the rider at the face-off (`00336c90`).
@@ -1913,6 +1928,7 @@ impl App {
                 "environment": ready.venue.environment,
                 "championship": riding.ride.race().and_then(|r| r.settings().championship),
                 "training": self.training.as_ref().map(|t| t.state(riding.ride.frame().origin)),
+                "trainingArrows": ready.venue.training_arrows.map(|m| m.len()),
                 "game": self.game.as_ref().map(games::GameSession::state),
                 "hockey": self.hockey.as_ref().map(|h| h.state(riding.ride.frame().origin)),
                 "tag": self.tag.as_ref().map(|t| t.state()),

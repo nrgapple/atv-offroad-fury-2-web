@@ -90,6 +90,10 @@ pub struct Venue {
     /// Treasure Hunt's treasures from the game's mode TOY: their `bomb`
     /// models and loop (`bomb.MOT`), posed and hidden by the game.
     pub treasures: Option<Objective>,
+    /// The Training Course's two `arrow.slt` markers (`00224a80`): the
+    /// goal's and Steering's first circle's, posed and hidden by the
+    /// course (research/TRAINING.md).
+    pub training_arrows: Option<[usize; 2]>,
 }
 
 /// A Freestyle objective's data from the course's OB archive
@@ -338,6 +342,24 @@ pub async fn load_with(
                 scene.models.len() - 1
             })
     });
+    // The Training Course's arrows (`00224a80` builds two `arrow.slt`
+    // pointer objects); hidden until the course places them.
+    let training_arrows =
+        (environment == "training" && !racing && member_named(&archive, "arrow.psg").is_some())
+            .then(|| {
+                std::array::from_fn(|_| {
+                    scene.models.push(atv_core::scene::StaticModel {
+                        name: "arrow".into(),
+                        position: [0.; 3],
+                        look: [0., 0., 1.],
+                        up: Some([0., 1., 0.]),
+                        use_lighting: true,
+                        dynamic_lighting: false,
+                        world_matrix: IDENTITY,
+                    });
+                    scene.models.len() - 1
+                })
+            });
     // A Freestyle objective (`<course>.obj`) and its targets' cherries,
     // posed by the run (they spin and bob, and hide when hit).
     let objective = match &options.objective {
@@ -622,6 +644,7 @@ pub async fn load_with(
         weather,
         objective,
         treasures,
+        training_arrows,
         scene,
         terrain: Terrain {
             width,
