@@ -767,6 +767,25 @@ impl Net {
         (self.session.peer, self.session.roster())
     }
 
+    /// Riders' names in `roster` order.
+    pub fn names(&self, roster: &[u8]) -> Vec<String> {
+        let players = self
+            .session
+            .lobby
+            .as_ref()
+            .map(|l| l.players.as_slice())
+            .unwrap_or(&[]);
+        roster
+            .iter()
+            .map(|id| {
+                players
+                    .iter()
+                    .find(|p| p.id == *id)
+                    .map_or_else(|| format!("Rider {}", id + 1), |p| p.name.clone())
+            })
+            .collect()
+    }
+
     /// Another rider's current position and velocity, if fresh.
     pub fn rider_motion(&self, peer: u8) -> Option<([f32; 3], [f32; 3])> {
         let now = now_ms(self.clock);
