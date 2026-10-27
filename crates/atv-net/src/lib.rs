@@ -224,6 +224,52 @@ impl Default for Snapshot {
         }
     }
 }
+/// A room mini-game's host-owned state (research/GAMES.md "Online"): the
+/// host runs the rules and the puck/ball and broadcasts this; riders still
+/// own their own ATVs.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct GameState {
+    /// 1 Hockey, 2 Tag.
+    pub game: u8,
+    /// Increments each change of `phase` (face-offs, goals).
+    pub serial: u32,
+    /// The game's phase code (Hockey: 0 face-off, 1 play, 2 sudden death,
+    /// 3 pause, 4 over).
+    pub phase: u8,
+    /// Phase countdown (face-off or pause seconds left).
+    pub timer: f32,
+    /// Game clock seconds left.
+    pub clock: f32,
+    /// Hockey: Red and Blue scores; Tag: points by roster slot.
+    pub scores: [u32; 4],
+    /// Banner code (0 none) and its seconds left.
+    pub banner: u8,
+    pub banner_time: f32,
+    /// Hockey: the scoring rider; Tag: the carrier (`NO_PEER` for none).
+    pub holder: PeerId,
+    /// The puck or ball.
+    pub ball: [f32; 3],
+    pub ball_velocity: [f32; 3],
+    pub ball_yaw: f32,
+}
+pub const NO_PEER: PeerId = 255;
+impl GameState {
+    pub fn validate(&self) -> Result<()> {
+        if !(1..=2).contains(&self.game)
+            || self.phase > 8
+            || self.banner > 16
+            || (self.holder != NO_PEER && !valid_peer(self.holder))
+            || !bounded(&[self.timer, self.clock, self.banner_time], 100_000.)
+            || !bounded(&self.ball, 1_000_000.)
+            || !bounded(&self.ball_velocity, 100_000.)
+            || !bounded(&[self.ball_yaw], 1_000_000.)
+        {
+            return Err(Error::InvalidValue);
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Packet {
     Join {
@@ -261,6 +307,8 @@ pub enum Packet {
     Ready {
         map: u16,
     },
+    /// The host's mini-game state (relayed only from the host).
+    Game(Box<GameState>),
 }
 
 pub(crate) fn bounded(values: &[f32], limit: f32) -> bool {

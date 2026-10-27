@@ -5,7 +5,7 @@
 //! Temporary entry (Main Menu → Hockey) until the shared Games menu lands;
 //! the original is split-screen only with no CPU riders, so a single human
 //! plays Red against an empty Blue net (an authored practice adaptation).
-use atv_core::hockey::{Arena, Event, Game, Puck, State};
+use atv_core::hockey::{Arena, Banner, Event, Game, Puck, State};
 use atv_core::math::Det;
 use atv_game::ride::Ride;
 
@@ -49,6 +49,56 @@ pub struct HockeySession {
     fast: bool,
     /// `hockeyGoal=1`: the first drop tees the puck up for the human (tests).
     tee: bool,
+    /// The human's rider slot (roster order online).
+    me: usize,
+    /// Online: the room roster the game was built for, the phase serial
+    /// sent (host) or last applied (guest) and the last send step.
+    roster: Vec<u8>,
+    serial: u32,
+    phase: u8,
+    sent_step: u64,
+}
+
+fn phase_code(state: State) -> (u8, f32) {
+    match state {
+        State::FaceOff { countdown } => (0, countdown),
+        State::Play => (1, 0.),
+        State::SuddenDeath => (2, 0.),
+        State::Pause { remaining } => (3, remaining),
+        State::Over => (4, 0.),
+    }
+}
+
+fn phase_state(code: u8, timer: f32) -> State {
+    match code {
+        0 => State::FaceOff { countdown: timer },
+        1 => State::Play,
+        2 => State::SuddenDeath,
+        3 => State::Pause { remaining: timer },
+        _ => State::Over,
+    }
+}
+
+fn banner_code(banner: Option<(Banner, f32)>) -> (u8, f32) {
+    match banner {
+        None => (0, 0.),
+        Some((Banner::Goal { team }, t)) => (1 + team.min(1) as u8, t),
+        Some((Banner::HatTrick, t)) => (3, t),
+        Some((Banner::SuddenDeath, t)) => (4, t),
+        Some((Banner::GameOver, t)) => (5, t),
+    }
+}
+
+fn banner_of(code: u8, t: f32) -> Option<(Banner, f32)> {
+    let b = match code {
+        1 => Banner::Goal { team: 0 },
+        2 => Banner::Goal { team: 1 },
+        3 => Banner::HatTrick,
+        4 => Banner::SuddenDeath,
+        5 => Banner::GameOver,
+        _ => return None,
+    };
+    Some((b, t))
 }
 
 /// Rider slot of the human (team Red).
@@ -73,11 +123,16 @@ impl HockeySession {
             sounds: Vec::new(),
             fast,
             tee: crate::url_flag("hockeyGoal=1"),
+            me: PLAYER,
+            roster: Vec::new(),
+            serial: 0,
+            phase: 0,
+            sent_step: 0,
         }
     }
 
     fn face_off(&mut self, ride: &mut Ride) {
-        let (origin, yaw) = self.game.face_off(PLAYER);
+        let (origin, yaw) = self.game.face_off(self.me);
         if let Err(error) = ride.place_beside(origin, yaw, [0.; 3]) {
             crate::status(&format!("Hockey face-off placement failed: {error}"));
         }
@@ -97,12 +152,34 @@ impl HockeySession {
         let goal = self.game.arena.goals[0];
         self.puck.position = [goal[0], self.game.arena.ice + 0.2, goal[2] - 14.];
         self.puck.velocity = [0., 0., 25.];
-        self.game.touch(PLAYER);
+        self.game.touch(self.me);
     }
 
     /// Advances the game with the ride's clock. True once, when the game
     /// ends.
-    pub fn update(&mut self, ride: &mut Ride) -> bool {
+    pub fn update(&mut self, ride: &mut Ride, net: Option<&mut crate::multiplayer::Net>) -> bool {
+        let mut net = net;
+        if let Some(net) = net.as_deref_mut() {
+            let (me, roster) = net.roster();
+            let me = me.and_then(|id| roster.iter().position(|r| *r == id));
+            if let Some(me) = me {
+                if !net.is_host() {
+                    return self.follow(ride, net, me);
+                }
+                // The host runs the game for the room's roster: alternate
+                // teams in peer order (the original Team Select is not
+                // reproduced). A changed roster starts a new game.
+                if roster != self.roster {
+                    let teams = (0..roster.len()).map(|i| i % 2).collect();
+                    self.game = Game::new(self.game.arena, teams, self.game.time_limit);
+                    self.roster = roster;
+                    self.me = me;
+                    self.placed = false;
+                    self.finished = false;
+                    self.tee = crate::url_flag("hockeyGoal=1");
+                }
+            }
+        }
         if !self.placed {
             self.placed = true;
             self.face_off(ride);
@@ -114,10 +191,39 @@ impl HockeySession {
         if n == 0 || self.finished {
             return false;
         }
+        // A room's game waits at the face-off for a second rider.
+        if self.roster.len() == 1 {
+            self.game.state = State::FaceOff {
+                countdown: atv_core::hockey::FACE_OFF_SECONDS,
+            };
+            if let Some(net) = net {
+                self.broadcast(net, steps);
+            }
+            return false;
+        }
         let dt = atv_game::ride::STEP;
         let mut ended = false;
         let frame = ride.frame();
-        let rider = (frame.origin, frame.linear_velocity);
+        let own = (frame.origin, frame.linear_velocity);
+        // Every rider in slot order: the human's own ATV, the others' latest
+        // relayed poses (out of reach while unknown).
+        let riders: Vec<([f32; 3], [f32; 3])> = if self.roster.is_empty() {
+            vec![own]
+        } else {
+            let (me, _) = net.as_deref().map(|n| n.roster()).unwrap_or_default();
+            self.roster
+                .iter()
+                .map(|id| {
+                    if Some(*id) == me {
+                        own
+                    } else {
+                        net.as_deref()
+                            .and_then(|n| n.rider_motion(*id))
+                            .unwrap_or(([0., -1000., 0.], [0.; 3]))
+                    }
+                })
+                .collect()
+        };
         for _ in 0..n {
             let mut touched = false;
             match self.game.state {
@@ -125,10 +231,10 @@ impl HockeySession {
                 _ => {
                     // A wrecked rider's ATV still pushes the puck; the
                     // detached rider does not (authored).
-                    let riders = [rider];
-                    touched = !self.puck.step(&self.game.arena, &riders, dt).is_empty();
-                    if touched {
-                        self.game.touch(PLAYER);
+                    let touches = self.puck.step(&self.game.arena, &riders, dt);
+                    touched = !touches.is_empty();
+                    for rider in touches {
+                        self.game.touch(rider);
                     }
                 }
             }
@@ -170,7 +276,97 @@ impl HockeySession {
                 }
             }
         }
+        if let Some(net) = net
+            && !self.roster.is_empty()
+        {
+            self.broadcast(net, steps);
+        }
         ended
+    }
+
+    /// Host: the state for the room at most every third step (20 Hz) and
+    /// on every phase change.
+    fn broadcast(&mut self, net: &mut crate::multiplayer::Net, steps: u64) {
+        let (phase, timer) = phase_code(self.game.state);
+        let changed = phase != self.phase;
+        if changed {
+            self.phase = phase;
+            self.serial = self.serial.wrapping_add(1);
+        }
+        if !changed && steps < self.sent_step + 3 {
+            return;
+        }
+        self.sent_step = steps;
+        let (banner, banner_time) = banner_code(self.game.banner);
+        let [red, blue] = self.game.scores;
+        net.send_game(&atv_game::multiplayer::GameState {
+            game: 1,
+            serial: self.serial,
+            phase,
+            timer,
+            clock: self.game.clock,
+            scores: [red, blue, 0, 0],
+            banner,
+            banner_time,
+            holder: atv_game::multiplayer::NO_PEER,
+            ball: self.puck.position,
+            ball_velocity: self.puck.velocity,
+            ball_yaw: self.puck.yaw,
+        });
+    }
+
+    /// Guest: mirror the host's game; face off at its own spot.
+    fn follow(&mut self, ride: &mut Ride, net: &mut crate::multiplayer::Net, me: usize) -> bool {
+        let (_, roster) = net.roster();
+        if roster != self.roster {
+            let teams = (0..roster.len()).map(|i| i % 2).collect();
+            self.game = Game::new(self.game.arena, teams, self.game.time_limit);
+            self.roster = roster;
+            self.me = me;
+            self.serial = u32::MAX;
+        }
+        self.steps = ride.steps();
+        let Some(g) = net.game_state().cloned() else {
+            return false;
+        };
+        let state = phase_state(g.phase, g.timer);
+        let fresh = g.serial != self.serial;
+        self.serial = g.serial;
+        let before = self.game.scores;
+        self.game.state = state;
+        self.game.clock = g.clock;
+        self.game.scores = [g.scores[0], g.scores[1]];
+        self.game.banner = banner_of(g.banner, g.banner_time);
+        self.puck.position = g.ball;
+        self.puck.velocity = g.ball_velocity;
+        self.puck.yaw = g.ball_yaw;
+        if !fresh {
+            return false;
+        }
+        match g.phase {
+            0 => {
+                let (origin, yaw) = self.game.face_off(self.me);
+                if let Err(error) = ride.place_beside(origin, yaw, [0.; 3]) {
+                    crate::status(&format!("Hockey face-off placement failed: {error}"));
+                }
+                self.finished = false;
+            }
+            3 if self.game.scores != before => {
+                self.sounds.push(SIREN);
+                self.sounds
+                    .push(if g.banner == 3 { CROWD[2] } else { CROWD[0] });
+            }
+            3 if g.banner == 5 => {
+                self.sounds.push(GAME_OVER);
+                self.sounds.push(CROWD[3]);
+            }
+            4 if !self.finished => {
+                self.finished = true;
+                return true;
+            }
+            _ => {}
+        }
+        false
     }
 
     /// The puck model's world matrix (yaw spin about +Y).
@@ -199,15 +395,23 @@ impl HockeySession {
         let g = &self.game;
         let [red, blue] = g.scores;
         let banner = g.banner.map(|(b, _)| b.text()).or(match g.state {
+            State::FaceOff { .. } if self.roster.len() == 1 => {
+                Some("Waiting for riders".to_string())
+            }
             State::FaceOff { countdown } => Some(format!("Face-off {}", countdown.ceil() as u32)),
             _ => None,
         });
         let p = self.puck.position;
         atv_ui::hud::training::View {
             title: format!("Red {red} – {blue} Blue   {}", self.clock()),
-            caption: Some(match g.state {
-                State::SuddenDeath => "Sudden death: the next goal wins.".into(),
-                _ => "Push the puck into the far goal.".into(),
+            caption: Some({
+                let team = atv_core::hockey::TEAMS[g.teams.get(self.me).copied().unwrap_or(0)];
+                match g.state {
+                    State::SuddenDeath => {
+                        format!("You are {team}. Sudden death: the next goal wins.")
+                    }
+                    _ => format!("You are {team}. Push the puck into the far goal."),
+                }
             }),
             banner,
             distance: None,
@@ -240,7 +444,7 @@ impl HockeySession {
         };
         format!(
             "Red {red} – {blue} Blue. {outcome} Your goals: {}.",
-            self.game.goals[PLAYER]
+            self.game.goals[self.me]
         )
     }
 
@@ -254,7 +458,7 @@ impl HockeySession {
         };
         format!(
             "Hockey: Red {red} – {blue} Blue. {outcome} Your goals: {}.",
-            self.game.goals[PLAYER]
+            self.game.goals[self.me]
         )
     }
 
@@ -275,6 +479,46 @@ impl HockeySession {
             "fast": self.fast,
             "log": self.log,
             "result": self.result(),
+            "me": self.me,
+            "roster": self.roster,
+            "serial": self.serial,
+            "teams": g.teams,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn room_state_codes_round_trip() {
+        for state in [
+            State::FaceOff { countdown: 1.5 },
+            State::Play,
+            State::SuddenDeath,
+            State::Pause { remaining: 3.25 },
+            State::Over,
+        ] {
+            let (code, timer) = phase_code(state);
+            assert_eq!(phase_state(code, timer), state);
+        }
+        for banner in [
+            Banner::Goal { team: 0 },
+            Banner::Goal { team: 1 },
+            Banner::HatTrick,
+            Banner::SuddenDeath,
+            Banner::GameOver,
+        ] {
+            let (code, t) = banner_code(Some((banner, 2.)));
+            assert_eq!(banner_of(code, t), Some((banner, 2.)));
+        }
+        assert_eq!(banner_of(0, 0.), None);
+    }
+
+    #[test]
+    fn arena_loads_hockey_samples_only() {
+        assert_eq!(samples("game01").len(), 8);
+        assert!(samples("env01").is_empty());
     }
 }

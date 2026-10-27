@@ -744,6 +744,37 @@ impl Net {
         self.session.contact_bodies(now, &|car| ride.train_car(car))
     }
 
+    /// The room's mini-game: the host's latest state, and the host
+    /// broadcasting its own (research/GAMES.md "Online").
+    pub fn game_state(&self) -> Option<&atv_game::multiplayer::GameState> {
+        self.session.game.as_ref().map(|(g, _)| g)
+    }
+
+    pub fn send_game(&mut self, state: &atv_game::multiplayer::GameState) {
+        if self.closed.is_none()
+            && let Ok(bytes) = self.session.game_packet(state)
+        {
+            self.socket.send(bytes);
+        }
+    }
+
+    pub fn is_host(&self) -> bool {
+        self.session.is_host()
+    }
+
+    /// (own peer id, roster ids ascending).
+    pub fn roster(&self) -> (Option<u8>, Vec<u8>) {
+        (self.session.peer, self.session.roster())
+    }
+
+    /// Another rider's current position and velocity, if fresh.
+    pub fn rider_motion(&self, peer: u8) -> Option<([f32; 3], [f32; 3])> {
+        let now = now_ms(self.clock);
+        self.session
+            .current(peer, now, &atv_game::multiplayer::no_cars)
+            .map(|s| (s.atv.position, s.velocity))
+    }
+
     /// The relay clock as (local clock origin, offset ms) once synced, so the
     /// ride can derive each step's shared train phase.
     pub fn server_clock(&self) -> Option<(Instant, f64)> {

@@ -15,6 +15,7 @@ pub mod spawn;
 
 use crate::Result;
 use crate::ride::Ride;
+pub use atv_net::{GameState, NO_PEER};
 use atv_net::{Lobby, Packet, Participant, PoseBuffer, SampledPose, Snapshot};
 use std::collections::BTreeMap;
 
@@ -124,6 +125,8 @@ pub struct Session {
     clock_rtt_ms: u32,
     /// Peer contacts stay off until this local time after an arrival.
     ghost_until: u64,
+    /// The host's latest mini-game state (`Packet::Game`) and when it came.
+    pub game: Option<(atv_net::GameState, u64)>,
 }
 
 fn encode(packet: &Packet) -> Result<Vec<u8>> {
@@ -341,6 +344,8 @@ impl Session {
                     }
                 }
             }
+            // The relay forwards it only from the host.
+            Packet::Game(state) => self.game = Some((*state, now_ms)),
             _ => return Err("unexpected relay packet".into()),
         }
         Ok(())
@@ -591,6 +596,22 @@ impl Session {
         }
         rebase(&mut pose.snapshot, cars);
         Some(pose.snapshot)
+    }
+
+    /// The host's mini-game state as a packet.
+    pub fn game_packet(&self, state: &atv_net::GameState) -> Result<Vec<u8>> {
+        encode(&Packet::Game(Box::new(state.clone())))
+    }
+
+    /// Roster order (peer ids, ascending): mini-game slots and teams.
+    pub fn roster(&self) -> Vec<u8> {
+        let mut ids: Vec<u8> = self
+            .lobby
+            .iter()
+            .flat_map(|l| l.players.iter().map(|p| p.id))
+            .collect();
+        ids.sort_unstable();
+        ids
     }
 
     /// Every other rider's current position (spawn clearance).
