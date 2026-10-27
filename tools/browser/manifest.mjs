@@ -132,6 +132,7 @@ export const TESTS = {
   'test_engine_championship.mjs': { group: 'content', timeout: 1500 },
   'test_engine_championship_loading.mjs': { group: 'content' },
   'test_engine_championship_enduro.mjs': { group: 'content', timeout: 900 },
+  'test_engine_freestyle_objectives.mjs': { group: 'content', timeout: 900 },
   'test_engine_sleep.mjs': { group: 'content' },
   'test_engine_motorcycle.mjs': { group: 'content' },
   'test_engine_interpolation.mjs': {

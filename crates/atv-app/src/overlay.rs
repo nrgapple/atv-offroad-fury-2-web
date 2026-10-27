@@ -51,6 +51,8 @@ pub struct HudInput<'a> {
     /// Other riders in a multiplayer room, the player's origin and the
     /// scene's view-projection (name tags and map markers).
     pub peers: Option<(&'a [atv_ui::hud::peers::Peer], [f32; 3], [f32; 16])>,
+    /// A Freestyle objective's panel (time left, progress, score).
+    pub objective: Option<atv_ui::hud::objective::View>,
 }
 
 /// A press on a toolbar button or the minimap (utility pointers in touch.js).
@@ -840,6 +842,33 @@ impl Overlay {
                 self.list.items.extend_from_slice(&list.items);
             }
         }
+        // A Freestyle objective's panel, under the toolbar.
+        if let Some(objective) = shown.and_then(|h| h.objective.as_ref())
+            && !self.results.shown
+        {
+            let mut top = self.toolbar_cache.as_ref().map_or(0., |(.., hits)| {
+                hits.iter().map(|(r, _)| r.bottom()).fold(0., f32::max)
+            }) + 8.;
+            // Narrow views: below a top GPS map the panel would cover.
+            let half = 300f32.min(view.width - 24.) / 2.;
+            if map_visible
+                && map.y < top + 120.
+                && map.x < view.width / 2. + half
+                && map.right() > view.width / 2. - half
+            {
+                top = top.max(map.bottom() + 8.);
+            }
+            let mut list = DisplayList::default();
+            layout::render(
+                &atv_ui::hud::objective::element(&view, objective, top),
+                &mut self.fonts,
+                view.width,
+                view.height,
+                &mut list,
+                &mut Vec::new(),
+            );
+            self.list.items.extend_from_slice(&list.items);
+        }
         // Race over: the results panel or the Show Results button.
         match race {
             Some((frame, ..)) if frame.phase == "finished" => {
@@ -851,7 +880,9 @@ impl Overlay {
                 }
             }
             // A race restarted in place starts without results.
-            _ if self.results.shown => self.results = Results::default(),
+            _ if self.results.shown && self.results.objective.is_none() => {
+                self.results = Results::default()
+            }
             _ => {}
         }
         if self.results.shown && active {
@@ -927,14 +958,19 @@ impl Overlay {
     /// centred) and adds their paint and buttons.
     fn paint_results(&mut self, frame: Option<&atv_core::race::Frame>) {
         let view = self.view;
-        let summary = frame
-            .map(|f| {
-                let line = results::summary(f, self.results.error.as_deref());
-                if self.results.error.is_some() {
-                    line
-                } else {
-                    line + &self.results.points_line()
-                }
+        let summary = self
+            .results
+            .objective
+            .clone()
+            .or_else(|| {
+                frame.map(|f| {
+                    let line = results::summary(f, self.results.error.as_deref());
+                    if self.results.error.is_some() {
+                        line
+                    } else {
+                        line + &self.results.points_line()
+                    }
+                })
             })
             .unwrap_or_default();
         let fresh = self

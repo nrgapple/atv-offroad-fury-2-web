@@ -97,6 +97,10 @@ pub struct Results {
     /// The recorded round's next step (the original ChampionshipRaceOver
     /// menu: Continue Championship / Quit to Championship Menu).
     pub round: Option<Round>,
+    /// A Freestyle objective's results (Overlays.pb `[Objective Results
+    /// Menu]`): the summary lines replace the standings; Restart Objective
+    /// and Continue (back to Select Objective) replace the race choices.
+    pub objective: Option<String>,
     /// No profile was loaded: the race earned nothing and nothing was saved.
     pub no_profile: bool,
 }
@@ -225,6 +229,18 @@ impl Results {
                 outcome.required
             ),
         }
+    }
+
+    /// A finished Freestyle objective: its results with Restart Objective
+    /// and Continue.
+    pub fn show_objective(&mut self, summary: String) {
+        *self = Self {
+            shown: true,
+            menu: Menu::Quit,
+            can_quit: true,
+            objective: Some(summary),
+            ..Default::default()
+        };
     }
 
     /// The panel or the Show Results button is up.
@@ -551,8 +567,10 @@ pub fn element(view: &Viewport, state: &Results, summary: &str, fonts: &mut Font
             let label = match id {
                 CONTINUE => "Continue",
                 HIDE => "Hide Menu",
+                RETRY if state.objective.is_some() => "Restart Objective",
                 RETRY => "Restart",
                 NEXT_ROUND => "Continue Championship",
+                _ if state.objective.is_some() => "Continue",
                 _ if state.championship.is_some() => "Quit to Championship Menu",
                 _ => "Quit Event",
             };
@@ -609,7 +627,15 @@ pub fn element(view: &Viewport, state: &Results, summary: &str, fonts: &mut Font
                 (1., Color::hex("#fff0")),
             ],
         )))
-        .child(text("Race Results", heading, 28.6)),
+        .child(text(
+            if state.objective.is_some() {
+                "Objectives"
+            } else {
+                "Race Results"
+            },
+            heading,
+            28.6,
+        )),
     )
     .child(
         El::new(Style {
@@ -624,7 +650,7 @@ pub fn element(view: &Viewport, state: &Results, summary: &str, fonts: &mut Font
             wrap: true,
         }),
     )
-    .child(table)
+    .children(state.objective.is_none().then_some(table))
     .child(menu);
     root(panel)
 }

@@ -61,7 +61,7 @@ Short Tracks opens only with the GOLDCUPS or IGIVEUP cheat (`0033eca0`
 calls `003238a0` for every type; nothing else found opens type 8, and the
 manual counts 14 championships without it; `PROFILE_STORE.md`).
 
-Open: the Freestyle objective counter, the course
+Open: the course
 unlock side effects for other modes (`00323640`), runtime confirmation of the
 round-to-course mapping, and whether a lesser trophy after a better one pays.
 
@@ -94,9 +94,7 @@ reward once; the standings keep four CPU slots whose riders are drawn for
 each race, as the original's race creation draws its roster (`00210d20`,
 `0021f680`) for every race (a reading, not traced across rounds);
 Amateur Nationals races use the port's Environment race courses (the National
-mode files); there is no memory-card save or trophy page. Freestyle
-championships are not offered: Freestyle scores objectives the port does
-not have. Short Tracks (env06st, env01st, env07st, 3 rounds, no reward)
+mode files); there is no memory-card save or trophy page. Short Tracks (env06st, env01st, env07st, 3 rounds, no reward)
 is listed Locked until GOLDCUPS/IGIVEUP. Advancing a round and a gold or
 silver trophy unlock courses for Single Race and Freestyle
 (`PROFILE_STORE.md`).
@@ -120,3 +118,77 @@ page and the results choices; `tools/test_engine_championship.mjs` races
 Amateur Supercross rounds 5 and 6 from the menu through Continue
 Championship and checks the saved profile and the page;
 `tools/test_engine_championship_loading.mjs` checks the loading briefing.
+
+## Freestyle objectives (2026-10-27)
+
+Exact-build evidence (private exports; the shipped `<scene>.obj` files of
+each course's OB archive, `TRACKS/*/<x>_OB.RES`; bounded reading, no
+runtime traces):
+
+- **Objectives.** `[Objectives] NumObjectives`, `[Objective%d] Type`
+  (`002fca60`: `CherryPick`, `Stunt`, `ComboMambo`). Every championship
+  course ships four: Hit Every Green Target and Hit Every Red Target
+  (CherryPick: `NumberOfTargets`, `BonusPointsPerTarget` 500/1000,
+  `BonusTimePerTargetInSec` 10/5, a trigger TOY `<scene>gcp|rcp` of
+  one-time 5-unit spheres; `002fa840`), Bust 10 Different Combos
+  (`CombosToWin`; `002fbe30`, `002fc050`) and Score Stunt Points
+  (`NumPointLevels` 3, `Points%d`; 10k/25k/50k, St. Croix Sound
+  10k/25k/100k, Wheeler Junction 25k/50k/100k; `002fb720`). Target counts
+  per course are in `atv_core::freestyle::course_objectives`.
+- **Completion bits.** `00321ff0` returns a per-course, per-difficulty mask
+  of six bits; `0025a100` shows "Completed Course Objectives: %d of 6" and
+  "Completed Total Objectives: %d of 36/30" (profile +0x1e0 + type*0x3c).
+  Six = the two target runs, the combos and the three point levels.
+- **Run rules.** The event's limit is 120 s (`00289d50` +0x57c).
+  Stunt: each level the run's stunt score passes shows "%d Point Level
+  Reached"; the last completes it. ComboMambo: a successful chain of two or
+  more stunts whose stunt sequence differs from every counted combo adds one
+  ("Repeated Combos Do Not Count"; compared by the recorded stunt ids, up to
+  25). CherryPick: each target adds its bonus points and seconds.
+- **Menus.** In-game Overlays.pb `[Objectives Menu]` ("Select Objective",
+  six objective rows with check icons and point-level sub-rows),
+  `[Objective Results Menu]` and `[Objective Championship Results Menu]`
+  (`002ec310`, mode 2): "Congratulations, %s" / "Sorry, %s"
+  (`002ddc50`), "You have completed the objective!" / "You have failed the
+  objective." (`002dde00`), and the championship line (`002ddee0`): the
+  trophy, else "You have completed %d/36 objectives." (Pro /30).
+- **Championship.** Freestyle rounds always advance (`00322c60`). After the
+  last round the trophy (`00322440`) counts completed objectives: Amateur
+  24/30/36, Pro 18/24/30 for bronze/silver/gold. Rewards (`00322650`)
+  Amateur 1000/500/250 and Pro 2000/1000/500 on both difficulties; the
+  unlocks are the racing ones (gold opens Expert, a trophy in Amateur
+  Freestyle opens Pro Freestyle); a new profile has Amateur Freestyle open
+  on Normal and Expert.
+
+Port: `atv_core::freestyle` (objective parsing, the course table, `Run`
+with the timer, levels, combos and targets, completion bits, the
+round/trophy/reward/unlock rule; completion masks in
+`Championships::objectives`). The Championship page lists Amateur and Pro
+Freestyle (round, objectives completed, trophy); choosing one opens Select
+Objective for the round's course (completed objectives marked, the point
+levels counted) with Next Course / Finish Championship. An objective rides
+the course in Freestyle with a top-centre panel (objective, time left,
+progress, score, the latest level/combo notice); when it completes or time
+runs out the Objectives results show the original lines, the course and
+total counts, Restart Objective and Continue (back to Select Objective).
+
+**Authored or approximate:** the original picks objectives in-game from an
+overlay; the port's Select Objective is a front-end page, and the round
+ends with Next Course rather than a recovered in-game end (the round end
+condition was not found). The completion bits of a course persist across
+championship runs (the mask is per profile, course and difficulty, as
+`00321ff0` reads it; resetting at a new run was not found). Point levels
+count when reached even if the run then times out (a reading of
+`002fb720`). The target runs are listed but **not playable**: their
+trigger TOYs and cherry models ship only in the OB archives, which the
+hosted runtime package does not include yet, so 24 of 36 (Amateur) and 18
+of 30 (Pro) objectives are reachable today: bronze at most. No Profile
+Points are paid per objective (none found); the standalone Single Player
+Freestyle objectives mode (`Freestyle Prep` → Objectives) is not offered.
+
+Checks: `atv-core` freestyle tests (parser, levels and time-out, combos,
+targets, rounds/trophy/unlock); `atv-ui` controller test for the page
+flow; `tools/test_engine_freestyle_objectives.mjs` fails a Combos run on a
+shortened clock (`objectiveTest=timeout`), completes Score Stunt Points
+(`objectiveTest=score` credits the top level) and finishes Amateur
+Freestyle for silver, its reward and the Pro Freestyle unlock.
