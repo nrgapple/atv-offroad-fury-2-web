@@ -84,6 +84,9 @@ pub struct Venue {
     pub weather: Option<atv_core::weather::Selection>,
     /// A Freestyle objective's course file and targets (the OB archive).
     pub objective: Option<Objective>,
+    /// Treasure Hunt's treasures from the game's mode TOY: their `bomb`
+    /// models and loop (`bomb.MOT`), posed and hidden by the game.
+    pub treasures: Option<Objective>,
 }
 
 /// A Freestyle objective's data from the course's OB archive
@@ -118,6 +121,54 @@ impl Objective {
         }
         Some(matrix)
     }
+}
+
+type AnimatedModels = (
+    Vec<Option<usize>>,
+    Option<(atv_core::animation::Animation, Vec<atv_core::mesh::Node>)>,
+);
+/// Appends each animated target's model to the scene at its TOY offset and
+/// reads the looping motion (`mot`) with the model's PSG nodes it poses:
+/// Freestyle's cherries and Treasure Hunt's bombs.
+fn animated_models(
+    archive: &Resource,
+    scene: &mut atv_core::scene::Scene,
+    targets: &[atv_core::freestyle::Target],
+    mot: &str,
+) -> Result<AnimatedModels> {
+    let mut models = Vec::with_capacity(targets.len());
+    for t in targets {
+        if t.model.is_empty() {
+            models.push(None);
+            continue;
+        }
+        let [x, y, z] = t.offset;
+        let mut matrix = IDENTITY;
+        matrix[12..15].copy_from_slice(&[x, y, z]);
+        scene.models.push(atv_core::scene::StaticModel {
+            name: t.model.clone(),
+            position: t.offset,
+            look: [0., 0., 1.],
+            up: Some([0., 1., 0.]),
+            use_lighting: true,
+            dynamic_lighting: false,
+            world_matrix: matrix,
+        });
+        models.push(Some(scene.models.len() - 1));
+    }
+    let motion = match (
+        member_named(archive, mot),
+        targets
+            .first()
+            .and_then(|t| member_named(archive, &format!("{}.psg", t.model))),
+    ) {
+        (Some(mot), Some(psg)) => Some((
+            atv_core::animation::decode_mot(&archive.extract(mot)?)?,
+            atv_core::mesh::decode_psg(&archive.extract(psg)?)?.nodes,
+        )),
+        _ => None,
+    };
+    Ok((models, motion))
 }
 
 const IDENTITY: [f32; 16] = [
@@ -164,11 +215,13 @@ pub async fn load_with(
     racing: bool,
     options: LoadOptions,
 ) -> Result<Venue> {
+    let mut freeride_scene = None;
     let course = if racing {
         crate::launch::race_resource(environment, options.race)?
     } else {
         let mut course = course_resource(environment, false)?;
         if let Some((archive, stem)) = &options.game_scene {
+            freeride_scene = Some(course.scene_stem.clone());
             course.overlay = Some(archive.clone());
             course.scene_stem = stem.clone();
             course.mode_stem = stem.clone();
@@ -188,7 +241,17 @@ pub async fn load_with(
                 .ok_or_else(|| crate::ride::load::missing_member(what, name))?,
         )
     };
-    let scene_text = extract(&format!("{}.scn", course.scene_stem), "start position")?;
+    // Treasure Hunt ships no scene of its own (`env05th.toy` but no
+    // `env05th.scn`): it rides the Freeride scene with its mode TOY.
+    let scene_stem = match &freeride_scene {
+        Some(freeride)
+            if member_named(&archive, &format!("{}.scn", course.scene_stem)).is_none() =>
+        {
+            freeride.clone()
+        }
+        _ => course.scene_stem.clone(),
+    };
+    let scene_text = extract(&format!("{scene_stem}.scn"), "start position")?;
     let mode_index = member_named(&archive, &format!("{}.toy", course.mode_stem));
     let mode = mode_index.map(|i| archive.extract(i)).transpose()?;
     let mut scene = atv_core::scene::parse_with_start(&scene_text, mode.as_deref())?;
@@ -288,44 +351,35 @@ pub async fn load_with(
                 )),
                 None => Vec::new(),
             };
-            let mut models = Vec::with_capacity(targets.len());
-            for t in &targets {
-                if t.model.is_empty() {
-                    models.push(None);
-                    continue;
-                }
-                let [x, y, z] = t.offset;
-                let mut matrix = IDENTITY;
-                matrix[12..15].copy_from_slice(&[x, y, z]);
-                scene.models.push(atv_core::scene::StaticModel {
-                    name: t.model.clone(),
-                    position: t.offset,
-                    look: [0., 0., 1.],
-                    up: Some([0., 1., 0.]),
-                    use_lighting: true,
-                    dynamic_lighting: false,
-                    world_matrix: matrix,
-                });
-                models.push(Some(scene.models.len() - 1));
-            }
-            let motion = match (
-                member_named(&archive, "cherry.mot"),
-                targets
-                    .first()
-                    .and_then(|t| member_named(&archive, &format!("{}.psg", t.model))),
-            ) {
-                (Some(mot), Some(psg)) => Some((
-                    atv_core::animation::decode_mot(&archive.extract(mot)?)?,
-                    atv_core::mesh::decode_psg(&archive.extract(psg)?)?.nodes,
-                )),
-                _ => None,
-            };
+            let (models, motion) = animated_models(&archive, &mut scene, &targets, "cherry.mot")?;
             Some(Objective {
                 objectives,
                 targets,
                 models,
                 motion,
             })
+        }
+        _ => None,
+    };
+    // Treasure Hunt (`002d0750`): each `Treasure` trigger hides its
+    // `bomb.mcf` animation when collected.
+    let treasures = match (&options.game_scene, &mode) {
+        (Some(_), Some(mode)) if !racing => {
+            let targets = atv_core::freestyle::parse_animated_triggers(
+                &String::from_utf8_lossy(mode),
+                "Treasure",
+            );
+            if targets.is_empty() {
+                None
+            } else {
+                let (models, motion) = animated_models(&archive, &mut scene, &targets, "bomb.mot")?;
+                Some(Objective {
+                    objectives: Vec::new(),
+                    targets,
+                    models,
+                    motion,
+                })
+            }
         }
         _ => None,
     };
@@ -539,6 +593,7 @@ pub async fn load_with(
         },
         weather,
         objective,
+        treasures,
         scene,
         terrain: Terrain {
             width,

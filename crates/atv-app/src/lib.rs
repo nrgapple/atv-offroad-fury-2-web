@@ -1578,6 +1578,28 @@ impl App {
                 for (model, rgb) in game.flag_colors(&ready.venue.scene.models) {
                     ready.scene.tint_model(&ready.gpu, model, rgb);
                 }
+                // Treasure Hunt's bombs loop `bomb.MOT`; only the live
+                // group's uncollected treasures show (`002d11e0`, the
+                // collect's HideAnimation).
+                if let Some(treasures) = &ready.venue.treasures {
+                    let live = game.markers();
+                    let time = riding.ride.steps() as f32 * atv_game::ride::STEP;
+                    for (i, target) in treasures.targets.iter().enumerate() {
+                        let Some(Some(model)) = treasures.models.get(i).copied() else {
+                            continue;
+                        };
+                        let shown = live.iter().any(|m| {
+                            m.position
+                                .iter()
+                                .zip(target.position)
+                                .all(|(a, b)| (a - b).abs() < 0.5)
+                        });
+                        ready.scene.hide_model(model, !shown);
+                        if shown && let Some(matrix) = treasures.cherry_matrix(i, time) {
+                            ready.scene.pose_model(&ready.gpu, model, &matrix);
+                        }
+                    }
+                }
                 let sounds = game.take_sounds();
                 if let Some(sound) = &mut riding.sound {
                     for name in sounds {
@@ -5587,12 +5609,21 @@ impl App {
             sound,
             autodrive: None,
             // King of the Hills rides its own scene (the hill bases, flags
-            // and spotlights of `env05kh.scn`) over the Freeride archive.
+            // and spotlights of `env05kh.scn`) over the Freeride archive;
+            // Treasure Hunt reads its mode TOY and bombs the same way.
             game_scene: self.game.as_ref().and_then(|g| {
                 let path = atv_core::games::game_archive(g.kind, &g.venue)?;
-                (g.kind == atv_core::games::GameKind::KingOfTheHills
-                    && self.content.as_ref().is_some_and(|c| c.has(&path)))
-                .then(|| (path, format!("{}kh", g.venue)))
+                let suffix = match g.kind {
+                    atv_core::games::GameKind::KingOfTheHills => "kh",
+                    // Treasure Hunt: its mode TOY and bomb models over the
+                    // Freeride scene (no `th.scn` ships).
+                    atv_core::games::GameKind::TreasureHunt => "th",
+                    _ => return None,
+                };
+                self.content
+                    .as_ref()
+                    .is_some_and(|c| c.has(&path))
+                    .then(|| (path, format!("{}{suffix}", g.venue)))
             }),
             // A Freestyle objective reads the course's OB archive (its
             // `.obj`, and a target run's TOY and cherries).
