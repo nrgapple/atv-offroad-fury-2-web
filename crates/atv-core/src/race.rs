@@ -103,11 +103,12 @@ pub struct Located {
 }
 /// Route window searched around a rider's current station: the forward and
 /// backward limits RaceStatus `00248b20` passes to native 0017be80 from Track
-/// +0x34/+0x38. The Track constructor `00179330` sets both to 200ft and the
-/// TDF loader never changes them. +0x34 also bounds how near the finish a
-/// rider must be for a finish-gate crossing to count.
-pub const TRACK_AHEAD: f32 = 200.;
-pub const TRACK_BEHIND: f32 = 200.;
+/// +0x34/+0x38. The Track constructor `00179330` sets both to 200ft, then the
+/// race track loader `00215900` sets +0x34 = 125ft and +0x38 = 75ft. +0x34
+/// also bounds how near the finish a rider must be for a finish-gate
+/// crossing to count.
+pub const TRACK_AHEAD: f32 = 125.;
+pub const TRACK_BEHIND: f32 = 75.;
 /// Box +0x74, set to 150ft for the three Track boxes after loading: a crossing
 /// higher than this above the gate center does not count.
 const GATE_CEILING: f32 = 150.;
@@ -2709,8 +2710,8 @@ mod tests {
             slanted.crossing([-15., 0., 51.], [-15., 0., 49.]),
             Crossing::None
         );
-        // Track +0x34/+0x38 from the Track constructor 00179330.
-        assert_eq!((TRACK_AHEAD, TRACK_BEHIND), (200., 200.));
+        // Track +0x34/+0x38 as the race track loader 00215900 sets them.
+        assert_eq!((TRACK_AHEAD, TRACK_BEHIND), (125., 75.));
     }
     #[test]
     fn track_flags_skip_the_first_crossing_and_first_best_lap() {

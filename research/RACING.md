@@ -38,8 +38,8 @@ for the scalar branches, not whole-race replay):
 - Start slots: the `001f6350` pair shuffle and the `001f8410` race-mode row
   (slot − n/2 spacings across the start, side from section 0's first turn),
   for the player and every CPU. See "Start slots" below.
-- Track window and finish gate: the 200ft forward/backward route window
-  (Track +0x34/+0x38, constructor `00179330`), the `001a95b0` gate crossing
+- Track window and finish gate: the 125ft forward and 75ft backward route
+  window (Track +0x34/+0x38, set by the race track loader `00215900`), the `001a95b0` gate crossing
   test on the tag 16 box, and the TDF tag 41 Track flags 4 (first crossing
   only arms the rider) and 8 (first lap is no best lap). See "Finish gate and
   track window" below.
@@ -47,7 +47,7 @@ for the scalar branches, not whole-race replay):
 **Authored** (integration adaptations, not original behavior):
 
 - Race rules: countdown, timing, ranking and HUD. Progress follows the
-  racing line inside the TDF edge polygon within the recovered 200ft window;
+  racing line inside the TDF edge polygon within the recovered 125/75ft window;
   laps count through the recovered finish gate test. The skip of Track flag 4
   is treated as used up at the start on env07 and sx13, whose start row
   stands just past the gate (see below).
@@ -909,11 +909,14 @@ constructor `001a9400`, box placement `0017da40`, gate test `001a95b0` with
 its line intersection `0012b6d0`, and RaceStatus reset `00247900` and update
 `00248b20`; bounded reading, no instruction comparison):
 
-- **Track window.** The Track constructor sets +0x34 and +0x38 to 200ft. The
-  TDF loader never writes them. RaceStatus passes them to `0017be80` as the
-  forward and backward route limits of the on-track query, so a rider can
-  move up to 200ft along the route between updates in either direction. The
-  port's old window was 150ft ahead and 60ft behind.
+- **Track window.** The Track constructor sets +0x34 and +0x38 to 200ft and
+  the TDF loader does not write them, but the race track loader `00215900`
+  then stores 125ft in +0x34 and 75ft in +0x38 (corrected 2026-10-27; the
+  first reading stopped at the constructor). RaceStatus passes them to
+  `0017be80` as the forward and backward route limits of the on-track
+  query, so a rider can move up to 125ft forward or 75ft back along the
+  route between updates. The port's old window was 150ft ahead and 60ft
+  behind, then 200ft both ways.
 - **Gate line.** Tags 15, 16 and 25 build boxes with flags 3; after loading
   each box gets a 150ft ceiling (+0x74). For such a box `001a95b0` treats the
   segment from center − half extents to center + half extents in x/z as the
@@ -927,7 +930,7 @@ its line intersection `0012b6d0`, and RaceStatus reset `00247900` and update
 - **Laps.** Each update RaceStatus measures the forward route distance
   (`0017d3c0`, −1 on alternate sections) from the rider's previous track
   position to the finish box's track position (`0017da40`, where the route
-  crosses the gate line). Only when that distance is in [0, 200ft) does a
+  crosses the gate line). Only when that distance is in [0, 125ft) does a
   gate result of 1 count: lap counter +0x2c increases, the lap time is
   elapsed time less the lap start (a negative time is clamped to zero and
   skips the best-lap update), and the rider finishes when the counter reaches
@@ -943,21 +946,24 @@ its line intersection `0012b6d0`, and RaceStatus reset `00247900` and update
 
 Port:
 
-- `race::TRACK_AHEAD`/`TRACK_BEHIND` are 200ft. `Gate::crossing` is the gate
+- `race::TRACK_AHEAD`/`TRACK_BEHIND` are 125ft and 75ft. `Gate::crossing` is the gate
   test; `Course::gate_distance` finds where the main racing line first
   crosses the gate line (`finish_at`). `Progress` counts a lap when the
-  rider's previous race distance lies less than 200ft before the next gate
+  rider's previous race distance lies less than 125ft before the next gate
   position and its motion crosses the gate; it applies flags 4 and 8 as
   above. Hand-built courses without a finish gate keep the old
   distance-to-checkpoint rule. The race frame and script trace report
   `finish_at`, `track_flags` and each rider's laps and race distance.
+- `00215900` also rebuilds the start and finish boxes from the scene's
+  `natsgate` and `natfgate`/`stfgate` objects (center, model axes × half
+  width, ceiling); the port keeps the TDF tag 15/16 boxes (not compared).
 - The `0.0 <= +0x70` guard before the lap test (the previous position's x) is
   not reproduced; all shipped race coordinates are positive.
 - **Assumption.** On env07 and sx13 the start row stands about 20ft past the
   finish gate while Track flag 4 is set. Read literally, the skipped crossing
   would come only after a full circuit and the first lap would be two
   circuits long. The port treats the skip as already used when the grid lies
-  within 200ft past the gate. The original may instead clear the flag through
+  within 75ft past the gate (Track +0x38). The original may instead clear the flag through
   a crossing during start placement; this is not established.
 - CPU steering keeps its authored projection window (60ft behind, 2 × 150ft
   ahead); the original CPU driver's use of the Track window is not ported.
