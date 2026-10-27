@@ -1,4 +1,5 @@
 """R2 staging cannot change live pointers or deploy unverified dependency bytes."""
+from contextlib import nullcontext
 import io
 import json
 import hashlib
@@ -66,6 +67,19 @@ class PublicationTests(unittest.TestCase):
                                                          {'path': '/NEW.RES'}]}).encode(), live)
         with self.assertRaisesRegex(ValueError, 'remove live runtime'):
             uploader.require_additive(json.dumps({'files': [{'path': '/A.RES'}]}).encode(), live)
+
+    def test_any_chat_may_publish_content_without_a_checkpoint_claim(self):
+        with patch.object(uploader, 'upload_content') as publish:
+            uploader.main(['--content-only'])
+        publish.assert_called_once_with(None, False, checkpoint=None, owner=None)
+        with patch.object(uploader, 'publication_lock', return_value=nullcontext()), \
+                patch.object(uploader, 'require_owner') as require_owner, \
+                patch.object(uploader, 'validated_content', side_effect=RuntimeError('stop')), \
+                self.assertRaisesRegex(RuntimeError, 'stop'):
+            uploader.upload_content()
+        require_owner.assert_not_called()
+        with patch('sys.stderr', io.StringIO()), self.assertRaises(SystemExit):
+            uploader.main(['--content-only', '--checkpoint', 'combined'])
 
     def test_stages_scoped_manifests_and_verifies_remote_bytes(self):
         with tempfile.TemporaryDirectory() as temporary:
