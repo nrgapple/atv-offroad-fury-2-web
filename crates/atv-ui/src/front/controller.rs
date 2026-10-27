@@ -2168,7 +2168,7 @@ mod tests {
         front.show("single", &view);
         assert!(front.choices().iter().all(|(a, _)| a != "championship"));
         front.set_race_courses(
-            ["env05", "env02", "sx08", "nat01"]
+            ["env05", "env05ends", "env02", "sx08", "nat01"]
                 .map(String::from)
                 .to_vec(),
             &view,
@@ -2180,29 +2180,45 @@ mod tests {
         assert_eq!(front.page, "championship");
         assert_eq!(
             front.choices()[0].1,
+            "Amateur Enduro · Round 1 of 5 · 0 pts"
+        );
+        assert_eq!(front.choices()[1].1, "Pro Enduro · Locked");
+        assert_eq!(
+            front.choices()[2].1,
             "Amateur Nationals · Round 1 of 5 · 0 pts"
         );
-        assert_eq!(front.choices()[1].1, "Pro Nationals · Locked");
+        assert_eq!(front.choices()[3].1, "Pro Nationals · Locked");
         assert_eq!(
             front.series_line().as_deref(),
-            Some("Next: ENV05 · Standings: You 0, CPUs 0 / 0 / 0 / 0")
+            Some("Next: ENV05 Enduro Short · Standings: You 0, CPUs 0 / 0 / 0 / 0")
         );
-        // Amateur Nationals: env05, five laps, four CPUs.
+        // Amateur Enduro: env05's short Enduro, three laps, four CPUs.
         assert_eq!(
             front.key("Enter", &view, &mut settings),
             Some(Event::Race {
-                environment: "env05".into(),
+                environment: "env05ends".into(),
                 quad: 1,
                 rider: 0,
-                laps: 5,
+                laps: 3,
                 cpu: 4,
                 difficulty: 1,
                 cheats: (false, false),
                 championship: Some((0, false)),
             })
         );
+        // Amateur Nationals: env05, five laps.
+        front.selection = 2;
+        assert!(matches!(
+            front.key("Enter", &view, &mut settings),
+            Some(Event::Race {
+                laps: 5,
+                championship: Some((2, false)),
+                ..
+            })
+        ));
+        front.show("championship", &view);
         // A locked series explains how it opens.
-        front.selection = 1;
+        front.selection = 3;
         assert_eq!(front.key("Enter", &view, &mut settings), None);
         assert!(
             front

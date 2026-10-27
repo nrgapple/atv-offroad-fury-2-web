@@ -1028,7 +1028,10 @@ Port:
   tables without inflating anything).
 - `atv_core::enduro` parses the waypoints and builds the gate boxes and
   model matrices; `Course::set_enduro` switches a race to the gate rules
-  above and the Enduro grid. The venue draws and collides with the gate
+  above and the Enduro grid. Like the original RaceStatus (`0020f780`
+  +0x94), an Enduro also ends for everyone 30 s after the first rider
+  finishes, with the unfinished riders' times estimated as at any race
+  over. The venue draws and collides with the gate
   models. The HUD drops the radar and shows "GATE n of m".
 - Single Race lists each published variant under its venue's tab
   ("Prospect Springs Enduro Short").
@@ -1036,9 +1039,7 @@ Port:
 **Authored or approximate:** the gate width is the `endwgate` collision
 mesh's half extent across the gate (the original reads model field +0x110);
 the gate ceiling is the National 150 ft; the CPUs still drive the Enduro
-TDF route (how the original CPU uses the guidance vector is not read); the
-race still ends when the player finishes (the original also ends it 30 s
-after the first finisher); gates are drawn opaque with their default arrow
+TDF route (how the original CPU uses the guidance vector is not read); gates are drawn opaque with their default arrow
 textures (the original fades all but the next gate to 0.4 alpha and picks
 arrow textures toward the next gate, `00229e90`); the compass and GPS
 overlays are not drawn.

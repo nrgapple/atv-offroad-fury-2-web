@@ -63,8 +63,9 @@ round-to-course mapping, and whether a lesser trophy after a better one pays.
 
 ## Port
 
-- `atv_core::championship`: the four racing series whose courses the port
-  loads (Amateur and Pro Nationals, Amateur and Pro Supercross), their
+- `atv_core::championship`: the six racing series whose courses the port
+  loads (Amateur and Pro Enduro, Amateur and Pro Nationals, Amateur and Pro
+  Supercross), their
   courses, rounds, laps and rewards; championship points, the advance rule,
   trophies, first-trophy rewards and unlocks. Progress per series and
   difficulty lives in the saved profile (`fury-profile`, `PROFILE.md`).
@@ -89,9 +90,22 @@ reward once; the standings keep four CPU slots whose riders are drawn for
 each race, as the original's race creation draws its roster (`00210d20`,
 `0021f680`) for every race (a reading, not traced across rounds);
 Amateur Nationals races use the port's Environment race courses (the National
-mode files); there is no memory-card save or trophy page. Enduro, Freestyle and Short Tracks
-championships are not offered: their course variants or objectives are not
-ported.
+mode files); there is no memory-card save or trophy page. Freestyle and Short Tracks
+championships are not offered: Freestyle scores objectives the port does
+not have, and nothing found opens Short Tracks.
+
+**Enduro (2026-10-27).** Amateur Enduro races each venue's short Enduro and
+Pro Enduro its long one (`002f65e0` maps the event type to the track
+variant, `0021d8b0` builds `<venue>ends|endl`), three laps, with the gate
+rules in `RACING.md` "Enduro and Short Track races". Their course lists are
+the Environment order above, so round N races `env05ends`, `env02ends`, …
+(Pro: `env05endl`, …). Points, advancing, trophies, rewards (Amateur
+500/250/125, Pro 1000/500/250 on Normal) and the Amateur → Pro unlock are
+the same rules; the course Profile Points come from the Enduro mode TOY's
+[ChampionshipInfo]. A new profile has Amateur Enduro open on Normal.
+`tools/test_engine_championship_enduro.mjs` races the final Amateur Enduro
+round (env04ends) from the menu and checks the trophy, reward and the
+Pro Enduro unlock.
 
 Checks: `atv-core` championship tests (lists, short round replay, final
 round trophy/reward/unlocks, tie rule); `atv-ui` controller test for the

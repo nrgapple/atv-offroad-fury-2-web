@@ -52,7 +52,7 @@ try {
   await page.waitForFunction(() => JSON.parse(localStorage.getItem('fury-profile') || '{}').races === 6, null, { timeout: 600000 });
   let state = await ride();
   assert.equal(state.environment, 'sx02');
-  assert.deepEqual(state.championship, [2, false]);
+  assert.deepEqual(state.championship, [4, false]);
   const mid = (await profile(page)).championships.progress['amsx-normal'];
   assert.equal(mid.round, 5, `advanced ${JSON.stringify(mid)}`);
   assert.ok(mid.points[0] >= 31 + 1, `points ${mid.points}`);
@@ -65,7 +65,7 @@ try {
   await page.waitForFunction(() => JSON.parse(document.querySelector('#ui-state')?.textContent || '{}').ride?.environment === 'sx06', null, { timeout: 120000 });
   await page.waitForFunction(() => JSON.parse(localStorage.getItem('fury-profile') || '{}').races === 7, null, { timeout: 600000 });
   state = await ride();
-  assert.deepEqual(state.championship, [2, false]);
+  assert.deepEqual(state.championship, [4, false]);
   const after = await profile(page);
   const progress = after.championships.progress['amsx-normal'];
   assert.deepEqual([progress.round, progress.points], [0, [0, 0, 0, 0, 0]], `series restarts ${JSON.stringify(progress)}`);

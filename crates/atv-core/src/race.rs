@@ -19,6 +19,8 @@ const ALTERNATE_SECTION: u32 = 0x100;
 /// Native grid fallback in 001f8410 sets riders 4.66ft behind the start node.
 const GRID_SETBACK: f32 = 4.66;
 const COUNTDOWN: f32 = 4.;
+/// Enduro race over this long after the first finisher (RaceStatus +0x94).
+const ENDURO_FINISH_TIMEOUT: f32 = 30.;
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize)]
 pub struct Gate {
@@ -1618,6 +1620,16 @@ impl Race {
         if self.player.finish.is_some() {
             self.finishes.push((true, self.finished_count()));
             self.race_over();
+        } else if self.course.is_enduro()
+            && self
+                .progress
+                .iter()
+                .filter_map(|p| p.finish)
+                .any(|first| self.elapsed - first >= ENDURO_FINISH_TIMEOUT)
+        {
+            // Enduro RaceStatus (`0020f780` +0x94): the race ends for everyone
+            // 30s after the first rider finishes.
+            self.race_over();
         }
     }
     /// RaceStatus `00248b20` race over, once every human has finished: the
@@ -2238,6 +2250,32 @@ mod tests {
             step(&mut r, p);
         }
         assert!(r.player_finished());
+    }
+    #[test]
+    fn enduro_race_ends_thirty_seconds_after_the_first_finisher() {
+        let mut r = Race::new(enduro_course(), 1, vec!["CPU".into()], 1).unwrap();
+        r.countdown = 0.;
+        r.step([100., 0., 40.], 1.);
+        for p in [
+            [0., 0., 55.],
+            [0., 0., 45.],
+            [45., 0., 100.],
+            [55., 0., 100.],
+            [100., 0., 55.],
+            [100., 0., 45.],
+        ] {
+            r.step([100., 0., 40.], 1.);
+            r.observe_cpu(0, p, 0., None);
+        }
+        assert!(r.opponents()[0].finished && !r.player_finished());
+        for _ in 0..29 {
+            r.step([100., 0., 40.], 1.);
+        }
+        assert!(!r.player_finished());
+        r.step([100., 0., 40.], 1.);
+        assert!(r.player_finished(), "race over 30s after the CPU finished");
+        let f = r.frame(0.);
+        assert!(f.standings.iter().find(|s| s.player).unwrap().estimated);
     }
     #[test]
     fn countdown_then_finish_hand_over_the_player() {
