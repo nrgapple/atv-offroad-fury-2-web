@@ -12,8 +12,10 @@ document.addEventListener('visibilitychange', () => { usage.setVisible(!document
 addEventListener('pagehide', () => usage.report(1));
 // Pointer events drive the game (winit). Cancel native touch gestures so
 // Safari's loupe, selection, scrolling and pinch zoom never take a riding thumb;
-// the install banner and its help dialog keep their native taps.
-const shell = event => event.target instanceof Element && event.target.closest('#app-install-banner, #app-install-help');
+// the install banner, its help dialog and the Host/Join text fields (Rust's
+// text_inputs.rs) keep their native taps, so a tap focuses a field and opens
+// the soft keyboard.
+const shell = event => event.target instanceof Element && event.target.closest('#app-install-banner, #app-install-help, input, textarea');
 const cancel = event => { if (event.cancelable && !shell(event)) event.preventDefault(); };
 for (const type of ['touchstart', 'touchmove', 'gesturestart', 'gesturechange', 'gestureend']) document.addEventListener(type, cancel, { passive: false });
 for (const type of ['selectstart', 'contextmenu']) document.addEventListener(type, cancel);
