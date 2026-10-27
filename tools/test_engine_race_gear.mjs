@@ -38,7 +38,7 @@ try {
   await key(page, 'Enter'); await onPage(page, 'main');
   await key(page, 'Enter'); await onPage(page, 'single');
   let f = await front(page);
-  assert.deepEqual(f.choices, ['tracks', 'race', 'championship', 'games', 'garage']);
+  assert.deepEqual(f.choices, ['tracks', 'objective-courses', 'race', 'championship', 'games', 'garage']);
   assert.ok(f.race.courses >= 30, `race courses ${f.race.courses}`);
   await key(page, 'ArrowDown'); await key(page, 'Enter'); await onPage(page, 'race');
   f = await front(page);
