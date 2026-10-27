@@ -268,7 +268,18 @@ struct ObjectiveSession {
     /// (a restart begins from it again).
     fame: Option<atv_core::hall_of_fame::FreestyleWatch>,
     fame_start: Option<atv_core::hall_of_fame::FreestyleWatch>,
+    /// A target run's targets (the OB archive's target TOY).
+    targets: Vec<atv_core::freestyle::Target>,
+    /// One-shot sounds for the ride's mixer (target hits).
+    sounds: Vec<&'static str>,
+    /// `objectiveTest=targets`: the ride step of the last placement.
+    visit_clock: u64,
 }
+
+/// The reach added to a target's 5 ft sphere around the ATV origin.
+const TARGET_REACH: f32 = 0.;
+/// A target hit's sound.
+const TARGET_SOUND: &str = "iconhit.vag";
 
 impl ObjectiveSession {
     /// Advances the run with the ride: simulated time, finished stunt
@@ -278,14 +289,27 @@ impl ObjectiveSession {
     fn update(
         &mut self,
         ride: &mut atv_game::ride::Ride,
+        venue: Option<&atv_game::venue::Objective>,
         player: &str,
     ) -> Option<(String, atv_core::hall_of_fame::FreestyleWatch)> {
         use atv_core::freestyle::{Run, SERIES, course_objectives};
         let series = SERIES.get(self.series)?;
         if self.run.is_none() {
-            let objective = course_objectives(&self.course)?
-                .into_iter()
-                .nth(self.objective)?;
+            // The course's own `.obj` when its OB archive loaded (with the
+            // objective's start), else the built-in table.
+            let objective = venue
+                .and_then(|v| v.objectives.get(self.objective).cloned())
+                .or_else(|| {
+                    course_objectives(&self.course)?
+                        .into_iter()
+                        .nth(self.objective)
+                })?;
+            if matches!(objective.kind, atv_core::freestyle::Kind::CherryPick { .. })
+                && venue.is_none_or(|v| v.targets.is_empty())
+            {
+                return None;
+            }
+            self.targets = venue.map(|v| v.targets.clone()).unwrap_or_default();
             self.run = Some(Run::new(objective, self.objective, ride.committed_points()));
             let saved = atv_ui::settings::Settings::load();
             let key = atv_core::hall_of_fame::HallOfFame::freestyle_key(series.key, &self.course);
@@ -303,12 +327,22 @@ impl ObjectiveSession {
             self.fame_start = Some(fame);
             self.start(ride);
         }
+        if !self.targets.is_empty() && url_flag("objectiveTest=targets") {
+            self.test_visit(ride);
+        }
         let run = self.run.as_mut()?;
         let steps = ride.steps();
         let dt = steps.saturating_sub(self.steps) as f32 * atv_game::ride::STEP;
         self.steps = steps;
         for (success, ids) in ride.take_chains() {
             run.chain(success, &ids);
+        }
+        // CherryPick: the ATV touching an untouched target's sphere.
+        if !self.targets.is_empty() && !run.finished() {
+            let origin = ride.frame().origin;
+            for _ in run.touch(&self.targets, origin, TARGET_REACH) {
+                self.sounds.push(TARGET_SOUND);
+            }
         }
         let (jumps, chains) = ride.take_free_records();
         if let Some(fame) = self.fame.as_mut().filter(|_| !run.finished()) {
@@ -365,9 +399,16 @@ impl ObjectiveSession {
         Some((summary, fame))
     }
 
-    /// The run (re)starts on the ride's current clock and points.
+    /// The run (re)starts on the ride's current clock and points, the
+    /// rider at the objective's `DefaultStartPosition`.
     fn start(&mut self, ride: &mut atv_game::ride::Ride) {
         let Some(run) = &mut self.run else { return };
+        if let Some(start) = run.objective.start
+            && let Err(error) = ride.place_beside(start.position, start.yaw(), [0.; 3])
+        {
+            status(&format!("Objective start failed: {error}"));
+        }
+        self.visit_clock = ride.steps();
         run.restart(ride.committed_points());
         // Test tooling: `objectiveTest=score` credits the last point level,
         // `objectiveTest=timeout` leaves five seconds.
@@ -385,6 +426,66 @@ impl ObjectiveSession {
         self.fame = self.fame_start.clone();
         self.steps = ride.steps();
         self.recorded = false;
+    }
+
+    /// Test tooling (`objectiveTest=targets`): every 1.5 s of ride time,
+    /// set the ATV down 8 ft short of the next untouched target and roll
+    /// it through at 20 ft/s, so the real trigger test takes the hit.
+    fn test_visit(&mut self, ride: &mut atv_game::ride::Ride) {
+        let Some(run) = &self.run else { return };
+        let steps = ride.steps();
+        if steps < self.visit_clock + 90 {
+            return;
+        }
+        self.visit_clock = steps;
+        let Some(t) = self
+            .targets
+            .iter()
+            .enumerate()
+            .find(|(i, _)| !run.hits.get(*i).copied().unwrap_or(true))
+            .map(|(_, t)| t)
+        else {
+            return;
+        };
+        let [x, y, z] = t.position;
+        let _ = ride.place_beside([x, y, z - 8.], 0., [0., 0., 20.]);
+    }
+
+    /// Each target's cherry model and whether it shows (hit ones hide).
+    fn cherries(&self) -> Vec<(usize, bool)> {
+        let Some(run) = &self.run else {
+            return Vec::new();
+        };
+        (0..self.targets.len())
+            .map(|i| (i, !run.hits.get(i).copied().unwrap_or(false)))
+            .collect()
+    }
+
+    /// The untouched targets' screen tags and map markers (green or red).
+    fn markers(&self) -> Vec<atv_ui::hud::peers::Peer> {
+        let Some(run) = self.run.as_ref().filter(|r| !r.finished()) else {
+            return Vec::new();
+        };
+        let red = run
+            .objective
+            .description
+            .to_ascii_lowercase()
+            .contains("red");
+        self.targets
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| !run.hits.get(*i).copied().unwrap_or(true))
+            .map(|(_, t)| atv_ui::hud::peers::Peer {
+                slot: if red { 0 } else { 2 },
+                name: "Target".into(),
+                position: [t.position[0], t.position[1] - 7., t.position[2]],
+                stale: false,
+            })
+            .collect()
+    }
+
+    fn take_sounds(&mut self) -> Vec<&'static str> {
+        std::mem::take(&mut self.sounds)
     }
 
     /// The HUD panel.
@@ -602,6 +703,8 @@ struct World {
     autodrive: Option<replay::Script>,
     /// A mini-game's scene over the Freeride archive (King of the Hills).
     game_scene: Option<(String, String)>,
+    /// A Freestyle objective's OB archive and target TOY stem.
+    objective: Option<(String, Option<String>)>,
 }
 
 /// Ride prefetch (`?prefetch=off` turns it off for load-time measurement).
@@ -693,6 +796,7 @@ async fn prepare(
         sound,
         autodrive,
         game_scene,
+        objective,
     } = world;
     // Every archive the ride reads downloads in parallel (game.js prefetchRide).
     if ride && PREFETCH.load(std::sync::atomic::Ordering::Relaxed) {
@@ -723,6 +827,7 @@ async fn prepare(
             sky_smooth: graphics.sky_smooth,
             race: race.map(|r| r.course).unwrap_or_default(),
             game_scene,
+            objective,
         },
     )
     .await?;
@@ -1335,11 +1440,31 @@ impl App {
                     .map(|f| f.borrow().state.player_name.trim().to_string())
                     .filter(|n| !n.is_empty())
                     .unwrap_or_else(|| "Rider".into());
-                if let Some((summary, fame)) = session.update(&mut riding.ride, &player)
+                if let Some((summary, fame)) =
+                    session.update(&mut riding.ride, ready.venue.objective.as_ref(), &player)
                     && let Some(overlay) = &mut self.overlay
                 {
                     overlay.results.show_objective(summary);
                     overlay.offer_fame(atv_core::hall_of_fame::Watch::Freestyle(fame));
+                }
+                // The targets' cherries loop their motion; hit ones hide.
+                if let Some(objective) = &ready.venue.objective {
+                    let time = riding.ride.steps() as f32 * atv_game::ride::STEP;
+                    for (target, shown) in session.cherries() {
+                        let Some(Some(model)) = objective.models.get(target).copied() else {
+                            continue;
+                        };
+                        ready.scene.hide_model(model, !shown);
+                        if shown && let Some(matrix) = objective.cherry_matrix(target, time) {
+                            ready.scene.pose_model(&ready.gpu, model, &matrix);
+                        }
+                    }
+                }
+                let sounds = session.take_sounds();
+                if let Some(sound) = &mut riding.sound {
+                    for name in sounds {
+                        sound.one_shot(name);
+                    }
                 }
                 session.view()
             }
@@ -1519,6 +1644,12 @@ impl App {
                 })
                 .or(training_markers)
                 .or(game_markers)
+                .or_else(|| {
+                    self.objective
+                        .as_ref()
+                        .map(|o| o.markers())
+                        .filter(|m| !m.is_empty())
+                })
                 .or_else(|| self.hockey.as_ref().map(|h| h.markers()));
             let view_projection =
                 ready
@@ -1630,6 +1761,13 @@ impl App {
                     "timeLeft": o.run.as_ref().map(|r| r.time_left),
                     "score": o.run.as_ref().map(|r| r.score),
                     "progress": o.run.as_ref().map(|r| r.progress()),
+                    "outcome": o.run.as_ref().and_then(|r| r.outcome).map(|x| format!("{x:?}")),
+                    "message": o.run.as_ref().and_then(|r| r.messages.last().cloned()),
+                    "targets": o.targets,
+                    "hits": o.run.as_ref().map(|r| r.hits.clone()),
+                    "start": o.run.as_ref().and_then(|r| r.objective.start),
+                    "cherries": ready.venue.objective.as_ref()
+                        .map(|v| v.models.iter().filter(|m| m.is_some()).count()),
                 })),
                 "results": self.overlay.as_ref().filter(|o| o.results.shown)
                     .map(|o| o.results.buttons()),
@@ -3273,6 +3411,7 @@ impl ApplicationHandler<Message> for App {
             sound: options.sound,
             autodrive: options.autodrive,
             game_scene: None,
+            objective: None,
         };
         let future = async move {
             let gpu = open_gpu(window, display).await?;
@@ -4655,6 +4794,16 @@ impl App {
             })
             .collect();
         front.state.store.courses = courses;
+        // The target runs ride each course's objective (OB) archive.
+        front.state.objective_courses = atv_core::freestyle::SERIES
+            .iter()
+            .flat_map(|s| s.courses.iter())
+            .filter(|c| {
+                atv_core::freestyle::objective_archive(c)
+                    .is_some_and(|path| content.manifest.record(&path).is_some())
+            })
+            .map(|c| c.to_string())
+            .collect();
         front.state.set_race_courses(race_courses, &view);
         self.front = Some(Rc::new(RefCell::new(front)));
         self.gpu = Some(gpu);
@@ -4960,6 +5109,9 @@ impl App {
                     recorded: false,
                     fame: None,
                     fame_start: None,
+                    targets: Vec::new(),
+                    sounds: Vec::new(),
+                    visit_clock: 0,
                 });
                 self.start_ride(environment, quad, rider, None, None);
             }
@@ -5406,6 +5558,23 @@ impl App {
                 (g.kind == atv_core::games::GameKind::KingOfTheHills
                     && self.content.as_ref().is_some_and(|c| c.has(&path)))
                 .then(|| (path, format!("{}kh", g.venue)))
+            }),
+            // A Freestyle objective reads the course's OB archive (its
+            // `.obj`, and a target run's TOY and cherries).
+            objective: self.objective.as_ref().and_then(|o| {
+                let path = atv_core::freestyle::objective_archive(&o.course)?;
+                self.content
+                    .as_ref()
+                    .is_some_and(|c| c.has(&path))
+                    .then(|| {
+                        let toy = atv_core::freestyle::course_objectives(&o.course)
+                            .and_then(|list| list.into_iter().nth(o.objective))
+                            .and_then(|obj| match obj.kind {
+                                atv_core::freestyle::Kind::CherryPick { toy, .. } => Some(toy),
+                                _ => None,
+                            });
+                        (path, toy)
+                    })
             }),
             selection: atv_game::ride::Selection { quad, rider },
             // The saved Garage appearance dresses the ride (game.js
@@ -6631,6 +6800,7 @@ impl App {
             sound: net.ride.sound,
             autodrive: None,
             game_scene: None,
+            objective: None,
         };
         let future = async move {
             let mut ready = match prepare(

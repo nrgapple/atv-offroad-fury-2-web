@@ -237,6 +237,8 @@ pub struct Trigger {
     pub position: [f32; 3],
     /// `Box`: the extents about `position` (read as half sizes).
     pub extents: [f32; 3],
+    /// `Radius`: a sphere trigger (Freestyle targets), 0 for a box.
+    pub radius: f32,
     pub one_time: bool,
     /// Each action's `ActionType` and its other keys (lowercase).
     pub actions: Vec<(String, BTreeMap<String, String>)>,
@@ -292,6 +294,11 @@ pub fn parse_triggers(toy: &Toy) -> Vec<Trigger> {
             name: toy.get(&section, "Name").unwrap_or_default().to_string(),
             position,
             extents,
+            radius: toy
+                .get(&section, "Radius")
+                .and_then(|r| r.trim().parse::<f32>().ok())
+                .filter(|r| r.is_finite() && *r > 0.)
+                .unwrap_or(0.),
             one_time: toy
                 .get(&section, "OneTimeOnly")
                 .is_some_and(|v| v.eq_ignore_ascii_case("t")),
