@@ -279,7 +279,7 @@ impl Front {
         crate::sound::sync_audio_session(&mut self.prefs);
         self.minimap = MinimapSettings::load(&self.settings);
         self.bindings = pause::controller::load_bindings(&mut self.settings);
-        self.state.profile = atv_ui::settings::load_profile(&self.settings);
+        self.state.load_profiles(&self.settings);
         self.state.loading = None;
         self.state.show(page, &self.view);
     }
@@ -360,6 +360,8 @@ impl Front {
                 "main"
                     | "single"
                     | "championship"
+                    | "profile"
+                    | "profile-view"
                     | "garage"
                     | "gear"
                     | "multiplayer"
@@ -767,6 +769,8 @@ impl Front {
                 | "main"
                 | "single"
                 | "championship"
+                | "profile"
+                | "profile-view"
                 | "multiplayer"
                 | "create-lobby"
                 | "join-lobby"
@@ -1200,6 +1204,8 @@ impl Front {
                 "main"
                     | "single"
                     | "championship"
+                    | "profile"
+                    | "profile-view"
                     | "garage"
                     | "gear"
                     | "multiplayer"
@@ -1388,6 +1394,12 @@ impl Front {
     }
 
     pub fn diagnostics(&self) -> serde_json::Value {
+        let profile_book = serde_json::json!({
+            "name": self.state.profile_name(),
+            "names": self.state.book.profiles.iter().map(|p| p.name.clone()).collect::<Vec<_>>(),
+            "details": self.state.profile_details(),
+            "heading": self.state.profile_heading(),
+        });
         serde_json::json!({
             "page": self.state.page,
             // The page (or menu panel) slide: [opacity, translateX px].
@@ -1425,6 +1437,7 @@ impl Front {
                 "stageQuad": self.state.stage_quad(),
             },
             "profile": self.state.profile_text(),
+            "profileBook": profile_book,
             "labels": self.state.choices().iter().map(|(_, l)| l).collect::<Vec<_>>(),
             "race": {
                 "courses": self.state.race_courses.len(), "course": self.state.race.course,

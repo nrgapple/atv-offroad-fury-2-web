@@ -1,4 +1,4 @@
-// The original Profile Store (research/PROFILE_STORE.md): Single Player →
+// The original Profile Store (research/PROFILE_STORE.md): Profile Editor →
 // Unlock Items. A new profile enters the original GIMMEPTS cheat, buys the
 // Patriot (250 Profile Points) on the ATVs page, is refused the 10,000-point
 // Ravage Talon Black, keeps the purchase after a reload and can then choose
@@ -51,14 +51,14 @@ try {
     await onPage(page, 'title');
     await page.mouse.click(8, 8);
     await key(page, 'Enter'); await onPage(page, 'main');
-    await key(page, 'Enter'); await onPage(page, 'single');
     // The catalogs load behind the title.
     await page.waitForFunction(() => {
       const s = JSON.parse(document.querySelector('#ui-state')?.textContent || '{}').front?.store;
       return s && s.atvs > 20 && s.courses > 8;
     }, null, { timeout: 60000 });
 
-    // Single Player → Unlock Items (touch/pointer).
+    // Main Menu → Profile Editor → Unlock Items (touch/pointer).
+    await clickRow(page, 'Profile Editor'); await onPage(page, 'profile');
     await clickRow(page, 'Unlock Items'); await onPage(page, 'store');
     let front = await read(page);
     assert.deepEqual(front.labels, ['ATVs', 'Rider Equipment', 'Games', 'Tracks', 'Cheats', 'Back']);
@@ -134,7 +134,8 @@ try {
 
     // The purchase is saved with the profile and survives a reload.
     const saved = JSON.parse(await page.evaluate(() => localStorage.getItem('fury-profile')));
-    assert.equal(saved.points, 1000);
+    assert.equal(saved.points, 750);
+    assert.equal(saved.earned, 1000);
     assert.equal(saved.store.spent, 250);
     assert.deepEqual(saved.store.atvs, [8]);
     await page.reload();

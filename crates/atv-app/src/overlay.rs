@@ -149,6 +149,9 @@ pub struct Overlay {
     pub frontend: bool,
     /// The ride is a race (Pause → Restart Race).
     pub race: bool,
+    /// The race's course id, the player's vehicle and whether it runs the
+    /// default laps: what the profile's course record keeps (`001f1e30`).
+    pub race_entry: Option<(String, u16, bool)>,
     /// Pause pages slide in as they open (frontend.js `animatePage`), and
     /// this frame's slide.
     transition: atv_ui::transition::PageTransition,
@@ -221,6 +224,7 @@ impl Overlay {
             backdrop: None,
             frontend: false,
             race: false,
+            race_entry: None,
             transition: Default::default(),
             menu_motion: None,
         }
@@ -843,7 +847,7 @@ impl Overlay {
                 // engine's frontend leaves for its menus.
                 self.results.can_quit = self.frontend || cfg!(target_arch = "wasm32");
                 if self.results.finish(frame) {
-                    self.credit_profile();
+                    self.credit_profile(frame);
                 }
             }
             // A race restarted in place starts without results.
@@ -872,21 +876,38 @@ impl Overlay {
         self.prepare_ms = started.elapsed().as_secs_f64() * 1000.;
     }
 
-    /// Credits the finished race to the saved profile (`001f1e30` →
-    /// `00323440`/`00322080`) once per race.
-    fn credit_profile(&mut self) {
-        use atv_ui::settings::{load_profile, save_profile};
+    /// Credits the finished race to the loaded profile (`001f1e30` →
+    /// `00323440`/`00322080`) once per race. With no profile loaded the
+    /// race earns nothing (`001f1e30`: a rider without a profile earns 0).
+    fn credit_profile(&mut self, frame: &atv_core::race::Frame) {
+        use atv_ui::settings::{load_profile, profile_loaded, save_profile};
         let Some((place, stunt, points)) = self.results.award else {
             return;
         };
+        if !profile_loaded(&self.settings) {
+            self.results.mark_no_profile();
+            return;
+        }
         let mut profile = load_profile(&self.settings);
         profile.record_race(place, points, stunt);
+        if let Some((course, quad, full_length)) = self.race_entry.clone()
+            && let Some(you) = frame.standings.iter().find(|s| s.player)
+        {
+            profile.record_course(&atv_core::profile::RaceResult {
+                course,
+                quad,
+                place,
+                best_lap: you.best,
+                total: you.time.filter(|_| !you.estimated),
+                full_length,
+            });
+        }
         if let Some((round, places)) = self.results.championship.clone()
             && let Some(series) = atv_core::championship::series(round.series)
         {
             let outcome = profile.record_championship(series, round.expert, &places);
             if let Some((_, reward, _)) = &outcome.finished {
-                profile.points = profile.points.saturating_add(*reward);
+                profile.credit(*reward);
             }
             self.results.championship_line =
                 Some(results::Results::describe_round(series, &outcome));

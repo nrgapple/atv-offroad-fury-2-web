@@ -14,6 +14,8 @@ use serde_json::{Value, json};
 #[path = "store.rs"]
 pub mod store;
 pub use store::{StoreView, store_page};
+pub mod profile_pages;
+use profile_pages::NO_PROFILE;
 
 /// What the application must do after a frontend input.
 #[derive(Clone, Debug, PartialEq)]
@@ -149,7 +151,15 @@ const GEAR_ROWS: [(&str, &str); 7] = [
 pub fn stepper(action: &str) -> bool {
     matches!(
         action,
-        "racetrack" | "racelaps" | "racecpu" | "racedifficulty" | "champdifficulty" | "storeitem"
+        "racetrack"
+            | "racelaps"
+            | "racecpu"
+            | "racedifficulty"
+            | "champdifficulty"
+            | "profileletter"
+            | "recordevent"
+            | "recordcourse"
+            | "storeitem"
     ) || GEAR_ROWS.iter().any(|(a, _)| *a == action)
 }
 
@@ -286,12 +296,20 @@ pub struct Frontend {
     pub room_code: String,
     /// The focused form field, by index in [`Frontend::fields`].
     pub focus: Option<usize>,
+    /// Android's soft keyboard is up over the lower screen: the form shows
+    /// only the focused field, in the top slot above it.
+    pub soft_keyboard: bool,
     /// The course select picks the room's course (Host Game → Select Track).
     pub hosting: bool,
     /// A form error (`#menu-notice` / the thrown message in frontend.js).
     pub notice: Option<String>,
-    /// The saved profile, shown on Single Player (PROFILE.md).
+    /// The loaded profile, shown on Single Player (PROFILE.md); a new
+    /// unnamed one with none loaded.
     pub profile: atv_core::profile::Profile,
+    /// The saved profiles and the loaded one (the Profile Editor's book).
+    pub book: atv_core::profile::ProfileBook,
+    /// The Profile Editor pages' working state.
+    pub profile_ui: profile_pages::ProfileUi,
     /// The Championship page lists Expert progress.
     pub champ_expert: bool,
     /// The garage ("garage") or course picker ("tracks") is open over a
@@ -357,9 +375,12 @@ impl Frontend {
             create_code: String::new(),
             room_code: String::new(),
             focus: None,
+            soft_keyboard: false,
             hosting: false,
             notice: None,
-            profile: crate::settings::load_profile(settings),
+            profile: Default::default(),
+            book: Default::default(),
+            profile_ui: Default::default(),
             champ_expert: false,
             room: None,
             lobby: None,
@@ -372,6 +393,7 @@ impl Frontend {
             shift: false,
             store: StoreView::default(),
         };
+        front.load_profiles(settings);
         front.player_name = front.saved["playerName"]
             .as_str()
             .filter(|n| valid_name(n))
@@ -418,6 +440,11 @@ impl Frontend {
         }
         if self.page == "championship" {
             self.choices = self.championship_choices();
+            self.selection = self.selection.min(self.choices.len().saturating_sub(1));
+            return;
+        }
+        if Self::is_profile_page(&self.page) {
+            self.choices = self.profile_choices();
             self.selection = self.selection.min(self.choices.len().saturating_sub(1));
             return;
         }
@@ -482,6 +509,17 @@ impl Frontend {
             .filter(|a| self.web || !matches!(a.as_str(), "devlog" | "downloads"))
             .map(|a| (a.clone(), label(a)))
             .collect();
+        // Main Menu → Profile Editor: the original's fourth row (Single
+        // Player, Multiplayer, Training Course, Profile Editor, Hall of Fame,
+        // Options), here after the ride modes and before Settings.
+        if page == "main" {
+            let at = ["freeride", "multiplayer", "single"]
+                .iter()
+                .find_map(|row| self.choices.iter().position(|(a, _)| a == row))
+                .map_or(0, |i| i + 1);
+            self.choices
+                .insert(at, ("profile".into(), "Profile Editor".into()));
+        }
         // Single Player → Championship, after Race.
         if page == "single" && !self.race_courses.is_empty() {
             let at = self
@@ -491,18 +529,6 @@ impl Frontend {
                 .map_or(self.choices.len(), |i| i + 1);
             self.choices
                 .insert(at, ("championship".into(), "Championship".into()));
-        }
-        // The original sells unlocks under Profile Editor → Unlock Items;
-        // the port has no Profile Editor page yet, so Unlock Items follows
-        // the Garage on Single Player.
-        if page == "single" {
-            let at = self
-                .choices
-                .iter()
-                .position(|(a, _)| a == "garage")
-                .map_or(self.choices.len(), |i| i + 1);
-            self.choices
-                .insert(at, ("store".into(), "Unlock Items".into()));
         }
         self.selection = self.selection.min(self.choices.len().saturating_sub(1));
     }
@@ -651,6 +677,12 @@ impl Frontend {
 
     /// A value row stepped by Left/Right, its arrows or a tap (+1).
     fn step(&mut self, action: &str, direction: i32, view: &Viewport, settings: &mut Settings) {
+        if matches!(action, "profileletter" | "recordevent" | "recordcourse") {
+            // Arrows step; a tap or Enter on the letter row adds its letter
+            // (`run`).
+            self.step_profile(action, direction, view);
+            return;
+        }
         match action {
             "champdifficulty" => {
                 self.champ_expert = !self.champ_expert;
@@ -758,10 +790,14 @@ impl Frontend {
     /// highlighted series on Championship.
     pub fn profile_text(&self) -> Option<String> {
         match self.page.as_str() {
-            "single" => Some(profile_line(&self.profile)),
+            "single" => Some(match self.profile_name() {
+                Some(name) => format!("{name} · {}", profile_line(&self.profile)),
+                // 0x431440: no profile, nothing is saved.
+                None => "No profile loaded · Remember, your progress is not being saved!".into(),
+            }),
             "championship" => self.series_line(),
             page if store_page(page) => self.store_text(),
-            _ => None,
+            _ => self.profile_status(),
         }
     }
 
@@ -844,6 +880,12 @@ impl Frontend {
             max_length: 24,
         };
         match self.page.as_str() {
+            "profile-name" => vec![Field {
+                action: "profile-name",
+                label: "Enter Player Profile Save File Name:",
+                value: self.profile_ui.name.clone(),
+                max_length: atv_core::profile::NAME_MAX,
+            }],
             "create-lobby" => vec![
                 name,
                 Field {
@@ -890,6 +932,10 @@ impl Frontend {
                     name.pop();
                 }
                 self.player_name = name;
+            }
+            "profile-name" => {
+                self.set_profile_name(text);
+                return;
             }
             "create-code" => self.create_code = code(text),
             "room-code" => self.room_code = code(text),
@@ -1115,6 +1161,14 @@ impl Frontend {
             // frontend.js: Back on the lobby page is Leave Game.
             return self.leave_lobby(view);
         }
+        if let Some(to) = self.profile_back() {
+            if self.page == "profile-confirm" {
+                self.profile_ui.confirm = None;
+            }
+            self.focus = None;
+            self.show(to, view);
+            return None;
+        }
         let to = match self.page.as_str() {
             _ if self.store_back().is_some() => self.store_back().unwrap_or("single").to_string(),
             "main" => "title".to_string(),
@@ -1170,11 +1224,18 @@ impl Frontend {
         if self.store_run(action, view, settings) {
             return None;
         }
+        if let Some(event) = self.profile_action(action, view, settings) {
+            return event;
+        }
         match action {
             "main" | "single" | "tracks" | "multiplayer" | "race" | "gear" => {
                 self.show(action, view)
             }
             "racestart" => return self.race_event(settings),
+            // Championship progress lives in the profile: it needs one loaded.
+            "championship" if self.book.current.is_none() => {
+                self.notice = Some(NO_PROFILE.into());
+            }
             "championship" => self.show(action, view),
             "champdifficulty" => {
                 self.champ_expert = !self.champ_expert;
@@ -1362,7 +1423,8 @@ impl Frontend {
                 return self.race_event(settings);
             }
             (
-                "race" | "gear" | "store-atv" | "store-gear" | "store-games" | "store-tracks",
+                "race" | "gear" | "profile-name" | "profile-records" | "store-atv" | "store-gear"
+                | "store-games" | "store-tracks",
                 "left" | "right",
             ) => {
                 // Only value rows step; Start Race, the link and Back do not.
@@ -1698,8 +1760,8 @@ impl Frontend {
                 let online = self.online_garage();
                 if !online && !self.quad_owned(quad) {
                     self.notice = Some(format!(
-                        "{} is locked. Unlock it in Single Player → Unlock Items.",
-                        self.vehicle_name(quad)
+                        "{} is locked. Unlock it in Profile Editor → Unlock Items.",
+                        self.quad_label(quad)
                     ));
                     return None;
                 }
@@ -1789,8 +1851,11 @@ impl Frontend {
                     .map(|(i, f)| (f.label.to_string(), f.value, self.focus == Some(i)))
                     .collect()
             },
+            typing: self.soft_keyboard && self.focus.is_some(),
             notice: self.notice.clone(),
             profile: self.profile_text(),
+            details: self.profile_details(),
+            heading: self.profile_heading(),
             lobby: self.lobby.clone(),
             motion: None,
             backdrop,
@@ -1851,7 +1916,7 @@ impl Frontend {
                 String::new()
             },
             list_scroll: self.list_scroll,
-            vehicle_label: self.vehicle_name(self.stage_quad()),
+            vehicle_label: self.quad_label(self.stage_quad()),
             rider: self.rider_id,
             catalog: if self.page == "garage" {
                 let online = self.online_garage();
@@ -2277,11 +2342,12 @@ mod tests {
         let mut front = Frontend::new(tracks(), &settings, true);
         store_catalogs(&mut front);
         front.quad_id = 22;
-        front.show("single", &view);
+        // Profile Editor → Unlock Items (the original's entry).
+        front.show("profile", &view);
         let at = front
             .choices()
             .iter()
-            .position(|(a, _)| a == "store")
+            .position(|(a, _)| a == "profile-store")
             .unwrap();
         front.selection = at;
         front.key("Enter", &view, &mut settings);
@@ -2352,6 +2418,16 @@ mod tests {
         front.quad_id = 19;
         assert!(front.enforce_unlocks(&mut settings).is_some());
         assert_eq!(front.quad_id, 22);
+        // View Profile → ATVs lists the collection without purchases.
+        front.view_collection("store-atv", &view);
+        front.key("ArrowRight", &view, &mut settings);
+        front.key("ArrowRight", &view, &mut settings);
+        assert_eq!(front.choices()[0].1, "ATV 3/3 · Locked: G Ride");
+        assert!(front.choices().iter().all(|(a, _)| a != "storebuy"));
+        front.key("Escape", &view, &mut settings);
+        assert_eq!(front.page, "profile-view");
+        // Percent Complete counts the Patriot over the original 201.
+        assert_eq!(front.profile.percent_complete(), 100. / 201.);
     }
 
     #[test]
@@ -2368,10 +2444,7 @@ mod tests {
             &view,
         );
         let choices: Vec<_> = front.choices().iter().map(|(a, _)| a.as_str()).collect();
-        assert_eq!(
-            &choices[..5],
-            ["tracks", "race", "championship", "garage", "store"]
-        );
+        assert_eq!(&choices[..4], ["tracks", "race", "championship", "garage"]);
         front.selection = 2;
         front.key("Enter", &view, &mut settings);
         assert_eq!(front.page, "championship");

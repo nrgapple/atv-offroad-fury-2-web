@@ -182,10 +182,18 @@ pub struct Screen {
     pub model_status: [Option<&'static str>; 2],
     /// Host/Join form fields: (label, value, focused).
     pub fields: Vec<(String, String, bool)>,
+    /// A soft keyboard covers the lower screen while a field has focus: the
+    /// form shows that field alone, where the first field sits.
+    pub typing: bool,
     /// A form error under the rows (`#menu-notice`).
     pub notice: Option<String>,
     /// Single Player: the saved profile's points and race record.
     pub profile: Option<String>,
+    /// Profile Editor pages: the panel's table (label, value; a line
+    /// without a value spans the panel).
+    pub details: Vec<(String, String)>,
+    /// A page title in place of the page's own (Load/Copy/Delete Profile).
+    pub heading: Option<String>,
     /// The Free Ride Lobby page's room code and status.
     pub lobby: Option<controller::Lobby>,
     /// The page's slide-in while it opens (crate::transition).
@@ -197,7 +205,14 @@ pub struct Screen {
 fn stage_page(page: &str) -> bool {
     matches!(
         page,
-        "main" | "single" | "multiplayer" | "championship" | "create-lobby" | "join-lobby"
+        "main"
+            | "single"
+            | "multiplayer"
+            | "championship"
+            | "create-lobby"
+            | "join-lobby"
+            | "profile"
+            | "profile-view"
     ) || controller::store_page(page)
 }
 
@@ -447,6 +462,22 @@ fn page_element(view: &Viewport, s: &Screen) -> El {
     if m.portrait {
         style.grid_template_columns = vec![minmax(length(0.), fr(1.))];
         let stage = match page {
+            // Seven main rows and the six Profile Editor rows with its
+            // status line need more of the height than the others.
+            "main" => {
+                if h <= 640. {
+                    0.26
+                } else {
+                    0.36
+                }
+            }
+            "profile" | "profile-view" => {
+                if h <= 640. {
+                    0.2
+                } else {
+                    0.36
+                }
+            }
             page if stage_page(page) => {
                 if h <= 640. {
                     0.4
@@ -643,6 +674,13 @@ fn page_title(page: &str) -> &'static str {
         "store-games" => "Games",
         "store-tracks" => "Tracks",
         "store-cheats" => "Enter Cheats",
+        "profile" => "Profile Editor",
+        "profile-name" => "Profile Name Entry",
+        "profile-view" => "View Profile",
+        "profile-overview" => "Profile Overview",
+        "profile-trophies" => "Trophies",
+        "profile-records" => "Records",
+        "profile-slots" | "profile-confirm" => "Profile Editor",
         "gear" => "Rider Gear",
         "loading" => "Now Loading...",
         "settings" => "Settings",
@@ -705,7 +743,10 @@ fn heading(m: &Metrics, s: &Screen) -> El {
     })
     .paint(Paint::fill(fill))
     .content(Content::Text {
-        text: page_title(&s.page).into(),
+        text: s
+            .heading
+            .clone()
+            .unwrap_or_else(|| page_title(&s.page).into()),
         style,
         line_height: size * 1.05,
         wrap: false,
@@ -855,9 +896,98 @@ fn panel(m: &Metrics, s: &Screen, loading: bool) -> El {
             }
         }
         "loading" => panel = panel.child(loading_info(m, s)),
+        page if controller::profile_pages::DETAIL_PAGES.contains(&page) => {
+            panel = panel.child(details(m, s));
+        }
         _ => {}
     }
     panel
+}
+
+/// The Profile Editor pages' table on the silver panel (the original
+/// ProfileView pages' label/value rows).
+fn details(m: &Metrics, s: &Screen) -> El {
+    let size = if m.short {
+        15.
+    } else if m.portrait {
+        clamp(15., m.w * 0.04, 18.)
+    } else {
+        clamp(15., m.h * 0.026, 21.)
+    };
+    let mut table = El::new(Style {
+        padding: if m.portrait {
+            sides(6., 0., 4., 0.)
+        } else {
+            sides(clamp(8., m.h * 0.05, 48.), 0., 8., 0.)
+        },
+        max_size: Size {
+            width: length(640.),
+            height: auto(),
+        },
+        ..column(if m.short { 2. } else { 5. })
+    });
+    for (i, (label, value)) in s.details.iter().enumerate() {
+        let lead = i == 0 && !value.is_empty();
+        let label_style = TextStyle::new(
+            display(
+                size,
+                if value.is_empty() || lead { 800 } else { 700 },
+                false,
+            ),
+            Color::hex(if value.is_empty() || lead {
+                "#111"
+            } else {
+                "#3a3a3a"
+            }),
+        );
+        let wrap_text = |text: &str, style: TextStyle, grow: f32| {
+            El::new(Style {
+                flex_grow: grow,
+                flex_shrink: 1.,
+                min_size: Size {
+                    width: length(0.),
+                    height: auto(),
+                },
+                ..Default::default()
+            })
+            .content(Content::Text {
+                text: text.to_string(),
+                style,
+                line_height: size * 1.2,
+                wrap: true,
+            })
+        };
+        let mut line = El::new(Style {
+            align_items: AlignItems::FLEX_START,
+            padding: sides(2., 8., 2., 8.),
+            ..row(12.)
+        });
+        if !value.is_empty() {
+            line.paint.border = [0., 0., 1., 0.];
+            line.paint.border_color = Color::hex("#0000001f");
+            line.style.border = sides(0., 0., 1., 0.);
+        }
+        line = line.child(wrap_text(label, label_style, 1.));
+        if !value.is_empty() {
+            line = line.child(
+                El::new(Style {
+                    flex_shrink: 0.,
+                    max_size: Size {
+                        width: percent(0.55),
+                        height: auto(),
+                    },
+                    ..Default::default()
+                })
+                .content(Content::Ellipsis {
+                    text: value.clone(),
+                    style: TextStyle::new(display(size, 800, false), Color::hex("#111")),
+                    line_height: size * 1.2,
+                }),
+            );
+        }
+        table = table.child(line);
+    }
+    table
 }
 
 fn panel_logo(m: &Metrics, s: &Screen) -> Option<El> {
@@ -1211,20 +1341,36 @@ fn left(m: &Metrics, s: &Screen) -> El {
                 ));
             }
         }
-        page if matches!(page, "main" | "single" | "multiplayer" | "championship")
-            || controller::store_page(page) =>
+        page if matches!(
+            page,
+            "main"
+                | "single"
+                | "multiplayer"
+                | "championship"
+                | "profile"
+                | "profile-name"
+                | "profile-slots"
+                | "profile-confirm"
+                | "profile-view"
+                | "profile-overview"
+                | "profile-trophies"
+                | "profile-records"
+        ) || controller::store_page(page) =>
         {
-            if page == "store-cheats" {
+            if matches!(page, "profile-name" | "store-cheats") {
                 left = left.child(form(m, s));
             }
             let mut rows = El::new(column(2.));
             rows.style.flex_shrink = 0.;
             rows.style.padding = sides(0., if m.portrait { 0. } else { 8. }, 0., 0.);
+            // A page with nothing but Back (the Overview and Trophies)
+            // keeps Back as its row.
+            let only_back = s.choices.iter().all(|(a, _)| a == "back");
             for (index, (action, label)) in s.choices.iter().enumerate() {
-                if action == "back" {
+                if action == "back" && !only_back {
                     continue;
                 }
-                rows = rows.child(if action == "storeitem" {
+                rows = rows.child(if controller::stepper(action) {
                     stepper_row(m, s, index, label)
                 } else {
                     menu_row(m, s, index, action, label)
@@ -1238,22 +1384,14 @@ fn left(m: &Metrics, s: &Screen) -> El {
                         margin: margins(12., 0., 0., if m.portrait { 0. } else { 8. }),
                         ..Default::default()
                     })
-                    .child(
-                        El::new(Style {
-                            max_size: Size {
-                                width: length(m.w.min(460.)),
-                                height: auto(),
-                            },
-                            ..Default::default()
-                        })
-                        .content(Content::Text {
-                            text: profile.clone(),
-                            style: TextStyle::new(display(16., 700, false), Color::hex("#f1d84e"))
-                                .shadow(1., 2., 0., Color::hex("#000a")),
-                            line_height: 20.,
-                            wrap: true,
-                        }),
-                    ),
+                    // Wraps on narrow phones rather than running under Back.
+                    .content(Content::Text {
+                        text: profile.clone(),
+                        style: TextStyle::new(display(16., 700, false), Color::hex("#f1d84e"))
+                            .shadow(1., 2., 0., Color::hex("#000a")),
+                        line_height: 20.,
+                        wrap: true,
+                    }),
                 );
             }
             // `#menu-notice`, e.g. why a ride link could not open.
@@ -1540,6 +1678,9 @@ fn form(m: &Metrics, s: &Screen) -> El {
     fields.style.flex_shrink = 0.;
     fields.style.padding = sides(0., if m.portrait { 0. } else { 12. }, 0., 0.);
     for (index, (label, value, focused)) in s.fields.iter().enumerate() {
+        if s.typing && !focused {
+            continue;
+        }
         let mut field = El::new(column(6.));
         field = field.child(text(
             label.clone(),
@@ -2807,6 +2948,44 @@ mod tests {
         assert!((first.h - 48.).abs() < 0.5, "{first:?}");
         let back = hits.iter().find(|(_, id)| *id == BACK).unwrap().0;
         assert!(back.right() <= 1280. - 40.);
+    }
+
+    #[test]
+    fn a_soft_keyboard_leaves_the_focused_field_alone_in_the_top_slot() {
+        let view = Viewport {
+            width: 1280.,
+            height: 720.,
+            scale: 1.,
+            ..Default::default()
+        };
+        let mut fonts = Fonts::new();
+        let fields = |s: &Screen, fonts: &mut Fonts| {
+            let (mut list, mut hits) = (DisplayList::default(), Vec::new());
+            layout::render(&element(&view, s), fonts, 1280., 720., &mut list, &mut hits);
+            let mut fields: Vec<_> = hits
+                .into_iter()
+                .filter(|(_, id)| (FIELD..FIELD + 4).contains(id))
+                .collect();
+            fields.sort_by_key(|(_, id)| *id);
+            fields
+        };
+        let mut join = screen("join-lobby");
+        join.fields = vec![
+            ("Rider name".into(), "Rider".into(), false),
+            ("Lobby code".into(), "AB".into(), true),
+        ];
+        let form = fields(&join, &mut fonts);
+        assert_eq!(form.len(), 2);
+        join.typing = true;
+        let typing = fields(&join, &mut fonts);
+        // The code field keeps its id (taps still focus it) and takes the
+        // name field's place.
+        assert_eq!(typing.len(), 1);
+        assert_eq!(typing[0].1, FIELD + 1);
+        assert!(
+            (typing[0].0.y - form[0].0.y).abs() < 0.5,
+            "{typing:?} {form:?}"
+        );
     }
 
     #[test]

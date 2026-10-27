@@ -90,14 +90,14 @@ section is authoritative.
 | Water, weather, ambient | Recovered buoyancy kernel and dynamic heights, visible surfaces; weather/emitters from source TOY records with bounded GPU adaptations | `WATER.md`, `WEATHER.md`, `AMBIENT_EFFECTS.md`, `WHEEL_EFFECTS.md` |
 | Arlington train | Route, wheel motion, collision, sound and locomotive smoke connected | `TRAIN.md`, `TRAIN_CONTACT.md` |
 | HUD and minimap | Authored controller using original layout/fonts/atlases; GPS minimap is authored | `HUD.md`, `MINIMAP.md` |
-| Menus and UI | Browser-native screens driven by Rust menu logic; profiles, championships, unlocks and saves missing | `UI.md`, `MENU_SCREENS.md`, `DESIGN_SYSTEM.md` |
+| Menus and UI | Browser-native screens driven by Rust menu logic; Profile Editor and View Profile pages over a local profile book; Profile Store unlocks and memory-card UI missing | `UI.md`, `MENU_SCREENS.md`, `DESIGN_SYSTEM.md` |
 | Audio | Recovered VAG decoding, 21-song catalog/shuffle streamed as AAC with VAG fallback, Jukebox player, engine banks, impacts, train; SPU2 mixer/reverb not reproduced | `AUDIO.md` |
 | Racing | All 32 National-rules race courses plus the 16 original Enduro courses (gate races) and 3 Short Tracks; recovered CPU driver decisions (Normal/Expert, jump preload, track-edge and cheat flags) inside authored race rules | `RACING.md` |
 | Multiplayer | Authored four-player Freeride through the Rust relay; authored rider contacts; no split-screen or original protocol | `MULTIPLAYER.md`, `MULTIPLAYER_ORIGINAL.md`, `SECURITY.md` |
 | Motorcycles | Riding controller recovered component by component from MX vs. ATV Unleashed (steer/bank, tires/suspension, engine/clutch, wheelie/stoppie, air control, preload, flips, wreck rules) through authored terrain/surface/input adapters; native whole-step parity unmeasured; Single Player only | `MOTORCYCLES.md` |
 | Crash effects | Optional authored presentation layer (Crazy/Gorn); enhancement-isolation checks show it leaves the simulation unchanged | `CRASH_EFFECTS.md` |
 | Input | Remappable keyboard/controller bindings; one-handed and two-thumb touch are authored adaptations | `CONTROLS.md`, `TOUCH.md` |
-| Progression and saves | Recovered race Profile Points award and racing championships (Am/Pro Enduro, Nationals and Supercross: rounds, 7/4/2/1/0 points, advance rule, trophies, rewards, unlocks) saved in one implicit local profile; the original Profile Store (Unlock Items: ATVs, gear, courses, games, cheats) with Single Player unlock gating and the cheat-opened Short Tracks championship; original profile screens, Freestyle championships, Training rewards and memory-card saves missing. Garage selections and settings persist locally | `PROFILE.md`, `CHAMPIONSHIPS.md`, `PROFILE_STORE.md` |
+| Progression and saves | Recovered race Profile Points award, per-course race record and racing championships (Am/Pro Enduro, Nationals and Supercross: rounds, 7/4/2/1/0 points, advance rule, trophies, rewards, unlocks); up to four named local profiles (the old implicit save migrates to PLAYER1) with the original Profile Editor (create, load, copy, delete) and View Profile (Overview, Trophies, Records); the original Profile Store (Unlock Items: ATVs, gear, courses, games, cheats) with Single Player unlock gating and the cheat-opened Short Tracks championship; jump/combo records, Freestyle championships, Training rewards and memory-card UI missing. Garage selections and settings persist locally | `PROFILE.md`, `CHAMPIONSHIPS.md`, `PROFILE_STORE.md` |
 
 ## Build and test
 
@@ -158,11 +158,11 @@ the worktree's `target/`; keep bulk output on the SSD.
 
 - Whole-game parity is unverified: no PS2 hardware or deterministic full replay
   comparison exists. Trigonometry and VU arithmetic use host approximations.
-- Original profile screens, Freestyle championships, Training Course rewards,
-  memory-card saves and split-screen are missing; races, championships and
-  Profile Store unlocks save to one implicit local profile, and Unlock Items
-  sits on Single Player until a Profile Editor page exists (`PROFILE.md`,
-  `CHAMPIONSHIPS.md`, `PROFILE_STORE.md`).
+- Freestyle championships, Training Course rewards, jump/combo and
+  Freestyle profile records, memory-card UI and split-screen are missing;
+  races, championships and Profile Store unlocks save to the loaded profile
+  of a local four-profile book (`PROFILE.md`, `CHAMPIONSHIPS.md`,
+  `PROFILE_STORE.md`).
 - Race rules are authored around recovered start slots, track window and
   finish-gate laps; firework triggers and points are open (`RACING.md`).
   Enduro CPUs drive the TDF route line, not the waypoint guidance

@@ -81,18 +81,21 @@ whether G-Ride is listed in the store.
 
 - `atv_core::store`: catalog parsers, ownership queries, purchases,
   Training reward, course unlock cascade and the cheats, with unit tests.
-  The profile keeps an additive `store` record (points spent, ATVs, gear,
-  courses, games and cheats; serde defaults, so old saves load as a new
-  profile's unlocks). Remaining points are lifetime points minus spent.
-- Single Player → **Unlock Items** (authored location: the port has no
-  Profile Editor page yet; move it there once it exists). Pages: ATVs,
+  The loaded profile keeps an additive `store` record (points spent, ATVs,
+  gear, courses, games and cheats; serde defaults, so old saves load as a
+  new profile's unlocks). Purchases spend the profile's `points`
+  (Remaining) and never `earned`; GIMMEPTS credits both.
+- Main Menu → Profile Editor → **Unlock Items** (the original's entry; it
+  needs a loaded profile, else the No Profile Alert text). Pages: ATVs,
   Rider Equipment (Switch Equipment: Helmet, Jersey, Gloves, Goggles,
   Boots), Games, Tracks (Switch Event through the nine event lists) and
   Cheats (a text field and Enter). Each item page shows the item with
   Locked/Unlocked, Purchase Item while locked, the "Point Cost:" and
   "Current Profile Points:" readout, and works with keyboard (Left/Right
   steps items), controller and touch. The ATV page shows the browsed ATV
-  on the stage.
+  on the stage. View Profile → ATVs, Rider Equipment and Games show the
+  same pages without Purchase Item, and Percent Complete counts unlocked
+  items over the original total of 201 (`PROFILE.md`).
 - **Authored messages:** "Unlocked <item>!", "Not enough Profile Points:
   … costs N." (the original only plays an error sound), and "To unlock this
   item... Complete the Training Course." for the Training items.

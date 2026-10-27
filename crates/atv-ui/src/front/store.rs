@@ -27,6 +27,9 @@ pub struct StoreView {
     pub item: usize,
     /// Unlock Items → Cheats: the code being typed.
     pub cheat: String,
+    /// View Profile's ATVs, Rider Equipment and Games: the same pages
+    /// without Purchase Item.
+    pub viewing: bool,
 }
 
 /// One item on a store page.
@@ -111,6 +114,15 @@ impl Frontend {
         }
     }
 
+    /// View Profile → ATVs, Rider Equipment or Games (PAGE24): the
+    /// collection, owned and locked, without purchases.
+    pub(super) fn view_collection(&mut self, page: &str, view: &Viewport) {
+        self.store.item = 0;
+        self.store.section = 0;
+        self.store.viewing = true;
+        self.show(page, view);
+    }
+
     /// The store page's rows.
     pub(super) fn store_choices(&self) -> Vec<(String, String)> {
         let row = |a: &str, l: &str| (a.to_string(), l.to_string());
@@ -143,7 +155,7 @@ impl Frontend {
                             item.name
                         ),
                     ));
-                    if !item.owned {
+                    if !item.owned && !self.store.viewing {
                         rows.push(row("storebuy", "Purchase Item"));
                     }
                 } else {
@@ -193,11 +205,12 @@ impl Frontend {
     }
 
     /// Opens a store page on its first item.
-    pub(super) fn open_store(&mut self, page: &str, view: &Viewport) {
+    pub(super) fn show_store(&mut self, page: &str, view: &Viewport) {
         if page != self.page {
             self.store.item = 0;
             self.store.section = 0;
         }
+        self.store.viewing = false;
         self.store.cheat.clear();
         self.show(page, view);
     }
@@ -263,7 +276,7 @@ impl Frontend {
         };
         self.notice = Some(match result {
             Purchase::Bought { .. } => {
-                crate::settings::save_profile(settings, &self.profile);
+                self.save_store(settings);
                 format!("Unlocked {name}!")
             }
             Purchase::AlreadyOwned => format!("{name} is already unlocked."),
@@ -289,7 +302,7 @@ impl Frontend {
                     "BRINGIT" => self.race.cheats.1 = true,
                     _ => {}
                 }
-                crate::settings::save_profile(settings, &self.profile);
+                self.save_store(settings);
                 if matches!(
                     code,
                     "WIDESCRN" | "FLYPAPER" | "GETONUP" | "STOPCAM" | "SYNC30HZ"
@@ -312,7 +325,7 @@ impl Frontend {
         settings: &mut Settings,
     ) -> bool {
         match action {
-            _ if store_page(action) => self.open_store(action, view),
+            _ if store_page(action) => self.show_store(action, view),
             "storeitem" => self.store_step(1, view),
             "storebuy" => self.store_buy(view, settings),
             "storeswitch" => self.store_switch(view),
@@ -325,10 +338,21 @@ impl Frontend {
     /// The page Back returns to from a store page.
     pub(super) fn store_back(&self) -> Option<&'static str> {
         match self.page.as_str() {
-            "store" => Some("single"),
+            "store" => Some("profile"),
+            _ if self.store.viewing => Some("profile-view"),
             p if store_page(p) => Some("store"),
             _ => None,
         }
+    }
+
+    /// Saves the loaded profile's purchases into the profile book.
+    pub(super) fn save_store(&mut self, settings: &mut Settings) {
+        if let Some(current) = self.book.current_mut() {
+            let name = std::mem::take(&mut current.name);
+            *current = self.profile.clone();
+            current.name = name;
+        }
+        crate::settings::save_book(settings, &self.book);
     }
 
     /// The ATV the stage shows: the browsed store ATV on its page.
@@ -375,11 +399,11 @@ impl Frontend {
     pub(super) fn enforce_unlocks(&mut self, settings: &mut Settings) -> Option<String> {
         let mut changed = None;
         if !self.quad_owned(self.quad_id) {
-            let from = self.vehicle_name(self.quad_id);
+            let from = self.quad_label(self.quad_id);
             self.quad_id = self.default_quad();
             changed = Some(format!(
                 "{from} is locked: riding the {}. Unlock ATVs in Unlock Items.",
-                self.vehicle_name(self.quad_id)
+                self.quad_label(self.quad_id)
             ));
         }
         for slot in 0..self.appearance.gear.len() {
@@ -394,7 +418,7 @@ impl Frontend {
         changed
     }
 
-    pub(super) fn vehicle_name(&self, quad: u16) -> String {
+    pub(super) fn quad_label(&self, quad: u16) -> String {
         self.catalog
             .iter()
             .find(|v| v.id == quad)

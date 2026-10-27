@@ -13,8 +13,9 @@
 //!   subtracts the cost from the remaining points only when the result stays
 //!   at or above zero, marks the item owned and shows the new remaining
 //!   points; short of points it plays the error sound and changes nothing.
-//!   Earned points (`00323440`) add to both the lifetime and the remaining
-//!   totals, so the port keeps lifetime points and the points spent.
+//!   Earned points (`00323440`) add to both the lifetime (`earned`) and the
+//!   remaining (`points`) totals; the store spends `points` only and keeps
+//!   the total spent.
 //! - Not for sale (`002f73d0`, `002f8510`): the four coloured Ravage Talons
 //!   and the matching ATV2 helmets, jerseys, sleeves and pants, the Training
 //!   Course reward (`0021f440`).
@@ -184,7 +185,7 @@ pub fn parse_courses(bytes: &[u8]) -> crate::Result<Vec<CourseList>> {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Unlocks {
-    /// Profile Points spent in the store (remaining = earned - spent).
+    /// Profile Points spent in the store (a record; `points` is what remains).
     pub spent: i64,
     /// ATVs bought or earned, by in-game id.
     pub atvs: Vec<u16>,
@@ -200,6 +201,14 @@ pub struct Unlocks {
 }
 
 impl Unlocks {
+    /// Items unlocked one by one (each `00323a00` step of +0x6c1).
+    pub fn unlocked_count(&self) -> usize {
+        self.atvs.len()
+            + self.gear.values().map(Vec::len).sum::<usize>()
+            + self.courses.values().map(Vec::len).sum::<usize>()
+            + self.events.len()
+    }
+
     fn cheat(&self, code: &str) -> bool {
         self.cheats.iter().any(|c| c == code)
     }
@@ -207,7 +216,7 @@ impl Unlocks {
 
 /// Profile Points left to spend (the original's "remaining" total).
 pub fn remaining(profile: &Profile) -> i64 {
-    profile.points.saturating_sub(profile.store.spent)
+    profile.points
 }
 
 /// `002f73d0`: store indices 8-11, the coloured Talons from Training.
@@ -328,10 +337,12 @@ pub enum Purchase {
 
 /// `00323480`: spend `cost` when enough remains.
 fn spend(profile: &mut Profile, cost: i64) -> bool {
+    let cost = cost.max(0);
     if remaining(profile) - cost < 0 {
         return false;
     }
-    profile.store.spent += cost.max(0);
+    profile.points -= cost;
+    profile.store.spent += cost;
     true
 }
 
@@ -512,7 +523,7 @@ pub fn enter_cheat(profile: &mut Profile, code: &str) -> Option<(&'static str, &
     };
     match code {
         // 00323440 adds to the lifetime and the remaining totals.
-        "GIMMEPTS" => profile.points = profile.points.saturating_add(1000),
+        "GIMMEPTS" => profile.credit(1000),
         "IGIVEUP" => {
             for c in EVERYTHING {
                 add(&mut profile.store.cheats, c.to_string());
@@ -642,7 +653,7 @@ mod tests {
         assert_eq!(remaining(&p), 200);
         p.points += 50;
         assert_eq!(buy_atv(&mut p, &atvs, 2), Purchase::Bought { cost: 250 });
-        assert_eq!((remaining(&p), p.points), (0, 250));
+        assert_eq!((remaining(&p), p.store.spent), (0, 250));
         assert!(atv_owned(&atvs, 8, &p));
         assert_eq!(buy_atv(&mut p, &atvs, 2), Purchase::AlreadyOwned);
         assert_eq!(buy_atv(&mut p, &atvs, 0), Purchase::AlreadyOwned);
@@ -705,7 +716,7 @@ mod tests {
         );
         assert!(course_owned(&lists, 9, 3, &p));
         assert_eq!(buy_event(&mut p, 9), Purchase::Insufficient { cost: 500 });
-        p.points += 1000;
+        p.credit(1000);
         assert_eq!(buy_event(&mut p, 9), Purchase::Bought { cost: 500 });
         assert!(event_open(9, &p));
         assert_eq!(buy_event(&mut p, 10), Purchase::AlreadyOwned);

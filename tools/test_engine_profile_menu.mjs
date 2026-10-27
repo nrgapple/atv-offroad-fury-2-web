@@ -1,6 +1,7 @@
-// Single Player shows the saved profile (research/PROFILE.md): the Profile
-// Points and race record that races credit to `fury-profile`, and a new
-// profile when the record is missing or unreadable.
+// Single Player shows the loaded profile (research/PROFILE.md): its name and
+// the Profile Points and race record that races credit to `fury-profile`
+// (an older single save migrates to the loaded PLAYER1), and a new profile
+// when the record is missing or unreadable.
 import assert from 'node:assert/strict';
 import { assertNoErrors, launch, newPage, nextFrames, optionalScreenshot, url } from './browser/harness.mjs';
 
@@ -11,8 +12,8 @@ async function key(page, code) { await page.keyboard.down(code); await nextFrame
 const browser = await launch();
 try {
   for (const [saved, expected] of [
-    [JSON.stringify({ points: 137, races: 6, wins: 1, best_stunt: 4200 }), 'Profile Points 137 · 6 races · 1 win'],
-    ['not json', 'Profile Points 0 · 0 races · 0 wins'],
+    [JSON.stringify({ points: 137, races: 6, wins: 1, best_stunt: 4200 }), 'PLAYER1 · Profile Points 137 · 6 races · 1 win'],
+    ['not json', 'PLAYER1 · Profile Points 0 · 0 races · 0 wins'],
   ]) {
     const errors = [];
     const page = await newPage(browser, { viewport: { width: 1280, height: 720 } }, errors);
