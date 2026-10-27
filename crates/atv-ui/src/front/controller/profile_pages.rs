@@ -257,7 +257,7 @@ impl Frontend {
             ],
             // PAGE10 `HOF`: Event Type, the track and the difficulty.
             "hall-of-fame" => {
-                let groups = record_groups(&self.race_courses);
+                let groups = self.fame_groups();
                 let group = groups.get(self.profile_ui.fame_group);
                 let course = group.and_then(|(_, c)| c.get(self.profile_ui.fame_course));
                 vec![
@@ -286,7 +286,7 @@ impl Frontend {
                 ]
             }
             "profile-records" => {
-                let groups = record_groups(&self.race_courses);
+                let groups = self.fame_groups();
                 let group = groups.get(self.profile_ui.group);
                 let course = group.and_then(|(_, c)| c.get(self.profile_ui.course));
                 vec![
@@ -456,7 +456,10 @@ impl Frontend {
             line("Win Percentage:", format!("{:3.0}%", p.win_percentage())),
             line("Most Winning ATV:", self.vehicle_name(p.most_winning_atv())),
             line("Longest Jump:", feet(p.stunts.longest_jump)),
-            line("Most Stunt Points In An Objective:", UNMEASURED.into()),
+            line(
+                "Most Stunt Points In An Objective:",
+                p.best_objective().map_or(UNMEASURED.into(), grouped),
+            ),
             line("Most Combos:", grouped(i64::from(p.stunts.most_combos))),
             line("Most Points In One Jump:", grouped(p.stunts.most_points)),
             line("Highest Race Stunt Score:", grouped(p.best_stunt)),
@@ -465,13 +468,37 @@ impl Frontend {
 
     /// PAGE27-35: the course's record.
     fn records(&self, p: &Profile) -> Vec<(String, String)> {
-        let groups = record_groups(&self.race_courses);
+        let groups = self.fame_groups();
         let Some((group, courses)) = groups.get(self.profile_ui.group) else {
             return vec![("No race courses are loaded.".into(), String::new())];
         };
         let Some(id) = courses.get(self.profile_ui.course) else {
             return Vec::new();
         };
+        // PAGE33/34 ProfileView_StuntAm/StuntPro.
+        if let Some(series) = atv_core::freestyle::SERIES
+            .iter()
+            .find(|s| s.name == *group)
+        {
+            let key = atv_core::hall_of_fame::HallOfFame::freestyle_key(series.key, id);
+            let record = p.freestyle.get(&key).cloned().unwrap_or_default();
+            return vec![
+                (self.course_name(id), group.to_string()),
+                (
+                    "Most Combos:".into(),
+                    grouped(i64::from(record.most_combos)),
+                ),
+                (
+                    "Highest Stunt Score:".into(),
+                    grouped(record.stunts.first().copied().unwrap_or(0)),
+                ),
+                (
+                    "Highest Objective Score:".into(),
+                    grouped(record.objectives.first().copied().unwrap_or(0)),
+                ),
+                ("Longest Jump:".into(), feet(record.longest_jump())),
+            ];
+        }
         let record = p.courses.get(id).cloned().unwrap_or_default();
         let laps = if group.contains("Enduro") { 3 } else { 5 };
         vec![
@@ -491,26 +518,74 @@ impl Frontend {
         ]
     }
 
+    /// The Hall of Fame's event types: the race groups, then Amateur and
+    /// Pro Freestyle (their championship courses).
+    pub(super) fn fame_groups(&self) -> Vec<(&'static str, Vec<String>)> {
+        let mut groups = record_groups(&self.race_courses);
+        for series in &atv_core::freestyle::SERIES {
+            groups.push((
+                series.name,
+                series.courses.iter().map(|c| c.to_string()).collect(),
+            ));
+        }
+        groups
+    }
+
     /// PAGE10 `HOF`: the course's holders on the chosen difficulty.
     fn hall_of_fame(&self) -> Vec<(String, String)> {
         use atv_core::hall_of_fame::Entry;
-        let groups = record_groups(&self.race_courses);
+        let groups = self.fame_groups();
         let Some((group, courses)) = groups.get(self.profile_ui.fame_group) else {
             return vec![("No race courses are loaded.".into(), String::new())];
         };
         let Some(id) = courses.get(self.profile_ui.fame_course) else {
             return Vec::new();
         };
-        let fame = self
-            .hall
-            .course(id, self.profile_ui.fame_expert)
-            .cloned()
-            .unwrap_or_default();
         // 002585c0 prints an empty holder as "<Nobody>".
         let who = |name: Option<&String>| {
             name.filter(|n| !n.is_empty())
                 .map_or("<Nobody>".to_string(), |n| n.clone())
         };
+        if let Some(series) = atv_core::freestyle::SERIES
+            .iter()
+            .find(|s| s.name == *group)
+        {
+            let fame = self
+                .hall
+                .freestyle_course(series.key, id)
+                .cloned()
+                .unwrap_or_default();
+            let scores = |title: &str, list: &[Entry<i64>]| {
+                let mut lines = vec![(title.to_string(), String::new())];
+                for i in 0..3 {
+                    let e = list.get(i);
+                    lines.push((
+                        format!("{}. {}", i + 1, who(e.map(|e| &e.name))),
+                        grouped(e.map_or(0, |e| e.value)),
+                    ));
+                }
+                lines
+            };
+            let mut lines = vec![(self.course_name(id), group.to_string())];
+            lines.extend(scores("Highest Objective Scores", &fame.objectives));
+            lines.extend(scores("Highest Stunt Scores", &fame.stunts));
+            let jump = fame.longest_jump.as_ref();
+            lines.push((
+                format!("Longest Jump: {}", who(jump.map(|e| &e.name))),
+                feet(jump.map_or(0., |e| e.value)),
+            ));
+            let combos = fame.most_combos.as_ref();
+            lines.push((
+                format!("Most Combos: {}", who(combos.map(|e| &e.name))),
+                format!("{} Combos", combos.map_or(0, |e| e.value)),
+            ));
+            return lines;
+        }
+        let fame = self
+            .hall
+            .course(id, self.profile_ui.fame_expert)
+            .cloned()
+            .unwrap_or_default();
         let times = |title: &str, list: &[Entry<f32>]| {
             let mut lines = vec![(title.to_string(), String::new())];
             for i in 0..3 {
@@ -727,22 +802,22 @@ impl Frontend {
                 }
             }
             "recordevent" => {
-                let n = record_groups(&self.race_courses).len();
+                let n = self.fame_groups().len();
                 self.profile_ui.group = wrap(self.profile_ui.group, n);
                 self.profile_ui.course = 0;
             }
             "recordcourse" => {
-                let groups = record_groups(&self.race_courses);
+                let groups = self.fame_groups();
                 let n = groups.get(self.profile_ui.group).map_or(0, |g| g.1.len());
                 self.profile_ui.course = wrap(self.profile_ui.course, n);
             }
             "fameevent" => {
-                let n = record_groups(&self.race_courses).len();
+                let n = self.fame_groups().len();
                 self.profile_ui.fame_group = wrap(self.profile_ui.fame_group, n);
                 self.profile_ui.fame_course = 0;
             }
             "famecourse" => {
-                let groups = record_groups(&self.race_courses);
+                let groups = self.fame_groups();
                 let n = groups
                     .get(self.profile_ui.fame_group)
                     .map_or(0, |g| g.1.len());
@@ -1081,5 +1156,41 @@ mod tests {
             ("1. <Nobody>".into(), "--:--.--".into())
         );
         assert_eq!(front.profile_back(), Some("main"));
+    }
+
+    #[test]
+    fn hall_of_fame_and_records_show_freestyle_courses() {
+        use atv_core::hall_of_fame::{FreestyleWatch, HallOfFame, Watch};
+        let view = view();
+        let mut settings = Settings::memory();
+        let mut hall = HallOfFame::default();
+        let mut run = FreestyleWatch::new("unspstunt", "env05", 3, None, None);
+        run.chain(true, 2, 600.);
+        run.jump(48.2);
+        run.finish(23_456.);
+        hall.commit_run(&Watch::Freestyle(run.clone()), "ACE");
+        crate::settings::save_hall_of_fame(&mut settings, &hall);
+        let mut profile = Profile::named("ACE");
+        profile.record_freestyle(&run.key, run.personal.clone().unwrap_or_default());
+        let mut front = Frontend::new(Vec::new(), &settings, true);
+        front.race_courses = vec!["sx01".into()];
+        front.book.profiles = vec![profile];
+        front.book.current = Some(0);
+        front.run("halloffame", &view, &mut settings);
+        let am = front
+            .fame_groups()
+            .iter()
+            .position(|(g, _)| *g == "Amateur Freestyle")
+            .unwrap();
+        for _ in 0..am {
+            front.step_profile("fameevent", 1, &view);
+        }
+        let details = front.profile_details();
+        assert_eq!(details[1].0, "Highest Objective Scores");
+        assert_eq!(details[2], ("1. ACE".into(), "23,456".into()));
+        assert_eq!(details[5].0, "Highest Stunt Scores");
+        assert_eq!(details[6], ("1. ACE".into(), "1,200".into()));
+        assert!(details.contains(&("Longest Jump: ACE".into(), "48 Feet".into())));
+        assert!(details.contains(&("Most Combos: ACE".into(), "2 Combos".into())));
     }
 }

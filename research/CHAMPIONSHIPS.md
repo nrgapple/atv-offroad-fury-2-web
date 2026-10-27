@@ -182,8 +182,10 @@ count when reached even if the run then times out (a reading of
 `002fb720`). The target runs are listed but **not playable**: their
 trigger TOYs and cherry models ship only in the OB archives, which the
 hosted runtime package does not include yet, so 24 of 36 (Amateur) and 18
-of 30 (Pro) objectives are reachable today: bronze at most. No Profile
-Points are paid per objective (none found); the standalone Single Player
+of 30 (Pro) objectives are reachable today: bronze at most. An objective's
+end pays score / 1000 plus its combo points (`002fce00`, see PROFILE.md
+"Freestyle records and Hall of Fame"; an earlier note said none was found);
+the standalone Single Player
 Freestyle objectives mode (`Freestyle Prep` → Objectives) is not offered.
 
 Checks: `atv-core` freestyle tests (parser, levels and time-out, combos,

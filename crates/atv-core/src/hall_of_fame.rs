@@ -41,9 +41,25 @@
 //!   Fastest 5 Lap Race Time"… — and "Enter your name for the Hall of
 //!   Fame:", nine bytes), and `00331f50` replaces the placeholder with the
 //!   entered name.
-//! - Not ported: the per-vehicle exclusions (+0x514 of 1 or 0x15), the
-//!   overall records the inserts also keep at the table's head, and the
-//!   Freestyle records (stunt and objective scores).
+//! - Freestyle types (2 Pro, 3 Amateur) keep one 0x90-byte record per
+//!   course: longest jump (+0x0, name +0x4, vehicle +0x10), the three
+//!   highest objective scores (+0x14, names +0x20, vehicles +0x3c), most
+//!   combos (+0x48) and the three highest stunt scores (+0x5c, one landed
+//!   chain's (int)(sum × count), names +0x68, vehicles +0x84). The
+//!   Freestyle jump hook `002fd7c0` → `00332e30` ("New Longest Jump"), the
+//!   chain hook `002fd350` → `00333130` ("New %sHighest Stunt Score!") and
+//!   `00333000` ("New Most Combos!"), and the objective's end `002fce00` →
+//!   `00332c50` ("New %sHighest Objective Score!", only for the 120 s
+//!   event) insert as the race ones do (larger values win). The profile's
+//!   Freestyle record (0x28 bytes) keeps its own: longest jump (`003251b0`,
+//!   no 40 ft minimum), three objective scores (`00325030`), most combos
+//!   (`00325330`) and three stunt scores (`00325410`), with "New Personal
+//!   %sHighest Objective Score!" and the rest; `00333360` lists Freestyle
+//!   records as objective scores, stunt scores, most combos, longest jump.
+//!   The objective's end also credits the run's stunt score / 1000 plus
+//!   the combo points to the profile (`002fce00` → `00323440`).
+//! - Not ported: the per-vehicle exclusions (+0x514 of 1 or 0x15) and the
+//!   overall records the inserts also keep at the table's head.
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -190,13 +206,85 @@ impl CourseFame {
     }
 }
 
-/// The Hall of Fame: every course's records on Normal and Expert. The host
-/// stores it apart from the profiles (it is not any one profile's).
+/// One Freestyle course's Hall of Fame (the 0x90-byte record).
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct FreestyleFame {
+    /// Highest objective scores, highest first (at most three).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub objectives: Vec<Entry<i64>>,
+    /// Highest stunt scores (one landed chain), highest first.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub stunts: Vec<Entry<i64>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub longest_jump: Option<Entry<f32>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub most_combos: Option<Entry<u32>>,
+}
+
+/// Inserts `score` into a highest-first top three when strictly higher
+/// than a kept score (or a free place remains); the 1-based rank.
+fn insert_score(list: &mut Vec<Entry<i64>>, score: i64, name: &str, vehicle: u16) -> Option<usize> {
+    let at = list
+        .iter()
+        .position(|e| score > e.value)
+        .unwrap_or(list.len());
+    if at >= 3 || (at == list.len() && score <= 0) {
+        return None;
+    }
+    list.insert(
+        at,
+        Entry {
+            value: score,
+            name: name.into(),
+            vehicle,
+        },
+    );
+    list.truncate(3);
+    Some(at + 1)
+}
+
+fn insert_plain_score(list: &mut Vec<i64>, score: i64) -> Option<usize> {
+    let at = list.iter().position(|s| score > *s).unwrap_or(list.len());
+    if at >= 3 || (at == list.len() && score <= 0) {
+        return None;
+    }
+    list.insert(at, score);
+    list.truncate(3);
+    Some(at + 1)
+}
+
+impl FreestyleFame {
+    /// `00333360` (type 2): the records `name` holds.
+    pub fn held_by(&self, name: &str) -> Vec<String> {
+        let mut out = Vec::new();
+        if let Some(i) = self.objectives.iter().position(|e| e.name == name) {
+            out.push(ranked(i + 1, "Highest Objective Score"));
+        }
+        if let Some(i) = self.stunts.iter().position(|e| e.name == name) {
+            out.push(ranked(i + 1, "Highest Stunt Score"));
+        }
+        if self.most_combos.as_ref().is_some_and(|e| e.name == name) {
+            out.push("Most Combos".into());
+        }
+        if self.longest_jump.as_ref().is_some_and(|e| e.name == name) {
+            out.push("Longest Jump".into());
+        }
+        out
+    }
+}
+
+/// The Hall of Fame: every course's records on Normal and Expert, and the
+/// Freestyle courses'. The host stores it apart from the profiles (it is
+/// not any one profile's).
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct HallOfFame {
     /// By [`HallOfFame::key`].
     pub courses: BTreeMap<String, CourseFame>,
+    /// By [`HallOfFame::freestyle_key`].
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub freestyle: BTreeMap<String, FreestyleFame>,
 }
 
 impl HallOfFame {
@@ -212,6 +300,102 @@ impl HallOfFame {
 
     pub fn course(&self, course: &str, expert: bool) -> Option<&CourseFame> {
         self.courses.get(&Self::key(course, expert))
+    }
+
+    /// A Freestyle course's key: the championship series (Amateur and Pro
+    /// Freestyle are separate event types) and the course.
+    pub fn freestyle_key(series: &str, course: &str) -> String {
+        format!("{series}:{course}")
+    }
+
+    pub fn freestyle_course(&self, series: &str, course: &str) -> Option<&FreestyleFame> {
+        self.freestyle.get(&Self::freestyle_key(series, course))
+    }
+
+    /// Stores a Freestyle run's records under `name`, as [`HallOfFame::commit`].
+    pub fn commit_freestyle(&mut self, watch: &FreestyleWatch, name: &str) {
+        let name = clean_name(name);
+        let fame = self.freestyle.entry(watch.key.clone()).or_default();
+        for e in watch
+            .fame
+            .objectives
+            .iter()
+            .filter(|e| e.name == PLACEHOLDER)
+        {
+            insert_score(&mut fame.objectives, e.value, &name, e.vehicle);
+        }
+        for e in watch.fame.stunts.iter().filter(|e| e.name == PLACEHOLDER) {
+            insert_score(&mut fame.stunts, e.value, &name, e.vehicle);
+        }
+        if let Some(e) = watch
+            .fame
+            .longest_jump
+            .as_ref()
+            .filter(|e| e.name == PLACEHOLDER)
+        {
+            beat(&mut fame.longest_jump, e.value, &name, e.vehicle);
+        }
+        if let Some(e) = watch
+            .fame
+            .most_combos
+            .as_ref()
+            .filter(|e| e.name == PLACEHOLDER)
+        {
+            beat(&mut fame.most_combos, e.value, &name, e.vehicle);
+        }
+    }
+
+    /// The name entry renames what [`HallOfFame::commit_freestyle`] stored.
+    pub fn rename_freestyle(&mut self, watch: &FreestyleWatch, from: &str, to: &str) {
+        let (from, to) = (clean_name(from), clean_name(to));
+        let Some(fame) = self.freestyle.get_mut(&watch.key) else {
+            return;
+        };
+        let run = &watch.fame;
+        let placed = |list: &[Entry<i64>], e: &Entry<i64>| {
+            list.iter()
+                .any(|r| r.name == PLACEHOLDER && r.value == e.value && r.vehicle == e.vehicle)
+        };
+        for e in fame.objectives.iter_mut().filter(|e| e.name == from) {
+            if placed(&run.objectives, e) {
+                e.name = to.clone();
+            }
+        }
+        for e in fame.stunts.iter_mut().filter(|e| e.name == from) {
+            if placed(&run.stunts, e) {
+                e.name = to.clone();
+            }
+        }
+        if let (Some(e), Some(r)) = (&mut fame.longest_jump, &run.longest_jump)
+            && e.name == from
+            && r.name == PLACEHOLDER
+            && e.value == r.value
+        {
+            e.name = to.clone();
+        }
+        if let (Some(e), Some(r)) = (&mut fame.most_combos, &run.most_combos)
+            && e.name == from
+            && r.name == PLACEHOLDER
+            && e.value == r.value
+        {
+            e.name = to;
+        }
+    }
+
+    /// Stores a finished run's records under `name`.
+    pub fn commit_run(&mut self, watch: &Watch, name: &str) {
+        match watch {
+            Watch::Race(w) => self.commit(w, name),
+            Watch::Freestyle(w) => self.commit_freestyle(w, name),
+        }
+    }
+
+    /// Renames a run's records from `from` to `to`.
+    pub fn rename_run(&mut self, watch: &Watch, from: &str, to: &str) {
+        match watch {
+            Watch::Race(w) => self.rename(w, from, to),
+            Watch::Freestyle(w) => self.rename_freestyle(w, from, to),
+        }
     }
 
     /// Stores a finished race's records under `name` (`00331f50` names
@@ -352,6 +536,168 @@ pub fn clean_name(name: &str) -> String {
         crate::profile::DEFAULT_NAME.into()
     } else {
         name
+    }
+}
+
+/// A finished run whose records the name entry names.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Watch {
+    Race(RecordWatch),
+    Freestyle(FreestyleWatch),
+}
+
+impl Watch {
+    /// The records the placeholder holds: what the name entry lists.
+    pub fn broken(&self) -> Vec<String> {
+        match self {
+            Self::Race(w) => w.broken(),
+            Self::Freestyle(w) => w.fame.held_by(PLACEHOLDER),
+        }
+    }
+}
+
+/// The profile's record for one Freestyle course (the 0x28-byte record):
+/// what the "New Personal …" messages compare against.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct FreestyleRecord {
+    /// Longest jump in hundredths of a foot (finite, comparable).
+    pub longest_jump_cft: u32,
+    /// Highest objective scores and stunt scores, highest first.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub objectives: Vec<i64>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub stunts: Vec<i64>,
+    pub most_combos: u32,
+}
+
+impl FreestyleRecord {
+    pub fn longest_jump(&self) -> f32 {
+        self.longest_jump_cft as f32 / 100.
+    }
+}
+
+/// One Freestyle objective run's record keeping for the player.
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+pub struct FreestyleWatch {
+    /// The [`HallOfFame::freestyle_key`].
+    pub key: String,
+    pub vehicle: u16,
+    pub fame: FreestyleFame,
+    /// The loaded profile's record; `None` without a profile.
+    pub personal: Option<FreestyleRecord>,
+    /// Profile Points from combos: `n - 1` per landed chain of `n` > 1
+    /// (`002fd350` adds them to the award accumulator).
+    pub combo_points: i32,
+    run_best: f32,
+    #[serde(skip)]
+    messages: Vec<String>,
+}
+
+impl FreestyleWatch {
+    pub fn new(
+        series: &str,
+        course: &str,
+        vehicle: u16,
+        hall: Option<&HallOfFame>,
+        personal: Option<FreestyleRecord>,
+    ) -> Self {
+        Self {
+            key: HallOfFame::freestyle_key(series, course),
+            vehicle,
+            fame: hall
+                .and_then(|h| h.freestyle_course(series, course))
+                .cloned()
+                .unwrap_or_default(),
+            personal,
+            ..Default::default()
+        }
+    }
+
+    pub fn take_messages(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.messages)
+    }
+
+    /// `002fd7c0`: a settled jump.
+    pub fn jump(&mut self, feet: f32) {
+        if !feet.is_finite() || feet <= self.run_best {
+            return;
+        }
+        self.run_best = feet;
+        let fame = beat(&mut self.fame.longest_jump, feet, PLACEHOLDER, self.vehicle);
+        if fame {
+            self.messages
+                .push(format!("New Longest Jump {} Feet!", feet as i64));
+        }
+        if let Some(personal) = &mut self.personal
+            && feet > personal.longest_jump()
+        {
+            personal.longest_jump_cft = (feet * 100.) as u32;
+            if !fame {
+                self.messages
+                    .push(format!("New Personal Longest Jump {} Feet!", feet as i64));
+            }
+        }
+    }
+
+    /// `002fd350`: a finished chain; only a landed one counts.
+    pub fn chain(&mut self, success: bool, count: usize, sum: f32) {
+        if !success || count == 0 {
+            return;
+        }
+        let points = (sum * count as f32) as i64;
+        let count = count.min(u32::MAX as usize) as u32;
+        let stunt = insert_score(&mut self.fame.stunts, points, PLACEHOLDER, self.vehicle);
+        if let Some(rank) = stunt {
+            self.messages
+                .push(format!("New {}Highest Stunt Score!", ordinal(rank)));
+        }
+        if let Some(personal) = &mut self.personal
+            && let Some(rank) = insert_plain_score(&mut personal.stunts, points)
+            && stunt.is_none()
+        {
+            self.messages.push(format!(
+                "New Personal {}Highest Stunt Score!",
+                ordinal(rank)
+            ));
+        }
+        if count == 1 {
+            return;
+        }
+        self.combo_points = self.combo_points.saturating_add(count as i32 - 1);
+        let combos = beat(&mut self.fame.most_combos, count, PLACEHOLDER, self.vehicle);
+        if combos {
+            self.messages.push("New Most Combos!".into());
+        }
+        if let Some(personal) = &mut self.personal
+            && count > personal.most_combos
+        {
+            personal.most_combos = count;
+            if !combos {
+                self.messages.push("New Personal Most Combos!".into());
+            }
+        }
+    }
+
+    /// `002fce00`: the 120 s objective ended with `score`; the Profile
+    /// Points it earns (score / 1000 plus the combo points).
+    pub fn finish(&mut self, score: f32) -> i64 {
+        let score = score.max(0.) as i64;
+        let fame = insert_score(&mut self.fame.objectives, score, PLACEHOLDER, self.vehicle);
+        if let Some(rank) = fame {
+            self.messages
+                .push(format!("New {}Highest Objective Score!", ordinal(rank)));
+        }
+        if let Some(personal) = &mut self.personal
+            && let Some(rank) = insert_plain_score(&mut personal.objectives, score)
+            && fame.is_none()
+        {
+            self.messages.push(format!(
+                "New Personal {}Highest Objective Score!",
+                ordinal(rank)
+            ));
+        }
+        score / 1000 + i64::from(self.combo_points)
     }
 }
 
@@ -687,6 +1033,83 @@ mod tests {
             laps.iter().map(|e| e.name.as_str()).collect::<Vec<_>>(),
             ["ZED", "OLD", "rider-lo"]
         );
+    }
+
+    #[test]
+    fn freestyle_runs_keep_objective_and_stunt_scores() {
+        let mut hall = HallOfFame::default();
+        let mut w = FreestyleWatch::new("unspstunt", "env05", 2, Some(&hall), None);
+        w.jump(55.);
+        w.chain(true, 1, 800.);
+        w.chain(true, 3, 300.);
+        w.chain(false, 4, 900.);
+        assert_eq!(
+            w.take_messages(),
+            [
+                "New Longest Jump 55 Feet!",
+                "New Highest Stunt Score!",
+                "New Highest Stunt Score!",
+                "New Most Combos!"
+            ]
+        );
+        assert_eq!(w.combo_points, 2);
+        // 12,345 / 1000 + 2 combo points.
+        assert_eq!(w.finish(12_345.), 14);
+        assert_eq!(w.take_messages(), ["New Highest Objective Score!"]);
+        let watch = Watch::Freestyle(w.clone());
+        assert_eq!(
+            watch.broken(),
+            [
+                "Highest Objective Score",
+                // `00333360` lists a table's first rank held only.
+                "Highest Stunt Score",
+                "Most Combos",
+                "Longest Jump"
+            ]
+        );
+        hall.commit_run(&watch, "PLAYER1");
+        hall.rename_run(&watch, "PLAYER1", "ACE");
+        let fame = hall.freestyle_course("unspstunt", "env05").unwrap();
+        assert_eq!(fame.stunts[0].value, 900);
+        assert_eq!(fame.stunts[1].value, 800);
+        assert_eq!(fame.objectives[0].name, "ACE");
+        assert!(hall.freestyle_course("spstunt", "env05").is_none());
+        // A later run: below the Hall of Fame, above the personal record.
+        let personal = FreestyleRecord {
+            objectives: vec![5_000],
+            ..Default::default()
+        };
+        let mut next = FreestyleWatch::new("unspstunt", "env05", 2, Some(&hall), Some(personal));
+        next.finish(9_000.);
+        assert_eq!(
+            next.take_messages(),
+            ["New 2nd Highest Objective Score!"],
+            "the Hall of Fame suppresses the personal message"
+        );
+        let mut low = FreestyleWatch::new(
+            "unspstunt",
+            "env05",
+            2,
+            Some(&hall),
+            Some(FreestyleRecord::default()),
+        );
+        low.fame.objectives = (0..3)
+            .map(|i| Entry {
+                value: 50_000 - i,
+                name: "X".into(),
+                vehicle: 0,
+            })
+            .collect();
+        low.jump(30.);
+        assert_eq!(low.finish(100.), 0);
+        assert_eq!(
+            low.take_messages(),
+            [
+                "New Personal Longest Jump 30 Feet!",
+                "New Personal Highest Objective Score!"
+            ]
+        );
+        assert_eq!(low.personal.unwrap().longest_jump_cft, 3000);
     }
 
     #[test]
