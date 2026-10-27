@@ -494,16 +494,13 @@ impl Frontend {
         }
         // The original sells unlocks under Profile Editor → Unlock Items;
         // the port has no Profile Editor page yet, so Unlock Items follows
-        // Championship on Single Player.
+        // the Garage on Single Player.
         if page == "single" {
             let at = self
                 .choices
                 .iter()
-                .position(|(a, _)| a == "championship" || a == "race")
-                .map_or(self.choices.len(), |i| {
-                    let after = self.choices.iter().position(|(a, _)| a == "championship");
-                    after.unwrap_or(i) + 1
-                });
+                .position(|(a, _)| a == "garage")
+                .map_or(self.choices.len(), |i| i + 1);
             self.choices
                 .insert(at, ("store".into(), "Unlock Items".into()));
         }
@@ -1854,11 +1851,7 @@ impl Frontend {
                 String::new()
             },
             list_scroll: self.list_scroll,
-            vehicle_label: self
-                .catalog
-                .iter()
-                .find(|v| v.id == self.quad_id)
-                .map_or(format!("Vehicle {}", self.quad_id), |v| v.label.clone()),
+            vehicle_label: self.vehicle_name(self.stage_quad()),
             rider: self.rider_id,
             catalog: if self.page == "garage" {
                 let online = self.online_garage();
@@ -2316,11 +2309,11 @@ mod tests {
         assert!(
             front.choices()[0]
                 .1
-                .ends_with("Honda 400EX Yellow · Unlocked")
+                .ends_with("Unlocked: Honda 400EX Yellow")
         );
         front.key("ArrowRight", &view, &mut settings);
         assert_eq!(front.stage_quad(), 8);
-        assert_eq!(front.choices()[0].1, "ATV 2 of 3: Patriot · Locked");
+        assert_eq!(front.choices()[0].1, "ATV 2/3 · Locked: Patriot");
         assert_eq!(
             front.profile_text().as_deref(),
             Some("Point Cost: 250 · Current Profile Points: 1,000")
@@ -2377,7 +2370,7 @@ mod tests {
         let choices: Vec<_> = front.choices().iter().map(|(a, _)| a.as_str()).collect();
         assert_eq!(
             &choices[..5],
-            ["tracks", "race", "championship", "store", "garage"]
+            ["tracks", "race", "championship", "garage", "store"]
         );
         front.selection = 2;
         front.key("Enter", &view, &mut settings);

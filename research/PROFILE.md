@@ -53,8 +53,9 @@ tricks, so CPU rows read 0).
   `localStorage`, desktop settings file) and credited once when the results
   open. Single Player shows "Profile Points N · R races · W wins" under its
   rows (the original's "Current Profile Points:" readout lives on its
-  profile pages). Original profile creation, names, multiple profiles, the Profile
-  Store and memory-card saves remain missing. Championship progress is kept
+  profile pages). Original profile creation, names, multiple profiles and
+  memory-card saves remain missing. The Profile Store (Unlock Items), the
+  points spent and the profile's unlocks are in `PROFILE_STORE.md`. Championship progress is kept
   in the same record (`CHAMPIONSHIPS.md`).
 
 Checks: `atv-core` profile and race tests (table parsing, award rule,

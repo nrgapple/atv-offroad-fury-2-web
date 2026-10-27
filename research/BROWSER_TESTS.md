@@ -94,6 +94,10 @@ lines over 500 characters.
 - `base`, `url(path)`: `ATV_TEST_URL`, default `http://127.0.0.1:4173`.
 - `newPage`, `watchErrors`, `assertNoErrors`: page-exception (optionally console
   error) collection that fails the test.
+- `unlockStore(page)`, `UNLOCKED_PROFILE`: seeds a saved profile with the
+  original unlock cheats (`PROFILE_STORE.md`) so menu tests that pick ATVs,
+  gear or courses are not changed by Single Player gating; a test that saves
+  its own `fury-profile` keeps it.
 - `waitForGame`: waits for `window.atvTerrainStatus.ready` or the loading error,
   failing immediately with the status text. `gameState`, `waitForScreen`,
   `button`, `waitForAnimations`, `nextFrames`.

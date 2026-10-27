@@ -131,7 +131,7 @@ impl Frontend {
                     rows.push((
                         "storeitem".into(),
                         format!(
-                            "{} {} of {}: {} · {state}",
+                            "{} {}/{} · {state}: {}",
                             match self.page.as_str() {
                                 "store-atv" => "ATV",
                                 "store-games" => "Game",
