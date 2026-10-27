@@ -386,13 +386,18 @@ riders could miss and which stalled their progress:
   distance (observed in host Chromium: all four riders dropped from ~1,545ft
   to ~518ft between 1,700 and 2,400 frames). The native query `0017be80`
   searches only the window, so the rule follows it; how it walks alternate
-  sections internally was not traced. Open: on sx14 the CPUs and the race
-  path driver then leave the line just past checkpoint 57 (the junction where
-  both alternates rejoin, beside a stadium jump): they turn south from about
-  (322, 658) and stop near (316, 602) although the driver's route aim points
-  east along checkpoints 58–64. Without scene collision the driver steers east
-  in a core probe, so the turn likely comes from scene avoidance or the jump;
-  not yet resolved.
+  sections internally was not traced.
+- CPU avoidance and ramps (authored). sx14's main line climbs onto the
+  `sx14bridge` static object just past checkpoint 57. All eight flat
+  avoidance rays (`00252080`, 100ft, origin raised 1ft) meet its 11° approach
+  ramp about 36ft ahead, and the successive attenuation turned every CPU and
+  the race path driver 90° south, where they stalled. `00252080` itself tests
+  every STATICOBJECT CollisionObject (it skips only VEHICLE/RIDER bodies that
+  are not PHYSICSBODY; mask names from the registry at `0x44c570`), so the
+  exact build gives no reason the original CPUs drive over it; the ray height
+  (+0x3c8) and the CPU's requested direction were not traced further. The port
+  ignores a hit whose surface faces up (normal y ≥ 0.85) and rises against
+  the ray; walls, hay bales and flat ground met by a dipping ray still count.
 - Progress is the race distance along the racing line, so laps count when the
   furthest distance passes the finish gate. Cutting across the infield,
   teleporting or reversing cannot skip or re-count the course. Alternate lines
@@ -950,6 +955,21 @@ its line intersection `0012b6d0`, and RaceStatus reset `00247900` and update
   skips the best-lap update), and the rider finishes when the counter reaches
   the race's laps. A pass beside the gate (result 2) counts nothing, so that
   lap needs another circuit.
+- **Port deviation (authored, 2026-10-27): crossings slightly past the box
+  position.** The port's race distance is accumulated from window offsets,
+  and the box position is where the *main racing line* meets the gate line.
+  A rider off the line meets a skewed gate a little later on the route: on
+  sx03 every CPU's previous distance was 0.6ft past the box position when it
+  drove through the gate, so the literal [0, 125ft) test wrapped to a whole
+  lap and the lap never counted (CPUs ran on past 7,000ft; env01 and sx13 the
+  same). Once a rider's distance has reached the box position, a previous
+  distance up to 75ft (Track +0x38) past it now also counts. A grid just past
+  the gate (env01, 4ft) has not reached it, so the start is unaffected. How
+  native `0017be80` places an off-line rider along a skewed segment was not
+  traced; it may avoid the case without this allowance. Headless 1-lap,
+  3-CPU sweep of all 32 courses (seed 7, 150 s): all CPUs finish on 25 courses
+  (13 before this and the ramp rule); nat04/06/07 are longer than the window;
+  env04, env06, nat02 and sx11 still have CPUs looping off the line.
 - **Track flags (TDF tag 41, Track +0x30).** Reset `00247900` sets rider flag
   0x10000 for Track flag 4 and 0x20000 for flag 8. Flag 0x10000 turns the
   next gate crossing into a no-lap crossing that only clears it; flag 0x20000
