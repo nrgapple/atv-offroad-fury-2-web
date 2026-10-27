@@ -1363,6 +1363,8 @@ impl Overlay {
             })),
             "hud": {
                 "helpOpen": self.help_open,
+                // Tags and King of the Hills pills drawn last frame.
+                "tags": self.tags,
                 "meter": self.meter.is_some() && !self.minimap.settings.enabled,
                 "compact": self.toolbar_cache.as_ref().is_some_and(|(_, s, ..)| s.compact),
                 "minimap": {

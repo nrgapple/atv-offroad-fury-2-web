@@ -9,7 +9,7 @@
 use super::Viewport;
 use crate::{
     color::Color,
-    paint::{DisplayList, Item},
+    paint::{BoxPaint, DisplayList, Item, Rect},
     text::{Font, Fonts, Join, Shape, Stroke, TextStyle},
 };
 
@@ -35,6 +35,11 @@ pub struct Peer {
     /// The ATV's world position.
     pub position: [f32; 3],
     pub stale: bool,
+    /// King of the Hills' hill HUD (`QuadzillaHillScoreHud`, `002eac20`):
+    /// draw a `koh_pillbkg` pill with this text in the slot's colour
+    /// instead of a name tag, and only while the hill is on screen
+    /// (`002207e0` hides it otherwise).
+    pub pill: Option<String>,
 }
 
 /// Where a tag goes: screen position, whether it is pinned to the edge (the
@@ -118,6 +123,16 @@ pub fn paint_tags(
         let Some(marker) = screen_marker(peer.position, vp, view.width, view.height) else {
             continue;
         };
+        if let Some(text) = &peer.pill {
+            if !marker.edge {
+                // Kept whole on screen (a near hill projects above the top).
+                let x = marker.x.clamp(24., (view.width - 24.).max(24.));
+                let y = marker.y.clamp(37., (view.height - 6.).max(37.));
+                paint_pill(fonts, list, text, peer.slot, x, y);
+                drawn += 1;
+            }
+            continue;
+        }
         if marker.edge {
             edges += 1;
             if edges > MAX_EDGE_TAGS {
@@ -181,6 +196,33 @@ pub fn paint_tags(
     drawn
 }
 
+/// One hill pill: a rounded 30 x 31-unit plate (`002eac20` sizes the
+/// `koh_pillbkg` widget 30 x 31 with a 10 x 11 inset) tinted with the owner's
+/// colour (white unowned), centred on the hill, with the score to beat
+/// ("%d", `002df040`).
+fn paint_pill(fonts: &mut Fonts, list: &mut DisplayList, text: &str, slot: u8, x: f32, y: f32) {
+    let font = Font::display(16., 800, false);
+    let style = TextStyle::new(font, Color::hex("#111"));
+    let width = (fonts.measure(text, &style.font, 0.).width + 20.).max(30.);
+    let height = 31f32;
+    let rect = Rect {
+        x: x - width / 2.,
+        y: y - height,
+        w: width,
+        h: height,
+    };
+    list.push(Item::Box(BoxPaint {
+        rect,
+        radii: [height / 2.; 4],
+        fill: Some(color(slot).into()),
+        border: [2.; 4],
+        border_color: Color::hex("#111"),
+        ..Default::default()
+    }));
+    let text_width = fonts.measure(text, &style.font, 0.).width;
+    list.text(text, &style, x - text_width / 2., y - height / 2. + 6.);
+}
+
 /// `mapPeerMarker`: a rider's offset on the GPS map, clamped to 40% of its
 /// size; `heading` rotates with a heading-up map.
 pub fn map_marker(
@@ -223,6 +265,49 @@ mod tests {
         let m = screen_marker([5., -7., 0.], &vp, 200., 100.).unwrap();
         assert!(m.edge && (m.x - 184.).abs() < 1e-3);
         assert!(screen_marker([f32::NAN, 0., 0.], &vp, 200., 100.).is_none());
+    }
+
+    #[test]
+    fn hill_pills_draw_on_screen_only_with_the_score_to_beat() {
+        let mut vp = [0.; 16];
+        vp[0] = 1.;
+        vp[5] = 1.;
+        vp[10] = 1.;
+        vp[15] = 1.;
+        let hill = |x: f32, slot: u8| Peer {
+            slot,
+            name: "Hill 1".into(),
+            position: [x, -7., 0.],
+            stale: false,
+            pill: Some("1250".into()),
+        };
+        let view = Viewport {
+            width: 200.,
+            height: 100.,
+            ..Default::default()
+        };
+        let mut list = DisplayList::default();
+        let drawn = paint_tags(
+            &mut Fonts::new(),
+            &mut list,
+            &view,
+            &[hill(0., 1), hill(5., 9)],
+            [0.; 3],
+            &vp,
+        );
+        // The off-screen hill is hidden, not pinned to the edge.
+        assert_eq!(drawn, 1);
+        let fill = list.items.iter().find_map(|i| match i {
+            Item::Box(b) => b.fill.clone(),
+            _ => None,
+        });
+        assert_eq!(fill, Some(color(1).into()));
+        assert!(
+            list.items
+                .iter()
+                .any(|i| matches!(i, Item::Text { text, .. } if text == "1250"))
+        );
+        assert!(!list.items.iter().any(|i| matches!(i, Item::Shape { .. })));
     }
 
     #[test]

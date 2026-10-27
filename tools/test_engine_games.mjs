@@ -209,6 +209,11 @@ try {
   assert.equal(g.scores[0], 1);
   assert.equal(g.markers[0].score, 1500);
   assert.equal(g.notice, 'ATV 1 captured hill 1');
+  // The hill HUD (002eac20): a pill per hill on screen, never more than
+  // the five hills (off-screen hills are hidden, not pinned).
+  const hud = await page.evaluate(() => JSON.parse(document.querySelector('#ui-state').textContent).toolbar?.hud
+    ?? JSON.parse(document.querySelector('#ui-state').textContent).hud);
+  assert.ok(hud && hud.tags >= 1 && hud.tags <= 5, `hill pills drawn: ${JSON.stringify(hud)}`);
   await shot(page, 'koth-captured');
   await page.waitForTimeout(4000);
   await shot(page, 'koth-flag');
@@ -217,6 +222,8 @@ try {
   await key(page, 'ArrowDown');
   await key(page, 'Enter');
   g = await until(page, g => g.scores[0] === 0 && g.markers.every(m => m.owner === null), 20000);
+  await page.waitForTimeout(1500);
+  await shot(page, 'koth-restart-pills');
 
   // The real stunt path (`gameTest=hillride`): set on hill 1, the ATV is
   // launched across the hilltop at 40 ft/s (a 12 ft/s lip) and rides off it; a keyboard

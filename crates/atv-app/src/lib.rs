@@ -480,6 +480,7 @@ impl ObjectiveSession {
                 name: "Target".into(),
                 position: [t.position[0], t.position[1] - 7., t.position[2]],
                 stale: false,
+                pill: None,
             })
             .collect()
     }
@@ -1612,6 +1613,7 @@ impl App {
                         // screen_marker lifts tags 7 ft.
                         position: [x, y - 7., z],
                         stale: false,
+                        pill: None,
                     })
                     .collect::<Vec<_>>()
             });
@@ -1626,6 +1628,12 @@ impl App {
                             .map_or(if m.label == "Treasure" { 19 } else { 9 }, |o| {
                                 o.min(3) as u8
                             }),
+                        // King of the Hills draws its hills as score pills
+                        // (`002eac20`); treasures keep a tag.
+                        pill: m
+                            .label
+                            .starts_with("Hill")
+                            .then(|| format!("{}", m.score as i32)),
                         name: m.label,
                         position: [m.position[0], m.position[1] - 7., m.position[2]],
                         stale: false,
