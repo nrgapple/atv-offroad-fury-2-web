@@ -41,11 +41,15 @@ try {
   assert.ok(f.choices.includes('multiplayer'), 'Multiplayer is listed');
   assert.ok(f.choices.includes('freeride'), 'Arlington Free Ride is listed');
   // Settings opens over the frontend and Back closes it.
-  await key(page, 'ArrowDown'); await key(page, 'ArrowDown'); await key(page, 'ArrowDown'); await key(page, 'Enter');
+  // Profile Editor sits between the ride modes and Settings (the original's fourth row).
+  assert.equal(f.choices.indexOf('profile'), f.choices.indexOf('settings') - 1, f.choices.join());
+  for (let i = 0; i < f.choices.indexOf('settings'); i++) await key(page, 'ArrowDown');
+  await key(page, 'Enter');
   await wait(page, () => JSON.parse(document.querySelector('#ui-state').textContent).front.menu?.page === 'settings');
   await key(page, 'Escape');
   await wait(page, () => !JSON.parse(document.querySelector('#ui-state').textContent).front.menu);
-  await key(page, 'ArrowUp'); await key(page, 'ArrowUp'); await key(page, 'ArrowUp'); await key(page, 'Enter'); await onPage(page, 'single');
+  for (let i = 0; i < f.choices.indexOf('settings'); i++) await key(page, 'ArrowUp');
+  await key(page, 'Enter'); await onPage(page, 'single');
   assert.deepEqual((await front(page)).choices, ['tracks', 'race', 'championship', 'garage']);
   // Garage: Right steps the ATV, the rider switch toggles; both persist.
   await key(page, 'ArrowDown'); await key(page, 'ArrowDown'); await key(page, 'ArrowDown'); await key(page, 'Enter'); await onPage(page, 'garage');
