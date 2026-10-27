@@ -305,6 +305,7 @@ impl TagSession {
             name: "Ball".into(),
             position: [x, y - 6., z],
             stale: false,
+            pill: None,
         }]
     }
 

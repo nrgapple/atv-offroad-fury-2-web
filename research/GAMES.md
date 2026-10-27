@@ -162,9 +162,21 @@ game's end (`002d10d0`, `002210e0`).
 - **Start countdown.** The original runs the shared 3-2-1 start lights
   (Overlays.pb object 10); the port holds the ATV for 3 s with the number
   in its panel and the start beeps, not the light sprites.
-- **Hill HUD.** The original pills (`koh_pillbkg`, `002eafc0`) sit at each
-  visible hill's screen position in the owner's colour; the port's hill
-  tags do the same job with the port's tag style.
+- **Hill HUD** (`QuadzillaHillScoreHud`). `002eac20` builds one
+  `koh_pillbkg` widget per hill (30 x 31 with a 10 x 11 inset, white,
+  alpha 0x80) and one text per hill whose callback (`002df040`) prints
+  "%d" of the hill record's +4: the stunt score that took the hill, i.e.
+  the score to beat (`00220b50` stores it with the owner and the owner's
+  colour at +8). `002203d0` places each pill at the hill's position raised
+  12 ft; every frame `002207e0` projects it and shows the pill only when
+  it is on screen and a ray from the camera reaches it (`00169b60`),
+  hiding it otherwise (`002eb0b0`). The port draws a rounded pill in the
+  owner's colour (white unowned) with the score to beat ("0" before the
+  first capture) at the same raised point, only while it projects inside
+  the view (off-screen hills are hidden, not pinned to the edge like rider
+  tags), and keeps the hills on the minimap. Not ported: the occlusion
+  ray (a hill behind terrain still shows its pill) and the
+  `koh_pillbkg` artwork itself (a drawn pill stands in).
 - **Treasure wait flag.** During the 6 s wait the original sets rider flag
   0x40000 (meaning not traced); the port only hides the treasures.
 

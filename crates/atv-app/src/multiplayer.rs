@@ -1095,6 +1095,7 @@ impl Net {
                     name: (*names.get(peer)?).to_string(),
                     position: *position,
                     stale: *stale,
+                    pill: None,
                 })
             })
             .collect()
