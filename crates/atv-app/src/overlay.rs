@@ -917,8 +917,16 @@ impl Overlay {
                 hits.iter().map(|(r, _)| r.bottom()).fold(0., f32::max)
             }) + 8.;
             let mut list = DisplayList::default();
+            // The original 321 lamps replace the countdown digits when the
+            // course archive has their art.
+            let lamps = self.meter.as_ref().filter(|m| m.has_lamps());
+            let mut game = game.clone();
+            if let (Some(meter), Some(lights)) = (lamps, game.lights) {
+                meter.paint_lamps(&mut list, lights, view.width, view.height);
+                game.start = None;
+            }
             layout::render(
-                &atv_ui::hud::games::element(&view, game, top),
+                &atv_ui::hud::games::element(&view, &game, top),
                 &mut self.fonts,
                 view.width,
                 view.height,

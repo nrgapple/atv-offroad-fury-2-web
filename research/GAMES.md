@@ -159,9 +159,13 @@ game's end (`002d10d0`, `002210e0`).
 - **Trigger contact.** The original tests the ATV's collision body against
   the box; the port tests the ATV origin against the box grown by 3 ft
   (1.5 ft vertically). `Box` is read as half extents.
-- **Start countdown.** The original runs the shared 3-2-1 start lights
-  (Overlays.pb object 10); the port holds the ATV for 3 s with the number
-  in its panel and the start beeps, not the light sprites.
+- **Start countdown.** The original runs the shared 321 LIGHTS overlay
+  (Overlays.pb object 10, `002e79a0`/`002e81f0`). The port holds the ATV
+  for 3 s with the beeps and draws the race's original lamps from the
+  course archive: one more red lamp each second, green at GO for one second
+  (the panel's digits show only when the lamp art is missing). The 3 s
+  hold starts on the first red lamp, so the original's all-off step is not
+  shown.
 - **Hill HUD** (`QuadzillaHillScoreHud`). `002eac20` builds one
   `koh_pillbkg` widget per hill (30 x 31 with a 10 x 11 inset, white,
   alpha 0x80) and one text per hill whose callback (`002df040`) prints
