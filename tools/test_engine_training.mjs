@@ -210,7 +210,8 @@ try {
       t = await training(page);
       if (t.passed > 0 || t.failed > 0) break;
       assert.ok(Date.now() < deadline, `lesson ${lesson} ${JSON.stringify(t)}`);
-      if (!t.grounded) flown = true;
+      // The placement drop at the start is not the jump.
+      if (!t.grounded && t.speed > 20) flown = true;
       if (air.lean) await press('KeyQ', !t.grounded && t.pitch > -0.15);
       if (air.stunt) await press('KeyJ', !t.grounded && t.pitch > -0.05);
       if (air.preload) await press('Space', t.grounded && !flown);
