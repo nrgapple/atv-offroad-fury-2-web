@@ -841,6 +841,8 @@ async fn prepare(
         // Per-load sample, like game.js `Math.floor(Math.random() * 0x80000000)`.
         None => venue::WeatherChoice::Random(random::seed31()),
     };
+    // A mini-game's archive also carries its HUD art (`koh_pillbkg`).
+    let hud_game = game_scene.as_ref().map(|(archive, _)| archive.clone());
     let venue = venue::load_with(
         &content,
         &environment,
@@ -1016,7 +1018,14 @@ async fn prepare(
         None
     };
     let hud_assets = if riding.is_some() {
-        match atv_ui::hud::assets::load(&content, &environment, race.map(|r| r.course)).await {
+        match atv_ui::hud::assets::load(
+            &content,
+            &environment,
+            race.map(|r| r.course),
+            hud_game.as_deref(),
+        )
+        .await
+        {
             Ok(assets) => Some(assets),
             Err(error) => {
                 status(&format!("HUD resources unavailable: {error}"));

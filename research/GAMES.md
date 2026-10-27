@@ -180,16 +180,25 @@ game's end (`002d10d0`, `002210e0`).
   colour at +8). `002203d0` places each pill at the hill's position raised
   12 ft; every frame `002207e0` projects it and shows the pill only when
   it is on screen and a ray from the camera reaches it (`00169b60`),
-  hiding it otherwise (`002eb0b0`). The port draws a rounded pill in the
-  owner's colour (white unowned) with the score to beat ("0" before the
-  first capture) at the same raised point, only while it projects inside
+  hiding it otherwise (`002eb0b0`). `002eb0e0` refits the pill to its text
+  and recolours it: black (0) while unowned, else the owner's colour from
+  the HUD's table (+0x168); the text stays white (+0x178 = 0xffffff).
+  `koh_pillbkg.pst` (KH archives only, ScreenObject shader, clamped) is a
+  32 x 32 white left cap whose first 10 texels are the arc, which matches
+  the 10-texel inset. The port loads it from the game archive and draws a
+  left cap, a stretched middle and the cap turned round for the right end,
+  pre-tinted per colour with GS alpha doubled (0x80 opaque), white score
+  centred ("0" before the first capture), at the same raised point, only while it projects inside
   the view (off-screen hills are hidden, not pinned to the edge like rider
   tags), and keeps the hills on the minimap. The occlusion ray
   (`00169b60` on the world's terrain object) is ported as a terrain line
   of sight from the drawn camera to the pill point, sampled every half
   cell; scene objects do not block it (whether the original's ray tests
-  only the heightfield was read from the call, not traced). Not ported:
-  the `koh_pillbkg` artwork itself (a drawn pill stands in).
+  only the heightfield was read from the call, not traced). How the
+  widget's draw routine slices the texture was not traced; the 3-slice
+  reading follows the texture's shape and the constructor's 30 x 31 /
+  10 x 11 values, and the pill height stays the 31 units of the
+  constructor rather than `002eb0e0`'s text height − 9.
 - **Treasure wait flag.** During the 6 s wait the original sets rider flag
   0x40000 (meaning not traced); the port only hides the treasures.
 
