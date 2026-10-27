@@ -59,6 +59,8 @@ try {
   s = await settings(page);
   assert.equal(s.vegetationQuery, false); assert.equal(s.ecosystemCollisionOff, true);
   assert.equal(s.soundConfiguration, 'Mono');
+  // The streamed soundtrack folds too: its Web Audio graph routes Mono.
+  assert.equal(s.musicRoute, 'Mono');
   await page.keyboard.down('ArrowUp'); await nextFrames(page, 90); await page.keyboard.up('ArrowUp');
   if (shots) await page.screenshot({ path: `${shots}/game-settings-kph.png` });
   // Reloading keeps every choice.

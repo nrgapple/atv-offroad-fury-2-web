@@ -17,6 +17,8 @@ pub struct Meter {
     pub assets: OverlayAssets,
     /// Uploaded icon textures by name.
     pub images: HashMap<String, ImageId>,
+    /// King of the Hills' tinted `koh_pillbkg` copies, when loaded.
+    pub pills: Option<super::peers::PillArt>,
 }
 
 pub(super) struct Logical {
@@ -30,6 +32,7 @@ impl Meter {
         Self {
             assets,
             images: HashMap::new(),
+            pills: None,
         }
     }
 

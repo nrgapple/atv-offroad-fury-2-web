@@ -112,6 +112,36 @@ pub const COMPASS: [&str; 3] = ["compassbkg", "compassarrow", "radaricon_gate"];
 /// The radar racer icon; the player's copy is tinted red (`tinted`).
 pub const RACER: &str = "radaricon_racer";
 pub const RACER_PLAYER: &str = "radaricon_racer#255,0,0";
+/// King of the Hills' hill score pill (`002eac20`): only the KH game
+/// archives carry it.
+pub const PILL: &str = "koh_pillbkg";
+/// The compass icon each mode passes `002e68e0` (`002edf00`): a Freestyle
+/// target run's untouched cherries, King of the Hills' hills and Treasure
+/// Hunt's live treasures. Only that mode's archive carries its icon.
+pub const RADAR_TARGET: &str = "radaricon_target";
+pub const RADAR_HILL: &str = "radaricon_hill";
+pub const RADAR_FLAG: &str = "radaricon_flag";
+
+/// `<icon>#<slot>`: an icon tinted with a participant colour (`002e76e0`
+/// colours each hill by its owner's slot).
+pub fn tinted_name(icon: &str, slot: u8) -> String {
+    format!("{icon}#{slot}")
+}
+
+/// hud.js `tinted`: the icon multiplied by `color`, keeping its alpha.
+pub fn tinted(image: &HudImage, color: crate::color::Color) -> HudImage {
+    let mut rgba = image.rgba.clone();
+    for px in rgba.as_chunks_mut::<4>().0 {
+        px[0] = (f32::from(px[0]) * color.r).round() as u8;
+        px[1] = (f32::from(px[1]) * color.g).round() as u8;
+        px[2] = (f32::from(px[2]) * color.b).round() as u8;
+    }
+    HudImage {
+        width: image.width,
+        height: image.height,
+        rgba,
+    }
+}
 
 /// The section's original bytes (hud.js/frontend.js `document(name, section)`):
 /// Overlays.pb has a stray authoring note outside the sections.
@@ -144,8 +174,9 @@ pub fn section(bytes: &[u8], name: &str) -> Option<Section> {
 }
 
 /// Archives in the order the browser registers member names; the first
-/// archive holding a name wins. A race adds its course archive last.
-fn archives(environment: &str, race: Option<RaceVariant>) -> Vec<String> {
+/// archive holding a name wins. A race adds its course archive last; a
+/// mini-game adds its game archive (`E05_KH.RES`) after the overlays.
+fn archives(environment: &str, race: Option<RaceVariant>, game: Option<&str>) -> Vec<String> {
     let mut list = vec![
         "/STARTAPP.RES".to_string(),
         "/UI/RESOURCE/PAGEA/PAGE01.RES".to_string(),
@@ -155,6 +186,7 @@ fn archives(environment: &str, race: Option<RaceVariant>) -> Vec<String> {
         list.push(course.archive);
     }
     list.push("/OVERLAYS.RES".to_string());
+    list.extend(game.map(str::to_string));
     if let Some(variant) = race
         && let Ok(course) = atv_game::launch::race_resource(environment, variant)
     {
@@ -252,11 +284,12 @@ pub async fn load(
     content: &Content,
     environment: &str,
     race: Option<RaceVariant>,
+    game: Option<&str>,
 ) -> Result<OverlayAssets, String> {
     let mut opened = Opened {
         archives: Vec::new(),
     };
-    for path in archives(environment, race) {
+    for path in archives(environment, race, game) {
         if content.manifest.record(&path).is_some() {
             opened.archives.push(Archive::open(content, &path).await?);
         }
@@ -277,6 +310,27 @@ pub async fn load(
     let mut lamps = true;
     for name in LAMPS {
         lamps &= opened.image(&mut images, name).await?;
+    }
+    opened.image(&mut images, PILL).await?;
+    // Target runs and mini-games show the compass (Overlay Sets 5-7).
+    if game.is_some() {
+        for name in COMPASS
+            .into_iter()
+            .chain([RACER, RADAR_TARGET, RADAR_HILL, RADAR_FLAG])
+        {
+            opened.image(&mut images, name).await?;
+        }
+        if let Some(hill) = images.get(RADAR_HILL) {
+            let copies: Vec<_> = (0..4)
+                .map(|slot| {
+                    (
+                        tinted_name(RADAR_HILL, slot),
+                        tinted(hill, super::peers::color(slot)),
+                    )
+                })
+                .collect();
+            images.extend(copies);
+        }
     }
     let race = if let Some(variant) = race {
         match race_assets(
@@ -409,7 +463,7 @@ mod tests {
         let content =
             pollster::block_on(Content::open(atv_content::Store::Directory(dir.into()))).unwrap();
         let assets =
-            pollster::block_on(load(&content, "env01", Some(RaceVariant::National))).unwrap();
+            pollster::block_on(load(&content, "env01", Some(RaceVariant::National), None)).unwrap();
         let mut keys: Vec<_> = assets.speed.fields.iter().collect();
         keys.sort();
         println!("speed {keys:#?}");

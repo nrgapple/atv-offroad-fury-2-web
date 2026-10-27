@@ -177,7 +177,16 @@ runtime traces):
   2 ft bob); the cherries show only during a target run. The Overlay Set 5
   HUD shows TARGETS n/total, TIME and SCORE and a Compass with one
   `RadarIcon_Target` dot per untouched target (`002e68e0`, `002e77f0`,
-  `002e6e80`).
+  `002e6e80`). `002edf00` builds the compass per player with the
+  mode's icon (event type 2 → `RadarIcon_Target`, sized to the scene's
+  model count); `002ed910` shows it only for a target run (objective
+  mode 0) and refills it with `002e77f0`: every visible scene model whose
+  name starts `cherry`. A hit removes that cherry's icon (`002fab40` →
+  `002e78d0`). Icons are clamped to the 33 px rim like the riders
+  (`002e6e80`; only an Enduro gate is hidden outside it). The port draws
+  this compass at Overlay Set 5's 70,375 from the OB archive's
+  `compassbkg`/`compassarrow`/`radaricon_target`, one icon per untouched
+  target, heading-up as in Enduro (RACING.md).
 - **Menus.** In-game Overlays.pb `[Objectives Menu]` ("Select Objective",
   six objective rows with check icons and point-level sub-rows),
   `[Objective Results Menu]` and `[Objective Championship Results Menu]`

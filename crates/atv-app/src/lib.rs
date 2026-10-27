@@ -486,6 +486,24 @@ impl ObjectiveSession {
             .collect()
     }
 
+    /// A target run's untouched targets for its compass (`002e77f0`
+    /// lists the visible `cherry` models; a hit removes its icon,
+    /// `002fab40` → `002e78d0`). None outside a running target run.
+    fn compass_targets(&self) -> Option<Vec<[f32; 3]>> {
+        let run = self.run.as_ref().filter(|r| !r.finished())?;
+        if self.targets.is_empty() {
+            return None;
+        }
+        Some(
+            self.targets
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| !run.hits.get(*i).copied().unwrap_or(true))
+                .map(|(_, t)| t.position)
+                .collect(),
+        )
+    }
+
     /// The untouched targets' screen tags and map markers (green or red).
     fn markers(&self) -> Vec<atv_ui::hud::peers::Peer> {
         let Some(run) = self.run.as_ref().filter(|r| !r.finished()) else {
@@ -844,6 +862,12 @@ async fn prepare(
         // Per-load sample, like game.js `Math.floor(Math.random() * 0x80000000)`.
         None => venue::WeatherChoice::Random(random::seed31()),
     };
+    // A mini-game's or objective's archive also carries its HUD art
+    // (`koh_pillbkg`, the compass and its radar icon).
+    let hud_game = game_scene
+        .as_ref()
+        .map(|(archive, _)| archive.clone())
+        .or_else(|| objective.as_ref().map(|(archive, _)| archive.clone()));
     let venue = venue::load_with(
         &content,
         &environment,
@@ -1019,7 +1043,14 @@ async fn prepare(
         None
     };
     let hud_assets = if riding.is_some() {
-        match atv_ui::hud::assets::load(&content, &environment, race.map(|r| r.course)).await {
+        match atv_ui::hud::assets::load(
+            &content,
+            &environment,
+            race.map(|r| r.course),
+            hud_game.as_deref(),
+        )
+        .await
+        {
             Ok(assets) => Some(assets),
             Err(error) => {
                 status(&format!("HUD resources unavailable: {error}"));
@@ -1756,6 +1787,52 @@ impl App {
                 ready
                     .camera
                     .view_projection(gpu.aspect(), ready.focal_length, 1., 10_000.);
+            // The compass of a mini-game or a Freestyle target run
+            // (`002edf00` passes Hill, Flag or Target icons).
+            let compass_icons = match (&self.game, &self.objective) {
+                (Some(game), _) if game.view().is_some() => Some(
+                    game.markers()
+                        .into_iter()
+                        .map(|m| {
+                            let icon = if m.label.starts_with("Hill") {
+                                // `002e76e0`: each hill in its owner's
+                                // colour, white unowned.
+                                m.owner.filter(|o| *o < 4).map_or_else(
+                                    || atv_ui::hud::assets::RADAR_HILL.to_string(),
+                                    |o| {
+                                        atv_ui::hud::assets::tinted_name(
+                                            atv_ui::hud::assets::RADAR_HILL,
+                                            o as u8,
+                                        )
+                                    },
+                                )
+                            } else {
+                                atv_ui::hud::assets::RADAR_FLAG.to_string()
+                            };
+                            (m.position, icon)
+                        })
+                        .collect::<Vec<_>>(),
+                ),
+                (None, Some(objective)) => objective.compass_targets().map(|targets| {
+                    targets
+                        .into_iter()
+                        .map(|p| (p, atv_ui::hud::assets::RADAR_TARGET.to_string()))
+                        .collect()
+                }),
+                _ => None,
+            };
+            let compass = compass_icons.map(|icons| {
+                let [w, x, y, z] = frame.orientation;
+                atv_ui::hud::race::CompassView {
+                    yaw: atv_core::math::Det::atan2_d(
+                        2. * (w * y + x * z),
+                        1. - 2. * (y * y + x * x),
+                    ),
+                    origin: frame.origin,
+                    racers: Vec::new(),
+                    icons,
+                }
+            });
             overlay.prepare(
                 &gpu.device,
                 &gpu.queue,
@@ -1781,6 +1858,7 @@ impl App {
                     objective: objective_view,
                     training: training_view,
                     game: game_view,
+                    compass,
                 }),
                 Some(&mut riding.bindings),
             );
@@ -1949,6 +2027,8 @@ impl App {
             // Game Settings (tools/test_engine_game_settings.mjs).
             let game = &mut state["settings"];
             game["soundConfiguration"] = mixer.as_ref().map(|m| m.2.clone()).into();
+            // The streamed soundtrack's routing (web: a graph once not Stereo).
+            game["musicRoute"] = riding.sound.as_ref().and_then(|s| s.music_route()).into();
             game["speedUnits"] = riding.ride.hud().units.into();
             game["vegetationQuery"] = (!riding.ride.frame().skip_vegetation_query).into();
             game["ecosystemCollisionOff"] = riding.ride.options.ecosystem_collision_off.into();
@@ -4724,6 +4804,21 @@ impl App {
             .as_ref()
             .filter(|_| front_shown)
             .map_or((false, 0.), |f| f.borrow().music());
+        // Game Settings → Sound Configuration also shapes the menus' tune
+        // and the Jukebox (the ride sets its own from the overlay prefs).
+        let configuration = self
+            .front
+            .as_ref()
+            .filter(|_| front_shown)
+            .map(|f| f.borrow().sound_configuration());
+        if let Some(configuration) = configuration {
+            if let Ok(mut mixer) = output.mixer.lock() {
+                mixer.configuration = configuration;
+            }
+            if let Some(music) = &self.soundtrack {
+                music.borrow_mut().set_configuration(configuration);
+            }
+        }
         // The Jukebox (or an Audio page song) plays the soundtrack instead of
         // the menu tune (setMusicPreview's `originalMenu`).
         let preview = front_shown
@@ -6550,6 +6645,7 @@ fn capture(ready: &mut Ready, path: &std::path::Path, width: u32, height: u32, u
                     objective: None,
                     training: None,
                     game: None,
+                    compass: None,
                 }),
                 None,
             );

@@ -183,16 +183,42 @@ game's end (`002d10d0`, `002210e0`).
   colour at +8). `002203d0` places each pill at the hill's position raised
   12 ft; every frame `002207e0` projects it and shows the pill only when
   it is on screen and a ray from the camera reaches it (`00169b60`),
-  hiding it otherwise (`002eb0b0`). The port draws a rounded pill in the
-  owner's colour (white unowned) with the score to beat ("0" before the
-  first capture) at the same raised point, only while it projects inside
+  hiding it otherwise (`002eb0b0`). `002eb0e0` refits the pill to its text
+  and recolours it: black (0) while unowned, else the owner's colour from
+  the HUD's table (+0x168); the text stays white (+0x178 = 0xffffff).
+  `koh_pillbkg.pst` (KH archives only, ScreenObject shader, clamped) is a
+  32 x 32 white left cap whose first 10 texels are the arc, which matches
+  the 10-texel inset. The port loads it from the game archive and draws a
+  left cap, a stretched middle and the cap turned round for the right end,
+  pre-tinted per colour with GS alpha doubled (0x80 opaque), white score
+  centred ("0" before the first capture), at the same raised point, only while it projects inside
   the view (off-screen hills are hidden, not pinned to the edge like rider
   tags), and keeps the hills on the minimap. The occlusion ray
   (`00169b60` on the world's terrain object) is ported as a terrain line
   of sight from the drawn camera to the pill point, sampled every half
   cell; scene objects do not block it (whether the original's ray tests
-  only the heightfield was read from the call, not traced). Not ported:
-  the `koh_pillbkg` artwork itself (a drawn pill stands in).
+  only the heightfield was read from the call, not traced). How the
+  widget's draw routine slices the texture was not traced; the 3-slice
+  reading follows the texture's shape and the constructor's 30 x 31 /
+  10 x 11 values, and the pill height stays the 31 units of the
+  constructor rather than `002eb0e0`'s text height − 9.
+- **Compass.** Overlay Sets 6 and 7 place object 31 (`QuadzillaCompass`)
+  at 70,375; Tag (Set 10) and Hockey (Set 9) have none, and Coonce's
+  archive ships no compass art. `002edf00` passes the mode's icon:
+  event type 7 (King of the Hills) `RadarIcon_Hill`, 10 (Treasure Hunt)
+  `RadarIcon_Flag` (8, `RadarIcon_Ball`, and 0/1, `RadarIcon_Gate`, are
+  the other cases). King of the Hills fills the icon list once with every
+  scene model whose name contains `hill` (`002e7610`) and colours each by
+  its owner (`002e76e0`: participant colours 0-3, white unowned) at the
+  start and on every capture. Treasure Hunt refills it with the live
+  group's treasures when a group starts and after each pickup
+  (`002e7590` from `002d1280`/`002d0d70`). The port draws it from the
+  game archive's art: one `radaricon_hill` per hill marker (tinted copies
+  per owner slot) and one `radaricon_flag` per live, uncollected treasure,
+  all clamped to the rim. Assumptions: hill icons sit at the port's hill
+  marker points rather than the `hill` models' origins, and collected
+  treasures are dropped from the list (whether `002d17c0`'s group list
+  still holds them was not traced).
 - **Treasure wait flag.** During the 6 s wait the original sets rider flag
   0x40000 (meaning not traced); the port only hides the treasures.
 
