@@ -6,6 +6,7 @@
 //! `<venue>endfgate` finish gate. RaceStatus type 1 (`0024a490`) tests only
 //! each rider's next gate; crossing the last one counts a lap. See
 //! research/RACING.md "Enduro".
+use crate::math::Det;
 use crate::race::Gate;
 use crate::{Result, slice, u32le};
 
@@ -110,6 +111,39 @@ pub fn model_matrix(gate: &Gate) -> [f32; 16] {
     ]
 }
 
+/// Gate banner textures (`00229e90`, `00229670`): the turn to the next gate
+/// (the last gate points at gate 0), θ = atan2(D·right, D·forward) with
+/// right (dz, 0, −dx), picks the front-face `<venue>arrowN` suffix and the
+/// back face's (the same turn seen riding the other way).
+pub fn arrow_textures(gates: &[Gate], index: usize) -> (&'static str, &'static str) {
+    let gate = &gates[index];
+    let next = &gates[(index + 1) % gates.len()];
+    let d = [
+        next.center[0] - gate.center[0],
+        next.center[2] - gate.center[2],
+    ];
+    let [dx, _, dz] = gate.forward;
+    let theta = (d[0] * dz - d[1] * dx).atan2_d(d[0] * dx + d[1] * dz);
+    use std::f32::consts::FRAC_PI_8;
+    const BINS: [f32; 4] = [FRAC_PI_8, 3. * FRAC_PI_8, 5. * FRAC_PI_8, 7. * FRAC_PI_8];
+    let bin = BINS.iter().take_while(|&&b| theta.abs() > b).count();
+    match (theta >= 0., bin) {
+        (true, 0) => ("arrow1", "arrow5r"),
+        (true, 1) => ("arrow2", "arrow6"),
+        (true, 2) => ("arrow3", "arrow7"),
+        (true, 3) => ("arrow4", "arrow8"),
+        (true, _) => ("arrow5r", "arrow1"),
+        (false, 0) => ("arrow1", "arrow5l"),
+        (false, 1) => ("arrow8", "arrow4"),
+        (false, 2) => ("arrow7", "arrow3"),
+        (false, 3) => ("arrow6", "arrow2"),
+        (false, _) => ("arrow5l", "arrow1"),
+    }
+}
+
+/// `00228ea0`: every gate but the rider's next one draws at this alpha.
+pub const FADED_GATE_ALPHA: f32 = 0.4;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -145,5 +179,28 @@ mod tests {
         assert!(parse_wpt(&wpt(&[[0., 0., 0., 1.]])).is_err());
         assert!(parse_wpt(&wpt(&[[0., 0., 0., 0.], [1., 1., 0., 1.]])).is_err());
         assert!(gates(&w, 0., |_, _| 0.).is_err());
+    }
+
+    #[test]
+    fn banners_point_at_the_next_gate() {
+        let w = |x: f32, z: f32| Waypoint {
+            x,
+            z,
+            direction: [0., 1.],
+        };
+        // Heading +z: right is +x (right = (dz, 0, −dx)).
+        let at = |x: f32, z: f32| {
+            let g = gates(&[w(0., 0.), w(x, z)], 10., |_, _| 0.).unwrap();
+            arrow_textures(&g, 0)
+        };
+        assert_eq!(at(0., 100.), ("arrow1", "arrow5r"));
+        assert_eq!(at(100., 100.), ("arrow2", "arrow6"));
+        assert_eq!(at(100., 0.), ("arrow3", "arrow7"));
+        assert_eq!(at(100., -100.), ("arrow4", "arrow8"));
+        assert_eq!(at(1., -100.), ("arrow5r", "arrow1"));
+        assert_eq!(at(-100., 100.), ("arrow8", "arrow4"));
+        assert_eq!(at(-100., 0.), ("arrow7", "arrow3"));
+        assert_eq!(at(-1., -100.), ("arrow5l", "arrow1"));
+        assert_eq!(at(-1., 100.), ("arrow1", "arrow5l"));
     }
 }

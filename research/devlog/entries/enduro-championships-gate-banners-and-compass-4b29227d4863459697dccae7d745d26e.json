@@ -1,0 +1,18 @@
+{
+  "id": "enduro-championships-gate-banners-and-compass-4b29227d4863459697dccae7d745d26e",
+  "timestamp": "2026-10-27T01:09:49.812828+00:00",
+  "recorded_at": "2026-10-27T01:30:17.416702+00:00",
+  "kind": "build",
+  "title": "Enduro championships, gate banners and compass",
+  "summary": "Amateur and Pro Enduro championships implemented; each gate's banners show turn arrows with selective fading; original Enduro compass is heading-up radar; race track window corrected to 125 ft ahead / 75 ft behind.",
+  "details": [
+    "Amateur and Pro Enduro championships (Amateur races each venue's short Enduro, Pro the long one, three laps, same points/advance/trophy/reward rules; a trophy in Amateur opens Pro). An Enduro now also ends for everyone 30 s after the first rider finishes, as in the original. Each gate's banners show the original turn arrow toward the next gate (22.5\u00b0 bins, front and back faces); every gate but the rider's next one draws at 40% opacity. The original Enduro compass is a heading-up radar with the player arrow, other riders as dots and the next gate's icon within about 333 ft. Race track window is 125 ft ahead / 75 ft behind (the original race loader overwrites the 200 ft constructor value)\u2014affects all National/Supercross races' progress window and lap test. Unit tests and browser tests (test_engine_championship_enduro, test_engine_championship, test_engine_championship_loading, test_engine_enduro_race, race/finish-gate/grid tests) pass; screenshots inspected. Host-only."
+  ],
+  "limitation": "Enduro content must be published by the release owner first; CPUs and the test autopilot follow the course route line and can stall (one test round ended through the 30 s rule); gate fading not visually confirmed in captures; compass arrow tint unverified; Short Tracks and Freestyle championships not offered.",
+  "image": "/devlog-images/enduro-championships-gate-banners-and-compass-4b29227d4863459697dccae7d745d26e.png",
+  "caption": "Amateur Enduro final round results: Gold trophy awarded, Pro Enduro unlocked.",
+  "image2": "/devlog-images/enduro-championships-gate-banners-and-compass-4b29227d4863459697dccae7d745d26e-2.png",
+  "caption2": "Waypoint gate with turn-arrow banners, GATE 2 of 13 indicator and heading-up compass.",
+  "image3": "/devlog-images/enduro-championships-gate-banners-and-compass-4b29227d4863459697dccae7d745d26e-3.png",
+  "caption3": "Compass displaying the next-gate icon within ~333 ft."
+}

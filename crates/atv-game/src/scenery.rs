@@ -53,6 +53,8 @@ pub struct Draw {
     pub flash: Option<usize>,
     /// Part of the race's drop gate (posed each step after GO).
     pub gate: bool,
+    /// Part of Enduro gate N (faded unless it is the rider's next gate).
+    pub enduro_gate: Option<usize>,
     pub min: [f32; 3],
     pub max: [f32; 3],
 }
@@ -68,13 +70,22 @@ pub struct Scenery {
     pub flashes: Option<(atv_core::race_crowd::FlashConfig, usize)>,
 }
 
+/// An Enduro gate's scene model and the banner textures that replace its
+/// `frontarrow`/`backarrow` placeholders (`00229670`).
+pub struct EnduroDress {
+    pub model: usize,
+    pub front: String,
+    pub back: String,
+}
+
 /// `common` is the venue TOY, read for `[CameraFlash]`; `gate` is the scene
-/// model index of a race's drop gate.
+/// model index of a race's drop gate; `enduro` dresses the Enduro gates.
 pub fn load(
     archive: &Resource,
     scene: &Scene,
     common: Option<&[u8]>,
     gate: Option<usize>,
+    enduro: &[EnduroDress],
 ) -> Result<Scenery> {
     let mut scenery = Scenery::default();
     let mut materials = Materials::default();
@@ -106,7 +117,51 @@ pub fn load(
         let Some((_, chunks)) = geometry.iter().find(|(name, _)| *name == model.name) else {
             continue;
         };
+        let dress = enduro.iter().position(|d| d.model == index);
         for &chunk in chunks {
+            // A gate banner draws its own arrow texture: a copy of the
+            // placeholder chunk with the chosen material.
+            let chunk = match dress.map(|d| &enduro[d]) {
+                Some(d) => {
+                    let banner = match scenery.chunks[chunk]
+                        .material_name
+                        .to_ascii_lowercase()
+                        .as_str()
+                    {
+                        "frontarrow" => Some(&d.front),
+                        "backarrow" => Some(&d.back),
+                        _ => None,
+                    };
+                    match banner {
+                        Some(name) => {
+                            let material = materials.get(archive, name, true)?;
+                            let c = &scenery.chunks[chunk];
+                            if material.passes.len() <= c.pass_index {
+                                return Err(format!(
+                                    "Enduro banner {name} has no pass {}",
+                                    c.pass_index
+                                ));
+                            }
+                            let copy = Chunk {
+                                vertices: c.vertices.clone(),
+                                colors: c.colors.clone(),
+                                reflection: c.reflection.clone(),
+                                indices: c.indices.clone(),
+                                material,
+                                material_name: name.clone(),
+                                pass_index: c.pass_index,
+                                nodes: c.nodes.clone(),
+                                min: c.min,
+                                max: c.max,
+                            };
+                            scenery.chunks.push(copy);
+                            scenery.chunks.len() - 1
+                        }
+                        None => chunk,
+                    }
+                }
+                None => chunk,
+            };
             let c = &scenery.chunks[chunk];
             let prelit = c.pass().pass.as_ref().is_some_and(|p| p.prelit);
             let (min, max) = world_bounds(c.min, c.max, &model.world_matrix);
@@ -116,6 +171,7 @@ pub fn load(
                 unlit: prelit || !model.use_lighting,
                 flash,
                 gate: gate == Some(index),
+                enduro_gate: dress,
                 min,
                 max,
             });
