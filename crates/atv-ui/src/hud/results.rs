@@ -394,6 +394,29 @@ impl Results {
         }
     }
 
+    /// The controller letter picker (`dir` 1 up, 2 down, 3 add, 4 delete).
+    fn pick_letter(&mut self, dir: i32) {
+        const LETTERS: &str = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-. ";
+        let Some(fame) = &self.fame else { return };
+        let mut name: Vec<char> = fame.name.chars().collect();
+        match dir {
+            3 => name.push('A'),
+            4 => {
+                name.pop();
+            }
+            _ => {
+                let letters: Vec<char> = LETTERS.chars().collect();
+                let last = name.pop().unwrap_or(' ');
+                let at = letters.iter().position(|c| *c == last).unwrap_or(0) as i32;
+                let step = if dir == 1 { 1 } else { -1 };
+                let n = letters.len() as i32;
+                name.push(letters[(at + step).rem_euclid(n) as usize]);
+            }
+        }
+        let name: String = name.into_iter().collect();
+        self.set_fame_name(&name);
+    }
+
     /// Typing the Hall of Fame name: letters, digits, space and `-`,
     /// Backspace, and Enter to accept.
     fn name_key(&mut self, code: &str) -> (bool, Option<Command>) {
@@ -435,6 +458,27 @@ impl Results {
         }
         let pressed = |i: usize| buttons.get(i).is_some_and(|v| *v > 0.5);
         let axis = |i: usize| axes.get(i).copied().unwrap_or(0.);
+        if self.menu == Menu::NameEntry {
+            // The letter picker: Up/Down step the last letter, Right adds
+            // one, Left deletes one (authored; the original's entry cells
+            // are not recovered).
+            let dir = if pressed(12) || axis(1) < -0.55 {
+                1
+            } else if pressed(13) || axis(1) > 0.55 {
+                2
+            } else if pressed(15) || axis(0) > 0.55 {
+                3
+            } else if pressed(14) || axis(0) < -0.55 {
+                4
+            } else {
+                0
+            };
+            if dir != 0 && dir != self.pad_steer {
+                self.focus_visible = true;
+                self.pick_letter(dir);
+            }
+            self.pad_steer = dir;
+        }
         let steer = if pressed(14) || pressed(12) || axis(0) < -0.55 || axis(1) < -0.55 {
             -1
         } else if pressed(15) || pressed(13) || axis(0) > 0.55 || axis(1) > 0.55 {
@@ -442,7 +486,8 @@ impl Results {
         } else {
             0
         };
-        if steer != 0 && steer != self.pad_steer && !self.hidden {
+        if self.menu == Menu::NameEntry {
+        } else if steer != 0 && steer != self.pad_steer && !self.hidden {
             self.focus_visible = true;
             self.move_focus(steer);
         }
@@ -846,6 +891,25 @@ mod tests {
         assert_eq!(r.key("Enter"), (true, Some(Command::FameName)));
         assert_eq!(r.menu, Menu::Results);
         assert_eq!(r.buttons(), [CONTINUE, HIDE]);
+        // The controller's letter picker: Right adds A, Up steps it to B,
+        // Down twice to the space before A, Left deletes it.
+        r.enter_fame(vec!["Longest Jump".into()], "AC");
+        let mut buttons = [0f32; 16];
+        let mut tap = |r: &mut Results, i: usize| {
+            buttons[i] = 1.;
+            r.pad(&buttons, &[]);
+            buttons[i] = 0.;
+            r.pad(&buttons, &[]);
+        };
+        tap(&mut r, 15);
+        tap(&mut r, 12);
+        assert_eq!(r.fame.as_ref().unwrap().name, "ACB");
+        tap(&mut r, 13);
+        tap(&mut r, 13);
+        assert_eq!(r.fame.as_ref().unwrap().name, "AC ");
+        tap(&mut r, 14);
+        assert_eq!(r.fame.as_ref().unwrap().name, "AC");
+        assert_eq!(r.menu, Menu::NameEntry);
         // The controller's A accepts too.
         r.enter_fame(vec!["Longest Jump".into()], "ACE");
         assert_eq!(r.pad(&[0.], &[]), None);
