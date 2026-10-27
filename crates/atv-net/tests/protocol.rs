@@ -687,3 +687,40 @@ fn shared_room_codes_are_numbered_and_reserved() {
     assert!(valid_room_code(&code) && is_public_room_code(&code));
     assert!(!is_public_room_code(b"ABCD2345"));
 }
+
+#[test]
+fn game_state_round_trips_and_rejects_bad_values() {
+    let state = atv_net::GameState {
+        game: 1,
+        serial: 7,
+        phase: 3,
+        timer: 2.5,
+        clock: 61.25,
+        scores: [2, 1, 0, 0],
+        banner: 1,
+        banner_time: 3.,
+        holder: 2,
+        ball: [384., 90.3, 437.],
+        ball_velocity: [0., 0., 25.],
+        ball_yaw: 1.5,
+    };
+    let packet = atv_net::Packet::Game(Box::new(state.clone()));
+    let bytes = atv_net::encode(&packet).unwrap();
+    assert_eq!(atv_net::decode(&bytes).unwrap(), packet);
+    for bad in [
+        atv_net::GameState {
+            game: 0,
+            ..state.clone()
+        },
+        atv_net::GameState {
+            holder: 200,
+            ..state.clone()
+        },
+        atv_net::GameState {
+            clock: f32::NAN,
+            ..state.clone()
+        },
+    ] {
+        assert!(atv_net::encode(&atv_net::Packet::Game(Box::new(bad))).is_err());
+    }
+}

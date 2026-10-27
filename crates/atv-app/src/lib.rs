@@ -1333,6 +1333,15 @@ impl App {
         };
         // The Training Course: its lessons run on the ride's clock and hold
         // the ATV while a line plays; its end returns to the main menu.
+        // A room on Coonce Arena plays Hockey (research/GAMES.md "Online").
+        if ready.net.is_some() {
+            let arena = ready.venue.environment == "game01";
+            if arena && self.hockey.is_none() {
+                self.hockey = Some(hockey::HockeySession::new());
+            } else if !arena {
+                self.hockey = None;
+            }
+        }
         let training_view = match (&mut self.training, &mut self.hockey) {
             (Some(session), _) => {
                 session.update(&mut riding.ride);
@@ -1343,7 +1352,7 @@ impl App {
             (None, Some(session)) => {
                 // Game over: the HockeyOver page (Restart Game, Quit to
                 // Main Menu).
-                if session.update(&mut riding.ride)
+                if session.update(&mut riding.ride, ready.net.as_mut())
                     && let Some(overlay) = &mut self.overlay
                 {
                     overlay
