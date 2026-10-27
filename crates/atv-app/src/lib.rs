@@ -272,6 +272,8 @@ struct ObjectiveSession {
     targets: Vec<atv_core::freestyle::Target>,
     /// One-shot sounds for the ride's mixer (target hits).
     sounds: Vec<&'static str>,
+    /// Targets hit since the presentation last ran their explosions.
+    triggered: Vec<usize>,
     /// `objectiveTest=targets`: the ride step of the last placement.
     visit_clock: u64,
     /// A championship round (else Single Player → Freestyle Objectives):
@@ -346,8 +348,9 @@ impl ObjectiveSession {
         if !self.targets.is_empty() && !run.finished() {
             let rider = ride.rider_world();
             for point in [ride.frame().origin, [rider[12], rider[13], rider[14]]] {
-                for _ in run.touch(&self.targets, point, TARGET_REACH) {
+                for target in run.touch(&self.targets, point, TARGET_REACH) {
                     self.sounds.push(TARGET_SOUND);
+                    self.triggered.push(target);
                 }
             }
         }
@@ -1518,6 +1521,21 @@ impl App {
                         }
                     }
                 }
+                // A hit target's `Particles` action starts its cherry
+                // explosion (the target TOY's emitter; `0023f460`).
+                if let (Some(objective), Some(ambient)) =
+                    (&ready.venue.objective, &ready.venue.ambient)
+                {
+                    for target in std::mem::take(&mut session.triggered) {
+                        if let Some(t) = objective.targets.get(target) {
+                            ambient.borrow_mut().trigger(
+                                atv_core::ambient_effects::Toy::Targets,
+                                &t.particles,
+                                None,
+                            );
+                        }
+                    }
+                }
                 let sounds = session.take_sounds();
                 if let Some(sound) = &mut riding.sound {
                     for name in sounds {
@@ -1575,6 +1593,21 @@ impl App {
             (Some(session), _) => {
                 session.update(&mut riding.ride);
                 riding.locked = session.course.locked();
+                // The `arrow.slt` pointers bob and turn over the marked
+                // circles (`002ea500`); hidden when not placed.
+                if let Some(models) = ready.venue.training_arrows {
+                    let arrows = session.course.arrows();
+                    let time = riding.ride.steps() as f32 * atv_game::ride::STEP;
+                    for (i, model) in models.into_iter().enumerate() {
+                        let pose = arrows.get(i).and_then(|&(base, dir)| {
+                            atv_core::training::arrow_matrix(base, dir, time).ok()
+                        });
+                        ready.scene.hide_model(model, pose.is_none());
+                        if let Some(matrix) = pose {
+                            ready.scene.pose_model(&ready.gpu, model, &matrix);
+                        }
+                    }
+                }
                 Some(session.view(riding.ride.frame().origin))
             }
             // Hockey holds the rider at the face-off (`00336c90`).
@@ -1590,6 +1623,13 @@ impl App {
                 }
                 riding.locked = session.held();
                 ready.scene.pose_prop(&ready.gpu, &session.puck_matrix());
+                // The hat-trick group (`003368c0` starts it, the next
+                // face-off and Restart Game stop it).
+                if let Some(ambient) = &ready.venue.ambient {
+                    for on in session.take_hats() {
+                        ambient.borrow_mut().hat_trick(on);
+                    }
+                }
                 let sounds = session.take_sounds();
                 if let Some(sound) = &mut riding.sound {
                     for name in sounds {
@@ -1633,6 +1673,30 @@ impl App {
                         if shown && let Some(matrix) = treasures.cherry_matrix(i, time) {
                             ready.scene.pose_model(&ready.gpu, model, &matrix);
                         }
+                    }
+                }
+                // A collected treasure's trigger: its `Particles` action
+                // starts the bomb's `bomb_explosion.emt` at the bomb.
+                if let (Some(treasures), Some(ambient)) =
+                    (&ready.venue.treasures, &ready.venue.ambient)
+                {
+                    let time = riding.ride.steps() as f32 * atv_game::ride::STEP;
+                    for name in game.take_triggered() {
+                        let Some(i) = treasures
+                            .targets
+                            .iter()
+                            .position(|t| t.name.eq_ignore_ascii_case(&name))
+                        else {
+                            continue;
+                        };
+                        let at = treasures
+                            .cherry_matrix(i, time)
+                            .map(|m| [m[12], m[13], m[14]]);
+                        ambient.borrow_mut().trigger(
+                            atv_core::ambient_effects::Toy::Mode,
+                            &treasures.targets[i].particles,
+                            at,
+                        );
                     }
                 }
                 let sounds = game.take_sounds();
@@ -1870,6 +1934,24 @@ impl App {
                             .any(|x| x.name.eq_ignore_ascii_case(&m))),
                     })
                 });
+            // Placed TOY emitters: gameplay starts (bomb/cherry bursts, hat
+            // tricks) and the live CPU particles per pool (static, moving
+            // actor, CPU stream) (tools/test_engine_toy_explosions.mjs).
+            state["ambient"] = ready
+                .venue
+                .ambient
+                .as_ref()
+                .map_or(serde_json::Value::Null, |a| {
+                    let a = a.borrow();
+                    let frame = a.frame();
+                    serde_json::json!({
+                        "triggered": a.effects.triggered(), "live": a.effects.live(),
+                        "particles": frame.particles.len(), "emitted": frame.total_emitted,
+                        "dropped": frame.dropped, "capacity": a.metadata.capacity,
+                        "hatTrick": a.hat_trick.len(),
+                        "drawn": ready.scene.ambient_sprites(),
+                    })
+                });
             state["snow"] = ready
                 .scene
                 .snow_state()
@@ -1932,6 +2014,7 @@ impl App {
                 "environment": ready.venue.environment,
                 "championship": riding.ride.race().and_then(|r| r.settings().championship),
                 "training": self.training.as_ref().map(|t| t.state(riding.ride.frame().origin)),
+                "trainingArrows": ready.venue.training_arrows.map(|m| m.len()),
                 "game": self.game.as_ref().map(games::GameSession::state),
                 "hockey": self.hockey.as_ref().map(|h| h.state(riding.ride.frame().origin)),
                 "tag": self.tag.as_ref().map(|t| t.state()),
@@ -2010,6 +2093,8 @@ impl App {
             // Game Settings (tools/test_engine_game_settings.mjs).
             let game = &mut state["settings"];
             game["soundConfiguration"] = mixer.as_ref().map(|m| m.2.clone()).into();
+            // The streamed soundtrack's routing (web: a graph once not Stereo).
+            game["musicRoute"] = riding.sound.as_ref().and_then(|s| s.music_route()).into();
             game["speedUnits"] = riding.ride.hud().units.into();
             game["vegetationQuery"] = (!riding.ride.frame().skip_vegetation_query).into();
             game["ecosystemCollisionOff"] = riding.ride.options.ecosystem_collision_off.into();
@@ -4787,6 +4872,21 @@ impl App {
             .as_ref()
             .filter(|_| front_shown)
             .map_or((false, 0.), |f| f.borrow().music());
+        // Game Settings → Sound Configuration also shapes the menus' tune
+        // and the Jukebox (the ride sets its own from the overlay prefs).
+        let configuration = self
+            .front
+            .as_ref()
+            .filter(|_| front_shown)
+            .map(|f| f.borrow().sound_configuration());
+        if let Some(configuration) = configuration {
+            if let Ok(mut mixer) = output.mixer.lock() {
+                mixer.configuration = configuration;
+            }
+            if let Some(music) = &self.soundtrack {
+                music.borrow_mut().set_configuration(configuration);
+            }
+        }
         // The Jukebox (or an Audio page song) plays the soundtrack instead of
         // the menu tune (setMusicPreview's `originalMenu`).
         let preview = front_shown
@@ -5298,6 +5398,7 @@ impl App {
                     fame_start: None,
                     targets: Vec::new(),
                     sounds: Vec::new(),
+                    triggered: Vec::new(),
                     visit_clock: 0,
                     championship,
                 });

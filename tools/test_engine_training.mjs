@@ -87,6 +87,8 @@ try {
 
   await toMain(page, 'trainingTest=fast&trainingPass=1');
   await startTraining(page);
+  // The course's two arrow.slt pointers are scene models (00224a80).
+  assert.equal((await state(page)).ride?.trainingArrows, 2);
   let t = await training(page);
   assert.equal(t.completedBefore, false, 'a new profile has not completed it');
   // The introduction, then lesson 1's demonstration; the ATV waits at the start.

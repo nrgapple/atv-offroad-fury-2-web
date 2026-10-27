@@ -1,0 +1,19 @@
+{
+  "id": "ambient-venue-actors-koh-pill-art-compass-radar-and-so-1f81628b242e49db948d48dbfc7787a6",
+  "timestamp": "2026-10-27T18:38:30.239981+00:00",
+  "recorded_at": "2026-10-27T19:19:49.674454+00:00",
+  "kind": "build",
+  "title": "Ambient venue actors, KOH pill art, compass radar and soundtrack channel setting",
+  "summary": "Four checkpoints shipped 2026-10-27: venue TOY actors (crows, seagulls, fish, windmills, blimps, twisters, crocodiles, airliners) now animate on every venue route, King of the Hills uses the original pill art, the original compass appears in three game modes, and Sound Configuration now covers streamed music.",
+  "details": [
+    "PR #373 Ambient TOY actors: 724 keyframed actors load, animate and draw across all 40 venue routes and 32 races, with 0 unresolved. Recovered from the exact build: TOY [Animations] records, the KeyFramedModel reader, MCF/MOT playback in MOT seconds, and Look/Up placement. Geometry is shared, poses are cached and actors are view-culled. Host perf on FREE04: draws 78 to about 82, CPU within noise.",
+    "PR #370 King of the Hills hill pills use the original koh_pillbkg art as a 3-slice: black while unowned, owner colour once captured, white score.",
+    "PR #371 Original compass (bottom-left, heading-up) in Freestyle target runs (RadarIcon_Target per untouched target), King of the Hills (RadarIcon_Hill per hill, owner colour) and Treasure Hunt (RadarIcon_Flag per live treasure).",
+    "PR #372 Game Settings > Sound Configuration (Swapped/Mono) now also applies to the web streamed soundtrack and the menu music.",
+    "Verification: Rust unit tests and browser tests (toy_actors, games, freestyle_targets, game_settings) pass on host. Host-only; these are not phone measurements."
+  ],
+  "limitation": "Actor loop sounds are not yet played, there is no moving collision, and visibility is view culling only (no zone visibility).",
+  "image": "/devlog-images/ambient-venue-actors-koh-pill-art-compass-radar-and-so-1f81628b242e49db948d48dbfc7787a6.png",
+  "caption": "A twister actor animating on a Freestyle venue (FREE06), host build.",
+  "working_on": "Ambient actor audio and zone visibility"
+}

@@ -98,9 +98,24 @@ disc's `AUDIO/TRAINING/DIALOGUE.AUD`. Observed facts:
   each line is a port-authored caption (not a transcription) shown for a
   length-based time. Hosting the lines through the R2 package and playing
   them would restore the original timing.
-- **No demonstration replay or arrow model.** The jumbotron VCR replays and the
-  `arrow.slt` model are not drawn; a screen tag and minimap marker at the
-  recovered arrow position stand in for it.
+- **No demonstration replay.** The jumbotron VCR replays are not drawn.
+- **Arrows (2026-10-27).** `00224a80` builds two pointer objects
+  (`002ea3d0`, vtable 0x45ea90) from `arrow.slt` through `002ea490` with
+  scale 4 (`T00_TR.RES` `geometry/arrow.psg`: a flat 1 × 2.25 ft arrow
+  along +Z, so 4 × 9 ft). `00224860` places them with `002ea880`
+  (position and a direction; the side vector is direction × a stored
+  reference chosen by |y| > 0.99, the up vector side × direction): the
+  goal's 25 ft over its circle pointing (0, −1, 0), Steering's 25 ft over
+  circle 0 pointing (1, 0, 0) (read from the stores in the assembly).
+  The update `002ea500` moves the arrow 16 ft/s along its direction for
+  0.45 s and back for 0.45 s, resets it at 0.9 s, looks along the
+  direction (`00164dd0`) and turns its up vector by π · phase / 0.9.
+  The port poses both models from the course's arrows each frame and hides
+  them when not placed (`training::arrow_matrix`). Assumptions: the two
+  stored reference vectors (+Z for vertical, +Y otherwise) and which of
+  `001aafe0`/`001ab060` is the cosine were not read; the arrow spins, so
+  only its starting phase depends on them. The port's screen tag and
+  minimap marker stay as authored aids.
   The dialogue markers' jumbotron/preload cues are not reproduced.
 - **Field mappings (assumptions).** The drive command (+0x9e4) is read as gas,
   or brake once the ATV no longer rolls forward; +0x198 +0x34 and +0x904 as

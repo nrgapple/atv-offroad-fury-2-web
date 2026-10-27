@@ -57,6 +57,8 @@ pub struct TreasureHunt {
     seed: u32,
     rng: u32,
     pub finished: bool,
+    /// Collected treasures' trigger names not yet taken.
+    triggered: Vec<String>,
 }
 
 impl TreasureHunt {
@@ -111,6 +113,7 @@ impl TreasureHunt {
             seed: 0x1234_5678,
             rng: 0x1234_5678,
             finished: false,
+            triggered: Vec::new(),
         };
         hunt.reset();
         Ok(hunt)
@@ -128,6 +131,7 @@ impl TreasureHunt {
         self.collected.iter_mut().for_each(|c| *c = 0);
         self.rng = self.seed;
         self.finished = false;
+        self.triggered.clear();
     }
 
     /// Treasures still to collect (+0x1d4).
@@ -191,6 +195,7 @@ impl Rules for TreasureHunt {
                     {
                         t.collected_by = Some(r);
                         self.collected[r] += 1;
+                        self.triggered.push(t.name.clone());
                     }
                 }
             }
@@ -263,6 +268,10 @@ impl Rules for TreasureHunt {
 
     fn restart(&mut self) {
         self.reset();
+    }
+
+    fn take_triggered(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.triggered)
     }
 
     fn diagnostics(&self) -> Vec<(&'static str, f32)> {
@@ -340,6 +349,7 @@ mod tests {
         hunt.begin();
         hunt.update(0.1, &[at(300.)]);
         assert_eq!(hunt.collected[0], 0, "group 2 is hidden");
+        assert!(hunt.take_triggered().is_empty(), "no trigger fired yet");
         hunt.update(0.1, &[at(100.)]);
         hunt.update(0.1, &[at(100.)]);
         assert_eq!(
@@ -347,6 +357,9 @@ mod tests {
             (1, 2),
             "one time only"
         );
+        // The collect runs the trigger's other actions (its explosion) once.
+        assert_eq!(hunt.take_triggered(), ["a"]);
+        assert!(hunt.take_triggered().is_empty());
         assert_eq!(hunt.progress(0), "1 / 3");
     }
 

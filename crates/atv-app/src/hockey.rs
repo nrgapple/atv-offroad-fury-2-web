@@ -37,6 +37,8 @@ pub fn samples(environment: &str) -> Vec<String> {
 pub struct HockeySession {
     /// One-shots raised since the host last took them.
     sounds: Vec<&'static str>,
+    /// Hat-trick group starts (true) and stops since last taken.
+    hats: Vec<bool>,
     pub game: Game,
     pub puck: Puck,
     steps: u64,
@@ -47,8 +49,9 @@ pub struct HockeySession {
     log: Vec<String>,
     /// `hockeyTest=fast`: a 20 s clock for browser tests.
     fast: bool,
-    /// `hockeyGoal=1`: the first drop tees the puck up for the human (tests).
-    tee: bool,
+    /// `hockeyGoal=1`: the first drop tees the puck up for the human;
+    /// `hockeyGoal=3`: the first three (a hat trick) (tests).
+    tee: u8,
     /// The human's rider slot (roster order online).
     me: usize,
     /// Online: the room roster the game was built for, the phase serial
@@ -101,6 +104,15 @@ fn banner_of(code: u8, t: f32) -> Option<(Banner, f32)> {
     Some((b, t))
 }
 
+/// The drops `hockeyGoal=N` tees up for the human (test tooling).
+fn tee_goals() -> u8 {
+    if crate::url_flag("hockeyGoal=3") {
+        3
+    } else {
+        u8::from(crate::url_flag("hockeyGoal=1"))
+    }
+}
+
 /// Rider slot of the human (team Red).
 const PLAYER: usize = 0;
 
@@ -121,8 +133,9 @@ impl HockeySession {
             finished: false,
             log: Vec::new(),
             sounds: Vec::new(),
+            hats: Vec::new(),
             fast,
-            tee: crate::url_flag("hockeyGoal=1"),
+            tee: tee_goals(),
             me: PLAYER,
             roster: Vec::new(),
             serial: 0,
@@ -132,6 +145,9 @@ impl HockeySession {
     }
 
     fn face_off(&mut self, ride: &mut Ride) {
+        // The pause's end (`00336200`), setup and Restart Game stop the
+        // hat-trick group before the riders line up.
+        self.hats.push(false);
         let (origin, yaw) = self.game.face_off(self.me);
         if let Err(error) = ride.place_beside(origin, yaw, [0.; 3]) {
             crate::status(&format!("Hockey face-off placement failed: {error}"));
@@ -176,7 +192,7 @@ impl HockeySession {
                     self.me = me;
                     self.placed = false;
                     self.finished = false;
-                    self.tee = crate::url_flag("hockeyGoal=1");
+                    self.tee = tee_goals();
                 }
             }
         }
@@ -246,11 +262,18 @@ impl HockeySession {
                 );
             }
             for event in events {
+                if let Event::Goal {
+                    hat_trick: true, ..
+                } = event
+                {
+                    self.hats.push(true);
+                }
                 match event {
                     Event::FaceOff => self.face_off(ride),
                     Event::Drop => {
                         self.puck = Puck::drop(&self.game.arena, || crate::random::unit() as f32);
-                        if std::mem::take(&mut self.tee) {
+                        if self.tee > 0 {
+                            self.tee -= 1;
                             self.tee_up();
                         }
                     }
@@ -345,6 +368,7 @@ impl HockeySession {
         }
         match g.phase {
             0 => {
+                self.hats.push(false);
                 let (origin, yaw) = self.game.face_off(self.me);
                 if let Err(error) = ride.place_beside(origin, yaw, [0.; 3]) {
                     crate::status(&format!("Hockey face-off placement failed: {error}"));
@@ -352,6 +376,9 @@ impl HockeySession {
                 self.finished = false;
             }
             3 if self.game.scores != before => {
+                if g.banner == 3 {
+                    self.hats.push(true);
+                }
                 self.sounds.push(SIREN);
                 self.sounds
                     .push(if g.banner == 3 { CROWD[2] } else { CROWD[0] });
@@ -379,6 +406,11 @@ impl HockeySession {
     /// The one-shots to play this frame.
     pub fn take_sounds(&mut self) -> Vec<&'static str> {
         std::mem::take(&mut self.sounds)
+    }
+
+    /// Hat-trick group starts/stops to apply to the arena's emitters.
+    pub fn take_hats(&mut self) -> Vec<bool> {
+        std::mem::take(&mut self.hats)
     }
 
     pub fn held(&self) -> bool {

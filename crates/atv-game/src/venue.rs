@@ -93,6 +93,10 @@ pub struct Venue {
     /// Treasure Hunt's treasures from the game's mode TOY: their `bomb`
     /// models and loop (`bomb.MOT`), posed and hidden by the game.
     pub treasures: Option<Objective>,
+    /// The Training Course's two `arrow.slt` markers (`00224a80`): the
+    /// goal's and Steering's first circle's, posed and hidden by the
+    /// course (research/TRAINING.md).
+    pub training_arrows: Option<[usize; 2]>,
 }
 
 /// A Freestyle objective's data from the course's OB archive
@@ -341,8 +345,29 @@ pub async fn load_with(
                 scene.models.len() - 1
             })
     });
+    // The Training Course's arrows (`00224a80` builds two `arrow.slt`
+    // pointer objects); hidden until the course places them.
+    let training_arrows =
+        (environment == "training" && !racing && member_named(&archive, "arrow.psg").is_some())
+            .then(|| {
+                std::array::from_fn(|_| {
+                    scene.models.push(atv_core::scene::StaticModel {
+                        name: "arrow".into(),
+                        position: [0.; 3],
+                        look: [0., 0., 1.],
+                        up: Some([0., 1., 0.]),
+                        use_lighting: true,
+                        dynamic_lighting: false,
+                        world_matrix: IDENTITY,
+                    });
+                    scene.models.len() - 1
+                })
+            });
     // A Freestyle objective (`<course>.obj`) and its targets' cherries,
     // posed by the run (they spin and bob, and hide when hit).
+    // The objective's target TOY: its cherry explosions are appended
+    // emitters (`002427b0`) that its `Particles` actions start.
+    let mut target_toy = None;
     let objective = match &options.objective {
         Some((_, toy)) if !racing => {
             let text = String::from_utf8_lossy(&extract(
@@ -352,9 +377,13 @@ pub async fn load_with(
             .into_owned();
             let objectives = atv_core::freestyle::parse_objectives(&text)?;
             let targets = match toy {
-                Some(stem) => atv_core::freestyle::parse_targets(&String::from_utf8_lossy(
-                    &extract(&format!("{stem}.toy"), "objective targets")?,
-                )),
+                Some(stem) => {
+                    let bytes = extract(&format!("{stem}.toy"), "objective targets")?;
+                    let targets =
+                        atv_core::freestyle::parse_targets(&String::from_utf8_lossy(&bytes));
+                    target_toy = Some(bytes);
+                    targets
+                }
                 None => Vec::new(),
             };
             let (models, motion) = animated_models(&archive, &mut scene, &targets, "cherry.mot")?;
@@ -537,8 +566,12 @@ pub async fn load_with(
         &scene_text,
         toy.as_deref(),
         toy_index,
-        mode.as_deref(),
-        mode_index,
+        crate::ambient::Sources {
+            mode: mode.as_deref(),
+            mode_index,
+            game: options.game_scene.is_some() && !racing,
+            targets: target_toy.as_deref(),
+        },
     )
     .unwrap_or_else(|error| {
         // The browser skips effects it cannot configure.
@@ -627,6 +660,7 @@ pub async fn load_with(
         weather,
         objective,
         treasures,
+        training_arrows,
         scene,
         terrain: Terrain {
             width,

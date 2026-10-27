@@ -228,6 +228,13 @@ pub(crate) struct MusicGraph {
     filter: web_sys::BiquadFilterNode,
     level: web_sys::GainNode,
     pub(crate) analyser: web_sys::AnalyserNode,
+    /// Game Settings → Sound Configuration after the muffle level:
+    /// Swapped crosses a splitter into a merger; Mono folds through a
+    /// one-channel gain (speakers down-mix, (L + R) / 2, duplicated back
+    /// to both speakers), like the mixer's `Configuration::apply`.
+    splitter: web_sys::ChannelSplitterNode,
+    merger: web_sys::ChannelMergerNode,
+    mono: web_sys::GainNode,
     _source: web_sys::MediaElementAudioSourceNode,
 }
 
@@ -241,6 +248,16 @@ impl MusicGraph {
         filter.frequency().set_value(22_000.);
         filter.q().set_value(0.7);
         let level = context.create_gain().ok()?;
+        let splitter = context
+            .create_channel_splitter_with_number_of_outputs(2)
+            .ok()?;
+        let merger = context
+            .create_channel_merger_with_number_of_inputs(2)
+            .ok()?;
+        let mono = context.create_gain().ok()?;
+        mono.set_channel_count(1);
+        mono.set_channel_count_mode(web_sys::ChannelCountMode::Explicit);
+        mono.set_channel_interpretation(web_sys::ChannelInterpretation::Speakers);
         let source = context.create_media_element_source(element).ok()?;
         source.connect_with_audio_node(&gain).ok()?;
         gain.connect_with_audio_node(&filter).ok()?;
@@ -257,8 +274,40 @@ impl MusicGraph {
             filter,
             level,
             analyser,
+            splitter,
+            merger,
+            mono,
             _source: source,
         })
+    }
+
+    /// Routes the muffle level's output for the Sound Configuration.
+    fn route(&self, configuration: atv_game::audio::mixer::Configuration) {
+        use atv_game::audio::mixer::Configuration as C;
+        let _ = self.level.disconnect();
+        let _ = self.splitter.disconnect();
+        let _ = self.merger.disconnect();
+        let _ = self.mono.disconnect();
+        let destination = self.context.destination();
+        let _ = match configuration {
+            C::Stereo | C::Dolby => self.level.connect_with_audio_node(&destination),
+            C::Swapped => self
+                .level
+                .connect_with_audio_node(&self.splitter)
+                .and_then(|_| {
+                    self.splitter
+                        .connect_with_audio_node_and_output_and_input(&self.merger, 0, 1)
+                })
+                .and_then(|_| {
+                    self.splitter
+                        .connect_with_audio_node_and_output_and_input(&self.merger, 1, 0)
+                })
+                .and_then(|_| self.merger.connect_with_audio_node(&destination)),
+            C::Mono => self
+                .level
+                .connect_with_audio_node(&self.mono)
+                .and_then(|_| self.mono.connect_with_audio_node(&destination)),
+        };
     }
 
     pub(crate) fn resume(&self) {
@@ -286,6 +335,8 @@ pub(crate) struct WebMusic {
     /// music.js park(): the song unloaded while the page is hidden (url,
     /// position), restored on the next resume.
     parked: Option<(String, f64)>,
+    /// Game Settings → Sound Configuration (graphed once not Stereo).
+    configuration: atv_game::audio::mixer::Configuration,
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -304,6 +355,7 @@ impl WebMusic {
             primed: Rc::new(Cell::new(false)),
             silent: None,
             parked: None,
+            configuration: Default::default(),
         })
     }
 
@@ -372,13 +424,40 @@ impl WebMusic {
     pub(crate) fn graph(&mut self) -> Option<&MusicGraph> {
         if self.graph.is_none() {
             self.graph = MusicGraph::new(&self.element);
-            if self.graph.is_some() {
+            if let Some(graph) = &self.graph {
+                graph.route(self.configuration);
                 self.element.set_volume(1.);
                 let volume = self.volume;
                 self.set_volume(volume);
             }
         }
         self.graph.as_ref()
+    }
+
+    /// The configuration the graph routes, if graphed.
+    pub(crate) fn route(&self) -> Option<String> {
+        self.graph
+            .as_ref()
+            .map(|_| format!("{:?}", self.configuration))
+    }
+
+    /// Game Settings → Sound Configuration on the streamed soundtrack: a
+    /// plain element plays Stereo, so another configuration graphs it.
+    pub(crate) fn set_configuration(
+        &mut self,
+        configuration: atv_game::audio::mixer::Configuration,
+    ) {
+        use atv_game::audio::mixer::Configuration as C;
+        if configuration == self.configuration {
+            return;
+        }
+        self.configuration = configuration;
+        if self.graph.is_none() && matches!(configuration, C::Stereo | C::Dolby) {
+            return;
+        }
+        if let Some(graph) = self.graph() {
+            graph.route(configuration);
+        }
     }
 
     /// setHype on the streamed soundtrack: the graph's lowpass and level
@@ -706,11 +785,20 @@ impl Sound {
         self.music.borrow_mut().set_volume(music, enabled);
     }
 
-    /// Game Settings → Sound Configuration for the mixed output.
+    /// Diagnostics: the configuration the streamed soundtrack's graph
+    /// routes, None while it plays straight from its element (Stereo).
+    pub fn music_route(&self) -> Option<String> {
+        self.music.borrow().music_route()
+    }
+
+    /// Game Settings → Sound Configuration for the mixed output and the
+    /// streamed soundtrack.
     pub fn set_configuration(&mut self, value: &str) {
+        let configuration = atv_game::audio::mixer::Configuration::parse(value);
         if let Ok(mut mixer) = self.output.mixer.lock() {
-            mixer.configuration = atv_game::audio::mixer::Configuration::parse(value);
+            mixer.configuration = configuration;
         }
+        self.music.borrow_mut().set_configuration(configuration);
     }
 
     /// Other riders' engines and body impacts this frame; returns the

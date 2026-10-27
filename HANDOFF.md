@@ -98,7 +98,7 @@ section is authoritative.
 | Motorcycles | Riding controller recovered component by component from MX vs. ATV Unleashed (steer/bank, tires/suspension, engine/clutch, wheelie/stoppie, air control, preload, flips, wreck rules) through authored terrain/surface/input adapters; native whole-step parity unmeasured; Single Player only | `MOTORCYCLES.md` |
 | Crash effects | Optional authored presentation layer (Crazy/Gorn); enhancement-isolation checks show it leaves the simulation unchanged | `CRASH_EFFECTS.md` |
 | Input | Remappable keyboard/controller bindings; one-handed and two-thumb touch are authored adaptations | `CONTROLS.md`, `TOUCH.md` |
-| Progression and saves | Recovered race Profile Points award, per-course race record and racing championships (Am/Pro Enduro, Nationals and Supercross: rounds, 7/4/2/1/0 points, advance rule, trophies, rewards, unlocks); up to four named local profiles (the old implicit save migrates to PLAYER1) with the original Profile Editor (create, load, copy, delete) and View Profile (Overview, Trophies, Records); the original Profile Store (Unlock Items: ATVs, gear, courses, games, cheats) with Single Player unlock gating and the cheat-opened Short Tracks championship; Amateur/Pro Freestyle championships and the standalone Single Player → Freestyle Objectives mode with all four objective types (green/red target runs from the courses' OB archives: cherries, one-time trigger spheres, bonus points/time, signs, the seconds-left bonus); jump/combo records and the racing Hall of Fame (per-course top-three laps and races, longest jump, most combos, highest stunt score, the race-over name entry, Main Menu → Hall of Fame and the loading-screen holders, with the original "New …" / "New Personal …" record messages); the original six-lesson Training Course (Main Menu row, recovered lesson rules, Talon and ATV2 gear reward; spoken lines shown as captions, no jumbotron replay or arrow model); the original mini-games framework with Treasure Hunt and King of the Hills (Single Player → Games, recovered rules, time limit, store gating, results; one player, markers instead of the game models; Tag and Hockey pending); Freestyle objective Profile Points, Freestyle records and Hall of Fame; memory-card UI missing. Garage selections and settings persist locally | `PROFILE.md`, `CHAMPIONSHIPS.md`, `PROFILE_STORE.md`, `TRAINING.md`, `GAMES.md` |
+| Progression and saves | Recovered race Profile Points award, per-course race record and racing championships (Am/Pro Enduro, Nationals and Supercross: rounds, 7/4/2/1/0 points, advance rule, trophies, rewards, unlocks); up to four named local profiles (the old implicit save migrates to PLAYER1) with the original Profile Editor (create, load, copy, delete) and View Profile (Overview, Trophies, Records); the original Profile Store (Unlock Items: ATVs, gear, courses, games, cheats) with Single Player unlock gating and the cheat-opened Short Tracks championship; Amateur/Pro Freestyle championships and the standalone Single Player → Freestyle Objectives mode with all four objective types (green/red target runs from the courses' OB archives: cherries, one-time trigger spheres, bonus points/time, signs, the seconds-left bonus); jump/combo records and the racing Hall of Fame (per-course top-three laps and races, longest jump, most combos, highest stunt score, the race-over name entry, Main Menu → Hall of Fame and the loading-screen holders, with the original "New …" / "New Personal …" record messages); the original six-lesson Training Course (Main Menu row, recovered lesson rules, Talon and ATV2 gear reward; spoken lines shown as captions, the original bobbing arrow.slt pointers, no jumbotron replay); the original mini-games framework with Treasure Hunt and King of the Hills (Single Player → Games, recovered rules, time limit, store gating, results; one player, markers instead of the game models; Tag and Hockey pending); Freestyle objective Profile Points, Freestyle records and Hall of Fame; memory-card UI missing. Garage selections and settings persist locally | `PROFILE.md`, `CHAMPIONSHIPS.md`, `PROFILE_STORE.md`, `TRAINING.md`, `GAMES.md` |
 
 ## Build and test
 
@@ -163,21 +163,22 @@ the worktree's `target/`; keep bulk output on the SSD.
 - Freestyle objectives: Select Objective is a front-end page and the round
   ends with Next Course (the original picks in-game and ends a round by
   quitting the event); target hits test the
-  ATV origin and rider root rather than every wheel/chassis/rider body, and the target
-  explosions and compass are not drawn (`CHAMPIONSHIPS.md`).
+  ATV origin and rider root rather than every wheel/chassis/rider body
+  (`CHAMPIONSHIPS.md`). Target, Treasure Hunt bomb and Hockey hat-trick
+  emitters run from their TOYs (`AMBIENT_EFFECTS.md`).
 - The mini-games have no opponents: the original runs them split screen
   (or online) with human riders only. Single Player → Games plays Treasure
-  Hunt and King of the Hills alone (screen tags instead of the bomb and flag
-  models; their KH/TH archives must reach the hosted R2 package), Hockey is
+  Hunt and King of the Hills alone (with the original bombs, hill flags,
+  hill pills and compass), Hockey is
   a one-human practice and Tag is not yet playable (`GAMES.md`).
 - Memory-card UI and split-screen are missing; the Training Course shows
-  captions for its 46 spoken lines and lacks the jumbotron replays and arrow
-  models (`TRAINING.md`);
+  captions for its 46 spoken lines and lacks the jumbotron replays (`TRAINING.md`);
   races, championships and Profile Store unlocks save to the loaded profile
   of a local four-profile book (`PROFILE.md`, `CHAMPIONSHIPS.md`,
   `PROFILE_STORE.md`).
 - Race rules are authored around recovered start slots, track window and
-  finish-gate laps; firework triggers and points are open (`RACING.md`).
+  finish-gate laps; points are open (`RACING.md`); firework triggers run with
+  the original CPU spark streams (`AMBIENT_EFFECTS.md`).
   Reset points, the off-track reset, the committed station, the Enduro CPU
   driver (VehicleAI mode 4, aimed through the next gate) and off-track-only
   static avoidance are recovered. In the idle-player headless sweep CPUs

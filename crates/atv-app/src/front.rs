@@ -271,6 +271,11 @@ impl Front {
         (self.prefs.music_enabled, self.prefs.music_volume)
     }
 
+    /// Game Settings → Sound Configuration.
+    pub fn sound_configuration(&self) -> atv_game::audio::mixer::Configuration {
+        atv_game::audio::mixer::Configuration::parse(&self.prefs.sound_configuration)
+    }
+
     /// Back from a ride: saved settings may have changed meanwhile.
     pub fn resume(&mut self, page: &str) {
         self.settings = Settings::load();
