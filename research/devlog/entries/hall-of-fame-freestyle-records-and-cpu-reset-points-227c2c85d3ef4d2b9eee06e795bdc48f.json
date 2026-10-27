@@ -1,0 +1,14 @@
+{
+  "id": "hall-of-fame-freestyle-records-and-cpu-reset-points-227c2c85d3ef4d2b9eee06e795bdc48f",
+  "timestamp": "2026-10-27T07:51:14.154668+00:00",
+  "recorded_at": "2026-10-27T08:19:52.850419+00:00",
+  "kind": "build",
+  "title": "Hall of Fame, Freestyle records and CPU reset points",
+  "summary": "Racing Hall of Fame recovered from original USA v2.00 executable: per course on Normal and Expert, three fastest laps and three fastest full-length race times plus longest jump, most combos and highest stunt score with names. After a race that set records, original name entry before the results with keyboard typing and controller letter picker (Up/Down letter, Right add, Left delete) and Select. Main Menu Hall of Fame page per event type, track and difficulty. Hall of Fame panel on race loading screens.\n\nFreestyle objectives now pay Profile Points (score / 1000 plus combo points) and keep Freestyle Hall of Fame records (top three objective scores and stunt scores, longest jump, most combos) and the profile's Freestyle record. View Profile shows Freestyle records and 'Most Stunt Points In An Objective'.\n\nCPU racers: original reset-point rules (a reset point is only taken with all four wheels down, upright, above water and clear of objects; flagged no-reset track nodes are skipped; resets sidestep other riders) and a forward-only track station. Headless sweep: all CPUs finish on 30 of 32 courses (was 29) for seed 7, 30 (was 27) for seed 11, 29 (was 27) for seed 23.",
+  "details": [
+    "Unit tests, browser tests in local Chromium (hall_of_fame, freestyle_objectives, race, race_finish_gate, front, profile_editor, etc.). Host-only, not phones."
+  ],
+  "limitation": "Hall of Fame vehicle exclusions and Meters unit not ported; touch players keep the default name; env04 CPUs still loop at a water crossing and one sx15 CPU loops near a jump (avoidance ray height unrecovered).",
+  "image": "/devlog-images/hall-of-fame-freestyle-records-and-cpu-reset-points-227c2c85d3ef4d2b9eee06e795bdc48f.png",
+  "caption": "name entry after a Freestyle objective"
+}
