@@ -116,7 +116,7 @@ game's end (`002d10d0`, `002210e0`).
   Time Limit (2:00-20:00, default 5:00) and Start Game, and works with
   keyboard (Left/Right steps), controller and touch. Locked games and
   courses are marked and refused with the store's lines. Hockey starts
-  the Coonce Arena session described below (also on its Main Menu row);
+  the Coonce Arena session described below;
   Tag is listed but not playable yet.
 - `atv-app/src/games.rs` loads the game archive's mode TOY, rides the
   venue's Freeride scene, places the ATV at the TOY's `Start1` (else the
@@ -248,8 +248,8 @@ Event `QuadzillaEventHockey.cpp`, vtable `00460770`; camera
   10-unit corner chamfers, 14-unit goal mouths opening into 7.5-unit
   pockets), and ATV contact as an infinite-mass push within 3.5 + 1.5
   units. It does not use the original rigid body or the puck hulls.
-- Main Menu → **Hockey** (a temporary row after the ride modes, before
-  Training Course, while Coonce Arena is available) rides `game01` with the garage ATV. The
+- Single Player → Games → **Hockey** (Coonce Arena) rides `game01` with the
+  garage ATV. The
   human plays Red alone; Blue has no riders (see below). The rider is
   placed and held at its face-off spot, the HUD panel shows "Red n – m
   Blue" with the clock, the original banners ("Red scores!", "Hat

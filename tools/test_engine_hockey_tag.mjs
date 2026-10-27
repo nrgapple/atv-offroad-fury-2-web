@@ -48,12 +48,20 @@ async function toMain(page, query) {
   await key(page, 'Enter'); await onPage(page, 'main');
 }
 async function startHockey(page) {
-  const front = (await state(page)).front;
-  const at = front.choices.indexOf('hockey');
-  assert.ok(at > 0, `Hockey row in ${front.choices}`);
-  assert.equal(front.labels[at], 'Hockey');
-  assert.equal(front.choices[at + 1], 'training', 'Hockey follows the ride modes');
-  await choose(page, 'hockey');
+  // Single Player → Games → Game: Hockey (Coonce Arena) → Start Game.
+  await page.waitForFunction(() => (JSON.parse(document.querySelector('#ui-state')?.textContent || '{}').front?.store?.atvs ?? 0) > 20, null, { timeout: 60000 });
+  assert.ok(!(await state(page)).front.choices.includes('hockey'), 'no Main Menu Hockey row');
+  await choose(page, 'single'); await onPage(page, 'single');
+  await choose(page, 'games'); await onPage(page, 'games');
+  for (let i = 0; i < 4; i++) {
+    const front = (await state(page)).front;
+    if (front.labels[0].startsWith('Game: Hockey')) break;
+    await key(page, 'ArrowRight');
+  }
+  let front = (await state(page)).front;
+  assert.equal(front.labels[0], 'Game: Hockey');
+  assert.equal(front.labels[1], 'Course: Coonce Arena');
+  await choose(page, 'gamestart');
   await page.waitForFunction(() => {
     const s = JSON.parse(document.querySelector('#ui-state')?.textContent || '{}');
     return s.ride?.environment === 'game01' && s.ride?.hockey;
