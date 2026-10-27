@@ -21,6 +21,7 @@ pub mod fog;
 pub mod freestyle;
 pub mod gore;
 pub mod grip;
+pub mod hall_of_fame;
 pub mod hud;
 pub mod ipu;
 pub mod iso;

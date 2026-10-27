@@ -150,6 +150,13 @@ pub struct CourseRecord {
     /// Victories per vehicle id.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub atv_wins: BTreeMap<u16, u32>,
+    /// The three fastest laps (+0x70, `003249c0`) and full-length race
+    /// times (+0x7c, `00324b40`), fastest first; older saves keep only the
+    /// best above.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub top_laps_ms: Vec<u32>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub top_races_ms: Vec<u32>,
     /// Longest jump (+0x88, kept over 40 ft by `00324cc0`), most combos
     /// (+0x8c) and most points in one jump (+0x90).
     #[serde(skip_serializing_if = "StuntRecords::is_empty")]
@@ -159,6 +166,25 @@ pub struct CourseRecord {
 impl CourseRecord {
     pub fn most_winning_atv(&self) -> Option<u16> {
         most_wins(&self.atv_wins)
+    }
+
+    /// What this race's "New Personal …" messages compare against.
+    pub fn personal(&self) -> crate::hall_of_fame::Personal {
+        let seconds = |top: &[u32], best: Option<u32>| -> Vec<f32> {
+            let ms: Vec<u32> = if top.is_empty() {
+                best.into_iter().collect()
+            } else {
+                top.to_vec()
+            };
+            ms.into_iter().map(|t| t as f32 / 1000.).collect()
+        };
+        crate::hall_of_fame::Personal {
+            laps: seconds(&self.top_laps_ms, self.best_lap_ms),
+            races: seconds(&self.top_races_ms, self.best_total_ms),
+            longest_jump: self.stunts.longest_jump,
+            most_combos: self.stunts.most_combos,
+            most_points: self.stunts.most_points,
+        }
     }
 }
 
@@ -189,6 +215,9 @@ pub struct RaceResult {
     pub full_length: bool,
     /// The player's race stunt records.
     pub stunts: StuntRecords,
+    /// The course record's top laps and race times after this race (the
+    /// race's record keeping, `003249c0`/`00324b40`).
+    pub personal: Option<crate::hall_of_fame::Personal>,
 }
 
 /// Longest name a profile takes: the name entry's eight cells
@@ -328,6 +357,11 @@ impl Profile {
         course.best_lap_ms = better(course.best_lap_ms, result.best_lap.and_then(ms));
         if result.full_length {
             course.best_total_ms = better(course.best_total_ms, result.total.and_then(ms));
+        }
+        if let Some(personal) = &result.personal {
+            let top = |times: &[f32]| times.iter().filter_map(|t| ms(*t)).take(3).collect();
+            course.top_laps_ms = top(&personal.laps);
+            course.top_races_ms = top(&personal.races);
         }
     }
 
@@ -638,6 +672,7 @@ mod tests {
                 most_combos: quad as u32,
                 most_points: (total * 10.) as i64,
             },
+            personal: None,
         };
         p.record_course(&race(1, 4, 41.25, 210.5, true));
         p.record_course(&race(2, 4, 40.0, 205.0, false));

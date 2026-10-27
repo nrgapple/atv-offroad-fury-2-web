@@ -21,12 +21,24 @@ pub const RETRY: u32 = 32;
 pub const QUIT: u32 = 33;
 pub const SHOW: u32 = 34;
 pub const NEXT_ROUND: u32 = 35;
+pub const FAME_SELECT: u32 = 36;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum Menu {
     #[default]
     Results,
     Quit,
+    /// Overlays.pb `[NameEntry Menu]`: the Hall of Fame name, before the
+    /// results (`001f1740` → `00217e40`).
+    NameEntry,
+}
+
+/// The Hall of Fame records the player broke and the name being entered.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Fame {
+    /// "Fastest Lap Time", "2nd Fastest 5 Lap Race Time"… (`00333360`).
+    pub broken: Vec<String>,
+    pub name: String,
 }
 
 /// What the host runs for the player.
@@ -38,6 +50,8 @@ pub enum Command {
     Quit,
     /// Continue Championship: the series' next round.
     NextRound,
+    /// The Hall of Fame name was entered (`Results::fame`).
+    FameName,
 }
 
 /// Where a recorded championship round leaves the series.
@@ -103,6 +117,8 @@ pub struct Results {
     pub objective: Option<String>,
     /// No profile was loaded: the race earned nothing and nothing was saved.
     pub no_profile: bool,
+    /// Hall of Fame records this race set, and their name.
+    pub fame: Option<Fame>,
 }
 
 impl Results {
@@ -145,6 +161,7 @@ impl Results {
             (s.position, s.stunt, award)
         });
         self.profile_total = None;
+        self.fame = None;
         self.rows = frame
             .standings
             .iter()
@@ -243,6 +260,33 @@ impl Results {
         };
     }
 
+    /// The race set Hall of Fame records: the name entry comes first,
+    /// starting on `name`.
+    pub fn enter_fame(&mut self, broken: Vec<String>, name: &str) {
+        if broken.is_empty() {
+            return;
+        }
+        self.fame = Some(Fame {
+            broken,
+            name: name.into(),
+        });
+        self.menu = Menu::NameEntry;
+        self.hidden = false;
+        self.focus = 0;
+    }
+
+    /// The name entry's text: printable ASCII, at most eight characters
+    /// (nine-byte fields).
+    pub fn set_fame_name(&mut self, text: &str) {
+        if let Some(fame) = &mut self.fame {
+            fame.name = text
+                .chars()
+                .filter(|c| c.is_ascii_graphic() || *c == ' ')
+                .take(atv_core::hall_of_fame::NAME_MAX)
+                .collect();
+        }
+    }
+
     /// The panel or the Show Results button is up.
     pub fn active(&self) -> bool {
         self.shown
@@ -254,6 +298,7 @@ impl Results {
             return vec![SHOW];
         }
         match (self.menu, self.round) {
+            (Menu::NameEntry, _) => vec![FAME_SELECT],
             (Menu::Results, _) => vec![CONTINUE, HIDE],
             // An advanced or finished round cannot be raced again.
             (Menu::Quit, Some(Round::Next)) if self.can_quit => vec![NEXT_ROUND, QUIT],
@@ -286,6 +331,11 @@ impl Results {
             SHOW => self.hidden = false,
             RETRY => return Some(Command::Retry),
             NEXT_ROUND => return Some(Command::NextRound),
+            FAME_SELECT if self.menu == Menu::NameEntry => {
+                self.menu = Menu::Results;
+                self.focus = 0;
+                return Some(Command::FameName);
+            }
             QUIT if self.can_quit => return Some(Command::Quit),
             _ => return None,
         }
@@ -305,6 +355,9 @@ impl Results {
             return (false, None);
         }
         self.focus_visible = true;
+        if self.menu == Menu::NameEntry {
+            return self.name_key(code);
+        }
         match code {
             "Escape" => {
                 if self.menu == Menu::Quit {
@@ -330,6 +383,39 @@ impl Results {
                 self.move_focus(1);
                 (true, None)
             }
+            _ => (false, None),
+        }
+    }
+
+    /// Typing the Hall of Fame name: letters, digits, space and `-`,
+    /// Backspace, and Enter to accept.
+    fn name_key(&mut self, code: &str) -> (bool, Option<Command>) {
+        let typed = if let Some(letter) = code.strip_prefix("Key") {
+            letter.chars().next().filter(|_| letter.len() == 1)
+        } else if let Some(digit) = code.strip_prefix("Digit") {
+            digit.chars().next().filter(|_| digit.len() == 1)
+        } else {
+            match code {
+                "Space" => Some(' '),
+                "Minus" => Some('-'),
+                "Period" => Some('.'),
+                _ => None,
+            }
+        };
+        if let Some(c) = typed {
+            let name = self.fame.as_ref().map_or(String::new(), |f| f.name.clone());
+            self.set_fame_name(&format!("{name}{c}"));
+            return (true, None);
+        }
+        match code {
+            "Backspace" => {
+                if let Some(fame) = &mut self.fame {
+                    fame.name.pop();
+                }
+                (true, None)
+            }
+            "Enter" | "NumpadEnter" => (true, self.act(FAME_SELECT)),
+            "Escape" | "Tab" | "ArrowLeft" | "ArrowRight" | "ArrowUp" | "ArrowDown" => (true, None),
             _ => (false, None),
         }
     }
@@ -364,6 +450,10 @@ impl Results {
         }
         self.pad_armed = false;
         self.focus_visible = true;
+        if self.menu == Menu::NameEntry {
+            // A accepts the name (B and X do nothing here).
+            return pressed(0).then(|| self.act(FAME_SELECT)).flatten();
+        }
         let id = if self.hidden {
             SHOW
         } else if pressed(2) {
@@ -498,6 +588,10 @@ pub fn element(view: &Viewport, state: &Results, summary: &str, fonts: &mut Font
         );
     }
     let width = 620f32.min(view.width - 32.);
+    let naming = state
+        .fame
+        .as_ref()
+        .filter(|_| state.menu == Menu::NameEntry);
     let heading = TextStyle::new(display(26., 800, true), Color::hex("#f6f6f6"))
         .spacing(0.39)
         .shadow(2., 3., 0., Color::hex("#000a"));
@@ -570,6 +664,7 @@ pub fn element(view: &Viewport, state: &Results, summary: &str, fonts: &mut Font
                 RETRY if state.objective.is_some() => "Restart Objective",
                 RETRY => "Restart",
                 NEXT_ROUND => "Continue Championship",
+                FAME_SELECT => "Select",
                 _ if state.objective.is_some() => "Continue",
                 _ if state.championship.is_some() => "Quit to Championship Menu",
                 _ => "Quit Event",
@@ -577,7 +672,7 @@ pub fn element(view: &Viewport, state: &Results, summary: &str, fonts: &mut Font
             button(
                 id,
                 label,
-                matches!(id, CONTINUE | RETRY | NEXT_ROUND),
+                matches!(id, CONTINUE | RETRY | NEXT_ROUND | FAME_SELECT),
                 focused == Some(id),
             )
         })
@@ -628,7 +723,9 @@ pub fn element(view: &Viewport, state: &Results, summary: &str, fonts: &mut Font
             ],
         )))
         .child(text(
-            if state.objective.is_some() {
+            if naming.is_some() {
+                "Congratulations"
+            } else if state.objective.is_some() {
                 "Objectives"
             } else {
                 "Race Results"
@@ -637,7 +734,7 @@ pub fn element(view: &Viewport, state: &Results, summary: &str, fonts: &mut Font
             28.6,
         )),
     )
-    .child(
+    .children(naming.is_none().then(|| {
         El::new(Style {
             // The paragraph's 16px margins, collapsed with the heading's 12px.
             margin: margins(4., 0., 16., 0.),
@@ -648,11 +745,55 @@ pub fn element(view: &Viewport, state: &Results, summary: &str, fonts: &mut Font
             style: summary_style,
             line_height: 22.4,
             wrap: true,
-        }),
-    )
-    .children(state.objective.is_none().then_some(table))
+        })
+    }))
+    .children(naming.into_iter().flat_map(fame_lines))
+    .children(naming.map(|fame| name_field(&fame.name)))
+    .children((state.objective.is_none() && naming.is_none()).then_some(table))
     .child(menu);
     root(panel)
+}
+
+/// `[NameEntry Menu]` Text5–Text11: the broken records and the prompt
+/// (the prompt in the overlay's gold, 218,192,31).
+fn fame_lines(fame: &Fame) -> Vec<El> {
+    let plain = TextStyle::new(display(17., 700, false), Color::hex("#e8e8e8"));
+    let record = TextStyle::new(display(17., 700, false), Color::hex("#f1d84e"));
+    let gold = TextStyle::new(display(17., 700, false), Color::rgb(218, 192, 31));
+    let mut lines = vec![text("You Have Broken These Records:", plain, 24.)];
+    lines.extend(
+        fame.broken
+            .iter()
+            .take(5)
+            .map(|line| text(&format!("  {line}"), record.clone(), 24.)),
+    );
+    lines.push(
+        El::new(Style {
+            margin: margins(10., 0., 4., 0.),
+            ..Default::default()
+        })
+        .child(text("Enter your name for the Hall of Fame:", gold, 24.)),
+    );
+    lines
+}
+
+/// The name cell (Text2, nine bytes) with its caret.
+fn name_field(name: &str) -> El {
+    El::new(Style {
+        margin: margins(0., 0., 6., 0.),
+        padding: sides(6., 12., 6., 12.),
+        ..Default::default()
+    })
+    .paint(
+        Paint::fill(Color::hex("#ffffff14"))
+            .radius(4.)
+            .shadow(BoxShadow::inset(0., 0., 0., Color::hex("#f6e06180"))),
+    )
+    .child(text(
+        &format!("{name}_"),
+        TextStyle::new(display(22., 700, false), Color::hex("#dac01f")).spacing(1.),
+        26.,
+    ))
 }
 
 /// The panel is centred with `translate(-50%, -50%)`: its height is only
@@ -674,6 +815,35 @@ pub fn summary(frame: &atv_core::race::Frame, error: Option<&str>) -> String {
 mod tests {
     use super::*;
 
+    #[test]
+    fn hall_of_fame_name_entry_comes_first_and_takes_keys() {
+        let mut r = Results {
+            shown: true,
+            ..Default::default()
+        };
+        r.enter_fame(vec![], "ACE");
+        assert!(r.fame.is_none(), "no records, no name entry");
+        r.enter_fame(vec!["Fastest Lap Time".into()], "ACE");
+        assert_eq!(r.menu, Menu::NameEntry);
+        assert_eq!(r.buttons(), [FAME_SELECT]);
+        for code in ["Backspace", "Backspace", "KeyB", "Digit2", "Space", "KeyZ"] {
+            assert_eq!(r.key(code), (true, None));
+        }
+        // Escape does not hide the entry; the name keeps 8 characters.
+        r.key("Escape");
+        assert_eq!(r.menu, Menu::NameEntry);
+        for _ in 0..10 {
+            r.key("KeyQ");
+        }
+        assert_eq!(r.fame.as_ref().unwrap().name, "AB2 ZQQQ");
+        assert_eq!(r.key("Enter"), (true, Some(Command::FameName)));
+        assert_eq!(r.menu, Menu::Results);
+        assert_eq!(r.buttons(), [CONTINUE, HIDE]);
+        // The controller's A accepts too.
+        r.enter_fame(vec!["Longest Jump".into()], "ACE");
+        assert_eq!(r.pad(&[0.], &[]), None);
+        assert_eq!(r.pad(&[1.], &[]), Some(Command::FameName));
+    }
     #[test]
     fn race_time_matches_race_js() {
         assert_eq!(race_time(None), "--:--.--");

@@ -61,7 +61,8 @@ try {
   await page.mouse.click(8, 8);
   await key(page, 'Enter'); await onPage(page, 'main');
   let f = await state(page);
-  assert.equal(f.choices.indexOf('profile'), f.choices.indexOf('settings') - 1, `${f.choices}`);
+  assert.equal(f.choices.indexOf('profile'), f.choices.indexOf('settings') - 2, `${f.choices}`);
+  assert.equal(f.choices.indexOf('halloffame'), f.choices.indexOf('settings') - 1, `${f.choices}`);
   // The old save migrated: PLAYER1, loaded, keeping its record.
   assert.equal(f.profileBook.name, 'PLAYER1');
   await shot(page, 'main-menu');

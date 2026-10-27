@@ -173,6 +173,9 @@ pub fn stepper(action: &str) -> bool {
             | "profileletter"
             | "recordevent"
             | "recordcourse"
+            | "fameevent"
+            | "famecourse"
+            | "famedifficulty"
             | "storeitem"
     ) || GEAR_ROWS.iter().any(|(a, _)| *a == action)
 }
@@ -275,6 +278,8 @@ pub struct Loading {
     pub tip: Vec<String>,
     /// A championship round's briefing (the original loading screen).
     pub championship: Vec<String>,
+    /// A race's Hall of Fame lines (`002585c0`).
+    pub fame: Vec<String>,
 }
 
 pub struct Frontend {
@@ -322,6 +327,8 @@ pub struct Frontend {
     pub profile: atv_core::profile::Profile,
     /// The saved profiles and the loaded one (the Profile Editor's book).
     pub book: atv_core::profile::ProfileBook,
+    /// The Hall of Fame (Main Menu → Hall of Fame).
+    pub hall: atv_core::hall_of_fame::HallOfFame,
     /// The Profile Editor pages' working state.
     pub profile_ui: profile_pages::ProfileUi,
     /// The Championship page lists Expert progress.
@@ -397,6 +404,7 @@ impl Frontend {
             notice: None,
             profile: Default::default(),
             book: Default::default(),
+            hall: Default::default(),
             profile_ui: Default::default(),
             champ_expert: false,
             freestyle: None,
@@ -542,6 +550,9 @@ impl Frontend {
                 .map_or(0, |i| i + 1);
             self.choices
                 .insert(at, ("profile".into(), "Profile Editor".into()));
+            // The original's fifth row.
+            self.choices
+                .insert(at + 1, ("halloffame".into(), "Hall of Fame".into()));
             // Training Course, the original's third row, before the
             // Profile Editor when its venue is available.
             if self.tracks.iter().any(|t| t.id == "training") {
@@ -706,7 +717,15 @@ impl Frontend {
 
     /// A value row stepped by Left/Right, its arrows or a tap (+1).
     fn step(&mut self, action: &str, direction: i32, view: &Viewport, settings: &mut Settings) {
-        if matches!(action, "profileletter" | "recordevent" | "recordcourse") {
+        if matches!(
+            action,
+            "profileletter"
+                | "recordevent"
+                | "recordcourse"
+                | "fameevent"
+                | "famecourse"
+                | "famedifficulty"
+        ) {
             // Arrows step; a tap or Enter on the letter row adds its letter
             // (`run`).
             self.step_profile(action, direction, view);
@@ -1365,6 +1384,7 @@ impl Frontend {
             progress: 0.,
             tip: Vec::new(),
             championship: Vec::new(),
+            fame: Vec::new(),
         });
     }
 
@@ -1372,6 +1392,13 @@ impl Frontend {
     pub fn set_briefing(&mut self, lines: Vec<String>) {
         if let Some(loading) = &mut self.loading {
             loading.championship = lines;
+        }
+    }
+
+    /// The loading race's Hall of Fame lines (`002585c0`).
+    pub fn set_fame_briefing(&mut self, lines: Vec<String>) {
+        if let Some(loading) = &mut self.loading {
+            loading.fame = lines;
         }
     }
 
@@ -1675,8 +1702,8 @@ impl Frontend {
                 return self.race_event(settings);
             }
             (
-                "race" | "gear" | "profile-name" | "profile-records" | "store-atv" | "store-gear"
-                | "store-games" | "store-tracks",
+                "race" | "gear" | "profile-name" | "profile-records" | "hall-of-fame" | "store-atv"
+                | "store-gear" | "store-games" | "store-tracks",
                 "left" | "right",
             ) => {
                 // Only value rows step; Start Race, the link and Back do not.
@@ -2197,6 +2224,7 @@ impl Frontend {
                 .loading
                 .as_ref()
                 .map_or(Vec::new(), |l| l.championship.clone()),
+            fame: self.loading.as_ref().map_or(Vec::new(), |l| l.fame.clone()),
             progress: self.loading.as_ref().map_or(0., |l| l.progress),
             shot: shot.0,
             previous_shot: shot.1,

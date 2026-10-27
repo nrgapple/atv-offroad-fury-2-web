@@ -309,6 +309,18 @@ impl Front {
         self.state.set_briefing(lines);
     }
 
+    /// A race's loading screen Hall of Fame (`002585c0`): the course's
+    /// first holders on the race's difficulty.
+    pub fn fame_briefing(&mut self, race: Option<(String, bool)>) {
+        let lines = race
+            .map(|(course, expert)| {
+                let hall = atv_ui::settings::load_hall_of_fame(&Settings::load());
+                atv_core::hall_of_fame::briefing(hall.course(&course, expert), &course, expert)
+            })
+            .unwrap_or_default();
+        self.state.set_fame_briefing(lines);
+    }
+
     fn choose_tip(&mut self) {
         if !self.tip_chosen
             && !self.art.tips.is_empty()
@@ -1454,7 +1466,7 @@ impl Front {
             },
             "loading": self.state.loading.as_ref().map(|l| serde_json::json!({
                 "environment": l.environment, "status": l.status, "progress": l.progress,
-                "championship": l.championship,
+                "championship": l.championship, "fame": l.fame,
             })),
             "menu": self.menu.as_ref().map(|m| serde_json::json!({
                 "page": m.page, "choices": m.rows.choices,

@@ -97,7 +97,7 @@ section is authoritative.
 | Motorcycles | Riding controller recovered component by component from MX vs. ATV Unleashed (steer/bank, tires/suspension, engine/clutch, wheelie/stoppie, air control, preload, flips, wreck rules) through authored terrain/surface/input adapters; native whole-step parity unmeasured; Single Player only | `MOTORCYCLES.md` |
 | Crash effects | Optional authored presentation layer (Crazy/Gorn); enhancement-isolation checks show it leaves the simulation unchanged | `CRASH_EFFECTS.md` |
 | Input | Remappable keyboard/controller bindings; one-handed and two-thumb touch are authored adaptations | `CONTROLS.md`, `TOUCH.md` |
-| Progression and saves | Recovered race Profile Points award, per-course race record and racing championships (Am/Pro Enduro, Nationals and Supercross: rounds, 7/4/2/1/0 points, advance rule, trophies, rewards, unlocks); up to four named local profiles (the old implicit save migrates to PLAYER1) with the original Profile Editor (create, load, copy, delete) and View Profile (Overview, Trophies, Records); the original Profile Store (Unlock Items: ATVs, gear, courses, games, cheats) with Single Player unlock gating and the cheat-opened Short Tracks championship; Amateur/Pro Freestyle championships with the Stunt and Combo objectives (target runs need the OB archives); the original six-lesson Training Course (Main Menu row, recovered lesson rules, Talon and ATV2 gear reward; spoken lines shown as captions, no jumbotron replay or arrow model); jump/combo records and memory-card UI missing. Garage selections and settings persist locally | `PROFILE.md`, `CHAMPIONSHIPS.md`, `PROFILE_STORE.md`, `TRAINING.md` |
+| Progression and saves | Recovered race Profile Points award, per-course race record and racing championships (Am/Pro Enduro, Nationals and Supercross: rounds, 7/4/2/1/0 points, advance rule, trophies, rewards, unlocks); up to four named local profiles (the old implicit save migrates to PLAYER1) with the original Profile Editor (create, load, copy, delete) and View Profile (Overview, Trophies, Records); the original Profile Store (Unlock Items: ATVs, gear, courses, games, cheats) with Single Player unlock gating and the cheat-opened Short Tracks championship; Amateur/Pro Freestyle championships with the Stunt and Combo objectives (target runs need the OB archives); jump/combo records and the racing Hall of Fame (per-course top-three laps and races, longest jump, most combos, highest stunt score, the race-over name entry, Main Menu → Hall of Fame and the loading-screen holders, with the original "New …" / "New Personal …" record messages); the original six-lesson Training Course (Main Menu row, recovered lesson rules, Talon and ATV2 gear reward; spoken lines shown as captions, no jumbotron replay or arrow model); Freestyle Hall of Fame records and memory-card UI missing. Garage selections and settings persist locally | `PROFILE.md`, `CHAMPIONSHIPS.md`, `PROFILE_STORE.md`, `TRAINING.md` |
 
 ## Build and test
 
@@ -160,9 +160,10 @@ the worktree's `target/`; keep bulk output on the SSD.
   comparison exists. Trigonometry and VU arithmetic use host approximations.
 - The Freestyle championships run the Stunt and Combo objectives; the
   green/red target runs need the OB archives in the hosted package.
-- Jump/combo and Freestyle profile records, memory-card UI and split-screen
-  are missing; the Training Course shows captions for its 46 spoken lines
-  and lacks the jumbotron replays and arrow markers (`TRAINING.md`);
+- Freestyle profile and Hall of Fame records, memory-card UI and
+  split-screen are missing; the Training Course shows captions for its 46
+  spoken lines and lacks the jumbotron replays and arrow models
+  (`TRAINING.md`);
   races, championships and Profile Store unlocks save to the loaded profile
   of a local four-profile book (`PROFILE.md`, `CHAMPIONSHIPS.md`,
   `PROFILE_STORE.md`).

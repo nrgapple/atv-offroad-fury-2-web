@@ -213,7 +213,7 @@ try {
       if (!t.grounded) flown = true;
       if (air.lean) await press('KeyQ', !t.grounded && t.pitch > -0.15);
       if (air.stunt) await press('KeyJ', !t.grounded && t.pitch > -0.05);
-      if (air.preload) await press('Space', t.grounded && !flown && t.distance < 200);
+      if (air.preload) await press('Space', t.grounded && !flown);
       if (air.steer) {
         // Steer the travel direction toward the next circle (circle 0, then
         // the goal once passed).
