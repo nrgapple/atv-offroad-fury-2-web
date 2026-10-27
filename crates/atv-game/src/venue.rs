@@ -192,6 +192,31 @@ pub async fn load_with(
         });
         scene.models.len() - 1
     });
+    // Coonce Arena's puck (`00337be0`, `hockeypuck.psg`): a free-moving
+    // model the Hockey session poses each frame through the posed-model
+    // path the drop gate uses (research/GAMES.md). It rests at the TOY's
+    // `[Ball] StartPosition` until posed.
+    let gate_model = gate_model.or_else(|| {
+        (environment == "game01" && !racing && member_named(&archive, "hockeypuck.psg").is_some())
+            .then(|| {
+                let [x, y, z] = atv_core::hockey::Arena::COONCE.puck_start;
+                let mut matrix = [0.; 16];
+                for i in [0, 5, 10, 15] {
+                    matrix[i] = 1.;
+                }
+                matrix[12..15].copy_from_slice(&[x, y, z]);
+                scene.models.push(atv_core::scene::StaticModel {
+                    name: "hockeypuck".into(),
+                    position: [x, y, z],
+                    look: [0., 0., 1.],
+                    up: Some([0., 1., 0.]),
+                    use_lighting: true,
+                    dynamic_lighting: false,
+                    world_matrix: matrix,
+                });
+                scene.models.len() - 1
+            })
+    });
     let tr2 = extract(&format!("{environment}.tr2"), "terrain")?;
     let decoded = terrain::decode_tr2(&tr2)?;
     crate::yield_frame().await;

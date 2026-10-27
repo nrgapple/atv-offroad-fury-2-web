@@ -832,6 +832,17 @@ impl Sound {
         self.boom.1
     }
 
+    /// A loaded race/game sample once on the effects bus (Hockey's siren,
+    /// puck and crowd), on a running output.
+    pub fn one_shot(&mut self, name: &str) {
+        if self.output.started.get()
+            && let Ok(mut mixer) = self.output.mixer.lock()
+        {
+            let ride = &mut self.ride;
+            ride.race.one_shot(&ride.bank, &mut mixer, name);
+        }
+    }
+
     /// One race step's sounds: lamp/gate one-shots and crowd cues on a
     /// running output (the browser drops them on a suspended context), and
     /// the race music events.

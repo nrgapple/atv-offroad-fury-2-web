@@ -984,6 +984,15 @@ impl SceneRenderer {
     /// One race step's world presentation, applied before that step's world
     /// clocks advance (atv-web steps the ambient emitters and flashes after
     /// the race): flash bursts, firework emitter commands, the drop gate.
+    /// Poses the venue's posed model outside a race (the Hockey puck),
+    /// through the drop gate's path; unchanged matrices write nothing.
+    pub fn pose_prop(&mut self, gpu: &Gpu, matrix: &[f32; 16]) {
+        if self.gate != Some(*matrix) {
+            self.gate = Some(*matrix);
+            self.scenery.pose_gate(gpu, matrix);
+        }
+    }
+
     pub fn race_step(&mut self, gpu: &Gpu, events: &atv_game::ride::race::StepEvents) {
         use atv_game::ride::race::FlashBurst;
         if let Some(flashes) = &mut self.scenery.flashes {

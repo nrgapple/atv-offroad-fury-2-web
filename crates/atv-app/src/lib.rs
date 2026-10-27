@@ -852,7 +852,11 @@ async fn prepare(
                     mode,
                     music,
                     selection,
-                    race_samples: riding.ride.race().map(|r| r.samples()).unwrap_or_default(),
+                    race_samples: riding
+                        .ride
+                        .race()
+                        .map(|r| r.samples())
+                        .unwrap_or_else(|| hockey::samples(&venue.environment)),
                     train_sounds: venue.train_sounds.clone(),
                     // loadWeather: active Rain weather loops rain.vag.
                     rain: venue.weather.as_ref().is_some_and(|w| {
@@ -1300,16 +1304,6 @@ impl App {
             }
             return;
         }
-        // Hockey ended (the HockeyOver menu): back to the main menu with
-        // the result on the notice line.
-        if let Some(session) = self.hockey.take_if(|h| h.finished) {
-            if self.quit_to(Some("main"))
-                && let Some(front) = &self.front
-            {
-                front.borrow_mut().state.notice = Some(session.result());
-            }
-            return;
-        }
         let Some(ready) = &mut self.ready else { return };
         let Some(riding) = &mut ready.riding else {
             return;
@@ -1352,8 +1346,23 @@ impl App {
             }
             // Hockey holds the rider at the face-off (`00336c90`).
             (None, Some(session)) => {
-                session.update(&mut riding.ride);
+                // Game over: the HockeyOver page (Restart Game, Quit to
+                // Main Menu).
+                if session.update(&mut riding.ride)
+                    && let Some(overlay) = &mut self.overlay
+                {
+                    overlay
+                        .results
+                        .show_game("Hockey Results", session.summary());
+                }
                 riding.locked = session.held();
+                ready.scene.pose_prop(&ready.gpu, &session.puck_matrix());
+                let sounds = session.take_sounds();
+                if let Some(sound) = &mut riding.sound {
+                    for name in sounds {
+                        sound.one_shot(name);
+                    }
+                }
                 Some(session.view(riding.ride.frame().origin))
             }
             (None, None) => {
@@ -1377,7 +1386,7 @@ impl App {
                 if let Some(summary) = game.results(&player)
                     && let Some(overlay) = &mut self.overlay
                 {
-                    overlay.results.show_game(summary);
+                    overlay.results.show_game("Race Results", summary);
                 }
                 game.view()
             }
@@ -1548,6 +1557,7 @@ impl App {
                 "training": self.training.as_ref().map(|t| t.state(riding.ride.frame().origin)),
                 "game": self.game.as_ref().map(games::GameSession::state),
                 "hockey": self.hockey.as_ref().map(|h| h.state(riding.ride.frame().origin)),
+                "oneShots": riding.sound.as_ref().map(|s| s.ride.race.stats.one_shots.clone()),
                 "objective": self.objective.as_ref().map(|o| serde_json::json!({
                     "series": o.series, "expert": o.expert, "course": o.course,
                     "objective": o.objective, "recorded": o.recorded,
@@ -2453,11 +2463,27 @@ impl App {
                     overlay.results = Default::default();
                 }
             }
+            overlay::Action::RaceRetry if self.hockey.is_some() => {
+                if let Some(session) = &mut self.hockey {
+                    session.restart(&mut riding.ride);
+                }
+                if let Some(overlay) = &mut self.overlay {
+                    overlay.results = Default::default();
+                }
+            }
             overlay::Action::RaceQuit if self.game.is_some() => {
                 // Continue: back to the Games page (the original returns to
                 // its Games Prep).
                 self.game = None;
                 self.quit_to(Some("games"));
+            }
+            overlay::Action::RaceQuit if self.hockey.is_some() => {
+                let result = self.hockey.as_ref().map(|h| h.result());
+                if self.quit_to(Some("main"))
+                    && let (Some(front), Some(result)) = (&self.front, result)
+                {
+                    front.borrow_mut().state.notice = Some(result);
+                }
             }
             overlay::Action::RaceRetry if self.objective.is_some() => self.restart_objective(),
             overlay::Action::RaceQuit if self.objective.is_some() => {

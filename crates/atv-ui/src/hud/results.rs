@@ -117,10 +117,9 @@ pub struct Results {
     /// Menu]`): the summary lines replace the standings; Restart Objective
     /// and Continue (back to Select Objective) replace the race choices.
     pub objective: Option<String>,
-    /// The objective summary is a mini-game's results (Overlays.pb
-    /// `[TreasureOver Menu]`/`[HillKingOver Menu]`, titled "Race Results"):
-    /// Restart Game and Continue.
-    pub game: bool,
+    /// A mini-game's over page (`HockeyOver Menu`): its title; the summary
+    /// is `objective`'s, with Restart Game and Quit to Main Menu.
+    pub game: Option<String>,
     /// No profile was loaded: the race earned nothing and nothing was saved.
     pub no_profile: bool,
     /// Hall of Fame records this race set, and their name.
@@ -266,10 +265,12 @@ impl Results {
         };
     }
 
-    /// A finished mini-game: its standings with Restart Game and Continue.
-    pub fn show_game(&mut self, summary: String) {
+    /// A finished mini-game (the original `HockeyOver Menu`/`TagOver
+    /// Menu`): `title`, the summary lines, Restart Game and Quit to Main
+    /// Menu.
+    pub fn show_game(&mut self, title: &str, summary: String) {
         self.show_objective(summary);
-        self.game = true;
+        self.game = Some(title.into());
     }
 
     /// The race set Hall of Fame records: the name entry comes first,
@@ -723,11 +724,14 @@ pub fn element(view: &Viewport, state: &Results, summary: &str, fonts: &mut Font
             let label = match id {
                 CONTINUE => "Continue",
                 HIDE => "Hide Menu",
-                RETRY if state.game => "Restart Game",
+                RETRY if state.game.is_some() => "Restart Game",
                 RETRY if state.objective.is_some() => "Restart Objective",
                 RETRY => "Restart",
                 NEXT_ROUND => "Continue Championship",
                 FAME_SELECT => "Select",
+                // Treasure Hunt / King of the Hills return to Games (Continue).
+                _ if state.game.as_deref() == Some("Race Results") => "Continue",
+                _ if state.game.is_some() => "Quit to Main Menu",
                 _ if state.objective.is_some() => "Continue",
                 _ if state.championship.is_some() => "Quit to Championship Menu",
                 _ => "Quit Event",
@@ -788,8 +792,8 @@ pub fn element(view: &Viewport, state: &Results, summary: &str, fonts: &mut Font
         .child(text(
             if naming.is_some() {
                 "Congratulations"
-            } else if state.game {
-                "Race Results"
+            } else if let Some(title) = &state.game {
+                title.as_str()
             } else if state.objective.is_some() {
                 "Objectives"
             } else {
