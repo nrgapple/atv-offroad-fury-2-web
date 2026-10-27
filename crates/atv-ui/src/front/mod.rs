@@ -166,6 +166,8 @@ pub struct Screen {
     pub tip: Vec<String>,
     /// Loader: a championship round's briefing lines (title first).
     pub briefing: Vec<String>,
+    /// Loader: a race's Hall of Fame holders (`002585c0`).
+    pub fame: Vec<String>,
     pub progress: f32,
     pub shot: Option<Img>,
     pub previous_shot: Option<(Img, f32)>,
@@ -677,6 +679,7 @@ fn page_title(page: &str) -> &'static str {
         "store-tracks" => "Tracks",
         "store-cheats" => "Enter Cheats",
         "profile" => "Profile Editor",
+        "hall-of-fame" => "Hall of Fame",
         "profile-name" => "Profile Name Entry",
         "profile-view" => "View Profile",
         "profile-overview" => "Profile Overview",
@@ -1358,6 +1361,7 @@ fn left(m: &Metrics, s: &Screen) -> El {
                 | "profile-overview"
                 | "profile-trophies"
                 | "profile-records"
+                | "hall-of-fame"
         ) || controller::store_page(page) =>
         {
             if matches!(page, "profile-name" | "store-cheats") {
@@ -2811,7 +2815,11 @@ fn loading_info(m: &Metrics, s: &Screen) -> El {
             .child(text("Track:", style.clone(), track_size * 1.2))
             .child(text(s.loading_track.clone(), style, track_size * 1.2)),
     );
-    for (label, lines) in [("Championship:", &s.briefing), ("Tips:", &s.tip)] {
+    for (label, lines) in [
+        ("Championship:", &s.briefing),
+        ("Hall of Fame:", &s.fame),
+        ("Tips:", &s.tip),
+    ] {
         if lines.is_empty() {
             continue;
         }

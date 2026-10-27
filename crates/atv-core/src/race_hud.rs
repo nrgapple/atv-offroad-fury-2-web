@@ -128,7 +128,8 @@ impl RaceHud {
             self.sign = Some((next, -1.));
         }
     }
-    fn say(&mut self, text: String, seconds: f32) {
+    /// Queues an infotext message (`002e2cf0`), such as a record's.
+    pub fn say(&mut self, text: String, seconds: f32) {
         if self.infotext.len() < 3 {
             self.infotext.push((text, seconds));
         }

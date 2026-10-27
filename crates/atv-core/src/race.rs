@@ -1198,6 +1198,9 @@ struct Progress {
     skip_crossing: bool,
     /// Rider flag 0x20000: the next counted lap is not a best-lap candidate.
     skip_best: bool,
+    /// Counted laps the lap hook (`001f24b0`) judges: not after flag
+    /// 0x20000, not negative.
+    judged_laps: u32,
     /// Stunt points scored since GO, frozen at the finish.
     stunt: f32,
     /// Enduro (`0024a490`): the next gate (+0xb0/+0xb4), gates crossed
@@ -1251,6 +1254,7 @@ impl Progress {
             off_track: 0.,
             skip_crossing: course.track_flags & 4 != 0 && !course.grid_past_finish(station),
             skip_best: course.track_flags & 8 != 0,
+            judged_laps: 0,
             stunt: 0.,
             next_gate: 0,
             gates_passed: 0,
@@ -1378,8 +1382,11 @@ impl Progress {
         self.last_lap = lap.max(0.);
         self.lap_times.push(self.last_lap);
         self.lap_start = time;
-        if lap >= 0. && !self.skip_best && self.best.is_none_or(|b| lap < b) {
-            self.best = Some(lap);
+        if lap >= 0. && !self.skip_best {
+            self.judged_laps += 1;
+            if self.best.is_none_or(|b| lap < b) {
+                self.best = Some(lap);
+            }
         }
         self.skip_best = false;
         if self.completed >= laps {
@@ -1476,6 +1483,9 @@ pub struct Frame {
     pub standings: Vec<Standing>,
     /// The player's race stunt records and combo Profile Points.
     pub player_stunts: crate::stunt_records::RaceStunts,
+    /// The player's Hall of Fame and personal records, once finished.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub records: Option<crate::hall_of_fame::RecordWatch>,
     /// The player's completed lap times and the best one's index.
     pub lap_times: Vec<f32>,
     pub best_lap: Option<usize>,
@@ -1525,6 +1535,8 @@ pub struct Race {
     player_jump: crate::stunt_records::JumpTracker,
     player_stunts: crate::stunt_records::RaceStunts,
     player_resets: u32,
+    /// The player's Hall of Fame and personal records (`hall_of_fame`).
+    records: Option<crate::hall_of_fame::RecordWatch>,
 }
 impl Race {
     /// A race with the riders in slot order (player in slot 1), as when the
@@ -1618,6 +1630,7 @@ impl Race {
             player_jump: Default::default(),
             player_stunts: Default::default(),
             player_resets: 0,
+            records: None,
             random: crate::engine_audio::OriginalRandom::with_seed(97211 + 5 * 47),
             finishes: Vec::new(),
         })
@@ -1670,6 +1683,9 @@ impl Race {
         }
         if let Some(feet) = self.player_jump.step(grounded, position, dt) {
             self.player_stunts.jump(feet);
+            if let Some(records) = &mut self.records {
+                records.jump(feet);
+            }
         }
     }
     /// A finished stunt chain of the player's (`001f22a0`), between GO and
@@ -1679,6 +1695,22 @@ impl Race {
             return;
         }
         self.player_stunts.chain(success, count, sum);
+        if let Some(records) = &mut self.records {
+            records.chain(success, count, sum);
+        }
+    }
+    /// Keeps the player's Hall of Fame and personal records this race.
+    pub fn set_records(&mut self, records: crate::hall_of_fame::RecordWatch) {
+        self.records = Some(records);
+    }
+    pub fn records(&self) -> Option<&crate::hall_of_fame::RecordWatch> {
+        self.records.as_ref()
+    }
+    /// Record messages raised since the last call (`002e2cf0` infotext).
+    pub fn take_record_messages(&mut self) -> Vec<String> {
+        self.records
+            .as_mut()
+            .map_or_else(Vec::new, |r| r.take_messages())
     }
     pub fn player_stunts(&self) -> crate::stunt_records::RaceStunts {
         self.player_stunts
@@ -1702,8 +1734,17 @@ impl Race {
             return;
         }
         self.elapsed += dt;
+        let judged = self.player.judged_laps;
         self.player
             .update(p, &self.course, self.elapsed, self.laps, dt);
+        if let Some(records) = &mut self.records {
+            if self.player.judged_laps > judged {
+                records.lap(self.player.last_lap);
+            }
+            if let Some(total) = self.player.finish {
+                records.finish(total);
+            }
+        }
         if self.player.finish.is_some() {
             self.finishes.push((true, self.finished_count()));
             self.race_over();
@@ -2000,6 +2041,10 @@ impl Race {
             championship: None,
             opponents: self.opponents.clone(),
             player_stunts: self.player_stunts,
+            records: self
+                .records
+                .clone()
+                .filter(|_| self.player.finish.is_some()),
             standings: order
                 .into_iter()
                 .enumerate()
@@ -2979,6 +3024,58 @@ mod tests {
         assert_eq!(r.player.completed, 2);
         assert_eq!(r.player.best, Some(16.));
         assert_eq!(r.frame(0.).best_lap, Some(1));
+    }
+    #[test]
+    fn hall_of_fame_judges_counted_laps_and_the_finish() {
+        use crate::hall_of_fame::{PLACEHOLDER, Personal, RecordWatch};
+        let mut data = graph_course();
+        data.push(41);
+        data.extend(0xc_u32.to_le_bytes());
+        let c = Course::parse(&data).unwrap();
+        let mut r = Race::new(c, 2, vec![], 1).unwrap();
+        r.set_records(RecordWatch::new(
+            "sx01",
+            false,
+            4,
+            true,
+            None,
+            Some(Personal::default()),
+        ));
+        r.countdown = 0.;
+        let lap = [
+            [0., 0., 200.],
+            [50., 0., 250.],
+            [100., 0., 200.],
+            [100., 0., 100.],
+            [100., 0., 0.],
+            [50., 0., -20.],
+            [1., 0., 0.],
+            [0., 0., 100.],
+        ];
+        for p in [[0., 0., -50.], [1., 0., 0.], [0., 0., 100.]] {
+            r.step(p, 1.);
+        }
+        // Flag 8's first counted lap skips the lap hook (0x20000).
+        for p in lap {
+            r.step(p, 1.);
+        }
+        assert!(r.take_record_messages().is_empty());
+        assert!(r.frame(0.).records.is_none(), "kept until the finish");
+        for p in lap {
+            r.step(p, 2.);
+        }
+        assert!(r.player_finished());
+        assert_eq!(
+            r.take_record_messages(),
+            ["New Fastest Lap Time!", "New Fastest 5 Lap Race Time!"]
+        );
+        let records = r.frame(0.).records.unwrap();
+        assert_eq!(records.fame.laps[0].value, 16.);
+        assert_eq!(records.fame.races[0].name, PLACEHOLDER);
+        assert_eq!(
+            records.broken(),
+            ["Fastest Lap Time", "Fastest 5 Lap Race Time"]
+        );
     }
     #[test]
     fn passing_beside_the_finish_gate_counts_no_lap() {

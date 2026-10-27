@@ -197,6 +197,25 @@ pub fn save_profile(settings: &mut Settings, profile: &atv_core::profile::Profil
     save_book(settings, &book)
 }
 
+/// The Hall of Fame (`hall_of_fame`): every course's records, kept apart
+/// from the profiles.
+pub const HALL_OF_FAME_KEY: &str = "fury-hall-of-fame";
+
+pub fn load_hall_of_fame(settings: &Settings) -> atv_core::hall_of_fame::HallOfFame {
+    settings
+        .get(HALL_OF_FAME_KEY)
+        .and_then(|text| serde_json::from_str(&text).ok())
+        .unwrap_or_default()
+}
+
+/// False when it lasts only for this session.
+pub fn save_hall_of_fame(
+    settings: &mut Settings,
+    hall: &atv_core::hall_of_fame::HallOfFame,
+) -> bool {
+    serde_json::to_string(hall).is_ok_and(|text| settings.set(HALL_OF_FAME_KEY, &text))
+}
+
 /// bindings.js `storageError`: the notice when a binding cannot be saved.
 pub const STORAGE_ERROR: &str = "Settings work for this session; browser storage is unavailable.";
 
