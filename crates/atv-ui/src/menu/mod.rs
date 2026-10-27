@@ -81,6 +81,8 @@ pub fn title(page: &str) -> &'static str {
     match page {
         "settings" => "Settings",
         "extras" => "Extras",
+        "game-settings" => "Game Settings",
+        "ecosystem-warning" => "Warning",
         "alpha" => "Alpha",
         "controls" => "Controls",
         "controller-settings" => "Controller Settings",
@@ -652,6 +654,19 @@ pub fn element(view: &Viewport, state: &State, images: &glyphs::GlyphImages) -> 
                 roster = roster.child(row);
             }
             body = body.child(roster);
+        }
+        if state.page == "ecosystem-warning" {
+            // Warning 0x90: the original's three two-line paragraphs.
+            let mut warning = column(10.);
+            for pair in atv_core::ui_menu::ECOSYSTEM_WARNING.chunks(2) {
+                warning = warning.child(El::new(Style::default()).content(Content::Text {
+                    text: pair.join(" "),
+                    style: TextStyle::new(display(16., 500, false), Color::hex("#e8e8e8")),
+                    line_height: 24.,
+                    wrap: true,
+                }));
+            }
+            body = body.child(warning);
         }
         body = body.child(settings);
         if state.page == "controls" {

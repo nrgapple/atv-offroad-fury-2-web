@@ -691,6 +691,13 @@ impl Sound {
         self.music.borrow_mut().set_volume(music, enabled);
     }
 
+    /// Game Settings → Sound Configuration for the mixed output.
+    pub fn set_configuration(&mut self, value: &str) {
+        if let Ok(mut mixer) = self.output.mixer.lock() {
+            mixer.configuration = atv_game::audio::mixer::Configuration::parse(value);
+        }
+    }
+
     /// Other riders' engines and body impacts this frame; returns the
     /// remote quads whose engine banks should load. Like game.js's
     /// multiplayer listener, they are heard from the drawn camera (after the

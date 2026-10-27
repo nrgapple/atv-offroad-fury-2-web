@@ -344,6 +344,8 @@ pub struct Frontend {
     pub book: atv_core::profile::ProfileBook,
     /// The Hall of Fame (Main Menu → Hall of Fame).
     pub hall: atv_core::hall_of_fame::HallOfFame,
+    /// Game Settings → Measurement for jump lengths.
+    pub units: atv_core::hall_of_fame::Units,
     /// The Profile Editor pages' working state.
     pub profile_ui: profile_pages::ProfileUi,
     /// Single Player → Games' selection.
@@ -422,6 +424,7 @@ impl Frontend {
             profile: Default::default(),
             book: Default::default(),
             hall: Default::default(),
+            units: Default::default(),
             profile_ui: Default::default(),
             games: Default::default(),
             champ_expert: false,

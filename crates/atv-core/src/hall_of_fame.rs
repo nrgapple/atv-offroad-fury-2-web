@@ -480,10 +480,44 @@ impl HallOfFame {
     }
 }
 
+/// Game Settings → Measurement. The original keeps one speed factor
+/// (settings +0x564: 0.68182 Standard, 1.08 Metric, set by `0020f780` from
+/// profile +0x6b0) and every record line tests it: Metric prints a jump of
+/// `feet` × 0.3048 as "%d Meters" (`00332810`, `00332e30`, `002585c0`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
+pub enum Units {
+    #[default]
+    Standard,
+    Metric,
+}
+
+impl Units {
+    /// "%d %s" with the truncated length in the selected unit.
+    pub fn jump(self, feet: f32) -> String {
+        match self {
+            Units::Standard => format!("{} Feet", feet as i64),
+            Units::Metric => format!("{} Meters", (feet * 0.3048) as i64),
+        }
+    }
+
+    /// The HUD speedometer factor from ft/s and its label (`002e2030`).
+    pub fn speed(self) -> (f32, &'static str) {
+        match self {
+            Units::Standard => (crate::hud::MPH_FACTOR, "Mph"),
+            Units::Metric => (crate::hud::KPH_FACTOR, "Kph"),
+        }
+    }
+}
+
 /// The race loading screen's Hall of Fame (`002585c0`): the first fastest
 /// lap, the first fastest race, the highest stunt score and the longest
 /// jump with their holders ("<Nobody>" when empty), and the difficulty.
-pub fn briefing(fame: Option<&CourseFame>, course: &str, expert: bool) -> Vec<String> {
+pub fn briefing(
+    fame: Option<&CourseFame>,
+    course: &str,
+    expert: bool,
+    units: Units,
+) -> Vec<String> {
     let fame = fame.cloned().unwrap_or_default();
     let who = |name: Option<&String>| {
         name.filter(|n| !n.is_empty())
@@ -519,9 +553,9 @@ pub fn briefing(fame: Option<&CourseFame>, course: &str, expert: bool) -> Vec<St
             stunt.map_or(0, |e| e.value)
         ),
         format!(
-            "Longest Jump: {} {} Feet",
+            "Longest Jump: {} {}",
             who(jump.map(|e| &e.name)),
-            jump.map_or(0, |e| e.value as i64)
+            units.jump(jump.map_or(0., |e| e.value))
         ),
         format!("{} Difficulty", if expert { "Expert" } else { "Normal" }),
     ]
@@ -589,6 +623,8 @@ pub struct FreestyleWatch {
     /// Profile Points from combos: `n - 1` per landed chain of `n` > 1
     /// (`002fd350` adds them to the award accumulator).
     pub combo_points: i32,
+    /// Measurement for the record messages.
+    pub units: Units,
     run_best: f32,
     #[serde(skip)]
     messages: Vec<String>,
@@ -627,15 +663,17 @@ impl FreestyleWatch {
         let fame = beat(&mut self.fame.longest_jump, feet, PLACEHOLDER, self.vehicle);
         if fame {
             self.messages
-                .push(format!("New Longest Jump {} Feet!", feet as i64));
+                .push(format!("New Longest Jump {}!", self.units.jump(feet)));
         }
         if let Some(personal) = &mut self.personal
             && feet > personal.longest_jump()
         {
             personal.longest_jump_cft = (feet * 100.) as u32;
             if !fame {
-                self.messages
-                    .push(format!("New Personal Longest Jump {} Feet!", feet as i64));
+                self.messages.push(format!(
+                    "New Personal Longest Jump {}!",
+                    self.units.jump(feet)
+                ));
             }
         }
     }
@@ -746,6 +784,8 @@ pub struct RecordWatch {
     /// The race's best jump so far (racer +0x118): the jump hook runs only
     /// when it grows.
     race_best: f32,
+    /// Measurement for the record messages.
+    pub units: Units,
     #[serde(skip)]
     messages: Vec<String>,
 }
@@ -834,7 +874,7 @@ impl RecordWatch {
         let fame = beat(&mut self.fame.longest_jump, feet, PLACEHOLDER, self.vehicle);
         if fame {
             self.messages
-                .push(format!("New Longest Jump {} Feet!", feet as i64));
+                .push(format!("New Longest Jump {}!", self.units.jump(feet)));
         }
         if let Some(personal) = &mut self.personal
             && feet > PERSONAL_MIN_JUMP_FEET
@@ -842,8 +882,10 @@ impl RecordWatch {
         {
             personal.longest_jump = feet;
             if !fame {
-                self.messages
-                    .push(format!("New Personal Longest Jump {} Feet!", feet as i64));
+                self.messages.push(format!(
+                    "New Personal Longest Jump {}!",
+                    self.units.jump(feet)
+                ));
             }
         }
     }
@@ -922,6 +964,22 @@ mod tests {
         assert!(w.take_messages().is_empty());
         assert_eq!(w.fame.laps[0].vehicle, 7);
         assert_eq!(w.fame.laps[0].name, PLACEHOLDER);
+    }
+
+    #[test]
+    fn metric_prints_meters_and_kph() {
+        assert_eq!(Units::Standard.jump(87.9), "87 Feet");
+        assert_eq!(Units::Metric.jump(100.), "30 Meters");
+        assert_eq!(Units::Metric.speed(), (1.08, "Kph"));
+        assert_eq!(Units::Standard.speed().1, "Mph");
+        let mut w = RecordWatch::new("sx01", false, 3, true, None, None);
+        w.units = Units::Metric;
+        w.jump(90.);
+        assert_eq!(w.take_messages(), ["New Longest Jump 27 Meters!"]);
+        let mut f = FreestyleWatch::new("unspstunt", "env05", 3, None, None);
+        f.units = Units::Metric;
+        f.jump(50.);
+        assert_eq!(f.take_messages(), ["New Longest Jump 15 Meters!"]);
     }
 
     #[test]
@@ -1115,7 +1173,7 @@ mod tests {
     #[test]
     fn loading_briefing_names_the_first_holders() {
         assert_eq!(
-            briefing(None, "env05ends", true),
+            briefing(None, "env05ends", true, Units::Standard),
             [
                 "Fastest Lap: <Nobody> --:--.--",
                 "Fastest 3-Lap Race: <Nobody> --:--.--",
@@ -1129,7 +1187,9 @@ mod tests {
         w.jump(71.9);
         let mut hall = HallOfFame::default();
         hall.commit(&w, "ACE");
-        let lines = briefing(hall.course("sx01", false), "sx01", false);
+        let lines = briefing(hall.course("sx01", false), "sx01", false, Units::Standard);
+        let metric = briefing(hall.course("sx01", false), "sx01", false, Units::Metric);
+        assert_eq!(metric[3], "Longest Jump: ACE 21 Meters");
         assert_eq!(lines[0], "Fastest Lap: ACE 01:05.00");
         assert_eq!(lines[1], "Fastest 5-Lap Race: <Nobody> --:--.--");
         assert_eq!(lines[3], "Longest Jump: ACE 71 Feet");
