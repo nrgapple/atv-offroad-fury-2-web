@@ -75,6 +75,27 @@ export async function newPage(browser, options = {}, errors = [], watch = {}) {
   return page;
 }
 
+/**
+ * A saved profile with the original store unlocks (research/PROFILE_STORE.md):
+ * the SHOWROOM, TRLBLAZR, THREADS, GAMEON and GABRIEL cheats plus the G-Ride
+ * ATV and gear they skip. Menu tests that pick ATVs, gear or courses seed it
+ * so Single Player gating does not change their selections.
+ */
+export const UNLOCKED_PROFILE = {
+  store: {
+    cheats: ['SHOWROOM', 'TRLBLAZR', 'THREADS', 'GAMEON', 'GABRIEL'],
+    atvs: [19],
+    gear: { helmet: [25], glove: [22], boot: [14], shirt: [25], sleeve: [25], pant: [25], goggle: [10] },
+  },
+};
+
+/** Seeds UNLOCKED_PROFILE before the page loads unless a profile is saved. */
+export async function unlockStore(page) {
+  await page.addInitScript(profile => {
+    if (!localStorage.getItem('fury-profile')) localStorage.setItem('fury-profile', profile);
+  }, JSON.stringify(UNLOCKED_PROFILE));
+}
+
 export function assertNoErrors(errors, message = 'browser errors') {
   assert.deepEqual(errors, [], `${message}: ${errors.join('; ')}`);
 }

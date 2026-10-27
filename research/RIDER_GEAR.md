@@ -16,9 +16,9 @@ In-game rider materials share the item stem without `_ui`:
 - Sleeves and pants pair with the shirt at the same index; their catalog names
   are generic ("pants 10").
 
-All 153 items resolve to materials in `RIDER_MT.RES`. The port has no store
-progression, so every item is selectable, consistent with the Garage's existing
-access to every quad.
+All 153 items resolve to materials in `RIDER_MT.RES`. Single Player follows
+the profile's unlocks: locked items are skipped and bought in Unlock Items
+(`PROFILE_STORE.md`); multiplayer garages keep every item.
 
 ## Port
 

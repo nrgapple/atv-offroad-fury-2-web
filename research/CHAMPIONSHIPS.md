@@ -57,7 +57,11 @@ runtime traces). "Inferred" marks readings not confirmed by execution.
 - **Loading screen (`002591f0`).** Shows the round, current points, points
   required and the place required to advance.
 
-Open: what opens Short Tracks, the Freestyle objective counter, the course
+Short Tracks opens only with the GOLDCUPS or IGIVEUP cheat (`0033eca0`
+calls `003238a0` for every type; nothing else found opens type 8, and the
+manual counts 14 championships without it; `PROFILE_STORE.md`).
+
+Open: the Freestyle objective counter, the course
 unlock side effects for other modes (`00323640`), runtime confirmation of the
 round-to-course mapping, and whether a lesser trophy after a better one pays.
 
@@ -65,7 +69,7 @@ round-to-course mapping, and whether a lesser trophy after a better one pays.
 
 - `atv_core::championship`: the six racing series whose courses the port
   loads (Amateur and Pro Enduro, Amateur and Pro Nationals, Amateur and Pro
-  Supercross), their
+  Supercross, and Short Tracks once a cheat opens it), their
   courses, rounds, laps and rewards; championship points, the advance rule,
   trophies, first-trophy rewards and unlocks. Progress per series and
   difficulty lives in the saved profile (`fury-profile`, `PROFILE.md`).
@@ -90,9 +94,12 @@ reward once; the standings keep four CPU slots whose riders are drawn for
 each race, as the original's race creation draws its roster (`00210d20`,
 `0021f680`) for every race (a reading, not traced across rounds);
 Amateur Nationals races use the port's Environment race courses (the National
-mode files); there is no memory-card save or trophy page. Freestyle and Short Tracks
+mode files); there is no memory-card save or trophy page. Freestyle
 championships are not offered: Freestyle scores objectives the port does
-not have, and nothing found opens Short Tracks.
+not have. Short Tracks (env06st, env01st, env07st, 3 rounds, no reward)
+is listed Locked until GOLDCUPS/IGIVEUP. Advancing a round and a gold or
+silver trophy unlock courses for Single Race and Freestyle
+(`PROFILE_STORE.md`).
 
 **Enduro (2026-10-27).** Amateur Enduro races each venue's short Enduro and
 Pro Enduro its long one (`002f65e0` maps the event type to the track

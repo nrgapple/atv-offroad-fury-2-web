@@ -117,6 +117,8 @@ fn pst(bytes: &[u8]) -> Result<Rgba, String> {
 pub struct Boot {
     pub tracks: Vec<Track>,
     pub backdrop: Option<Rgba>,
+    /// Tracks.dat's course lists with their store access and prices.
+    pub courses: Vec<atv_core::store::CourseList>,
 }
 
 pub async fn boot(content: &Content) -> Result<Boot, String> {
@@ -124,7 +126,9 @@ pub async fn boot(content: &Content) -> Result<Boot, String> {
     let index = startapp
         .named("tracks.dat")
         .ok_or("original tracks.dat is missing")?;
-    let tracks = sections(&startapp.member(index).await?)?;
+    let bytes = startapp.member(index).await?;
+    let courses = atv_core::store::parse_courses(&bytes).unwrap_or_default();
+    let tracks = sections(&bytes)?;
     let tracks = unlocked_courses(&tracks, &|path| content.manifest.record(path).is_some());
     let mut backdrop = None;
     if content
@@ -137,7 +141,11 @@ pub async fn boot(content: &Content) -> Result<Boot, String> {
             backdrop = pst(&page.member(index).await?).ok();
         }
     }
-    Ok(Boot { tracks, backdrop })
+    Ok(Boot {
+        tracks,
+        backdrop,
+        courses,
+    })
 }
 
 /// Every course photograph: the two halves joined and trimmed. Archives
@@ -224,13 +232,17 @@ pub struct QuadInfo {
 pub struct QuadCatalog {
     pub info: HashMap<u16, QuadInfo>,
     pub logos: HashMap<String, Rgba>,
+    /// The Profile Store's ATVs in uiQuad.txt order.
+    pub atvs: Vec<atv_core::store::Atv>,
 }
 
 pub async fn quad_catalog(content: &Content) -> Result<QuadCatalog, String> {
     let archive = Archive::open(content, "/UI/RESOURCE/QUADINFO.RES").await?;
     let index = archive.named("uiQuad.txt").ok_or("uiQuad.txt is missing")?;
+    let bytes = archive.member(index).await?;
+    let atvs = atv_core::store::parse_atvs(&bytes).unwrap_or_default();
     let mut info = HashMap::new();
-    for (name, fields) in sections(&archive.member(index).await?)? {
+    for (name, fields) in sections(&bytes)? {
         let Some(n) = name.strip_prefix("quad") else {
             continue;
         };
@@ -274,7 +286,7 @@ pub async fn quad_catalog(content: &Content) -> Result<QuadCatalog, String> {
             logos.insert(stem.to_string(), image);
         }
     }
-    Ok(QuadCatalog { info, logos })
+    Ok(QuadCatalog { info, logos, atvs })
 }
 
 /// The authored physics top speed (mph) of an ATV.

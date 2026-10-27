@@ -223,11 +223,14 @@ impl Frontend {
                 .collect(),
             "profile-confirm" => vec![row("confirmyes", "Yes"), row("confirmno", "No")],
             // PAGE24 `ProfileView_Menu`. ATVs, Rider Equipment and Games list
-            // Profile Store ownership, which the store adds.
+            // Profile Store ownership (PROFILE_STORE.md).
             "profile-view" => vec![
                 row("view-overview", "Overview"),
                 row("view-trophies", "Trophies"),
                 row("view-records", "Records"),
+                row("view-atvs", "ATVs"),
+                row("view-gear", "Rider Equipment"),
+                row("view-games", "Games"),
             ],
             "profile-records" => {
                 let groups = record_groups(&self.race_courses);
@@ -474,6 +477,9 @@ impl Frontend {
             }
             "profile-store" => return Some(self.open_store(view)),
             "view-overview" => self.show("profile-overview", view),
+            "view-atvs" => self.view_collection("store-atv", view),
+            "view-gear" => self.view_collection("store-gear", view),
+            "view-games" => self.view_collection("store-games", view),
             "view-trophies" => self.show("profile-trophies", view),
             "view-records" => {
                 self.profile_ui.group = 0;
@@ -540,10 +546,14 @@ impl Frontend {
     }
 
     /// Profile Editor → Unlock Items: the Profile Store (PAGE36
-    /// `ProfileStore_Menu`), which the store work opens here.
+    /// `ProfileStore_Menu`, PROFILE_STORE.md); it sells to the loaded
+    /// profile.
     fn open_store(&mut self, view: &Viewport) -> Option<Event> {
-        let _ = view;
-        self.notice = Some("The Profile Store is not available yet.".into());
+        if self.book.current.is_none() {
+            self.notice = Some(NO_PROFILE.into());
+        } else {
+            self.show_store("store", view);
+        }
         None
     }
 

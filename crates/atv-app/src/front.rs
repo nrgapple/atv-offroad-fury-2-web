@@ -355,7 +355,7 @@ impl Front {
         let page = self.state.page.as_str();
         let mut wants = Vec::new();
         if self.menu.is_none()
-            && matches!(
+            && (matches!(
                 page,
                 "main"
                     | "single"
@@ -367,9 +367,9 @@ impl Front {
                     | "multiplayer"
                     | "create-lobby"
                     | "join-lobby"
-            )
+            ) || atv_ui::front::controller::store_page(page))
         {
-            let quad = self.state.quad_id;
+            let quad = self.state.stage_quad();
             if !self.art.vehicles.iter().any(|(q, ..)| *q == quad) {
                 wants.push(Want::Vehicle(quad));
             }
@@ -774,7 +774,8 @@ impl Front {
                 | "multiplayer"
                 | "create-lobby"
                 | "join-lobby"
-        ) {
+        ) || atv_ui::front::controller::store_page(&page)
+        {
             let drawn = self.image(device, queue, &logo_key, |_| Some(logo::raster(px)));
             let shadow_alpha = if page == "title" { 0.6 } else { 0.4 };
             let shadow_key = format!("logo-shadow:{px}:{shadow_alpha}");
@@ -1198,7 +1199,7 @@ impl Front {
     fn update_previews(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, now: f64) {
         let page = self.state.page.clone();
         let shown = self.menu.is_none()
-            && matches!(
+            && (matches!(
                 page.as_str(),
                 "main"
                     | "single"
@@ -1210,8 +1211,8 @@ impl Front {
                     | "multiplayer"
                     | "create-lobby"
                     | "join-lobby"
-            );
-        let quad = self.state.quad_id;
+            ) || atv_ui::front::controller::store_page(&page));
+        let quad = self.state.stage_quad();
         let garage = matches!(page.as_str(), "garage" | "gear");
         // The garage look: paint on ATVs (motorcycles keep their livery).
         let appearance = self.state.appearance;
@@ -1426,6 +1427,15 @@ impl Front {
                 "code": l.code, "status": l.status,
             })),
             "notice": self.state.notice,
+            "store": {
+                "remaining": atv_core::store::remaining(&self.state.profile),
+                "spent": self.state.profile.store.spent,
+                "section": self.state.store.section,
+                "item": self.state.store.item,
+                "atvs": self.state.store.atvs.len(),
+                "courses": self.state.store.courses.len(),
+                "stageQuad": self.state.stage_quad(),
+            },
             "profile": self.state.profile_text(),
             "profileBook": profile_book,
             "labels": self.state.choices().iter().map(|(_, l)| l).collect::<Vec<_>>(),

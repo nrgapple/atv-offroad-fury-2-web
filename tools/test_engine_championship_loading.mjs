@@ -3,7 +3,7 @@
 // the round, the points, the 3 points still needed and the place that earns
 // them (2nd) while the course loads.
 import assert from 'node:assert/strict';
-import { assertNoErrors, launch, newPage, nextFrames, optionalScreenshot, url } from './browser/harness.mjs';
+import { UNLOCKED_PROFILE, assertNoErrors, launch, newPage, nextFrames, optionalScreenshot, url } from './browser/harness.mjs';
 
 const read = page => page.evaluate(() => JSON.parse(document.querySelector('#ui-state')?.textContent || '{}'));
 const onPage = (page, name) => page.waitForFunction(name => JSON.parse(document.querySelector('#ui-state')?.textContent || '{}').front?.page === name, name, { timeout: 60000 });
@@ -13,10 +13,10 @@ const browser = await launch();
 try {
   const errors = [];
   const page = await newPage(browser, { viewport: { width: 1280, height: 720 } }, errors);
-  await page.addInitScript(() => {
+  await page.addInitScript(store => {
     localStorage.setItem('atv2-keyboard-help-seen-v1', '1');
-    localStorage.setItem('fury-profile', JSON.stringify({ championships: { progress: { 'amsx-normal': { round: 2, points: [7, 9, 4, 2, 0] } } } }));
-  });
+    localStorage.setItem('fury-profile', JSON.stringify({ store, championships: { progress: { 'amsx-normal': { round: 2, points: [7, 9, 4, 2, 0] } } } }));
+  }, UNLOCKED_PROFILE.store);
   await page.goto(url('/play.html?uiDiagnostics=1&weather=off'));
   await onPage(page, 'title');
   await page.mouse.click(8, 8);

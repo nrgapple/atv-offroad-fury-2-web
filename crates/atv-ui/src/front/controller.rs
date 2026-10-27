@@ -11,6 +11,9 @@ use crate::{hud::Viewport, paint::Rect, settings::Settings};
 use atv_core::rider_gear::{Appearance, Category, PAINTS, SLOTS};
 use serde_json::{Value, json};
 
+#[path = "store.rs"]
+pub mod store;
+pub use store::{StoreView, store_page};
 pub mod profile_pages;
 use profile_pages::NO_PROFILE;
 
@@ -156,6 +159,7 @@ pub fn stepper(action: &str) -> bool {
             | "profileletter"
             | "recordevent"
             | "recordcourse"
+            | "storeitem"
     ) || GEAR_ROWS.iter().any(|(a, _)| *a == action)
 }
 
@@ -326,6 +330,8 @@ pub struct Frontend {
     pub shown: u64,
     /// A Shift key is held: Tab moves focus backwards.
     shift: bool,
+    /// The Profile Store's catalogs and browsing state.
+    pub store: StoreView,
 }
 
 impl Frontend {
@@ -385,6 +391,7 @@ impl Frontend {
             gear_catalog: Vec::new(),
             shown: crate::transition::next_show(),
             shift: false,
+            store: StoreView::default(),
         };
         front.load_profiles(settings);
         front.player_name = front.saved["playerName"]
@@ -426,6 +433,11 @@ impl Frontend {
 
     /// ui_menu rows for the page (labels and keyboard order).
     pub fn refresh(&mut self, view: &Viewport) {
+        if store_page(&self.page) {
+            self.choices = self.store_choices();
+            self.selection = self.selection.min(self.choices.len().saturating_sub(1));
+            return;
+        }
         if self.page == "championship" {
             self.choices = self.championship_choices();
             self.selection = self.selection.min(self.choices.len().saturating_sub(1));
@@ -647,7 +659,13 @@ impl Frontend {
             if items == 0 {
                 return;
             }
-            a.gear[at] = (i32::from(a.gear[at]) + direction).rem_euclid(items as i32 + 1) as u8;
+            for _ in 0..=items {
+                a.gear[at] = (i32::from(a.gear[at]) + direction).rem_euclid(items as i32 + 1) as u8;
+                // Locked gear is skipped (Original, index 0, is the rider's own).
+                if self.online_garage() || self.gear_choice_owned(at, a.gear[at]) {
+                    break;
+                }
+            }
             if row == "jersey" {
                 let sleeve = SLOTS.iter().position(|s| *s == "sleeve").unwrap_or(4);
                 let sleeves = self.gear_catalog.get(sleeve).map_or(0, |c| c.items.len());
@@ -670,6 +688,7 @@ impl Frontend {
                 self.champ_expert = !self.champ_expert;
                 self.notice = None;
             }
+            "storeitem" => return self.store_step(direction, view),
             "racetrack" => {
                 let order = self.race_order();
                 if !order.is_empty() {
@@ -710,6 +729,11 @@ impl Frontend {
         if !self.race_courses.contains(&self.race.course) {
             return None;
         }
+        if let Some(cost) = self.race_course_cost(&self.race.course) {
+            self.notice = Some(Self::locked_course(cost));
+            return None;
+        }
+        self.notice = self.enforce_unlocks(settings);
         // The last started race is remembered (frontend.js `lastRace`).
         self.saved["race"] = self.race.value();
         self.save(settings);
@@ -772,6 +796,7 @@ impl Frontend {
                 None => "No profile loaded · Remember, your progress is not being saved!".into(),
             }),
             "championship" => self.series_line(),
+            page if store_page(page) => self.store_text(),
             _ => self.profile_status(),
         }
     }
@@ -797,7 +822,7 @@ impl Frontend {
 
     /// Starts the selected series' next round: five laps against four CPUs,
     /// Expert CPUs on Expert (`00289d50`).
-    fn championship_event(&mut self, key: &str) -> Option<Event> {
+    fn championship_event(&mut self, key: &str, settings: &mut Settings) -> Option<Event> {
         use atv_core::championship::SERIES;
         let index = SERIES.iter().position(|s| s.key == key)?;
         let series = &SERIES[index];
@@ -811,6 +836,9 @@ impl Frontend {
                     atv_core::championship::series(am).map_or(am, |s| s.name),
                     series.name
                 ),
+                (None, false) if series.kind == 8 => {
+                    "Locked. The original opens Short Tracks only with a cheat.".into()
+                }
                 (None, false) => "Locked.".into(),
             });
             return None;
@@ -820,6 +848,7 @@ impl Frontend {
             self.notice = Some(format!("{} is not available.", self.course_name(course)));
             return None;
         }
+        self.notice = self.enforce_unlocks(settings);
         Some(Event::Race {
             environment: course.into(),
             quad: self.quad_id,
@@ -875,6 +904,12 @@ impl Frontend {
                     max_length: 8,
                 },
             ],
+            "store-cheats" => vec![Field {
+                action: "cheat",
+                label: "Enter Cheat:",
+                value: self.store.cheat.clone(),
+                max_length: 8,
+            }],
             _ => Vec::new(),
         }
     }
@@ -904,6 +939,7 @@ impl Frontend {
             }
             "create-code" => self.create_code = code(text),
             "room-code" => self.room_code = code(text),
+            "cheat" => self.store.cheat = code(text),
             _ => return,
         }
         self.notice = None;
@@ -1025,7 +1061,16 @@ impl Frontend {
         } else {
             i32::from(VEHICLES)
         };
-        self.quad_id = ((i32::from(self.quad_id) - 1 + direction).rem_euclid(n) + 1) as u16;
+        let online = self.online_garage();
+        let mut quad = self.quad_id;
+        // Single Player skips ATVs the profile has not unlocked.
+        for _ in 0..n {
+            quad = ((i32::from(quad) - 1 + direction).rem_euclid(n) + 1) as u16;
+            if online || self.quad_owned(quad) {
+                break;
+            }
+        }
+        self.quad_id = quad;
         self.reveal = true;
     }
 
@@ -1056,6 +1101,12 @@ impl Frontend {
                 name: self.room_name(),
             });
         }
+        // Single Player Freestyle keeps Tracks.dat's course unlocks.
+        if let Some(cost) = self.freestyle_cost(&track.id) {
+            self.notice = Some(Self::locked_course(cost));
+            return None;
+        }
+        self.notice = self.enforce_unlocks(settings);
         self.remember_freestyle(settings);
         Some(Event::Ride {
             environment: track.id,
@@ -1119,6 +1170,7 @@ impl Frontend {
             return None;
         }
         let to = match self.page.as_str() {
+            _ if self.store_back().is_some() => self.store_back().unwrap_or("single").to_string(),
             "main" => "title".to_string(),
             "single" => "main".into(),
             "tracks" if self.hosting => "create-lobby".into(),
@@ -1169,6 +1221,9 @@ impl Frontend {
     }
 
     fn run(&mut self, action: &str, view: &Viewport, settings: &mut Settings) -> Option<Event> {
+        if self.store_run(action, view, settings) {
+            return None;
+        }
         if let Some(event) = self.profile_action(action, view, settings) {
             return event;
         }
@@ -1188,7 +1243,7 @@ impl Frontend {
                 self.refresh(view);
             }
             _ if action.starts_with("champ:") => {
-                return self.championship_event(&action["champ:".len()..]);
+                return self.championship_event(&action["champ:".len()..], settings);
             }
             "copyride" if self.page == "race" => return Some(Event::CopyRaceLink),
             _ if stepper(action) => self.step(action, 1, view, settings),
@@ -1253,7 +1308,12 @@ impl Frontend {
             }
             "garage" => {
                 self.garage_return = self.page.clone();
+                if !self.online_garage() {
+                    self.notice = self.enforce_unlocks(settings);
+                }
+                let notice = self.notice.take();
                 self.show("garage", view);
+                self.notice = notice;
             }
             "back" => return self.back(view),
             "devlog" => return Some(Event::DevLog),
@@ -1362,7 +1422,11 @@ impl Frontend {
             ("race", "accept") if self.current() == Some("racetrack") => {
                 return self.race_event(settings);
             }
-            ("race" | "gear" | "profile-name" | "profile-records", "left" | "right") => {
+            (
+                "race" | "gear" | "profile-name" | "profile-records" | "store-atv" | "store-gear"
+                | "store-games" | "store-tracks",
+                "left" | "right",
+            ) => {
                 // Only value rows step; Start Race, the link and Back do not.
                 if let Some(current) = self.current().filter(|a| stepper(a)).map(String::from) {
                     self.step(
@@ -1694,6 +1758,13 @@ impl Frontend {
             _ if (VEHICLE..VEHICLE + 100).contains(&id) => {
                 let quad = (id - VEHICLE) as u16;
                 let online = self.online_garage();
+                if !online && !self.quad_owned(quad) {
+                    self.notice = Some(format!(
+                        "{} is locked. Unlock it in Profile Editor → Unlock Items.",
+                        self.quad_label(quad)
+                    ));
+                    return None;
+                }
                 if self
                     .catalog
                     .iter()
@@ -1845,18 +1916,20 @@ impl Frontend {
                 String::new()
             },
             list_scroll: self.list_scroll,
-            vehicle_label: self
-                .catalog
-                .iter()
-                .find(|v| v.id == self.quad_id)
-                .map_or(format!("Vehicle {}", self.quad_id), |v| v.label.clone()),
+            vehicle_label: self.quad_label(self.stage_quad()),
             rider: self.rider_id,
             catalog: if self.page == "garage" {
                 let online = self.online_garage();
                 self.catalog
                     .iter()
                     .filter(|v| !online || !v.motorcycle)
-                    .cloned()
+                    .map(|v| {
+                        let mut v = v.clone();
+                        if !online && !self.quad_owned(v.id) {
+                            v.label += " (Locked)";
+                        }
+                        v
+                    })
                     .collect()
             } else {
                 Vec::new()
@@ -2234,6 +2307,127 @@ mod tests {
         // Back opens the page on its first row (frontend.js `show`).
         front.key("Escape", &view, &mut settings);
         assert_eq!((front.page.as_str(), front.selection), ("single", 0));
+    }
+
+    fn store_catalogs(front: &mut Frontend) {
+        let quads = "[General]\nNumQuads=3\n[Quad1]\nName=\"Honda 400EX Yellow\"\nAccess=1\nIngameID=22\nPoints=1000\n\
+            [Quad2]\nName=\"Patriot\"\nAccess=0\nIngameID=8\nPoints=250\n\
+            [Quad3]\nName=\"G Ride\"\nAccess=0\nIngameID=19\nPoints=1000\n";
+        front.store.atvs = atv_core::store::parse_atvs(quads.as_bytes()).unwrap();
+        let tracks = "[unspnat1]\nscn=env05\nname=\"Prospect Springs\"\naccess=1\npoints=0\n\
+            [unspnat2]\nscn=env02\nname=\"Tioga Valley\"\naccess=0\npoints=200\n\
+            [unspstunt1]\nscn=env01\nname=\"Caribou Peak\"\naccess=1\npoints=0\n\
+            [spstunt1]\nscn=free01\nname=\"Tempe\"\naccess=0\npoints=250\n";
+        front.store.courses = atv_core::store::parse_courses(tracks.as_bytes()).unwrap();
+        front.catalog = [
+            (22, "Honda 400EX Yellow"),
+            (8, "Patriot"),
+            (19, "G Ride"),
+            (27, "MX"),
+        ]
+        .iter()
+        .map(|(id, label)| super::super::Vehicle {
+            id: *id,
+            label: label.to_string(),
+            motorcycle: *id >= 27,
+            class: String::new(),
+        })
+        .collect();
+    }
+
+    #[test]
+    fn store_sells_unlocks_and_gates_single_player() {
+        let view = view(1280., 720.);
+        let mut settings = Settings::memory();
+        let mut front = Frontend::new(tracks(), &settings, true);
+        store_catalogs(&mut front);
+        front.quad_id = 22;
+        // Profile Editor → Unlock Items (the original's entry).
+        front.show("profile", &view);
+        let at = front
+            .choices()
+            .iter()
+            .position(|(a, _)| a == "profile-store")
+            .unwrap();
+        front.selection = at;
+        front.key("Enter", &view, &mut settings);
+        assert_eq!(front.page, "store");
+        assert_eq!(
+            front.profile_text().as_deref(),
+            Some("Current Profile Points: 0")
+        );
+        // Cheats: GIMMEPTS adds 1,000 points.
+        front.selection = 4;
+        front.key("Enter", &view, &mut settings);
+        assert_eq!(front.page, "store-cheats");
+        front.set_field("cheat", "gimmepts");
+        front.selection = 0;
+        front.key("Enter", &view, &mut settings);
+        assert_eq!(front.notice.as_deref(), Some("Added 1,000 Profile Points!"));
+        front.set_field("cheat", "xyz");
+        front.key("Enter", &view, &mut settings);
+        assert_eq!(front.notice.as_deref(), Some("Invalid cheat!"));
+        front.key("Escape", &view, &mut settings);
+        // ATVs: the Patriot costs 250.
+        front.selection = 0;
+        front.key("Enter", &view, &mut settings);
+        assert_eq!(front.page, "store-atv");
+        assert!(
+            front.choices()[0]
+                .1
+                .ends_with("Unlocked: Honda 400EX Yellow")
+        );
+        front.key("ArrowRight", &view, &mut settings);
+        assert_eq!(front.stage_quad(), 8);
+        assert_eq!(front.choices()[0].1, "ATV 2/3 · Locked: Patriot");
+        assert_eq!(
+            front.profile_text().as_deref(),
+            Some("Point Cost: 250 · Current Profile Points: 1,000")
+        );
+        // Single Player skips the locked ATVs.
+        assert!(!front.quad_owned(8) && front.quad_owned(27) && front.quad_owned(6));
+        front.selection = 1;
+        front.key("Enter", &view, &mut settings);
+        assert_eq!(front.notice.as_deref(), Some("Unlocked Patriot!"));
+        assert_eq!(atv_core::store::remaining(&front.profile), 750);
+        assert!(front.quad_owned(8));
+        // The purchase is saved with the profile.
+        let saved = crate::settings::load_profile(&settings);
+        assert_eq!(saved.store.atvs, [8]);
+        assert_eq!(saved.store.spent, 250);
+        // Tracks: Switch Event moves to the next event's list.
+        front.key("Escape", &view, &mut settings);
+        front.selection = 3;
+        front.key("Enter", &view, &mut settings);
+        assert_eq!(front.page, "store-tracks");
+        assert!(front.choices()[0].1.contains("Prospect Springs"));
+        // A locked course refuses a Single Race.
+        front.race.course = "env02".into();
+        front.race_courses = vec!["env02".into(), "env05".into()];
+        assert_eq!(front.race_event(&mut settings), None);
+        assert!(
+            front
+                .notice
+                .as_deref()
+                .unwrap()
+                .contains("Spend 200 Profile Points")
+        );
+        front.race.course = "env05".into();
+        assert!(front.race_event(&mut settings).is_some());
+        // A locked garage choice gives way to the first owned ATV.
+        front.quad_id = 19;
+        assert!(front.enforce_unlocks(&mut settings).is_some());
+        assert_eq!(front.quad_id, 22);
+        // View Profile → ATVs lists the collection without purchases.
+        front.view_collection("store-atv", &view);
+        front.key("ArrowRight", &view, &mut settings);
+        front.key("ArrowRight", &view, &mut settings);
+        assert_eq!(front.choices()[0].1, "ATV 3/3 · Locked: G Ride");
+        assert!(front.choices().iter().all(|(a, _)| a != "storebuy"));
+        front.key("Escape", &view, &mut settings);
+        assert_eq!(front.page, "profile-view");
+        // Percent Complete counts the Patriot over the original 201.
+        assert_eq!(front.profile.percent_complete(), 100. / 201.);
     }
 
     #[test]

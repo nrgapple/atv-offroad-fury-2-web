@@ -9,7 +9,7 @@
 //   Race → race setup.
 // Host Chromium evidence with a stand-in standard gamepad.
 import assert from 'node:assert/strict';
-import { assertNoErrors, launch, newPage, nextFrames, url } from './browser/harness.mjs';
+import { assertNoErrors, launch, newPage, nextFrames, unlockStore, url } from './browser/harness.mjs';
 
 const read = page => page.evaluate(() => JSON.parse(document.querySelector('#ui-state')?.textContent || '{}'));
 const front = async page => (await read(page)).front;
@@ -48,6 +48,8 @@ const browser = await launch({ args: ['--autoplay-policy=no-user-gesture-require
 try {
   const errors = [];
   const page = await newPage(browser, { viewport: { width: 1280, height: 720 }, serviceWorkers: 'block' }, errors);
+  // Single Player picks follow the profile's unlocks (PROFILE_STORE.md).
+  await unlockStore(page);
   await page.addInitScript(() => {
     localStorage.setItem('atv2-keyboard-help-seen-v1', '1');
     localStorage.removeItem('atv-player-selection');
