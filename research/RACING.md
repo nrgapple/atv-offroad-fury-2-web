@@ -1334,3 +1334,28 @@ about 360ft back, to the last reset point accepted before the bridge (the
 bridge's own points fail `001ea4d0`'s clearance rays). The test now tells
 such a reset (the rider's position jumps) from the alternate-line remap it
 guards against (the rider stays in place).
+
+Follow-up on the remaining wreck loops (2026-10-27, no fix found):
+
+- sx03/sx05 (seed 11; sx05 also on seed 7 in a rerun, so the outcome is
+  chaotic) loop at sx05 nodes 44–47: the accepted reset point (581, 88, 494)
+  lies on the corner before the flag-0x58 jump at node 47. After a reset the
+  CPU understeers through the corner about 20ft inside the line, meets the
+  jump off line at about 50ft/s and wrecks again.
+- What the reset path does, read for this: `001e35d0` places the rider, sets
+  race entry flags 0x80000 and 0x800 (`0024df70` is only the jump-distance
+  record), copies entry +0xd0 (the reset node) to the stations +0xb8/+0xc4
+  as the port does, and clears +0x274/+0x278 of the object at vehicle
+  +0x150 (if that is the VehicleAI, its aim base, which makes the next
+  `0024f9d0` frame start from the committed station: no lasting effect).
+  Nothing in it resets or changes the lane offset (+0x158 slews toward the
+  goal +0x15c, which is re-drawn only when the aim node changes), so no
+  recovered rule moves the post-reset line. The `+0x10 < 10` pull-back
+  applies only to reset points within 10ft past the finish gate.
+- env05endl (seed 7): two CPUs end pinned against obstacles 30ft from the
+  line but inside the wide Enduro polygon (so on the track, no rays),
+  throttle held, bouncing between 1 and 15ft/s. The authored stuck clock
+  (under 3ft/s) keeps restarting. Tried: a displacement-based stuck clock
+  (within 12ft for 4s). It did not help: the stuck reset goes to the Enduro
+  reset point, which is the rider's own last valid position, so the CPU is
+  put back where it was pinned. Not shipped.
