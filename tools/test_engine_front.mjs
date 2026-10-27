@@ -44,7 +44,9 @@ try {
   assert.ok(f.choices.includes('freeride'), 'Arlington Free Ride is listed');
   // Settings opens over the frontend and Back closes it.
   // Profile Editor sits between the ride modes and Settings (the original's fourth row).
-  assert.equal(f.choices.indexOf('profile'), f.choices.indexOf('settings') - 1, f.choices.join());
+  // Profile Editor and Hall of Fame (the original's fourth and fifth rows) before Settings.
+  assert.equal(f.choices.indexOf('profile'), f.choices.indexOf('settings') - 2, f.choices.join());
+  assert.equal(f.choices.indexOf('halloffame'), f.choices.indexOf('settings') - 1, f.choices.join());
   for (let i = 0; i < f.choices.indexOf('settings'); i++) await key(page, 'ArrowDown');
   await key(page, 'Enter');
   await wait(page, () => JSON.parse(document.querySelector('#ui-state').textContent).front.menu?.page === 'settings');

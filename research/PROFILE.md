@@ -129,6 +129,51 @@ instruction comparisons, no hardware runs):
   Profile Points are earned only in single-player Race, Freestyle and
   Championship; online play requires a profile.
 
+- **Hall of Fame (`00331400`, `00331750`, `00331970`, `003323d0`,
+  `003325d0`, `00332810`, `003329e0`, `00332b20`, `00333360`, `00331f50`,
+  `00217e40`, `002585c0`; Overlays.pb `[NameEntry Menu]`; PAGE10 `HOF`).**
+  The table holds sixteen event types; each racing type (0, 1, 4–8) keeps
+  two records per course (Normal, then Expert from difficulty +0x1890 = 2),
+  the Freestyle types (2, 3) one. A racing record (0xa4 bytes) has the
+  three fastest laps and the three fastest race times, each with a 9-byte
+  name and the vehicle, and one holder each for longest jump, most combos
+  and highest stunt score; new tables have no holders (times FLT_MAX,
+  names empty). The race hooks insert with the placeholder `"@%d"`
+  (`0x4289f8`, the player index): each counted lap (`001f24b0`, skipped
+  after rider flag 0x20000), the finish time only at the default laps
+  (`001f1e30`), the jump whenever the race's best jump grows (`001f2610`;
+  no 40 ft minimum), a landed chain's points (int)(sum × count) and its
+  event count (`001f22a0`; a count of 1 is not a combo). Times enter when
+  strictly faster than a kept one and shift the rest down; the others
+  replace a strictly smaller value (the inserts also keep overall records
+  at the table's head). A Hall of Fame record shows its 1.5 s infotext
+  (`002e2cf0`) — "New %sFastest Lap Time!", "New %sFastest 3 Lap Race
+  Time!" (race types 0 and 1, Enduro) or "…5 Lap…", "New Longest Jump %d
+  %s!", "New Most Combos!", "New Highest Stunt Score!", `%s` from
+  `003337a0` ("", "2nd ", "3rd ") — and suppresses the course record's
+  own: "New Personal %sFastest Lap Time!" (`003249c0`, the record's three
+  laps at +0x70), "New Personal %sFastest 5 Lap Race Time!" (`00324b40`,
+  three race times at +0x7c; the string says 5 for every event), "New
+  Personal Longest Jump %d %s!", "New Personal Most Combos!" and "New
+  Personal Highest Stunt Score!". The personal inserts still run when the
+  message is suppressed. After the race (`001f1740` → `00217e40`) a player
+  whose placeholder holds a record gets the name entry before the results:
+  "Congratulations", "You Have Broken These Records:", up to five lines
+  from `00333360` in the order lap, race, combos, jump, stunt ("Fastest
+  Lap Time", "2nd Fastest 5 Lap Race Time", "Most Combos"…), "Enter your
+  name for the Hall of Fame:" over a nine-byte field and "Select";
+  `00331f50` then writes the name over the placeholder. The race loading
+  screen (`002585c0`) shows the course's first fastest lap, first fastest
+  3- or 5-lap race, highest stunt score and longest jump with their
+  holders ("<Nobody>" when empty, "--:--.--" with no time, "99:99.99"
+  above 5999.99 s), "Track:" and "%s Difficulty". The PAGE10 page labels:
+  Event Type, Environment, Difficulty (Normal), Fastest Lap with "1.–3.
+  WWWWWWWW ##:##.##", Fastest 5-Lap / 3-Lap Race, Highest Stunt Score,
+  Longest Jump "#,## ft.", Highest Objective Scores, Most Combos "#
+  Combos". Every insert skips a per-player value +0x514 of 1 or 0x15 and
+  requires world +0x674 set and +0x7d8 (online) clear; the personal ones
+  also require one human (+0x10 = 1).
+
 Unresolved: the value callback 59 body (what a CPU row shows; the port shows
 "-"), the exact race record layout beyond races/wins, and CPU stunt scores (the port does not score CPU
 tricks, so CPU rows read 0).
@@ -188,9 +233,39 @@ tricks, so CPU rows read 0).
   Purchase Item (`PROFILE_STORE.md`).
 - **Course record.** Each race adds to the loaded profile's record for its
   course id: races, victories, victories per vehicle, best lap and, only at
-  the default laps (3 Enduro, 5 otherwise), best total time (one best, not
-  the original's top three); per-vehicle victories also count profile-wide
-  for Most Winning ATV.
+  the default laps (3 Enduro, 5 otherwise), best total time, plus the top
+  three laps and race times the race's record keeping maintains
+  (`top_laps_ms`, `top_races_ms`); per-vehicle victories also count
+  profile-wide for Most Winning ATV.
+- **Hall of Fame.** `atv_core::hall_of_fame` keeps the racing records
+  (`HallOfFame`, one `CourseFame` per race course id, `:expert` for
+  Expert) and a race's record keeping (`RecordWatch`): the race feeds it
+  the judged laps, the finish, settled jumps and landed chains as the
+  original hooks do and raises the original messages, which the race HUD
+  shows as 1.5 s infotext. A race starts its watch from the stored Hall of
+  Fame and, with a profile loaded, the course record (the personal
+  messages). The Hall of Fame lives in local storage `fury-hall-of-fame`,
+  apart from the profile book (authored mapping: where the original saves
+  it is not traced). At the results a race that set records stores them at
+  once under a default name and opens the name entry before Race Results:
+  "Congratulations", the broken records, "Enter your name for the Hall of
+  Fame:", the name field and Select; typing (letters, digits, space, `-`,
+  `.`, Backspace, at most eight characters) and Enter, a tap on Select or
+  the controller's A store the name. The default (authored; the original's
+  starting text is not recovered) is the last name entered this session,
+  else the loaded profile's name, else PLAYER1, so leaving without
+  entering a name keeps the records. Main Menu → Hall of Fame (after
+  Profile Editor, the original's fifth row) shows PAGE10: Event Type and
+  Track step through the Records page's event groups and courses and
+  Difficulty toggles Normal/Expert; the table lists the three fastest laps
+  and races ("<Nobody>", "--:--.--" when empty), Highest Stunt Score,
+  Longest Jump ("N Feet") and Most Combos with their holders. A race's
+  loading screen adds a "Hall of Fame:" panel with the `002585c0` lines.
+  Online rooms keep no records (+0x7d8). Not ported: the +0x514 vehicle
+  exclusions (which vehicles 1 and 0x15 are is unverified), the overall
+  records, Freestyle records (stunt and objective scores), Meters, and a
+  controller/touch letter picker in the name entry (the default name
+  stands in).
 - **Stunt records.** `atv_core::stunt_records` implements the
   `0024df70` jump measurement (`JumpTracker`: takeoff and landing
   positions from the player's vehicle origin, grounded on any wheel
@@ -200,9 +275,9 @@ tricks, so CPU rows read 0).
   player's finish, as it counts the race stunt score; the Race Results'
   Profile Points add the combo points. At the results the course record
   and the profile keep the maxima. Authored: a reset drops a jump in
-  progress so a respawn is not measured as flight. Not ported: the
-  vehicle-index and world +0x674/+0x7d8 gates, the in-race "New Personal
-  …" messages and Hall of Fame jump/combo records, the Freestyle record
+  progress so a respawn is not measured as flight. The in-race "New
+  Personal …" messages come with the Hall of Fame (below). Not ported: the
+  vehicle-index and world +0x674 gates, the Freestyle record
   (the port has no Freestyle results), Meters, and highest jump / air time
   (no page shows them).
 - **No profile loaded.** As `001f1e30` gives a rider without a profile

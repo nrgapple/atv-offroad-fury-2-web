@@ -754,6 +754,7 @@ async fn prepare(
             crashes.reset(&riding.ride)?;
             riding.crashes = Some(crashes);
         }
+        attach_records(&mut riding.ride, &venue.environment);
         if let Some(script) = &script {
             // `?traceAll=1`: every step, for browser-vs-native parity.
             if trace_all() {
@@ -5054,11 +5055,18 @@ impl App {
         #[cfg(target_os = "android")]
         self.soft_keyboard.follow(false, false);
         let championship = race.as_ref().and_then(|r| r.championship);
+        let fame = race.as_ref().map(|r| {
+            (
+                atv_game::launch::race_course_id(&environment, r.course),
+                r.difficulty == 2,
+            )
+        });
         let (world, ride) = self.ride_setup(&front, quad, rider, race);
         {
             let mut f = front.borrow_mut();
             f.begin_loading(&environment);
             f.championship_briefing(championship);
+            f.fame_briefing(fame);
             paint_front(&gpu, &mut f);
             // The loader paints between load stages only; publish its state
             // now (tools/test_engine_championship_loading.mjs).
@@ -5999,6 +6007,37 @@ fn url_flag(pair: &str) -> bool {
         let _ = pair;
         false
     }
+}
+
+/// A race's record keeping (`atv_core::hall_of_fame`): the stored Hall of
+/// Fame and, with a profile loaded, the course record its "New …" messages
+/// compare against. Attached before the first step (scripted replays run
+/// the whole race during load).
+fn attach_records(ride: &mut atv_game::ride::Ride, course: &str) {
+    use atv_ui::settings::{Settings, load_book, load_hall_of_fame};
+    let quad = ride.selection().quad;
+    let Some(race) = ride.race_mut() else {
+        return;
+    };
+    let settings = race.settings();
+    let enduro = atv_game::launch::split_race_course(course).is_some_and(|(_, v)| v.is_enduro());
+    let full = settings.laps == if enduro { 3 } else { 5 };
+    let saved = Settings::load();
+    let hall = load_hall_of_fame(&saved);
+    let personal = load_book(&saved).current_profile().map(|p| {
+        p.courses
+            .get(course)
+            .map(|c| c.personal())
+            .unwrap_or_default()
+    });
+    race.set_records(atv_core::hall_of_fame::RecordWatch::new(
+        course,
+        settings.difficulty == 2,
+        quad,
+        full,
+        Some(&hall),
+        personal,
+    ));
 }
 
 /// The replayed state, for the browser parity tool (`#trace`).
