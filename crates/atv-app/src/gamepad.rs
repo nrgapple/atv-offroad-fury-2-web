@@ -274,6 +274,22 @@ impl Gamepads {
         self.read(id)
     }
 
+    /// Split screen: rumbles the `slot`-th connected controller (each
+    /// player's own pad, as `sample_slot` reads it).
+    pub fn rumble_slot(&mut self, slot: usize, pulse: atv_game::ride::impact::Pulse) -> bool {
+        let Some(id) = self
+            .gilrs
+            .as_ref()
+            .and_then(|g| split_slot(g.gamepads().map(|(id, _)| id), slot))
+        else {
+            return false;
+        };
+        let saved = self.active.replace(id);
+        let sent = self.rumble(pulse);
+        self.active = saved;
+        sent
+    }
+
     fn read(&self, id: GamepadId) -> Option<Pad> {
         let gilrs = self.gilrs.as_ref()?;
         let pad = gilrs.gamepad(id);

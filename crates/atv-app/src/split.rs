@@ -154,6 +154,9 @@ pub struct Second {
     pub focal_length: f32,
     /// A connected controller drove player 2 this frame.
     pub pad: bool,
+    /// Wrecks so far and whether the rider is off now (the room's crash
+    /// serial, which plays a body impact).
+    crash: (u32, bool),
 }
 
 /// Load-time choices both players share: (ATV and rider, gear, race,
@@ -253,6 +256,7 @@ impl Second {
             },
             focal_length: 1.,
             pad: false,
+            crash: (0, false),
         })
     }
 
@@ -282,14 +286,14 @@ impl Second {
     }
 
     /// One rendered frame of player 2's riding: its keys and controller,
-    /// with player 1 as its contact body (`other`).
+    /// with player 1 and player 1's CPUs as its contact bodies (`others`).
     pub fn frame(
         &mut self,
         keys: &dyn Fn(&str) -> bool,
         pad: Option<&atv_game::ride::bindings::Pad>,
         now: f64,
         dt: f32,
-        other: atv_game::multiplayer::PeerBody,
+        others: Vec<atv_game::multiplayer::PeerBody>,
     ) -> Result<(), String> {
         self.pad = pad.is_some();
         let held = |code: &str| player_2_key(keys, code);
@@ -299,10 +303,40 @@ impl Second {
             now,
             drag: 0.,
         };
-        let sampler = move |_: u64, _: &atv_game::ride::Ride| vec![other];
+        let sampler = move |_: u64, _: &atv_game::ride::Ride| others.clone();
         let mut touch = || None;
         self.riding
             .frame(&sample, &mut touch, dt, Some((0, &sampler)))
+    }
+
+    /// Player 2 as the room riders' engine and impact voices hear it.
+    pub fn audio_rider(&mut self) -> atv_game::audio::remote::Rider {
+        let ride = &self.riding.ride;
+        let f = ride.frame();
+        let wreck = ride.rider_wreck();
+        if wreck.is_some() && !self.crash.1 {
+            self.crash.0 = self.crash.0.wrapping_add(1);
+        }
+        self.crash.1 = wreck.is_some();
+        let (rider_position, rider_velocity) = wreck.map_or((f.origin, f.linear_velocity), |(m, v)| {
+            ([m[12], m[13], m[14]], v)
+        });
+        atv_game::audio::remote::Rider {
+            peer: PEER,
+            quad: ride.selection().quad,
+            position: f.origin,
+            velocity: f.linear_velocity,
+            rider_position,
+            rider_velocity,
+            throttle: if self.riding.paused { 0. } else { ride.applied().throttle },
+            speed: f.speed_magnitude,
+            // The room's RiderState::Riding: on the ground, not recovering.
+            riding: wreck.is_none()
+                && f.wreck.phase != atv_core::wreck::Phase::Recovering
+                && f.grounded.iter().any(|g| *g),
+            crash_serial: self.crash.0,
+            stale: false,
+        }
     }
 
     /// Player 2's camera this frame, and its rider drawn in the scene's
@@ -322,6 +356,56 @@ impl Second {
         scene.pose_peers(gpu, &[(PEER, pose)]);
         Ok(())
     }
+}
+
+/// Links each player's race to the other before their steps: player 1's
+/// CPUs see player 2 as a human peer, each race's PLACE and finish signs
+/// read the combined place, and player 1's race is not over (no CPU
+/// estimates) until player 2 has finished too. Returns the contact bodies
+/// player 2 rides against: player 1, then each CPU.
+pub fn link(
+    first: &mut atv_game::ride::Ride,
+    second: &mut atv_game::ride::Ride,
+) -> Vec<atv_game::multiplayer::PeerBody> {
+    let finished = |ride: &atv_game::ride::Ride| {
+        ride.race()
+            .and_then(|r| r.frame.as_ref())
+            .is_some_and(|f| f.phase == "finished")
+    };
+    let placed = |ride: &atv_game::ride::Ride| {
+        ride.race()
+            .and_then(|r| r.frame.as_ref())
+            .map(|f| f.position)
+            .filter(|p| *p > 0)
+    };
+    let (first_done, second_done) = (finished(first), finished(second));
+    let (first_place, second_place) = (placed(first), placed(second));
+    let f2 = second.frame();
+    let human = (f2.origin, f2.linear_velocity, f2.orientation);
+    if let Some(state) = first.race_mut() {
+        state.split = atv_game::ride::race::SplitLink {
+            human: Some(human),
+            place: first_place,
+            waiting: !second_done,
+        };
+    }
+    if let Some(state) = second.race_mut() {
+        state.split = atv_game::ride::race::SplitLink {
+            human: None,
+            place: second_place,
+            waiting: !first_done,
+        };
+    }
+    std::iter::once(body(first, -1.))
+        .chain(first.race_cpu_bodies().into_iter().map(|(position, velocity, orientation)| {
+            atv_game::multiplayer::PeerBody {
+                position,
+                velocity,
+                orientation,
+                tie: -1.,
+            }
+        }))
+        .collect()
 }
 
 /// Split views present at the 4:3 reference (no portrait adaptation); the

@@ -1369,6 +1369,10 @@ impl App {
             net.map_or_else(Vec::new, |n| n.contact_bodies_at(now, ride))
         };
         // Split screen: each player is the other's contact body.
+        let split_others = ready
+            .split
+            .as_mut()
+            .map(|s| split::link(&mut riding.ride, &mut s.riding.ride));
         let split_body = ready
             .split
             .as_ref()
@@ -1387,8 +1391,13 @@ impl App {
             // Player 2 rides while player 1 does: either player's pause
             // opens player 1's Pause menu over both views.
             if !riding.paused && !riding.held && focused {
-                let other = split::body(&riding.ride, -1.);
-                if let Err(error) = second.frame(&all_keys, pad2.as_ref(), sample_now, dt, other) {
+                // Player 1 as it stands after this frame's steps.
+                let mut others = split_others.unwrap_or_default();
+                if let Some(first) = others.first_mut() {
+                    *first = split::body(&riding.ride, -1.);
+                }
+                if let Err(error) = second.frame(&all_keys, pad2.as_ref(), sample_now, dt, others)
+                {
                     status(&format!("Player 2 stopped: {error}"));
                 }
                 if second.riding.paused {
@@ -1411,9 +1420,22 @@ impl App {
             }
         }
         // Rumble.pulse: the frame's impacts on the active controller.
+        // Split screen: each player's impacts rumble its own pad.
         for pulse in std::mem::take(&mut riding.pulses) {
-            if self.gamepad.rumble(pulse) {
+            let sent = if split_on {
+                self.gamepad.rumble_slot(0, pulse)
+            } else {
+                self.gamepad.rumble(pulse)
+            };
+            if sent {
                 riding.rumble.sent(pulse);
+            }
+        }
+        if let Some(second) = &mut ready.split {
+            for pulse in std::mem::take(&mut second.riding.pulses) {
+                if self.gamepad.rumble_slot(1, pulse) {
+                    second.riding.rumble.sent(pulse);
+                }
             }
         }
         // A Pause binding this frame opens the menu in this same frame (the
@@ -1536,6 +1558,21 @@ impl App {
                 .map(|s| (s.remote.voices(), s.remote.starts, s.remote.impact_starts));
             let tags = self.overlay.as_ref().map_or(0, |o| o.tags);
             publish_multiplayer(net, riding.contacts, &riding.ride, remote, tags);
+        }
+        // Split screen: player 2's engine and body impacts play through the
+        // room riders' voices, heard from player 1's camera (one output; the
+        // original's split-screen mix was not traced).
+        if let (Some(second), Some(sound)) = (&mut ready.split, &mut riding.sound) {
+            let motion = riding.ride.frame();
+            let rider = second.audio_rider();
+            for quad in sound.remote_frame(
+                &[rider],
+                motion.origin,
+                &ready.camera,
+                motion.linear_velocity,
+            ) {
+                engine_loads.push((quad, sound.load_remote_engine(quad)));
+            }
         }
         for (quad, future) in engine_loads {
             self.spawn_frame(future, move |engine| {
@@ -2009,13 +2046,18 @@ impl App {
                     serde_json::json!([c.x, c.y, c.z, c.yaw, c.pitch, focal])
                 };
                 let race = |ride: &atv_game::ride::Ride| {
-                    ride.race().and_then(|r| r.frame.as_ref()).map(|f| {
+                    let state = ride.race()?;
+                    state.frame.as_ref().map(|f| {
                         serde_json::json!({
                             "phase": f.phase, "lap": f.lap, "laps": f.laps,
                             "position": f.position, "field": f.field,
                             "elapsed": f.elapsed,
+                            "sign": f.hud.as_ref().and_then(|h| h.sign.as_ref()).map(|s| s.id),
+                            "linkedHuman": state.split.human.is_some(),
+                            "waiting": state.split.waiting,
                             "standings": f.standings.iter().map(|s| serde_json::json!({
                                 "name": s.name, "position": s.position, "time": s.time,
+                                "estimated": s.estimated,
                                 "player": s.player})).collect::<Vec<_>>(),
                         })
                     })
@@ -3086,6 +3128,12 @@ impl App {
             // always on" (`0020f780` sets +0x674 for network play).
             ecosystem_collision_off: !prefs.ecosystem_collision && !riding.online,
         };
+        // Split screen: player 2 rides the same settings.
+        if let Some(second) = &mut ready.split {
+            second.riding.vibration = prefs.vibration;
+            second.riding.chase_assist = prefs.chase_assist;
+            second.riding.ride.options = riding.ride.options;
+        }
         // Settings → Alpha presentation (web/hype.js).
         riding.alpha_slowmo = prefs.alpha("air-slowmo");
         riding.alpha_big_air_camera = prefs.alpha("big-air-camera");

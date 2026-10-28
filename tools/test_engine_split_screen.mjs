@@ -153,8 +153,20 @@ try {
     const field = s.player1.race.field;
     assert.equal(s.player2.race.field, field);
     assert.ok(s.player1.race.standings.some(r => r.name === 'Player 2'), JSON.stringify(s.player1.race.standings));
+    // Player 1's CPUs ride against player 2 (a human peer to avoid).
+    assert.equal(s.player1.race.linkedHuman, true);
     await nextFrames(page, 120);
     await shot(page, 'split-race-vertical');
+    // Player 2's finish sign shows its combined place (not its own race's).
+    await wait(page, () => JSON.parse(document.querySelector('#ui-state').textContent).split.player2.race.phase === 'finished',
+      null, 420000);
+    s = await split(page);
+    const p2 = s.player2.race;
+    const p2Row = s.player1.race.standings.find(r => r.name === 'Player 2');
+    assert.equal(p2.position, p2Row.position, JSON.stringify([p2, s.player1.race.standings]));
+    if (p2.sign >= 13 && p2.sign <= 15) assert.equal(p2.sign - 12, p2.position, `finish sign ${p2.sign} for place ${p2.position}`);
+    else assert.ok(p2.position > 3 || p2.sign === null || p2.sign < 13, `sign ${p2.sign} place ${p2.position}`);
+    await shot(page, 'split-race-p2-finish');
     // Both finish; the results wait for the second.
     await wait(page, () => {
       const s = JSON.parse(document.querySelector('#ui-state').textContent).split;
@@ -164,6 +176,13 @@ try {
     assert.equal(s.resultsHeld, false);
     const rows = s.resultsRows.map(r => r[0]);
     assert.ok(rows.some(r => r.includes('Player 2')) && rows.length === field, JSON.stringify(rows));
+    // The race ended when both humans had finished: CPUs that finished
+    // before the last human have real (not estimated) times.
+    const standings = s.player1.race.standings;
+    const lastHuman = Math.max(...standings.filter(r => r.player || r.name === 'Player 2').map(r => r.time));
+    for (const r of standings.filter(r => !r.player && r.name !== 'Player 2' && r.time < lastHuman - 0.05)) {
+      assert.equal(r.estimated, false, `CPU ${r.name} finished at ${r.time} before ${lastHuman}: ${JSON.stringify(standings)}`);
+    }
     const times = s.player1.race.standings.map(r => r.time);
     assert.ok(times.every((t, i) => t !== null && (i === 0 || t >= times[i - 1])), JSON.stringify(s.player1.race.standings));
     await shot(page, 'split-race-results');
