@@ -22,11 +22,17 @@ export function uncachedContent(entries, origin) {
   return urls;
 }
 
-// Ask the browser not to evict the cache. Installed apps are the case that
-// matters (and the case browsers usually grant); a refusal changes nothing.
+// Saved progress on this device: a profile book or a Pass Key (research/CLOUD_SAVE.md).
+export function savedProgress(win) {
+  try { return ['fury-pass-key', 'fury-profiles'].some(key => win.localStorage?.getItem(key)); } catch { return false; }
+}
+
+// Ask the browser not to evict the cache and the saves. Installed apps, and any
+// tab once a profile is saved (a cleared save loses progress that has not
+// synced to its Pass Key yet); a refusal changes nothing.
 export async function persistStorage(win) {
   const storage = win.navigator.storage;
-  if (!standalone(win) || !storage?.persist) return false;
+  if (!(standalone(win) || savedProgress(win)) || !storage?.persist) return false;
   try { return (await storage.persisted?.()) || await storage.persist(); } catch { return false; }
 }
 

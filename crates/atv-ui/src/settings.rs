@@ -78,7 +78,9 @@ impl Settings {
                 .get(key)
                 .cloned();
         }
-        // Prefer this session after a write, including quota/private-mode failures.
+        // A write storage refused (quota, private mode) lasts for this
+        // session. Saved writes read back from storage, so a key another
+        // instance (or tab) wrote since is never shadowed by an older copy.
         if let Some(value) = self.values.get(key) {
             return Some(value.clone());
         }
@@ -105,12 +107,19 @@ impl Settings {
             return serde_json::to_string_pretty(&file)
                 .is_ok_and(|text| std::fs::write(path, text).is_ok());
         }
-        self.values.insert(key.into(), value.into());
         #[cfg(target_arch = "wasm32")]
         {
             // Private mode or quota: keep the session value.
-            storage().is_some_and(|storage| storage.set_item(key, value).is_ok())
+            let saved = storage().is_some_and(|storage| storage.set_item(key, value).is_ok());
+            if saved {
+                self.values.remove(key);
+            } else {
+                self.values.insert(key.into(), value.into());
+            }
+            saved
         }
+        #[cfg(not(target_arch = "wasm32"))]
+        self.values.insert(key.into(), value.into());
         // Desktop in-memory settings (tests, captures) need no storage.
         #[cfg(not(target_arch = "wasm32"))]
         true

@@ -36,6 +36,10 @@ pub struct ControlRow {
 #[serde(deny_unknown_fields)]
 pub struct Request {
     pub page: String,
+    /// Split Screen: the two-player layout is side by side (the original
+    /// Game Settings "Split Screen Vertical"), else one above the other.
+    #[serde(default)]
+    pub split_vertical: bool,
     #[serde(default)]
     pub loading_status: String,
     #[serde(default = "default_quad")]
@@ -576,6 +580,7 @@ pub fn layout(request: Request) -> Result<Frame> {
         "main" => "Main Menu",
         "single" => "Single Player",
         "multiplayer" => "Multiplayer",
+        "split" => "Split Screen",
         "create-lobby" => "Host Game",
         "join-lobby" => "Join Game",
         "lobby" => "Free Ride Lobby",
@@ -994,9 +999,42 @@ pub fn layout(request: Request) -> Result<Frame> {
             );
         }
         "multiplayer" => {
-            for (i, (label, action)) in [("Host Game", "create-lobby"), ("Join Game", "join-lobby")]
-                .iter()
-                .enumerate()
+            // The original Multiplayer page leads with Split Screen (one
+            // console, PAGE17 ControllerSelect), then the network games.
+            for (i, (label, action)) in [
+                ("Split Screen", "split"),
+                ("Host Game", "create-lobby"),
+                ("Join Game", "join-lobby"),
+            ]
+            .iter()
+            .enumerate()
+            {
+                f.choices.push((*action).into());
+                f.button(
+                    label,
+                    action,
+                    [24., 104. + i as f32 * 58., list_w, 58.],
+                    request.selection == i,
+                );
+            }
+            f.footer(true);
+        }
+        "split" => {
+            // Multiplayer → Split Screen → MultiPlayerSelect (Race,
+            // Freestyle; Games follow in a later slice), and the Game
+            // Settings layout row the original keeps under Options.
+            let layout = if request.split_vertical {
+                "Screen: Side by Side"
+            } else {
+                "Screen: Top and Bottom"
+            };
+            for (i, (label, action)) in [
+                ("Race", "splitrace"),
+                ("Freestyle", "splitfree"),
+                (layout, "splitlayout"),
+            ]
+            .iter()
+            .enumerate()
             {
                 f.choices.push((*action).into());
                 f.button(
@@ -2143,6 +2181,7 @@ mod tests {
     fn request(page: &str, w: f32, h: f32) -> Request {
         Request {
             page: page.into(),
+            split_vertical: false,
             loading_status: "Reading original ATV...".into(),
             quad_id: 1,
             rider_id: 0,
@@ -2221,8 +2260,9 @@ mod tests {
     fn multiplayer_intent_and_forms_are_separate() {
         let menu = layout(request("multiplayer", 390., 844.)).unwrap();
         assert!(menu.inputs.is_empty());
-        assert_eq!(menu.choices, ["create-lobby", "join-lobby"]);
-        assert_eq!(menu.hits[0].label, "Host Game");
+        assert_eq!(menu.choices, ["split", "create-lobby", "join-lobby"]);
+        assert_eq!(menu.hits[0].label, "Split Screen");
+        assert_eq!(menu.hits[1].label, "Host Game");
         let create = layout(request("create-lobby", 390., 844.)).unwrap();
         assert_eq!(create.inputs.len(), 2);
         assert_eq!(create.inputs[1].action, "create-code");

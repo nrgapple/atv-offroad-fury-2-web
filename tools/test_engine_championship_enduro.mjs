@@ -42,12 +42,14 @@ try {
   let front = (await read(page)).front;
   const at = front.choices.indexOf('championship');
   for (let i = front.selection; i < at; i++) await key(page, 'ArrowDown');
+  for (let i = front.selection; i > at; i--) await key(page, 'ArrowUp');
   await key(page, 'Enter'); await onPage(page, 'championship');
   front = (await read(page)).front;
   let labels = Object.fromEntries(front.choices.map((c, i) => [c, front.labels[i]]));
   assert.equal(labels['champ:send'], 'Amateur Enduro · Round 5 of 5 · 28 pts');
   assert.equal(labels['champ:lend'], 'Pro Enduro · Locked');
   for (let i = front.selection; i < front.choices.indexOf('champ:send'); i++) await key(page, 'ArrowDown');
+  for (let i = front.selection; i > front.choices.indexOf('champ:send'); i--) await key(page, 'ArrowUp');
   await key(page, 'Enter');
   await page.waitForFunction(() => JSON.parse(localStorage.getItem('fury-profile') || '{}').races === 5, null, { timeout: 600000 });
   const state = (await read(page)).ride ?? {};

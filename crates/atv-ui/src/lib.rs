@@ -4,6 +4,7 @@
 //! artwork and menus are later migration checkpoints.
 // Presentation only: not part of the deterministic simulation (clippy.toml).
 #![allow(clippy::disallowed_methods)]
+pub mod cloud;
 pub mod color;
 pub mod diagnostics;
 pub mod front;
@@ -12,6 +13,7 @@ pub mod layout;
 pub mod menu;
 pub mod paint;
 pub mod render;
+pub mod scroll;
 pub mod settings;
 pub mod text;
 pub mod touch;

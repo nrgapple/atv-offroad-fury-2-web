@@ -292,6 +292,7 @@ dependencies = [
  "atv-ui",
  "console_error_panic_hook",
  "cpal",
+ "getrandom 0.3.4",
  "gilrs",
  "jni",
  "js-sys",
@@ -396,6 +397,8 @@ dependencies = [
  "cosmic-text",
  "js-sys",
  "pollster",
+ "qrcodegen",
+ "serde",
  "serde_json",
  "swash",
  "taffy",
@@ -2592,6 +2595,12 @@ name = "profiling"
 version = "1.0.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3d595e54a326bc53c1c197b32d295e14b169e3cfeaa8dc82b529f947fba6bcf5"
+
+[[package]]
+name = "qrcodegen"
+version = "1.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4339fc7a1021c9c1621d87f5e3505f2805c8c105420ba2f2a4df86814590c142"
 
 [[package]]
 name = "quick-xml"

@@ -268,6 +268,7 @@ fn rebuild(ready: &mut crate::Ready, overlay: Option<&mut crate::overlay::Overla
         venue,
         scene,
         riding,
+        split,
         ..
     } = ready;
     let result = match riding {
@@ -278,6 +279,11 @@ fn rebuild(ready: &mut crate::Ready, overlay: Option<&mut crate::overlay::Overla
             Ok(())
         }
     };
+    // Split screen's player 2 rides in a rider slot of the new scene.
+    let result = result.and_then(|()| match split {
+        Some(second) => second.restore(gpu, venue, scene),
+        None => Ok(()),
+    });
     if let Err(error) = result {
         status(&format!("Restoring graphics: {error}"));
     }

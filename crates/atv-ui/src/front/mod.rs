@@ -41,9 +41,17 @@ pub const MODEL_RIDER: u32 = 2410;
 /// Single Race: Start Race under the preview, and Copy ride link by Back.
 pub const START: u32 = 2411;
 pub const SHARE: u32 = 2412;
+/// The Pass Key badge (title, main menu and Profile Editor pages).
+pub const PASSKEY: u32 = 2413;
 /// Value rows' Previous/Next arrows, by choice index.
 pub const STEP_PREV: u32 = 2430;
 pub const STEP_NEXT: u32 = 2440;
+/// The rows column when it scrolls, and a marker after its last child (its
+/// content height).
+pub const ROWS: u32 = 2450;
+pub const ROWS_END: u32 = 2451;
+/// Space kept under the rows column's last child when it scrolls.
+pub const ROWS_PADDING: f32 = 12.;
 
 /// A registered image and its texel size.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -129,6 +137,16 @@ pub struct Stats {
     pub top_speed: Option<f32>,
 }
 
+/// The Pass Key badge's state.
+#[derive(Clone, Debug, PartialEq, Default)]
+pub struct Badge {
+    /// This device's key; none before the first saved progress.
+    pub key: Option<String>,
+    pub status: String,
+    pub synced: bool,
+    pub trouble: bool,
+}
+
 /// Everything a page draws.
 #[derive(Clone, Debug, PartialEq, Default)]
 pub struct Screen {
@@ -155,6 +173,8 @@ pub struct Screen {
     /// Single Race: `.ms-track-mode` ("National race").
     pub hero_mode: String,
     pub list_scroll: f32,
+    /// The rows column's scroll (pages whose rows can outgrow it).
+    pub rows_scroll: f32,
     /// Garage.
     pub vehicle_label: String,
     pub rider: u16,
@@ -200,6 +220,10 @@ pub struct Screen {
     pub lobby: Option<controller::Lobby>,
     /// The page's slide-in while it opens (crate::transition).
     pub motion: Option<crate::transition::Motion>,
+    /// The Pass Key badge, on the pages that show it.
+    pub badge: Option<Badge>,
+    /// The Pass Key page's QR code: the link it encodes.
+    pub qr: Option<String>,
 }
 
 /// Pages laid out like the main menu: rows on the left, the ride stage
@@ -210,6 +234,7 @@ fn stage_page(page: &str) -> bool {
         "main"
             | "single"
             | "multiplayer"
+            | "split"
             | "championship"
             | "objectives"
             | "objective-courses"
@@ -586,8 +611,32 @@ fn page_element(view: &Viewport, s: &Screen) -> El {
         (bar.style.grid_row, bar.style.grid_column) = hints_area;
         root = root.child(bar);
     } else if let Some(mut hints) = hints(&m, s) {
-        (hints.style.grid_row, hints.style.grid_column) = hints_area;
+        (hints.style.grid_row, hints.style.grid_column) = hints_area.clone();
         root = root.child(hints);
+        // The Pass Key badge in the bottom-left corner, level with Back.
+        // Portrait menus run their rows down to that corner: there it shows
+        // on the title and the Pass Key pages only.
+        if let Some(badge) = s
+            .badge
+            .as_ref()
+            .filter(|_| !m.portrait || s.page.starts_with("passkey"))
+        {
+            let mut el = badge_element(&m, s, badge);
+            (el.style.grid_row, el.style.grid_column) = hints_area;
+            el.style.justify_self = Some(JustifySelf::START);
+            el.style.align_self = Some(AlignSelf::END);
+            el.style.margin = margins(
+                0.,
+                0.,
+                if m.portrait || m.short {
+                    6.
+                } else {
+                    clamp(6., m.h * 0.014, 14.)
+                },
+                m.gutter,
+            );
+            root = root.child(el);
+        }
     }
     root
 }
@@ -666,6 +715,7 @@ fn page_title(page: &str) -> &'static str {
         "main" => "Main Menu",
         "single" => "Single Player",
         "multiplayer" => "Multiplayer",
+        "split" => "Split Screen",
         "create-lobby" => "Create Lobby",
         "join-lobby" => "Join Lobby",
         "lobby" => "Free Ride Lobby",
@@ -691,6 +741,10 @@ fn page_title(page: &str) -> &'static str {
         "profile-records" => "Records",
         "profile-slots" | "profile-confirm" => "Profile Editor",
         "gear" => "Rider Gear",
+        "passkey" => "Pass Key",
+        "passkey-entry" => "Enter Pass Key",
+        "passkey-file" => "Save Files",
+        "passkey-confirm" => "Load Save",
         "loading" => "Now Loading...",
         "settings" => "Settings",
         _ => "",
@@ -789,7 +843,8 @@ fn panel(m: &Metrics, s: &Screen, loading: bool) -> El {
         sides(
             if loading { 34. } else { 4. },
             m.gutter,
-            if matches!(s.page.as_str(), "tracks" | "race") {
+            // Clear of the sweeping lower edge, which rises 56px at the left.
+            if matches!(s.page.as_str(), "tracks" | "race") || stage_page(&s.page) {
                 if m.h <= 640. { 16. } else { 22. }
             } else {
                 10.
@@ -905,8 +960,13 @@ fn panel(m: &Metrics, s: &Screen, loading: bool) -> El {
             }
         }
         "loading" => panel = panel.child(loading_info(m, s)),
-        page if controller::profile_pages::DETAIL_PAGES.contains(&page) => {
+        page if controller::profile_pages::DETAIL_PAGES.contains(&page)
+            || controller::passkey_page::PAGES.contains(&page) =>
+        {
             panel = panel.child(details(m, s));
+            if let Some(link) = &s.qr {
+                panel = panel.child(qr_code(m, link));
+            }
         }
         _ => {}
     }
@@ -1355,6 +1415,7 @@ fn left(m: &Metrics, s: &Screen) -> El {
             "main"
                 | "single"
                 | "multiplayer"
+                | "split"
                 | "championship"
                 | "objectives"
                 | "objective-courses"
@@ -1368,9 +1429,10 @@ fn left(m: &Metrics, s: &Screen) -> El {
                 | "profile-trophies"
                 | "profile-records"
                 | "hall-of-fame"
-        ) || controller::store_page(page) =>
+        ) || controller::store_page(page)
+            || controller::passkey_page::PAGES.contains(&page) =>
         {
-            if matches!(page, "profile-name" | "store-cheats") {
+            if matches!(page, "profile-name" | "store-cheats" | "passkey-entry") {
                 left = left.child(form(m, s));
             }
             let mut rows = El::new(column(2.));
@@ -1529,7 +1591,32 @@ fn left(m: &Metrics, s: &Screen) -> El {
         "loading" => left = left.child(shot(s)),
         _ => {}
     }
-    left
+    if matches!(s.page.as_str(), "tracks" | "race" | "garage" | "loading") {
+        // Their lists scroll instead.
+        return left;
+    }
+    // Rows that outgrow the column (a phone in landscape, the seven main
+    // rows on a short portrait screen) scroll inside it, clipped, instead
+    // of running under Back and off the screen.
+    left.style.overflow = taffy::Point {
+        x: taffy::Overflow::Visible,
+        y: taffy::Overflow::Scroll,
+    };
+    left.style.scrollbar_width = 0.;
+    left.style.min_size.height = length(0.);
+    left.child(
+        El::new(Style {
+            flex_shrink: 0.,
+            size: Size {
+                width: length(0.),
+                height: length(0.),
+            },
+            ..Default::default()
+        })
+        .id(ROWS_END),
+    )
+    .id(ROWS)
+    .scroll(s.rows_scroll)
 }
 
 fn bullet() -> El {
@@ -2708,7 +2795,158 @@ fn title(m: &Metrics, s: &Screen, mut root: El) -> El {
         }
         actions = actions.child(row);
     }
-    root.child(lockup).child(actions)
+    root = root.child(lockup).child(actions);
+    if let Some(badge) = &s.badge {
+        let mut el = badge_element(m, s, badge);
+        el.style.position = Position::Absolute;
+        el.style.inset = inset(Some(12.), Some(12.), None, None);
+        root = root.child(el);
+    }
+    root
+}
+
+/// The Pass Key badge: the key (or an invitation to enter one) over its sync
+/// state, a dark pill like Back; selecting it opens the Pass Key page.
+fn badge_element(m: &Metrics, s: &Screen, badge: &Badge) -> El {
+    let hovered = s.hovered == Some(PASSKEY);
+    let dot = if badge.trouble {
+        "#ff8a65"
+    } else if badge.synced {
+        "#7ee07e"
+    } else {
+        "#f1d84e"
+    };
+    let label = match &badge.key {
+        Some(_) if !badge.status.is_empty() => {
+            format!("PASS KEY · {}", badge.status.to_uppercase())
+        }
+        _ => "PASS KEY".to_string(),
+    };
+    let key = match &badge.key {
+        // Narrow phones: the first and last groups.
+        Some(key) if m.w < 380. && key.len() > 14 => {
+            format!("{}…{}", &key[..9], &key[key.len() - 4..])
+        }
+        Some(key) => key.clone(),
+        None => "Enter or create".into(),
+    };
+    let column = El::new(Style {
+        min_size: Size {
+            width: length(0.),
+            height: auto(),
+        },
+        ..column(1.)
+    })
+    .child(text(
+        label,
+        TextStyle::new(display(10., 700, false), Color::hex("#f1d84e"))
+            .spacing(1.)
+            .shadow(0., 1., 2., Color::BLACK),
+        12.,
+    ))
+    .child(text(
+        key,
+        TextStyle::new(
+            display(if m.short { 13. } else { 15. }, 700, false),
+            Color::hex(if hovered { "#fffaa1" } else { "#f2f2f2" }),
+        )
+        .spacing(1.)
+        .shadow(0., 1., 3., Color::BLACK),
+        17.,
+    ));
+    El::new(Style {
+        display: Display::Flex,
+        align_items: AlignItems::CENTER,
+        gap: Size {
+            width: px(9.),
+            height: px(0.),
+        },
+        min_size: Size {
+            width: auto(),
+            height: length(46.),
+        },
+        padding: sides(4., 12., 4., 11.),
+        flex_shrink: 0.,
+        ..Default::default()
+    })
+    .paint(Paint::fill(Color::hex("#0000008f")).radius(5.))
+    .id(PASSKEY)
+    .child(
+        El::new(Style {
+            size: Size {
+                width: length(9.),
+                height: length(9.),
+            },
+            flex_shrink: 0.,
+            ..Default::default()
+        })
+        .paint(
+            Paint::fill(Color::hex(dot))
+                .radius(4.5)
+                .shadow(BoxShadow::outer(0., 0., 6., Color::hex(dot))),
+        ),
+    )
+    .child(column)
+}
+
+/// A QR code of `link` on a white card with its quiet zone (dark modules as
+/// one vector path, so it stays sharp at any scale).
+fn qr_code(m: &Metrics, link: &str) -> El {
+    use qrcodegen::{QrCode, QrCodeEcc};
+    let Ok(code) = QrCode::encode_text(link, QrCodeEcc::Medium) else {
+        return El::new(Style::default());
+    };
+    let n = code.size();
+    let mut path = String::new();
+    for y in 0..n {
+        let mut x = 0;
+        while x < n {
+            if code.get_module(x, y) {
+                let start = x;
+                while x < n && code.get_module(x, y) {
+                    x += 1;
+                }
+                path += &format!("M{start} {y}h{}v1h-{}z", x - start, x - start);
+            } else {
+                x += 1;
+            }
+        }
+    }
+    let side = if m.portrait {
+        clamp(120., m.w * 0.42, 200.)
+    } else {
+        clamp(120., m.h * 0.34, 240.)
+    };
+    let quiet = side / n as f32 * 3.;
+    El::new(Style {
+        padding: sides(quiet, quiet, quiet, quiet),
+        margin: margins(8., 0., 0., 8.),
+        align_self: Some(AlignSelf::FLEX_START),
+        flex_shrink: 0.,
+        ..Default::default()
+    })
+    .paint(
+        Paint::fill(Color::hex("#ffffff"))
+            .radius(6.)
+            .shadow(BoxShadow::outer(0., 2., 0., Color::hex("#0006"))),
+    )
+    .child(
+        El::new(Style {
+            size: Size {
+                width: length(side),
+                height: length(side),
+            },
+            ..Default::default()
+        })
+        .content(Content::Shape(Shape {
+            path,
+            bounds: [0., 0., n as f32, n as f32],
+            unit: side / n as f32,
+            fill: Color::hex("#000000"),
+            stroke: None,
+            drop_shadow: None,
+        })),
+    )
 }
 
 /// A quiet text button under the title's Start (DEV LOG, DOWNLOADS).

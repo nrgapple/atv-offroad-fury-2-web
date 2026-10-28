@@ -9,7 +9,9 @@ atv-content = { path = "../atv-content" }
 atv-core = { path = "../atv-core" }
 atv-game = { path = "../atv-game" }
 bytemuck = { version = "1", features = ["derive"] }
+serde.workspace = true
 serde_json.workspace = true
+qrcodegen = "1.8"
 web-time = "1"
 taffy = { version = "0.15", default-features = false, features = ["std", "taffy_tree", "flexbox", "grid", "block_layout", "content_size"] }
 wgpu = { version = "30", default-features = false, features = ["std", "wgsl"] }

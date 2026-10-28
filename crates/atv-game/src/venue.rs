@@ -100,6 +100,9 @@ pub struct Venue {
     /// Tag's `tagball.psg` (a `*_TG.RES` ride): the posed model the Tag
     /// session moves each frame through the drop gate's path.
     pub tag_ball: bool,
+    /// Zone references of the scene and TOYs (StartingZone/Zone/InitialZone)
+    /// against the scene's zones (research/VISIBILITY.md).
+    pub zones: atv_core::zones::Census,
 }
 
 /// A Freestyle objective's data from the course's OB archive
@@ -621,6 +624,11 @@ pub async fn load_with(
     // Supercross venues) declares its actors once.
     let mode_toy = mode.as_deref().filter(|_| mode_index != toy_index);
     let toys: Vec<&[u8]> = toy.as_deref().into_iter().chain(mode_toy).collect();
+    let mut zones = atv_core::zones::Census::default();
+    zones.add(&String::from_utf8_lossy(&scene_text), scene.zones);
+    for text in &toys {
+        zones.add(&String::from_utf8_lossy(text), scene.zones);
+    }
     let actors = crate::actors::load(&archive, &toys, &|d| {
         (!d.reference_name.is_empty()
             && treasure_refs.contains(&d.reference_name.to_ascii_lowercase()))
@@ -693,6 +701,7 @@ pub async fn load_with(
         treasures,
         training_arrows,
         tag_ball,
+        zones,
         scene,
         terrain: Terrain {
             width,

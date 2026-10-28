@@ -111,6 +111,9 @@ pub enum CameraMode {
 }
 
 /// Loaded original venue state the simulation reuses on every reset.
+/// 00319c10 -> 003007b0 supplies 70 MPH and the original ft/s conversion.
+pub(crate) const CAMERA_SPEED_REFERENCE: f32 = 70. * f32::from_bits(0x3fbbbb84);
+
 struct Simulation {
     terrain: terrain::Terrain,
     materials: [TerrainMaterial; 8],
@@ -122,6 +125,9 @@ struct Simulation {
     boundary: Option<atv_core::boundary_launch::Config>,
     extended_boundary: bool,
     camera: FollowCamera,
+    /// The course's `FollowCamPresets.pb`, for another viewport layout's
+    /// sections (split screen).
+    camera_presets: Vec<u8>,
     /// ENV08's train, shared with the renderer; an ATV ride steps it with
     /// its physics (collision heights, moving obstacles) as atv-web does.
     train: Option<Rc<std::cell::RefCell<crate::train::Train>>>,
@@ -847,6 +853,15 @@ impl Ride {
         self.after_placement()?;
         self.sim.camera.reset();
         self.step_camera(0.)
+    }
+
+    /// Rides with the follow-camera presets of another viewport layout
+    /// (`atv_core::camera::presets`: 1 horizontal split, 2 vertical split),
+    /// before the first step.
+    pub fn set_camera_layout(&mut self, layout: u32) -> Result<()> {
+        let presets = atv_core::camera::presets(&self.sim.camera_presets, layout)?;
+        self.sim.camera = FollowCamera::new(presets, CAMERA_SPEED_REFERENCE)?;
+        Ok(())
     }
 
     /// Change camera (op 47 with cycle).

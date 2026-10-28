@@ -1,0 +1,15 @@
+{
+  "id": "tag-on-the-14-original-tag-courses-4301b5e7700542629deffd39449d5c3a",
+  "timestamp": "2026-10-28T00:56:52.087912+00:00",
+  "recorded_at": "2026-10-28T01:13:56.652900+00:00",
+  "kind": "build",
+  "title": "Tag on the 14 original Tag courses",
+  "summary": "Games > Tag and Pause > Play Tag now host a room on the original TG courses (E01-E08_TG and F01-F06_TG) using the original tagball model and the recovered rules. PR #390 is open and queued to merge through auto-merge.",
+  "details": [
+    "The 14 TG courses are already on the live content host and all 14 hashes were verified. Recovered rules: 25% chance the ball is knocked loose when a trick starts, the carrier has about 34% less top speed, a boundary throw-in near the heightfield edge (stadiums use only the edge), ground respawn from 18 level rays, ties broken by rider slot, and a 2 to 20 minute limit chosen in Games Prep. Also fixed a room opened from a link not moving to the Tag course.",
+    "Verification (host Chromium): the multiplayer_tag and new games_tag browser tests pass, plus an all-course sweep. Not yet a verified public release."
+  ],
+  "limitation": "Guest tricks do not knock the ball loose; riders share one start; the ball only tests terrain; no ball spin.",
+  "image": "/devlog-images/tag-on-the-14-original-tag-courses-4301b5e7700542629deffd39449d5c3a.png",
+  "caption": "A guest chasing the host who has the ball on a Tag course"
+}
