@@ -4,6 +4,7 @@
 mod android;
 #[cfg(not(target_arch = "wasm32"))]
 mod clipboard;
+mod cloud;
 #[cfg(any(target_os = "android", test))]
 mod content_sync;
 #[cfg(target_arch = "wasm32")]
@@ -208,6 +209,12 @@ enum Message {
     ContextLost,
     #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
     ContextRestored,
+    /// Web: a Pass Key save request's answer (cloud.rs).
+    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+    Cloud(u64, atv_ui::cloud::Response),
+    /// Web: Import Save read a file (name, text).
+    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+    CloudImport(String, String),
 }
 
 /// A connected room waiting on the lobby page: (room, course, quad, rider,
@@ -544,6 +551,8 @@ impl ObjectiveSession {
 }
 
 struct App {
+    /// Pass Key cloud saves (cloud.rs).
+    cloud: cloud::Cloud,
     /// The frontend's Split Screen branch asked for two local players on
     /// the next rides (kept for Restart Race).
     split_request: Option<split::Layout>,
@@ -2642,6 +2651,7 @@ impl App {
         self.sync_menu_music();
         self.last = Instant::now();
         self.wake();
+        self.cloud_activity(focused);
     }
 
     fn blur(&mut self) {
@@ -4271,7 +4281,12 @@ impl ApplicationHandler<Message> for App {
                     window.request_redraw();
                 }
             }
-            Message::PresenceTick => self.presence_tick(),
+            Message::PresenceTick => {
+                self.presence_tick();
+                self.cloud_tick();
+            }
+            Message::Cloud(id, response) => self.cloud_response(id, response),
+            Message::CloudImport(name, text) => self.cloud_import(name, text),
             Message::RoomJoined(result) => self.room_joined(*result),
             Message::LobbyNotice(text) => {
                 if let Some(front) = &self.front {
@@ -4768,10 +4783,15 @@ impl App {
             }
         }
         self.poll_riders();
+        #[cfg(not(target_arch = "wasm32"))]
+        let cloud = self.cloud_poll();
         // The earliest of every reason to wake without an event.
         let now = Instant::now();
         let mut wake: Option<Instant> = None;
         let mut at = |when: Instant| wake = Some(wake.map_or(when, |w| w.min(when)));
+        // Pass Key sync: its answers and once-a-second tick (cloud.rs).
+        #[cfg(not(target_arch = "wasm32"))]
+        at(cloud);
         // A hidden or suspended room ride draws no frames: a 1 s timer keeps
         // its presence (the browser's throttled background timers).
         #[cfg(not(target_arch = "wasm32"))]
@@ -5353,6 +5373,7 @@ impl App {
             );
         }
         self.open_launch();
+        self.cloud_ready();
         #[cfg(not(target_arch = "wasm32"))]
         if let Some(seconds) = self.lose_gpu.0.take() {
             self.lose_gpu.1 = Some(Instant::now() + std::time::Duration::from_secs_f64(seconds));
@@ -5668,6 +5689,7 @@ impl App {
                 self.start_ride(environment, quad, rider, Some(settings), None);
             }
             Event::CopyRaceLink => self.copy_race_link(),
+            Event::Cloud(command) => self.cloud_command(command),
             Event::FreeRide { quad, rider, name } => {
                 let Some(relay) = self.defaults.as_ref().map(|d| d.relay.clone()) else {
                     return;
@@ -7528,6 +7550,7 @@ pub fn run(options: Options) {
     }
     let event_loop = builder.build().expect("event loop");
     let app = App {
+        cloud: Default::default(),
         camera_choice: options.camera_choice,
         render_scale: Default::default(),
         usage: Default::default(),
