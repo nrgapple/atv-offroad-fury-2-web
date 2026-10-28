@@ -155,17 +155,17 @@ pub struct Setup {
 /// Each CPU quad's rest node matrices and the seated rider's.
 type GridRest = (Vec<Vec<[f32; 16]>>, Vec<[f32; 16]>);
 
-/// Split screen: the other local human as this race sees it
+/// Split screen: the other local humans as this race sees them
 /// (research/SPLIT_SCREEN.md). Player 1's race holds the CPU field.
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct SplitLink {
-    /// The other human's (origin, velocity, orientation): the CPUs steer
-    /// around it (a human peer, RaceStatus flag 4) and push against it.
-    pub human: Option<([f32; 3], [f32; 3], [f32; 4])>,
+    /// The other humans' (origin, velocity, orientation): the CPUs steer
+    /// around them (human peers, RaceStatus flag 4) and push against them.
+    pub humans: Vec<([f32; 3], [f32; 3], [f32; 4])>,
     /// The combined place from the latest standings merge: the PLACE sign,
     /// the finish sign and the race-over music read it.
     pub place: Option<usize>,
-    /// The other human has not finished: the race is not over yet.
+    /// Another human has not finished: the race is not over yet.
     pub waiting: bool,
 }
 
@@ -711,18 +711,23 @@ impl Ride {
                 Ok(())
             };
         let (point, heading) = on_line(race.checkpoint(None))?;
-        // Split screen's other human: a human peer the CPUs avoid.
-        let human = state.split.human.map(|(origin, velocity, _)| Peer {
-            origin,
-            velocity,
-            human: Some(
-                race.course
-                    .tangent(race.course.nearest_station(origin).segment),
-            ),
-        });
+        // Split screen's other humans: human peers the CPUs avoid.
+        let humans: Vec<Peer> = state
+            .split
+            .humans
+            .iter()
+            .map(|&(origin, velocity, _)| Peer {
+                origin,
+                velocity,
+                human: Some(
+                    race.course
+                        .tangent(race.course.nearest_station(origin).segment),
+                ),
+            })
+            .collect();
         let positions: Vec<[f32; 3]> = std::iter::once(player.origin)
             .chain(snapshots.iter().map(|p| p.origin))
-            .chain(human.map(|h| h.origin))
+            .chain(humans.iter().map(|h| h.origin))
             .collect();
         let others = |own: usize| {
             positions
@@ -763,7 +768,7 @@ impl Ride {
                     .filter(|(i, _)| *i != index)
                     .map(|(_, p)| *p),
             )
-            .chain(human)
+            .chain(humans.iter().copied())
             .collect();
             let (frame, physical, repositioned) = cpu.step(
                 &race.course,
@@ -864,7 +869,7 @@ impl Ride {
             .collect();
         // Split screen: each CPU applies its half against the other human
         // (whose own ride applies the other half, split.rs).
-        if let Some((origin, velocity, orientation)) = state.split.human {
+        for &(origin, velocity, orientation) in &state.split.humans {
             for cpu in &mut state.cpus {
                 if cpu
                     .vehicle

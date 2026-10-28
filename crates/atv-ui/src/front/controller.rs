@@ -415,14 +415,17 @@ pub struct Frontend {
     pub cloud: CloudView,
     /// The Pass Key pages' working state.
     pub passkey: passkey_page::PassKeyUi,
-    /// Multiplayer → Split Screen: the next Freestyle or Race rides two
-    /// local players (research/SPLIT_SCREEN.md).
+    /// Multiplayer → Split Screen: the next Freestyle or Race rides
+    /// `split_players` local players (research/SPLIT_SCREEN.md).
     pub split: bool,
-    /// Split Screen layout: side by side, else top and bottom (saved).
+    /// Split Screen layout for two players: side by side, else top and
+    /// bottom (saved). Three and four players share quarters.
     pub split_vertical: bool,
-    /// Split Screen: player 2's own ATV and rider (0 male, 1 female),
+    /// Split Screen: how many local players (2-4, saved).
+    pub split_players: u8,
+    /// Split Screen: players 2-4's own ATV and rider (0 male, 1 female),
     /// chosen on the Split Screen page (saved).
-    pub split_second: (u16, u16),
+    pub split_seconds: [(u16, u16); 3],
     /// The pages Back returns through (`navigation`).
     history: Vec<navigation::Visit>,
 }
@@ -431,6 +434,13 @@ pub struct Frontend {
 pub const SPLIT_LAYOUT_KEY: &str = "atv-split-screen";
 /// Saved player 2 ATV and rider ("quad,rider").
 pub const SPLIT_SECOND_KEY: &str = "atv-split-player2";
+/// Saved Split Screen player count (2-4).
+pub const SPLIT_PLAYERS_KEY: &str = "atv-split-players";
+
+/// Player `n`'s saved ATV and rider key (`atv-split-player2`..4).
+pub fn split_player_key(n: u8) -> String {
+    format!("atv-split-player{n}")
+}
 
 /// Player 2's ATVs: the 26 original quads (rooms and the rider slot that
 /// draws player 2 carry ATVs only).
@@ -506,14 +516,21 @@ impl Frontend {
             passkey: Default::default(),
             split: false,
             split_vertical: settings.get(SPLIT_LAYOUT_KEY).as_deref() == Some("vertical"),
-            split_second: settings
-                .get(SPLIT_SECOND_KEY)
-                .and_then(|v| {
-                    let (q, r) = v.split_once(',')?;
-                    Some((q.parse().ok()?, r.parse().ok()?))
-                })
-                .filter(|(q, r): &(u16, u16)| (1..=SPLIT_QUADS).contains(q) && *r <= 1)
-                .unwrap_or((2, 0)),
+            split_players: settings
+                .get(SPLIT_PLAYERS_KEY)
+                .and_then(|v| v.parse().ok())
+                .filter(|n| (2..=4).contains(n))
+                .unwrap_or(2),
+            split_seconds: [2u8, 3, 4].map(|n| {
+                settings
+                    .get(&split_player_key(n))
+                    .and_then(|v| {
+                        let (q, r) = v.split_once(',')?;
+                        Some((q.parse().ok()?, r.parse().ok()?))
+                    })
+                    .filter(|(q, r): &(u16, u16)| (1..=SPLIT_QUADS).contains(q) && *r <= 1)
+                    .unwrap_or((u16::from(n), 0))
+            }),
             history: Vec::new(),
         };
         front.load_profiles(settings);
@@ -605,13 +622,20 @@ impl Frontend {
         let request = json!({
             "page": page,
             "split_vertical": self.split_vertical,
-            "split_second": [
-                format!("Player 2 ATV: {}", self.quad_label(self.split_second.0)),
-                format!(
-                    "Player 2 Rider: {}",
-                    if self.split_second.1 == 1 { "Female" } else { "Male" }
-                ),
-            ],
+            "split_players": self.split_players,
+            "split_seconds": (0..usize::from(self.split_players.clamp(2, 4)) - 1)
+                .flat_map(|i| {
+                    let (quad, rider) = self.split_seconds[i];
+                    [
+                        format!("Player {} ATV: {}", i + 2, self.quad_label(quad)),
+                        format!(
+                            "Player {} Rider: {}",
+                            i + 2,
+                            if rider == 1 { "Female" } else { "Male" }
+                        ),
+                    ]
+                })
+                .collect::<Vec<_>>(),
             "width": view.width.clamp(240., 16384.),
             "height": view.height.clamp(240., 16384.),
             "selection": self.selection,
@@ -1713,11 +1737,24 @@ impl Frontend {
                     view,
                 );
             }
-            // Player 2's own garage (the original seats each player at a
-            // pad with its own ATV and rider choice).
-            "split2quad" | "split2rider" => {
-                let (mut quad, mut rider) = self.split_second;
-                if action == "split2rider" {
+            // Split Screen's player count: 2, 3 or 4 (the manual's
+            // multitap split screen).
+            "splitplayers" => {
+                self.split_players = self.split_players % 4 + 1;
+                if self.split_players < 2 {
+                    self.split_players = 2;
+                }
+                settings.set(SPLIT_PLAYERS_KEY, &self.split_players.to_string());
+                self.refresh(view);
+            }
+            // Players 2-4's own garage (the original seats each player at
+            // a pad with its own ATV and rider choice).
+            "split2quad" | "split2rider" | "split3quad" | "split3rider" | "split4quad"
+            | "split4rider" => {
+                let n = action.as_bytes()[5] - b'0';
+                let index = usize::from(n) - 2;
+                let (mut quad, mut rider) = self.split_seconds[index];
+                if action.ends_with("rider") {
                     rider = 1 - rider.min(1);
                 } else {
                     for _ in 0..SPLIT_QUADS {
@@ -1727,8 +1764,8 @@ impl Frontend {
                         }
                     }
                 }
-                self.split_second = (quad, rider);
-                settings.set(SPLIT_SECOND_KEY, &format!("{quad},{rider}"));
+                self.split_seconds[index] = (quad, rider);
+                settings.set(&split_player_key(n), &format!("{quad},{rider}"));
                 self.refresh(view);
             }
             "splitlayout" => {
@@ -3360,15 +3397,21 @@ mod tests {
         assert_eq!((front.page.as_str(), front.split), ("split", false));
         let actions: Vec<_> = front.choices().iter().map(|(a, _)| a.clone()).collect();
         assert_eq!(
-            actions[..4],
-            ["splitrace", "splitfree", "splitgames", "splitlayout"]
+            actions[..5],
+            [
+                "splitrace",
+                "splitfree",
+                "splitgames",
+                "splitplayers",
+                "splitlayout"
+            ]
         );
         // The layout row toggles and is saved.
-        front.selection = 3;
+        front.selection = 4;
         front.key("Enter", &view, &mut settings);
         assert!(front.split_vertical);
         assert_eq!(settings.get(SPLIT_LAYOUT_KEY).as_deref(), Some("vertical"));
-        assert!(front.choices()[3].1.contains("Side by Side"));
+        assert!(front.choices()[4].1.contains("Side by Side"));
         // Games opens the Games page for two players.
         front.selection = 2;
         front.key("Enter", &view, &mut settings);
@@ -3391,19 +3434,46 @@ mod tests {
         // Player 2's own ATV and rider rows, saved.
         front.show("split", &view);
         let actions: Vec<_> = front.choices().iter().map(|(a, _)| a.clone()).collect();
-        assert_eq!(actions[4..6], ["split2quad", "split2rider"]);
-        let quad = front.split_second.0;
-        front.selection = 4;
-        front.key("Enter", &view, &mut settings);
-        assert_ne!(front.split_second.0, quad);
+        assert_eq!(actions[5..7], ["split2quad", "split2rider"]);
+        let quad = front.split_seconds[0].0;
         front.selection = 5;
         front.key("Enter", &view, &mut settings);
-        assert_eq!(front.split_second.1, 1);
-        assert!(front.choices()[5].1.contains("Female"));
+        assert_ne!(front.split_seconds[0].0, quad);
+        front.selection = 6;
+        front.key("Enter", &view, &mut settings);
+        assert_eq!(front.split_seconds[0].1, 1);
+        assert!(front.choices()[6].1.contains("Female"));
         assert_eq!(
-            Frontend::new(tracks(), &settings, true).split_second,
-            front.split_second
+            Frontend::new(tracks(), &settings, true).split_seconds,
+            front.split_seconds
         );
+        // Three and four players: quarters (no layout row) and rows for
+        // players 3 and 4, saved.
+        front.selection = 3;
+        front.key("Enter", &view, &mut settings);
+        assert_eq!(front.split_players, 3);
+        let actions: Vec<_> = front.choices().iter().map(|(a, _)| a.clone()).collect();
+        assert!(!actions.contains(&"splitlayout".to_string()));
+        assert!(front.choices()[3].1.contains("Players: 3"));
+        assert_eq!(
+            actions[4..],
+            ["split2quad", "split2rider", "split3quad", "split3rider"]
+        );
+        front.key("Enter", &view, &mut settings);
+        assert_eq!(front.split_players, 4);
+        let actions: Vec<_> = front.choices().iter().map(|(a, _)| a.clone()).collect();
+        assert_eq!(actions.len(), 10);
+        assert_eq!(actions[8..], ["split4quad", "split4rider"]);
+        front.selection = 9;
+        front.key("Enter", &view, &mut settings);
+        assert_eq!(front.split_seconds[2].1, 1);
+        let restored = Frontend::new(tracks(), &settings, true);
+        assert_eq!(restored.split_players, 4);
+        assert_eq!(restored.split_seconds, front.split_seconds);
+        // Four wraps back to two.
+        front.selection = 3;
+        front.key("Enter", &view, &mut settings);
+        assert_eq!(front.split_players, 2);
     }
 
     #[test]

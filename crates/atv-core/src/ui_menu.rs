@@ -40,9 +40,13 @@ pub struct Request {
     /// Game Settings "Split Screen Vertical"), else one above the other.
     #[serde(default)]
     pub split_vertical: bool,
-    /// Split Screen: player 2's own ATV and rider labels.
+    /// Split Screen: how many local players (2-4).
     #[serde(default)]
-    pub split_second: [String; 2],
+    pub split_players: u8,
+    /// Split Screen: players 2.. own ATV and rider labels (two per
+    /// player).
+    #[serde(default)]
+    pub split_seconds: Vec<String>,
     #[serde(default)]
     pub loading_status: String,
     #[serde(default = "default_quad")]
@@ -1014,22 +1018,40 @@ pub fn layout(request: Request) -> Result<Frame> {
             // Multiplayer → Split Screen → MultiPlayerSelect (Race,
             // Freestyle, Games), and the Game Settings layout row the
             // original keeps under Options.
+            // Two players choose top/bottom or side by side; three and four
+            // share quarters (the camera loader's `Preset<n>q`).
+            let players = request.split_players.clamp(2, 4);
             let layout = if request.split_vertical {
                 "Screen: Side by Side"
             } else {
                 "Screen: Top and Bottom"
             };
-            for (i, (label, action)) in [
+            let count = format!("Players: {players}");
+            let seats = [
+                "split2quad",
+                "split2rider",
+                "split3quad",
+                "split3rider",
+                "split4quad",
+                "split4rider",
+            ];
+            let mut rows: Vec<(&str, &str)> = vec![
                 ("Race", "splitrace"),
                 ("Freestyle", "splitfree"),
                 ("Games", "splitgames"),
-                (layout, "splitlayout"),
-                (request.split_second[0].as_str(), "split2quad"),
-                (request.split_second[1].as_str(), "split2rider"),
-            ]
-            .iter()
-            .enumerate()
-            {
+                (count.as_str(), "splitplayers"),
+            ];
+            if players == 2 {
+                rows.push((layout, "splitlayout"));
+            }
+            rows.extend(
+                request
+                    .split_seconds
+                    .iter()
+                    .zip(seats)
+                    .map(|(label, action)| (label.as_str(), action)),
+            );
+            for (i, (label, action)) in rows.iter().enumerate() {
                 f.choices.push((*action).into());
                 f.button(
                     label,
@@ -2193,7 +2215,8 @@ mod tests {
         Request {
             page: page.into(),
             split_vertical: false,
-            split_second: Default::default(),
+            split_players: 2,
+            split_seconds: Vec::new(),
             loading_status: "Reading original ATV...".into(),
             quad_id: 1,
             rider_id: 0,

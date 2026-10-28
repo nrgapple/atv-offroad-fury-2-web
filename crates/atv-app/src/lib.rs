@@ -135,8 +135,8 @@ struct Ready {
     hud_assets: Option<atv_ui::hud::assets::OverlayAssets>,
     /// The multiplayer room this ride is in.
     net: Option<multiplayer::Net>,
-    /// Local split screen's second player (split.rs).
-    split: Option<split::Second>,
+    /// Local split screen's players 2-4 (split.rs); empty riding alone.
+    split: Vec<split::Second>,
 }
 
 struct PendingSound {
@@ -957,9 +957,15 @@ async fn prepare(
     );
     let mut pending_sound = None;
     // Split screen starts both players' countdowns together: no pre-race
-    // camera tour (it frames one rider).
+    // camera tour (it frames one rider). Three and four players exclude
+    // CPU riders (manual p. 16: two-player split screen can include them).
     let race = race.map(|r| atv_game::ride::race::Settings {
         intro: r.intro && split_layout.is_none(),
+        cpu: if split_layout.is_some_and(|s| s.players > 2) {
+            0
+        } else {
+            r.cpu
+        },
         ..r
     });
     let riding = if ride {
@@ -1106,10 +1112,11 @@ async fn prepare(
         None
     };
     let mut riding = riding;
-    let split = match (split_layout, &mut riding) {
-        (Some(request), Some(first)) => {
-            progress(&gpu, "Reading player 2…");
-            Some(
+    let mut split = Vec::new();
+    if let (Some(request), Some(first)) = (split_layout, &mut riding) {
+        for (player, _) in request.others() {
+            progress(&gpu, &format!("Reading player {player}…"));
+            split.push(
                 split::Second::load(
                     &gpu,
                     &content,
@@ -1117,13 +1124,13 @@ async fn prepare(
                     &mut scene,
                     first,
                     request,
+                    player,
                     (selection, appearance, race, crash, graphics),
                 )
                 .await?,
-            )
+            );
         }
-        _ => None,
-    };
+    }
     let hud_assets = if riding.is_some() {
         match atv_ui::hud::assets::load(
             &content,
@@ -1344,18 +1351,19 @@ impl App {
         self.gamepad
             .set_pin(riding.bindings.tuning.selected.clone());
         // Split screen: player 1 plays the first connected controller (and
-        // the keyboard's left side), player 2 the second (split.rs).
-        let split_on = ready.split.is_some();
+        // the keyboard's left side), player 2 the second (and the right
+        // side), players 3 and 4 the third and fourth (split.rs).
+        let split_on = !ready.split.is_empty();
         let pad = if split_on {
             self.gamepad.sample_slot(0)
         } else {
             self.gamepad.sample()
         };
-        let pad2 = if split_on {
-            self.gamepad.sample_slot(1)
-        } else {
-            None
-        };
+        let other_pads: Vec<_> = ready
+            .split
+            .iter()
+            .map(|s| self.gamepad.sample_slot(usize::from(s.player) - 1))
+            .collect();
         if let Some(overlay) = &mut self.overlay {
             overlay.pad_name = self.gamepad.name();
             overlay.pads = self.gamepad.connected();
@@ -1416,54 +1424,62 @@ impl App {
         let sampler = |now: u64, ride: &atv_game::ride::Ride| {
             net.map_or_else(Vec::new, |n| n.contact_bodies_at(now, ride))
         };
-        // Split screen: each player is the other's contact body.
-        let split_others = ready
+        // Split screen: each player is the others' contact body.
+        let split_others = split::link(&mut riding.ride, &mut ready.split);
+        let split_bodies: Vec<_> = ready
             .split
-            .as_mut()
-            .map(|s| split::link(&mut riding.ride, &mut s.riding.ride));
-        let split_body = ready
-            .split
-            .as_ref()
-            .map(|s| split::body(&s.riding.ride, 1.));
-        let split_sampler =
-            move |_: u64, _: &atv_game::ride::Ride| split_body.into_iter().collect::<Vec<_>>();
+            .iter()
+            .map(|s| split::body(&s.riding.ride, 1.))
+            .collect();
+        let split_sampler = |_: u64, _: &atv_game::ride::Ride| split_bodies.clone();
         let peers = net
             .map(|n| (n.session_now(), &sampler as riding::PeerSampler))
-            .or_else(|| split_body.map(|_| (0, &split_sampler as riding::PeerSampler)));
+            .or_else(|| {
+                (!split_bodies.is_empty()).then_some((0, &split_sampler as riding::PeerSampler))
+            });
         if let Err(error) = riding.frame(&sample, &mut touch, dt, peers) {
             status(&format!("Simulation stopped: {error}"));
             ready.riding = None;
             return;
         }
-        if let Some(second) = &mut ready.split {
-            // Player 2 rides while player 1 does: either player's pause
-            // opens player 1's Pause menu over both views.
+        if split_on {
+            // The other players ride while player 1 does: any player's
+            // pause opens player 1's Pause menu over every view.
             if !riding.paused && !riding.held && focused {
-                // Player 1 as it stands after this frame's steps.
-                let mut others = split_others.unwrap_or_default();
-                if let Some(first) = others.first_mut() {
-                    *first = split::body(&riding.ride, -1.);
-                }
-                if let Err(error) = second.frame(&all_keys, pad2.as_ref(), sample_now, dt, others) {
-                    status(&format!("Player 2 stopped: {error}"));
-                }
-                if second.riding.paused {
-                    second.riding.paused = false;
-                    second.riding.clear_input();
-                    riding.paused = true;
-                    riding.clear_input();
-                    riding.sync_sound();
+                let first_body = split::body(&riding.ride, -1.);
+                for ((second, mut others), pad) in
+                    ready.split.iter_mut().zip(split_others).zip(&other_pads)
+                {
+                    // Player 1 as it stands after this frame's steps.
+                    if let Some(first) = others.first_mut() {
+                        *first = first_body.clone();
+                    }
+                    if let Err(error) =
+                        second.frame(&all_keys, pad.as_ref(), sample_now, dt, others)
+                    {
+                        status(&format!("Player {} stopped: {error}", second.player));
+                    }
+                    if second.riding.paused {
+                        second.riding.paused = false;
+                        second.riding.clear_input();
+                        riding.paused = true;
+                        riding.clear_input();
+                        riding.sync_sound();
+                    }
                 }
             }
-            let origins = [
-                riding.ride.frame().origin,
-                second.riding.ride.frame().origin,
-            ];
-            if let (Some(first), Some(other)) = (
-                riding.ride.race_mut().and_then(|r| r.frame.as_mut()),
-                second.riding.ride.race_mut().and_then(|r| r.frame.as_mut()),
-            ) {
-                split::merge_race(first, other, origins);
+            let origins: Vec<[f32; 3]> = std::iter::once(riding.ride.frame().origin)
+                .chain(ready.split.iter().map(|s| s.riding.ride.frame().origin))
+                .collect();
+            if let Some(first) = riding.ride.race_mut().and_then(|r| r.frame.as_mut()) {
+                let mut others: Vec<&mut atv_core::race::Frame> = ready
+                    .split
+                    .iter_mut()
+                    .filter_map(|s| s.riding.ride.race_mut().and_then(|r| r.frame.as_mut()))
+                    .collect();
+                if others.len() + 1 == origins.len() {
+                    split::merge_race(first, &mut others, &origins);
+                }
             }
         }
         // Rumble.pulse: the frame's impacts on the active controller.
@@ -1478,9 +1494,10 @@ impl App {
                 riding.rumble.sent(pulse);
             }
         }
-        if let Some(second) = &mut ready.split {
+        for second in &mut ready.split {
+            let slot = usize::from(second.player) - 1;
             for pulse in std::mem::take(&mut second.riding.pulses) {
-                if self.gamepad.rumble_slot(1, pulse) {
+                if self.gamepad.rumble_slot(slot, pulse) {
                     second.riding.rumble.sent(pulse);
                 }
             }
@@ -1520,17 +1537,23 @@ impl App {
         if let Some(effects) = &mut riding.effects {
             ready.scene.accept_wheel_effects(&ready.gpu, effects);
         }
-        // Split screen: player 2's wheel effects, and its own fine terrain
-        // patch beside player 1's.
-        riding.split_origin = ready.split.as_mut().map(|second| {
-            if let Some(effects) = &mut second.riding.effects {
-                ready.scene.accept_second_wheel_effects(effects);
-            }
-            second.riding.ride.frame().origin
-        });
+        // Split screen: the other players' wheel effects, and their own
+        // fine terrain patches beside player 1's.
+        riding.split_origin = ready
+            .split
+            .iter_mut()
+            .map(|second| {
+                if let Some(effects) = &mut second.riding.effects {
+                    ready
+                        .scene
+                        .accept_second_wheel_effects(usize::from(second.player) - 2, effects);
+                }
+                second.riding.ride.frame().origin
+            })
+            .collect();
         // A split view presents at the preset's reference and scales the
         // focal length to its layout (split.rs).
-        let (present_aspect, focal_scale) = match &ready.split {
+        let (present_aspect, focal_scale) = match ready.split.first() {
             Some(second) => (split::SPLIT_PRESENT_ASPECT, second.layout.focal_scale()),
             None => (ready.gpu.aspect(), 1.),
         };
@@ -1548,10 +1571,10 @@ impl App {
             Ok(_) => {}
             Err(error) => status(&error),
         }
-        if let Some(second) = &mut ready.split
-            && let Err(error) = second.present(&ready.gpu, &mut ready.scene, &ready.venue, dt)
-        {
-            status(&format!("Player 2: {error}"));
+        for second in &mut ready.split {
+            if let Err(error) = second.present(&ready.gpu, &mut ready.scene, &ready.venue, dt) {
+                status(&format!("Player {}: {error}", second.player));
+            }
         }
         // The speed-rush screen pass shares the FOV kick's amount.
         let motion = riding.ride.frame();
@@ -1617,11 +1640,11 @@ impl App {
         // Split screen: player 2's engine and body impacts play through the
         // room riders' voices, heard from player 1's camera (one output; the
         // original's split-screen mix was not traced).
-        if let (Some(second), Some(sound)) = (&mut ready.split, &mut riding.sound) {
+        if let (false, Some(sound)) = (ready.split.is_empty(), &mut riding.sound) {
             let motion = riding.ride.frame();
-            let rider = second.audio_rider();
+            let riders: Vec<_> = ready.split.iter_mut().map(|s| s.audio_rider()).collect();
             for quad in sound.remote_frame(
-                &[rider],
+                &riders,
                 motion.origin,
                 &ready.camera,
                 motion.linear_velocity,
@@ -1750,10 +1773,10 @@ impl App {
         }
         // Tag: the host starts it from Pause; guests join when its state
         // arrives. Leaving the room ends it.
-        if ready.net.is_none() && ready.split.is_some() && self.tag.is_none() {
-            // Split screen Tag: both rides are ready.
+        if ready.net.is_none() && !ready.split.is_empty() && self.tag.is_none() {
+            // Split screen Tag: every ride is ready.
             if let Some((minutes, _)) = self.split_tag.take() {
-                let mut session = tag::TagSession::new_local(minutes);
+                let mut session = tag::TagSession::new_local(minutes, ready.split.len() + 1);
                 session.model = ready.venue.tag_ball;
                 self.tag = Some(session);
             }
@@ -1822,11 +1845,10 @@ impl App {
                 }
                 session.start = ready.venue.scene.start_position;
                 session.crowd = ready.venue.scene.crowd_present;
-                if session.update(
-                    &mut riding.ride,
-                    ready.net.as_mut(),
-                    ready.split.as_mut().map(|s| &mut s.riding.ride),
-                ) && let Some(overlay) = &mut self.overlay
+                let mut others: Vec<_> =
+                    ready.split.iter_mut().map(|s| &mut s.riding.ride).collect();
+                if session.update(&mut riding.ride, ready.net.as_mut(), &mut others)
+                    && let Some(overlay) = &mut self.overlay
                 {
                     overlay.results.show_game("Tag Results", session.summary());
                     // A room keeps riding (Continue); split screen offers
@@ -1868,18 +1890,17 @@ impl App {
             (None, Some(session)) => {
                 // Game over: the HockeyOver page (Restart Game, Quit to
                 // Main Menu).
-                if session.update(
-                    &mut riding.ride,
-                    ready.net.as_mut(),
-                    ready.split.as_mut().map(|s| &mut s.riding.ride),
-                ) && let Some(overlay) = &mut self.overlay
+                let mut others: Vec<_> =
+                    ready.split.iter_mut().map(|s| &mut s.riding.ride).collect();
+                if session.update(&mut riding.ride, ready.net.as_mut(), &mut others)
+                    && let Some(overlay) = &mut self.overlay
                 {
                     overlay
                         .results
                         .show_game("Hockey Results", session.summary());
                 }
                 riding.locked = session.held();
-                if let Some(second) = &mut ready.split {
+                for second in &mut ready.split {
                     second.riding.locked = session.held();
                 }
                 ready.scene.pose_prop(&ready.gpu, &session.puck_matrix());
@@ -1908,12 +1929,11 @@ impl App {
         // open the results.
         let game_view = match &mut self.game {
             Some(game) => {
-                game.update(
-                    &mut riding.ride,
-                    ready.split.as_mut().map(|s| &mut s.riding.ride),
-                );
+                let mut others: Vec<_> =
+                    ready.split.iter_mut().map(|s| &mut s.riding.ride).collect();
+                game.update(&mut riding.ride, &mut others);
                 riding.locked |= game.locked();
-                if let Some(second) = &mut ready.split {
+                for second in &mut ready.split {
                     second.riding.locked = game.locked();
                 }
                 for (model, rgb) in game.flag_colors(&ready.venue.scene.models) {
@@ -1983,7 +2003,10 @@ impl App {
                         .filter(|n| !n.is_empty())
                         .unwrap_or_else(|| "You".into())
                 };
-                if let Some(summary) = game.results(&[&player, split::PLAYER_2])
+                let names: Vec<&str> = std::iter::once(player.as_str())
+                    .chain(split::PLAYER_NAMES[1..].iter().copied())
+                    .collect();
+                if let Some(summary) = game.results(&names)
                     && let Some(overlay) = &mut self.overlay
                 {
                     overlay.results.show_game("Race Results", summary);
@@ -1993,8 +2016,8 @@ impl App {
             None => None,
         };
         if let Some(overlay) = &mut self.overlay {
-            // Split screen: the race is over once both players finish.
-            overlay.hold_results = ready.split.as_ref().is_some_and(|s| {
+            // Split screen: the race is over once every player finishes.
+            overlay.hold_results = ready.split.iter().any(|s| {
                 s.riding
                     .ride
                     .race()
@@ -2073,7 +2096,7 @@ impl App {
                 .clone()
                 .or_else(|| self.hockey.as_ref().map(|h| h.markers()))
                 .or_else(|| local_tag.clone())
-                .filter(|_| ready.split.is_some());
+                .filter(|_| !ready.split.is_empty());
             let hud_peers = ready
                 .net
                 .as_ref()
@@ -2095,13 +2118,18 @@ impl App {
                 .or_else(|| self.hockey.as_ref().map(|h| h.markers()))
                 .or(local_tag);
             // Split screen: each view projects at its own rectangle's aspect.
-            let rects = ready.split.as_ref().map(|s| {
+            let rects: Option<Vec<f32>> = ready.split.first().map(|s| {
                 s.layout
                     .rects(gpu.config.width, gpu.config.height, 1.)
+                    .into_iter()
                     .map(|[_, _, w, h]| w as f32 / h.max(1) as f32)
+                    .collect()
             });
             let view_projection = ready.camera.view_projection(
-                rects.map_or(gpu.aspect(), |r| r[0]),
+                rects
+                    .as_ref()
+                    .and_then(|r| r.first().copied())
+                    .unwrap_or(gpu.aspect()),
                 ready.focal_length,
                 1.,
                 10_000.,
@@ -2152,14 +2180,70 @@ impl App {
                     icons,
                 }
             };
-            // Split screen: player 2's mini-game panel, compass and tags.
-            let second_game = self.game.as_ref().and_then(|g| g.view(1));
-            let second_compass = ready
+            // Split screen: the other players' mini-game panels, compasses
+            // and tags.
+            let compass_for = |s: &split::Second| {
+                compass_icons
+                    .clone()
+                    .filter(|_| {
+                        self.game
+                            .as_ref()
+                            .and_then(|g| g.view(usize::from(s.player) - 1))
+                            .is_some()
+                    })
+                    .map(|icons| compass_of(s.riding.ride.frame(), icons))
+            };
+            let others: Vec<overlay::SecondHud> = ready
                 .split
-                .as_ref()
-                .zip(compass_icons.clone())
-                .filter(|_| second_game.is_some())
-                .map(|(s, icons)| compass_of(s.riding.ride.frame(), icons));
+                .iter()
+                .map(|s| {
+                    let ride = &s.riding.ride;
+                    let index = usize::from(s.player) - 1;
+                    let (columns, rows) = s.layout.grid();
+                    overlay::SecondHud {
+                        grid: (columns, rows),
+                        cell: (index as u32 % columns, index as u32 / columns),
+                        hud: ride.hud(),
+                        race: ride
+                            .race()
+                            .and_then(|r| r.frame.as_ref())
+                            .map(|f| (f, ride.committed_points(), ride.frame().origin)),
+                        game: self
+                            .game
+                            .as_ref()
+                            .filter(|g| g.players > index)
+                            .and_then(|g| g.view(index)),
+                        compass: compass_for(s),
+                        training: self
+                            .hockey
+                            .as_ref()
+                            .filter(|h| h.split)
+                            .map(|h| h.view_for(ride.frame().origin, index))
+                            .or_else(|| {
+                                self.tag
+                                    .as_ref()
+                                    .filter(|t| t.local)
+                                    .map(|t| t.view_for(index))
+                            }),
+                        peers: game_peers.as_deref().map(|peers| {
+                            (
+                                peers,
+                                ride.frame().origin,
+                                s.camera.view_projection(
+                                    rects
+                                        .as_ref()
+                                        .and_then(|r| r.get(index).copied())
+                                        .unwrap_or(1.),
+                                    s.focal_length,
+                                    1.,
+                                    10_000.,
+                                ),
+                            )
+                        }),
+                        eye: Some(s.camera.eye()),
+                    }
+                })
+                .collect();
             let compass = compass_icons.map(|icons| compass_of(frame, icons));
             overlay.prepare(
                 &gpu.device,
@@ -2187,41 +2271,7 @@ impl App {
                     training: training_view,
                     game: game_view,
                     compass,
-                    second: ready.split.as_ref().map(|s| {
-                        let ride = &s.riding.ride;
-                        overlay::SecondHud {
-                            vertical: s.layout == split::Layout::Vertical,
-                            hud: ride.hud(),
-                            race: ride
-                                .race()
-                                .and_then(|r| r.frame.as_ref())
-                                .map(|f| (f, ride.committed_points(), ride.frame().origin)),
-                            game: second_game
-                                .filter(|_| self.game.as_ref().is_some_and(|g| g.players > 1)),
-                            compass: second_compass,
-                            training: self
-                                .hockey
-                                .as_ref()
-                                .filter(|h| h.split)
-                                .map(|h| h.view_for(ride.frame().origin, 1))
-                                .or_else(|| {
-                                    self.tag.as_ref().filter(|t| t.local).map(|t| t.view_for(1))
-                                }),
-                            peers: game_peers.as_deref().map(|peers| {
-                                (
-                                    peers,
-                                    ride.frame().origin,
-                                    s.camera.view_projection(
-                                        rects.map_or(1., |r| r[1]),
-                                        s.focal_length,
-                                        1.,
-                                        10_000.,
-                                    ),
-                                )
-                            }),
-                            eye: Some(s.camera.eye()),
-                        }
-                    }),
+                    others,
                 }),
                 Some(&mut riding.bindings),
             );
@@ -2232,10 +2282,7 @@ impl App {
             state["camera"]["preset"] = riding.ride.camera().0.preset.into();
             state["paused"] = riding.paused.into();
             // Split screen (tools/test_engine_split_screen.mjs).
-            if let Some(second) = &ready.split {
-                let ride = &second.riding.ride;
-                let f = ride.frame();
-                let applied = ride.applied();
+            if let Some(second) = ready.split.first() {
                 let camera = |c: &atv_render::Camera, focal: f32| {
                     serde_json::json!([c.x, c.y, c.z, c.yaw, c.pitch, focal])
                 };
@@ -2247,7 +2294,8 @@ impl App {
                             "position": f.position, "field": f.field,
                             "elapsed": f.elapsed,
                             "sign": f.hud.as_ref().and_then(|h| h.sign.as_ref()).map(|s| s.id),
-                            "linkedHuman": state.split.human.is_some(),
+                            "linkedHuman": !state.split.humans.is_empty(),
+                            "linkedHumans": state.split.humans.len(),
                             "waiting": state.split.waiting,
                             "standings": f.standings.iter().map(|s| serde_json::json!({
                                 "name": s.name, "position": s.position, "time": s.time,
@@ -2256,19 +2304,55 @@ impl App {
                         })
                     })
                 };
-                state["split"] = serde_json::json!({
-                    "layout": format!("{:?}", second.layout),
-                    "views": second.layout.rects(
+                let player = |s: &split::Second| {
+                    let ride = &s.riding.ride;
+                    let f = ride.frame();
+                    let applied = ride.applied();
+                    serde_json::json!({
+                        "player": s.player,
+                        "origin": f.origin,
+                        "speed": f.speed_magnitude,
+                        "steps": ride.steps(),
+                        "throttle": applied.throttle,
+                        "steer": applied.steer,
+                        "race": race(ride),
+                        "quad": ride.selection().quad,
+                        "rider": ride.selection().rider,
+                        "locked": s.riding.locked,
+                        "effects": s.riding.effects.as_ref().map(|e| {
+                            let f = e.frame();
+                            serde_json::json!({
+                                "particles": f.particles.len(),
+                                "emitted": f.total_emitted.iter().sum::<u64>(),
+                            })
+                        }),
+                        "rumbles": s.riding.rumble.pulses,
+                    })
+                };
+                let players: Vec<_> = ready.split.iter().map(player).collect();
+                let views: Vec<_> = second
+                    .layout
+                    .rects(
                         ready.gpu.config.width,
                         ready.gpu.config.height,
                         self.window.as_ref().map_or(1., |w| w.scale_factor()) as f32,
-                    ),
-                    "cameras": [
-                        camera(&ready.camera, ready.focal_length),
-                        camera(&second.camera, second.focal_length),
-                    ],
-                    "presets": [riding.ride.camera().0.preset, ride.camera().0.preset],
-                    "pads": [pad.is_some(), second.pad],
+                    )
+                    .into_iter()
+                    .take(ready.split.len() + 1)
+                    .collect();
+                state["split"] = serde_json::json!({
+                    "layout": format!("{:?}", second.layout),
+                    "players": ready.split.len() + 1,
+                    "views": views,
+                    "cameras": std::iter::once(camera(&ready.camera, ready.focal_length))
+                        .chain(ready.split.iter().map(|s| camera(&s.camera, s.focal_length)))
+                        .collect::<Vec<_>>(),
+                    "presets": std::iter::once(riding.ride.camera().0.preset)
+                        .chain(ready.split.iter().map(|s| s.riding.ride.camera().0.preset))
+                        .collect::<Vec<_>>(),
+                    "pads": std::iter::once(pad.is_some())
+                        .chain(ready.split.iter().map(|s| s.pad))
+                        .collect::<Vec<_>>(),
                     "resultsHeld": self.overlay.as_ref().is_some_and(|o| o.hold_results),
                     "resultsShown": self.overlay.as_ref().is_some_and(|o| o.results.shown),
                     "resultsRows": self.overlay.as_ref().map(|o| o.results.rows.clone()),
@@ -2279,24 +2363,8 @@ impl App {
                         "race": race(&riding.ride),
                         "quad": riding.ride.selection().quad,
                     },
-                    "player2": {
-                        "origin": f.origin,
-                        "speed": f.speed_magnitude,
-                        "steps": ride.steps(),
-                        "throttle": applied.throttle,
-                        "steer": applied.steer,
-                        "race": race(ride),
-                        "quad": ride.selection().quad,
-                        "rider": ride.selection().rider,
-                        "effects": second.riding.effects.as_ref().map(|e| {
-                            let f = e.frame();
-                            serde_json::json!({
-                                "particles": f.particles.len(),
-                                "emitted": f.total_emitted.iter().sum::<u64>(),
-                            })
-                        }),
-                        "rumbles": second.riding.rumble.pulses,
-                    },
+                    "player2": players.first(),
+                    "others": players,
                     "terrainPatches": ready.scene.terrain_patches(),
                 });
             }
@@ -2566,22 +2634,23 @@ impl App {
                 overlay.draw(encoder, target);
             }
         };
-        let rendered = match &ready.split {
+        let rendered = match ready.split.first() {
             Some(second) => {
-                let [a, b] = second.layout.rects(
+                let rects = second.layout.rects(
                     ready.gpu.config.width,
                     ready.gpu.config.height,
                     device as f32,
                 );
-                let second_view = View {
-                    camera: second.camera,
-                    focal_length: second.focal_length,
-                };
-                ready.scene.render_views(
-                    &ready.gpu,
-                    &[(first_view, a), (second_view, b)],
-                    &mut draw_overlay,
-                )
+                let views: Vec<(View, [u32; 4])> = std::iter::once(first_view)
+                    .chain(ready.split.iter().map(|s| View {
+                        camera: s.camera,
+                        focal_length: s.focal_length,
+                    }))
+                    .zip(rects)
+                    .collect();
+                ready
+                    .scene
+                    .render_views(&ready.gpu, &views, &mut draw_overlay)
             }
             None => ready
                 .scene
@@ -2937,8 +3006,9 @@ impl App {
         let Some(riding) = ready.riding.as_mut() else {
             return;
         };
-        // Split screen: player 2's ride restarts a game with player 1's.
-        let second = ready.split.as_mut().map(|s| &mut s.riding.ride);
+        // Split screen: the other players' rides restart a game with
+        // player 1's.
+        let mut second: Vec<_> = ready.split.iter_mut().map(|s| &mut s.riding.ride).collect();
         match event {
             // Restart Race (frontend.js reset({restart:true})): the whole
             // event reloads, also after the finish.
@@ -2952,7 +3022,7 @@ impl App {
             // at its start, in place.
             Event::Reset if self.game.is_some() => {
                 if let Some(game) = &mut self.game {
-                    game.restart(&mut riding.ride, second);
+                    game.restart(&mut riding.ride, &mut second);
                 }
                 if let Some(overlay) = &mut self.overlay {
                     overlay.results = Default::default();
@@ -2966,7 +3036,7 @@ impl App {
             }
             Event::Reset if self.hockey.is_some() => {
                 if let Some(session) = &mut self.hockey {
-                    session.restart(&mut riding.ride, second);
+                    session.restart(&mut riding.ride, &mut second);
                 }
                 self.menu_event(Event::Resume);
             }
@@ -3300,12 +3370,12 @@ impl App {
     fn remember_ride(&self) {
         #[cfg(target_arch = "wasm32")]
         if let Some(storage) = web_sys::window().and_then(|w| w.session_storage().ok().flatten()) {
-            // A split ride reopens split, with player 2's own ATV and rider.
+            // A split ride reopens split, with each player's own ATV and
+            // rider.
             let split = self
                 .ready
                 .as_ref()
-                .and_then(|r| r.split.as_ref())
-                .map(split::Second::resume_query);
+                .and_then(|r| split::resume_query(&r.split));
             let _ = match self.ride_link() {
                 Some((url, _)) => storage.set_item(
                     "fury-resume",
@@ -3393,7 +3463,7 @@ impl App {
             ecosystem_collision_off: !prefs.ecosystem_collision && !riding.online,
         };
         // Split screen: player 2 rides the same settings.
-        if let Some(second) = &mut ready.split {
+        for second in &mut ready.split {
             second.riding.vibration = prefs.vibration;
             second.riding.chase_assist = prefs.chase_assist;
             second.riding.ride.options = riding.ride.options;
@@ -3465,7 +3535,7 @@ impl App {
         let Some(riding) = ready.riding.as_mut() else {
             return;
         };
-        let second = ready.split.as_mut().map(|s| &mut s.riding.ride);
+        let mut second: Vec<_> = ready.split.iter_mut().map(|s| &mut s.riding.ride).collect();
         match action {
             overlay::Action::Pause => {
                 if !riding.held {
@@ -3510,7 +3580,7 @@ impl App {
             }
             overlay::Action::RaceRetry if self.game.is_some() => {
                 if let Some(game) = &mut self.game {
-                    game.restart(&mut riding.ride, second);
+                    game.restart(&mut riding.ride, &mut second);
                 }
                 if let Some(overlay) = &mut self.overlay {
                     overlay.results = Default::default();
@@ -3518,7 +3588,7 @@ impl App {
             }
             overlay::Action::RaceRetry if self.hockey.is_some() => {
                 if let Some(session) = &mut self.hockey {
-                    session.restart(&mut riding.ride, second);
+                    session.restart(&mut riding.ride, &mut second);
                 }
                 if let Some(overlay) = &mut self.overlay {
                     overlay.results = Default::default();
@@ -5921,10 +5991,11 @@ impl App {
                     ))
                 .then(|| split::Request {
                     layout: split::Layout::from_vertical(f.state.split_vertical),
-                    second: Some(atv_game::ride::Selection {
-                        quad: f.state.split_second.0,
-                        rider: f.state.split_second.1,
-                    }),
+                    players: f.state.split_players.clamp(2, split::MAX_PLAYERS),
+                    seconds: f
+                        .state
+                        .split_seconds
+                        .map(|(quad, rider)| Some(atv_game::ride::Selection { quad, rider })),
                 })
             });
             self.split_request = split;
@@ -5949,7 +6020,9 @@ impl App {
                 let Some(content) = self.content.clone() else {
                     return;
                 };
-                let players = if self.split_request.is_some() { 2 } else { 1 };
+                let players = self
+                    .split_request
+                    .map_or(1, |r| usize::from(r.players.clamp(2, split::MAX_PLAYERS)));
                 self.game = Some(games::GameSession::new(
                     kind,
                     venue.clone(),
@@ -5980,10 +6053,9 @@ impl App {
                 self.start_ride(venue, quad, rider, None, None);
             }
             Event::Hockey { quad, rider } => {
-                self.hockey = Some(if self.split_request.is_some() {
-                    hockey::HockeySession::new_split()
-                } else {
-                    hockey::HockeySession::new()
+                self.hockey = Some(match self.split_request {
+                    Some(request) => hockey::HockeySession::new_split(usize::from(request.players)),
+                    None => hockey::HockeySession::new(),
                 });
                 self.start_ride("game01".into(), quad, rider, None, None);
             }
@@ -7378,7 +7450,7 @@ fn capture(ready: &mut Ready, path: &std::path::Path, width: u32, height: u32, u
                     training: None,
                     game: None,
                     compass: None,
-                    second: None,
+                    others: Vec::new(),
                 }),
                 None,
             );
@@ -7848,15 +7920,18 @@ impl App {
                 status(&format!("Tag restart placement failed: {error}"));
             }
         }
-        if let Some(second) = ready.split.as_mut() {
+        for second in &mut ready.split {
+            let player = second.player;
             let ride = &mut second.riding.ride;
             tag::TagSession::release(ride);
-            let (mut at, yaw) = split::freeride_start(start, yaw);
+            let (mut at, yaw) = split::freeride_start_for(start, yaw, player);
             if let Some(ground) = ride.ground(at[0], at[2]) {
                 at[1] = ground + 2.5;
             }
             if let Err(error) = ride.place_beside(at, yaw, [0.; 3]) {
-                status(&format!("Player 2 Tag restart placement failed: {error}"));
+                status(&format!(
+                    "Player {player} Tag restart placement failed: {error}"
+                ));
             }
         }
         if let Some(session) = &mut self.tag {
@@ -8566,46 +8641,49 @@ impl Diagnostics {
 /// `?debug=` on the web; `ATV_DEBUG` natively.
 /// `?split2=quad.rider` (web) or `FURY_SPLIT2` (desktop): player 2's own
 /// ATV (1-26) and rider (0 male, 1 female) for a direct split ride.
-fn split_second_param() -> Option<atv_game::ride::Selection> {
+/// `?key=` (web) or the `env` variable (desktop).
+fn link_param(key: &str, env: &str) -> Option<String> {
     #[cfg(target_arch = "wasm32")]
-    let value = web_sys::window()
-        .and_then(|w| w.location().search().ok())
-        .and_then(|search| {
-            search.trim_start_matches('?').split('&').find_map(|pair| {
-                let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
-                (key == "split2").then(|| value.to_string())
-            })
-        });
+    {
+        let _ = env;
+        let search = web_sys::window()?.location().search().ok()?;
+        search.trim_start_matches('?').split('&').find_map(|pair| {
+            let (k, value) = pair.split_once('=').unwrap_or((pair, ""));
+            (k == key).then(|| value.to_string())
+        })
+    }
     #[cfg(not(target_arch = "wasm32"))]
-    let value = std::env::var("FURY_SPLIT2").ok();
+    {
+        let _ = key;
+        std::env::var(env).ok()
+    }
+}
+
+/// `?splitN=quad.rider` (web) or `FURY_SPLITN` (desktop): player N's ATV
+/// and rider.
+fn split_player_param(n: u8) -> Option<atv_game::ride::Selection> {
+    let value = link_param(&format!("split{n}"), &format!("FURY_SPLIT{n}"));
     let (quad, rider) = value?
         .split_once('.')
         .and_then(|(q, r)| Some((q.parse().ok()?, r.parse().ok()?)))?;
     ((1..=26).contains(&quad) && rider <= 1).then_some(atv_game::ride::Selection { quad, rider })
 }
 
-/// `?split=h|v` with `?split2=quad.rider` (web), or FURY_SPLIT and
-/// FURY_SPLIT2 (desktop): a direct split ride (tests, host measurements and
-/// the context-loss resume link).
+/// `?split=h|v|q` with `?splitn=2-4` and `?split2=quad.rider` (to
+/// `split4`) (web), or FURY_SPLIT, FURY_SPLITN and FURY_SPLIT2-4 (desktop):
+/// a direct split ride (tests, host measurements and the context-loss
+/// resume link). `q` alone means four players.
 fn split_link_param() -> Option<split::Request> {
-    split::Layout::requested(split_param().as_deref()).map(|layout| split::Request {
+    let layout = split::Layout::requested(link_param("split", "FURY_SPLIT").as_deref())?;
+    let players = link_param("splitn", "FURY_SPLITN")
+        .and_then(|n| n.parse::<u8>().ok())
+        .filter(|n| (2..=split::MAX_PLAYERS).contains(n))
+        .unwrap_or(if layout == split::Layout::Quad { 4 } else { 2 });
+    Some(split::Request {
         layout,
-        second: split_second_param(),
+        players,
+        seconds: [2, 3, 4].map(split_player_param),
     })
-}
-
-/// `?split=h|v` (web) or `FURY_SPLIT` (desktop).
-fn split_param() -> Option<String> {
-    #[cfg(target_arch = "wasm32")]
-    {
-        let search = web_sys::window()?.location().search().ok()?;
-        search.trim_start_matches('?').split('&').find_map(|pair| {
-            let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
-            (key == "split").then(|| value.to_string())
-        })
-    }
-    #[cfg(not(target_arch = "wasm32"))]
-    std::env::var("FURY_SPLIT").ok()
 }
 
 fn debug_param() -> Option<String> {
