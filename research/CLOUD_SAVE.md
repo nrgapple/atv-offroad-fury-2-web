@@ -152,5 +152,22 @@ D1 Time Travel can restore the whole database to a point in the last 30 days
 `node --test cloudflare/*.test.mjs` runs the API against real SQLite with the
 production migration (via `node:sqlite`), covering create, read, conflicts,
 revision cap, restore, share immutability, normalization, validation, size, rate
-limits, storage failure and origin rules. Live verification of the deployed API is
-recorded in the dev-log entry or PR for the release that shipped it.
+limits, storage failure and origin rules.
+
+Live verification (2026-10-28, production commit `7cd4a58`, PR #386) with curl and
+a client-style random key against `https://furyremastered.com`: GET before
+create 404; create 200 revision 1; write with a lowercase key 200 revision 2; GET
+with the bare 16 symbols 200; stale write 409 with the current save; share 201;
+a later write did not change the share (GET share returned the revision-2
+snapshot); revisions listed 3, 2, 1; restore of revision 1 returned revision 4 with
+that save; bad key 400; save without `v` 400; foreign `Origin` 403; the workers.dev
+`Origin` 200; a 70 KB save 413. Every response carried `Cache-Control: no-store`.
+The SQL was also checked directly on the remote database before the merge.
+
+Rate limits: a keep-alive burst of share requests from one IP was answered 201
+twelve times and then 429 with `Retry-After: 60` (limit 10, counters are
+eventually consistent). Earlier bursts that opened a new connection per request
+(about 40 creates in 25 seconds, limit 10) were not limited at all, so treat the
+native limiters as coarse, per-location abuse brakes, not exact quotas. All
+verification rows (marked `"test": "server-verification…"`) were deleted
+afterwards.
