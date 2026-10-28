@@ -836,8 +836,19 @@ pub fn element(view: &Viewport, state: &State, images: &glyphs::GlyphImages) -> 
     .children(notice(view, state))
 }
 
-/// `#menu-stage` while a page slides in (frontend.js `animatePage`): the
-/// panel moves and fades; the dim backdrop and `#menu-notice` stay.
+/// The moving part of a menu page alone: its panel, without the dim
+/// backdrop and `#menu-notice` that stay put. The page a transition leaves
+/// is drawn this way while it slides out (crate::transition), so the dim
+/// layer is not doubled.
+pub fn stage(view: &Viewport, state: &State, images: &glyphs::GlyphImages) -> El {
+    let mut el = element(view, state, images);
+    el.paint = Paint::default();
+    el.children.truncate(1);
+    el
+}
+
+/// `#menu-stage` while a page slides (crate::transition): the panel moves
+/// and fades; the dim backdrop and `#menu-notice` stay.
 pub fn slide(stage: El, state: &State) -> El {
     match state.motion {
         Some(m) => stage.opacity(m.opacity).translate(m.dx, 0.),

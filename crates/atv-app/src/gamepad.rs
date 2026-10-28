@@ -276,6 +276,70 @@ impl Gamepads {
         self.read(id)
     }
 
+    /// The Gamepad API `dual-rumble` on one browser pad; whether it played.
+    #[cfg(target_arch = "wasm32")]
+    fn dual_rumble(
+        &self,
+        pad: &wasm_bindgen::JsValue,
+        pulse: atv_game::ride::impact::Pulse,
+    ) -> bool {
+        use wasm_bindgen::JsCast;
+        let Some(actuator) = browser_get(pad, "vibrationActuator").filter(|a| a.is_object()) else {
+            return false;
+        };
+        let Some(play) = browser_get(&actuator, "playEffect")
+            .and_then(|f| f.dyn_into::<js_sys::Function>().ok())
+        else {
+            return false;
+        };
+        let options = js_sys::Object::new();
+        for (key, value) in [
+            ("startDelay", 0.),
+            ("duration", f64::from(pulse.duration_ms)),
+            ("strongMagnitude", pulse.strength),
+            ("weakMagnitude", pulse.weak),
+        ] {
+            let _ = js_sys::Reflect::set(&options, &key.into(), &value.into());
+        }
+        match play.call2(&actuator, &"dual-rumble".into(), &options) {
+            Ok(promise) => {
+                // A rejected effect (unsupported) must not surface as an error.
+                if let Ok(promise) = promise.dyn_into::<js_sys::Promise>() {
+                    let _ = promise.catch(&self.ignore);
+                }
+                true
+            }
+            Err(_) => false,
+        }
+    }
+
+    /// Split screen on the web: rumbles the `slot`-th connected browser pad
+    /// (the order `sample_slot` reads), so two identical controllers each
+    /// rumble for their own player (matching by name cannot tell them
+    /// apart). No touch-vibration fallback: split screen plays on pads and
+    /// the keyboard.
+    #[cfg(target_arch = "wasm32")]
+    pub fn rumble_slot(&mut self, slot: usize, pulse: atv_game::ride::impact::Pulse) -> bool {
+        split_slot(browser_pads().into_iter(), slot).is_some_and(|p| self.dual_rumble(&p, pulse))
+    }
+
+    /// Split screen: rumbles the `slot`-th connected controller (each
+    /// player's own pad, as `sample_slot` reads it).
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn rumble_slot(&mut self, slot: usize, pulse: atv_game::ride::impact::Pulse) -> bool {
+        let Some(id) = self
+            .gilrs
+            .as_ref()
+            .and_then(|g| split_slot(g.gamepads().map(|(id, _)| id), slot))
+        else {
+            return false;
+        };
+        let saved = self.active.replace(id);
+        let sent = self.rumble(pulse);
+        self.active = saved;
+        sent
+    }
+
     fn read(&self, id: GamepadId) -> Option<Pad> {
         let gilrs = self.gilrs.as_ref()?;
         let pad = gilrs.gamepad(id);
@@ -352,7 +416,6 @@ impl Gamepads {
     /// for pulses from 0.3 (iOS has none). gilrs has no web force feedback.
     #[cfg(target_arch = "wasm32")]
     pub fn rumble(&mut self, pulse: atv_game::ride::impact::Pulse) -> bool {
-        use js_sys::Reflect;
         use wasm_bindgen::{JsCast, JsValue};
         let Some(window) = web_sys::window() else {
             return false;
@@ -369,28 +432,8 @@ impl Gamepads {
                 let t = |p: &JsValue| get(p, "timestamp").and_then(|v| v.as_f64()).unwrap_or(0.);
                 t(a).total_cmp(&t(b))
             });
-        if let Some(actuator) = pad
-            .and_then(|p| get(&p, "vibrationActuator"))
-            .filter(|a| a.is_object())
-            && let Some(play) =
-                get(&actuator, "playEffect").and_then(|f| f.dyn_into::<js_sys::Function>().ok())
-        {
-            let options = js_sys::Object::new();
-            for (key, value) in [
-                ("startDelay", 0.),
-                ("duration", f64::from(pulse.duration_ms)),
-                ("strongMagnitude", pulse.strength),
-                ("weakMagnitude", pulse.weak),
-            ] {
-                let _ = Reflect::set(&options, &key.into(), &value.into());
-            }
-            if let Ok(promise) = play.call2(&actuator, &"dual-rumble".into(), &options) {
-                // A rejected effect (unsupported) must not surface as an error.
-                if let Ok(promise) = promise.dyn_into::<js_sys::Promise>() {
-                    let _ = promise.catch(&self.ignore);
-                }
-                return true;
-            }
+        if pad.is_some_and(|p| self.dual_rumble(&p, pulse)) {
+            return true;
         }
         let coarse = window
             .match_media("(pointer: coarse)")

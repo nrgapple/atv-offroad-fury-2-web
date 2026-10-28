@@ -40,6 +40,9 @@ pub struct Request {
     /// Game Settings "Split Screen Vertical"), else one above the other.
     #[serde(default)]
     pub split_vertical: bool,
+    /// Split Screen: player 2's own ATV and rider labels.
+    #[serde(default)]
+    pub split_second: [String; 2],
     #[serde(default)]
     pub loading_status: String,
     #[serde(default = "default_quad")]
@@ -1020,6 +1023,8 @@ pub fn layout(request: Request) -> Result<Frame> {
                 ("Race", "splitrace"),
                 ("Freestyle", "splitfree"),
                 (layout, "splitlayout"),
+                (request.split_second[0].as_str(), "split2quad"),
+                (request.split_second[1].as_str(), "split2rider"),
             ]
             .iter()
             .enumerate()
@@ -2187,6 +2192,7 @@ mod tests {
         Request {
             page: page.into(),
             split_vertical: false,
+            split_second: Default::default(),
             loading_status: "Reading original ATV...".into(),
             quad_id: 1,
             rider_id: 0,

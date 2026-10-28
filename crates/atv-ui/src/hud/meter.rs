@@ -19,6 +19,11 @@ pub struct Meter {
     pub images: HashMap<String, ImageId>,
     /// King of the Hills' tinted `koh_pillbkg` copies, when loaded.
     pub pills: Option<super::peers::PillArt>,
+    /// Split screen: each view keeps the race overlays' 480-unit minimum
+    /// width, so a narrow half view shrinks the meter rather than crowding
+    /// the stunt and record text into it (a port layout choice; the split
+    /// HUD rectangles were not traced).
+    pub split: bool,
 }
 
 pub(super) struct Logical {
@@ -33,6 +38,7 @@ impl Meter {
             assets,
             images: HashMap::new(),
             pills: None,
+            split: false,
         }
     }
 
@@ -177,10 +183,12 @@ impl Meter {
 
     /// hud.js's frame: the 640x448 logical frame scaled by height (wide
     /// screens extend horizontally), compact portrait below 560 px.
-    fn frame(width: f32, height: f32) -> (Logical, f32, bool) {
+    fn frame(&self, width: f32, height: f32) -> (Logical, f32, bool) {
         let compact = width < 560.;
         let unit = if compact {
             (width / 400.).min(height / 448.)
+        } else if self.split {
+            (height / 448.).min(width / 480.)
         } else {
             height / 448.
         };
@@ -204,7 +212,7 @@ impl Meter {
         width: f32,
         height: f32,
     ) {
-        let (f, logical_height, compact) = Self::frame(width, height);
+        let (f, logical_height, compact) = self.frame(width, height);
         if speed_visible {
             let at = if compact {
                 [f.logical_width - 24., 72.]
@@ -254,7 +262,7 @@ impl Meter {
         width: f32,
         height: f32,
     ) {
-        let (f, logical_height, compact) = Self::frame(width, height);
+        let (f, logical_height, compact) = self.frame(width, height);
         if hud.stunt_visible {
             let stunt = &self.assets.stunt;
             let at = [

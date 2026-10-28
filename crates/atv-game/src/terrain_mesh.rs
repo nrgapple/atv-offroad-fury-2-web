@@ -46,7 +46,52 @@ pub fn patch(terrain: &Terrain, center: [f32; 2]) -> Patch {
     }
 }
 
+impl Patch {
+    /// Whether two patches overlap or share an edge (no coarse cell between).
+    fn touches(&self, other: &Patch) -> bool {
+        self.x0 <= other.x1 && other.x0 <= self.x1 && self.z0 <= other.z1 && other.z0 <= self.z1
+    }
+
+    fn contains(&self, x0: usize, x1: usize, z0: usize, z1: usize) -> bool {
+        x0 >= self.x0 && x1 <= self.x1 && z0 >= self.z0 && z1 <= self.z1
+    }
+}
+
+/// Split screen: one fine patch per local player (research/SPLIT_SCREEN.md).
+/// Patches that overlap or touch merge into their bounding box, so every
+/// remaining patch has coarse cells around it to stitch to. A port choice:
+/// the original's split-screen terrain LOD was not traced.
+pub fn disjoint(mut patches: Vec<Patch>) -> Vec<Patch> {
+    let mut merged = true;
+    while merged {
+        merged = false;
+        'outer: for a in 0..patches.len() {
+            for b in a + 1..patches.len() {
+                if patches[a].touches(&patches[b]) {
+                    let other = patches.swap_remove(b);
+                    let p = &mut patches[a];
+                    *p = Patch {
+                        x0: p.x0.min(other.x0),
+                        x1: p.x1.max(other.x1),
+                        z0: p.z0.min(other.z0),
+                        z1: p.z1.max(other.z1),
+                    };
+                    merged = true;
+                    break 'outer;
+                }
+            }
+        }
+    }
+    patches
+}
+
 pub fn build(terrain: &Terrain, patch: Option<Patch>) -> Vec<Chunk> {
+    build_patches(terrain, patch.as_slice())
+}
+
+/// The grid with a fine patch at each of `patches` (disjoint, see
+/// [`disjoint`]).
+pub fn build_patches(terrain: &Terrain, patches: &[Patch]) -> Vec<Chunk> {
     let step = far_step(terrain);
     let mut xs: Vec<usize> = (0..terrain.width - 1).step_by(step).collect();
     let mut zs: Vec<usize> = (0..terrain.depth - 1).step_by(step).collect();
@@ -57,17 +102,17 @@ pub fn build(terrain: &Terrain, patch: Option<Patch>) -> Vec<Chunk> {
         for x0 in (0..xs.len() - 1).step_by(CHUNK) {
             let gx = &xs[x0..(x0 + CHUNK + 1).min(xs.len())];
             let gz = &zs[z0..(z0 + CHUNK + 1).min(zs.len())];
-            chunks.push(grid(terrain, gx, gz, step, patch, false));
+            chunks.push(grid(terrain, gx, gz, step, patches, None));
         }
     }
-    if let Some(p) = patch {
+    for p in patches {
         let fx: Vec<usize> = (p.x0..=p.x1).collect();
         let fz: Vec<usize> = (p.z0..=p.z1).collect();
         for z0 in (0..fz.len().saturating_sub(1)).step_by(CHUNK) {
             for x0 in (0..fx.len().saturating_sub(1)).step_by(CHUNK) {
                 let gx = &fx[x0..(x0 + CHUNK + 1).min(fx.len())];
                 let gz = &fz[z0..(z0 + CHUNK + 1).min(fz.len())];
-                chunks.push(grid(terrain, gx, gz, step, patch, true));
+                chunks.push(grid(terrain, gx, gz, step, patches, Some(*p)));
             }
         }
     }
@@ -80,8 +125,9 @@ fn grid(
     gx: &[usize],
     gz: &[usize],
     step: usize,
-    patch: Option<Patch>,
-    fine: bool,
+    patches: &[Patch],
+    // The fine patch this chunk belongs to; none for the coarse grid.
+    fine: Option<Patch>,
 ) -> Chunk {
     let (nx, nz) = (gx.len(), gz.len());
     let h = |x: usize, z: usize| t.height(x, z) as f64;
@@ -97,7 +143,7 @@ fn grid(
             let length = (dx * dx + 1. + dz * dz).sqrt();
             let mut y = h(x, z);
             // Stitch the fine patch boundary to the surrounding coarse grid.
-            if let (true, Some(p)) = (fine, patch) {
+            if let Some(p) = fine {
                 if x == p.x0 || x == p.x1 {
                     let za = z / step * step;
                     let zb = (za + step).min(t.depth - 1);
@@ -136,12 +182,10 @@ fn grid(
     let mut indices = Vec::with_capacity((nx - 1) * (nz - 1) * 6);
     for z in 0..nz - 1 {
         for x in 0..nx - 1 {
-            if !fine
-                && let Some(p) = patch
-                && gx[x] >= p.x0
-                && gx[x + 1] <= p.x1
-                && gz[z] >= p.z0
-                && gz[z + 1] <= p.z1
+            if fine.is_none()
+                && patches
+                    .iter()
+                    .any(|p| p.contains(gx[x], gx[x + 1], gz[z], gz[z + 1]))
             {
                 continue;
             }
@@ -208,6 +252,31 @@ mod tests {
         let fine: usize =
             split.iter().map(|c| c.indices.len() / 6).sum::<usize>() - (cells - 48 * 48);
         assert_eq!(fine, 192 * 192);
+    }
+
+    #[test]
+    fn split_screen_patches_stay_apart_or_merge() {
+        let t = flat(1025, 1025);
+        let cells = 256 * 256;
+        // Far apart: two full fine patches, each cutting its own hole.
+        let (a, b) = (patch(&t, [400., 400.]), patch(&t, [1600., 1600.]));
+        let patches = disjoint(vec![a, b]);
+        assert_eq!(patches, [a, b]);
+        let built = build_patches(&t, &patches);
+        let total: usize = built.iter().map(|c| c.indices.len() / 6).sum();
+        assert_eq!(total, cells - 2 * 48 * 48 + 2 * 192 * 192);
+        // Overlapping: one bounding patch, so no cell is drawn twice.
+        let c = patch(&t, [600., 500.]);
+        let merged = disjoint(vec![a, c]);
+        assert_eq!(merged.len(), 1);
+        let m = merged[0];
+        assert_eq!((m.x0, m.x1, m.z0, m.z1), (a.x0, c.x1, a.z0, c.z1));
+        let total: usize = build_patches(&t, &merged)
+            .iter()
+            .map(|c| c.indices.len() / 6)
+            .sum();
+        let (w, d) = (m.x1 - m.x0, m.z1 - m.z0);
+        assert_eq!(total, cells - (w / 4) * (d / 4) + w * d);
     }
 
     #[test]

@@ -420,12 +420,21 @@ pub struct Frontend {
     pub split: bool,
     /// Split Screen layout: side by side, else top and bottom (saved).
     pub split_vertical: bool,
+    /// Split Screen: player 2's own ATV and rider (0 male, 1 female),
+    /// chosen on the Split Screen page (saved).
+    pub split_second: (u16, u16),
     /// The pages Back returns through (`navigation`).
     history: Vec<navigation::Visit>,
 }
 
 /// Saved Split Screen layout ("vertical" or "horizontal").
 pub const SPLIT_LAYOUT_KEY: &str = "atv-split-screen";
+/// Saved player 2 ATV and rider ("quad,rider").
+pub const SPLIT_SECOND_KEY: &str = "atv-split-player2";
+
+/// Player 2's ATVs: the 26 original quads (rooms and the rider slot that
+/// draws player 2 carry ATVs only).
+const SPLIT_QUADS: u16 = 26;
 
 impl Frontend {
     pub fn new(tracks: Vec<Track>, settings: &Settings, web: bool) -> Self {
@@ -497,6 +506,14 @@ impl Frontend {
             passkey: Default::default(),
             split: false,
             split_vertical: settings.get(SPLIT_LAYOUT_KEY).as_deref() == Some("vertical"),
+            split_second: settings
+                .get(SPLIT_SECOND_KEY)
+                .and_then(|v| {
+                    let (q, r) = v.split_once(',')?;
+                    Some((q.parse().ok()?, r.parse().ok()?))
+                })
+                .filter(|(q, r): &(u16, u16)| (1..=SPLIT_QUADS).contains(q) && *r <= 1)
+                .unwrap_or((2, 0)),
             history: Vec::new(),
         };
         front.load_profiles(settings);
@@ -588,6 +605,13 @@ impl Frontend {
         let request = json!({
             "page": page,
             "split_vertical": self.split_vertical,
+            "split_second": [
+                format!("Player 2 ATV: {}", self.quad_label(self.split_second.0)),
+                format!(
+                    "Player 2 Rider: {}",
+                    if self.split_second.1 == 1 { "Female" } else { "Male" }
+                ),
+            ],
             "width": view.width.clamp(240., 16384.),
             "height": view.height.clamp(240., 16384.),
             "selection": self.selection,
@@ -1688,6 +1712,24 @@ impl Frontend {
                     },
                     view,
                 );
+            }
+            // Player 2's own garage (the original seats each player at a
+            // pad with its own ATV and rider choice).
+            "split2quad" | "split2rider" => {
+                let (mut quad, mut rider) = self.split_second;
+                if action == "split2rider" {
+                    rider = 1 - rider.min(1);
+                } else {
+                    for _ in 0..SPLIT_QUADS {
+                        quad = quad % SPLIT_QUADS + 1;
+                        if self.quad_owned(quad) {
+                            break;
+                        }
+                    }
+                }
+                self.split_second = (quad, rider);
+                settings.set(SPLIT_SECOND_KEY, &format!("{quad},{rider}"));
+                self.refresh(view);
             }
             "splitlayout" => {
                 self.split_vertical = !self.split_vertical;
@@ -3337,6 +3379,22 @@ mod tests {
         front.key("Escape", &view, &mut settings);
         assert_eq!((front.page.as_str(), front.split), ("multiplayer", false));
         assert!(Frontend::new(tracks(), &settings, true).split_vertical);
+        // Player 2's own ATV and rider rows, saved.
+        front.show("split", &view);
+        let actions: Vec<_> = front.choices().iter().map(|(a, _)| a.clone()).collect();
+        assert_eq!(actions[3..5], ["split2quad", "split2rider"]);
+        let quad = front.split_second.0;
+        front.selection = 3;
+        front.key("Enter", &view, &mut settings);
+        assert_ne!(front.split_second.0, quad);
+        front.selection = 4;
+        front.key("Enter", &view, &mut settings);
+        assert_eq!(front.split_second.1, 1);
+        assert!(front.choices()[4].1.contains("Female"));
+        assert_eq!(
+            Frontend::new(tracks(), &settings, true).split_second,
+            front.split_second
+        );
     }
 
     #[test]

@@ -1,18 +1,20 @@
 //! The Pass Key pages (authored for the port; research/CLOUD_SAVE.md):
 //! this device's key and sync state, Copy, Show QR Code, Share Progress,
-//! Enter Pass Key, Enter Share Code, the save files (Export / Import) and the
-//! confirmation for a fetched save. They follow the Profile Editor's layout:
+//! Enter Pass Key, Enter Share Code, the save files (Export / Import), Save
+//! History (restore one of the kept revisions) and the confirmation for a
+//! fetched save. They follow the Profile Editor's layout:
 //! rows on the left, the details table (or the QR code) on the panel.
 use super::{Event, Frontend, Viewport};
-use crate::cloud::{Choice, Fetched, Source};
+use crate::cloud::{Choice, Fetched, Revision, Source};
 use crate::settings::Settings;
 use atv_core::cloud_save::{self, ALPHABET, KEY_PREFIX, SHARE_PREFIX, SYMBOLS};
 
 /// The Pass Key pages laid out as detail pages.
-pub const PAGES: [&str; 4] = [
+pub const PAGES: [&str; 5] = [
     "passkey",
     "passkey-entry",
     "passkey-file",
+    "passkey-history",
     "passkey-confirm",
 ];
 
@@ -54,6 +56,12 @@ pub enum CloudCommand {
     Import,
     /// A fetched save was applied: sync now.
     Applied,
+    /// Save History: list the kept revisions.
+    History,
+    /// Save History: fetch a kept revision for confirmation.
+    FetchRevision(u64),
+    /// Save History: make a kept revision current and load it here.
+    Restore(u64),
 }
 
 /// The pages' working state.
@@ -74,6 +82,8 @@ pub struct PassKeyUi {
     pub back: String,
     /// A link's code to look up once the menus are ready.
     pub link: Option<String>,
+    /// Save History's kept revisions, newest first (None while loading).
+    pub history: Option<Vec<Revision>>,
 }
 
 /// `XXXX-XXXX-…` of typed symbols, with blanks for the rest.
@@ -142,6 +152,25 @@ impl Frontend {
         self.show("passkey-confirm", view);
     }
 
+    /// Save History's list arrived.
+    pub fn show_history(&mut self, revisions: Vec<Revision>, view: &Viewport) {
+        self.passkey.busy = false;
+        self.passkey.history = Some(revisions);
+        if self.page == "passkey-history" {
+            self.notice = None;
+            self.refresh(view);
+        }
+    }
+
+    /// A revision was restored over this device's save.
+    pub fn passkey_restored(&mut self, message: String, view: &Viewport) {
+        self.passkey.busy = false;
+        self.passkey.pending = None;
+        self.passkey.history = None;
+        self.show("passkey", view);
+        self.notice = Some(message);
+    }
+
     /// A lookup or file read failed: the reason on the page.
     pub fn passkey_message(&mut self, message: String) {
         self.passkey.busy = false;
@@ -174,8 +203,26 @@ impl Frontend {
                 if self.cloud.files {
                     rows.push(row("savefiles", "Save Files"));
                 }
+                if self.cloud.key.is_some() {
+                    rows.push(row("savehistory", "Save History"));
+                }
                 rows
             }
+            // The current revision is the save itself; the older ones can
+            // be restored.
+            "passkey-history" => self
+                .passkey
+                .history
+                .iter()
+                .flatten()
+                .skip(1)
+                .map(|r| {
+                    (
+                        format!("revision-{}", r.revision),
+                        format!("#{} {}", r.revision, crate::cloud::when(&r.updated_at)),
+                    )
+                })
+                .collect(),
             "passkey-entry" => {
                 let symbol = ALPHABET[self.passkey.letter % ALPHABET.len()] as char;
                 vec![
@@ -208,6 +255,10 @@ impl Frontend {
                     rows.push(row("cancel", "Cancel"));
                     rows
                 }
+                Some(Fetched {
+                    source: Source::Revision(_),
+                    ..
+                }) => vec![row("restore", "Restore This Save"), row("cancel", "Cancel")],
                 Some(_) if self.local_progress() => vec![
                     row("merge", "Merge With This Device"),
                     row("replace", "Replace This Device's Save"),
@@ -228,9 +279,11 @@ impl Frontend {
                 "passkey-entry" if self.passkey.share => "Enter Share Code",
                 "passkey-entry" => "Enter Pass Key",
                 "passkey-file" => "Save Files",
+                "passkey-history" => "Save History",
                 "passkey-confirm" => match self.passkey.pending.as_ref().map(|p| &p.source) {
                     Some(Source::Share(_)) => "Load Shared Progress",
                     Some(Source::File(_)) => "Import Save",
+                    Some(Source::Revision(_)) => "Restore Save",
                     _ => "Load Pass Key",
                 },
                 _ => return None,
@@ -298,6 +351,7 @@ impl Frontend {
                 )]
             }
             "passkey-file" => vec![line(&self.cloud.files_hint, String::new())],
+            "passkey-history" => self.history_details(),
             "passkey-confirm" => self.confirm_details(),
             _ => Vec::new(),
         }
@@ -312,6 +366,10 @@ impl Frontend {
             Source::Key(key) => line("Pass Key", key.clone()),
             Source::Share(code) => line("Share Code", code.clone()),
             Source::File(name) => line("File", name.clone()),
+            Source::Revision(n) => line(
+                "Saved",
+                format!("{} (revision {n})", crate::cloud::when(&fetched.updated_at)),
+            ),
         }];
         let save = &fetched.save;
         let names: Vec<&str> = save
@@ -354,12 +412,53 @@ impl Frontend {
                 String::new(),
             ));
         }
+        if let Source::Revision(_) = fetched.source {
+            lines.push(line(
+                if self.cloud.synced {
+                    "Restore makes this the online save and replaces this device's. The save it \
+                     replaces stays in Save History."
+                } else {
+                    "Restore makes this the online save and replaces this device's. Progress on \
+                     this device that is not saved online yet is lost."
+                },
+                String::new(),
+            ));
+        }
         if let Source::Share(_) = fetched.source {
             lines.push(line(
                 "Shared progress is copied into your own save; your Pass Key stays the same.",
                 String::new(),
             ));
         }
+        lines
+    }
+
+    fn history_details(&self) -> Vec<(String, String)> {
+        let line = |l: &str, v: String| (l.to_string(), v);
+        let Some(history) = &self.passkey.history else {
+            return vec![line("Loading Save History…", String::new())];
+        };
+        let mut lines = Vec::new();
+        if let Some(current) = history.first() {
+            lines.push(line(
+                "Current Save",
+                format!(
+                    "{} (revision {})",
+                    crate::cloud::when(&current.updated_at),
+                    current.revision
+                ),
+            ));
+        }
+        lines.push(line(
+            if history.len() > 1 {
+                "The server keeps the last 10 saves of this Pass Key. Choose one to see it \
+                 before restoring it, for example if someone with your key changed your progress."
+            } else {
+                "No earlier saves are kept yet. The server keeps the last 10 saves of this \
+                 Pass Key."
+            },
+            String::new(),
+        ));
         lines
     }
 
@@ -461,6 +560,36 @@ impl Frontend {
                 self.show("passkey-file", view);
                 return Some(None);
             }
+            "savehistory" => {
+                self.passkey.history = None;
+                self.passkey.busy = true;
+                self.show("passkey-history", view);
+                return Some(Some(Event::Cloud(CloudCommand::History)));
+            }
+            _ if action.starts_with("revision-") => {
+                let n = action["revision-".len()..].parse().ok()?;
+                if self.passkey.busy {
+                    return Some(None);
+                }
+                self.passkey.busy = true;
+                self.notice = Some("Looking up…".into());
+                return Some(Some(Event::Cloud(CloudCommand::FetchRevision(n))));
+            }
+            "restore" => {
+                let Some(Fetched {
+                    source: Source::Revision(n),
+                    ..
+                }) = self.passkey.pending
+                else {
+                    return Some(None);
+                };
+                if self.passkey.busy {
+                    return Some(None);
+                }
+                self.passkey.busy = true;
+                self.notice = Some("Restoring…".into());
+                return Some(Some(Event::Cloud(CloudCommand::Restore(n))));
+            }
             "exportsave" => return Some(Some(Event::Cloud(CloudCommand::Export))),
             "importsave" => return Some(Some(Event::Cloud(CloudCommand::Import))),
             "codeletter" => {
@@ -485,8 +614,14 @@ impl Frontend {
                 return Some(self.lookup());
             }
             "cancel" if self.page == "passkey-confirm" => {
-                self.passkey.pending = None;
-                self.show("passkey", view);
+                let back = match self.passkey.pending.take() {
+                    Some(Fetched {
+                        source: Source::Revision(_),
+                        ..
+                    }) => "passkey-history",
+                    _ => "passkey",
+                };
+                self.show(back, view);
                 return Some(None);
             }
             "merge" => Choice::Merge,
@@ -520,7 +655,17 @@ impl Frontend {
                     self.passkey.back.clone()
                 }
             }
-            "passkey-entry" | "passkey-file" | "passkey-confirm" => "passkey".into(),
+            "passkey-confirm"
+                if matches!(
+                    self.passkey.pending.as_ref().map(|p| &p.source),
+                    Some(Source::Revision(_))
+                ) =>
+            {
+                "passkey-history".into()
+            }
+            "passkey-entry" | "passkey-file" | "passkey-history" | "passkey-confirm" => {
+                "passkey".into()
+            }
             _ => return None,
         })
     }
@@ -567,6 +712,7 @@ mod tests {
                 "enterkey",
                 "entershare",
                 "savefiles",
+                "savehistory",
                 "back"
             ]
         );
