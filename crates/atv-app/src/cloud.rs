@@ -442,10 +442,10 @@ impl App {
             files,
             files_hint,
         };
-        let mut f = front.borrow_mut();
-        if f.state.cloud == view {
+        if front.borrow().state.cloud == view {
             return;
         }
+        let mut f = front.borrow_mut();
         f.state.cloud = view;
         if f.state.page.starts_with("passkey") {
             let page_view = f.view;

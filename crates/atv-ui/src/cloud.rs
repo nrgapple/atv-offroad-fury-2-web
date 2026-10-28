@@ -492,7 +492,7 @@ impl Sync {
                 if now < self.push_after {
                     // A burst of changes goes as one write.
                     self.check_due = true;
-                    self.status = Status::Saving;
+                    self.saving();
                     return None;
                 }
                 let wire = local.to_wire();
@@ -502,7 +502,7 @@ impl Sync {
                     return None;
                 }
                 self.refused = None;
-                self.status = Status::Saving;
+                self.saving();
                 return Some(self.issue(Op::Push(save, record.revision, wire), Some(key), now));
             }
             self.status = Status::Saved;
@@ -511,6 +511,14 @@ impl Sync {
             return Some(self.issue(Op::Share, Some(key), now));
         }
         None
+    }
+
+    /// Changes wait to be written. Offline stays Offline until a write
+    /// gets through (retries do not flicker the badge).
+    fn saving(&mut self) {
+        if self.status != Status::Offline {
+            self.status = Status::Saving;
+        }
     }
 
     fn issue(&mut self, op: Op, key: Option<String>, now: f64) -> Request {
