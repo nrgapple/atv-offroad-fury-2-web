@@ -95,6 +95,11 @@ struct Connection {
     sequence: Option<u32>,
     #[serde(default)]
     snapshot: Option<atv_net::Snapshot>,
+    /// The client announced room races (a serial-0 `Progress`); only such
+    /// clients receive race state, so older cached clients in the room
+    /// never see a packet kind they cannot decode.
+    #[serde(default)]
+    races: bool,
     last_seen_ms: f64,
     window_ms: f64,
     messages: u16,
@@ -933,6 +938,7 @@ impl DurableObject for LobbyRoom {
             player: None,
             sequence: None,
             snapshot: None,
+            races: false,
             last_seen_ms: instant,
             window_ms: instant,
             messages: 0,
@@ -1156,9 +1162,28 @@ impl DurableObject for LobbyRoom {
                     && connection.ready_map == room.map
                     && self.lobby(None)?.host == connection.peer =>
             {
+                let race = state.game == 3;
                 for (peer, other) in self.connections()? {
-                    if peer != ws && other.ready_map == room.map {
+                    if peer != ws && other.ready_map == room.map && (!race || other.races) {
                         send(&peer, &Packet::Game(state.clone()))?;
+                    }
+                }
+            }
+            // A rider's room-race progress (research/MULTIPLAYER.md "Room
+            // races"): serial 0 only announces support; the relay stamps the
+            // sender and forwards progress to race-aware riders on the map.
+            Packet::Progress(mut progress) if connection.player.is_some() => {
+                connection.races = true;
+                if progress.serial != 0
+                    && !room.public
+                    && room.started
+                    && connection.ready_map == room.map
+                {
+                    progress.peer = connection.peer;
+                    for (peer, other) in self.connections()? {
+                        if peer != ws && other.ready_map == room.map && other.races {
+                            send(&peer, &Packet::Progress(progress))?;
+                        }
                     }
                 }
             }
@@ -1457,6 +1482,7 @@ mod tests {
             player: None,
             sequence: None,
             snapshot: None,
+            races: false,
             last_seen_ms: 0.,
             window_ms: 0.,
             messages: 0,
@@ -1504,6 +1530,7 @@ mod tests {
                 appearance: [0; 8],
             }),
             snapshot: None,
+            races: false,
             sequence: Some(u32::MAX),
             last_seen_ms: 555.,
             window_ms: 500.,

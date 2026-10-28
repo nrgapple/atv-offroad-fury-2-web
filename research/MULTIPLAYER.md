@@ -543,3 +543,95 @@ counter design, which reported from the join and leave message path. During
 that stall, `workerd`'s main thread spun in its isolate lock queue at 99% CPU.
 It did not recur in the three runs after reports moved to the alarm and
 recipients were cached. Production behaviour is not measured.
+
+## Room races (2026-10-28)
+
+User decision (status.md "Product decisions"): online rooms offer every mode
+split-screen offers. This slice adds **races** to private rooms. Original
+evidence is limited to the manual (pages 16–17, 36–37: online races are
+human-only, the host's unlocks decide availability, online competition saves
+neither profile progress nor Hall of Fame records) and the exact-build lobby
+strings (`Race Lobby`, `Under Host Control`, host-forced start). No original
+race packet, start synchronization or result agreement has been recovered
+(`MULTIPLAYER_ORIGINAL.md`), so the protocol below is **authored**.
+
+### Rules
+
+- **Start.** The room host chooses Pause → Play Race on a race course the
+  room is on (Select Track picks it: National `nat01`–`nat08`, Supercross
+  `sx01`–`sx16`, or a Freestyle venue's National race). Laps come from the
+  host's Race menu setting (1–5; `raceLaps=N` test hook). The host's unlocks
+  decide availability: the track list is the host's. Enduro and Short Track
+  are carried in the protocol (`RaceInfo::variant`) but not yet offered in
+  the menu.
+- **Grid.** Start slots come from the original shuffle (`001f6350`,
+  `atv_core::race::start_slots`) over the riders in the room, drawn by the
+  host and broadcast, so every peer sees the same grid. Each rider takes its
+  own slot on the course's grid (`Course::grid(slot, riders)`).
+- **Everyone races locally.** Each rider runs the recovered race rules for its
+  own ATV: checkpoints, laps, finish gate, track window, resets, the
+  QuadzillaCountdownOverlay lamps. Remote riders are the room's ordinary
+  rider replicas (smoothing, contacts); they are not CPU racers.
+- **3-2-1-GO together.** The race holds on the grid (the intro hold, no
+  pre-race shots) until the host has a progress report from every rider on
+  the grid (or 30 s, authored). The host then broadcasts the 4 s countdown;
+  guests start it at the host's remaining time less half the relay round
+  trip.
+- **Progress.** Each rider sends its laps, race distance and finish time
+  every 200 ms (`Packet::Progress`). The HUD position/field and the race
+  standings use every room rider's progress (finishers by time, then laps and
+  distance).
+- **Finish and results (host authoritative).** The race ends when every
+  rider still in the room has finished, or 30 s after the first finisher
+  (authored; the original's online race-over rule is not recovered). The host
+  freezes the order into `GameState::scores` (finish ms by peer; riders who
+  did not finish hold `RACE_DNF + n` in the host's order) and broadcasts
+  phase RESULTS. Every peer shows the race's own results panel with those
+  rows, or the mini-game results panel for a rider who did not cross the
+  line. Online races credit no Profile Points and record no Hall of Fame
+  entries (manual).
+- **Late joiners and leavers.** A rider who joins mid-race has no grid slot:
+  it free-rides the course and joins the next race. A rider who leaves is not
+  waited for and ranks as not finished; if every racer leaves the race ends.
+  The host leaving still ends the room (no host migration in the original).
+- **Next race.** On the results panel the host's Race Again starts a new race
+  (new serial, new grid) for everyone; Quit returns the rider to the room's
+  Free Ride on the same course.
+- **No CPU fill yet.** The manual has online races human-only; optional CPU
+  fill (host-simulated CPUs replicated to guests) is not built.
+
+### Protocol (version 6, compatible)
+
+- `GameState` game 3 (Race): phases 0 grid, 1 countdown (`timer` = seconds
+  to GO), 2 racing, 3 results. Game 3 appends a 6-byte race block (variant,
+  laps, start slot by peer 0–3); Hockey and Tag packets are unchanged.
+  Validation bounds laps 1–5, variant 0–3, slots 0–4, times ≤ 2 h.
+- `Packet::Progress` (kind 14, 18-byte body): serial, laps (≤ 10), distance
+  (finite, bounded), finish ms (≤ 2 h). The relay stamps the sender's peer id
+  and forwards it only within a started private room on the room's map.
+- **Mixed versions.** A client announces race support with a serial-0
+  `Progress`; the relay forwards race `GameState` and `Progress` only to
+  such clients, so a stale cached client in the room never receives a packet
+  kind it cannot decode (it keeps free-riding). The relay ships in the same
+  Worker deployment as the game (CI `make relay` then `package_release.py`),
+  so new clients never meet an older relay on production.
+
+### Code
+
+- `crates/atv-app/src/room_race.rs`: `Field`, the participant list (rider
+  ids with start slots) and host state machine with unit tests (grid,
+  countdown, finish, leavers, finish wait, standings), and `RoomRace`, its
+  glue to the room socket and ride. A local split-screen race can drive
+  `Field` by reporting each local player's progress under its own id.
+- `atv_game::ride::race::Settings::room` (slot, riders) and `Ride::room_go`;
+  `atv_core::race::Race::set_player_grid`; `RaceState::room` standings.
+- Relay: `crates/atv-relay` `Packet::Progress` handling and the `races` flag.
+- Browser gate: `tools/test_engine_multiplayer_race.mjs` (relay group).
+
+### Next modes
+
+Championships online need a per-round series state on the host (points by
+peer, the next course pushed via Select Track) on top of this race loop.
+Freestyle and King of the Hills / Treasure Hunt need the same host-owned
+`GameState` pattern as Tag/Hockey with their recovered scoring (`GAMES.md`),
+plus a per-rider score report like `Progress`.

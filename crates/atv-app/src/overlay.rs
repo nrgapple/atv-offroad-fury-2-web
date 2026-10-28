@@ -165,6 +165,9 @@ pub struct Overlay {
     pub training: bool,
     /// The ride is a mini-game (Pause → Restart Game).
     pub game: bool,
+    /// A room race whose host results have not arrived yet: hold the
+    /// race's own results panel (research/MULTIPLAYER.md "Room races").
+    pub room_race_pending: bool,
     /// The race's course id, the player's vehicle and whether it runs the
     /// default laps: what the profile's course record keeps (`001f1e30`).
     pub race_entry: Option<(String, u16, bool)>,
@@ -248,6 +251,7 @@ impl Overlay {
             race: false,
             training: false,
             game: false,
+            room_race_pending: false,
             race_entry: None,
             fame_watch: None,
             fame_name: String::new(),
@@ -953,17 +957,19 @@ impl Overlay {
         }
         // Race over: the results panel or the Show Results button.
         match race {
-            Some((frame, ..)) if frame.phase == "finished" => {
+            // A room race shows its results once the host's are final.
+            Some((frame, ..)) if frame.phase == "finished" && !self.room_race_pending => {
                 // race.js always offers Quit Event; a page without the
                 // engine's frontend leaves for its menus.
                 self.results.can_quit = self.frontend || cfg!(target_arch = "wasm32");
-                if self.results.finish(frame) {
+                // Online competition saves neither profile progress nor Hall
+                // of Fame records (USA manual pp. 36–37).
+                if self.results.finish(frame) && self.lobby.is_none() {
                     self.credit_profile(frame);
-                    if self.lobby.is_none() {
-                        self.record_fame(frame);
-                    }
+                    self.record_fame(frame);
                 }
             }
+            Some(_) if self.room_race_pending && self.results.shown => {}
             // A race restarted in place starts without results.
             _ if self.results.shown && self.results.objective.is_none() => {
                 self.results = Results::default()

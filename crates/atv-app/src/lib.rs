@@ -19,6 +19,7 @@ mod random;
 mod render_scale;
 pub mod replay;
 mod riding;
+mod room_race;
 mod sound;
 mod soundtrack;
 mod tag;
@@ -634,6 +635,10 @@ struct App {
     hockey: Option<hockey::HockeySession>,
     /// Tag in a multiplayer room (`atv_core::tag`).
     tag: Option<tag::TagSession>,
+    /// A race in a multiplayer room (research/MULTIPLAYER.md "Room races").
+    room_race: Option<room_race::RoomRace>,
+    /// The last room race serial seen, so the host numbers the next one.
+    room_race_serial: u32,
     /// The held room the next frontend ride resumes.
     pending_room: Option<multiplayer::Net>,
     /// `pending_room` was just joined (it meets a rider; a held room
@@ -1395,6 +1400,7 @@ impl App {
         let mut loads = Vec::new();
         let mut engine_loads = Vec::new();
         let mut course = None;
+        let mut room_load = None;
         let mut ended = None;
         if let Some(net) = &mut ready.net {
             // Only actual suspension (hidden page, suspended app) sends the
@@ -1434,6 +1440,48 @@ impl App {
             let content = net.content();
             loads.extend(tick.loads.into_iter().map(|key| (content.clone(), key)));
             course = tick.course;
+            // Room races: a guest follows the host's new race; the race
+            // runs per rider and the host settles the results.
+            let (me, _) = net.roster();
+            if !net.is_host()
+                && let (Some(me), Some(state)) = (me, net.game_state())
+                && state.game == 3
+                && state.serial != self.room_race_serial
+                && state.phase != atv_game::multiplayer::race_phase::RESULTS
+            {
+                self.room_race_serial = state.serial;
+                let (race, load) = room_race::RoomRace::guest(state, me);
+                self.room_race = Some(race);
+                if let Some(overlay) = &mut self.overlay {
+                    overlay.results = Default::default();
+                }
+                if let Some(room_race::Action::Load(settings)) = load {
+                    room_load = Some(settings);
+                }
+            }
+            if let Some(race) = &mut self.room_race {
+                match race.frame(&mut riding.ride, net) {
+                    Some(room_race::Action::Load(settings)) => room_load = Some(settings),
+                    Some(room_race::Action::Results(summary)) => {
+                        // A rider who did not cross the line still sees the
+                        // agreed order (the race panel shows it otherwise).
+                        if let Some(overlay) = &mut self.overlay
+                            && riding
+                                .ride
+                                .race()
+                                .and_then(|r| r.frame.as_ref())
+                                .is_none_or(|f| f.phase != "finished")
+                        {
+                            overlay.results.show_game("Race Results", summary);
+                            overlay.results.game_continue = true;
+                        }
+                    }
+                    None => {}
+                }
+            }
+            if let Some(overlay) = &mut self.overlay {
+                overlay.room_race_pending = self.room_race.as_ref().is_some_and(|r| r.pending());
+            }
             let remote = riding
                 .sound
                 .as_ref()
@@ -1459,8 +1507,20 @@ impl App {
             return;
         }
         if let Some(environment) = course {
-            self.reload_room(environment);
+            self.room_race = None;
+            self.reload_room(environment, None);
             return;
+        }
+        if let Some(settings) = room_load {
+            let environment = self
+                .ready
+                .as_ref()
+                .and_then(|r| r.net.as_ref())
+                .map(|n| n.environment.clone());
+            if let Some(environment) = environment {
+                self.reload_room(environment, Some(settings));
+                return;
+            }
         }
         // The Training Course ended (`00225980` phase 3): back to the main
         // menu with the reward on the notice line.
@@ -2036,6 +2096,7 @@ impl App {
                 "training": self.training.as_ref().map(|t| t.state(riding.ride.frame().origin)),
                 "trainingArrows": ready.venue.training_arrows.map(|m| m.len()),
                 "game": self.game.as_ref().map(games::GameSession::state),
+                "roomRace": self.room_race.as_ref().map(room_race::RoomRace::state),
                 "hockey": self.hockey.as_ref().map(|h| h.state(riding.ride.frame().origin)),
                 "tag": self.tag.as_ref().map(|t| t.state()),
                 "oneShots": riding.sound.as_ref().map(|s| s.ride.race.stats.one_shots.clone()),
@@ -2579,6 +2640,12 @@ impl App {
                     }
                 }
             }
+            // Play Race (room host): every room rider races this course
+            // (research/MULTIPLAYER.md "Room races").
+            Event::PlayRace => {
+                self.start_room_race();
+                self.menu_event(Event::Resume);
+            }
             // Play Tag (room host): a Tag game for the room on this course.
             Event::PlayTag => {
                 let ok = self.ready.as_ref().is_some_and(|r| {
@@ -2976,6 +3043,35 @@ impl App {
                 }
             }
             overlay::Action::Camera => riding.cycle_requested = true,
+            // Room race results: the host starts the next race, a guest
+            // waits for it; Quit returns to the room's Free Ride.
+            overlay::Action::RaceRetry if self.room_race.is_some() => {
+                if let Some(overlay) = &mut self.overlay {
+                    overlay.results = Default::default();
+                }
+                if self
+                    .ready
+                    .as_ref()
+                    .and_then(|r| r.net.as_ref())
+                    .is_some_and(|n| n.is_host())
+                {
+                    self.start_room_race();
+                }
+            }
+            overlay::Action::RaceQuit if self.room_race.is_some() => {
+                self.room_race = None;
+                if let Some(overlay) = &mut self.overlay {
+                    overlay.results = Default::default();
+                }
+                let environment = self
+                    .ready
+                    .as_ref()
+                    .and_then(|r| r.net.as_ref())
+                    .map(|n| n.environment.clone());
+                if let Some(environment) = environment {
+                    self.reload_room(environment, None);
+                }
+            }
             overlay::Action::RaceRetry if self.tag.is_some() => {
                 if self
                     .ready
@@ -6223,7 +6319,7 @@ impl App {
         }
         self.poll_frame_tasks();
         if let Some(environment) = course {
-            self.reload_room(environment);
+            self.reload_room(environment, None);
         }
     }
 
@@ -7169,7 +7265,43 @@ fn publish_multiplayer(
 impl App {
     /// The room moved to another course: reload the ride there, keeping the
     /// room (web/multiplayer.js `follow` -> `ride`).
-    fn reload_room(&mut self, environment: String) {
+    /// The room host starts a race on the room's course for every rider in
+    /// the room, with the Race menu's lap count (`raceLaps=N` for tests).
+    fn start_room_race(&mut self) {
+        let laps = (1..=5u8)
+            .find(|n| url_flag(&format!("raceLaps={n}")))
+            .or_else(|| {
+                self.front
+                    .as_ref()
+                    .map(|f| f.borrow().state.race.laps.clamp(1, 5) as u8)
+            })
+            .unwrap_or(3);
+        let Some(ready) = &mut self.ready else { return };
+        let Some(net) = ready.net.as_mut().filter(|n| n.is_host()) else {
+            return;
+        };
+        if !atv_game::launch::is_race_course(&net.environment) {
+            if let Some(menu) = self.overlay.as_mut().and_then(|o| o.menu.as_mut()) {
+                menu.notice = Some("Select a race track first.".into());
+            }
+            return;
+        }
+        let Some((race, room_race::Action::Load(settings))) =
+            room_race::RoomRace::host(net, self.room_race_serial, laps, fresh_seed())
+        else {
+            return;
+        };
+        self.room_race_serial = race.field.serial;
+        self.room_race = Some(race);
+        self.tag = None;
+        if let Some(overlay) = &mut self.overlay {
+            overlay.results = Default::default();
+        }
+        let environment = net.environment.clone();
+        self.reload_room(environment, Some(settings));
+    }
+
+    fn reload_room(&mut self, environment: String, race: Option<atv_game::ride::race::Settings>) {
         let Some(mut ready) = self.ready.take() else {
             return;
         };
@@ -7191,7 +7323,7 @@ impl App {
                 rider: p.rider,
             }),
             appearance: net.ride.appearance,
-            race: None,
+            race,
             weather: net.ride.weather,
             steps: None,
             graphics: net.ride.graphics,
@@ -7372,6 +7504,8 @@ pub fn run(options: Options) {
         game: None,
         hockey: None,
         tag: None,
+        room_race: None,
+        room_race_serial: 0,
         pending_room: None,
         pending_fresh: false,
         joining: None,

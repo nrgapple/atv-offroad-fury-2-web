@@ -229,7 +229,7 @@ impl Default for Snapshot {
 /// own their own ATVs.
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct GameState {
-    /// 1 Hockey, 2 Tag.
+    /// 1 Hockey, 2 Tag, 3 Race (research/MULTIPLAYER.md "Room races").
     pub game: u8,
     /// Increments each change of `phase` (face-offs, goals).
     pub serial: u32,
@@ -251,11 +251,78 @@ pub struct GameState {
     pub ball: [f32; 3],
     pub ball_velocity: [f32; 3],
     pub ball_yaw: f32,
+    /// Race only (game 3); encoded after the shared fields.
+    #[serde(default)]
+    pub race: RaceInfo,
+}
+/// A room race's host-chosen setup (game 3): the course variant on the
+/// room's map, the lap count and each private-room slot's start slot.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct RaceInfo {
+    /// 0 National/Supercross, 1 Enduro long, 2 Enduro short, 3 Short Track.
+    pub variant: u8,
+    pub laps: u8,
+    /// Start slot (1…riders) by peer id; 0 = not in this race.
+    pub grid: [u8; RACE_RIDERS],
+}
+/// Riders in a room race: a private room's capacity (peer ids 0…3).
+pub const RACE_RIDERS: usize = 4;
+/// Room race phases (GameState::phase for game 3).
+pub mod race_phase {
+    /// Riders load the course and wait on the grid.
+    pub const GRID: u8 = 0;
+    /// 3-2-1-GO: `timer` is the seconds left to GO.
+    pub const COUNTDOWN: u8 = 1;
+    pub const RACING: u8 = 2;
+    /// Final: `scores` hold finish times (ms) by peer id; riders who did
+    /// not finish hold `RACE_DNF + n`, the host's order among them; 0 is a
+    /// slot outside the race. Ascending scores are the agreed finish order.
+    pub const RESULTS: u8 = 3;
+}
+/// Base of a room-race result for a rider who did not finish.
+pub const RACE_DNF: u32 = u32::MAX - 16;
+/// Finish times above this (ms) are invalid (two hours).
+pub const RACE_MAX_MS: u32 = 7_200_000;
+/// A rider's own race progress (any rider; the relay stamps `peer`).
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
+pub struct RaceProgress {
+    pub peer: PeerId,
+    /// The race (GameState serial) this progress belongs to; 0 announces
+    /// that the sender understands room races.
+    pub serial: u32,
+    /// Laps completed.
+    pub lap: u8,
+    /// Race distance from the grid along the racing line (ft).
+    pub distance: f32,
+    /// Finish time (ms of race clock), 0 while racing.
+    pub finish_ms: u32,
+}
+impl RaceProgress {
+    pub fn validate(&self) -> Result<()> {
+        if !valid_peer(self.peer)
+            || self.lap > 10
+            || !self.distance.is_finite()
+            || !(-10_000. ..=1_000_000.).contains(&self.distance)
+            || self.finish_ms > RACE_MAX_MS
+        {
+            return Err(Error::InvalidValue);
+        }
+        Ok(())
+    }
 }
 pub const NO_PEER: PeerId = 255;
 impl GameState {
     pub fn validate(&self) -> Result<()> {
-        if !(1..=2).contains(&self.game)
+        if self.game == 3
+            && (self.race.variant > 3
+                || !(1..=5).contains(&self.race.laps)
+                || self.race.grid.iter().any(|&g| g as usize > RACE_RIDERS)
+                || self.phase > race_phase::RESULTS
+                || self.scores.iter().any(|&s| s > RACE_MAX_MS && s < RACE_DNF))
+        {
+            return Err(Error::InvalidValue);
+        }
+        if !(1..=3).contains(&self.game)
             || self.phase > 8
             || self.banner > 16
             || (self.holder != NO_PEER && !valid_peer(self.holder))
@@ -309,6 +376,8 @@ pub enum Packet {
     },
     /// The host's mini-game state (relayed only from the host).
     Game(Box<GameState>),
+    /// A rider's room-race progress (research/MULTIPLAYER.md "Room races").
+    Progress(RaceProgress),
 }
 
 pub(crate) fn bounded(values: &[f32], limit: f32) -> bool {

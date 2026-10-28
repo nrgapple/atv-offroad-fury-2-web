@@ -15,7 +15,9 @@ pub mod spawn;
 
 use crate::Result;
 use crate::ride::Ride;
-pub use atv_net::{GameState, NO_PEER};
+pub use atv_net::{
+    GameState, NO_PEER, RACE_DNF, RACE_MAX_MS, RACE_RIDERS, RaceInfo, RaceProgress, race_phase,
+};
 use atv_net::{Lobby, Packet, Participant, PoseBuffer, SampledPose, Snapshot};
 use std::collections::BTreeMap;
 
@@ -127,6 +129,8 @@ pub struct Session {
     ghost_until: u64,
     /// The host's latest mini-game state (`Packet::Game`) and when it came.
     pub game: Option<(atv_net::GameState, u64)>,
+    /// Other riders' latest room-race progress by peer (`Packet::Progress`).
+    pub progress: BTreeMap<u8, atv_net::RaceProgress>,
 }
 
 fn encode(packet: &Packet) -> Result<Vec<u8>> {
@@ -317,6 +321,7 @@ impl Session {
             }
             Packet::Leave { peer } => {
                 self.buffers.remove(&peer);
+                self.progress.remove(&peer);
             }
             Packet::Pong { nonce, server_ms } => {
                 let rtt = (now_ms as u32).wrapping_sub(nonce);
@@ -346,6 +351,10 @@ impl Session {
             }
             // The relay forwards it only from the host.
             Packet::Game(state) => self.game = Some((*state, now_ms)),
+            // The relay stamps the sender.
+            Packet::Progress(progress) => {
+                self.progress.insert(progress.peer, progress);
+            }
             _ => return Err("unexpected relay packet".into()),
         }
         Ok(())
@@ -596,6 +605,15 @@ impl Session {
         }
         rebase(&mut pose.snapshot, cars);
         Some(pose.snapshot)
+    }
+
+    /// The rider's own room-race progress as a packet.
+    pub fn progress_packet(&self, progress: atv_net::RaceProgress) -> Result<Vec<u8>> {
+        let peer = self.peer.ok_or("join multiplayer first")?;
+        encode(&Packet::Progress(atv_net::RaceProgress {
+            peer,
+            ..progress
+        }))
     }
 
     /// The host's mini-game state as a packet.

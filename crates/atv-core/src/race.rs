@@ -18,7 +18,7 @@ use serde::Serialize;
 const ALTERNATE_SECTION: u32 = 0x100;
 /// Native grid fallback in 001f8410 sets riders 4.66ft behind the start node.
 const GRID_SETBACK: f32 = 4.66;
-const COUNTDOWN: f32 = 4.;
+pub const COUNTDOWN: f32 = 4.;
 /// Enduro race over this long after the first finisher (RaceStatus +0x94).
 const ENDURO_FINISH_TIMEOUT: f32 = 30.;
 
@@ -1715,6 +1715,31 @@ impl Race {
     /// The player's grid origin and heading in its start slot.
     pub fn player_grid(&self) -> ([f32; 3], f32) {
         self.player_grid
+    }
+    /// A room race (research/MULTIPLAYER.md "Room races", authored): the
+    /// player takes start slot `slot` of a grid of `riders` humans, as the
+    /// other room riders take theirs on their own machines. Only before the
+    /// race moves and without CPUs.
+    pub fn set_player_grid(&mut self, slot: u32, riders: usize) -> Result<()> {
+        if !self.opponents.is_empty()
+            || self.elapsed != 0.
+            || !(1..=4).contains(&riders)
+            || !(1..=riders as u32).contains(&slot)
+        {
+            return Err("invalid room race grid".into());
+        }
+        self.player_grid = self.course.grid(slot, riders);
+        self.player = Progress::new(self.player_grid.0, &self.course);
+        self.grid_slots = vec![slot];
+        Ok(())
+    }
+    /// The player's race distance from the grid along the racing line.
+    pub fn player_distance(&self) -> f32 {
+        self.player.distance
+    }
+    /// The player's finish time (race seconds), once across the line.
+    pub fn player_finish(&self) -> Option<f32> {
+        self.player.finish
     }
     /// Start slot of the player, then each CPU.
     pub fn grid_slots(&self) -> &[u32] {

@@ -39,6 +39,8 @@ pub enum Event {
     SelectTrack,
     /// The host's Play Tag: a Tag game for the room on this course.
     PlayTag,
+    /// The host's Play Race: every room rider races this course.
+    PlayRace,
 }
 
 /// The multiplayer room as the pause menu shows it (the browser's
@@ -482,6 +484,7 @@ impl PauseMenu {
             "changeride" => return Some(Event::ChangeRide),
             "hosttrack" => return Some(Event::SelectTrack),
             "playtag" => return Some(Event::PlayTag),
+            "playrace" => return Some(Event::PlayRace),
             "players" => {
                 self.show("players");
                 return None;

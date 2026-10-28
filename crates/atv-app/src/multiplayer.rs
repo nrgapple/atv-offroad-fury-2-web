@@ -575,6 +575,7 @@ impl Net {
                 self.last_traffic = now_f;
                 // A fresh arrival starts apart from nobody: contacts wait.
                 self.session.ghost(now);
+                self.announce_races();
             }
             if let Some((at, tries)) = self.meet
                 && self.ready_sent
@@ -677,6 +678,7 @@ impl Net {
         {
             self.ready_sent = self.socket.send(bytes);
             self.last_traffic = now_f;
+            self.announce_races();
         }
         if !self.ready_sent || now_f - self.last_send < 50. {
             return;
@@ -724,7 +726,8 @@ impl Net {
                 }
             };
             ride.step_with(&controls, 0., &mut touch)?;
-            // Rooms do not race; drain the step's (empty) race events.
+            // Held behind a menu: drain the step's race events (a room race
+            // keeps its own progress in `room_race`).
             let _ = ride.take_race_events();
         }
         Ok(())
@@ -756,6 +759,35 @@ impl Net {
         {
             self.socket.send(bytes);
         }
+    }
+
+    /// This rider's room-race progress (research/MULTIPLAYER.md "Room
+    /// races"); serial 0 announces race support to the relay.
+    pub fn send_progress(&mut self, progress: atv_game::multiplayer::RaceProgress) {
+        if self.closed.is_none()
+            && self.ready_sent
+            && let Ok(bytes) = self.session.progress_packet(progress)
+        {
+            self.socket.send(bytes);
+        }
+    }
+
+    /// Tell the relay this client takes room-race packets (a serial-0
+    /// progress), after each Ready so reconnects announce again.
+    fn announce_races(&mut self) {
+        if self.ready_sent && self.session.lobby.as_ref().is_some_and(|l| !l.public) {
+            self.send_progress(Default::default());
+        }
+    }
+
+    /// Other riders' latest room-race progress.
+    pub fn race_progress(&self) -> &BTreeMap<u8, atv_game::multiplayer::RaceProgress> {
+        &self.session.progress
+    }
+
+    /// The latest relay round trip (ms).
+    pub fn rtt_ms(&self) -> Option<u32> {
+        self.session.rtt_ms
     }
 
     pub fn is_host(&self) -> bool {

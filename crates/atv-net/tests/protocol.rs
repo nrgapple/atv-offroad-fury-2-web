@@ -703,6 +703,7 @@ fn game_state_round_trips_and_rejects_bad_values() {
         ball: [384., 90.3, 437.],
         ball_velocity: [0., 0., 25.],
         ball_yaw: 1.5,
+        race: Default::default(),
     };
     let packet = atv_net::Packet::Game(Box::new(state.clone()));
     let bytes = atv_net::encode(&packet).unwrap();
@@ -722,5 +723,98 @@ fn game_state_round_trips_and_rejects_bad_values() {
         },
     ] {
         assert!(atv_net::encode(&atv_net::Packet::Game(Box::new(bad))).is_err());
+    }
+}
+
+#[test]
+fn race_state_and_progress_round_trip_and_reject_bad_values() {
+    use atv_net::{GameState, Packet, RACE_DNF, RaceInfo, RaceProgress};
+    let state = GameState {
+        game: 3,
+        serial: 4,
+        phase: atv_net::race_phase::RESULTS,
+        scores: [61_250, RACE_DNF, 59_000, 0],
+        race: RaceInfo {
+            variant: 0,
+            laps: 2,
+            grid: [2, 3, 1, 0],
+        },
+        ..Default::default()
+    };
+    let packet = Packet::Game(Box::new(state.clone()));
+    let bytes = atv_net::encode(&packet).unwrap();
+    assert_eq!(atv_net::decode(&bytes).unwrap(), packet);
+    // Hockey and Tag keep their pre-race size: no race block.
+    let tag = GameState {
+        game: 2,
+        ..Default::default()
+    };
+    let tag_len = atv_net::encode(&Packet::Game(Box::new(tag))).unwrap().len();
+    assert_eq!(bytes.len(), tag_len + 6);
+    for bad in [
+        RaceInfo {
+            laps: 0,
+            ..state.race
+        },
+        RaceInfo {
+            laps: 6,
+            ..state.race
+        },
+        RaceInfo {
+            variant: 4,
+            ..state.race
+        },
+        RaceInfo {
+            grid: [5, 0, 0, 0],
+            ..state.race
+        },
+    ] {
+        let g = GameState {
+            race: bad,
+            ..state.clone()
+        };
+        assert!(atv_net::encode(&Packet::Game(Box::new(g))).is_err());
+    }
+    let g = GameState {
+        scores: [atv_net::RACE_MAX_MS + 1, 0, 0, 0],
+        ..state.clone()
+    };
+    assert!(atv_net::encode(&Packet::Game(Box::new(g))).is_err());
+    // A truncated race block is rejected.
+    let mut short = bytes.clone();
+    short.truncate(bytes.len() - 1);
+    let len = (short.len() - 8) as u16;
+    short[6..8].copy_from_slice(&len.to_le_bytes());
+    assert!(atv_net::decode(&short).is_err());
+
+    let progress = RaceProgress {
+        peer: 1,
+        serial: 4,
+        lap: 1,
+        distance: 1234.5,
+        finish_ms: 0,
+    };
+    let packet = Packet::Progress(progress);
+    let bytes = atv_net::encode(&packet).unwrap();
+    assert_eq!(atv_net::decode(&bytes).unwrap(), packet);
+    for bad in [
+        RaceProgress {
+            peer: 99,
+            ..progress
+        },
+        RaceProgress {
+            lap: 11,
+            ..progress
+        },
+        RaceProgress {
+            distance: f32::INFINITY,
+            ..progress
+        },
+        RaceProgress {
+            finish_ms: atv_net::RACE_MAX_MS + 1,
+            ..progress
+        },
+    ] {
+        assert!(atv_net::encode(&Packet::Progress(bad)).is_err());
     }
 }
