@@ -122,15 +122,12 @@ try {
     await onPage(page, 'profile-view');
 
     // Notices show as a toast under the bar, seen without scrolling, then fade.
-    await page.goto(url('/play.html?uiDiagnostics=1&front=store-atv'));
-    await onPage(page, 'store-atv');
-    await page.mouse.click(4, viewport.height - 4);
-    for (let i = 0; i < 30 && !(await front(page)).labels[0].includes('Locked'); i++) {
-      await page.keyboard.press('ArrowRight');
-      await nextFrames(page, 2);
-    }
-    await page.keyboard.press('ArrowDown');
-    await page.keyboard.press('Enter');
+    // (A wrong cheat code: "Invalid cheat!".)
+    await page.goto(url('/play.html?uiDiagnostics=1&front=store-cheats'));
+    await onPage(page, 'store-cheats');
+    await page.getByLabel('Enter Cheat:', { exact: true }).fill('nope');
+    f = await front(page);
+    await tap(page, hit(f, 2000 + f.labels.indexOf('Enter')));
     await page.waitForFunction(() => {
       const f = JSON.parse(document.querySelector('#ui-state').textContent).front;
       return f.notice && f.status.toast > 0.9;

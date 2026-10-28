@@ -229,6 +229,11 @@ points and progress no longer sit in text under the rows:
   Player ("Profile Points N · races · wins"), the Profile Editor ("Current
   Profile Points") and the Profile Store; the store keeps the item's cost or
   unlock rule, and the no-profile warning stays.
+- Notices ("Unlocked Everything!", "Invalid cheat!", a locked vehicle) show
+  as a toast under the bar (fade in 150 ms, hold 3 s, fade 300 ms) instead of
+  under the rows, where phone portrait needed a scroll to see them. The coin
+  chip also glows for 700 ms when the profile's unlocks change (Unlock
+  Everything, a purchase) even when the points do not.
 - Icons are vector shapes in the menu gold. The original trophy art
   (`trophy_goldon`…, PAGE26) is not in the hosted runtime package.
 - Controllers and keyboards reach the same pages through the menus (Profile
