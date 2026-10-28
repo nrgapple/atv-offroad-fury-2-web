@@ -350,6 +350,10 @@ pub struct Driver {
     /// Each Enduro gate's place on the route (the box track position
     /// `0017da40`, gate +0x84).
     gate_stations: Vec<crate::race::Station>,
+    /// Port adaptation ([`crate::cpu_recovery`]): set by the race for a CPU
+    /// working through a repeated failure; default (off) is the recovered
+    /// driver.
+    pub assist: crate::cpu_recovery::Assist,
 }
 impl Driver {
     pub fn new(index: usize, options: Options) -> Self {
@@ -368,6 +372,7 @@ impl Driver {
             jump: JumpLatch::default(),
             enduro: None,
             gate_stations: Vec::new(),
+            assist: Default::default(),
         }
     }
     pub fn repositioned(&mut self) {
@@ -611,6 +616,11 @@ impl Driver {
                 - course.lane_limit;
             self.last_target = aim.segment;
         }
+        if self.assist.centre_lane {
+            // Port adaptation: hold the racing line (the draw above still
+            // advances the random stream).
+            self.goal = 0.;
+        }
         let tangent = course.tangent(p.segment);
         let delta = sub(p.point, frame.origin);
         let measured = delta[2] * tangent[0] - delta[0] * tangent[2];
@@ -750,7 +760,8 @@ impl Driver {
         // AI +0xf4 keeps this lean; the release below only changes the input.
         self.lean = lean;
         // Flag 0x400 is set for every difficulty except Expert.
-        if !self.options.expert {
+        // The recovery assist (port adaptation) lifts it.
+        if !self.options.expert && !self.assist.no_leader_limit {
             desired_speed = leader_speed(
                 desired_speed,
                 player_speed,
