@@ -1429,7 +1429,7 @@ impl Front {
             "details": self.state.profile_details(),
             "heading": self.state.profile_heading(),
         });
-        serde_json::json!({
+        let mut report = serde_json::json!({
             "page": self.state.page,
             // The page (or menu panel) slide: [opacity, translateX px].
             "motion": self.motion.map(|m| [m.opacity, m.dx]),
@@ -1497,7 +1497,14 @@ impl Front {
             "hits": self.hits.iter().map(|(r, id)| serde_json::json!({
                 "id": id, "x": r.x, "y": r.y, "width": r.w, "height": r.h,
             })).collect::<Vec<_>>(),
-        })
+        });
+        // The pages Back returns through (research/MENU_FLOW.md).
+        report["history"] = self.state.history().collect::<Vec<_>>().into();
+        if let Some(m) = &self.menu {
+            report["menu"]["selection"] = m.selection.into();
+            report["menu"]["history"] = m.history().collect::<Vec<_>>().into();
+        }
+        report
     }
 }
 

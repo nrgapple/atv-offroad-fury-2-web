@@ -15,6 +15,7 @@ use serde_json::{Value, json};
 pub mod store;
 pub use store::{StoreView, store_page};
 pub mod games_page;
+pub mod navigation;
 pub mod profile_pages;
 use profile_pages::NO_PROFILE;
 
@@ -386,6 +387,8 @@ pub struct Frontend {
     pub split: bool,
     /// Split Screen layout: side by side, else top and bottom (saved).
     pub split_vertical: bool,
+    /// The pages Back returns through (`navigation`).
+    history: Vec<navigation::Visit>,
 }
 
 /// Saved Split Screen layout ("vertical" or "horizontal").
@@ -457,6 +460,7 @@ impl Frontend {
             store: StoreView::default(),
             split: false,
             split_vertical: settings.get(SPLIT_LAYOUT_KEY).as_deref() == Some("vertical"),
+            history: Vec::new(),
         };
         front.load_profiles(settings);
         front.player_name = front.saved["playerName"]
@@ -1367,7 +1371,9 @@ impl Frontend {
         self.choices.get(self.selection).map(|(a, _)| a.as_str())
     }
 
-    pub fn show(&mut self, page: &str, view: &Viewport) {
+    /// Switches to `page` on its first row; [`Frontend::show`] (the
+    /// history) decides where Back then leads.
+    fn present(&mut self, page: &str, view: &Viewport) {
         self.shown = crate::transition::next_show();
         // frontend.js clears `#menu-notice` with each action.
         if self.page != page {
@@ -1572,37 +1578,15 @@ impl Frontend {
             // frontend.js: Back on the lobby page is Leave Game.
             return self.leave_lobby(view);
         }
-        if let Some(to) = self.profile_back() {
-            if self.page == "profile-confirm" {
-                self.profile_ui.confirm = None;
-            }
-            self.focus = None;
-            self.show(to, view);
-            return None;
-        }
-        let to = match self.page.as_str() {
-            _ if self.store_back().is_some() => self.store_back().unwrap_or("single").to_string(),
-            "main" => "title".to_string(),
-            "single" => "main".into(),
-            "tracks" if self.hosting => "create-lobby".into(),
-            "tracks" | "race" if self.split => "split".into(),
-            "tracks" | "race" | "championship" | "games" => "single".into(),
-            "objectives" if self.freestyle.is_none() => "objective-courses".into(),
-            "objectives" => "championship".into(),
-            "objective-courses" => "single".into(),
-            "gear" => "garage".into(),
-            "garage" => self.garage_return.clone(),
-            "multiplayer" => "main".into(),
-            "create-lobby" | "join-lobby" | "split" => "multiplayer".into(),
-            _ => return None,
-        };
         let from = self.page.clone();
-        if from == "tracks" {
-            self.hosting = false;
-        }
         self.focus = None;
-        // frontend.js `show`: the new page starts on its first row.
-        self.show(&to, view);
+        // The page the player came from, on the row they left it by.
+        self.go_back(view);
+        match from.as_str() {
+            "tracks" => self.hosting = false,
+            "profile-confirm" => self.profile_ui.confirm = None,
+            _ => {}
+        }
         None
     }
 
@@ -2527,7 +2511,8 @@ mod tests {
         let view = view(1280., 720.);
         let mut settings = Settings::memory();
         let mut front = Frontend::new(tracks(), &settings, true);
-        front.show("join-lobby", &view);
+        // Opened from a link: Back climbs to its canonical parent.
+        front.open("join-lobby", &view);
         front.tab(true);
         assert!(front.focus.is_some());
         front.key("Escape", &view, &mut settings);
@@ -2797,9 +2782,11 @@ mod tests {
                 .iter()
                 .any(|v| v.motorcycle && !v.class.is_empty())
         );
-        // Back opens the page on its first row (frontend.js `show`).
+        // Back returns to the row that opened the page (the original's
+        // page history, MENU_FLOW.md).
         front.key("Escape", &view, &mut settings);
-        assert_eq!((front.page.as_str(), front.selection), ("single", 0));
+        assert_eq!(front.page, "single");
+        assert_eq!(front.current(), Some("garage"));
     }
 
     fn store_catalogs(front: &mut Frontend) {
@@ -2912,6 +2899,7 @@ mod tests {
         assert!(front.enforce_unlocks(&mut settings).is_some());
         assert_eq!(front.quad_id, 22);
         // View Profile → ATVs lists the collection without purchases.
+        front.show("profile-view", &view);
         front.view_collection("store-atv", &view);
         front.key("ArrowRight", &view, &mut settings);
         front.key("ArrowRight", &view, &mut settings);
@@ -3333,7 +3321,8 @@ mod tests {
         assert_eq!(saved["appearance"]["paint"], 10);
         assert_eq!(saved["appearance"]["gear"][3], 2);
         front.key("Escape", &view, &mut settings);
-        assert_eq!((front.page.as_str(), front.selection), ("garage", 0));
+        assert_eq!(front.page, "garage");
+        assert_eq!(front.current(), Some("gear"));
     }
 
     #[test]
