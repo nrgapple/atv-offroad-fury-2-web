@@ -415,6 +415,16 @@ struct Metrics {
     gutter: f32,
     row: f32,
     row_font: f32,
+    /// `env(safe-area-inset-*)`: top, right, bottom, left (notches, the
+    /// status bar and the home indicator).
+    safe: [f32; 4],
+}
+
+impl Metrics {
+    /// Side padding clear of the notch: (left, right).
+    fn sides(&self) -> (f32, f32) {
+        (self.gutter + self.safe[3], self.gutter + self.safe[1])
+    }
 }
 
 impl Metrics {
@@ -440,6 +450,7 @@ impl Metrics {
             } else {
                 clamp(19., w * 0.023, 27.)
             },
+            safe: view.safe,
         }
     }
 }
@@ -646,8 +657,8 @@ fn page_element(m: &Metrics, s: &Screen) -> El {
                     6.
                 } else {
                     clamp(6., m.h * 0.014, 14.)
-                },
-                m.gutter,
+                } + m.safe[2],
+                m.sides().0,
             );
             root = root.child(el);
         }
@@ -808,7 +819,7 @@ fn heading(m: &Metrics, s: &Screen) -> El {
     };
     let (pad_top, pad_bottom) = if m.short { (3., 4.) } else { (6., 8.) };
     let strip = El::new(Style {
-        padding: sides(pad_top, m.gutter, pad_bottom, m.gutter),
+        padding: sides(pad_top, m.sides().1, pad_bottom, m.sides().0),
         min_size: Size {
             width: length(0.),
             height: auto(),
@@ -837,7 +848,7 @@ fn heading(m: &Metrics, s: &Screen) -> El {
         (clamp(12., m.h * 0.03, 28.), clamp(8., m.h * 0.016, 16.))
     };
     El::new(Style {
-        padding: sides(padding.0, 0., padding.1, 0.),
+        padding: sides(padding.0 + m.safe[0], 0., padding.1, 0.),
         ..column(0.)
     })
     .child(strip)
@@ -857,14 +868,14 @@ fn panel(m: &Metrics, s: &Screen, loading: bool) -> El {
     style.padding = if m.portrait {
         sides(
             if loading { 34. } else { 4. },
-            m.gutter,
+            m.sides().1,
             // Clear of the sweeping lower edge, which rises 56px at the left.
             if matches!(s.page.as_str(), "tracks" | "race") || stage_page(&s.page) {
                 if m.h <= 640. { 16. } else { 22. }
             } else {
                 10.
             },
-            m.gutter,
+            m.sides().0,
         )
     } else {
         sides(
@@ -873,7 +884,7 @@ fn panel(m: &Metrics, s: &Screen, loading: bool) -> El {
             } else {
                 clamp(16., m.h * 0.04, 40.)
             },
-            m.gutter,
+            m.sides().1,
             if m.short { 6. } else { 12. },
             clamp(64., m.w * 0.04 + m.h * 0.12, 160.),
         )
@@ -1393,16 +1404,16 @@ fn left(m: &Metrics, s: &Screen) -> El {
     });
     style.position = Position::Relative;
     style.padding = if m.portrait {
-        sides(14., m.gutter, 10., m.gutter)
+        sides(14., m.sides().1, 10., m.sides().0)
     } else {
-        sides(0., 0., 12., m.gutter)
+        sides(0., 0., 12., m.sides().0)
     };
     if s.page == "loading" {
         style.justify_content = JustifyContent::CENTER;
         style.padding = if m.portrait {
-            sides(10., m.gutter, 10., m.gutter)
+            sides(10., m.sides().1, 10., m.sides().0)
         } else {
-            sides(0., 12., 12., m.gutter)
+            sides(0., 12., 12., m.sides().0)
         };
     }
     let mut left = El::new(style);
@@ -1846,21 +1857,16 @@ fn form(m: &Metrics, s: &Screen) -> El {
 
 fn tabs(m: &Metrics, s: &Screen) -> El {
     let mut style = row(6.);
-    style.flex_wrap = if m.portrait {
-        FlexWrap::NoWrap
-    } else {
-        FlexWrap::Wrap
-    };
+    // Wrap everywhere: a portrait row ran its last tabs (Supercross, Arena)
+    // off the screen with no way to scroll to them.
+    style.flex_wrap = FlexWrap::Wrap;
     style.gap.height = px(6.);
     style.flex_shrink = 0.;
     style.padding = if m.portrait {
-        sides(0., m.gutter, 2., m.gutter)
+        sides(0., 0., 2., 0.)
     } else {
         sides(0., 12., 0., 0.)
     };
-    if m.portrait {
-        style.margin = margins(0., -m.gutter, 0., -m.gutter);
-    }
     let mut el = El::new(style);
     for (index, (key, label, count)) in s.tabs.iter().enumerate() {
         let selected = *key == s.filter;
@@ -2026,7 +2032,9 @@ fn garage_left(m: &Metrics, s: &Screen, mut left: El) -> El {
     // Vehicle row: arrows either side of the kind and name.
     let mut vehicle = row(14.);
     vehicle.position = Position::Relative;
-    vehicle.min_size.height = length(m.row);
+    // Tall enough for the kind over the name inside the pill (5px insets),
+    // so "ATV" does not poke out of its top.
+    vehicle.min_size.height = length(m.row.max(font * 1.69 + 14.));
     vehicle.padding = sides(0., 18., 0., 6.);
     let mut vehicle_row = El::new(vehicle).id(ROW + index_of(s, "quadprev"));
     if vehicle_selected {
@@ -2464,7 +2472,9 @@ fn stats_panel(m: &Metrics, stats: &Stats) -> El {
         padding: if m.portrait {
             sides(6., 10., 6., 10.)
         } else {
-            sides(0., 0., 0., 0.)
+            // At the bottom of the stage the 7deg skewed edge has moved
+            // h/2 x tan(7deg) right: keep "Top speed" off it.
+            sides(0., 0., 0., m.h * 0.5 * 7f32.to_radians().tan())
         },
         ..Default::default()
     });
@@ -2573,7 +2583,7 @@ fn hints(m: &Metrics, s: &Screen) -> Option<El> {
     bar.min_size.height = length(if m.short { 44. } else { 50. });
     if m.portrait {
         bar.justify_content = JustifyContent::FLEX_END;
-        bar.margin = margins(0., m.gutter, 6., m.gutter);
+        bar.margin = margins(0., m.sides().1, 6. + m.safe[2], m.sides().0);
         bar.padding = sides(0., 0., 0., 4.);
     } else {
         bar.justify_self = Some(JustifySelf::END);
@@ -2584,10 +2594,10 @@ fn hints(m: &Metrics, s: &Screen) -> Option<El> {
                 6.
             } else {
                 clamp(6., m.h * 0.014, 14.)
-            },
+            } + m.safe[2],
             0.,
         );
-        bar.padding = sides(0., m.gutter, 0., 26.);
+        bar.padding = sides(0., m.sides().1, 0., 26.);
     }
     Some(El::new(bar).children(share).child(back))
 }
@@ -2762,7 +2772,12 @@ fn title(m: &Metrics, s: &Screen, mut root: El) -> El {
             width: px(0.),
             height: px(10.),
         },
-        padding: sides(0., 16., clamp(24., m.h * 0.07, 64.), 16.),
+        padding: sides(
+            m.safe[0],
+            16. + m.safe[1],
+            clamp(24., m.h * 0.07, 64.) + m.safe[2],
+            16. + m.safe[3],
+        ),
         ..Default::default()
     });
     if let Some(index) = start_index {
@@ -3169,7 +3184,12 @@ fn loading_bar(m: &Metrics, s: &Screen) -> El {
         display: Display::Flex,
         justify_content: JustifyContent::CENTER,
         align_items: AlignItems::CENTER,
-        padding: sides(8., m.gutter, clamp(14., m.h * 0.04, 36.), m.gutter),
+        padding: sides(
+            8.,
+            m.sides().1,
+            clamp(14., m.h * 0.04, 36.) + m.safe[2],
+            m.sides().0,
+        ),
         ..Default::default()
     })
     .child(meter)
@@ -3256,6 +3276,53 @@ mod tests {
             (typing[0].0.y - form[0].0.y).abs() < 0.5,
             "{typing:?} {form:?}"
         );
+    }
+
+    #[test]
+    fn pages_keep_clear_of_notches_and_the_home_indicator() {
+        let mut fonts = Fonts::new();
+        // iPhone landscape (notch left), then portrait (status bar, home bar).
+        for (w, h, safe) in [
+            (844., 390., [0., 47., 21., 47.]),
+            (390., 844., [47., 0., 34., 0.]),
+        ] {
+            let view = Viewport {
+                width: w,
+                height: h,
+                scale: 3.,
+                safe,
+                ..Default::default()
+            };
+            for page in ["main", "single", "tracks"] {
+                let (mut list, mut hits) = (DisplayList::default(), Vec::new());
+                layout::render(
+                    &element(&view, &screen(page)),
+                    &mut fonts,
+                    w,
+                    h,
+                    &mut list,
+                    &mut hits,
+                );
+                let back = hits.iter().find(|(_, id)| *id == BACK).expect("Back").0;
+                assert!(
+                    back.bottom() <= h - safe[2] + 0.5,
+                    "{page} {w}: Back {back:?}"
+                );
+                assert!(
+                    back.right() <= w - safe[1] + 0.5,
+                    "{page} {w}: Back {back:?}"
+                );
+                // Text starts right of the notch (pills may run under it).
+                let texts = list.items.iter().filter_map(|i| match i {
+                    crate::paint::Item::Text { x, y, .. } => Some((*x, *y)),
+                    _ => None,
+                });
+                for (x, y) in texts {
+                    assert!(x >= safe[3] - 0.5, "{page} {w}: text at x {x}");
+                    assert!(y >= safe[0], "{page} {w}: text at y {y}");
+                }
+            }
+        }
     }
 
     #[test]

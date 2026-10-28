@@ -185,3 +185,20 @@ side overlap. Portrait stage pages keep 16/22px under the plate so the vehicle
 name clears the sweep. `tools/test_engine_menu_divider.mjs` follows the rim
 column by column (portrait) and row by row (landscape skew) in Chromium and
 WebKit at DPR 1 and 3; production before the fix jumped 3.33px at the centre.
+
+## Safe areas, tabs, garage and scroll indicator (2026-10-28)
+
+- Frontend pages and the Settings/Options panel follow `env(safe-area-inset-*)`
+  (`viewport-fit=cover`): the heading clears the status bar, row text clears a
+  landscape notch (the gold pill may still run under it, as it runs off the
+  edge), and Back clears the home indicator. The pause panel's inset and width
+  subtract the insets too. `atv-ui` test: iPhone portrait and landscape insets
+  on Main, Single Player and Select Track.
+- Select Track's event tabs wrap on portrait as in landscape; on a 390px phone
+  Supercross and Arena used to run off the screen with no way to reach them.
+- Garage: the ATV/BIKE row is tall enough for the kind over the name inside its
+  pill, and the stats block keeps clear of the stage's 7-degree skewed edge
+  (h/2 x tan 7deg at the bottom), where "Top speed" was clipped.
+- A thin scroll indicator (3px, 55% white) shows on the right of a list, rows
+  column or settings panel while it moves or is held, stays 500 ms, then fades
+  over 300 ms; it never shows on content that fits.
