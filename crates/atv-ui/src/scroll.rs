@@ -37,6 +37,9 @@ const KEEP_SAMPLES: f64 = 250.;
 const SPRING: f32 = 0.013;
 /// Rubber-band resistance (UIScrollView's 0.55).
 const RUBBER: f32 = 0.55;
+/// The indicator stays this long after the content rests, then fades (ms).
+const INDICATOR_HOLD: f64 = 500.;
+const INDICATOR_FADE: f64 = 300.;
 /// Keyboard/controller glide duration (ms).
 pub const GLIDE_MS: f64 = 180.;
 
@@ -107,6 +110,8 @@ pub struct Scroller {
     drag: Option<Drag>,
     /// The last tick (ms).
     clock: Option<f64>,
+    /// When the content last moved (ms), for the scroll indicator.
+    moved_at: Option<f64>,
 }
 
 impl Default for Scroller {
@@ -118,6 +123,7 @@ impl Default for Scroller {
             motion: Motion::Rest,
             drag: None,
             clock: None,
+            moved_at: None,
         }
     }
 }
@@ -212,6 +218,7 @@ impl Scroller {
         let base = self.target().clamp(0., self.max);
         self.motion = Motion::Rest;
         self.offset = (base + dy).clamp(0., self.max);
+        self.moved_at = Some(now());
     }
 
     /// A press at `y`. Returns true when it caught moving content: that
@@ -258,6 +265,7 @@ impl Scroller {
         } else {
             raw
         };
+        self.moved_at = Some(now);
         true
     }
 
@@ -336,10 +344,59 @@ impl Scroller {
         };
     }
 
+    /// The scroll indicator's opacity at `now`: shown while the content
+    /// moves or is held, then fading out (UIScrollView's thin thumb).
+    pub fn indicator_alpha(&self, now: f64) -> f32 {
+        if self.max <= 0. {
+            return 0.;
+        }
+        if self.active() || self.dragging() {
+            return 1.;
+        }
+        let Some(at) = self.moved_at else {
+            return 0.;
+        };
+        let since = now - at;
+        (1. - ((since - INDICATOR_HOLD) / INDICATOR_FADE) as f32).clamp(0., 1.)
+    }
+
+    /// Paints the indicator thumb inside `pane`'s right edge.
+    pub fn paint_indicator(
+        &self,
+        list: &mut crate::paint::DisplayList,
+        pane: crate::Rect,
+        now: f64,
+    ) {
+        let alpha = self.indicator_alpha(now);
+        if alpha <= 0. || pane.h < 40. {
+            return;
+        }
+        let track = pane.h - 8.;
+        let content = pane.h + self.max;
+        // Past an end the thumb shortens, as it does natively.
+        let over = if self.offset < 0. {
+            -self.offset
+        } else {
+            (self.offset - self.max).max(0.)
+        };
+        let length = (track * pane.h / content - over).clamp(18., track);
+        let t = (self.offset / self.max).clamp(0., 1.);
+        let y = pane.y + 4. + (track - length) * t;
+        list.push(crate::paint::Item::Box(crate::paint::BoxPaint {
+            rect: crate::Rect::new(pane.right() - 6., y, 3., length),
+            fill: Some(crate::Color::hex("#ffffff").with_alpha(0.55 * alpha).into()),
+            radii: [1.5; 4],
+            ..Default::default()
+        }));
+    }
+
     /// Advances the motion to `now`. Returns true while it moves.
     pub fn tick(&mut self, now: f64) -> bool {
         let dt = self.clock.map_or(0., |c| (now - c).clamp(0., 50.)) as f32;
         self.clock = Some(now);
+        if self.motion != Motion::Rest {
+            self.moved_at = Some(now);
+        }
         match self.motion {
             Motion::Rest => {}
             Motion::Fling { velocity } => {
@@ -557,6 +614,32 @@ mod tests {
             "{} vs {springing}",
             s.offset()
         );
+    }
+
+    #[test]
+    fn the_indicator_shows_while_moving_then_fades() {
+        let mut s = bounded(1000.);
+        assert_eq!(s.indicator_alpha(0.), 0., "hidden until it scrolls");
+        let end = swipe(&mut s, 700., 400., 0., 120.);
+        assert_eq!(s.indicator_alpha(end), 1.);
+        s.release(end);
+        let (rest, _) = settle(&mut s, end);
+        assert_eq!(s.indicator_alpha(rest + 100.), 1., "held briefly");
+        assert!(s.indicator_alpha(rest + 650.) < 1.);
+        assert_eq!(s.indicator_alpha(rest + 900.), 0.);
+        let mut list = crate::paint::DisplayList::default();
+        s.paint_indicator(&mut list, crate::Rect::new(0., 100., 300., 400.), end);
+        match &list.items[..] {
+            [crate::paint::Item::Box(b)] => {
+                assert!(b.rect.x > 290. && b.rect.w == 3.);
+                assert!(b.rect.h >= 18. && b.rect.h < 400.);
+            }
+            other => panic!("{other:?}"),
+        }
+        // Nothing to scroll: never shown.
+        let mut flat = bounded(0.);
+        flat.wheel(10.);
+        assert_eq!(flat.indicator_alpha(0.), 0.);
     }
 
     #[test]
