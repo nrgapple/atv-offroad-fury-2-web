@@ -8,6 +8,7 @@ pub mod assets;
 pub mod controller;
 pub mod logo;
 pub mod pixels;
+pub mod status_bar;
 
 use crate::{
     color::{Color, Fill, Gradient},
@@ -220,6 +221,8 @@ pub struct Screen {
     pub lobby: Option<controller::Lobby>,
     /// The page's slide-in while it opens (crate::transition).
     pub motion: Option<crate::transition::Motion>,
+    /// The status bar across the top (menu pages; none in rides).
+    pub status: Option<status_bar::StatusBar>,
     /// The Pass Key badge, on the pages that show it.
     pub badge: Option<Badge>,
     /// The Pass Key page's QR code: the link it encodes.
@@ -480,11 +483,47 @@ pub fn layers(view: &Viewport, s: &Screen) -> (El, El) {
     if !m.portrait && !matches!(s.page.as_str(), "title" | "backdrop") {
         back = back.child(panel_shape(&m));
     }
-    let content = page_element(&m, s);
-    let content = match s.motion {
-        Some(motion) => content.opacity(motion.opacity).translate(motion.dx, 0.),
-        None => content,
+    let Some(status) = &s.status else {
+        let content = page_element(&m, s);
+        let content = match s.motion {
+            Some(motion) => content.opacity(motion.opacity).translate(motion.dx, 0.),
+            None => content,
+        };
+        return (back, content);
     };
+    // The bar takes the top (and the top safe area); the page lays out in
+    // the rest, so no row ever sits under it. It stays put while the page
+    // slides; an open popover covers both.
+    let top = status_bar::total_height(&m);
+    let below = Viewport {
+        height: (view.height - top).max(1.),
+        safe: [0., view.safe[1], view.safe[2], view.safe[3]],
+        ..*view
+    };
+    let mut page = page_element(&Metrics::new(&below), s);
+    page.style.inset.top = LengthPercentageAuto::length(top);
+    if let Some(motion) = s.motion {
+        page = page.opacity(motion.opacity).translate(motion.dx, 0.);
+    }
+    let mut content = El::new(Style {
+        position: Position::Absolute,
+        inset: taffy::Rect {
+            left: LengthPercentageAuto::length(0.),
+            top: LengthPercentageAuto::length(0.),
+            right: LengthPercentageAuto::auto(),
+            bottom: LengthPercentageAuto::auto(),
+        },
+        size: Size {
+            width: length(m.w),
+            height: length(m.h),
+        },
+        ..Default::default()
+    })
+    .child(page)
+    .child(status_bar::bar(&m, status, s.hovered));
+    if let Some(pop) = &status.open {
+        content = content.child(status_bar::popover(&m, pop, status.anchor));
+    }
     (back, content)
 }
 

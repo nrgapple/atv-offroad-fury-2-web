@@ -141,6 +141,8 @@ pub struct Front {
     last_menu: Option<pause::State>,
     exit_menu: Option<pause::State>,
     page_cache: Option<PageCache>,
+    /// The coin chip's count towards a changed Profile Points total.
+    coins: CoinCount,
 }
 
 /// frontend.js `Math.floor(Math.random() * tips.length)`.
@@ -230,6 +232,7 @@ impl Front {
             last_menu: None,
             exit_menu: None,
             page_cache: None,
+            coins: CoinCount::default(),
         };
         front.state.refresh(&view);
         front
@@ -381,6 +384,7 @@ impl Front {
             || self.state.scrolling()
             || self.menu.as_ref().is_some_and(|m| m.scroller.active())
             || self.indicating()
+            || self.coins.counting(self.now())
             || self.menu.is_none()
                 && (matches!(self.state.page.as_str(), "title" | "loading")
                     || (matches!(self.state.page.as_str(), "garage" | "gear")
@@ -1017,8 +1021,19 @@ impl Front {
         screen.shot_fade = art.shot_fade;
         if self.menu.is_some() {
             screen.page = "backdrop".into();
+            // Options and the Jukebox fill the screen over the frontend; the
+            // bar's chips would be out of reach under them.
+            screen.status = None;
         } else {
             screen.motion = self.motion;
+        }
+        // The coin chip counts to a new Profile Points total.
+        if let Some(status) = &mut screen.status {
+            let (shown, counting) = self
+                .coins
+                .count(status.points, now, crate::reduced_motion());
+            status.shown_points = shown;
+            status.counting = counting;
         }
         // A slot shows its model once the wanted one is built (ModelView
         // clears to "Loading model..." on a change), else its status.
@@ -1656,6 +1671,16 @@ impl Front {
             })).collect::<Vec<_>>(),
         });
         out["kinetic"] = kinetic;
+        // The status bar (front/status_bar.rs): numbers, sync and popover.
+        out["status"] = match self.state.status_bar().filter(|_| self.menu.is_none()) {
+            Some(b) => serde_json::json!({
+                "profile": b.profile, "points": b.points, "trophies": [b.trophies.0, b.trophies.1],
+                "sync": b.sync.word(), "minimal": b.minimal, "store": b.store,
+                "open": b.open.map(|p| p.title), "counting": self.coins.counting(self.now()),
+                "shown": self.coins.value(self.now()).0,
+            }),
+            None => serde_json::Value::Null,
+        };
         // The page being left while it slides out: [opacity, translateX px].
         out["exit"] = serde_json::json!(self.transition.exit_motion().map(|m| [m.opacity, m.dx]));
         // The pages Back returns through (research/MENU_FLOW.md).
@@ -1665,6 +1690,50 @@ impl Front {
             out["menu"]["history"] = m.history().collect::<Vec<_>>().into();
         }
         out
+    }
+}
+
+/// The status bar's coin count: a changed total counts from the shown value
+/// over 700 ms (ease-out), as mobile games tick their currency.
+#[derive(Default)]
+struct CoinCount {
+    target: Option<i64>,
+    from: i64,
+    start: f64,
+}
+
+impl CoinCount {
+    const MS: f64 = 700.;
+
+    /// The value to show for `points` at `now`, and whether it is counting.
+    fn count(&mut self, points: i64, now: f64, reduced: bool) -> (i64, bool) {
+        match self.target {
+            None => self.target = Some(points),
+            Some(target) if target != points => {
+                self.from = if reduced { points } else { self.value(now).0 };
+                self.target = Some(points);
+                self.start = now;
+            }
+            _ => {}
+        }
+        self.value(now)
+    }
+
+    fn value(&self, now: f64) -> (i64, bool) {
+        let Some(target) = self.target else {
+            return (0, false);
+        };
+        let t = ((now - self.start) / Self::MS).clamp(0., 1.);
+        if t >= 1. || self.from == target {
+            return (target, false);
+        }
+        let eased = 1. - (1. - t).powi(3);
+        let shown = self.from as f64 + (target - self.from) as f64 * eased;
+        (shown.round() as i64, true)
+    }
+
+    fn counting(&self, now: f64) -> bool {
+        self.value(now).1
     }
 }
 

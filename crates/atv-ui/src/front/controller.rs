@@ -18,6 +18,7 @@ pub mod games_page;
 pub mod navigation;
 pub mod passkey_page;
 pub mod profile_pages;
+pub mod status_page;
 pub use passkey_page::{CloudCommand, CloudView};
 use profile_pages::NO_PROFILE;
 
@@ -413,6 +414,9 @@ pub struct Frontend {
     pub store: StoreView,
     /// The Pass Key sync as the host last reported it.
     pub cloud: CloudView,
+    /// The status bar's open popover and its chip's centre x.
+    status_open: Option<super::status_bar::Chip>,
+    status_anchor: f32,
     /// The Pass Key pages' working state.
     pub passkey: passkey_page::PassKeyUi,
     /// Multiplayer → Split Screen: the next Freestyle or Race rides two
@@ -503,6 +507,8 @@ impl Frontend {
             shift: false,
             store: StoreView::default(),
             cloud: CloudView::default(),
+            status_open: None,
+            status_anchor: 0.,
             passkey: Default::default(),
             split: false,
             split_vertical: settings.get(SPLIT_LAYOUT_KEY).as_deref() == Some("vertical"),
@@ -997,11 +1003,15 @@ impl Frontend {
     /// highlighted series on Championship.
     pub fn profile_text(&self) -> Option<String> {
         match self.page.as_str() {
-            "single" => Some(match self.profile_name() {
-                Some(name) => format!("{name} · {}", profile_line(&self.profile)),
-                // 0x431440: no profile, nothing is saved.
-                None => "No profile loaded · Remember, your progress is not being saved!".into(),
-            }),
+            // The status bar shows the profile and its points; the line
+            // stays only for the original's warning (0x431440: no profile,
+            // nothing is saved).
+            "single" => match self.profile_name() {
+                Some(_) => None,
+                None => {
+                    Some("No profile loaded · Remember, your progress is not being saved!".into())
+                }
+            },
             "championship" => self.series_line(),
             "games" => self.games_line(),
             "objectives" => self.objectives_line(),
@@ -1889,6 +1899,11 @@ impl Frontend {
     /// Keyboard navigation (frontend.js `action`).
     pub fn key(&mut self, code: &str, view: &Viewport, settings: &mut Settings) -> Option<Event> {
         self.reveal_row = true;
+        // An open status popover takes the next key and closes.
+        if self.status_open() && !matches!(code, "ShiftLeft" | "ShiftRight") {
+            self.close_status();
+            return None;
+        }
         if matches!(code, "ShiftLeft" | "ShiftRight") {
             self.shift = true;
             return None;
@@ -2163,7 +2178,10 @@ impl Frontend {
     pub fn press(&mut self, hits: &[(Rect, u32)], pointer: u64, x: f32, y: f32) {
         let inside = |pane: u32| hits.iter().any(|(r, id)| *id == pane && r.contains(x, y));
         // The list sits inside the rows column on Select Track: it wins.
-        let scroll = if inside(LIST) {
+        // An open status popover covers both.
+        let scroll = if self.status_open() {
+            None
+        } else if inside(LIST) {
             Some(Pane::List)
         } else if inside(ROWS) && self.rows.max() > 0. {
             Some(Pane::Rows)
@@ -2262,6 +2280,14 @@ impl Frontend {
             }
         }
         let id = Self::hit(hits, x, y).filter(|id| Some(*id) == pressed.id)?;
+        let rect = hits
+            .iter()
+            .rev()
+            .find(|(r, i)| *i == id && r.contains(x, y))
+            .map(|(r, _)| *r);
+        if self.status_click(id, rect, view) {
+            return None;
+        }
         self.click(id, view, settings)
     }
 
@@ -2483,12 +2509,9 @@ impl Frontend {
             notice: self.notice.clone(),
             profile: self.profile_text(),
             details: self.profile_details(),
-            badge: self.badge_page().then(|| super::Badge {
-                key: self.cloud.key.clone(),
-                status: self.cloud.short.clone(),
-                synced: self.cloud.synced,
-                trouble: self.cloud.trouble,
-            }),
+            // The status bar's save chip replaced the Pass Key badge.
+            badge: None,
+            status: self.status_bar(),
             qr: self.passkey_qr(),
             heading: self.profile_heading(),
             lobby: self.lobby.clone(),
@@ -3025,10 +3048,10 @@ mod tests {
         front.selection = at;
         front.key("Enter", &view, &mut settings);
         assert_eq!(front.page, "store");
-        assert_eq!(
-            front.profile_text().as_deref(),
-            Some("Current Profile Points: 0")
-        );
+        // The points to spend are on the status bar's emphasized coin chip.
+        assert_eq!(front.profile_text(), None);
+        let bar = front.status_bar().unwrap();
+        assert!(bar.store && bar.points == 0);
         // Cheats: GIMMEPTS adds 1,000 points.
         front.selection = 4;
         front.key("Enter", &view, &mut settings);
@@ -3053,10 +3076,8 @@ mod tests {
         front.key("ArrowRight", &view, &mut settings);
         assert_eq!(front.stage_quad(), 8);
         assert_eq!(front.choices()[0].1, "ATV 2/3 · Locked: Patriot");
-        assert_eq!(
-            front.profile_text().as_deref(),
-            Some("Point Cost: 250 · Current Profile Points: 1,000")
-        );
+        assert_eq!(front.profile_text().as_deref(), Some("Point Cost: 250"));
+        assert_eq!(front.status_bar().unwrap().points, 1_000);
         // Single Player skips the locked ATVs.
         assert!(!front.quad_owned(8) && front.quad_owned(27) && front.quad_owned(6));
         front.selection = 1;
