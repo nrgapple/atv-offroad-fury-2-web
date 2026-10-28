@@ -20,6 +20,7 @@ mod random;
 mod render_scale;
 pub mod replay;
 mod riding;
+mod room_game;
 mod room_race;
 mod sound;
 mod soundtrack;
@@ -658,6 +659,11 @@ struct App {
     room_race: Option<room_race::RoomRace>,
     /// The last room race serial seen, so the host numbers the next one.
     room_race_serial: u32,
+    /// The last room King of the Hills / Treasure Hunt serial seen
+    /// (research/MULTIPLAYER.md "Room games").
+    room_game_serial: u32,
+    /// The next room reload rides this game's course scene.
+    room_game_scene: Option<atv_core::games::GameKind>,
     /// The host's Play Tag reloads the room's venue from its TG archive;
     /// the game starts with these minutes once that ride is ready.
     tag_start: Option<u32>,
@@ -1571,6 +1577,7 @@ impl App {
         let mut engine_loads = Vec::new();
         let mut course = None;
         let mut room_load = None;
+        let mut game_join = None;
         let mut ended = None;
         if let Some(net) = &mut ready.net {
             // Only actual suspension (hidden page, suspended app) sends the
@@ -1628,6 +1635,18 @@ impl App {
                 if let Some(room_race::Action::Load(settings)) = load {
                     room_load = Some(settings);
                 }
+            }
+            // Room King of the Hills / Treasure Hunt: a guest follows the
+            // host's new game onto its course scene.
+            if !net.is_host()
+                && let Some(state) = net.game_state()
+                && let Some(kind) = room_game::kind(state.game)
+                && state.serial != self.room_game_serial
+                && state.phase != atv_game::multiplayer::game_phase::OVER
+            {
+                self.room_game_serial = state.serial;
+                let minutes = (state.clock / 60.).ceil() as u32;
+                game_join = Some((kind, state.serial, minutes));
             }
             if let Some(race) = &mut self.room_race {
                 match race.frame(&mut riding.ride, net) {
@@ -1706,6 +1725,10 @@ impl App {
                 self.reload_room(environment, Some(settings));
                 return;
             }
+        }
+        if let Some((kind, serial, minutes)) = game_join {
+            self.start_room_game(kind, false, serial, minutes);
+            return;
         }
         // A guest following the host's Tag onto its course.
         if let Some(environment) = self.tag_reload.take() {
@@ -1952,10 +1975,13 @@ impl App {
         // open the results.
         let game_view = match &mut self.game {
             Some(game) => {
-                game.update(
-                    &mut riding.ride,
-                    ready.split.as_mut().map(|s| &mut s.riding.ride),
-                );
+                match (&game.room, ready.net.as_mut()) {
+                    (Some(_), Some(net)) => game.room_update(&mut riding.ride, net),
+                    _ => game.update(
+                        &mut riding.ride,
+                        ready.split.as_mut().map(|s| &mut s.riding.ride),
+                    ),
+                }
                 riding.locked |= game.locked();
                 if let Some(second) = &mut ready.split {
                     second.riding.locked = game.locked();
@@ -2027,10 +2053,20 @@ impl App {
                         .filter(|n| !n.is_empty())
                         .unwrap_or_else(|| "You".into())
                 };
-                if let Some(summary) = game.results(&[&player, split::PLAYER_2])
+                let summary = if game.room.is_some() {
+                    game.room_results()
+                } else {
+                    game.results(&[&player, split::PLAYER_2])
+                };
+                if let Some(summary) = summary
                     && let Some(overlay) = &mut self.overlay
                 {
                     overlay.results.show_game("Race Results", summary);
+                    // A room game: Play Again (host) or Continue to the
+                    // room's Free Ride.
+                    if game.room.is_some() {
+                        overlay.results.game_continue = true;
+                    }
                 }
                 game.view(0)
             }
@@ -2504,6 +2540,7 @@ impl App {
                 "trainingArrows": ready.venue.training_arrows.map(|m| m.len()),
                 "game": self.game.as_ref().map(games::GameSession::state),
                 "roomRace": self.room_race.as_ref().map(room_race::RoomRace::state),
+                "roomGame": self.game.as_ref().map(games::GameSession::room_state),
                 "hockey": self.hockey.as_ref().map(|h| h.state(riding.ride.frame().origin)),
                 "tag": self.tag.as_ref().map(|t| t.state()),
                 "tagBall": ready.venue.tag_ball,
@@ -2988,8 +3025,16 @@ impl App {
             // Restart Game (`00220d10`, `002d1450`): the game starts over
             // at its start, in place.
             Event::Reset if self.game.is_some() => {
+                // A room game restarts for everyone, from the host only.
+                let host = ready.net.as_ref().is_some_and(|n| n.is_host());
                 if let Some(game) = &mut self.game {
-                    game.restart(&mut riding.ride, second);
+                    if game.room.is_none() {
+                        game.restart(&mut riding.ride, second);
+                    } else if host {
+                        let serial = self.room_game_serial.wrapping_add(1).max(1);
+                        self.room_game_serial = serial;
+                        game.room_restart(&mut riding.ride, serial);
+                    }
                 }
                 if let Some(overlay) = &mut self.overlay {
                     overlay.results = Default::default();
@@ -3080,6 +3125,26 @@ impl App {
             Event::PlayRace(variant) => {
                 self.start_room_race(variant);
                 self.menu_event(Event::Resume);
+            }
+            // Play King of the Hills / Treasure Hunt (room host): the game
+            // for every room rider on this course (research/MULTIPLAYER.md
+            // "Room games").
+            Event::PlayGame(event) => {
+                self.menu_event(Event::Resume);
+                let host = self
+                    .ready
+                    .as_ref()
+                    .and_then(|r| r.net.as_ref())
+                    .is_some_and(|n| n.is_host());
+                if let Some(kind) = atv_core::games::GameKind::from_event_type(event)
+                    .filter(|k| room_game::code(*k).is_some())
+                    && host
+                {
+                    let serial = self.room_game_serial.wrapping_add(1).max(1);
+                    self.room_game_serial = serial;
+                    let minutes = self.room_game_minutes();
+                    self.start_room_game(kind, true, serial, minutes);
+                }
             }
             // Play Tag (room host): a Tag game for the room on this course.
             Event::PlayTag => {
@@ -3543,6 +3608,31 @@ impl App {
                     .as_ref()
                     .and_then(|r| r.net.as_ref())
                     .map(|n| n.environment.clone());
+                if let Some(environment) = environment {
+                    self.reload_room(environment, None);
+                }
+            }
+            // Room King of the Hills / Treasure Hunt results: the host's
+            // Play Again starts the next game, a guest waits for it;
+            // Continue returns to the room's Free Ride.
+            overlay::Action::RaceRetry if self.game.as_ref().is_some_and(|g| g.room.is_some()) => {
+                if let Some(overlay) = &mut self.overlay {
+                    overlay.results = Default::default();
+                }
+                if ready.net.as_ref().is_some_and(|n| n.is_host())
+                    && let Some(game) = &mut self.game
+                {
+                    let serial = self.room_game_serial.wrapping_add(1).max(1);
+                    self.room_game_serial = serial;
+                    game.room_restart(&mut riding.ride, serial);
+                }
+            }
+            overlay::Action::RaceQuit if self.game.as_ref().is_some_and(|g| g.room.is_some()) => {
+                self.game = None;
+                if let Some(overlay) = &mut self.overlay {
+                    overlay.results = Default::default();
+                }
+                let environment = ready.net.as_ref().map(|n| n.environment.clone());
                 if let Some(environment) = environment {
                     self.reload_room(environment, None);
                 }
@@ -7045,6 +7135,11 @@ impl App {
         // A room race ends with its room (its results never come).
         self.room_race = None;
         self.room_race_serial = 0;
+        // So does a room King of the Hills / Treasure Hunt.
+        if self.game.as_ref().is_some_and(|g| g.room.is_some()) {
+            self.game = None;
+        }
+        self.room_game_serial = 0;
         if let Some(overlay) = &mut self.overlay {
             overlay.room_race_pending = false;
         }
@@ -7889,6 +7984,65 @@ impl App {
             .unwrap_or(atv_core::games::DEFAULT_MINUTES)
     }
 
+    /// Room games' time limit: Games Prep's minutes (`gameMinutes=N` for
+    /// links and tests).
+    fn room_game_minutes(&self) -> u32 {
+        (atv_core::games::MIN_MINUTES..=atv_core::games::MAX_MINUTES)
+            .find(|m| url_flag(&format!("gameMinutes={m}")))
+            .or_else(|| self.front.as_ref().map(|f| f.borrow().state.games.minutes))
+            .unwrap_or(atv_core::games::DEFAULT_MINUTES)
+    }
+
+    /// Starts (host) or joins (guest) a room King of the Hills / Treasure
+    /// Hunt: the game session, its mode TOY from the room's package and
+    /// the reload onto the game's course scene.
+    fn start_room_game(
+        &mut self,
+        kind: atv_core::games::GameKind,
+        host: bool,
+        serial: u32,
+        minutes: u32,
+    ) {
+        let Some((environment, content)) = self
+            .ready
+            .as_ref()
+            .and_then(|r| r.net.as_ref())
+            .map(|n| (n.environment.clone(), n.content()))
+        else {
+            return;
+        };
+        let Some(path) = atv_core::games::game_archive(kind, &environment)
+            .filter(|p| content.has(p) && room_game::venue_code(&environment).is_some())
+        else {
+            if let Some(menu) = self.overlay.as_mut().and_then(|o| o.menu.as_mut()) {
+                menu.notice = Some(format!("{} is not on this course.", kind.name()));
+            }
+            return;
+        };
+        self.room_race = None;
+        self.tag = None;
+        self.game = Some(games::GameSession::for_room(
+            kind,
+            environment.clone(),
+            minutes,
+            host,
+            serial,
+        ));
+        if let Some(overlay) = &mut self.overlay {
+            overlay.results = Default::default();
+        }
+        let at = environment.clone();
+        self.spawn(
+            async move {
+                let bytes = content.file(&path).await.map_err(|e| e.to_string())?;
+                games::mode_toy(&bytes, kind, &at)
+            },
+            Message::GameToy,
+        );
+        self.room_game_scene = Some(kind);
+        self.reload_room_with(environment, false, None);
+    }
+
     /// The room host starts a race on the room's course for every rider in
     /// the room, with the Race menu's lap count (`raceLaps=N` for tests).
     fn start_room_race(&mut self, variant: u8) {
@@ -7943,8 +8097,25 @@ impl App {
         tag: bool,
         race: Option<atv_game::ride::race::Settings>,
     ) {
+        let room_game = self.room_game_scene.take();
         let game_scene = if tag {
             self.tag_course(&environment)
+        } else if let Some(kind) = room_game {
+            // A room King of the Hills / Treasure Hunt rides the game's
+            // scene over the Freeride archive, as the single-player game.
+            let suffix = if kind == atv_core::games::GameKind::KingOfTheHills {
+                "kh"
+            } else {
+                "th"
+            };
+            let content = self
+                .ready
+                .as_ref()
+                .and_then(|r| r.net.as_ref())
+                .map(|n| n.content());
+            atv_core::games::game_archive(kind, &environment)
+                .filter(|p| content.as_ref().is_some_and(|c| c.has(p)))
+                .map(|p| (p, format!("{environment}{suffix}")))
         } else {
             None
         };
@@ -8156,6 +8327,8 @@ pub fn run(options: Options) {
         tag: None,
         room_race: None,
         room_race_serial: 0,
+        room_game_serial: 0,
+        room_game_scene: None,
         tag_start: None,
         tag_reload: None,
         pending_room: None,

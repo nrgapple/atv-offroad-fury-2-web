@@ -214,6 +214,45 @@ impl Rules for KingOfTheHill {
         }
     }
 
+    fn marks_state(&self) -> Vec<(Option<usize>, f32)> {
+        self.hills.iter().map(|h| (h.owner, h.score)).collect()
+    }
+
+    fn apply_marks(&mut self, marks: &[(Option<usize>, f32)], scores: &[i32], _wait: f32) {
+        for (hill, (owner, score)) in self.hills.iter_mut().zip(marks) {
+            hill.owner = owner.filter(|o| *o < self.riders);
+            hill.score = *score;
+        }
+        for (held, score) in self.held.iter_mut().zip(scores) {
+            *held = *score;
+        }
+    }
+
+    fn claim(&mut self, rider: usize, number: usize, points: f32) -> Option<Notice> {
+        if rider >= self.riders || !self.hills.iter().any(|h| h.number == number) {
+            return None;
+        }
+        let state = self.state[rider];
+        self.state[rider] = number as i32;
+        let notice = self.capture(rider, points);
+        self.state[rider] = state;
+        notice
+    }
+
+    fn release(&mut self, rider: usize) {
+        if rider >= self.riders {
+            return;
+        }
+        for hill in &mut self.hills {
+            if hill.owner == Some(rider) {
+                hill.owner = None;
+                hill.score = 0.;
+            }
+        }
+        self.held[rider] = 0;
+        self.state[rider] = CLEAR;
+    }
+
     fn diagnostics(&self) -> Vec<(&'static str, f32)> {
         let mut d = vec![
             ("hills", self.hills.len() as f32),
@@ -325,5 +364,30 @@ mod tests {
         jump(&mut g, 0, 100.);
         g.restart();
         assert_eq!((g.held.clone(), g.hills[0].owner), (vec![0, 0], None));
+    }
+
+    /// Room games (research/MULTIPLAYER.md "Room games"): a reported
+    /// capture goes through `00220b50`'s beat-the-score test, guests mirror
+    /// the host's hills, and a leaver's hills free up.
+    #[test]
+    fn room_claims_mirror_and_release() {
+        let mut host = game();
+        assert!(host.claim(0, 3, 500.).is_none(), "no hill 3");
+        assert!(host.claim(2, 1, 500.).is_none(), "no rider 3");
+        assert_eq!(
+            host.claim(1, 2, 500.).map(|n| n.text),
+            Some("ATV 2 captured hill 2".into())
+        );
+        assert!(host.claim(0, 2, 500.).is_none(), "a tie keeps the hill");
+        assert!(host.claim(0, 2, 501.).is_some());
+        assert_eq!(host.held, vec![1, 0]);
+        assert_eq!(host.state, vec![CLEAR, CLEAR], "claims leave arming alone");
+        let mut guest = game();
+        guest.apply_marks(&host.marks_state(), &host.scores(), 0.);
+        assert_eq!(guest.marks_state(), host.marks_state());
+        assert_eq!(guest.held, host.held);
+        host.release(0);
+        assert_eq!(host.hills[1].owner, None);
+        assert_eq!((host.hills[1].score, host.held[0]), (0., 0));
     }
 }

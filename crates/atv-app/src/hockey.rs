@@ -381,6 +381,7 @@ impl HockeySession {
             ball_velocity: self.puck.velocity,
             ball_yaw: self.puck.yaw,
             race: Default::default(),
+            marks: Default::default(),
         });
     }
 
