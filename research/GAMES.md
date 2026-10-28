@@ -116,8 +116,9 @@ game's end (`002d10d0`, `002210e0`).
   Time Limit (2:00-20:00, default 5:00) and Start Game, and works with
   keyboard (Left/Right steps), controller and touch. Locked games and
   courses are marked and refused with the store's lines. Hockey starts
-  the Coonce Arena session described below;
-  Tag is listed but not playable yet.
+  the Coonce Arena session described below; Tag's Start Game hosts a
+  multiplayer room on the chosen Tag course and starts Tag there with the
+  page's time limit (Tag "Port").
 - `atv-app/src/games.rs` loads the game archive's mode TOY, rides the
   venue's Freeride scene, places the ATV at the TOY's `Start1` (else the
   venue start), holds it for a 3 s start countdown, samples position,
@@ -421,30 +422,75 @@ carrier is "it" and scores while holding the ball.
 - **Carrying.** A newly gained ball is tossed 3 units over the new
   carrier with its velocity plus 11 units/s up; it homes on the carrier
   (at most 2.3 units a step) and rides on the ATV once it falls back
-  within 3 units. While carried, a random 25 % chance on some condition
-  of the carrier's ATV knocks it loose 2 units up with 3 units/s up (the
-  condition, rider +0x30 flag 0x40 against a time threshold, is
-  unidentified).
+  within 3 units.
+- **Knock loose.** While the ball rides on the carrier's ATV, a trick
+  that has just begun knocks it loose with a 25 % chance (a uniform draw
+  above 0.75): the ball is set 2 units over the carrier's centre with the
+  carrier's velocity plus 3 units/s up and homes back as above. The
+  carrier keeps the ball and keeps scoring. The condition reads the
+  rider's stunt record (+0x30) flag 0x40, which the stunt event
+  accounting `0024da00` sets when it opens a trick event, and the rider
+  animation's main stunt clock (+0x884 +0x3fc), which `002da6c0` resets
+  to 0 when a trick starts and `002d8ba0` advances in the main-stunt
+  mode; the clock must be no more than the frame time, so the draw
+  happens in the frame a trick begins.
 - **Gain `00246310`.** "You are it!" (1.6 s) for the carrier, "%s has the
-  ball!" (2 s) for the others, the beep; the carrier's ATV gets a
-  handicap (+0x178 +0x68 = −0.34, reset on drop; meaning unverified).
+  ball!" (2 s) for the others, the beep. The carrier's engine is
+  handicapped: racer +0x178 is the engine block that `001e3b80` fills
+  from the vehicle's `[Engine]` data (+0x60 TopSpeed in feet/second,
+  +0xa0 the garage TopSpeed adjustment); the gain sets the engine effect
+  +0x68 to −0.34 and its speed term +0x70 to TopSpeed + adjustment. The
+  engine update `001f5b40` adds effect × +0x70 to both ends of its speed
+  taper (and effect × +0x6c to horsepower; Tag leaves +0x6c alone), so
+  the carrier's top speed falls by 34 %. The drop `00246000` clears +0x68
+  and +0x70.
 - **Drop `00246000`.** The longest possession keeps the larger of itself
   and the current one; the current one resets.
 - **Ball `00246da0`, `00246500`, `00246ec0`.** A carried ball resting on
   the ground for 2.5 s is lost ("You have lost the ball!"); after 5 s the
-  ball is thrown back into play toward the nearest open ground. A ball
-  past the course boundary (110-unit margin) is thrown toward the map
-  centre at 170.47 units/s and 112.15 units/s up.
-- **End `00247160`.** Riders are sorted by score (a second pass orders
-  equal scores by a comparator not yet read) and numbered from first
-  place; the TagOver menu shows the result.
+  ball is thrown back into play. `00246500` casts eighteen level rays at
+  20° steps from a random heading (the base vector is rotated about the
+  up axis by `0012b550`), each 300 units out from the ball, against the
+  world collision (`00169b60`). The nearest hit under 300 units wins, and
+  a hit under 100 ends the search. The throw direction is the unit vector
+  to the hit plus the up axis, halved (about 45° up toward a level hit);
+  each axis is scaled by its own `d + max(40, d × draw)`, `d` the hit
+  distance and the draws uniform in [0, 1), and the ball gets a random
+  spin of 0–16 on each axis. With no hit the ball returns to the event's
+  stored start (+0x220), is put on the ground there (`0016ac10`) and
+  raised 10 units.
+- **Boundary.** Every frame `0020aec0` tests the ball against the
+  heightfield (terrain +0x520/+0x524 tiles of 256 cells, +0x528/+0x52c
+  cell sizes): outside when within 110 cells of an edge, or only past
+  the edge when world +0x658 is set. That field is the scene's `[Sounds]
+  CrowdPresent` (`00209460` defaults it to 0, `00209680` reads the key
+  into it; `0020af90` gates the stadium camera flashes on it), so the
+  Freestyle stadiums FREE01–FREE03 keep the whole heightfield in play
+  where the 110-cell margin would leave a 108-unit square. `00246ec0` then sets the
+  ball's velocity to the horizontal unit vector toward the heightfield's
+  centre (tiles × 128 cells) times 170.4714 plus 112.152245 up; the
+  position is kept.
+- **End `00247160`.** Riders are sorted by score, highest first
+  (`002fa120`); each run of equal scores is then sorted by rider slot
+  (`002fa200` compares the rider indices), and places are numbered from
+  1 into the racer's place field (+0x28); the TagOver menu shows the
+  result.
+- **Time limit.** Games Prep (`0026b7a0`) writes its Time Limit row's
+  minutes × 60 to settings +0x57c for every game, and the event setup
+  `0020f780` copies +0x57c to the event clock for Tag (and King of the
+  Hills/Treasure Hunt). Tag therefore runs 2–20 minutes, 5 by default.
 
 ### Port
 
 - `atv_core::tag`: the possession rules, scoring, immunity, re-grab
-  guard, wreck drop, ground loss and respawn, time-out and standings,
-  plus an authored `Ball` (toss, homing catch, carry, bounce, throw-in)
-  with unit tests.
+  guard, wreck drop (which also blocks a take in the same frame, since
+  it resets the current possession), ground loss and respawn, the
+  knock-loose draw (25 %, a port xorshift instead of the original's
+  shared generator), the carrier's engine handicap (`carrier_engine`,
+  applied through the vehicle's engine modifiers), the boundary test
+  and full-speed throw-in toward the heightfield centre, the tie order
+  and Games Prep minutes, plus an authored `Ball` (toss, homing catch,
+  carry, bounce, knock, throw-in) with unit tests.
 - **Online (authored).** Tag plays in multiplayer rooms, the port's
   replacement for split screen. The room host's Pause → **Play Tag**
   starts a game on the room's course (any venue but Coonce Arena): the
@@ -459,17 +505,66 @@ carrier is "it" and scores while holding the ball.
   `tools/test_engine_multiplayer_tag.mjs` (relay group: Pause → Play
   Tag, the host carries and scores, the guest takes the ball with the
   `tagReach=60` test hook, both reach the same results).
-- **Courses.** The original's Tag rides its fourteen `*_TG.RES` course
-  archives (their own scene variants; the mode TOY only sets a start).
-  They are not in the hosted package, so the port rides the room's
-  Freestyle venue instead. Hosting them would mean adding the fourteen
-  archives to `tools/package_content.py` (each a full environment copy)
-  and a Tag course list in room setup; the ball model `tagball.psg`
-  ships only there, so the ball shows as a screen tag.
-- Not implemented: single-player Tag (the original has no CPU riders),
-  the carrier handicap, the random knock-loose rule, the boundary
-  throw-in toward the map centre (the ball is thrown back toward the
-  host), Tag's time-limit option and tie order.
+- **Courses.** Each `*_TG.RES` repeats its venue's Freeride archive:
+  a private comparison finds the eight Environment `envNNtg.scn` scenes
+  byte-identical to the Freeride `envNNfr.scn` (the six Freestyle TG
+  archives ship no scene), so the Tag "scene variants" are the Freeride
+  scenes under the Tag name. What a TG archive adds is the mode TOY
+  (`[SceneInfo] DefaultStartPosition`/`Direction`, plus Wheeler
+  Junction's snow weather and Arlington Stream's train animations, as in
+  the Freeride TOYs), `tagball.psg` with its `tagballm`/`tagballf` hulls
+  and `tagball.pst`, and `radaricon_ball.pst`. `tools/package_content.py`
+  packages the fourteen archives like the KH/TH ones, as lazily fetched
+  archives of only the members that differ from Freeride (13.7–31 KB
+  each, about 290 KB together); they are on the public R2 package.
+- **Riding a Tag course.** In a room on one of the fourteen venues, the
+  host's Pause → Play Tag reloads the room's ride from the venue's TG
+  archive (read over Freeride, its mode TOY's start, the ball model) and
+  then starts the game; a guest seeing the host's Tag state reloads the
+  same way and joins. The ball draws as `tagball.psg`, posed each frame
+  at the ball's centre through the posed-model path the Hockey puck
+  uses; it keeps its minimap marker but no screen tag. Venues without a
+  TG archive (Nationals, Supercross, Training) play with the screen tag
+  as before. Riders reload at the one mode-TOY start; how the original
+  spreads split-screen riders at Tag's start was not traced, so they
+  overlap until they drive off (peer contact separates them).
+- **Games page.** Single Player → Games lists Tag with its fourteen
+  Tracks.dat courses (Prospect Springs and Tioga Valley open, the rest
+  by course unlocks). The original reaches Games only from Multiplayer →
+  Split Screen and has no CPU riders, so the port keeps Tag human-only:
+  Start Game hosts a private multiplayer room on the chosen venue (the
+  invite is shared from Pause as usual) and starts Tag on its Tag course
+  with the page's time limit. The host's Pause → Play Tag uses the same
+  minutes (`tagMinutes=N` in a link).
+- **Rules in rooms.** The host runs the boundary throw-in at the
+  original's full speed (a ball carried on an ATV is not thrown) and the
+  knock-loose draw for its own tricks; remote riders' trick starts are
+  not relayed, so a guest carrier's ball is never knocked loose (that
+  needs a guest-to-host game message). Each rider applies the engine
+  handicap to its own ATV while it is the carrier (motorcycles, a port
+  extra, are not handicapped). The host runs `00246500`'s ground respawn:
+  its rays are cast against the heightfield in 1-unit steps (static
+  objects and stadium walls are not tested, and the ball has no rigid
+  body, so a throw can leave a stadium over its walls until the edge
+  throw-in returns it), with the draws from the port's generator; no spin.
+- The room's Tag course is resolved from the ride's own content package,
+  so a room opened from an invite link (no frontend loaded) also moves to
+  the TG archive.
+- Check: `tools/test_engine_multiplayer_tag.mjs` (relay group) now moves
+  both pages onto `E05_TG.RES` (the TOY start, `tagball.psg`), covers the
+  throw-in (`tagTest=throw` starts the ball past the margin), the time
+  limit option (`tagMinutes=3`), the host's and then the guest's engine
+  handicap, the transfer and the results; `cargo test -p atv-game --test
+  tag_courses -- --ignored` (private hosted package) loads all fourteen
+  Tag courses: TOY start, ball model drawn, nothing unsupported, and on
+  each course's heightfield a ball past the margin (past the edge in the
+  CrowdPresent stadiums) is thrown back inside and the ground respawn
+  from the start lands inside (eleven courses find a ray hit, FREE02 and
+  FREE05 return to the start). `tools/test_engine_games_tag.mjs` (relay
+  group) plays the Games page path: Tag bought, a locked Tag course
+  refused, Start Game on Prospect Springs with a 3:00 limit hosts the
+  room on `E05_TG.RES`, and a guest joining by the code follows onto the
+  Tag course into the same running game.
 
 ## Uncertainty
 
@@ -478,5 +573,12 @@ carrier is "it" and scores while holding the ball.
   was not traced.
 - The goal triggers' `Box` values are read as half extents (the box then
   spans the ice to the crossbar).
-- Tag's tie order, the knock-loose condition and the carrier handicap are
-  unread.
+- Tag: the knock-loose draw uses the port's own generator, so its
+  sequence differs from the original's shared one; the heightfield extent
+  is read as the TR2's cell span (assumed equal to tiles × 256 cells);
+  `tagball.psg` is drawn at the ball's authored 1.5-unit contact radius
+  centre without the original rigid body or spin. The respawn's base
+  ray vector and up axis (`0x4a7b70`/`0x4a7b80`) are filled at run time
+  and were read as a level forward vector and +Y from how the throw adds
+  the axis to the hit direction; the random heading makes the base
+  vector's choice immaterial.

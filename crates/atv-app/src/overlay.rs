@@ -189,6 +189,8 @@ pub struct Overlay {
     /// this frame's slide.
     transition: atv_ui::transition::PageTransition,
     menu_motion: Option<atv_ui::transition::Motion>,
+    /// The pause page being left, while it slides out.
+    exit_menu: Option<pause::State>,
 }
 
 impl Overlay {
@@ -266,6 +268,7 @@ impl Overlay {
             fame_name: String::new(),
             transition: Default::default(),
             menu_motion: None,
+            exit_menu: None,
         }
     }
 
@@ -619,9 +622,15 @@ impl Overlay {
             );
         }
         let view = self.view;
-        // Each pause page shown slides in; closing the menu shows nothing.
+        // Each pause page shown slides in (the page left slides out, redrawn
+        // from its last state); closing the menu shows nothing.
+        let shown = self.menu.as_ref().map(|m| m.shown);
+        if self.transition.changes(shown) {
+            self.exit_menu = self.menu_cache.as_ref().map(|c| c.1.clone());
+        }
+        let page = self.menu.as_ref().map_or("", |m| m.page.as_str());
         self.transition
-            .observe(self.menu.as_ref().map(|m| m.shown), crate::reduced_motion());
+            .observe(shown, page, crate::reduced_motion(), &[]);
         self.menu_motion = self.transition.motion(now);
         if let Some(menu) = &mut self.menu {
             menu.scroller.tick(atv_ui::scroll::now());
@@ -645,6 +654,24 @@ impl Overlay {
                 if self.menu_motion.is_some() {
                     self.list.unopacity();
                 }
+            }
+            // The page left slides out over the new one, without its dim.
+            match (self.transition.exit_motion(), &self.exit_menu) {
+                (Some(motion), Some(old)) => {
+                    let mut old = old.clone();
+                    old.motion = Some(motion);
+                    let mut ignored = Vec::new();
+                    layout::render(
+                        &pause::stage(&view, &old, &self.glyphs),
+                        &mut self.fonts,
+                        view.width,
+                        view.height,
+                        &mut self.list,
+                        &mut ignored,
+                    );
+                }
+                (None, Some(_)) => self.exit_menu = None,
+                _ => {}
             }
             self.upload(device, queue, width, height);
             self.prepare_ms = started.elapsed().as_secs_f64() * 1000.;
@@ -1438,6 +1465,7 @@ impl Overlay {
                 "page": m.page,
                 // The panel's slide: [opacity, translateX px].
                 "motion": self.menu_motion.map(|m| [m.opacity, m.dx]),
+                "exit": self.transition.exit_motion().map(|m| [m.opacity, m.dx]),
                 "selection": m.selection,
                 "choices": m.rows.choices,
                 "scroll": m.scroller.offset(),

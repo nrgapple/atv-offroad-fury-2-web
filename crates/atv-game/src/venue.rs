@@ -97,6 +97,9 @@ pub struct Venue {
     /// goal's and Steering's first circle's, posed and hidden by the
     /// course (research/TRAINING.md).
     pub training_arrows: Option<[usize; 2]>,
+    /// Tag's `tagball.psg` (a `*_TG.RES` ride): the posed model the Tag
+    /// session moves each frame through the drop gate's path.
+    pub tag_ball: bool,
     /// Zone references of the scene and TOYs (StartingZone/Zone/InitialZone)
     /// against the scene's zones (research/VISIBILITY.md).
     pub zones: atv_core::zones::Census,
@@ -347,6 +350,34 @@ pub async fn load_with(
                 });
                 scene.models.len() - 1
             })
+    });
+    // Tag's ball (`00244d20` builds the `tagball.psg` body): a TG ride's
+    // posed model, held at the mode TOY's start until the session poses it.
+    let tag_ball = !racing
+        && options
+            .game_scene
+            .as_ref()
+            .is_some_and(|(_, stem)| stem.ends_with("tg"))
+        && member_named(&archive, "tagball.psg").is_some();
+    let gate_model = gate_model.or_else(|| {
+        tag_ball.then(|| {
+            let [x, y, z] = scene.start_position;
+            let mut matrix = [0.; 16];
+            for i in [0, 5, 10, 15] {
+                matrix[i] = 1.;
+            }
+            matrix[12..15].copy_from_slice(&[x, y + 4., z]);
+            scene.models.push(atv_core::scene::StaticModel {
+                name: "tagball".into(),
+                position: [x, y + 4., z],
+                look: [0., 0., 1.],
+                up: Some([0., 1., 0.]),
+                use_lighting: true,
+                dynamic_lighting: false,
+                world_matrix: matrix,
+            });
+            scene.models.len() - 1
+        })
     });
     // The Training Course's arrows (`00224a80` builds two `arrow.slt`
     // pointer objects); hidden until the course places them.
@@ -669,6 +700,7 @@ pub async fn load_with(
         objective,
         treasures,
         training_arrows,
+        tag_ball,
         zones,
         scene,
         terrain: Terrain {

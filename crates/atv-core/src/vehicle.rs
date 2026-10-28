@@ -213,6 +213,8 @@ pub struct Vehicle {
     body: BodyState,
     body_config: BodyConfig,
     engine: Drivetrain,
+    /// Engine +0x9c/+0xa0/+0x68.. (Tag's carrier handicap, `00246310`).
+    engine_modifiers: EngineModifiers,
     wheels: [WheelState; 4],
     wheel_config: [WheelConfig; 4],
     wheel_rest: [Vec3; 4],
@@ -425,6 +427,7 @@ impl Vehicle {
             body,
             body_config,
             engine: Drivetrain::new(EngineConfig::from_physics(data)?)?,
+            engine_modifiers: EngineModifiers::default(),
             wheels: [WheelState::default(); 4],
             wheel_stops: stops.try_into().map_err(|_| "wheel stop count")?,
             wheel_config: configs.try_into().map_err(|_| "wheel count")?,
@@ -639,6 +642,21 @@ impl Vehicle {
         self.linkage = Some(linkage);
         self.linkage_matrices = None;
     }
+    /// Engine modifiers applied by game rules (Tag's carrier handicap,
+    /// `00246310`/`00246000`); default none.
+    pub fn engine_modifiers(&self) -> EngineModifiers {
+        self.engine_modifiers
+    }
+
+    pub fn set_engine_modifiers(&mut self, modifiers: EngineModifiers) {
+        self.engine_modifiers = modifiers;
+    }
+
+    /// The engine's `[Engine] TopSpeed`, feet/second.
+    pub fn top_speed(&self) -> f32 {
+        self.engine.config().top_speed
+    }
+
     pub fn linkage_matrices(&self) -> Option<&[[f32; 16]]> {
         self.linkage_matrices.as_deref()
     }
@@ -1630,7 +1648,7 @@ impl Vehicle {
                 // 001dd830 supplies total speed with the sign of body-local Z.
                 speed_ft_per_second: magnitude * if speed < 0.0 { -1.0 } else { 1.0 },
                 allow_shifting: self.contacts[2].grounded || self.contacts[3].grounded,
-                modifiers: EngineModifiers::default(),
+                modifiers: self.engine_modifiers,
             },
             &driven,
         )?;
