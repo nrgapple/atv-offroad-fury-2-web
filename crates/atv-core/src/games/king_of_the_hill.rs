@@ -215,10 +215,15 @@ impl Rules for KingOfTheHill {
     }
 
     fn diagnostics(&self) -> Vec<(&'static str, f32)> {
-        vec![
+        let mut d = vec![
             ("hills", self.hills.len() as f32),
             ("state", self.state[0] as f32),
-        ]
+        ];
+        // Split screen: player 2's rider state.
+        if let Some(s) = self.state.get(1) {
+            d.push(("state2", *s as f32));
+        }
+        d
     }
 }
 

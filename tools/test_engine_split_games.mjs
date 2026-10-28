@@ -10,8 +10,9 @@
 //   arms hill 1 for player 2 through the real trigger enter/leave and
 //   lands a 1,500-point chain for it): "ATV 2 captured hill 1", player 2
 //   holds it in its own colour, player 1 holds none;
-// - Hockey: player 1 Red and player 2 Blue at their own face-off spots, to
-//   results listing both players' goals.
+// - Hockey: player 1 Red and player 2 Blue at their own face-off spots;
+//   `hockeyGoal=1` scores player 1's goal (a 0-0 game goes to sudden
+//   death), to results listing both players' goals.
 // ATV_SPLIT_GAMES_SHOTS=<dir> saves captures. Host Chromium evidence.
 import assert from 'node:assert/strict';
 import { mkdir } from 'node:fs/promises';
@@ -128,8 +129,11 @@ try {
     assert.equal(g.progress[1], `${g.scores[1]} / 25`);
     assert.deepEqual([...g.places].sort(), [1, 2]);
     // Both panels and tags in their own views.
-    const hud = (await read(page)).toolbar?.hud ?? (await read(page)).hud;
-    assert.ok(hud && hud.tags >= 1, `treasure tags drawn: ${JSON.stringify(hud)}`);
+    // (Between treasure groups no tag stands, so wait for the next one.)
+    await wait(page, () => {
+      const s = JSON.parse(document.querySelector('#ui-state')?.textContent || '{}');
+      return ((s.toolbar?.hud ?? s.hud)?.tags ?? 0) >= 1;
+    }, null, 20000);
     await shot(page, 'treasure-split-collecting');
     g = await until(page, g => g.end === 'Complete', 240000);
     assert.equal(g.scores[0] + g.scores[1], 25);
@@ -187,7 +191,7 @@ try {
   // face-off spots; the 20 s clock (hockeyTest=fast) runs to the results,
   // which list both players' goals.
   {
-    const { page, errors } = await open(browser, 'hockeyTest=fast', false);
+    const { page, errors } = await open(browser, 'hockeyGoal=1&hockeyTest=fast', false);
     await setGame(page, 'Hockey');
     await choose(page, 'gamestart');
     await wait(page, () => {
@@ -203,12 +207,18 @@ try {
     const gap = distance(s.split.player1.origin, s.split.player2.origin);
     assert.ok(gap > 20, `players face off apart: ${gap}`);
     await shot(page, 'hockey-split-faceoff');
+    // Both views draw their own team panel.
+    await wait(page, () => (JSON.parse(document.querySelector('#ui-state')?.textContent || '{}').ride?.hockey?.scores?.[0] ?? 0) === 1,
+      null, 60000);
+    await page.waitForTimeout(500);
+    await shot(page, 'hockey-split-goal');
     await wait(page, () => {
       const s = JSON.parse(document.querySelector('#ui-state')?.textContent || '{}');
       return s.ride?.hockey?.finished && (s.ride?.results?.length ?? 0) > 0;
     }, null, 120000);
     s = await read(page);
-    assert.match(s.ride.hockey.result, /Player 1 \(Red\) goals: \d+, Player 2 \(Blue\) goals: \d+/);
+    assert.deepEqual(s.ride.hockey.scores, [1, 0]);
+    assert.match(s.ride.hockey.result, /Red wins! Player 1 \(Red\) goals: 1, Player 2 \(Blue\) goals: 0/);
     await shot(page, 'hockey-split-results');
     console.log(`  hockey: ${s.ride.hockey.result}`);
     assertNoErrors(errors);

@@ -1928,18 +1928,18 @@ impl App {
                         sound.one_shot(name);
                     }
                 }
-                let player = self
-                    .front
-                    .as_ref()
-                    .map(|f| f.borrow().state.player_name.trim().to_string())
-                    .filter(|n| !n.is_empty())
-                    .unwrap_or_else(|| {
-                        if game.players > 1 {
-                            split::PLAYER_1.into()
-                        } else {
-                            "You".into()
-                        }
-                    });
+                // Split screen names the views' players (the race
+                // standings' Player 1 / Player 2); one player keeps the
+                // profile name.
+                let player = if game.players > 1 {
+                    split::PLAYER_1.to_string()
+                } else {
+                    self.front
+                        .as_ref()
+                        .map(|f| f.borrow().state.player_name.trim().to_string())
+                        .filter(|n| !n.is_empty())
+                        .unwrap_or_else(|| "You".into())
+                };
                 if let Some(summary) = game.results(&[&player, split::PLAYER_2])
                     && let Some(overlay) = &mut self.overlay
                 {

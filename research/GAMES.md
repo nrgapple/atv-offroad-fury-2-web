@@ -121,7 +121,9 @@ game's end (`002d10d0`, `002210e0`).
   page's time limit (Tag "Port").
 - `atv-app/src/games.rs` loads the game archive's mode TOY, rides the
   venue's Freeride scene, places the ATV at the TOY's `Start1` (else the
-  venue start), holds it for a 3 s start countdown, samples position,
+  venue start; ten of the 28 mode TOYs list no starts, and their venue
+  start is remembered so Restart Game returns there too), holds it for a
+  3 s start countdown, samples position,
   ground contact, the open stunt and finished chains, and opens the results
   (Restart Game, Continue back to Games). Pause → Restart Game restarts in
   place.

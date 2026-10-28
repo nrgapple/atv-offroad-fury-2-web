@@ -171,9 +171,13 @@ What the port does:
   contact, open stunt, each player's own finished chain and committed
   stunt score), so hills and treasures count for whoever earned them; a
   captured hill takes the capturer's colour (player 2 blue) on its flag,
-  pill and compass icon. Player 1 starts at `Start1`, player 2 at `Start2`
-  (beside player 1 when a TOY lists one start). Both ATVs are held through
-  the 321 lamps and after the end; Restart Game puts both back.
+  pill and compass icon. Player 1 starts at `Start1`, player 2 at `Start2`.
+  The private sweep of all 28 courses finds at least two starts on 18;
+  ten mode TOYs list none (KOTH env04, free03, free04, free05; Treasure
+  Hunt env02, env04, env08, free01, free03, free05), so player 1 keeps the
+  venue's ride start (remembered for Restart Game) and player 2 rides ten
+  feet to its right. Both ATVs are held through the 321 lamps and after
+  the end; Restart Game puts both back.
 - **Hockey.** Player 1 skates for Red and player 2 for Blue, each placed at
   its own face-off spot (`Game::face_off`, the rooms' semicircle rule);
   both ATVs push the puck and both are held at each face-off. A port
@@ -187,22 +191,29 @@ What the port does:
   hill 1", "All Treasures Collected") show in both panels. Where the
   original's split-screen HUD sits per viewport was not traced; the port
   reuses the single-screen layout scaled to each view.
-- **Results.** "Race Results" lists both players by place with their count
-  and stunt score (Player 1 / Player 2 when no profile name is set);
+- **Results.** "Race Results" lists both players by place as Player 1 /
+  Player 2 (the split race standings' names) with their count and stunt
+  score;
   Hockey Results lists each player's goals with the team score.
 - **Tag** is not split yet: its Start Game still hosts a multiplayer room
   (GAMES.md "Tag"). Freestyle objectives/target runs are not split either.
 
 Checks: `atv-core` unit tests `split_screen_players_collect_and_rank_separately`
 (Treasure Hunt: per-player counts, progress, places and the stunt-score
-tie order through `Session`) and `split_screen_rules_keep_a_record_per_player`;
+tie order through `Session`), `split_screen_rules_keep_a_record_per_player`
+and the private sweep `every_original_game_course_resolves` (both games'
+two-rider rules on all 14 venues each, and their start counts);
 the Split Screen menu unit test covers the Games row;
 `tools/test_engine_split_games.mjs` (content group) plays Treasure Hunt
 top/bottom to "All Treasures Collected" with both players collecting
 (`gameTest=visit` alternates players) and results listing both, King of
 the Hills side by side where player 2 captures hill 1 through the real
 trigger enter/leave (`gameTest=hill2` lands the chain for player 2), and
-split Hockey on its 20 s clock to results listing both players' goals.
+split Hockey (`hockeyGoal=1` scores player 1's goal; a 0-0 game goes to
+sudden death) on its 20 s clock to "Red wins!" and results listing both
+players' goals. Host Chromium only; player 2 keyboard halves and second
+pads are the slice 1 input path (`test_engine_split_screen.mjs`), not
+re-driven in the games test.
 
 ## Measurements
 

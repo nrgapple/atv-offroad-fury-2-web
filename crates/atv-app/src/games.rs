@@ -324,6 +324,8 @@ impl GameSession {
             _ => ride,
         };
         let raise = atv_core::games::king_of_the_hill::MARKER_RAISE;
+        // The hooked player's rider state (`state2`: split screen's player 2).
+        let key = if player == 1 { "state2" } else { "state" };
         match self.hill {
             1 => {
                 place(ride, [hill[0], hill[1] - raise, hill[2]]);
@@ -340,7 +342,7 @@ impl GameSession {
                 .rules
                 .diagnostics()
                 .iter()
-                .any(|(k, v)| *k == "state" && *v == -1.) =>
+                .any(|(k, v)| *k == key && *v == -1.) =>
             {
                 if let Some(n) = self.ride_off {
                     let yaw = f32::from(n) * std::f32::consts::FRAC_PI_2;
@@ -360,7 +362,7 @@ impl GameSession {
                 .rules
                 .diagnostics()
                 .iter()
-                .any(|(k, v)| *k == "state" && *v >= 1.) =>
+                .any(|(k, v)| *k == key && *v >= 1.) =>
             {
                 self.inject = Some((player, 1500.));
                 self.hill = 5;
