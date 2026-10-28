@@ -82,6 +82,10 @@ export const TESTS = {
     group: 'relay',
     reason: 'needs the multiplayer relay at the same origin (Rust host and guest race a Supercross room); run with --url'
   },
+  'test_engine_games_tag.mjs': {
+    group: 'relay',
+    reason: 'needs the multiplayer relay at the same origin (Games → Tag hosts a room; a Rust guest joins); run with --url'
+  },
   'test_engine_multiplayer_hockey.mjs': {
     group: 'relay',
     reason: 'needs the multiplayer relay at the same origin (Rust host and guest Hockey room); run with --url'

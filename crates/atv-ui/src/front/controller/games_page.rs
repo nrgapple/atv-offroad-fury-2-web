@@ -122,7 +122,7 @@ impl Frontend {
                 "Jump off a hill and land a stunt that beats its score to capture it.".into()
             }
             GameKind::Hockey => "Score in the far goal before the time runs out.".into(),
-            GameKind::Tag => "Keep the ball away; tag the carrier to take it. Plays in Multiplayer rooms (Pause → Play Tag).".into(),
+            GameKind::Tag => "Keep the ball away; tag the carrier to take it. Tag needs other riders: Start Game hosts a Multiplayer room on this course (share its invite).".into(),
         })
     }
 
@@ -146,20 +146,34 @@ impl Frontend {
     /// Start Game: the selected game on its course with the garage choice.
     pub(super) fn game_event(&mut self, settings: &mut Settings) -> Option<Event> {
         let kind = self.game_kind();
-        if !kind.playable() {
-            // Tag needs opponents: it plays in multiplayer rooms (the
-            // host's Pause → Play Tag, research/GAMES.md "Tag").
-            self.notice = Some(format!(
-                "{} needs other riders: host a Multiplayer room and choose Pause → Play Tag.",
-                kind.name()
-            ));
-            return None;
-        }
         if let Some(lock) = self.game_lock() {
             self.notice = Some(lock);
             return None;
         }
         let (venue, course) = self.game_courses().get(self.games.course)?.clone();
+        // Tag needs opponents (the original's split screen; no CPU riders):
+        // Start Game hosts a multiplayer room on the Tag course, which
+        // starts Tag with this time limit (research/GAMES.md "Tag").
+        if kind == GameKind::Tag {
+            if !self.tracks.iter().any(|t| t.id == venue) {
+                self.notice = Some(format!("{course} is not available."));
+                return None;
+            }
+            self.notice = self.enforce_unlocks(settings);
+            self.save(settings);
+            let name = if self.player_name.trim().is_empty() {
+                "Rider".to_string()
+            } else {
+                self.player_name.clone()
+            };
+            return Some(Event::TagHost {
+                environment: venue,
+                minutes: self.games.minutes,
+                quad: self.quad_id,
+                rider: self.rider_id,
+                name,
+            });
+        }
         // Hockey runs its own Coonce Arena session (`atv_core::hockey`).
         if kind == GameKind::Hockey {
             self.notice = self.enforce_unlocks(settings);
@@ -208,7 +222,9 @@ mod tests {
         front.store.courses = atv_core::store::parse_courses(
             b"[th1]\nscn=env05\nname=\"Prospect Springs\"\naccess=1\npoints=0\n\
               [th2]\nscn=env08\nname=\"Arlington Stream\"\naccess=0\npoints=0\n\
-              [koth1]\nscn=env02\nname=\"Tioga Valley\"\naccess=1\npoints=0\n",
+              [koth1]\nscn=env02\nname=\"Tioga Valley\"\naccess=1\npoints=0\n\
+              [tag1]\nscn=env05\nname=\"Prospect Springs\"\naccess=1\npoints=0\n\
+              [tag2]\nscn=env08\nname=\"Arlington Stream\"\naccess=0\npoints=0\n",
         )
         .unwrap();
         front.show("single", &view);
@@ -248,11 +264,27 @@ mod tests {
         front.step("gametype", 1, &view, &mut settings);
         assert_eq!(front.choices()[0].1, "Game: King of the Hills");
         assert_eq!(front.choices()[1].1, "Course: Tioga Valley");
+        // Tag hosts a room on its course with the time limit (no CPU
+        // riders); locked Tag courses are refused like the others.
         front.step("gametype", 1, &view, &mut settings);
-        assert!(
-            front.run("gamestart", &view, &mut settings).is_none(),
-            "Tag is not ported"
-        );
+        assert_eq!(front.choices()[0].1, "Game: Tag");
+        assert_eq!(front.choices()[1].1, "Course: Prospect Springs");
+        front.player_name = "Ace".into();
+        match front.run("gamestart", &view, &mut settings) {
+            Some(Event::TagHost {
+                environment,
+                minutes,
+                name,
+                ..
+            }) => assert_eq!(
+                (environment.as_str(), minutes, name.as_str()),
+                ("env05", 20, "Ace")
+            ),
+            other => panic!("{other:?}"),
+        }
+        front.step("gamecourse", 1, &view, &mut settings);
+        assert_eq!(front.choices()[1].1, "Course: Arlington Stream (Locked)");
+        assert!(front.run("gamestart", &view, &mut settings).is_none());
         front.back(&view);
         assert_eq!(front.page, "single");
     }
