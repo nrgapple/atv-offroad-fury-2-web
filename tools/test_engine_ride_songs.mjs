@@ -61,14 +61,19 @@ try {
   const second = await ride(page, first);
   assert.notEqual(second, first, 'the second ride starts a new song');
   await quit(page);
-  // A main-menu Jukebox choice plays over the menus, then the ride picks anew.
-  await select(page, 'jukebox'); await key(page, 'Enter');
+  // A Jukebox choice (Main Menu → Options → Jukebox) plays over the menus,
+  // then the ride picks anew.
+  await select(page, 'settings'); await key(page, 'Enter');
+  await until(page, () => JSON.parse(document.querySelector('#ui-state').textContent).front.menu?.page === 'settings');
+  await key(page, 'Enter');
   await until(page, () => JSON.parse(document.querySelector('#ui-state').textContent).front.menu?.music?.songs > 0);
   const s = await read(page), index = s.front.menu.choices.indexOf('song:4');
   const hit = s.front.menuHits.find(h => h.id === 1000 + index);
   await page.mouse.click(hit.x + hit.width / 2, hit.y + hit.height / 2);
   await until(page, () => JSON.parse(document.querySelector('#ui-state').textContent).soundtrack?.playing === 4);
   const chosen = (await read(page)).soundtrack.musicTitle;
+  await key(page, 'Escape');
+  await until(page, () => JSON.parse(document.querySelector('#ui-state').textContent).front.menu?.page === 'settings');
   await key(page, 'Escape');
   await until(page, () => !JSON.parse(document.querySelector('#ui-state').textContent).front.menu);
   const third = await ride(page, chosen);

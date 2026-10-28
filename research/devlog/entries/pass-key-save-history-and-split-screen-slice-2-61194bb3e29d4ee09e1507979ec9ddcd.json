@@ -1,0 +1,16 @@
+{
+  "id": "pass-key-save-history-and-split-screen-slice-2-61194bb3e29d4ee09e1507979ec9ddcd",
+  "timestamp": "2026-10-28T13:20:00-07:00",
+  "recorded_at": "2026-10-28T13:18:17.073324+00:00",
+  "kind": "build",
+  "title": "Pass Key Save History and split screen slice 2",
+  "summary": "Two checkpoints from 2026-10-28. Pass Key Save History (PR #401) lets a player view and restore earlier online saves of their key. Split screen slice 2 (PR #404) gives Player 2 their own ATV, rider, sounds, effects and rumble, and makes races treat both humans as racers.",
+  "details": [
+    "Pass Key Save History: Pass Key page, Save History lists the server's last 10 saves of the key as '#n date UTC' rows. Choosing one previews it (profiles, percent complete, profile points, Hall of Fame records) with Restore This Save and Cancel. Restore makes that save the online save on every device using the key. The save it replaces stays in history, so a restore can be undone. Verified with a unit test using two devices, worker tests, and a browser Pass Key test against a mocked API.",
+    "Split screen slice 2: Player 2 picks their own ATV and rider on the Split Screen page (a port adaptation), and has their own engine and crash sounds, dust and particles, and rumbles their own controller. In races CPUs treat Player 2 as a human, both views show the combined place, and the race waits for both humans to finish. Each player gets their own detailed terrain patch, and a GPU context loss keeps split screen active.",
+    "Host performance only (Mac mini headless Chromium, not phones): CPU draw time 7.4-8.8 ms single player versus 9.2-12 ms split screen."
+  ],
+  "limitation": "Save History shows times in UTC, and restoring needs a connection to the server. Split screen has no 3-4 player support. Player 2 has no own gear, paint, Hall of Fame credit or tire tracks. No split-screen Games or championships yet, and no online parity yet. Performance figures are host measurements, not physical-phone results.",
+  "image": "/devlog-images/pass-key-save-history-and-split-screen-slice-2-61194bb3e29d4ee09e1507979ec9ddcd.png",
+  "caption": "Split screen race with both views showing the combined place list"
+}

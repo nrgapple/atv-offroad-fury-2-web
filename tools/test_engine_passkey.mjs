@@ -3,7 +3,8 @@
 // shows it on the badge; a fresh context enters that key (typed into the Pass
 // Key page) and continues the same progress; a share code copies progress into a
 // third context's save as a new profile; Export Save / Import Save round-trips a
-// file; and a `#key=` link opens the confirmation directly.
+// file; Save History lists the kept revisions and restores an older one (mocked
+// API only); and a `#key=` link opens the confirmation directly.
 //
 // The save API is the contract's (GET/PUT /api/save, POST /api/save/share, GET
 // /api/share), mocked in this process through Playwright routes so the test runs
@@ -53,6 +54,8 @@ const profiles = page => page.evaluate(() => JSON.parse(localStorage.getItem('fu
 // The contract's server, in memory.
 const saves = new Map();
 const shares = new Map();
+const history = new Map();
+const keep = (pass, s) => history.set(pass, [...(history.get(pass) || []), s].slice(-10));
 const symbols = text => text.toUpperCase().replace(/[\s-]/g, '').replace(/^FURY(?=.{16}$)/, '').replace(/^SHARE(?=.{16}$)/, '').replace(/O/g, '0').replace(/[IL]/g, '1');
 async function api(route) {
   const request = route.request();
@@ -74,7 +77,26 @@ async function api(route) {
     }
     const next = { revision: (s?.revision ?? 0) + 1, updatedAt: now, save: body.save };
     saves.set(pass, next);
+    keep(pass, next);
     return json(200, { revision: next.revision, updatedAt: now });
+  }
+  if (pathname === '/api/save/revisions' && request.method() === 'GET') {
+    const kept = history.get(pass) || [];
+    const wanted = request.headers()['x-fury-revision'];
+    if (wanted !== undefined) {
+      const s = kept.find(s => s.revision === Number(wanted));
+      return s ? json(200, s) : json(404, { error: 'not_found' });
+    }
+    if (!kept.length) return json(404, { error: 'not_found' });
+    return json(200, { revisions: kept.slice().reverse().map(s => ({ revision: s.revision, updatedAt: s.updatedAt, bytes: JSON.stringify(s.save).length })) });
+  }
+  if (pathname === '/api/save/restore' && request.method() === 'POST') {
+    const old = (history.get(pass) || []).find(s => s.revision === JSON.parse(request.postData()).revision);
+    if (!old) return json(404, { error: 'not_found' });
+    const next = { revision: saves.get(pass).revision + 1, updatedAt: now, save: old.save };
+    saves.set(pass, next);
+    keep(pass, next);
+    return json(200, next);
   }
   if (pathname === '/api/save/share' && request.method() === 'POST') {
     const s = saves.get(pass);
@@ -221,6 +243,36 @@ try {
   await shot(d.page, 'phone-import-confirm');
   await choose(d.page, 'replace'); await onPage(d.page, 'passkey');
   assert.equal((await profiles(d.page)).profiles[0].points, 340);
+
+  // Save History: someone else with the key overwrites the progress; A
+  // restores the earlier save, which becomes the online one.
+  if (!live && !forward) {
+    const pass = symbols(passKey);
+    const spoiled = structuredClone(saves.get(pass).save);
+    spoiled.profiles.profiles[0].points = 1;
+    const next = { revision: saves.get(pass).revision + 1, updatedAt: new Date().toISOString(), save: spoiled };
+    saves.set(pass, next); keep(pass, next);
+    await choose(a.page, 'back'); await onPage(a.page, 'passkey');
+    await choose(a.page, 'savehistory'); await onPage(a.page, 'passkey-history');
+    await a.page.waitForFunction(() => (JSON.parse(document.querySelector('#ui-state')?.textContent || '{}').front?.choices || []).some(c => c.startsWith('revision-')), null, { timeout: 30000 });
+    f = await ui(a.page);
+    assert.deepEqual(f.choices.filter(c => c.startsWith('revision-')), ['revision-1']);
+    assert.equal(f.profileBook.details[0][0], 'Current Save');
+    await shot(a.page, 'passkey-history');
+    await choose(a.page, 'revision-1');
+    await onPage(a.page, 'passkey-confirm', 30000);
+    f = await ui(a.page);
+    assert.deepEqual(f.choices.slice(0, 2), ['restore', 'cancel']);
+    assert.match(f.profileBook.details[0][1], /revision 1/);
+    await shot(a.page, 'passkey-restore-confirm');
+    await choose(a.page, 'restore'); await onPage(a.page, 'passkey', 30000);
+    await a.page.waitForFunction(() => /restored/.test(JSON.parse(document.querySelector('#ui-state')?.textContent || '{}').front?.notice || ''), null, { timeout: 30000 });
+    assert.equal(saves.get(pass).revision, next.revision + 1);
+    assert.equal(saves.get(pass).save.profiles.profiles[0].points, 340);
+    assert.equal((await profiles(a.page)).profiles[0].points, 340);
+    await nextFrames(a.page, 30);
+    assert.equal(saves.get(pass).revision, next.revision + 1, 'nothing pushed over the restored save');
+  }
 
   // A `#key=` link opens the confirmation on load.
   const e = await device('e', { hash: `#key=${passKey}` });
