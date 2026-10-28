@@ -1452,6 +1452,33 @@ impl Front {
             "active": self.state.scrolling(),
             "menu": self.menu.as_ref().map(|m| [m.scroller.offset(), m.scroller.max()]),
         });
+        let store = serde_json::json!({
+            "remaining": atv_core::store::remaining(&self.state.profile),
+            "spent": self.state.profile.store.spent,
+            "section": self.state.store.section,
+            "item": self.state.store.item,
+            "atvs": self.state.store.atvs.len(),
+            "courses": self.state.store.courses.len(),
+            "stageQuad": self.state.stage_quad(),
+        });
+        let menu = self.menu.as_ref().map(|m| {
+            serde_json::json!({
+                "page": m.page, "choices": m.rows.choices,
+                "music": self.music.as_ref().map(|v| serde_json::json!({
+                    "playing": v.playing_index, "enabled": v.enabled, "paused": v.paused,
+                    "songs": v.songs.len(), "position": v.position,
+                })),
+                "spectrum": self.spectrum.as_ref().map(|b| b.iter().copied().max().unwrap_or(0)),
+                "art": self.jukebox_art.is_some(),
+            })
+        });
+        let cloud = serde_json::json!({
+            "key": self.state.cloud.key, "status": self.state.cloud.status,
+            "short": self.state.cloud.short, "shareCode": self.state.cloud.share_code,
+            "previousKey": self.state.cloud.previous_key,
+            "pending": self.state.passkey.pending.is_some(),
+            "qr": self.state.passkey_qr(), "entry": self.state.passkey.entry,
+        });
         let mut out = serde_json::json!({
             "page": self.state.page,
             // The page (or menu panel) slide: [opacity, translateX px].
@@ -1479,17 +1506,10 @@ impl Front {
                 "code": l.code, "status": l.status,
             })),
             "notice": self.state.notice,
-            "store": {
-                "remaining": atv_core::store::remaining(&self.state.profile),
-                "spent": self.state.profile.store.spent,
-                "section": self.state.store.section,
-                "item": self.state.store.item,
-                "atvs": self.state.store.atvs.len(),
-                "courses": self.state.store.courses.len(),
-                "stageQuad": self.state.stage_quad(),
-            },
+            "store": store,
             "profile": self.state.profile_text(),
             "profileBook": profile_book,
+            "cloud": cloud,
             "labels": self.state.choices().iter().map(|(_, l)| l).collect::<Vec<_>>(),
             "race": {
                 "courses": self.state.race_courses.len(), "course": self.state.race.course,
@@ -1505,15 +1525,7 @@ impl Front {
                 "environment": l.environment, "status": l.status, "progress": l.progress,
                 "championship": l.championship, "fame": l.fame,
             })),
-            "menu": self.menu.as_ref().map(|m| serde_json::json!({
-                "page": m.page, "choices": m.rows.choices,
-                "music": self.music.as_ref().map(|v| serde_json::json!({
-                    "playing": v.playing_index, "enabled": v.enabled, "paused": v.paused,
-                    "songs": v.songs.len(), "position": v.position,
-                })),
-                "spectrum": self.spectrum.as_ref().map(|b| b.iter().copied().max().unwrap_or(0)),
-                "art": self.jukebox_art.is_some(),
-            })),
+            "menu": menu,
             "menuHits": self.menu_hits.iter().map(|(r, id)| serde_json::json!({
                 "id": id, "x": r.x, "y": r.y, "width": r.w, "height": r.h,
             })).collect::<Vec<_>>(),
