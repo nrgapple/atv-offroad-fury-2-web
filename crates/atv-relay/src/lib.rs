@@ -106,9 +106,16 @@ struct Connection {
     bytes: usize,
 }
 
+/// Per-connection budget: 120 messages and 1 MiB a second on average, over
+/// a 3 s window, so a client whose packets queued during a stall (a starved
+/// tab, a congested link) and arrive together is not closed for the burst.
+const RATE_WINDOW_MS: f64 = 3000.;
+const RATE_MESSAGES: u16 = 360;
+const RATE_BYTES: usize = 3 * 1024 * 1024;
+
 impl Connection {
     fn account(&mut self, now: f64, bytes: usize) -> bool {
-        if now - self.window_ms >= 1000. {
+        if now - self.window_ms >= RATE_WINDOW_MS {
             self.window_ms = now;
             self.messages = 0;
             self.bytes = 0;
@@ -116,7 +123,7 @@ impl Connection {
         self.messages = self.messages.saturating_add(1);
         self.bytes = self.bytes.saturating_add(bytes);
         self.last_seen_ms = now;
-        self.messages <= 120 && self.bytes <= 1024 * 1024
+        self.messages <= RATE_MESSAGES && self.bytes <= RATE_BYTES
     }
 }
 
@@ -1488,12 +1495,13 @@ mod tests {
             messages: 0,
             bytes: 0,
         };
-        for _ in 0..120 {
+        // A burst of queued packets within the window's average budget.
+        for _ in 0..360 {
             assert!(connection.account(10., 100));
         }
         assert!(!connection.account(20., 100));
-        assert!(connection.account(1001., 8192));
-        assert!(!connection.account(1002., 1024 * 1024));
+        assert!(connection.account(3010., 8192));
+        assert!(!connection.account(3011., 3 * 1024 * 1024));
     }
 
     #[test]
@@ -1534,7 +1542,7 @@ mod tests {
             sequence: Some(u32::MAX),
             last_seen_ms: 555.,
             window_ms: 500.,
-            messages: 119,
+            messages: 359,
             bytes: 999,
         };
         let loaded: Room = serde_json::from_str(&serde_json::to_string(&room).unwrap()).unwrap();

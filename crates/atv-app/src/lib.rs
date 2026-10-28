@@ -2400,6 +2400,7 @@ impl App {
                 "trainingArrows": ready.venue.training_arrows.map(|m| m.len()),
                 "game": self.game.as_ref().map(games::GameSession::state),
                 "roomRace": self.room_race.as_ref().map(room_race::RoomRace::state),
+                "online": ready.net.is_some(),
                 "hockey": self.hockey.as_ref().map(|h| h.state(riding.ride.frame().origin)),
                 "tag": self.tag.as_ref().map(|t| t.state()),
                 "tagBall": ready.venue.tag_ball,
@@ -6915,6 +6916,12 @@ impl App {
                 front.borrow_mut().state.notice = Some(reason);
             }
             return;
+        }
+        // A room race ends with its room (its results never come).
+        self.room_race = None;
+        self.room_race_serial = 0;
+        if let Some(overlay) = &mut self.overlay {
+            overlay.room_race_pending = false;
         }
         let Some(ready) = &mut self.ready else { return };
         ready.net = None;
