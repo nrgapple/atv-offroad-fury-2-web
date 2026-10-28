@@ -30,6 +30,35 @@ export async function persistStorage(win) {
   try { return (await storage.persisted?.()) || await storage.persist(); } catch { return false; }
 }
 
+// A start that failed (the module or its WASM did not load, e.g. a transfer
+// dropped on a cellular network) reloads once. Under a service worker (a
+// returning visitor: an older worker, its caches, or a transfer it passed on)
+// it first unregisters it, so the reload loads straight from the network and
+// the next load registers the current worker. The flag lasts for the tab's
+// session and is cleared by a successful start, so a page that fails again shows
+// its error instead of reloading in a loop. Returns true when reloading.
+const RECOVERY = 'fury-start-recovery';
+
+export async function recoverFailedStart(win = globalThis.window) {
+  if (!win?.location) return false;
+  try {
+    if (win.sessionStorage.getItem(RECOVERY)) return false;
+    win.sessionStorage.setItem(RECOVERY, '1');
+  } catch {
+    return false;
+  }
+  const container = win.navigator?.serviceWorker;
+  try {
+    if (container?.controller) for (const registration of await container.getRegistrations()) await registration.unregister();
+  } catch { /* Reload anyway: a fresh load may still succeed. */ }
+  win.location.reload();
+  return true;
+}
+
+export function startSucceeded(win = globalThis.window) {
+  try { win?.sessionStorage?.removeItem(RECOVERY); } catch { /* Storage may be unavailable. */ }
+}
+
 function reportUncachedContent(win, container) {
   const pending = new Set();
   let timer = null;

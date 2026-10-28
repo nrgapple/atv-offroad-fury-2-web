@@ -38,7 +38,8 @@ class FakeStorage {
 // A service worker global over an in-memory site. `files` maps path+query to body text or {status, body}.
 function worker({ version = V, files = {} } = {}) {
   const handlers = {}, requests = [], storage = new FakeStorage();
-  const network = { offline: false, hang: false };
+  // drops: how many upcoming 200 answers lose their connection half way through the body.
+  const network = { offline: false, hang: false, drops: 0 };
   const self = { location: { origin: ORIGIN }, addEventListener: (type, fn) => { handlers[type] = fn; }, clients: { claimed: 0, claim: async () => { self.clients.claimed++; } } };
   async function fetch(input) {
     const url = new URL(typeof input === 'string' ? input : input.url, ORIGIN);
@@ -48,10 +49,23 @@ function worker({ version = V, files = {} } = {}) {
     const page = url.pathname === '/' ? '/index.html' : url.pathname;
     const file = files[url.pathname + url.search] ?? (page.endsWith('.html') ? files[page] : undefined);
     const { status = 200, body = '' } = file === undefined ? { status: 404, body: 'Not found' } : typeof file === 'string' ? { body: file } : file;
+    if (status === 200 && network.drops > 0) {
+      network.drops--;
+      const bytes = new TextEncoder().encode(body);
+      const half = bytes.slice(0, Math.max(1, bytes.length >> 1));
+      let sent = false;
+      const stream = new ReadableStream({
+        pull(controller) {
+          if (!sent) { sent = true; controller.enqueue(half); return; }
+          controller.error(new TypeError('Load failed'));
+        }
+      });
+      return new BasicResponse(stream, { status, headers: { 'Content-Length': String(bytes.length), 'Content-Encoding': 'gzip' } });
+    }
     return new BasicResponse(body, { status });
   }
   const source = version ? SOURCE.replace("'engine.js'", `'engine.js?v=${version}'`) : SOURCE;
-  const context = vm.createContext({ self, caches: storage, fetch, URL, Response, crypto, setTimeout, clearTimeout, console });
+  const context = vm.createContext({ self, caches: storage, fetch, URL, Headers, Response, crypto, setTimeout, clearTimeout, console });
   vm.runInContext(source, context);
   context.PRUNE_DELAY_MS = 0;
   const settle = async waits => { for (let i = 0; i < waits.length; i++) await waits[i].catch?.(() => {}); };
@@ -271,4 +285,43 @@ test('streams, ranged reads, multiplayer, analytics and non-GET requests are nev
   for (const [path, options] of [[`/content/${'1'.repeat(64)}.m4a`, {}], [blob, { headers: { Range: 'bytes=0-9' } }], ['/multiplayer/freeride/riders', {}],
     ['/multiplayer/rooms', { method: 'POST' }], ['/api/events', { method: 'POST' }], ['/devlog.json', {}], [blob, { method: 'HEAD' }]])
     assert.equal((await sw.request(path, options)).intercepted, false, path);
+});
+
+// Production regression (2026-10-27, iPhone Safari on LTE): a returning visitor's
+// worker passed the new deploy's atv_app_bg.wasm through while it was still
+// downloading; the transfer dropped and the page failed with "Engine failed:
+// FetchEvent.respondWith received an error: Load failed".
+test('a cache miss is answered only once its whole body arrived, retrying a dropped transfer once', async () => {
+  const sw = worker({ files: { ...site(NEW), ...site() } });
+  await sw.lifecycle('install');
+  sw.requests.length = 0;
+  const wasm = `/atv_app_bg.wasm?v=${NEW}`;
+  sw.network.drops = 1;
+  const update = await sw.request(wasm);
+  assert.equal(update.text, '\0asm', 'a newer deploy’s file arrives whole after one dropped transfer');
+  assert.deepEqual(sw.requests, [wasm, wasm]);
+  assert.equal(update.response.headers.get('content-encoding'), null, 'decoded bytes carry no transfer encoding');
+
+  const body = 'menu archive', blob = `/content/${sha(body)}.bin`;
+  sw.files[blob] = body;
+  sw.network.drops = 1;
+  assert.equal((await sw.request(blob)).text, body);
+  assert.deepEqual(sw.storage.urls('fury-content-v1'), [blob], 'the retried blob is verified and cached');
+
+  sw.network.drops = 2;
+  const failed = await sw.request(`/engine.js?v=${NEW}`);
+  assert.equal(failed.intercepted, true);
+  assert.equal(failed.response.type, 'error', 'two dropped transfers: a plain network error, never a half body or a rejected respondWith');
+});
+
+test('a storage failure falls back to the network instead of rejecting respondWith', async () => {
+  const sw = worker({ files: site() });
+  await sw.lifecycle('install');
+  const broken = async () => { throw new DOMException('Unknown error', 'UnknownError'); };
+  Object.assign(sw.storage, { open: broken, match: broken });
+  assert.equal((await sw.request(`/hud.js?v=${V}`)).text, 'export const hud = 1;');
+  assert.match((await sw.request('/play.html', { mode: 'navigate' })).text, /game\.js/);
+  sw.network.offline = true;
+  assert.equal((await sw.request(`/hud.js?v=${V}`)).response.type, 'error');
+  assert.equal((await sw.request('/play.html', { mode: 'navigate' })).response.type, 'error');
 });
