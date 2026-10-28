@@ -656,6 +656,9 @@ struct App {
     /// The host's Play Tag reloads the room's venue from its TG archive;
     /// the game starts with these minutes once that ride is ready.
     tag_start: Option<u32>,
+    /// Split screen → Games → Tag: a local two-player game starts with
+    /// these minutes once both rides are ready (no room).
+    split_tag: Option<(u32, String)>,
     /// A guest's pending move to the room's Tag course.
     tag_reload: Option<String>,
     /// The held room the next frontend ride resumes.
@@ -1720,11 +1723,19 @@ impl App {
         }
         // Tag: the host starts it from Pause; guests join when its state
         // arrives. Leaving the room ends it.
-        if ready.net.is_none() {
+        if ready.net.is_none() && ready.split.is_some() && self.tag.is_none() {
+            // Split screen Tag: both rides are ready.
+            if let Some((minutes, _)) = self.split_tag.take() {
+                let mut session = tag::TagSession::new_local(minutes);
+                session.model = ready.venue.tag_ball;
+                self.tag = Some(session);
+            }
+        } else if ready.net.is_none() && !self.tag.as_ref().is_some_and(|t| t.local) {
             if self.tag.take().is_some() {
                 tag::TagSession::release(&mut riding.ride);
             }
             self.tag_start = None;
+        } else if ready.net.is_none() {
         } else if self.tag.is_none()
             && self.tag_start.is_some()
             && !ready.venue.tag_ball
@@ -1777,18 +1788,23 @@ impl App {
                 self.tag = Some(session);
             }
         }
-        let tag_view = match (&mut self.tag, ready.net.as_mut()) {
-            (Some(session), Some(net)) => {
+        let tag_view = match &mut self.tag {
+            Some(session) if session.local || ready.net.is_some() => {
                 if ready.venue.tag_ball {
                     ready.scene.pose_prop(&ready.gpu, &session.ball_matrix());
                 }
                 session.start = ready.venue.scene.start_position;
                 session.crowd = ready.venue.scene.crowd_present;
-                if session.update(&mut riding.ride, net)
-                    && let Some(overlay) = &mut self.overlay
+                if session.update(
+                    &mut riding.ride,
+                    ready.net.as_mut(),
+                    ready.split.as_mut().map(|s| &mut s.riding.ride),
+                ) && let Some(overlay) = &mut self.overlay
                 {
                     overlay.results.show_game("Tag Results", session.summary());
-                    overlay.results.game_continue = true;
+                    // A room keeps riding (Continue); split screen offers
+                    // Restart Game and back to Games, like the other games.
+                    overlay.results.game_continue = !session.local;
                 }
                 let sounds = session.take_sounds();
                 if let Some(sound) = &mut riding.sound {
@@ -1959,7 +1975,9 @@ impl App {
                     .is_some_and(|f| f.phase != "finished")
             });
             overlay.training = self.training.is_some();
-            overlay.game = self.game.is_some() || self.hockey.is_some();
+            overlay.game = self.game.is_some()
+                || self.hockey.is_some()
+                || self.tag.as_ref().is_some_and(|t| t.local);
             if riding.input_cleared {
                 overlay.clear_input();
             }
@@ -2023,9 +2041,11 @@ impl App {
                     .collect::<Vec<_>>()
             });
             // Player 2's view shows the same game tags (hill pills, treasures).
+            let local_tag = self.tag.as_ref().filter(|t| t.local).map(|t| t.markers());
             let game_peers = game_markers
                 .clone()
                 .or_else(|| self.hockey.as_ref().map(|h| h.markers()))
+                .or_else(|| local_tag.clone())
                 .filter(|_| ready.split.is_some());
             let hud_peers = ready
                 .net
@@ -2045,7 +2065,8 @@ impl App {
                         .map(|o| o.markers())
                         .filter(|m| !m.is_empty())
                 })
-                .or_else(|| self.hockey.as_ref().map(|h| h.markers()));
+                .or_else(|| self.hockey.as_ref().map(|h| h.markers()))
+                .or(local_tag);
             // Split screen: each view projects at its own rectangle's aspect.
             let rects = ready.split.as_ref().map(|s| {
                 s.layout
@@ -2155,7 +2176,10 @@ impl App {
                                 .hockey
                                 .as_ref()
                                 .filter(|h| h.split)
-                                .map(|h| h.view_for(ride.frame().origin, 1)),
+                                .map(|h| h.view_for(ride.frame().origin, 1))
+                                .or_else(|| {
+                                    self.tag.as_ref().filter(|t| t.local).map(|t| t.view_for(1))
+                                }),
                             peers: game_peers.as_deref().map(|peers| {
                                 (
                                     peers,
@@ -2893,6 +2917,10 @@ impl App {
                 self.menu_event(Event::Resume);
             }
             // Restart (`003377f0`): scores and clock reset, a new face-off.
+            Event::Reset if self.tag.as_ref().is_some_and(|t| t.local) => {
+                self.restart_split_tag();
+                self.menu_event(Event::Resume);
+            }
             Event::Reset if self.hockey.is_some() => {
                 if let Some(session) = &mut self.hockey {
                     session.restart(&mut riding.ride, second);
@@ -3407,6 +3435,13 @@ impl App {
                 }
             }
             overlay::Action::Camera => riding.cycle_requested = true,
+            overlay::Action::RaceRetry if self.tag.as_ref().is_some_and(|t| t.local) => {
+                self.restart_split_tag();
+            }
+            overlay::Action::RaceQuit if self.tag.as_ref().is_some_and(|t| t.local) => {
+                // Back to the Games page that started it.
+                self.quit_to(Some("games"));
+            }
             overlay::Action::RaceRetry if self.tag.is_some() => {
                 if self
                     .ready
@@ -5827,6 +5862,7 @@ impl App {
                 | Event::Training { .. }
                 | Event::Game { .. }
                 | Event::Hockey { .. }
+                | Event::TagHost { .. }
                 | Event::Objective { .. }
         ) {
             let split = self.front.as_ref().and_then(|f| {
@@ -5838,6 +5874,7 @@ impl App {
                             | Event::Race { .. }
                             | Event::Game { .. }
                             | Event::Hockey { .. }
+                            | Event::TagHost { .. }
                     ))
                 .then(|| split::Request {
                     layout: split::Layout::from_vertical(f.state.split_vertical),
@@ -6060,6 +6097,18 @@ impl App {
                     net.resume_at = None;
                 }
                 self.pending_room = Some(net);
+                self.start_ride(environment, quad, rider, None, None);
+            }
+            // Split screen: Tag for both local players on the venue's Tag
+            // course, no room (research/SPLIT_SCREEN.md "Slice 4").
+            Event::TagHost {
+                environment,
+                minutes,
+                quad,
+                rider,
+                ..
+            } if self.split_request.is_some() => {
+                self.split_tag = Some((minutes, environment.clone()));
                 self.start_ride(environment, quad, rider, None, None);
             }
             Event::TagHost {
@@ -6417,6 +6466,12 @@ impl App {
                     .as_ref()
                     .is_some_and(|c| c.has(&path))
                     .then(|| (path, format!("{}{suffix}", g.venue)))
+            })
+            // Split screen Tag rides the venue's Tag course.
+            .or_else(|| {
+                self.split_tag
+                    .as_ref()
+                    .and_then(|(_, venue)| tag_scene(self.content.as_ref(), venue))
             }),
             // A Freestyle objective reads the course's OB archive (its
             // `.obj`, and a target run's TOY and cherries).
@@ -6924,6 +6979,7 @@ impl App {
         let Some(front) = self.front.clone() else {
             return false;
         };
+        self.split_tag = None;
         // Leaving mid-course keeps nothing (the original saves only the
         // ending's reward).
         self.training = None;
@@ -7731,6 +7787,40 @@ impl App {
         tag_scene(room.as_ref().or(self.content.as_ref()), environment)
     }
 
+    /// Split screen Tag's Restart Game: a new game, both players back at
+    /// the Tag course start (player 2 beside player 1).
+    fn restart_split_tag(&mut self) {
+        let Some(ready) = self.ready.as_mut() else {
+            return;
+        };
+        let start = ready.venue.scene.start_position;
+        let d = ready.venue.scene.start_direction;
+        let yaw = atv_core::math::Det::atan2_d(d[0], d[2]);
+        if let Some(riding) = ready.riding.as_mut() {
+            tag::TagSession::release(&mut riding.ride);
+            if let Err(error) = riding.ride.place_beside(start, yaw, [0.; 3]) {
+                status(&format!("Tag restart placement failed: {error}"));
+            }
+        }
+        if let Some(second) = ready.split.as_mut() {
+            let ride = &mut second.riding.ride;
+            tag::TagSession::release(ride);
+            let (mut at, yaw) = split::freeride_start(start, yaw);
+            if let Some(ground) = ride.ground(at[0], at[2]) {
+                at[1] = ground + 2.5;
+            }
+            if let Err(error) = ride.place_beside(at, yaw, [0.; 3]) {
+                status(&format!("Player 2 Tag restart placement failed: {error}"));
+            }
+        }
+        if let Some(session) = &mut self.tag {
+            session.restart_local();
+        }
+        if let Some(overlay) = &mut self.overlay {
+            overlay.results = Default::default();
+        }
+    }
+
     /// Tag's time limit: Games Prep's minutes (the Games page's Time Limit
     /// row, `0026b7a0`), `tagMinutes=N` for links and tests.
     fn tag_minutes(&self) -> u32 {
@@ -7961,6 +8051,7 @@ pub fn run(options: Options) {
         hockey: None,
         tag: None,
         tag_start: None,
+        split_tag: None,
         tag_reload: None,
         pending_room: None,
         pending_fresh: false,

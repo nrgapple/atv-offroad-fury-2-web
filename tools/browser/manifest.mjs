@@ -140,6 +140,7 @@ export const TESTS = {
   'test_engine_race.mjs': { group: 'content' },
   'test_engine_split_screen.mjs': { group: 'content', timeout: 900 },
   'test_engine_split_games.mjs': { group: 'content', timeout: 900 },
+  'test_engine_split_tag.mjs': { group: 'content', timeout: 600 },
   'test_engine_race_grid.mjs': { group: 'content' },
   'test_engine_race_finish_gate.mjs': { group: 'content' },
   'test_engine_race_alternates.mjs': { group: 'content', timeout: 900 },

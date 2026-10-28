@@ -4,6 +4,10 @@
 //! its `*_TG` courses; the port reloads the room's venue from its TG
 //! archive (the mode TOY's start, `tagball.psg`) when a game starts there,
 //! and draws the ball as that model (a screen tag on other venues).
+//!
+//! Split screen (research/SPLIT_SCREEN.md "Slice 4"): the same session runs
+//! the rules for two local riders with no room (`new_local`): this console
+//! is the host, player 1 rider slot 0 and player 2 slot 1.
 use atv_core::math::Det;
 use atv_core::tag::{Ball, Bounds, DropReason, Event, Game, Rider};
 use atv_game::multiplayer::{GameState, NO_PEER};
@@ -54,6 +58,12 @@ pub struct TagSession {
     pub crowd: bool,
     /// Ground respawns so far (diagnostics: ray throws, start returns).
     respawns: (u32, u32),
+    /// Split screen: two local players and no room.
+    pub local: bool,
+    /// Player 2's open-chain length last step (split screen).
+    chain_seen_2: usize,
+    /// Split screen: the first ball was tossed.
+    tossed: bool,
 }
 
 /// The game's clock: Games Prep's minutes (`0026b7a0`, 2-20, default 5);
@@ -100,7 +110,23 @@ impl TagSession {
             start: [0.; 3],
             respawns: (0, 0),
             crowd: false,
+            local: false,
+            chain_seen_2: 0,
+            tossed: false,
         }
+    }
+
+    /// Split screen: a two-player game on this console (no room).
+    pub fn new_local(minutes: u32) -> Self {
+        let mut session = Self::new(true, minutes);
+        session.local = true;
+        session.roster = vec![0, 1];
+        session.names = vec![
+            crate::split::PLAYER_1.to_string(),
+            crate::split::PLAYER_2.to_string(),
+        ];
+        session.game = Game::new(2, session.game.time_limit);
+        session
     }
 
     fn name(&self, slot: usize) -> String {
@@ -117,7 +143,8 @@ impl TagSession {
         self.carrier_seen = carrier;
         if let Some(c) = carrier {
             // `00246310`: "You are it!" (1.6 s) / "%s has the ball!" (2 s).
-            self.banner = Some(if c == self.me {
+            // Split screen names the carrier in both views.
+            self.banner = Some(if c == self.me && !self.local {
                 ("You are it!".into(), atv_core::tag::YOU_ARE_IT_BANNER)
             } else {
                 (
@@ -130,16 +157,40 @@ impl TagSession {
     }
 
     /// Advances the game; true once, when it ends.
-    pub fn update(&mut self, ride: &mut Ride, net: &mut crate::multiplayer::Net) -> bool {
-        let ended = self.advance(ride, net);
+    /// `net`: the room (None in split screen); `second`: split screen's
+    /// player 2.
+    pub fn update(
+        &mut self,
+        ride: &mut Ride,
+        net: Option<&mut crate::multiplayer::Net>,
+        second: Option<&mut Ride>,
+    ) -> bool {
+        let ended = self.advance(ride, net, second.as_deref());
         // `00246310`/`00246000`: the carrier's ATV runs handicapped; each
         // rider owns its ATV, so each applies its own.
-        let carrying =
-            !self.game.over && self.game.carrier == Some(self.me) && !self.roster.is_empty();
-        if carrying != (ride.engine_effect() != 0.) {
-            ride.set_carrier_handicap(carrying);
+        let handicap = |ride: &mut Ride, slot: usize, game: &Game, any: bool| {
+            let carrying = !game.over && game.carrier == Some(slot) && any;
+            if carrying != (ride.engine_effect() != 0.) {
+                ride.set_carrier_handicap(carrying);
+            }
+        };
+        let any = !self.roster.is_empty();
+        handicap(ride, self.me, &self.game, any);
+        if self.local
+            && let Some(ride2) = second
+        {
+            handicap(ride2, 1, &self.game, any);
         }
         ended
+    }
+
+    /// Split screen Restart Game: a new game for both players.
+    pub fn restart_local(&mut self) {
+        let mut fresh = Self::new_local(self.minutes);
+        fresh.model = self.model;
+        fresh.start = self.start;
+        fresh.crowd = self.crowd;
+        *self = fresh;
     }
 
     /// The game ended or was left: no handicap remains.
@@ -147,22 +198,47 @@ impl TagSession {
         ride.set_carrier_handicap(false);
     }
 
-    fn advance(&mut self, ride: &Ride, net: &mut crate::multiplayer::Net) -> bool {
+    fn advance(
+        &mut self,
+        ride: &Ride,
+        net: Option<&mut crate::multiplayer::Net>,
+        second: Option<&Ride>,
+    ) -> bool {
         let terrain = ride.terrain();
         let bounds = Bounds::from_cells(terrain.width_cells, terrain.depth_cells, terrain.spacing);
-        let (me, roster) = net.roster();
-        let Some(me) = me.and_then(|id| roster.iter().position(|r| *r == id)) else {
-            return false;
+        let host = self.local || net.as_deref().is_some_and(|n| n.is_host());
+        let fresh = if self.local {
+            // The first update (and Restart Game) tosses the first ball.
+            let fresh = !self.tossed;
+            if fresh {
+                self.tossed = true;
+                self.finished = false;
+                // The clock starts now, not at the ride's first step.
+                self.steps = ride.steps();
+            }
+            fresh
+        } else {
+            let Some(net) = net.as_deref() else {
+                return false;
+            };
+            let (me, roster) = net.roster();
+            let Some(me) = me.and_then(|id| roster.iter().position(|r| *r == id)) else {
+                return false;
+            };
+            self.names = net.names(&roster);
+            let changed = roster != self.roster;
+            if changed {
+                self.roster = roster;
+                self.me = me;
+                self.game = Game::new(self.roster.len(), self.game.time_limit);
+                self.finished = false;
+            }
+            changed
         };
-        self.names = net.names(&roster);
-        if roster != self.roster {
-            self.roster = roster;
-            self.me = me;
-            self.game = Game::new(self.roster.len(), self.game.time_limit);
-            self.finished = false;
+        if fresh {
             let o = ride.frame().origin;
             self.ball = Ball::toss(o, [0.; 3]);
-            if crate::url_flag("tagTest=throw") && net.is_host() {
+            if crate::url_flag("tagTest=throw") && host {
                 // Past the west margin (`0020aec0`), level with the host.
                 self.ball.position = [bounds.cell[0] * 40., o[1] + 20., o[2]];
                 self.ball.velocity = [0.; 3];
@@ -179,9 +255,9 @@ impl TagSession {
                 self.banner = None;
             }
         }
-        if !net.is_host() {
+        if !host {
             self.host = false;
-            return self.follow(net);
+            return net.as_deref().is_some_and(|net| self.follow(net));
         }
         self.host = true;
         if n == 0 || self.finished {
@@ -200,6 +276,14 @@ impl TagSession {
             frame.linear_velocity,
             frame.wreck.phase != atv_core::wreck::Phase::Riding,
         );
+        let motion = |ride: &Ride| {
+            let f = ride.frame();
+            (
+                f.origin,
+                f.linear_velocity,
+                f.wreck.phase != atv_core::wreck::Phase::Riding,
+            )
+        };
         let riders: Vec<([f32; 3], [f32; 3], bool)> = self
             .roster
             .iter()
@@ -207,8 +291,12 @@ impl TagSession {
             .map(|(i, id)| {
                 if i == self.me {
                     own
+                } else if self.local {
+                    // Split screen: player 2's own ride.
+                    second.map_or(([0., -1000., 0.], [0.; 3], true), motion)
                 } else {
-                    net.rider_motion(*id)
+                    net.as_deref()
+                        .and_then(|net| net.rider_motion(*id))
                         .map_or(([0., -1000., 0.], [0.; 3], true), |(p, v)| (p, v, false))
                 }
             })
@@ -220,6 +308,10 @@ impl TagSession {
         let chain = ride.chain_len();
         let own_trick = chain > self.chain_seen;
         self.chain_seen = chain;
+        // Split screen: player 2's tricks are local too.
+        let chain_2 = second.filter(|_| self.local).map_or(0, |r| r.chain_len());
+        let second_trick = chain_2 > self.chain_seen_2;
+        self.chain_seen_2 = chain_2;
         if let Some(t) = &mut self.throw_test
             && self.throw_ins > 0
         {
@@ -260,7 +352,9 @@ impl TagSession {
                 .enumerate()
                 .map(|(i, (p, _, wrecked))| Rider {
                     wrecked: *wrecked,
-                    stunt_started: i == self.me && own_trick && step == 0,
+                    stunt_started: step == 0
+                        && ((i == self.me && own_trick)
+                            || (self.local && i == 1 && second_trick)),
                     touches_ball: carrier.is_none()
                         && flat(*p, self.ball.position) < BALL_REACH
                         && (p[1] - self.ball.position[1]).abs() < 8.,
@@ -323,6 +417,9 @@ impl TagSession {
             }
         }
         self.announce(self.game.carrier);
+        let Some(net) = net.filter(|_| !self.local) else {
+            return ended;
+        };
         // 20 Hz and on every change of carrier.
         let changed = self.game.carrier.map_or(NO_PEER, |c| c as u8) != self.sent_carrier;
         if changed || ended || steps >= self.sent_step + 3 {
@@ -392,11 +489,16 @@ impl TagSession {
     }
 
     pub fn view(&self) -> atv_ui::hud::training::View {
-        let mine = self.game.records.get(self.me).map_or(0, |r| r.score);
+        self.view_for(self.me)
+    }
+
+    /// A local player's panel (split screen: player 2 is slot 1).
+    pub fn view_for(&self, me: usize) -> atv_ui::hud::training::View {
+        let mine = self.game.records.get(me).map_or(0, |r| r.score);
         atv_ui::hud::training::View {
             title: format!("Tag   {}   You {mine}", self.clock()),
             caption: Some(match self.game.carrier {
-                Some(c) if c == self.me => "You have the ball: keep it away!".into(),
+                Some(c) if c == me => "You have the ball: keep it away!".into(),
                 Some(c) => format!("{} has the ball: tag them!", self.name(c)),
                 None => "Grab the ball!".into(),
             }),
@@ -465,6 +567,7 @@ impl TagSession {
             "knocks": self.knocks,
             "respawns": [self.respawns.0, self.respawns.1],
             "attached": self.game.attached,
+            "local": self.local,
         })
     }
 }
