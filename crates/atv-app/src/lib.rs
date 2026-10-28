@@ -1825,14 +1825,20 @@ impl App {
             (None, Some(session)) => {
                 // Game over: the HockeyOver page (Restart Game, Quit to
                 // Main Menu).
-                if session.update(&mut riding.ride, ready.net.as_mut())
-                    && let Some(overlay) = &mut self.overlay
+                if session.update(
+                    &mut riding.ride,
+                    ready.net.as_mut(),
+                    ready.split.as_mut().map(|s| &mut s.riding.ride),
+                ) && let Some(overlay) = &mut self.overlay
                 {
                     overlay
                         .results
                         .show_game("Hockey Results", session.summary());
                 }
                 riding.locked = session.held();
+                if let Some(second) = &mut ready.split {
+                    second.riding.locked = session.held();
+                }
                 ready.scene.pose_prop(&ready.gpu, &session.puck_matrix());
                 // The hat-trick group (`003368c0` starts it, the next
                 // face-off and Restart Game stop it).
@@ -1859,8 +1865,14 @@ impl App {
         // open the results.
         let game_view = match &mut self.game {
             Some(game) => {
-                game.update(&mut riding.ride);
+                game.update(
+                    &mut riding.ride,
+                    ready.split.as_mut().map(|s| &mut s.riding.ride),
+                );
                 riding.locked |= game.locked();
+                if let Some(second) = &mut ready.split {
+                    second.riding.locked = game.locked();
+                }
                 for (model, rgb) in game.flag_colors(&ready.venue.scene.models) {
                     ready.scene.tint_model(&ready.gpu, model, rgb);
                 }
@@ -1921,13 +1933,19 @@ impl App {
                     .as_ref()
                     .map(|f| f.borrow().state.player_name.trim().to_string())
                     .filter(|n| !n.is_empty())
-                    .unwrap_or_else(|| "You".into());
-                if let Some(summary) = game.results(&player)
+                    .unwrap_or_else(|| {
+                        if game.players > 1 {
+                            split::PLAYER_1.into()
+                        } else {
+                            "You".into()
+                        }
+                    });
+                if let Some(summary) = game.results(&[&player, split::PLAYER_2])
                     && let Some(overlay) = &mut self.overlay
                 {
                     overlay.results.show_game("Race Results", summary);
                 }
-                game.view()
+                game.view(0)
             }
             None => None,
         };
@@ -2004,6 +2022,11 @@ impl App {
                     })
                     .collect::<Vec<_>>()
             });
+            // Player 2's view shows the same game tags (hill pills, treasures).
+            let game_peers = game_markers
+                .clone()
+                .or_else(|| self.hockey.as_ref().map(|h| h.markers()))
+                .filter(|_| ready.split.is_some());
             let hud_peers = ready
                 .net
                 .as_ref()
@@ -2023,14 +2046,22 @@ impl App {
                         .filter(|m| !m.is_empty())
                 })
                 .or_else(|| self.hockey.as_ref().map(|h| h.markers()));
-            let view_projection =
-                ready
-                    .camera
-                    .view_projection(gpu.aspect(), ready.focal_length, 1., 10_000.);
+            // Split screen: each view projects at its own rectangle's aspect.
+            let rects = ready.split.as_ref().map(|s| {
+                s.layout
+                    .rects(gpu.config.width, gpu.config.height, 1.)
+                    .map(|[_, _, w, h]| w as f32 / h.max(1) as f32)
+            });
+            let view_projection = ready.camera.view_projection(
+                rects.map_or(gpu.aspect(), |r| r[0]),
+                ready.focal_length,
+                1.,
+                10_000.,
+            );
             // The compass of a mini-game or a Freestyle target run
             // (`002edf00` passes Hill, Flag or Target icons).
             let compass_icons = match (&self.game, &self.objective) {
-                (Some(game), _) if game.view().is_some() => Some(
+                (Some(game), _) if game.view(0).is_some() => Some(
                     game.markers()
                         .into_iter()
                         .map(|m| {
@@ -2061,7 +2092,7 @@ impl App {
                 }),
                 _ => None,
             };
-            let compass = compass_icons.map(|icons| {
+            let compass_of = |frame: &atv_core::vehicle::VehicleFrame, icons: Vec<_>| {
                 let [w, x, y, z] = frame.orientation;
                 atv_ui::hud::race::CompassView {
                     yaw: atv_core::math::Det::atan2_d(
@@ -2072,7 +2103,16 @@ impl App {
                     racers: Vec::new(),
                     icons,
                 }
-            });
+            };
+            // Split screen: player 2's mini-game panel, compass and tags.
+            let second_game = self.game.as_ref().and_then(|g| g.view(1));
+            let second_compass = ready
+                .split
+                .as_ref()
+                .zip(compass_icons.clone())
+                .filter(|_| second_game.is_some())
+                .map(|(s, icons)| compass_of(s.riding.ride.frame(), icons));
+            let compass = compass_icons.map(|icons| compass_of(frame, icons));
             overlay.prepare(
                 &gpu.device,
                 &gpu.queue,
@@ -2108,6 +2148,27 @@ impl App {
                                 .race()
                                 .and_then(|r| r.frame.as_ref())
                                 .map(|f| (f, ride.committed_points(), ride.frame().origin)),
+                            game: second_game
+                                .filter(|_| self.game.as_ref().is_some_and(|g| g.players > 1)),
+                            compass: second_compass,
+                            training: self
+                                .hockey
+                                .as_ref()
+                                .filter(|h| h.split)
+                                .map(|h| h.view_for(ride.frame().origin, 1)),
+                            peers: game_peers.as_deref().map(|peers| {
+                                (
+                                    peers,
+                                    ride.frame().origin,
+                                    s.camera.view_projection(
+                                        rects.map_or(1., |r| r[1]),
+                                        s.focal_length,
+                                        1.,
+                                        10_000.,
+                                    ),
+                                )
+                            }),
+                            eye: Some(s.camera.eye()),
                         }
                     }),
                 }),
@@ -2803,9 +2864,14 @@ impl App {
     /// Applies a pause-menu outcome to the ride.
     fn menu_event(&mut self, event: atv_ui::menu::controller::Event) {
         use atv_ui::menu::controller::Event;
-        let Some(riding) = self.ready.as_mut().and_then(|r| r.riding.as_mut()) else {
+        let Some(ready) = self.ready.as_mut() else {
             return;
         };
+        let Some(riding) = ready.riding.as_mut() else {
+            return;
+        };
+        // Split screen: player 2's ride restarts a game with player 1's.
+        let second = ready.split.as_mut().map(|s| &mut s.riding.ride);
         match event {
             // Restart Race (frontend.js reset({restart:true})): the whole
             // event reloads, also after the finish.
@@ -2819,7 +2885,7 @@ impl App {
             // at its start, in place.
             Event::Reset if self.game.is_some() => {
                 if let Some(game) = &mut self.game {
-                    game.restart(&mut riding.ride);
+                    game.restart(&mut riding.ride, second);
                 }
                 if let Some(overlay) = &mut self.overlay {
                     overlay.results = Default::default();
@@ -2829,7 +2895,7 @@ impl App {
             // Restart (`003377f0`): scores and clock reset, a new face-off.
             Event::Reset if self.hockey.is_some() => {
                 if let Some(session) = &mut self.hockey {
-                    session.restart(&mut riding.ride);
+                    session.restart(&mut riding.ride, second);
                 }
                 self.menu_event(Event::Resume);
             }
@@ -3322,9 +3388,13 @@ impl App {
     }
 
     fn act(&mut self, action: overlay::Action) {
-        let Some(riding) = self.ready.as_mut().and_then(|r| r.riding.as_mut()) else {
+        let Some(ready) = self.ready.as_mut() else {
             return;
         };
+        let Some(riding) = ready.riding.as_mut() else {
+            return;
+        };
+        let second = ready.split.as_mut().map(|s| &mut s.riding.ride);
         match action {
             overlay::Action::Pause => {
                 if !riding.held {
@@ -3362,7 +3432,7 @@ impl App {
             }
             overlay::Action::RaceRetry if self.game.is_some() => {
                 if let Some(game) = &mut self.game {
-                    game.restart(&mut riding.ride);
+                    game.restart(&mut riding.ride, second);
                 }
                 if let Some(overlay) = &mut self.overlay {
                     overlay.results = Default::default();
@@ -3370,7 +3440,7 @@ impl App {
             }
             overlay::Action::RaceRetry if self.hockey.is_some() => {
                 if let Some(session) = &mut self.hockey {
-                    session.restart(&mut riding.ride);
+                    session.restart(&mut riding.ride, second);
                 }
                 if let Some(overlay) = &mut self.overlay {
                     overlay.results = Default::default();
@@ -5740,8 +5810,9 @@ impl App {
 
     fn front_event(&mut self, event: atv_ui::front::controller::Event) {
         use atv_ui::front::controller::Event;
-        // Multiplayer → Split Screen rides Freestyle and races with two
-        // local players; every other ride is one player's.
+        // Multiplayer → Split Screen rides Freestyle, races and the Games
+        // King of the Hills, Treasure Hunt and Hockey with two local
+        // players; every other ride is one player's.
         if matches!(
             event,
             Event::Ride { .. }
@@ -5757,15 +5828,21 @@ impl App {
         ) {
             let split = self.front.as_ref().and_then(|f| {
                 let f = f.borrow();
-                (f.state.split && matches!(event, Event::Ride { .. } | Event::Race { .. })).then(
-                    || split::Request {
-                        layout: split::Layout::from_vertical(f.state.split_vertical),
-                        second: Some(atv_game::ride::Selection {
-                            quad: f.state.split_second.0,
-                            rider: f.state.split_second.1,
-                        }),
-                    },
-                )
+                (f.state.split
+                    && matches!(
+                        event,
+                        Event::Ride { .. }
+                            | Event::Race { .. }
+                            | Event::Game { .. }
+                            | Event::Hockey { .. }
+                    ))
+                .then(|| split::Request {
+                    layout: split::Layout::from_vertical(f.state.split_vertical),
+                    second: Some(atv_game::ride::Selection {
+                        quad: f.state.split_second.0,
+                        rider: f.state.split_second.1,
+                    }),
+                })
             });
             self.split_request = split;
         }
@@ -5789,11 +5866,13 @@ impl App {
                 let Some(content) = self.content.clone() else {
                     return;
                 };
+                let players = if self.split_request.is_some() { 2 } else { 1 };
                 self.game = Some(games::GameSession::new(
                     kind,
                     venue.clone(),
                     course,
                     minutes,
+                    players,
                 ));
                 match atv_core::games::game_archive(kind, &venue).filter(|p| content.has(p)) {
                     Some(path) => {
@@ -5818,7 +5897,11 @@ impl App {
                 self.start_ride(venue, quad, rider, None, None);
             }
             Event::Hockey { quad, rider } => {
-                self.hockey = Some(hockey::HockeySession::new());
+                self.hockey = Some(if self.split_request.is_some() {
+                    hockey::HockeySession::new_split()
+                } else {
+                    hockey::HockeySession::new()
+                });
                 self.start_ride("game01".into(), quad, rider, None, None);
             }
             Event::Training { quad, rider } => {

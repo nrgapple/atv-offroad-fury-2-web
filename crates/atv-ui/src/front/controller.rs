@@ -1716,13 +1716,13 @@ impl Frontend {
             "main" | "single" | "tracks" | "multiplayer" | "race" | "gear" | "split" => {
                 self.show(action, view)
             }
-            "splitfree" | "splitrace" => {
+            "splitfree" | "splitrace" | "splitgames" => {
                 self.split = true;
                 self.show(
-                    if action == "splitrace" {
-                        "race"
-                    } else {
-                        "tracks"
+                    match action {
+                        "splitrace" => "race",
+                        "splitgames" => "games",
+                        _ => "tracks",
                     },
                     view,
                 );
@@ -3367,13 +3367,22 @@ mod tests {
         front.key("Enter", &view, &mut settings);
         assert_eq!((front.page.as_str(), front.split), ("split", false));
         let actions: Vec<_> = front.choices().iter().map(|(a, _)| a.clone()).collect();
-        assert_eq!(actions[..3], ["splitrace", "splitfree", "splitlayout"]);
+        assert_eq!(
+            actions[..4],
+            ["splitrace", "splitfree", "splitgames", "splitlayout"]
+        );
         // The layout row toggles and is saved.
-        front.selection = 2;
+        front.selection = 3;
         front.key("Enter", &view, &mut settings);
         assert!(front.split_vertical);
         assert_eq!(settings.get(SPLIT_LAYOUT_KEY).as_deref(), Some("vertical"));
-        assert!(front.choices()[2].1.contains("Side by Side"));
+        assert!(front.choices()[3].1.contains("Side by Side"));
+        // Games opens the Games page for two players.
+        front.selection = 2;
+        front.key("Enter", &view, &mut settings);
+        assert_eq!((front.page.as_str(), front.split), ("games", true));
+        front.key("Escape", &view, &mut settings);
+        assert_eq!((front.page.as_str(), front.split), ("split", false));
         front.selection = 1;
         front.key("Enter", &view, &mut settings);
         assert_eq!((front.page.as_str(), front.split), ("tracks", true));
@@ -3390,15 +3399,15 @@ mod tests {
         // Player 2's own ATV and rider rows, saved.
         front.show("split", &view);
         let actions: Vec<_> = front.choices().iter().map(|(a, _)| a.clone()).collect();
-        assert_eq!(actions[3..5], ["split2quad", "split2rider"]);
+        assert_eq!(actions[4..6], ["split2quad", "split2rider"]);
         let quad = front.split_second.0;
-        front.selection = 3;
-        front.key("Enter", &view, &mut settings);
-        assert_ne!(front.split_second.0, quad);
         front.selection = 4;
         front.key("Enter", &view, &mut settings);
+        assert_ne!(front.split_second.0, quad);
+        front.selection = 5;
+        front.key("Enter", &view, &mut settings);
         assert_eq!(front.split_second.1, 1);
-        assert!(front.choices()[4].1.contains("Female"));
+        assert!(front.choices()[5].1.contains("Female"));
         assert_eq!(
             Frontend::new(tracks(), &settings, true).split_second,
             front.split_second

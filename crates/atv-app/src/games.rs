@@ -39,9 +39,15 @@ pub struct GameSession {
     go: f32,
     placed: bool,
     steps: u64,
-    committed: f32,
+    /// Each player's committed stunt score at the last sample.
+    committed: [f32; 2],
+    /// Local players: 1, or 2 in split screen (player 2 is rider 1,
+    /// research/SPLIT_SCREEN.md "Slice 3").
+    pub players: usize,
     /// The results were shown.
     pub reported: bool,
+    /// The last results summary (diagnostics).
+    summary: Option<String>,
     /// Test tooling: `gameTest=fast` ends the clock after 20 s;
     /// `gameTest=visit` places the ATV on the next standing treasure each
     /// second; `gameTest=hill` sets the ATV on hill 1, then lifts it off
@@ -54,9 +60,13 @@ pub struct GameSession {
     /// so it rides off the hill for a real stunt.
     ride_off: Option<u8>,
     test_clock: f32,
+    /// `gameTest=visit` placements so far.
+    visits: u32,
     /// `gameTest=hill`: a landed chain's points for the next sample (an
     /// ATV placed in the air opens no stunt).
-    inject: Option<f32>,
+    inject: Option<(usize, f32)>,
+    /// `gameTest=hill2`: the hill hook moves player 2 (split screen).
+    hill_player: usize,
     /// The last finished chain: landed, committed delta, stunt sum.
     last_chain: Option<(bool, f32, f32)>,
     /// One-shot sounds for the ride's mixer (start beeps, pickups).
@@ -69,7 +79,13 @@ pub struct GameSession {
 pub const OWNER_COLORS: [[f32; 3]; 4] = [[1., 0., 0.], [0., 0., 1.], [0., 1., 0.], [1., 1., 0.]];
 
 impl GameSession {
-    pub fn new(kind: GameKind, venue: String, course: String, minutes: u32) -> Self {
+    pub fn new(
+        kind: GameKind,
+        venue: String,
+        course: String,
+        minutes: u32,
+        players: usize,
+    ) -> Self {
         Self {
             kind,
             venue,
@@ -82,16 +98,22 @@ impl GameSession {
             go: 0.,
             placed: false,
             steps: 0,
-            committed: 0.,
+            committed: [0.; 2],
+            players: players.clamp(1, 2),
             reported: false,
+            summary: None,
             fast: crate::url_flag("gameTest=fast"),
             visit: crate::url_flag("gameTest=visit"),
             hill: u8::from(
-                crate::url_flag("gameTest=hill") || crate::url_flag("gameTest=hillride"),
+                crate::url_flag("gameTest=hill")
+                    || crate::url_flag("gameTest=hill2")
+                    || crate::url_flag("gameTest=hillride"),
             ),
             ride_off: crate::url_flag("gameTest=hillride").then_some(0),
             test_clock: 0.,
+            visits: 0,
             inject: None,
+            hill_player: usize::from(crate::url_flag("gameTest=hill2")),
             sounds: Vec::new(),
             flags: None,
             last_chain: None,
@@ -101,14 +123,15 @@ impl GameSession {
     /// The mode TOY text arrived (or why not).
     pub fn load(&mut self, toy: Result<String, String>) {
         match toy.and_then(|text| {
-            let rules = atv_core::games::rules(self.kind, &text).map_err(|e| e.to_string())?;
+            let rules = atv_core::games::rules_for(self.kind, &text, self.players)
+                .map_err(|e| e.to_string())?;
             Ok((rules, atv_core::games::parse_starts(&Toy::parse(&text))))
         }) {
             Ok((mut rules, starts)) => {
                 // The original draws the next treasure group with `rand`.
                 rules.seed(crate::fresh_seed() as u32);
                 rules.restart();
-                let mut session = Session::new(rules, self.minutes, 1);
+                let mut session = Session::new(rules, self.minutes, self.players);
                 if self.fast {
                     session.time_left = session.time_left.min(20.);
                 }
@@ -119,7 +142,7 @@ impl GameSession {
         }
     }
 
-    fn place(&mut self, ride: &mut Ride) {
+    fn place(&mut self, ride: &mut Ride, second: Option<&mut Ride>) {
         if let Some(start) = self.starts.first()
             && let Err(error) = ride.place_beside(start.position, start.yaw(), [0.; 3])
         {
@@ -127,14 +150,37 @@ impl GameSession {
         }
         ride.take_chains();
         self.steps = ride.steps();
-        self.committed = ride.committed_points();
+        self.committed[0] = ride.committed_points();
+        // Player 2 takes the TOY's second start (`Start%d` is one per
+        // player slot); a course with one start puts it beside player 1.
+        if let Some(ride2) = second {
+            let (at, yaw) = match (self.starts.get(1), self.starts.first()) {
+                (Some(s), _) => (s.position, s.yaw()),
+                (None, Some(s)) => crate::split::freeride_start(s.position, s.yaw()),
+                (None, None) => {
+                    let f = ride.frame();
+                    let [w, x, y, z] = f.orientation;
+                    let yaw = atv_core::math::Det::atan2_d(
+                        2. * (w * y + x * z),
+                        1. - 2. * (y * y + x * x),
+                    );
+                    crate::split::freeride_start(f.origin, yaw)
+                }
+            };
+            if let Err(error) = ride2.place_beside(at, yaw, [0.; 3]) {
+                crate::status(&format!("Player 2 game placement failed: {error}"));
+            }
+            ride2.take_chains();
+            ride2.take_free_records();
+            self.committed[1] = ride2.committed_points();
+        }
         self.countdown = COUNTDOWN;
         self.go = 0.;
     }
 
     /// Restart Game (`00220d10`, `002d1450`): the rules and clock start
     /// over at the start position.
-    pub fn restart(&mut self, ride: &mut Ride) {
+    pub fn restart(&mut self, ride: &mut Ride, second: Option<&mut Ride>) {
         if let Some(session) = &mut self.session {
             session.restart();
             if self.fast {
@@ -148,7 +194,7 @@ impl GameSession {
         if let Some(n) = &mut self.ride_off {
             *n = (*n + 1) % 4;
         }
-        self.place(ride);
+        self.place(ride, second);
     }
 
     /// The ATV is held during the countdown and after the game ends.
@@ -159,13 +205,14 @@ impl GameSession {
     }
 
     /// Advances the game with the ride.
-    pub fn update(&mut self, ride: &mut Ride) {
+    /// Advances the game with the ride (and player 2's in split screen).
+    pub fn update(&mut self, ride: &mut Ride, mut second: Option<&mut Ride>) {
         if self.session.is_none() {
             return;
         }
         if !self.placed {
             self.placed = true;
-            self.place(ride);
+            self.place(ride, second.as_deref_mut());
         }
         let steps = ride.steps();
         let dt = steps.saturating_sub(self.steps) as f32 * atv_game::ride::STEP;
@@ -195,38 +242,33 @@ impl GameSession {
             }
         }
         let collected: i32 = session.rules.scores().iter().sum();
-        let committed = ride.committed_points();
-        let chains = ride.take_chains();
-        // A landed chain scores what it added to the committed stunt score.
-        // The chain's points: what it added to the committed score, else
-        // its stunts' sum (`00221020`).
-        let (_, free) = ride.take_free_records();
-        let chain = chains
-            .last()
-            .map(|(success, _)| {
-                let sum = free.last().map_or(0., |c| c.2);
-                let points = (committed - self.committed).max(0.);
-                self.last_chain = Some((*success, points, sum));
-                (*success, if points > 0. { points } else { sum })
-            })
-            .or(self.inject.take().map(|points| (true, points)));
-        self.committed = committed;
-        let frame = ride.frame();
-        let rider = Rider {
-            position: frame.origin,
-            grounded: frame.grounded.iter().any(|g| *g),
-            stunting: ride.stunting(),
-            wrecked: frame.wreck.phase != atv_core::wreck::Phase::Riding,
-            chain,
+        let inject = |player: usize, inject: &mut Option<(usize, f32)>| {
+            inject
+                .filter(|(p, _)| *p == player)
+                .and_then(|_| inject.take())
+                .map(|(_, points)| points)
         };
-        session.tick(dt, &[rider], &[committed]);
+        let (first, chain) = sample(ride, &mut self.committed[0], inject(0, &mut self.inject));
+        if chain.is_some() {
+            self.last_chain = chain;
+        }
+        let mut riders = vec![first];
+        let mut stunts = vec![self.committed[0]];
+        if self.players > 1
+            && let Some(ride2) = second.as_deref_mut()
+        {
+            let (rider, _) = sample(ride2, &mut self.committed[1], inject(1, &mut self.inject));
+            riders.push(rider);
+            stunts.push(self.committed[1]);
+        }
+        session.tick(dt, &riders, &stunts);
         // `002d0d70` plays iconhit.vag for each treasure.
         if self.kind == GameKind::TreasureHunt
             && session.rules.scores().iter().sum::<i32>() > collected
         {
             self.sounds.push("iconhit.vag");
         }
-        self.test_hooks(ride, dt);
+        self.test_hooks(ride, second, dt);
     }
 
     /// The TOY triggers the rules took since the last call (Treasure
@@ -239,7 +281,7 @@ impl GameSession {
     }
 
     /// The `gameTest` placements (test tooling only).
-    fn test_hooks(&mut self, ride: &mut Ride, dt: f32) {
+    fn test_hooks(&mut self, ride: &mut Ride, mut second: Option<&mut Ride>, dt: f32) {
         let Some(session) = &mut self.session else {
             return;
         };
@@ -256,10 +298,20 @@ impl GameSession {
             && let Some(m) = markers.first()
         {
             self.test_clock = 0.;
-            place(ride, m.position);
+            // Split screen: the players take turns, so both collect.
+            self.visits += 1;
+            match second.as_deref_mut() {
+                Some(ride2) if self.visits % 2 == 0 => place(ride2, m.position),
+                _ => place(ride, m.position),
+            }
         }
         let Some(hill) = markers.first().map(|m| m.position) else {
             return;
+        };
+        let player = self.hill_player;
+        let ride: &mut Ride = match second {
+            Some(ride2) if player == 1 => ride2,
+            _ => ride,
         };
         let raise = atv_core::games::king_of_the_hill::MARKER_RAISE;
         match self.hill {
@@ -300,12 +352,14 @@ impl GameSession {
                 .iter()
                 .any(|(k, v)| *k == "state" && *v >= 1.) =>
             {
-                self.inject = Some(1500.);
+                self.inject = Some((player, 1500.));
                 self.hill = 5;
                 self.test_clock = 0.;
             }
             // Captured: set down south of the hill facing its flag.
-            5 if self.test_clock > 2. && markers.first().is_some_and(|m| m.owner == Some(0)) => {
+            5 if self.test_clock > 2.
+                && markers.first().is_some_and(|m| m.owner == Some(player)) =>
+            {
                 let ground = ride.frame().origin[1].max(hill[1] - raise);
                 let _ = ride.place_beside([hill[0], ground + 2., hill[2] - 45.], 0., [0.; 3]);
                 self.hill = 6;
@@ -315,7 +369,8 @@ impl GameSession {
     }
 
     /// The results summary once the game is over (shown once).
-    pub fn results(&mut self, player: &str) -> Option<String> {
+    /// `names`: each local player's name (rider index order).
+    pub fn results(&mut self, names: &[&str]) -> Option<String> {
         let session = self.session.as_ref()?;
         if self.reported || !session.over() {
             return None;
@@ -333,23 +388,25 @@ impl GameSession {
                 format!(
                     "{}. {}: {} {}, Stunt Score {}.",
                     place + 1,
-                    if s.rider == 0 { player } else { "Rider" },
+                    names.get(s.rider).copied().unwrap_or("Rider"),
                     self.kind.score_label(),
                     s.score,
                     atv_ui::hud::objective::grouped(s.stunt as i64)
                 )
             })
             .collect();
-        Some(format!(
+        let summary = format!(
             "{} on {}: {end}. {}",
             self.kind.name(),
             self.course,
             rows.join(" ")
-        ))
+        );
+        self.summary = Some(summary.clone());
+        Some(summary)
     }
 
-    /// The HUD panel.
-    pub fn view(&self) -> Option<atv_ui::hud::games::View> {
+    /// The HUD panel of a local player (0, or 1 for split screen's player 2).
+    pub fn view(&self, player: usize) -> Option<atv_ui::hud::games::View> {
         let session = self.session.as_ref();
         Some(atv_ui::hud::games::View {
             title: self.kind.name().to_string(),
@@ -364,9 +421,9 @@ impl GameSession {
                 _ => "SCORE",
             }
             .into(),
-            count: session.map_or_else(String::new, |s| s.rules.progress(0)),
-            score: session.map_or(0, |s| s.stunt[0] as i64),
-            place: session.map_or(1, |s| s.place(0)),
+            count: session.map_or_else(String::new, |s| s.rules.progress(player)),
+            score: session.map_or(0, |s| s.stunt.get(player).copied().unwrap_or(0.) as i64),
+            place: session.map_or(1, |s| s.place(player)),
             start: session
                 .filter(|s| !s.started)
                 .map(|_| (self.countdown.ceil() as u32).max(1)),
@@ -463,6 +520,10 @@ impl GameSession {
             "scores": session.map(|s| s.rules.scores()),
             "standings": session.map(Session::standings),
             "stunt": session.map(|s| s.stunt[0]),
+            "players": self.players,
+            "stunts": session.map(|s| s.stunt.clone()),
+            "progress": session.map(|s| (0..self.players).map(|p| s.rules.progress(p)).collect::<Vec<_>>()),
+            "places": session.map(|s| (0..self.players).map(|p| s.place(p)).collect::<Vec<_>>()),
             "starts": self.starts,
             "markers": self.markers(),
             "rules": session.map(|s| s
@@ -472,10 +533,47 @@ impl GameSession {
                 .map(|(k, v)| (k.to_string(), serde_json::json!(v)))
                 .collect::<serde_json::Map<_, _>>()),
             "reported": self.reported,
+            "summary": self.summary,
             "flags": self.flags,
             "lastChain": self.last_chain,
         })
     }
+}
+
+/// One player's sample for the rules: position, ground contact, the open
+/// stunt and the chain finished since the last sample (its points: what it
+/// added to the committed stunt score, else its stunts' sum, `00221020`).
+/// Returns the rider and the finished chain's (landed, delta, sum).
+fn sample(
+    ride: &mut Ride,
+    committed: &mut f32,
+    inject: Option<f32>,
+) -> (Rider, Option<(bool, f32, f32)>) {
+    let total = ride.committed_points();
+    let chains = ride.take_chains();
+    let (_, free) = ride.take_free_records();
+    let mut record = None;
+    let chain = chains
+        .last()
+        .map(|(success, _)| {
+            let sum = free.last().map_or(0., |c| c.2);
+            let points = (total - *committed).max(0.);
+            record = Some((*success, points, sum));
+            (*success, if points > 0. { points } else { sum })
+        })
+        .or(inject.map(|points| (true, points)));
+    *committed = total;
+    let frame = ride.frame();
+    (
+        Rider {
+            position: frame.origin,
+            grounded: frame.grounded.iter().any(|g| *g),
+            stunting: ride.stunting(),
+            wrecked: frame.wreck.phase != atv_core::wreck::Phase::Riding,
+            chain,
+        },
+        record,
+    )
 }
 
 /// The mode TOY of a game archive's bytes.

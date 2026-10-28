@@ -555,12 +555,20 @@ impl Session {
     }
 }
 
-/// The game's rules from its mode TOY text.
+/// The game's rules from its mode TOY text, for one player.
 pub fn rules(kind: GameKind, toy: &str) -> crate::Result<Box<dyn Rules>> {
+    rules_for(kind, toy, 1)
+}
+
+/// The game's rules for `riders` players (split screen: one per view; the
+/// original's rider records hold up to four).
+pub fn rules_for(kind: GameKind, toy: &str, riders: usize) -> crate::Result<Box<dyn Rules>> {
     let toy = Toy::parse(toy);
     match kind {
-        GameKind::KingOfTheHills => Ok(Box::new(king_of_the_hill::KingOfTheHill::new(&toy)?)),
-        GameKind::TreasureHunt => Ok(Box::new(treasure_hunt::TreasureHunt::new(&toy, 1)?)),
+        GameKind::KingOfTheHills => Ok(Box::new(king_of_the_hill::KingOfTheHill::with_riders(
+            &toy, riders,
+        )?)),
+        GameKind::TreasureHunt => Ok(Box::new(treasure_hunt::TreasureHunt::new(&toy, riders)?)),
         _ => Err(format!(
             "{} is not available in this port yet.",
             kind.name()
@@ -571,6 +579,20 @@ pub fn rules(kind: GameKind, toy: &str) -> crate::Result<Box<dyn Rules>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn split_screen_rules_keep_a_record_per_player() {
+        let koth = "[KingOfTheHill]\nNumberOfHills=1\n[Triggers]\nNumberOfTriggers=1\n\
+             [Trigger1]\nName=Hill1\nNumberOfActions=1\nPosition=0,0,0\nBox=20,20,20\n\
+             [Trigger1Action1]\nActionType=Hilltop\nHillNumber=1\n";
+        let split = rules_for(GameKind::KingOfTheHills, koth, 2).unwrap();
+        assert_eq!(split.scores(), vec![0, 0]);
+        assert_eq!(split.progress(1), "0 / 1");
+        assert_eq!(
+            rules(GameKind::KingOfTheHills, koth).unwrap().scores(),
+            vec![0]
+        );
+    }
 
     #[test]
     fn kinds_match_the_store_and_tracks_dat() {

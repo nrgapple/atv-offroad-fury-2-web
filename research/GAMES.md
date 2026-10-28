@@ -137,8 +137,9 @@ game's end (`002d10d0`, `002210e0`).
 ### Adaptations and open items
 
 - **One player, no opponents.** The original is split-screen or online only;
-  the port plays it alone (scores, ranking and results work for more
-  riders, but nothing else rides).
+  Single Player → Games plays it alone. Multiplayer → Split Screen → Games
+  plays King of the Hills, Treasure Hunt and Hockey for two local players
+  (SPLIT_SCREEN.md "Slice 3").
 - **Scenes and models.** King of the Hills rides its own scene
   (`env05kh.scn`, read with its mode TOY over the Freeride archive), so the
   original `kohbase` bases, `kohflag` flags and spotlights stand at the
