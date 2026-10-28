@@ -249,6 +249,14 @@ profiles (`MERGE_SLOTS`), so two devices with four profiles each keep all of
 them and the Profile Editor refuses new ones until some are deleted. The loaded
 profile stays this device's choice.
 
+Unlock Everything ([PROFILE_STORE.md](PROFILE_STORE.md)) is stored as the
+`EVERYTHING` entry of a profile's cheats list, so it needs no new payload
+field: the union merge carries it to every device on the key (and builds that
+predate it keep the entry), pressing it counts as progress (the first press
+on a new game makes the Pass Key) and the next sync check pushes it. A Share
+Code of an unlocked save gives the profile copied from it everything too. The
+Game Settings toggle for new profiles is a device setting and does not travel.
+
 ## Sync
 
 `atv_ui::cloud::Sync` is transport-free (unit-tested with an in-memory contract

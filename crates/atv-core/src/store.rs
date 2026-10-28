@@ -33,6 +33,12 @@
 //!   San Jacinto Isles; IGIVEUP all of SHOWROOM, TRLBLAZR, THREADS, GAMEON
 //!   and GOLDCUPS. The G-Ride items were the reward for an ATV Offroad Fury
 //!   save on the memory card.
+//!
+//! Port option (not in the original): Unlock Everything ([`unlock_everything`])
+//! applies IGIVEUP and GABRIEL and records the [`EVERYTHING_FLAG`], which
+//! also opens what no original cheat reaches (the G Ride, the G-Ride gear and
+//! the games' last courses). Like the cheats it is a flag: no Profile Points,
+//! trophies, records or Percent Complete are granted.
 use crate::profile::Profile;
 use crate::rider_gear::Category;
 use crate::ui::Document;
@@ -196,7 +202,7 @@ pub struct Unlocks {
     /// Event types opened (games), by list key.
     pub events: Vec<String>,
     /// Unlock cheats entered (SHOWROOM, TRLBLAZR, THREADS, GAMEON,
-    /// GOLDCUPS, GABRIEL).
+    /// GOLDCUPS, GABRIEL), and the port's [`EVERYTHING_FLAG`].
     pub cheats: Vec<String>,
 }
 
@@ -234,6 +240,7 @@ pub fn atv_owned(catalog: &[Atv], id: u16, profile: &Profile) -> bool {
     catalog[index].access != 0
         || u.atvs.contains(&id)
         || (u.cheat("SHOWROOM") && index + 1 < catalog.len())
+        || u.cheat(EVERYTHING_FLAG)
 }
 
 /// `002f8510`: the ATV2 Training gear is not sold (0-based indices).
@@ -256,6 +263,7 @@ pub fn gear_owned(category: &Category, index: usize, profile: &Profile) -> bool 
             .get(category.slot)
             .is_some_and(|l| l.contains(&(index as u16)))
         || (u.cheat("THREADS") && index + 1 < category.items.len())
+        || u.cheat(EVERYTHING_FLAG)
 }
 
 /// Types whose last course is San Jacinto Isles (TRLBLAZR skips it).
@@ -281,6 +289,7 @@ pub fn course_owned(lists: &[CourseList], kind: u8, index: usize, profile: &Prof
         || (kind <= 8 && u.cheat("TRLBLAZR") && !(last && last_is_bonus(kind)))
         || ((9..=12).contains(&kind) && u.cheat("GAMEON") && !(last && kind != 11))
         || (u.cheat("GABRIEL") && last && last_is_bonus(kind))
+        || u.cheat(EVERYTHING_FLAG)
 }
 
 /// `0021add0`: event types start open but King of the Hills and Treasure
@@ -290,6 +299,7 @@ pub fn event_open(kind: u8, profile: &Profile) -> bool {
     !matches!(kind, 9 | 12)
         || profile.store.events.iter().any(|e| e == key)
         || profile.store.cheat("GAMEON")
+        || profile.store.cheat(EVERYTHING_FLAG)
 }
 
 /// The original race course id's list: (event type, index), from its
@@ -542,14 +552,41 @@ pub fn enter_cheat(profile: &mut Profile, code: &str) -> Option<(&'static str, &
     Some((code, message))
 }
 
-/// GOLDCUPS (`0033eca0`): every championship on Normal and Expert.
+/// GOLDCUPS (`0033eca0`): every championship on Normal and Expert. The
+/// original calls `003238a0` for all 16 event types, so the Freestyle
+/// (objective) championships open too.
 fn open_championships(profile: &mut Profile) {
     use crate::championship::{SERIES, save_key};
-    for series in &SERIES {
+    for series in SERIES.iter().chain(&crate::freestyle::SERIES) {
         for expert in [false, true] {
             add(&mut profile.championships.opened, save_key(series, expert));
         }
     }
+}
+
+/// The port's Unlock Everything flag, kept with the cheats so Pass Key
+/// merges (a union of cheats) carry it and older builds keep it.
+pub const EVERYTHING_FLAG: &str = "EVERYTHING";
+
+/// The message Unlock Everything shows (IGIVEUP's).
+pub const EVERYTHING_MESSAGE: &str = "Unlocked Everything!";
+
+/// Whether the profile has Unlock Everything.
+pub fn everything_unlocked(profile: &Profile) -> bool {
+    profile.store.cheat(EVERYTHING_FLAG)
+}
+
+/// Unlock Everything (port option): IGIVEUP, GABRIEL and the
+/// [`EVERYTHING_FLAG`], so every ATV, gear item, course, game and
+/// championship (Normal and Expert) is open. Points, records, trophies and
+/// Percent Complete stay as earned. Idempotent; true when it changed
+/// anything.
+pub fn unlock_everything(profile: &mut Profile) -> bool {
+    let before = profile.clone();
+    enter_cheat(profile, "IGIVEUP");
+    enter_cheat(profile, "GABRIEL");
+    add(&mut profile.store.cheats, EVERYTHING_FLAG.to_string());
+    *profile != before
 }
 
 /// "1,000"-style thousands separators, as the store prints costs.
@@ -723,6 +760,58 @@ mod tests {
     }
 
     #[test]
+    fn unlock_everything_opens_every_item_and_fakes_no_progress() {
+        let atvs = parse_atvs(QUADS.as_bytes()).unwrap();
+        let lists = parse_courses(TRACKS.as_bytes()).unwrap();
+        let gear = helmets();
+        let mut p = profile(120);
+        p.earned = 300;
+        assert!(!everything_unlocked(&p));
+        assert!(unlock_everything(&mut p));
+        assert!(everything_unlocked(&p));
+        for atv in &atvs {
+            // The G Ride (last) too, which SHOWROOM leaves locked.
+            assert!(atv_owned(&atvs, atv.id, &p), "{}", atv.name);
+        }
+        for category in &gear {
+            for i in 0..category.items.len() {
+                assert!(gear_owned(category, i, &p), "{} {i}", category.slot);
+            }
+        }
+        for list in &lists {
+            for i in 0..list.courses.len() {
+                assert!(course_owned(&lists, list.kind, i, &p), "{} {i}", list.kind);
+            }
+        }
+        for (kind, name) in GAMES {
+            assert!(event_open(kind, &p), "{name}");
+        }
+        use crate::championship::SERIES;
+        for series in SERIES.iter().chain(&crate::freestyle::SERIES) {
+            for expert in [false, true] {
+                assert!(p.championships.is_open(series, expert), "{}", series.name);
+                assert!(p.championships.freestyle_open(series, expert));
+            }
+        }
+        // Nothing earned is faked: points, trophies, Percent Complete.
+        assert_eq!((p.points, p.earned, p.store.spent), (120, 300, 0));
+        assert!(p.championships.progress.is_empty());
+        assert_eq!(p.percent_complete(), 0.);
+        assert_eq!(p.store.unlocked_count(), 0);
+        // Idempotent.
+        let once = p.clone();
+        assert!(!unlock_everything(&mut p));
+        assert_eq!(p, once);
+        // Purchases afterwards are already owned and cost nothing.
+        assert_eq!(buy_atv(&mut p, &atvs, 3), Purchase::AlreadyOwned);
+        assert_eq!(buy_event(&mut p, 12), Purchase::AlreadyOwned);
+        // The flag survives a save written by a build that only knows the
+        // cheats list.
+        let json = serde_json::to_string(&p).unwrap();
+        assert!(everything_unlocked(&serde_json::from_str(&json).unwrap()));
+    }
+
+    #[test]
     fn cheats_follow_0033ede0() {
         let atvs = parse_atvs(QUADS.as_bytes()).unwrap();
         let lists = parse_courses(TRACKS.as_bytes()).unwrap();
@@ -747,6 +836,12 @@ mod tests {
         let st = crate::championship::series("st").unwrap();
         assert!(q.championships.is_open(st, false) && q.championships.is_open(st, true));
         assert!(event_open(12, &q));
+        // 003238a0 runs for every event type: Pro Freestyle opens too.
+        let pro = crate::freestyle::series("spstunt").unwrap();
+        assert!(q.championships.freestyle_open(pro, false));
+        assert!(q.championships.freestyle_open(pro, true));
+        // IGIVEUP leaves the G Ride for the port's Unlock Everything.
+        assert!(!atv_owned(&atvs, 19, &q) && !everything_unlocked(&q));
         assert_eq!(grouped(1000), "1,000");
         assert_eq!(grouped(10000000), "10,000,000");
         assert_eq!(grouped(25), "25");
