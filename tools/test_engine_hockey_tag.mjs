@@ -5,7 +5,7 @@
 // and after the 4 s pause the rider is back at the face-off. Pause → Restart
 // Game zeroes the score; `hockeyTest=fast` (a 20 s clock) then runs the game
 // to "Game over!", the HockeyOver results page (Quit to Main Menu) and the
-// result on the main menu. ATV_HOCKEY_SOUNDS=1 also requires the hockey
+// result on the Games page. ATV_HOCKEY_SOUNDS=1 also requires the hockey
 // one-shots (a content package with them). Keyboard driving moves the
 // rider off the face-off once the puck drops. Tag's rules are core-only
 // (crates/atv-core/src/tag.rs unit tests) until its CPU riders land.
@@ -128,7 +128,7 @@ try {
   await onPage(page, 'main', 60000);
 
   // To the end: a 20 s clock, one goal, Game over! and the HockeyOver
-  // result on the main menu.
+  // result on the Games page.
   await toMain(page, 'hockeyGoal=1&hockeyTest=fast');
   await startHockey(page);
   h = await until(page, h => h.banner === 'Game over!', 120000);
@@ -152,7 +152,8 @@ try {
   console.log(`one-shots: ${shots_.join(', ')}`);
   await key(page, 'ArrowDown');
   await key(page, 'Enter');
-  await onPage(page, 'main', 60000);
+  // Continue returns to the Games page that started it (MENU_FLOW.md).
+  await onPage(page, 'games', 60000);
   const notice = (await state(page)).front?.notice ?? '';
   assert.equal(notice, 'Hockey: Red 1 – 0 Blue. Red wins! Your goals: 1.');
   await shot(page, 'hockey-result');

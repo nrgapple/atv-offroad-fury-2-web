@@ -65,12 +65,21 @@ pub struct HudInput<'a> {
     pub second: Option<SecondHud<'a>>,
 }
 
-/// Player 2's HUD: its speed and stunt text, and its race overlays.
+/// Player 2's HUD: its speed and stunt text, its race overlays and, in a
+/// mini-game, its own game panel, compass and world tags.
 pub struct SecondHud<'a> {
     /// Side by side, else one view above the other.
     pub vertical: bool,
     pub hud: atv_core::hud::Frame,
     pub race: Option<(&'a atv_core::race::Frame, f32, [f32; 3])>,
+    pub game: Option<atv_ui::hud::games::View>,
+    /// Split Hockey: player 2's team panel.
+    pub training: Option<atv_ui::hud::training::View>,
+    pub compass: Option<atv_ui::hud::race::CompassView>,
+    /// World tags (hill pills, treasures) from player 2's camera: the
+    /// tags, its origin and its view's view-projection.
+    pub peers: Option<(&'a [atv_ui::hud::peers::Peer], [f32; 3], [f32; 16])>,
+    pub eye: Option<[f32; 3]>,
 }
 
 /// A press on a toolbar button or the minimap (utility pointers in touch.js).
@@ -861,7 +870,7 @@ impl Overlay {
             if race.is_none()
                 && let Some(compass) = h.compass.as_ref().filter(|_| meter.has_compass())
             {
-                meter.paint_compass(&mut items, compass, view.width, view.height);
+                meter.paint_compass(&mut items, compass, hw, hh);
                 self.compass_icons = Some(compass.icons.iter().map(|(_, i)| i.clone()).collect());
             }
             if race.is_none() || self.race_overlays.shown("info") {
@@ -894,6 +903,11 @@ impl Overlay {
                 if second.race.is_none() || self.race_overlays.shown("info") {
                     meter.paint_stunt(&mut self.fonts, &mut items, &second.hud, hw, hh);
                 }
+                if second.race.is_none()
+                    && let Some(compass) = &second.compass
+                {
+                    meter.paint_compass(&mut items, compass, hw, hh);
+                }
                 let (dx, dy) = if second.vertical {
                     (view.width - hw, 0.)
                 } else {
@@ -913,31 +927,52 @@ impl Overlay {
             .filter(|_| active)
             .map(|start| ((now - start) / 500.) as f32)
             .filter(|t| *t < 1.);
-        // Name tags over other riders, under the map and menus.
-        if let Some((peers, origin, vp)) = shown.and_then(|h| h.peers) {
+        // Name tags over other riders, under the map and menus. Split
+        // screen: each player's tags project into its own view.
+        let sub = atv_ui::hud::Viewport {
+            width: hw,
+            height: hh,
+            ..view
+        };
+        self.tags = 0;
+        let views = [
+            shown.and_then(|h| h.peers.map(|p| (p, h.eye, (0., 0.)))),
+            second.and_then(|s| {
+                s.peers.map(|p| {
+                    let offset = if s.vertical {
+                        (view.width - hw, 0.)
+                    } else {
+                        (0., view.height - hh)
+                    };
+                    (p, s.eye, offset)
+                })
+            }),
+        ];
+        for ((peers, origin, vp), eye, (dx, dy)) in views.into_iter().flatten() {
             // `002207e0` hides a hill pill whose point the camera's ray to
             // it does not reach (`00169b60` against the terrain).
             let hidden = |p: &&atv_ui::hud::peers::Peer| {
                 p.pill.is_some()
                     && shown
-                        .and_then(|h| h.eye.map(|eye| (h.terrain, eye)))
+                        .and_then(|h| eye.map(|eye| (h.terrain, eye)))
                         .is_some_and(|(terrain, eye)| {
                             let to = [p.position[0], p.position[1] + 7., p.position[2]];
                             terrain_blocks(terrain, eye, to)
                         })
             };
             let visible: Vec<_> = peers.iter().filter(|p| !hidden(p)).cloned().collect();
-            self.tags = atv_ui::hud::peers::paint_tags(
+            let mut list = DisplayList::default();
+            self.tags += atv_ui::hud::peers::paint_tags(
                 &mut self.fonts,
-                &mut self.list,
-                &view,
+                &mut list,
+                &sub,
                 &visible,
                 origin,
                 &vp,
                 self.meter.as_ref().and_then(|m| m.pills.as_ref()),
             );
-        } else {
-            self.tags = 0;
+            list.translate(dx, dy);
+            self.list.items.extend(list.items);
         }
         if map_visible {
             self.minimap.paint(&view, &mut self.fonts, &mut self.list);
@@ -1010,38 +1045,81 @@ impl Overlay {
                 top = top.max(map.bottom() + 8.);
             }
             let mut list = DisplayList::default();
+            // Split screen: the panel fits player 1's view.
             layout::render(
-                &atv_ui::hud::training::element(&view, training, top),
+                &atv_ui::hud::training::element(&sub, training, top),
                 &mut self.fonts,
-                view.width,
-                view.height,
+                hw,
+                hh,
                 &mut list,
                 &mut Vec::new(),
             );
             self.list.items.extend_from_slice(&list.items);
         }
+        // Split Hockey: player 2's team panel in its own view.
+        if let Some(second) = second
+            && let Some(training) = second.training.as_ref()
+        {
+            let (dx, dy, top) = if second.vertical {
+                let top = self.toolbar_cache.as_ref().map_or(0., |(.., hits)| {
+                    hits.iter().map(|(r, _)| r.bottom()).fold(0., f32::max)
+                }) + 8.;
+                (view.width - hw, 0., top)
+            } else {
+                (0., view.height - hh, 8.)
+            };
+            let mut list = DisplayList::default();
+            layout::render(
+                &atv_ui::hud::training::element(&sub, training, top),
+                &mut self.fonts,
+                hw,
+                hh,
+                &mut list,
+                &mut Vec::new(),
+            );
+            list.translate(dx, dy);
+            self.list.items.extend_from_slice(&list.items);
+        }
         // A mini-game's panel, under the toolbar.
-        if let Some(game) = shown.and_then(|h| h.game.as_ref()) {
-            let top = self.toolbar_cache.as_ref().map_or(0., |(.., hits)| {
-                hits.iter().map(|(r, _)| r.bottom()).fold(0., f32::max)
-            }) + 8.;
+        // Split screen: each player's panel in its own view (player 2's
+        // at the top of its view, moved there).
+        let toolbar_bottom = self.toolbar_cache.as_ref().map_or(0., |(.., hits)| {
+            hits.iter().map(|(r, _)| r.bottom()).fold(0., f32::max)
+        });
+        let panels = [
+            shown
+                .and_then(|h| h.game.as_ref())
+                .map(|g| (g, toolbar_bottom + 8., (0., 0.))),
+            second.and_then(|s| {
+                let offset = if s.vertical {
+                    (view.width - hw, 0.)
+                } else {
+                    (0., view.height - hh)
+                };
+                // Side by side, player 2's view is also under the toolbar.
+                let top = if s.vertical { toolbar_bottom + 8. } else { 8. };
+                s.game.as_ref().map(|g| (g, top, offset))
+            }),
+        ];
+        for (game, top, (dx, dy)) in panels.into_iter().flatten() {
             let mut list = DisplayList::default();
             // The original 321 lamps replace the countdown digits when the
             // course archive has their art.
             let lamps = self.meter.as_ref().filter(|m| m.has_lamps());
             let mut game = game.clone();
             if let (Some(meter), Some(lights)) = (lamps, game.lights) {
-                meter.paint_lamps(&mut list, lights, view.width, view.height);
+                meter.paint_lamps(&mut list, lights, hw, hh);
                 game.start = None;
             }
             layout::render(
-                &atv_ui::hud::games::element(&view, &game, top),
+                &atv_ui::hud::games::element(&sub, &game, top),
                 &mut self.fonts,
-                view.width,
-                view.height,
+                hw,
+                hh,
                 &mut list,
                 &mut Vec::new(),
             );
+            list.translate(dx, dy);
             self.list.items.extend_from_slice(&list.items);
         }
         // Race over: the results panel or the Show Results button.
