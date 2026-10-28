@@ -119,9 +119,10 @@ impl GameKind {
         }
     }
 
-    /// The port plays this game (Hockey through `crate::hockey`).
+    /// The port plays this game (Hockey through `crate::hockey`, Tag in a
+    /// hosted multiplayer room through `crate::tag`).
     pub fn playable(self) -> bool {
-        !matches!(self, GameKind::Tag)
+        true
     }
 
     /// The results column (Overlays.pb `[TreasureOver Menu]` "Tokens

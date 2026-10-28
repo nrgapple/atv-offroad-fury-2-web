@@ -444,46 +444,63 @@ impl Metrics {
     }
 }
 
-/// The full-viewport frontend page. While it slides in (frontend.js
-/// `animatePage`), the whole HD screen moves and fades in `#menu-stage`
-/// over `#frontend`'s own background.
+/// The full-viewport frontend page: [`layers`] in one tree.
 pub fn element(view: &Viewport, s: &Screen) -> El {
-    let page = page_element(view, s);
-    match s.motion {
-        Some(m) => El::new(Style {
-            size: Size {
-                width: length(view.width),
-                height: length(view.height),
-            },
-            ..Default::default()
-        })
-        .paint(Paint::fill(Color::hex("#080606")))
-        .child(page.opacity(m.opacity).translate(m.dx, 0.)),
-        None => page,
-    }
+    let (back, content) = layers(view, s);
+    back.child(content)
 }
 
-fn page_element(view: &Viewport, s: &Screen) -> El {
+/// The page's two layers. The backdrop (the scenic photo and, in
+/// landscape, the silver stage frame every page shares) stays put; the
+/// content (heading, rows, stage contents, hints) slides and fades while a
+/// page transition runs (crate::transition), and is drawn over it.
+pub fn layers(view: &Viewport, s: &Screen) -> (El, El) {
     let m = Metrics::new(view);
+    let mut back = El::new(Style {
+        position: Position::Relative,
+        size: Size {
+            width: length(m.w),
+            height: length(m.h),
+        },
+        ..Default::default()
+    })
+    .paint(Paint::fill(Color::hex("#2a0505")))
+    .children(backdrop(&m, s));
+    if !m.portrait && !matches!(s.page.as_str(), "title" | "backdrop") {
+        back = back.child(panel_shape(&m));
+    }
+    let content = page_element(&m, s);
+    let content = match s.motion {
+        Some(motion) => content.opacity(motion.opacity).translate(motion.dx, 0.),
+        None => content,
+    };
+    (back, content)
+}
+
+fn page_element(m: &Metrics, s: &Screen) -> El {
     let (w, h) = (m.w, m.h);
     let mut root = El::new(Style {
-        position: Position::Relative,
+        position: Position::Absolute,
+        inset: taffy::Rect {
+            left: LengthPercentageAuto::length(0.),
+            top: LengthPercentageAuto::length(0.),
+            right: LengthPercentageAuto::auto(),
+            bottom: LengthPercentageAuto::auto(),
+        },
         size: Size {
             width: length(w),
             height: length(h),
         },
         display: Display::Grid,
         ..Default::default()
-    })
-    .paint(Paint::fill(Color::hex("#2a0505")));
-    root = root.children(backdrop(&m, s));
+    });
     let page = s.page.as_str();
     // Settings opened from the main menu draw over the bare backdrop.
     if page == "backdrop" {
         return root;
     }
     if page == "title" {
-        return title(&m, s, root);
+        return title(m, s, root);
     }
     let loading = page == "loading";
     // Grid tracks and areas.
@@ -595,22 +612,19 @@ fn page_element(view: &Viewport, s: &Screen) -> El {
             area((3, 4), (1, 3)),
         )
     };
-    if !m.portrait {
-        root = root.child(panel_shape(&m));
-    }
-    let mut panel = panel(&m, s, loading);
+    let mut panel = panel(m, s, loading);
     (panel.style.grid_row, panel.style.grid_column) = panel_area;
-    let mut header = heading(&m, s);
+    let mut header = heading(m, s);
     (header.style.grid_row, header.style.grid_column) = header_area;
-    let mut left = left(&m, s);
+    let mut left = left(m, s);
     (left.style.grid_row, left.style.grid_column) = left_area;
     // Portrait: the panel paints its silver behind the heading.
     root = root.child(panel).child(header).child(left);
     if loading {
-        let mut bar = loading_bar(&m, s);
+        let mut bar = loading_bar(m, s);
         (bar.style.grid_row, bar.style.grid_column) = hints_area;
         root = root.child(bar);
-    } else if let Some(mut hints) = hints(&m, s) {
+    } else if let Some(mut hints) = hints(m, s) {
         (hints.style.grid_row, hints.style.grid_column) = hints_area.clone();
         root = root.child(hints);
         // The Pass Key badge in the bottom-left corner, level with Back.
@@ -621,7 +635,7 @@ fn page_element(view: &Viewport, s: &Screen) -> El {
             .as_ref()
             .filter(|_| !m.portrait || s.page.starts_with("passkey"))
         {
-            let mut el = badge_element(&m, s, badge);
+            let mut el = badge_element(m, s, badge);
             (el.style.grid_row, el.style.grid_column) = hints_area;
             el.style.justify_self = Some(JustifySelf::START);
             el.style.align_self = Some(AlignSelf::END);
@@ -3267,13 +3281,18 @@ mod tests {
         // Buttons follow the page (a transformed DOM button is hit there).
         assert!((row(&hits).x - row(&rest_hits).x - m.dx).abs() < 1e-3);
         assert_eq!(row(&hits).y, row(&rest_hits).y);
-        // `#frontend` stays behind at full strength; the stage fades.
-        let crate::paint::Item::Box(under) = &list.items[0] else {
-            panic!("{:?}", list.items[0]);
-        };
-        assert_eq!(under.rect, crate::Rect::new(0., 0., 1280., 720.));
-        assert_eq!(list.items[1], crate::paint::Item::PushOpacity(m.opacity));
+        // The backdrop and the landscape stage frame stay put at full
+        // strength; only the content fades (one opacity group, last).
+        let group = list
+            .items
+            .iter()
+            .position(|i| *i == crate::paint::Item::PushOpacity(m.opacity))
+            .expect("content group");
+        assert_eq!(list.items[..group], rest.items[..group]);
         assert_eq!(list.items.last(), Some(&crate::paint::Item::PopOpacity));
-        assert_eq!(list.items.len(), rest.items.len() + 3);
+        assert_eq!(list.items.len(), rest.items.len() + 2);
+        // The backdrop layer has no hit targets: input goes to the content.
+        let (back, _) = layers(&view, &moving);
+        assert!(back.id.is_none() && back.children.iter().all(|c| c.id.is_none()));
     }
 }
