@@ -21,6 +21,12 @@ pub const LOAD_WAIT_MS: f64 = 30_000.;
 /// still riding (ms, authored; the original's online race-over timer is not
 /// recovered).
 pub const FINISH_WAIT_MS: f64 = 30_000.;
+/// At the finish wait, a still-connected rider not heard from for this long
+/// (ms) may have finished behind a slow link: the host waits for it up to
+/// [`LATE_GRACE_MS`] longer before ranking it as not finished (authored).
+pub const STALE_MS: f64 = 3_000.;
+/// The longest extra wait for stale riders after the finish wait (ms).
+pub const LATE_GRACE_MS: f64 = 30_000.;
 /// The countdown the host broadcasts (`0020f780`: 4.0 s, live at the end).
 pub const COUNTDOWN_S: f32 = 4.;
 
@@ -69,6 +75,12 @@ pub struct Field {
     first_finish: Option<f64>,
     /// Latest progress by participant id (this race's serial only).
     pub progress: BTreeMap<u8, RaceProgress>,
+    /// Racers seen leaving the room. They stay out even if a late joiner
+    /// later takes the same room slot id (that rider spectates).
+    gone: [bool; RACE_RIDERS],
+    /// A report changed since the last step / when it was last heard (ms).
+    fresh: [bool; RACE_RIDERS],
+    heard: [f64; RACE_RIDERS],
 }
 
 /// Start slots for the riders (ascending ids) from the original shuffle
@@ -105,6 +117,9 @@ impl Field {
             phase_at: now,
             first_finish: None,
             progress: BTreeMap::new(),
+            gone: [false; RACE_RIDERS],
+            fresh: [false; RACE_RIDERS],
+            heard: [f64::NEG_INFINITY; RACE_RIDERS],
         }
     }
 
@@ -125,8 +140,13 @@ impl Field {
         if progress.serial == self.serial
             && (progress.peer as usize) < RACE_RIDERS
             && self.info.grid[progress.peer as usize] > 0
+            && !self.gone[progress.peer as usize]
             && self.phase != race_phase::RESULTS
         {
+            let before = self.progress.get(&progress.peer).copied();
+            if before.is_none_or(|b| b.distance != progress.distance || b.lap != progress.lap) {
+                self.fresh[progress.peer as usize] = true;
+            }
             let entry = self.progress.entry(progress.peer).or_insert(progress);
             // A finish time, once reported, stands.
             let finish = if entry.finish_ms > 0 {
@@ -142,11 +162,16 @@ impl Field {
     }
 
     /// A rider left the room: they stay in the results as not finished, and
-    /// nobody waits for them.
-    fn present(&self, roster: &[u8]) -> Vec<u8> {
+    /// nobody waits for them (nor for a late joiner reusing their id).
+    fn present(&mut self, roster: &[u8]) -> Vec<u8> {
+        for id in self.racers() {
+            if !roster.contains(&id) {
+                self.gone[id as usize] = true;
+            }
+        }
         self.racers()
             .into_iter()
-            .filter(|id| roster.contains(id))
+            .filter(|id| !self.gone[*id as usize])
             .collect()
     }
 
@@ -154,6 +179,11 @@ impl Field {
     /// Returns true when the phase changed.
     pub fn step(&mut self, now: f64, roster: &[u8]) -> bool {
         let present = self.present(roster);
+        for id in 0..RACE_RIDERS {
+            if std::mem::take(&mut self.fresh[id]) {
+                self.heard[id] = now;
+            }
+        }
         let before = self.phase;
         match self.phase {
             race_phase::GRID => {
@@ -177,7 +207,16 @@ impl Field {
                     self.first_finish = Some(now);
                 }
                 let all = present.iter().all(finished);
-                let timed_out = self.first_finish.is_some_and(|t| now - t >= FINISH_WAIT_MS);
+                // A rider still riding (heard lately) is ranked at the finish
+                // wait; one gone quiet may have crossed the line behind a slow
+                // link, so the host waits a little longer for its report.
+                let quiet = present
+                    .iter()
+                    .any(|id| !finished(id) && now - self.heard[*id as usize] > STALE_MS);
+                let timed_out = self.first_finish.is_some_and(|t| {
+                    now - t >= FINISH_WAIT_MS
+                        && (!quiet || now - t >= FINISH_WAIT_MS + LATE_GRACE_MS)
+                });
                 if all || timed_out || present.is_empty() {
                     self.finish();
                 }
@@ -217,6 +256,25 @@ impl Field {
         }
     }
 
+    /// A guest who becomes the room host mid-race (the relay hands the room
+    /// to the lowest remaining rider when the host leaves) takes the race
+    /// over from its mirror at `now` (ms): the countdown keeps its time
+    /// left, a finish wait restarts, and the old host ranks as gone at the
+    /// next step.
+    pub fn adopt(&mut self, now: f64) {
+        self.phase_at = match self.phase {
+            race_phase::COUNTDOWN => now - f64::from(COUNTDOWN_S - self.timer) * 1000.,
+            _ => now,
+        };
+        self.first_finish = self
+            .progress
+            .values()
+            .any(|p| p.finish_ms > 0)
+            .then_some(now);
+        // Everyone gets a fresh hearing under the new host.
+        self.heard = [now; RACE_RIDERS];
+    }
+
     /// A guest's copy of the host's race.
     pub fn mirror(state: &GameState) -> Self {
         Self {
@@ -228,6 +286,9 @@ impl Field {
             phase_at: 0.,
             first_finish: None,
             progress: BTreeMap::new(),
+            gone: [false; RACE_RIDERS],
+            fresh: [false; RACE_RIDERS],
+            heard: [f64::NEG_INFINITY; RACE_RIDERS],
         }
     }
 }
@@ -326,7 +387,14 @@ impl RoomRace {
             return None;
         };
         let now = net.session_now() as f64;
-        let field = Field::new(previous.wrapping_add(1).max(1), variant, laps, &roster, seed, now);
+        let field = Field::new(
+            previous.wrapping_add(1).max(1),
+            variant,
+            laps,
+            &roster,
+            seed,
+            now,
+        );
         net.send_game(&field.state());
         let load = settings(&field, me, u64::from(field.serial))?;
         Some((
@@ -353,7 +421,9 @@ impl RoomRace {
         let ships = atv_game::launch::RaceVariant::ALL
             .get(state.race.variant as usize)
             .is_some_and(|v| v.exists(environment));
-        let load = (state.phase != race_phase::RESULTS && ships)
+        // A rider first seeing a race already under way (a late joiner, maybe
+        // reusing a leaver's slot id) spectates it and joins the next one.
+        let load = (state.phase <= race_phase::COUNTDOWN && ships)
             .then(|| settings(&field, me, u64::from(state.serial)))
             .flatten()
             .map(Action::Load);
@@ -385,6 +455,12 @@ impl RoomRace {
         net: &mut crate::multiplayer::Net,
     ) -> Option<Action> {
         let now = net.session_now() as f64;
+        // The host left and the room passed to this rider: run the race on.
+        if !self.host && net.is_host() {
+            self.host = true;
+            self.field.adopt(now);
+            self.last_broadcast = 0.;
+        }
         // The ride is this race once its reload carries the race's serial.
         self.loaded = ride.race().is_some_and(|r| {
             let s = r.settings();
@@ -621,6 +697,108 @@ mod tests {
     }
 
     #[test]
+    fn a_late_joiner_reusing_a_leavers_id_is_not_waited_for() {
+        let mut f = Field::new(4, 0, 1, &[0, 1], 9, 0.);
+        f.report(progress(0, 4, 0, 0., 0));
+        f.report(progress(1, 4, 0, 0., 0));
+        f.step(0., &[0, 1]);
+        f.step(4000., &[0, 1]);
+        // Rider 1 leaves, a newcomer takes room slot 1.
+        assert!(!f.step(5000., &[0]));
+        f.report(progress(1, 4, 0, 50., 0));
+        assert_eq!(
+            f.progress[&1].distance, 0.,
+            "a gone rider's id reports nothing"
+        );
+        f.report(progress(0, 4, 1, 2000., 45_000));
+        assert!(
+            f.step(6000., &[0, 1]),
+            "the race ends once rider 0 finishes"
+        );
+        let rows = results(&f.state(), &|id| format!("R{id}"));
+        assert_eq!(rows[1].time, None);
+    }
+
+    #[test]
+    fn a_new_host_takes_over_mid_race() {
+        let mut host = Field::new(7, 0, 1, &[0, 1, 2], 9, 0.);
+        for id in 0..3 {
+            host.report(progress(id, 7, 0, 0., 0));
+        }
+        host.step(0., &[0, 1, 2]);
+        host.step(4000., &[0, 1, 2]);
+        host.report(progress(1, 7, 1, 2000., 50_000));
+        // Rider 1's mirror of the host's state, with the relayed progress.
+        let mut mirror = Field::mirror(&host.state());
+        mirror.progress = host.progress.clone();
+        mirror.report(progress(2, 7, 0, 900., 0));
+        // The host (0) leaves; rider 1 is the room's new host.
+        mirror.adopt(100_000.);
+        assert!(!mirror.step(100_001., &[1, 2]), "rider 2 is still racing");
+        mirror.report(progress(2, 7, 1, 2000., 70_000));
+        assert!(mirror.step(100_002., &[1, 2]));
+        let rows = results(&mirror.state(), &|id| format!("R{id}"));
+        assert_eq!(rows.iter().map(|r| r.id).collect::<Vec<_>>(), vec![1, 2, 0]);
+        assert_eq!(rows[2].time, None, "the old host ranks DNF");
+        // A countdown keeps its time left across the handoff.
+        let mut f = Field::new(8, 0, 1, &[0, 1], 9, 0.);
+        f.report(progress(0, 8, 0, 0., 0));
+        f.report(progress(1, 8, 0, 0., 0));
+        f.step(0., &[0, 1]);
+        f.step(1000., &[0, 1]);
+        let mut m = Field::mirror(&f.state());
+        m.adopt(50_000.);
+        m.step(50_500., &[1]);
+        assert!((m.timer - 2.5).abs() < 1e-3);
+    }
+
+    #[test]
+    fn a_quiet_rider_gets_a_grace_before_dnf() {
+        let mut f = Field::new(9, 0, 1, &[0, 1], 9, 0.);
+        f.report(progress(0, 9, 0, 0., 0));
+        f.report(progress(1, 9, 0, 0., 0));
+        f.step(0., &[0, 1]);
+        f.step(4000., &[0, 1]);
+        f.report(progress(1, 9, 0, 500., 0));
+        f.step(5000., &[0, 1]);
+        f.report(progress(0, 9, 1, 2000., 40_000));
+        f.step(10_000., &[0, 1]);
+        // Rider 1 has not been heard since 5 s: the wait is extended.
+        assert!(!f.step(10_000. + FINISH_WAIT_MS, &[0, 1]));
+        // Its delayed finish arrives and stands.
+        f.report(progress(1, 9, 1, 2000., 39_000));
+        assert!(f.step(10_000. + FINISH_WAIT_MS + 5_000., &[0, 1]));
+        let rows = results(&f.state(), &|id| format!("R{id}"));
+        assert_eq!(rows[0].id, 1, "the earlier time wins once it arrives");
+        // A rider never heard again is ranked after the grace.
+        let mut g = Field::new(10, 0, 1, &[0, 1], 9, 0.);
+        g.report(progress(0, 10, 0, 0., 0));
+        g.report(progress(1, 10, 0, 0., 0));
+        g.step(0., &[0, 1]);
+        g.step(4000., &[0, 1]);
+        g.report(progress(0, 10, 1, 2000., 40_000));
+        g.step(10_000., &[0, 1]);
+        assert!(!g.step(10_000. + FINISH_WAIT_MS + LATE_GRACE_MS - 1., &[0, 1]));
+        assert!(g.step(10_000. + FINISH_WAIT_MS + LATE_GRACE_MS, &[0, 1]));
+    }
+
+    #[test]
+    fn guests_load_only_races_not_yet_under_way() {
+        let mut f = Field::new(6, 0, 1, &[0, 1], 9, 0.);
+        let mut state = f.state();
+        assert!(RoomRace::guest(&state, 1, "sx01").1.is_some());
+        // A rider without a slot spectates.
+        assert!(RoomRace::guest(&state, 2, "sx01").1.is_none());
+        f.report(progress(0, 6, 0, 0., 0));
+        f.report(progress(1, 6, 0, 0., 0));
+        f.step(0., &[0, 1]);
+        f.step(4000., &[0, 1]);
+        state = f.state();
+        assert_eq!(state.phase, race_phase::RACING);
+        assert!(RoomRace::guest(&state, 1, "sx01").1.is_none());
+    }
+
+    #[test]
     fn the_race_ends_after_the_finish_wait() {
         let mut f = Field::new(3, 0, 1, &[0, 1], 9, 0.);
         f.report(progress(0, 3, 0, 0., 0));
@@ -629,6 +807,9 @@ mod tests {
         f.step(4000., &[0, 1]);
         f.report(progress(0, 3, 1, 2000., 40_000));
         f.step(10_000., &[0, 1]);
+        // Rider 1 is still riding (heard lately), just not across the line.
+        f.report(progress(1, 3, 0, 1500., 0));
+        f.step(10_000. + FINISH_WAIT_MS - 1_000., &[0, 1]);
         assert!(!f.step(10_000. + FINISH_WAIT_MS - 1., &[0, 1]));
         assert!(f.step(10_000. + FINISH_WAIT_MS, &[0, 1]));
         let state = f.state();

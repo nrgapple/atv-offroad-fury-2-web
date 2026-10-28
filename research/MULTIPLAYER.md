@@ -557,13 +557,17 @@ race packet, start synchronization or result agreement has been recovered
 
 ### Rules
 
-- **Start.** The room host chooses Pause → Play Race on a race course the
-  room is on (Select Track picks it: National `nat01`–`nat08`, Supercross
-  `sx01`–`sx16`, or a Freestyle venue's National race). Laps come from the
-  host's Race menu setting (1–5; `raceLaps=N` test hook). The host's unlocks
-  decide availability: the track list is the host's. Enduro and Short Track
-  are carried in the protocol (`RaceInfo::variant`) but not yet offered in
-  the menu.
+- **Start.** The room host opens Pause on a race course the room is on
+  (Select Track picks it: National `nat01`–`nat08`, Supercross `sx01`–`sx16`,
+  or an Enduro venue `env01`–`env08`) and chooses one row per race that
+  course ships (`multiplayer::room_races`, `RaceVariant::exists`): Play Race
+  (the National/Supercross race), Play Enduro Long, Play Enduro Short and,
+  on `env01`/`env06`/`env07`, Play Short Track. These are every race course
+  the single-player Race menu offers. Laps come from the host's Race menu
+  setting (1–5; `raceLaps=N` test hook). The host's unlocks decide
+  availability: the track list is the host's. A guest loads the race only
+  when its own build ships that course (an untrusted host cannot name a
+  missing course).
 - **Grid.** Start slots come from the original shuffle (`001f6350`,
   `atv_core::race::start_slots`) over the riders in the room, drawn by the
   host and broadcast, so every peer sees the same grid. Each rider takes its
@@ -590,10 +594,33 @@ race packet, start synchronization or result agreement has been recovered
   rows, or the mini-game results panel for a rider who did not cross the
   line. Online races credit no Profile Points and record no Hall of Fame
   entries (manual).
-- **Late joiners and leavers.** A rider who joins mid-race has no grid slot:
-  it free-rides the course and joins the next race. A rider who leaves is not
-  waited for and ranks as not finished; if every racer leaves the race ends.
-  The host leaving still ends the room (no host migration in the original).
+- **Late joiners and leavers.** A rider who first sees a race already past
+  its countdown (a late joiner) has no grid slot to take: it free-rides the
+  course as a spectator, sees the agreed Race Results when they arrive, and
+  joins the next race. A rider who leaves is not waited for and ranks as not
+  finished; the host remembers it as gone, so a late joiner who reuses the
+  leaver's room slot id is neither waited for nor credited with the
+  leaver's progress. If every racer leaves the race ends.
+- **Host leaving.** The relay hands the room to the lowest remaining rider
+  (drop-in rooms, above). That rider's mirror of the race becomes the host
+  race (`Field::adopt`): the countdown keeps its time left, an already
+  running finish wait restarts, and the old host ranks as not finished. It
+  has every rider's relayed progress, so the race runs on to agreed results.
+  The original's online host leaving is not recovered; this is authored.
+- **Finish-time desync.** Each rider times its own race locally from its
+  own GO (started at the host's countdown less half the relay round trip),
+  so times can differ from a shared clock by up to about half the round
+  trip. The host never re-times: the first finish time a rider reports
+  stands, later reports cannot erase or change it, and the host's frozen
+  `scores` are what every peer shows.
+- **Slow links at the finish wait.** When the 30 s finish wait runs out, a
+  rider still in the room whose progress has not changed for 3 s
+  (`STALE_MS`) may have crossed the line behind a slow link: the host waits
+  up to 30 s more (`LATE_GRACE_MS`) for its report before ranking it not
+  finished. A late finish time that arrives in that window ranks by its time
+  (an earlier time can still win). Measured cause: on a heavily loaded host
+  machine (load average ~200) the local relay round trip reached 26–40 s, and
+  without the grace a rider who finished first was ranked DNF. Authored.
 - **Next race.** On the results panel the host's Race Again starts a new race
   (new serial, new grid) for everyone; Quit returns the rider to the room's
   Free Ride on the same course.
@@ -620,13 +647,16 @@ race packet, start synchronization or result agreement has been recovered
 
 - `crates/atv-app/src/room_race.rs`: `Field`, the participant list (rider
   ids with start slots) and host state machine with unit tests (grid,
-  countdown, finish, leavers, finish wait, standings), and `RoomRace`, its
+  countdown, finish, leavers, a leaver's reused id, host handoff, late joiners, finish wait, standings), and `RoomRace`, its
   glue to the room socket and ride. A local split-screen race can drive
   `Field` by reporting each local player's progress under its own id.
 - `atv_game::ride::race::Settings::room` (slot, riders) and `Ride::room_go`;
   `atv_core::race::Race::set_player_grid`; `RaceState::room` standings.
 - Relay: `crates/atv-relay` `Packet::Progress` handling and the `races` flag.
-- Browser gate: `tools/test_engine_multiplayer_race.mjs` (relay group).
+- Browser gate: `tools/test_engine_multiplayer_race.mjs` (relay group): two
+  pages race a Supercross room, agree the results, the guest quits back to
+  the room's Free Ride, the host's Race Again starts a second race the guest
+  joins, and the guest leaves mid-race (host finishes, guest ranks DNF).
 
 ### Next modes
 

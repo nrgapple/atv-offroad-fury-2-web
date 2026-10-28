@@ -6844,6 +6844,9 @@ impl App {
         self.game = None;
         self.hockey = None;
         self.tag = None;
+        // A room race ends with its room; the next room numbers from 1.
+        self.room_race = None;
+        self.room_race_serial = 0;
         let Some(ready) = self.ready.take() else {
             return false;
         };

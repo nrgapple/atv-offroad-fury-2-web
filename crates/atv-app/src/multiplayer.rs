@@ -1177,6 +1177,25 @@ pub async fn load_model(content: Rc<Content>, key: Key) -> Result<RemoteModel, (
         .map_err(|e| (key, e))
 }
 
+/// The races a room on `environment` can start (research/MULTIPLAYER.md
+/// "Room races"): variant index and pause-menu row.
+pub fn room_races(environment: &str) -> Vec<(u8, &'static str)> {
+    atv_game::launch::RaceVariant::ALL
+        .iter()
+        .enumerate()
+        .filter(|(_, v)| v.exists(environment))
+        .map(|(at, v)| {
+            let label = match v {
+                atv_game::launch::RaceVariant::National => "Play Race",
+                atv_game::launch::RaceVariant::EnduroLong => "Play Enduro Long",
+                atv_game::launch::RaceVariant::EnduroShort => "Play Enduro Short",
+                atv_game::launch::RaceVariant::ShortTrack => "Play Short Track",
+            };
+            (at as u8, label)
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1201,23 +1220,4 @@ mod tests {
         kept.sort_unstable();
         assert_eq!(kept, [3, 20]);
     }
-}
-
-/// The races a room on `environment` can start (research/MULTIPLAYER.md
-/// "Room races"): variant index and pause-menu row.
-pub fn room_races(environment: &str) -> Vec<(u8, &'static str)> {
-    atv_game::launch::RaceVariant::ALL
-        .iter()
-        .enumerate()
-        .filter(|(_, v)| v.exists(environment))
-        .map(|(at, v)| {
-            let label = match v {
-                atv_game::launch::RaceVariant::National => "Play Race",
-                atv_game::launch::RaceVariant::EnduroLong => "Play Enduro Long",
-                atv_game::launch::RaceVariant::EnduroShort => "Play Enduro Short",
-                atv_game::launch::RaceVariant::ShortTrack => "Play Short Track",
-            };
-            (at as u8, label)
-        })
-        .collect()
 }
