@@ -215,7 +215,7 @@ pub fn scenery_triangles(
     let mut draws: Vec<_> = scenery
         .draws
         .iter()
-        .filter(|d| scenery.chunks[d.chunk].pass_index == 0)
+        .filter(|d| d.lod == 0 && scenery.chunks[d.chunk].pass_index == 0)
         .collect();
     draws.sort_by(|a, b| a.matrix[13].total_cmp(&b.matrix[13]));
     let mut fills: std::collections::HashMap<usize, [u8; 3]> = Default::default();
