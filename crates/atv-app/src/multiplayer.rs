@@ -515,8 +515,6 @@ impl Net {
                 Event::Message(bytes, at) => {
                     if let Err(error) = self.session.receive(&bytes, arrival(self.clock, at, now)) {
                         self.socket.close();
-                        // TEMP diagnostics
-                        crate::status(&format!("bad packet {:02x?}", &bytes[..bytes.len().min(96)]));
                         self.closed = Some(format!("Invalid session message: {error}"));
                         return tick;
                     }

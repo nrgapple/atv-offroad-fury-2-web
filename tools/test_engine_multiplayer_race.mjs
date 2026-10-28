@@ -50,7 +50,7 @@ async function shot(p, name) {
 const browser = await launch();
 try {
   const open = async () => {
-    const p = await newPage(browser, { viewport: { width: 960, height: 540 } }, errors);
+    const p = await newPage(browser, { viewport: { width: 640, height: 360 } }, errors);
     await p.addInitScript(() => {
       localStorage.setItem('atv2-keyboard-help-seen-v1', '1');
       Object.defineProperty(document, 'hasFocus', { value: () => true });
@@ -69,7 +69,7 @@ try {
 
   // Pause → Play Race (the host's row).
   await host.bringToFront();
-  await host.mouse.click(480, 300);
+  await host.mouse.click(320, 180);
   await key(host, 'Escape');
   await host.waitForFunction(() => JSON.parse(document.querySelector('#ui-state').textContent).toolbar?.menu?.page === 'pause', null, { timeout: 30000 });
   const menu = (await ui(host)).toolbar.menu;
