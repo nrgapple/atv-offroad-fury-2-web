@@ -640,6 +640,17 @@ mod tests {
                     .unwrap_or_else(|| panic!("{path} lacks {name}"));
                 let text = String::from_utf8_lossy(&archive.extract(index).unwrap()).into_owned();
                 let toy = Toy::parse(&text);
+                // Split screen (research/SPLIT_SCREEN.md "Slice 3"): two
+                // riders keep their own records, and player 2 has a start
+                // (its own `Start2`, else the port's beside-player-1 spot;
+                // a TOY without starts keeps the venue's ride start).
+                let split = rules_for(kind, &text, 2).unwrap();
+                assert_eq!(split.scores(), vec![0, 0], "{venue}");
+                assert!(!split.progress(1).is_empty(), "{venue}");
+                let starts = parse_starts(&toy);
+                if starts.len() < 2 {
+                    eprintln!("{venue} {kind:?}: {} start(s)", starts.len());
+                }
                 match kind {
                     GameKind::KingOfTheHills => {
                         let g = king_of_the_hill::KingOfTheHill::new(&toy).unwrap();

@@ -62,6 +62,9 @@ pub struct GameSession {
     test_clock: f32,
     /// `gameTest=visit` placements so far.
     visits: u32,
+    /// A mode TOY without `Start%d` keeps the venue's ride start: player
+    /// 1's first pose, so Restart Game returns both players there.
+    venue_start: Option<([f32; 3], f32)>,
     /// `gameTest=hill`: a landed chain's points for the next sample (an
     /// ATV placed in the air opens no stunt).
     inject: Option<(usize, f32)>,
@@ -112,6 +115,7 @@ impl GameSession {
             ride_off: crate::url_flag("gameTest=hillride").then_some(0),
             test_clock: 0.,
             visits: 0,
+            venue_start: None,
             inject: None,
             hill_player: usize::from(crate::url_flag("gameTest=hill2")),
             sounds: Vec::new(),
@@ -143,8 +147,22 @@ impl GameSession {
     }
 
     fn place(&mut self, ride: &mut Ride, second: Option<&mut Ride>) {
-        if let Some(start) = self.starts.first()
-            && let Err(error) = ride.place_beside(start.position, start.yaw(), [0.; 3])
+        // Ten courses' mode TOYs have no starts (every other one has
+        // `Start1` and `Start2`): the venue's ride start, remembered.
+        if self.starts.is_empty() && self.venue_start.is_none() {
+            let f = ride.frame();
+            let [w, x, y, z] = f.orientation;
+            let yaw =
+                atv_core::math::Det::atan2_d(2. * (w * y + x * z), 1. - 2. * (y * y + x * x));
+            self.venue_start = Some((f.origin, yaw));
+        }
+        let first = self
+            .starts
+            .first()
+            .map(|s| (s.position, s.yaw()))
+            .or(self.venue_start);
+        if let Some((at, yaw)) = first
+            && let Err(error) = ride.place_beside(at, yaw, [0.; 3])
         {
             crate::status(&format!("Game placement failed: {error}"));
         }
@@ -152,20 +170,12 @@ impl GameSession {
         self.steps = ride.steps();
         self.committed[0] = ride.committed_points();
         // Player 2 takes the TOY's second start (`Start%d` is one per
-        // player slot); a course with one start puts it beside player 1.
+        // player slot); without one it rides beside player 1's start.
         if let Some(ride2) = second {
-            let (at, yaw) = match (self.starts.get(1), self.starts.first()) {
+            let (at, yaw) = match (self.starts.get(1), first) {
                 (Some(s), _) => (s.position, s.yaw()),
-                (None, Some(s)) => crate::split::freeride_start(s.position, s.yaw()),
-                (None, None) => {
-                    let f = ride.frame();
-                    let [w, x, y, z] = f.orientation;
-                    let yaw = atv_core::math::Det::atan2_d(
-                        2. * (w * y + x * z),
-                        1. - 2. * (y * y + x * x),
-                    );
-                    crate::split::freeride_start(f.origin, yaw)
-                }
+                (None, Some((at, yaw))) => crate::split::freeride_start(at, yaw),
+                (None, None) => crate::split::freeride_start(ride.frame().origin, 0.),
             };
             if let Err(error) = ride2.place_beside(at, yaw, [0.; 3]) {
                 crate::status(&format!("Player 2 game placement failed: {error}"));
@@ -301,7 +311,7 @@ impl GameSession {
             // Split screen: the players take turns, so both collect.
             self.visits += 1;
             match second.as_deref_mut() {
-                Some(ride2) if self.visits % 2 == 0 => place(ride2, m.position),
+                Some(ride2) if self.visits.is_multiple_of(2) => place(ride2, m.position),
                 _ => place(ride, m.position),
             }
         }
