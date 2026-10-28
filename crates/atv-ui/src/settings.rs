@@ -160,6 +160,16 @@ pub fn ecosystem_collision(settings: &Settings) -> bool {
     settings.get("atv-ecosystem-collision").as_deref() != Some("off")
 }
 
+/// Game Settings → New Profiles (`atv-new-profiles-unlocked`, port option):
+/// "on" gives profiles created on this device Unlock Everything. A device
+/// setting like the rest of Game Settings; unlocks themselves live in the
+/// profiles and travel with the Pass Key.
+pub const NEW_PROFILES_KEY: &str = "atv-new-profiles-unlocked";
+
+pub fn new_profiles_unlocked(settings: &Settings) -> bool {
+    settings.get(NEW_PROFILES_KEY).as_deref() == Some("on")
+}
+
 pub fn load_book(settings: &Settings) -> atv_core::profile::ProfileBook {
     use atv_core::profile::{Profile, ProfileBook};
     let mirror: Option<Profile> = settings

@@ -754,6 +754,7 @@ fn page_title(page: &str) -> &'static str {
         "profile-trophies" => "Trophies",
         "profile-records" => "Records",
         "profile-slots" | "profile-confirm" => "Profile Editor",
+        "profile-unlock" => "Unlock Everything",
         "gear" => "Rider Gear",
         "passkey" => "Pass Key",
         "passkey-entry" => "Enter Pass Key",
@@ -1439,6 +1440,7 @@ fn left(m: &Metrics, s: &Screen) -> El {
                 | "profile-name"
                 | "profile-slots"
                 | "profile-confirm"
+                | "profile-unlock"
                 | "profile-view"
                 | "profile-overview"
                 | "profile-trophies"
