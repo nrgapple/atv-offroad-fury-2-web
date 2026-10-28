@@ -78,6 +78,9 @@ try {
     await shot(page, `store-cheats-${suffix}`);
     await page.mouse.click(8, 8);
     await key(page, 'Escape'); await onPage(page, 'store');
+    // Back returned to the Cheats row; up to ATVs.
+    for (let i = 0; i < 6 && (await read(page)).choices[(await read(page)).selection] !== 'store-atv'; i++)
+      await key(page, 'ArrowUp');
 
     // ATVs (keyboard): step to the Patriot and buy it.
     await key(page, 'Enter'); await onPage(page, 'store-atv');

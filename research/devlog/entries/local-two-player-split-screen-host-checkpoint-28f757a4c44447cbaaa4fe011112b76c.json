@@ -1,0 +1,20 @@
+{
+  "id": "local-two-player-split-screen-host-checkpoint-28f757a4c44447cbaaa4fe011112b76c",
+  "timestamp": "2026-10-28T01:28:06.210811+00:00",
+  "recorded_at": "2026-10-28T01:32:07.314768+00:00",
+  "kind": "build",
+  "title": "Local two-player split screen (host checkpoint)",
+  "summary": "Main Menu \u2192 Multiplayer \u2192 Split Screen now rides Freestyle and races with two local players on one screen, top and bottom or side by side, each with the original split-screen camera presets, its own controller or keyboard half, its own HUD, and combined race results.",
+  "details": [
+    "Each player rides a full Rust ride on the shared venue; player 2 is drawn through the scene's multiplayer rider slot and the two riders collide with the rooms' authored contact rule.",
+    "The renderer prepares and submits the scene once per view into its own viewport, then draws the UI once.",
+    "Cameras switch to the original FollowCamPresets.pb horizontal (Preset<n>h) and vertical (Preset<n>v) sections.",
+    "Player 1 plays the first connected controller and the keyboard's left side; player 2 the second controller and the arrows/numpad side. Slots follow connection order.",
+    "Races: player 1's race holds the CPU field, player 2 races its own copy from the next grid slot; standings, PLACE trees and track maps merge both, and the results wait until both finish.",
+    "Host-only Chromium (Apple silicon, 1280x720, ENV01 autodrive, player 2 idle): CPU per frame Enhanced 4.25 ms single vs 7.38/7.49 ms split (top-bottom/side-by-side), High 5.62 ms vs 9.89/10.20 ms; render 2.67 \u2192 5.05/5.18 ms Enhanced. Not phone or desktop-app evidence.",
+    "tools/test_engine_split_screen.mjs drives both players from the menu: Freestyle with keyboard and two stand-in pads, then a one-lap side-by-side race to combined results."
+  ],
+  "limitation": "Online rooms do not yet offer split-screen modes.",
+  "image": "/devlog-images/local-two-player-split-screen-host-checkpoint-28f757a4c44447cbaaa4fe011112b76c.png",
+  "caption": "A side-by-side race with both players in each PLACE tree"
+}

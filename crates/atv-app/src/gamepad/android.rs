@@ -264,6 +264,11 @@ impl Gamepads {
         true
     }
 
+    /// Split screen: one controller plays player 1 on Android for now.
+    pub fn sample_slot(&mut self, slot: usize) -> Option<Pad> {
+        if slot == 0 { self.sample() } else { None }
+    }
+
     pub fn sample(&mut self) -> Option<Pad> {
         let now = Instant::now();
         if self
