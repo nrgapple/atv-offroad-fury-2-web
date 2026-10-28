@@ -498,9 +498,10 @@ impl ProfileBook {
     }
 
     /// Drops an out-of-range selection and blank names (a hand-edited or
-    /// damaged save).
+    /// damaged save). A cloud-save merge may hold more than [`SLOTS`]
+    /// profiles (`cloud_save::MERGE_SLOTS`); none of those are dropped.
     pub fn normalize(&mut self) {
-        self.profiles.truncate(SLOTS);
+        self.profiles.truncate(crate::cloud_save::MERGE_SLOTS);
         for (i, profile) in self.profiles.iter_mut().enumerate() {
             profile.name = clean_name(&profile.name).trim_end().to_string();
             if profile.name.is_empty() {
