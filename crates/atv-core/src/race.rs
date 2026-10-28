@@ -2186,9 +2186,9 @@ impl Race {
             }
             ahead - 20.
         } else {
-            course
-                .finish_at
-                .map_or(f32::MAX, |at| (at - course.station_distance(from)).rem_euclid(cycle) - 20.)
+            course.finish_at.map_or(f32::MAX, |at| {
+                (at - course.station_distance(from)).rem_euclid(cycle) - 20.
+            })
         };
         let mut out: Vec<RecoveryPoint> = Vec::new();
         for &d in distances {
@@ -2742,19 +2742,23 @@ mod tests {
         let last = *points.last().unwrap();
         r.accept_recovery_station(0, last.station, last.gained);
         r.restore_checkpoint(Some(0), last.point);
-        assert!((r.race_distance(0) - before - last.gained).abs() < 1., "{}", r.race_distance(0));
+        assert!(
+            (r.race_distance(0) - before - last.gained).abs() < 1.,
+            "{}",
+            r.race_distance(0)
+        );
     }
     #[test]
     fn enduro_recovery_stations_stop_before_the_next_gate() {
         let mut r = Race::new(enduro_course(), 1, vec!["CPU".into()], 1).unwrap();
         r.countdown = 0.;
         // Starting at (100, 40) heading south: next gate is gate 0 at (0, 50),
-        // 150ft along the route.
+        // 190ft along the route (40 + 100 + 50), so skips stop 20ft short.
         r.observe_cpu(0, [100., 0., 40.], 0., None);
         let points = r.recovery_stations(0, &crate::cpu_recovery::SKIP_DISTANCES);
         assert!(!points.is_empty());
         for p in &points {
-            assert!(p.gained <= 131., "{p:?}");
+            assert!(p.gained <= 171., "{p:?}");
         }
     }
     #[test]

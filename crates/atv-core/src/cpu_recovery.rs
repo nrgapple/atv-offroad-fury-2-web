@@ -7,13 +7,15 @@
 //! It watches each CPU's race distance (progress along the route, not
 //! speed) and its resets, and escalates only when the CPU repeats itself:
 //!
-//! 1. **Assist** after the second reset near the same race distance without
-//!    clearing it: the leader speed limit is lifted (a CPU held to 75ft/s
-//!    at sx15 takes a 220ft/s jump too slowly) and the lane goal is held on
-//!    the racing line, until the CPU is [`CLEAR`] past that reset.
-//! 2. **Skip ahead** after the third such reset, or when the race distance
-//!    has not advanced [`PROGRESS_STEP`] for [`STALL_SECONDS`] while
-//!    riding: the caller resets the CPU to a validated point further along
+//! 1. **Assist** after the third reset near the same race distance without
+//!    clearing it ([`ASSIST_REPEATS`]; two resets to one accepted point are
+//!    common in ordinary races and are left to the recovered rules): the
+//!    leader speed limit is lifted (a CPU held to 75ft/s at sx15 takes a
+//!    220ft/s jump too slowly) and the lane goal is held on the racing
+//!    line, until the CPU is [`CLEAR`] past that reset.
+//! 2. **Skip ahead** after the fourth such reset ([`SKIP_REPEATS`]), or
+//!    when the race distance has not advanced [`PROGRESS_STEP`] for
+//!    [`STALL_SECONDS`] while riding: the caller resets the CPU to a validated point further along
 //!    the route (instead of the accepted point, or in Enduro the rider's
 //!    own last valid position, which put a pinned CPU back where it stood).
 //!
@@ -27,6 +29,10 @@ pub const PROGRESS_STEP: f32 = 25.;
 pub const STALL_SECONDS: f32 = 15.;
 /// Resets within this race distance of the previous one count as repeats.
 pub const SAME_PLACE: f32 = 80.;
+/// Repeats (resets after the first near one race distance) that switch the
+/// assist on, and that request a skip ahead.
+pub const ASSIST_REPEATS: u32 = 2;
+pub const SKIP_REPEATS: u32 = 3;
 /// Race distance past a repeated reset that clears the escalation.
 pub const CLEAR: f32 = 400.;
 /// Route distances tried, in order, for a skip-ahead reset point.
@@ -62,6 +68,8 @@ pub struct Recovery {
     clear_at: f32,
     /// Skip-ahead resets requested (for traces and tests).
     pub skips: u32,
+    /// Times the assist switched on (for traces and tests).
+    pub assists: u32,
 }
 
 impl Recovery {
@@ -81,7 +89,7 @@ impl Recovery {
         if self.repeats > 0 && distance >= self.clear_at {
             self.repeats = 0;
         }
-        if riding && (self.since_progress > STALL_SECONDS || self.repeats >= 2) {
+        if riding && (self.since_progress > STALL_SECONDS || self.repeats >= SKIP_REPEATS) {
             return Action::SkipAhead;
         }
         Action::None
@@ -95,6 +103,9 @@ impl Recovery {
             .is_some_and(|previous| (distance - previous).abs() < SAME_PLACE);
         if repeat {
             self.repeats += 1;
+            if self.repeats == ASSIST_REPEATS {
+                self.assists += 1;
+            }
         } else {
             self.repeats = 0;
         }
@@ -113,7 +124,7 @@ impl Recovery {
     }
 
     pub fn assist(&self) -> Assist {
-        let on = self.repeats >= 1;
+        let on = self.repeats >= ASSIST_REPEATS;
         Assist {
             no_leader_limit: on,
             centre_lane: on,
@@ -142,6 +153,10 @@ mod tests {
         let mut r = Recovery::default();
         r.reset(1000.);
         r.observe(1000., true, DT);
+        // Two resets to about one place: still the recovered rules alone.
+        r.reset(1020.);
+        assert_eq!(r.assist(), Assist::default());
+        assert_eq!(r.observe(1020., true, DT), Action::None);
         r.reset(1010.);
         assert!(r.assist().no_leader_limit && r.assist().centre_lane);
         assert_eq!(r.observe(1010., true, DT), Action::None);
@@ -152,12 +167,13 @@ mod tests {
         r.skipped(1200.);
         assert_eq!(r.assist(), Assist::default());
         assert_eq!(r.observe(1200., true, DT), Action::None);
-        assert_eq!(r.skips, 1);
+        assert_eq!((r.assists, r.skips), (1, 1));
     }
 
     #[test]
     fn clearing_the_spot_ends_the_assist() {
         let mut r = Recovery::default();
+        r.reset(1000.);
         r.reset(1000.);
         r.reset(1000.);
         assert!(r.assist().no_leader_limit);
