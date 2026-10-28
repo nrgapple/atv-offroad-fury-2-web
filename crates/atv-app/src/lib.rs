@@ -529,6 +529,7 @@ impl ObjectiveSession {
                 position: [t.position[0], t.position[1] - 7., t.position[2]],
                 stale: false,
                 pill: None,
+                map_only: false,
             })
             .collect()
     }
@@ -649,6 +650,11 @@ struct App {
     hockey: Option<hockey::HockeySession>,
     /// Tag in a multiplayer room (`atv_core::tag`).
     tag: Option<tag::TagSession>,
+    /// The host's Play Tag reloads the room's venue from its TG archive;
+    /// the game starts with these minutes once that ride is ready.
+    tag_start: Option<u32>,
+    /// A guest's pending move to the room's Tag course.
+    tag_reload: Option<String>,
     /// The held room the next frontend ride resumes.
     pending_room: Option<multiplayer::Net>,
     /// `pending_room` was just joined (it meets a rider; a held room
@@ -1567,6 +1573,11 @@ impl App {
             self.reload_room(environment);
             return;
         }
+        // A guest following the host's Tag onto its course.
+        if let Some(environment) = self.tag_reload.take() {
+            self.reload_room_with(environment, true);
+            return;
+        }
         // The Training Course ended (`00225980` phase 3): back to the main
         // menu with the reward on the notice line.
         if let Some(session) = self.training.take_if(|t| t.finished) {
@@ -1663,7 +1674,38 @@ impl App {
         // Tag: the host starts it from Pause; guests join when its state
         // arrives. Leaving the room ends it.
         if ready.net.is_none() {
-            self.tag = None;
+            if self.tag.take().is_some() {
+                tag::TagSession::release(&mut riding.ride);
+            }
+            self.tag_start = None;
+        } else if self.tag.is_none()
+            && self.tag_start.is_some()
+            && !ready.venue.tag_ball
+            && ready.net.as_ref().is_some_and(|n| n.is_host())
+            && self.tag_reload.is_none()
+        {
+            // Games → Tag hosted the room on the venue's Freeride ride:
+            // move to the Tag course (or play here when it is not packaged).
+            if tag_scene(
+                ready.net.as_ref().map(|n| n.content()).as_ref(),
+                &ready.venue.environment,
+            )
+            .is_some()
+            {
+                self.tag_reload = Some(ready.venue.environment.clone());
+            } else if let Some(minutes) = self.tag_start.take() {
+                self.tag = Some(tag::TagSession::new(true, minutes));
+            }
+        } else if self.tag.is_none()
+            && let Some(minutes) = self
+                .tag_start
+                .filter(|_| ready.venue.tag_ball && ready.net.as_ref().is_some_and(|n| n.is_host()))
+        {
+            // The host's Play Tag, now riding the Tag course.
+            self.tag_start = None;
+            let mut session = tag::TagSession::new(true, minutes);
+            session.model = true;
+            self.tag = Some(session);
         } else if self.tag.is_none()
             && ready.venue.environment != "game01"
             && ready
@@ -1672,11 +1714,30 @@ impl App {
                 .and_then(|n| n.game_state())
                 .is_some_and(|g| g.game == 2 && g.phase == 0)
         {
-            self.tag = Some(tag::TagSession::new(false));
+            // A guest joins the host's game, first moving to the Tag course
+            // when the package has it.
+            if !ready.venue.tag_ball
+                && tag_scene(
+                    ready.net.as_ref().map(|n| n.content()).as_ref(),
+                    &ready.venue.environment,
+                )
+                .is_some()
+            {
+                self.tag_reload = Some(ready.venue.environment.clone());
+            } else {
+                let mut session = tag::TagSession::new(false, atv_core::games::DEFAULT_MINUTES);
+                session.model = ready.venue.tag_ball;
+                self.tag = Some(session);
+            }
         }
         let tag_view = match (&mut self.tag, ready.net.as_mut()) {
             (Some(session), Some(net)) => {
-                if session.update(&riding.ride, net)
+                if ready.venue.tag_ball {
+                    ready.scene.pose_prop(&ready.gpu, &session.ball_matrix());
+                }
+                session.start = ready.venue.scene.start_position;
+                session.crowd = ready.venue.scene.crowd_present;
+                if session.update(&mut riding.ride, net)
                     && let Some(overlay) = &mut self.overlay
                 {
                     overlay.results.show_game("Tag Results", session.summary());
@@ -1868,6 +1929,7 @@ impl App {
                         position: [x, y - 7., z],
                         stale: false,
                         pill: None,
+                        map_only: false,
                     })
                     .collect::<Vec<_>>()
             });
@@ -1891,6 +1953,7 @@ impl App {
                         name: m.label,
                         position: [m.position[0], m.position[1] - 7., m.position[2]],
                         stale: false,
+                        map_only: false,
                     })
                     .collect::<Vec<_>>()
             });
@@ -2214,6 +2277,9 @@ impl App {
                 "game": self.game.as_ref().map(games::GameSession::state),
                 "hockey": self.hockey.as_ref().map(|h| h.state(riding.ride.frame().origin)),
                 "tag": self.tag.as_ref().map(|t| t.state()),
+                "tagBall": ready.venue.tag_ball,
+                "engineEffect": riding.ride.engine_effect(),
+                "start": ready.venue.scene.start_position,
                 "oneShots": riding.sound.as_ref().map(|s| s.ride.race.stats.one_shots.clone()),
                 "objective": self.objective.as_ref().map(|o| serde_json::json!({
                     "series": o.series, "expert": o.expert, "course": o.course,
@@ -2780,8 +2846,25 @@ impl App {
                 let ok = self.ready.as_ref().is_some_and(|r| {
                     r.venue.environment != "game01" && r.net.as_ref().is_some_and(|n| n.is_host())
                 });
+                let minutes = self.tag_minutes();
+                let venue = self
+                    .ready
+                    .as_ref()
+                    .filter(|r| !r.venue.tag_ball)
+                    .map(|r| r.venue.environment.clone())
+                    .filter(|v| self.tag_course(v).is_some());
+                if ok && let Some(environment) = venue {
+                    // The original rides the venue's Tag course: reload the
+                    // room's ride from its TG archive, then start.
+                    self.menu_event(Event::Resume);
+                    self.tag_start = Some(minutes);
+                    self.reload_room_with(environment, true);
+                    return;
+                }
                 if ok {
-                    self.tag = Some(tag::TagSession::new(true));
+                    let mut session = tag::TagSession::new(true, minutes);
+                    session.model = self.ready.as_ref().is_some_and(|r| r.venue.tag_ball);
+                    self.tag = Some(session);
                     if let Some(overlay) = &mut self.overlay {
                         overlay.results = Default::default();
                     }
@@ -3179,7 +3262,10 @@ impl App {
                     .and_then(|r| r.net.as_ref())
                     .is_some_and(|n| n.is_host())
                 {
-                    self.tag = Some(tag::TagSession::new(true));
+                    let minutes = self.tag_minutes();
+                    let mut session = tag::TagSession::new(true, minutes);
+                    session.model = self.ready.as_ref().is_some_and(|r| r.venue.tag_ball);
+                    self.tag = Some(session);
                 }
                 if let Some(overlay) = &mut self.overlay {
                     overlay.results = Default::default();
@@ -3187,6 +3273,7 @@ impl App {
             }
             overlay::Action::RaceQuit if self.tag.is_some() => {
                 self.tag = None;
+                tag::TagSession::release(&mut riding.ride);
                 if let Some(overlay) = &mut self.overlay {
                     overlay.results = Default::default();
                 }
@@ -5592,6 +5679,7 @@ impl App {
         self.game = None;
         self.hockey = None;
         self.tag = None;
+        self.tag_start = None;
         match event {
             Event::Game {
                 kind,
@@ -5790,6 +5878,23 @@ impl App {
                 }
                 self.pending_room = Some(net);
                 self.start_ride(environment, quad, rider, None, None);
+            }
+            Event::TagHost {
+                environment,
+                minutes,
+                quad,
+                rider,
+                name,
+            } => {
+                self.front_event(Event::Host {
+                    environment,
+                    code: None,
+                    quad,
+                    rider,
+                    name,
+                });
+                // The room's ride moves to the Tag course and starts Tag.
+                self.tag_start = Some(minutes);
             }
             Event::Host {
                 environment,
@@ -7419,10 +7524,51 @@ fn publish_multiplayer(
     let _ = (net, contacts, ride, remote_sound, tags);
 }
 
+/// The room's Tag course (research/GAMES.md "Tag"): the venue's `*_TG.RES`
+/// read over its Freeride archive (the same scene, the Tag mode TOY's start
+/// and `tagball.psg`), when the package has it.
+fn tag_scene(content: Option<&Rc<Content>>, environment: &str) -> Option<(String, String)> {
+    let path = atv_core::games::game_archive(atv_core::games::GameKind::Tag, environment)?;
+    content
+        .is_some_and(|c| c.has(&path))
+        .then(|| (path, format!("{environment}tg")))
+}
+
 impl App {
+    /// The room's Tag course: its ride's package (a room booted from a link
+    /// has no frontend content), else the frontend's.
+    fn tag_course(&self, environment: &str) -> Option<(String, String)> {
+        let room = self
+            .ready
+            .as_ref()
+            .and_then(|r| r.net.as_ref())
+            .map(|n| n.content());
+        tag_scene(room.as_ref().or(self.content.as_ref()), environment)
+    }
+
+    /// Tag's time limit: Games Prep's minutes (the Games page's Time Limit
+    /// row, `0026b7a0`), `tagMinutes=N` for links and tests.
+    fn tag_minutes(&self) -> u32 {
+        (atv_core::games::MIN_MINUTES..=atv_core::games::MAX_MINUTES)
+            .find(|m| url_flag(&format!("tagMinutes={m}")))
+            .or_else(|| self.front.as_ref().map(|f| f.borrow().state.games.minutes))
+            .unwrap_or(atv_core::games::DEFAULT_MINUTES)
+    }
+
     /// The room moved to another course: reload the ride there, keeping the
     /// room (web/multiplayer.js `follow` -> `ride`).
     fn reload_room(&mut self, environment: String) {
+        self.tag_start = None;
+        self.reload_room_with(environment, false);
+    }
+
+    /// Reloads the room's ride; `tag` reads the venue's Tag course.
+    fn reload_room_with(&mut self, environment: String, tag: bool) {
+        let game_scene = if tag {
+            self.tag_course(&environment)
+        } else {
+            None
+        };
         let Some(mut ready) = self.ready.take() else {
             return;
         };
@@ -7453,7 +7599,7 @@ impl App {
             script: None,
             sound: net.ride.sound,
             autodrive: None,
-            game_scene: None,
+            game_scene,
             objective: None,
             split: None,
         };
@@ -7628,6 +7774,8 @@ pub fn run(options: Options) {
         game: None,
         hockey: None,
         tag: None,
+        tag_start: None,
+        tag_reload: None,
         pending_room: None,
         pending_fresh: false,
         joining: None,

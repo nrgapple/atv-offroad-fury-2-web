@@ -40,6 +40,9 @@ pub struct Peer {
     /// instead of a name tag, and only while the hill is on screen
     /// (`002207e0` hides it otherwise).
     pub pill: Option<String>,
+    /// A minimap marker only, no screen tag (Tag's ball when its
+    /// `tagball.psg` model is drawn).
+    pub map_only: bool,
 }
 
 /// Where a tag goes: screen position, whether it is pinned to the edge (the
@@ -111,7 +114,7 @@ pub fn paint_tags(
             .map(|(a, b)| (a - b) * (a - b))
             .sum::<f32>()
     };
-    let mut nearest: Vec<&Peer> = peers.iter().filter(|p| !p.stale).collect();
+    let mut nearest: Vec<&Peer> = peers.iter().filter(|p| !p.stale && !p.map_only).collect();
     nearest.sort_by(|a, b| distance(a).total_cmp(&distance(b)));
     nearest.truncate(MAX_NAME_TAGS);
     let font = Font::display(FONT_SIZE, 800, true);
@@ -356,6 +359,7 @@ mod tests {
             position: [x, -7., 0.],
             stale: false,
             pill: Some("1250".into()),
+            map_only: false,
         };
         let view = Viewport {
             width: 200.,
