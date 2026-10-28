@@ -794,7 +794,6 @@ impl Ride {
                     chosen = Some((last.station, last.gained));
                 }
                 if let Some((station, gained)) = chosen {
-                    eprintln!("DBG skip cpu {index} at {} gained {gained} seg {} laps {}", race.race_distance(index), station.segment, race.laps_completed(Some(index)));
                     race.accept_recovery_station(index, station, gained);
                     cpu.respawn(nodes)?;
                     let reset = cpu.vehicle.frame();

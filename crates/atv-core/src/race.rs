@@ -1289,9 +1289,6 @@ struct Progress {
     /// Finish-gate crossings handled (counted or skipped).
     crossings: u32,
 }
-/// Progress at an accepted reset point (RaceStatus +0xd0, which 001e35d0
-/// copies back to the racer's stations +0xb8/+0xc4 on a reset).
-#[derive(Clone, Copy, Debug)]
 /// A skip-ahead reset candidate ([`Race::recovery_stations`], port
 /// adaptation): its route station, the route distance gained, and the pose.
 #[derive(Debug, Clone, Copy)]
@@ -1301,6 +1298,9 @@ pub struct RecoveryPoint {
     pub point: [f32; 3],
     pub heading: f32,
 }
+/// Progress at an accepted reset point (RaceStatus +0xd0, which 001e35d0
+/// copies back to the racer's stations +0xb8/+0xc4 on a reset).
+#[derive(Clone, Copy, Debug)]
 struct Kept {
     station: Station,
     entered: bool,
@@ -2706,6 +2706,56 @@ mod tests {
         .unwrap();
         c.set_enduro(gates).unwrap();
         c
+    }
+    #[test]
+    fn retreat_undoes_advance() {
+        let c = course();
+        let from = Station {
+            segment: 2,
+            fraction: 0.25,
+        };
+        let ahead = c.advance(from, 130.);
+        let back = c.retreat(ahead, 130.);
+        assert_eq!(back.segment, 2);
+        assert!((back.fraction - 0.25).abs() < 1e-4, "{back:?}");
+        assert!((c.forward_distance(from, ahead) - 130.).abs() < 1e-3);
+    }
+    #[test]
+    fn recovery_stations_stop_short_of_the_finish_gate() {
+        let mut c = course();
+        // Finish gate 60ft along the course from the CPU's station.
+        c.finish_at = Some(160.);
+        let mut r = Race::new(c, 1, vec!["CPU".into()], 1).unwrap();
+        r.countdown = 0.;
+        r.observe_cpu(0, [0., 0., 0.], 0., None);
+        r.observe_cpu(0, [0., 0., 50.], 0., None);
+        r.observe_cpu(0, [0., 0., 100.], 0., None);
+        let from = r.station(Some(0));
+        assert_eq!(from.segment, 1);
+        let points = r.recovery_stations(0, &crate::cpu_recovery::SKIP_DISTANCES);
+        assert!(!points.is_empty());
+        for p in &points {
+            assert!(p.gained >= 10. && p.gained <= 41., "{p:?}");
+        }
+        // Accepting one moves the race distance on by what it gained.
+        let before = r.race_distance(0);
+        let last = *points.last().unwrap();
+        r.accept_recovery_station(0, last.station, last.gained);
+        r.restore_checkpoint(Some(0), last.point);
+        assert!((r.race_distance(0) - before - last.gained).abs() < 1., "{}", r.race_distance(0));
+    }
+    #[test]
+    fn enduro_recovery_stations_stop_before_the_next_gate() {
+        let mut r = Race::new(enduro_course(), 1, vec!["CPU".into()], 1).unwrap();
+        r.countdown = 0.;
+        // Starting at (100, 40) heading south: next gate is gate 0 at (0, 50),
+        // 150ft along the route.
+        r.observe_cpu(0, [100., 0., 40.], 0., None);
+        let points = r.recovery_stations(0, &crate::cpu_recovery::SKIP_DISTANCES);
+        assert!(!points.is_empty());
+        for p in &points {
+            assert!(p.gained <= 131., "{p:?}");
+        }
     }
     #[test]
     fn enduro_reset_point_is_the_rider_facing_its_next_gate() {
