@@ -169,3 +169,16 @@ records. The per-course 640x448 `LDSCREEN.RES` backdrops are not used: the origi
 loader's panels and bars are painted into those images, which cannot match a
 responsive layout. Records ("Fastest Lap", profile points) are not shown because
 the port has no saved records.
+
+## Stage rim (2026-10-28)
+
+The portrait stage's lower edge is one elliptical corner wider than half the
+screen (`border-radius: 75% / 56px` on a box 120% wide). The UI shader chose a
+box's corner by quadrant, so that curve stopped at the centre line and the
+straight edge took over about 3px lower: the white rim between the silver
+stage and the red controls broke in two. Corners now own the rectangle their
+radii span, with the CSS rule that scales every radius when two corners on a
+side overlap. Portrait stage pages keep 16/22px under the plate so the vehicle
+name clears the sweep. `tools/test_engine_menu_divider.mjs` follows the rim
+column by column (portrait) and row by row (landscape skew) in Chromium and
+WebKit at DPR 1 and 3; production before the fix jumped 3.33px at the centre.
