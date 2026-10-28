@@ -69,11 +69,13 @@ Every write is one D1 batch (a single transaction): the conditional
 that matched nothing leaves the table unchanged and is answered as a conflict (or
 404 for restore), so concurrent writers cannot both win the same revision.
 
-D1 was chosen by the user. The CI deployment token (Individual Workers Editor for
-this Worker plus Account Settings Read) deployed the D1 binding without extra
-permissions (PR #385). Schema migrations are **not** applied by CI: that token has
-no D1 permission. Apply them from the owner's machine with Wrangler OAuth before
-merging code that needs them (see Operations).
+D1 was chosen by the user. The CI deployment token has Individual Workers Editor
+for this Worker, Account Settings Read, and account-scoped D1 Write (the dashboard's
+D1 Edit option). GitHub Actions applies pending migrations before deploying the
+Worker, inside the serialized production job and after its stale-build gate.
+It uses the root `wrangler.jsonc` so `cloudflare/migrations` resolves correctly;
+the generated deployment config lives in a different directory. Migration failure
+stops deployment. PR jobs never receive this token or run remote migrations.
 
 ## Limits and abuse controls
 
@@ -114,9 +116,21 @@ the dev-log footer (`web/devlog.html`, `#privacy`).
 
 ## Operations
 
-All commands run from a checkout with Wrangler OAuth (`npx wrangler whoami`).
+Add schema changes as new numbered SQL files in `cloudflare/migrations/`; do not
+rewrite applied migrations. Merge them with the code that needs them. The trusted
+main deployment runs `wrangler d1 migrations apply SAVES --remote` automatically,
+using the existing GitHub `CLOUDFLARE_API_TOKEN` secret. Wrangler tracks applied
+files, so retries and deployments without new SQL skip them. Pure documentation
+changes do not deploy or migrate.
 
-Apply new migrations (before merging code that depends on them):
+Keep migrations compatible with the currently running Worker: the schema changes
+first, and a later deployment failure leaves the previous Worker serving it.
+For destructive changes, use separate additive, code-transition and cleanup
+releases. A failed migration rolls back that migration, not earlier successful
+ones; inspect the failure and fix forward before retrying the deployment.
+
+For manual inspection or recovery on the owner's machine, use a checkout with
+Wrangler OAuth (`npx wrangler whoami`). The equivalent commands are:
 
 ```sh
 npx wrangler d1 migrations list fury-saves --remote
