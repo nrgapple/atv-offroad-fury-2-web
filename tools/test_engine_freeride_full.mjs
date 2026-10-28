@@ -170,6 +170,10 @@ try {
   await page.mouse.click(8, 8);
   await key(page, 'Enter');
   await page.waitForFunction(() => JSON.parse(document.querySelector('#ui-state').textContent).front?.page === 'main');
+  // Main Menu → Multiplayer → Arlington Free Ride.
+  await key(page, 'ArrowDown');
+  await key(page, 'Enter');
+  await page.waitForFunction(() => JSON.parse(document.querySelector('#ui-state').textContent).front?.page === 'multiplayer');
   const choices = (await read(page)).front.choices;
   for (let i = 0; i < choices.indexOf('freeride'); i++) await key(page, 'ArrowDown');
   await key(page, 'Enter');

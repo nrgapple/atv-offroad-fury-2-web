@@ -103,22 +103,67 @@ menu laid over them and over a ride's Pause:
 - The browser's own Back button and gesture are not connected: they leave
   `play.html` as on any page.
 
+### Port page graph
+
+Rows in page order (port additions in italics). Back returns along the
+history; the Back column is where it leads when the page is opened from the
+row shown (its canonical parent).
+
+| Page | Rows → page | Back |
+| --- | --- | --- |
+| Title | Press Start → Main, *Dev log*, *Downloads* (web) | nothing |
+| Main Menu | Single Player, Multiplayer, Training Course (ride), Profile Editor, Hall of Fame, Options (overlay), *Dev log* (web) | Title |
+| Single Player | Race → Single Race, Freestyle → Select Track, *Freestyle Objectives*, Championships → Championship, *Games*, *Garage* → Select ATV & Rider | Main |
+| Single Race | Course, Laps, CPU riders, Difficulty, Start Race (ride), *Copy ride link* | Single Player |
+| Select Track | event tabs, courses, Ride (ride) | Single Player (Host Game when hosting, Split Screen in split screen) |
+| Championship | a championship (ride), Freestyle championships → Select Objective | Single Player |
+| *Freestyle Objectives* | a course → Select Objective | Single Player |
+| *Garage* | ATV, rider, Rider Gear → Rider Gear | the page that opened it |
+| Multiplayer | Split Screen → Split Screen, Host Game, Join Game, *Arlington Free Ride* (ride) | Main |
+| Split Screen | Race → Single Race, Freestyle → Select Track, Screen layout | Multiplayer |
+| Host Game / Join Game | name and code, Garage, Select Track / Join | Multiplayer |
+| Profile Editor | Create New Profile → name entry, Load / Copy / Delete → slots → Yes/No, View Current Profile → View Profile, Unlock Items → Profile Store | Main |
+| View Profile | Overview, Trophies, Records, ATVs, Rider Equipment, Games | Profile Editor |
+| Profile Store | ATVs, Rider Equipment, Games, Tracks, Cheats | Profile Editor |
+| Hall of Fame | event, course, difficulty | Main |
+| Options (main menu) | Jukebox, Game Settings, Controls, *Display*, *Audio*, *Extras*, *Alpha* | Main (closes) |
+| Pause | Resume, Restart/Reset, Options (no Jukebox row), Jukebox, … Quit to Main Menu | Resume |
+
 ## Deviations kept on purpose
 
 - **Title.** The port opens on a title page (Press Start, Dev log, Downloads)
   and Back on the main menu returns to it; the original main menu ignores
-  Triangle.
+  Triangle. The main menu keeps a Dev log row on the web.
 - **Rides start from their setup page.** Freestyle rides from Select Track and
   Single Race from its setup page with the Garage choice; the original goes
   Track Select → Next → ATV & Rider → Start Event. The Garage stays a
   separate Single Player row.
+- **Single Player** adds Freestyle Objectives after Freestyle (the original's
+  Freestyle Prep Objectives event is an event type inside Track Select) and
+  Games after Championships (the original's Games are split-screen only,
+  under Multiplayer → Split Screen; the port plays them alone). There is no
+  Waypoint Editor.
+- **Multiplayer** has no i.LINK or LAN; Host Game and Join Game stand for the
+  network games and Arlington Free Ride for Online, last as Online was. Its
+  live rider count shows there, and leaving a Free Ride or room returns to
+  Multiplayer.
+- **Options** is also the ride's Pause → Options (the original Pause has only
+  volumes and camera); from Pause it has no Jukebox row because Pause lists
+  one. Controller Settings is the port's Controls page (keyboard, controller
+  and touch); there is no Credits page; Display, Audio, Extras and Alpha are
+  the port's own pages.
+- **Quit to Main Menu** from Pause unwinds to the main menu as its label
+  says; the original's Quit returns to the page that started the event
+  (the results' Continue does that in the port).
 
 ## Verification
 
 - Rust: `atv-ui` `front::controller::navigation` tests (Back to the page and
   row, a page reached two ways, ride returns, canonical parents, forms and
-  confirmations, bounded history) and `menu::controller` parity tests (Back
-  through Options to the row, Ecosystem Collision warning).
+  confirmations, the original row order, bounded history), `menu::controller`
+  parity tests (Back through Options to the row, the Jukebox leading Options
+  from the main menu, Ecosystem Collision warning) and `atv-core` `ui_menu`
+  row tests.
 - Browser: `tools/test_engine_menu_navigation.mjs` crawls every menu page
   reachable from the title without riding, opens each from its row and
   checks that Back returns to the parent on the same row, with the keyboard

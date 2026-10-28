@@ -758,9 +758,10 @@ fn page_title(page: &str) -> &'static str {
         "passkey" => "Pass Key",
         "passkey-entry" => "Enter Pass Key",
         "passkey-file" => "Save Files",
+        "passkey-history" => "Save History",
         "passkey-confirm" => "Load Save",
         "loading" => "Now Loading...",
-        "settings" => "Settings",
+        "settings" => "Options",
         _ => "",
     }
 }

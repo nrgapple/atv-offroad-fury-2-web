@@ -288,6 +288,10 @@ impl Gamepads {
     pub fn rumble(&mut self, _pulse: atv_game::ride::impact::Pulse) -> bool {
         false
     }
+
+    pub fn rumble_slot(&mut self, _slot: usize, _pulse: atv_game::ride::impact::Pulse) -> bool {
+        false
+    }
 }
 
 /// Runs `f` with the activity's JNI environment.
