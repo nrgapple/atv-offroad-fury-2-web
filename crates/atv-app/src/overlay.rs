@@ -664,6 +664,13 @@ impl Overlay {
                     self.list.unopacity();
                 }
             }
+            if let (Some(menu), Some((panel, _))) = (
+                &self.menu,
+                self.menu_hits.iter().find(|(_, id)| *id == pause::PANEL),
+            ) {
+                menu.scroller
+                    .paint_indicator(&mut self.list, *panel, atv_ui::scroll::now());
+            }
             // The page left slides out over the new one, without its dim.
             match (self.transition.exit_motion(), &self.exit_menu) {
                 (Some(motion), Some(old)) => {
@@ -1294,7 +1301,10 @@ impl Overlay {
 
     /// A pause page is sliding in (frames keep coming until it rests).
     pub fn sliding(&self) -> bool {
-        self.transition.active() || self.menu.as_ref().is_some_and(|m| m.scroller.active())
+        self.transition.active()
+            || self.menu.as_ref().is_some_and(|m| {
+                m.scroller.active() || m.scroller.indicator_alpha(atv_ui::scroll::now()) > 0.
+            })
     }
 
     /// The Jukebox page is open (it animates every frame).
