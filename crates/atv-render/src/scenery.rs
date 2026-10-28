@@ -138,6 +138,9 @@ pub struct SceneryPass {
     models: Vec<Option<atv_core::model_lod::ModelLod>>,
     translations: Vec<[f32; 3]>,
     selected: Vec<(u8, bool)>,
+    /// Scene models whose state can change: several levels, or a later pass
+    /// under the 130 ft cull (the rest stay at their finest level).
+    switching: Vec<usize>,
 }
 
 const STRIDE: u64 = 36;
@@ -421,8 +424,21 @@ impl SceneryPass {
                 }
                 t
             },
+            switching: {
+                let mut switching: Vec<bool> = scenery
+                    .lods
+                    .iter()
+                    .map(|l| l.as_ref().is_some_and(|l| l.thresholds.len() > 1))
+                    .collect();
+                for draw in scenery.draws.iter().filter(|d| d.far_cull) {
+                    if let Some(slot) = switching.get_mut(draw.model) {
+                        *slot = true;
+                    }
+                }
+                (0..switching.len()).filter(|&m| switching[m]).collect()
+            },
             models: scenery.lods.clone(),
-            selected: Vec::new(),
+            selected: vec![(0, false); scenery.lods.len()],
         }
     }
 
@@ -568,10 +584,9 @@ impl SceneryPass {
     fn select_levels(&mut self, eye: [f32; 3], focal_length: f32, detail: Detail) -> u32 {
         use atv_core::model_lod;
         let focal = model_lod::focal_from_view(focal_length);
-        self.selected.clear();
         let mut coarse = 0;
-        for (model, lod) in self.models.iter().enumerate() {
-            let state = match (detail, lod) {
+        for &model in &self.switching {
+            let state = match (detail, &self.models[model]) {
                 (Detail::Original, Some(lod)) => {
                     let distance = lod.distance(self.translations[model], eye);
                     let level = lod.select(distance, focal).min(u8::MAX as usize) as u8;
@@ -580,7 +595,7 @@ impl SceneryPass {
                 _ => (0, false),
             };
             coarse += u32::from(state.0 > 0);
-            self.selected.push(state);
+            self.selected[model] = state;
         }
         coarse
     }

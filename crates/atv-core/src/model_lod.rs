@@ -20,12 +20,12 @@ use crate::{Result, mesh::Mesh};
 
 /// The gameplay viewport width every `0011a810` caller passes (640x448).
 pub const VIEW_WIDTH: f32 = 640.;
-/// `001b3a90`'s global multiplier (DAT_00408350).
+/// `001b3a90`'s global multiplier (the float at 00408350).
 pub const LOD_FACTOR: f32 = 1.;
 /// The geometry's own multiplier, initialised to 1 by `001b2610` (+0x14)
 /// and not changed by any loader found.
 pub const GEOMETRY_SCALE: f32 = 1.;
-/// `001b2390`: beyond this model distance (DAT_00408348, feet) materials with
+/// `001b2390`: beyond this model distance (the float at 00408348, feet) materials with
 /// `EnableMultiPassCull` draw only their first pass (`001b90b0`).
 pub const MULTIPASS_CULL_DISTANCE: f32 = 130.;
 /// `001b3a90`'s lower bound on the distance beyond the bounds radius.
@@ -34,7 +34,7 @@ pub const NEAR_CLAMP: f32 = 0.1;
 /// The original focal length in viewport pixels for a horizontal field of
 /// view in degrees (`0011b070`).
 pub fn focal_from_fov(horizontal_fov_degrees: f32) -> f32 {
-    VIEW_WIDTH * 0.5 / (horizontal_fov_degrees.to_radians() * 0.5).tan()
+    VIEW_WIDTH * 0.5 / crate::math::Det::tan_d(horizontal_fov_degrees.to_radians() * 0.5)
 }
 
 /// The browser view's `focal_length` is `(4/3) / tan(FOV/2)` (the vertical
@@ -169,7 +169,7 @@ mod tests {
         let f = focal_from_fov(85.);
         assert!((f - 349.21).abs() < 0.01, "{f}");
         // The browser's 4:3 reference focal maps to the same pixels.
-        let view = (4. / 3.) / (85f32.to_radians() * 0.5).tan();
+        let view = (4. / 3.) / crate::math::Det::tan_d(85f32.to_radians() * 0.5);
         assert!((focal_from_view(view) - f).abs() < 1e-3);
     }
 

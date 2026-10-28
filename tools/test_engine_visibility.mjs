@@ -104,17 +104,22 @@ try {
   let watched = s.farCullModels.find(m => m.model === gate.model);
   assert.equal(watched.far, true, `far at ${watched.distance.toFixed(1)} ft`);
   assert.ok(s.farCulled >= 1, `later pass culled: ${s.farCulled}`);
+  const farCulled = s.farCulled;
   s = await open(page, 'env04', 'original', cameraAt(gate.center, 60));
   watched = s.farCullModels.find(m => m.model === gate.model);
   assert.equal(watched.far, false, `near at ${watched.distance.toFixed(1)} ft`);
-  assert.equal(s.farCulled, 0, 'every pass draws inside 130 ft');
+  // Other gates of the venue may still be beyond 130 ft.
+  const othersFar = s.farCullModels.filter(m => m.far).length;
+  assert.ok(s.farCulled < farCulled || othersFar === 0, `near gate draws its later pass: ${s.farCulled} vs ${farCulled}`);
+  if (othersFar === 0) assert.equal(s.farCulled, 0, 'every pass draws inside 130 ft');
   s = await open(page, 'env04', 'high', cameraAt(gate.center, 200));
   assert.equal(s.farCulled, 0, 'High draws every pass');
   assertNoErrors(errors);
 
-  // 4. A Supercross stadium and a National race keep the single zone.
+  // 4. A Supercross stadium and a National race (env03, whose TOYs carry zone
+//    references) keep the single zone.
   await open(page, 'sx01', 'original');
-  await page.goto(url('/play.html?venue=nat03&race=1&laps=1&cpu=0&uiDiagnostics=1&weather=off&graphics=original'));
+  await page.goto(url('/play.html?venue=env03&race=1&laps=1&cpu=0&uiDiagnostics=1&weather=off&graphics=original'));
   await page.waitForFunction(
     () => {
       const s = JSON.parse(document.querySelector('#ui-state')?.textContent || '{}');

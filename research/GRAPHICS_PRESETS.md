@@ -26,6 +26,7 @@ receives the same input fields in every preset.
 | Visual wheel re-projection | Off (recovered wheel placement) | On | On | Authored presentation of the documented one-frame order effect |
 | Tire tracks | Off | 600 segments, 15 s | 3,600 segments, 75 s | Original GenerateTireTrack/dirt zone flags; ruts from speed, scuffs from contact slip |
 | Vehicle-only sun shadow map | Off | Off | 2048², 48 ft box | Authored |
+| Scene-model level of detail | Recovered selection and 130 ft multi-pass cull | Recovered | Finest level, every pass | Original `001b3a90`/`001b2390` (`VISIBILITY.md`); High is the enhancement |
 | Water Fresnel | Off (original pass) | On | On | Authored |
 | Lingering dust | Off | 24 puffs | 96 puffs | Original GenerateDust flags and terrain texture colours; authored puffs |
 | Smooth sky | Off (original decode, bilinear) | On | On | Original CUB tiles; authored deblock, denoise, chroma upsampling and bicubic sampling |
