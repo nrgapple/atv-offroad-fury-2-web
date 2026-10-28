@@ -5490,6 +5490,8 @@ impl App {
         }
         let race = setup.activity == "race";
         if race && !f.state.race_courses.is_empty() {
+            // Back from the setup climbs through Single Player.
+            f.state.open("single", &view);
             // Only race links change the race setup (frontend.js).
             f.state.show_race(
                 atv_ui::front::controller::RaceSetup {
