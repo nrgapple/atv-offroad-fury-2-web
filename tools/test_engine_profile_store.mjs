@@ -61,7 +61,7 @@ try {
     await clickRow(page, 'Profile Editor'); await onPage(page, 'profile');
     await clickRow(page, 'Unlock Items'); await onPage(page, 'store');
     let front = await read(page);
-    assert.deepEqual(front.labels, ['ATVs', 'Rider Equipment', 'Games', 'Tracks', 'Cheats', 'Back']);
+    assert.deepEqual(front.labels, ['ATVs', 'Rider Equipment', 'Games', 'Tracks', 'Cheats', 'Unlock Everything', 'Back']);
     assert.equal(front.profile, 'Current Profile Points: 0');
     await shot(page, `store-menu-${suffix}`);
 

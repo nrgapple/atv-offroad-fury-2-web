@@ -206,6 +206,8 @@ impl Frontend {
                 if self.cloud.key.is_some() {
                     rows.push(row("savehistory", "Save History"));
                 }
+                // Unlocks travel with the key (port option).
+                rows.push(row(super::profile_pages::UNLOCK_PAGE, "Unlock Everything"));
                 rows
             }
             // The current revision is the save itself; the older ones can
@@ -698,7 +700,10 @@ mod tests {
         assert!(actions(&front).contains(&"passkey"));
         front.run("passkey", &view, &mut settings);
         assert_eq!(front.page, "passkey");
-        assert_eq!(actions(&front), ["enterkey", "entershare", "back"]);
+        assert_eq!(
+            actions(&front),
+            ["enterkey", "entershare", "profile-unlock", "back"]
+        );
         assert_eq!(front.profile_details()[0].0, "No Pass Key yet");
         front.cloud.key = Some("FURY-28T5-CY4T-QKFF-03ZD".into());
         front.cloud.files = true;
@@ -713,6 +718,7 @@ mod tests {
                 "entershare",
                 "savefiles",
                 "savehistory",
+                "profile-unlock",
                 "back"
             ]
         );

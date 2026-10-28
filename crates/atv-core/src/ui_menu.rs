@@ -167,6 +167,10 @@ pub struct Request {
     pub ecosystem_collision: bool,
     #[serde(default)]
     pub sound_configuration: String,
+    /// Game Settings → New Profiles (port option): profiles created on
+    /// this device start with Unlock Everything.
+    #[serde(default)]
+    pub new_profiles_unlocked: bool,
     #[serde(default)]
     pub speed_rush: String,
     /// Display → Graphics choice (auto/original/enhanced/high) and, for Auto,
@@ -1486,6 +1490,14 @@ pub fn layout(request: Request) -> Result<Frame> {
                         },
                         "sound-configuration",
                     ),
+                    (
+                        if request.new_profiles_unlocked {
+                            "New Profiles: Everything Unlocked"
+                        } else {
+                            "New Profiles: Locked (original)"
+                        },
+                        "new-profiles",
+                    ),
                 ],
                 _ => vec![
                     (graphics_label.as_str(), "graphics"),
@@ -2100,6 +2112,7 @@ mod tests {
             "Measurement: Metric",
             "Ecosystem Collision: On",
             "Sound Configuration: Stereo (Swapped)",
+            "New Profiles: Locked (original)",
             "Back",
         ] {
             assert!(game.iter().any(|t| t == row), "{row}: {game:?}");
@@ -2239,6 +2252,7 @@ mod tests {
             metric: false,
             ecosystem_collision: true,
             sound_configuration: String::new(),
+            new_profiles_unlocked: false,
             speed_rush: "normal".into(),
             graphics_preset: String::new(),
             graphics_resolved: String::new(),

@@ -353,6 +353,8 @@ impl PauseMenu {
             "fullscreen": p.fullscreen,
         });
         let mut request = request;
+        // Past json!'s recursion limit.
+        request["new_profiles_unlocked"] = p.new_profiles_unlocked.into();
         if let Some(b) = ctx.bindings.as_deref() {
             let t = &b.tuning;
             // gamepads.js controllerLabel: Auto, a pinned pad, or a pinned
@@ -1573,7 +1575,13 @@ mod parity_tests {
         fx.with(&mut menu, |m, ctx| m.run("game-settings", 1, false, ctx));
         assert_eq!(
             menu.rows.choices,
-            ["measurement", "ecosystem", "sound-configuration", "back"]
+            [
+                "measurement",
+                "ecosystem",
+                "sound-configuration",
+                "new-profiles",
+                "back"
+            ]
         );
         fx.with(&mut menu, |m, ctx| m.run("ecosystem", 1, false, ctx));
         assert_eq!(menu.page, "ecosystem-warning");

@@ -49,6 +49,10 @@ pub struct Preferences {
     pub ecosystem_collision: bool,
     /// Game Settings → Sound Configuration (one of [`SOUND_CONFIGURATIONS`]).
     pub sound_configuration: String,
+    /// Game Settings → New Profiles (port option, this device): profiles
+    /// created here start with Unlock Everything
+    /// (`settings::new_profiles_unlocked`).
+    pub new_profiles_unlocked: bool,
 }
 
 /// web/alpha.js `ALPHA_FEATURES`: authored experiments, each off by default.
@@ -132,6 +136,7 @@ impl Preferences {
                 &SOUND_CONFIGURATIONS,
                 "stereo",
             ),
+            new_profiles_unlocked: crate::settings::new_profiles_unlocked(settings),
         }
     }
 
@@ -266,6 +271,15 @@ impl Preferences {
                 self.metric = !self.metric;
                 let v = if self.metric { "metric" } else { "standard" };
                 settings.set("atv-measurement", v);
+            }
+            "new-profiles" => {
+                self.new_profiles_unlocked = !self.new_profiles_unlocked;
+                let v = if self.new_profiles_unlocked {
+                    "on"
+                } else {
+                    "off"
+                };
+                settings.set(crate::settings::NEW_PROFILES_KEY, v);
             }
             "sound-configuration" => {
                 self.sound_configuration =
