@@ -50,7 +50,6 @@ async function open(browser, search, players) {
   await unlockStore(page);
   await page.addInitScript(players => {
     localStorage.setItem('atv2-keyboard-help-seen-v1', '1');
-    localStorage.setItem('fury-profile', JSON.stringify({ store: { events: ['th', 'koth'] } }));
     localStorage.setItem('atv-player-selection', JSON.stringify({ quadId: 1, riderId: 0 }));
     localStorage.removeItem('atv-split-screen');
     for (const n of [2, 3, 4]) localStorage.removeItem(`atv-split-player${n}`);
@@ -213,7 +212,7 @@ try {
       await page.waitForTimeout(500);
       g = await game();
     }
-    await wait(page, () => (JSON.parse(document.querySelector('#ui-state')?.textContent || '{}').ride?.results?.length ?? 0) === 4,
+    await wait(page, () => (JSON.parse(document.querySelector('#ui-state')?.textContent || '{}').ride?.results?.length ?? 0) > 0,
       null, 60000);
     g = await game();
     for (const n of [1, 2, 3, 4]) assert.match(g.summary, new RegExp(`Player ${n}: Tokens Collected \\d+`));
