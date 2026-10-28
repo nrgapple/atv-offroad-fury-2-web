@@ -402,6 +402,8 @@ impl PauseMenu {
         if let Some(c) = &self.capture {
             request["capture_label"] = c.label.clone().into();
         }
+        // Options from the main menu leads with the Jukebox.
+        request["options_jukebox"] = self.from_menu.into();
         if let Some(lobby) = ctx.lobby {
             request["lobby_status"] = lobby.status.clone().into();
             request["lobby_host"] = lobby.host.into();
@@ -428,11 +430,6 @@ impl PauseMenu {
             .map(|frame| Rows::from_frame(&frame));
         if let Ok(mut rows) = rows {
             rows.choices.retain(|c| !UNSUPPORTED.contains(&c.as_str()));
-            // The main menu's Jukebox is its own page; a pause menu always
-            // lists it (the page waits for the soundtrack catalog).
-            if self.from_menu {
-                rows.choices.retain(|c| c != "jukebox");
-            }
             if !cfg!(target_arch = "wasm32") {
                 // Desktop has no dev log page to open. Copy ride link stays:
                 // it copies the site's play.html link for this ride.
@@ -1744,6 +1741,33 @@ mod parity_tests {
                 crate::menu::jukebox::JukeboxAction::Previous
             ))
         );
+    }
+
+    #[test]
+    fn options_from_the_main_menu_leads_with_the_jukebox_and_back_returns_to_it() {
+        let mut fx = Fixture::new();
+        let mut options = PauseMenu::settings();
+        fx.with(&mut options, |_, _| ());
+        assert_eq!(
+            options.rows.choices[..3],
+            ["jukebox", "game-settings", "controls"]
+        );
+        fx.with(&mut options, |m, ctx| m.key("Enter", ctx));
+        assert_eq!(options.page, "jukebox");
+        // Back leaves the song paused and returns to Options on the row.
+        assert_eq!(
+            fx.with(&mut options, |m, ctx| m.key("Escape", ctx)),
+            Some(Event::Jukebox(crate::menu::jukebox::JukeboxAction::Leave))
+        );
+        assert_eq!((options.page.as_str(), options.selection), ("settings", 0));
+        // Back on Options closes it; Options over a ride has no Jukebox row.
+        assert_eq!(
+            fx.with(&mut options, |m, ctx| m.key("Escape", ctx)),
+            Some(Event::Resume)
+        );
+        let mut ride = PauseMenu::new();
+        fx.with(&mut ride, |m, ctx| m.run("settings", 1, false, ctx));
+        assert!(ride.rows.choices.iter().all(|c| c != "jukebox"));
     }
 
     #[test]

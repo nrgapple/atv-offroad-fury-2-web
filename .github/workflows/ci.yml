@@ -22,7 +22,9 @@ jobs:
     permissions:
       contents: read
       actions: read
-    runs-on: ubuntu-latest
+    # Pinned: ubuntu-latest became 26.04, which the pinned Playwright's
+    # install-deps does not list (tools/playwright_ci.py could not read it).
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -248,7 +250,7 @@ jobs:
       group: deploy-production
       cancel-in-progress: false
     if: vars.FURY_DEPLOYMENT_MODE != 'local' && needs.web.outputs.publish == 'true' && github.repository == 'nrgapple/atv-offroad-fury-2-web' && github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && github.actor == github.repository_owner
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
       contents: read

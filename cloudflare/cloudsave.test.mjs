@@ -116,6 +116,16 @@ test('revision history keeps the last 10 and restore makes an old one current', 
   assert.deepEqual((await result(await call(env, 'GET', '/api/save'))).body, { revision: 14, updatedAt: restored.body.updatedAt, save: { v: 1, n: 4 } });
   const after = (await result(await call(env, 'GET', '/api/save/revisions'))).body.revisions.map(item => item.revision);
   assert.deepEqual(after, [14, 13, 12, 11, 10, 9, 8, 7, 6, 5]);
+  const one = await result(await call(env, 'GET', '/api/save/revisions', { headers: { 'X-Fury-Revision': '7' } }));
+  assert.equal(one.status, 200);
+  assert.equal(one.body.revision, 7); assert.deepEqual(one.body.save, { v: 1, n: 6 });
+  assert.equal(typeof one.body.updatedAt, 'string');
+  assert.equal(one.headers.get('Cache-Control'), 'no-store');
+  assert.equal((await result(await call(env, 'GET', '/api/save/revisions', { headers: { 'X-Fury-Revision': '4' } }))).status, 404);
+  for (const bad of ['0', '-1', '1.5', 'x', '', '01', '99999999999999999']) {
+    assert.deepEqual((await result(await call(env, 'GET', '/api/save/revisions', { headers: { 'X-Fury-Revision': bad } }))).body, { error: 'bad_revision' }, bad);
+  }
+  assert.equal((await result(await call(env, 'GET', '/api/save/revisions', { key: 'FURY-0000-0000-0000-0002', headers: { 'X-Fury-Revision': '7' } }))).status, 404);
   for (const body of [{}, { revision: 0 }, { revision: '5' }, { revision: 1.5 }, []]) {
     assert.deepEqual((await result(await call(env, 'POST', '/api/save/restore', { body }))).body, { error: 'bad_body' });
   }

@@ -81,9 +81,10 @@ pass (six viewports including 390×844 and 320×568, all 26 quads, rider changes
 touch, keyboard and controller, model/control separation, loading and driving).
 Physical phones, Safari/WebKit and exact original appearance are not verified.
 
-## Settings from the main menu
+## Options from the main menu
 
-Settings, Controls, Display, Audio and Extras opened from the main menu use the
+Options (the shared Settings pages: Jukebox, Game Settings, Controls, Display,
+Audio, Extras) opened from the main menu use the
 frontend backdrop and keep the original menu tune. The racing soundtrack plays
 there only after a song is chosen or music is toggled on the Audio page. From
 Pause they keep the ride panel and soundtrack.

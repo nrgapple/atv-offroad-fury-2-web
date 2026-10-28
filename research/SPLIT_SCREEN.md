@@ -94,12 +94,76 @@ drives both players from the menu (Freestyle top/bottom with keyboard and
 two stand-in controllers, then a one-lap side-by-side race to combined
 results).
 
+## Slice 2 (2026-10-28)
+
+- **Player 2's own garage.** The Split Screen page adds **Player 2 ATV**
+  (cycles the owned original ATVs 1-26; rooms and the player 2 rider slot
+  carry ATVs only) and **Player 2 Rider** (Male/Female), saved as
+  `atv-split-player2` ("quad,rider"). Player 2's gear and paint stay the
+  profile's. The original seats each player at a pad with its own Garage
+  choice; these two rows are a port adaptation of that (the per-player
+  Garage pages were not traced). `?split2=quad.rider` (web) or
+  `FURY_SPLIT2` (desktop) picks it for a direct split ride.
+- **Sound.** Player 2's engine and body impacts play through the room
+  riders' voices (`audio::remote`), positioned and heard from player 1's
+  camera on the one output. The original's split-screen mix was not traced.
+- **Wheel effects.** Player 2 has its own wheel dust, chunks and spray
+  (a second `WheelEffectsPass`, drawn in both views). Tire tracks and
+  Enhanced lingering dust remain player 1's.
+- **Rumble.** Each player's impacts rumble its own controller slot
+  (desktop: gilrs force feedback on the slot's pad; web: `dual-rumble` on
+  the slot's browser pad, so two identical controllers are told apart).
+- **Shared race.** Before each frame `split::link` ties the two races:
+  player 1's CPUs treat player 2 as a human peer (steering around it, as a
+  room's human, and pushing against it through `peer_contact`), player 2
+  rides against player 1 and every CPU, and both races' PLACE sign, finish
+  sign and race-over music read the combined place. Player 1's race no
+  longer ends (and estimates CPU times) at player 1's finish while player 2
+  still races (`Race::waiting`; RaceStatus `00248b20` waits for every
+  human): the clock runs on and CPUs finish for real.
+- **Terrain.** Each player gets a fine terrain patch
+  (`terrain_mesh::disjoint`: patches that overlap or touch merge into their
+  bounding box so every patch keeps a coarse border to stitch to); the
+  patches rebuild when either player leaves 48 cells of its patch. A port
+  choice: the original's split-screen terrain LOD was not traced.
+- **Graphics loss.** A restored WebGL context rebuilds player 2's rider,
+  wheel effects and terrain patch; the fallback reload link
+  (`fury-resume`) carries `split=` and `split2=` so a reopened ride is
+  still split. Desktop device loss reopens the ride through the kept split
+  request, as do Restart Race and direct `?split=` rides.
+
+Checks: unit tests for patch merging, the race wait, query links and the
+Player 2 rows; `tools/test_engine_split_screen.mjs` also chooses player 2's
+ATV and rider, checks its ride uses them, its wheel effects emit, the
+terrain patches, the combined finish place and per-slot rumble on two
+identical stand-in controllers.
+
+Host frame time: see "Measurements" below.
+
+## Measurements
+
+Host only (Apple Silicon Mac mini, headless Chromium on Metal, 1280x720,
+ENV01 Freestyle, weather off, both players on the throttle, `?debug=1`
+Performance lines after 600 frames; one run each, not phone results):
+
+| Ride | Frame (ms) | Frame p95 (ms) | CPU draw (ms) |
+| --- | --- | --- | --- |
+| One player | 13.0-13.3 | 19.6-24.7 | 7.4-8.8 |
+| Split top/bottom (`?split=h&split2=5.1`) | 14.3-19.0 | 24.3-29.8 | 9.2-9.8 |
+| Split side by side (`?split=v&split2=5.1`) | 14.8-14.9 | 20.4-20.9 | 11.5-12.0 |
+
+Split screen draws the scene twice and steps a second ride, so CPU draw
+rises by about 1-4 ms on this host; the players rode close together, so the
+terrain kept one merged fine patch. The frame cadence is noisy in headless
+Chromium. Phones were not measured.
+
 ## Left for later slices
 
 - Three and four players (quarter presets `Preset<n>q`, no CPUs) and the
-  ControllerSelect claiming page; each player's own garage selection.
+  ControllerSelect claiming page.
+- Player 2's own gear and paint, Hall of Fame and profile credit; its tire
+  tracks and lingering dust; a per-player audio mix.
 - Games (Tag, Hockey, King of the Hills, Treasure Hunt), Freestyle
   objectives and championships split screen.
-- Player 2 sound, wheel effects and rumble; a per-view terrain patch.
 - Online parity: every split-screen mode in relay rooms up to the room's
   player cap.

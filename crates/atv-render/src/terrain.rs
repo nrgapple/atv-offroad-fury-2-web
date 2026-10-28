@@ -33,6 +33,8 @@ struct Mesh {
     vertices: wgpu::Buffer,
     indices: wgpu::Buffer,
     chunks: Vec<Chunk>,
+    /// Fine patches drawn (split screen keeps one per player).
+    patches: usize,
 }
 
 /// The texture views the terrain bind group holds.
@@ -343,6 +345,26 @@ impl TerrainPass {
         self.mesh = mesh(gpu, &venue.terrain, Some(center));
     }
 
+    /// Split screen: a fine patch around each local player
+    /// (`terrain_mesh::disjoint`).
+    pub fn recenter_many(&mut self, gpu: &Gpu, venue: &Venue, centers: &[[f32; 2]]) {
+        let patches = centers
+            .iter()
+            .map(|c| terrain_mesh::patch(&venue.terrain, *c))
+            .collect();
+        let patches = terrain_mesh::disjoint(patches);
+        self.mesh = upload(
+            gpu,
+            terrain_mesh::build_patches(&venue.terrain, &patches),
+            patches.len(),
+        );
+    }
+
+    /// Fine patches in the drawn mesh.
+    pub fn patches(&self) -> usize {
+        self.mesh.patches
+    }
+
     /// The High vehicle shadow map this frame (shadowReceive), or none.
     pub fn set_shadow(&mut self, matrix: Option<&[f32; 16]>, texel: f32) {
         match matrix {
@@ -475,9 +497,16 @@ fn downsample(pixels: &[u8], w: u32, h: u32) -> (Vec<u8>, u32, u32) {
 }
 
 fn mesh(gpu: &Gpu, terrain: &atv_game::venue::Terrain, center: Option<[f32; 2]>) -> Mesh {
-    let device = &gpu.device;
     let patch = center.map(|center| terrain_mesh::patch(terrain, center));
-    let built = terrain_mesh::build(terrain, patch);
+    upload(
+        gpu,
+        terrain_mesh::build(terrain, patch),
+        usize::from(patch.is_some()),
+    )
+}
+
+fn upload(gpu: &Gpu, built: Vec<terrain_mesh::Chunk>, patches: usize) -> Mesh {
+    let device = &gpu.device;
     let (mut vertices, mut indices, mut chunks) = (Vec::new(), Vec::new(), Vec::new());
     for chunk in &built {
         let base = (vertices.len() / terrain_mesh::FLOATS_PER_VERTEX) as u32;
@@ -502,5 +531,6 @@ fn mesh(gpu: &Gpu, terrain: &atv_game::venue::Terrain, center: Option<[f32; 2]>)
             usage: wgpu::BufferUsages::INDEX,
         }),
         chunks,
+        patches,
     }
 }
