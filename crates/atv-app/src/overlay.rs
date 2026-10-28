@@ -623,6 +623,9 @@ impl Overlay {
         self.transition
             .observe(self.menu.as_ref().map(|m| m.shown), crate::reduced_motion());
         self.menu_motion = self.transition.motion(now);
+        if let Some(menu) = &mut self.menu {
+            menu.scroller.tick(atv_ui::scroll::now());
+        }
         if self.menu.is_some() {
             self.prepare_menu(device, queue, bindings);
             // drawBars: the spectrum repaints every frame over the cached panel.
@@ -1183,7 +1186,7 @@ impl Overlay {
 
     /// A pause page is sliding in (frames keep coming until it rests).
     pub fn sliding(&self) -> bool {
-        self.transition.active()
+        self.transition.active() || self.menu.as_ref().is_some_and(|m| m.scroller.active())
     }
 
     /// The Jukebox page is open (it animates every frame).
@@ -1375,10 +1378,11 @@ impl Overlay {
             && let Some(row) = rect(pause::ROW + index as u32)
             && let Some(menu) = &mut self.menu
         {
-            let before = menu.scroll;
-            menu.scroll = (menu.scroll + row.y - panel.y - (panel.h - row.h) / 2.)
-                .clamp(0., self.menu_scroll_max);
-            if menu.scroll != before {
+            let before = menu.scroller.offset();
+            menu.scroller.set_bounds(self.menu_scroll_max, panel.h);
+            menu.scroller
+                .jump_to(before + row.y - panel.y - (panel.h - row.h) / 2.);
+            if menu.scroller.offset() != before {
                 self.list.items.truncate(start);
                 self.menu_cache = None;
                 self.prepare_menu(device, queue, bindings);
@@ -1395,13 +1399,20 @@ impl Overlay {
             self.menu_scroll_max,
         ));
         self.menu_hits = hits;
-        if std::mem::take(&mut self.menu_reveal) {
+        let reveal = std::mem::take(&mut self.menu_reveal);
+        {
             let hits = std::mem::take(&mut self.menu_hits);
             if let Some(menu) = &mut self.menu {
-                let before = menu.scroll;
-                menu.reveal(&hits);
-                menu.scroll = menu.scroll.min(self.menu_scroll_max);
-                if menu.scroll != before {
+                let before = menu.scroller.offset();
+                let viewport = hits
+                    .iter()
+                    .find(|(_, id)| *id == pause::PANEL)
+                    .map_or(400., |(r, _)| r.h);
+                menu.scroller.set_bounds(self.menu_scroll_max, viewport);
+                if reveal {
+                    menu.reveal(&hits, self.menu_scroll_max, !crate::reduced_motion());
+                }
+                if menu.scroller.offset() != before {
                     self.menu_hits = hits;
                     self.list.items.truncate(start);
                     self.prepare_menu(device, queue, bindings);
@@ -1429,7 +1440,8 @@ impl Overlay {
                 "motion": self.menu_motion.map(|m| [m.opacity, m.dx]),
                 "selection": m.selection,
                 "choices": m.rows.choices,
-                "scroll": m.scroll,
+                "scroll": m.scroller.offset(),
+                "scrolling": m.scroller.active(),
                 "notice": m.notice,
                 "labels": m.rows.labels.iter().cloned().collect::<std::collections::BTreeMap<_, _>>(),
                 "musicPage": m.music_page(),

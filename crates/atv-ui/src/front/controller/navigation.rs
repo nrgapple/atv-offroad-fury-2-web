@@ -29,7 +29,6 @@ pub struct Visit {
     /// Championships once a profile loads), and its index as a fallback.
     pub action: Option<String>,
     pub selection: usize,
-    pub scroll: f32,
 }
 
 /// Pages that are never returned to: the course loader stands in for the
@@ -110,7 +109,6 @@ impl Frontend {
             page: self.page.clone(),
             action: self.current().map(String::from),
             selection: self.selection,
-            scroll: self.list_scroll,
         });
         if self.history.len() > DEPTH {
             self.history.remove(0);
@@ -124,7 +122,9 @@ impl Frontend {
             .as_ref()
             .and_then(|action| self.choices.iter().position(|(a, _)| a == action));
         self.selection = at.unwrap_or(visit.selection);
-        self.list_scroll = visit.scroll;
+        // Scrolled back into view once laid out (a long Options or store
+        // list); the course and vehicle lists show their current card.
+        self.reveal_row = true;
         self.refresh(view);
     }
 
@@ -141,7 +141,6 @@ impl Frontend {
                 // The parent's row that opens the child, where it has one.
                 action: Some(child.clone()),
                 selection: 0,
-                scroll: 0.,
             });
             child = parent;
         }

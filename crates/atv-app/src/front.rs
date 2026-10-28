@@ -367,6 +367,8 @@ impl Front {
     pub fn animating(&self) -> bool {
         self.transition.active()
             || self.jukebox_open()
+            || self.state.scrolling()
+            || self.menu.as_ref().is_some_and(|m| m.scroller.active())
             || self.menu.is_none()
                 && (matches!(self.state.page.as_str(), "title" | "loading")
                     || (matches!(self.state.page.as_str(), "garage" | "gear")
@@ -951,6 +953,12 @@ impl Front {
         self.transition
             .observe(Some(shown), !self.slide || crate::reduced_motion());
         self.motion = self.transition.motion(now);
+        // Kinetic scrolling: flings, rubber bands and focus glides.
+        let scroll_now = atv_ui::scroll::now();
+        self.state.tick_scroll(scroll_now);
+        if let Some(menu) = &mut self.menu {
+            menu.scroller.tick(scroll_now);
+        }
         // ms-pulse: brightness 1 → 1.18 → 1 over 1.8 s, ease-in-out.
         let phase = (now / 1800.).fract() as f32;
         let wave = 0.5 - 0.5 * atv_core::math::Det::cos_d(phase * std::f32::consts::TAU);
@@ -1003,8 +1011,12 @@ impl Front {
             &mut self.hits,
         );
         // Both lists keep 8px of padding under their last item.
-        if self.state.laid_out(&self.hits, 8.) {
-            screen.list_scroll = self.state.list_scroll;
+        if self
+            .state
+            .laid_out(&self.hits, 8., !crate::reduced_motion())
+        {
+            screen.list_scroll = self.state.list.offset();
+            screen.rows_scroll = self.state.rows.offset();
             self.list.clear();
             self.hits.clear();
             layout::render(
@@ -1139,18 +1151,22 @@ impl Front {
             &mut hits,
         );
         let rect = |id| hits.iter().find(|(_, i)| *i == id).map(|(r, _)| *r);
+        let mut viewport = 400.;
         if let (Some(panel), Some(content)) = (rect(pause::PANEL), rect(pause::CONTENT)) {
             // Full-screen panel: clamp(12px, 3vh, 28px) above, 20px below.
             let padding = (view.height * 0.03).clamp(12., 28.) + 20.;
             self.menu_scroll_max = (content.h - (panel.h - padding)).max(0.);
+            viewport = panel.h;
         }
-        if std::mem::take(&mut self.menu_reveal)
-            && let Some(menu) = &mut self.menu
-        {
-            let before = menu.scroll;
-            menu.reveal(&hits);
-            menu.scroll = menu.scroll.min(self.menu_scroll_max);
-            if menu.scroll != before {
+        let reveal = std::mem::take(&mut self.menu_reveal);
+        let animate = !crate::reduced_motion();
+        if let Some(menu) = &mut self.menu {
+            let before = menu.scroller.offset();
+            menu.scroller.set_bounds(self.menu_scroll_max, viewport);
+            if reveal {
+                menu.reveal(&hits, self.menu_scroll_max, animate);
+            }
+            if menu.scroller.offset() != before {
                 self.list.items.truncate(start);
                 self.menu_hits = hits;
                 return self.prepare_menu(device, queue);
@@ -1429,6 +1445,13 @@ impl Front {
             "details": self.state.profile_details(),
             "heading": self.state.profile_heading(),
         });
+        // Kinetic scrolling (crate::scroll): list, rows column, moving.
+        let kinetic = serde_json::json!({
+            "list": [self.state.list.offset(), self.state.list.max()],
+            "rows": [self.state.rows.offset(), self.state.rows.max()],
+            "active": self.state.scrolling(),
+            "menu": self.menu.as_ref().map(|m| [m.scroller.offset(), m.scroller.max()]),
+        });
         let store = serde_json::json!({
             "remaining": atv_core::store::remaining(&self.state.profile),
             "spent": self.state.profile.store.spent,
@@ -1456,7 +1479,7 @@ impl Front {
             "pending": self.state.passkey.pending.is_some(),
             "qr": self.state.passkey_qr(), "entry": self.state.passkey.entry,
         });
-        let mut report = serde_json::json!({
+        let mut out = serde_json::json!({
             "page": self.state.page,
             // The page (or menu panel) slide: [opacity, translateX px].
             "motion": self.motion.map(|m| [m.opacity, m.dx]),
@@ -1473,7 +1496,7 @@ impl Front {
             "createCode": self.state.create_code,
             "tracks": self.state.tracks.len(),
             "photos": self.art.photos.len(),
-            "scroll": self.state.list_scroll,
+            "scroll": self.state.list.offset(),
             "prepareMs": self.prepare_ms,
             "splitMs": self.split_ms,
             "models": self.previews.iter().map(|p| p.as_ref().filter(|p| p.target.is_some()).map(|p| p.key.clone())).collect::<Vec<_>>(),
@@ -1510,13 +1533,14 @@ impl Front {
                 "id": id, "x": r.x, "y": r.y, "width": r.w, "height": r.h,
             })).collect::<Vec<_>>(),
         });
+        out["kinetic"] = kinetic;
         // The pages Back returns through (research/MENU_FLOW.md).
-        report["history"] = self.state.history().collect::<Vec<_>>().into();
+        out["history"] = self.state.history().collect::<Vec<_>>().into();
         if let Some(m) = &self.menu {
-            report["menu"]["selection"] = m.selection.into();
-            report["menu"]["history"] = m.history().collect::<Vec<_>>().into();
+            out["menu"]["selection"] = m.selection.into();
+            out["menu"]["history"] = m.history().collect::<Vec<_>>().into();
         }
-        report
+        out
     }
 }
 

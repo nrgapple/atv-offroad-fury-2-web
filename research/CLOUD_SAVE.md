@@ -313,8 +313,16 @@ server): the app hands it the time and runs the requests it returns.
   merge on entering a key, too large, links, export/import; the pages' rows,
   entry, confirmation and links).
 - Browser: `tools/test_engine_passkey.mjs` (content group). Against a mocked API
-  by default; `ATV_PASSKEY_LIVE=1 ATV_TEST_URL=https://furyremastered.com` uses
-  the real one.
+  by default; `ATV_PASSKEY_LIVE=1 ATV_TEST_URL=https://furyremastered.com` runs it
+  on the deployed site, and `ATV_PASSKEY_API=https://furyremastered.com` forwards
+  a local build's `/api/` calls to the real server (no `Origin`, like the desktop
+  app).
+- Production (2026-10-28, deployed commit `63b3a3a`, host Chromium): the live run
+  passed: a context with progress got a Pass Key and synced it, a fresh context
+  typed the key and loaded the same profile, a share code imported as a new
+  profile in a third context, an exported file imported on a 390×844 phone
+  context, and a `#key=` link opened the confirmation. The test rows it created
+  (ACE, 340 points) were left on the server.
 - Not verified: physical phones (Web Share sheet, iOS Safari clipboard and file
   picker after an asynchronous share), desktop and Android builds against the
   live API (the native transport compiles in CI but was not run end to end),
