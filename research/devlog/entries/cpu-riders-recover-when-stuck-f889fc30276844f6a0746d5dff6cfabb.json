@@ -1,0 +1,12 @@
+{
+  "id": "cpu-riders-recover-when-stuck-f889fc30276844f6a0746d5dff6cfabb",
+  "timestamp": "2026-10-28T19:29:29.576480+00:00",
+  "recorded_at": "2026-10-28T19:29:29.576480+00:00",
+  "kind": "verification",
+  "title": "CPU riders recover when stuck",
+  "summary": "Authored port adaptation: CPU riders reset when stuck and recover using a validated point 80\u2013500 ft along the route",
+  "details": [
+    "From a CPU's 3rd reset at one place the leader speed limit lifts and it holds the racing line; from the 4th reset, or 15 s without 25 ft of progress, it resets to a validated point 80\u2013500 ft further along the route, never crossing the finish gate or skipping an Enduro gate, never causing a DNF. Verification: headless sweep, 1 lap, 3 CPUs, idle player, seeds 7/11/23 on all 51 courses (32 National, 16 Enduro, 3 Short Track): every CPU finished in 153/153 runs (before: 147/153; stuck on sx15, sx03, sx05, env05endl). Runs without recovery are bit-identical to before. Browser race tests pass."
+  ],
+  "limitation": "Thresholds tuned on idle-player sweeps only; underlying causes (sx15 jump leader limit, sx05 reset line, env05endl obstacle) unchanged; a skip moves a CPU up to 500 ft without riding it."
+}
