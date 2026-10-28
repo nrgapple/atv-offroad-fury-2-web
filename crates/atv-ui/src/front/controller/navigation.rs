@@ -85,7 +85,6 @@ impl Frontend {
         let Some(to) = self.canonical_parent(&from) else {
             return;
         };
-        let to = to.to_string();
         self.history = self.ancestors(&to);
         self.present(&to, view);
         // The row that leads to the page just left.
@@ -138,13 +137,13 @@ impl Frontend {
                 break;
             }
             chain.push(Visit {
-                page: parent.to_string(),
+                page: parent.clone(),
                 // The parent's row that opens the child, where it has one.
                 action: Some(child.clone()),
                 selection: 0,
                 scroll: 0.,
             });
-            child = parent.to_string();
+            child = parent;
         }
         chain.reverse();
         chain
@@ -152,34 +151,49 @@ impl Frontend {
 
     /// Where a page sits in the menus when it was not reached through them
     /// (the original's synthesized stacks, `0021ed60`).
-    pub fn canonical_parent(&self, page: &str) -> Option<&'static str> {
+    pub fn canonical_parent(&self, page: &str) -> Option<String> {
         // The current page's own rules know its state (a store page opened
-        // from View Profile, a name entry for a copy).
-        if page == self.page
-            && let Some(to) = self.store_back().or_else(|| self.profile_back())
-        {
-            return Some(to);
+        // from View Profile, a name entry for a copy, the page that opened
+        // Pass Key).
+        if page == self.page {
+            if let Some(to) = self.store_back().or_else(|| self.profile_back()) {
+                return Some(to.into());
+            }
+            if let Some(to) = self.passkey_back() {
+                return Some(to);
+            }
         }
         if super::store_page(page) {
-            return Some(if page == "store" { "profile" } else { "store" });
+            return Some(if page == "store" { "profile" } else { "store" }.into());
         }
-        Some(match page {
-            "title" | "loading" => return None,
-            "main" => "title",
-            "single" | "multiplayer" | "profile" | "hall-of-fame" => "main",
-            "tracks" if self.hosting => "create-lobby",
-            "tracks" | "race" if self.split => "split",
-            "tracks" | "race" | "championship" | "games" | "objective-courses" | "garage" => {
-                "single"
+        if page == "passkey" {
+            return Some(if self.passkey.back.is_empty() {
+                "main".into()
+            } else {
+                self.passkey.back.clone()
+            });
+        }
+        Some(
+            match page {
+                "title" | "loading" => return None,
+                "main" => "title",
+                "single" | "multiplayer" | "profile" | "hall-of-fame" => "main",
+                "tracks" if self.hosting => "create-lobby",
+                "tracks" | "race" if self.split => "split",
+                "tracks" | "race" | "championship" | "games" | "objective-courses" | "garage" => {
+                    "single"
+                }
+                "objectives" if self.freestyle.is_none() => "objective-courses",
+                "objectives" => "championship",
+                "gear" => "garage",
+                "create-lobby" | "join-lobby" | "split" | "lobby" => "multiplayer",
+                "profile-overview" | "profile-trophies" | "profile-records" => "profile-view",
+                p if p.starts_with("profile-") => "profile",
+                p if p.starts_with("passkey-") => "passkey",
+                _ => "main",
             }
-            "objectives" if self.freestyle.is_none() => "objective-courses",
-            "objectives" => "championship",
-            "gear" => "garage",
-            "create-lobby" | "join-lobby" | "split" | "lobby" => "multiplayer",
-            "profile-overview" | "profile-trophies" | "profile-records" => "profile-view",
-            p if p.starts_with("profile-") => "profile",
-            _ => "main",
-        })
+            .into(),
+        )
     }
 }
 

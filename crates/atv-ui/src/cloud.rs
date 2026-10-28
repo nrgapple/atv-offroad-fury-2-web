@@ -278,6 +278,17 @@ impl Status {
             Self::Failed(message) => message.clone(),
         }
     }
+
+    /// The badge's word.
+    pub fn short(&self) -> &'static str {
+        match self {
+            Self::NoKey => "",
+            Self::Saving => "Saving…",
+            Self::Saved => "Saved",
+            Self::Offline => "Offline",
+            Self::Failed(_) => "Not synced",
+        }
+    }
 }
 
 /// What a response changed, for the host and the menus.
@@ -398,6 +409,11 @@ impl Sync {
                 .is_some_and(|f| matches!(f.op, Op::FetchKey(_) | Op::FetchShare(_)))
     }
 
+    /// A request is on its way.
+    pub fn waiting(&self) -> bool {
+        self.in_flight.is_some()
+    }
+
     pub fn sharing(&self) -> bool {
         self.share_wanted
     }
@@ -476,7 +492,7 @@ impl Sync {
                 if now < self.push_after {
                     // A burst of changes goes as one write.
                     self.check_due = true;
-                    self.status = Status::Saving;
+                    self.saving();
                     return None;
                 }
                 let wire = local.to_wire();
@@ -486,7 +502,7 @@ impl Sync {
                     return None;
                 }
                 self.refused = None;
-                self.status = Status::Saving;
+                self.saving();
                 return Some(self.issue(Op::Push(save, record.revision, wire), Some(key), now));
             }
             self.status = Status::Saved;
@@ -495,6 +511,14 @@ impl Sync {
             return Some(self.issue(Op::Share, Some(key), now));
         }
         None
+    }
+
+    /// Changes wait to be written. Offline stays Offline until a write
+    /// gets through (retries do not flicker the badge).
+    fn saving(&mut self) {
+        if self.status != Status::Offline {
+            self.status = Status::Saving;
+        }
     }
 
     fn issue(&mut self, op: Op, key: Option<String>, now: f64) -> Request {

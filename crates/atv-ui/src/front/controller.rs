@@ -16,7 +16,9 @@ pub mod store;
 pub use store::{StoreView, store_page};
 pub mod games_page;
 pub mod navigation;
+pub mod passkey_page;
 pub mod profile_pages;
+pub use passkey_page::{CloudCommand, CloudView};
 use profile_pages::NO_PROFILE;
 
 /// What the application must do after a frontend input.
@@ -115,6 +117,8 @@ pub enum Event {
         expert: bool,
         objective: usize,
     },
+    /// A Pass Key page's request: copy, share, look up, save files.
+    Cloud(CloudCommand),
 }
 
 /// Race setup offers 1-5 laps, 0, 3 or 4 CPU riders and the original
@@ -192,6 +196,7 @@ pub fn stepper(action: &str) -> bool {
             | "famecourse"
             | "famedifficulty"
             | "storeitem"
+            | "codeletter"
     ) || games_page::game_row(action)
         || GEAR_ROWS.iter().any(|(a, _)| *a == action)
 }
@@ -382,6 +387,10 @@ pub struct Frontend {
     shift: bool,
     /// The Profile Store's catalogs and browsing state.
     pub store: StoreView,
+    /// The Pass Key sync as the host last reported it.
+    pub cloud: CloudView,
+    /// The Pass Key pages' working state.
+    pub passkey: passkey_page::PassKeyUi,
     /// Multiplayer → Split Screen: the next Freestyle or Race rides two
     /// local players (research/SPLIT_SCREEN.md).
     pub split: bool,
@@ -458,6 +467,8 @@ impl Frontend {
             shown: crate::transition::next_show(),
             shift: false,
             store: StoreView::default(),
+            cloud: CloudView::default(),
+            passkey: Default::default(),
             split: false,
             split_vertical: settings.get(SPLIT_LAYOUT_KEY).as_deref() == Some("vertical"),
             history: Vec::new(),
@@ -524,6 +535,11 @@ impl Frontend {
                 self.championship_choices()
             };
 
+            self.selection = self.selection.min(self.choices.len().saturating_sub(1));
+            return;
+        }
+        if Self::is_passkey_page(&self.page) {
+            self.choices = self.passkey_choices();
             self.selection = self.selection.min(self.choices.len().saturating_sub(1));
             return;
         }
@@ -816,6 +832,7 @@ impl Frontend {
             return;
         }
         match action {
+            "codeletter" => return self.step_passkey(direction, view),
             _ if games_page::game_row(action) => self.step_game(action, direction),
             "champdifficulty" => {
                 self.champ_expert = !self.champ_expert;
@@ -1307,6 +1324,16 @@ impl Frontend {
                     max_length: 8,
                 },
             ],
+            "passkey-entry" => vec![Field {
+                action: "passkey-code",
+                label: if self.passkey.share {
+                    "Enter Share Code:"
+                } else {
+                    "Enter Pass Key:"
+                },
+                value: self.passkey.entry.clone(),
+                max_length: 40,
+            }],
             "store-cheats" => vec![Field {
                 action: "cheat",
                 label: "Enter Cheat:",
@@ -1338,6 +1365,10 @@ impl Frontend {
             }
             "profile-name" => {
                 self.set_profile_name(text);
+                return;
+            }
+            "passkey-code" => {
+                self.set_passkey_entry(text);
                 return;
             }
             "create-code" => self.create_code = code(text),
@@ -1585,6 +1616,7 @@ impl Frontend {
         match from.as_str() {
             "tracks" => self.hosting = false,
             "profile-confirm" => self.profile_ui.confirm = None,
+            "passkey-confirm" => self.passkey.pending = None,
             _ => {}
         }
         None
@@ -1622,6 +1654,9 @@ impl Frontend {
     fn run(&mut self, action: &str, view: &Viewport, settings: &mut Settings) -> Option<Event> {
         if self.store_run(action, view, settings) {
             return None;
+        }
+        if let Some(event) = self.passkey_action(action, view, settings) {
+            return event;
         }
         if let Some(event) = self.profile_action(action, view, settings) {
             return event;
@@ -1873,7 +1908,7 @@ impl Frontend {
             }
             (
                 "race" | "gear" | "games" | "profile-name" | "profile-records" | "hall-of-fame"
-                | "store-atv" | "store-gear" | "store-games" | "store-tracks",
+                | "passkey-entry" | "store-atv" | "store-gear" | "store-games" | "store-tracks",
                 "left" | "right",
             ) => {
                 // Only value rows step; Start Race, the link and Back do not.
@@ -2130,6 +2165,7 @@ impl Frontend {
         self.focus = None;
         match id {
             BACK | DONE => return self.back(view),
+            super::PASSKEY => self.open_passkey(view),
             START => return self.race_event(settings),
             SHARE if self.page == "race" => return Some(Event::CopyRaceLink),
             PREV | NEXT if self.page == "race" => {
@@ -2304,6 +2340,13 @@ impl Frontend {
             notice: self.notice.clone(),
             profile: self.profile_text(),
             details: self.profile_details(),
+            badge: self.badge_page().then(|| super::Badge {
+                key: self.cloud.key.clone(),
+                status: self.cloud.short.clone(),
+                synced: self.cloud.synced,
+                trouble: self.cloud.trouble,
+            }),
+            qr: self.passkey_qr(),
             heading: self.profile_heading(),
             lobby: self.lobby.clone(),
             motion: None,
