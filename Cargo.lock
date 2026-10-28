@@ -396,6 +396,7 @@ dependencies = [
  "cosmic-text",
  "js-sys",
  "pollster",
+ "serde",
  "serde_json",
  "swash",
  "taffy",
