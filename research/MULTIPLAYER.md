@@ -678,6 +678,49 @@ race packet, start synchronization or result agreement has been recovered
   earlier on main as well: its host-reservation assertions predate drop-in
   rooms (a guest may now join before the host; `Connection replaced`).
 
+### Stale relayed poses no longer end the room (2026-10-28)
+
+Race 2 of the browser gate stalled because the **host left the room** with
+`Invalid session message: multiplayer packet: InvalidValue` right after it
+reloaded the course. Evidence (ignored `work/probe/stall-*.json`): the
+rejected message was an ordinary full compact pose (kind 9, 127-byte body,
+peer 1, sequence 1279, sender time 154,907 ms, steering code 30 = 0.004 rad),
+which decodes and validates. The error came from the host's pose buffer, not
+the codec: `PoseBuffer::push` returned `InvalidValue` when a sender's clock
+advanced more than 5 s beyond receipt time, and `Session::receive` turned
+that into a closed session. The relay hands a rider who reports `Ready` every
+other rider's last stored pose; that copy can be seconds old (a paused rider
+sends every 5 s, a background tab is throttled), so the stored pose arrived
+late and the guest's next live pose then ran more than 5 s ahead of it.
+
+- A sender clock running more than `SENDER_JUMP_MS` (5 s) ahead of receipt
+  now restarts that peer's timeline at the new pose (like a teleport) instead
+  of failing. Out-of-order and duplicate poses are still dropped; a pose with
+  another peer's id or a regressed local receipt clock is still rejected by
+  the buffer, and `Session::receive` then restarts only that rider's buffer
+  (the packet itself already decoded and validated) rather than the room.
+- Latent codec edge found by the new property-style round-trip tests
+  (`crates/atv-net/tests/compact_limits.rs`: every bounded field at and just
+  inside its limit, plus 20,000 random valid poses): visual steering at the
+  3.9 rad limit encoded as code 31949, which decodes as 3.900024 and failed
+  validation. The encoder now clamps the code to 31948; the decoder accepts
+  exactly one code of overshoot from older senders (clamped back to 3.9) and
+  still rejects anything further, escapes and non-finite values. ATV visual
+  steering stays near ±0.52 rad, so this was not the race 2 cause. Every
+  other quantized field (wheels, compression, phase, weights, look phase,
+  velocities, angular velocity, rpm, throttle, speed, rotations) was checked
+  to decode within its validated range.
+
+Two related fixes from the same investigation:
+
+- The relay's per-connection budget is the same average (120 messages and
+  1 MiB a second) over a 3 s window (360 messages / 3 MiB), so packets that
+  queued during a stall (a starved tab, a congested link) and arrive together
+  no longer close the socket with `Message rate exceeded`.
+- A room race ends with its room: when the room closes while no frontend is
+  open, the race state is cleared instead of holding the ride on a race whose
+  host is gone.
+
 ### Next modes
 
 Championships online need a per-round series state on the host (points by

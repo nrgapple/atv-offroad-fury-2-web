@@ -358,9 +358,6 @@ pub struct RoomRace {
     /// Racers' names as last seen in the room, so a leaver keeps its name
     /// in the results.
     names: BTreeMap<u8, String>,
-    /// Diagnostics: frames run and the latest session time (ms).
-    frames: u32,
-    now: f64,
 }
 
 /// Ride settings for this rider's slot in `field`.
@@ -414,8 +411,6 @@ impl RoomRace {
                 went: false,
                 rows: Vec::new(),
                 names: BTreeMap::new(),
-                frames: 0,
-                now: 0.,
             },
             Action::Load(load),
         ))
@@ -447,8 +442,6 @@ impl RoomRace {
                 went: false,
                 rows: Vec::new(),
                 names: BTreeMap::new(),
-                frames: 0,
-                now: 0.,
             },
             load,
         )
@@ -467,8 +460,6 @@ impl RoomRace {
         net: &mut crate::multiplayer::Net,
     ) -> Option<Action> {
         let now = net.session_now() as f64;
-        self.frames = self.frames.wrapping_add(1);
-        self.now = now;
         // The host left and the room passed to this rider: run the race on.
         if !self.host && net.is_host() {
             self.host = true;
@@ -614,8 +605,6 @@ impl RoomRace {
             "scores": self.field.scores,
             "loaded": self.loaded,
             "went": self.went,
-            "frames": self.frames,
-            "now": self.now,
             "progress": self.field.progress.values().map(|p| serde_json::json!({
                 "peer": p.peer, "lap": p.lap, "distance": p.distance, "finish": p.finish_ms,
             })).collect::<Vec<_>>(),
