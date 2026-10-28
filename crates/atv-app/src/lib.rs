@@ -21,6 +21,7 @@ pub mod replay;
 mod riding;
 mod sound;
 mod soundtrack;
+mod split;
 mod tag;
 #[cfg(target_arch = "wasm32")]
 mod text_inputs;
@@ -133,6 +134,8 @@ struct Ready {
     hud_assets: Option<atv_ui::hud::assets::OverlayAssets>,
     /// The multiplayer room this ride is in.
     net: Option<multiplayer::Net>,
+    /// Local split screen's second player (split.rs).
+    split: Option<split::Second>,
 }
 
 struct PendingSound {
@@ -541,6 +544,9 @@ impl ObjectiveSession {
 }
 
 struct App {
+    /// The frontend's Split Screen branch asked for two local players on
+    /// the next rides (kept for Restart Race).
+    split_request: Option<split::Layout>,
     /// Crash camera Tight, Chase camera Assisted (Options::camera_choice).
     camera_choice: (bool, bool),
     /// Adaptive render resolution (web): steps RENDER_RATIO while riding.
@@ -748,6 +754,8 @@ struct World {
     game_scene: Option<(String, String)>,
     /// A Freestyle objective's OB archive and target TOY stem.
     objective: Option<(String, Option<String>)>,
+    /// Two local players in this layout (split.rs).
+    split: Option<split::Layout>,
 }
 
 /// Ride prefetch (`?prefetch=off` turns it off for load-time measurement).
@@ -840,6 +848,7 @@ async fn prepare(
         autodrive,
         game_scene,
         objective,
+        split: split_layout,
     } = world;
     // Every archive the ride reads downloads in parallel (game.js prefetchRide).
     if ride && PREFETCH.load(std::sync::atomic::Ordering::Relaxed) {
@@ -926,6 +935,12 @@ async fn prepare(
             .is_some_and(|m| m.matches()),
     );
     let mut pending_sound = None;
+    // Split screen starts both players' countdowns together: no pre-race
+    // camera tour (it frames one rider).
+    let race = race.map(|r| atv_game::ride::race::Settings {
+        intro: r.intro && split_layout.is_none(),
+        ..r
+    });
     let riding = if ride {
         let ride = atv_game::ride::load_with(
             &content,
@@ -1042,6 +1057,25 @@ async fn prepare(
     } else {
         None
     };
+    let mut riding = riding;
+    let split = match (split_layout, &mut riding) {
+        (Some(layout), Some(first)) => {
+            progress(&gpu, "Reading player 2…");
+            Some(
+                split::Second::load(
+                    &gpu,
+                    &content,
+                    &venue,
+                    &mut scene,
+                    first,
+                    layout,
+                    (selection, appearance, race, crash, graphics),
+                )
+                .await?,
+            )
+        }
+        _ => None,
+    };
     let hud_assets = if riding.is_some() {
         match atv_ui::hud::assets::load(
             &content,
@@ -1073,6 +1107,7 @@ async fn prepare(
         pending_sound,
         hud_assets,
         net: None,
+        split,
     })
 }
 
@@ -1260,7 +1295,19 @@ impl App {
         let active = !riding.paused && !riding.held && focused;
         self.gamepad
             .set_pin(riding.bindings.tuning.selected.clone());
-        let pad = self.gamepad.sample();
+        // Split screen: player 1 plays the first connected controller (and
+        // the keyboard's left side), player 2 the second (split.rs).
+        let split_on = ready.split.is_some();
+        let pad = if split_on {
+            self.gamepad.sample_slot(0)
+        } else {
+            self.gamepad.sample()
+        };
+        let pad2 = if split_on {
+            self.gamepad.sample_slot(1)
+        } else {
+            None
+        };
         if let Some(overlay) = &mut self.overlay {
             overlay.pad_name = self.gamepad.name();
             overlay.pads = self.gamepad.connected();
@@ -1302,7 +1349,9 @@ impl App {
         }
         self.intro_pad_held = pad_pressed;
         let names: HashSet<String> = self.keys.iter().map(|k| format!("{k:?}")).collect();
-        let keys = |code: &str| names.contains(code);
+        let keys = |code: &str| names.contains(code) && (!split_on || split::player_1_key(code));
+        let all_keys = |code: &str| names.contains(code);
+        let sample_now = (now - self.started).as_secs_f64();
         let sample = riding::Sample {
             keys: &keys,
             pad: pad.as_ref(),
@@ -1319,11 +1368,47 @@ impl App {
         let sampler = |now: u64, ride: &atv_game::ride::Ride| {
             net.map_or_else(Vec::new, |n| n.contact_bodies_at(now, ride))
         };
-        let peers = net.map(|n| (n.session_now(), &sampler as riding::PeerSampler));
+        // Split screen: each player is the other's contact body.
+        let split_body = ready
+            .split
+            .as_ref()
+            .map(|s| split::body(&s.riding.ride, 1.));
+        let split_sampler =
+            move |_: u64, _: &atv_game::ride::Ride| split_body.into_iter().collect::<Vec<_>>();
+        let peers = net
+            .map(|n| (n.session_now(), &sampler as riding::PeerSampler))
+            .or_else(|| split_body.map(|_| (0, &split_sampler as riding::PeerSampler)));
         if let Err(error) = riding.frame(&sample, &mut touch, dt, peers) {
             status(&format!("Simulation stopped: {error}"));
             ready.riding = None;
             return;
+        }
+        if let Some(second) = &mut ready.split {
+            // Player 2 rides while player 1 does: either player's pause
+            // opens player 1's Pause menu over both views.
+            if !riding.paused && !riding.held && focused {
+                let other = split::body(&riding.ride, -1.);
+                if let Err(error) = second.frame(&all_keys, pad2.as_ref(), sample_now, dt, other) {
+                    status(&format!("Player 2 stopped: {error}"));
+                }
+                if second.riding.paused {
+                    second.riding.paused = false;
+                    second.riding.clear_input();
+                    riding.paused = true;
+                    riding.clear_input();
+                    riding.sync_sound();
+                }
+            }
+            let origins = [
+                riding.ride.frame().origin,
+                second.riding.ride.frame().origin,
+            ];
+            if let (Some(first), Some(other)) = (
+                riding.ride.race_mut().and_then(|r| r.frame.as_mut()),
+                second.riding.ride.race_mut().and_then(|r| r.frame.as_mut()),
+            ) {
+                split::merge_race(first, other, origins);
+            }
         }
         // Rumble.pulse: the frame's impacts on the active controller.
         for pulse in std::mem::take(&mut riding.pulses) {
@@ -1366,19 +1451,30 @@ impl App {
         if let Some(effects) = &mut riding.effects {
             ready.scene.accept_wheel_effects(&ready.gpu, effects);
         }
+        // A split view presents at the preset's reference and scales the
+        // focal length to its layout (split.rs).
+        let (present_aspect, focal_scale) = match &ready.split {
+            Some(second) => (split::SPLIT_PRESENT_ASPECT, second.layout.focal_scale()),
+            None => (ready.gpu.aspect(), 1.),
+        };
         match riding.present(
             &ready.gpu,
             &mut ready.scene,
             &ready.venue,
-            ready.gpu.aspect(),
+            present_aspect,
             dt,
         ) {
             Ok((camera, focal)) if !ready.fixed => {
                 ready.camera = camera;
-                ready.focal_length = focal;
+                ready.focal_length = focal * focal_scale;
             }
             Ok(_) => {}
             Err(error) => status(&error),
+        }
+        if let Some(second) = &mut ready.split
+            && let Err(error) = second.present(&ready.gpu, &mut ready.scene, &ready.venue, dt)
+        {
+            status(&format!("Player 2: {error}"));
         }
         // The speed-rush screen pass shares the FOV kick's amount.
         let motion = riding.ride.frame();
@@ -1719,6 +1815,14 @@ impl App {
             None => None,
         };
         if let Some(overlay) = &mut self.overlay {
+            // Split screen: the race is over once both players finish.
+            overlay.hold_results = ready.split.as_ref().is_some_and(|s| {
+                s.riding
+                    .ride
+                    .race()
+                    .and_then(|r| r.frame.as_ref())
+                    .is_some_and(|f| f.phase != "finished")
+            });
             overlay.training = self.training.is_some();
             overlay.game = self.game.is_some() || self.hockey.is_some();
             if riding.input_cleared {
@@ -1876,6 +1980,17 @@ impl App {
                     training: training_view,
                     game: game_view,
                     compass,
+                    second: ready.split.as_ref().map(|s| {
+                        let ride = &s.riding.ride;
+                        overlay::SecondHud {
+                            vertical: s.layout == split::Layout::Vertical,
+                            hud: ride.hud(),
+                            race: ride
+                                .race()
+                                .and_then(|r| r.frame.as_ref())
+                                .map(|f| (f, ride.committed_points(), ride.frame().origin)),
+                        }
+                    }),
                 }),
                 Some(&mut riding.bindings),
             );
@@ -1885,6 +2000,58 @@ impl App {
             let mut state = replay::record(&riding.ride, riding.ride.steps());
             state["camera"]["preset"] = riding.ride.camera().0.preset.into();
             state["paused"] = riding.paused.into();
+            // Split screen (tools/test_engine_split_screen.mjs).
+            if let Some(second) = &ready.split {
+                let ride = &second.riding.ride;
+                let f = ride.frame();
+                let applied = ride.applied();
+                let camera = |c: &atv_render::Camera, focal: f32| {
+                    serde_json::json!([c.x, c.y, c.z, c.yaw, c.pitch, focal])
+                };
+                let race = |ride: &atv_game::ride::Ride| {
+                    ride.race().and_then(|r| r.frame.as_ref()).map(|f| {
+                        serde_json::json!({
+                            "phase": f.phase, "lap": f.lap, "laps": f.laps,
+                            "position": f.position, "field": f.field,
+                            "elapsed": f.elapsed,
+                            "standings": f.standings.iter().map(|s| serde_json::json!({
+                                "name": s.name, "position": s.position, "time": s.time,
+                                "player": s.player})).collect::<Vec<_>>(),
+                        })
+                    })
+                };
+                state["split"] = serde_json::json!({
+                    "layout": format!("{:?}", second.layout),
+                    "views": second.layout.rects(
+                        ready.gpu.config.width,
+                        ready.gpu.config.height,
+                        self.window.as_ref().map_or(1., |w| w.scale_factor()) as f32,
+                    ),
+                    "cameras": [
+                        camera(&ready.camera, ready.focal_length),
+                        camera(&second.camera, second.focal_length),
+                    ],
+                    "presets": [riding.ride.camera().0.preset, ride.camera().0.preset],
+                    "pads": [pad.is_some(), second.pad],
+                    "resultsHeld": self.overlay.as_ref().is_some_and(|o| o.hold_results),
+                    "resultsShown": self.overlay.as_ref().is_some_and(|o| o.results.shown),
+                    "resultsRows": self.overlay.as_ref().map(|o| o.results.rows.clone()),
+                    "player1": {
+                        "origin": riding.ride.frame().origin,
+                        "speed": riding.ride.frame().speed_magnitude,
+                        "throttle": riding.ride.applied().throttle,
+                        "race": race(&riding.ride),
+                    },
+                    "player2": {
+                        "origin": f.origin,
+                        "speed": f.speed_magnitude,
+                        "steps": ride.steps(),
+                        "throttle": applied.throttle,
+                        "steer": applied.steer,
+                        "race": race(ride),
+                    },
+                });
+            }
             state["wakeLock"] = self.wake_lock.held().into();
             state["diagnostics"] = serde_json::json!({
                 "mode": self.diagnostics.mode.name(), "lines": self.diagnostics.lines});
@@ -2123,18 +2290,37 @@ impl App {
         let overlay = self.overlay.as_ref().filter(|_| !self.hide_ui);
         let render_started = Instant::now();
         let mut acquire = 0.;
-        match ready.scene.render_with(
-            &ready.gpu,
-            &View {
-                camera: ready.camera,
-                focal_length: ready.focal_length,
-            },
-            &mut |encoder, target| {
-                if let Some(overlay) = overlay {
-                    overlay.draw(encoder, target);
-                }
-            },
-        ) {
+        let first_view = View {
+            camera: ready.camera,
+            focal_length: ready.focal_length,
+        };
+        let mut draw_overlay = |encoder: &mut wgpu::CommandEncoder, target: &wgpu::TextureView| {
+            if let Some(overlay) = overlay {
+                overlay.draw(encoder, target);
+            }
+        };
+        let rendered = match &ready.split {
+            Some(second) => {
+                let [a, b] = second.layout.rects(
+                    ready.gpu.config.width,
+                    ready.gpu.config.height,
+                    device as f32,
+                );
+                let second_view = View {
+                    camera: second.camera,
+                    focal_length: second.focal_length,
+                };
+                ready.scene.render_views(
+                    &ready.gpu,
+                    &[(first_view, a), (second_view, b)],
+                    &mut draw_overlay,
+                )
+            }
+            None => ready
+                .scene
+                .render_with(&ready.gpu, &first_view, &mut draw_overlay),
+        };
+        match rendered {
             Ok(stats) => {
                 self.meter.triangles = stats.triangles();
                 self.meter.draws = stats.draws();
@@ -3702,6 +3888,9 @@ impl ApplicationHandler<Message> for App {
             autodrive: options.autodrive,
             game_scene: None,
             objective: None,
+            // `?split=h|v` (web) or FURY_SPLIT=h|v (desktop): a direct split
+            // ride (tests and host measurements).
+            split: split::Layout::requested(split_param().as_deref()),
         };
         let future = async move {
             let gpu = open_gpu(window, display).await?;
@@ -5335,6 +5524,28 @@ impl App {
 
     fn front_event(&mut self, event: atv_ui::front::controller::Event) {
         use atv_ui::front::controller::Event;
+        // Multiplayer → Split Screen rides Freestyle and races with two
+        // local players; every other ride is one player's.
+        if matches!(
+            event,
+            Event::Ride { .. }
+                | Event::Race { .. }
+                | Event::FreeRide { .. }
+                | Event::Host { .. }
+                | Event::Join { .. }
+                | Event::RoomRide { .. }
+                | Event::Training { .. }
+                | Event::Game { .. }
+                | Event::Hockey { .. }
+                | Event::Objective { .. }
+        ) {
+            let split = self.front.as_ref().and_then(|f| {
+                let f = f.borrow();
+                (f.state.split && matches!(event, Event::Ride { .. } | Event::Race { .. }))
+                    .then(|| split::Layout::from_vertical(f.state.split_vertical))
+            });
+            self.split_request = split;
+        }
         if !matches!(event, Event::Objective { .. }) {
             self.objective = None;
         }
@@ -5896,6 +6107,7 @@ impl App {
                         (path, toy)
                     })
             }),
+            split: self.split_request,
             selection: atv_game::ride::Selection { quad, rider },
             // The saved Garage appearance dresses the ride (game.js
             // rideAppearance = frontend.appearance).
@@ -6736,6 +6948,7 @@ fn capture(ready: &mut Ready, path: &std::path::Path, width: u32, height: u32, u
                     training: None,
                     game: None,
                     compass: None,
+                    second: None,
                 }),
                 None,
             );
@@ -7202,6 +7415,7 @@ impl App {
             autodrive: None,
             game_scene: None,
             objective: None,
+            split: None,
         };
         let future = async move {
             let mut ready = match prepare(
@@ -7366,6 +7580,7 @@ pub fn run(options: Options) {
         requested: HashSet::new(),
         riders_polled: None,
         held_room: None,
+        split_request: None,
         held_ride: None,
         objective: None,
         training: None,
@@ -7837,6 +8052,20 @@ impl Diagnostics {
 }
 
 /// `?debug=` on the web; `ATV_DEBUG` natively.
+/// `?split=h|v` (web) or `FURY_SPLIT` (desktop).
+fn split_param() -> Option<String> {
+    #[cfg(target_arch = "wasm32")]
+    {
+        let search = web_sys::window()?.location().search().ok()?;
+        search.trim_start_matches('?').split('&').find_map(|pair| {
+            let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
+            (key == "split").then(|| value.to_string())
+        })
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    std::env::var("FURY_SPLIT").ok()
+}
+
 fn debug_param() -> Option<String> {
     #[cfg(target_arch = "wasm32")]
     {

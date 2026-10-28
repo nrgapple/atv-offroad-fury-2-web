@@ -210,6 +210,7 @@ fn stage_page(page: &str) -> bool {
         "main"
             | "single"
             | "multiplayer"
+            | "split"
             | "championship"
             | "objectives"
             | "objective-courses"
@@ -666,6 +667,7 @@ fn page_title(page: &str) -> &'static str {
         "main" => "Main Menu",
         "single" => "Single Player",
         "multiplayer" => "Multiplayer",
+        "split" => "Split Screen",
         "create-lobby" => "Create Lobby",
         "join-lobby" => "Join Lobby",
         "lobby" => "Free Ride Lobby",
@@ -1355,6 +1357,7 @@ fn left(m: &Metrics, s: &Screen) -> El {
             "main"
                 | "single"
                 | "multiplayer"
+                | "split"
                 | "championship"
                 | "objectives"
                 | "objective-courses"

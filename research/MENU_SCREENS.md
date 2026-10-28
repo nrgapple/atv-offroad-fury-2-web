@@ -132,8 +132,9 @@ that have an effect on a browser or desktop build. Exact-build evidence
 
 Authored or not ported: the original keeps Measurement in the profile
 (+0x6b0) and saves the settings with it; the port keeps one device-wide
-choice like its other settings. Split Screen
-(no split screen) and Display Mode (480p/480i) have no counterpart; the
+choice like its other settings. Split Screen Horizontal/Vertical is the
+Screen row of Multiplayer → Split Screen ([SPLIT_SCREEN.md](SPLIT_SCREEN.md));
+Display Mode (480p/480i) has no counterpart; the
 volumes stay on Settings → Audio. Where the original stores +0x674 between
 sessions was not traced. The port's motorcycles (not in the original
 game) keep their vegetation collision.
