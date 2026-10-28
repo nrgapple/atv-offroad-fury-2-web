@@ -52,6 +52,15 @@ and registry cache, keyed by toolchain, lockfiles and commit; PRs only restore i
 The separately validated `worker-build` executable cache remains exact-key only.
 No private content, credentials, screenshots or references enter either cache.
 
+The production deployment applies pending D1 cloud-save migrations before the
+Worker update, using the same pinned Wrangler and deploy token (which requires
+D1 Edit/Write). It runs after the stale-build gate under `deploy-production`
+serialization; migration failure stops the Worker update. The migration command
+uses root `wrangler.jsonc`, whose `migrations_dir` points at the checked-out SQL,
+while the Worker deploy uses the staged config. Applied files are skipped on
+retries. Migrations must remain compatible with the running Worker until the new
+version is deployed; see [cloud-save operations](CLOUD_SAVE.md#operations).
+
 ## One owner and four milestones
 
 All receipts are ignored under shared `private/reports/release-checkpoints/`.

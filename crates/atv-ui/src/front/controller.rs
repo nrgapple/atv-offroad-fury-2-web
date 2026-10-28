@@ -4,10 +4,10 @@
 //! same request fields the browser sends.
 use super::{
     BACK, COURSE, DONE, FIELD, GROUPS, Img, LIST, NEXT, PREV, QUAD_NEXT, QUAD_PREV, RIDE, RIDER,
-    ROW, SHARE, START, STEP_NEXT, STEP_PREV, Screen, Stats, TAB, VEHICLE, assets::Track,
-    course_group, group_label,
+    ROW, ROWS, ROWS_END, ROWS_PADDING, SHARE, START, STEP_NEXT, STEP_PREV, Screen, Stats, TAB,
+    VEHICLE, assets::Track, course_group, group_label,
 };
-use crate::{hud::Viewport, paint::Rect, settings::Settings};
+use crate::{hud::Viewport, paint::Rect, scroll::Scroller, settings::Settings};
 use atv_core::rider_gear::{Appearance, Category, PAINTS, SLOTS};
 use serde_json::{Value, json};
 
@@ -15,7 +15,10 @@ use serde_json::{Value, json};
 pub mod store;
 pub use store::{StoreView, store_page};
 pub mod games_page;
+pub mod navigation;
+pub mod passkey_page;
 pub mod profile_pages;
+pub use passkey_page::{CloudCommand, CloudView};
 use profile_pages::NO_PROFILE;
 
 /// What the application must do after a frontend input.
@@ -114,6 +117,8 @@ pub enum Event {
         expert: bool,
         objective: usize,
     },
+    /// A Pass Key page's request: copy, share, look up, save files.
+    Cloud(CloudCommand),
 }
 
 /// Race setup offers 1-5 laps, 0, 3 or 4 CPU riders and the original
@@ -191,6 +196,7 @@ pub fn stepper(action: &str) -> bool {
             | "famecourse"
             | "famedifficulty"
             | "storeitem"
+            | "codeletter"
     ) || games_page::game_row(action)
         || GEAR_ROWS.iter().any(|(a, _)| *a == action)
 }
@@ -279,8 +285,17 @@ struct Pressed {
     x: f32,
     y: f32,
     moved: bool,
-    /// Dragging the list: the scroll at press.
-    scroll: Option<f32>,
+    /// The press began in a scrolling region (the list or the rows).
+    scroll: Option<Pane>,
+    /// It caught moving content: a grab, never a tap.
+    caught: bool,
+}
+
+/// The frontend's scrolling regions.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Pane {
+    List,
+    Rows,
 }
 
 /// The course loader's state.
@@ -306,8 +321,14 @@ pub struct Frontend {
     pub filter: String,
     pub quad_id: u16,
     pub rider_id: u16,
-    pub list_scroll: f32,
-    list_max: f32,
+    /// The course/vehicle list's kinetic scroll (crate::scroll).
+    pub list: Scroller,
+    /// The rows column's scroll, where a page's rows outgrow it.
+    pub rows: Scroller,
+    /// Bring the selected row into view after the next layout (keys/pad).
+    reveal_row: bool,
+    /// The page just opened: its list shows the current card without a glide.
+    fresh: bool,
     hovered: Option<u32>,
     pressed: Option<Pressed>,
     pad: u32,
@@ -381,7 +402,21 @@ pub struct Frontend {
     shift: bool,
     /// The Profile Store's catalogs and browsing state.
     pub store: StoreView,
+    /// The Pass Key sync as the host last reported it.
+    pub cloud: CloudView,
+    /// The Pass Key pages' working state.
+    pub passkey: passkey_page::PassKeyUi,
+    /// Multiplayer → Split Screen: the next Freestyle or Race rides two
+    /// local players (research/SPLIT_SCREEN.md).
+    pub split: bool,
+    /// Split Screen layout: side by side, else top and bottom (saved).
+    pub split_vertical: bool,
+    /// The pages Back returns through (`navigation`).
+    history: Vec<navigation::Visit>,
 }
+
+/// Saved Split Screen layout ("vertical" or "horizontal").
+pub const SPLIT_LAYOUT_KEY: &str = "atv-split-screen";
 
 impl Frontend {
     pub fn new(tracks: Vec<Track>, settings: &Settings, web: bool) -> Self {
@@ -407,8 +442,10 @@ impl Frontend {
             filter: "all".into(),
             quad_id,
             rider_id,
-            list_scroll: 0.,
-            list_max: 0.,
+            list: Scroller::default(),
+            rows: Scroller::default(),
+            reveal_row: false,
+            fresh: false,
             hovered: None,
             pressed: None,
             pad: u32::MAX,
@@ -447,6 +484,11 @@ impl Frontend {
             shown: crate::transition::next_show(),
             shift: false,
             store: StoreView::default(),
+            cloud: CloudView::default(),
+            passkey: Default::default(),
+            split: false,
+            split_vertical: settings.get(SPLIT_LAYOUT_KEY).as_deref() == Some("vertical"),
+            history: Vec::new(),
         };
         front.load_profiles(settings);
         front.player_name = front.saved["playerName"]
@@ -513,6 +555,11 @@ impl Frontend {
             self.selection = self.selection.min(self.choices.len().saturating_sub(1));
             return;
         }
+        if Self::is_passkey_page(&self.page) {
+            self.choices = self.passkey_choices();
+            self.selection = self.selection.min(self.choices.len().saturating_sub(1));
+            return;
+        }
         if Self::is_profile_page(&self.page) {
             self.choices = self.profile_choices();
             self.selection = self.selection.min(self.choices.len().saturating_sub(1));
@@ -531,6 +578,7 @@ impl Frontend {
         };
         let request = json!({
             "page": page,
+            "split_vertical": self.split_vertical,
             "width": view.width.clamp(240., 16384.),
             "height": view.height.clamp(240., 16384.),
             "selection": self.selection,
@@ -699,7 +747,7 @@ impl Frontend {
         if !order.is_empty() && !order.contains(&self.race.course) {
             self.race.course = order[0].clone();
         }
-        self.list_scroll = 0.;
+        self.list.reset();
         self.reveal = true;
     }
 
@@ -801,6 +849,7 @@ impl Frontend {
             return;
         }
         match action {
+            "codeletter" => return self.step_passkey(direction, view),
             _ if games_page::game_row(action) => self.step_game(action, direction),
             "champdifficulty" => {
                 self.champ_expert = !self.champ_expert;
@@ -1292,6 +1341,16 @@ impl Frontend {
                     max_length: 8,
                 },
             ],
+            "passkey-entry" => vec![Field {
+                action: "passkey-code",
+                label: if self.passkey.share {
+                    "Enter Share Code:"
+                } else {
+                    "Enter Pass Key:"
+                },
+                value: self.passkey.entry.clone(),
+                max_length: 40,
+            }],
             "store-cheats" => vec![Field {
                 action: "cheat",
                 label: "Enter Cheat:",
@@ -1325,6 +1384,10 @@ impl Frontend {
                 self.set_profile_name(text);
                 return;
             }
+            "passkey-code" => {
+                self.set_passkey_entry(text);
+                return;
+            }
             "create-code" => self.create_code = code(text),
             "room-code" => self.room_code = code(text),
             "cheat" => self.store.cheat = code(text),
@@ -1356,19 +1419,26 @@ impl Frontend {
         self.choices.get(self.selection).map(|(a, _)| a.as_str())
     }
 
-    pub fn show(&mut self, page: &str, view: &Viewport) {
+    /// Switches to `page` on its first row; [`Frontend::show`] (the
+    /// history) decides where Back then leads.
+    fn present(&mut self, page: &str, view: &Viewport) {
         self.shown = crate::transition::next_show();
         // frontend.js clears `#menu-notice` with each action.
         if self.page != page {
             self.notice = None;
         }
         self.page = page.into();
+        // Only the Split Screen branch's own pages keep two players.
+        if matches!(page, "title" | "main" | "single" | "multiplayer" | "split") {
+            self.split = false;
+        }
         self.selection = 0;
-        self.list_scroll = 0.;
-        self.list_max = 0.;
+        self.list = Scroller::default();
+        self.rows = Scroller::default();
         self.pressed = None;
         self.hovered = None;
         self.reveal = matches!(page, "tracks" | "garage" | "race");
+        self.fresh = true;
         // A held button does not also act on the new page.
         self.pad = u32::MAX;
         self.refresh(view);
@@ -1405,7 +1475,7 @@ impl Frontend {
         if !order.is_empty() && !order.contains(&self.track) {
             self.track = order[0];
         }
-        self.list_scroll = 0.;
+        self.list.reset();
         self.reveal = true;
     }
 
@@ -1557,36 +1627,16 @@ impl Frontend {
             // frontend.js: Back on the lobby page is Leave Game.
             return self.leave_lobby(view);
         }
-        if let Some(to) = self.profile_back() {
-            if self.page == "profile-confirm" {
-                self.profile_ui.confirm = None;
-            }
-            self.focus = None;
-            self.show(to, view);
-            return None;
-        }
-        let to = match self.page.as_str() {
-            _ if self.store_back().is_some() => self.store_back().unwrap_or("single").to_string(),
-            "main" => "title".to_string(),
-            "single" => "main".into(),
-            "tracks" if self.hosting => "create-lobby".into(),
-            "tracks" | "race" | "championship" | "games" => "single".into(),
-            "objectives" if self.freestyle.is_none() => "objective-courses".into(),
-            "objectives" => "championship".into(),
-            "objective-courses" => "single".into(),
-            "gear" => "garage".into(),
-            "garage" => self.garage_return.clone(),
-            "multiplayer" => "main".into(),
-            "create-lobby" | "join-lobby" => "multiplayer".into(),
-            _ => return None,
-        };
         let from = self.page.clone();
-        if from == "tracks" {
-            self.hosting = false;
-        }
         self.focus = None;
-        // frontend.js `show`: the new page starts on its first row.
-        self.show(&to, view);
+        // The page the player came from, on the row they left it by.
+        self.go_back(view);
+        match from.as_str() {
+            "tracks" => self.hosting = false,
+            "profile-confirm" => self.profile_ui.confirm = None,
+            "passkey-confirm" => self.passkey.pending = None,
+            _ => {}
+        }
         None
     }
 
@@ -1623,12 +1673,38 @@ impl Frontend {
         if self.store_run(action, view, settings) {
             return None;
         }
+        if let Some(event) = self.passkey_action(action, view, settings) {
+            return event;
+        }
         if let Some(event) = self.profile_action(action, view, settings) {
             return event;
         }
         match action {
-            "main" | "single" | "tracks" | "multiplayer" | "race" | "gear" => {
+            "main" | "single" | "tracks" | "multiplayer" | "race" | "gear" | "split" => {
                 self.show(action, view)
+            }
+            "splitfree" | "splitrace" => {
+                self.split = true;
+                self.show(
+                    if action == "splitrace" {
+                        "race"
+                    } else {
+                        "tracks"
+                    },
+                    view,
+                );
+            }
+            "splitlayout" => {
+                self.split_vertical = !self.split_vertical;
+                settings.set(
+                    SPLIT_LAYOUT_KEY,
+                    if self.split_vertical {
+                        "vertical"
+                    } else {
+                        "horizontal"
+                    },
+                );
+                self.refresh(view);
             }
             "racestart" => return self.race_event(settings),
             "games" => self.show(action, view),
@@ -1775,6 +1851,7 @@ impl Frontend {
 
     /// Keyboard navigation (frontend.js `action`).
     pub fn key(&mut self, code: &str, view: &Viewport, settings: &mut Settings) -> Option<Event> {
+        self.reveal_row = true;
         if matches!(code, "ShiftLeft" | "ShiftRight") {
             self.shift = true;
             return None;
@@ -1850,7 +1927,7 @@ impl Frontend {
             }
             (
                 "race" | "gear" | "games" | "profile-name" | "profile-records" | "hall-of-fame"
-                | "store-atv" | "store-gear" | "store-games" | "store-tracks",
+                | "passkey-entry" | "store-atv" | "store-gear" | "store-games" | "store-tracks",
                 "left" | "right",
             ) => {
                 // Only value rows step; Start Race, the link and Back do not.
@@ -2013,16 +2090,26 @@ impl Frontend {
         (COURSE..COURSE + 100).contains(&id) || (VEHICLE..VEHICLE + 100).contains(&id)
     }
 
+    /// Targets drawn inside the scrolling rows column.
+    fn in_rows(id: u32) -> bool {
+        (ROW..ROW + 100).contains(&id)
+            || (STEP_PREV..STEP_NEXT + 10).contains(&id)
+            || (FIELD..FIELD + 4).contains(&id)
+    }
+
     fn hit(hits: &[(Rect, u32)], x: f32, y: f32) -> Option<u32> {
-        let list = hits.iter().find(|(_, id)| *id == LIST).map(|(r, _)| *r);
+        let pane = |pane: u32| hits.iter().find(|(_, id)| *id == pane).map(|(r, _)| *r);
+        let (list, rows) = (pane(LIST), pane(ROWS));
         hits.iter()
             .rev()
-            // List items outside the scrolled viewport are clipped.
+            // Items scrolled outside their pane are clipped.
             .filter(|(r, id)| {
-                r.contains(x, y) && !(Self::listed(*id) && list.is_some_and(|l| !l.contains(x, y)))
+                r.contains(x, y)
+                    && !(Self::listed(*id) && list.is_some_and(|l| !l.contains(x, y)))
+                    && !(Self::in_rows(*id) && rows.is_some_and(|l| !l.contains(x, y)))
             })
             .map(|(_, id)| *id)
-            .find(|id| *id != LIST)
+            .find(|id| *id != LIST && *id != ROWS)
     }
 
     /// Mouse movement: hover, and a row under a moving mouse takes the
@@ -2037,34 +2124,72 @@ impl Frontend {
     }
 
     pub fn press(&mut self, hits: &[(Rect, u32)], pointer: u64, x: f32, y: f32) {
-        let in_list = hits.iter().any(|(r, id)| *id == LIST && r.contains(x, y));
+        let inside = |pane: u32| hits.iter().any(|(r, id)| *id == pane && r.contains(x, y));
+        // The list sits inside the rows column on Select Track: it wins.
+        let scroll = if inside(LIST) {
+            Some(Pane::List)
+        } else if inside(ROWS) && self.rows.max() > 0. {
+            Some(Pane::Rows)
+        } else {
+            None
+        };
+        let now = crate::scroll::now();
+        let caught = match scroll {
+            Some(pane) => self.pane(pane).press(y, now),
+            None => false,
+        };
         self.pressed = Some(Pressed {
             pointer,
             id: Self::hit(hits, x, y),
             x,
             y,
-            moved: false,
-            scroll: in_list.then_some(self.list_scroll),
+            moved: caught,
+            scroll,
+            caught,
         });
     }
 
-    /// Touch/mouse drag: lists scroll with the finger.
+    fn pane(&mut self, pane: Pane) -> &mut Scroller {
+        match pane {
+            Pane::List => &mut self.list,
+            Pane::Rows => &mut self.rows,
+        }
+    }
+
+    /// Touch/mouse drag: lists and overflowing rows follow the finger.
     pub fn drag(&mut self, pointer: u64, x: f32, y: f32) {
-        let max = self.list_max;
         let Some(p) = self.pressed.as_mut().filter(|p| p.pointer == pointer) else {
             return;
         };
+        let scroll = p.scroll;
         if (x - p.x).hypot(y - p.y) > 8. {
             p.moved = true;
         }
-        if let (true, Some(start)) = (p.moved, p.scroll) {
-            self.list_scroll = (start - (y - p.y)).clamp(0., max);
+        if let Some(pane) = scroll
+            && self.pane(pane).drag(y, crate::scroll::now())
+            && let Some(p) = self.pressed.as_mut()
+        {
+            // The content follows the finger: this press is a scroll.
+            p.moved = true;
         }
+    }
+
+    /// Advances list and rows momentum; true while either moves.
+    pub fn tick_scroll(&mut self, now: f64) -> bool {
+        let list = self.list.tick(now);
+        self.rows.tick(now) || list
+    }
+
+    /// Scrolling content is moving (frames must keep coming).
+    pub fn scrolling(&self) -> bool {
+        self.list.active() || self.rows.active()
     }
 
     pub fn cancel_pointer(&mut self) {
         self.pressed = None;
         self.hovered = None;
+        self.list.cancel();
+        self.rows.cancel();
     }
 
     /// A menu over the page takes the pad: a button still held when it
@@ -2092,8 +2217,12 @@ impl Frontend {
         settings: &mut Settings,
     ) -> Option<Event> {
         let pressed = self.pressed.take().filter(|p| p.pointer == pointer)?;
-        if pressed.moved && pressed.scroll.is_some() {
-            return None;
+        if let Some(pane) = pressed.scroll {
+            self.pane(pane).release(crate::scroll::now());
+            // A drag scrolls; a grab stops a fling. Neither selects.
+            if pressed.moved || pressed.caught {
+                return None;
+            }
         }
         let id = Self::hit(hits, x, y).filter(|id| Some(*id) == pressed.id)?;
         self.click(id, view, settings)
@@ -2107,6 +2236,7 @@ impl Frontend {
         self.focus = None;
         match id {
             BACK | DONE => return self.back(view),
+            super::PASSKEY => self.open_passkey(view),
             START => return self.race_event(settings),
             SHARE if self.page == "race" => return Some(Event::CopyRaceLink),
             PREV | NEXT if self.page == "race" => {
@@ -2206,22 +2336,54 @@ impl Frontend {
         None
     }
 
+    /// Wheel/trackpad: the list when the page has one, else the rows.
     pub fn wheel(&mut self, dy: f32) {
-        self.list_scroll = (self.list_scroll + dy).clamp(0., self.list_max);
+        if self.list.max() > 0. {
+            self.list.wheel(dy);
+        } else {
+            self.rows.wheel(dy);
+        }
     }
 
-    /// After layout: the list's scroll range, and the current card brought
-    /// into view (`scrollIntoView({block: 'nearest'})`). True when the
-    /// scroll moved (lay out again).
-    pub fn laid_out(&mut self, hits: &[(Rect, u32)], padding_bottom: f32) -> bool {
-        let Some(list) = hits.iter().find(|(_, id)| *id == LIST).map(|(r, _)| *r) else {
-            return false;
+    /// After layout: the list's and the rows column's scroll ranges, and
+    /// the current card or the keyboard-selected row brought into view
+    /// (`scrollIntoView({block: 'nearest'})`): at once when a page opens,
+    /// gliding when the keys or a controller moved it (unless `animate` is
+    /// off: reduced motion). True when the scroll jumped (lay out again).
+    pub fn laid_out(&mut self, hits: &[(Rect, u32)], padding_bottom: f32, animate: bool) -> bool {
+        let rect = |pane: u32| hits.iter().find(|(_, id)| *id == pane).map(|(r, _)| *r);
+        let mut moved = false;
+        // The rows column (pages whose rows can outgrow it).
+        let reveal_row = std::mem::take(&mut self.reveal_row);
+        if let (Some(pane), Some(end)) = (rect(ROWS), rect(ROWS_END)) {
+            let before = self.rows.offset();
+            let bottom = end.y + before + ROWS_PADDING;
+            self.rows
+                .set_bounds((bottom - pane.bottom()).max(0.), pane.h);
+            if reveal_row && let Some(row) = rect(ROW + self.selection as u32) {
+                let target = self.rows.target();
+                // Rows sit at their layout place minus the drawn offset.
+                let (top, bottom) = (row.y + before, row.bottom() + before);
+                let margin = 8.;
+                if top - margin < target + pane.y {
+                    self.rows.glide_to(top - margin - pane.y, animate);
+                } else if bottom + margin > target + pane.bottom() {
+                    self.rows.glide_to(bottom + margin - pane.bottom(), animate);
+                }
+            }
+            moved |= self.rows.offset() != before;
+        } else {
+            self.rows.set_bounds(0., 1.);
+        }
+        let Some(list) = rect(LIST) else {
+            self.list.set_bounds(0., 1.);
+            return moved;
         };
         let items: Vec<&(Rect, u32)> = hits.iter().filter(|(_, id)| Self::listed(*id)).collect();
-        let bottom =
-            items.iter().map(|(r, _)| r.bottom()).fold(list.y, f32::max) + self.list_scroll;
-        self.list_max = (bottom + padding_bottom - list.bottom()).max(0.);
-        let before = self.list_scroll;
+        let before = self.list.offset();
+        let bottom = items.iter().map(|(r, _)| r.bottom()).fold(list.y, f32::max) + before;
+        self.list
+            .set_bounds((bottom + padding_bottom - list.bottom()).max(0.), list.h);
         if std::mem::take(&mut self.reveal) {
             let current = if self.page == "garage" {
                 VEHICLE + u32::from(self.quad_id)
@@ -2236,16 +2398,19 @@ impl Frontend {
                 let order = self.order();
                 COURSE + order.iter().position(|&i| i == self.track).unwrap_or(0) as u32
             };
+            // A page that just opened shows its card at once.
+            let animate = animate && !std::mem::take(&mut self.fresh);
             if let Some((r, _)) = items.iter().find(|(_, id)| *id == current) {
-                if r.y < list.y {
-                    self.list_scroll -= list.y - r.y;
-                } else if r.bottom() > list.bottom() {
-                    self.list_scroll += r.bottom() - list.bottom();
+                let target = self.list.target();
+                let (top, bottom) = (r.y + before, r.bottom() + before);
+                if top < target + list.y {
+                    self.list.glide_to(top - list.y, animate);
+                } else if bottom > target + list.bottom() {
+                    self.list.glide_to(bottom - list.bottom(), animate);
                 }
             }
         }
-        self.list_scroll = self.list_scroll.clamp(0., self.list_max);
-        self.list_scroll != before
+        moved || self.list.offset() != before
     }
 
     /// The page's draw state with its artwork.
@@ -2281,6 +2446,13 @@ impl Frontend {
             notice: self.notice.clone(),
             profile: self.profile_text(),
             details: self.profile_details(),
+            badge: self.badge_page().then(|| super::Badge {
+                key: self.cloud.key.clone(),
+                status: self.cloud.short.clone(),
+                synced: self.cloud.synced,
+                trouble: self.cloud.trouble,
+            }),
+            qr: self.passkey_qr(),
             heading: self.profile_heading(),
             lobby: self.lobby.clone(),
             motion: None,
@@ -2341,7 +2513,8 @@ impl Frontend {
             } else {
                 String::new()
             },
-            list_scroll: self.list_scroll,
+            list_scroll: self.list.offset(),
+            rows_scroll: self.rows.offset(),
             vehicle_label: self.quad_label(self.stage_quad()),
             rider: self.rider_id,
             catalog: if self.page == "garage" {
@@ -2421,6 +2594,8 @@ mod tests {
         front.selection = at;
         front.key("Enter", &view, &mut settings);
         assert_eq!(front.page, "multiplayer");
+        // Split Screen leads; Host Game is the next row.
+        front.key("ArrowDown", &view, &mut settings);
         front.key("Enter", &view, &mut settings);
         assert_eq!(front.page, "create-lobby");
         assert_eq!(front.fields().len(), 2);
@@ -2486,7 +2661,8 @@ mod tests {
         let view = view(1280., 720.);
         let mut settings = Settings::memory();
         let mut front = Frontend::new(tracks(), &settings, true);
-        front.show("join-lobby", &view);
+        // Opened from a link: Back climbs to its canonical parent.
+        front.open("join-lobby", &view);
         front.tab(true);
         assert!(front.focus.is_some());
         front.key("Escape", &view, &mut settings);
@@ -2756,9 +2932,11 @@ mod tests {
                 .iter()
                 .any(|v| v.motorcycle && !v.class.is_empty())
         );
-        // Back opens the page on its first row (frontend.js `show`).
+        // Back returns to the row that opened the page (the original's
+        // page history, MENU_FLOW.md).
         front.key("Escape", &view, &mut settings);
-        assert_eq!((front.page.as_str(), front.selection), ("single", 0));
+        assert_eq!(front.page, "single");
+        assert_eq!(front.current(), Some("garage"));
     }
 
     fn store_catalogs(front: &mut Frontend) {
@@ -2871,6 +3049,7 @@ mod tests {
         assert!(front.enforce_unlocks(&mut settings).is_some());
         assert_eq!(front.quad_id, 22);
         // View Profile → ATVs lists the collection without purchases.
+        front.show("profile-view", &view);
         front.view_collection("store-atv", &view);
         front.key("ArrowRight", &view, &mut settings);
         front.key("ArrowRight", &view, &mut settings);
@@ -3127,6 +3306,39 @@ mod tests {
     }
 
     #[test]
+    fn split_screen_branch_marks_two_players_until_it_is_left() {
+        let view = view(1280., 720.);
+        let mut settings = Settings::memory();
+        let mut front = Frontend::new(tracks(), &settings, true);
+        front.set_race_courses(vec!["env01".into()], &view);
+        front.show("multiplayer", &view);
+        assert_eq!(front.choices()[0].0, "split");
+        front.key("Enter", &view, &mut settings);
+        assert_eq!((front.page.as_str(), front.split), ("split", false));
+        let actions: Vec<_> = front.choices().iter().map(|(a, _)| a.clone()).collect();
+        assert_eq!(actions[..3], ["splitrace", "splitfree", "splitlayout"]);
+        // The layout row toggles and is saved.
+        front.selection = 2;
+        front.key("Enter", &view, &mut settings);
+        assert!(front.split_vertical);
+        assert_eq!(settings.get(SPLIT_LAYOUT_KEY).as_deref(), Some("vertical"));
+        assert!(front.choices()[2].1.contains("Side by Side"));
+        front.selection = 1;
+        front.key("Enter", &view, &mut settings);
+        assert_eq!((front.page.as_str(), front.split), ("tracks", true));
+        // Back returns to Split Screen, which rides one player again.
+        front.key("Escape", &view, &mut settings);
+        assert_eq!((front.page.as_str(), front.split), ("split", false));
+        front.selection = 0;
+        front.key("Enter", &view, &mut settings);
+        assert_eq!((front.page.as_str(), front.split), ("race", true));
+        front.key("Escape", &view, &mut settings);
+        front.key("Escape", &view, &mut settings);
+        assert_eq!((front.page.as_str(), front.split), ("multiplayer", false));
+        assert!(Frontend::new(tracks(), &settings, true).split_vertical);
+    }
+
+    #[test]
     fn single_race_setup_steps_and_starts_a_race() {
         let view = view(1280., 720.);
         let mut settings = Settings::memory();
@@ -3259,7 +3471,8 @@ mod tests {
         assert_eq!(saved["appearance"]["paint"], 10);
         assert_eq!(saved["appearance"]["gear"][3], 2);
         front.key("Escape", &view, &mut settings);
-        assert_eq!((front.page.as_str(), front.selection), ("garage", 0));
+        assert_eq!(front.page, "garage");
+        assert_eq!(front.current(), Some("gear"));
     }
 
     #[test]

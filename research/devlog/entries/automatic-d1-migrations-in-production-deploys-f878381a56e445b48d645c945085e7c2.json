@@ -1,0 +1,12 @@
+{
+  "id": "automatic-d1-migrations-in-production-deploys-f878381a56e445b48d645c945085e7c2",
+  "timestamp": "2026-10-28T02:42:01.127448+00:00",
+  "recorded_at": "2026-10-28T02:42:01.127448+00:00",
+  "kind": "verification",
+  "title": "Automatic D1 migrations in production deploys",
+  "summary": "GitHub production deployments now apply pending D1 migrations before deploying the Worker, with Wrangler pinned in the repository. Existing migration tracking skips files already applied.",
+  "details": [
+    "The deployment workflow runs wrangler d1 migrations apply SAVES --remote before the Worker deploy inside the existing guarded, serialized shell. The focused test_release_workflow suite passed 10 tests, including a stubbed execution proving migrations precede deployment and migration failure stops the deploy. Remote replay verification and public deployment remain pending."
+  ],
+  "limitation": "Live production behavior has not yet been verified; remote migration replay and the GitHub Actions deployment are still pending."
+}

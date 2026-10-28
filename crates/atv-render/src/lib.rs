@@ -395,6 +395,14 @@ pub struct View {
     pub focal_length: f32,
 }
 
+/// A split-screen view's rectangle of the frame (surface pixels), and
+/// whether it is the frame's first view (which clears the frame).
+#[derive(Clone, Copy, Debug)]
+struct Region {
+    rect: [u32; 4],
+    clear: bool,
+}
+
 #[derive(Default, Clone, Copy, Debug)]
 pub struct FrameStats {
     pub terrain_draws: u32,
@@ -437,6 +445,35 @@ pub struct FrameStats {
 }
 
 impl FrameStats {
+    /// Adds another view's counts (split screen draws the scene twice).
+    pub fn add(&mut self, other: &Self) {
+        self.terrain_draws += other.terrain_draws;
+        self.terrain_triangles += other.terrain_triangles;
+        self.sky_tiles += other.sky_tiles;
+        self.scenery_draws += other.scenery_draws;
+        self.scenery_triangles += other.scenery_triangles;
+        self.scenery_culled += other.scenery_culled;
+        self.vegetation_draws += other.vegetation_draws;
+        self.vegetation_triangles += other.vegetation_triangles;
+        self.vegetation_visible += other.vegetation_visible;
+        self.water_draws += other.water_draws;
+        self.train_draws += other.train_draws;
+        self.train_triangles += other.train_triangles;
+        self.actor_draws += other.actor_draws;
+        self.actor_triangles += other.actor_triangles;
+        self.actors_visible += other.actors_visible;
+        self.actors_culled += other.actors_culled;
+        self.ambient_draws += other.ambient_draws;
+        self.ambient_triangles += other.ambient_triangles;
+        self.snow_draws += other.snow_draws;
+        self.snow_triangles += other.snow_triangles;
+        self.wheel_draws += other.wheel_draws;
+        self.wheel_triangles += other.wheel_triangles;
+        self.shadow_draws += other.shadow_draws;
+        self.shadow_casters += other.shadow_casters;
+        self.contact_casters += other.contact_casters;
+        self.vehicle_triangles += other.vehicle_triangles;
+    }
     pub fn draws(&self) -> u32 {
         self.terrain_draws
             + self.sky_tiles
@@ -1464,6 +1501,7 @@ impl SceneRenderer {
             &target,
             gpu.msaa.as_ref(),
             &gpu.depth,
+            None,
         );
         self.profiler.mark("encode.speed_rush");
         overlay(&mut encoder, &target);
@@ -1479,6 +1517,63 @@ impl SceneRenderer {
         Ok(stats)
     }
 
+    /// Split screen: renders each view into its own rectangle of the frame
+    /// (x, y, width, height in surface pixels), then `overlay`, and presents.
+    /// Each view is prepared and submitted in turn, so the per-view uniforms
+    /// a pass writes reach only its own draws. The speed-rush and air-blur
+    /// screen passes are full-frame effects and are skipped.
+    pub fn render_views(
+        &mut self,
+        gpu: &Gpu,
+        views: &[(View, [u32; 4])],
+        overlay: &mut dyn FnMut(&mut wgpu::CommandEncoder, &wgpu::TextureView),
+    ) -> Result<FrameStats, String> {
+        let acquire = web_time::Instant::now();
+        let Some(surface) = gpu.live_surface() else {
+            return Ok(FrameStats::default());
+        };
+        let frame = match surface.get_current_texture() {
+            wgpu::CurrentSurfaceTexture::Success(frame)
+            | wgpu::CurrentSurfaceTexture::Suboptimal(frame) => frame,
+            wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
+                surface.configure(&gpu.device, &gpu.config);
+                return Ok(FrameStats::default());
+            }
+            wgpu::CurrentSurfaceTexture::Timeout | wgpu::CurrentSurfaceTexture::Occluded => {
+                return Ok(FrameStats::default());
+            }
+            other => return Err(format!("surface: {other:?}")),
+        };
+        let acquire_ms = acquire.elapsed().as_secs_f64() * 1000.;
+        self.profiler.start();
+        let target = frame.texture.create_view(&Default::default());
+        let mut total = FrameStats::default();
+        for (index, (view, rect)) in views.iter().enumerate() {
+            let (encoder, stats) = self.encode(
+                gpu,
+                view,
+                (rect[2].max(1), rect[3].max(1)),
+                &target,
+                gpu.msaa.as_ref(),
+                &gpu.depth,
+                Some(Region {
+                    rect: *rect,
+                    clear: index == 0,
+                }),
+            );
+            gpu.queue.submit([encoder.finish()]);
+            total.add(&stats);
+        }
+        let mut encoder = gpu.device.create_command_encoder(&Default::default());
+        overlay(&mut encoder, &target);
+        gpu.queue.submit([encoder.finish()]);
+        gpu.queue.present(frame);
+        self.profiler.end_frame();
+        total.acquire_ms = acquire_ms;
+        Ok(total)
+    }
+
+    #[allow(clippy::too_many_arguments)]
     fn encode(
         &mut self,
         gpu: &Gpu,
@@ -1487,6 +1582,7 @@ impl SceneRenderer {
         target: &wgpu::TextureView,
         msaa: Option<&wgpu::TextureView>,
         depth: &wgpu::TextureView,
+        region: Option<Region>,
     ) -> (wgpu::CommandEncoder, FrameStats) {
         let aspect = size.0 as f32 / size.1 as f32;
         // 0012b360 applies the active fog end to the far clipping plane.
@@ -1700,7 +1796,7 @@ impl SceneRenderer {
         stats.shadow_draws = u32::from(contact > 0) + u32::from(light.is_some());
         stats.contact_casters = contact;
         let rush_scene = match &mut self.speed_rush {
-            Some(rush) if rush.active() => {
+            Some(rush) if rush.active() && region.is_none() => {
                 let (origin, velocity) = self.rush_motion;
                 rush.prepare(
                     gpu,
@@ -1714,7 +1810,7 @@ impl SceneRenderer {
         };
         // Air blur: the frame (after speed rush) renders into its texture.
         let blur_scene = match &mut self.air_blur {
-            Some(blur) if blur.active() => Some(blur.scene_target(gpu, size)),
+            Some(blur) if blur.active() && region.is_none() => Some(blur.scene_target(gpu, size)),
             _ => None,
         };
         let output = blur_scene.as_ref().unwrap_or(target);
@@ -1769,15 +1865,24 @@ impl SceneRenderer {
                 Some(msaa) => (msaa, Some(scene_target)),
                 None => (scene_target, None),
             };
+            // A later split-screen view keeps the views drawn before it.
+            let color_load = match region {
+                Some(Region { clear: false, .. }) => wgpu::LoadOp::Load,
+                _ => wgpu::LoadOp::Clear(wgpu::Color { r, g, b, a: 1. }),
+            };
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("scene"),
-                timestamp_writes: self.gpu_timer.as_ref().and_then(|t| t.writes()),
+                timestamp_writes: self
+                    .gpu_timer
+                    .as_ref()
+                    .filter(|_| region.is_none_or(|r| r.clear))
+                    .and_then(|t| t.writes()),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view,
                     depth_slice: None,
                     resolve_target,
                     ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color { r, g, b, a: 1. }),
+                        load: color_load,
                         store: wgpu::StoreOp::Store,
                     },
                 })],
@@ -1798,6 +1903,13 @@ impl SceneRenderer {
                 }),
                 ..Default::default()
             });
+            if let Some(Region {
+                rect: [x, y, w, h], ..
+            }) = region
+            {
+                pass.set_viewport(x as f32, y as f32, w as f32, h as f32, 0., 1.);
+                pass.set_scissor_rect(x, y, w, h);
+            }
             self.profiler.mark("encode.begin");
             if let Some(sky) = &self.sky {
                 sky.draw(&mut pass, &self.world);
@@ -1929,8 +2041,15 @@ impl SceneRenderer {
             if let Some(timer) = &mut self.gpu_timer {
                 timer.frame = frame.checked_sub(30);
             }
-            let (encoder, _) =
-                self.encode(gpu, view, (width, height), &target, msaa.as_ref(), &depth);
+            let (encoder, _) = self.encode(
+                gpu,
+                view,
+                (width, height),
+                &target,
+                msaa.as_ref(),
+                &depth,
+                None,
+            );
             gpu.queue.submit([encoder.finish()]);
         }
         let mut samples = self
@@ -1973,8 +2092,15 @@ impl SceneRenderer {
             view_formats: &[],
         });
         let target = texture.create_view(&Default::default());
-        let (mut encoder, _) =
-            self.encode(gpu, view, (width, height), &target, msaa.as_ref(), &depth);
+        let (mut encoder, _) = self.encode(
+            gpu,
+            view,
+            (width, height),
+            &target,
+            msaa.as_ref(),
+            &depth,
+            None,
+        );
         overlay(&mut encoder, &target);
         read_texture(gpu, encoder, &texture, width, height)
     }

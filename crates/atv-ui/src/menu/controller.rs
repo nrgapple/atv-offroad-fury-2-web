@@ -1,10 +1,11 @@
 //! Pause menu state: page, selection, navigation and setting actions
 //! (frontend.js `show`/`run`/`action` for the ride's pause screens). Rows come
 //! from atv_core::ui_menu with the same request fields the browser sends.
-use super::{PANEL, ROW, Rows, State, prefs::Preferences};
+use super::{CONTENT, PANEL, ROW, Rows, State, prefs::Preferences};
 use crate::{
     hud::{Viewport, minimap::MinimapSettings},
     paint::Rect,
+    scroll::Scroller,
     settings::Settings,
     touch::TouchControls,
 };
@@ -96,7 +97,8 @@ pub struct PauseMenu {
     pub page: String,
     pub selection: usize,
     pub rows: Rows,
-    pub scroll: f32,
+    /// The panel's kinetic scroll (crate::scroll).
+    pub scroller: Scroller,
     hovered: Option<usize>,
     pressed: Option<Pressed>,
     pad: u32,
@@ -129,6 +131,11 @@ pub struct PauseMenu {
     held: Vec<String>,
     /// Generation of the page last shown (each `show` slides a page in).
     pub shown: u64,
+    /// The pages Back returns through with the row each was left by
+    /// (the original's page history, research/MENU_FLOW.md).
+    history: Vec<(String, usize, Option<String>)>,
+    /// The row to select once the returned-to page's rows are built.
+    restore: Option<String>,
 }
 
 struct Pressed {
@@ -138,7 +145,8 @@ struct Pressed {
     y: f32,
     moved: bool,
     slider: Option<Rect>,
-    scroll: f32,
+    /// It caught a moving panel: a grab, never a tap.
+    caught: bool,
 }
 
 /// Each page's Back target (frontend.js returns).
@@ -159,7 +167,7 @@ impl PauseMenu {
             page: "pause".into(),
             selection: 0,
             rows: Rows::default(),
-            scroll: 0.,
+            scroller: Scroller::default(),
             hovered: None,
             pressed: None,
             pad: u32::MAX,
@@ -178,6 +186,8 @@ impl PauseMenu {
             game_active: false,
             held: Vec::new(),
             shown: crate::transition::next_show(),
+            history: Vec::new(),
+            restore: None,
         }
     }
 
@@ -216,8 +226,9 @@ impl PauseMenu {
             rows: self.rows.clone(),
             selection: self.selection,
             hovered: self.hovered,
-            pressed: self.pressed.as_ref().map(|p| p.index),
-            scroll: self.scroll,
+            // Pressed feedback ends once the finger scrolls.
+            pressed: self.pressed.as_ref().filter(|p| !p.moved).map(|p| p.index),
+            scroll: self.scroller.offset(),
             one_handed: ctx.touch.one_handed(),
             capture: self.capture.as_ref().map(|c| c.label.clone()),
             from_menu: self.from_menu,
@@ -427,19 +438,50 @@ impl PauseMenu {
             if !cfg!(target_arch = "wasm32") && !self.frontend {
                 rows.choices.retain(|c| c != "main");
             }
+            if let Some(action) = self.restore.take()
+                && let Some(at) = rows.choices.iter().position(|c| *c == action)
+            {
+                self.selection = at;
+            }
             self.selection = self.selection.min(rows.choices.len().saturating_sub(1));
             self.rows = rows;
         }
         self.key = key;
     }
 
+    /// Opens `page` over the current one; a page already in the history is
+    /// returned to on the row it was left by.
     fn show(&mut self, page: &str) {
+        if page == self.page {
+            self.present(page);
+            return;
+        }
+        if let Some(at) = self.history.iter().rposition(|(p, ..)| p == page) {
+            let (_, selection, action) = self.history[at].clone();
+            self.history.truncate(at);
+            self.present(page);
+            self.selection = selection;
+            self.restore = action;
+            return;
+        }
+        let action = self.selected().map(String::from);
+        self.history
+            .push((self.page.clone(), self.selection, action));
+        self.present(page);
+    }
+
+    /// The pages Back returns through, oldest first.
+    pub fn history(&self) -> impl Iterator<Item = &str> {
+        self.history.iter().map(|(p, ..)| p.as_str())
+    }
+
+    fn present(&mut self, page: &str) {
         self.shown = crate::transition::next_show();
         self.capture = None;
         self.notice = None;
         self.page = page.into();
         self.selection = 0;
-        self.scroll = 0.;
+        self.scroller = Scroller::default();
         self.hovered = None;
         self.key.clear();
     }
@@ -449,19 +491,24 @@ impl PauseMenu {
             return Some(Event::Resume);
         }
         if self.page == "jukebox" {
-            // From the main menu the Jukebox closes (the host ends the menu).
-            if !self.from_menu {
+            // Opened on its own from the main menu the Jukebox closes (the
+            // host ends the menu); otherwise it returns to its opener.
+            if let Some((page, ..)) = self.history.last() {
+                let page = page.clone();
+                self.show(&page);
+            } else if !self.from_menu {
                 self.show("pause");
             }
             return Some(Event::Jukebox(super::jukebox::JukeboxAction::Leave));
         }
-        let to = if self.page == "bindings" && !self.keyboard {
-            "controller-settings"
-        } else {
-            parent(&self.page)
+        // The page the player came from, on the row they left it by;
+        // without one (a page the host opened) its parent.
+        let to = match self.history.last() {
+            Some((page, ..)) => page.clone(),
+            None if self.page == "bindings" && !self.keyboard => "controller-settings".into(),
+            None => parent(&self.page).into(),
         };
-        // frontend.js `show`: the page opens on its first row.
-        self.show(to);
+        self.show(&to);
         None
     }
 
@@ -556,8 +603,9 @@ impl PauseMenu {
                 if action == "ecosystem-yes" {
                     ctx.prefs.set_ecosystem_collision(false, ctx.settings);
                 }
+                // Back on the Ecosystem Collision row.
                 self.show("game-settings");
-                self.selection = 1;
+                self.restore = Some("ecosystem".into());
                 Event::Changed
             }
             "keyboard" | "padbindings" => {
@@ -1004,9 +1052,22 @@ impl PauseMenu {
     }
 
     fn hit(hits: &[(Rect, u32)], x: f32, y: f32) -> Option<(usize, Rect)> {
+        // Rows inside the scrolled content are clipped to the panel (the
+        // Jukebox scrolls only its track list; its controls stay put).
+        let rect = |want: u32| hits.iter().find(|(_, id)| *id == want).map(|(r, _)| *r);
+        let (panel, content) = (rect(PANEL), rect(CONTENT));
+        let scrolled = |r: &Rect| {
+            content.is_some_and(|c| {
+                r.y >= c.y - 0.5 && r.bottom() <= c.bottom() + 0.5 && r.x >= c.x - 0.5
+            })
+        };
         hits.iter()
             .rev()
-            .find(|(r, id)| *id >= ROW && r.contains(x, y))
+            .find(|(r, id)| {
+                *id >= ROW
+                    && r.contains(x, y)
+                    && !(scrolled(r) && panel.is_some_and(|p| !p.contains(x, y)))
+            })
             .map(|(r, id)| ((id - ROW) as usize, *r))
     }
 
@@ -1025,19 +1086,22 @@ impl PauseMenu {
                 || (action == "jukeseek" && ctx.music.is_some_and(|m| m.seekable));
             (self.rows.slider(action).is_some() || juke).then_some(r)
         });
-        if let Some((index, _)) = target {
+        // A slider takes the press at once; any other row is chosen by a
+        // tap on release, so a drag that scrolls never selects.
+        if let (Some((index, _)), Some(_)) = (target, slider) {
             self.selection = index;
             self.key.clear();
             self.follow_binding_row();
         }
+        let caught = slider.is_none() && self.scroller.press(y, crate::scroll::now());
         self.pressed = Some(Pressed {
             pointer,
             index: target.map_or(usize::MAX, |(i, _)| i),
             x,
             y,
-            moved: false,
+            moved: caught,
             slider,
-            scroll: self.scroll,
+            caught,
         });
         if slider.is_some() {
             self.drag_slider(x, ctx);
@@ -1065,7 +1129,8 @@ impl PauseMenu {
         self.set_slider(&action, s.min + t * (s.max - s.min), ctx);
     }
 
-    /// Pointer motion while pressed: drags a slider, or scrolls the panel.
+    /// Pointer motion while pressed: drags a slider, or scrolls the panel
+    /// (it follows the finger, with momentum after release).
     pub fn drag(
         &mut self,
         pointer: u64,
@@ -1085,8 +1150,14 @@ impl PauseMenu {
         }
         if p.slider.is_some() {
             self.drag_slider(x, ctx);
-        } else if p.moved {
-            self.scroll = (p.scroll + p.y - y).clamp(0., max_scroll.max(0.));
+        } else {
+            let viewport = self.scroller.viewport();
+            self.scroller.set_bounds(max_scroll, viewport);
+            if self.scroller.drag(y, crate::scroll::now())
+                && let Some(p) = &mut self.pressed
+            {
+                p.moved = true;
+            }
         }
         true
     }
@@ -1114,40 +1185,53 @@ impl PauseMenu {
                 _ => None,
             };
         }
-        if p.moved {
+        self.scroller.release(crate::scroll::now());
+        if p.moved || p.caught {
             return None;
         }
         let (index, _) = Self::hit(hits, x, y)?;
         if index != p.index {
             return None;
         }
+        self.selection = index;
+        self.key.clear();
+        self.follow_binding_row();
         let action = self.rows.choices.get(index)?.clone();
         self.run(&action, 1, false, ctx)
     }
 
     pub fn wheel(&mut self, dy: f32, max_scroll: f32) {
-        self.scroll = (self.scroll + dy).clamp(0., max_scroll.max(0.));
+        let viewport = self.scroller.viewport();
+        self.scroller.set_bounds(max_scroll, viewport);
+        self.scroller.wheel(dy);
     }
 
     pub fn cancel_pointer(&mut self) {
         self.pressed = None;
         self.hovered = None;
+        self.scroller.cancel();
     }
 
-    /// Keeps the selected row inside the scrolled panel.
-    pub fn reveal(&mut self, hits: &[(Rect, u32)]) {
+    /// Keeps the selected row inside the scrolled panel: it glides there
+    /// (or jumps when `animate` is off: reduced motion). The panel's scroll
+    /// range is `max_scroll`.
+    pub fn reveal(&mut self, hits: &[(Rect, u32)], max_scroll: f32, animate: bool) {
         let panel = hits.iter().find(|(_, id)| *id == PANEL).map(|(r, _)| *r);
         let row = hits
             .iter()
             .find(|(_, id)| *id == ROW + self.selection as u32)
             .map(|(r, _)| *r);
         if let (Some(panel), Some(row)) = (panel, row) {
-            if row.y < panel.y {
-                self.scroll -= panel.y - row.y;
-            } else if row.bottom() > panel.bottom() {
-                self.scroll += row.bottom() - panel.bottom();
+            self.scroller.set_bounds(max_scroll, panel.h);
+            let before = self.scroller.offset();
+            let target = self.scroller.target();
+            // Rows sit at their layout place minus the drawn offset.
+            let (top, bottom) = (row.y + before, row.bottom() + before);
+            if top < target + panel.y {
+                self.scroller.glide_to(top - panel.y, animate);
+            } else if bottom > target + panel.bottom() {
+                self.scroller.glide_to(bottom - panel.bottom(), animate);
             }
-            self.scroll = self.scroll.max(0.);
         }
     }
 }
@@ -1453,7 +1537,7 @@ mod parity_tests {
     }
 
     #[test]
-    fn back_opens_the_first_row_and_jukebox_waits_for_its_catalog() {
+    fn back_returns_to_the_row_it_left_and_jukebox_waits_for_its_catalog() {
         let mut fx = Fixture::new();
         fx.music.ready = false;
         let mut menu = PauseMenu::new();
@@ -1461,12 +1545,30 @@ mod parity_tests {
         // The Jukebox row shows before the soundtrack catalog is ready.
         assert!(menu.rows.choices.iter().any(|c| c == "jukebox"));
         assert!(menu.rows.choices.iter().any(|c| c == "copyride"));
-        fx.with(&mut menu, |m, ctx| m.run("settings", 1, false, ctx));
-        fx.with(&mut menu, |m, ctx| m.run("controls", 1, false, ctx));
+        let row = |menu: &PauseMenu, action: &str| {
+            menu.rows.choices.iter().position(|c| c == action).unwrap()
+        };
+        let settings = row(&menu, "settings");
+        menu.selection = settings;
+        fx.with(&mut menu, |m, ctx| m.key("Enter", ctx));
+        fx.with(&mut menu, |_, _| ());
+        assert_eq!(menu.page, "settings");
+        let controls = row(&menu, "controls");
+        menu.selection = controls;
+        fx.with(&mut menu, |m, ctx| m.key("Enter", ctx));
+        fx.with(&mut menu, |_, _| ());
+        assert_eq!(menu.history().collect::<Vec<_>>(), ["pause", "settings"]);
         fx.with(&mut menu, |m, ctx| m.key("Escape", ctx));
-        assert_eq!((menu.page.as_str(), menu.selection), ("settings", 0));
+        fx.with(&mut menu, |_, _| ());
+        assert_eq!((menu.page.as_str(), menu.selection), ("settings", controls));
         fx.with(&mut menu, |m, ctx| m.key("Escape", ctx));
-        assert_eq!((menu.page.as_str(), menu.selection), ("pause", 0));
+        fx.with(&mut menu, |_, _| ());
+        assert_eq!((menu.page.as_str(), menu.selection), ("pause", settings));
+        // Back on Pause resumes the ride.
+        assert_eq!(
+            fx.with(&mut menu, |m, ctx| m.key("Escape", ctx)),
+            Some(Event::Resume)
+        );
     }
 
     #[test]
@@ -1577,9 +1679,12 @@ mod parity_tests {
         fx.with(&mut menu, |m, ctx| m.run("bindclear", 1, false, ctx));
         assert!(fx.bindings.row(true, Action::SteerLeft).is_empty());
         assert!(!fx.bindings.row(true, Action::Throttle).is_empty());
-        // A pointer press on a row moves it too.
+        // A tap on a row moves it too; the press alone does not (a press
+        // that turns into a scroll must not select).
         let hits = vec![(Rect::new(0., 0., 100., 40.), crate::menu::ROW + 1)];
         fx.with(&mut menu, |m, ctx| m.press(&hits, 1, 10., 10., ctx));
+        assert_eq!(menu.binding_row, 2);
+        fx.with(&mut menu, |m, ctx| m.release(&hits, 1, 10., 10., ctx));
         assert_eq!(menu.binding_row, 1);
     }
 

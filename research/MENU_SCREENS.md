@@ -36,6 +36,8 @@ profile lists, alerts, Overview, Trophies and Records (`PROFILE.md`).
 
 ## Navigation and value rows
 
+- Which page each row opens and where Back returns (a page history that
+  restores the row, as the original's) are in [MENU_FLOW.md](MENU_FLOW.md).
 - Value rows (race Course, Laps, CPU riders, Difficulty and every Rider gear row) have real
   previous/next buttons either side of the value on every row; tapping the label
   still steps forward. Left/Right step only value rows, so they never start a race,
@@ -132,8 +134,9 @@ that have an effect on a browser or desktop build. Exact-build evidence
 
 Authored or not ported: the original keeps Measurement in the profile
 (+0x6b0) and saves the settings with it; the port keeps one device-wide
-choice like its other settings. Split Screen
-(no split screen) and Display Mode (480p/480i) have no counterpart; the
+choice like its other settings. Split Screen Horizontal/Vertical is the
+Screen row of Multiplayer → Split Screen ([SPLIT_SCREEN.md](SPLIT_SCREEN.md));
+Display Mode (480p/480i) has no counterpart; the
 volumes stay on Settings → Audio. Where the original stores +0x674 between
 sessions was not traced. The port's motorcycles (not in the original
 game) keep their vegetation collision.
@@ -168,3 +171,16 @@ records. The per-course 640x448 `LDSCREEN.RES` backdrops are not used: the origi
 loader's panels and bars are painted into those images, which cannot match a
 responsive layout. Records ("Fastest Lap", profile points) are not shown because
 the port has no saved records.
+
+## Stage rim (2026-10-28)
+
+The portrait stage's lower edge is one elliptical corner wider than half the
+screen (`border-radius: 75% / 56px` on a box 120% wide). The UI shader chose a
+box's corner by quadrant, so that curve stopped at the centre line and the
+straight edge took over about 3px lower: the white rim between the silver
+stage and the red controls broke in two. Corners now own the rectangle their
+radii span, with the CSS rule that scales every radius when two corners on a
+side overlap. Portrait stage pages keep 16/22px under the plate so the vehicle
+name clears the sweep. `tools/test_engine_menu_divider.mjs` follows the rim
+column by column (portrait) and row by row (landscape skew) in Chromium and
+WebKit at DPR 1 and 3; production before the fix jumped 3.33px at the centre.

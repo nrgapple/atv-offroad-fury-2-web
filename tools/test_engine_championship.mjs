@@ -41,6 +41,7 @@ try {
   const at = front.choices.indexOf('championship');
   assert.ok(at > 0, `Championship row: ${front.choices}`);
   for (let i = front.selection; i < at; i++) await key(page, 'ArrowDown');
+  for (let i = front.selection; i > at; i--) await key(page, 'ArrowUp');
   await key(page, 'Enter'); await onPage(page, 'championship');
   front = (await read(page)).front;
   const labels = Object.fromEntries(front.choices.map((c, i) => [c, front.labels[i]]));
@@ -48,6 +49,7 @@ try {
   assert.equal(labels['champ:prosx'], 'Pro Supercross · Locked');
   await optionalScreenshot(page, 'ATV_CHAMPIONSHIP_SCREENSHOT', 'menu');
   for (let i = front.selection; i < front.choices.indexOf('champ:amsx'); i++) await key(page, 'ArrowDown');
+  for (let i = front.selection; i > front.choices.indexOf('champ:amsx'); i--) await key(page, 'ArrowUp');
   await key(page, 'Enter');
   const ride = async () => (await read(page)).ride ?? {};
   // The results' buttons: the name entry's Select (36) when a record broke.

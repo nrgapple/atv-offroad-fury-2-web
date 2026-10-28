@@ -151,6 +151,34 @@ impl DisplayList {
     pub fn clear(&mut self) {
         self.items.clear();
     }
+    /// Moves every item by (`dx`, `dy`) CSS pixels (a split-screen
+    /// player's HUD painted for its own view, placed in the frame).
+    pub fn translate(&mut self, dx: f32, dy: f32) {
+        let shift = |r: &mut Rect| {
+            r.x += dx;
+            r.y += dy;
+        };
+        for item in &mut self.items {
+            match item {
+                Item::Box(b) => {
+                    shift(&mut b.rect);
+                    b.pivot[0] += dx;
+                    b.pivot[1] += dy;
+                }
+                Item::Text { x, y, .. } | Item::Shape { x, y, .. } => {
+                    *x += dx;
+                    *y += dy;
+                }
+                Item::Image { dst, pivot, .. } => {
+                    shift(dst);
+                    pivot[0] += dx;
+                    pivot[1] += dy;
+                }
+                Item::ImageShadow { dst, .. } | Item::PushClip { rect: dst, .. } => shift(dst),
+                Item::PopClip | Item::PushOpacity(_) | Item::PopOpacity => {}
+            }
+        }
+    }
     pub fn push(&mut self, item: Item) {
         self.items.push(item);
     }

@@ -27,6 +27,7 @@ async function choose(page, action) {
   const at = f.choices.indexOf(action);
   assert.ok(at >= 0, `${action} in ${f.choices}`);
   for (let i = f.selection; i < at; i++) await key(page, 'ArrowDown');
+  for (let i = f.selection; i > at; i--) await key(page, 'ArrowUp');
   await key(page, 'Enter');
 }
 // Riding in the room: the pause menu's Leave Game.
