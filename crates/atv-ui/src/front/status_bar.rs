@@ -611,3 +611,56 @@ pub(super) fn popover(m: &Metrics, pop: &Popover, anchor: f32) -> El {
     .id(POPOVER_CLOSE)
     .child(panel)
 }
+
+/// A notice ("Unlocked Everything!", "Not enough Profile Points…") as a
+/// toast under the bar, where it is seen without scrolling (`#menu-notice`
+/// sat under the rows): a dark pill with the menus' gold rule, centred.
+pub(super) fn toast(m: &Metrics, notice: &str) -> El {
+    let width = (m.w - 24. - m.safe[1] - m.safe[3]).min(460.);
+    El::new(Style {
+        position: Position::Absolute,
+        inset: taffy::Rect {
+            left: LengthPercentageAuto::length(0.),
+            top: LengthPercentageAuto::length(total_height(m) + 4.),
+            right: LengthPercentageAuto::auto(),
+            bottom: LengthPercentageAuto::auto(),
+        },
+        size: Size {
+            width: length(m.w),
+            height: auto(),
+        },
+        display: Display::Flex,
+        justify_content: JustifyContent::CENTER,
+        ..Default::default()
+    })
+    .child(
+        El::new(Style {
+            max_size: Size {
+                width: length(width),
+                height: auto(),
+            },
+            padding: sides(10., 16., 10., 14.),
+            border: sides(0., 0., 0., 3.),
+            ..Default::default()
+        })
+        .paint({
+            let mut paint = Paint::fill(Color::hex("#0c0c0cf2"))
+                .radius(6.)
+                .shadow(BoxShadow::outer(0., 6., 18., Color::hex("#000a")));
+            paint.border = [0., 0., 0., 3.];
+            paint.border_color = Color::hex("#f1d84e");
+            paint
+        })
+        .content(Content::Text {
+            text: notice.to_string(),
+            style: TextStyle::new(display(15., 700, false), Color::hex("#f6f6f6")).shadow(
+                0.,
+                1.,
+                2.,
+                Color::BLACK,
+            ),
+            line_height: 20.,
+            wrap: true,
+        }),
+    )
+}

@@ -150,6 +150,7 @@ export const TESTS = {
   'test_engine_profile_store.mjs': { group: 'content', timeout: 600 },
   'test_engine_profile_editor.mjs': { group: 'content', timeout: 900 },
   'test_engine_passkey.mjs': { group: 'content', timeout: 600 },
+  'test_engine_unlock_everything.mjs': { group: 'content', timeout: 600 },
   'test_engine_profile_stunts.mjs': { group: 'content', timeout: 900 },
   'test_engine_hall_of_fame.mjs': { group: 'content', timeout: 900 },
   'test_engine_text_fields_touch.mjs': { group: 'content' },

@@ -143,6 +143,7 @@ pub struct Front {
     page_cache: Option<PageCache>,
     /// The coin chip's count towards a changed Profile Points total.
     coins: CoinCount,
+    toast: Toast,
 }
 
 /// frontend.js `Math.floor(Math.random() * tips.length)`.
@@ -233,6 +234,7 @@ impl Front {
             exit_menu: None,
             page_cache: None,
             coins: CoinCount::default(),
+            toast: Toast::default(),
         };
         front.state.refresh(&view);
         front
@@ -385,6 +387,7 @@ impl Front {
             || self.menu.as_ref().is_some_and(|m| m.scroller.active())
             || self.indicating()
             || self.coins.counting(self.now())
+            || self.toast.showing(self.now())
             || self.menu.is_none()
                 && (matches!(self.state.page.as_str(), "title" | "loading")
                     || (matches!(self.state.page.as_str(), "garage" | "gear")
@@ -1027,13 +1030,22 @@ impl Front {
         } else {
             screen.motion = self.motion;
         }
-        // The coin chip counts to a new Profile Points total.
+        // The coin chip counts to a new Profile Points total, and glows when
+        // the unlocks change (Unlock Everything, a purchase).
         if let Some(status) = &mut screen.status {
-            let (shown, counting) = self
-                .coins
-                .count(status.points, now, crate::reduced_motion());
+            let reduced = crate::reduced_motion();
+            let (shown, counting) = self.coins.count(status.points, now, reduced);
+            let unlocks = &self.state.profile.store;
+            if self.coins.unlocks.as_ref() != Some(unlocks) {
+                if self.coins.unlocks.is_some() && !reduced {
+                    self.coins.glow = now;
+                }
+                self.coins.unlocks = Some(unlocks.clone());
+            }
             status.shown_points = shown;
-            status.counting = counting;
+            status.counting = counting || self.coins.glowing(now);
+            // Notices show as a toast under the bar for 3 s.
+            screen.toast = Some(self.toast.opacity(screen.notice.as_deref(), now));
         }
         // A slot shows its model once the wanted one is built (ModelView
         // clears to "Loading model..." on a change), else its status.
@@ -1680,6 +1692,7 @@ impl Front {
                 "lines": b.open.map(|p| p.lines).unwrap_or_default(),
                 "counting": self.coins.counting(self.now()),
                 "shown": self.coins.value(self.now()).0,
+                "toast": self.toast.at(self.now()),
             }),
             None => serde_json::Value::Null,
         };
@@ -1702,6 +1715,47 @@ struct CoinCount {
     target: Option<i64>,
     from: i64,
     start: f64,
+    /// The profile's unlocks last seen, and when they last changed.
+    unlocks: Option<atv_core::store::Unlocks>,
+    glow: f64,
+}
+
+/// A notice shown as a toast: fades in over 150 ms, holds, fades out by 3.3 s.
+#[derive(Default)]
+struct Toast {
+    shown: Option<(String, f64)>,
+}
+
+impl Toast {
+    const HOLD: f64 = 3000.;
+    const FADE: f64 = 300.;
+
+    fn opacity(&mut self, notice: Option<&str>, now: f64) -> f32 {
+        let Some(notice) = notice else {
+            self.shown = None;
+            return 0.;
+        };
+        if self.shown.as_ref().is_none_or(|(n, _)| n != notice) {
+            self.shown = Some((notice.to_string(), now));
+        }
+        self.at(now)
+    }
+
+    fn at(&self, now: f64) -> f32 {
+        let Some((_, start)) = &self.shown else {
+            return 0.;
+        };
+        let age = now - start;
+        let fade_in = (age / 150.).clamp(0., 1.);
+        let fade_out = (1. - (age - Self::HOLD) / Self::FADE).clamp(0., 1.);
+        fade_in.min(fade_out) as f32
+    }
+
+    fn showing(&self, now: f64) -> bool {
+        self.shown
+            .as_ref()
+            .is_some_and(|(_, start)| now - start < Self::HOLD + Self::FADE)
+    }
 }
 
 impl CoinCount {
@@ -1735,7 +1789,11 @@ impl CoinCount {
     }
 
     fn counting(&self, now: f64) -> bool {
-        self.value(now).1
+        self.value(now).1 || self.glowing(now)
+    }
+
+    fn glowing(&self, now: f64) -> bool {
+        self.glow > 0. && now - self.glow < Self::MS
     }
 }
 

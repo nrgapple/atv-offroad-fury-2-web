@@ -223,6 +223,9 @@ pub struct Screen {
     pub motion: Option<crate::transition::Motion>,
     /// The status bar across the top (menu pages; none in rides).
     pub status: Option<status_bar::StatusBar>,
+    /// With the bar, the notice shows as a toast under it at this opacity
+    /// (0 once it has faded) instead of under the rows.
+    pub toast: Option<f32>,
     /// The Pass Key badge, on the pages that show it.
     pub badge: Option<Badge>,
     /// The Pass Key page's QR code: the link it encodes.
@@ -521,6 +524,11 @@ pub fn layers(view: &Viewport, s: &Screen) -> (El, El) {
     })
     .child(page)
     .child(status_bar::bar(&m, status, s.hovered));
+    if let (Some(notice), Some(opacity)) = (&s.notice, s.toast)
+        && opacity > 0.
+    {
+        content = content.child(status_bar::toast(&m, notice).opacity(opacity));
+    }
     if let Some(pop) = &status.open {
         content = content.child(status_bar::popover(&m, pop, status.anchor));
     }
@@ -804,6 +812,7 @@ fn page_title(page: &str) -> &'static str {
         "profile-trophies" => "Trophies",
         "profile-records" => "Records",
         "profile-slots" | "profile-confirm" => "Profile Editor",
+        "profile-unlock" => "Unlock Everything",
         "gear" => "Rider Gear",
         "passkey" => "Pass Key",
         "passkey-entry" => "Enter Pass Key",
@@ -1467,7 +1476,7 @@ fn left(m: &Metrics, s: &Screen) -> El {
                 }
             }
             left = left.child(rows);
-            if let Some(notice) = &s.notice {
+            if let Some(notice) = s.notice.as_ref().filter(|_| s.toast.is_none()) {
                 left = left.child(text(
                     notice.clone(),
                     TextStyle::new(display(15., 700, false), Color::hex("#ffd166")),
@@ -1489,6 +1498,7 @@ fn left(m: &Metrics, s: &Screen) -> El {
                 | "profile-name"
                 | "profile-slots"
                 | "profile-confirm"
+                | "profile-unlock"
                 | "profile-view"
                 | "profile-overview"
                 | "profile-trophies"
@@ -1535,7 +1545,7 @@ fn left(m: &Metrics, s: &Screen) -> El {
                 );
             }
             // `#menu-notice`, e.g. why a ride link could not open.
-            if let Some(notice) = &s.notice {
+            if let Some(notice) = s.notice.as_ref().filter(|_| s.toast.is_none()) {
                 left = left.child(
                     El::new(Style {
                         flex_shrink: 0.,
@@ -1558,7 +1568,7 @@ fn left(m: &Metrics, s: &Screen) -> El {
         "tracks" => {
             left = left.child(tabs(m, s)).child(course_list(m, s));
             // A locked Freestyle course (the profile's unlocks).
-            if let Some(notice) = &s.notice {
+            if let Some(notice) = s.notice.as_ref().filter(|_| s.toast.is_none()) {
                 left = left.child(text(
                     notice.clone(),
                     TextStyle::new(display(15., 700, false), Color::hex("#ffd166")),
@@ -1583,7 +1593,7 @@ fn left(m: &Metrics, s: &Screen) -> El {
                 .child(tabs(m, s))
                 .child(course_list(m, s))
                 .child(settings);
-            if let Some(notice) = &s.notice {
+            if let Some(notice) = s.notice.as_ref().filter(|_| s.toast.is_none()) {
                 left = left.child(text(
                     notice.clone(),
                     TextStyle::new(display(15., 700, false), Color::hex("#ffd166")),
@@ -1644,7 +1654,7 @@ fn left(m: &Metrics, s: &Screen) -> El {
                 }
             }
             left = left.child(rows);
-            if let Some(notice) = &s.notice {
+            if let Some(notice) = s.notice.as_ref().filter(|_| s.toast.is_none()) {
                 left = left.child(text(
                     notice.clone(),
                     TextStyle::new(display(15., 700, false), Color::hex("#ffd166")),
@@ -2372,7 +2382,7 @@ fn garage_left(m: &Metrics, s: &Screen, mut left: El) -> El {
     }
     let mut left = left.child(actions.child(done));
     // A locked vehicle or a locked selection replaced (the profile's unlocks).
-    if let Some(notice) = &s.notice {
+    if let Some(notice) = s.notice.as_ref().filter(|_| s.toast.is_none()) {
         left = left.child(
             El::new(Style {
                 flex_shrink: 0.,

@@ -133,6 +133,8 @@ impl Frontend {
                 row("store-games", "Games"),
                 row("store-tracks", "Tracks"),
                 row("store-cheats", "Cheats"),
+                // Port option: every item at once (profile_pages).
+                row(super::profile_pages::UNLOCK_PAGE, "Unlock Everything"),
             ],
             "store-cheats" => vec![row("cheatenter", "Enter")],
             _ => {

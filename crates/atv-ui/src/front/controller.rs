@@ -2512,6 +2512,7 @@ impl Frontend {
             // The status bar's save chip replaced the Pass Key badge.
             badge: None,
             status: self.status_bar(),
+            toast: None,
             qr: self.passkey_qr(),
             heading: self.profile_heading(),
             lobby: self.lobby.clone(),
@@ -3029,6 +3030,112 @@ mod tests {
             class: String::new(),
         })
         .collect();
+    }
+
+    fn row(front: &Frontend, action: &str) -> usize {
+        front
+            .choices()
+            .iter()
+            .position(|(a, _)| a == action)
+            .unwrap_or_else(|| panic!("{action}: {:?}", front.choices()))
+    }
+
+    #[test]
+    fn unlock_everything_opens_the_whole_save_and_saves_it() {
+        let view = view(1280., 720.);
+        let mut settings = Settings::memory();
+        let mut front = Frontend::new(tracks(), &settings, true);
+        store_catalogs(&mut front);
+        // Two profiles; the second is loaded.
+        let mut book = atv_core::profile::ProfileBook::migrate(None);
+        book.create("ACE").unwrap();
+        crate::settings::save_book(&mut settings, &book);
+        front.load_profiles(&settings);
+        let pro = atv_core::championship::series("prosx").unwrap();
+        let free = atv_core::freestyle::series("spstunt").unwrap();
+        assert!(!front.quad_owned(19) && !front.quad_owned(8));
+        assert_eq!(front.race_course_cost("env02"), Some(200));
+        assert!(!front.profile.championships.is_open(pro, true));
+        front.games.kind = atv_core::games::GameKind::ALL
+            .iter()
+            .position(|k| k.event_type() == 12)
+            .unwrap();
+        assert!(front.game_lock().is_some());
+        // Profile Editor → Unlock Everything, then Cancel.
+        front.show("profile", &view);
+        front.selection = row(&front, "profile-unlock");
+        front.key("Enter", &view, &mut settings);
+        assert_eq!(front.page, "profile-unlock");
+        let actions: Vec<&str> = front.choices().iter().map(|(a, _)| a.as_str()).collect();
+        assert_eq!(actions, ["unlockthis", "unlockall", "unlockcancel", "back"]);
+        assert_eq!(front.choices()[0].1, "Unlock For ACE");
+        assert_eq!(front.choices()[1].1, "Unlock For All 2 Profiles");
+        assert!(
+            front.profile_details()[0]
+                .0
+                .contains("records and trophies stay")
+        );
+        front.selection = 2;
+        front.key("Enter", &view, &mut settings);
+        assert_eq!(front.page, "profile");
+        assert_eq!(front.current(), Some("profile-unlock"));
+        assert!(!front.quad_owned(19));
+        // This profile only.
+        front.key("Enter", &view, &mut settings);
+        front.selection = 0;
+        front.key("Enter", &view, &mut settings);
+        assert_eq!(front.page, "profile");
+        assert_eq!(front.notice.as_deref(), Some("Unlocked Everything!"));
+        assert!(front.quad_owned(19) && front.quad_owned(8));
+        assert_eq!(front.race_course_cost("env02"), None);
+        assert_eq!(front.freestyle_cost("free01"), None);
+        assert!(front.profile.championships.is_open(pro, true));
+        assert!(front.profile.championships.freestyle_open(free, true));
+        assert!(front.game_lock().is_none());
+        assert_eq!(front.profile.points, 0);
+        let saved = crate::settings::load_book(&settings);
+        assert!(atv_core::store::everything_unlocked(&saved.profiles[1]));
+        assert!(!atv_core::store::everything_unlocked(&saved.profiles[0]));
+        assert!(atv_core::store::everything_unlocked(
+            &crate::settings::load_profile(&settings)
+        ));
+        // From Unlock Items: every profile; Back returns there.
+        front.selection = row(&front, "profile-store");
+        front.key("Enter", &view, &mut settings);
+        assert_eq!(front.page, "store");
+        front.selection = row(&front, "profile-unlock");
+        front.key("Enter", &view, &mut settings);
+        front.selection = row(&front, "unlockall");
+        front.key("Enter", &view, &mut settings);
+        assert_eq!(front.page, "store");
+        assert_eq!(front.notice.as_deref(), Some("Unlocked Everything!"));
+        let saved = crate::settings::load_book(&settings);
+        assert!(
+            saved
+                .profiles
+                .iter()
+                .all(atv_core::store::everything_unlocked)
+        );
+        // Again: nothing left to unlock.
+        front.selection = row(&front, "profile-unlock");
+        front.key("Enter", &view, &mut settings);
+        front.selection = row(&front, "unlockall");
+        front.key("Enter", &view, &mut settings);
+        assert_eq!(
+            front.notice.as_deref(),
+            Some("Everything is already unlocked.")
+        );
+        // Game Settings → New Profiles: profiles made here start unlocked.
+        settings.set(crate::settings::NEW_PROFILES_KEY, "on");
+        front.show("profile", &view);
+        front.run("profile-create", &view, &mut settings);
+        front.set_profile_name("NEW");
+        front.run("profilesave", &view, &mut settings);
+        assert_eq!(front.profile_name(), Some("NEW"));
+        assert!(atv_core::store::everything_unlocked(&front.profile));
+        // The Pass Key page offers it too.
+        front.show("passkey", &view);
+        assert!(front.choices().iter().any(|(a, _)| a == "profile-unlock"));
     }
 
     #[test]

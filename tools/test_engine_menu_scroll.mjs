@@ -38,7 +38,8 @@ async function toucher(page, engine) {
   return async (phase, at) => {
     const phases = phase === 'lift' ? ['move', 'up'] : [phase];
     if (cdp) {
-      for (const p of phases) await send(p, at);
+      // Queued together: a loaded renderer must not stretch the lift's gap.
+      await Promise.all(phases.map(p => send(p, at)));
     } else {
       await page.evaluate(
         ({ phases, at }) => {
@@ -130,7 +131,10 @@ for (const engine of ['chromium', 'webkit']) {
     // 2. Momentum: it keeps moving after release, decelerates, then rests.
     const path = await follow(page, ['kinetic', 'list', 0]);
     const rest = path.at(-1).value;
-    assert.ok(rest > released + 60, `${engine}: momentum after release: ${released} -> ${rest} held ${held} path ${JSON.stringify(path.slice(0, 5))}`);
+    assert.ok(
+      rest > released + 60,
+      `${engine}: momentum after release: ${released} -> ${rest} held ${held} path ${JSON.stringify(path.slice(0, 5))}`
+    );
     assert.ok(path.length > 4 && !path.at(-1).active, 'settles');
     const intervals = path
       .slice(1, -1)

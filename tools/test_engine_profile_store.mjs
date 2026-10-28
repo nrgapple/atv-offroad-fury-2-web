@@ -61,7 +61,7 @@ try {
     await clickRow(page, 'Profile Editor'); await onPage(page, 'profile');
     await clickRow(page, 'Unlock Items'); await onPage(page, 'store');
     let front = await read(page);
-    assert.deepEqual(front.labels, ['ATVs', 'Rider Equipment', 'Games', 'Tracks', 'Cheats', 'Back']);
+    assert.deepEqual(front.labels, ['ATVs', 'Rider Equipment', 'Games', 'Tracks', 'Cheats', 'Unlock Everything', 'Back']);
     // The points to spend are on the status bar's coin chip, emphasized here.
     assert.equal(front.profile, null);
     assert.equal(front.status.points, 0);
