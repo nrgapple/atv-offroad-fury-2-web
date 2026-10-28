@@ -64,6 +64,39 @@ impl Definition {
     /// `00164dd0` basis from `Look`/`Up`. A zero or absent `Look` takes
     /// the `0x141150` basis from `Yaw`/`Pitch`/`Roll` instead (identity when
     /// all are zero, as in every shipped record without `Look`).
+    /// `0023cdc0` → `0011e1d0`: a `UseCollision` actor loads
+    /// `anim\<MCF stem>.col` (`%s.col`, with the `geometry\` prefix
+    /// cleared), else none.
+    pub fn collision_path(&self) -> Option<String> {
+        if !self.use_collision || self.mcf.is_empty() {
+            return None;
+        }
+        let name = self.mcf.replace('\\', "/").to_ascii_lowercase();
+        let name = name.rsplit('/').next().unwrap_or(&name);
+        let stem = name.rsplit_once('.').map_or(name, |(stem, _)| stem);
+        Some(format!("anim/{stem}.col"))
+    }
+
+    /// The collision body's world transform (`0011eca0` → `00330420`): the
+    /// COL attaches to the model's engine root (`00330720` stores the node
+    /// passed by `0011e1d0`), which carries only Offset/Look/Up. The MOT
+    /// channels address nodes below that root, so the body follows the
+    /// placement, not the animation, and its velocity history stays zero.
+    pub fn collision_matrix(&self, local: &[f32; 12]) -> Result<[f32; 16]> {
+        let root = self.matrix()?;
+        let local = [
+            local[0], local[1], local[2], 0., local[3], local[4], local[5], 0., local[6], local[7],
+            local[8], 0., local[9], local[10], local[11], 1.,
+        ];
+        let mut out = [0.; 16];
+        for c in 0..4 {
+            for r in 0..4 {
+                out[c * 4 + r] = (0..4).map(|k| root[k * 4 + r] * local[c * 4 + k]).sum();
+            }
+        }
+        Ok(out)
+    }
+
     pub fn matrix(&self) -> Result<[f32; 16]> {
         match self.look.filter(|l| *l != [0.; 3]) {
             Some(look) => crate::scene::placement_matrix(self.offset, look, self.up),
@@ -213,7 +246,8 @@ pub fn parse(text: &str) -> Vec<Definition> {
                     .unwrap_or(0.)
             }),
             use_lighting: flag(&toy, &section, "UseLighting", true),
-            use_collision: flag(&toy, &section, "UseCollision", false),
+            // `0023bfc0` reads `UseCollision` with default 1 (`001421b0`).
+            use_collision: flag(&toy, &section, "UseCollision", true),
             motions,
             sequences,
             loop_sounds: loop_sounds(&toy, &section),
@@ -426,6 +460,31 @@ mod tests {
         [Animation4]\nMCF=windmill.mcf\nAnimationType=KeyFramed\nUseCollision=t\n";
 
     #[test]
+    fn use_collision_actors_name_their_anim_col_and_follow_the_placement() {
+        let actors = parse(TOY);
+        let (crow, roof, windmill) = (&actors[0], &actors[1], &actors[2]);
+        assert_eq!(crow.collision_path(), None);
+        assert_eq!(roof.collision_path().as_deref(), Some("anim/stdmbroof.col"));
+        assert_eq!(
+            windmill.collision_path().as_deref(),
+            Some("anim/windmill.col")
+        );
+        // An identity COL local leaves the placement (Offset/Look/Up).
+        let identity = [1., 0., 0., 0., 1., 0., 0., 0., 1., 0., 0., 0.];
+        assert_eq!(
+            crow.collision_matrix(&identity).unwrap(),
+            crow.matrix().unwrap()
+        );
+        // A local translation composes inside the placement basis.
+        let shifted = [1., 0., 0., 0., 1., 0., 0., 0., 1., 0., 0., 2.];
+        let m = crow.collision_matrix(&shifted).unwrap();
+        let p = crow.matrix().unwrap();
+        for i in 0..3 {
+            assert!((m[12 + i] - (p[12 + i] + 2. * p[8 + i])).abs() < 1e-5);
+        }
+    }
+
+    #[test]
     fn sx10_roof_trigger_reads_only_its_counted_actions_and_fires_on_entry() {
         let toy = "[Triggers]\nNumberOfTriggers=1\n[Trigger1]\nName=openroof\nNumberOfActions=2\n\
             Zone=1\nPosition=340,105,225\nBox=40,25,30\nStartEnabled = TRUE\nOneTimeOnly = TRUE\n\
@@ -538,6 +597,8 @@ mod tests {
             );
         }
         assert!(windmill.use_collision);
+        // `UseCollision` absent: the reader's default 1 (`0023bfc0`).
+        assert!(roof.use_collision);
         assert!(windmill.motions.is_empty());
     }
 

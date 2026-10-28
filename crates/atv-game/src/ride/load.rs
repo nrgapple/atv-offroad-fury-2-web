@@ -338,7 +338,7 @@ pub async fn load_with(
         },
         actors: venue.actors.clone().filter(|a| {
             let a = a.borrow();
-            !a.sounds.is_empty() || !a.triggers.is_empty()
+            !a.sounds.is_empty() || !a.triggers.is_empty() || !a.collision.is_empty()
         }),
     };
     Ride::start(

@@ -157,6 +157,7 @@ export const TESTS = {
   'test_engine_freestyle_objectives.mjs': { group: 'content', timeout: 900 },
   'test_engine_freestyle_targets.mjs': { group: 'content', timeout: 900 },
   'test_engine_toy_actors.mjs': { group: 'content', timeout: 600 },
+  'test_engine_actor_collision.mjs': { group: 'content', timeout: 600 },
   'test_engine_training.mjs': { group: 'content', timeout: 900 },
   'test_engine_games.mjs': { group: 'content', timeout: 900 },
   'test_engine_toy_explosions.mjs': { group: 'content', timeout: 900 },
