@@ -835,7 +835,8 @@ fn panel(m: &Metrics, s: &Screen, loading: bool) -> El {
         sides(
             if loading { 34. } else { 4. },
             m.gutter,
-            if matches!(s.page.as_str(), "tracks" | "race") {
+            // Clear of the sweeping lower edge, which rises 56px at the left.
+            if matches!(s.page.as_str(), "tracks" | "race") || stage_page(&s.page) {
                 if m.h <= 640. { 16. } else { 22. }
             } else {
                 10.
