@@ -1414,20 +1414,21 @@ branch is based); courses where every CPU finishes:
 | seed | National (32) before → after | Enduro (16) | Short Tracks (3) |
 | --- | --- | --- | --- |
 | 7 | 31 (sx15) → 32 | 15 (env05endl) → 16 | 3 → 3 |
-| 11 | 29 (sx03, sx05, sx15) → see PR | 16 → see PR | 3 → see PR |
-| 23 | 31 (sx15) → see PR | 16 → see PR | 3 → see PR |
+| 11 | 29 (sx03, sx05, sx15) → 32 | 16 → 16 | 3 → 3 |
+| 23 | 31 (sx15) → 32 | 16 → 16 | 3 → 3 |
 
-With an earlier threshold (assist from the second reset at one place,
-skip from the third) all 153 course/seed runs finished. The final
-thresholds' sweep was incomplete at hand-off (seed 7 complete for the
-national courses: every CPU finished); the PR records the full result.
+Before: 147 of 153 course/seed runs had every CPU finish; after (final
+thresholds, rebuilt on origin/main 3f21cd5): 153 of 153.
 
 No regression where no CPU is stuck: with the layer idle the run is
-bit-identical to main (equal trace fingerprints) on every checked course
-where it never acted (8 of 8 so far). It does act more often than hoped:
-in the idle-player sweep most courses have a CPU reset three times to one
-accepted point (the leader limit keeps CPUs slow on jumps), so the assist
-switches on there; skips stay rare (sx03, sx05, sx13, sx15).
+bit-identical to main. 61 of the 153 runs never acted; 5 sampled across
+all course types (nat01, sx12, env01endl, env03endl, env06st) have equal
+trace fingerprints to the pre-branch main binary. It does act more often
+than hoped: 91 runs switch the assist on for at least one CPU (in the
+idle-player sweep CPUs often reset three times to one accepted point, as
+the leader limit keeps them slow on jumps). Skips stay rarer: 21 runs, 48
+skips in total, on sx02, sx03, sx05, sx13, sx15, env01ends, env02endl,
+env05endl and env07endl (at most 8 for one CPU, env05endl seed 7).
 
 Checks: `atv-core` `cpu_recovery` tests (single wreck, two resets, assist
 then skip, clearing, stall, wreck time, steady progress) and the `race`
