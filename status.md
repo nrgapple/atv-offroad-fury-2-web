@@ -45,3 +45,9 @@ Product decisions (user, 2026-10-27):
   CPU rider looping or stranded, the port may add smarter authored recovery
   (for example resetting further along the route). Keep it separate from
   recovered logic and label it as a port adaptation in the research note.
+- **Cloud saves use retro save codes** (2026-10-28). Progress stays saved
+  locally and syncs to Cloudflare storage (D1 behind the existing Worker) under a
+  short save code shown in the Profile menu. Entering the code on any device or
+  browser restores that progress; sharing a code to share progress is intended.
+  No accounts or personal data. Ship persistent-storage requests and save
+  export/import first. Passkeys may later lock a code, but only as an option.
