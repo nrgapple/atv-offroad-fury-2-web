@@ -53,6 +53,11 @@ const NAV = new Set([
   'store-games',
   'store-tracks',
   'store-cheats',
+  // Profile Editor → Pass Key & Saves (research/CLOUD_SAVE.md).
+  'passkey',
+  'enterkey',
+  'entershare',
+  'savefiles',
   // Options (the shared settings menu) and its pages.
   'game-settings',
   'controls',
@@ -80,6 +85,7 @@ const EXPLORE = new Set([
   'profile',
   'profile-view',
   'store',
+  'passkey',
   'menu:settings',
   'menu:controls',
   'menu:hud-settings',

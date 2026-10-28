@@ -205,6 +205,7 @@ impl Frontend {
                 row("profile-store", "Unlock Items"),
                 row("profile-copy", "Copy Profile"),
                 row("profile-delete", "Delete Profile"),
+                row("passkey", "Pass Key & Saves"),
             ],
             // PAGE21: the name, then the controller's letter row.
             "profile-name" => {
@@ -313,6 +314,9 @@ impl Frontend {
 
     /// Load/Copy/Delete Profile titles (PAGE22, 23, 53 share one layout).
     pub fn profile_heading(&self) -> Option<String> {
+        if Self::is_passkey_page(&self.page) {
+            return self.passkey_heading();
+        }
         if !matches!(self.page.as_str(), "profile-slots" | "profile-confirm") {
             return None;
         }
@@ -328,6 +332,9 @@ impl Frontend {
 
     /// The line under the Profile Editor's rows: the loaded profile.
     pub(super) fn profile_status(&self) -> Option<String> {
+        if Self::is_passkey_page(&self.page) {
+            return self.passkey_status();
+        }
         match self.page.as_str() {
             "profile" | "profile-view" => Some(match self.book.current_profile() {
                 Some(p) => format!(
@@ -344,6 +351,9 @@ impl Frontend {
 
     /// The panel's details table (label, value) for the page.
     pub fn profile_details(&self) -> Vec<(String, String)> {
+        if Self::is_passkey_page(&self.page) {
+            return self.passkey_details();
+        }
         let line = |l: &str, v: String| (l.to_string(), v);
         let current = self.book.current_profile();
         match self.page.as_str() {
