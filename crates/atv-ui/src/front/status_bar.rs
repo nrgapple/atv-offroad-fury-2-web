@@ -153,7 +153,7 @@ pub fn grouped(n: i64) -> String {
     let digits = n.unsigned_abs().to_string();
     let mut out = String::new();
     for (i, c) in digits.chars().enumerate() {
-        if i > 0 && (digits.len() - i) % 3 == 0 {
+        if i > 0 && (digits.len() - i).is_multiple_of(3) {
             out.push(',');
         }
         out.push(c);
@@ -521,7 +521,7 @@ pub(super) fn popover(m: &Metrics, pop: &Popover, anchor: f32) -> El {
         ..Default::default()
     })
     .paint(
-        Paint::fill(Color::hex("#0c0c0cf0"))
+        Paint::fill(Color::hex("#0c0c0cfc"))
             .radius(8.)
             .shadow(BoxShadow::outer(0., 8., 24., Color::hex("#000b")))
             .shadow(BoxShadow::inset(0., 1., 0., Color::hex("#ffffff1f"))),

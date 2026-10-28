@@ -3318,6 +3318,52 @@ mod tests {
     }
 
     #[test]
+    fn the_status_bar_sits_above_every_page_target() {
+        use status_bar::{COINS, PROFILE, SAVE, StatusBar, TROPHIES};
+        let mut fonts = Fonts::new();
+        for (w, h, safe) in [
+            (390., 844., [47., 0., 34., 0.]),
+            (844., 390., [0., 47., 21., 47.]),
+            (820., 1180., [24., 0., 20., 0.]),
+            (1280., 800., [0.; 4]),
+        ] {
+            let view = Viewport {
+                width: w,
+                height: h,
+                scale: 2.,
+                safe,
+                ..Default::default()
+            };
+            for page in ["main", "single", "tracks", "garage"] {
+                let mut s = screen(page);
+                s.status = Some(StatusBar {
+                    profile: Some("PLAYER1".into()),
+                    trophies: (3, 14),
+                    ..Default::default()
+                });
+                let (mut list, mut hits) = (DisplayList::default(), Vec::new());
+                layout::render(&element(&view, &s), &mut fonts, w, h, &mut list, &mut hits);
+                let chips: Vec<_> = hits
+                    .iter()
+                    .filter(|(_, id)| [PROFILE, COINS, TROPHIES, SAVE].contains(id))
+                    .collect();
+                assert_eq!(chips.len(), 4, "{page} {w}");
+                for (c, _) in &chips {
+                    assert!(c.y >= safe[0] - 0.5 && c.w >= 44., "{page} {w}: {c:?}");
+                    assert!(c.x >= 0. && c.right() <= w + 0.5, "{page} {w}: {c:?}");
+                    for (r, id) in hits.iter().filter(|(_, id)| !(2460..=2466).contains(id)) {
+                        let apart = c.right() <= r.x
+                            || r.right() <= c.x
+                            || c.bottom() <= r.y
+                            || r.bottom() <= c.y;
+                        assert!(apart, "{page} {w}: chip {c:?} over {id} {r:?}");
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
     fn pages_keep_clear_of_notches_and_the_home_indicator() {
         let mut fonts = Fonts::new();
         // iPhone landscape (notch left), then portrait (status bar, home bar).

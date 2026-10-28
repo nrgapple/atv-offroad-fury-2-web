@@ -202,3 +202,40 @@ WebKit at DPR 1 and 3; production before the fix jumped 3.33px at the centre.
 - A thin scroll indicator (3px, 55% white) shows on the right of a list, rows
   column or settings panel while it moves or is held, stays 500 ms, then fades
   over 300 ms; it never shows on content that fits.
+
+## Status bar (2026-10-28)
+
+Menu pages carry a mobile-game style status bar across the top
+(`atv-ui/src/front/status_bar.rs`, state in `controller/status_page.rs`), so
+points and progress no longer sit in text under the rows:
+
+| Chip | Shows | Popover (tap) | Link |
+| --- | --- | --- | --- |
+| Profile (left) | gold avatar with the initial, profile name ("No profile"/"Guest" without one) | races, wins, points earned, best stunt | View Profile (Profile Editor without a profile) |
+| Coins | Profile Points to spend; counts up/down over 700 ms when the total changes (purchase, race reward, cheat, Unlock Everything); gold ring on Profile Store pages | available, earned, spent | Profile Store |
+| Trophies | championship trophies won of the 14 the port offers (7 series x Normal/Expert) | won, and each series' Normal / Expert trophy | View Trophies |
+| Save | Pass Key sync as a cloud: check (saved), arrow (saving), slash (offline), "!" (error), grey (no key yet) | status line and key | Open Pass Key |
+
+- Progressive disclosure: phones show icons and numbers only; widths from
+  900px add short labels (POINTS, TROPHIES, the sync word). Popovers sit under
+  their chip, close on a tap outside, Escape/Back or any key, and their link
+  navigates through the normal page history.
+- The bar is 48px (40px on short landscape phones) below the top safe area;
+  chips keep 44px-wide targets. Pages lay out below it, so no row, list or
+  Back can sit under it, and their kinetic scrolling is unchanged.
+- The title shows the save chip alone; the course loader, Options/Jukebox over
+  the menu and rides show no bar (the HUD rules in rides).
+- It replaces the bottom-left PASS KEY badge and the points lines on Single
+  Player ("Profile Points N · races · wins"), the Profile Editor ("Current
+  Profile Points") and the Profile Store; the store keeps the item's cost or
+  unlock rule, and the no-profile warning stays.
+- Icons are vector shapes in the menu gold. The original trophy art
+  (`trophy_goldon`…, PAGE26) is not in the hosted runtime package.
+- Controllers and keyboards reach the same pages through the menus (Profile
+  Editor, View Profile, Unlock Items, Pass Key); no button is mapped to the
+  bar.
+
+Checks: `tools/test_engine_status_bar.mjs` (four sizes, no overlap with page
+targets, popovers, links, title, rides), `test_engine_profile_store.mjs`
+(count-up after GIMMEPTS), `test_engine_profile_menu.mjs`,
+`test_engine_profile_editor.mjs`.
