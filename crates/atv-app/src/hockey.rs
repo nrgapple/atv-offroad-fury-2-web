@@ -464,6 +464,7 @@ impl HockeySession {
             position: [x, y - 5., z],
             stale: false,
             pill: None,
+            map_only: false,
         }]
     }
 

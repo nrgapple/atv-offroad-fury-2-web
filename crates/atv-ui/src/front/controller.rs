@@ -55,6 +55,15 @@ pub enum Event {
         rider: u16,
         name: String,
     },
+    /// Games → Tag → Start Game: host a room on the Tag course and start
+    /// Tag there with Games Prep's minutes (research/GAMES.md "Tag").
+    TagHost {
+        environment: String,
+        minutes: u32,
+        quad: u16,
+        rider: u16,
+        name: String,
+    },
     /// Back from the garage or course picker opened over a held room ride:
     /// ride again with this look (a new course for the host's Ride).
     RoomRide {
