@@ -152,6 +152,9 @@ pub struct Trace {
     /// gate, firework commands, lamp sounds, music and the stadium flashes
     /// lit after the step (atv-web's op 50 `race` and `flashes`).
     pub events: Vec<Value>,
+    /// Port adaptation counters per CPU at the end (`cpu_recovery`): assists
+    /// switched on and skip-ahead resets made (not fingerprinted).
+    pub cpu_recovery: Vec<(u32, u32)>,
 }
 
 /// Loads the venue and ride headlessly and replays `script`. With
@@ -237,10 +240,17 @@ pub async fn trace(
             _ => recorded.push(json!({"frames": 1, "input": step})),
         }
     }
+    let cpu_recovery = ride.race().map_or(Vec::new(), |r| {
+        r.cpus
+            .iter()
+            .map(|c| (c.recovery.assists, c.recovery.skips))
+            .collect()
+    });
     Ok(Trace {
         records,
         autopilot: recorded,
         events,
+        cpu_recovery,
     })
 }
 
