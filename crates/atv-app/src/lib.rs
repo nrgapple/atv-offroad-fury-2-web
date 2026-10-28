@@ -1425,7 +1425,11 @@ impl App {
             net.map_or_else(Vec::new, |n| n.contact_bodies_at(now, ride))
         };
         // Split screen: each player is the others' contact body.
-        let split_others = split::link(&mut riding.ride, &mut ready.split);
+        let split_others = if ready.split.is_empty() {
+            Vec::new()
+        } else {
+            split::link(&mut riding.ride, &mut ready.split)
+        };
         let split_bodies: Vec<_> = ready
             .split
             .iter()
