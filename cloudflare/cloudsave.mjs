@@ -207,6 +207,14 @@ export async function cloudSaveRequest(request, env, allowedOrigins) {
     if (path === '/api/save') return await putSave(request, env, db, id, ip);
     if (path === '/api/save/share') return await share(db, id);
     if (path === '/api/save/restore') return await restore(request, db, id);
+    const wanted = request.headers.get('X-Fury-Revision');
+    if (wanted !== null) {
+      // One kept revision's save, so Save History can show it before a restore.
+      const revision = /^[1-9][0-9]{0,15}$/.test(wanted) ? Number(wanted) : 0;
+      if (!isRevision(revision) || revision < 1) return error('bad_revision', 400);
+      const row = await db.prepare('SELECT revision, updated_at, save FROM revisions WHERE key_id = ?1 AND revision = ?2').bind(id, revision).first();
+      return row ? json({ revision: row.revision, updatedAt: row.updated_at, save: JSON.parse(row.save) }) : error('not_found', 404);
+    }
     const { results } = await db.prepare('SELECT revision, updated_at, bytes FROM revisions WHERE key_id = ?1 ORDER BY revision DESC LIMIT ?2').bind(id, KEEP_REVISIONS).all();
     if (!results?.length) return error('not_found', 404);
     return json({ revisions: results.map(row => ({ revision: row.revision, updatedAt: row.updated_at, bytes: row.bytes })) });
