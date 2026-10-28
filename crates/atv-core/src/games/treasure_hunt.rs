@@ -403,4 +403,30 @@ mod tests {
         );
         assert_eq!(hunt.markers().len(), 1);
     }
+
+    #[test]
+    fn split_screen_players_collect_and_rank_separately() {
+        // Two players in one Session (split screen): each treasure counts
+        // for whoever touches it, the HUD reads each player's own count,
+        // and the standings rank both (ties by stunt score).
+        let rules = TreasureHunt::new(&toy(&[&["a", "b", "c"]]), 2).unwrap();
+        let mut session = crate::games::Session::new(Box::new(rules), 5, 2);
+        session.begin();
+        session.tick(0.1, &[at(100.), at(200.)], &[0., 50.]);
+        assert_eq!(session.rules.scores(), vec![1, 1]);
+        assert_eq!(session.rules.progress(1), "1 / 3");
+        // Equal counts: player 2's higher stunt score ranks it first.
+        assert_eq!(session.place(1), 1);
+        session.tick(0.1, &[at(300.), at(0.)], &[0., 50.]);
+        assert_eq!(session.rules.scores(), vec![2, 1]);
+        assert_eq!(session.rules.progress(0), "2 / 3");
+        assert_eq!((session.place(0), session.place(1)), (1, 2));
+        assert_eq!(session.end, Some(crate::games::End::Complete));
+        let rows: Vec<_> = session
+            .standings()
+            .iter()
+            .map(|s| (s.rider, s.score))
+            .collect();
+        assert_eq!(rows, [(0, 2), (1, 1)]);
+    }
 }

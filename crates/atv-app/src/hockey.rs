@@ -60,6 +60,9 @@ pub struct HockeySession {
     serial: u32,
     phase: u8,
     sent_step: u64,
+    /// Split screen: player 2 skates for Blue on this console
+    /// (research/SPLIT_SCREEN.md "Slice 3").
+    pub split: bool,
 }
 
 fn phase_code(state: State) -> (u8, f32) {
@@ -113,6 +116,15 @@ fn tee_goals() -> u8 {
     }
 }
 
+/// "You are" alone; split screen names the player.
+fn you(split: bool, me: usize) -> String {
+    if split {
+        format!("Player {} is", me + 1)
+    } else {
+        "You are".into()
+    }
+}
+
 /// Rider slot of the human (team Red).
 const PLAYER: usize = 0;
 
@@ -141,10 +153,21 @@ impl HockeySession {
             serial: 0,
             phase: 0,
             sent_step: 0,
+            split: false,
         }
     }
 
-    fn face_off(&mut self, ride: &mut Ride) {
+    /// Split screen: player 1 skates for Red and player 2 for Blue (the
+    /// rooms' alternating teams; the original Hockey Team Select page was
+    /// not traced, so this is a port choice).
+    pub fn new_split() -> Self {
+        let mut session = Self::new();
+        session.game = Game::new(session.game.arena, vec![0, 1], session.game.time_limit);
+        session.split = true;
+        session
+    }
+
+    fn face_off(&mut self, ride: &mut Ride, second: Option<&mut Ride>) {
         // The pause's end (`00336200`), setup and Restart Game stop the
         // hat-trick group before the riders line up.
         self.hats.push(false);
@@ -152,14 +175,23 @@ impl HockeySession {
         if let Err(error) = ride.place_beside(origin, yaw, [0.; 3]) {
             crate::status(&format!("Hockey face-off placement failed: {error}"));
         }
+        // Split screen: player 2 lines up at rider slot 1's spot.
+        if self.split
+            && let Some(ride2) = second
+        {
+            let (origin, yaw) = self.game.face_off(1);
+            if let Err(error) = ride2.place_beside(origin, yaw, [0.; 3]) {
+                crate::status(&format!("Player 2 face-off placement failed: {error}"));
+            }
+        }
         self.puck = Puck::held(&self.game.arena);
     }
 
     /// Pause → Restart (`003377f0`).
-    pub fn restart(&mut self, ride: &mut Ride) {
+    pub fn restart(&mut self, ride: &mut Ride, second: Option<&mut Ride>) {
         self.game.restart();
         self.finished = false;
-        self.face_off(ride);
+        self.face_off(ride, second);
         self.steps = ride.steps();
     }
 
@@ -173,7 +205,12 @@ impl HockeySession {
 
     /// Advances the game with the ride's clock. True once, when the game
     /// ends.
-    pub fn update(&mut self, ride: &mut Ride, net: Option<&mut crate::multiplayer::Net>) -> bool {
+    pub fn update(
+        &mut self,
+        ride: &mut Ride,
+        net: Option<&mut crate::multiplayer::Net>,
+        mut second: Option<&mut Ride>,
+    ) -> bool {
         let mut net = net;
         if let Some(net) = net.as_deref_mut() {
             let (me, roster) = net.roster();
@@ -198,7 +235,7 @@ impl HockeySession {
         }
         if !self.placed {
             self.placed = true;
-            self.face_off(ride);
+            self.face_off(ride, second.as_deref_mut());
             self.steps = ride.steps();
         }
         let steps = ride.steps();
@@ -224,7 +261,15 @@ impl HockeySession {
         // Every rider in slot order: the human's own ATV, the others' latest
         // relayed poses (out of reach while unknown).
         let riders: Vec<([f32; 3], [f32; 3])> = if self.roster.is_empty() {
-            vec![own]
+            // Split screen: player 2's ATV is rider slot 1.
+            let mut riders = vec![own];
+            if self.split
+                && let Some(ride2) = second.as_deref()
+            {
+                let f = ride2.frame();
+                riders.push((f.origin, f.linear_velocity));
+            }
+            riders
         } else {
             let (me, _) = net.as_deref().map(|n| n.roster()).unwrap_or_default();
             self.roster
@@ -269,7 +314,7 @@ impl HockeySession {
                     self.hats.push(true);
                 }
                 match event {
-                    Event::FaceOff => self.face_off(ride),
+                    Event::FaceOff => self.face_off(ride, second.as_deref_mut()),
                     Event::Drop => {
                         self.puck = Puck::drop(&self.game.arena, || crate::random::unit() as f32);
                         if self.tee > 0 {
@@ -425,6 +470,11 @@ impl HockeySession {
 
     /// The HUD panel (the Training panel's layout).
     pub fn view(&self, origin: [f32; 3]) -> atv_ui::hud::training::View {
+        self.view_for(origin, self.me)
+    }
+
+    /// A local player's panel (split screen: player 2 is rider 1).
+    pub fn view_for(&self, origin: [f32; 3], me: usize) -> atv_ui::hud::training::View {
         let g = &self.game;
         let [red, blue] = g.scores;
         let banner = g.banner.map(|(b, _)| b.text()).or(match g.state {
@@ -438,12 +488,18 @@ impl HockeySession {
         atv_ui::hud::training::View {
             title: format!("Red {red} – {blue} Blue   {}", self.clock()),
             caption: Some({
-                let team = atv_core::hockey::TEAMS[g.teams.get(self.me).copied().unwrap_or(0)];
+                let team = atv_core::hockey::TEAMS[g.teams.get(me).copied().unwrap_or(0)];
                 match g.state {
                     State::SuddenDeath => {
-                        format!("You are {team}. Sudden death: the next goal wins.")
+                        format!(
+                            "{} {team}. Sudden death: the next goal wins.",
+                            you(self.split, me)
+                        )
                     }
-                    _ => format!("You are {team}. Push the puck into the far goal."),
+                    _ => format!(
+                        "{} {team}. Push the puck into the far goal.",
+                        you(self.split, me)
+                    ),
                 }
             }),
             banner,
@@ -469,6 +525,22 @@ impl HockeySession {
         }]
     }
 
+    /// Each local player's goals (split screen lists both).
+    fn goal_line(&self) -> String {
+        let goals = |i: usize| self.game.goals.get(i).copied().unwrap_or(0);
+        if self.split {
+            format!(
+                "{} (Red) goals: {}, {} (Blue) goals: {}",
+                crate::split::PLAYER_1,
+                goals(0),
+                crate::split::PLAYER_2,
+                goals(1)
+            )
+        } else {
+            format!("Your goals: {}", goals(self.me))
+        }
+    }
+
     /// The HockeyOver page's lines: the score, the winner and the goals.
     pub fn summary(&self) -> String {
         let [red, blue] = self.game.scores;
@@ -477,10 +549,7 @@ impl HockeySession {
             Some(_) => "Blue wins!",
             None => "Tied.",
         };
-        format!(
-            "Red {red} – {blue} Blue. {outcome} Your goals: {}.",
-            self.game.goals[self.me]
-        )
+        format!("Red {red} – {blue} Blue. {outcome} {}.", self.goal_line())
     }
 
     /// The HockeyOver result line.
@@ -492,8 +561,8 @@ impl HockeySession {
             None => "Tied.",
         };
         format!(
-            "Hockey: Red {red} – {blue} Blue. {outcome} Your goals: {}.",
-            self.game.goals[self.me]
+            "Hockey: Red {red} – {blue} Blue. {outcome} {}.",
+            self.goal_line()
         )
     }
 
@@ -518,6 +587,7 @@ impl HockeySession {
             "roster": self.roster,
             "serial": self.serial,
             "teams": g.teams,
+            "split": self.split,
         })
     }
 }

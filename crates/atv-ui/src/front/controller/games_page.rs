@@ -1,8 +1,8 @@
 //! Single Player → Games (research/GAMES.md): the original's Games Prep
 //! (Track Select in mode 3, `0026a720`) as one page: Game, the course from
 //! the game's Tracks.dat list, the time limit and Start Game. The original
-//! reaches it from Multiplayer → Split Screen → Games; the port has no
-//! split screen, so a single player starts it here.
+//! reaches it from Multiplayer → Split Screen → Games, which opens this page
+//! for two local players; Single Player → Games starts it for one.
 //!
 //! Profile Store gating (`0021add0`, `00323640`): King of the Hills and
 //! Treasure Hunt start locked until bought (500 points) and each game list

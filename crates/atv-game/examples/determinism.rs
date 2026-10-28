@@ -61,6 +61,10 @@ fn main() {
         fingerprint(&traced.records),
         started.elapsed().as_secs_f64() * 1000. / steps.max(1) as f64
     );
+    if traced.cpu_recovery.iter().any(|&(a, s)| a + s > 0) {
+        // Port adaptation counters (atv_core::cpu_recovery), per CPU.
+        println!("cpu recovery (assists, skips): {:?}", traced.cpu_recovery);
+    }
     if let Some(path) = events {
         std::fs::write(path, serde_json::to_vec(&traced.events).unwrap()).expect("write events");
     }

@@ -140,6 +140,81 @@ identical stand-in controllers.
 
 Host frame time: see "Measurements" below.
 
+## Slice 3 (2026-10-28): Games
+
+The original's Games are "Split Screen Only" (manual p. 17) and live under
+Multiplayer → Split Screen → `MultiPlayerSelect` → Games (GAMES.md). Exact-
+build evidence used:
+
+- Each game's rules keep a record per rider: King of the Hills
+  (`00220150`, `00220b50`: per-rider state, hills held, the capturing
+  rider's colour from +0x210 red/blue/green/yellow and "ATV %d captured
+  hill %d"), Treasure Hunt (`002d0d70`: the collecting rider's count),
+  Hockey (two team records at +0x1c4, each session rider on the team
+  chosen on Hockey Team Select) and Tag (four rider records).
+- The ranking sorts riders by the game's count, ties by stunt score
+  (`00220e70`, `002d0f20`, `002fa120`), and the results pages list places
+  1-5 (`002ec310`).
+- The game TOYs' `[SceneInfo] NumStartPositions` / `Start%d` /
+  `Direction%d` give one start per player slot.
+
+What the port does:
+
+- **Reaching it.** The Split Screen page adds **Games** after Freestyle
+  (the original's MultiPlayerSelect order). It opens the same Games page
+  (Game, Course, Time Limit, Start Game) with two players marked; Back
+  returns to Split Screen, which rides one player again. Locks are the
+  profile's, as on Single Player → Games.
+- **King of the Hills and Treasure Hunt.** One `atv_core::games::Session`
+  runs the rules for two riders (`rules_for`): player 1 is rider 0 and
+  player 2 rider 1. Every frame both rides are sampled (position, ground
+  contact, open stunt, each player's own finished chain and committed
+  stunt score), so hills and treasures count for whoever earned them; a
+  captured hill takes the capturer's colour (player 2 blue) on its flag,
+  pill and compass icon. Player 1 starts at `Start1`, player 2 at `Start2`.
+  The private sweep of all 28 courses finds at least two starts on 18;
+  ten mode TOYs list none (KOTH env04, free03, free04, free05; Treasure
+  Hunt env02, env04, env08, free01, free03, free05), so player 1 keeps the
+  venue's ride start (remembered for Restart Game) and player 2 rides ten
+  feet to its right. Both ATVs are held through the 321 lamps and after
+  the end; Restart Game puts both back.
+- **Hockey.** Player 1 skates for Red and player 2 for Blue, each placed at
+  its own face-off spot (`Game::face_off`, the rooms' semicircle rule);
+  both ATVs push the puck and both are held at each face-off. A port
+  choice: the Hockey Team Select page was not traced, so the teams are the
+  rooms' alternation. CPU skaters are still not connected.
+- **HUD.** Each view gets its own game panel (game, TIME, TOKENS/HILLS,
+  PLACE and its own stunt SCORE; Hockey's team panel names "Player N is
+  Red/Blue"), its own compass (Overlay Sets 6/7 object 31, drawn at the
+  view's size), its own world tags and hill pills projected with its own
+  camera and view aspect, and the start lamps. Signs ("ATV 2 captured
+  hill 1", "All Treasures Collected") show in both panels. Where the
+  original's split-screen HUD sits per viewport was not traced; the port
+  reuses the single-screen layout scaled to each view.
+- **Results.** "Race Results" lists both players by place as Player 1 /
+  Player 2 (the split race standings' names) with their count and stunt
+  score;
+  Hockey Results lists each player's goals with the team score.
+- **Tag** is not split yet: its Start Game still hosts a multiplayer room
+  (GAMES.md "Tag"). Freestyle objectives/target runs are not split either.
+
+Checks: `atv-core` unit tests `split_screen_players_collect_and_rank_separately`
+(Treasure Hunt: per-player counts, progress, places and the stunt-score
+tie order through `Session`), `split_screen_rules_keep_a_record_per_player`
+and the private sweep `every_original_game_course_resolves` (both games'
+two-rider rules on all 14 venues each, and their start counts);
+the Split Screen menu unit test covers the Games row;
+`tools/test_engine_split_games.mjs` (content group) plays Treasure Hunt
+top/bottom to "All Treasures Collected" with both players collecting
+(`gameTest=visit` alternates players) and results listing both, King of
+the Hills side by side where player 2 captures hill 1 through the real
+trigger enter/leave (`gameTest=hill2` lands the chain for player 2), and
+split Hockey (`hockeyGoal=1` scores player 1's goal; a 0-0 game goes to
+sudden death) on its 20 s clock to "Red wins!" and results listing both
+players' goals. Host Chromium only; player 2 keyboard halves and second
+pads are the slice 1 input path (`test_engine_split_screen.mjs`), not
+re-driven in the games test.
+
 ## Measurements
 
 Host only (Apple Silicon Mac mini, headless Chromium on Metal, 1280x720,
@@ -163,7 +238,7 @@ Chromium. Phones were not measured.
   ControllerSelect claiming page.
 - Player 2's own gear and paint, Hall of Fame and profile credit; its tire
   tracks and lingering dust; a per-player audio mix.
-- Games (Tag, Hockey, King of the Hills, Treasure Hunt), Freestyle
-  objectives and championships split screen.
+- Tag, Freestyle objectives and championships split screen (King of the
+  Hills, Treasure Hunt and Hockey are slice 3).
 - Online parity: every split-screen mode in relay rooms up to the room's
   player cap.

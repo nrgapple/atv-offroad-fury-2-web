@@ -1026,8 +1026,8 @@ pub fn layout(request: Request) -> Result<Frame> {
         }
         "split" => {
             // Multiplayer → Split Screen → MultiPlayerSelect (Race,
-            // Freestyle; Games follow in a later slice), and the Game
-            // Settings layout row the original keeps under Options.
+            // Freestyle, Games), and the Game Settings layout row the
+            // original keeps under Options.
             let layout = if request.split_vertical {
                 "Screen: Side by Side"
             } else {
@@ -1036,6 +1036,7 @@ pub fn layout(request: Request) -> Result<Frame> {
             for (i, (label, action)) in [
                 ("Race", "splitrace"),
                 ("Freestyle", "splitfree"),
+                ("Games", "splitgames"),
                 (layout, "splitlayout"),
                 (request.split_second[0].as_str(), "split2quad"),
                 (request.split_second[1].as_str(), "split2rider"),

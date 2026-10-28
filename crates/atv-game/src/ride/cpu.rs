@@ -80,6 +80,8 @@ pub struct CpuRacer {
     wreck: wreck_animation::Animator,
     mode: Option<rider_pose::Mode>,
     stuck: f32,
+    /// Port adaptation: the authored repeat/stall recovery (CPU only).
+    pub recovery: atv_core::cpu_recovery::Recovery,
 }
 
 impl CpuRacer {
@@ -125,6 +127,7 @@ impl CpuRacer {
             wreck,
             mode: None,
             stuck: 0.,
+            recovery: Default::default(),
             driver: Driver::new(index, options),
         })
     }
@@ -156,6 +159,7 @@ impl CpuRacer {
         )?;
         let mut pose: DriverPose = (&before).into();
         pose.preload_rates = self.vehicle.preload_rates();
+        self.driver.assist = self.recovery.assist();
         let (mut input, decisions) = self.driver.step(
             course,
             &pose,

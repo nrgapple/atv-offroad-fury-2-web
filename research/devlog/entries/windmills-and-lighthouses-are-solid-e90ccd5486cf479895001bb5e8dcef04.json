@@ -1,0 +1,14 @@
+{
+  "id": "windmills-and-lighthouses-are-solid-e90ccd5486cf479895001bb5e8dcef04",
+  "timestamp": "2026-10-28T18:21:45.238604+00:00",
+  "recorded_at": "2026-10-28T19:29:42.093134+00:00",
+  "kind": "verification",
+  "title": "Windmills and lighthouses are solid",
+  "summary": "Recovered from USA v2.00: TOY actors with UseCollision load their collision body at placement and register dynamically; type-0 bodies now collide for ATV, motorcycle and CPU riders",
+  "details": [
+    "Recovered from the USA v2.00 executable: TOY actors with UseCollision load their anim<name>.col body at the actor's placement (it does not follow the animation) and register it in the scene's dynamic list. Type-0 bodies now collide for the ATV, motorcycle and CPU riders: ENV02 windmill, ENV03 windmills, ENV04 lighthouse, ENV07 snakes, ENV08 waterwheels. Verification: native windmill contact test, browser test drives a quad into the Rockbridge windmill and it stops at the tower."
+  ],
+  "limitation": "Type-1 compound bodies (cement truck, crocodile, shark, twister, NAT05 windmill, sawmill) are not yet solid.",
+  "image": "/devlog-images/windmills-and-lighthouses-are-solid-e90ccd5486cf479895001bb5e8dcef04.png",
+  "caption": "Quad stopped against the windmill tower at Rockbridge"
+}
