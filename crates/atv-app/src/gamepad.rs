@@ -22,6 +22,8 @@ const RESTING: f32 = 0.5;
 const MOVED: f32 = 0.35;
 
 /// The controller a split-screen slot plays with: connected pads in order.
+/// (Android picks its pads in gamepad/android.rs; only tests use it there.)
+#[cfg_attr(target_os = "android", allow(dead_code))]
 pub fn split_slot<K>(connected: impl Iterator<Item = K>, slot: usize) -> Option<K> {
     connected.into_iter().nth(slot)
 }

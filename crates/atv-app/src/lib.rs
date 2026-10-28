@@ -4,6 +4,7 @@
 mod android;
 #[cfg(not(target_arch = "wasm32"))]
 mod clipboard;
+mod cloud;
 #[cfg(any(target_os = "android", test))]
 mod content_sync;
 #[cfg(target_arch = "wasm32")]
@@ -208,6 +209,12 @@ enum Message {
     ContextLost,
     #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
     ContextRestored,
+    /// Web: a Pass Key save request's answer (cloud.rs).
+    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+    Cloud(u64, atv_ui::cloud::Response),
+    /// Web: Import Save read a file (name, text).
+    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+    CloudImport(String, String),
 }
 
 /// A connected room waiting on the lobby page: (room, course, quad, rider,
@@ -544,6 +551,8 @@ impl ObjectiveSession {
 }
 
 struct App {
+    /// Pass Key cloud saves (cloud.rs).
+    cloud: cloud::Cloud,
     /// The frontend's Split Screen branch asked for two local players on
     /// the next rides (kept for Restart Race).
     split_request: Option<split::Layout>,
@@ -2684,6 +2693,7 @@ impl App {
         self.sync_menu_music();
         self.last = Instant::now();
         self.wake();
+        self.cloud_activity(focused);
     }
 
     fn blur(&mut self) {
@@ -3252,8 +3262,11 @@ impl App {
                 self.quit_to(Some("games"));
             }
             overlay::Action::RaceQuit if self.hockey.is_some() => {
+                // Continue: back to the Games page that started it (the
+                // original returns to the page that started the event,
+                // `0021ecb0`), with the score on its notice line.
                 let result = self.hockey.as_ref().map(|h| h.result());
-                if self.quit_to(Some("main"))
+                if self.quit_to(Some("games"))
                     && let (Some(front), Some(result)) = (&self.front, result)
                 {
                     front.borrow_mut().state.notice = Some(result);
@@ -3268,9 +3281,12 @@ impl App {
             overlay::Action::RaceRetry => self.restart_race(),
             overlay::Action::RaceNextRound => self.next_round(),
             overlay::Action::RaceQuit => {
-                // race.js quit: Single Player (a championship round returns
-                // to its Championship page); a page without the engine's
-                // frontend (a direct ride) opens its menus instead.
+                // Continue returns to the page that started the race, on the
+                // row it was started from (`0021ecb0`): Single Race's setup,
+                // or a championship round's Championship page (the
+                // original's "Quit to Championship Menu"). A page without
+                // the engine's frontend (a direct ride) opens its menus
+                // instead.
                 let page = if riding
                     .ride
                     .race()
@@ -3278,7 +3294,7 @@ impl App {
                 {
                     "championship"
                 } else {
-                    "single"
+                    "race"
                 };
                 if !self.quit_to(Some(page)) {
                     #[cfg(target_arch = "wasm32")]
@@ -4319,7 +4335,12 @@ impl ApplicationHandler<Message> for App {
                     window.request_redraw();
                 }
             }
-            Message::PresenceTick => self.presence_tick(),
+            Message::PresenceTick => {
+                self.presence_tick();
+                self.cloud_tick();
+            }
+            Message::Cloud(id, response) => self.cloud_response(id, response),
+            Message::CloudImport(name, text) => self.cloud_import(name, text),
             Message::RoomJoined(result) => self.room_joined(*result),
             Message::LobbyNotice(text) => {
                 if let Some(front) = &self.front {
@@ -4459,9 +4480,17 @@ impl ApplicationHandler<Message> for App {
                     .map_or(("tracks", None), |(page, error)| (page, Some(error)));
                 if let Some(front) = &self.front {
                     let mut f = front.borrow_mut();
+                    // A single-player ride returns to the page that started
+                    // it (a championship round, the Games page, Training's
+                    // main menu); a room to its lobby's menu.
+                    let launcher = f.state.launcher().map(String::from);
+                    let page = match launcher {
+                        Some(launcher) if matches!(page, "tracks" | "race") => launcher,
+                        _ => page.to_string(),
+                    };
                     // Its GPU objects belonged to the device the load took.
                     f.release_gpu();
-                    f.resume(page);
+                    f.resume(&page);
                     f.state.notice = notice;
                 }
                 self.requested.remove("jukebox-art");
@@ -4816,10 +4845,15 @@ impl App {
             }
         }
         self.poll_riders();
+        #[cfg(not(target_arch = "wasm32"))]
+        let cloud = self.cloud_poll();
         // The earliest of every reason to wake without an event.
         let now = Instant::now();
         let mut wake: Option<Instant> = None;
         let mut at = |when: Instant| wake = Some(wake.map_or(when, |w| w.min(when)));
+        // Pass Key sync: its answers and once-a-second tick (cloud.rs).
+        #[cfg(not(target_arch = "wasm32"))]
+        at(cloud);
         // A hidden or suspended room ride draws no frames: a 1 s timer keeps
         // its presence (the browser's throttled background timers).
         #[cfg(not(target_arch = "wasm32"))]
@@ -5401,6 +5435,7 @@ impl App {
             );
         }
         self.open_launch();
+        self.cloud_ready();
         #[cfg(not(target_arch = "wasm32"))]
         if let Some(seconds) = self.lose_gpu.0.take() {
             self.lose_gpu.1 = Some(Instant::now() + std::time::Duration::from_secs_f64(seconds));
@@ -5430,9 +5465,11 @@ impl App {
                 serde_json::json!({ "entry": if linked { "link" } else { "menu" } }),
             ],
         );
+        // A page opened from outside the menus climbs to the title through
+        // its canonical parents (research/MENU_FLOW.md).
         if let Some(page) = &start.page {
             let page = page.clone();
-            f.state.show(&page, &view);
+            f.state.open(&page, &view);
             return;
         }
         if let Some(page) = atv_game::launch::menu_shortcut(&start.search) {
@@ -5442,7 +5479,7 @@ impl App {
             } else {
                 page
             };
-            f.state.show(page, &view);
+            f.state.open(page, &view);
             return;
         }
         let tracks: Vec<(String, String)> = f
@@ -5465,7 +5502,7 @@ impl App {
         if !errors.is_empty() {
             // frontend.js openLaunch: the main menu's notice line says why.
             let message = format!("Cannot open ride link. {}", errors.join(" "));
-            f.state.show("main", &view);
+            f.state.open("main", &view);
             f.state.notice = Some(message.clone());
             status(&message);
             return;
@@ -5490,7 +5527,7 @@ impl App {
                 f.state.room_code = setup.room.clone();
             }
             f.state
-                .show(if create { "create-lobby" } else { "join-lobby" }, &view);
+                .open(if create { "create-lobby" } else { "join-lobby" }, &view);
             if !setup.play {
                 return;
             }
@@ -5522,6 +5559,8 @@ impl App {
         }
         let race = setup.activity == "race";
         if race && !f.state.race_courses.is_empty() {
+            // Back from the setup climbs through Single Player.
+            f.state.open("single", &view);
             // Only race links change the race setup (frontend.js).
             f.state.show_race(
                 atv_ui::front::controller::RaceSetup {
@@ -5535,7 +5574,7 @@ impl App {
                 &view,
             );
         } else {
-            f.state.show(if race { "single" } else { "tracks" }, &view);
+            f.state.open(if race { "single" } else { "tracks" }, &view);
         }
         if !setup.play {
             return;
@@ -5716,6 +5755,7 @@ impl App {
                 self.start_ride(environment, quad, rider, Some(settings), None);
             }
             Event::CopyRaceLink => self.copy_race_link(),
+            Event::Cloud(command) => self.cloud_command(command),
             Event::FreeRide { quad, rider, name } => {
                 let Some(relay) = self.defaults.as_ref().map(|d| d.relay.clone()) else {
                     return;
@@ -7576,6 +7616,7 @@ pub fn run(options: Options) {
     }
     let event_loop = builder.build().expect("event loop");
     let app = App {
+        cloud: Default::default(),
         camera_choice: options.camera_choice,
         render_scale: Default::default(),
         usage: Default::default(),

@@ -69,11 +69,13 @@ Every write is one D1 batch (a single transaction): the conditional
 that matched nothing leaves the table unchanged and is answered as a conflict (or
 404 for restore), so concurrent writers cannot both win the same revision.
 
-D1 was chosen by the user. The CI deployment token (Individual Workers Editor for
-this Worker plus Account Settings Read) deployed the D1 binding without extra
-permissions (PR #385). Schema migrations are **not** applied by CI: that token has
-no D1 permission. Apply them from the owner's machine with Wrangler OAuth before
-merging code that needs them (see Operations).
+D1 was chosen by the user. The CI deployment token has Individual Workers Editor
+for this Worker, Account Settings Read, and account-scoped D1 Write (the dashboard's
+D1 Edit option). GitHub Actions applies pending migrations before deploying the
+Worker, inside the serialized production job and after its stale-build gate.
+It uses the root `wrangler.jsonc` so `cloudflare/migrations` resolves correctly;
+the generated deployment config lives in a different directory. Migration failure
+stops deployment. PR jobs never receive this token or run remote migrations.
 
 ## Limits and abuse controls
 
@@ -114,9 +116,21 @@ the dev-log footer (`web/devlog.html`, `#privacy`).
 
 ## Operations
 
-All commands run from a checkout with Wrangler OAuth (`npx wrangler whoami`).
+Add schema changes as new numbered SQL files in `cloudflare/migrations/`; do not
+rewrite applied migrations. Merge them with the code that needs them. The trusted
+main deployment runs `wrangler d1 migrations apply SAVES --remote` automatically,
+using the existing GitHub `CLOUDFLARE_API_TOKEN` secret. Wrangler tracks applied
+files, so retries and deployments without new SQL skip them. Pure documentation
+changes do not deploy or migrate.
 
-Apply new migrations (before merging code that depends on them):
+Keep migrations compatible with the currently running Worker: the schema changes
+first, and a later deployment failure leaves the previous Worker serving it.
+For destructive changes, use separate additive, code-transition and cleanup
+releases. A failed migration rolls back that migration, not earlier successful
+ones; inspect the failure and fix forward before retrying the deployment.
+
+For manual inspection or recovery on the owner's machine, use a checkout with
+Wrangler OAuth (`npx wrangler whoami`). The equivalent commands are:
 
 ```sh
 npx wrangler d1 migrations list fury-saves --remote
@@ -171,3 +185,146 @@ eventually consistent). Earlier bursts that opened a new connection per request
 native limiters as coarse, per-location abuse brakes, not exact quotas. All
 verification rows (marked `"test": "server-verification…"`) were deleted
 afterwards.
+
+# Pass Key cloud saves (game client)
+
+Authored for the port (the original kept profiles on a memory card). Code:
+`crates/atv-core/src/cloud_save.rs` (codes, payload, merge),
+`crates/atv-ui/src/cloud.rs` (stored key, sync state machine, apply choices),
+`crates/atv-ui/src/front/controller/passkey_page.rs` (pages, badge state),
+`crates/atv-app/src/cloud.rs` (HTTP transport, triggers, files, links).
+
+## Keys, storage and payload
+
+- The client makes a Pass Key from 10 bytes of the platform's cryptographic
+  random source (`crypto.getRandomValues`; `getrandom` on desktop and Android)
+  the first time the local save holds progress: anything beyond a new game's
+  single empty PLAYER1 (points, races, unlocks, records, a named profile, Hall
+  of Fame entries). Nothing is sent before that.
+- Local storage stays the source of truth. New keys: `fury-pass-key` (the key)
+  and `fury-cloud` (`{revision, updatedAt, base, shareCode, previousKey}`: the
+  server revision and save last agreed on, the last share code made here and the
+  key used before entering another). Desktop keeps them in its `settings.json`
+  like every other setting.
+- `save` payload v1 (JSON): `{"v": 1, "profiles": {"current": n|null,
+  "profiles": [Profile…]}, "hallOfFame": {"courses": {…}, "freestyle": {…}}}`.
+  `Profile` and `HallOfFame` are the same serde shapes the game already stores
+  under `fury-profiles` and `fury-hall-of-fame` (points, earned, races, wins,
+  per-course records, Freestyle records, championships and trophies, Profile
+  Store purchases and unlocks and cheats). Device settings (graphics, controls,
+  audio, minimap, garage choice, multiplayer name) never travel.
+- Size: a completed save with a full Hall of Fame is about 90–150 KB as plain
+  JSON, over the 64 KiB cap. Saves whose JSON exceeds 48 KiB travel as
+  `{"v": 1, "z": "<base64 of raw-DEFLATE of the plain JSON>"}` (the server
+  treats `save` as opaque); a synthetic four-profile, 120-course save deflates
+  to well under 32 KiB. Readers accept both forms; a save with `v` above 1 is
+  refused rather than merged ("update the game"). Export files are always plain,
+  pretty JSON.
+
+## Merge rules (never silently drop progress)
+
+`cloud_save::merge(local, remote, base)` has two modes:
+
+- **Rebase** (a 409 conflict or a pull, with `base` = the last agreed save):
+  this device's changes since `base` are replayed onto the server save.
+  Counters add both sides' gains, `remote + (local − base)`: Profile Points
+  (spendable, floored at 0), points earned, points spent in the store, races,
+  wins and per-ATV / per-course win and race counts. So points earned on two
+  devices both count, and two purchases made from the same balance are both
+  paid for (the balance can bottom out at 0; the second item is then kept free
+  rather than taken away).
+- **Union** (no base: Enter Pass Key → Merge, Import Save → Merge, share codes):
+  idempotent. Counters keep the larger side, so merging the same save twice, or
+  loading one share code many times, mints no points.
+
+In both modes: best lap and race times keep the minimum; top-three lists
+(profile course records and the Hall of Fame's laps, races, objective and stunt
+scores) keep the best three distinct entries; jumps, combos and stunt scores
+keep the maximum; purchases, gear, course and event unlocks, cheats, opened
+series and objective bits are unions; a championship's standing keeps the side
+that changed since `base` (else the further round) and the best trophy. Profiles
+match by name (case-insensitive). A profile deleted on one side is dropped only
+when the other side did not change it since `base`; a merge keeps at most eight
+profiles (`MERGE_SLOTS`), so two devices with four profiles each keep all of
+them and the Profile Editor refuses new ones until some are deleted. The loaded
+profile stays this device's choice.
+
+## Sync
+
+`atv_ui::cloud::Sync` is transport-free (unit-tested with an in-memory contract
+server): the app hands it the time and runs the requests it returns.
+
+- Startup and focus/visibility (at most every 30 s) pull `GET /api/save`; a
+  newer revision is rebased into local progress and the menus reload.
+- Local progress is compared with `base` on every page change and every 10 s;
+  a difference is pushed (`PUT`, `baseRevision` = the stored revision). Writes
+  are coalesced to one per 5 s; hiding or leaving the app flushes at once.
+- 409 with a save: rebase and push again. 409 with `save: null` or a 404 pull
+  (the server lost or never had it): push again from revision 0.
+- Network failure, 429 or 5xx: exponential backoff from 2 s to 5 min (or
+  `Retry-After`); status "Offline · saved on this device". Focus retries at once.
+- 413 or 400: that save is not sent again until it changes; the status shows why.
+- An answer for a key the player has since replaced is ignored.
+
+## UI
+
+- **Badge**: a dark pill like Back with a status dot (green saved, gold saving
+  or no key, orange offline/failed), "PASS KEY · SAVED" and the key (first and
+  last groups under 380 px wide; "Enter or create" before a key exists). Title:
+  top-right. Main menu, Profile Editor and View Profile: bottom-left, level with
+  Back, in landscape; portrait menus run their rows into that corner, so phones
+  show it on the title and the Pass Key pages only. Never on the race HUD.
+- **Pass Key page** (badge, or Profile Editor → Pass Key & Saves): the key,
+  status, last share code and previous key on the panel; rows Copy Pass Key,
+  Share Progress, Show QR Code (a `#key=` link drawn as a vector QR code),
+  Enter Pass Key, Enter Share Code, Save Files (Export Save / Import Save).
+- **Entry**: a real text field (typing, pasting a key or a whole link; O→0,
+  I/L→1) plus the controller's Add Symbol row (Left/Right steps the Crockford
+  symbols, accept adds), Delete Symbol and Look Up.
+- **Confirmation**: the fetched save's profiles, percent complete, points and
+  Hall of Fame records. A key or file offers Merge With This Device / Replace
+  This Device's Save (just Load This Save when this device has no progress);
+  replacing warns when this device has progress not yet saved online. A share
+  code offers Copy Into <loaded profile> or Add As New Profile; the player keeps
+  their own key. Loading a key keeps the old one as Previous Pass Key.
+- **Share Progress** pushes pending progress, makes a share code and offers
+  `…/play.html#share=SHARE-…` through the Web Share sheet where the browser has
+  one, else the clipboard, else on screen.
+- **Links**: `play.html#key=FURY-…` and `#share=SHARE-…` (fragments stay out of
+  server logs) look the code up as the menus open and show the confirmation;
+  the fragment is removed from the address.
+- **Files**: web Export downloads `fury-save-YYYY-MM-DD-HHMMSS.json`, Import uses
+  the browser file picker; desktop writes to and imports the newest file from
+  `Documents/Fury Remastered` (`FURY_SAVES_DIR` overrides). Android has no save
+  files; its Pass Key moves the save.
+- Persistent storage: `web/offline.js` asks for it in any tab that holds a
+  profile or key (not only installed apps), and the game asks once a key exists.
+- Web settings now read saved keys back from `localStorage` rather than a
+  per-instance copy, so a merge written by the sync is never overwritten by a
+  stale menu or ride instance.
+
+## Client verification
+
+- Unit tests: `cargo test -p atv-core cloud_save` (format, normalization,
+  payload and deflate round trip, rebase and union merges, double spend,
+  deletions, Hall of Fame top three, new-profile names) and `cargo test -p
+  atv-ui cloud passkey` (sync against an in-memory contract server: first key,
+  another device, conflict, offline backoff, debounce and flush, share import,
+  merge on entering a key, too large, links, export/import; the pages' rows,
+  entry, confirmation and links).
+- Browser: `tools/test_engine_passkey.mjs` (content group). Against a mocked API
+  by default; `ATV_PASSKEY_LIVE=1 ATV_TEST_URL=https://furyremastered.com` runs it
+  on the deployed site, and `ATV_PASSKEY_API=https://furyremastered.com` forwards
+  a local build's `/api/` calls to the real server (no `Origin`, like the desktop
+  app).
+- Production (2026-10-28, deployed commit `63b3a3a`, host Chromium): the live run
+  passed: a context with progress got a Pass Key and synced it, a fresh context
+  typed the key and loaded the same profile, a share code imported as a new
+  profile in a third context, an exported file imported on a 390×844 phone
+  context, and a `#key=` link opened the confirmation. The test rows it created
+  (ACE, 340 points) were left on the server.
+- Not verified: physical phones (Web Share sheet, iOS Safari clipboard and file
+  picker after an asynchronous share), desktop and Android builds against the
+  live API (the native transport compiles in CI but was not run end to end),
+  controller-initiated Import on the web (a gamepad press is not a user
+  activation, so browsers may refuse the file picker).
