@@ -403,6 +403,12 @@ pub struct FrameStats {
     pub scenery_draws: u32,
     pub scenery_triangles: u32,
     pub scenery_culled: u32,
+    /// Scenery chunks drawn per level of detail, later passes dropped by the
+    /// 130 ft multi-pass cull, and models drawn coarser than their finest
+    /// level (research/VISIBILITY.md).
+    pub scenery_levels: [u32; 4],
+    pub scenery_far_culled: u32,
+    pub scenery_coarse_models: u32,
     pub vegetation_draws: u32,
     pub vegetation_triangles: u32,
     pub vegetation_visible: u32,
@@ -483,6 +489,10 @@ pub struct Graphics {
     /// Tire track ring segments and their life in seconds (Enhanced 600/15,
     /// High 3600/75; 0 off).
     pub tire_tracks: (u16, u16),
+    /// High: every scene model at its finest level with all material passes
+    /// (Original/Enhanced follow the recovered LOD and 130 ft multi-pass
+    /// cull, research/VISIBILITY.md).
+    pub finest_models: bool,
 }
 
 /// A multiplayer rider's look: quad, rider and appearance bytes.
@@ -739,6 +749,12 @@ impl SceneRenderer {
     }
 
     /// Active Snow's latest frame: its clock and emitters (diagnostics).
+    /// Each scene model's level of detail and far flag in the last frame
+    /// (research/VISIBILITY.md).
+    pub fn scenery_levels(&self) -> &[(u8, bool)] {
+        self.scenery.selected()
+    }
+
     /// Placed-emitter CPU sprites drawn last frame: [alpha, additive].
     pub fn ambient_sprites(&self) -> Option<[u32; 2]> {
         self.ambient.as_ref().map(|(pass, _)| pass.sprite_counts())
@@ -1514,10 +1530,20 @@ impl SceneRenderer {
             .prepare(gpu, &view_projection, eye, view.camera.yaw);
         self.profiler.mark("prepare.world");
         stats.sky_tiles = self.sky.as_ref().map_or(0, |s| s.tiles());
-        let scenery = self.scenery.prepare(gpu, &cull);
+        let detail = if self.graphics.finest_models {
+            scenery::Detail::Finest
+        } else {
+            scenery::Detail::Original
+        };
+        let scenery = self
+            .scenery
+            .prepare(gpu, &cull, eye, view.focal_length, detail);
         stats.scenery_draws = scenery.draws;
         stats.scenery_triangles = scenery.triangles;
         stats.scenery_culled = scenery.culled;
+        stats.scenery_levels = scenery.levels;
+        stats.scenery_far_culled = scenery.far_culled;
+        stats.scenery_coarse_models = scenery.coarse_models;
         self.profiler.mark("prepare.scenery");
         if let Some((pass, shared)) = &mut self.train {
             (stats.train_draws, stats.train_triangles) = pass.prepare(gpu, &shared.borrow());

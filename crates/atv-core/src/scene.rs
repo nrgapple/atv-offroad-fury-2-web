@@ -47,6 +47,9 @@ pub struct Scene {
     pub collision_partition: Option<crate::scene_partition::Config>,
     pub boundary_launch: Option<crate::boundary_launch::Config>,
     pub crowd_present: bool,
+    /// `[SceneInfo]` NumZones/NumPortals (001fc850 defaults 1 and 0).
+    pub zones: i64,
+    pub portals: i64,
 }
 fn value<'a>(data: &'a PhysicsData, section: &str, key: &str) -> Option<&'a str> {
     data.entries
@@ -98,9 +101,11 @@ fn boolean(data: &PhysicsData, section: &str, key: &str, default: bool) -> Resul
 ///001421b0/00141fc0 accepts legacy boolean words before its numeric path.
 /// Shipped scenes use F/T. Only zero/nonzero is consumed by the boundary gate.
 fn crowd_present(data: &PhysicsData) -> bool {
-    let Some(text) = value(data, "Sounds", "CrowdPresent") else {
-        return false;
-    };
+    value(data, "Sounds", "CrowdPresent").is_some_and(flag)
+}
+/// The shared TOY/scene/PSM flag reader (001421b0/00141fc0): a leading T/Y
+/// or F/N, ON/OFF, otherwise strtol(base 0) is nonzero.
+pub fn flag(text: &str) -> bool {
     match text.as_bytes().first().map(u8::to_ascii_uppercase) {
         Some(b'T' | b'Y') => return true,
         Some(b'F' | b'N') => return false,
@@ -130,6 +135,18 @@ fn crowd_present(data: &PhysicsData) -> bool {
         .chars()
         .map_while(|c| c.to_digit(radix))
         .any(|d| d != 0)
+}
+/// `[SceneInfo]` NumZones (default 1) and NumPortals (default 0), read by
+/// 001fc850. No shipped scene declares either: every venue is one zone
+/// without portals (research/VISIBILITY.md).
+fn zone_count(data: &PhysicsData, key: &str, default: i64) -> Result<i64> {
+    match value(data, "SceneInfo", key) {
+        None => Ok(default),
+        Some(text) => text
+            .trim()
+            .parse::<i64>()
+            .map_err(|_| format!("unsupported scene [SceneInfo] {key}")),
+    }
 }
 fn color(data: &PhysicsData, section: &str) -> Result<[f32; 3]> {
     let color = required_vector(data, section, "ColorRGB")?;
@@ -555,6 +572,8 @@ pub fn parse_with_start(data: &[u8], mode: Option<&[u8]>) -> Result<Scene> {
         collision_partition: collision_partition(&data)?,
         boundary_launch: boundary_launch(&data)?,
         crowd_present: crowd_present(&data),
+        zones: zone_count(&data, "NumZones", 1)?,
+        portals: zone_count(&data, "NumPortals", 0)?,
     })
 }
 #[cfg(test)]
