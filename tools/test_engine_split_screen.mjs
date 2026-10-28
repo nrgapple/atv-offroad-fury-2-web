@@ -1,4 +1,7 @@
 // Local two-player split screen (research/SPLIT_SCREEN.md) in /play.html:
+// - Split Screen's Player 2 ATV and Rider rows choose player 2's own ATV
+//   and rider, which its ride uses; player 2 raises its own wheel dust and
+//   the terrain keeps a fine patch around each player;
 // - Main Menu → Multiplayer → Split Screen → Freestyle rides two players
 //   top and bottom with the original horizontal split camera presets;
 //   player 1 drives with the keyboard's left side (W) and the first
@@ -48,11 +51,19 @@ async function open(browser, search) {
   await page.addInitScript(() => {
     localStorage.setItem('atv2-keyboard-help-seen-v1', '1');
     localStorage.removeItem('atv-split-screen');
+    localStorage.removeItem('atv-split-player2');
     const make = (index, id) => {
       const buttons = Array.from({ length: 17 }, () => ({ pressed: false, touched: false, value: 0 }));
-      return { id, index, connected: true, mapping: 'standard', timestamp: 1, axes: [0, 0, 0, 0], buttons };
+      // Each pad counts its own dual-rumble effects (per-controller rumble).
+      const vibrationActuator = {
+        type: 'dual-rumble',
+        playEffect: () => { window.rumbles[index]++; return Promise.resolve('complete'); },
+      };
+      return { id, index, connected: true, mapping: 'standard', timestamp: 1, axes: [0, 0, 0, 0], buttons, vibrationActuator };
     };
-    const pads = [make(0, 'Player one stand-in (STANDARD GAMEPAD)'), make(1, 'Player two stand-in (STANDARD GAMEPAD)')];
+    window.rumbles = [0, 0];
+    // Two identical controllers (same id): players and rumble go by slot.
+    const pads = [make(0, 'Stand-in pad (STANDARD GAMEPAD)'), make(1, 'Stand-in pad (STANDARD GAMEPAD)')];
     window.padButton = (pad, index, value) => {
       pads[pad].buttons[index] = { pressed: value > 0.5, touched: value > 0, value };
       pads[pad].timestamp++;
@@ -80,6 +91,14 @@ try {
   // Freestyle, top and bottom.
   {
     const { page, errors } = await open(browser, '&weather=off');
+    // Player 2's own garage: the next ATV, and the female rider.
+    await choose(page, 'split2quad');
+    await onFront(page, 'split');
+    await choose(page, 'split2rider');
+    await onFront(page, 'split');
+    const saved = await page.evaluate(() => localStorage.getItem('atv-split-player2'));
+    const [quad2, rider2] = saved.split(',').map(Number);
+    assert.ok(quad2 !== 2 && rider2 === 1, `player 2 choice saved: ${saved}`);
     await choose(page, 'splitfree');
     await onFront(page, 'tracks');
     await key(page, 'Enter');
@@ -90,6 +109,8 @@ try {
     const [top, bottom] = s.views;
     assert.ok(top[1] === 0 && bottom[1] > top[3] && top[2] === bottom[2], JSON.stringify(s.views));
     assert.deepEqual(s.pads, [true, true]);
+    assert.ok(s.player2.quad === quad2 && s.player2.rider === rider2, `player 2 rides its own choice: ${JSON.stringify(s.player2)}`);
+    assert.ok(s.player2.quad !== s.player1.quad, 'player 1 keeps the Garage ATV');
     const start1 = s.player1.origin;
     const start2 = s.player2.origin;
     assert.ok(distance(start1, start2) > 5, `player 2 starts beside player 1: ${start1} ${start2}`);
@@ -105,6 +126,10 @@ try {
     s = await split(page);
     assert.ok(s.player2.throttle > 0.9 && s.player2.steer < -0.2, JSON.stringify(s.player2));
     assert.ok(s.player1.throttle === 0, `player 1 ignores pad 2: ${JSON.stringify(s.player1)}`);
+    // Player 2's own wheel effects, and a fine terrain patch for each player
+    // (merged into one while they ride close together).
+    assert.ok(s.player2.effects && s.player2.effects.emitted > 0, `player 2 dust: ${JSON.stringify(s.player2.effects)}`);
+    assert.ok(s.terrainPatches >= 1 && s.terrainPatches <= 2, `terrain patches ${s.terrainPatches}`);
     // Distinct chase cameras, each behind its own rider.
     const [c1, c2] = s.cameras;
     assert.ok(Math.hypot(c1[0] - c2[0], c1[2] - c2[2]) > 5, JSON.stringify(s.cameras));
@@ -186,6 +211,11 @@ try {
     const times = s.player1.race.standings.map(r => r.time);
     assert.ok(times.every((t, i) => t !== null && (i === 0 || t >= times[i - 1])), JSON.stringify(s.player1.race.standings));
     await shot(page, 'split-race-results');
+    // Player 2's impacts rumbled the second pad (identical stand-ins: by slot,
+    // not by name).
+    const rumbles = await page.evaluate(() => window.rumbles);
+    if (s.player2.rumbles > 0) assert.ok(rumbles[1] > 0, `pad 2 rumbles ${JSON.stringify(rumbles)} for ${s.player2.rumbles} pulses`);
+    console.log(`  rumble: pads ${JSON.stringify(rumbles)}, player 2 pulses ${s.player2.rumbles}`);
     assertNoErrors(errors);
     console.log(`  race: ${rows.join(' | ')}`);
     await page.close();

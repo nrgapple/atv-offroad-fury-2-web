@@ -557,6 +557,9 @@ struct App {
     /// The frontend's Split Screen branch asked for two local players on
     /// the next rides (kept for Restart Race).
     split_request: Option<split::Request>,
+    /// `?split=`/`?split2=` on a ride link (the context-loss resume link):
+    /// the link's first ride is split; later rides follow the menus.
+    split_link: Option<split::Request>,
     /// Crash camera Tight, Chase camera Assisted (Options::camera_choice).
     camera_choice: (bool, bool),
     /// Adaptive render resolution (web): steps RENDER_RATIO while riding.
@@ -2162,6 +2165,7 @@ impl App {
                         "speed": riding.ride.frame().speed_magnitude,
                         "throttle": riding.ride.applied().throttle,
                         "race": race(&riding.ride),
+                        "quad": riding.ride.selection().quad,
                     },
                     "player2": {
                         "origin": f.origin,
@@ -3159,8 +3163,20 @@ impl App {
     fn remember_ride(&self) {
         #[cfg(target_arch = "wasm32")]
         if let Some(storage) = web_sys::window().and_then(|w| w.session_storage().ok().flatten()) {
+            // A split ride reopens split, with player 2's own ATV and rider.
+            let split = self
+                .ready
+                .as_ref()
+                .and_then(|r| r.split.as_ref())
+                .map(split::Second::resume_query);
             let _ = match self.ride_link() {
-                Some((url, _)) => storage.set_item("fury-resume", &url),
+                Some((url, _)) => storage.set_item(
+                    "fury-resume",
+                    &match split {
+                        Some(query) => split::with_query(&url, &query),
+                        None => url,
+                    },
+                ),
                 None => storage.remove_item("fury-resume"),
             };
         }
@@ -4059,13 +4075,11 @@ impl ApplicationHandler<Message> for App {
             objective: None,
             // `?split=h|v` (web) or FURY_SPLIT=h|v (desktop): a direct split
             // ride (tests and host measurements).
-            split: split::Layout::requested(split_param().as_deref()).map(|layout| {
-                split::Request {
-                    layout,
-                    second: split_second_param(),
-                }
-            }),
+            split: split_link_param(),
         };
+        // A direct split ride restarts (and reopens after a device loss)
+        // split too.
+        self.split_request = world.split;
         let future = async move {
             let gpu = open_gpu(window, display).await?;
             let content = Rc::new(Content::open(store).await?);
@@ -5716,6 +5730,11 @@ impl App {
         drop(f);
         // A race starts its course (an Enduro or Short Track id from `course=`).
         let map = if race { setup.race.course } else { setup.map };
+        // `?split=` on the link (the context-loss resume link): this ride
+        // is split; later rides follow the menus.
+        if let Some(link) = self.split_link.take() {
+            self.split_request = Some(link);
+        }
         self.start_ride(map, setup.quad_id, setup.rider_id, settings, None);
     }
 
@@ -7846,6 +7865,7 @@ pub fn run(options: Options) {
         riders_polled: None,
         held_room: None,
         split_request: None,
+        split_link: split_link_param(),
         held_ride: None,
         objective: None,
         training: None,
@@ -8337,6 +8357,16 @@ fn split_second_param() -> Option<atv_game::ride::Selection> {
         .split_once('.')
         .and_then(|(q, r)| Some((q.parse().ok()?, r.parse().ok()?)))?;
     ((1..=26).contains(&quad) && rider <= 1).then_some(atv_game::ride::Selection { quad, rider })
+}
+
+/// `?split=h|v` with `?split2=quad.rider` (web), or FURY_SPLIT and
+/// FURY_SPLIT2 (desktop): a direct split ride (tests, host measurements and
+/// the context-loss resume link).
+fn split_link_param() -> Option<split::Request> {
+    split::Layout::requested(split_param().as_deref()).map(|layout| split::Request {
+        layout,
+        second: split_second_param(),
+    })
 }
 
 /// `?split=h|v` (web) or `FURY_SPLIT` (desktop).

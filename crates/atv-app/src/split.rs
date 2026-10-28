@@ -144,6 +144,22 @@ impl Layout {
             _ => None,
         }
     }
+
+    /// The `?split=` value that requests this layout.
+    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+    pub fn param(self) -> &'static str {
+        match self {
+            Self::Horizontal => "h",
+            Self::Vertical => "v",
+        }
+    }
+}
+
+/// `url` with `query` appended (`?` or `&`).
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+pub fn with_query(url: &str, query: &str) -> String {
+    let joiner = if url.contains('?') { '&' } else { '?' };
+    format!("{url}{joiner}{query}")
 }
 
 /// A split ride's request: the layout, and player 2's own Garage choice
@@ -280,6 +296,19 @@ impl Second {
             pad: false,
             crash: (0, false),
         })
+    }
+
+    /// `split=..&split2=quad.rider`: this split ride as a link's query
+    /// (the context-loss resume link reopens it split).
+    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+    pub fn resume_query(&self) -> String {
+        let s = self.riding.ride.selection();
+        format!(
+            "split={}&split2={}.{}",
+            self.layout.param(),
+            s.quad,
+            s.rider
+        )
     }
 
     /// Uploads player 2's rider into a rebuilt scene (a restored context).
@@ -624,6 +653,14 @@ mod tests {
 
     #[test]
     fn layouts_split_the_frame_with_a_divider() {
+        assert_eq!(
+            with_query("https://x/play.html?map=a", "split=v"),
+            "https://x/play.html?map=a&split=v"
+        );
+        assert_eq!(with_query("/play.html", "split=h"), "/play.html?split=h");
+        for layout in [Layout::Horizontal, Layout::Vertical] {
+            assert_eq!(Layout::requested(Some(layout.param())), Some(layout));
+        }
         let [a, b] = Layout::Horizontal.rects(1280, 720, 1.);
         assert_eq!(a, [0, 0, 1280, 359]);
         assert_eq!(b, [0, 361, 1280, 359]);
