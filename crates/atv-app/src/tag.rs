@@ -1,11 +1,11 @@
 //! Tag in a multiplayer room (research/GAMES.md "Tag", "Online"): the room
 //! host runs `atv_core::tag` and the ball for the roster and broadcasts
 //! `GameState`; guests mirror it. The original plays Tag split screen on
-//! its `*_TG` courses; the port plays it on the room's venue (an authored
-//! adaptation: the TG archives and `tagball.psg` are not hosted, so the
-//! ball shows as a screen tag).
+//! its `*_TG` courses; the port reloads the room's venue from its TG
+//! archive (the mode TOY's start, `tagball.psg`) when a game starts there,
+//! and draws the ball as that model (a screen tag on other venues).
 use atv_core::math::Det;
-use atv_core::tag::{Ball, DropReason, Event, Game, Rider};
+use atv_core::tag::{Ball, Bounds, DropReason, Event, Game, Rider};
 use atv_game::multiplayer::{GameState, NO_PEER};
 use atv_game::ride::Ride;
 
@@ -35,21 +35,35 @@ pub struct TagSession {
     sent_carrier: u8,
     /// Tag contact distance (`tagReach=N` widens it for tests).
     reach: f32,
+    /// The own ride's open-chain length last step (a new trick starts the
+    /// knock-loose draw, `00244ef0`).
+    chain_seen: usize,
+    /// The ball is drawn as `tagball.psg` (a TG ride): no screen tag.
+    pub model: bool,
+    /// Boundary throw-ins so far (diagnostics).
+    throw_ins: u32,
+    knocks: u32,
+    /// Games Prep's minutes this game was set up with.
+    minutes: u32,
+    /// `tagTest=throw`: the first ball starts past the boundary; a second
+    /// after the throw-in it is tossed back to the host (test hook).
+    throw_test: Option<f32>,
 }
 
-/// `tagTest=fast`: a 30 s clock for browser tests.
-fn time_limit() -> f32 {
+/// The game's clock: Games Prep's minutes (`0026b7a0`, 2-20, default 5);
+/// `tagTest=fast` a 30 s clock for browser tests.
+fn time_limit(minutes: u32) -> f32 {
     if crate::url_flag("tagTest=fast") {
         30.
     } else {
-        atv_core::hockey::DEFAULT_TIME_LIMIT
+        minutes.clamp(atv_core::games::MIN_MINUTES, atv_core::games::MAX_MINUTES) as f32 * 60.
     }
 }
 
 impl TagSession {
-    pub fn new(host: bool) -> Self {
+    pub fn new(host: bool, minutes: u32) -> Self {
         Self {
-            game: Game::new(0, time_limit()),
+            game: Game::new(0, time_limit(minutes)),
             ball: Ball {
                 position: [0.; 3],
                 velocity: [0.; 3],
@@ -71,6 +85,12 @@ impl TagSession {
                 .step_by(10)
                 .find(|r| crate::url_flag(&format!("tagReach={r}")))
                 .map_or(CONTACT, |r| r as f32),
+            chain_seen: 0,
+            model: false,
+            throw_ins: 0,
+            knocks: 0,
+            minutes,
+            throw_test: None,
         }
     }
 
@@ -101,8 +121,26 @@ impl TagSession {
     }
 
     /// Advances the game; true once, when it ends.
-    pub fn update(&mut self, ride: &Ride, net: &mut crate::multiplayer::Net) -> bool {
+    pub fn update(&mut self, ride: &mut Ride, net: &mut crate::multiplayer::Net) -> bool {
+        let ended = self.advance(ride, net);
+        // `00246310`/`00246000`: the carrier's ATV runs handicapped; each
+        // rider owns its ATV, so each applies its own.
+        let carrying =
+            !self.game.over && self.game.carrier == Some(self.me) && !self.roster.is_empty();
+        if carrying != (ride.engine_effect() != 0.) {
+            ride.set_carrier_handicap(carrying);
+        }
+        ended
+    }
+
+    /// The game ended or was left: no handicap remains.
+    pub fn release(ride: &mut Ride) {
+        ride.set_carrier_handicap(false);
+    }
+
+    fn advance(&mut self, ride: &Ride, net: &mut crate::multiplayer::Net) -> bool {
         let terrain = ride.terrain();
+        let bounds = Bounds::from_cells(terrain.width_cells, terrain.depth_cells, terrain.spacing);
         let (me, roster) = net.roster();
         let Some(me) = me.and_then(|id| roster.iter().position(|r| *r == id)) else {
             return false;
@@ -115,6 +153,12 @@ impl TagSession {
             self.finished = false;
             let o = ride.frame().origin;
             self.ball = Ball::toss(o, [0.; 3]);
+            if crate::url_flag("tagTest=throw") && net.is_host() {
+                // Past the west margin (`0020aec0`), level with the host.
+                self.ball.position = [bounds.cell[0] * 40., o[1] + 20., o[2]];
+                self.ball.velocity = [0.; 3];
+                self.throw_test = Some(0.);
+            }
         }
         let steps = ride.steps();
         let n = steps.saturating_sub(self.steps);
@@ -162,7 +206,32 @@ impl TagSession {
             .collect();
         let mut ended = false;
         let reach = self.reach;
-        for _ in 0..n {
+        // A trick begun since the last update (the own rider's; remote
+        // riders' tricks are not relayed, research/GAMES.md).
+        let chain = ride.chain_len();
+        let own_trick = chain > self.chain_seen;
+        self.chain_seen = chain;
+        if let Some(t) = &mut self.throw_test
+            && self.throw_ins > 0
+        {
+            *t += n as f32 * dt;
+            if *t > 1. {
+                self.throw_test = None;
+                self.ball = Ball::toss(ride.frame().origin, [0.; 3]);
+            }
+        }
+        for step in 0..n {
+            // `00244ef0` → `0020aec0`/`00246ec0`: a ball past the boundary
+            // margin is thrown toward the map centre.
+            if !self.game.attached
+                && bounds.outside(self.ball.position, atv_core::tag::BOUNDARY_CELLS)
+            {
+                self.ball = Ball::throw_in(self.ball.position, bounds.centre());
+                self.throw_ins += 1;
+                if self.throw_ins == 1 || self.throw_ins % 30 == 0 {
+                    self.log(format!("ThrowIn {}", self.throw_ins));
+                }
+            }
             let carrier = self.game.carrier;
             let caught = self.ball.step(
                 dt,
@@ -176,8 +245,10 @@ impl TagSession {
             let flat = |a: [f32; 3], b: [f32; 3]| (a[0] - b[0]).hypot_d(a[2] - b[2]);
             let input: Vec<Rider> = riders
                 .iter()
-                .map(|(p, _, wrecked)| Rider {
+                .enumerate()
+                .map(|(i, (p, _, wrecked))| Rider {
                     wrecked: *wrecked,
+                    stunt_started: i == self.me && own_trick && step == 0,
                     touches_ball: carrier.is_none()
                         && flat(*p, self.ball.position) < BALL_REACH
                         && (p[1] - self.ball.position[1]).abs() < 8.,
@@ -202,8 +273,16 @@ impl TagSession {
                         }
                     }
                     Event::Respawn => {
+                        // `00246500` aims at open ground near the ball (not
+                        // ported); the port lobs it toward the host.
                         let o = riders[self.me].0;
-                        self.ball = Ball::throw_in(self.ball.position, o);
+                        self.ball = Ball::lob(self.ball.position, o);
+                    }
+                    Event::KnockLoose { rider } => {
+                        let (p, v, _) = riders[rider];
+                        self.ball = Ball::knock(p, v);
+                        self.knocks += 1;
+                        self.log(format!("KnockLoose {rider}"));
                     }
                     Event::Over => {
                         self.finished = true;
@@ -297,7 +376,8 @@ impl TagSession {
         }
     }
 
-    /// The ball as a screen tag (no `tagball.psg` on the port's venues).
+    /// The ball's minimap marker; a screen tag too unless the
+    /// `tagball.psg` model is drawn.
     pub fn markers(&self) -> Vec<atv_ui::hud::peers::Peer> {
         let [x, y, z] = self.ball.position;
         vec![atv_ui::hud::peers::Peer {
@@ -306,7 +386,14 @@ impl TagSession {
             position: [x, y - 6., z],
             stale: false,
             pill: None,
+            map_only: self.model,
         }]
+    }
+
+    /// The ball model's world matrix (`tagball.psg`; the ball's centre).
+    pub fn ball_matrix(&self) -> [f32; 16] {
+        let [x, y, z] = self.ball.position;
+        [1., 0., 0., 0., 0., 1., 0., 0., 0., 0., 1., 0., x, y, z, 1.]
     }
 
     /// The TagOver page (`00247160`: places by score).
@@ -340,6 +427,13 @@ impl TagSession {
             "finished": self.finished,
             "log": self.log,
             "summary": self.summary(),
+            "timeLimit": self.game.time_limit,
+            "minutes": self.minutes,
+            "ballVelocity": self.ball.velocity,
+            "model": self.model,
+            "throwIns": self.throw_ins,
+            "knocks": self.knocks,
+            "attached": self.game.attached,
         })
     }
 }

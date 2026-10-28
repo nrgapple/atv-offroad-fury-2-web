@@ -737,6 +737,38 @@ impl Ride {
         std::mem::take(&mut self.chains)
     }
 
+    /// Tricks begun in the open chain (Tag's knock-loose rule watches for a
+    /// new one, `00244ef0`).
+    pub fn chain_len(&self) -> usize {
+        self.chain_ids.len()
+    }
+
+    /// Tag's carrier handicap (`00246310`): on, the ATV's engine takes
+    /// effect -0.34 of its top speed; off (`00246000`), none. Motorcycles
+    /// (a port extra) are not handicapped.
+    pub fn set_carrier_handicap(&mut self, on: bool) {
+        if let Mount::Quad { vehicle, .. } = &mut self.mount {
+            let base = atv_core::drivetrain::EngineModifiers {
+                effect: 0.,
+                effect_speed: 0.,
+                ..vehicle.engine_modifiers()
+            };
+            vehicle.set_engine_modifiers(if on {
+                atv_core::tag::carrier_engine(base, vehicle.top_speed())
+            } else {
+                base
+            });
+        }
+    }
+
+    /// The engine effect now applied (Tag's handicap; 0 without one).
+    pub fn engine_effect(&self) -> f32 {
+        match &self.mount {
+            Mount::Quad { vehicle, .. } => vehicle.engine_modifiers().effect,
+            Mount::Bike(_) => 0.,
+        }
+    }
+
     /// A stunt chain is in progress (started, not yet finished): the
     /// Training Stunt lesson's +0x30 +8 & 0x20 and +0x230.
     pub fn stunting(&self) -> bool {

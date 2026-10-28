@@ -32,10 +32,32 @@
 //!   play (`00246500`). A ball outside the course boundary (110-unit
 //!   margin, `0020aec0`) is thrown back toward the map centre at about 170
 //!   units/s and 112 units/s up (`00246ec0`).
-//! - End `00247160`: riders are ranked by score (place 1 first); the
-//!   TagOver menu shows the result.
+//! - Knock loose (`00244ef0`): while the ball rides on the carrier's ATV,
+//!   a trick that has just begun (the stunt record's open-event flag,
+//!   racer +0x30 +8 & 0x40, set by `0024da00`; the rider's main stunt
+//!   clock +0x884 +0x3fc, reset to 0 by `002da6c0` as a trick starts, no
+//!   more than one frame) knocks it loose with a 25 % chance (a uniform
+//!   draw above 0.75): the ball jumps 2 units over the carrier's centre with
+//!   the carrier's velocity plus 3 units/s up and homes back. The carrier
+//!   keeps the ball (and its points).
+//! - Handicap (`00246310`, `00246000`): the carrier's engine (racer +0x178,
+//!   the `[Engine]` block of `001e3b80`) gets effect +0x68 = -0.34 with
+//!   +0x70 = TopSpeed + the garage speed adjustment (+0x60 + +0xa0). The
+//!   engine update `001f5b40` adds effect x +0x70 to both ends of its speed
+//!   taper, so the carrier's top speed is cut by 34 %; the drop clears both.
+//! - Boundary (`0020aec0`): outside `margin` terrain cells of the
+//!   heightfield's edge (110 cells; 0 when world +0x658 is set). The
+//!   throw-in `00246ec0` sets the ball's velocity to the horizontal unit
+//!   vector toward the heightfield's centre (tiles x 128 cells) times
+//!   170.4714 plus 112.152245 up; the position is kept.
+//! - End `00247160`: riders are sorted by score, highest first
+//!   (`002fa120`); each run of equal scores is then sorted by rider slot
+//!   (`002fa200`), and places are numbered from 1; the TagOver menu shows
+//!   the result.
 //!
-//! The time limit is the session's (settings +0x57c, default 120 s).
+//! The time limit is Games Prep's (`0026b7a0` writes minutes x 60 to
+//! settings +0x57c; `0020f780` copies it to the event clock for Tag), 2-20
+//! minutes, 5 by default (`crate::games`).
 
 use crate::math::Det;
 
@@ -64,6 +86,68 @@ pub const HOMING_STEP: f32 = 2.3;
 pub const BOUNDARY_MARGIN: f32 = 110.0;
 pub const THROW_IN_SPEED: f32 = 170.4714;
 pub const THROW_IN_UP: f32 = 112.152_245;
+/// `00244ef0`: a trick start knocks the ball loose when a uniform draw is
+/// above this (a 25 % chance).
+pub const KNOCK_LOOSE_DRAW: f32 = 0.75;
+/// `00244ef0`: the knocked ball's lift over the carrier and upward speed.
+pub const KNOCK_HEIGHT: f32 = 2.0;
+pub const KNOCK_UP: f32 = 3.0;
+/// `00246310`: the carrier's engine effect (+0x68).
+pub const CARRIER_EFFECT: f32 = -0.34;
+
+/// The carrier's engine modifiers (`00246310`): effect -0.34 scaled by its
+/// top speed (TopSpeed + the garage speed adjustment, feet/second), which
+/// lowers both ends of the engine's speed taper by 34 % of the top speed.
+/// Horsepower's effect term (+0x6c) is left as it was.
+pub fn carrier_engine(
+    mut modifiers: crate::drivetrain::EngineModifiers,
+    top_speed: f32,
+) -> crate::drivetrain::EngineModifiers {
+    modifiers.effect = CARRIER_EFFECT;
+    modifiers.effect_speed = top_speed + modifiers.speed_adjustment;
+    modifiers
+}
+
+/// `0020aec0`: the heightfield's extent (terrain +0x520/+0x524 tiles of
+/// 256 cells, +0x528/+0x52c cell sizes).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Bounds {
+    pub tiles: [f32; 2],
+    pub cell: [f32; 2],
+}
+
+impl Bounds {
+    /// Outside the playing area: within `margin` cells of an edge or past it.
+    pub fn outside(&self, p: [f32; 3], margin: f32) -> bool {
+        let x =
+            p[0] < margin * self.cell[0] || p[0] > self.cell[0] * (self.tiles[0] * 256. - margin);
+        let z =
+            p[2] < margin * self.cell[1] || p[2] > self.cell[1] * (self.tiles[1] * 256. - margin);
+        x || z
+    }
+
+    /// The port's heightfield (`Terrain::width_cells`/`depth_cells`, read
+    /// as tiles x 256 cells).
+    pub fn from_cells(width_cells: u32, depth_cells: u32, spacing: f32) -> Self {
+        Self {
+            tiles: [width_cells as f32 / 256., depth_cells as f32 / 256.],
+            cell: [spacing, spacing],
+        }
+    }
+
+    /// `00246ec0`'s target: the heightfield's centre.
+    pub fn centre(&self) -> [f32; 3] {
+        [
+            self.tiles[0] * 128. * self.cell[0],
+            0.,
+            self.tiles[1] * 128. * self.cell[1],
+        ]
+    }
+}
+
+/// `0020aec0`'s margin in cells for Tag (`00244ef0`: 110, or 0 when world
+/// +0x658 is set; that flag's meaning was not traced).
+pub const BOUNDARY_CELLS: f32 = BOUNDARY_MARGIN;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Record {
@@ -86,6 +170,9 @@ pub struct Rider {
     pub touches_ball: bool,
     /// The rider's body touches the carrier's.
     pub touches_carrier: bool,
+    /// A trick began this frame (`00244ef0`: the stunt record's open-event
+    /// flag with the main stunt clock within one frame).
+    pub stunt_started: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -98,6 +185,9 @@ pub enum Event {
     Points { rider: usize, points: u32 },
     /// Throw the ball back into play (`00246500`).
     Respawn,
+    /// A trick knocked the carried ball loose (`00244ef0`); the rider keeps
+    /// it and the ball homes back.
+    KnockLoose { rider: usize },
     /// The time limit ran out.
     Over,
 }
@@ -127,6 +217,8 @@ pub struct Game {
     pub clock: f32,
     pub time_limit: f32,
     pub over: bool,
+    /// The knock-loose draw's generator state.
+    pub seed: u32,
 }
 
 impl Game {
@@ -141,11 +233,30 @@ impl Game {
             clock: time_limit,
             time_limit,
             over: false,
+            seed: 0x2545_f491,
         }
     }
 
+    /// Games Prep's minutes (`0026b7a0`: minutes x 60).
+    pub fn with_minutes(riders: usize, minutes: u32) -> Self {
+        Self::new(riders, minutes as f32 * 60.)
+    }
+
     pub fn restart(&mut self) {
+        let seed = self.seed;
         *self = Self::new(self.records.len(), self.time_limit);
+        self.seed = seed;
+    }
+
+    /// A uniform draw in [0, 1) (xorshift; the original's shared generator
+    /// `0036e7a0` and its call order are not reproduced).
+    fn draw(&mut self) -> f32 {
+        let mut x = self.seed.max(1);
+        x ^= x << 13;
+        x ^= x >> 17;
+        x ^= x << 5;
+        self.seed = x;
+        (x >> 8) as f32 / (1u32 << 24) as f32
     }
 
     fn drop_ball(&mut self, reason: DropReason, events: &mut Vec<Event>) {
@@ -217,9 +328,17 @@ impl Game {
                 });
                 r.score = due;
             }
-            if riders.get(c).is_some_and(|r| r.wrecked) {
+            let rider = riders.get(c).copied().unwrap_or_default();
+            if rider.wrecked {
                 self.drop_ball(DropReason::Wreck, &mut events);
-            } else if self.records[c].current < IMMUNITY {
+            } else if self.attached && rider.stunt_started && self.draw() > KNOCK_LOOSE_DRAW {
+                // `00244ef0`: knocked off the ATV; the rider keeps the ball.
+                self.attached = false;
+                events.push(Event::KnockLoose { rider: c });
+            }
+            // A wreck's drop reset the current possession, so nobody takes
+            // the ball this frame either.
+            if self.records[c].current < IMMUNITY {
                 return events;
             }
         }
@@ -241,11 +360,16 @@ impl Game {
         events
     }
 
-    /// `00247160`: riders by place (highest score first; equal scores keep
-    /// slot order, see research/GAMES.md).
+    /// `00247160`: riders by place: highest score first (`002fa120`), then
+    /// each run of equal scores by rider slot (`002fa200`).
     pub fn standings(&self) -> Vec<usize> {
         let mut order: Vec<usize> = (0..self.records.len()).collect();
-        order.sort_by(|a, b| self.records[*b].score.cmp(&self.records[*a].score));
+        order.sort_by(|a, b| {
+            self.records[*b]
+                .score
+                .cmp(&self.records[*a].score)
+                .then(a.cmp(b))
+        });
         order
     }
 }
@@ -272,18 +396,43 @@ impl Ball {
         }
     }
 
-    /// `00246ec0`: thrown back toward `centre`.
+    /// `00246ec0`: thrown back toward `centre` from where it is, 170.4714
+    /// units/s horizontally and 112.152245 up (the original's values; the
+    /// position is kept).
     pub fn throw_in(from: [f32; 3], centre: [f32; 3]) -> Self {
         let (dx, dz) = (centre[0] - from[0], centre[2] - from[2]);
+        let len = dx.hypot_d(dz);
+        let (ux, uz) = if len > 0. {
+            (dx / len, dz / len)
+        } else {
+            (0., 0.)
+        };
+        Self {
+            position: from,
+            velocity: [ux * THROW_IN_SPEED, THROW_IN_UP, uz * THROW_IN_SPEED],
+        }
+    }
+
+    /// A shorter throw toward `centre` that lands near it (the port's
+    /// earlier authored scaling, kept for venues without a heightfield
+    /// extent).
+    pub fn lob(from: [f32; 3], centre: [f32; 3]) -> Self {
+        let (dx, dz) = (centre[0] - from[0], centre[2] - from[2]);
         let len = dx.hypot_d(dz).max(1e-3);
-        // Horizontal 170 units/s is far more than a short course needs; the
-        // original's value carries it across a whole map. The port scales
-        // the throw to land near the centre (research/GAMES.md).
         let flight = 2. * THROW_IN_UP / GRAVITY;
         let speed = (len / flight).min(THROW_IN_SPEED);
         Self {
             position: from,
             velocity: [dx / len * speed, THROW_IN_UP, dz / len * speed],
+        }
+    }
+
+    /// `00244ef0`: knocked loose off the carrier: 2 units over its centre
+    /// with its velocity plus 3 units/s up.
+    pub fn knock(carrier: [f32; 3], velocity: [f32; 3]) -> Self {
+        Self {
+            position: [carrier[0], carrier[1] + KNOCK_HEIGHT, carrier[2]],
+            velocity: [velocity[0], velocity[1] + KNOCK_UP, velocity[2]],
         }
     }
 
@@ -492,6 +641,119 @@ mod tests {
     }
 
     #[test]
+    fn a_trick_on_a_carried_ball_knocks_it_loose_a_quarter_of_the_time() {
+        let mut knocked = 0;
+        let trials = 4000;
+        for seed in 0..trials {
+            let mut g = Game::new(2, 120.);
+            g.seed = 0x9e37_79b9u32.wrapping_mul(seed + 1);
+            let mut r = riders(2);
+            r[0].touches_ball = true;
+            g.tick(DT, &r, false);
+            r[0].touches_ball = false;
+            // Not yet on the ATV: a trick does nothing.
+            r[0].stunt_started = true;
+            assert!(
+                !g.tick(DT, &r, false)
+                    .iter()
+                    .any(|e| matches!(e, Event::KnockLoose { .. }))
+            );
+            g.catch();
+            let events = g.tick(DT, &r, false);
+            if events.contains(&Event::KnockLoose { rider: 0 }) {
+                knocked += 1;
+                assert!(!g.attached);
+                // The rider keeps the ball and its points.
+                assert_eq!(g.carrier, Some(0));
+            } else {
+                assert!(g.attached);
+            }
+        }
+        let share = knocked as f32 / trials as f32;
+        assert!((0.22..0.28).contains(&share), "{share}");
+    }
+
+    #[test]
+    fn knocked_ball_rises_two_units_and_homes_back() {
+        let carrier = [5., 10., 5.];
+        let b = Ball::knock(carrier, [4., 0., 0.]);
+        assert_eq!(b.position, [5., 12., 5.]);
+        assert_eq!(b.velocity, [4., 3., 0.]);
+    }
+
+    #[test]
+    fn carrier_engine_handicap_cuts_top_speed_by_a_third() {
+        let m = carrier_engine(
+            crate::drivetrain::EngineModifiers {
+                speed_adjustment: 2.,
+                ..Default::default()
+            },
+            80.,
+        );
+        assert_eq!(m.effect, -0.34);
+        assert_eq!(m.effect_speed, 82.);
+        // 001f5b40's taper end: TopSpeed + adjustment + effect x +0x70.
+        let end = 80. + m.speed_adjustment + m.effect * m.effect_speed;
+        assert!((end - 82. * 0.66).abs() < 1e-4);
+    }
+
+    #[test]
+    fn boundary_uses_cells_and_throw_in_heads_for_the_centre_at_full_speed() {
+        // Two 256-cell tiles of 8 ft each way: 4096 ft square.
+        let b = Bounds {
+            tiles: [2., 2.],
+            cell: [8., 8.],
+        };
+        assert_eq!(b.centre(), [2048., 0., 2048.]);
+        assert!(!b.outside([2048., 0., 2048.], BOUNDARY_CELLS));
+        assert!(b.outside([879., 0., 2048.], BOUNDARY_CELLS));
+        assert!(!b.outside([881., 0., 2048.], BOUNDARY_CELLS));
+        assert!(b.outside([2048., 0., 4096. - 879.], BOUNDARY_CELLS));
+        assert!(!b.outside([10., 0., 10.], 0.));
+        let t = Ball::throw_in([4000., 50., 2048.], b.centre());
+        assert_eq!(t.position, [4000., 50., 2048.]);
+        assert!((t.velocity[0] + THROW_IN_SPEED).abs() < 1e-3);
+        assert_eq!(t.velocity[1], THROW_IN_UP);
+        assert!(t.velocity[2].abs() < 1e-3);
+    }
+
+    #[test]
+    fn equal_scores_rank_by_rider_slot() {
+        let mut g = Game::new(4, 60.);
+        g.records[0].score = 500;
+        g.records[1].score = 750;
+        g.records[2].score = 750;
+        g.records[3].score = 500;
+        assert_eq!(g.standings(), vec![1, 2, 0, 3]);
+    }
+
+    #[test]
+    fn games_prep_minutes_set_the_clock() {
+        let g = Game::with_minutes(2, crate::games::DEFAULT_MINUTES);
+        assert_eq!(g.time_limit, 300.);
+        assert_eq!(g.clock, 300.);
+        assert_eq!(Game::with_minutes(2, 20).time_limit, 1200.);
+    }
+
+    #[test]
+    fn a_wreck_drop_blocks_takes_that_frame() {
+        let mut g = Game::new(2, 120.);
+        let mut r = riders(2);
+        r[0].touches_ball = true;
+        g.tick(DT, &r, false);
+        r[0].touches_ball = false;
+        run(&mut g, &r, 2.5);
+        r[0].wrecked = true;
+        r[1].touches_ball = true;
+        let events = g.tick(DT, &r, false);
+        assert!(!events.iter().any(|e| matches!(e, Event::Gain { .. })));
+        assert!(matches!(
+            g.tick(DT, &r, false)[..],
+            [Event::Gain { rider: 1 }]
+        ));
+    }
+
+    #[test]
     fn tossed_ball_lands_back_on_the_carrier() {
         let carrier = [10., 0., 10.];
         let mut b = Ball::toss(carrier, [5., 0., 0.]);
@@ -513,7 +775,7 @@ mod tests {
             b.step(DT, |_, _| 0., None, false);
         }
         assert!(b.resting(|_, _| 0.));
-        let t = Ball::throw_in([500., 0., 0.], [0., 0., 0.]);
+        let t = Ball::lob([500., 0., 0.], [0., 0., 0.]);
         assert!(t.velocity[0] < 0. && t.velocity[1] > 100.);
     }
 }

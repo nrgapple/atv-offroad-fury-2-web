@@ -1096,6 +1096,7 @@ impl Net {
                     position: *position,
                     stale: *stale,
                     pill: None,
+                    map_only: false,
                 })
             })
             .collect()
