@@ -12,8 +12,9 @@ Status: host component. Placement, playback and drawing follow the recovered
 loader and update. The actors' looping engine sounds play through the train's
 body-attached sound path (see [Loop sounds](#loop-sounds)); their samples need
 a content upload before the public site plays them. SX10's roof trigger
-starts the roofs (see [Roof trigger](#roof-trigger)). Sequence changes,
-moving collision and zone visibility are not connected (see
+starts the roofs (see [Roof trigger](#roof-trigger)). `UseCollision` actors
+with a type-0 COL collide (see [Collision](#collision)). Sequence changes,
+type-1 compound actor collision and zone visibility are not connected (see
 [Not connected](#not-connected)).
 
 ## Recovered behavior (USA v2.00)
@@ -187,6 +188,97 @@ Inferences and limits:
 - The common TOY's triggers are read on every route, races included. Whether
   the original arms them in races was not confirmed.
 
+## Collision
+
+Facts from the exact executable:
+
+- `0023bfc0` reads `UseCollision` through the shared TOY reader with default
+  1. The Rust reader previously defaulted it to 0; it now defaults to 1.
+  Every shipped venue record sets the key explicitly. Only the Freestyle
+  CherryPick target TOYs omit it.
+- `0023cdc0` passes `%s.mcf` and `%s.col` paths and the record's
+  `UseCollision` to `0011e1d0`. When the flag is set, `0011e1d0` clears the
+  `geometry\` prefix and loads `anim\<MCF stem>.col` through `00120510`.
+  That loader dispatches on the COL type: type 0 to `00330720`, type 1 (a
+  compound) to `0032d040`, type 2 to `0032a480`. The original has no
+  missing-file fallback, so every flagged actor ships its COL.
+- `00330720` stores the node argument as the body's attachment. `0011e1d0`
+  passes the model's engine root (`model+4`). `0023cdc0` places that same
+  root at `Offset` with the `Look`/`Up` basis. The MOT channels address the
+  nodes below the root (`0013c390`), so **the collision body follows the
+  placement, not the animation**.
+- Each body gets a procedural motion record (`002dacc0`, the train's
+  constructor) whose source is the same root node. Its velocity getters
+  difference the prior and current root transforms, so for a keyframed actor
+  the body velocity stays zero.
+- `0011e520` registers the body with flags 2. The train notes show that this
+  selects the scene's dynamic list (`001a2a40`), not the static quadtree.
+  Each update (`0020cba0`) calls `0011e5c0`. That routine recomputes the
+  body transform (`0011eca0` → vtable +0x98 `00330420`: root world composed
+  with the COL local by `003302b0`) and refreshes the registration bounds
+  (`0011ee00` → `001a5230`). The transform is constant because the root
+  never moves.
+- Contact therefore uses the moving-target branch with a zero target
+  velocity. That branch is the same path as the train ([TRAIN_CONTACT.md](TRAIN_CONTACT.md)):
+  the ordinary chassis query, the secondary nonstatic pass with penetration
+  coefficient 1.0, and the ordinary wreck classifier. The bodies have no
+  callback of their own. No push, launch or scripted wreck was found.
+
+Inference: the windmill, lighthouse and waterwheel COLs are the static
+towers and housings, and the blades or wheels are not in them. Their extents
+fit this reading: the windmill COL is 44 units tall, and the snake COL is a
+41-unit-long, 1.4-unit-wide strip. A "moving" collidable actor such as the
+cement truck therefore has a fixed body at its placement.
+
+Census of the shipped disc (all track archives, mode TOYs included):
+
+| COL | Type | Venues (routes) |
+| --- | --- | --- |
+| `windmill.col` | 0 | ENV02 (common TOY, every route that loads it) |
+| `bigwindmill.col` | 0 | ENV03 (9 per route) |
+| `litehous.col` | 0 | ENV04 |
+| `snake.col` | 0 | ENV07 (2) |
+| `waterwheel.col` | 0 | ENV08 (2) |
+| `cementtruck.col` | 1 | ENV05 (4) |
+| `croc.col` | 1 | ENV07 (3) |
+| `shark.col` | 1 | ENV07 (3), FREE04 (9), NAT01 (9) |
+| `twister3.col` | 1 | FREE06 (3) |
+| `nat5windmill.col` | 1 | NAT05 (3) |
+| `lumbersawmill.col` | 1 | NAT06 (1) |
+| `cherryg.col`, `cherryr.col` | 1 | Freestyle CherryPick TOYs (owned by the objective system) |
+
+All type-0 actor COLs have identity local transforms.
+
+Implementation:
+
+- `toy_actors::Definition::collision_path` and `collision_matrix`.
+- `actors::load` decodes each flagged actor's COL once per venue load. A type-0
+  body becomes an `ActorCollision` at the placement. A COL that cannot be
+  decoded (the type-1 compounds) goes to `collision_unresolved`.
+- The ride installs these bodies in the scene's dynamic list after the train
+  cars, and both the ATV and the motorcycle receive them. Their prior and
+  current transforms are equal (zero velocity). CPU riders in races copy the
+  player's dynamic list, as they already do for the train. The existing
+  candidate cache and distance stages provide the broadphase: a body outside
+  the cache radius never reaches a triangle query.
+- The page diagnostics report `actors.collision` (body and position),
+  `actors.collisionUnresolved`, `actors.dynamicContacts` and
+  `actors.vehicle`. `?actorPlace=<stem>` is a test hook that places the quad
+  40 ft south of that body, heading at it.
+
+Limits:
+
+- The type-1 compound COLs of 6 actor kinds (cement truck, crocodile, shark,
+  twister, NAT05 windmill and sawmill) are still not collidable. Their reader
+  (`0032d040`/`0032b620`) has not been recovered. The header starts like
+  type 0 but carries a part count and per-part blocks.
+- On ENV08, the original registers the waterwheels (common TOY) before the
+  train (mode TOY). The port appends them after the train cars so the
+  train's dynamic indices stay stable. This changes only the order of
+  contacts when a vehicle touches both in the same step.
+- Whether `UseCollision` actors also block the train's height query
+  (`train_height` walks the dynamic list) was not checked in the original.
+
 ## Census (all routes)
 
 `crates/atv-game/tests/toy_actors.rs` loads the 40 Freeride/Training/
@@ -271,10 +363,9 @@ Cost (host only, not a physical-phone result):
 - The actor loop sounds are implemented (see [Loop sounds](#loop-sounds)),
   but their samples await a content upload. The emitter's own per-frame
   setter was not decompiled, so the train's recovered attenuation is reused.
-- Moving collision from `UseCollision` is not connected. The windmills,
-  sawmill and other actors with this flag load `anim\<mcf>.col` in the
-  original and move it with the animation (`0011eca0`/`0011ee00`). Which node
-  drives that transform was not decompiled.
+- `UseCollision` bodies whose COL is a type-1 compound are not connected
+  (see [Collision](#collision)). Type-0 bodies are connected. The body
+  follows the engine root, not the animation.
 - Zone registration and draw (`StartingZone`) are approximated by frustum
   culling. The port has no zone visibility.
 - The original advances actors by variable frame dt. The port advances them on

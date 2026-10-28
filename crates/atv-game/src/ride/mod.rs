@@ -161,6 +161,21 @@ fn train_obstacles(
         .collect()
 }
 
+/// Every moving-scene body of the ride: the train cars, then the
+/// `UseCollision` TOY actors' placement-fixed COL bodies
+/// (research/AMBIENT_ACTORS.md, Collision). The train keeps indices
+/// `0..cars` because its step republishes them by position.
+fn dynamic_obstacles(sim: &Simulation) -> Result<Vec<atv_core::scene_collision::DynamicObstacle>> {
+    let mut objects = match &sim.train {
+        Some(train) => train_obstacles(&train.borrow())?,
+        None => Vec::new(),
+    };
+    if let Some(actors) = &sim.actors {
+        objects.extend(actors.borrow().collision.iter().map(|c| c.obstacle()));
+    }
+    Ok(objects)
+}
+
 /// The ATV's original rig (ops 20-22, 44, 48, 51-53): physics, linkage,
 /// collision rays, the rider animator and the wreck rig.
 struct QuadRig {
@@ -488,8 +503,9 @@ impl Ride {
         }
         if let Some(scene) = vehicle.scene_collision_mut() {
             scene.set_mud_obstacles(sim.mud_obstacles.clone())?;
-            if let Some(train) = &sim.train {
-                scene.install_dynamic(train_obstacles(&train.borrow())?)?;
+            let dynamic = dynamic_obstacles(sim)?;
+            if !dynamic.is_empty() {
+                scene.install_dynamic(dynamic)?;
             }
         }
         Ok(vehicle)
