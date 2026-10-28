@@ -152,8 +152,7 @@ impl GameSession {
         if self.starts.is_empty() && self.venue_start.is_none() {
             let f = ride.frame();
             let [w, x, y, z] = f.orientation;
-            let yaw =
-                atv_core::math::Det::atan2_d(2. * (w * y + x * z), 1. - 2. * (y * y + x * x));
+            let yaw = atv_core::math::Det::atan2_d(2. * (w * y + x * z), 1. - 2. * (y * y + x * x));
             self.venue_start = Some((f.origin, yaw));
         }
         let first = self
