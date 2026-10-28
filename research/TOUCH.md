@@ -178,3 +178,38 @@ one activation per tap, cancellation/drag guards, visible 44px targets, pause
 freezing, neutral resume, mouse/keyboard activation and no browser errors.
 These are host browser checks; physical iOS Safari remains unverified. Selected
 screenshots stay in ignored private storage for the integrated dev-log gate.
+
+## Menu scrolling (2026-10-28)
+
+Menu lists used to move only after an 8px slop and then jumped by it, stopped
+dead on release, and pages whose rows outgrew the column (the main menu on a
+phone in landscape, nine rows on a short portrait screen) did not scroll at
+all: the rows ran under Back and off the screen, so a drag there "froze".
+`atv-ui::scroll::Scroller` now drives the course and vehicle lists, every
+frontend rows column (clipped, scrolling only when it overflows) and the
+pause/settings panels (including over the main menu):
+
+- Tracking starts once the finger crosses 6px, anchored there (no jump).
+- Release throws the content with the finger's velocity over the last 100 ms
+  (none if the finger rested 60 ms before lifting) and decays it at
+  UIScrollView's normal rate, 0.998 per ms.
+- Past either end the content stretches with UIScrollView's 0.55 resistance
+  and springs back (critically damped, ~400 ms); a fling into an end
+  overshoots a little and returns.
+- A touch on moving content catches it; that touch never selects.
+- Tap vs drag: a press selects nothing; a release without movement selects
+  (sliders still take the press at once). Rows scrolled out of their pane
+  cannot be hit.
+- Keyboard and controller focus glides rows into view (180 ms ease-out),
+  and jumps under `prefers-reduced-motion`. Wheels and trackpads move the
+  content directly (trackpads supply their own momentum).
+
+Frames keep coming only while something moves; an idle menu still sleeps.
+Physics constants are authored to match native iOS feel; they are not
+original-game behaviour (the PS2 menus had no touch input). Checks:
+`atv-ui` scroll unit tests and `tools/test_engine_menu_scroll.mjs`
+(Chromium CDP touches and WebKit touch PointerEvents at 390x844 and 844x390:
+tracking, momentum, rubber band, catch, tap vs drag, the landscape main-menu
+rows, keyboard glide). Host Chromium fling frames: p95 17.5 ms at 60 Hz;
+headless WebKit runs its frame clock at ~30 Hz (p95 34 ms). Physical iOS and
+Android touch feel is not verified.

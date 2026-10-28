@@ -13,6 +13,7 @@ pub mod layout;
 pub mod menu;
 pub mod paint;
 pub mod render;
+pub mod scroll;
 pub mod settings;
 pub mod text;
 pub mod touch;
