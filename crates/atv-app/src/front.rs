@@ -1534,6 +1534,12 @@ impl Front {
             })).collect::<Vec<_>>(),
         });
         out["kinetic"] = kinetic;
+        // The pages Back returns through (research/MENU_FLOW.md).
+        out["history"] = self.state.history().collect::<Vec<_>>().into();
+        if let Some(m) = &self.menu {
+            out["menu"]["selection"] = m.selection.into();
+            out["menu"]["history"] = m.history().collect::<Vec<_>>().into();
+        }
         out
     }
 }

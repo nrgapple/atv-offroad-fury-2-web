@@ -32,12 +32,13 @@ try {
   assert.deepEqual(m.choices.slice(0, 3), ['resume', 'reset', 'settings']);
   for (const hit of m.hits) assert.ok(hit.height >= 44 && hit.x >= 0 && hit.x + hit.width <= 1280);
   assert.equal((await read(page)).paused, true);
-  // Keyboard navigation; Back opens a page on its first row (frontend.js `show`).
+  // Keyboard navigation; Back returns to the row that opened the page
+  // (the original's page history, research/MENU_FLOW.md).
   await key(page, 'ArrowDown'); await key(page, 'ArrowDown');
   assert.equal((await menu(page)).selection, 2);
   await key(page, 'Enter'); await onPage(page, 'settings');
   await key(page, 'Escape'); await onPage(page, 'pause');
-  assert.equal((await menu(page)).choices[(await menu(page)).selection], 'resume');
+  assert.equal((await menu(page)).choices[(await menu(page)).selection], 'settings');
   // Display → Minimap configuration: rows and sliders save under minimap.js keys.
   await click(page, 'settings'); await onPage(page, 'settings');
   await click(page, 'hud-settings'); await onPage(page, 'hud-settings');

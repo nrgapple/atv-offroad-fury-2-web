@@ -36,6 +36,8 @@ profile lists, alerts, Overview, Trophies and Records (`PROFILE.md`).
 
 ## Navigation and value rows
 
+- Which page each row opens and where Back returns (a page history that
+  restores the row, as the original's) are in [MENU_FLOW.md](MENU_FLOW.md).
 - Value rows (race Course, Laps, CPU riders, Difficulty and every Rider gear row) have real
   previous/next buttons either side of the value on every row; tapping the label
   still steps forward. Left/Right step only value rows, so they never start a race,

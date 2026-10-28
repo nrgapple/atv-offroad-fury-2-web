@@ -129,6 +129,11 @@ pub struct PauseMenu {
     held: Vec<String>,
     /// Generation of the page last shown (each `show` slides a page in).
     pub shown: u64,
+    /// The pages Back returns through with the row each was left by
+    /// (the original's page history, research/MENU_FLOW.md).
+    history: Vec<(String, usize, Option<String>)>,
+    /// The row to select once the returned-to page's rows are built.
+    restore: Option<String>,
 }
 
 struct Pressed {
@@ -179,6 +184,8 @@ impl PauseMenu {
             game_active: false,
             held: Vec::new(),
             shown: crate::transition::next_show(),
+            history: Vec::new(),
+            restore: None,
         }
     }
 
@@ -429,13 +436,44 @@ impl PauseMenu {
             if !cfg!(target_arch = "wasm32") && !self.frontend {
                 rows.choices.retain(|c| c != "main");
             }
+            if let Some(action) = self.restore.take()
+                && let Some(at) = rows.choices.iter().position(|c| *c == action)
+            {
+                self.selection = at;
+            }
             self.selection = self.selection.min(rows.choices.len().saturating_sub(1));
             self.rows = rows;
         }
         self.key = key;
     }
 
+    /// Opens `page` over the current one; a page already in the history is
+    /// returned to on the row it was left by.
     fn show(&mut self, page: &str) {
+        if page == self.page {
+            self.present(page);
+            return;
+        }
+        if let Some(at) = self.history.iter().rposition(|(p, ..)| p == page) {
+            let (_, selection, action) = self.history[at].clone();
+            self.history.truncate(at);
+            self.present(page);
+            self.selection = selection;
+            self.restore = action;
+            return;
+        }
+        let action = self.selected().map(String::from);
+        self.history
+            .push((self.page.clone(), self.selection, action));
+        self.present(page);
+    }
+
+    /// The pages Back returns through, oldest first.
+    pub fn history(&self) -> impl Iterator<Item = &str> {
+        self.history.iter().map(|(p, ..)| p.as_str())
+    }
+
+    fn present(&mut self, page: &str) {
         self.shown = crate::transition::next_show();
         self.capture = None;
         self.notice = None;
@@ -451,19 +489,24 @@ impl PauseMenu {
             return Some(Event::Resume);
         }
         if self.page == "jukebox" {
-            // From the main menu the Jukebox closes (the host ends the menu).
-            if !self.from_menu {
+            // Opened on its own from the main menu the Jukebox closes (the
+            // host ends the menu); otherwise it returns to its opener.
+            if let Some((page, ..)) = self.history.last() {
+                let page = page.clone();
+                self.show(&page);
+            } else if !self.from_menu {
                 self.show("pause");
             }
             return Some(Event::Jukebox(super::jukebox::JukeboxAction::Leave));
         }
-        let to = if self.page == "bindings" && !self.keyboard {
-            "controller-settings"
-        } else {
-            parent(&self.page)
+        // The page the player came from, on the row they left it by;
+        // without one (a page the host opened) its parent.
+        let to = match self.history.last() {
+            Some((page, ..)) => page.clone(),
+            None if self.page == "bindings" && !self.keyboard => "controller-settings".into(),
+            None => parent(&self.page).into(),
         };
-        // frontend.js `show`: the page opens on its first row.
-        self.show(to);
+        self.show(&to);
         None
     }
 
@@ -557,8 +600,9 @@ impl PauseMenu {
                 if action == "ecosystem-yes" {
                     ctx.prefs.set_ecosystem_collision(false, ctx.settings);
                 }
+                // Back on the Ecosystem Collision row.
                 self.show("game-settings");
-                self.selection = 1;
+                self.restore = Some("ecosystem".into());
                 Event::Changed
             }
             "keyboard" | "padbindings" => {
@@ -1490,7 +1534,7 @@ mod parity_tests {
     }
 
     #[test]
-    fn back_opens_the_first_row_and_jukebox_waits_for_its_catalog() {
+    fn back_returns_to_the_row_it_left_and_jukebox_waits_for_its_catalog() {
         let mut fx = Fixture::new();
         fx.music.ready = false;
         let mut menu = PauseMenu::new();
@@ -1498,12 +1542,30 @@ mod parity_tests {
         // The Jukebox row shows before the soundtrack catalog is ready.
         assert!(menu.rows.choices.iter().any(|c| c == "jukebox"));
         assert!(menu.rows.choices.iter().any(|c| c == "copyride"));
-        fx.with(&mut menu, |m, ctx| m.run("settings", 1, false, ctx));
-        fx.with(&mut menu, |m, ctx| m.run("controls", 1, false, ctx));
+        let row = |menu: &PauseMenu, action: &str| {
+            menu.rows.choices.iter().position(|c| c == action).unwrap()
+        };
+        let settings = row(&menu, "settings");
+        menu.selection = settings;
+        fx.with(&mut menu, |m, ctx| m.key("Enter", ctx));
+        fx.with(&mut menu, |_, _| ());
+        assert_eq!(menu.page, "settings");
+        let controls = row(&menu, "controls");
+        menu.selection = controls;
+        fx.with(&mut menu, |m, ctx| m.key("Enter", ctx));
+        fx.with(&mut menu, |_, _| ());
+        assert_eq!(menu.history().collect::<Vec<_>>(), ["pause", "settings"]);
         fx.with(&mut menu, |m, ctx| m.key("Escape", ctx));
-        assert_eq!((menu.page.as_str(), menu.selection), ("settings", 0));
+        fx.with(&mut menu, |_, _| ());
+        assert_eq!((menu.page.as_str(), menu.selection), ("settings", controls));
         fx.with(&mut menu, |m, ctx| m.key("Escape", ctx));
-        assert_eq!((menu.page.as_str(), menu.selection), ("pause", 0));
+        fx.with(&mut menu, |_, _| ());
+        assert_eq!((menu.page.as_str(), menu.selection), ("pause", settings));
+        // Back on Pause resumes the ride.
+        assert_eq!(
+            fx.with(&mut menu, |m, ctx| m.key("Escape", ctx)),
+            Some(Event::Resume)
+        );
     }
 
     #[test]

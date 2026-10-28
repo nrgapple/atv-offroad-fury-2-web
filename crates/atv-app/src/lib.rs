@@ -3214,8 +3214,11 @@ impl App {
                 self.quit_to(Some("games"));
             }
             overlay::Action::RaceQuit if self.hockey.is_some() => {
+                // Continue: back to the Games page that started it (the
+                // original returns to the page that started the event,
+                // `0021ecb0`), with the score on its notice line.
                 let result = self.hockey.as_ref().map(|h| h.result());
-                if self.quit_to(Some("main"))
+                if self.quit_to(Some("games"))
                     && let (Some(front), Some(result)) = (&self.front, result)
                 {
                     front.borrow_mut().state.notice = Some(result);
@@ -3230,9 +3233,12 @@ impl App {
             overlay::Action::RaceRetry => self.restart_race(),
             overlay::Action::RaceNextRound => self.next_round(),
             overlay::Action::RaceQuit => {
-                // race.js quit: Single Player (a championship round returns
-                // to its Championship page); a page without the engine's
-                // frontend (a direct ride) opens its menus instead.
+                // Continue returns to the page that started the race, on the
+                // row it was started from (`0021ecb0`): Single Race's setup,
+                // or a championship round's Championship page (the
+                // original's "Quit to Championship Menu"). A page without
+                // the engine's frontend (a direct ride) opens its menus
+                // instead.
                 let page = if riding
                     .ride
                     .race()
@@ -3240,7 +3246,7 @@ impl App {
                 {
                     "championship"
                 } else {
-                    "single"
+                    "race"
                 };
                 if !self.quit_to(Some(page)) {
                     #[cfg(target_arch = "wasm32")]
@@ -4426,9 +4432,17 @@ impl ApplicationHandler<Message> for App {
                     .map_or(("tracks", None), |(page, error)| (page, Some(error)));
                 if let Some(front) = &self.front {
                     let mut f = front.borrow_mut();
+                    // A single-player ride returns to the page that started
+                    // it (a championship round, the Games page, Training's
+                    // main menu); a room to its lobby's menu.
+                    let launcher = f.state.launcher().map(String::from);
+                    let page = match launcher {
+                        Some(launcher) if matches!(page, "tracks" | "race") => launcher,
+                        _ => page.to_string(),
+                    };
                     // Its GPU objects belonged to the device the load took.
                     f.release_gpu();
-                    f.resume(page);
+                    f.resume(&page);
                     f.state.notice = notice;
                 }
                 self.requested.remove("jukebox-art");
@@ -5403,9 +5417,11 @@ impl App {
                 serde_json::json!({ "entry": if linked { "link" } else { "menu" } }),
             ],
         );
+        // A page opened from outside the menus climbs to the title through
+        // its canonical parents (research/MENU_FLOW.md).
         if let Some(page) = &start.page {
             let page = page.clone();
-            f.state.show(&page, &view);
+            f.state.open(&page, &view);
             return;
         }
         if let Some(page) = atv_game::launch::menu_shortcut(&start.search) {
@@ -5415,7 +5431,7 @@ impl App {
             } else {
                 page
             };
-            f.state.show(page, &view);
+            f.state.open(page, &view);
             return;
         }
         let tracks: Vec<(String, String)> = f
@@ -5438,7 +5454,7 @@ impl App {
         if !errors.is_empty() {
             // frontend.js openLaunch: the main menu's notice line says why.
             let message = format!("Cannot open ride link. {}", errors.join(" "));
-            f.state.show("main", &view);
+            f.state.open("main", &view);
             f.state.notice = Some(message.clone());
             status(&message);
             return;
@@ -5463,7 +5479,7 @@ impl App {
                 f.state.room_code = setup.room.clone();
             }
             f.state
-                .show(if create { "create-lobby" } else { "join-lobby" }, &view);
+                .open(if create { "create-lobby" } else { "join-lobby" }, &view);
             if !setup.play {
                 return;
             }
@@ -5495,6 +5511,8 @@ impl App {
         }
         let race = setup.activity == "race";
         if race && !f.state.race_courses.is_empty() {
+            // Back from the setup climbs through Single Player.
+            f.state.open("single", &view);
             // Only race links change the race setup (frontend.js).
             f.state.show_race(
                 atv_ui::front::controller::RaceSetup {
@@ -5508,7 +5526,7 @@ impl App {
                 &view,
             );
         } else {
-            f.state.show(if race { "single" } else { "tracks" }, &view);
+            f.state.open(if race { "single" } else { "tracks" }, &view);
         }
         if !setup.play {
             return;

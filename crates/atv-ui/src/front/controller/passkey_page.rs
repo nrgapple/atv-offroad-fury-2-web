@@ -120,7 +120,8 @@ impl Frontend {
             KEY_PREFIX
         };
         self.passkey.entry = cloud_save::clean_symbols(code, prefix);
-        self.show("passkey-entry", view);
+        // From outside the menus: Back climbs Pass Key → Main → Title.
+        self.open("passkey-entry", view);
         self.lookup()
     }
 
