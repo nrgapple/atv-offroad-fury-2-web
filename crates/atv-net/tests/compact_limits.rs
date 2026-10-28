@@ -38,6 +38,24 @@ fn roundtrip(s: &Snapshot) -> Snapshot {
     match decode(&bytes) {
         Ok(Packet::Snapshot(out)) => {
             out.validate().expect("decoded snapshot must validate");
+            // The relay decodes, validates and re-encodes every pose it
+            // forwards: a decoded pose must re-encode to a packet that
+            // decodes to the same pose.
+            let again = encode(&Packet::Snapshot(out.clone())).expect("re-encode");
+            match decode(&again) {
+                Ok(Packet::Snapshot(mut twice)) => {
+                    // Quaternions are renormalized on decode, so they may move
+                    // by a fraction of a code; everything else is exact.
+                    for (a, b) in [(&mut twice.atv, &out.atv), (&mut twice.rider, &out.rider)] {
+                        for (x, y) in a.rotation.iter().zip(b.rotation) {
+                            assert!((x - y).abs() < 1e-4, "rotation drifted");
+                        }
+                        a.rotation = b.rotation;
+                    }
+                    assert_eq!(*twice, *out, "relay re-encode drifted");
+                }
+                other => panic!("relay re-encode failed for {out:?}: {other:?}"),
+            }
             *out
         }
         other => panic!("decode failed for {s:?}: {other:?}"),
@@ -66,9 +84,12 @@ fn steering_at_its_limit_survives_quantization() {
     }
 }
 
+/// A field name, the values to try and how to set them.
+type Field = (&'static str, Vec<f32>, fn(&mut Snapshot, f32));
+
 #[test]
 fn every_bounded_field_at_its_limits_roundtrips() {
-    let edit: Vec<(&str, Vec<f32>, fn(&mut Snapshot, f32))> = vec![
+    let edit: Vec<Field> = vec![
         ("steering", near(3.9), |s, v| {
             s.animation.as_mut().unwrap().steering = v
         }),
