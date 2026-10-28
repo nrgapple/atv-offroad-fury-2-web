@@ -48,6 +48,12 @@ pub struct TagSession {
     /// `tagTest=throw`: the first ball starts past the boundary; a second
     /// after the throw-in it is tossed back to the host (test hook).
     throw_test: Option<f32>,
+    /// The course start (`00246500`'s fallback when no ray hits).
+    pub start: [f32; 3],
+    /// The venue's `CrowdPresent` (world +0x658): no boundary margin.
+    pub crowd: bool,
+    /// Ground respawns so far (diagnostics: ray throws, start returns).
+    respawns: (u32, u32),
 }
 
 /// The game's clock: Games Prep's minutes (`0026b7a0`, 2-20, default 5);
@@ -91,6 +97,9 @@ impl TagSession {
             knocks: 0,
             minutes,
             throw_test: None,
+            start: [0.; 3],
+            respawns: (0, 0),
+            crowd: false,
         }
     }
 
@@ -224,11 +233,14 @@ impl TagSession {
             // `00244ef0` → `0020aec0`/`00246ec0`: a ball past the boundary
             // margin is thrown toward the map centre.
             if !self.game.attached
-                && bounds.outside(self.ball.position, atv_core::tag::BOUNDARY_CELLS)
+                && bounds.outside(
+                    self.ball.position,
+                    atv_core::tag::boundary_margin(self.crowd),
+                )
             {
                 self.ball = Ball::throw_in(self.ball.position, bounds.centre());
                 self.throw_ins += 1;
-                if self.throw_ins == 1 || self.throw_ins % 30 == 0 {
+                if self.throw_ins == 1 || self.throw_ins.is_multiple_of(30) {
                     self.log(format!("ThrowIn {}", self.throw_ins));
                 }
             }
@@ -273,10 +285,28 @@ impl TagSession {
                         }
                     }
                     Event::Respawn => {
-                        // `00246500` aims at open ground near the ball (not
-                        // ported); the port lobs it toward the host.
-                        let o = riders[self.me].0;
-                        self.ball = Ball::lob(self.ball.position, o);
+                        // `00246500`: eighteen level rays from a random
+                        // heading against the world (the port casts the
+                        // heightfield); the nearest hit sets the throw,
+                        // with none the ball restarts at the course start.
+                        let from = self.ball.position;
+                        let heading = self.game.draw() * 360.;
+                        let cast = |a: [f32; 3], b: [f32; 3]| terrain_ray(ground, a, b);
+                        self.ball = match atv_core::tag::respawn_search(from, heading, cast) {
+                            Some(hit) => {
+                                let draws = [self.game.draw(), self.game.draw(), self.game.draw()];
+                                self.respawns.0 += 1;
+                                Ball::respawn_throw(from, hit, draws)
+                            }
+                            None => {
+                                self.respawns.1 += 1;
+                                Ball::respawn_start(
+                                    self.start,
+                                    ground(self.start[0], self.start[2]),
+                                )
+                            }
+                        };
+                        self.log(format!("Respawn {} {}", self.respawns.0, self.respawns.1));
                     }
                     Event::KnockLoose { rider } => {
                         let (p, v, _) = riders[rider];
@@ -433,7 +463,22 @@ impl TagSession {
             "model": self.model,
             "throwIns": self.throw_ins,
             "knocks": self.knocks,
+            "respawns": [self.respawns.0, self.respawns.1],
             "attached": self.game.attached,
         })
     }
+}
+
+/// The first point along the level segment `a`-`b` at or under the
+/// heightfield (1-unit steps), the port's stand-in for the world collision
+/// cast `00169b60` (static objects are not tested).
+fn terrain_ray(ground: impl Fn(f32, f32) -> f32, a: [f32; 3], b: [f32; 3]) -> Option<[f32; 3]> {
+    let d = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+    let len = (d[0] * d[0] + d[2] * d[2]).sqrt();
+    let steps = len.ceil().max(1.) as usize;
+    (1..=steps).find_map(|k| {
+        let t = k as f32 / steps as f32;
+        let p = [a[0] + d[0] * t, a[1] + d[1] * t, a[2] + d[2] * t];
+        (ground(p[0], p[2]) >= p[1]).then_some(p)
+    })
 }

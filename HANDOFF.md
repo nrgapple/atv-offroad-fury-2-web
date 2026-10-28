@@ -175,8 +175,8 @@ the worktree's `target/`; keep bulk output on the SSD.
   a one-human practice and Tag plays only with other humans in a hosted
   room (no CPU riders, as in the original); a guest carrier's tricks do not
   knock the ball loose (not relayed), riders share one Tag start, and the
-  ground respawn lobs toward the host instead of the original ray search
-  (`GAMES.md`).
+  ground respawn's rays and the ball test only the heightfield, not
+  static objects or stadium walls (`GAMES.md`).
 - Memory-card UI and split-screen are missing; the Training Course shows
   captions for its 46 spoken lines and lacks the jumbotron replays (`TRAINING.md`);
   races, championships and Profile Store unlocks save to the loaded profile

@@ -448,15 +448,25 @@ carrier is "it" and scores while holding the ball.
   and the current one; the current one resets.
 - **Ball `00246da0`, `00246500`, `00246ec0`.** A carried ball resting on
   the ground for 2.5 s is lost ("You have lost the ball!"); after 5 s the
-  ball is thrown back into play (`00246500`: eighteen rays at 20° steps
-  from a random heading, 300 units out from the ball, against the world's
-  collision; the nearest hit under 300 units, stopping early under 100,
-  sets the throw; with no hit the ball returns to the event's stored
-  start, 10 units up).
+  ball is thrown back into play. `00246500` casts eighteen level rays at
+  20° steps from a random heading (the base vector is rotated about the
+  up axis by `0012b550`), each 300 units out from the ball, against the
+  world collision (`00169b60`). The nearest hit under 300 units wins, and
+  a hit under 100 ends the search. The throw direction is the unit vector
+  to the hit plus the up axis, halved (about 45° up toward a level hit);
+  each axis is scaled by its own `d + max(40, d × draw)`, `d` the hit
+  distance and the draws uniform in [0, 1), and the ball gets a random
+  spin of 0–16 on each axis. With no hit the ball returns to the event's
+  stored start (+0x220), is put on the ground there (`0016ac10`) and
+  raised 10 units.
 - **Boundary.** Every frame `0020aec0` tests the ball against the
   heightfield (terrain +0x520/+0x524 tiles of 256 cells, +0x528/+0x52c
-  cell sizes): outside when within 110 cells of an edge (0 when world
-  +0x658 is set; that flag was not traced). `00246ec0` then sets the
+  cell sizes): outside when within 110 cells of an edge, or only past
+  the edge when world +0x658 is set. That field is the scene's `[Sounds]
+  CrowdPresent` (`00209460` defaults it to 0, `00209680` reads the key
+  into it; `0020af90` gates the stadium camera flashes on it), so the
+  Freestyle stadiums FREE01–FREE03 keep the whole heightfield in play
+  where the 110-cell margin would leave a 108-unit square. `00246ec0` then sets the
   ball's velocity to the horizontal unit vector toward the heightfield's
   centre (tiles × 128 cells) times 170.4714 plus 112.152245 up; the
   position is kept.
@@ -532,15 +542,29 @@ carrier is "it" and scores while holding the ball.
   not relayed, so a guest carrier's ball is never knocked loose (that
   needs a guest-to-host game message). Each rider applies the engine
   handicap to its own ATV while it is the carrier (motorcycles, a port
-  extra, are not handicapped). The ground respawn still lobs the ball
-  toward the host instead of `00246500`'s ray search.
+  extra, are not handicapped). The host runs `00246500`'s ground respawn:
+  its rays are cast against the heightfield in 1-unit steps (static
+  objects and stadium walls are not tested, and the ball has no rigid
+  body, so a throw can leave a stadium over its walls until the edge
+  throw-in returns it), with the draws from the port's generator; no spin.
+- The room's Tag course is resolved from the ride's own content package,
+  so a room opened from an invite link (no frontend loaded) also moves to
+  the TG archive.
 - Check: `tools/test_engine_multiplayer_tag.mjs` (relay group) now moves
   both pages onto `E05_TG.RES` (the TOY start, `tagball.psg`), covers the
   throw-in (`tagTest=throw` starts the ball past the margin), the time
   limit option (`tagMinutes=3`), the host's and then the guest's engine
   handicap, the transfer and the results; `cargo test -p atv-game --test
   tag_courses -- --ignored` (private hosted package) loads all fourteen
-  Tag courses: TOY start, ball model drawn, nothing unsupported.
+  Tag courses: TOY start, ball model drawn, nothing unsupported, and on
+  each course's heightfield a ball past the margin (past the edge in the
+  CrowdPresent stadiums) is thrown back inside and the ground respawn
+  from the start lands inside (eleven courses find a ray hit, FREE02 and
+  FREE05 return to the start). `tools/test_engine_games_tag.mjs` (relay
+  group) plays the Games page path: Tag bought, a locked Tag course
+  refused, Start Game on Prospect Springs with a 3:00 limit hosts the
+  room on `E05_TG.RES`, and a guest joining by the code follows onto the
+  Tag course into the same running game.
 
 ## Uncertainty
 
@@ -553,4 +577,8 @@ carrier is "it" and scores while holding the ball.
   sequence differs from the original's shared one; the heightfield extent
   is read as the TR2's cell span (assumed equal to tiles × 256 cells);
   `tagball.psg` is drawn at the ball's authored 1.5-unit contact radius
-  centre without the original rigid body or spin.
+  centre without the original rigid body or spin. The respawn's base
+  ray vector and up axis (`0x4a7b70`/`0x4a7b80`) are filled at run time
+  and were read as a level forward vector and +Y from how the throw adds
+  the axis to the hit direction; the random heading makes the base
+  vector's choice immaterial.

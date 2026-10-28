@@ -1578,7 +1578,12 @@ impl App {
         {
             // Games → Tag hosted the room on the venue's Freeride ride:
             // move to the Tag course (or play here when it is not packaged).
-            if tag_scene(self.content.as_ref(), &ready.venue.environment).is_some() {
+            if tag_scene(
+                ready.net.as_ref().map(|n| n.content()).as_ref(),
+                &ready.venue.environment,
+            )
+            .is_some()
+            {
                 self.tag_reload = Some(ready.venue.environment.clone());
             } else if let Some(minutes) = self.tag_start.take() {
                 self.tag = Some(tag::TagSession::new(true, minutes));
@@ -1604,7 +1609,11 @@ impl App {
             // A guest joins the host's game, first moving to the Tag course
             // when the package has it.
             if !ready.venue.tag_ball
-                && tag_scene(self.content.as_ref(), &ready.venue.environment).is_some()
+                && tag_scene(
+                    ready.net.as_ref().map(|n| n.content()).as_ref(),
+                    &ready.venue.environment,
+                )
+                .is_some()
             {
                 self.tag_reload = Some(ready.venue.environment.clone());
             } else {
@@ -1618,6 +1627,8 @@ impl App {
                 if ready.venue.tag_ball {
                     ready.scene.pose_prop(&ready.gpu, &session.ball_matrix());
                 }
+                session.start = ready.venue.scene.start_position;
+                session.crowd = ready.venue.scene.crowd_present;
                 if session.update(&mut riding.ride, net)
                     && let Some(overlay) = &mut self.overlay
                 {
@@ -2618,7 +2629,7 @@ impl App {
                     .as_ref()
                     .filter(|r| !r.venue.tag_ball)
                     .map(|r| r.venue.environment.clone())
-                    .filter(|v| tag_scene(self.content.as_ref(), v).is_some());
+                    .filter(|v| self.tag_course(v).is_some());
                 if ok && let Some(environment) = venue {
                     // The original rides the venue's Tag course: reload the
                     // room's ride from its TG archive, then start.
@@ -7165,6 +7176,17 @@ fn tag_scene(content: Option<&Rc<Content>>, environment: &str) -> Option<(String
 }
 
 impl App {
+    /// The room's Tag course: its ride's package (a room booted from a link
+    /// has no frontend content), else the frontend's.
+    fn tag_course(&self, environment: &str) -> Option<(String, String)> {
+        let room = self
+            .ready
+            .as_ref()
+            .and_then(|r| r.net.as_ref())
+            .map(|n| n.content());
+        tag_scene(room.as_ref().or(self.content.as_ref()), environment)
+    }
+
     /// Tag's time limit: Games Prep's minutes (the Games page's Time Limit
     /// row, `0026b7a0`), `tagMinutes=N` for links and tests.
     fn tag_minutes(&self) -> u32 {
@@ -7184,7 +7206,7 @@ impl App {
     /// Reloads the room's ride; `tag` reads the venue's Tag course.
     fn reload_room_with(&mut self, environment: String, tag: bool) {
         let game_scene = if tag {
-            tag_scene(self.content.as_ref(), &environment)
+            self.tag_course(&environment)
         } else {
             None
         };

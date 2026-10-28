@@ -146,8 +146,16 @@ impl Bounds {
 }
 
 /// `0020aec0`'s margin in cells for Tag (`00244ef0`: 110, or 0 when world
-/// +0x658 is set; that flag's meaning was not traced).
+/// +0x658 is set).
 pub const BOUNDARY_CELLS: f32 = BOUNDARY_MARGIN;
+
+/// Tag's boundary margin for a venue: world +0x658 is the scene's
+/// `[Sounds] CrowdPresent` (`00209680` reads the key into it, `00209460`
+/// defaults it to 0), so stadium venues test the ball only against the
+/// heightfield's edge (`00244ef0`).
+pub fn boundary_margin(crowd_present: bool) -> f32 {
+    if crowd_present { 0. } else { BOUNDARY_CELLS }
+}
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Record {
@@ -250,7 +258,7 @@ impl Game {
 
     /// A uniform draw in [0, 1) (xorshift; the original's shared generator
     /// `0036e7a0` and its call order are not reproduced).
-    fn draw(&mut self) -> f32 {
+    pub fn draw(&mut self) -> f32 {
         let mut x = self.seed.max(1);
         x ^= x << 13;
         x ^= x >> 17;
@@ -481,10 +489,89 @@ impl Ball {
         false
     }
 
+    /// `00246500`, after the search: thrown at the nearest world hit
+    /// `hit` from `from`. The direction is the unit vector to the hit plus
+    /// the up axis, halved (about 45 degrees up for a level hit); each axis
+    /// is scaled by its own speed `d + max(40, d * draw)`, `d` the hit
+    /// distance and `draws` three uniform draws in [0, 1).
+    pub fn respawn_throw(from: [f32; 3], hit: [f32; 3], draws: [f32; 3]) -> Self {
+        let d = [hit[0] - from[0], hit[1] - from[1], hit[2] - from[2]];
+        let dist = (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt();
+        let unit = if dist > 0. {
+            [d[0] / dist, d[1] / dist, d[2] / dist]
+        } else {
+            [0.; 3]
+        };
+        let half = [unit[0] * 0.5, (unit[1] + 1.) * 0.5, unit[2] * 0.5];
+        let speed = |r: f32| dist + (dist * r).max(RESPAWN_MIN_SPEED);
+        Self {
+            position: from,
+            velocity: [
+                half[0] * speed(draws[0]),
+                half[1] * speed(draws[1]),
+                half[2] * speed(draws[2]),
+            ],
+        }
+    }
+
+    /// `00246500` with no hit within range: back to the event's stored
+    /// start, 10 units over the ground there, at rest.
+    pub fn respawn_start(start: [f32; 3], ground: f32) -> Self {
+        Self {
+            position: [start[0], ground + RESPAWN_START_LIFT, start[2]],
+            velocity: [0.; 3],
+        }
+    }
+
     /// Lying within a unit of the ground (`00246da0`).
     pub fn resting(&self, ground: impl Fn(f32, f32) -> f32) -> bool {
         self.position[1] - BALL_RADIUS <= ground(self.position[0], self.position[2]) + 1.
     }
+}
+
+/// `00246500`'s rays: eighteen, 20 degrees apart from `heading` (degrees),
+/// each `RESPAWN_RANGE` units out level with the ball.
+pub const RESPAWN_RAYS: usize = 18;
+pub const RESPAWN_STEP: f32 = 20.0;
+pub const RESPAWN_RANGE: f32 = 300.0;
+/// A hit nearer than this ends the search early.
+pub const RESPAWN_NEAR: f32 = 100.0;
+/// The smallest random speed term of the throw.
+pub const RESPAWN_MIN_SPEED: f32 = 40.0;
+/// The fallback start's lift over the ground.
+pub const RESPAWN_START_LIFT: f32 = 10.0;
+
+/// `00246500`'s search: casts the rays from `from` with `cast(from, to)`
+/// (the nearest world hit along the segment) and returns the nearest hit
+/// under `RESPAWN_RANGE`, stopping at the first one under `RESPAWN_NEAR`.
+pub fn respawn_search(
+    from: [f32; 3],
+    heading: f32,
+    mut cast: impl FnMut([f32; 3], [f32; 3]) -> Option<[f32; 3]>,
+) -> Option<[f32; 3]> {
+    // The search starts one unit past the range (301), as the original.
+    let mut best = RESPAWN_RANGE + 1.;
+    let mut found = None;
+    for i in 0..RESPAWN_RAYS {
+        let a = (heading + RESPAWN_STEP * i as f32).to_radians();
+        let to = [
+            from[0] + a.sin_d() * RESPAWN_RANGE,
+            from[1],
+            from[2] + a.cos_d() * RESPAWN_RANGE,
+        ];
+        if let Some(hit) = cast(from, to) {
+            let d = [hit[0] - from[0], hit[1] - from[1], hit[2] - from[2]];
+            let dist = (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt();
+            if dist < best {
+                best = dist;
+                found = Some(hit);
+                if dist < RESPAWN_NEAR {
+                    break;
+                }
+            }
+        }
+    }
+    found.filter(|_| best < RESPAWN_RANGE)
 }
 
 #[cfg(test)]
@@ -709,6 +796,10 @@ mod tests {
         assert!(b.outside([879., 0., 2048.], BOUNDARY_CELLS));
         assert!(!b.outside([881., 0., 2048.], BOUNDARY_CELLS));
         assert!(b.outside([2048., 0., 4096. - 879.], BOUNDARY_CELLS));
+        // A CrowdPresent stadium tests only the heightfield's edge.
+        assert!(!b.outside([1., 0., 2048.], boundary_margin(true)));
+        assert!(b.outside([-1., 0., 2048.], boundary_margin(true)));
+        assert_eq!(boundary_margin(false), 110.);
         assert!(!b.outside([10., 0., 10.], 0.));
         let t = Ball::throw_in([4000., 50., 2048.], b.centre());
         assert_eq!(t.position, [4000., 50., 2048.]);
@@ -777,5 +868,49 @@ mod tests {
         assert!(b.resting(|_, _| 0.));
         let t = Ball::lob([500., 0., 0.], [0., 0., 0.]);
         assert!(t.velocity[0] < 0. && t.velocity[1] > 100.);
+    }
+    #[test]
+    fn respawn_search_takes_the_nearest_hit_and_stops_under_100() {
+        // A wall 150 units east and one 250 north: the nearer wins (the
+        // ray at 10 + 4 x 20 = 90 degrees points east).
+        let wall = |from: [f32; 3], to: [f32; 3]| {
+            let mut hit = None;
+            for k in 1..=300 {
+                let t = k as f32 / 300.;
+                let p = [
+                    from[0] + (to[0] - from[0]) * t,
+                    from[1],
+                    from[2] + (to[2] - from[2]) * t,
+                ];
+                if p[0] >= 150. || p[2] >= 250. {
+                    hit = Some(p);
+                    break;
+                }
+            }
+            hit
+        };
+        let hit = respawn_search([0.; 3], 10., wall).unwrap();
+        assert!((hit[0] - 150.).abs() < 2. && hit[2].abs() < 2., "{hit:?}");
+        // Under 100 units the first such hit ends the search.
+        let mut casts = 0;
+        let near = respawn_search([0.; 3], 0., |_, to| {
+            casts += 1;
+            Some([to[0] / 10., 0., to[2] / 10.])
+        });
+        assert_eq!(casts, 1);
+        assert!(near.is_some());
+        // Nothing within range: no throw (the caller restarts the ball).
+        assert!(respawn_search([0.; 3], 0., |_, _| None).is_none());
+        assert!(respawn_search([0.; 3], 0., |_, to| Some(to)).is_none());
+    }
+
+    #[test]
+    fn respawn_throw_aims_up_toward_the_hit() {
+        let b = Ball::respawn_throw([0., 0., 0.], [200., 0., 0.], [0., 0.5, 1.]);
+        // x: (1 + 0) / 2 x (200 + max(40, 0)); y: (0 + 1) / 2 x (200 + 100);
+        // z: 0.
+        assert_eq!(b.velocity, [120., 150., 0.]);
+        let s = Ball::respawn_start([5., 0., 7.], 30.);
+        assert_eq!((s.position, s.velocity), ([5., 40., 7.], [0.; 3]));
     }
 }
