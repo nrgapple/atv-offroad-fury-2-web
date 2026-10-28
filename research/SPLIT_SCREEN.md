@@ -140,6 +140,23 @@ identical stand-in controllers.
 
 Host frame time: see "Measurements" below.
 
+## Measurements
+
+Host only (Apple Silicon Mac mini, headless Chromium on Metal, 1280x720,
+ENV01 Freestyle, weather off, both players on the throttle, `?debug=1`
+Performance lines after 600 frames; one run each, not phone results):
+
+| Ride | Frame (ms) | Frame p95 (ms) | CPU draw (ms) |
+| --- | --- | --- | --- |
+| One player | 13.0-13.3 | 19.6-24.7 | 7.4-8.8 |
+| Split top/bottom (`?split=h&split2=5.1`) | 14.3-19.0 | 24.3-29.8 | 9.2-9.8 |
+| Split side by side (`?split=v&split2=5.1`) | 14.8-14.9 | 20.4-20.9 | 11.5-12.0 |
+
+Split screen draws the scene twice and steps a second ride, so CPU draw
+rises by about 1-4 ms on this host; the players rode close together, so the
+terrain kept one merged fine patch. The frame cadence is noisy in headless
+Chromium. Phones were not measured.
+
 ## Left for later slices
 
 - Three and four players (quarter presets `Preset<n>q`, no CPUs) and the
