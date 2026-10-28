@@ -8,6 +8,7 @@
 //! drop gate pose, the 321 lamp sounds and the race music events.
 use super::{Mount, Ride, STEP, cpu::CpuModel, cpu::CpuRacer, cpu::World};
 use crate::Result;
+use atv_core::cpu_recovery;
 use atv_core::math::Det;
 use atv_core::{
     camera::CameraFrame,
@@ -779,9 +780,10 @@ impl Ride {
             let cpu_yaw = yaw(frame.orientation);
             // Settling on the grid earns no race distance.
             if repositioned || hold {
-                race.reposition_cpu(index, frame.origin, cpu_yaw, Some(physical));
+                race.reposition_cpu(index, frame.origin, cpu_yaw, Some(physical.clone()));
                 if repositioned && !hold {
                     race.restore_checkpoint(Some(index), frame.origin);
+                    cpu.recovery.reset(race.race_distance(index));
                 }
             } else {
                 race.observe_cpu(index, frame.origin, cpu_yaw, Some(physical.clone()));
@@ -797,9 +799,59 @@ impl Ride {
                         index,
                         reset.origin,
                         yaw(reset.orientation),
+                        Some(physical.clone()),
+                    );
+                    race.restore_checkpoint(Some(index), reset.origin);
+                    cpu.recovery.reset(race.race_distance(index));
+                }
+            }
+            // Port adaptation (atv_core::cpu_recovery): a CPU that keeps
+            // returning to the same reset point, or makes no route progress
+            // while riding, is reset to a validated point further on.
+            if !hold
+                && !race.cpu_finished(index)
+                && cpu.recovery.observe(
+                    race.race_distance(index),
+                    cpu.vehicle.frame().wreck.phase == Phase::Riding,
+                    STEP,
+                ) == cpu_recovery::Action::SkipAhead
+            {
+                let candidates = race.recovery_stations(index, &cpu_recovery::SKIP_DISTANCES);
+                let mut chosen = None;
+                for candidate in &candidates {
+                    let (point, heading) = on_line((candidate.point, candidate.heading))?;
+                    if cpu
+                        .vehicle
+                        .offer_recovery_checkpoint(terrain, point, heading)?
+                    {
+                        chosen = Some((candidate.station, candidate.gained));
+                        break;
+                    }
+                }
+                // None clear: the furthest candidate, placed by the ring
+                // search of the off-track reset.
+                if chosen.is_none()
+                    && let Some(last) = candidates.last()
+                {
+                    cpu.vehicle
+                        .set_race_checkpoint(Some(on_line((last.point, last.heading))?));
+                    chosen = Some((last.station, last.gained));
+                }
+                if let Some((station, gained)) = chosen {
+                    race.accept_recovery_station(index, station, gained);
+                    cpu.respawn(nodes)?;
+                    let reset = cpu.vehicle.frame();
+                    race.reposition_cpu(
+                        index,
+                        reset.origin,
+                        yaw(reset.orientation),
                         Some(physical),
                     );
                     race.restore_checkpoint(Some(index), reset.origin);
+                    cpu.recovery.skipped(race.race_distance(index));
+                } else {
+                    // Nowhere ahead to go (at the gate): count afresh.
+                    cpu.recovery.skipped(race.race_distance(index));
                 }
             }
         }

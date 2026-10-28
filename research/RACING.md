@@ -1364,3 +1364,78 @@ Follow-up on the remaining wreck loops (2026-10-27, no fix found):
   (within 12ft for 4s). It did not help: the stuck reset goes to the Enduro
   reset point, which is the rider's own last valid position, so the CPU is
   put back where it was pinned. Not shipped.
+
+## Authored CPU anti-stuck recovery (port adaptation) — 2026-10-28
+
+**Not original behavior.** The user approved authored recovery where the
+recovered rules leave a CPU looping or stranded (`status.md` "Product
+decisions"). It lives in its own module, `atv_core::cpu_recovery`, with
+the race-side helpers `Race::{recovery_stations, accept_recovery_station,
+race_distance, cpu_finished}`, `Course::retreat` and
+`Vehicle::offer_recovery_checkpoint`, all labelled port adaptation. It
+applies to CPU riders only (never the player or the autopilot); while it
+stays idle the recovered rules run unchanged.
+
+The rule (per CPU, on the fixed race step):
+
+- **Detector.** It tracks the CPU's race distance (route progress, not
+  speed) and each reset (wreck recovery, the off-track reset and the
+  authored 4s stuck reset). A reset whose race distance lies within 80ft of
+  the previous reset's counts as a repeat; reaching 400ft past it clears
+  the repeats. Separately, riding (not wrecked, not on the grid hold)
+  without gaining 25ft of race distance for 15s is a stall.
+- **Assist** from the second repeat (the third reset to about one place):
+  the leader speed limit (`002536b0`) is lifted and the lane goal is held
+  on the racing line (the lane draw still runs, so the random stream is
+  unchanged), until the CPU clears the spot. Two resets to one accepted
+  point are common in ordinary races and are left to the recovered rules.
+- **Skip ahead** on the third repeat or a stall: the CPU is reset to the
+  first point 80, 120, 160 … 500ft further along the racing line (moved
+  past no-reset nodes) that passes the forced `001ea4d0` test (ground above
+  water, `001ea050` clearance); if none passes, the furthest candidate is
+  placed by the off-track reset's ring search. The skip becomes the
+  accepted reset state, so race distance gains the skipped route length.
+  It never crosses the finish gate (candidates stop 20ft short, so a lap is
+  never skipped) and in Enduro never reaches the next gate; an Enduro CPU
+  that has passed beside its gate is put 40ft before that gate, facing it.
+  A skip never causes a DNF and never moves a finished CPU.
+
+Why these escalations: on sx15 the leader limit holds a CPU to 75ft/s at
+a jump built for 220ft/s, so it lands on its nose every time; on sx03/sx05
+(seed 11) a CPU reset at a corner meets the next jump off line; on
+env05endl (seed 7) a CPU pinned against an obstacle inside the wide Enduro
+polygon is reset to its own last valid position, where it is pinned again.
+
+Evidence: headless sweep, `determinism` example, 1 lap, 3 CPUs, 18,000
+frames, player idle on the grid, seeds 7/11/23, all 51 courses. "Before" is
+origin/main 39fbfc5 (race and CPU code identical to 166f36c, on which this
+branch is based); courses where every CPU finishes:
+
+| seed | National (32) before → after | Enduro (16) | Short Tracks (3) |
+| --- | --- | --- | --- |
+| 7 | 31 (sx15) → 32 | 15 (env05endl) → 16 | 3 → 3 |
+| 11 | 29 (sx03, sx05, sx15) → 32 | 16 → 16 | 3 → 3 |
+| 23 | 31 (sx15) → 32 | 16 → 16 | 3 → 3 |
+
+Before: 147 of 153 course/seed runs had every CPU finish; after (final
+thresholds, rebuilt on origin/main 3f21cd5): 153 of 153.
+
+No regression where no CPU is stuck: with the layer idle the run is
+bit-identical to main. 61 of the 153 runs never acted; 5 sampled across
+all course types (nat01, sx12, env01endl, env03endl, env06st) have equal
+trace fingerprints to the pre-branch main binary. It does act more often
+than hoped: 91 runs switch the assist on for at least one CPU (in the
+idle-player sweep CPUs often reset three times to one accepted point, as
+the leader limit keeps them slow on jumps). Skips stay rarer: 21 runs, 48
+skips in total, on sx02, sx03, sx05, sx13, sx15, env01ends, env02endl,
+env05endl and env07endl (at most 8 for one CPU, env05endl seed 7).
+
+Checks: `atv-core` `cpu_recovery` tests (single wreck, two resets, assist
+then skip, clearing, stall, wreck time, steady progress) and the `race`
+recovery-station tests (finish gate, Enduro gate, `retreat`).
+
+Limits: the thresholds are authored and tuned on the idle-player sweep;
+whether the original's CPUs wreck in the same places is unverified, and the
+underlying causes (the leader limit at sx15's jump, the post-reset line at
+sx05 node 44, the Enduro pin at env05endl) are unchanged. A skip moves a CPU
+up to 500ft along the route without riding it.

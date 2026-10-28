@@ -812,6 +812,45 @@ impl Vehicle {
         self.race_checkpoint = Some((support, yaw));
         Ok(true)
     }
+    /// Port adaptation (`cpu_recovery` skip-ahead): the 001ea4d0 point test
+    /// as forced (the rider's own wheels and wreck state are not asked,
+    /// since a stranded CPU is the reason for the call): ground above the
+    /// cached water height and the 001ea050 clearance. Keeps the point when
+    /// it passes.
+    pub fn offer_recovery_checkpoint(
+        &mut self,
+        terrain: &Terrain,
+        point: Vec3,
+        yaw: f32,
+    ) -> Result<bool> {
+        if !point.iter().all(|v| v.is_finite()) || !yaw.is_finite() {
+            return Ok(false);
+        }
+        let Some(ground) = terrain.contact(point[0], point[2])? else {
+            return Ok(false);
+        };
+        let (candidate, allowed) = crate::boundary_launch::checkpoint_candidate(
+            [point[0], ground.height, point[2]],
+            crate::boundary_launch::CheckpointGates {
+                boundary_flight: false,
+                player_kind_two: false,
+                forced: true,
+                all_wheels_grounded: true,
+                wrecked: false,
+                body_up_y: 1.,
+                terrain_height: ground.height,
+                water_height: self.water_height,
+            },
+        )?;
+        if !allowed {
+            return Ok(false);
+        }
+        let Some(support) = self.checkpoint_support(candidate, yaw)? else {
+            return Ok(false);
+        };
+        self.race_checkpoint = Some((support, yaw));
+        Ok(true)
+    }
     /// Other racers' current positions for the reset sidestep.
     pub fn set_reset_peers(&mut self, peers: impl IntoIterator<Item = Vec3>) {
         self.reset_peers.clear();
