@@ -1,0 +1,15 @@
+{
+  "id": "scenes-pick-model-detail-and-cull-far-passes-like-the--0854deaebb4a43dc828b780b285cdb30",
+  "timestamp": "2026-10-28T00:31:18.447935+00:00",
+  "recorded_at": "2026-10-28T01:13:55.172396+00:00",
+  "kind": "build",
+  "title": "Scenes pick model detail and cull far passes like the original",
+  "summary": "Scene models now choose their level of detail the way the original does, and far scenery draws only a material's first pass beyond 130 ft when multi-pass culling is on. The Original and Enhanced presets follow the original; High keeps the finest models as an explicit enhancement. PR #388, merged.",
+  "details": [
+    "Recovered from the exact build: model LOD selection (001b3a90: scale = focal / max(distance - radius, 0.1); a coarser level is used when scale x threshold < 1), the far cull beyond 130 ft that keeps only the first material pass when EnableMultiPassCull is on (001b2390 / 001b90b0), and the zone system (001fc850). No shipped scene declares several zones, so every model, actor and emitter stays visible.",
+    "Verification (host): an all-route sweep covered 91 routes and 41,616 placed models; 8,085 have several levels and 0 were unresolved. Host frame time stayed within noise. A far view of the env06 lodge draws 12% fewer scenery triangles under Original than High. Host-only; this is not a phone measurement, and the public site picks it up through the normal merge and deploy flow."
+  ],
+  "limitation": "Animated actors and vehicles still draw at their finest level. One global that forces the far flag has no known writer in the recovered code. No physical-phone measurement yet.",
+  "image": "/devlog-images/scenes-pick-model-detail-and-cull-far-passes-like-the--0854deaebb4a43dc828b780b285cdb30.png",
+  "caption": "env06 lodge from a far view under the Original preset (coarser scenery levels and first-pass-only far materials)"
+}
