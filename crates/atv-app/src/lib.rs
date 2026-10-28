@@ -725,6 +725,8 @@ struct Meter {
     snow_draws: u32,
     /// TOY actors drawn and culled, and their draw calls, in the last frame.
     actors: (u32, u32, u32),
+    /// The last frame's statistics (scenery LOD/visibility, `?uiDiagnostics=1`).
+    scenery: Option<atv_render::FrameStats>,
     /// Room work (socket, poses, remote riders and loads) CPU, included in
     /// `cpu`, and the longest frame interval this second.
     net: f64,
@@ -1240,6 +1242,7 @@ impl App {
                 self.meter.shadows = (stats.contact_casters, stats.shadow_casters);
                 self.meter.snow_draws = stats.snow_draws;
                 self.meter.actors = (stats.actors_visible, stats.actors_culled, stats.actor_draws);
+                self.meter.scenery = Some(stats);
                 acquire = stats.acquire_ms;
             }
             Err(error) => status(&error),
@@ -2114,6 +2117,28 @@ impl App {
                         "drawn": ready.scene.ambient_sprites(),
                     })
                 });
+            // Scene model visibility (tools/test_engine_visibility.mjs,
+            // research/VISIBILITY.md): drawn chunks per level, frustum
+            // culls, far multi-pass culls and coarse models; the scene's
+            // zone/portal counts.
+            state["scenery"] = self.meter.scenery.map_or(serde_json::Value::Null, |f| {
+                serde_json::json!({
+                    "draws": f.scenery_draws, "triangles": f.scenery_triangles,
+                    "culled": f.scenery_culled, "levels": f.scenery_levels,
+                    "farCulled": f.scenery_far_culled, "coarseModels": f.scenery_coarse_models,
+                    "finest": ready.scene.graphics().finest_models,
+                    "zones": ready.venue.scene.zones, "portals": ready.venue.scene.portals,
+                    "zoneRecords": ready.venue.zones.records,
+                    "zonesOutside": ready.venue.zones.outside.len(),
+                    "nearest": nearest_levels(
+                        ready.camera.eye(), ready.focal_length, &ready.scene, &ready.venue, 6),
+                    "focal": atv_core::model_lod::focal_from_view(ready.focal_length),
+                    // One digit per scene model: its drawn level last frame.
+                    "modelLevels": ready.scene.scenery_levels().iter()
+                        .map(|(l, _)| char::from(b'0' + (*l).min(9))).collect::<String>(),
+                    "farCullModels": far_cull_models(ready.camera.eye(), &ready.scene, &ready.venue),
+                })
+            });
             state["snow"] = ready
                 .scene
                 .snow_state()
@@ -2302,6 +2327,7 @@ impl App {
                 self.meter.shadows = (stats.contact_casters, stats.shadow_casters);
                 self.meter.snow_draws = stats.snow_draws;
                 self.meter.actors = (stats.actors_visible, stats.actors_culled, stats.actor_draws);
+                self.meter.scenery = Some(stats);
                 acquire = stats.acquire_ms;
             }
             Err(error) => status(&error),
@@ -2479,6 +2505,7 @@ impl App {
                 draws: self.meter.draws,
                 snow_draws: self.meter.snow_draws,
                 actors: self.meter.actors,
+                scenery: self.meter.scenery,
                 last: self.meter.last,
                 ..Default::default()
             };
@@ -7079,6 +7106,83 @@ pub fn detect_graphics_tier() -> &'static str {
     }
 }
 
+/// Diagnostics: the multi-level scene models nearest the eye with their
+/// world bounds centre, distance, drawn level, far flag and the distances at
+/// which each coarser level starts for the current focal length
+/// (tools/test_engine_visibility.mjs).
+fn nearest_levels(
+    eye: [f32; 3],
+    focal_length: f32,
+    scene: &SceneRenderer,
+    venue: &atv_game::venue::Venue,
+    count: usize,
+) -> serde_json::Value {
+    use atv_core::model_lod;
+    let focal = model_lod::focal_from_view(focal_length);
+    let selected = scene.scenery_levels();
+    let mut models: Vec<(f32, usize)> = venue
+        .scenery
+        .lods
+        .iter()
+        .enumerate()
+        .filter_map(|(i, lod)| {
+            let lod = lod.as_ref().filter(|l| l.thresholds.len() > 1)?;
+            let m = &venue.scene.models.get(i)?.world_matrix;
+            Some((lod.distance([m[12], m[13], m[14]], eye), i))
+        })
+        .collect();
+    models.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let list: Vec<_> = models
+        .into_iter()
+        .take(count)
+        .map(|(distance, i)| {
+            let lod = venue.scenery.lods[i].as_ref().unwrap();
+            let m = &venue.scene.models[i].world_matrix;
+            let (level, far) = selected.get(i).copied().unwrap_or((0, false));
+            serde_json::json!({
+                "model": i, "name": venue.scene.models[i].name,
+                "center": [lod.center[0] + m[12], lod.center[1] + m[13], lod.center[2] + m[14]],
+                "radius": lod.radius, "distance": distance, "level": level, "far": far,
+                "switches": lod.switch_distances(focal),
+            })
+        })
+        .collect();
+    serde_json::Value::Array(list)
+}
+
+/// Diagnostics: scene models with a later pass under `EnableMultiPassCull`,
+/// their bounds centre, distance and last frame's far flag.
+fn far_cull_models(
+    eye: [f32; 3],
+    scene: &SceneRenderer,
+    venue: &atv_game::venue::Venue,
+) -> serde_json::Value {
+    let mut models: Vec<usize> = venue
+        .scenery
+        .draws
+        .iter()
+        .filter(|d| d.far_cull)
+        .map(|d| d.model)
+        .collect();
+    models.dedup();
+    let selected = scene.scenery_levels();
+    serde_json::Value::Array(
+        models
+            .into_iter()
+            .filter_map(|i| {
+                let lod = venue.scenery.lods.get(i)?.as_ref()?;
+                let m = &venue.scene.models.get(i)?.world_matrix;
+                Some(serde_json::json!({
+                    "model": i, "name": venue.scene.models[i].name,
+                    "center": [lod.center[0] + m[12], lod.center[1] + m[13], lod.center[2] + m[14]],
+                    "distance": lod.distance([m[12], m[13], m[14]], eye),
+                    "far": selected.get(i).is_some_and(|s| s.1),
+                }))
+            })
+            .collect(),
+    )
+}
+
 /// Display -> Graphics preset features (presetFeatures in web/graphics.js).
 pub fn graphics_preset(name: &str) -> Graphics {
     match name {
@@ -7093,6 +7197,7 @@ pub fn graphics_preset(name: &str) -> Graphics {
             tire_tracks: (3600, 75),
             wheel_reprojection: true,
             dirt: true,
+            finest_models: true,
         },
         "enhanced" => Graphics {
             interpolation: true,
@@ -7105,6 +7210,7 @@ pub fn graphics_preset(name: &str) -> Graphics {
             tire_tracks: (600, 15),
             wheel_reprojection: true,
             dirt: true,
+            finest_models: false,
         },
         _ => Graphics::default(),
     }

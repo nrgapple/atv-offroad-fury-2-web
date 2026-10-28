@@ -45,3 +45,12 @@ Product decisions (user, 2026-10-27):
   CPU rider looping or stranded, the port may add smarter authored recovery
   (for example resetting further along the route). Keep it separate from
   recovered logic and label it as a port adaptation in the research note.
+- **Cloud saves use Pass Keys** (2026-10-28). Each player is assigned a Pass Key
+  (a retro save code such as `FURY-XXXX-XXXX-XXXX-XXXX`) automatically as progress
+  is saved, shown in a corner of the menus. Progress stays saved locally and syncs
+  to Cloudflare storage (D1 behind the existing Worker). Entering the Pass Key on
+  any device or browser continues that save, like a game save file. Players can
+  also share a snapshot of their progress (for example a 100% save) as a
+  `SHARE-…` code or link that copies it into someone else's save. No accounts or
+  personal data; anyone with a key can use it, which is intended. "Pass Key" is
+  the product name, not WebAuthn. Persistent storage and export/import ship too.

@@ -80,7 +80,7 @@ section is authoritative.
 | --- | --- | --- |
 | Resource formats | Recovered layouts; all 487 archives parse | `FORMATS.md`, `GEOMETRY.md`, `IPUM.md` |
 | Maps | All 40 Freestyle venue families load (terrain, sky, scenery, vegetation) | `FREESTYLE_MAPS.md`, `MAP_FIDELITY.md` |
-| Rendering | Authored WebGL2 using recovered materials, animated UVs, fog, ice reflections, near-vegetation colors, water and wheel effects. LOD, vegetation visibility, lighting/shadows and GS precision incomplete | `MAP_FIDELITY.md`, `STADIUM_MATERIALS.md`, `PERFORMANCE.md` |
+| Rendering | Authored WebGL2 using recovered materials, animated UVs, fog, ice reflections, near-vegetation colors, water and wheel effects, the recovered scene-model LOD selection, 130 ft multi-pass cull and single-zone visibility on every venue route (High keeps the finest level); actor/vehicle LOD, lighting/shadows and GS precision incomplete | `MAP_FIDELITY.md`, `STADIUM_MATERIALS.md`, `PERFORMANCE.md`, `VISIBILITY.md` |
 | ATV physics | Recovered vehicle routines (suspension/travel stop, static contact, terrain contact, wheel support, drivetrain, rider force) on all 26 quads. Native fixed tick and whole-step parity unestablished; residual landing/slope tire overlap mostly explained by original ordering and contact-model properties (one-step display order, travel bottoming, single-point contact) | `MOVEMENT.md`, `CONTACT.md`, `TERRAIN_CONTACT.md`, `COUPLED_LANDING.md` |
 | Collision | Recovered static COL queries, scene partition/candidate order, shipped vegetation proxies, moving train bodies. Some proxy kinds and model-COL resolution remain | `COLLISION.md`, `OBSTACLES.md`, `SCENE_COLLISION.md`, `VEGETATION_COLLISION.md`, `TRAIN_CONTACT.md` |
 | Wrecks and recovery | Recovered classifier, boundary launch, deep-water failure and recovery; post-loop full-correction pass for moving bodies; detached rider contacts terrain, static props, vegetation proxies and train bodies | `WRECK.md`, `BOUNDARY_LAUNCH.md`, `WATER_SNOW_GATE.md` |
@@ -190,8 +190,11 @@ the worktree's `target/`; keep bulk output on the SSD.
   static avoidance are recovered. In the idle-player headless sweep CPUs
   still wreck-loop on sx15's jump and occasionally on sx03/sx05 and
   env05endl (`RACING.md` "Enduro CPU driver and off-track avoidance").
-- Rendering lacks original LOD/visibility policy, point lights, shadows, light
-  lens effects and native GS precision (`MAP_FIDELITY.md`). ScreenRain lens drops
+- Rendering lacks point lights, shadows, light lens effects and native GS
+  precision (`MAP_FIDELITY.md`). Scene-model LOD and the multi-pass far cull
+  are recovered; keyframed actors and vehicles still draw their finest level,
+  and multi-zone portal traversal is unrecovered (no shipped scene uses it)
+  (`VISIBILITY.md`). ScreenRain lens drops
   are dormant in shipped content and intentionally not drawn (`WEATHER.md`).
 - Residual tire/terrain overlap on landings and cross-slope turns follows mostly
   from original ordering and contact-model properties; about 0.12 ft on landings
