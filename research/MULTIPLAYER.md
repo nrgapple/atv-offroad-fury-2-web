@@ -682,7 +682,7 @@ race packet, start synchronization or result agreement has been recovered
 
 Race 2 of the browser gate stalled because the **host left the room** with
 `Invalid session message: multiplayer packet: InvalidValue` right after it
-reloaded the course. Evidence (ignored `work/probe/stall-*.json`): the
+reloaded the course. Evidence (ignored `work/probe/evidence-before-fix/` in the task worktree): the
 rejected message was an ordinary full compact pose (kind 9, 127-byte body,
 peer 1, sequence 1279, sender time 154,907 ms, steering code 30 = 0.004 rad),
 which decodes and validates. The error came from the host's pose buffer, not
@@ -709,7 +709,14 @@ late and the guest's next live pose then ran more than 5 s ahead of it.
   steering stays near ±0.52 rad, so this was not the race 2 cause. Every
   other quantized field (wheels, compression, phase, weights, look phase,
   velocities, angular velocity, rpm, throttle, speed, rotations) was checked
-  to decode within its validated range.
+  to decode within its validated range, and a decoded pose re-encodes (as
+  the relay does) to the same pose apart from sub-code quaternion
+  renormalization.
+- Verified (host only, local wrangler relay, load average 40–65): the full
+  `test_engine_multiplayer_race.mjs` gate passed, and the same scenario
+  with 4x CDP CPU throttling on both pages, which failed at race 2 with the
+  `InvalidValue` exit before the fix, passed through Race Again and the
+  mid-race leaver.
 
 Two related fixes from the same investigation:
 
