@@ -19,6 +19,8 @@ pub const PASS_KEY_KEY: &str = "fury-pass-key";
 pub const CLOUD_KEY: &str = "fury-cloud";
 pub const KEY_HEADER: &str = "X-Fury-Pass-Key";
 pub const SHARE_HEADER: &str = "X-Fury-Share-Code";
+/// Save History: which kept revision `GET /api/save/revisions` returns.
+pub const REVISION_HEADER: &str = "X-Fury-Revision";
 /// Where desktop and Android builds reach the save API (the web page uses
 /// its own origin).
 pub const ORIGIN: &str = "https://furyremastered.com";
@@ -122,6 +124,32 @@ pub enum Source {
     Share(String),
     /// Import Save: the file's name.
     File(String),
+    /// Save History: a kept revision of this device's Pass Key.
+    Revision(u64),
+}
+
+/// A kept revision of this device's Pass Key (Save History).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Revision {
+    pub revision: u64,
+    /// ISO 8601 UTC, as the server stores it.
+    pub updated_at: String,
+    pub bytes: u64,
+}
+
+/// `2026-10-28T06:12:33.120Z` as `Oct 28 2026, 06:12 UTC` (the server's
+/// clock; the menus have no time zone).
+pub fn when(iso: &str) -> String {
+    const MONTHS: [&str; 12] = [
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+    ];
+    let field = |range: std::ops::Range<usize>| iso.get(range).and_then(|t| t.parse::<u32>().ok());
+    match (field(0..4), field(5..7), field(8..10), iso.get(11..16)) {
+        (Some(y), Some(m @ 1..=12), Some(d), Some(hm)) if iso.as_bytes().get(13) == Some(&b':') => {
+            format!("{} {d} {y}, {hm} UTC", MONTHS[m as usize - 1])
+        }
+        _ => iso.to_string(),
+    }
 }
 
 /// A save fetched (or read from a file) and waiting for the player's choice.
@@ -149,6 +177,11 @@ pub enum Choice {
 
 /// Applies a fetched save; the message to show, or why not.
 pub fn apply(settings: &mut Settings, fetched: &Fetched, choice: Choice) -> Result<String, String> {
+    if let Source::Revision(_) = fetched.source {
+        // Restoring goes through the server (`Sync::restore`), so the
+        // online save changes with this device's.
+        return Err("Choose Restore This Save to restore it.".into());
+    }
     let local = local_save(settings);
     let incoming = &fetched.save;
     let (save, message) = match (&fetched.source, choice) {
@@ -255,6 +288,12 @@ enum Op {
     Share,
     FetchKey(String),
     FetchShare(String),
+    /// Save History's list.
+    History,
+    /// One kept revision, for confirmation.
+    FetchRevision(u64),
+    /// Make a kept revision current again; it replaces this device's save.
+    Restore(u64),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -302,6 +341,10 @@ pub enum Notice {
     Shared(String),
     /// A line for the menu notice.
     Message(String),
+    /// Save History's kept revisions, newest first.
+    History(Vec<Revision>),
+    /// A revision was restored and replaced this device's save.
+    Restored(String),
 }
 
 struct InFlight {
@@ -400,13 +443,38 @@ impl Sync {
         });
     }
 
+    /// Save History: list this key's kept revisions.
+    pub fn history(&mut self) {
+        self.user = Some(Op::History);
+    }
+
+    /// Save History: fetch one kept revision for confirmation.
+    pub fn fetch_revision(&mut self, revision: u64) {
+        self.user = Some(Op::FetchRevision(revision));
+    }
+
+    /// Save History: make `revision` current again (the server copies it
+    /// forward as a new revision) and load it on this device.
+    pub fn restore(&mut self, revision: u64) {
+        self.user = Some(Op::Restore(revision));
+    }
+
     /// A fetch is queued or waiting for its answer.
     pub fn fetching(&self) -> bool {
         self.user.is_some()
             || self
                 .in_flight
                 .as_ref()
-                .is_some_and(|f| matches!(f.op, Op::FetchKey(_) | Op::FetchShare(_)))
+                .is_some_and(|f| {
+                    matches!(
+                        f.op,
+                        Op::FetchKey(_)
+                            | Op::FetchShare(_)
+                            | Op::History
+                            | Op::FetchRevision(_)
+                            | Op::Restore(_)
+                    )
+                })
     }
 
     /// A request is on its way.
@@ -535,6 +603,16 @@ impl Sync {
             Op::Share => ("POST", "/api/save/share", key_header, None),
             Op::FetchKey(k) => ("GET", "/api/save", header(KEY_HEADER, k), None),
             Op::FetchShare(c) => ("GET", "/api/share", header(SHARE_HEADER, c), None),
+            Op::History => ("GET", "/api/save/revisions", key_header, None),
+            Op::FetchRevision(n) => {
+                let mut headers = key_header;
+                headers.push((REVISION_HEADER, n.to_string()));
+                ("GET", "/api/save/revisions", headers, None)
+            }
+            Op::Restore(n) => {
+                let body = json!({ "revision": n }).to_string();
+                ("POST", "/api/save/restore", key_header, Some(body))
+            }
         };
         self.in_flight = Some(InFlight {
             id,
@@ -605,6 +683,13 @@ impl Sync {
                     _ => Some(error()),
                 };
                 notices.extend(message.map(Notice::Message));
+                return notices;
+            }
+            Op::History | Op::FetchRevision(_) | Op::Restore(_) => {
+                self.history_response(&sent, status, &body, settings, &mut notices);
+                if !transient && status != 0 {
+                    self.backoff = 0.;
+                }
                 return notices;
             }
             _ if pass_key(settings) != sent.key => {
@@ -695,9 +780,104 @@ impl Sync {
                 notices.push(Notice::Message(error()));
             }
             (Op::Pull, _) => self.status = Status::Failed(error()),
-            (Op::FetchKey(_) | Op::FetchShare(_), _) => {}
+            (
+                Op::FetchKey(_)
+                | Op::FetchShare(_)
+                | Op::History
+                | Op::FetchRevision(_)
+                | Op::Restore(_),
+                _,
+            ) => {}
         }
         notices
+    }
+
+    /// Save History's answers (the list, a revision for confirmation, a
+    /// restore). They are the player's own requests: failures become a
+    /// notice and never change the background sync's state.
+    fn history_response(
+        &mut self,
+        sent: &InFlight,
+        status: u16,
+        body: &Value,
+        settings: &mut Settings,
+        notices: &mut Vec<Notice>,
+    ) {
+        let message = |text: &str| Notice::Message(text.to_string());
+        if pass_key(settings) != sent.key {
+            notices.push(message("The Pass Key changed. Open Save History again."));
+            return;
+        }
+        if status == 0 || status == 429 || status >= 500 {
+            notices.push(message(
+                "The save server could not be reached. Check the connection and try again.",
+            ));
+            return;
+        }
+        match (&sent.op, status) {
+            (Op::History, 200) => {
+                let revisions = body["revisions"]
+                    .as_array()
+                    .map(|list| {
+                        list.iter()
+                            .filter_map(|r| {
+                                Some(Revision {
+                                    revision: r["revision"].as_u64().filter(|&n| n > 0)?,
+                                    updated_at: text(&r["updatedAt"]),
+                                    bytes: r["bytes"].as_u64().unwrap_or(0),
+                                })
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                notices.push(Notice::History(revisions));
+            }
+            // Not on the server yet: nothing kept.
+            (Op::History, 404) => notices.push(Notice::History(Vec::new())),
+            (Op::FetchRevision(n), 200) => match Save::from_value(body["save"].clone()) {
+                Ok(save) => notices.push(Notice::Fetched(Box::new(Fetched {
+                    source: Source::Revision(*n),
+                    revision: body["revision"].as_u64().unwrap_or(*n),
+                    updated_at: text(&body["updatedAt"]),
+                    save,
+                }))),
+                Err(text) => notices.push(Notice::Message(text)),
+            },
+            (Op::FetchRevision(_) | Op::Restore(_), 404) => {
+                notices.push(message("That save is no longer kept. Open Save History again."));
+            }
+            (Op::Restore(n), 200) => {
+                let save = match Save::from_value(body["save"].clone()) {
+                    Ok(save) => save,
+                    Err(text) => {
+                        notices.push(Notice::Message(text));
+                        return;
+                    }
+                };
+                if !write_save(settings, &save) {
+                    notices.push(message(crate::settings::STORAGE_ERROR));
+                    return;
+                }
+                // The restored save is the server's current one: agreed, so
+                // nothing is pushed back over it.
+                let mut record = record(settings);
+                record.revision = body["revision"].as_u64().unwrap_or(record.revision + 1);
+                record.updated_at = text(&body["updatedAt"]);
+                record.base = Some(save.to_value());
+                store_record(settings, &record);
+                self.refused = None;
+                self.status = Status::Saved;
+                notices.push(Notice::LocalChanged);
+                notices.push(Notice::Restored(format!(
+                    "Save restored to revision {n}. Other devices with this Pass Key load it when they next sync."
+                )));
+            }
+            _ => notices.push(Notice::Message(
+                body["error"]
+                    .as_str()
+                    .map_or_else(|| format!("Save server error ({status})."), str::to_string),
+            )),
+        }
     }
 
     /// A server save (a pull or a conflict): merged into local progress
