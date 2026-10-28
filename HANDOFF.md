@@ -94,7 +94,7 @@ section is authoritative.
 | Audio | Recovered VAG decoding, 21-song catalog/shuffle streamed as AAC with VAG fallback, Jukebox player, engine banks, impacts, train; SPU2 mixer/reverb not reproduced | `AUDIO.md` |
 | Racing | All 32 National-rules race courses plus the 16 original Enduro courses (gate races) and 3 Short Tracks; recovered CPU driver decisions (Normal/Expert, jump preload, track-edge and cheat flags, the Enduro gate driver and off-track-only static avoidance) inside authored race rules | `RACING.md` |
 | Games (mini-games) | Hockey rules recovered (face-off, drop, goals, hat tricks, sudden death, game over) and playable from a temporary Main Menu row on Coonce Arena by one human against an empty net, the puck an authored flat-ice body shown as a screen tag; Tag's recovered ball-tag rules (possession, scoring, knock loose, carrier engine handicap, boundary throw-in, tie order, Games Prep time limit) play in multiplayer rooms on the fourteen original `*_TG.RES` courses with the `tagball.psg` model (Games → Tag hosts the room); King of the Hills and Treasure Hunt are separate work | `GAMES.md` |
-| Multiplayer | Authored four-player Freeride through the Rust relay; authored rider contacts; local two-player split screen (Multiplayer → Split Screen: Freestyle and races with CPUs, top/bottom or side by side, the original split camera presets, per-controller and split-keyboard input, combined race results); no three/four-player split, split Games or original protocol | `MULTIPLAYER.md`, `SPLIT_SCREEN.md`, `MULTIPLAYER_ORIGINAL.md`, `SECURITY.md` |
+| Multiplayer | Authored four-player Freeride through the Rust relay; authored rider contacts; local two-player split screen (Multiplayer → Split Screen: Freestyle and races with CPUs, top/bottom or side by side, the original split camera presets, per-controller and split-keyboard input, combined race results; player 2's own ATV and rider, engine sound, wheel dust, rumble, terrain patch, and a shared race place with CPUs avoiding player 2); no three/four-player split, split Games or original protocol | `MULTIPLAYER.md`, `SPLIT_SCREEN.md`, `MULTIPLAYER_ORIGINAL.md`, `SECURITY.md` |
 | Motorcycles | Riding controller recovered component by component from MX vs. ATV Unleashed (steer/bank, tires/suspension, engine/clutch, wheelie/stoppie, air control, preload, flips, wreck rules) through authored terrain/surface/input adapters; native whole-step parity unmeasured; Single Player only | `MOTORCYCLES.md` |
 | Crash effects | Optional authored presentation layer (Crazy/Gorn); enhancement-isolation checks show it leaves the simulation unchanged | `CRASH_EFFECTS.md` |
 | Input | Remappable keyboard/controller bindings; one-handed and two-thumb touch are authored adaptations | `CONTROLS.md`, `TOUCH.md` |
@@ -179,8 +179,9 @@ the worktree's `target/`; keep bulk output on the SSD.
   static objects or stadium walls (`GAMES.md`).
 - Split screen is two players only (Freestyle and races): three and four
   players, the ControllerSelect claiming page, split Games/objectives/
-  championships, player 2's own garage, sound, wheel effects and rumble, and
-  online parity for split modes remain (`SPLIT_SCREEN.md`).
+  championships, player 2's own gear/paint, records and profile credit,
+  tire tracks and a per-player audio mix, and online parity for split modes
+  remain (`SPLIT_SCREEN.md`).
 - Memory-card UI is missing; the Training Course shows
   captions for its 46 spoken lines and lacks the jumbotron replays (`TRAINING.md`);
   races, championships and Profile Store unlocks save to the loaded profile

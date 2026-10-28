@@ -1645,6 +1645,12 @@ pub struct Race {
     player_resets: u32,
     /// The player's Hall of Fame and personal records (`hall_of_fame`).
     records: Option<crate::hall_of_fame::RecordWatch>,
+    /// Split screen: another local human is still racing, so this race is
+    /// not over at the player's finish (RaceStatus `00248b20` waits for
+    /// every human): the clock runs on and the CPUs' finishes stay real.
+    pub waiting: bool,
+    /// Race over has run (every human finished, or the Enduro timeout).
+    over: bool,
 }
 impl Race {
     /// A race with the riders in slot order (player in slot 1), as when the
@@ -1739,6 +1745,8 @@ impl Race {
             player_stunts: Default::default(),
             player_resets: 0,
             records: None,
+            waiting: false,
+            over: false,
             random: crate::engine_audio::OriginalRandom::with_seed(97211 + 5 * 47),
             finishes: Vec::new(),
         })
@@ -1837,6 +1845,13 @@ impl Race {
             return;
         }
         if self.player.finish.is_some() {
+            if self.waiting && !self.over {
+                // Another human still races: the clock times the CPUs.
+                self.elapsed += dt;
+            } else if !self.over {
+                self.over = true;
+                self.race_over();
+            }
             self.player
                 .update(p, &self.course, self.elapsed, self.laps, dt);
             return;
@@ -1855,7 +1870,10 @@ impl Race {
         }
         if self.player.finish.is_some() {
             self.finishes.push((true, self.finished_count()));
-            self.race_over();
+            if !self.waiting {
+                self.over = true;
+                self.race_over();
+            }
         } else if self.course.is_enduro()
             && self
                 .progress
@@ -1865,6 +1883,7 @@ impl Race {
         {
             // Enduro RaceStatus (`0020f780` +0x94): the race ends for everyone
             // 30s after the first rider finishes.
+            self.over = true;
             self.race_over();
         }
     }
@@ -2957,6 +2976,47 @@ mod tests {
                 .filter(|s| !s.player)
                 .all(|s| s.stunt == 0.)
         );
+    }
+    #[test]
+    fn race_waits_for_another_human_with_real_cpu_times() {
+        let mut r = Race::new(course(), 1, vec!["Half".into()], 1).unwrap();
+        r.countdown = 0.;
+        r.waiting = true;
+        let half = [
+            [0., 0., 100.],
+            [100., 0., 100.],
+            [100., 0., 100.],
+            [100., 0., 100.],
+        ];
+        for (i, p) in [[0., 0., 100.], [100., 0., 100.], [100., 0., 0.], [0.; 3]]
+            .into_iter()
+            .enumerate()
+        {
+            r.observe_cpu(0, half[i], 0., None);
+            r.step(p, 1.);
+        }
+        assert!(r.player_finished());
+        // Split screen: no estimate while player 2 races; the clock runs.
+        let f = r.frame(0.);
+        assert!(!f.opponents[0].finished);
+        r.step([0.; 3], 1.);
+        assert!(r.elapsed > 4.5);
+        // The CPU finishes for real while the race waits.
+        for p in [[100., 0., 0.], [0.; 3]] {
+            r.observe_cpu(0, p, 0., None);
+            r.step([0.; 3], 1.);
+        }
+        let f = r.frame(0.);
+        let cpu = f.standings.iter().find(|s| !s.player).unwrap();
+        assert!(
+            cpu.time.is_some() && !cpu.estimated,
+            "{:?}",
+            (cpu.time, cpu.estimated)
+        );
+        // Player 2 finishing ends the race: nothing left to estimate.
+        r.waiting = false;
+        r.step([0.; 3], 1.);
+        assert!(r.frame(0.).opponents.iter().all(|o| o.finished));
     }
     #[test]
     fn race_over_estimates_unfinished_cpus_from_the_leader_pace() {

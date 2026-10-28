@@ -155,7 +155,23 @@ pub struct Setup {
 /// Each CPU quad's rest node matrices and the seated rider's.
 type GridRest = (Vec<Vec<[f32; 16]>>, Vec<[f32; 16]>);
 
+/// Split screen: the other local human as this race sees it
+/// (research/SPLIT_SCREEN.md). Player 1's race holds the CPU field.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct SplitLink {
+    /// The other human's (origin, velocity, orientation): the CPUs steer
+    /// around it (a human peer, RaceStatus flag 4) and push against it.
+    pub human: Option<([f32; 3], [f32; 3], [f32; 4])>,
+    /// The combined place from the latest standings merge: the PLACE sign,
+    /// the finish sign and the race-over music read it.
+    pub place: Option<usize>,
+    /// The other human has not finished: the race is not over yet.
+    pub waiting: bool,
+}
+
 pub struct RaceState {
+    /// Split screen's other human (none in a one-player race).
+    pub split: SplitLink,
     pub race: Race,
     pub cpus: Vec<CpuRacer>,
     /// Original CPU quads and riders by slot (for drawing).
@@ -436,6 +452,7 @@ impl Ride {
             stage: setup.stage,
             crowd_wrecked: false,
             crowd_laps: 0,
+            split: SplitLink::default(),
             fireworks: None,
             firework_positions: Vec::new(),
             lights: None,
@@ -587,6 +604,21 @@ impl Ride {
     }
 
     /// Race progress, CPU racers and rider contact after the player's step.
+    /// Split screen: each CPU's contact body (origin, velocity,
+    /// orientation) for the other human's ride.
+    pub fn race_cpu_bodies(&self) -> Vec<([f32; 3], [f32; 3], [f32; 4])> {
+        self.race.as_ref().map_or_else(Vec::new, |state| {
+            state
+                .cpus
+                .iter()
+                .map(|c| {
+                    let f = c.vehicle.frame();
+                    (f.origin, f.linear_velocity, f.orientation)
+                })
+                .collect()
+        })
+    }
+
     pub(super) fn step_race(&mut self) -> Result<()> {
         let committed = self.committed_points();
         let Some(state) = &mut self.race else {
@@ -616,6 +648,7 @@ impl Ride {
         {
             race.restore_checkpoint(None, player.origin);
         }
+        race.waiting = state.split.waiting;
         race.step(player.origin, STEP);
         race.record_player_stunt(committed);
         race.record_player_jump(
@@ -678,8 +711,18 @@ impl Ride {
                 Ok(())
             };
         let (point, heading) = on_line(race.checkpoint(None))?;
+        // Split screen's other human: a human peer the CPUs avoid.
+        let human = state.split.human.map(|(origin, velocity, _)| Peer {
+            origin,
+            velocity,
+            human: Some(
+                race.course
+                    .tangent(race.course.nearest_station(origin).segment),
+            ),
+        });
         let positions: Vec<[f32; 3]> = std::iter::once(player.origin)
             .chain(snapshots.iter().map(|p| p.origin))
+            .chain(human.map(|h| h.origin))
             .collect();
         let others = |own: usize| {
             positions
@@ -720,6 +763,7 @@ impl Ride {
                     .filter(|(i, _)| *i != index)
                     .map(|(_, p)| *p),
             )
+            .chain(human)
             .collect();
             let (frame, physical, repositioned) = cpu.step(
                 &race.course,
@@ -818,6 +862,18 @@ impl Ride {
         let bodies: Vec<_> = std::iter::once(body(&player))
             .chain(state.cpus.iter().map(|c| body(&c.vehicle.frame())))
             .collect();
+        // Split screen: each CPU applies its half against the other human
+        // (whose own ride applies the other half, split.rs).
+        if let Some((origin, velocity, orientation)) = state.split.human {
+            for cpu in &mut state.cpus {
+                if cpu
+                    .vehicle
+                    .peer_contact(origin, velocity, orientation, STEP, 1.)
+                {
+                    race.contacts += 1;
+                }
+            }
+        }
         for a in 0..bodies.len() {
             for b in a + 1..bodies.len() {
                 for (own, other, tie) in [(a, b, 1.), (b, a, -1.)] {
@@ -935,7 +991,7 @@ impl Ride {
                 "countdown" if previous != Some("intro") => Some(MusicEvent::Restart),
                 "racing" => Some(MusicEvent::Go),
                 "finished" => Some(MusicEvent::Over {
-                    won: frame.position == 1,
+                    won: state.split.place.unwrap_or(frame.position) == 1,
                 }),
                 _ => None,
             };
@@ -961,7 +1017,7 @@ impl Ride {
                 laps: frame.laps,
                 lap_times: &frame.lap_times,
                 best_lap: frame.best_lap,
-                place: frame.position,
+                place: state.split.place.unwrap_or(frame.position),
                 ranks: &frame.ranks,
                 wrong_way: frame.wrong_way,
                 off_track: frame.off_track.then_some(frame.off_track_time),

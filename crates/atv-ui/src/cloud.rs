@@ -19,6 +19,8 @@ pub const PASS_KEY_KEY: &str = "fury-pass-key";
 pub const CLOUD_KEY: &str = "fury-cloud";
 pub const KEY_HEADER: &str = "X-Fury-Pass-Key";
 pub const SHARE_HEADER: &str = "X-Fury-Share-Code";
+/// Save History: which kept revision `GET /api/save/revisions` returns.
+pub const REVISION_HEADER: &str = "X-Fury-Revision";
 /// Where desktop and Android builds reach the save API (the web page uses
 /// its own origin).
 pub const ORIGIN: &str = "https://furyremastered.com";
@@ -122,6 +124,32 @@ pub enum Source {
     Share(String),
     /// Import Save: the file's name.
     File(String),
+    /// Save History: a kept revision of this device's Pass Key.
+    Revision(u64),
+}
+
+/// A kept revision of this device's Pass Key (Save History).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Revision {
+    pub revision: u64,
+    /// ISO 8601 UTC, as the server stores it.
+    pub updated_at: String,
+    pub bytes: u64,
+}
+
+/// `2026-10-28T06:12:33.120Z` as `Oct 28 2026, 06:12 UTC` (the server's
+/// clock; the menus have no time zone).
+pub fn when(iso: &str) -> String {
+    const MONTHS: [&str; 12] = [
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+    ];
+    let field = |range: std::ops::Range<usize>| iso.get(range).and_then(|t| t.parse::<u32>().ok());
+    match (field(0..4), field(5..7), field(8..10), iso.get(11..16)) {
+        (Some(y), Some(m @ 1..=12), Some(d), Some(hm)) if iso.as_bytes().get(13) == Some(&b':') => {
+            format!("{} {d} {y}, {hm} UTC", MONTHS[m as usize - 1])
+        }
+        _ => iso.to_string(),
+    }
 }
 
 /// A save fetched (or read from a file) and waiting for the player's choice.
@@ -149,6 +177,11 @@ pub enum Choice {
 
 /// Applies a fetched save; the message to show, or why not.
 pub fn apply(settings: &mut Settings, fetched: &Fetched, choice: Choice) -> Result<String, String> {
+    if let Source::Revision(_) = fetched.source {
+        // Restoring goes through the server (`Sync::restore`), so the
+        // online save changes with this device's.
+        return Err("Choose Restore This Save to restore it.".into());
+    }
     let local = local_save(settings);
     let incoming = &fetched.save;
     let (save, message) = match (&fetched.source, choice) {
@@ -255,6 +288,12 @@ enum Op {
     Share,
     FetchKey(String),
     FetchShare(String),
+    /// Save History's list.
+    History,
+    /// One kept revision, for confirmation.
+    FetchRevision(u64),
+    /// Make a kept revision current again; it replaces this device's save.
+    Restore(u64),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -302,6 +341,10 @@ pub enum Notice {
     Shared(String),
     /// A line for the menu notice.
     Message(String),
+    /// Save History's kept revisions, newest first.
+    History(Vec<Revision>),
+    /// A revision was restored and replaced this device's save.
+    Restored(String),
 }
 
 struct InFlight {
@@ -400,13 +443,35 @@ impl Sync {
         });
     }
 
+    /// Save History: list this key's kept revisions.
+    pub fn history(&mut self) {
+        self.user = Some(Op::History);
+    }
+
+    /// Save History: fetch one kept revision for confirmation.
+    pub fn fetch_revision(&mut self, revision: u64) {
+        self.user = Some(Op::FetchRevision(revision));
+    }
+
+    /// Save History: make `revision` current again (the server copies it
+    /// forward as a new revision) and load it on this device.
+    pub fn restore(&mut self, revision: u64) {
+        self.user = Some(Op::Restore(revision));
+    }
+
     /// A fetch is queued or waiting for its answer.
     pub fn fetching(&self) -> bool {
         self.user.is_some()
-            || self
-                .in_flight
-                .as_ref()
-                .is_some_and(|f| matches!(f.op, Op::FetchKey(_) | Op::FetchShare(_)))
+            || self.in_flight.as_ref().is_some_and(|f| {
+                matches!(
+                    f.op,
+                    Op::FetchKey(_)
+                        | Op::FetchShare(_)
+                        | Op::History
+                        | Op::FetchRevision(_)
+                        | Op::Restore(_)
+                )
+            })
     }
 
     /// A request is on its way.
@@ -535,6 +600,16 @@ impl Sync {
             Op::Share => ("POST", "/api/save/share", key_header, None),
             Op::FetchKey(k) => ("GET", "/api/save", header(KEY_HEADER, k), None),
             Op::FetchShare(c) => ("GET", "/api/share", header(SHARE_HEADER, c), None),
+            Op::History => ("GET", "/api/save/revisions", key_header, None),
+            Op::FetchRevision(n) => {
+                let mut headers = key_header;
+                headers.push((REVISION_HEADER, n.to_string()));
+                ("GET", "/api/save/revisions", headers, None)
+            }
+            Op::Restore(n) => {
+                let body = json!({ "revision": n }).to_string();
+                ("POST", "/api/save/restore", key_header, Some(body))
+            }
         };
         self.in_flight = Some(InFlight {
             id,
@@ -605,6 +680,13 @@ impl Sync {
                     _ => Some(error()),
                 };
                 notices.extend(message.map(Notice::Message));
+                return notices;
+            }
+            Op::History | Op::FetchRevision(_) | Op::Restore(_) => {
+                self.history_response(&sent, status, &body, settings, &mut notices);
+                if !transient && status != 0 {
+                    self.backoff = 0.;
+                }
                 return notices;
             }
             _ if pass_key(settings) != sent.key => {
@@ -695,9 +777,106 @@ impl Sync {
                 notices.push(Notice::Message(error()));
             }
             (Op::Pull, _) => self.status = Status::Failed(error()),
-            (Op::FetchKey(_) | Op::FetchShare(_), _) => {}
+            (
+                Op::FetchKey(_)
+                | Op::FetchShare(_)
+                | Op::History
+                | Op::FetchRevision(_)
+                | Op::Restore(_),
+                _,
+            ) => {}
         }
         notices
+    }
+
+    /// Save History's answers (the list, a revision for confirmation, a
+    /// restore). They are the player's own requests: failures become a
+    /// notice and never change the background sync's state.
+    fn history_response(
+        &mut self,
+        sent: &InFlight,
+        status: u16,
+        body: &Value,
+        settings: &mut Settings,
+        notices: &mut Vec<Notice>,
+    ) {
+        let message = |text: &str| Notice::Message(text.to_string());
+        if pass_key(settings) != sent.key {
+            notices.push(message("The Pass Key changed. Open Save History again."));
+            return;
+        }
+        if status == 0 || status == 429 || status >= 500 {
+            notices.push(message(
+                "The save server could not be reached. Check the connection and try again.",
+            ));
+            return;
+        }
+        match (&sent.op, status) {
+            (Op::History, 200) => {
+                let revisions = body["revisions"]
+                    .as_array()
+                    .map(|list| {
+                        list.iter()
+                            .filter_map(|r| {
+                                Some(Revision {
+                                    revision: r["revision"].as_u64().filter(|&n| n > 0)?,
+                                    updated_at: text(&r["updatedAt"]),
+                                    bytes: r["bytes"].as_u64().unwrap_or(0),
+                                })
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                notices.push(Notice::History(revisions));
+            }
+            // Not on the server yet: nothing kept.
+            (Op::History, 404) => notices.push(Notice::History(Vec::new())),
+            (Op::FetchRevision(n), 200) => match Save::from_value(body["save"].clone()) {
+                Ok(save) => notices.push(Notice::Fetched(Box::new(Fetched {
+                    source: Source::Revision(*n),
+                    revision: body["revision"].as_u64().unwrap_or(*n),
+                    updated_at: text(&body["updatedAt"]),
+                    save,
+                }))),
+                Err(text) => notices.push(Notice::Message(text)),
+            },
+            (Op::FetchRevision(_) | Op::Restore(_), 404) => {
+                notices.push(message(
+                    "That save is no longer kept. Open Save History again.",
+                ));
+            }
+            (Op::Restore(n), 200) => {
+                let save = match Save::from_value(body["save"].clone()) {
+                    Ok(save) => save,
+                    Err(text) => {
+                        notices.push(Notice::Message(text));
+                        return;
+                    }
+                };
+                if !write_save(settings, &save) {
+                    notices.push(message(crate::settings::STORAGE_ERROR));
+                    return;
+                }
+                // The restored save is the server's current one: agreed, so
+                // nothing is pushed back over it.
+                let mut record = record(settings);
+                record.revision = body["revision"].as_u64().unwrap_or(record.revision + 1);
+                record.updated_at = text(&body["updatedAt"]);
+                record.base = Some(save.to_value());
+                store_record(settings, &record);
+                self.refused = None;
+                self.status = Status::Saved;
+                notices.push(Notice::LocalChanged);
+                notices.push(Notice::Restored(format!(
+                    "Save restored to revision {n}. Other devices with this Pass Key load it when they next sync."
+                )));
+            }
+            _ => notices.push(Notice::Message(
+                body["error"]
+                    .as_str()
+                    .map_or_else(|| format!("Save server error ({status})."), str::to_string),
+            )),
+        }
     }
 
     /// A server save (a pull or a conflict): merged into local progress
@@ -745,6 +924,8 @@ mod tests {
     struct Server {
         saves: BTreeMap<String, (u64, Value)>,
         shares: BTreeMap<String, Value>,
+        /// Every kept revision per key, oldest first.
+        history: BTreeMap<String, Vec<(u64, Value)>>,
         /// Fail every request with this status (0: network down).
         down: Option<u16>,
         requests: Vec<(String, String)>,
@@ -791,8 +972,63 @@ mod tests {
                             json!({"error": "conflict", "revision": rev, "updatedAt": "t", "save": save}),
                         );
                     }
-                    self.saves.insert(key, (current + 1, body["save"].clone()));
+                    self.saves
+                        .insert(key.clone(), (current + 1, body["save"].clone()));
+                    self.history
+                        .entry(key)
+                        .or_default()
+                        .push((current + 1, body["save"].clone()));
                     reply(200, json!({"revision": current + 1, "updatedAt": "t"}))
+                }
+                ("GET", "/api/save/revisions") => {
+                    let kept = self
+                        .history
+                        .get(&header(KEY_HEADER))
+                        .cloned()
+                        .unwrap_or_default();
+                    let wanted = header(REVISION_HEADER);
+                    if wanted.is_empty() {
+                        if kept.is_empty() {
+                            return reply(404, json!({"error": "not_found"}));
+                        }
+                        let list: Vec<Value> = kept
+                            .iter()
+                            .rev()
+                            .map(|(rev, _)| json!({"revision": rev, "updatedAt": format!("2026-10-28T06:{rev:02}:00.000Z"), "bytes": 10}))
+                            .collect();
+                        return reply(200, json!({"revisions": list}));
+                    }
+                    let n: u64 = wanted.parse().unwrap();
+                    match kept.iter().find(|(rev, _)| *rev == n) {
+                        Some((rev, save)) => reply(
+                            200,
+                            json!({"revision": rev, "updatedAt": "t", "save": save}),
+                        ),
+                        None => reply(404, json!({"error": "not_found"})),
+                    }
+                }
+                ("POST", "/api/save/restore") => {
+                    let body: Value = serde_json::from_str(r.body.as_deref().unwrap()).unwrap();
+                    let key = header(KEY_HEADER);
+                    let n = body["revision"].as_u64().unwrap();
+                    let Some(save) = self
+                        .history
+                        .get(&key)
+                        .and_then(|kept| kept.iter().find(|(rev, _)| *rev == n))
+                        .map(|(_, save)| save.clone())
+                    else {
+                        return reply(404, json!({"error": "not_found"}));
+                    };
+                    let next = self.saves[&key].0 + 1;
+                    self.saves.insert(key.clone(), (next, save.clone()));
+                    self.history
+                        .get_mut(&key)
+                        .unwrap()
+                        .push((next, save.clone()));
+                    reply(
+                        200,
+                        json!({"revision": next, "updatedAt": "t", "save": save}),
+                    )
                 }
                 ("POST", "/api/save/share") => match self.saves.get(&header(KEY_HEADER)) {
                     Some((_, save)) => {
@@ -861,6 +1097,85 @@ mod tests {
             self.sync.poke();
             self.now += PUSH_GAP_MS;
         }
+    }
+
+    #[test]
+    fn save_history_restores_a_kept_revision_everywhere() {
+        let mut server = Server::default();
+        let mut a = Device::new(1);
+        a.earn(10);
+        a.settle(&mut server);
+        a.earn(5);
+        a.settle(&mut server);
+        a.earn(7);
+        a.settle(&mut server);
+        let key = pass_key(&a.settings).unwrap();
+        assert_eq!(server.saves[&key].0, 3);
+        assert_eq!(a.profile().points, 22);
+        // A second device on the same key.
+        let mut b = Device::new(2);
+        b.sync.fetch(&key);
+        b.settle(&mut server);
+        let Some(Notice::Fetched(fetched)) = b.notices.pop() else {
+            panic!("no fetched save");
+        };
+        apply(&mut b.settings, &fetched, Choice::Replace).unwrap();
+        b.sync.flush(b.now);
+        b.settle(&mut server);
+
+        a.sync.history();
+        a.settle(&mut server);
+        let Some(Notice::History(list)) = a.notices.pop() else {
+            panic!("no history");
+        };
+        assert_eq!(
+            list.iter().map(|r| r.revision).collect::<Vec<_>>(),
+            [3, 2, 1]
+        );
+        assert_eq!(when(&list[2].updated_at), "Oct 28 2026, 06:01 UTC");
+        a.sync.fetch_revision(1);
+        a.settle(&mut server);
+        let Some(Notice::Fetched(fetched)) = a.notices.pop() else {
+            panic!("no revision");
+        };
+        assert_eq!(fetched.source, Source::Revision(1));
+        // Applying locally is refused: restores go through the server.
+        assert!(apply(&mut a.settings, &fetched, Choice::Replace).is_err());
+        assert_eq!(a.profile().points, 22);
+        a.sync.restore(1);
+        a.settle(&mut server);
+        assert!(matches!(a.notices.last(), Some(Notice::Restored(_))));
+        assert!(a.notices.contains(&Notice::LocalChanged));
+        assert_eq!(a.profile().points, 10);
+        assert_eq!(server.saves[&key].0, 4);
+        assert_eq!(record(&a.settings).revision, 4);
+        // Nothing is pushed back over the restored save.
+        a.now += 20_000.;
+        a.settle(&mut server);
+        assert_eq!(server.saves[&key].0, 4);
+        assert_eq!(a.sync.status, Status::Saved);
+        // The other device takes the restored save on its next pull: its
+        // progress was already online, so nothing of it comes back.
+        b.now += PULL_MS;
+        b.sync.wake(b.now);
+        b.settle(&mut server);
+        assert_eq!(b.profile().points, 10);
+        assert_eq!(server.saves[&key].0, 4);
+        // A revision the server no longer keeps.
+        a.sync.fetch_revision(99);
+        a.settle(&mut server);
+        assert_eq!(
+            a.notices.pop(),
+            Some(Notice::Message(
+                "That save is no longer kept. Open Save History again.".into()
+            ))
+        );
+        // History before any save reached the server.
+        let mut c = Device::new(3);
+        c.settings.set(PASS_KEY_KEY, "FURY-0000-0000-0000-0009");
+        c.sync.history();
+        c.settle(&mut server);
+        assert_eq!(c.notices.pop(), Some(Notice::History(Vec::new())));
     }
 
     #[test]

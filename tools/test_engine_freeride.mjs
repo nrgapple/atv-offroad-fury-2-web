@@ -1,6 +1,6 @@
-// Host-only gate: Arlington Free Ride from the Rust engine's main menu, in the
-// same shared room as the JavaScript game, on a local relay with content.
-//   1. The Rust main menu lists Arlington Free Ride with its live rider count.
+// Host-only gate: Arlington Free Ride from the Rust engine's Multiplayer page, in
+// the same shared room as the JavaScript game, on a local relay with content.
+//   1. Multiplayer lists Arlington Free Ride with its live rider count.
 //   2. Choosing it claims a shared-room slot and rides Arlington (env08).
 //   3. A JavaScript player taps Arlington Free Ride; both see each other.
 //      A shared room's invite link (FREERDnn) opens Free Ride too.
@@ -40,17 +40,20 @@ try {
   await rust.mouse.click(8, 8);
   await key(rust, 'Enter');
   await onPage(rust, 'main');
+  // Main Menu → Multiplayer, where the live count shows on Arlington Free Ride.
+  await key(rust, 'ArrowDown');
+  await key(rust, 'Enter');
+  await onPage(rust, 'multiplayer');
   await wait(rust, () =>
     Number.isInteger(JSON.parse(document.querySelector('#ui-state').textContent).front.freerideRiders)
   );
   let f = (await read(rust)).front;
   report.menu = { choices: f.choices, riders: f.freerideRiders };
-  assert.equal(f.choices[2], 'freeride');
+  assert.equal(f.choices[3], 'freeride');
   if (shots) await rust.screenshot({ path: shots.replace('.png', '-menu.png') });
 
   // 2. Choose Arlington Free Ride.
-  await key(rust, 'ArrowDown');
-  await key(rust, 'ArrowDown');
+  for (let i = 0; i < 3; i++) await key(rust, 'ArrowDown');
   await key(rust, 'Enter');
   await wait(rust, () => JSON.parse(window.furyMultiplayer ?? 'null')?.environment === 'env08', null, 180000);
   let e = await engine(rust);

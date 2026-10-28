@@ -754,6 +754,9 @@ impl Overlay {
         }
         self.touch
             .paint(active, now, &mut self.fonts, &mut self.list);
+        if let Some(meter) = &mut self.meter {
+            meter.split = second.is_some();
+        }
         if let (Some(meter), Some(h)) = (&self.meter, shown) {
             let speed = match race {
                 Some(_) => self.race_overlays.shown("speed"),

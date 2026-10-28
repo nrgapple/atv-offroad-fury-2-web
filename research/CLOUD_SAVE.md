@@ -28,7 +28,7 @@ All endpoints are same-origin JSON with `Cache-Control: no-store`.
 | `PUT /api/save` + key, `{baseRevision, save}` | 200 `{revision, updatedAt}` | Creates when absent and `baseRevision` is 0. Otherwise `baseRevision` must equal the current revision, or 409 `{error:"conflict", revision, updatedAt, save}` returns the current save so the client merges and retries. An unknown key with a nonzero base gets 409 with `revision: 0, updatedAt: null, save: null`. |
 | `POST /api/save/share` + key | 201 `{shareCode, createdAt}` | Immutable snapshot of the current save. 404 if the key has no save. The body is ignored. |
 | `GET /api/share` + `X-Fury-Share-Code` | 200 `{createdAt, save}` | Read-only; loading copies it into the loader's own save on the client. |
-| `GET /api/save/revisions` + key | 200 `{revisions: [{revision, updatedAt, bytes}]}` | Newest first, at most 10, including the current revision. |
+| `GET /api/save/revisions` + key | 200 `{revisions: [{revision, updatedAt, bytes}]}` | Newest first, at most 10, including the current revision. With `X-Fury-Revision: n` (a positive integer, no leading zero; else 400 `bad_revision`): 200 `{revision, updatedAt, save}` for that kept revision, 404 if it is not kept. Save History uses it to show a revision before restoring it. |
 | `POST /api/save/restore` + key, `{revision}` | 200 `{revision, updatedAt, save}` | Copies a kept revision forward as a new revision (undo for a griefed shared key). 404 if that revision is no longer kept. |
 
 Errors: 400 `bad_key` / `bad_body`, 403 `origin_denied`, 404 `not_found`,
@@ -277,7 +277,18 @@ server): the app hands it the time and runs the requests it returns.
 - **Pass Key page** (badge, or Profile Editor → Pass Key & Saves): the key,
   status, last share code and previous key on the panel; rows Copy Pass Key,
   Share Progress, Show QR Code (a `#key=` link drawn as a vector QR code),
-  Enter Pass Key, Enter Share Code, Save Files (Export Save / Import Save).
+  Enter Pass Key, Enter Share Code, Save Files (Export Save / Import Save) and,
+  once the device has a key, Save History.
+- **Save History**: lists the key's kept revisions (`GET /api/save/revisions`)
+  as `#n <date, time> UTC` rows, the newest (current) one on the panel. Choosing
+  a row fetches that revision and shows the usual confirmation table with
+  Restore This Save / Cancel; Restore calls `POST /api/save/restore`, writes the
+  returned save over this device's and records it as the agreed base, so nothing
+  is pushed back over it and other devices on the key take it on their next
+  pull. The confirmation warns when this device has progress not yet online.
+  The save it replaces stays in the history, so a restore can itself be undone.
+  Restores are never applied locally without the server (an offline restore
+  shows the connection message), so devices cannot disagree about it.
 - **Entry**: a real text field (typing, pasting a key or a whole link; O→0,
   I/L→1) plus the controller's Add Symbol row (Left/Right steps the Crockford
   symbols, accept adds), Delete Symbol and Look Up.

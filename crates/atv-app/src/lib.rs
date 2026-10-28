@@ -556,7 +556,10 @@ struct App {
     cloud: cloud::Cloud,
     /// The frontend's Split Screen branch asked for two local players on
     /// the next rides (kept for Restart Race).
-    split_request: Option<split::Layout>,
+    split_request: Option<split::Request>,
+    /// `?split=`/`?split2=` on a ride link (the context-loss resume link):
+    /// the link's first ride is split; later rides follow the menus.
+    split_link: Option<split::Request>,
     /// Crash camera Tight, Chase camera Assisted (Options::camera_choice).
     camera_choice: (bool, bool),
     /// Adaptive render resolution (web): steps RENDER_RATIO while riding.
@@ -770,7 +773,7 @@ struct World {
     /// A Freestyle objective's OB archive and target TOY stem.
     objective: Option<(String, Option<String>)>,
     /// Two local players in this layout (split.rs).
-    split: Option<split::Layout>,
+    split: Option<split::Request>,
 }
 
 /// Ride prefetch (`?prefetch=off` turns it off for load-time measurement).
@@ -1074,7 +1077,7 @@ async fn prepare(
     };
     let mut riding = riding;
     let split = match (split_layout, &mut riding) {
-        (Some(layout), Some(first)) => {
+        (Some(request), Some(first)) => {
             progress(&gpu, "Reading player 2…");
             Some(
                 split::Second::load(
@@ -1083,7 +1086,7 @@ async fn prepare(
                     &venue,
                     &mut scene,
                     first,
-                    layout,
+                    request,
                     (selection, appearance, race, crash, graphics),
                 )
                 .await?,
@@ -1384,6 +1387,10 @@ impl App {
             net.map_or_else(Vec::new, |n| n.contact_bodies_at(now, ride))
         };
         // Split screen: each player is the other's contact body.
+        let split_others = ready
+            .split
+            .as_mut()
+            .map(|s| split::link(&mut riding.ride, &mut s.riding.ride));
         let split_body = ready
             .split
             .as_ref()
@@ -1402,8 +1409,12 @@ impl App {
             // Player 2 rides while player 1 does: either player's pause
             // opens player 1's Pause menu over both views.
             if !riding.paused && !riding.held && focused {
-                let other = split::body(&riding.ride, -1.);
-                if let Err(error) = second.frame(&all_keys, pad2.as_ref(), sample_now, dt, other) {
+                // Player 1 as it stands after this frame's steps.
+                let mut others = split_others.unwrap_or_default();
+                if let Some(first) = others.first_mut() {
+                    *first = split::body(&riding.ride, -1.);
+                }
+                if let Err(error) = second.frame(&all_keys, pad2.as_ref(), sample_now, dt, others) {
                     status(&format!("Player 2 stopped: {error}"));
                 }
                 if second.riding.paused {
@@ -1426,9 +1437,22 @@ impl App {
             }
         }
         // Rumble.pulse: the frame's impacts on the active controller.
+        // Split screen: each player's impacts rumble its own pad.
         for pulse in std::mem::take(&mut riding.pulses) {
-            if self.gamepad.rumble(pulse) {
+            let sent = if split_on {
+                self.gamepad.rumble_slot(0, pulse)
+            } else {
+                self.gamepad.rumble(pulse)
+            };
+            if sent {
                 riding.rumble.sent(pulse);
+            }
+        }
+        if let Some(second) = &mut ready.split {
+            for pulse in std::mem::take(&mut second.riding.pulses) {
+                if self.gamepad.rumble_slot(1, pulse) {
+                    second.riding.rumble.sent(pulse);
+                }
             }
         }
         // A Pause binding this frame opens the menu in this same frame (the
@@ -1466,6 +1490,14 @@ impl App {
         if let Some(effects) = &mut riding.effects {
             ready.scene.accept_wheel_effects(&ready.gpu, effects);
         }
+        // Split screen: player 2's wheel effects, and its own fine terrain
+        // patch beside player 1's.
+        riding.split_origin = ready.split.as_mut().map(|second| {
+            if let Some(effects) = &mut second.riding.effects {
+                ready.scene.accept_second_wheel_effects(effects);
+            }
+            second.riding.ride.frame().origin
+        });
         // A split view presents at the preset's reference and scales the
         // focal length to its layout (split.rs).
         let (present_aspect, focal_scale) = match &ready.split {
@@ -1551,6 +1583,21 @@ impl App {
                 .map(|s| (s.remote.voices(), s.remote.starts, s.remote.impact_starts));
             let tags = self.overlay.as_ref().map_or(0, |o| o.tags);
             publish_multiplayer(net, riding.contacts, &riding.ride, remote, tags);
+        }
+        // Split screen: player 2's engine and body impacts play through the
+        // room riders' voices, heard from player 1's camera (one output; the
+        // original's split-screen mix was not traced).
+        if let (Some(second), Some(sound)) = (&mut ready.split, &mut riding.sound) {
+            let motion = riding.ride.frame();
+            let rider = second.audio_rider();
+            for quad in sound.remote_frame(
+                &[rider],
+                motion.origin,
+                &ready.camera,
+                motion.linear_velocity,
+            ) {
+                engine_loads.push((quad, sound.load_remote_engine(quad)));
+            }
         }
         for (quad, future) in engine_loads {
             self.spawn_frame(future, move |engine| {
@@ -2081,13 +2128,18 @@ impl App {
                     serde_json::json!([c.x, c.y, c.z, c.yaw, c.pitch, focal])
                 };
                 let race = |ride: &atv_game::ride::Ride| {
-                    ride.race().and_then(|r| r.frame.as_ref()).map(|f| {
+                    let state = ride.race()?;
+                    state.frame.as_ref().map(|f| {
                         serde_json::json!({
                             "phase": f.phase, "lap": f.lap, "laps": f.laps,
                             "position": f.position, "field": f.field,
                             "elapsed": f.elapsed,
+                            "sign": f.hud.as_ref().and_then(|h| h.sign.as_ref()).map(|s| s.id),
+                            "linkedHuman": state.split.human.is_some(),
+                            "waiting": state.split.waiting,
                             "standings": f.standings.iter().map(|s| serde_json::json!({
                                 "name": s.name, "position": s.position, "time": s.time,
+                                "estimated": s.estimated,
                                 "player": s.player})).collect::<Vec<_>>(),
                         })
                     })
@@ -2113,6 +2165,7 @@ impl App {
                         "speed": riding.ride.frame().speed_magnitude,
                         "throttle": riding.ride.applied().throttle,
                         "race": race(&riding.ride),
+                        "quad": riding.ride.selection().quad,
                     },
                     "player2": {
                         "origin": f.origin,
@@ -2121,7 +2174,18 @@ impl App {
                         "throttle": applied.throttle,
                         "steer": applied.steer,
                         "race": race(ride),
+                        "quad": ride.selection().quad,
+                        "rider": ride.selection().rider,
+                        "effects": second.riding.effects.as_ref().map(|e| {
+                            let f = e.frame();
+                            serde_json::json!({
+                                "particles": f.particles.len(),
+                                "emitted": f.total_emitted.iter().sum::<u64>(),
+                            })
+                        }),
+                        "rumbles": second.riding.rumble.pulses,
                     },
+                    "terrainPatches": ready.scene.terrain_patches(),
                 });
             }
             state["wakeLock"] = self.wake_lock.held().into();
@@ -2910,8 +2974,8 @@ impl App {
                     page = room_page(net.shared());
                     net.leave();
                 }
-                // multiplayer.js `leave`: a shared Free Ride room returns to
-                // the main menu, a private room to the Multiplayer page.
+                // Leaving a room returns to the Multiplayer page, where Free
+                // Ride, Host Game and Join Game start (MENU_FLOW.md).
                 if self.quit_to(Some(page)) {
                     return;
                 }
@@ -3099,8 +3163,20 @@ impl App {
     fn remember_ride(&self) {
         #[cfg(target_arch = "wasm32")]
         if let Some(storage) = web_sys::window().and_then(|w| w.session_storage().ok().flatten()) {
+            // A split ride reopens split, with player 2's own ATV and rider.
+            let split = self
+                .ready
+                .as_ref()
+                .and_then(|r| r.split.as_ref())
+                .map(split::Second::resume_query);
             let _ = match self.ride_link() {
-                Some((url, _)) => storage.set_item("fury-resume", &url),
+                Some((url, _)) => storage.set_item(
+                    "fury-resume",
+                    &match split {
+                        Some(query) => split::with_query(&url, &query),
+                        None => url,
+                    },
+                ),
                 None => storage.remove_item("fury-resume"),
             };
         }
@@ -3179,6 +3255,12 @@ impl App {
             // always on" (`0020f780` sets +0x674 for network play).
             ecosystem_collision_off: !prefs.ecosystem_collision && !riding.online,
         };
+        // Split screen: player 2 rides the same settings.
+        if let Some(second) = &mut ready.split {
+            second.riding.vibration = prefs.vibration;
+            second.riding.chase_assist = prefs.chase_assist;
+            second.riding.ride.options = riding.ride.options;
+        }
         // Settings → Alpha presentation (web/hype.js).
         riding.alpha_slowmo = prefs.alpha("air-slowmo");
         riding.alpha_big_air_camera = prefs.alpha("big-air-camera");
@@ -3993,8 +4075,11 @@ impl ApplicationHandler<Message> for App {
             objective: None,
             // `?split=h|v` (web) or FURY_SPLIT=h|v (desktop): a direct split
             // ride (tests and host measurements).
-            split: split::Layout::requested(split_param().as_deref()),
+            split: split_link_param(),
         };
+        // A direct split ride restarts (and reopens after a device loss)
+        // split too.
+        self.split_request = world.split;
         let future = async move {
             let gpu = open_gpu(window, display).await?;
             let content = Rc::new(Content::open(store).await?);
@@ -4236,6 +4321,9 @@ impl ApplicationHandler<Message> for App {
                     Err(error) => status(&format!("Menu music: {error}")),
                 }
                 self.sync_menu_music();
+                // One frame reports it (an idle menu draws none; the main
+                // menu no longer polls the Free Ride count).
+                self.wake();
             }
             Message::JukeboxArt(art) => {
                 if let (Some(overlay), Some(ready)) = (&mut self.overlay, &self.ready) {
@@ -4899,12 +4987,12 @@ impl App {
         if self.presence_due() {
             at(now + std::time::Duration::from_secs(1));
         }
-        // The main menu refreshes its Free Ride count every 15 s.
+        // Multiplayer refreshes its Free Ride count every 15 s.
         if self.ready.is_none()
             && self
                 .front
                 .as_ref()
-                .is_some_and(|f| f.borrow().state.page == "main")
+                .is_some_and(|f| f.borrow().state.page == "multiplayer")
             && let Some(polled) = self.riders_polled
         {
             at(polled + std::time::Duration::from_secs(15));
@@ -5645,6 +5733,11 @@ impl App {
         drop(f);
         // A race starts its course (an Enduro or Short Track id from `course=`).
         let map = if race { setup.race.course } else { setup.map };
+        // `?split=` on the link (the context-loss resume link): this ride
+        // is split; later rides follow the menus.
+        if let Some(link) = self.split_link.take() {
+            self.split_request = Some(link);
+        }
         self.start_ride(map, setup.quad_id, setup.rider_id, settings, None);
     }
 
@@ -5667,8 +5760,15 @@ impl App {
         ) {
             let split = self.front.as_ref().and_then(|f| {
                 let f = f.borrow();
-                (f.state.split && matches!(event, Event::Ride { .. } | Event::Race { .. }))
-                    .then(|| split::Layout::from_vertical(f.state.split_vertical))
+                (f.state.split && matches!(event, Event::Ride { .. } | Event::Race { .. })).then(
+                    || split::Request {
+                        layout: split::Layout::from_vertical(f.state.split_vertical),
+                        second: Some(atv_game::ride::Selection {
+                            quad: f.state.split_second.0,
+                            rider: f.state.split_second.1,
+                        }),
+                    },
+                )
             });
             self.split_request = split;
         }
@@ -6315,7 +6415,7 @@ impl App {
                         .as_deref()
                         .is_some_and(atv_game::multiplayer::is_shared_room) =>
             {
-                "main"
+                "multiplayer"
             }
             (Some(_), _) => "multiplayer",
             (None, Some(net)) => room_page(net.shared()),
@@ -6539,7 +6639,7 @@ impl App {
             }
             if let Some(closed) = net.closed.clone() {
                 // multiplayer.js onLeave: the menu over the held room goes to
-                // the main menu (Free Ride) or Multiplayer, with the reason.
+                // Multiplayer, with the reason.
                 let page = room_page(net.shared());
                 status(&format!("Multiplayer ended: {closed}"));
                 self.held_room = None;
@@ -6584,13 +6684,13 @@ impl App {
         }
     }
 
-    /// The main menu's Free Ride count, at most every 15 s while it shows
+    /// Multiplayer's Free Ride count, at most every 15 s while it shows
     /// (watchFreerideRiders in frontend.js).
     fn poll_riders(&mut self) {
         let Some(front) = &self.front else {
             return;
         };
-        if self.ready.is_some() || front.borrow().state.page != "main" {
+        if self.ready.is_some() || front.borrow().state.page != "multiplayer" {
             return;
         }
         if self
@@ -7458,8 +7558,10 @@ fn publish_trace(text: &str) {
 /// site on desktop.
 /// The frontend page a room's Leave Game or end returns to
 /// (multiplayer.js `shared ? 'main' : 'multiplayer'`).
-fn room_page(shared: bool) -> &'static str {
-    if shared { "main" } else { "multiplayer" }
+/// The menu a room's ride returns to: Multiplayer, where Free Ride, Host
+/// Game and Join Game live (research/MENU_FLOW.md).
+fn room_page(_shared: bool) -> &'static str {
+    "multiplayer"
 }
 
 fn default_relay() -> String {
@@ -7768,6 +7870,7 @@ pub fn run(options: Options) {
         riders_polled: None,
         held_room: None,
         split_request: None,
+        split_link: split_link_param(),
         held_ride: None,
         objective: None,
         training: None,
@@ -8241,6 +8344,36 @@ impl Diagnostics {
 }
 
 /// `?debug=` on the web; `ATV_DEBUG` natively.
+/// `?split2=quad.rider` (web) or `FURY_SPLIT2` (desktop): player 2's own
+/// ATV (1-26) and rider (0 male, 1 female) for a direct split ride.
+fn split_second_param() -> Option<atv_game::ride::Selection> {
+    #[cfg(target_arch = "wasm32")]
+    let value = web_sys::window()
+        .and_then(|w| w.location().search().ok())
+        .and_then(|search| {
+            search.trim_start_matches('?').split('&').find_map(|pair| {
+                let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
+                (key == "split2").then(|| value.to_string())
+            })
+        });
+    #[cfg(not(target_arch = "wasm32"))]
+    let value = std::env::var("FURY_SPLIT2").ok();
+    let (quad, rider) = value?
+        .split_once('.')
+        .and_then(|(q, r)| Some((q.parse().ok()?, r.parse().ok()?)))?;
+    ((1..=26).contains(&quad) && rider <= 1).then_some(atv_game::ride::Selection { quad, rider })
+}
+
+/// `?split=h|v` with `?split2=quad.rider` (web), or FURY_SPLIT and
+/// FURY_SPLIT2 (desktop): a direct split ride (tests, host measurements and
+/// the context-loss resume link).
+fn split_link_param() -> Option<split::Request> {
+    split::Layout::requested(split_param().as_deref()).map(|layout| split::Request {
+        layout,
+        second: split_second_param(),
+    })
+}
+
 /// `?split=h|v` (web) or `FURY_SPLIT` (desktop).
 fn split_param() -> Option<String> {
     #[cfg(target_arch = "wasm32")]
@@ -8303,8 +8436,9 @@ mod tests {
     }
 
     #[test]
-    fn rooms_return_to_the_main_menu_or_multiplayer() {
-        assert_eq!(super::room_page(true), "main");
+    fn rooms_return_to_multiplayer() {
+        // Free Ride sits under Multiplayer with Host and Join Game.
+        assert_eq!(super::room_page(true), "multiplayer");
         assert_eq!(super::room_page(false), "multiplayer");
     }
 
