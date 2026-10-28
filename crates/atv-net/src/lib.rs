@@ -12,13 +12,13 @@ use serde::{Deserialize, Serialize};
 mod codec;
 mod compact;
 mod names;
-pub use compact::{AnimationState, Delta, apply_delta, delta};
+pub use compact::{AnimationState, Delta, STEERING_LIMIT, apply_delta, delta};
 pub use names::{offensive_name, public_name};
 mod smoothing;
 mod transform;
 
 pub use codec::{decode, encode};
-pub use smoothing::{PoseBuffer, SampledPose, SmoothingConfig};
+pub use smoothing::{PoseBuffer, SENDER_JUMP_MS, SampledPose, SmoothingConfig};
 pub use transform::Transform;
 
 pub const VERSION: u8 = 6;

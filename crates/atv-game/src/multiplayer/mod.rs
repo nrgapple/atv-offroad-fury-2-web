@@ -312,11 +312,14 @@ impl Session {
                         })
                 });
                 if allowed && Some(s.peer) != self.peer {
-                    self.buffers
-                        .entry(s.peer)
-                        .or_default()
-                        .push(*s, now_ms)
-                        .map_err(|e| e.to_string())?;
+                    let buffer = self.buffers.entry(s.peer).or_default();
+                    if buffer.push((*s).clone(), now_ms).is_err() {
+                        // One rider's pose history (not the wire packet, which
+                        // decoded and validated) disagrees with this pose:
+                        // restart that rider's timeline rather than the room.
+                        buffer.clear();
+                        buffer.push(*s, now_ms).map_err(|e| e.to_string())?;
+                    }
                 }
             }
             Packet::Leave { peer } => {

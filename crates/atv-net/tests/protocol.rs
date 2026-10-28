@@ -429,18 +429,50 @@ fn user_codes_normalize_but_invalid_characters_do_not_pass() {
     }
 }
 #[test]
-fn sender_clock_jump_and_cross_peer_input_do_not_mutate_buffer() {
+fn cross_peer_input_does_not_mutate_buffer() {
     let mut buffer = PoseBuffer::default();
     buffer.push(snapshot(1, 100, 0.), 100).unwrap();
-    assert_eq!(
-        buffer.push(snapshot(2, 100000, 1.), 150),
-        Err(Error::InvalidValue)
-    );
     let mut wrong = snapshot(2, 150, 1.);
     wrong.peer = 1;
     assert_eq!(buffer.push(wrong, 150), Err(Error::InvalidValue));
     assert_eq!(buffer.len(), 1);
     assert!(buffer.push(snapshot(2, 150, 1.), 150).unwrap());
+}
+#[test]
+fn sender_clock_jump_restarts_the_timeline_instead_of_failing() {
+    // A sender clock far ahead of receipt is a discontinuity, not an error.
+    let mut buffer = PoseBuffer::default();
+    buffer.push(snapshot(1, 100, 0.), 100).unwrap();
+    assert_eq!(buffer.push(snapshot(2, 100_000, 1.), 150), Ok(true));
+    assert_eq!(buffer.len(), 1);
+    assert_eq!(buffer.latest().unwrap().0.sequence, 2);
+    assert!(buffer.push(snapshot(3, 100_050, 2.), 200).unwrap());
+    assert_eq!(buffer.len(), 2);
+}
+#[test]
+fn stale_relay_replay_then_live_pose_keeps_the_session() {
+    // Room race 2 regression: the relay hands a rider who reports Ready each
+    // other rider's last stored pose. That copy was sent while the guest was
+    // paused (5 s cadence) and arrives at the host seconds late; the guest's
+    // next live pose then ran more than SENDER_JUMP_MS ahead of receipt and
+    // the host left the room with "multiplayer packet: InvalidValue".
+    let mut buffer = PoseBuffer::default();
+    for i in 0..10u32 {
+        buffer
+            .push(
+                snapshot(i + 1, 1000 + i * 100, i as f32),
+                50_000 + u64::from(i) * 100,
+            )
+            .unwrap();
+    }
+    // Stale replay: sent at 2000, received at 58_000 (relay stored copy).
+    assert!(buffer.push(snapshot(20, 2_000, 10.), 58_000).unwrap());
+    // Live pose 6.5 s later on the sender's clock, 100 ms later on receipt.
+    assert!(buffer.push(snapshot(21, 8_500, 11.), 58_100).unwrap());
+    assert_eq!(buffer.len(), 1);
+    // Smoothing continues normally afterwards.
+    assert!(buffer.push(snapshot(22, 8_550, 12.), 58_150).unwrap());
+    assert!(buffer.sample(58_400).is_some());
 }
 #[test]
 fn receipt_jitter_does_not_shift_sender_timeline() {

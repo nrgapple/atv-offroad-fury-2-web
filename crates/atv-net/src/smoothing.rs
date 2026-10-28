@@ -8,6 +8,9 @@ const MAX_SAMPLES: usize = 32;
 /// extrapolation bound. `present` and `sample_current` use the configured bound.
 const LEGACY_EXTRAPOLATION_MS: u32 = 100;
 const MAX_EXTRAPOLATION_MS: u32 = 300;
+/// A sender clock running this far ahead of receipt is a discontinuity (a
+/// stale relayed copy or a clock jump), not motion to smooth.
+pub const SENDER_JUMP_MS: u64 = 5000;
 
 // Adaptive playback delay: interval + 2 * jitter + margin, clamped.
 const MIN_DELAY_MS: f64 = 45.;
@@ -228,7 +231,9 @@ impl PoseBuffer {
         self.samples.is_empty()
     }
     /// Returns false for duplicates/out-of-order sequence or sender time. Invalid
-    /// input never mutates the buffer. Receipt time must use a monotonic clock.
+    /// input never mutates the buffer; a sender clock that runs more than
+    /// [`SENDER_JUMP_MS`] ahead of receipt restarts the timeline at the new
+    /// pose. Receipt time must use a monotonic clock.
     pub fn push(&mut self, snapshot: Snapshot, received_ms: u64) -> Result<bool> {
         snapshot.validate()?;
         let mut gap = None;
@@ -249,9 +254,17 @@ impl PoseBuffer {
             if u64::from(delta)
                 > received_ms
                     .saturating_sub(last.received_ms)
-                    .saturating_add(5000)
+                    .saturating_add(SENDER_JUMP_MS)
             {
-                return Err(Error::InvalidValue);
+                // The sender's clock ran ahead of receipt by more than five
+                // seconds: the previous sample was a stale copy (the relay
+                // replays each rider's last stored pose to a rider who reports
+                // Ready, which can be seconds old while that rider was paused
+                // or throttled) or the sender's clock jumped. Neither may end
+                // the session; restart this peer's timeline from the new pose,
+                // as a teleport would.
+                self.clear();
+                return self.push(snapshot, received_ms);
             }
             gap = Some((u64::from(delta), received_ms - last.received_ms));
             last.time_ms + u64::from(delta)
