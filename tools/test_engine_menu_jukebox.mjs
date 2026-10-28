@@ -68,11 +68,16 @@ try {
   await until(page, () => JSON.parse(document.querySelector('#ui-state').textContent).menuMusic.playing === true);
   await until(page, () => JSON.parse(document.querySelector('#ui-state').textContent).soundtrack.musicPaused === true);
   console.log(`  Jukebox: ${title}; back on the menu tune with the song paused`);
+  // Back again closes Options on its main-menu row.
+  await key(page, 'Escape');
+  await until(page, () => !JSON.parse(document.querySelector('#ui-state').textContent).front.menu);
+  s = await read(page);
+  assert.equal(s.front.choices[s.front.selection], 'settings');
   // A ride starts a new song (game.js loadGame builds a new MusicStream).
-  await key(page, 'ArrowUp');
   for (let i = 0; i < 10 && (await read(page)).front.choices[(await read(page)).front.selection] !== 'single'; i++) await key(page, 'ArrowUp');
   await key(page, 'Enter');
   await until(page, () => JSON.parse(document.querySelector('#ui-state').textContent).front.page === 'single');
+  for (let i = 0; i < 10 && (await read(page)).front.choices[(await read(page)).front.selection] !== 'tracks'; i++) await key(page, 'ArrowDown');
   await key(page, 'Enter');
   await until(page, () => JSON.parse(document.querySelector('#ui-state').textContent).front.page === 'tracks');
   await key(page, 'Enter');

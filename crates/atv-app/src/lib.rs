@@ -4149,6 +4149,9 @@ impl ApplicationHandler<Message> for App {
                     Err(error) => status(&format!("Menu music: {error}")),
                 }
                 self.sync_menu_music();
+                // One frame reports it (an idle menu draws none; the main
+                // menu no longer polls the Free Ride count).
+                self.wake();
             }
             Message::JukeboxArt(art) => {
                 if let (Some(overlay), Some(ready)) = (&mut self.overlay, &self.ready) {
