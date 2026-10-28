@@ -31,6 +31,14 @@
       "dataset": "fury_usage"
     }
   ],
+  "d1_databases": [
+    {
+      "binding": "SAVES",
+      "database_name": "fury-saves",
+      "database_id": "d8ee401b-4613-4564-b2b7-309062dee1d2",
+      "migrations_dir": "cloudflare/migrations"
+    }
+  ],
   "durable_objects": {
     "bindings": [
       {
@@ -100,6 +108,38 @@
       "namespace_id": "82401303",
       "simple": {
         "limit": 60,
+        "period": 60
+      }
+    },
+    {
+      "name": "SAVE_READ_LIMIT",
+      "namespace_id": "82401304",
+      "simple": {
+        "limit": 120,
+        "period": 60
+      }
+    },
+    {
+      "name": "SAVE_WRITE_LIMIT",
+      "namespace_id": "82401305",
+      "simple": {
+        "limit": 60,
+        "period": 60
+      }
+    },
+    {
+      "name": "SAVE_CREATE_LIMIT",
+      "namespace_id": "82401306",
+      "simple": {
+        "limit": 10,
+        "period": 60
+      }
+    },
+    {
+      "name": "SAVE_SHARE_LIMIT",
+      "namespace_id": "82401307",
+      "simple": {
+        "limit": 10,
         "period": 60
       }
     }

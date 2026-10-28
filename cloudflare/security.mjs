@@ -127,6 +127,16 @@ export async function multiplayerRequest(request, env) {
   }
 }
 
+// APIs that native apps also call (cloud saves): an Origin header must name a
+// game origin, while requests without one (desktop/Android HTTP clients, curl)
+// pass. Opaque `Origin: null` and cross-site fetch metadata are browsers from
+// elsewhere and are refused.
+export function browserOriginAllowed(request, allowed) {
+  const origin = request.headers.get('Origin');
+  if (origin !== null) return allowed.includes(origin);
+  return request.headers.get('Sec-Fetch-Site') !== 'cross-site';
+}
+
 export function secureResponse(response, request, { webAnalytics = false } = {}) {
   // Reconstructing an upgrade response would discard its accepted WebSocket.
   if (response.status === 101) return response;
