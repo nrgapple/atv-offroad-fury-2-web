@@ -2,6 +2,7 @@
 // and bridges the page shell: anonymous usage events (analytics.js).
 import init from './atv_app.js';
 import { UsageAnalytics, deviceContext } from './analytics.js';
+import { recoverFailedStart, startSucceeded } from './offline.js';
 // window.furyUsage: the Rust engine reports rides through it (lib.rs `usage`).
 // Tests may set window.furyUsageSend before load to receive the events.
 const usage = typeof window.furyUsageSend === 'function'
@@ -36,8 +37,10 @@ addEventListener('error', event => {
   line.classList.add('fatal');
 });
 // A module that will not start closes the boot loader and shows its error
-// on the notice line, as the JavaScript game did for a startup failure.
-init().catch(error => {
+// on the notice line, as the JavaScript game did for a startup failure, after
+// one reload (without the offline worker; offline.js recoverFailedStart).
+init().then(() => startSucceeded(), async error => {
+  if (await recoverFailedStart()) return;
   const text = `Engine failed: ${error?.message ?? error}`;
   document.getElementById('status').textContent = text;
   document.getElementById('loading-screen')?.setAttribute('hidden', '');
