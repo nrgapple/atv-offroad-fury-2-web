@@ -318,6 +318,7 @@ impl RoomRace {
     pub fn host(
         net: &mut crate::multiplayer::Net,
         previous: u32,
+        variant: u8,
         laps: u8,
         seed: u64,
     ) -> Option<(Self, Action)> {
@@ -325,7 +326,7 @@ impl RoomRace {
             return None;
         };
         let now = net.session_now() as f64;
-        let field = Field::new(previous.wrapping_add(1).max(1), 0, laps, &roster, seed, now);
+        let field = Field::new(previous.wrapping_add(1).max(1), variant, laps, &roster, seed, now);
         net.send_game(&field.state());
         let load = settings(&field, me, u64::from(field.serial))?;
         Some((
@@ -344,10 +345,15 @@ impl RoomRace {
     }
 
     /// A guest sees the host's new race: load it when it has a slot for
-    /// this rider (else spectate until the next one).
-    pub fn guest(state: &GameState, me: u8) -> (Self, Option<Action>) {
+    /// this rider and the room's course ships the race (else spectate until
+    /// the next one; an untrusted host cannot make a guest load a course
+    /// that does not exist).
+    pub fn guest(state: &GameState, me: u8, environment: &str) -> (Self, Option<Action>) {
         let field = Field::mirror(state);
-        let load = (state.phase != race_phase::RESULTS)
+        let ships = atv_game::launch::RaceVariant::ALL
+            .get(state.race.variant as usize)
+            .is_some_and(|v| v.exists(environment));
+        let load = (state.phase != race_phase::RESULTS && ships)
             .then(|| settings(&field, me, u64::from(state.serial)))
             .flatten()
             .map(Action::Load);

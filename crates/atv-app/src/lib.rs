@@ -1555,7 +1555,7 @@ impl App {
                 && state.phase != atv_game::multiplayer::race_phase::RESULTS
             {
                 self.room_race_serial = state.serial;
-                let (race, load) = room_race::RoomRace::guest(state, me);
+                let (race, load) = room_race::RoomRace::guest(state, me, &net.environment);
                 self.room_race = Some(race);
                 if let Some(overlay) = &mut self.overlay {
                     overlay.results = Default::default();
@@ -2838,8 +2838,8 @@ impl App {
             }
             // Play Race (room host): every room rider races this course
             // (research/MULTIPLAYER.md "Room races").
-            Event::PlayRace => {
-                self.start_room_race();
+            Event::PlayRace(variant) => {
+                self.start_room_race(variant);
                 self.menu_event(Event::Resume);
             }
             // Play Tag (room host): a Tag game for the room on this course.
@@ -3251,7 +3251,8 @@ impl App {
                     .and_then(|r| r.net.as_ref())
                     .is_some_and(|n| n.is_host())
                 {
-                    self.start_room_race();
+                    let variant = self.room_race.as_ref().map_or(0, |r| r.field.info.variant);
+                    self.start_room_race(variant);
                 }
             }
             overlay::Action::RaceQuit if self.room_race.is_some() => {
@@ -7520,7 +7521,7 @@ impl App {
     /// room (web/multiplayer.js `follow` -> `ride`).
     /// The room host starts a race on the room's course for every rider in
     /// the room, with the Race menu's lap count (`raceLaps=N` for tests).
-    fn start_room_race(&mut self) {
+    fn start_room_race(&mut self, variant: u8) {
         let laps = (1..=5u8)
             .find(|n| url_flag(&format!("raceLaps={n}")))
             .or_else(|| {
@@ -7533,14 +7534,17 @@ impl App {
         let Some(net) = ready.net.as_mut().filter(|n| n.is_host()) else {
             return;
         };
-        if !atv_game::launch::is_race_course(&net.environment) {
+        let exists = atv_game::launch::RaceVariant::ALL
+            .get(variant as usize)
+            .is_some_and(|v| v.exists(&net.environment));
+        if !exists {
             if let Some(menu) = self.overlay.as_mut().and_then(|o| o.menu.as_mut()) {
                 menu.notice = Some("Select a race track first.".into());
             }
             return;
         }
         let Some((race, room_race::Action::Load(settings))) =
-            room_race::RoomRace::host(net, self.room_race_serial, laps, fresh_seed())
+            room_race::RoomRace::host(net, self.room_race_serial, variant, laps, fresh_seed())
         else {
             return;
         };

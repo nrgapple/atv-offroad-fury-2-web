@@ -235,6 +235,32 @@ try {
   await sleep(150);
   assert.equal(host.packets.filter(p => p.Snapshot).length, count);
   check('Validated pose/wreck/audio relayed with sender stamp; stale sequence dropped');
+  // Room races (research/MULTIPLAYER.md "Room races"): race state goes from
+  // the host only to riders that announced race support (serial-0 Progress);
+  // Progress is stamped with the sender's peer and reaches only such riders.
+  for (const ws of [host, guest, guest2]) ws.send(encode({ Ready: { map: 9 } }));
+  const progress = { peer: 3, serial: 0, lap: 0, distance: 0, finish_ms: 0 };
+  host.send(encode({ Progress: progress }));
+  guest.send(encode({ Progress: progress }));
+  await sleep(150);
+  const raceState = {
+    game: 3, serial: 1, phase: 1, timer: 4, clock: 0, scores: [0, 0, 0, 0], banner: 0, banner_time: 0,
+    holder: 255, ball: [0, 0, 0], ball_velocity: [0, 0, 0], ball_yaw: 0,
+    race: { variant: 0, laps: 2, grid: [2, 1, 0, 0] }
+  };
+  const guest2Before = guest2.packets.length;
+  after = guest.packets.length;
+  host.send(encode({ Game: raceState }));
+  const relayedRace = (await wait(guest, p => p.Game, after)).Game;
+  assert.deepEqual(relayedRace.race, raceState.race);
+  after = host.packets.length;
+  guest.send(encode({ Progress: { ...progress, serial: 1, lap: 1, distance: 812.5 } }));
+  const relayedProgress = (await wait(host, p => p.Progress, after)).Progress;
+  assert.equal(relayedProgress.peer, guest.peer, 'relay stamps the sender, not the claimed peer');
+  assert.equal(relayedProgress.lap, 1);
+  await sleep(150);
+  assert.ok(!guest2.packets.slice(guest2Before).some(p => p.Game || p.Progress), 'race-unaware rider gets no race packets');
+  check('Room race state from host and stamped progress reach only race-aware riders');
   after = host.packets.length;
   guest2.send(encode({ SetLobby: { epoch: lastLobby(host).epoch, map: 1, started: false } }));
   assert.equal((await closed(guest2)).code, 1008);
@@ -246,6 +272,13 @@ try {
   guest3.send(Buffer.from('malformed'));
   assert.equal((await closed(guest3)).code, 1008);
   check('Malformed binary packet closes only offender');
+  const badRace = await connect(code, player('Race probe'));
+  badRace.send(encode({ Ready: { map: 9 } }));
+  const badProgress = encode({ Progress: { peer: 0, serial: 1, lap: 1, distance: 0, finish_ms: 0 } });
+  badProgress[13] = 11; // laps beyond the codec bound
+  badRace.send(badProgress);
+  assert.equal((await closed(badRace)).code, 1008);
+  check('Out-of-range race progress closes only offender');
   const rate = await connect(code, player('Rate probe'));
   const ping = encode({ Ping: { nonce: 42 } });
   for (let i = 0; i < 500; i++) rate.send(ping);

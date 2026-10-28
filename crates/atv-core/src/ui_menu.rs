@@ -32,6 +32,16 @@ pub struct ControlRow {
     pub label: String,
     pub value: String,
 }
+/// A room race row's action for a race variant id (`"0"`…`"3"`).
+fn race_actions(id: &str) -> &'static str {
+    match id {
+        "1" => "playrace:1",
+        "2" => "playrace:2",
+        "3" => "playrace:3",
+        _ => "playrace",
+    }
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Request {
@@ -58,6 +68,10 @@ pub struct Request {
     pub lobby_host: bool,
     #[serde(default)]
     pub lobby_started: bool,
+    /// The room course's races the host may start (id = race variant
+    /// index, label = menu row), research/MULTIPLAYER.md "Room races".
+    #[serde(default)]
+    pub lobby_races: Vec<ControlRow>,
     /// Shared Arlington Free Ride room: no invites and no track changes.
     #[serde(default)]
     pub lobby_public: bool,
@@ -1324,8 +1338,11 @@ pub fn layout(request: Request) -> Result<Frame> {
                     choices.insert(4, ("Select Track", "hosttrack"));
                     // Tag on the room's course (research/GAMES.md "Online").
                     choices.insert(5, ("Play Tag", "playtag"));
-                    // Races for the room (research/MULTIPLAYER.md "Room races").
-                    choices.insert(6, ("Play Race", "playrace"));
+                    // Races for the room (research/MULTIPLAYER.md "Room
+                    // races"): one row per race the room's course ships.
+                    for (at, race) in request.lobby_races.iter().enumerate() {
+                        choices.insert(6 + at, (race.label.as_str(), race_actions(&race.id)));
+                    }
                 }
             }
             // Shared Free Ride rooms have no invite: everyone just drops in.
@@ -2191,6 +2208,7 @@ mod tests {
             player_name: String::new(),
             lobby_status: String::new(),
             lobby_players: vec![],
+            lobby_races: vec![],
             lobby_host: false,
             lobby_started: false,
             lobby_public: false,
@@ -2279,6 +2297,15 @@ mod tests {
             let mut input = request("pause", 1280., 720.);
             input.lobby_status = "2/4".into();
             input.lobby_host = host;
+            input.lobby_races = ["Play Race", "Play Enduro Long"]
+                .iter()
+                .enumerate()
+                .map(|(at, label)| ControlRow {
+                    id: at.to_string(),
+                    label: label.to_string(),
+                    value: String::new(),
+                })
+                .collect();
             layout(input).unwrap()
         };
         let guest = online(false);
@@ -2287,6 +2314,10 @@ mod tests {
         assert_eq!(guest.choices.last().unwrap(), "leave");
         let host = online(true);
         assert!(host.choices.contains(&"hosttrack".to_string()));
+        // One row per race the room's course ships (research/MULTIPLAYER.md).
+        assert!(host.choices.contains(&"playrace".to_string()));
+        assert!(host.choices.contains(&"playrace:1".to_string()));
+        assert!(!guest.choices.contains(&"playrace".to_string()));
         let solo = layout(request("pause", 1280., 720.)).unwrap();
         assert!(!solo.choices.contains(&"changeride".to_string()));
         assert_eq!(solo.choices.last().unwrap(), "main");
