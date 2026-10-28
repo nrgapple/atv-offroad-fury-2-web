@@ -100,6 +100,13 @@ pub struct Actors {
     pub triggers: Vec<(toy_actors::AnimationTrigger, Vec<usize>)>,
     /// How many times each trigger fired (diagnostics).
     pub fired: Vec<u32>,
+    /// `UseCollision` actors with a supported `anim\<stem>.col` (type 0):
+    /// actor index, mesh and the body's fixed world transform
+    /// (research/AMBIENT_ACTORS.md, Collision).
+    pub collision: Vec<ActorCollision>,
+    /// `UseCollision` actors whose COL is absent or not yet decoded
+    /// (`[AnimationN]` MCF and reason), e.g. type-1 compounds.
+    pub collision_unresolved: Vec<(String, String)>,
     /// The trigger roll stream (local seed, research/AMBIENT_ACTORS.md).
     random: Option<atv_core::engine_audio::OriginalRandom>,
     /// Scene clock: whole 60 Hz steps.
@@ -107,6 +114,34 @@ pub struct Actors {
     /// Poses of the current step, shared by actors on the same model,
     /// motion and time (`(model, clip, time bits)` → node matrices).
     cache: std::cell::RefCell<Vec<(PoseKey, NodePose)>>,
+}
+
+/// A `UseCollision` actor's original COL body. `0011e1d0` attaches it to the
+/// model's engine root, so its world transform is the placement and never
+/// follows the MOT; `0011e520` registers it in the scene's dynamic list.
+#[derive(Clone)]
+pub struct ActorCollision {
+    pub actor: usize,
+    pub mesh: Rc<atv_core::collision::CollisionMesh>,
+    pub world_matrix: [f32; 16],
+}
+
+impl ActorCollision {
+    /// The dynamic scene body: a placement-fixed transform whose prior and
+    /// current poses agree, so the moving-target velocity is zero.
+    pub fn obstacle(&self) -> atv_core::scene_collision::DynamicObstacle {
+        atv_core::scene_collision::DynamicObstacle {
+            obstacle: atv_core::obstacle::StaticObstacle {
+                mesh: self.mesh.clone(),
+                world_matrix: self.world_matrix,
+            },
+            motion: atv_core::train::MotionState {
+                current: self.world_matrix,
+                previous: self.world_matrix,
+                reciprocal_dt: 60.,
+            },
+        }
+    }
 }
 
 /// Model, motion and motion-time bits of a cached pose.
@@ -289,6 +324,10 @@ pub fn load(
     let mut actors = Actors::default();
     let mut materials = Materials::default();
     let mut mcfs: Vec<(String, Option<Mcf>)> = Vec::new();
+    let mut cols: Vec<(
+        String,
+        std::result::Result<Rc<atv_core::collision::CollisionMesh>, String>,
+    )> = Vec::new();
     for toy in toys {
         for definition in toy_actors::parse(&String::from_utf8_lossy(toy)) {
             if skip(&definition) {
@@ -375,6 +414,43 @@ pub fn load(
                         position: None,
                     },
                 });
+            }
+            if let Some(path) = definition.collision_path() {
+                let mesh = match cols.iter().find(|(p, _)| *p == path) {
+                    Some((_, mesh)) => mesh.clone(),
+                    None => {
+                        let mesh = member_at(archive, &path)
+                            .ok_or_else(|| format!("{path} missing"))
+                            .and_then(|m| archive.extract(m).map_err(|e| e.to_string()))
+                            .and_then(|b| {
+                                atv_core::collision::decode_col(&b).map_err(|e| e.to_string())
+                            })
+                            .and_then(|mesh| {
+                                if mesh.transform
+                                    == [1., 0., 0., 0., 1., 0., 0., 0., 1., 0., 0., 0.]
+                                {
+                                    Ok(Rc::new(mesh))
+                                } else {
+                                    Err(format!("{path}: unsupported COL local transform"))
+                                }
+                            });
+                        cols.push((path, mesh.clone()));
+                        mesh
+                    }
+                };
+                match mesh.and_then(|mesh| {
+                    let world_matrix = definition
+                        .collision_matrix(&mesh.transform)
+                        .map_err(|e| e.to_string())?;
+                    Ok(ActorCollision {
+                        actor: actors.actors.len(),
+                        mesh,
+                        world_matrix,
+                    })
+                }) {
+                    Ok(body) => actors.collision.push(body),
+                    Err(reason) => actors.collision_unresolved.push((label.clone(), reason)),
+                }
             }
             actors.actors.push(Actor {
                 definition,

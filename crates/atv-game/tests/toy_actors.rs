@@ -30,6 +30,8 @@ fn every_venue_route_resolves_its_keyframed_actors() {
         let mut report = Vec::new();
         let (mut total, mut unresolved) = (0, 0);
         let mut sounds = std::collections::BTreeMap::new();
+        let mut bodies = std::collections::BTreeMap::new();
+        let mut missing = std::collections::BTreeMap::new();
         for environment in environments() {
             let mut routes = vec![(false, RaceVariant::National)];
             if is_race_course(&environment) {
@@ -98,6 +100,20 @@ fn every_venue_route_resolves_its_keyframed_actors() {
                     assert!(now.iter().chain(&before).all(|v| v.is_finite()));
                 }
                 unresolved += actors.unresolved.len();
+                // `UseCollision` actors: each body sits at its actor's
+                // placement, finite and within the actor's posed reach.
+                for body in &actors.collision {
+                    assert!(body.world_matrix.iter().all(|v| v.is_finite()));
+                    assert_eq!(body.world_matrix, actors.actors[body.actor].placement);
+                    let mcf = actors.actors[body.actor]
+                        .definition
+                        .mcf
+                        .to_ascii_lowercase();
+                    *bodies.entry(mcf).or_insert(0) += 1;
+                }
+                for (label, reason) in &actors.collision_unresolved {
+                    *missing.entry(format!("{label}: {reason}")).or_insert(0) += 1;
+                }
                 // Every actor poses finitely over its motion and moves.
                 let mut moving = 0;
                 let mut first = Vec::new();
@@ -184,11 +200,24 @@ fn every_venue_route_resolves_its_keyframed_actors() {
                     "environment": environment, "racing": racing,
                     "actors": actors.actors.len(), "moving": moving, "pose_us_per_step": pose_us,
                     "unresolved": actors.unresolved, "kinds": kinds,
+                    "collision": actors.collision.iter()
+                        .map(|b| actors.actors[b.actor].definition.mcf.clone())
+                        .collect::<Vec<_>>(),
+                    "collision_unresolved": actors.collision_unresolved,
                     "models": models, "clips": clips,
                 }));
             }
         }
         println!("total actors {total}, unresolved {unresolved}, loop sounds {sounds:?}");
+        println!("collision bodies {bodies:?}");
+        println!("collision unresolved {missing:#?}");
+        // Every UseCollision record either binds a type-0 body or names a
+        // type-1 compound COL, whose reader is not implemented yet
+        // (research/COLLISION.md).
+        for reason in missing.keys() {
+            assert!(reason.contains("unsupported COL variant"), "{reason}");
+        }
+        assert!(!bodies.is_empty());
         if let Some(path) = std::env::var_os("ATV_ACTORS_REPORT") {
             std::fs::write(path, serde_json::to_string_pretty(&report).unwrap()).unwrap();
         }

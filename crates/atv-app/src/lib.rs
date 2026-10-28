@@ -1069,6 +1069,33 @@ async fn prepare(
             });
         }
         riding.autodrive = autodrive.map(|script| (script.controls(), 0));
+        // `?actorPlace=windmill` (tools/test_engine_actor_collision.mjs): the
+        // quad 40 ft south of that UseCollision actor's body, heading at it.
+        if let Some(actors) = &venue.actors
+            && let Some(m) = ["windmill", "litehous", "bigwindmill", "waterwheel", "snake"]
+                .iter()
+                .find(|name| url_flag(&format!("actorPlace={name}")))
+                .and_then(|name| {
+                    let actors = actors.borrow();
+                    let mcf = format!("{name}.mcf");
+                    actors
+                        .collision
+                        .iter()
+                        .find(|b| {
+                            actors.actors[b.actor]
+                                .definition
+                                .mcf
+                                .eq_ignore_ascii_case(&mcf)
+                        })
+                        .map(|b| b.world_matrix)
+                })
+            && let Err(error) =
+                riding
+                    .ride
+                    .place_beside([m[12], m[13] + 6., m[14] - 40.], 0., [0., 0., 30.])
+        {
+            status(&format!("Unable to place beside the actor: {error}"));
+        }
         // `?presentTrace=1` (tools/test_engine_interpolation.mjs): log the
         // delivered states and sampled presentation of the autodrive run.
         if url_flag("presentTrace=1") {
@@ -2402,7 +2429,23 @@ impl App {
                                 "emitter": [m[12], m[13], m[14]]})
                             })
                             .collect();
+                        // UseCollision bodies and the vehicle's moving-body
+                        // contacts this step (test_engine_actor_collision.mjs).
+                        let collision: Vec<_> = actors
+                            .collision
+                            .iter()
+                            .map(|b| {
+                                let m = b.world_matrix;
+                                serde_json::json!({"actor": b.actor,
+                                "mcf": actors.actors[b.actor].definition.mcf,
+                                "position": [m[12], m[13], m[14]]})
+                            })
+                            .collect();
                         serde_json::json!({"count": actors.actors.len(),
+                        "collision": collision,
+                        "collisionUnresolved": actors.collision_unresolved.len(),
+                        "dynamicContacts": riding.ride.frame().dynamic_contact_count,
+                        "vehicle": riding.ride.frame().origin,
                         "models": actors.models.len(), "clips": actors.clips.len(),
                         "steps": actors.steps(), "visible": visible, "culled": culled,
                         "draws": draws, "list": list, "sounds": sounds,
