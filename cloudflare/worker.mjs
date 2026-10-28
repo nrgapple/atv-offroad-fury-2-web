@@ -1,5 +1,6 @@
 import { multiplayerRequest, secureResponse } from './security.mjs';
 import { usageEvent, webAnalyticsEnabled, withWebAnalytics } from './analytics.mjs';
+import { cloudSaveRequest, isCloudSavePath } from './cloudsave.mjs';
 const BLOB = /^\/content\/[a-f0-9]{64}\.bin$/;
 const IMAGE = /^\/devlog-images\/[a-z0-9-]+\.png$/;
 const APP_ICON = /^\/app-icons\/[a-f0-9]{64}\.png$/;
@@ -75,6 +76,7 @@ async function route(request, env) {
     }
     const allowed = (env.GAME_ORIGINS ?? env.GAME_ORIGIN ?? url.origin).split(',').map(value => value.trim()).filter(Boolean);
     if (path === '/api/events') return usageEvent(request, env, allowed);
+    if (isCloudSavePath(path)) return cloudSaveRequest(request, env, allowed);
     // The public Free Ride rider count: same-origin GETs carry no Origin header.
     if (path === '/multiplayer/freeride/riders') return env.MULTIPLAYER ? multiplayerRequest(request, env) : new Response('Multiplayer unavailable', {status:503});
     if (path.startsWith('/multiplayer/')) {
