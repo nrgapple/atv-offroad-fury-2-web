@@ -8,6 +8,7 @@ pub mod assets;
 pub mod controller;
 pub mod logo;
 pub mod pixels;
+pub mod status_bar;
 
 use crate::{
     color::{Color, Fill, Gradient},
@@ -220,6 +221,11 @@ pub struct Screen {
     pub lobby: Option<controller::Lobby>,
     /// The page's slide-in while it opens (crate::transition).
     pub motion: Option<crate::transition::Motion>,
+    /// The status bar across the top (menu pages; none in rides).
+    pub status: Option<status_bar::StatusBar>,
+    /// With the bar, the notice shows as a toast under it at this opacity
+    /// (0 once it has faded) instead of under the rows.
+    pub toast: Option<f32>,
     /// The Pass Key badge, on the pages that show it.
     pub badge: Option<Badge>,
     /// The Pass Key page's QR code: the link it encodes.
@@ -480,11 +486,52 @@ pub fn layers(view: &Viewport, s: &Screen) -> (El, El) {
     if !m.portrait && !matches!(s.page.as_str(), "title" | "backdrop") {
         back = back.child(panel_shape(&m));
     }
-    let content = page_element(&m, s);
-    let content = match s.motion {
-        Some(motion) => content.opacity(motion.opacity).translate(motion.dx, 0.),
-        None => content,
+    let Some(status) = &s.status else {
+        let content = page_element(&m, s);
+        let content = match s.motion {
+            Some(motion) => content.opacity(motion.opacity).translate(motion.dx, 0.),
+            None => content,
+        };
+        return (back, content);
     };
+    // The bar takes the top (and the top safe area); the page lays out in
+    // the rest, so no row ever sits under it. It stays put while the page
+    // slides; an open popover covers both.
+    let top = status_bar::total_height(&m);
+    let below = Viewport {
+        height: (view.height - top).max(1.),
+        safe: [0., view.safe[1], view.safe[2], view.safe[3]],
+        ..*view
+    };
+    let mut page = page_element(&Metrics::new(&below), s);
+    page.style.inset.top = LengthPercentageAuto::length(top);
+    if let Some(motion) = s.motion {
+        page = page.opacity(motion.opacity).translate(motion.dx, 0.);
+    }
+    let mut content = El::new(Style {
+        position: Position::Absolute,
+        inset: taffy::Rect {
+            left: LengthPercentageAuto::length(0.),
+            top: LengthPercentageAuto::length(0.),
+            right: LengthPercentageAuto::auto(),
+            bottom: LengthPercentageAuto::auto(),
+        },
+        size: Size {
+            width: length(m.w),
+            height: length(m.h),
+        },
+        ..Default::default()
+    })
+    .child(page)
+    .child(status_bar::bar(&m, status, s.hovered));
+    if let (Some(notice), Some(opacity)) = (&s.notice, s.toast)
+        && opacity > 0.
+    {
+        content = content.child(status_bar::toast(&m, notice).opacity(opacity));
+    }
+    if let Some(pop) = &status.open {
+        content = content.child(status_bar::popover(&m, pop, status.anchor));
+    }
     (back, content)
 }
 
@@ -1429,7 +1476,7 @@ fn left(m: &Metrics, s: &Screen) -> El {
                 }
             }
             left = left.child(rows);
-            if let Some(notice) = &s.notice {
+            if let Some(notice) = s.notice.as_ref().filter(|_| s.toast.is_none()) {
                 left = left.child(text(
                     notice.clone(),
                     TextStyle::new(display(15., 700, false), Color::hex("#ffd166")),
@@ -1498,7 +1545,7 @@ fn left(m: &Metrics, s: &Screen) -> El {
                 );
             }
             // `#menu-notice`, e.g. why a ride link could not open.
-            if let Some(notice) = &s.notice {
+            if let Some(notice) = s.notice.as_ref().filter(|_| s.toast.is_none()) {
                 left = left.child(
                     El::new(Style {
                         flex_shrink: 0.,
@@ -1521,7 +1568,7 @@ fn left(m: &Metrics, s: &Screen) -> El {
         "tracks" => {
             left = left.child(tabs(m, s)).child(course_list(m, s));
             // A locked Freestyle course (the profile's unlocks).
-            if let Some(notice) = &s.notice {
+            if let Some(notice) = s.notice.as_ref().filter(|_| s.toast.is_none()) {
                 left = left.child(text(
                     notice.clone(),
                     TextStyle::new(display(15., 700, false), Color::hex("#ffd166")),
@@ -1546,7 +1593,7 @@ fn left(m: &Metrics, s: &Screen) -> El {
                 .child(tabs(m, s))
                 .child(course_list(m, s))
                 .child(settings);
-            if let Some(notice) = &s.notice {
+            if let Some(notice) = s.notice.as_ref().filter(|_| s.toast.is_none()) {
                 left = left.child(text(
                     notice.clone(),
                     TextStyle::new(display(15., 700, false), Color::hex("#ffd166")),
@@ -1607,7 +1654,7 @@ fn left(m: &Metrics, s: &Screen) -> El {
                 }
             }
             left = left.child(rows);
-            if let Some(notice) = &s.notice {
+            if let Some(notice) = s.notice.as_ref().filter(|_| s.toast.is_none()) {
                 left = left.child(text(
                     notice.clone(),
                     TextStyle::new(display(15., 700, false), Color::hex("#ffd166")),
@@ -2335,7 +2382,7 @@ fn garage_left(m: &Metrics, s: &Screen, mut left: El) -> El {
     }
     let mut left = left.child(actions.child(done));
     // A locked vehicle or a locked selection replaced (the profile's unlocks).
-    if let Some(notice) = &s.notice {
+    if let Some(notice) = s.notice.as_ref().filter(|_| s.toast.is_none()) {
         left = left.child(
             El::new(Style {
                 flex_shrink: 0.,
@@ -3278,6 +3325,52 @@ mod tests {
             (typing[0].0.y - form[0].0.y).abs() < 0.5,
             "{typing:?} {form:?}"
         );
+    }
+
+    #[test]
+    fn the_status_bar_sits_above_every_page_target() {
+        use status_bar::{COINS, PROFILE, SAVE, StatusBar, TROPHIES};
+        let mut fonts = Fonts::new();
+        for (w, h, safe) in [
+            (390., 844., [47., 0., 34., 0.]),
+            (844., 390., [0., 47., 21., 47.]),
+            (820., 1180., [24., 0., 20., 0.]),
+            (1280., 800., [0.; 4]),
+        ] {
+            let view = Viewport {
+                width: w,
+                height: h,
+                scale: 2.,
+                safe,
+                ..Default::default()
+            };
+            for page in ["main", "single", "tracks", "garage"] {
+                let mut s = screen(page);
+                s.status = Some(StatusBar {
+                    profile: Some("PLAYER1".into()),
+                    trophies: (3, 14),
+                    ..Default::default()
+                });
+                let (mut list, mut hits) = (DisplayList::default(), Vec::new());
+                layout::render(&element(&view, &s), &mut fonts, w, h, &mut list, &mut hits);
+                let chips: Vec<_> = hits
+                    .iter()
+                    .filter(|(_, id)| [PROFILE, COINS, TROPHIES, SAVE].contains(id))
+                    .collect();
+                assert_eq!(chips.len(), 4, "{page} {w}");
+                for (c, _) in &chips {
+                    assert!(c.y >= safe[0] - 0.5 && c.w >= 44., "{page} {w}: {c:?}");
+                    assert!(c.x >= 0. && c.right() <= w + 0.5, "{page} {w}: {c:?}");
+                    for (r, id) in hits.iter().filter(|(_, id)| !(2460..=2466).contains(id)) {
+                        let apart = c.right() <= r.x
+                            || r.right() <= c.x
+                            || c.bottom() <= r.y
+                            || r.bottom() <= c.y;
+                        assert!(apart, "{page} {w}: chip {c:?} over {id} {r:?}");
+                    }
+                }
+            }
+        }
     }
 
     #[test]
