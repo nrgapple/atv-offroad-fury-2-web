@@ -27,6 +27,10 @@ pub struct Riding {
     pub locked: bool,
     /// Fine terrain patch centre, in terrain cells.
     center: [f32; 2],
+    /// Split screen: player 2's origin this frame, which gets its own fine
+    /// terrain patch (`terrain_mesh::disjoint`), and that patch's centre.
+    pub split_origin: Option<[f32; 3]>,
+    split_center: Option<[f32; 2]>,
     pub steps_last_frame: u32,
     /// The toolbar Camera button (game.js `cameraCycle`).
     pub cycle_requested: bool,
@@ -177,6 +181,8 @@ impl Riding {
             held: false,
             locked: false,
             center: cells(venue, origin),
+            split_origin: None,
+            split_center: None,
             steps_last_frame: 0,
             cycle_requested: false,
             menu_open: false,
@@ -606,6 +612,8 @@ impl Riding {
     ) -> Result<(), String> {
         let origin = self.ride.frame().origin;
         self.center = cells(venue, origin);
+        // Player 2's patch returns on the next presented frame.
+        self.split_center = None;
         scene.rebuild(gpu, venue, Some([origin[0], origin[2]]));
         scene.set_ride(gpu, venue, &self.ride.quad, &self.ride.rider)?;
         scene.set_ride_paint(self.ride.paint());
@@ -743,11 +751,28 @@ impl Riding {
         } = view;
         // buildTerrainMesh again once the rider leaves 48 cells of the patch.
         let at = cells(venue, frame.origin);
+        let far = |at: [f32; 2], center: [f32; 2]| {
+            (at[0] - center[0]).abs() > 48. || (at[1] - center[1]).abs() > 48.
+        };
+        let split_at = self.split_origin.map(|o| cells(venue, o));
+        let split_moved = match (split_at, self.split_center) {
+            (Some(at), Some(center)) => far(at, center),
+            (None, None) => false,
+            _ => true,
+        };
         if let Some(scene) = scene.as_deref_mut()
-            && ((at[0] - self.center[0]).abs() > 48. || (at[1] - self.center[1]).abs() > 48.)
+            && (far(at, self.center) || split_moved)
         {
             self.center = at;
-            scene.recenter_terrain(gpu, venue, [frame.origin[0], frame.origin[2]]);
+            self.split_center = split_at;
+            match self.split_origin {
+                Some(second) => scene.recenter_terrain_many(
+                    gpu,
+                    venue,
+                    &[[frame.origin[0], frame.origin[2]], [second[0], second[2]]],
+                ),
+                None => scene.recenter_terrain(gpu, venue, [frame.origin[0], frame.origin[2]]),
+            }
         }
         let (mut pose, cpu_poses) = match shown {
             Some(shown) => (shown.pose(), shown.cpu_poses()),
