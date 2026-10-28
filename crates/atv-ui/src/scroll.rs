@@ -30,6 +30,9 @@ const MAX_FLING: f32 = 8.;
 /// a finger held still that long before lifting does not fling.
 const VELOCITY_WINDOW: f64 = 100.;
 const HOLD_STILL: f64 = 60.;
+/// Samples kept: a janky frame can leave the window with one sample, so one
+/// older sample (up to this age) still gives the release a velocity.
+const KEEP_SAMPLES: f64 = 250.;
 /// Spring stiffness (critically damped, rad/ms): settles in ~400 ms.
 const SPRING: f32 = 0.013;
 /// Rubber-band resistance (UIScrollView's 0.55).
@@ -247,7 +250,7 @@ impl Scroller {
         }
         let raw = drag.anchor_offset - (y - drag.anchor);
         drag.samples.push((now, raw));
-        drag.samples.retain(|(t, _)| now - t <= VELOCITY_WINDOW);
+        drag.samples.retain(|(t, _)| now - t <= KEEP_SAMPLES);
         self.offset = if raw < 0. {
             -rubber(-raw, viewport)
         } else if raw > max {
@@ -295,11 +298,17 @@ impl Scroller {
         if now - last_t > HOLD_STILL {
             return 0.;
         }
-        let recent: Vec<&(f64, f32)> = samples
+        // The oldest sample in the window, or the one just before it.
+        let inside = samples
             .iter()
-            .filter(|(t, _)| last_t - t <= VELOCITY_WINDOW)
-            .collect();
-        let &(first_t, first) = recent[0];
+            .position(|(t, _)| last_t - t <= VELOCITY_WINDOW)
+            .unwrap_or(samples.len() - 1);
+        let from = if inside + 1 >= samples.len() {
+            inside.saturating_sub(1)
+        } else {
+            inside
+        };
+        let (first_t, first) = samples[from];
         let dt = (last_t - first_t) as f32;
         if dt < 8. {
             return 0.;
@@ -479,6 +488,18 @@ mod tests {
         let end = swipe(&mut s, 700., 690., 0., 2000.);
         s.release(end);
         assert!(!s.active());
+    }
+
+    #[test]
+    fn a_janky_drag_still_flings() {
+        // Moves 120 ms apart (stalled frames): the release still has the
+        // finger's velocity from the previous sample.
+        let mut s = bounded(5000.);
+        s.press(700., 0.);
+        s.drag(600., 120.);
+        s.drag(450., 240.);
+        s.release(250.);
+        assert!(s.active(), "flung");
     }
 
     #[test]

@@ -66,7 +66,10 @@ STARTUP += VARIANTS
 # differ (compact_game_archive), which the engine reads for the game's mode
 # TOY (hills, treasures and starts) over the Freeride ride.
 GAME_VENUES = tuple((f'ENV{i:02}', f'E{i:02}') for i in range(1, 9)) + tuple((f'FREE{i:02}', f'F{i:02}') for i in range(1, 7))
-GAMES = tuple(f'/TRACKS/TRACKSA/{folder}/{stem}_{suffix}.RES' for folder, stem in GAME_VENUES for suffix in ('KH', 'TH'))
+# Tag (TG) archives repeat the Freeride scene byte for byte under the
+# Tag name; their own members are the mode TOY (start), `tagball.psg` with
+# its hulls and texture, and the ball radar icon (about 31-93 KB each).
+GAMES = tuple(f'/TRACKS/TRACKSA/{folder}/{stem}_{suffix}.RES' for folder, stem in GAME_VENUES for suffix in ('KH', 'TH', 'TG'))
 STARTUP += GAMES
 # Original Freestyle objective (OB) archives of the 11 championship courses
 # (research/CHAMPIONSHIPS.md "Freestyle objectives"). Each repeats its
@@ -517,7 +520,7 @@ def compact_game_archive(data, freeride):
         if match and match[0] == size and base.extract(match[1]) == member:
             continue
         selected.append((name, member))
-    if not any(name.lower().endswith(('kh.toy', 'th.toy')) for name, _ in selected):
+    if not any(name.lower().endswith(('kh.toy', 'th.toy', 'tg.toy')) for name, _ in selected):
         raise ValueError('game archive has no mode TOY of its own')
     return pack_resource(selected)
 

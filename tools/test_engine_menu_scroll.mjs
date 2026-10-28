@@ -25,37 +25,44 @@ const settled = page =>
 const hit = (front, id) => front.hits.find(h => h.id === id);
 const centre = h => ({ x: h.x + h.width / 2, y: h.y + h.height / 2 });
 
-/** Touch helpers for one page: down/move/up at CSS points. */
+/** Touch helpers for one page: down/move/up at CSS points ('lift' = a last move and the
+ *  release together, as a finger lifts right after moving). */
 async function toucher(page, engine) {
   const cdp = engine === 'chromium' ? await page.context().newCDPSession(page) : null;
-  return async (phase, at, wait = true) => {
+  const send = async (phase, at) => {
+    await cdp.send('Input.dispatchTouchEvent', {
+      type: { down: 'touchStart', move: 'touchMove', up: 'touchEnd' }[phase],
+      touchPoints: phase === 'up' ? [] : [{ id: 1, x: at.x, y: at.y }]
+    });
+  };
+  return async (phase, at) => {
+    const phases = phase === 'lift' ? ['move', 'up'] : [phase];
     if (cdp) {
-      await cdp.send('Input.dispatchTouchEvent', {
-        type: { down: 'touchStart', move: 'touchMove', up: 'touchEnd' }[phase],
-        touchPoints: phase === 'up' ? [] : [{ id: 1, x: at.x, y: at.y }]
-      });
+      for (const p of phases) await send(p, at);
     } else {
       await page.evaluate(
-        ({ phase, at }) => {
-          const type = { down: 'pointerdown', move: 'pointermove', up: 'pointerup' }[phase];
-          const event = new PointerEvent(type, {
-            pointerId: 7,
-            pointerType: 'touch',
-            isPrimary: true,
-            clientX: at.x,
-            clientY: at.y,
-            button: phase === 'move' ? -1 : 0,
-            buttons: phase === 'up' ? 0 : 1,
-            bubbles: true,
-            cancelable: true
-          });
-          if (phase === 'move') event.getCoalescedEvents = () => [event];
-          document.querySelector('canvas').dispatchEvent(event);
+        ({ phases, at }) => {
+          for (const phase of phases) {
+            const type = { down: 'pointerdown', move: 'pointermove', up: 'pointerup' }[phase];
+            const event = new PointerEvent(type, {
+              pointerId: 7,
+              pointerType: 'touch',
+              isPrimary: true,
+              clientX: at.x,
+              clientY: at.y,
+              button: phase === 'move' ? -1 : 0,
+              buttons: phase === 'up' ? 0 : 1,
+              bubbles: true,
+              cancelable: true
+            });
+            if (phase === 'move') event.getCoalescedEvents = () => [event];
+            document.querySelector('canvas').dispatchEvent(event);
+          }
         },
-        { phase, at }
+        { phases, at }
       );
     }
-    if (wait) await nextFrames(page, 1);
+    await nextFrames(page, 1);
   };
 }
 
@@ -63,13 +70,11 @@ async function toucher(page, engine) {
 async function swipe(touch, page, from, dy, steps, pick) {
   const seen = [];
   await touch('down', from);
-  for (let i = 1; i <= steps; i++) {
-    // A finger lifts right after its last move (no frame in between).
-    const last = i === steps;
-    await touch('move', { x: from.x, y: from.y + (dy * i) / steps }, !last);
-    if (!last) seen.push(pick(await read(page)));
+  for (let i = 1; i < steps; i++) {
+    await touch('move', { x: from.x, y: from.y + (dy * i) / steps });
+    seen.push(pick(await read(page)));
   }
-  await touch('up', { x: from.x, y: from.y + dy });
+  await touch('lift', { x: from.x, y: from.y + dy });
   seen.push(pick(await read(page)));
   return seen;
 }
@@ -125,7 +130,7 @@ for (const engine of ['chromium', 'webkit']) {
     // 2. Momentum: it keeps moving after release, decelerates, then rests.
     const path = await follow(page, ['kinetic', 'list', 0]);
     const rest = path.at(-1).value;
-    assert.ok(rest > released + 60, `momentum after release: ${released} -> ${rest}`);
+    assert.ok(rest > released + 60, `${engine}: momentum after release: ${released} -> ${rest} held ${held} path ${JSON.stringify(path.slice(0, 5))}`);
     assert.ok(path.length > 4 && !path.at(-1).active, 'settles');
     const intervals = path
       .slice(1, -1)
