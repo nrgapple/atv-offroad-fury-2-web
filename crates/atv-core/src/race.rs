@@ -2823,7 +2823,11 @@ mod tests {
         }
         let f = r.frame(0.);
         let cpu = f.standings.iter().find(|s| !s.player).unwrap();
-        assert!(cpu.time.is_some() && !cpu.estimated, "{cpu:?}");
+        assert!(
+            cpu.time.is_some() && !cpu.estimated,
+            "{:?}",
+            (cpu.time, cpu.estimated)
+        );
         // Player 2 finishing ends the race: nothing left to estimate.
         r.waiting = false;
         r.step([0.; 3], 1.);
