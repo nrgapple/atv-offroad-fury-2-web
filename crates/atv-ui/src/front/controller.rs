@@ -594,65 +594,51 @@ impl Frontend {
             .filter(|a| self.web || !matches!(a.as_str(), "devlog" | "downloads"))
             .map(|a| (a.clone(), label(a)))
             .collect();
-        // Main Menu → Profile Editor: the original's fourth row (Single
-        // Player, Multiplayer, Training Course, Profile Editor, Hall of Fame,
-        // Options), here after the ride modes and before Settings.
+        // Main Menu in the original's order (PAGE01: Single Player,
+        // Multiplayer, Training Course, Profile Editor, Hall of Fame,
+        // Options); Training Course when its venue is available.
         if page == "main" {
-            let at = ["freeride", "multiplayer", "single"]
+            let at = self
+                .choices
                 .iter()
-                .find_map(|row| self.choices.iter().position(|(a, _)| a == row))
+                .position(|(a, _)| a == "multiplayer")
                 .map_or(0, |i| i + 1);
-            self.choices
-                .insert(at, ("profile".into(), "Profile Editor".into()));
-            // The original's fifth row.
-            self.choices
-                .insert(at + 1, ("halloffame".into(), "Hall of Fame".into()));
-            // Training Course, the original's third row, before the
-            // Profile Editor when its venue is available.
+            let mut rows = vec![
+                ("profile", "Profile Editor"),
+                ("halloffame", "Hall of Fame"),
+            ];
             if self.tracks.iter().any(|t| t.id == "training") {
-                self.choices
-                    .insert(at, ("training".into(), "Training Course".into()));
+                rows.insert(0, ("training", "Training Course"));
+            }
+            for (i, (action, label)) in rows.into_iter().enumerate() {
+                self.choices.insert(at + i, (action.into(), label.into()));
             }
         }
-        // Single Player → Championship, after Race.
-        if page == "single" && !self.race_courses.is_empty() {
+        // Single Player in the original's order (PAGE02: Race, Freestyle,
+        // Championships) with the port's rows between Freestyle and the
+        // Garage: Freestyle Objectives (the original's Freestyle Prep
+        // Objectives event, `26a720`, `26d010`) after Freestyle, and Games
+        // (the original's live under Multiplayer → Split Screen) after
+        // Championships.
+        if page == "single" {
+            let mut rows = Vec::new();
+            if !self.objective_courses.is_empty() {
+                rows.push(("objective-courses", "Freestyle Objectives"));
+            }
+            if !self.race_courses.is_empty() {
+                rows.push(("championship", "Championships"));
+            }
+            if self.store.courses.iter().any(|l| l.kind == 12) {
+                rows.push(("games", "Games"));
+            }
             let at = self
                 .choices
                 .iter()
-                .position(|(a, _)| a == "race")
-                .map_or(self.choices.len(), |i| i + 1);
-            self.choices
-                .insert(at, ("championship".into(), "Championship".into()));
-        }
-        // Single Player → Freestyle Objectives, after Freestyle: the
-        // original's Freestyle Prep Objectives event (`26a720`, `26d010`).
-        if page == "single" && !self.objective_courses.is_empty() {
-            let at = self
-                .choices
-                .iter()
-                .position(|(a, _)| a == "tracks")
-                .map_or(0, |i| i + 1);
-            self.choices.insert(
-                at,
-                ("objective-courses".into(), "Freestyle Objectives".into()),
-            );
-        }
-        // Single Player → Games, after Championship: the original's Games
-        // live under Multiplayer → Split Screen, which the port lacks.
-        if page == "single" && self.store.courses.iter().any(|l| l.kind == 12) {
-            let at = self
-                .choices
-                .iter()
-                .position(|(a, _)| a == "championship" || a == "race")
-                .map_or(self.choices.len(), |i| {
-                    i + 1
-                        + usize::from(
-                            self.choices
-                                .get(i + 1)
-                                .is_some_and(|(a, _)| a == "championship"),
-                        )
-                });
-            self.choices.insert(at, ("games".into(), "Games".into()));
+                .position(|(a, _)| a == "garage")
+                .unwrap_or(self.choices.len());
+            for (i, (action, label)) in rows.into_iter().enumerate() {
+                self.choices.insert(at + i, (action.into(), label.into()));
+            }
         }
         self.selection = self.selection.min(self.choices.len().saturating_sub(1));
     }
@@ -2686,9 +2672,15 @@ mod tests {
         );
         let mut front = Frontend::new(tracks(), &settings, true);
         front.key("Enter", &view, &mut settings);
-        assert_eq!(front.choices()[2].0, "freeride");
+        // Main Menu → Multiplayer → Arlington Free Ride (the original's
+        // Online row, last).
         front.key("ArrowDown", &view, &mut settings);
-        front.key("ArrowDown", &view, &mut settings);
+        front.key("Enter", &view, &mut settings);
+        assert_eq!(front.page, "multiplayer");
+        assert_eq!(front.choices()[3].0, "freeride");
+        for _ in 0..3 {
+            front.key("ArrowDown", &view, &mut settings);
+        }
         assert_eq!(
             front.key("Enter", &view, &mut settings),
             Some(Event::FreeRide {
@@ -3088,7 +3080,7 @@ mod tests {
             &view,
         );
         let choices: Vec<_> = front.choices().iter().map(|(a, _)| a.as_str()).collect();
-        assert_eq!(&choices[..4], ["tracks", "race", "championship", "garage"]);
+        assert_eq!(&choices[..4], ["race", "tracks", "championship", "garage"]);
         front.selection = 2;
         front.key("Enter", &view, &mut settings);
         assert_eq!(front.page, "championship");

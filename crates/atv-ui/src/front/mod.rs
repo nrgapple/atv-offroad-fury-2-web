@@ -694,7 +694,7 @@ fn page_title(page: &str) -> &'static str {
         "profile-slots" | "profile-confirm" => "Profile Editor",
         "gear" => "Rider Gear",
         "loading" => "Now Loading...",
-        "settings" => "Settings",
+        "settings" => "Options",
         _ => "",
     }
 }

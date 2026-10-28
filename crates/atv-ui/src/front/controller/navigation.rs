@@ -354,6 +354,41 @@ mod tests {
     }
 
     #[test]
+    fn menus_follow_the_original_order() {
+        let (mut front, view, _) = front();
+        let rows = |front: &Frontend| -> Vec<String> {
+            front.choices().iter().map(|(a, _)| a.clone()).collect()
+        };
+        // PAGE01 Main (the test tracks have no Training venue), then the
+        // port's Dev log.
+        front.show("main", &view);
+        assert_eq!(
+            rows(&front),
+            [
+                "single",
+                "multiplayer",
+                "profile",
+                "halloffame",
+                "settings",
+                "devlog"
+            ]
+        );
+        assert_eq!(front.choices()[4].1, "Options");
+        // PAGE02 Single Player: Race, Freestyle, Championships, then the
+        // port's Garage.
+        front.show("single", &view);
+        assert_eq!(rows(&front), ["race", "tracks", "championship", "garage"]);
+        assert_eq!(front.choices()[2].1, "Championships");
+        // PAGE03 Multiplayer: Split Screen, the hosted games, and Free Ride
+        // where the original's Online row was.
+        front.show("multiplayer", &view);
+        assert_eq!(
+            rows(&front),
+            ["split", "create-lobby", "join-lobby", "freeride"]
+        );
+    }
+
+    #[test]
     fn the_history_is_bounded() {
         let (mut front, view, _) = front();
         for i in 0..40 {

@@ -79,7 +79,7 @@ impl Rows {
 /// Panel title per page (frontend.js `rebuildPausePanel`).
 pub fn title(page: &str) -> &'static str {
     match page {
-        "settings" => "Settings",
+        "settings" => "Options",
         "extras" => "Extras",
         "game-settings" => "Game Settings",
         "ecosystem-warning" => "Warning",

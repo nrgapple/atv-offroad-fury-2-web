@@ -107,6 +107,10 @@ pub struct Request {
     /// browser has no audio session API, which hides the row.
     #[serde(default)]
     pub silent_mode: String,
+    /// Options opened from the main menu lists the Jukebox first (the
+    /// original Options page); Pause has its own Jukebox row.
+    #[serde(default)]
+    pub options_jukebox: bool,
     #[serde(default)]
     pub menu_logo: bool,
     #[serde(default)]
@@ -590,7 +594,7 @@ pub fn layout(request: Request) -> Result<Frame> {
         "tracks" => "Freestyle",
         "race" => "Single Race",
         "pause" => "Pause",
-        "settings" => "Settings",
+        "settings" => "Options",
         "extras" => "Extras",
         "game-settings" => "Game Settings",
         "ecosystem-warning" => "Warning",
@@ -689,67 +693,48 @@ pub fn layout(request: Request) -> Result<Frame> {
             );
         }
         "main" | "single" => {
-            let (label, action, detail) = if request.page == "main" {
-                ("Single Player", "single", "Ride the original environments.")
-            } else {
-                (
-                    "Freestyle",
-                    "tracks",
-                    "Choose an environment and free ride.",
-                )
-            };
-            f.choices.push(action.to_string());
+            // The original's order (PAGE01 Main, PAGE02 SinglePlayer,
+            // research/MENU_FLOW.md); the frontend adds the rows that need
+            // its state (Training Course, Profile Editor, Hall of Fame,
+            // Freestyle Objectives, Championships, Games).
             let main = request.page == "main";
-            f.button(
-                label,
-                action,
-                [20., 102., list_w, 58.],
-                request.selection == 0,
-            );
-            // Ride modes come first; the Garage (ride setup) follows them.
-            let items: &[(&str, &str)] = if main {
+            let rows: &[(&str, &str)] = if main {
                 &[
+                    ("Single Player", "single"),
                     ("Multiplayer", "multiplayer"),
-                    ("Arlington Free Ride", "freeride"),
-                    ("Settings", "settings"),
-                    ("Jukebox", "jukebox"),
+                    ("Options", "settings"),
                     ("Dev log", "devlog"),
                 ]
             } else if request.race_available {
-                &[("Race", "race"), ("Garage", "garage")]
+                &[
+                    ("Race", "race"),
+                    ("Freestyle", "tracks"),
+                    ("Garage", "garage"),
+                ]
             } else {
-                &[("Garage", "garage")]
+                &[("Freestyle", "tracks"), ("Garage", "garage")]
             };
             // Six main rows fit the 448-unit landscape height at 50 units.
             let row = if main && !portrait { 50. } else { 58. };
-            for (i, (label, action)) in items.iter().enumerate() {
+            for (i, (label, action)) in rows.iter().enumerate() {
                 f.choices.push((*action).into());
                 f.button(
                     label,
                     action,
-                    [20., 102. + row + i as f32 * row, list_w, row],
-                    request.selection == i + 1,
+                    [20., 102. + i as f32 * row, list_w, row],
+                    request.selection == i,
                 );
             }
-            let detail_y = if main {
-                104. + row * 6.
-            } else if request.race_available {
-                292.
-            } else {
-                236.
-            };
-            let detail = if !main && request.race_available && request.selection == 1 {
-                "Race CPU riders on 32 original National and Supercross courses."
-            } else if main && request.selection == 2 {
-                "Drop straight into Arlington Stream with up to 20 riders online."
-            } else if main && request.selection == 3 {
-                "Controls, display, audio and extras."
-            } else if main && request.selection == 4 {
-                "Play the original soundtrack."
-            } else if main && request.selection == 5 {
-                "Progress, screenshots and what is next."
-            } else {
-                detail
+            let selected = rows.get(request.selection).map_or("", |r| r.1);
+            let detail_y = 104. + row * rows.len() as f32;
+            let detail = match selected {
+                "race" => "Race CPU riders on 32 original National and Supercross courses.",
+                "tracks" => "Choose an environment and free ride.",
+                "garage" => "Choose your ATV and rider.",
+                "multiplayer" => "Split screen, hosted rooms and Arlington Free Ride.",
+                "settings" => "Jukebox, game settings, controls, display and audio.",
+                "devlog" => "Progress, screenshots and what is next.",
+                _ => "Ride the original environments.",
             };
             f.text(
                 detail,
@@ -1001,10 +986,13 @@ pub fn layout(request: Request) -> Result<Frame> {
         "multiplayer" => {
             // The original Multiplayer page leads with Split Screen (one
             // console, PAGE17 ControllerSelect), then the network games.
+            // Arlington Free Ride (the port's open online room) stands
+            // where the original's Online row was, last.
             for (i, (label, action)) in [
                 ("Split Screen", "split"),
                 ("Host Game", "create-lobby"),
                 ("Join Game", "join-lobby"),
+                ("Arlington Free Ride", "freeride"),
             ]
             .iter()
             .enumerate()
@@ -1311,7 +1299,7 @@ pub fn layout(request: Request) -> Result<Frame> {
                     },
                     "reset",
                 ),
-                ("Settings", "settings"),
+                ("Options", "settings"),
                 ("Jukebox", "jukebox"),
             ];
             let online = !request.lobby_status.is_empty();
@@ -1410,6 +1398,18 @@ pub fn layout(request: Request) -> Result<Frame> {
             };
             let graphics_label = graphics_label(&request);
             let mut choices = match request.page.as_str() {
+                // The original Options page (PAGE13): Jukebox, Game
+                // Settings, Controller Settings (here Controls), then the
+                // port's own pages.
+                "settings" if request.options_jukebox => vec![
+                    ("Jukebox", "jukebox"),
+                    ("Game Settings", "game-settings"),
+                    ("Controls", "controls"),
+                    ("Display", "hud-settings"),
+                    ("Audio", "music"),
+                    ("Extras", "extras"),
+                    ("Alpha (experimental)", "alpha"),
+                ],
                 "settings" => vec![
                     ("Game Settings", "game-settings"),
                     ("Controls", "controls"),
@@ -2173,10 +2173,15 @@ mod tests {
                 .iter()
                 .any(|h| h.label == "Play")
         );
-        for page in ["pause", "main"] {
-            let menu = layout(request(page, 390., 844.)).unwrap();
-            assert!(menu.choices.iter().any(|c| c == "jukebox"), "{page}");
-        }
+        // Pause lists it; from the main menu it leads Options (the
+        // original Options page), and Options over a ride leaves it out.
+        let mut options = request("settings", 390., 844.);
+        options.options_jukebox = true;
+        assert_eq!(layout(options).unwrap().choices[0], "jukebox");
+        let menu = layout(request("pause", 390., 844.)).unwrap();
+        assert!(menu.choices.iter().any(|c| c == "jukebox"));
+        let ride = layout(request("settings", 390., 844.)).unwrap();
+        assert!(ride.choices.iter().all(|c| c != "jukebox"));
     }
     fn request(page: &str, w: f32, h: f32) -> Request {
         Request {
@@ -2213,6 +2218,7 @@ mod tests {
             sfx_volume: 100,
             sound_mode: String::new(),
             silent_mode: String::new(),
+            options_jukebox: false,
             menu_logo: true,
             menu_atv: true,
             diagnostics_mode: String::new(),
@@ -2260,7 +2266,10 @@ mod tests {
     fn multiplayer_intent_and_forms_are_separate() {
         let menu = layout(request("multiplayer", 390., 844.)).unwrap();
         assert!(menu.inputs.is_empty());
-        assert_eq!(menu.choices, ["split", "create-lobby", "join-lobby"]);
+        assert_eq!(
+            menu.choices,
+            ["split", "create-lobby", "join-lobby", "freeride"]
+        );
         assert_eq!(menu.hits[0].label, "Split Screen");
         assert_eq!(menu.hits[1].label, "Host Game");
         let create = layout(request("create-lobby", 390., 844.)).unwrap();
@@ -2401,14 +2410,7 @@ mod tests {
     fn supported_routes_have_no_unfinished_choices() {
         assert_eq!(
             layout(request("main", 1280., 720.)).unwrap().choices,
-            [
-                "single",
-                "multiplayer",
-                "freeride",
-                "settings",
-                "jukebox",
-                "devlog"
-            ]
+            ["single", "multiplayer", "settings", "devlog"]
         );
         assert_eq!(
             layout(request("single", 1280., 720.)).unwrap().choices,
@@ -2459,7 +2461,7 @@ mod tests {
     fn race_availability_setup_and_restart_match_the_live_mode() {
         let mut r = request("single", 390., 844.);
         r.race_available = true;
-        assert_eq!(layout(r).unwrap().choices, ["tracks", "race", "garage"]);
+        assert_eq!(layout(r).unwrap().choices, ["race", "tracks", "garage"]);
         let f = layout(request("race", 844., 390.)).unwrap();
         assert_eq!(
             f.choices,

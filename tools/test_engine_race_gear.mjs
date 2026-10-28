@@ -38,9 +38,9 @@ try {
   await key(page, 'Enter'); await onPage(page, 'main');
   await key(page, 'Enter'); await onPage(page, 'single');
   let f = await front(page);
-  assert.deepEqual(f.choices, ['tracks', 'objective-courses', 'race', 'championship', 'games', 'garage']);
+  assert.deepEqual(f.choices, ['race', 'tracks', 'objective-courses', 'championship', 'games', 'garage']);
   assert.ok(f.race.courses >= 30, `race courses ${f.race.courses}`);
-  await key(page, 'ArrowDown'); await key(page, 'ArrowDown'); await key(page, 'Enter'); await onPage(page, 'race');
+  await key(page, 'Enter'); await onPage(page, 'race');
   f = await front(page);
   assert.deepEqual(f.choices.filter(c => c !== 'back'), ['racetrack', 'racelaps', 'racecpu', 'racedifficulty', 'racestart', 'copyride']);
   assert.deepEqual([f.race.course, f.race.laps, f.race.cpu, f.race.difficulty], ['env01', 3, 3, 1]);
