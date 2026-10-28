@@ -967,7 +967,9 @@ mod tests {
         front.show("main", &view);
         let main: Vec<&str> = front.choices().iter().map(|(a, _)| a.as_str()).collect();
         let at = main.iter().position(|a| *a == "profile").unwrap();
-        assert_eq!(main[at - 1], "freeride");
+        // The original's order: Multiplayer, (Training Course,) Profile
+        // Editor, Hall of Fame, Options.
+        assert_eq!(main[at - 1], "multiplayer");
         assert_eq!(main[at + 1], "halloffame");
         assert_eq!(main[at + 2], "settings");
         front.run("profile", &view, &mut settings);

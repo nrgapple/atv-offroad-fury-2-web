@@ -2974,8 +2974,8 @@ impl App {
                     page = room_page(net.shared());
                     net.leave();
                 }
-                // multiplayer.js `leave`: a shared Free Ride room returns to
-                // the main menu, a private room to the Multiplayer page.
+                // Leaving a room returns to the Multiplayer page, where Free
+                // Ride, Host Game and Join Game start (MENU_FLOW.md).
                 if self.quit_to(Some(page)) {
                     return;
                 }
@@ -4321,6 +4321,9 @@ impl ApplicationHandler<Message> for App {
                     Err(error) => status(&format!("Menu music: {error}")),
                 }
                 self.sync_menu_music();
+                // One frame reports it (an idle menu draws none; the main
+                // menu no longer polls the Free Ride count).
+                self.wake();
             }
             Message::JukeboxArt(art) => {
                 if let (Some(overlay), Some(ready)) = (&mut self.overlay, &self.ready) {
@@ -4984,12 +4987,12 @@ impl App {
         if self.presence_due() {
             at(now + std::time::Duration::from_secs(1));
         }
-        // The main menu refreshes its Free Ride count every 15 s.
+        // Multiplayer refreshes its Free Ride count every 15 s.
         if self.ready.is_none()
             && self
                 .front
                 .as_ref()
-                .is_some_and(|f| f.borrow().state.page == "main")
+                .is_some_and(|f| f.borrow().state.page == "multiplayer")
             && let Some(polled) = self.riders_polled
         {
             at(polled + std::time::Duration::from_secs(15));
@@ -6412,7 +6415,7 @@ impl App {
                         .as_deref()
                         .is_some_and(atv_game::multiplayer::is_shared_room) =>
             {
-                "main"
+                "multiplayer"
             }
             (Some(_), _) => "multiplayer",
             (None, Some(net)) => room_page(net.shared()),
@@ -6636,7 +6639,7 @@ impl App {
             }
             if let Some(closed) = net.closed.clone() {
                 // multiplayer.js onLeave: the menu over the held room goes to
-                // the main menu (Free Ride) or Multiplayer, with the reason.
+                // Multiplayer, with the reason.
                 let page = room_page(net.shared());
                 status(&format!("Multiplayer ended: {closed}"));
                 self.held_room = None;
@@ -6681,13 +6684,13 @@ impl App {
         }
     }
 
-    /// The main menu's Free Ride count, at most every 15 s while it shows
+    /// Multiplayer's Free Ride count, at most every 15 s while it shows
     /// (watchFreerideRiders in frontend.js).
     fn poll_riders(&mut self) {
         let Some(front) = &self.front else {
             return;
         };
-        if self.ready.is_some() || front.borrow().state.page != "main" {
+        if self.ready.is_some() || front.borrow().state.page != "multiplayer" {
             return;
         }
         if self
@@ -7555,8 +7558,10 @@ fn publish_trace(text: &str) {
 /// site on desktop.
 /// The frontend page a room's Leave Game or end returns to
 /// (multiplayer.js `shared ? 'main' : 'multiplayer'`).
-fn room_page(shared: bool) -> &'static str {
-    if shared { "main" } else { "multiplayer" }
+/// The menu a room's ride returns to: Multiplayer, where Free Ride, Host
+/// Game and Join Game live (research/MENU_FLOW.md).
+fn room_page(_shared: bool) -> &'static str {
+    "multiplayer"
 }
 
 fn default_relay() -> String {
@@ -8431,8 +8436,9 @@ mod tests {
     }
 
     #[test]
-    fn rooms_return_to_the_main_menu_or_multiplayer() {
-        assert_eq!(super::room_page(true), "main");
+    fn rooms_return_to_multiplayer() {
+        // Free Ride sits under Multiplayer with Host and Join Game.
+        assert_eq!(super::room_page(true), "multiplayer");
         assert_eq!(super::room_page(false), "multiplayer");
     }
 

@@ -1,4 +1,5 @@
-// Main menu → Jukebox in the Rust engine (frontend.js jukeboxReturn 'main',
+// Main menu → Options → Jukebox in the Rust engine (the original Options page
+// leads with it; frontend.js jukeboxReturn,
 // audio.js setMusicPreview): the soundtrack list over the frontend, a chosen
 // song playing in place of the menu tune with the spectrum and PAGE14 art,
 // Back returning to the menu tune with the song paused in place, and the next
@@ -35,9 +36,13 @@ try {
   await until(page, () => JSON.parse(document.querySelector('#ui-state').textContent).front.page === 'main');
   await until(page, () => JSON.parse(document.querySelector('#ui-state').textContent).menuMusic?.playing === true);
   let s = await read(page);
-  assert.ok(s.front.choices.includes('jukebox'), s.front.choices.join());
-  // Open the Jukebox from its main-menu row.
-  for (let i = 0; i < 10 && (await read(page)).front.choices[(await read(page)).front.selection] !== 'jukebox'; i++) await key(page, 'ArrowDown');
+  // Open the Jukebox from Options, as the original's Options page (PAGE13) leads with it.
+  assert.ok(!s.front.choices.includes('jukebox'), s.front.choices.join());
+  for (let i = 0; i < 10 && (await read(page)).front.choices[(await read(page)).front.selection] !== 'settings'; i++) await key(page, 'ArrowDown');
+  await key(page, 'Enter');
+  await until(page, () => JSON.parse(document.querySelector('#ui-state').textContent).front.menu?.page === 'settings');
+  s = await read(page);
+  assert.equal(s.front.menu.choices[0], 'jukebox', s.front.menu.choices.join());
   await key(page, 'Enter');
   await until(page, () => JSON.parse(document.querySelector('#ui-state').textContent).front.menu?.page === 'jukebox');
   await until(page, () => JSON.parse(document.querySelector('#ui-state').textContent).front.menu.music?.songs === 21);
@@ -55,17 +60,24 @@ try {
   const title = (await read(page)).soundtrack.musicTitle;
   const saved = await page.evaluate(() => JSON.parse(localStorage.getItem('atv-soundtrack-v1')));
   assert.ok(saved.history.length >= 1, 'the play history is saved');
-  // Back: the menu tune returns and the song pauses in place.
+  // Back to Options on its Jukebox row: the menu tune returns and the song pauses in place.
   await key(page, 'Escape');
-  await until(page, () => !JSON.parse(document.querySelector('#ui-state').textContent).front.menu);
+  await until(page, () => JSON.parse(document.querySelector('#ui-state').textContent).front.menu?.page === 'settings');
+  s = await read(page);
+  assert.equal(s.front.menu.choices[s.front.menu.selection], 'jukebox');
   await until(page, () => JSON.parse(document.querySelector('#ui-state').textContent).menuMusic.playing === true);
   await until(page, () => JSON.parse(document.querySelector('#ui-state').textContent).soundtrack.musicPaused === true);
   console.log(`  Jukebox: ${title}; back on the menu tune with the song paused`);
+  // Back again closes Options on its main-menu row.
+  await key(page, 'Escape');
+  await until(page, () => !JSON.parse(document.querySelector('#ui-state').textContent).front.menu);
+  s = await read(page);
+  assert.equal(s.front.choices[s.front.selection], 'settings');
   // A ride starts a new song (game.js loadGame builds a new MusicStream).
-  await key(page, 'ArrowUp');
   for (let i = 0; i < 10 && (await read(page)).front.choices[(await read(page)).front.selection] !== 'single'; i++) await key(page, 'ArrowUp');
   await key(page, 'Enter');
   await until(page, () => JSON.parse(document.querySelector('#ui-state').textContent).front.page === 'single');
+  for (let i = 0; i < 10 && (await read(page)).front.choices[(await read(page)).front.selection] !== 'tracks'; i++) await key(page, 'ArrowDown');
   await key(page, 'Enter');
   await until(page, () => JSON.parse(document.querySelector('#ui-state').textContent).front.page === 'tracks');
   await key(page, 'Enter');

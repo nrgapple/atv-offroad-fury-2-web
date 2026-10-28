@@ -622,7 +622,8 @@ The bars repaint each frame on top of the cached panel layout. Evidence:
 `private/reports/rust-ui/jukebox-bars/{rust-web,javascript}-1280.png` (same art box
 and bar geometry; levels differ with the song position).
 
-The main menu's Jukebox row opens the same page over the frontend. The page's one
+Main Menu → Options → Jukebox (the original Options page's first row,
+[MENU_FLOW.md](MENU_FLOW.md)) opens the same page over the frontend. The page's one
 soundtrack player (`atv-app/src/soundtrack.rs`, audio.js `this.music`) serves both
 the menus and rides. A chosen song replaces the menu tune; Back pauses it in place
 (music.js `pauseQueue`); each ride load then starts a new random song, never the one just
