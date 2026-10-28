@@ -54,6 +54,10 @@ pub struct Settings {
     pub championship: Option<(usize, bool)>,
     /// Which of the venue's races (National, Enduro long/short, Short Track).
     pub course: crate::launch::RaceVariant,
+    /// A room race (research/MULTIPLAYER.md "Room races"): this rider's
+    /// start slot and the human grid size. The race holds on the grid until
+    /// the room host's GO ([`Ride::room_go`]).
+    pub room: Option<(u32, usize)>,
 }
 
 impl Default for Settings {
@@ -68,8 +72,35 @@ impl Default for Settings {
             intro: true,
             championship: None,
             course: Default::default(),
+            room: None,
         }
     }
+}
+
+/// Room standings in race order replace the solo race's (its only racer
+/// is the player).
+fn room_standings(frame: &mut Frame, rows: &[RoomRow]) {
+    let mine = frame.standings.iter().find(|s| s.player);
+    let (best, stunt) = mine.map_or((None, 0.), |s| (s.best, s.stunt));
+    frame.field = rows.len().max(1);
+    if let Some(at) = rows.iter().position(|r| r.player) {
+        frame.position = at + 1;
+    }
+    frame.standings = rows
+        .iter()
+        .enumerate()
+        .map(|(at, r)| atv_core::race::Standing {
+            name: r.name.clone(),
+            position: at + 1,
+            laps: r.laps,
+            time: r.time,
+            best: if r.player { best } else { None },
+            estimated: false,
+            progress: r.progress,
+            stunt: if r.player { stunt } else { 0. },
+            player: r.player,
+        })
+        .collect();
 }
 
 /// A stadium camera-flash burst (`0020ee10` targets of `[CameraFlash]`).
@@ -219,6 +250,20 @@ pub struct RaceState {
     /// The Hall of Fame and personal records as the event started; a
     /// restart keeps them for its fresh race.
     records_start: Option<atv_core::hall_of_fame::RecordWatch>,
+    /// A room race's standings across every room rider, set by the room
+    /// each frame; they replace the frame's position, field and standings.
+    pub room: Option<Vec<RoomRow>>,
+}
+
+/// One room-race rider's standing (research/MULTIPLAYER.md "Room races").
+#[derive(Clone, Debug, PartialEq)]
+pub struct RoomRow {
+    pub name: String,
+    pub laps: u32,
+    /// Finish time (s).
+    pub time: Option<f32>,
+    pub progress: f32,
+    pub player: bool,
 }
 
 impl RaceState {
@@ -408,9 +453,15 @@ impl Ride {
                 None,
             );
         }
+        // A room race takes its own slot on the shared grid and holds there
+        // for the host's countdown (authored, research/MULTIPLAYER.md).
+        if let Some((slot, riders)) = settings.room {
+            race.set_player_grid(slot, riders)?;
+            race.begin_intro();
+        }
         // Race load plays the pre-race camera (00210980 SetCamera(5)).
         let mut intro_camera = None;
-        if intro && !setup.shots.is_empty() {
+        if intro && settings.room.is_none() && !setup.shots.is_empty() {
             intro_camera = Some(Intro::new(setup.shots.clone()));
             race.begin_intro();
         }
@@ -461,6 +512,7 @@ impl Ride {
             rest: Some(rest),
             events: StepEvents::default(),
             records_start: None,
+            room: None,
         });
         Ok(())
     }
@@ -1009,6 +1061,12 @@ impl Ride {
                 .hud
                 .say(message, atv_core::hall_of_fame::MESSAGE_SECONDS);
         }
+        // Room standings first: the HUD's place and finish sign use them.
+        if let Some(rows) = &state.room
+            && state.settings.room.is_some()
+        {
+            room_standings(&mut frame, rows);
+        }
         frame.hud = Some(state.hud.step(
             STEP,
             &race_hud::Input {
@@ -1132,6 +1190,18 @@ impl Ride {
     }
 
     /// Skip the pre-race camera on any button (00212d40).
+    /// A room race: start the countdown with `remaining` seconds to GO
+    /// (the host's clock less half the relay round trip). Idempotent.
+    pub fn room_go(&mut self, remaining: f32) {
+        if let Some(state) = &mut self.race
+            && state.settings.room.is_some()
+            && state.race.in_intro()
+        {
+            state.race.start_countdown();
+            state.race.countdown = remaining.clamp(0., atv_core::race::COUNTDOWN);
+        }
+    }
+
     pub fn skip_intro(&mut self) {
         if let Some(state) = &mut self.race
             && let Some(intro) = &mut state.intro

@@ -95,15 +95,27 @@ struct Connection {
     sequence: Option<u32>,
     #[serde(default)]
     snapshot: Option<atv_net::Snapshot>,
+    /// The client announced room races (a serial-0 `Progress`); only such
+    /// clients receive race state, so older cached clients in the room
+    /// never see a packet kind they cannot decode.
+    #[serde(default)]
+    races: bool,
     last_seen_ms: f64,
     window_ms: f64,
     messages: u16,
     bytes: usize,
 }
 
+/// Per-connection budget: 120 messages and 1 MiB a second on average, over
+/// a 3 s window, so a client whose packets queued during a stall (a starved
+/// tab, a congested link) and arrive together is not closed for the burst.
+const RATE_WINDOW_MS: f64 = 3000.;
+const RATE_MESSAGES: u16 = 360;
+const RATE_BYTES: usize = 3 * 1024 * 1024;
+
 impl Connection {
     fn account(&mut self, now: f64, bytes: usize) -> bool {
-        if now - self.window_ms >= 1000. {
+        if now - self.window_ms >= RATE_WINDOW_MS {
             self.window_ms = now;
             self.messages = 0;
             self.bytes = 0;
@@ -111,7 +123,7 @@ impl Connection {
         self.messages = self.messages.saturating_add(1);
         self.bytes = self.bytes.saturating_add(bytes);
         self.last_seen_ms = now;
-        self.messages <= 120 && self.bytes <= 1024 * 1024
+        self.messages <= RATE_MESSAGES && self.bytes <= RATE_BYTES
     }
 }
 
@@ -933,6 +945,7 @@ impl DurableObject for LobbyRoom {
             player: None,
             sequence: None,
             snapshot: None,
+            races: false,
             last_seen_ms: instant,
             window_ms: instant,
             messages: 0,
@@ -1156,9 +1169,28 @@ impl DurableObject for LobbyRoom {
                     && connection.ready_map == room.map
                     && self.lobby(None)?.host == connection.peer =>
             {
+                let race = state.game == 3;
                 for (peer, other) in self.connections()? {
-                    if peer != ws && other.ready_map == room.map {
+                    if peer != ws && other.ready_map == room.map && (!race || other.races) {
                         send(&peer, &Packet::Game(state.clone()))?;
+                    }
+                }
+            }
+            // A rider's room-race progress (research/MULTIPLAYER.md "Room
+            // races"): serial 0 only announces support; the relay stamps the
+            // sender and forwards progress to race-aware riders on the map.
+            Packet::Progress(mut progress) if connection.player.is_some() => {
+                connection.races = true;
+                if progress.serial != 0
+                    && !room.public
+                    && room.started
+                    && connection.ready_map == room.map
+                {
+                    progress.peer = connection.peer;
+                    for (peer, other) in self.connections()? {
+                        if peer != ws && other.ready_map == room.map && other.races {
+                            send(&peer, &Packet::Progress(progress))?;
+                        }
                     }
                 }
             }
@@ -1457,17 +1489,19 @@ mod tests {
             player: None,
             sequence: None,
             snapshot: None,
+            races: false,
             last_seen_ms: 0.,
             window_ms: 0.,
             messages: 0,
             bytes: 0,
         };
-        for _ in 0..120 {
+        // A burst of queued packets within the window's average budget.
+        for _ in 0..360 {
             assert!(connection.account(10., 100));
         }
         assert!(!connection.account(20., 100));
-        assert!(connection.account(1001., 8192));
-        assert!(!connection.account(1002., 1024 * 1024));
+        assert!(connection.account(3010., 8192));
+        assert!(!connection.account(3011., 3 * 1024 * 1024));
     }
 
     #[test]
@@ -1504,10 +1538,11 @@ mod tests {
                 appearance: [0; 8],
             }),
             snapshot: None,
+            races: false,
             sequence: Some(u32::MAX),
             last_seen_ms: 555.,
             window_ms: 500.,
-            messages: 119,
+            messages: 359,
             bytes: 999,
         };
         let loaded: Room = serde_json::from_str(&serde_json::to_string(&room).unwrap()).unwrap();

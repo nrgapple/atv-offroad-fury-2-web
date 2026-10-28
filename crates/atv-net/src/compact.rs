@@ -31,12 +31,20 @@ impl Default for AnimationState {
         }
     }
 }
+/// Largest visual steering angle (rad) a pose may carry.
+pub const STEERING_LIMIT: f32 = 3.9;
+const STEERING_SCALE: f32 = 8192.;
+/// The largest steering code whose decoded value stays within the limit
+/// (3.9 * 8192 = 31948.8 rounds to 31949, which decodes as 3.900024).
+fn steering_code_limit() -> f32 {
+    (STEERING_LIMIT * STEERING_SCALE).floor()
+}
 impl AnimationState {
     pub fn validate(&self) -> Result<()> {
         if !matches!(self.count, 1 | 2 | 4)
             || self.clips.iter().any(|v| *v >= 64)
             || !self.steering.is_finite()
-            || self.steering.abs() > 3.9
+            || self.steering.abs() > STEERING_LIMIT
             || !self.wheels.iter().all(|v| v.is_finite())
             || !self
                 .compression
@@ -146,7 +154,11 @@ fn block(s: &Snapshot, i: u8) -> Result<Vec<u8>> {
         2 => {
             let a = s.animation.as_ref().ok_or(Error::InvalidValue)?;
             a.validate()?;
-            i16q(&mut out, a.steering, 8192.)?;
+            // Clamp the code so the receiver's decoded value stays within
+            // STEERING_LIMIT; rounding at the limit used to overshoot it.
+            let limit = steering_code_limit();
+            let code = (a.steering * STEERING_SCALE).round().clamp(-limit, limit);
+            out.extend_from_slice(&(code as i16).to_le_bytes());
             for v in a.wheels {
                 i16q(
                     &mut out,
@@ -252,8 +264,16 @@ fn read_block(s: &mut Snapshot, i: u8, data: &[u8]) -> Result<()> {
             s.rider_velocity = r.vector()?;
         }
         2 => {
+            // Encoders before the clamp could round one code past the limit;
+            // accept exactly that overshoot (clamped back) and nothing more.
+            let n = i16::from_le_bytes(r.take()?);
+            let limit = steering_code_limit();
+            if n == i16::MIN || f32::from(n).abs() > limit + 1. {
+                return Err(Error::InvalidValue);
+            }
+            let steering = (f32::from(n) / STEERING_SCALE).clamp(-STEERING_LIMIT, STEERING_LIMIT);
             let mut a = AnimationState {
-                steering: r.q(8192.)?,
+                steering,
                 ..Default::default()
             };
             for v in &mut a.wheels {

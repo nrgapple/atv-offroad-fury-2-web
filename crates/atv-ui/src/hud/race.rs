@@ -335,10 +335,28 @@ impl Meter {
         }
         if let Some(tree) = layout(4).filter(|_| position == "name") {
             // PLACE position tree: each rider slot's name slides to its rank.
-            let names: Vec<String> = std::iter::once("YOU".to_string())
-                .chain(frame.opponents.iter().map(|o| o.name.clone()))
-                .map(|n| n.chars().take(9).collect())
-                .collect();
+            // A room race (research/MULTIPLAYER.md "Room races") has no CPU
+            // opponents: its standings list every room rider in race order.
+            let room = frame.opponents.is_empty() && frame.standings.len() > 1;
+            let names: Vec<String> = if room {
+                frame
+                    .standings
+                    .iter()
+                    .map(|s| {
+                        if s.player {
+                            "YOU".to_string()
+                        } else {
+                            s.name.clone()
+                        }
+                    })
+                    .map(|n| n.chars().take(9).collect())
+                    .collect()
+            } else {
+                std::iter::once("YOU".to_string())
+                    .chain(frame.opponents.iter().map(|o| o.name.clone()))
+                    .map(|n| n.chars().take(9).collect())
+                    .collect()
+            };
             text(
                 list,
                 "PLACE",
@@ -365,16 +383,24 @@ impl Meter {
                 );
             }
             for (slot, name) in names.iter().take(5).enumerate() {
-                let y = hud.tree.get(slot).copied().unwrap_or_else(|| {
-                    (frame.ranks.get(slot).copied().unwrap_or(1) as f32 - 1.) * 23.
-                });
+                let y = if room {
+                    slot as f32 * 23.
+                } else {
+                    hud.tree.get(slot).copied().unwrap_or_else(|| {
+                        (frame.ranks.get(slot).copied().unwrap_or(1) as f32 - 1.) * 23.
+                    })
+                };
                 text(
                     list,
                     name,
                     at(20., 23.),
                     tree,
                     7,
-                    Some(if slot == 0 { RACE_GOLD } else { RACE_TEXT }),
+                    Some(if (room && name == "YOU") || (!room && slot == 0) {
+                        RACE_GOLD
+                    } else {
+                        RACE_TEXT
+                    }),
                     1.,
                     None,
                     [0., y],

@@ -189,6 +189,15 @@ impl Results {
         true
     }
 
+    /// Online competition earns no Profile Points (USA manual pp. 36–37):
+    /// the panel shows none.
+    pub fn no_award(&mut self) {
+        self.award = None;
+        if let Some(row) = self.player_row.and_then(|i| self.rows.get_mut(i)) {
+            row[4] = "-".into();
+        }
+    }
+
     /// No profile is loaded: `001f1e30` gives the rider no Profile Points
     /// and nothing is recorded.
     pub fn mark_no_profile(&mut self) {

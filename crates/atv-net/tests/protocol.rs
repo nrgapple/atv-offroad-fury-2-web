@@ -429,18 +429,50 @@ fn user_codes_normalize_but_invalid_characters_do_not_pass() {
     }
 }
 #[test]
-fn sender_clock_jump_and_cross_peer_input_do_not_mutate_buffer() {
+fn cross_peer_input_does_not_mutate_buffer() {
     let mut buffer = PoseBuffer::default();
     buffer.push(snapshot(1, 100, 0.), 100).unwrap();
-    assert_eq!(
-        buffer.push(snapshot(2, 100000, 1.), 150),
-        Err(Error::InvalidValue)
-    );
     let mut wrong = snapshot(2, 150, 1.);
     wrong.peer = 1;
     assert_eq!(buffer.push(wrong, 150), Err(Error::InvalidValue));
     assert_eq!(buffer.len(), 1);
     assert!(buffer.push(snapshot(2, 150, 1.), 150).unwrap());
+}
+#[test]
+fn sender_clock_jump_restarts_the_timeline_instead_of_failing() {
+    // A sender clock far ahead of receipt is a discontinuity, not an error.
+    let mut buffer = PoseBuffer::default();
+    buffer.push(snapshot(1, 100, 0.), 100).unwrap();
+    assert_eq!(buffer.push(snapshot(2, 100_000, 1.), 150), Ok(true));
+    assert_eq!(buffer.len(), 1);
+    assert_eq!(buffer.latest().unwrap().0.sequence, 2);
+    assert!(buffer.push(snapshot(3, 100_050, 2.), 200).unwrap());
+    assert_eq!(buffer.len(), 2);
+}
+#[test]
+fn stale_relay_replay_then_live_pose_keeps_the_session() {
+    // Room race 2 regression: the relay hands a rider who reports Ready each
+    // other rider's last stored pose. That copy was sent while the guest was
+    // paused (5 s cadence) and arrives at the host seconds late; the guest's
+    // next live pose then ran more than SENDER_JUMP_MS ahead of receipt and
+    // the host left the room with "multiplayer packet: InvalidValue".
+    let mut buffer = PoseBuffer::default();
+    for i in 0..10u32 {
+        buffer
+            .push(
+                snapshot(i + 1, 1000 + i * 100, i as f32),
+                50_000 + u64::from(i) * 100,
+            )
+            .unwrap();
+    }
+    // Stale replay: sent at 2000, received at 58_000 (relay stored copy).
+    assert!(buffer.push(snapshot(20, 2_000, 10.), 58_000).unwrap());
+    // Live pose 6.5 s later on the sender's clock, 100 ms later on receipt.
+    assert!(buffer.push(snapshot(21, 8_500, 11.), 58_100).unwrap());
+    assert_eq!(buffer.len(), 1);
+    // Smoothing continues normally afterwards.
+    assert!(buffer.push(snapshot(22, 8_550, 12.), 58_150).unwrap());
+    assert!(buffer.sample(58_400).is_some());
 }
 #[test]
 fn receipt_jitter_does_not_shift_sender_timeline() {
@@ -703,6 +735,7 @@ fn game_state_round_trips_and_rejects_bad_values() {
         ball: [384., 90.3, 437.],
         ball_velocity: [0., 0., 25.],
         ball_yaw: 1.5,
+        race: Default::default(),
     };
     let packet = atv_net::Packet::Game(Box::new(state.clone()));
     let bytes = atv_net::encode(&packet).unwrap();
@@ -722,5 +755,98 @@ fn game_state_round_trips_and_rejects_bad_values() {
         },
     ] {
         assert!(atv_net::encode(&atv_net::Packet::Game(Box::new(bad))).is_err());
+    }
+}
+
+#[test]
+fn race_state_and_progress_round_trip_and_reject_bad_values() {
+    use atv_net::{GameState, Packet, RACE_DNF, RaceInfo, RaceProgress};
+    let state = GameState {
+        game: 3,
+        serial: 4,
+        phase: atv_net::race_phase::RESULTS,
+        scores: [61_250, RACE_DNF, 59_000, 0],
+        race: RaceInfo {
+            variant: 0,
+            laps: 2,
+            grid: [2, 3, 1, 0],
+        },
+        ..Default::default()
+    };
+    let packet = Packet::Game(Box::new(state.clone()));
+    let bytes = atv_net::encode(&packet).unwrap();
+    assert_eq!(atv_net::decode(&bytes).unwrap(), packet);
+    // Hockey and Tag keep their pre-race size: no race block.
+    let tag = GameState {
+        game: 2,
+        ..Default::default()
+    };
+    let tag_len = atv_net::encode(&Packet::Game(Box::new(tag))).unwrap().len();
+    assert_eq!(bytes.len(), tag_len + 6);
+    for bad in [
+        RaceInfo {
+            laps: 0,
+            ..state.race
+        },
+        RaceInfo {
+            laps: 6,
+            ..state.race
+        },
+        RaceInfo {
+            variant: 4,
+            ..state.race
+        },
+        RaceInfo {
+            grid: [5, 0, 0, 0],
+            ..state.race
+        },
+    ] {
+        let g = GameState {
+            race: bad,
+            ..state.clone()
+        };
+        assert!(atv_net::encode(&Packet::Game(Box::new(g))).is_err());
+    }
+    let g = GameState {
+        scores: [atv_net::RACE_MAX_MS + 1, 0, 0, 0],
+        ..state.clone()
+    };
+    assert!(atv_net::encode(&Packet::Game(Box::new(g))).is_err());
+    // A truncated race block is rejected.
+    let mut short = bytes.clone();
+    short.truncate(bytes.len() - 1);
+    let len = (short.len() - 8) as u16;
+    short[6..8].copy_from_slice(&len.to_le_bytes());
+    assert!(atv_net::decode(&short).is_err());
+
+    let progress = RaceProgress {
+        peer: 1,
+        serial: 4,
+        lap: 1,
+        distance: 1234.5,
+        finish_ms: 0,
+    };
+    let packet = Packet::Progress(progress);
+    let bytes = atv_net::encode(&packet).unwrap();
+    assert_eq!(atv_net::decode(&bytes).unwrap(), packet);
+    for bad in [
+        RaceProgress {
+            peer: 99,
+            ..progress
+        },
+        RaceProgress {
+            lap: 11,
+            ..progress
+        },
+        RaceProgress {
+            distance: f32::INFINITY,
+            ..progress
+        },
+        RaceProgress {
+            finish_ms: atv_net::RACE_MAX_MS + 1,
+            ..progress
+        },
+    ] {
+        assert!(atv_net::encode(&Packet::Progress(bad)).is_err());
     }
 }
