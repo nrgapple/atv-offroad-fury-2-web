@@ -380,10 +380,22 @@ impl Front {
             || self.jukebox_open()
             || self.state.scrolling()
             || self.menu.as_ref().is_some_and(|m| m.scroller.active())
+            || self.indicating()
             || self.menu.is_none()
                 && (matches!(self.state.page.as_str(), "title" | "loading")
                     || (matches!(self.state.page.as_str(), "garage" | "gear")
                         && self.previews[1].as_ref().is_some_and(|p| p.animated)))
+    }
+
+    /// A scroll indicator is showing or fading out.
+    fn indicating(&self) -> bool {
+        let now = atv_ui::scroll::now();
+        self.state.list.indicator_alpha(now) > 0.
+            || self.state.rows.indicator_alpha(now) > 0.
+            || self
+                .menu
+                .as_ref()
+                .is_some_and(|m| m.scroller.indicator_alpha(now) > 0.)
     }
 
     /// Models the current page needs that are not loaded yet.
@@ -1045,8 +1057,24 @@ impl Front {
                 preview.model.prepare(device, queue, w, h);
             }
         }
+        // Scroll indicators over the list and the rows column.
+        let pane =
+            |hits: &[(Rect, u32)], id: u32| hits.iter().find(|(_, i)| *i == id).map(|(r, _)| *r);
+        if let Some(r) = pane(&self.hits, atv_ui::front::LIST) {
+            self.state
+                .list
+                .paint_indicator(&mut self.list, r, scroll_now);
+        }
+        if let Some(r) = pane(&self.hits, atv_ui::front::ROWS) {
+            self.state
+                .rows
+                .paint_indicator(&mut self.list, r, scroll_now);
+        }
         if self.menu.is_some() {
             self.prepare_menu(device, queue);
+            if let (Some(r), Some(menu)) = (pane(&self.menu_hits, pause::PANEL), &self.menu) {
+                menu.scroller.paint_indicator(&mut self.list, r, scroll_now);
+            }
         } else {
             self.last_menu = None;
         }
