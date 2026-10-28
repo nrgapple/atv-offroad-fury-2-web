@@ -390,7 +390,15 @@ pub struct Frontend {
     pub cloud: CloudView,
     /// The Pass Key pages' working state.
     pub passkey: passkey_page::PassKeyUi,
+    /// Multiplayer → Split Screen: the next Freestyle or Race rides two
+    /// local players (research/SPLIT_SCREEN.md).
+    pub split: bool,
+    /// Split Screen layout: side by side, else top and bottom (saved).
+    pub split_vertical: bool,
 }
+
+/// Saved Split Screen layout ("vertical" or "horizontal").
+pub const SPLIT_LAYOUT_KEY: &str = "atv-split-screen";
 
 impl Frontend {
     pub fn new(tracks: Vec<Track>, settings: &Settings, web: bool) -> Self {
@@ -458,6 +466,8 @@ impl Frontend {
             store: StoreView::default(),
             cloud: CloudView::default(),
             passkey: Default::default(),
+            split: false,
+            split_vertical: settings.get(SPLIT_LAYOUT_KEY).as_deref() == Some("vertical"),
         };
         front.load_profiles(settings);
         front.player_name = front.saved["playerName"]
@@ -547,6 +557,7 @@ impl Frontend {
         };
         let request = json!({
             "page": page,
+            "split_vertical": self.split_vertical,
             "width": view.width.clamp(240., 16384.),
             "height": view.height.clamp(240., 16384.),
             "selection": self.selection,
@@ -1394,6 +1405,10 @@ impl Frontend {
             self.notice = None;
         }
         self.page = page.into();
+        // Only the Split Screen branch's own pages keep two players.
+        if matches!(page, "title" | "main" | "single" | "multiplayer" | "split") {
+            self.split = false;
+        }
         self.selection = 0;
         self.list_scroll = 0.;
         self.list_max = 0.;
@@ -1609,6 +1624,7 @@ impl Frontend {
             "main" => "title".to_string(),
             "single" => "main".into(),
             "tracks" if self.hosting => "create-lobby".into(),
+            "tracks" | "race" if self.split => "split".into(),
             "tracks" | "race" | "championship" | "games" => "single".into(),
             "objectives" if self.freestyle.is_none() => "objective-courses".into(),
             "objectives" => "championship".into(),
@@ -1616,7 +1632,7 @@ impl Frontend {
             "gear" => "garage".into(),
             "garage" => self.garage_return.clone(),
             "multiplayer" => "main".into(),
-            "create-lobby" | "join-lobby" => "multiplayer".into(),
+            "create-lobby" | "join-lobby" | "split" => "multiplayer".into(),
             _ => return None,
         };
         let from = self.page.clone();
@@ -1669,8 +1685,31 @@ impl Frontend {
             return event;
         }
         match action {
-            "main" | "single" | "tracks" | "multiplayer" | "race" | "gear" => {
+            "main" | "single" | "tracks" | "multiplayer" | "race" | "gear" | "split" => {
                 self.show(action, view)
+            }
+            "splitfree" | "splitrace" => {
+                self.split = true;
+                self.show(
+                    if action == "splitrace" {
+                        "race"
+                    } else {
+                        "tracks"
+                    },
+                    view,
+                );
+            }
+            "splitlayout" => {
+                self.split_vertical = !self.split_vertical;
+                settings.set(
+                    SPLIT_LAYOUT_KEY,
+                    if self.split_vertical {
+                        "vertical"
+                    } else {
+                        "horizontal"
+                    },
+                );
+                self.refresh(view);
             }
             "racestart" => return self.race_event(settings),
             "games" => self.show(action, view),
@@ -2471,6 +2510,8 @@ mod tests {
         front.selection = at;
         front.key("Enter", &view, &mut settings);
         assert_eq!(front.page, "multiplayer");
+        // Split Screen leads; Host Game is the next row.
+        front.key("ArrowDown", &view, &mut settings);
         front.key("Enter", &view, &mut settings);
         assert_eq!(front.page, "create-lobby");
         assert_eq!(front.fields().len(), 2);
@@ -3174,6 +3215,39 @@ mod tests {
         assert!(front.choices()[0].1.ends_with("Locked"));
         front.key("Escape", &view, &mut settings);
         assert_eq!(front.page, "single");
+    }
+
+    #[test]
+    fn split_screen_branch_marks_two_players_until_it_is_left() {
+        let view = view(1280., 720.);
+        let mut settings = Settings::memory();
+        let mut front = Frontend::new(tracks(), &settings, true);
+        front.set_race_courses(vec!["env01".into()], &view);
+        front.show("multiplayer", &view);
+        assert_eq!(front.choices()[0].0, "split");
+        front.key("Enter", &view, &mut settings);
+        assert_eq!((front.page.as_str(), front.split), ("split", false));
+        let actions: Vec<_> = front.choices().iter().map(|(a, _)| a.clone()).collect();
+        assert_eq!(actions[..3], ["splitrace", "splitfree", "splitlayout"]);
+        // The layout row toggles and is saved.
+        front.selection = 2;
+        front.key("Enter", &view, &mut settings);
+        assert!(front.split_vertical);
+        assert_eq!(settings.get(SPLIT_LAYOUT_KEY).as_deref(), Some("vertical"));
+        assert!(front.choices()[2].1.contains("Side by Side"));
+        front.selection = 1;
+        front.key("Enter", &view, &mut settings);
+        assert_eq!((front.page.as_str(), front.split), ("tracks", true));
+        // Back returns to Split Screen, which rides one player again.
+        front.key("Escape", &view, &mut settings);
+        assert_eq!((front.page.as_str(), front.split), ("split", false));
+        front.selection = 0;
+        front.key("Enter", &view, &mut settings);
+        assert_eq!((front.page.as_str(), front.split), ("race", true));
+        front.key("Escape", &view, &mut settings);
+        front.key("Escape", &view, &mut settings);
+        assert_eq!((front.page.as_str(), front.split), ("multiplayer", false));
+        assert!(Frontend::new(tracks(), &settings, true).split_vertical);
     }
 
     #[test]

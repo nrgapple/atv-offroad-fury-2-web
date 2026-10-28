@@ -1,8 +1,11 @@
 """Exercise artifact reuse, publication ownership and honest milestone timing."""
 import hashlib
 import json
+import os
 from pathlib import Path
+import subprocess
 import tempfile
+import textwrap
 import unittest
 from unittest.mock import patch
 
@@ -15,6 +18,46 @@ import fetch_site_release as fetcher
 
 
 class WorkflowTests(unittest.TestCase):
+    def run_deploy_script(self, migration_status=0):
+        # Execute the real Actions shell body with external commands replaced.
+        # This exercises fail-fast behavior without touching production or D1.
+        workflow = (Path(__file__).resolve().parents[1] / '.github/workflows/ci.yml').read_text()
+        step = workflow.split('      - name: Migrate D1 and deploy successful main build to Cloudflare\n')[1].split('      - name:')[0]
+        script = textwrap.dedent(step.split('        run: |\n')[1])
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            for command in ('python3', 'npx'):
+                stub = root / command
+                stub.write_text('#!/bin/bash\n'
+                                'printf "%s\\n" "$*" >> "$DEPLOY_TEST_LOG"\n'
+                                'if [[ "$*" == *"d1 migrations apply"* ]]; then\n'
+                                '  exit "$DEPLOY_TEST_MIGRATION_STATUS"\n'
+                                'fi\n')
+                stub.chmod(0o755)
+            log = root / 'commands'
+            result = subprocess.run(['bash', '--noprofile', '--norc', '-eo', 'pipefail', '-c', script],
+                                    env={**os.environ, 'PATH': f'{root}:{os.environ["PATH"]}',
+                                         'CLOUDFLARE_API_TOKEN': 'test-placeholder', 'GITHUB_SHA': COMMIT,
+                                         'DEPLOY_TEST_LOG': str(log),
+                                         'DEPLOY_TEST_MIGRATION_STATUS': str(migration_status)},
+                                    capture_output=True, text=True)
+            return result, log.read_text().splitlines()
+
+    def test_d1_migrates_checked_out_sql_before_worker_deploy(self):
+        result, commands = self.run_deploy_script()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(len(commands), 3)
+        self.assertIn('tools/stage_cloudflare.py', commands[0])
+        self.assertIn('d1 migrations apply SAVES --remote --config wrangler.jsonc', commands[1])
+        self.assertIn('deploy --config work/cloudflare/wrangler.jsonc', commands[2])
+        self.assertEqual(commands[1].split()[1], commands[2].split()[1])  # same Wrangler pin
+
+    def test_failed_d1_migration_prevents_worker_deploy(self):
+        result, commands = self.run_deploy_script(migration_status=17)
+        self.assertEqual(result.returncode, 17)
+        self.assertEqual(len(commands), 2)
+        self.assertIn('d1 migrations apply', commands[-1])
+
     def repository(self, root):
         git(root, 'init', '-b', 'main')
         git(root, 'config', 'user.name', 'Release tests')

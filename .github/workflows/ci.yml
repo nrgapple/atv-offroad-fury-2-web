@@ -274,7 +274,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           FURY_DEPLOYMENT_MODE: ${{ vars.FURY_DEPLOYMENT_MODE }}
         run: python3 tools/deployment_gate.py --commit "$GITHUB_SHA"
-      - name: Deploy successful main build to Cloudflare
+      - name: Migrate D1 and deploy successful main build to Cloudflare
         if: steps.deployment-gate.outputs.publish == 'true'
         timeout-minutes: 6
         env:
@@ -285,6 +285,9 @@ jobs:
             exit 1
           fi
           python3 tools/stage_cloudflare.py --release work/release --commit "$GITHUB_SHA" --preserve-custom-domains
+          # Use the root config: its migrations_dir is relative to this file,
+          # not the generated config under work/cloudflare. Failure stops deploy.
+          npx --yes wrangler@4.149.0 d1 migrations apply SAVES --remote --config wrangler.jsonc
           npx --yes wrangler@4.149.0 deploy --config work/cloudflare/wrangler.jsonc
       - name: Verify public commit, application hashes and dev log
         if: steps.deployment-gate.outputs.publish == 'true'

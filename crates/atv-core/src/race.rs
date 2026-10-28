@@ -1517,7 +1517,7 @@ pub struct Standing {
     /// The human rider's row.
     pub player: bool,
 }
-#[derive(Serialize)]
+#[derive(Serialize, Default)]
 pub struct Frame {
     pub phase: &'static str,
     pub countdown: u32,

@@ -273,12 +273,9 @@ pub async fn load_with(
         });
     }
     crate::yield_frame().await;
-    let presets = camera::presets(
-        &member(&archive, "followcampresets.pb", "camera presets")?,
-        0,
-    )?;
-    // 00319c10 -> 003007b0 supplies 70 MPH and the original ft/s conversion.
-    let follow = camera::FollowCamera::new(presets, 70. * f32::from_bits(0x3fbbbb84))?;
+    let camera_presets = member(&archive, "followcampresets.pb", "camera presets")?;
+    let presets = camera::presets(&camera_presets, 0)?;
+    let follow = camera::FollowCamera::new(presets, super::CAMERA_SPEED_REFERENCE)?;
 
     let race = match race {
         Some(settings) => {
@@ -332,6 +329,7 @@ pub async fn load_with(
         extended_boundary: scene.crowd_present || environment.eq_ignore_ascii_case("training"),
         water,
         camera: follow,
+        camera_presets,
         // Freeride only: race venues load no train.
         train: if race.is_some() {
             None

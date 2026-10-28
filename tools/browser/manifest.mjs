@@ -34,6 +34,7 @@ export const TESTS = {
   'test_engine_shell.mjs': { group: 'content' },
   'test_engine_sw_update.mjs': { group: 'content' },
   'test_engine_shadows_prefetch.mjs': { group: 'content' },
+  'test_engine_visibility.mjs': { group: 'content' },
   'test_engine_arcade_touch.mjs': {
     group: 'manual',
     reason:
@@ -130,6 +131,7 @@ export const TESTS = {
   },
   'test_engine_preview.mjs': { group: 'content-free' },
   'test_engine_race.mjs': { group: 'content' },
+  'test_engine_split_screen.mjs': { group: 'content', timeout: 900 },
   'test_engine_race_grid.mjs': { group: 'content' },
   'test_engine_race_finish_gate.mjs': { group: 'content' },
   'test_engine_race_alternates.mjs': { group: 'content', timeout: 900 },

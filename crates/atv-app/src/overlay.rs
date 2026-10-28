@@ -61,6 +61,16 @@ pub struct HudInput<'a> {
     pub game: Option<atv_ui::hud::games::View>,
     /// A target run's or mini-game's compass (Overlay Sets 5-7).
     pub compass: Option<atv_ui::hud::race::CompassView>,
+    /// Split screen: player 2's instruments in its own view (split.rs).
+    pub second: Option<SecondHud<'a>>,
+}
+
+/// Player 2's HUD: its speed and stunt text, and its race overlays.
+pub struct SecondHud<'a> {
+    /// Side by side, else one view above the other.
+    pub vertical: bool,
+    pub hud: atv_core::hud::Frame,
+    pub race: Option<(&'a atv_core::race::Frame, f32, [f32; 3])>,
 }
 
 /// A press on a toolbar button or the minimap (utility pointers in touch.js).
@@ -84,6 +94,8 @@ type ResultsCache = (Viewport, Results, String, DisplayList, Vec<(Rect, u32)>);
 type ToolbarCache = (Viewport, toolbar::State, DisplayList, Vec<(Rect, u32)>);
 
 pub struct Overlay {
+    /// Split screen: a race's results wait until both players finish.
+    pub hold_results: bool,
     /// The multiplayer room for the pause menu's online rows.
     pub lobby: Option<atv_ui::menu::controller::Lobby>,
     /// Name tags drawn on the latest frame (tests).
@@ -213,6 +225,7 @@ impl Overlay {
             meter: None,
             race_overlays,
             race_fade: None,
+            hold_results: false,
             results: Results::default(),
             results_cache: None,
             help_open: false,
@@ -650,6 +663,26 @@ impl Overlay {
         let race = hud.as_ref().and_then(|h| h.race);
         let intro = race.is_some_and(|(frame, ..)| frame.phase == "intro");
         let shown = hud.as_ref().filter(|_| active && !intro);
+        // Split screen: each player's instruments fit its own view (player
+        // 1 on top or on the left).
+        let second = shown.and_then(|h| h.second.as_ref());
+        let (hw, hh) = match second {
+            Some(s) if s.vertical => (view.width / 2., view.height),
+            Some(_) => (view.width, view.height / 2.),
+            None => (view.width, view.height),
+        };
+        // The line between the views (split.rs DIVIDER, 2 CSS px).
+        match second {
+            Some(s) if s.vertical => self.list.rect(
+                Rect::new(hw - 1., 0., 2., view.height),
+                atv_ui::Color::rgb(0, 0, 0),
+            ),
+            Some(_) => self.list.rect(
+                Rect::new(0., hh - 1., view.width, 2.),
+                atv_ui::Color::rgb(0, 0, 0),
+            ),
+            None => {}
+        }
         let instrument = shown.map(|h| Instrument {
             speed: h.hud.speed_text.clone(),
             units: h.hud.units.into(),
@@ -672,7 +705,7 @@ impl Overlay {
         self.minimap.update(
             now,
             shown
-                .filter(|_| race.is_none())
+                .filter(|_| race.is_none() && second.is_none())
                 .map(|h| MapPose::from_matrix(&h.rider_world)),
             instrument,
         );
@@ -694,16 +727,9 @@ impl Overlay {
         if let (Some(meter), Some(h)) = (&self.meter, shown) {
             let speed = match race {
                 Some(_) => self.race_overlays.shown("speed"),
-                None => !self.minimap.settings.enabled,
+                None => !self.minimap.settings.enabled || second.is_some(),
             };
-            meter.paint_speed(
-                &mut self.fonts,
-                &mut self.list,
-                &h.hud,
-                speed,
-                view.width,
-                view.height,
-            );
+            meter.paint_speed(&mut self.fonts, &mut self.list, &h.hud, speed, hw, hh);
         }
         // The race overlays sit below the toolbar: drawn once it is laid out.
         let hud_at = self.list.items.len();
@@ -791,11 +817,11 @@ impl Overlay {
                         top_inset,
                         settings: &self.race_overlays,
                     },
-                    view.width,
-                    view.height,
+                    hw,
+                    hh,
                 );
                 if let Some(lights) = frame.lights {
-                    meter.paint_lamps(&mut items, lights, view.width, view.height);
+                    meter.paint_lamps(&mut items, lights, hw, hh);
                 }
             }
             self.compass_icons = None;
@@ -806,9 +832,43 @@ impl Overlay {
                 self.compass_icons = Some(compass.icons.iter().map(|(_, i)| i.clone()).collect());
             }
             if race.is_none() || self.race_overlays.shown("info") {
-                meter.paint_stunt(&mut self.fonts, &mut items, &h.hud, view.width, view.height);
+                meter.paint_stunt(&mut self.fonts, &mut items, &h.hud, hw, hh);
             }
             self.list.items.splice(hud_at..hud_at, items.items);
+            // Player 2's instruments, painted for its view and moved there.
+            if let Some(second) = second {
+                let mut items = DisplayList::default();
+                let speed = second.race.is_none() || self.race_overlays.shown("speed");
+                meter.paint_speed(&mut self.fonts, &mut items, &second.hud, speed, hw, hh);
+                if let Some((frame, score, origin)) = second.race {
+                    meter.paint_race(
+                        &mut self.fonts,
+                        &mut items,
+                        &RaceView {
+                            frame,
+                            score,
+                            origin,
+                            top_inset: 0.,
+                            settings: &self.race_overlays,
+                        },
+                        hw,
+                        hh,
+                    );
+                    if let Some(lights) = frame.lights {
+                        meter.paint_lamps(&mut items, lights, hw, hh);
+                    }
+                }
+                if second.race.is_none() || self.race_overlays.shown("info") {
+                    meter.paint_stunt(&mut self.fonts, &mut items, &second.hud, hw, hh);
+                }
+                let (dx, dy) = if second.vertical {
+                    (view.width - hw, 0.)
+                } else {
+                    (0., view.height - hh)
+                };
+                items.translate(dx, dy);
+                self.list.items.extend(items.items);
+            }
         }
         // Race load fades in from black over 500 ms as the pre-race camera
         // starts, over everything (#race-overlay is the topmost layer).
@@ -953,7 +1013,7 @@ impl Overlay {
         }
         // Race over: the results panel or the Show Results button.
         match race {
-            Some((frame, ..)) if frame.phase == "finished" => {
+            Some((frame, ..)) if frame.phase == "finished" && !self.hold_results => {
                 // race.js always offers Quit Event; a page without the
                 // engine's frontend leaves for its menus.
                 self.results.can_quit = self.frontend || cfg!(target_arch = "wasm32");

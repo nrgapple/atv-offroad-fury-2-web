@@ -32,6 +32,7 @@ pub mod materials;
 pub mod math;
 pub mod menu_preview;
 pub mod mesh;
+pub mod model_lod;
 pub mod motion_catalog;
 pub mod motorcycle;
 pub mod motorcycle_effects;
@@ -96,6 +97,7 @@ pub mod wheel_stop;
 pub mod wheel_support;
 pub mod world_sounds;
 pub mod wreck;
+pub mod zones;
 
 pub mod dynamics;
 
