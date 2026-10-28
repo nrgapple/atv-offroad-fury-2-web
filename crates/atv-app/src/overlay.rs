@@ -1057,9 +1057,13 @@ impl Overlay {
                 self.results.can_quit = self.frontend || cfg!(target_arch = "wasm32");
                 // Online competition saves neither profile progress nor Hall
                 // of Fame records (USA manual pp. 36–37).
-                if self.results.finish(frame) && self.lobby.is_none() {
-                    self.credit_profile(frame);
-                    self.record_fame(frame);
+                if self.results.finish(frame) {
+                    if self.lobby.is_none() {
+                        self.credit_profile(frame);
+                        self.record_fame(frame);
+                    } else {
+                        self.results.no_award();
+                    }
                 }
             }
             Some(_) if self.room_race_pending && self.results.shown => {}

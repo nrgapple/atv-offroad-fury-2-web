@@ -953,6 +953,12 @@ impl Ride {
                 .hud
                 .say(message, atv_core::hall_of_fame::MESSAGE_SECONDS);
         }
+        // Room standings first: the HUD's place and finish sign use them.
+        if let Some(rows) = &state.room
+            && state.settings.room.is_some()
+        {
+            room_standings(&mut frame, rows);
+        }
         frame.hud = Some(state.hud.step(
             STEP,
             &race_hud::Input {
@@ -980,11 +986,6 @@ impl Ride {
                     .unwrap_or_default(),
             })
         });
-        if let Some(rows) = &state.room
-            && state.settings.room.is_some()
-        {
-            room_standings(&mut frame, rows);
-        }
         state.frame = Some(frame);
         Ok(())
     }

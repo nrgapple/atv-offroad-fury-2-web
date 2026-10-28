@@ -355,6 +355,9 @@ pub struct RoomRace {
     last_broadcast: f64,
     went: bool,
     rows: Vec<Row>,
+    /// Racers' names as last seen in the room, so a leaver keeps its name
+    /// in the results.
+    names: BTreeMap<u8, String>,
 }
 
 /// Ride settings for this rider's slot in `field`.
@@ -407,6 +410,7 @@ impl RoomRace {
                 last_broadcast: now,
                 went: false,
                 rows: Vec::new(),
+                names: BTreeMap::new(),
             },
             Action::Load(load),
         ))
@@ -437,6 +441,7 @@ impl RoomRace {
                 last_broadcast: 0.,
                 went: false,
                 rows: Vec::new(),
+                names: BTreeMap::new(),
             },
             load,
         )
@@ -467,12 +472,22 @@ impl RoomRace {
             s.room.is_some() && s.seed == u64::from(self.field.serial)
         });
         let (me, roster) = net.roster();
-        let names = net.names(&roster);
+        for (id, n) in roster.iter().zip(net.names(&roster)) {
+            if self
+                .field
+                .info
+                .grid
+                .get(*id as usize)
+                .is_some_and(|s| *s > 0)
+            {
+                self.names.entry(*id).or_insert(n);
+            }
+        }
+        let known = self.names.clone();
         let name = |id: u8| {
-            roster
-                .iter()
-                .position(|r| *r == id)
-                .and_then(|i| names.get(i).cloned())
+            known
+                .get(&id)
+                .cloned()
                 .unwrap_or_else(|| format!("Rider {}", id + 1))
         };
         // This rider's progress.

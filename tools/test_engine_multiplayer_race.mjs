@@ -135,7 +135,7 @@ try {
   h = await until(host, r => r.phase === 3 && r.results.length === 2, 480000, 'race 2 results without the guest');
   assert.ok(h.results[0].time > 0, `host finished race 2: ${h.summary}`);
   assert.equal(h.results[1].time, null, `leaver ranks DNF: ${h.summary}`);
-  assert.match(h.summary, /2\. .* DNF$/);
+  assert.match(h.summary, /2\. RustGuest DNF$/, 'the leaver keeps its name');
   assertNoErrors(errors);
   console.log(`Multiplayer race: grid, shared countdown, per-rider laps, agreed results (${first}), return to room, Race Again and a mid-race leaver (${h.summary}) verified`);
 } finally {

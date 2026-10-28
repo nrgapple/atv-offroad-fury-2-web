@@ -593,7 +593,9 @@ race packet, start synchronization or result agreement has been recovered
   phase RESULTS. Every peer shows the race's own results panel with those
   rows, or the mini-game results panel for a rider who did not cross the
   line. Online races credit no Profile Points and record no Hall of Fame
-  entries (manual).
+  entries (manual); the results panel shows "-" for points. The HUD's PLACE
+  tree and the finish place sign (First/Second/Third Place) use the room
+  standings, not the rider's solo race.
 - **Late joiners and leavers.** A rider who first sees a race already past
   its countdown (a late joiner) has no grid slot to take: it free-rides the
   course as a spectator, sees the agreed Race Results when they arrive, and
@@ -657,6 +659,24 @@ race packet, start synchronization or result agreement has been recovered
   pages race a Supercross room, agree the results, the guest quits back to
   the room's Free Ride, the host's Race Again starts a second race the guest
   joins, and the guest leaves mid-race (host finishes, guest ranks DNF).
+
+### Verification (2026-10-28, host only)
+
+- `cargo test -p atv-app room_race`: grid, countdown, finish, leavers, a
+  leaver's reused id, host handoff, late-joiner loading, slow-link grace,
+  standings.
+- `tools/test_engine_multiplayer_race.mjs` passed end to end against a local
+  relay (wrangler dev) behind `tools/serve_multiplayer.mjs` on a machine at
+  load average ~100: agreed results, quit to the room, Race Again, mid-race
+  leaver ranked DNF. At load averages above ~200 the local relay's delivery
+  stalled for 30–60 s and runs failed on timing (the guest's finish or the
+  host's results arrived too late); this is a host-load limit of the local
+  setup, but it is not measured on production.
+- The relay's room-race forwarding (host-only race state, stamped progress,
+  race-aware riders only) was checked with the room-race section of
+  `tools/test_multiplayer_relay.mjs` on a fresh room. The full script stops
+  earlier on main as well: its host-reservation assertions predate drop-in
+  rooms (a guest may now join before the host; `Connection replaced`).
 
 ### Next modes
 
