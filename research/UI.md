@@ -172,3 +172,36 @@ movement. This is automated browser evidence, not physical-device or full-game
 parity verification. At the time of this browser checkpoint, the separate
 R2/gallery hash audit and upload of the inspected pause-menu screenshot had not
 yet run.
+
+## Direction-aware page transitions (2026-10-28)
+
+Pages used to slide in from the right on every change, including Back, while
+the old page vanished at once and the whole screen (backdrop included) faded
+up from near-black. `atv-ui::transition` now runs a shared-axis transition:
+
+- Push: the page left slides 28px left and fades out in 90 ms (`ease-in`);
+  the new page slides 36px from the right over 240 ms
+  (`cubic-bezier(.2,0,0,1)`) and fades in from 80 ms, so two layouts never
+  show on top of each other. Back mirrors both (the page returned to comes in
+  from the left).
+- Direction comes from the pages already seen (returning to one on the way
+  here is a pop), independently of the navigation code.
+- The red backdrop and, in landscape, the silver stage frame every page
+  shares stay put; only page content moves. Frontend pages leave as a
+  snapshot of their last frame; pause/settings panels redraw their old state
+  without its dim layer.
+- Interruptible (a page shown mid-transition starts from what is on screen),
+  input goes to the new page at once, a resize cancels it, and
+  `prefers-reduced-motion: reduce` shows pages at rest.
+- While a frontend page slides it is laid out once at rest and moved, as a
+  CSS transform would be.
+
+Exact-build evidence: the original page layouts (`private/extracted/ui-pages`)
+animate only `Animated_Icon` widgets (the 21-frame ATM selection pill); no page
+transition data was found, so the timing is authored, in the original stage's
+sweep-from-the-right direction. `tools/test_engine_menu_transitions.mjs` checks
+push and Back directions, the old page leaving, frontend, Settings over the main
+menu and the pause menu, and reduced motion. Host Chromium: slide frames median
+12 ms, p95 33 ms (1280x720). At 390x844 DPR3 with 4x CPU throttling, slide
+frames are median ~21 ms and frontend prepare ~10 ms, the same as the previous
+single slide. Physical phones are not measured.

@@ -135,6 +135,12 @@ pub struct Front {
     transition: PageTransition,
     /// This frame's slide of the page or the menu panel over it.
     motion: Option<atv_ui::transition::Motion>,
+    /// The content layer's items in `list` (the snapshot a transition
+    /// slides out), the last menu state drawn, and the menu page leaving.
+    content: std::ops::Range<usize>,
+    last_menu: Option<pause::State>,
+    exit_menu: Option<pause::State>,
+    page_cache: Option<PageCache>,
 }
 
 /// frontend.js `Math.floor(Math.random() * tips.length)`.
@@ -220,6 +226,10 @@ impl Front {
             slide: true,
             transition: PageTransition::default(),
             motion: None,
+            content: 0..0,
+            last_menu: None,
+            exit_menu: None,
+            page_cache: None,
         };
         front.state.refresh(&view);
         front
@@ -294,7 +304,8 @@ impl Front {
         // The loader paints only between load stages (the load holds the
         // GPU), where a slide would freeze part way or blank; the browser's
         // compositor runs it through the load. It opens at rest.
-        self.transition.observe(Some(self.state.shown), true);
+        self.transition
+            .observe(Some(self.state.shown), "loading", true, &[]);
         self.shot_started = self.now();
         self.tip_chosen = false;
         self.choose_tip();
@@ -950,8 +961,21 @@ impl Front {
         let now = self.now();
         // Each page shown, and the menu panel over the backdrop, slides in.
         let shown = self.menu.as_ref().map_or(self.state.shown, |m| m.shown);
-        self.transition
-            .observe(Some(shown), !self.slide || crate::reduced_motion());
+        if self.transition.changes(Some(shown)) {
+            // The menu page being left slides out (redrawn from its state).
+            self.exit_menu = self.last_menu.take();
+        }
+        let page = self
+            .menu
+            .as_ref()
+            .map_or(self.state.page.clone(), |m| m.page.clone());
+        let on_screen = self.list.items.get(self.content.clone()).unwrap_or(&[]);
+        self.transition.observe(
+            Some(shown),
+            &page,
+            !self.slide || crate::reduced_motion(),
+            on_screen,
+        );
         self.motion = self.transition.motion(now);
         // Kinetic scrolling: flings, rubber bands and focus glides.
         let scroll_now = atv_ui::scroll::now();
@@ -1000,16 +1024,7 @@ impl Front {
         screen.model_status = self.model_status();
         screen.quad_model = image(0, &self.previews[0]);
         screen.rider_model = image(1, &self.previews[1]);
-        self.list.clear();
-        self.hits.clear();
-        layout::render(
-            &front::element(&view, &screen),
-            &mut self.fonts,
-            view.width,
-            view.height,
-            &mut self.list,
-            &mut self.hits,
-        );
+        self.render_page(&screen);
         // Both lists keep 8px of padding under their last item.
         if self
             .state
@@ -1017,31 +1032,13 @@ impl Front {
         {
             screen.list_scroll = self.state.list.offset();
             screen.rows_scroll = self.state.rows.offset();
-            self.list.clear();
-            self.hits.clear();
-            layout::render(
-                &front::element(&view, &screen),
-                &mut self.fonts,
-                view.width,
-                view.height,
-                &mut self.list,
-                &mut self.hits,
-            );
+            self.render_page(&screen);
         }
         // Preview targets follow their slots (canvas size x min(DPR, 2)).
         if self.fit_previews(device) {
             screen.quad_model = image(0, &self.previews[0]);
             screen.rider_model = image(1, &self.previews[1]);
-            self.list.clear();
-            self.hits.clear();
-            layout::render(
-                &front::element(&view, &screen),
-                &mut self.fonts,
-                view.width,
-                view.height,
-                &mut self.list,
-                &mut self.hits,
-            );
+            self.render_page(&screen);
         }
         for preview in self.previews.iter_mut().flatten() {
             if let (true, Some((_, w, h))) = (preview.dirty, preview.target) {
@@ -1050,6 +1047,10 @@ impl Front {
         }
         if self.menu.is_some() {
             self.prepare_menu(device, queue);
+        } else {
+            self.last_menu = None;
+        }
+        if self.menu.is_some() {
             // drawBars: the spectrum repaints over the panel each frame.
             if let Some((area, _)) = self.menu_hits.iter().find(|(_, id)| *id == pause::BARS) {
                 if let Some(m) = self.motion {
@@ -1065,6 +1066,7 @@ impl Front {
                 }
             }
         }
+        self.paint_menu_exit();
         if !self.diagnostics.is_empty() {
             atv_ui::diagnostics::paint(
                 &mut self.list,
@@ -1095,6 +1097,97 @@ impl Front {
         self.split_ms = [art_ms, layout_ms, self.prepare_ms - art_ms - layout_ms];
     }
 
+    /// Lays out the page: the still backdrop, the page being left sliding
+    /// out, and the content (moving while a transition runs).
+    ///
+    /// While a page slides only its offset and opacity change, so the page
+    /// is laid out once at rest and then moved (a transform does not
+    /// reflow), as the browser's compositor would.
+    fn render_page(&mut self, screen: &front::Screen) {
+        let view = self.view;
+        let mut rest = screen.clone();
+        let motion = rest.motion.take();
+        let cached = self
+            .page_cache
+            .as_ref()
+            .is_some_and(|c| c.view == view && c.screen == rest);
+        if !cached {
+            let (back, content) = front::layers(&view, &rest);
+            let mut cache = PageCache {
+                view,
+                screen: rest,
+                back: DisplayList::default(),
+                content: DisplayList::default(),
+                hits: Vec::new(),
+            };
+            let mut ignored = Vec::new();
+            layout::render(
+                &back,
+                &mut self.fonts,
+                view.width,
+                view.height,
+                &mut cache.back,
+                &mut ignored,
+            );
+            layout::render(
+                &content,
+                &mut self.fonts,
+                view.width,
+                view.height,
+                &mut cache.content,
+                &mut cache.hits,
+            );
+            self.page_cache = Some(cache);
+        }
+        let Some(cache) = &self.page_cache else {
+            return;
+        };
+        self.list.clear();
+        self.list.items.extend_from_slice(&cache.back.items);
+        self.hits.clone_from(&cache.hits);
+        // The page left fades out under the new one.
+        self.transition.paint_exit(&mut self.list);
+        let start = self.list.items.len();
+        match motion {
+            Some(m) => {
+                let mut moved = cache.content.clone();
+                moved.translate(m.dx, 0.);
+                self.list.opacity(m.opacity);
+                self.list.items.extend(moved.items);
+                self.list.unopacity();
+                for (r, _) in &mut self.hits {
+                    r.x += m.dx;
+                }
+            }
+            None => self.list.items.extend_from_slice(&cache.content.items),
+        }
+        self.content = start..self.list.items.len();
+    }
+
+    /// A menu page being left slides out over the new one, without its dim
+    /// backdrop (the new page's is already drawn).
+    fn paint_menu_exit(&mut self) {
+        let Some(motion) = self.transition.exit_motion() else {
+            self.exit_menu = None;
+            return;
+        };
+        let Some(old) = &self.exit_menu else {
+            return;
+        };
+        let view = self.view;
+        let mut old = old.clone();
+        old.motion = Some(motion);
+        let mut ignored = Vec::new();
+        layout::render(
+            &pause::stage(&view, &old, &self.glyphs),
+            &mut self.fonts,
+            view.width,
+            view.height,
+            &mut self.list,
+            &mut ignored,
+        );
+    }
+
     fn prepare_menu(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
         let view = self.view;
         let start = self.list.items.len();
@@ -1105,6 +1198,7 @@ impl Front {
             return;
         };
         state.motion = self.motion;
+        self.last_menu = Some(state.clone());
         if state.page == "jukebox" {
             // The original PAGE14 art, registered once the host read it.
             if self.jukebox_art.is_none()
@@ -1534,6 +1628,8 @@ impl Front {
             })).collect::<Vec<_>>(),
         });
         out["kinetic"] = kinetic;
+        // The page being left while it slides out: [opacity, translateX px].
+        out["exit"] = serde_json::json!(self.transition.exit_motion().map(|m| [m.opacity, m.dx]));
         // The pages Back returns through (research/MENU_FLOW.md).
         out["history"] = self.state.history().collect::<Vec<_>>().into();
         if let Some(m) = &self.menu {
@@ -1542,6 +1638,15 @@ impl Front {
         }
         out
     }
+}
+
+/// The frontend page laid out at rest (see `Front::render_page`).
+struct PageCache {
+    view: Viewport,
+    screen: front::Screen,
+    back: DisplayList,
+    content: DisplayList,
+    hits: Vec<(Rect, u32)>,
 }
 
 /// The page's artwork this frame.
