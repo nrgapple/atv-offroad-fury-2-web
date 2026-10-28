@@ -353,8 +353,7 @@ impl TagSession {
                 .map(|(i, (p, _, wrecked))| Rider {
                     wrecked: *wrecked,
                     stunt_started: step == 0
-                        && ((i == self.me && own_trick)
-                            || (self.local && i == 1 && second_trick)),
+                        && ((i == self.me && own_trick) || (self.local && i == 1 && second_trick)),
                     touches_ball: carrier.is_none()
                         && flat(*p, self.ball.position) < BALL_REACH
                         && (p[1] - self.ball.position[1]).abs() < 8.,

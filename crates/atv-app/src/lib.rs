@@ -6496,26 +6496,29 @@ impl App {
             // King of the Hills rides its own scene (the hill bases, flags
             // and spotlights of `env05kh.scn`) over the Freeride archive;
             // Treasure Hunt reads its mode TOY and bombs the same way.
-            game_scene: self.game.as_ref().and_then(|g| {
-                let path = atv_core::games::game_archive(g.kind, &g.venue)?;
-                let suffix = match g.kind {
-                    atv_core::games::GameKind::KingOfTheHills => "kh",
-                    // Treasure Hunt: its mode TOY and bomb models over the
-                    // Freeride scene (no `th.scn` ships).
-                    atv_core::games::GameKind::TreasureHunt => "th",
-                    _ => return None,
-                };
-                self.content
-                    .as_ref()
-                    .is_some_and(|c| c.has(&path))
-                    .then(|| (path, format!("{}{suffix}", g.venue)))
-            })
-            // Split screen Tag rides the venue's Tag course.
-            .or_else(|| {
-                self.split_tag
-                    .as_ref()
-                    .and_then(|(_, venue)| tag_scene(self.content.as_ref(), venue))
-            }),
+            game_scene: self
+                .game
+                .as_ref()
+                .and_then(|g| {
+                    let path = atv_core::games::game_archive(g.kind, &g.venue)?;
+                    let suffix = match g.kind {
+                        atv_core::games::GameKind::KingOfTheHills => "kh",
+                        // Treasure Hunt: its mode TOY and bomb models over the
+                        // Freeride scene (no `th.scn` ships).
+                        atv_core::games::GameKind::TreasureHunt => "th",
+                        _ => return None,
+                    };
+                    self.content
+                        .as_ref()
+                        .is_some_and(|c| c.has(&path))
+                        .then(|| (path, format!("{}{suffix}", g.venue)))
+                })
+                // Split screen Tag rides the venue's Tag course.
+                .or_else(|| {
+                    self.split_tag
+                        .as_ref()
+                        .and_then(|(_, venue)| tag_scene(self.content.as_ref(), venue))
+                }),
             // A Freestyle objective reads the course's OB archive (its
             // `.obj`, and a target run's TOY and cherries).
             objective: self.objective.as_ref().and_then(|o| {
