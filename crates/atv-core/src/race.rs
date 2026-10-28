@@ -2797,7 +2797,12 @@ mod tests {
         let mut r = Race::new(course(), 1, vec!["Half".into()], 1).unwrap();
         r.countdown = 0.;
         r.waiting = true;
-        let half = [[0., 0., 100.], [100., 0., 100.], [100., 0., 100.], [100., 0., 100.]];
+        let half = [
+            [0., 0., 100.],
+            [100., 0., 100.],
+            [100., 0., 100.],
+            [100., 0., 100.],
+        ];
         for (i, p) in [[0., 0., 100.], [100., 0., 100.], [100., 0., 0.], [0.; 3]]
             .into_iter()
             .enumerate()

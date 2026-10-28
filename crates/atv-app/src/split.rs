@@ -146,6 +146,14 @@ impl Layout {
     }
 }
 
+/// A split ride's request: the layout, and player 2's own Garage choice
+/// (none rides player 1's).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Request {
+    pub layout: Layout,
+    pub second: Option<atv_game::ride::Selection>,
+}
+
 /// Player 2: its own ride on the shared venue, its view and its camera.
 pub struct Second {
     pub layout: Layout,
@@ -178,9 +186,13 @@ impl Second {
         venue: &atv_game::venue::Venue,
         scene: &mut atv_render::SceneRenderer,
         first: &mut crate::riding::Riding,
-        layout: Layout,
+        request: Request,
         (selection, appearance, race, crash, graphics): Shared,
     ) -> Result<Self, String> {
+        let layout = request.layout;
+        // Player 2's own Garage ATV and rider; gear stays player 1's (the
+        // Garage gear is the profile's).
+        let selection = request.second.unwrap_or(selection);
         first.ride.set_camera_layout(layout.camera_layout())?;
         // Player 2 races its own copy of the course with no CPUs: player
         // 1's race holds the field, and the standings merge both.
@@ -231,6 +243,16 @@ impl Second {
             ride.paint(),
         )?;
         let mut riding = crate::riding::Riding::new(ride, venue);
+        // Player 2's own wheel dust, chunks and spray (startSimulation's
+        // wheel effects for its ATV); tire tracks and lingering dust stay
+        // player 1's (one pass each).
+        if let Some(mut effects) =
+            atv_game::wheel_effects::load(content, venue, selection.quad).await?
+        {
+            effects.reset(&riding.ride)?;
+            scene.set_second_wheel_effects(gpu, Some(&effects));
+            riding.effects = Some(effects);
+        }
         riding.interpolation = graphics.interpolation;
         riding.wheel_reprojection = graphics.wheel_reprojection;
         riding.dirt_enabled = graphics.dirt;
@@ -269,6 +291,7 @@ impl Second {
         scene: &mut atv_render::SceneRenderer,
     ) -> Result<(), String> {
         let ride = &self.riding.ride;
+        scene.set_second_wheel_effects(gpu, self.riding.effects.as_ref());
         let selection = ride.selection();
         let key: atv_game::multiplayer::remote::Key = (
             selection.quad,
@@ -318,9 +341,10 @@ impl Second {
             self.crash.0 = self.crash.0.wrapping_add(1);
         }
         self.crash.1 = wreck.is_some();
-        let (rider_position, rider_velocity) = wreck.map_or((f.origin, f.linear_velocity), |(m, v)| {
-            ([m[12], m[13], m[14]], v)
-        });
+        let (rider_position, rider_velocity) = wreck
+            .map_or((f.origin, f.linear_velocity), |(m, v)| {
+                ([m[12], m[13], m[14]], v)
+            });
         atv_game::audio::remote::Rider {
             peer: PEER,
             quad: ride.selection().quad,
@@ -328,7 +352,11 @@ impl Second {
             velocity: f.linear_velocity,
             rider_position,
             rider_velocity,
-            throttle: if self.riding.paused { 0. } else { ride.applied().throttle },
+            throttle: if self.riding.paused {
+                0.
+            } else {
+                ride.applied().throttle
+            },
             speed: f.speed_magnitude,
             // The room's RiderState::Riding: on the ground, not recovering.
             riding: wreck.is_none()
@@ -397,14 +425,19 @@ pub fn link(
         };
     }
     std::iter::once(body(first, -1.))
-        .chain(first.race_cpu_bodies().into_iter().map(|(position, velocity, orientation)| {
-            atv_game::multiplayer::PeerBody {
-                position,
-                velocity,
-                orientation,
-                tie: -1.,
-            }
-        }))
+        .chain(
+            first
+                .race_cpu_bodies()
+                .into_iter()
+                .map(
+                    |(position, velocity, orientation)| atv_game::multiplayer::PeerBody {
+                        position,
+                        velocity,
+                        orientation,
+                        tie: -1.,
+                    },
+                ),
+        )
         .collect()
 }
 

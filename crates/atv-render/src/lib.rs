@@ -575,6 +575,9 @@ pub struct SceneRenderer {
     clock: f32,
     /// The ride's wheel dust, chunks, spray and wet births.
     wheel_effects: Option<wheel_effects::WheelEffectsPass>,
+    /// Split screen: player 2's wheel dust, chunks and spray (no tire
+    /// tracks or lingering dust).
+    second_wheel_effects: Option<wheel_effects::WheelEffectsPass>,
     /// Enhanced/High tire tracks.
     tire_tracks: Option<tire_tracks::TireTracksPass>,
     /// Enhanced/High lingering dust puffs.
@@ -748,6 +751,7 @@ impl SceneRenderer {
             profiler: profile::Profiler::default(),
             gpu_timer: None,
             wheel_effects: None,
+            second_wheel_effects: None,
             lingering_dust: None,
             burst: None,
             tire_tracks: None,
@@ -1148,6 +1152,27 @@ impl SceneRenderer {
         ));
     }
 
+    /// Split screen: installs (or, with none, removes) player 2's wheel
+    /// effects.
+    pub fn set_second_wheel_effects(
+        &mut self,
+        gpu: &Gpu,
+        effects: Option<&atv_game::wheel_effects::WheelEffects>,
+    ) {
+        self.second_wheel_effects =
+            effects.map(|e| wheel_effects::WheelEffectsPass::new(gpu, &self.world, e));
+    }
+
+    /// Player 2's latest wheel-effect frame (split screen).
+    pub fn accept_second_wheel_effects(
+        &mut self,
+        effects: &mut atv_game::wheel_effects::WheelEffects,
+    ) {
+        if let Some(pass) = &mut self.second_wheel_effects {
+            pass.accept(effects);
+        }
+    }
+
     /// The latest wheel-effect frame and every wet birth since the last call.
     pub fn accept_wheel_effects(
         &mut self,
@@ -1448,6 +1473,16 @@ impl SceneRenderer {
         self.terrain.recenter(gpu, venue, center);
     }
 
+    /// Fine terrain patches drawn (split screen: one per player apart).
+    pub fn terrain_patches(&self) -> usize {
+        self.terrain.patches()
+    }
+
+    /// Split screen: a fine terrain patch around each local player.
+    pub fn recenter_terrain_many(&mut self, gpu: &Gpu, venue: &Venue, centers: &[[f32; 2]]) {
+        self.terrain.recenter_many(gpu, venue, centers);
+    }
+
     /// Per-pass CPU timing (bench runs); resets the accumulated report.
     pub fn set_profiling(&mut self, enabled: bool) {
         self.profiler.set_enabled(enabled);
@@ -1690,6 +1725,11 @@ impl SceneRenderer {
         }
         if let Some(pass) = &mut self.wheel_effects {
             (stats.wheel_draws, stats.wheel_triangles) = pass.prepare(gpu, &view.camera);
+        }
+        if let Some(pass) = &mut self.second_wheel_effects {
+            let (draws, triangles) = pass.prepare(gpu, &view.camera);
+            stats.wheel_draws += draws;
+            stats.wheel_triangles += triangles;
         }
         if let Some(pass) = &mut self.tire_tracks {
             let (draws, triangles) = pass.prepare(gpu);
@@ -1963,6 +2003,9 @@ impl SceneRenderer {
                 blood.draw(&mut pass, &self.world);
             }
             if let Some(effects) = &self.wheel_effects {
+                effects.draw(&mut pass, &self.world);
+            }
+            if let Some(effects) = &self.second_wheel_effects {
                 effects.draw(&mut pass, &self.world);
             }
             if let Some(dust) = &self.lingering_dust {

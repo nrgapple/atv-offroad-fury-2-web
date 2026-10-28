@@ -555,7 +555,7 @@ struct App {
     cloud: cloud::Cloud,
     /// The frontend's Split Screen branch asked for two local players on
     /// the next rides (kept for Restart Race).
-    split_request: Option<split::Layout>,
+    split_request: Option<split::Request>,
     /// Crash camera Tight, Chase camera Assisted (Options::camera_choice).
     camera_choice: (bool, bool),
     /// Adaptive render resolution (web): steps RENDER_RATIO while riding.
@@ -764,7 +764,7 @@ struct World {
     /// A Freestyle objective's OB archive and target TOY stem.
     objective: Option<(String, Option<String>)>,
     /// Two local players in this layout (split.rs).
-    split: Option<split::Layout>,
+    split: Option<split::Request>,
 }
 
 /// Ride prefetch (`?prefetch=off` turns it off for load-time measurement).
@@ -1068,7 +1068,7 @@ async fn prepare(
     };
     let mut riding = riding;
     let split = match (split_layout, &mut riding) {
-        (Some(layout), Some(first)) => {
+        (Some(request), Some(first)) => {
             progress(&gpu, "Reading player 2…");
             Some(
                 split::Second::load(
@@ -1077,7 +1077,7 @@ async fn prepare(
                     &venue,
                     &mut scene,
                     first,
-                    layout,
+                    request,
                     (selection, appearance, race, crash, graphics),
                 )
                 .await?,
@@ -1405,8 +1405,7 @@ impl App {
                 if let Some(first) = others.first_mut() {
                     *first = split::body(&riding.ride, -1.);
                 }
-                if let Err(error) = second.frame(&all_keys, pad2.as_ref(), sample_now, dt, others)
-                {
+                if let Err(error) = second.frame(&all_keys, pad2.as_ref(), sample_now, dt, others) {
                     status(&format!("Player 2 stopped: {error}"));
                 }
                 if second.riding.paused {
@@ -1482,6 +1481,14 @@ impl App {
         if let Some(effects) = &mut riding.effects {
             ready.scene.accept_wheel_effects(&ready.gpu, effects);
         }
+        // Split screen: player 2's wheel effects, and its own fine terrain
+        // patch beside player 1's.
+        riding.split_origin = ready.split.as_mut().map(|second| {
+            if let Some(effects) = &mut second.riding.effects {
+                ready.scene.accept_second_wheel_effects(effects);
+            }
+            second.riding.ride.frame().origin
+        });
         // A split view presents at the preset's reference and scales the
         // focal length to its layout (split.rs).
         let (present_aspect, focal_scale) = match &ready.split {
@@ -2100,7 +2107,18 @@ impl App {
                         "throttle": applied.throttle,
                         "steer": applied.steer,
                         "race": race(ride),
+                        "quad": ride.selection().quad,
+                        "rider": ride.selection().rider,
+                        "effects": second.riding.effects.as_ref().map(|e| {
+                            let f = e.frame();
+                            serde_json::json!({
+                                "particles": f.particles.len(),
+                                "emitted": f.total_emitted.iter().sum::<u64>(),
+                            })
+                        }),
+                        "rumbles": second.riding.rumble.pulses,
                     },
+                    "terrainPatches": ready.scene.terrain_patches(),
                 });
             }
             state["wakeLock"] = self.wake_lock.held().into();
@@ -3954,7 +3972,12 @@ impl ApplicationHandler<Message> for App {
             objective: None,
             // `?split=h|v` (web) or FURY_SPLIT=h|v (desktop): a direct split
             // ride (tests and host measurements).
-            split: split::Layout::requested(split_param().as_deref()),
+            split: split::Layout::requested(split_param().as_deref()).map(|layout| {
+                split::Request {
+                    layout,
+                    second: split_second_param(),
+                }
+            }),
         };
         let future = async move {
             let gpu = open_gpu(window, display).await?;
@@ -5628,8 +5651,15 @@ impl App {
         ) {
             let split = self.front.as_ref().and_then(|f| {
                 let f = f.borrow();
-                (f.state.split && matches!(event, Event::Ride { .. } | Event::Race { .. }))
-                    .then(|| split::Layout::from_vertical(f.state.split_vertical))
+                (f.state.split && matches!(event, Event::Ride { .. } | Event::Race { .. })).then(
+                    || split::Request {
+                        layout: split::Layout::from_vertical(f.state.split_vertical),
+                        second: Some(atv_game::ride::Selection {
+                            quad: f.state.split_second.0,
+                            rider: f.state.split_second.1,
+                        }),
+                    },
+                )
             });
             self.split_request = split;
         }
@@ -8141,6 +8171,26 @@ impl Diagnostics {
 }
 
 /// `?debug=` on the web; `ATV_DEBUG` natively.
+/// `?split2=quad.rider` (web) or `FURY_SPLIT2` (desktop): player 2's own
+/// ATV (1-26) and rider (0 male, 1 female) for a direct split ride.
+fn split_second_param() -> Option<atv_game::ride::Selection> {
+    #[cfg(target_arch = "wasm32")]
+    let value = web_sys::window()
+        .and_then(|w| w.location().search().ok())
+        .and_then(|search| {
+            search.trim_start_matches('?').split('&').find_map(|pair| {
+                let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
+                (key == "split2").then(|| value.to_string())
+            })
+        });
+    #[cfg(not(target_arch = "wasm32"))]
+    let value = std::env::var("FURY_SPLIT2").ok();
+    let (quad, rider) = value?
+        .split_once('.')
+        .and_then(|(q, r)| Some((q.parse().ok()?, r.parse().ok()?)))?;
+    ((1..=26).contains(&quad) && rider <= 1).then_some(atv_game::ride::Selection { quad, rider })
+}
+
 /// `?split=h|v` (web) or `FURY_SPLIT` (desktop).
 fn split_param() -> Option<String> {
     #[cfg(target_arch = "wasm32")]
