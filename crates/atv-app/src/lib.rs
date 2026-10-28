@@ -1452,7 +1452,7 @@ impl App {
                 {
                     // Player 1 as it stands after this frame's steps.
                     if let Some(first) = others.first_mut() {
-                        *first = first_body.clone();
+                        *first = first_body;
                     }
                     if let Err(error) =
                         second.frame(&all_keys, pad.as_ref(), sample_now, dt, others)

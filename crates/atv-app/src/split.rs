@@ -582,12 +582,12 @@ pub fn link(
         let own = second.player;
         bodies.push(
             std::iter::once(body(first, -1.))
-                .chain(cpus.iter().cloned())
+                .chain(cpus.iter().copied())
                 .chain(local.iter().filter(|(p, _)| *p != own).map(|(p, b)| {
                     // The lower player number takes the -1 side of a tie.
                     atv_game::multiplayer::PeerBody {
                         tie: if *p < own { -1. } else { 1. },
-                        ..b.clone()
+                        ..*b
                     }
                 }))
                 .collect(),
