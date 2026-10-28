@@ -278,6 +278,17 @@ impl Status {
             Self::Failed(message) => message.clone(),
         }
     }
+
+    /// The badge's word.
+    pub fn short(&self) -> &'static str {
+        match self {
+            Self::NoKey => "",
+            Self::Saving => "Saving…",
+            Self::Saved => "Saved",
+            Self::Offline => "Offline",
+            Self::Failed(_) => "Not synced",
+        }
+    }
 }
 
 /// What a response changed, for the host and the menus.
@@ -396,6 +407,11 @@ impl Sync {
                 .in_flight
                 .as_ref()
                 .is_some_and(|f| matches!(f.op, Op::FetchKey(_) | Op::FetchShare(_)))
+    }
+
+    /// A request is on its way.
+    pub fn waiting(&self) -> bool {
+        self.in_flight.is_some()
     }
 
     pub fn sharing(&self) -> bool {
