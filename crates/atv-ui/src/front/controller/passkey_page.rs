@@ -219,7 +219,7 @@ impl Frontend {
                 .map(|r| {
                     (
                         format!("revision-{}", r.revision),
-                        crate::cloud::when(&r.updated_at),
+                        format!("#{} {}", r.revision, crate::cloud::when(&r.updated_at)),
                     )
                 })
                 .collect(),
@@ -366,7 +366,10 @@ impl Frontend {
             Source::Key(key) => line("Pass Key", key.clone()),
             Source::Share(code) => line("Share Code", code.clone()),
             Source::File(name) => line("File", name.clone()),
-            Source::Revision(n) => line("Saved", format!("{} (revision {n})", crate::cloud::when(&fetched.updated_at))),
+            Source::Revision(n) => line(
+                "Saved",
+                format!("{} (revision {n})", crate::cloud::when(&fetched.updated_at)),
+            ),
         }];
         let save = &fetched.save;
         let names: Vec<&str> = save
@@ -709,6 +712,7 @@ mod tests {
                 "enterkey",
                 "entershare",
                 "savefiles",
+                "savehistory",
                 "back"
             ]
         );

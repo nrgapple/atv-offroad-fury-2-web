@@ -408,6 +408,20 @@ impl App {
                     }
                 }
                 Notice::Shared(code) => self.offer_share(&code),
+                Notice::History(revisions) => {
+                    if let Some(front) = &self.front {
+                        let mut f = front.borrow_mut();
+                        let view = f.view;
+                        f.state.show_history(revisions, &view);
+                    }
+                }
+                Notice::Restored(message) => {
+                    if let Some(front) = &self.front {
+                        let mut f = front.borrow_mut();
+                        let view = f.view;
+                        f.state.passkey_restored(message, &view);
+                    }
+                }
                 Notice::Message(message) => {
                     if let Some(front) = &self.front {
                         front.borrow_mut().state.passkey_message(message);
@@ -473,6 +487,9 @@ impl App {
             }
             CloudCommand::Export => self.export_save(),
             CloudCommand::Import => self.import_save(),
+            CloudCommand::History => self.cloud.sync.history(),
+            CloudCommand::FetchRevision(n) => self.cloud.sync.fetch_revision(n),
+            CloudCommand::Restore(n) => self.cloud.sync.restore(n),
         }
         self.cloud_tick();
         self.wake();
