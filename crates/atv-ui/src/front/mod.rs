@@ -46,6 +46,12 @@ pub const PASSKEY: u32 = 2413;
 /// Value rows' Previous/Next arrows, by choice index.
 pub const STEP_PREV: u32 = 2430;
 pub const STEP_NEXT: u32 = 2440;
+/// The rows column when it scrolls, and a marker after its last child (its
+/// content height).
+pub const ROWS: u32 = 2450;
+pub const ROWS_END: u32 = 2451;
+/// Space kept under the rows column's last child when it scrolls.
+pub const ROWS_PADDING: f32 = 12.;
 
 /// A registered image and its texel size.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -167,6 +173,8 @@ pub struct Screen {
     /// Single Race: `.ms-track-mode` ("National race").
     pub hero_mode: String,
     pub list_scroll: f32,
+    /// The rows column's scroll (pages whose rows can outgrow it).
+    pub rows_scroll: f32,
     /// Garage.
     pub vehicle_label: String,
     pub rider: u16,
@@ -1583,7 +1591,32 @@ fn left(m: &Metrics, s: &Screen) -> El {
         "loading" => left = left.child(shot(s)),
         _ => {}
     }
-    left
+    if matches!(s.page.as_str(), "tracks" | "race" | "garage" | "loading") {
+        // Their lists scroll instead.
+        return left;
+    }
+    // Rows that outgrow the column (a phone in landscape, the seven main
+    // rows on a short portrait screen) scroll inside it, clipped, instead
+    // of running under Back and off the screen.
+    left.style.overflow = taffy::Point {
+        x: taffy::Overflow::Visible,
+        y: taffy::Overflow::Scroll,
+    };
+    left.style.scrollbar_width = 0.;
+    left.style.min_size.height = length(0.);
+    left.child(
+        El::new(Style {
+            flex_shrink: 0.,
+            size: Size {
+                width: length(0.),
+                height: length(0.),
+            },
+            ..Default::default()
+        })
+        .id(ROWS_END),
+    )
+    .id(ROWS)
+    .scroll(s.rows_scroll)
 }
 
 fn bullet() -> El {
