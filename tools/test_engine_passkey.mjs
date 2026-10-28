@@ -8,7 +8,9 @@
 // The save API is the contract's (GET/PUT /api/save, POST /api/save/share, GET
 // /api/share), mocked in this process through Playwright routes so the test runs
 // against any static server. ATV_PASSKEY_LIVE=1 uses the site's real API instead
-// (ATV_TEST_URL=https://furyremastered.com).
+// (ATV_TEST_URL=https://furyremastered.com). ATV_PASSKEY_API=https://furyremastered.com
+// forwards a local build's /api/ requests to that server instead (no Origin header,
+// as the desktop app sends), checking the client against the real API before a deploy.
 // Screenshots: ATV_PASSKEY_SHOTS=<dir> (desktop and 390x844 phone).
 import assert from 'node:assert/strict';
 import { mkdtemp, readFile } from 'node:fs/promises';
@@ -17,6 +19,7 @@ import path from 'node:path';
 import { assertNoErrors, launch, newPage, nextFrames, url } from './browser/harness.mjs';
 
 const live = process.env.ATV_PASSKEY_LIVE === '1';
+const forward = process.env.ATV_PASSKEY_API?.replace(/\/+$/, '');
 const shots = process.env.ATV_PASSKEY_SHOTS;
 const BADGE = 2413;
 const ui = page => page.evaluate(() => JSON.parse(document.querySelector('#ui-state')?.textContent || '{}').front || {});
@@ -94,7 +97,15 @@ const progress = {
 const browser = await launch();
 async function device(name, { seed, viewport = { width: 1280, height: 720 }, hash = '' } = {}) {
   const context = await browser.newContext({ viewport, acceptDownloads: true });
-  if (!live) await context.route('**/api/**', api);
+  if (forward) {
+    await context.route('**/api/**', async route => {
+      const request = route.request();
+      const headers = Object.fromEntries(Object.entries(request.headers()).filter(([k]) => k.startsWith('x-fury-') || k === 'content-type'));
+      const { pathname, search } = new URL(request.url());
+      const response = await fetch(forward + pathname + search, { method: request.method(), headers, body: request.postData() ?? undefined });
+      await route.fulfill({ status: response.status, headers: { 'content-type': 'application/json', ...(response.headers.get('retry-after') ? { 'retry-after': response.headers.get('retry-after') } : {}) }, body: await response.text() });
+    });
+  } else if (!live) await context.route('**/api/**', api);
   const errors = [];
   const page = await newPage(context, {}, errors);
   await page.addInitScript(([seed, name]) => {
@@ -116,7 +127,7 @@ try {
   assert.match(synced.key, /^FURY-[0-9A-HJKMNP-TV-Z]{4}(-[0-9A-HJKMNP-TV-Z]{4}){3}$/);
   const passKey = synced.key;
   assert.equal(await a.page.evaluate(() => localStorage.getItem('fury-pass-key')), passKey);
-  if (!live) assert.equal(saves.get(symbols(passKey)).save.profiles.profiles[0].points, 340);
+  if (!live && !forward) assert.equal(saves.get(symbols(passKey)).save.profiles.profiles[0].points, 340);
   await shot(a.page, 'title-badge');
   await key(a.page, 'Enter'); await onPage(a.page, 'main');
   await shot(a.page, 'main-badge');
@@ -218,7 +229,7 @@ try {
   assert.deepEqual((await ui(e.page)).profileBook.details[0], ['Pass Key', passKey]);
 
   for (const x of [a, b, c, d, e]) assertNoErrors(x.errors);
-  console.log(`passkey: key ${live ? '(live)' : passKey}, share ${shareCode}, export/import and link ok`);
+  console.log(`passkey: ${live || forward ? 'real API, ' : ''}key ${passKey}, share ${shareCode}, export/import and link ok`);
 } finally {
   await browser.close();
 }
