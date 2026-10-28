@@ -62,7 +62,10 @@ try {
     await clickRow(page, 'Unlock Items'); await onPage(page, 'store');
     let front = await read(page);
     assert.deepEqual(front.labels, ['ATVs', 'Rider Equipment', 'Games', 'Tracks', 'Cheats', 'Back']);
-    assert.equal(front.profile, 'Current Profile Points: 0');
+    // The points to spend are on the status bar's coin chip, emphasized here.
+    assert.equal(front.profile, null);
+    assert.equal(front.status.points, 0);
+    assert.equal(front.status.store, true);
     await shot(page, `store-menu-${suffix}`);
 
     // Cheats: GIMMEPTS adds 1,000 Profile Points; a wrong code is refused.
@@ -74,7 +77,13 @@ try {
     await clickRow(page, 'Enter');
     front = await read(page);
     assert.equal(front.notice, 'Added 1,000 Profile Points!');
-    assert.equal(front.profile, 'Current Profile Points: 1,000');
+    assert.equal(front.status.points, 1000);
+    // The coin chip counts up to the new total.
+    assert.equal(front.status.counting, true, 'coins count up');
+    await page.waitForFunction(() => {
+      const s = JSON.parse(document.querySelector('#ui-state').textContent).front.status;
+      return !s.counting && s.shown === 1000;
+    });
     await shot(page, `store-cheats-${suffix}`);
     await page.mouse.click(8, 8);
     await key(page, 'Escape'); await onPage(page, 'store');
@@ -87,7 +96,7 @@ try {
     for (let i = 0; i < 30 && !(await read(page)).labels[0].includes('Patriot'); i++) await key(page, 'ArrowRight');
     front = await read(page);
     assert.match(front.labels[0], /^ATV \d+\/24 · Locked: Patriot$/);
-    assert.equal(front.profile, 'Point Cost: 250 · Current Profile Points: 1,000');
+    assert.equal(front.profile, 'Point Cost: 250');
     assert.equal(front.store.stageQuad, 8);
     await shot(page, `store-atv-${suffix}`);
     await key(page, 'ArrowDown');
@@ -114,7 +123,8 @@ try {
     assert.equal(front.labels[0], 'Helmet 1/26 · Unlocked: Thor Black');
     await key(page, 'ArrowRight');
     assert.equal((await read(page)).labels[0], 'Helmet 2/26 · Locked: Thor White');
-    assert.equal((await read(page)).profile, 'Point Cost: 50 · Current Profile Points: 750');
+    assert.equal((await read(page)).profile, 'Point Cost: 50');
+    assert.equal((await read(page)).status.points, 750);
     await shot(page, `store-gear-${suffix}`);
     await clickRow(page, 'Switch Equipment');
     assert.match((await read(page)).labels[0], /^Jersey 1\/26/);
@@ -127,7 +137,8 @@ try {
     }
     front = await read(page);
     assert.equal(front.labels[0], 'Track 1/3 · Locked: Rockbridge Park');
-    assert.equal(front.profile, 'Point Cost: 100 · Current Profile Points: 750');
+    assert.equal(front.profile, 'Point Cost: 100');
+    assert.equal(front.status.points, 750);
     await shot(page, `store-tracks-${suffix}`);
     await key(page, 'Escape'); await onPage(page, 'store');
     await clickRow(page, 'Games'); await onPage(page, 'store-games');

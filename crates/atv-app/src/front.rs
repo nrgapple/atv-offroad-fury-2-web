@@ -1676,7 +1676,9 @@ impl Front {
             Some(b) => serde_json::json!({
                 "profile": b.profile, "points": b.points, "trophies": [b.trophies.0, b.trophies.1],
                 "sync": b.sync.word(), "minimal": b.minimal, "store": b.store,
-                "open": b.open.map(|p| p.title), "counting": self.coins.counting(self.now()),
+                "open": b.open.as_ref().map(|p| p.title.clone()),
+                "lines": b.open.map(|p| p.lines).unwrap_or_default(),
+                "counting": self.coins.counting(self.now()),
                 "shown": self.coins.value(self.now()).0,
             }),
             None => serde_json::Value::Null,
