@@ -96,19 +96,41 @@ class GuardTests(unittest.TestCase):
         runtime = service / 'runtime'
         runtime.mkdir(parents=True)
         (runtime / 'com.furyremastered.desktop-release.plist.in').write_text(
-            '<plist version="1.0"><dict><key>Label</key><string>test</string></dict></plist>')
+            '<plist version="1.0"><dict><key>Label</key><string>test</string>'
+            '<key>ProgramArguments</key><array><string>@PYTHON@</string></array></dict></plist>')
         (home / 'Library/LaunchAgents').mkdir(parents=True)
         legacy = home / 'LargeFiles/fury-desktop'
         legacy.mkdir(parents=True)
         (legacy / 'watcher-state.json').write_text(json.dumps({'done': {'preserved': {}}, 'failed': {}}))
         with patch.object(install, 'SERVICE', service), patch.object(install.Path, 'home', return_value=home), \
-             patch.object(install, 'running_watcher', side_effect=[123, None]), patch.object(install.subprocess, 'run') as run, \
+             patch.object(install, 'running_watcher', side_effect=[123, None]), patch.object(install, 'launch_python', return_value=sys.executable), \
+             patch.object(install.subprocess, 'run') as run, \
              patch.object(install.time, 'sleep', side_effect=lambda _: run.assert_not_called()):
             install.finish_handoff(home / 'repo')
+        config = plistlib.loads((home / 'Library/LaunchAgents' / (install.LABEL + '.plist')).read_bytes())
+        self.assertEqual(config['ProgramArguments'][0], sys.executable)
         self.assertIn('preserved', json.loads((service / 'watcher-state.json').read_text())['done'])
         commands = [call.args[0][1] for call in run.call_args_list]
         self.assertEqual(commands, ['bootout', 'enable', 'bootstrap'])
         self.assertEqual(json.loads((service / 'handoff.json').read_text())['status'], 'installed')
+
+    def test_launch_interpreter_uses_actual_mac_executable(self):
+        actual = Path(self.tmp.name) / 'Python.app/Contents/MacOS/Python'
+        actual.parent.mkdir(parents=True)
+        actual.touch()
+        with patch.object(install.sys, 'platform', 'darwin'), \
+             patch.object(install.subprocess, 'check_output', return_value=str(actual) + '\n'):
+            self.assertEqual(install.launch_python(), str(actual))
+
+    def test_launch_interpreter_fails_closed_if_process_identity_is_missing(self):
+        with patch.object(install.sys, 'platform', 'darwin'), \
+             patch.object(install.subprocess, 'check_output', return_value='missing'):
+            with self.assertRaises(ValueError):
+                install.launch_python()
+
+    def test_non_mac_interpreter_is_unchanged(self):
+        with patch.object(install.sys, 'platform', 'linux'):
+            self.assertEqual(install.launch_python(), sys.executable)
 
     def test_cargo_install_preserves_proxy_and_refuses_custom_binary(self):
         home = Path(self.tmp.name)
