@@ -335,9 +335,10 @@ impl Meter {
         }
         if let Some(tree) = layout(4).filter(|_| position == "name") {
             // PLACE position tree: each rider slot's name slides to its rank.
-            // A room race (research/MULTIPLAYER.md "Room races") has no CPU
-            // opponents: its standings list every room rider in race order.
-            let room = frame.opponents.is_empty() && frame.standings.len() > 1;
+            // A room race (research/MULTIPLAYER.md "Room races") lists every
+            // room rider (and its CPUs) in race order: more standings than
+            // this race's own racers.
+            let room = frame.standings.len() > frame.opponents.len() + 1;
             let names: Vec<String> = if room {
                 frame
                     .standings

@@ -230,6 +230,7 @@ pub fn stepper(action: &str) -> bool {
             | "storeitem"
             | "codeletter"
             | "hostfstime"
+            | "hostcpus"
     ) || games_page::game_row(action)
         || GEAR_ROWS.iter().any(|(a, _)| *a == action)
         || action.strip_prefix("seat").is_some_and(|rest| {
@@ -241,6 +242,14 @@ pub fn stepper(action: &str) -> bool {
 }
 
 /// The original catalog names pants and sleeves generically ("pants 10").
+/// Host Game → CPU Riders: Off, Fill to 4, Fill to 5 (the original race's
+/// fields with three or four CPUs), wrapping.
+pub fn step_cpu_field(value: u8, direction: i32) -> u8 {
+    const VALUES: [u8; 3] = [0, 4, 5];
+    let at = VALUES.iter().position(|v| *v == value).unwrap_or(0) as i32;
+    VALUES[(at + direction.signum()).rem_euclid(VALUES.len() as i32) as usize]
+}
+
 fn generic_name(name: &str) -> bool {
     let lower = name.to_ascii_lowercase();
     ["pants ", "sleeves "].iter().any(|p| {
@@ -626,6 +635,7 @@ impl Frontend {
             }),
             host_freestyle: false,
             host_freestyle_minutes: (atv_core::freestyle::TIME_LIMIT / 60.) as u32,
+            host_cpu_field: 0,
             seats: Default::default(),
             history: Vec::new(),
         };
@@ -725,6 +735,7 @@ impl Frontend {
             "split_vertical": self.split_vertical,
             "host_freestyle": self.host_freestyle,
             "host_freestyle_minutes": self.host_freestyle_minutes,
+            "host_cpu_field": self.host_cpu_field,
             "split_players": self.split_players,
             "split_seconds": (0..usize::from(self.split_players.clamp(2, 4)) - 1)
                 .flat_map(|i| {
@@ -1156,6 +1167,7 @@ impl Frontend {
                 self.host_freestyle_minutes =
                     atv_core::games::step_minutes(self.host_freestyle_minutes, direction);
             }
+            "hostcpus" => self.host_cpu_field = step_cpu_field(self.host_cpu_field, direction),
             "champdifficulty" => {
                 self.champ_expert = !self.champ_expert;
                 self.notice = None;

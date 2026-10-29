@@ -772,6 +772,40 @@ impl Net {
         }
     }
 
+    /// This rider's room ATV (1-26) and rider (0/1).
+    pub fn look(&self) -> (u16, u16) {
+        self.session.profile().map_or((1, 0), |p| (p.quad, p.rider))
+    }
+
+    /// The room-race host's CPU riders for the room (research/MULTIPLAYER.md
+    /// "Room race CPUs").
+    pub fn send_cpus(&mut self, motion: atv_game::multiplayer::CpuMotion) {
+        if self.closed.is_none()
+            && self.ready_sent
+            && let Ok(bytes) = self.session.cpu_packet(motion)
+        {
+            self.socket.send(bytes);
+        }
+    }
+
+    /// The host's CPUs' latest progress for race `serial`.
+    pub fn cpu_progress(&self, serial: u32) -> Vec<atv_game::multiplayer::RaceProgress> {
+        if self.session.cpu_serial != serial {
+            return Vec::new();
+        }
+        self.session.cpu_progress.values().copied().collect()
+    }
+
+    /// The host's CPUs as drawn now: (index, snapshot, stale).
+    pub fn present_cpus(&mut self) -> Vec<(u8, atv_game::multiplayer::Snapshot, bool)> {
+        let now = now_ms(self.clock);
+        self.session
+            .present_cpus(now)
+            .into_iter()
+            .map(|(index, pose)| (index, pose.snapshot, pose.stale))
+            .collect()
+    }
+
     /// Tell the relay this client takes room-race packets (a serial-0
     /// progress) and room King of the Hills / Treasure Hunt packets (a
     /// serial-0 claim), after each Ready so reconnects announce again.

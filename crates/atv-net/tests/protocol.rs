@@ -771,6 +771,7 @@ fn race_state_and_progress_round_trip_and_reject_bad_values() {
             variant: 0,
             laps: 2,
             grid: [2, 3, 1, 0],
+            ..Default::default()
         },
         ..Default::default()
     };
@@ -850,4 +851,172 @@ fn race_state_and_progress_round_trip_and_reject_bad_values() {
     ] {
         assert!(atv_net::encode(&Packet::Progress(bad)).is_err());
     }
+}
+
+#[test]
+fn race_cpu_fill_and_cpu_motion_round_trip_and_reject_bad_values() {
+    use atv_net::{
+        AnimationState, CPU_PEER, CpuMotion, CpuRider, GameState, Packet, RACE_DNF, RaceInfo,
+        Snapshot,
+    };
+    let race = RaceInfo {
+        variant: 1,
+        laps: 2,
+        grid: [4, 0, 1, 0],
+        cpus: 3,
+        cpu_grid: [2, 5, 3, 0],
+        roster_quad: 7,
+        roster_rider: 1,
+        difficulty: 2,
+        cpu_scores: [70_000, RACE_DNF + 1, 65_500, 0],
+    };
+    let state = GameState {
+        game: 3,
+        serial: 9,
+        phase: atv_net::race_phase::RESULTS,
+        scores: [61_000, 0, 62_000, 0],
+        race,
+        ..Default::default()
+    };
+    let packet = Packet::Game(Box::new(state.clone()));
+    let bytes = atv_net::encode(&packet).unwrap();
+    assert_eq!(atv_net::decode(&bytes).unwrap(), packet);
+    // The CPU block adds 24 bytes to a human-only race's state.
+    let plain = GameState {
+        race: RaceInfo {
+            variant: 1,
+            laps: 2,
+            grid: [2, 0, 1, 0],
+            ..Default::default()
+        },
+        scores: [0; 4],
+        ..state.clone()
+    };
+    let plain_len = atv_net::encode(&Packet::Game(Box::new(plain))).unwrap().len();
+    assert_eq!(bytes.len(), plain_len + 24);
+    for bad in [
+        RaceInfo { cpus: 5, ..race },
+        // A CPU index past the count has a slot.
+        RaceInfo {
+            cpu_grid: [2, 5, 3, 6],
+            ..race
+        },
+        // A counted CPU without a slot.
+        RaceInfo {
+            cpu_grid: [2, 5, 0, 0],
+            ..race
+        },
+        // Slots beyond the field.
+        RaceInfo {
+            cpu_grid: [2, 5, 8, 0],
+            ..race
+        },
+        RaceInfo {
+            roster_quad: 27,
+            ..race
+        },
+        RaceInfo {
+            roster_rider: 2,
+            ..race
+        },
+        RaceInfo {
+            difficulty: 3,
+            ..race
+        },
+        RaceInfo {
+            cpu_scores: [atv_net::RACE_MAX_MS + 1, 0, 0, 0],
+            ..race
+        },
+        RaceInfo {
+            cpu_scores: [1, 2, 3, 4],
+            ..race
+        },
+        // No CPUs, but roster fields set.
+        RaceInfo {
+            cpus: 0,
+            cpu_grid: [0; 4],
+            cpu_scores: [0; 4],
+            ..race
+        },
+    ] {
+        let g = GameState {
+            race: bad,
+            ..state.clone()
+        };
+        assert!(atv_net::encode(&Packet::Game(Box::new(g))).is_err(), "{bad:?}");
+    }
+    // A zero CPU count in an encoded block is rejected.
+    let mut zero = bytes.clone();
+    let at = plain_len;
+    zero[at] = 0;
+    assert!(atv_net::decode(&zero).is_err());
+
+    let pose = |index: u8| Snapshot {
+        peer: CPU_PEER + index,
+        sequence: 3,
+        time_ms: 1000,
+        atv_model: 7,
+        rider_model: 1,
+        velocity: [30., 0., 2.],
+        speed: 30.,
+        rpm: 5000.,
+        animation: Some(Box::new(AnimationState {
+            count: 1,
+            ..Default::default()
+        })),
+        ..Default::default()
+    };
+    let motion = CpuMotion {
+        serial: 9,
+        riders: (0..3)
+            .map(|i| CpuRider {
+                index: i,
+                lap: 1,
+                distance: 1500. + f32::from(i),
+                finish_ms: if i == 0 { 70_000 } else { 0 },
+                pose: pose(i),
+            })
+            .collect(),
+    };
+    let packet = Packet::Cpus(Box::new(motion.clone()));
+    let bytes = atv_net::encode(&packet).unwrap();
+    assert!(bytes.len() < 600, "{} bytes", bytes.len());
+    match atv_net::decode(&bytes).unwrap() {
+        Packet::Cpus(m) => {
+            assert_eq!(m.serial, 9);
+            assert_eq!(m.riders.len(), 3);
+            assert_eq!(m.riders[2].distance, 1502.);
+            assert_eq!(m.riders[0].finish_ms, 70_000);
+            assert_eq!(m.riders[1].pose.peer, CPU_PEER + 1);
+        }
+        other => panic!("{other:?}"),
+    }
+    let mut bad = motion.clone();
+    bad.riders[1].pose.peer = 1;
+    assert!(atv_net::encode(&Packet::Cpus(Box::new(bad))).is_err());
+    let mut bad = motion.clone();
+    bad.riders[1].index = 0;
+    bad.riders[1].pose.peer = CPU_PEER;
+    assert!(atv_net::encode(&Packet::Cpus(Box::new(bad))).is_err(), "duplicate");
+    let mut bad = motion.clone();
+    bad.riders[0].distance = f32::NAN;
+    assert!(atv_net::encode(&Packet::Cpus(Box::new(bad))).is_err());
+    let mut bad = motion.clone();
+    bad.serial = 0;
+    assert!(atv_net::encode(&Packet::Cpus(Box::new(bad))).is_err());
+    let mut bad = motion.clone();
+    bad.riders.push(bad.riders[0].clone());
+    bad.riders.push(bad.riders[0].clone());
+    assert!(atv_net::encode(&Packet::Cpus(Box::new(bad))).is_err(), "five CPUs");
+    // Truncated or padded packets are rejected.
+    let mut short = bytes.clone();
+    short.truncate(bytes.len() - 1);
+    let len = (short.len() - 8) as u16;
+    short[6..8].copy_from_slice(&len.to_le_bytes());
+    assert!(atv_net::decode(&short).is_err());
+    let mut long = bytes.clone();
+    long.push(0);
+    let len = (long.len() - 8) as u16;
+    long[6..8].copy_from_slice(&len.to_le_bytes());
+    assert!(atv_net::decode(&long).is_err());
 }

@@ -248,6 +248,11 @@ impl Animator {
     pub fn active(&self) -> bool {
         self.active
     }
+    /// One of the fourteen wreck clips ([`SUFFIXES`] order), for a rider
+    /// drawn from replicated state (a room race's CPU on a guest).
+    pub fn motion(&self, index: usize) -> Option<&Motion> {
+        self.motions.get(index)
+    }
     /// Use the same original scene order and supported type-0 collision
     /// placements as the ATV. Content and candidate filtering stay with caller.
     pub fn set_static_obstacles(&mut self, obstacles: Vec<crate::obstacle::StaticObstacle>) {

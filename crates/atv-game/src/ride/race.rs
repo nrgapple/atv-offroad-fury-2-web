@@ -6,7 +6,7 @@
 //! Each step also reports its presentation ([`StepEvents`]): stadium crowd
 //! cues and camera-flash bursts, Supercross firework commands, the National
 //! drop gate pose, the 321 lamp sounds and the race music events.
-use super::{Mount, Ride, STEP, cpu::CpuModel, cpu::CpuRacer, cpu::World};
+use super::{Mount, Ride, STEP, cpu::CpuModel, cpu::CpuRacer, cpu::Puppet, cpu::World};
 use crate::Result;
 use atv_core::cpu_recovery;
 use atv_core::math::Det;
@@ -58,6 +58,21 @@ pub struct Settings {
     /// start slot and the human grid size. The race holds on the grid until
     /// the room host's GO ([`Ride::room_go`]).
     pub room: Option<(u32, usize)>,
+    /// A room race's CPU riders (research/MULTIPLAYER.md "Room race CPUs"):
+    /// their start slots on the room grid and the host's roster draw. The
+    /// host races them; a guest's follow the host's relayed motion.
+    pub room_cpus: Option<RoomCpus>,
+}
+
+/// A room race's CPU field (see [`Settings::room_cpus`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RoomCpus {
+    /// Each CPU's start slot (the first [`Settings::cpu`] entries).
+    pub slots: [u32; 4],
+    /// The host's ATV (1-26) and rider (0 male, 1 female): the roster draw.
+    pub roster: (u16, u16),
+    /// A guest: the CPUs are puppets of the host's relayed motion.
+    pub puppets: bool,
 }
 
 impl Default for Settings {
@@ -73,6 +88,7 @@ impl Default for Settings {
             championship: None,
             course: Default::default(),
             room: None,
+            room_cpus: None,
         }
     }
 }
@@ -245,6 +261,8 @@ pub struct RaceState {
     /// Grid pose before the first step: each CPU quad's rest matrices and
     /// the player's seated rider pose (drawRosterCpu in game.js).
     rest: Option<GridRest>,
+    /// A room race guest's grid pose for CPUs not heard from yet.
+    rest_pose: Option<GridRest>,
     /// The latest step's presentation, until the host takes it.
     pub events: StepEvents,
     /// The Hall of Fame and personal records as the event started; a
@@ -253,6 +271,26 @@ pub struct RaceState {
     /// A room race's standings across every room rider, set by the room
     /// each frame; they replace the frame's position, field and standings.
     pub room: Option<Vec<RoomRow>>,
+    /// A room race guest's CPUs, drawn from the host's motion (empty
+    /// otherwise; then `cpus` race here).
+    pub puppets: Vec<Puppet>,
+    /// The host who raced them left: the guest's CPUs are no longer drawn.
+    pub puppets_retired: bool,
+}
+
+/// A room race host's CPU for the room ([`Ride::room_cpu_frames`]).
+pub struct RoomCpuFrame {
+    pub index: usize,
+    /// Its original quad (1-26).
+    pub quad: u16,
+    pub lap: u32,
+    pub distance: f32,
+    /// Finish time (race seconds).
+    pub finish: Option<f32>,
+    pub frame: atv_core::vehicle::VehicleFrame,
+    pub recipe: atv_core::rider_pose::Recipe,
+    /// The detached rider's world matrix and velocity during a wreck.
+    pub wreck: Option<([f32; 16], [f32; 3])>,
 }
 
 /// One room-race rider's standing (research/MULTIPLAYER.md "Room races").
@@ -330,8 +368,10 @@ fn cpu_rig<'a>(
     cpu_rider: Option<&'a super::CpuRider>,
 ) -> Result<CpuRig<'a>> {
     match (mount, cpu_rider) {
-        (Mount::Quad { rig, .. }, _) => Ok(((&rig.animator, &rig.wreck), &rider.mesh.nodes)),
-        (Mount::Bike(_), Some(cpu)) => Ok(((&cpu.animator, &cpu.wreck), &cpu.mesh.nodes)),
+        // A loaded CPU rig (a motorcycle player's, or a room race whose host
+        // rides the other rider) wins.
+        (_, Some(cpu)) => Ok(((&cpu.animator, &cpu.wreck), &cpu.mesh.nodes)),
+        (Mount::Quad { rig, .. }, None) => Ok(((&rig.animator, &rig.wreck), &rider.mesh.nodes)),
         (Mount::Bike(_), None) => Err("CPU rider rig missing".into()),
     }
 }
@@ -434,10 +474,39 @@ impl Ride {
                 .collect(),
             rig.0.pose(nodes)?.world_matrices,
         );
+        // A room race takes its own slot on the shared grid and holds there
+        // for the host's countdown (authored, research/MULTIPLAYER.md); its
+        // CPUs take theirs.
+        if let Some((slot, riders)) = settings.room {
+            match settings.room_cpus.filter(|_| settings.cpu > 0) {
+                Some(field) => {
+                    let slots = field
+                        .slots
+                        .get(..settings.cpu)
+                        .ok_or("invalid room race CPUs")?;
+                    race.set_room_grid(slot, riders, slots)?;
+                }
+                None => race.set_player_grid(slot, riders)?,
+            }
+            race.begin_intro();
+        }
+        // A guest's CPUs are drawn from the host's motion, not raced here.
+        let puppets = settings.room_cpus.is_some_and(|c| c.puppets);
+        let puppet_list = if puppets {
+            (0..race.opponents().len())
+                .map(|index| {
+                    let model = setup.models.get(index).ok_or("CPU quad missing")?;
+                    Puppet::new(rig, nodes, model, index)
+                })
+                .collect::<Result<Vec<_>>>()?
+        } else {
+            Vec::new()
+        };
         let cpus = race
             .opponents()
             .iter()
             .enumerate()
+            .filter(|_| !puppets)
             .map(|(index, cpu)| {
                 let model = setup.models.get(index).ok_or("CPU quad missing")?;
                 CpuRacer::new(
@@ -452,12 +521,6 @@ impl Ride {
                 race.opponents()[index].yaw,
                 None,
             );
-        }
-        // A room race takes its own slot on the shared grid and holds there
-        // for the host's countdown (authored, research/MULTIPLAYER.md).
-        if let Some((slot, riders)) = settings.room {
-            race.set_player_grid(slot, riders)?;
-            race.begin_intro();
         }
         // Race load plays the pre-race camera (00210980 SetCamera(5)).
         let mut intro_camera = None;
@@ -509,10 +572,13 @@ impl Ride {
             lights: None,
             music_phase: None,
             music_intro: false,
+            rest_pose: (!puppet_list.is_empty()).then(|| rest.clone()),
             rest: Some(rest),
             events: StepEvents::default(),
             records_start: None,
             room: None,
+            puppets: puppet_list,
+            puppets_retired: false,
         });
         Ok(())
     }
@@ -780,6 +846,7 @@ impl Ride {
         let positions: Vec<[f32; 3]> = std::iter::once(player.origin)
             .chain(snapshots.iter().map(|p| p.origin))
             .chain(humans.iter().map(|h| h.origin))
+            .chain(state.puppets.iter().filter_map(|p| p.body.map(|b| b.0)))
             .collect();
         let others = |own: usize| {
             positions
@@ -949,6 +1016,15 @@ impl Ride {
                     if contact && tie > 0. {
                         race.contacts += 1;
                     }
+                }
+            }
+        }
+        // A room race guest pushes against the host's CPUs; the host's
+        // CPUs push back on the host's machine (each applies its own half).
+        if !state.puppets_retired {
+            for &(origin, velocity, orientation) in state.puppets.iter().filter_map(|p| p.body.as_ref()) {
+                if vehicle.peer_contact(origin, velocity, orientation, 1.) {
+                    race.contacts += 1;
                 }
             }
         }
@@ -1224,11 +1300,97 @@ impl Ride {
         self.race.as_mut()
     }
 
+    /// A room race host's CPUs for the room (research/MULTIPLAYER.md "Room
+    /// race CPUs"): each one's race progress, vehicle state and rider.
+    pub fn room_cpu_frames(&self) -> Vec<RoomCpuFrame> {
+        let Some(state) = self.race.as_ref().filter(|s| s.settings.room.is_some()) else {
+            return Vec::new();
+        };
+        let race = &state.race;
+        state
+            .cpus
+            .iter()
+            .enumerate()
+            .map(|(index, cpu)| RoomCpuFrame {
+                index,
+                quad: state.roster.get(index).map_or(1, |e| e.quad as u16),
+                lap: race.laps_completed(Some(index)),
+                distance: race.race_distance(index),
+                finish: race.cpu_finish(index),
+                frame: cpu.vehicle.frame(),
+                recipe: cpu.recipe(),
+                wreck: cpu.rider_wreck(),
+            })
+            .collect()
+    }
+
+    /// A room race guest's CPUs from the host's presented motion
+    /// (index, snapshot, stale), `dt` seconds after the last call.
+    pub fn present_room_cpus(
+        &mut self,
+        poses: &[(u8, atv_net::Snapshot, bool)],
+        dt: f32,
+    ) -> Result<()> {
+        let Some(state) = self.race.as_mut() else {
+            return Ok(());
+        };
+        let nodes: &[atv_core::mesh::Node] = match state.cpu_rider.as_deref() {
+            Some(cpu) => &cpu.mesh.nodes,
+            None => &self.rider.mesh.nodes,
+        };
+        for (index, snapshot, stale) in poses {
+            let index = usize::from(*index);
+            let Some(puppet) = state.puppets.get_mut(index) else {
+                continue;
+            };
+            puppet.present(nodes, snapshot, dt, *stale)?;
+            let origin = snapshot.atv.position;
+            state.race.reposition_cpu(index, origin, yaw(snapshot.atv.rotation), None);
+        }
+        Ok(())
+    }
+
+    /// The room race host left (research/MULTIPLAYER.md "Room race CPUs"):
+    /// a guest's CPUs stop being drawn and pushed against.
+    pub fn retire_room_cpus(&mut self) {
+        if let Some(state) = self.race.as_mut() {
+            state.puppets_retired = true;
+            for p in &mut state.puppets {
+                p.body = None;
+            }
+        }
+    }
+
     /// World pose of each CPU's quad and rider for drawing.
     pub fn cpu_poses(&self) -> Vec<super::Pose> {
         let Some(state) = &self.race else {
             return Vec::new();
         };
+        // A room race guest draws the host's CPUs (none once retired), on
+        // the grid until their motion arrives.
+        if !state.puppets.is_empty() {
+            if state.puppets_retired {
+                return Vec::new();
+            }
+            let rest = |index: usize| {
+                let cpu = state.race.opponents().get(index)?;
+                let (quads, rider) = state.rest_pose.as_ref()?;
+                let (s, c) = (cpu.yaw / 2.).sin_cos_d();
+                let world = super::quaternion_world(cpu.origin, [c, 0., s, 0.]);
+                Some(super::Pose {
+                    quad_world: world,
+                    quad_nodes: quads.get(index)?.clone(),
+                    rider_world: world,
+                    rider_nodes: rider.clone(),
+                })
+            };
+            return state
+                .puppets
+                .iter()
+                .enumerate()
+                .filter_map(|(index, p)| p.pose.clone().or_else(|| rest(index)))
+                .collect();
+        }
         if let (Some((quads, rider)), None) = (&state.rest, &state.frame) {
             return state
                 .race

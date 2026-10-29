@@ -280,12 +280,26 @@ pub async fn load_with(
     let race = match race {
         Some(settings) => {
             progress("Reading original race…");
-            let mut setup =
-                race_setup(content, &archive, venue, &toy, quad, rider, settings).await?;
+            // A room race's CPUs follow the host's roster draw (its ATV
+            // group and rider), so every peer races the same field.
+            let (roster_quad, roster_rider) = settings
+                .room_cpus
+                .map_or((quad, rider), |c| c.roster);
+            let mut setup = race_setup(
+                content,
+                &archive,
+                venue,
+                &toy,
+                roster_quad,
+                roster_rider,
+                settings,
+            )
+            .await?;
             // MX vs. ATV fields: a motorcycle player's CPUs keep their quads
-            // and the ATV rider (game.js loads it for them).
-            if models.motorcycle {
-                let atv = player_models::selection(1, rider)?;
+            // and the ATV rider (game.js loads it for them). A room race
+            // whose host rides the other rider loads that rig for its CPUs.
+            if models.motorcycle || roster_rider != rider {
+                let atv = player_models::selection(1, roster_rider)?;
                 let (mesh, _, animator, wreck) =
                     load_atv_rider(content, &atv, &mut progress).await?;
                 setup.cpu_rider = Some(Box::new(super::CpuRider {

@@ -11,8 +11,35 @@
 //! host's state machine. It knows nothing about sockets or rendering, so a
 //! local split-screen race can drive the same rules by reporting each local
 //! player's progress under its own id.
-use atv_game::multiplayer::{GameState, RACE_DNF, RACE_RIDERS, RaceInfo, RaceProgress, race_phase};
+use atv_game::multiplayer::{
+    CPU_PEER, GameState, RACE_CPUS, RACE_DNF, RACE_RIDERS, RaceInfo, RaceProgress, race_phase,
+};
 use std::collections::BTreeMap;
+
+/// Ids in a race's field: the four room slots, then the CPUs
+/// ([`CPU_PEER`] + index; research/MULTIPLAYER.md "Room race CPUs").
+pub const FIELD: usize = RACE_RIDERS + RACE_CPUS;
+
+/// The host's CPU fill for a new race.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct CpuFill {
+    /// Fill the field to this many riders (0 off).
+    pub field: u8,
+    /// The host's ATV (1-26) and rider (0/1): every peer's roster draw.
+    pub quad: u8,
+    pub rider: u8,
+    /// 1 Normal, 2 Expert.
+    pub difficulty: u8,
+}
+
+impl CpuFill {
+    /// CPUs for `humans` riders: up to the field size, at most four.
+    pub fn count(&self, humans: usize) -> usize {
+        usize::from(self.field)
+            .saturating_sub(humans)
+            .min(RACE_CPUS)
+    }
+}
 
 /// The host waits this long for every rider to load before starting the
 /// countdown without them (ms, authored).
@@ -76,40 +103,80 @@ pub struct Field {
     /// Latest progress by participant id (this race's serial only).
     pub progress: BTreeMap<u8, RaceProgress>,
     /// Racers seen leaving the room. They stay out even if a late joiner
-    /// later takes the same room slot id (that rider spectates).
-    gone: [bool; RACE_RIDERS],
+    /// later takes the same room slot id (that rider spectates). CPUs are
+    /// gone once the host who raced them has left.
+    gone: [bool; FIELD],
     /// A report changed since the last step / when it was last heard (ms).
-    fresh: [bool; RACE_RIDERS],
-    heard: [f64; RACE_RIDERS],
+    fresh: [bool; FIELD],
+    heard: [f64; FIELD],
 }
 
 /// Start slots for the riders (ascending ids) from the original shuffle
 /// (`001f6350`, `atv_core::race::start_slots`) on a per-race seed.
 pub fn grid(ids: &[u8], seed: u64) -> [u8; RACE_RIDERS] {
+    grid_with_cpus(ids, 0, seed).0
+}
+
+/// Start slots for the riders and then `cpus` CPUs, one shuffle over the
+/// whole field (the humans first, as the original draws the player first).
+pub fn grid_with_cpus(ids: &[u8], cpus: usize, seed: u64) -> ([u8; RACE_RIDERS], [u8; RACE_CPUS]) {
     let mut out = [0; RACE_RIDERS];
+    let mut cpu = [0; RACE_CPUS];
     let riders: Vec<u8> = ids
         .iter()
         .copied()
         .filter(|id| (*id as usize) < RACE_RIDERS)
         .take(RACE_RIDERS)
         .collect();
+    let cpus = cpus.min(RACE_CPUS);
     let mut random = atv_core::engine_audio::OriginalRandom::with_seed(seed);
-    let slots = atv_core::race::start_slots(riders.len(), &mut random);
-    for (id, slot) in riders.iter().zip(slots) {
-        out[*id as usize] = slot as u8;
+    let slots = atv_core::race::start_slots(riders.len() + cpus, &mut random);
+    for (id, slot) in riders.iter().zip(&slots) {
+        out[*id as usize] = *slot as u8;
     }
-    out
+    for (c, slot) in cpu.iter_mut().zip(slots.iter().skip(riders.len())) {
+        *c = *slot as u8;
+    }
+    (out, cpu)
+}
+
+/// Whether `id` is a CPU of the field.
+pub fn is_cpu(id: u8) -> bool {
+    (CPU_PEER..CPU_PEER + RACE_CPUS as u8).contains(&id)
 }
 
 impl Field {
     /// A new race for `ids` (the room roster, ascending) at `now` (ms).
     pub fn new(serial: u32, variant: u8, laps: u8, ids: &[u8], seed: u64, now: f64) -> Self {
+        Self::with_cpus(serial, variant, laps, ids, CpuFill::default(), seed, now)
+    }
+
+    /// A new race for `ids` with the host's CPU fill.
+    pub fn with_cpus(
+        serial: u32,
+        variant: u8,
+        laps: u8,
+        ids: &[u8],
+        fill: CpuFill,
+        seed: u64,
+        now: f64,
+    ) -> Self {
+        let humans = ids.iter().filter(|id| (**id as usize) < RACE_RIDERS).count();
+        let cpus = fill.count(humans.min(RACE_RIDERS));
+        let (grid, cpu_grid) = grid_with_cpus(ids, cpus, seed);
+        let some = cpus > 0;
         Self {
             serial,
             info: RaceInfo {
                 variant,
                 laps: laps.clamp(1, 5),
-                grid: grid(ids, seed),
+                grid,
+                cpus: cpus as u8,
+                cpu_grid,
+                roster_quad: if some { fill.quad.clamp(1, 26) } else { 0 },
+                roster_rider: if some { fill.rider.min(1) } else { 0 },
+                difficulty: if some { fill.difficulty.clamp(1, 2) } else { 0 },
+                cpu_scores: [0; RACE_CPUS],
             },
             phase: race_phase::GRID,
             timer: COUNTDOWN_S,
@@ -117,17 +184,36 @@ impl Field {
             phase_at: now,
             first_finish: None,
             progress: BTreeMap::new(),
-            gone: [false; RACE_RIDERS],
-            fresh: [false; RACE_RIDERS],
-            heard: [f64::NEG_INFINITY; RACE_RIDERS],
+            gone: [false; FIELD],
+            fresh: [false; FIELD],
+            heard: [f64::NEG_INFINITY; FIELD],
         }
     }
 
-    /// The race's riders (ids with a start slot), ascending.
+    /// A field id's start slot (0: not in this race).
+    fn slot(&self, id: u8) -> u8 {
+        let id = id as usize;
+        if id < RACE_RIDERS {
+            self.info.grid[id]
+        } else if id - RACE_RIDERS < usize::from(self.info.cpus).min(RACE_CPUS) {
+            self.info.cpu_grid[id - RACE_RIDERS]
+        } else {
+            0
+        }
+    }
+
+    /// The race's riders (ids with a start slot), ascending: the humans,
+    /// then the CPUs.
     pub fn racers(&self) -> Vec<u8> {
-        (0..RACE_RIDERS as u8)
-            .filter(|id| self.info.grid[*id as usize] > 0)
-            .collect()
+        (0..FIELD as u8).filter(|id| self.slot(*id) > 0).collect()
+    }
+
+    /// The CPUs stop racing (their host left): they rank on their last
+    /// progress and nobody waits for them.
+    pub fn retire_cpus(&mut self) {
+        for id in self.racers().into_iter().filter(|id| is_cpu(*id)) {
+            self.gone[id as usize] = true;
+        }
     }
 
     /// Riders on the grid: their count, which sizes the start grid.
@@ -138,8 +224,8 @@ impl Field {
     /// A rider's progress report; other races' reports are ignored.
     pub fn report(&mut self, progress: RaceProgress) {
         if progress.serial == self.serial
-            && (progress.peer as usize) < RACE_RIDERS
-            && self.info.grid[progress.peer as usize] > 0
+            && (progress.peer as usize) < FIELD
+            && self.slot(progress.peer) > 0
             && !self.gone[progress.peer as usize]
             && self.phase != race_phase::RESULTS
         {
@@ -165,7 +251,7 @@ impl Field {
     /// nobody waits for them (nor for a late joiner reusing their id).
     fn present(&mut self, roster: &[u8]) -> Vec<u8> {
         for id in self.racers() {
-            if !roster.contains(&id) {
+            if !is_cpu(id) && !roster.contains(&id) {
                 self.gone[id as usize] = true;
             }
         }
@@ -179,7 +265,7 @@ impl Field {
     /// Returns true when the phase changed.
     pub fn step(&mut self, now: f64, roster: &[u8]) -> bool {
         let present = self.present(roster);
-        for id in 0..RACE_RIDERS {
+        for id in 0..FIELD {
             if std::mem::take(&mut self.fresh[id]) {
                 self.heard[id] = now;
             }
@@ -187,7 +273,11 @@ impl Field {
         let before = self.phase;
         match self.phase {
             race_phase::GRID => {
-                let loaded = present.iter().all(|id| self.progress.contains_key(id));
+                // Humans load; the host's CPUs are on the grid with it.
+                let loaded = present
+                    .iter()
+                    .filter(|id| !is_cpu(**id))
+                    .all(|id| self.progress.contains_key(id));
                 if loaded || now - self.phase_at >= LOAD_WAIT_MS {
                     self.phase = race_phase::COUNTDOWN;
                     self.phase_at = now;
@@ -217,7 +307,8 @@ impl Field {
                     now - t >= FINISH_WAIT_MS
                         && (!quiet || now - t >= FINISH_WAIT_MS + LATE_GRACE_MS)
                 });
-                if all || timed_out || present.is_empty() {
+                let humans = present.iter().any(|id| !is_cpu(*id));
+                if all || timed_out || !humans {
                     self.finish();
                 }
             }
@@ -237,7 +328,10 @@ impl Field {
                     RACE_DNF + dnf
                 }
             };
-            self.scores[id as usize] = score;
+            match id as usize {
+                i if i < RACE_RIDERS => self.scores[i] = score,
+                i => self.info.cpu_scores[i - RACE_RIDERS] = score,
+            }
         }
         self.phase = race_phase::RESULTS;
     }
@@ -272,7 +366,9 @@ impl Field {
             .any(|p| p.finish_ms > 0)
             .then_some(now);
         // Everyone gets a fresh hearing under the new host.
-        self.heard = [now; RACE_RIDERS];
+        self.heard = [now; FIELD];
+        // The old host raced the CPUs; this rider only drew them.
+        self.retire_cpus();
     }
 
     /// A guest's copy of the host's race.
@@ -286,22 +382,24 @@ impl Field {
             phase_at: 0.,
             first_finish: None,
             progress: BTreeMap::new(),
-            gone: [false; RACE_RIDERS],
-            fresh: [false; RACE_RIDERS],
-            heard: [f64::NEG_INFINITY; RACE_RIDERS],
+            gone: [false; FIELD],
+            fresh: [false; FIELD],
+            heard: [f64::NEG_INFINITY; FIELD],
         }
     }
 }
 
 /// The agreed results from a RESULTS state: rows in finish order.
 pub fn results(state: &GameState, name: &dyn Fn(u8) -> String) -> Vec<Row> {
-    let mut ids: Vec<u8> = (0..RACE_RIDERS as u8)
-        .filter(|id| state.scores[*id as usize] > 0)
-        .collect();
-    ids.sort_by_key(|id| (state.scores[*id as usize], *id));
+    let score = |id: u8| match id as usize {
+        i if i < RACE_RIDERS => state.scores[i],
+        i => state.race.cpu_scores.get(i - RACE_RIDERS).copied().unwrap_or(0),
+    };
+    let mut ids: Vec<u8> = (0..FIELD as u8).filter(|id| score(*id) > 0).collect();
+    ids.sort_by_key(|id| (score(*id), *id));
     ids.into_iter()
         .map(|id| {
-            let s = state.scores[id as usize];
+            let s = score(id);
             Row {
                 id,
                 name: name(id),
@@ -358,14 +456,38 @@ pub struct RoomRace {
     /// Racers' names as last seen in the room, so a leaver keeps its name
     /// in the results.
     names: BTreeMap<u8, String>,
+    /// Host: the last CPU motion sent and its pose sequence. Guest: the
+    /// last CPU presentation (session ms).
+    last_cpus: f64,
+    cpu_sequence: u32,
+    /// The CPUs' latest positions here (diagnostics).
+    cpu_origins: Vec<[f32; 3]>,
 }
 
-/// Ride settings for this rider's slot in `field`.
-fn settings(field: &Field, me: u8, seed: u64) -> Option<atv_game::ride::race::Settings> {
+/// Ride settings for this rider's slot in `field`: the host races the
+/// CPUs, a guest draws them from the host's motion.
+fn settings(
+    field: &Field,
+    me: u8,
+    seed: u64,
+    host: bool,
+) -> Option<atv_game::ride::race::Settings> {
     let slot = *field.info.grid.get(me as usize)?;
+    let info = &field.info;
+    let cpus = usize::from(info.cpus).min(RACE_CPUS);
     (slot > 0).then(|| atv_game::ride::race::Settings {
-        laps: u32::from(field.info.laps),
-        cpu: 0,
+        laps: u32::from(info.laps),
+        cpu: cpus,
+        difficulty: if cpus > 0 {
+            u32::from(info.difficulty.clamp(1, 2))
+        } else {
+            1
+        },
+        room_cpus: (cpus > 0).then(|| atv_game::ride::race::RoomCpus {
+            slots: info.cpu_grid.map(u32::from),
+            roster: (u16::from(info.roster_quad), u16::from(info.roster_rider)),
+            puppets: !host,
+        }),
         seed,
         intro: false,
         room: Some((u32::from(slot), field.riders())),
@@ -384,22 +506,24 @@ impl RoomRace {
         previous: u32,
         variant: u8,
         laps: u8,
+        fill: CpuFill,
         seed: u64,
     ) -> Option<(Self, Action)> {
         let (Some(me), roster) = net.roster() else {
             return None;
         };
         let now = net.session_now() as f64;
-        let field = Field::new(
+        let field = Field::with_cpus(
             previous.wrapping_add(1).max(1),
             variant,
             laps,
             &roster,
+            fill,
             seed,
             now,
         );
         net.send_game(&field.state());
-        let load = settings(&field, me, u64::from(field.serial))?;
+        let load = settings(&field, me, u64::from(field.serial), true)?;
         Some((
             Self {
                 field,
@@ -411,6 +535,9 @@ impl RoomRace {
                 went: false,
                 rows: Vec::new(),
                 names: BTreeMap::new(),
+                last_cpus: 0.,
+                cpu_sequence: 0,
+                cpu_origins: Vec::new(),
             },
             Action::Load(load),
         ))
@@ -428,7 +555,7 @@ impl RoomRace {
         // A rider first seeing a race already under way (a late joiner, maybe
         // reusing a leaver's slot id) spectates it and joins the next one.
         let load = (state.phase <= race_phase::COUNTDOWN && ships)
-            .then(|| settings(&field, me, u64::from(state.serial)))
+            .then(|| settings(&field, me, u64::from(state.serial), false))
             .flatten()
             .map(Action::Load);
         (
@@ -442,6 +569,9 @@ impl RoomRace {
                 went: false,
                 rows: Vec::new(),
                 names: BTreeMap::new(),
+                last_cpus: 0.,
+                cpu_sequence: 0,
+                cpu_origins: Vec::new(),
             },
             load,
         )
@@ -461,10 +591,12 @@ impl RoomRace {
     ) -> Option<Action> {
         let now = net.session_now() as f64;
         // The host left and the room passed to this rider: run the race on.
+        // The CPUs were the old host's: they stop where they were.
         if !self.host && net.is_host() {
             self.host = true;
             self.field.adopt(now);
             self.last_broadcast = 0.;
+            ride.retire_room_cpus();
         }
         // The ride is this race once its reload carries the race's serial.
         self.loaded = ride.race().is_some_and(|r| {
@@ -481,6 +613,14 @@ impl RoomRace {
                 .is_some_and(|s| *s > 0)
             {
                 self.names.entry(*id).or_insert(n);
+            }
+        }
+        // CPU names come from the roster every peer draws alike.
+        if let Some(r) = ride.race().filter(|_| self.loaded) {
+            for (i, o) in r.race.opponents().iter().enumerate() {
+                self.names
+                    .entry(CPU_PEER + i as u8)
+                    .or_insert_with(|| o.name.clone());
             }
         }
         let known = self.names.clone();
@@ -512,6 +652,11 @@ impl RoomRace {
             for p in reports {
                 self.field.report(p);
             }
+            // The CPUs race here: their progress, and their motion for the
+            // guests (10 Hz racing, 2 Hz otherwise).
+            if self.loaded && self.field.info.cpus > 0 {
+                self.host_cpus(ride, net, now);
+            }
             let changed = self.field.step(now, &roster);
             let every = if self.field.phase == race_phase::COUNTDOWN {
                 250.
@@ -534,6 +679,25 @@ impl RoomRace {
             }
             if let (Some(p), Some(id)) = (mine, me) {
                 self.field.report(RaceProgress { peer: id, ..p });
+            }
+            // The host's CPUs: their progress and drawn motion.
+            if self.field.info.cpus > 0 {
+                for p in net.cpu_progress(self.field.serial) {
+                    self.field.report(p);
+                }
+                if self.loaded {
+                    let poses = net.present_cpus();
+                    let dt = if self.last_cpus > 0. {
+                        ((now - self.last_cpus) / 1000.).clamp(0., 0.1) as f32
+                    } else {
+                        0.
+                    };
+                    self.last_cpus = now;
+                    self.cpu_origins = poses.iter().map(|(_, s, _)| s.atv.position).collect();
+                    if let Err(error) = ride.present_room_cpus(&poses, dt) {
+                        crate::status(&format!("Room race CPUs: {error}"));
+                    }
+                }
             }
         }
         // GO together: the host's countdown less half the round trip.
@@ -593,6 +757,63 @@ impl RoomRace {
         None
     }
 
+    /// Host: report the CPUs' progress to the field, let them steer around
+    /// and push against the room's riders, hold the race open for them,
+    /// and send their motion.
+    fn host_cpus(
+        &mut self,
+        ride: &mut atv_game::ride::Ride,
+        net: &mut crate::multiplayer::Net,
+        now: f64,
+    ) {
+        let frames = ride.room_cpu_frames();
+        self.cpu_origins = frames.iter().map(|f| f.frame.origin).collect();
+        for f in &frames {
+            self.field.report(RaceProgress {
+                peer: CPU_PEER + f.index as u8,
+                serial: self.field.serial,
+                lap: f.lap.min(10) as u8,
+                distance: f.distance.clamp(-10_000., 1_000_000.),
+                finish_ms: f.finish.map_or(0, |t| {
+                    ((t * 1000.) as u32).clamp(1, atv_game::multiplayer::RACE_MAX_MS)
+                }),
+            });
+        }
+        let bodies: Vec<_> = net
+            .contact_bodies_at(net.session_now(), ride)
+            .into_iter()
+            .map(|b| (b.position, b.velocity, b.orientation))
+            .collect();
+        let open = self.field.phase != race_phase::RESULTS;
+        if let Some(state) = ride.race_mut() {
+            // The room's riders are human peers to the CPUs, and the race
+            // runs on (CPUs finish for real) until the room's results.
+            state.split.humans = bodies;
+            state.split.waiting = open;
+        }
+        let every = if self.field.phase == race_phase::RACING {
+            100.
+        } else {
+            500.
+        };
+        if now - self.last_cpus < every || !open {
+            return;
+        }
+        self.last_cpus = now;
+        self.cpu_sequence = self.cpu_sequence.wrapping_add(1);
+        let motion = atv_game::multiplayer::cpu_motion(
+            self.field.serial,
+            self.cpu_sequence,
+            now as u32,
+            u16::from(self.field.info.roster_rider),
+            &frames,
+        );
+        match motion {
+            Ok(m) => net.send_cpus(m),
+            Err(error) => crate::status(&format!("Room race CPUs: {error}")),
+        }
+    }
+
     /// Diagnostics (`#ui-state` ride.roomRace).
     pub fn state(&self) -> serde_json::Value {
         serde_json::json!({
@@ -612,6 +833,10 @@ impl RoomRace {
                 "id": r.id, "name": r.name, "time": r.time,
             })).collect::<Vec<_>>(),
             "summary": summary(&self.rows),
+            "cpus": self.field.info.cpus,
+            "cpuGrid": self.field.info.cpu_grid,
+            "cpuScores": self.field.info.cpu_scores,
+            "cpuOrigins": self.cpu_origins,
         })
     }
 }
@@ -832,6 +1057,136 @@ mod tests {
         // A guest's mirror shows the same rows.
         let mirror = Field::mirror(&state);
         assert_eq!(mirror.state().scores, state.scores);
+    }
+
+    fn fill(field: u8) -> CpuFill {
+        CpuFill {
+            field,
+            quad: 3,
+            rider: 0,
+            difficulty: 1,
+        }
+    }
+
+    #[test]
+    fn cpus_fill_the_field_and_share_the_grid() {
+        assert_eq!(fill(5).count(2), 3);
+        assert_eq!(fill(4).count(4), 0);
+        assert_eq!(fill(5).count(1), 4);
+        assert_eq!(fill(0).count(2), 0);
+        let f = Field::with_cpus(1, 0, 2, &[0, 2], fill(5), 11, 0.);
+        assert_eq!(f.info.cpus, 3);
+        assert_eq!(f.riders(), 5);
+        assert_eq!(f.racers(), vec![0, 2, CPU_PEER, CPU_PEER + 1, CPU_PEER + 2]);
+        let mut slots: Vec<u8> = f
+            .info
+            .grid
+            .iter()
+            .chain(&f.info.cpu_grid)
+            .copied()
+            .filter(|s| *s > 0)
+            .collect();
+        slots.sort_unstable();
+        assert_eq!(slots, vec![1, 2, 3, 4, 5]);
+        f.state().validate().unwrap();
+        // Human-only races keep the pre-CPU grid draw.
+        let plain = Field::with_cpus(1, 0, 2, &[0, 2], fill(0), 11, 0.);
+        assert_eq!(plain.info.grid, grid(&[0, 2], 11));
+        assert_eq!(plain.info.roster_quad, 0);
+        plain.state().validate().unwrap();
+    }
+
+    #[test]
+    fn cpus_race_finish_and_rank_with_the_riders() {
+        let mut f = Field::with_cpus(3, 0, 1, &[0, 1], fill(4), 9, 0.);
+        assert_eq!(f.info.cpus, 2);
+        // The grid waits for the humans only.
+        f.report(progress(0, 3, 0, 0., 0));
+        f.report(progress(1, 3, 0, 0., 0));
+        assert!(f.step(0., &[0, 1]));
+        f.step(4000., &[0, 1]);
+        assert_eq!(f.phase, race_phase::RACING);
+        f.report(progress(CPU_PEER, 3, 1, 2000., 50_000));
+        f.report(progress(0, 3, 1, 2000., 52_000));
+        f.report(progress(1, 3, 1, 2000., 55_000));
+        f.report(progress(CPU_PEER + 1, 3, 0, 1200., 0));
+        // Every human finished, one CPU still racing: the finish wait.
+        assert!(!f.step(5000., &[0, 1]));
+        assert_eq!(
+            order(&f.progress, &f.racers()),
+            vec![CPU_PEER, 0, 1, CPU_PEER + 1]
+        );
+        f.report(progress(CPU_PEER + 1, 3, 0, 1300., 0));
+        assert!(f.step(5000. + FINISH_WAIT_MS, &[0, 1]));
+        let state = f.state();
+        state.validate().unwrap();
+        assert_eq!(state.race.cpu_scores[0], 50_000);
+        assert_eq!(state.race.cpu_scores[1], RACE_DNF + 1);
+        let rows = results(&state, &|id| format!("R{id}"));
+        assert_eq!(
+            rows.iter().map(|r| r.id).collect::<Vec<_>>(),
+            vec![CPU_PEER, 0, 1, CPU_PEER + 1]
+        );
+        assert_eq!(rows[3].time, None);
+        assert!(summary(&rows).starts_with("1. R4 0:50.00"));
+        // A guest's mirror agrees.
+        let rows2 = results(&Field::mirror(&state).state(), &|id| format!("R{id}"));
+        assert_eq!(rows, rows2);
+    }
+
+    #[test]
+    fn all_finished_ends_the_race_at_once_and_no_humans_ends_it() {
+        let mut f = Field::with_cpus(4, 0, 1, &[0, 1], fill(3), 9, 0.);
+        assert_eq!(f.info.cpus, 1);
+        f.report(progress(0, 4, 0, 0., 0));
+        f.report(progress(1, 4, 0, 0., 0));
+        f.step(0., &[0, 1]);
+        f.step(4000., &[0, 1]);
+        f.report(progress(0, 4, 1, 2000., 40_000));
+        f.report(progress(1, 4, 1, 2000., 41_000));
+        f.report(progress(CPU_PEER, 4, 1, 2000., 42_000));
+        assert!(f.step(5000., &[0, 1]));
+        // CPUs alone do not keep a race going.
+        let mut g = Field::with_cpus(5, 0, 1, &[0], fill(5), 9, 0.);
+        g.report(progress(0, 5, 0, 0., 0));
+        g.step(0., &[0]);
+        g.step(4000., &[0]);
+        assert!(!g.step(4001., &[0]));
+        assert!(g.step(4002., &[]));
+    }
+
+    #[test]
+    fn a_new_host_retires_the_cpus_on_their_last_progress() {
+        let mut host = Field::with_cpus(7, 0, 1, &[0, 1], fill(4), 9, 0.);
+        host.report(progress(0, 7, 0, 0., 0));
+        host.report(progress(1, 7, 0, 0., 0));
+        host.step(0., &[0, 1]);
+        host.step(4000., &[0, 1]);
+        host.report(progress(CPU_PEER, 7, 0, 1800., 0));
+        host.report(progress(CPU_PEER + 1, 7, 0, 900., 0));
+        let mut mirror = Field::mirror(&host.state());
+        mirror.progress = host.progress.clone();
+        mirror.adopt(50_000.);
+        // CPU reports are no longer taken.
+        mirror.report(progress(CPU_PEER, 7, 1, 2000., 45_000));
+        assert_eq!(mirror.progress[&CPU_PEER].finish_ms, 0);
+        // Rider 1 finishes: nobody else to wait for.
+        mirror.report(progress(1, 7, 1, 2000., 60_000));
+        assert!(mirror.step(50_001., &[1]));
+        let rows = results(&mirror.state(), &|id| format!("R{id}"));
+        assert_eq!(
+            rows.iter().map(|r| r.id).collect::<Vec<_>>(),
+            vec![1, CPU_PEER, CPU_PEER + 1, 0]
+        );
+    }
+
+    #[test]
+    fn host_cpu_field_steps_off_four_five() {
+        use atv_ui::front::controller::step_cpu_field;
+        assert_eq!(step_cpu_field(0, 1), 4);
+        assert_eq!(step_cpu_field(4, 1), 5);
+        assert_eq!(step_cpu_field(5, 1), 0);
+        assert_eq!(step_cpu_field(0, -1), 5);
     }
 
     #[test]
