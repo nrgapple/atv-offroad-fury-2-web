@@ -9,6 +9,8 @@ const usage = typeof window.furyUsageSend === 'function'
   ? new UsageAnalytics({ send: window.furyUsageSend, enabled: true, context: deviceContext() })
   : new UsageAnalytics();
 window.furyUsage = usage;
+// The Rust engine's decode workers start from this (packaging versions it).
+window.furyDecodeWorker = new URL('./decode-worker.js', import.meta.url).href;
 document.addEventListener('visibilitychange', () => { usage.setVisible(!document.hidden); if (document.hidden) usage.report(1); });
 addEventListener('pagehide', () => usage.report(1));
 // Pointer events drive the game (winit). Cancel native touch gestures so

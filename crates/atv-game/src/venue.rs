@@ -9,7 +9,7 @@ use crate::{
     vegetation::Vegetation,
 };
 use atv_content::Content;
-use atv_core::{ipu, resource::Resource, scene::Scene, terrain, texture};
+use atv_core::{resource::Resource, scene::Scene, terrain, texture};
 
 #[derive(Clone)]
 pub struct Image {
@@ -479,13 +479,21 @@ pub async fn load_with(
     }
 
     let layout = terrain::texture_layout(&tr2)?;
-    let mut layers = Vec::with_capacity(layout.records.len());
+    // The layers decode in parallel off the page's thread (offload.rs).
+    let mut sources = Vec::with_capacity(layout.records.len());
     for record in &layout.records {
         let mip = record.mips.last().ok_or("terrain texture has no mip")?;
-        let image = ipu::decode_ipum(
+        sources.push(
             tr2.get(mip.offset..mip.offset + mip.bytes)
                 .ok_or("terrain texture exceeds archive")?,
-        )?;
+        );
+    }
+    let mut layers = Vec::with_capacity(layout.records.len());
+    for (record, image) in layout
+        .records
+        .iter()
+        .zip(crate::offload::ipums(&sources, false).await?)
+    {
         if record.width != 256 || record.height != 256 || image.rgba.len() != 256 * 256 * 4 {
             return Err("unsupported terrain texture image".into());
         }
@@ -494,7 +502,6 @@ pub async fn load_with(
             height: 256,
             rgba: image.rgba,
         });
-        crate::yield_frame().await;
     }
     let mapping_width = (width - 1).div_ceil(64) as u32;
     let mapping_height = (depth - 1).div_ceil(64) as u32;
@@ -534,7 +541,8 @@ pub async fn load_with(
     let sky = Some(crate::sky::load(
         &archive.extract(sky_index)?,
         options.sky_smooth,
-    )?);
+    )
+    .await?);
     crate::yield_frame().await;
     // Enduro gates (`0022a340`): a `<venue>endwgate` at every waypoint but
     // the last, which holds the `<venue>endfgate` finish gate; both collide.

@@ -20,4 +20,4 @@ sha2 = "0.11"
 js-sys = "0.3"
 wasm-bindgen = "0.2.129"
 wasm-bindgen-futures = "0.4"
-web-sys = { version = "0.3", features = ["Window", "Request", "RequestInit", "Response"] }
+web-sys = { version = "0.3", features = ["Window", "Request", "RequestInit", "Response", "Performance", "MessageChannel", "MessagePort", "Crypto", "SubtleCrypto"] }

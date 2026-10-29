@@ -174,6 +174,8 @@ pub async fn photos(content: &Content, tracks: &[Track]) -> Result<Vec<(String, 
             continue;
         };
         out.push((track.id.clone(), Rgba::join(&left, &right).trim_dark()));
+        // Forty photos decode behind the title: let it keep animating (web).
+        atv_content::yield_frame().await;
     }
     Ok(out)
 }
@@ -216,6 +218,7 @@ pub async fn shots(content: &Content, environment: &str) -> Result<Vec<Rgba>, St
         {
             out.push(image.trim_dark());
         }
+        atv_content::yield_frame().await;
     }
     Ok(out)
 }
@@ -285,6 +288,7 @@ pub async fn quad_catalog(content: &Content) -> Result<QuadCatalog, String> {
         {
             logos.insert(stem.to_string(), image);
         }
+        atv_content::yield_frame().await;
     }
     Ok(QuadCatalog { info, logos, atvs })
 }
@@ -454,6 +458,7 @@ pub async fn menu_rider(content: &Content, female: bool) -> Result<MenuRider, St
                 },
             );
         }
+        atv_content::yield_frame().await;
     }
     if let Some(shirt) = textures.get("atv2_shirt_ui").cloned() {
         textures.insert("atv2_shirt_ui_export".into(), shirt);
