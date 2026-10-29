@@ -185,8 +185,10 @@ the worktree's `target/`; keep bulk output on the SSD.
 - Split screen runs two to four players (Freestyle, races, and the Games
   King of the Hills, Treasure Hunt, Hockey and Tag) with the original
   Overlays.pb `ScreenLayout` HUD positions, each seat's own gear and paint,
-  and per-player tire tracks and lingering dust. The ControllerSelect
-  claiming page, the split radar and Multi-Sign animation, split
+  per-player tire tracks and lingering dust, the original MultiATVRiderSelect
+  Players page (each pad joins, dresses and readies its seat), the shared
+  split race radar and the quarter stunt-text clock. The Players page's ATV
+  stats row and original panel art, the Multi-Sign animation, split
   objectives/championships, records and profile credit for players 2-4 (a
   product decision: whose profile), a per-player audio mix, and online
   championships remain (`SPLIT_SCREEN.md`). Room Freestyle trusts each

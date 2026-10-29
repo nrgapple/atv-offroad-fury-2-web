@@ -113,6 +113,8 @@ pub struct Overlay {
     /// Split screen: each player's drawn HUD objects and their anchors
     /// (CSS px) on the latest frame, player order (`#ui-state` for tests).
     pub split_hud: Vec<Vec<(u32, [f32; 2])>>,
+    /// The shared split race radar's top-left corner (CSS px) last frame.
+    pub split_radar: Option<[f32; 2]>,
     /// Split screen: a race's results wait until both players finish.
     pub hold_results: bool,
     /// The multiplayer room for the pause menu's online rows.
@@ -251,6 +253,7 @@ impl Overlay {
             race_fade: None,
             hold_results: false,
             split_hud: Vec::new(),
+            split_radar: None,
             results: Results::default(),
             results_cache: None,
             help_open: false,
@@ -893,6 +896,7 @@ impl Overlay {
             self.hits.extend_from_slice(hits);
         }
         self.split_hud.clear();
+        self.split_radar = None;
         if let (Some(meter), Some(h), Some((name, set))) = (&self.meter, shown, seated)
             && let Some(layout) = meter.split_layout(set, name)
         {
@@ -945,6 +949,31 @@ impl Overlay {
             // (object 10 at 256,208 in every split layout).
             if let Some(lights) = race.and_then(|(frame, ..)| frame.lights) {
                 meter.paint_lamps(&mut items, lights, view.width, view.height);
+            }
+            // The race radar is one overlay the whole frame shares (object
+            // 13): every racer, each human in its player colour.
+            self.split_radar = None;
+            if let Some((frame, _, origin)) = race
+                && self.race_overlays.shown("radar")
+            {
+                use atv_ui::hud::split::RadarDot;
+                let players: Vec<&str> = (2..=4).map(crate::split::player_name).collect();
+                let dots: Vec<RadarDot> = std::iter::once(RadarDot {
+                    origin,
+                    player: Some(0),
+                })
+                .chain(frame.opponents.iter().map(|o| {
+                    RadarDot {
+                        origin: o.origin,
+                        player: players
+                            .iter()
+                            .position(|n| *n == o.name)
+                            .map(|i| i as u8 + 1),
+                    }
+                }))
+                .collect();
+                self.split_radar =
+                    meter.paint_split_radar(&mut items, layout, &dots, view.width, view.height);
             }
             self.compass_icons = h
                 .compass
@@ -1724,6 +1753,7 @@ impl Overlay {
                 "split": self.split_hud.iter().map(|seat| seat.iter().map(|(object, at)| {
                     serde_json::json!({"object": object, "x": at[0], "y": at[1]})
                 }).collect::<Vec<_>>()).collect::<Vec<_>>(),
+                "splitRadar": self.split_radar,
                 // A target run's or mini-game's compass icons; whether the
                 // King of the Hills pills use the original art.
                 "compass": self.compass_icons,

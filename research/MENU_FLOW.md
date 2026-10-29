@@ -59,9 +59,11 @@ Rows in page order; → the page a row opens (GoToPage argument), ⇠ Back.
 | MultiPlayerSelect (4, Split Screen) | Race, Freestyle, Games → 6 | ⇠ previous |
 | Championship (5) | a championship → 7 | ⇠ previous |
 | TrackSelect (6) | Next → 7 (one player), 8 (split screen), 57 (Hockey) | ⇠ previous |
+| MultiATVRiderSelect (8) | each pad's START joins/readies its seat; all joined (≥ 2) ready → event (`0027e230`/`0027e360`) | Triangle on pad 1 |
 | ATVRiderSelect (7) | Start Event → event, Edit Name → 21 | ⇠ previous |
 | HOF (10) | event/course/difficulty values | ⇠ previous |
 | Options (13) | Jukebox → 14, Game Settings → 15, Controller Settings → 16 (then 17), Credits → 18 | ⇠ previous |
+| ControllerSelect (16) | × on pad *n* → 17 for that pad (`00286420`) | Triangle on pad 1 |
 | Jukebox (14), Game Settings (15) | Accept/Cancel → Back | ⇠ previous |
 | Profile Editor (19) | Create New Profile → alert then 20, Load → 23, Save Current → 21, View Current → 24, Unlock Items → 36, Copy → 22, Delete → 53 | ⇠ previous |
 | View Profile (24) | Overview → 25, Trophies → 26, Records → 27, ATVs → 47, Rider Equipment → 48, Games → 46 | ⇠ previous |
@@ -69,7 +71,7 @@ Rows in page order; → the page a row opens (GoToPage argument), ⇠ Back.
 
 Not traced: the Profile Store item pages' and Profile_Load/Copy/Delete's own
 handlers (their labels show Next/Back), the Connection, LAN and lobby pages,
-and ControllerSelect → ControllerSettings.
+(ControllerSelect → ControllerSettings is now traced: `00286420`.)
 
 ## Port navigation
 

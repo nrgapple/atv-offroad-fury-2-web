@@ -18,6 +18,7 @@ pub mod games_page;
 pub mod navigation;
 pub mod passkey_page;
 pub mod profile_pages;
+pub mod seats_page;
 pub mod status_page;
 pub use passkey_page::{CloudCommand, CloudView};
 use profile_pages::NO_PROFILE;
@@ -230,6 +231,12 @@ pub fn stepper(action: &str) -> bool {
             | "codeletter"
     ) || games_page::game_row(action)
         || GEAR_ROWS.iter().any(|(a, _)| *a == action)
+        || action.strip_prefix("seat").is_some_and(|rest| {
+            rest.len() > 1
+                && seats_page::SEAT_ROWS
+                    .iter()
+                    .any(|(row, _)| *row == &rest[1..])
+        })
 }
 
 /// The original catalog names pants and sleeves generically ("pants 10").
@@ -464,6 +471,8 @@ pub struct Frontend {
     /// Host Game → Room: Freestyle: the hosted room starts a room
     /// Freestyle session (research/MULTIPLAYER.md "Room Freestyle").
     pub host_freestyle: bool,
+    /// Split Screen → Players: the seats claimed before a split event.
+    pub seats: seats_page::Seats,
     /// The pages Back returns through (`navigation`).
     history: Vec<navigation::Visit>,
 }
@@ -612,6 +621,7 @@ impl Frontend {
                     .unwrap_or_default()
             }),
             host_freestyle: false,
+            seats: Default::default(),
             history: Vec::new(),
         };
         front.load_profiles(settings);
@@ -656,6 +666,11 @@ impl Frontend {
     pub fn refresh(&mut self, view: &Viewport) {
         if store_page(&self.page) {
             self.choices = self.store_choices();
+            self.selection = self.selection.min(self.choices.len().saturating_sub(1));
+            return;
+        }
+        if self.page == "splitseats" {
+            self.choices = self.seat_choices();
             self.selection = self.selection.min(self.choices.len().saturating_sub(1));
             return;
         }
@@ -986,30 +1001,33 @@ impl Frontend {
         self.set_race_filter(&next);
     }
 
+    /// A look's item name in one gear slot (Original for the rider's own;
+    /// pants and sleeves take their jersey line's name).
+    pub(super) fn gear_name(&self, a: Appearance, slot: &str) -> String {
+        let at = SLOTS.iter().position(|s| *s == slot).unwrap_or(0);
+        let index = usize::from(a.gear[at]);
+        let item = index
+            .checked_sub(1)
+            .and_then(|i| self.gear_catalog.get(at)?.items.get(i))
+            .map(|item| item.name.clone());
+        match item {
+            None => "Original".to_string(),
+            Some(item) if generic_name(&item) => {
+                let shirt = SLOTS.iter().position(|s| *s == "shirt").unwrap_or(3);
+                self.gear_catalog
+                    .get(shirt)
+                    .and_then(|c| c.items.get(index - 1))
+                    .map_or(item, |i| i.name.clone())
+            }
+            Some(item) => item,
+        }
+    }
+
     /// Gear rows' values (frontend.js `gearRows`): helmet, jersey, pants,
     /// gloves, boots, goggles and the quad paint.
     pub fn gear_rows(&self) -> Vec<String> {
         let a = self.appearance;
-        let name = |slot: &str| {
-            let at = SLOTS.iter().position(|s| *s == slot).unwrap_or(0);
-            let index = usize::from(a.gear[at]);
-            let item = index
-                .checked_sub(1)
-                .and_then(|i| self.gear_catalog.get(at)?.items.get(i))
-                .map(|item| item.name.clone());
-            match item {
-                None => "Original".to_string(),
-                // Pants and sleeves share the jersey line of their index.
-                Some(item) if generic_name(&item) => {
-                    let shirt = SLOTS.iter().position(|s| *s == "shirt").unwrap_or(3);
-                    self.gear_catalog
-                        .get(shirt)
-                        .and_then(|c| c.items.get(index - 1))
-                        .map_or(item, |i| i.name.clone())
-                }
-                Some(item) => item,
-            }
-        };
+        let name = |slot: &str| self.gear_name(a, slot);
         vec![
             name("helmet"),
             name("shirt"),
@@ -1093,6 +1111,10 @@ impl Frontend {
 
     /// A value row stepped by Left/Right, its arrows or a tap (+1).
     fn step(&mut self, action: &str, direction: i32, view: &Viewport, settings: &mut Settings) {
+        if self.page == "splitseats" {
+            self.seat_action(action, direction, view, settings);
+            return;
+        }
         if matches!(
             action,
             "profileletter"
@@ -1953,6 +1975,11 @@ impl Frontend {
         if let Some(event) = self.profile_action(action, view, settings) {
             return event;
         }
+        if self.page == "splitseats"
+            && let Some(event) = self.seat_action(action, 1, view, settings)
+        {
+            return event;
+        }
         match action {
             "main" | "single" | "tracks" | "multiplayer" | "race" | "gear" | "split" => {
                 self.show(action, view)
@@ -2179,6 +2206,11 @@ impl Frontend {
 
     /// Keyboard navigation (frontend.js `action`).
     pub fn key(&mut self, code: &str, view: &Viewport, settings: &mut Settings) -> Option<Event> {
+        let event = self.key_inner(code, view, settings);
+        self.seat_gate(event, view)
+    }
+
+    fn key_inner(&mut self, code: &str, view: &Viewport, settings: &mut Settings) -> Option<Event> {
         self.reveal_row = true;
         // An open status popover takes the next key and closes.
         if self.status_open() && !matches!(code, "ShiftLeft" | "ShiftRight") {
@@ -2266,7 +2298,8 @@ impl Frontend {
             }
             (
                 "race" | "gear" | "games" | "profile-name" | "profile-records" | "hall-of-fame"
-                | "passkey-entry" | "store-atv" | "store-gear" | "store-games" | "store-tracks",
+                | "passkey-entry" | "store-atv" | "store-gear" | "store-games" | "store-tracks"
+                | "splitseats",
                 "left" | "right",
             ) => {
                 // Only value rows step; Start Race, the link and Back do not.
@@ -2554,6 +2587,19 @@ impl Frontend {
     }
 
     pub fn release(
+        &mut self,
+        hits: &[(Rect, u32)],
+        pointer: u64,
+        x: f32,
+        y: f32,
+        view: &Viewport,
+        settings: &mut Settings,
+    ) -> Option<Event> {
+        let event = self.release_inner(hits, pointer, x, y, view, settings);
+        self.seat_gate(event, view)
+    }
+
+    fn release_inner(
         &mut self,
         hits: &[(Rect, u32)],
         pointer: u64,
@@ -3821,6 +3867,72 @@ mod tests {
         assert!(front.choices()[0].1.ends_with("Locked"));
         front.key("Escape", &view, &mut settings);
         assert_eq!(front.page, "single");
+    }
+
+    #[test]
+    fn split_events_wait_on_the_players_page_until_seated() {
+        let view = view(1280., 720.);
+        let mut settings = Settings::memory();
+        let mut front = Frontend::new(tracks(), &settings, true);
+        front.show("split", &view);
+        front.split = true;
+        front.show("tracks", &view);
+        // Start on Freestyle opens Players with the last two players joined.
+        assert_eq!(front.key("Enter", &view, &mut settings), None);
+        assert_eq!(front.page, "splitseats");
+        let actions: Vec<_> = front.choices().iter().map(|(a, _)| a.clone()).collect();
+        assert_eq!(actions[..3], ["splitgo", "seat1ready", "seat2ready"]);
+        assert!(actions.contains(&"seat2helmet".to_string()));
+        assert!(actions.contains(&"seat3join".to_string()));
+        // Player 3's pad: START joins; its D-pad moves to Rider and steps it.
+        let idle = [0f32; 17];
+        let press = |front: &mut Frontend, settings: &mut Settings, button: usize| {
+            let mut pad = idle;
+            pad[button] = 1.;
+            let event = front.seat_pad(2, Some((&pad, &[0.; 4])), &view, settings);
+            front.seat_pad(2, Some((&idle, &[0.; 4])), &view, settings);
+            event
+        };
+        front.seat_pad(2, Some((&idle, &[0.; 4])), &view, &mut settings);
+        press(&mut front, &mut settings, 9);
+        assert!(front.seats.joined[2]);
+        press(&mut front, &mut settings, 13);
+        press(&mut front, &mut settings, 15);
+        assert_eq!(
+            front.split_seconds[1].1, 1,
+            "player 3 rides the female rider"
+        );
+        // Player 3's helmet steps like Rider Gear's (Original when locked).
+        let helmet = front
+            .choices()
+            .iter()
+            .position(|(a, _)| a == "seat3helmet")
+            .unwrap();
+        front.selection = helmet;
+        front.key("ArrowRight", &view, &mut settings);
+        assert_eq!(front.seats.cursor[2], 3);
+        // Everyone ready: player 1's row, player 2's row, player 3's START.
+        for row in ["seat1ready", "seat2ready"] {
+            front.selection = front.choices().iter().position(|(a, _)| a == row).unwrap();
+            assert_eq!(front.key("Enter", &view, &mut settings), None);
+        }
+        let event = press(&mut front, &mut settings, 9);
+        assert!(matches!(event, Some(Event::Ride { .. })), "{event:?}");
+        let (players, seconds, _) = front.split_launch();
+        assert_eq!(players, 3);
+        assert_eq!(seconds[1].1, 1);
+        assert_eq!(settings.get(SPLIT_PLAYERS_KEY).as_deref(), Some("3"));
+        // Players 1 and 4 only: player 4 rides seat 2 (pad order compacts).
+        front.split_players = 2;
+        front.show("tracks", &view);
+        front.key("Enter", &view, &mut settings);
+        front.seats.joined = [true, false, false, true];
+        front.split_seconds[2] = (7, 1);
+        front.selection = 0;
+        let event = front.key("Enter", &view, &mut settings);
+        assert!(matches!(event, Some(Event::Ride { .. })));
+        let (players, seconds, _) = front.split_launch();
+        assert_eq!((players, seconds[0]), (2, (7, 1)));
     }
 
     #[test]

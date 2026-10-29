@@ -41,6 +41,13 @@ async function choose(page, action) {
   await select(page, action);
   await key(page, 'Enter');
 }
+
+// Split Screen → Players (MultiATVRiderSelect): the saved players are
+// seated; Start Event starts with them.
+async function seated(page) {
+  await onFront(page, 'splitseats');
+  await choose(page, 'splitgo');
+}
 const label = async (page, action) => {
   const f = (await read(page)).front;
   return f.labels[f.choices.indexOf(action)];
@@ -93,6 +100,7 @@ async function setGame(page, name) {
 }
 async function start(page, venue) {
   await choose(page, 'gamestart');
+  await seated(page);
   await wait(page, venue => {
     const s = JSON.parse(document.querySelector('#ui-state')?.textContent || '{}');
     return s.ride?.environment === venue && s.ride?.game?.loaded && s.split?.player2?.steps > 10;
@@ -194,6 +202,7 @@ try {
     const { page, errors } = await open(browser, 'hockeyGoal=1&hockeyTest=fast', false);
     await setGame(page, 'Hockey');
     await choose(page, 'gamestart');
+    await seated(page);
     await wait(page, () => {
       const s = JSON.parse(document.querySelector('#ui-state')?.textContent || '{}');
       return s.ride?.environment === 'game01' && s.ride?.hockey && s.split?.player2?.steps > 10;

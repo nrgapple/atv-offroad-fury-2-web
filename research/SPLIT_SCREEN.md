@@ -15,10 +15,11 @@ Observed facts, exact USA v2.00 `SCUS_972.11` and its disc resources:
   can include CPU riders (except Duel); three and four players exclude them.
   Games are "Split Screen Only".
 - **Menu flow** ([GAMES.md](GAMES.md)): Main Menu → Multiplayer → Split
-  Screen → `MultiPlayerSelect` (Race, Freestyle, Games). The
-  `QuadzillaUIPageControllerSelect` page (PAGE17) lets up to four players
-  claim a pad by pressing × beside a rotating `controller.slt` model
-  ([CONTROLS.md](CONTROLS.md)).
+  Screen → `MultiPlayerSelect` (Race, Freestyle, Games) → TrackSelect →
+  `MultiATVRiderSelect` (archive PAGE08), where the players claim their
+  seats (see "Players page"). `QuadzillaUIPageControllerSelect` (archive
+  PAGE16) is not a split-screen step: it is Options → Controller Settings'
+  pad picker (see "Players page").
 - **Layout setting**: Options → Game Settings (`Settings_Game`, PAGE15)
   labels "Split Screen Horizontal/Vertical" ([MENU_SCREENS.md](MENU_SCREENS.md)).
 - **Cameras**: the follow-camera loader `003029a0` reads `FollowCamPresets.pb`
@@ -31,8 +32,8 @@ Observed facts, exact USA v2.00 `SCUS_972.11` and its disc resources:
 
 Not traced (assumptions, labelled where used): the split viewport
 rectangles and divider, the per-player HUD layout, how the race waits for
-the second human, and ControllerSelect's claiming rules beyond the page
-text.
+the second human (the seat claiming rules were traced later: "Players
+page").
 
 ## Strategy
 
@@ -317,8 +318,8 @@ What the port does:
   tags; the results list every player.
 
 Port choices and gaps: the empty third-player quarter is dark; Hall of
-Fame and profile credit are player 1's; the ControllerSelect claiming page
-is still not reproduced (players follow controller connection order). The
+Fame and profile credit are player 1's; players follow controller connection order (the
+Players page, below, now seats them). The
 `ScreenLayout` HUD positions, per-seat gear/paint and per-player tire
 tracks and dust followed (see "Per-player fidelity").
 
@@ -400,11 +401,109 @@ What the port does:
   1's (host measurements).
 
 Not built: records/Hall of Fame and profile credit for players 2-4 need a
-product decision (whose profile they credit). The split radar (object 13,
-a single overlay at 251,159 for three and four players) stays hidden, and
-the Multi-Sign animation uses the single-player sign timing. Object 24's
-own stunt-text scale clock (ScaleSize 1.5) is not applied; the stunt text
-keeps object 12's animation values.
+product decision (whose profile they credit). The Multi-Sign animation uses
+the single-player sign timing. (The split radar and object 24's stunt-text
+clock followed in "Players page, radar and stunt text".)
+
+## Players page, radar and stunt text (2026-10-29)
+
+Exact-build evidence (USA v2.00 `SCUS_972.11`, private Ghidra exports of
+the functions named; page data from the extracted `UIPages`):
+
+- **ControllerSelect is the controller-settings pad picker.** Its vtable
+  (`0045c210`, class string at `0x436720`) overrides three slots. The pad
+  handler `00286420` takes Triangle on pad 1 as Back and Cross on pad *n*
+  as "configure pad *n*": it stores the pad (game state +0x1a0f) and opens
+  page 0x11, ControllerSettings. The update `00286510` shows each of the
+  four `Player N` panels in its connected (rotating `controller.slt`, full
+  alpha) or unplugged (`controller_alpha.slt`, alpha 96) state from each
+  pad's connection query. MENU_FLOW's Options → Controller Settings → 16
+  (then 17) is this path. The port's Controller Settings already picks the
+  pad (CONTROLS.md), so the page is not reproduced.
+- **MultiATVRiderSelect is the split-screen claiming page.** Vtable
+  `0045c810` (class string `0x436900`). The pad handler `0027a0a0` maps
+  each pad to its own player (`0025bb10`). A player that has not joined
+  takes only START (0x32), which joins it (`0027e780`: joined flag
+  +0x554[n], ready +0xa64[n] cleared, focus on its first row). A joined
+  player's nine rows per panel are ATV (1), Rider (2), Gear (3), Helmet
+  (4), Goggles (5), Gloves (6), Boots (7), the ATV stats row (8) and its
+  ready control (9); D-pad up/down (0x25/0x26) move, left/right
+  (0x23/0x24) change the value, and locked choices refuse with the error
+  sound. START on a joined player marks it ready (`0027eb70`: sound 9,
+  ready flag, panel state 3) when its choices are valid; START again takes
+  it back. While ready, only START reaches the panel. Triangle on pad 1
+  saves player 1's look to the profile and leaves the page; other pads'
+  Triangle does nothing offline. Page entry (`00278c50`) joins player 1
+  only, and an unplugged pad's panel shows state 6.
+- **Start rule.** The update `0027d300` counts joined players; with fewer
+  than two the Start/Force Start group is hidden. `0027e230` returns the
+  joined count only when player 1 has joined and every joined player is
+  ready; above one, `0027e360` starts the event (GoToPage 0x3c) and copies
+  each joined player's ATV, rider and seven gear slots into consecutive
+  rider slots, so the seated players are compacted in pad order, and
+  stores the count (+0x10).
+- **Radar.** Overlay Set 1 (Race) lists object 13 (`Type=Radar`) once per
+  layout: `1Player` 20,305, `2Player-Horiz` 20,165, `2Player-Vertical`
+  256,305, `3Player`/`4Player` 251,159. With `NumOverlay = 1` it is a
+  single radar the whole frame shares, at the divider or the views'
+  crossing. No game set (6-9), Freestyle (2) or Enduro (11) lists it. The
+  radar constructor `002e6160` adds a racer per rider: CPUs (rider index
+  ≥ the human count, offline) white 0xffffff, humans 0 red 0xff0000, 1 blue
+  0xff, 2 green 0xff00, 3 yellow 0xffff00 (`002e6390` stores the colour
+  on the `RadarIcon_Racer` icon).
+- **Stunt text.** Object 24 (three- and four-player stunt text) lists the
+  same ScaleUp 0.05, ScaleStay 0.25, ScaleDown 0.05, ColorChange 0.25 and
+  AlphaOut 1.0 s as object 12, with ScaleSize 1.5 instead of 2.0 and text
+  scales 0.7/0.8 with a 40-unit second line.
+
+What the port does:
+
+- **Players page** (`atv_ui::front::controller::seats_page`, page
+  `splitseats`, title "Players"). Split Screen's Start (Freestyle's course
+  Enter, Start Race, Start Game, Hockey and Tag) no longer rides at once:
+  the event waits on Players. Controller *n* claims seat *n* (connection
+  order): START or × joins, then readies or un-readies; the D-pad moves its
+  row (marked "> ") and changes ATV, Rider, Gear (the jersey line with its
+  sleeves and pants), Helmet, Goggles, Gloves, Boots and Paint; ○/△ takes
+  ready back. The first controller, the keyboard, mouse and touch drive
+  the page's rows like any menu (every seat's rows are listed, so a
+  keyboard-only group can seat and dress everyone). When player 1 and every
+  joined player are ready (two or more), the event starts with the joined
+  players in pad order (players 1 and 4 ride as two players). Choices are
+  saved per seat (`atv-split-player<n>`, `atv-split-look<n>`), the seated
+  count to `atv-split-players`.
+- **Radar.** Split races draw the race TOY's radar map once at its
+  layout's object 13 position on the whole frame (`Meter::
+  paint_split_radar`), at native size like the single-screen radar, with
+  every racer's dot: CPUs white, players red, blue, green and yellow (tinted
+  `radaricon_racer` copies). The Race overlays' Radar toggle hides it.
+  `#ui-state.hud.splitRadar` reports its top-left corner.
+- **Stunt text.** Three and four players use object 24's clock
+  (`atv_core::hud::Config::quarter`, ScaleSize 1.5) for every player; two
+  players keep object 12's. The text scales and offsets were already
+  object 24's.
+
+Port adaptations and uncertainty: the page opens with the last session's
+player count joined (the original joins only player 1), players 2-4 can
+leave with ○/△ when not ready, a Paint row follows Boots (the port's
+paints), and **Start Event** (the original's "Force Start" label, whose
+trigger was not traced) starts with the joined players without waiting
+for ready. The ATV stats row (8) and the Profile Name widgets are not
+reproduced; player 1 keeps its Garage selection (its rows are the Garage
+pages). The original panels' art (`multi_P<n>_panelcover`, arrows) is not
+used: the page uses the port's menu rows. The radar's draw order of the
+racers and whether it scales in split were not traced (native size,
+player 1 on top). Per-player audio mixing was not investigated this pass.
+
+Checks: `cargo test -p atv-ui` (`split_events_wait_on_the_players_page_
+until_seated`, `the_split_radar_is_one_overlay_over_the_views_crossing`,
+`everyone_joined_and_ready_starts_the_event`), `cargo test -p atv-core hud`
+(`quarter_stunt_text_pulses_to_object_24s_scale`), the new
+`tools/test_engine_split_seats.mjs` (content group, four stand-in pads:
+player 3 joins and changes its helmet on its own pad, players ready on
+their pads and rows, three players ride; players 1 and 4 seat as two) and
+the radar assertions in `test_engine_split_screen.mjs` (two players side
+by side) and `test_engine_split_4p.mjs` (four players).
 
 ## Measurements
 
@@ -462,10 +561,10 @@ lighter presets.
 
 ## Left for later slices
 
-- The ControllerSelect claiming page; the split radar (object 13) and
-  object 24's stunt-text clock.
+- The Players page's ATV stats row, Profile Name panels and original
+  panel art; the Force Start trigger.
 - Hall of Fame and profile credit for players 2-4 (needs a product
-  decision: whose profile); a per-player audio mix.
+  decision: whose profile); a per-player audio mix (not investigated).
 - Freestyle objectives and championships split screen (King of the
   Hills, Treasure Hunt and Hockey are slice 3, Tag slice 4).
 - Online parity: every split-screen mode in relay rooms up to the room's
