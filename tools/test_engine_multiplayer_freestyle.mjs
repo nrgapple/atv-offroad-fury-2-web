@@ -83,7 +83,8 @@ try {
   // freestyleTest=fast still runs the session for 25 s.
   assert.equal(f.labels[f.choices.indexOf('hostfstime')], 'Time Limit: 2:00');
   await pick('hostfstime');
-  await key(host, 'ArrowRight');
+  await key(host, 'Enter');
+  await nextFrames(host, 3);
   f = await front();
   assert.equal(f.labels[f.choices.indexOf('hostfstime')], 'Time Limit: 3:00');
   await shot(host, 'FS-host-form');
