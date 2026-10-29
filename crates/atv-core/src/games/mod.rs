@@ -405,6 +405,22 @@ pub trait Rules {
     fn take_triggered(&mut self) -> Vec<String> {
         Vec::new()
     }
+    /// A room game's host-owned state (research/MULTIPLAYER.md "Room
+    /// games"): King of the Hills one (owner, score) per hill, Treasure
+    /// Hunt one (collector, 1 when in the shown group) per treasure.
+    fn marks_state(&self) -> Vec<(Option<usize>, f32)> {
+        Vec::new()
+    }
+    /// A room guest mirrors the host's state: [`Self::marks_state`], each
+    /// rider's count and Treasure Hunt's wait before the next group.
+    fn apply_marks(&mut self, _marks: &[(Option<usize>, f32)], _scores: &[i32], _wait: f32) {}
+    /// The room host applies a rider's reported capture of hill `number`
+    /// with `points` (the rider's own client ran the arming rules).
+    fn claim(&mut self, _rider: usize, _number: usize, _points: f32) -> Option<Notice> {
+        None
+    }
+    /// A rider left the room: King of the Hills frees their hills.
+    fn release(&mut self, _rider: usize) {}
 }
 
 /// Why the game ended.
@@ -548,6 +564,47 @@ impl Session {
         self.stunt.iter_mut().for_each(|s| *s = 0.);
     }
 
+    /// A room guest follows the host's phase and clock (research/
+    /// MULTIPLAYER.md "Room games"): 0 countdown, 1 play, 2 the rules
+    /// completed (the finish sign holds), 3 results.
+    pub fn mirror(&mut self, phase: u8, clock: f32) {
+        self.time_left = clock.clamp(0., self.minutes as f32 * 60.);
+        match phase {
+            0 => {
+                self.started = false;
+                self.end = None;
+            }
+            1 => {
+                self.begin();
+                self.end = None;
+            }
+            2 => {
+                self.begin();
+                if self.end.is_none() {
+                    self.end = Some(End::Complete);
+                }
+                self.hold = self.hold.max(0.1);
+            }
+            _ => {
+                self.begin();
+                if self.end.is_none() {
+                    self.end = Some(End::TimeUp);
+                }
+                self.hold = 0.;
+            }
+        }
+    }
+
+    /// The room phase code [`Self::mirror`] reads.
+    pub fn phase(&self) -> u8 {
+        match (self.started, self.end) {
+            (false, _) => 0,
+            (true, None) => 1,
+            (true, Some(_)) if self.hold > 0. => 2,
+            _ => 3,
+        }
+    }
+
     /// "M:SS" of the time left (EventTimeRemainingValueCallback).
     pub fn clock(&self) -> String {
         let s = self.time_left.ceil().max(0.) as u32;
@@ -592,6 +649,29 @@ mod tests {
             rules(GameKind::KingOfTheHills, koth).unwrap().scores(),
             vec![0]
         );
+    }
+
+    #[test]
+    fn room_guests_follow_the_hosts_phase_and_clock() {
+        let koth = "[KingOfTheHill]\nNumberOfHills=1\n[Triggers]\nNumberOfTriggers=1\n\
+             [Trigger1]\nName=Hill1\nNumberOfActions=1\nPosition=0,0,0\nBox=20,20,20\n\
+             [Trigger1Action1]\nActionType=Hilltop\nHillNumber=1\n";
+        let mut s = Session::new(rules_for(GameKind::KingOfTheHills, koth, 4).unwrap(), 5, 4);
+        assert_eq!(s.phase(), 0);
+        s.mirror(1, 250.);
+        assert!(s.started && s.end.is_none() && s.phase() == 1);
+        assert_eq!(s.time_left, 250.);
+        s.mirror(2, 9999.);
+        assert_eq!(
+            (s.end, s.phase(), s.time_left),
+            (Some(End::Complete), 2, 300.)
+        );
+        s.mirror(3, 0.);
+        assert!(s.over());
+        assert_eq!(s.end, Some(End::Complete), "the end reason stays");
+        s.restart();
+        s.mirror(3, 0.);
+        assert_eq!((s.end, s.phase()), (Some(End::TimeUp), 3));
     }
 
     #[test]

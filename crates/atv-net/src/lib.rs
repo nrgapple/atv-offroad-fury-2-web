@@ -254,6 +254,84 @@ pub struct GameState {
     /// Race only (game 3); encoded after the shared fields.
     #[serde(default)]
     pub race: RaceInfo,
+    /// King of the Hills (game 4) and Treasure Hunt (game 5) only; encoded
+    /// after the shared fields (research/MULTIPLAYER.md "Room games").
+    #[serde(default)]
+    pub marks: GameMarks,
+}
+/// Room King of the Hills / Treasure Hunt state beyond the shared fields.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct GameMarks {
+    /// The course's archive venue (`env05`): 0-7 env01-08, 8-13 free01-06.
+    pub venue: u8,
+    /// The slots playing this game (bit N for slot N): riders present at
+    /// GO, less leavers. A rider who joins after GO spectates (no pickups,
+    /// no captures, not in the results) until the next game.
+    pub players: u8,
+    /// Each slot's committed stunt score (the results' tie-break).
+    pub stunts: [f32; RACE_RIDERS],
+    /// King of the Hills: one per hill (owner slot, score to beat).
+    /// Treasure Hunt: one per treasure (collector slot, 1 when in the shown
+    /// group else 0). `NO_PEER` is no owner.
+    pub marks: Vec<(PeerId, f32)>,
+}
+/// Most hills or treasures a room game carries (the TOY parser caps a
+/// course at 64 hills and 64 groups of triggers).
+pub const MAX_MARKS: usize = 512;
+/// Highest stunt or hill score a room game accepts.
+pub const MAX_GAME_POINTS: f32 = 100_000_000.;
+/// Room game codes (GameState::game).
+pub mod game_kind {
+    pub const HOCKEY: u8 = 1;
+    pub const TAG: u8 = 2;
+    pub const RACE: u8 = 3;
+    pub const KING_OF_THE_HILLS: u8 = 4;
+    pub const TREASURE_HUNT: u8 = 5;
+}
+/// Room King of the Hills / Treasure Hunt phases (GameState::phase).
+pub mod game_phase {
+    /// Riders load the course; `timer` is the start countdown.
+    pub const COUNTDOWN: u8 = 0;
+    pub const PLAY: u8 = 1;
+    /// The rules completed (all treasures): the finish sign holds.
+    pub const COMPLETE: u8 = 2;
+    /// Results: `scores` are final.
+    pub const OVER: u8 = 3;
+}
+/// A rider's room-game report to the host (any rider; the relay stamps
+/// `peer` and forwards it to the host only).
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
+pub struct GameClaim {
+    pub peer: PeerId,
+    /// The game (GameState serial) it belongs to; 0 announces that the
+    /// sender understands room games 4 and 5.
+    pub serial: u32,
+    /// 0 a stunt-score report; 1 a King of the Hills capture of hill
+    /// `index` (its 1-based number) with `points`.
+    pub kind: u8,
+    pub index: u16,
+    pub points: f32,
+    /// The sender's committed stunt score.
+    pub stunt: f32,
+}
+pub mod claim_kind {
+    pub const STUNT: u8 = 0;
+    pub const CAPTURE: u8 = 1;
+}
+impl GameClaim {
+    pub fn validate(&self) -> Result<()> {
+        if !valid_peer(self.peer)
+            || self.kind > claim_kind::CAPTURE
+            || self.index as usize > MAX_MARKS
+            || !self.points.is_finite()
+            || !(0. ..=MAX_GAME_POINTS).contains(&self.points)
+            || !self.stunt.is_finite()
+            || !(0. ..=MAX_GAME_POINTS).contains(&self.stunt)
+        {
+            return Err(Error::InvalidValue);
+        }
+        Ok(())
+    }
 }
 /// A room race's host-chosen setup (game 3): the course variant on the
 /// room's map, the lap count and each private-room slot's start slot.
@@ -322,7 +400,29 @@ impl GameState {
         {
             return Err(Error::InvalidValue);
         }
-        if !(1..=3).contains(&self.game)
+        if matches!(
+            self.game,
+            game_kind::KING_OF_THE_HILLS | game_kind::TREASURE_HUNT
+        ) && (self.phase > game_phase::OVER
+            || self.marks.venue > 13
+            || self.marks.players >> RACE_RIDERS != 0
+            || self.marks.marks.len() > MAX_MARKS
+            || self
+                .marks
+                .stunts
+                .iter()
+                .any(|s| !s.is_finite() || !(0. ..=MAX_GAME_POINTS).contains(s))
+            || self.marks.marks.iter().any(|(owner, v)| {
+                (*owner != NO_PEER && *owner as usize >= RACE_RIDERS)
+                    || !v.is_finite()
+                    || !(0. ..=MAX_GAME_POINTS).contains(v)
+            })
+            || self.scores.iter().any(|&s| s as usize > MAX_MARKS)
+            || (self.holder != NO_PEER && self.holder as usize >= RACE_RIDERS))
+        {
+            return Err(Error::InvalidValue);
+        }
+        if !(1..=5).contains(&self.game)
             || self.phase > 8
             || self.banner > 16
             || (self.holder != NO_PEER && !valid_peer(self.holder))
@@ -378,6 +478,8 @@ pub enum Packet {
     Game(Box<GameState>),
     /// A rider's room-race progress (research/MULTIPLAYER.md "Room races").
     Progress(RaceProgress),
+    /// A rider's room King of the Hills / Treasure Hunt report.
+    Claim(GameClaim),
 }
 
 pub(crate) fn bounded(values: &[f32], limit: f32) -> bool {

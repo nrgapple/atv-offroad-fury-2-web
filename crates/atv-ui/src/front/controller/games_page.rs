@@ -20,6 +20,10 @@ pub struct GamesUi {
     /// Index into the game's course list.
     pub course: usize,
     pub minutes: u32,
+    /// King of the Hills / Treasure Hunt: host a multiplayer room on the
+    /// course instead of riding alone (research/MULTIPLAYER.md "Room
+    /// games").
+    pub online: bool,
 }
 
 impl Default for GamesUi {
@@ -29,16 +33,30 @@ impl Default for GamesUi {
             kind: 3,
             course: 0,
             minutes: DEFAULT_MINUTES,
+            online: false,
         }
     }
 }
 
 /// The game value rows.
 pub fn game_row(action: &str) -> bool {
-    matches!(action, "gametype" | "gamecourse" | "gametime")
+    matches!(
+        action,
+        "gametype" | "gamecourse" | "gametime" | "gameriders"
+    )
 }
 
 impl Frontend {
+    /// King of the Hills and Treasure Hunt can also host a room (not from
+    /// Split Screen, which plays them on this console).
+    fn room_game(&self) -> bool {
+        !self.split
+            && matches!(
+                self.game_kind(),
+                GameKind::KingOfTheHills | GameKind::TreasureHunt
+            )
+    }
+
     pub(super) fn game_kind(&self) -> GameKind {
         GameKind::ALL[self.games.kind % GameKind::ALL.len()]
     }
@@ -84,7 +102,7 @@ impl Frontend {
         let course_locked = self
             .course_cost(kind.event_type(), self.games.course)
             .is_some();
-        vec![
+        let mut rows = vec![
             (
                 "gametype".into(),
                 format!(
@@ -104,9 +122,23 @@ impl Frontend {
                 "gametime".into(),
                 format!("Time Limit: {}:00", self.games.minutes),
             ),
-            ("gamestart".into(), "Start Game".into()),
-            ("back".into(), "Back".into()),
-        ]
+        ];
+        if self.room_game() {
+            rows.push((
+                "gameriders".into(),
+                format!(
+                    "Riders: {}",
+                    if self.games.online {
+                        "Online Room"
+                    } else {
+                        "Solo"
+                    }
+                ),
+            ));
+        }
+        rows.push(("gamestart".into(), "Start Game".into()));
+        rows.push(("back".into(), "Back".into()));
+        rows
     }
 
     /// The line under the rows: the lock, or what the game asks.
@@ -115,6 +147,9 @@ impl Frontend {
             return Some(lock);
         }
         Some(match self.game_kind() {
+            GameKind::TreasureHunt | GameKind::KingOfTheHills if self.room_game() && self.games.online => {
+                "Start Game hosts a Multiplayer room on this course (share its invite); everyone in the room plays.".into()
+            }
             GameKind::TreasureHunt => {
                 "Collect the treasures. Each group appears after the last is found.".into()
             }
@@ -140,6 +175,7 @@ impl Frontend {
                 self.games.course = (self.games.course as i32 + direction).rem_euclid(n) as usize;
             }
             "gametime" => self.games.minutes = step_minutes(self.games.minutes, direction),
+            "gameriders" => self.games.online = !self.games.online,
             _ => return,
         }
         self.notice = None;
@@ -192,6 +228,23 @@ impl Frontend {
         }
         self.notice = self.enforce_unlocks(settings);
         self.save(settings);
+        // Online Room: host a room on the course; the game starts there for
+        // every room rider (research/MULTIPLAYER.md "Room games").
+        if self.room_game() && self.games.online {
+            let name = if self.player_name.trim().is_empty() {
+                "Rider".to_string()
+            } else {
+                self.player_name.clone()
+            };
+            return Some(Event::GameHost {
+                kind,
+                environment: venue,
+                minutes: self.games.minutes,
+                quad: self.quad_id,
+                rider: self.rider_id,
+                name,
+            });
+        }
         Some(Event::Game {
             kind,
             venue,
@@ -267,6 +320,27 @@ mod tests {
         front.step("gametype", 1, &view, &mut settings);
         assert_eq!(front.choices()[0].1, "Game: King of the Hills");
         assert_eq!(front.choices()[1].1, "Course: Tioga Valley");
+        // Riders: Online Room hosts a room on the course instead.
+        assert_eq!(front.choices()[3].1, "Riders: Solo");
+        front.step("gameriders", 1, &view, &mut settings);
+        assert_eq!(front.choices()[3].1, "Riders: Online Room");
+        match front.run("gamestart", &view, &mut settings) {
+            Some(Event::GameHost {
+                kind,
+                environment,
+                minutes,
+                ..
+            }) => assert_eq!(
+                (kind, environment.as_str(), minutes),
+                (GameKind::KingOfTheHills, "env02", 20)
+            ),
+            other => panic!("{other:?}"),
+        }
+        front.split = true;
+        front.step("gametime", 1, &view, &mut settings);
+        assert!(!front.choices().iter().any(|(a, _)| a == "gameriders"));
+        front.step("gametime", -1, &view, &mut settings);
+        front.split = false;
         // Tag hosts a room on its course with the time limit (no CPU
         // riders); locked Tag courses are refused like the others.
         front.step("gametype", 1, &view, &mut settings);

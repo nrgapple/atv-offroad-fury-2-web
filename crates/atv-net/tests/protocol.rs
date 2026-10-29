@@ -736,6 +736,7 @@ fn game_state_round_trips_and_rejects_bad_values() {
         ball_velocity: [0., 0., 25.],
         ball_yaw: 1.5,
         race: Default::default(),
+        marks: Default::default(),
     };
     let packet = atv_net::Packet::Game(Box::new(state.clone()));
     let bytes = atv_net::encode(&packet).unwrap();
