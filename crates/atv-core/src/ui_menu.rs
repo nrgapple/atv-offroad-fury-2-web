@@ -57,6 +57,10 @@ pub struct Request {
     /// MULTIPLAYER.md "Room Freestyle"), else a Free Ride.
     #[serde(default)]
     pub host_freestyle: bool,
+    /// Host Game → Room: Freestyle: the session's Time Limit, minutes
+    /// (Freestyle Prep's Classic row, `002f60b0`/`002f6190`: 2-20, wraps).
+    #[serde(default)]
+    pub host_freestyle_minutes: u32,
     /// Split Screen: how many local players (2-4).
     #[serde(default)]
     pub split_players: u8,
@@ -1128,23 +1132,36 @@ pub fn layout(request: Request) -> Result<Frame> {
             // the game at once so friends can drop in from the invite.
             let mut rows = vec![
                 if creating {
-                    ("Select Track", "hosttrack")
+                    ("Select Track".to_string(), "hosttrack")
                 } else {
-                    ("Join Game", "join")
+                    ("Join Game".to_string(), "join")
                 },
-                ("Garage", "garage"),
+                ("Garage".to_string(), "garage"),
             ];
             // What the hosted room starts with: everyone free rides, or
-            // a timed Freestyle session with a shared score table.
+            // a timed Freestyle session with a shared score table and
+            // Classic Freestyle's Time Limit row.
             if creating {
                 rows.insert(
                     1,
                     if request.host_freestyle {
-                        ("Room: Freestyle (timed stunts)", "hostmode")
+                        ("Room: Freestyle (timed stunts)".to_string(), "hostmode")
                     } else {
-                        ("Room: Free Ride", "hostmode")
+                        ("Room: Free Ride".to_string(), "hostmode")
                     },
                 );
+                if request.host_freestyle {
+                    rows.insert(
+                        2,
+                        (
+                            format!(
+                                "Time Limit: {}:00",
+                                request.host_freestyle_minutes.clamp(2, 20)
+                            ),
+                            "hostfstime",
+                        ),
+                    );
+                }
             }
             for (i, (label, action)) in rows.iter().enumerate() {
                 f.choices.push((*action).into());
@@ -2273,6 +2290,7 @@ mod tests {
             page: page.into(),
             split_vertical: false,
             host_freestyle: false,
+            host_freestyle_minutes: 2,
             split_players: 2,
             split_seconds: Vec::new(),
             loading_status: "Reading original ATV...".into(),

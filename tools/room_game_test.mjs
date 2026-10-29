@@ -136,6 +136,10 @@ export async function roomGame({ prefix, action, hook, verify, label, leaver = '
     g = await ride(guest);
     assert.deepEqual(g.roomGame.standings.map(s => [s.rider, s.score]), h.roomGame.standings.map(s => [s.rider, s.score]), 'agreed standings');
     assert.equal(g.game.summary, h.game.summary, 'agreed results');
+    // The original `[TreasureOver Menu]` / `[HillKingOver Menu]` title
+    // (Overlays.pb): both games' results read "Race Results".
+    assert.equal(h.resultsTitle, 'Race Results');
+    assert.equal(g.resultsTitle, 'Race Results');
     assert.match(h.game.summary, /RustHost/);
     // The course by its Tracks.dat name, not its venue code (env05).
     assert.match(h.game.summary, / on Prospect Springs: /);
