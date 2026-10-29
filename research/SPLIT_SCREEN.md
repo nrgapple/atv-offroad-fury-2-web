@@ -246,6 +246,95 @@ placement were not traced. Check: `tools/test_engine_split_tag.mjs`
 (`tagTest=fast`) to Tag Results naming both players, then Restart Game.
 Host Chromium only.
 
+## Three and four players (2026-10-28)
+
+Exact-build evidence (USA v2.00 `SCUS_972.11` and `pause/Overlays.pb`):
+
+- **Which modes.** The manual (pp. 16-17) offers two- to four-player
+  split screen for Race, Freestyle and Games; three and four players
+  exclude CPU riders, and Duel is two players only (the port has no split
+  Duel). The executable's controller alerts name the Multitap ("Controller
+  %d or the Multitap (for PlayStation 2) ... has become unplugged") and the
+  lobby strings count "(%d/4 players)".
+- **Cameras.** `003029a0`'s layout 3 loads the quarter-screen presets
+  `Preset<n>q` (decoded privately in `camera-presets-quarter.json`: chase
+  FOV 70 at 13.5 ft, angle 1.01 rad).
+- **HUD.** Every overlay set in `Overlays.pb` has
+  `ScreenLayout-3Player` and `ScreenLayout-4Player` sections beside the
+  1-player and two 2-player ones. Their per-player overlays list one
+  position per player on the 640x448 frame in quarter order: player 1
+  top left, player 2 top right, player 3 bottom left, player 4 bottom right
+  (lap time at 20,23 / 615,23 / 20,231 / 615,231; speedometer at 20,155 /
+  597,155 / 20,372 / 597,372). The 321 lights and the radar are single,
+  centred overlays (256,208 and 251,159). The three-player layout lists the
+  same positions for three players and one "CHEESY GPS" overlay (object
+  32) with no position; whether that map fills the empty quarter was not
+  traced.
+
+What the port does:
+
+- **Menu.** Split Screen adds **Players: 2/3/4** after Games (saved as
+  `atv-split-players`). Three and four players hide the two-player
+  **Screen** row (they always share quarters) and add **Player 3 ATV/Rider**
+  and **Player 4 ATV/Rider** rows (`atv-split-player3`, `atv-split-player4`;
+  "quad,rider", like player 2's). `?split=q&splitn=3|4` with
+  `split2=`..`split4=quad.rider` (desktop `FURY_SPLIT=q`, `FURY_SPLITN`,
+  `FURY_SPLIT2`-`4`) starts a direct ride; the context-loss resume link
+  carries them.
+- **Views.** `split::Layout::Quad` cuts the frame into four quarters with
+  the 2 px dividers, in the original's quarter order. Three players leave
+  the bottom-right quarter dark (assumption: see the GPS note above). Each
+  view presents at 4:3 (the quarter's reference aspect, so the quarter
+  presets' FOV is used as authored).
+- **Players.** `Ready.split` holds players 2-4, each a full `Riding`
+  (physics, stunts, crashes, camera, bindings) drawn in its own scene
+  rider slot (`split::peer`: 250-252), with its own wheel dust/spray pass,
+  fine terrain patch (all players' patches merge when they touch), rumble
+  on its own pad, and engine/impact voices through the room riders' mixer.
+  Every local player is every other's contact body (lower player number
+  takes the -1 tie side). Players 2-4's riders are posed in one
+  `pose_peers` call per frame (the call hides every slot it is not given;
+  posing each player separately had left only the last player's rider
+  drawn, so in games players 2 and 3 could not see their own ATV).
+- **Input.** Player N plays the Nth connected controller; the keyboard's
+  halves stay players 1 and 2 (players 3 and 4 need pads). Any player's
+  Start opens player 1's Pause menu over every view.
+- **Races.** Three and four players race with no CPUs (manual); the
+  Single Race page's CPU count is ignored for them. Each player races its
+  own copy of the course from the grid slots after player 1;
+  `split::merge_race` adds players 2-4 to player 1's standings and gives
+  every race the combined place, field and opponents (PLACE trees, finish
+  signs, music). No race is over until every player has finished; results
+  list all players.
+- **Games.** King of the Hills and Treasure Hunt run one `Session` for all
+  players (`rules_for(.., players)`; hills take the capturer's colour from
+  the original red/blue/green/yellow table), each player at its own TOY
+  `Start%d` (or beside player 1 when the TOY lists fewer). Hockey seats
+  players 1 and 3 on Red and 2 and 4 on Blue (the rooms' alternation; Team
+  Select was not traced) at their own face-off spots. Tag runs
+  `TagSession::new_local` with up to four rider records (the original's
+  four Tag records). Each view gets its own game panel, compass and world
+  tags; the results list every player.
+
+Port choices and gaps: the empty third-player quarter is dark; per-view
+HUD elements reuse the port's single-screen layout scaled to the quarter
+(not yet the `ScreenLayout-4Player` positions); player 3/4 gear, paint,
+Hall of Fame and profile credit are player 1's; tire tracks and lingering
+dust stay player 1's; the ControllerSelect claiming page is still not
+reproduced (players follow controller connection order).
+
+Checks: `split.rs` unit tests (quarter rects and order, quarter camera
+layout, player names and scene slots, Freeride starts for players 3/4, a
+four-player standings merge with no CPUs), the Split Screen menu unit test
+(Players row cycles 2/3/4, rows for players 3/4, saved), and
+`tools/test_engine_split_4p.mjs` (content group, host Chromium, four
+stand-in pads): the Players row, four-player Freestyle in quarters with
+players 3 and 4 each driving only on their own pad, a one-lap four-player
+race with no CPUs to results listing all four, and four-player Treasure
+Hunt to results listing all four; three-player King of the Hills, Hockey
+and Tag each start in quarter views with players 2 and 3 drawn
+(`split.ridersShown`).
+
 ## Measurements
 
 Host only (Apple Silicon Mac mini, headless Chromium on Metal, 1280x720,
@@ -263,10 +352,28 @@ rises by about 1-4 ms on this host; the players rode close together, so the
 terrain kept one merged fine patch. The frame cadence is noisy in headless
 Chromium. Phones were not measured.
 
+Three and four players (2026-10-29, same host and page, one run each
+after 600 frames, every stand-in pad on the throttle, ENV01 Freestyle,
+`?split=q&splitn=3|4`; the 1P/2P rows re-measured in the same session for
+comparison, so the absolute numbers differ from the table above):
+
+| Ride | Frame (ms) | Frame p95 (ms) | CPU draw (ms) |
+| --- | --- | --- | --- |
+| One player | 12.0 | 26.7 | 2.9 |
+| Two players top/bottom | 12.7 | 27.3 | 3.9 |
+| Two players side by side | 12.9 | 27.2 | 3.8 |
+| Three players (quarters) | 19.5 | 23.9 | 7.0 |
+| Four players (quarters) | 10.9 | 12.8 | 6.9 |
+
+Four views cost about 3 ms more CPU draw than two on this host (the scene
+is drawn once per view); the frame cadence is noisy in headless Chromium
+under the shared host's load (the three-player frame time is not
+meaningfully worse than four). Host only; phones were not measured.
+
 ## Left for later slices
 
-- Three and four players (quarter presets `Preset<n>q`, no CPUs) and the
-  ControllerSelect claiming page.
+- The ControllerSelect claiming page; the `ScreenLayout-3Player`/
+  `-4Player` HUD positions (the port scales its single-screen HUD).
 - Player 2's own gear and paint, Hall of Fame and profile credit; its tire
   tracks and lingering dust; a per-player audio mix.
 - Freestyle objectives and championships split screen (King of the

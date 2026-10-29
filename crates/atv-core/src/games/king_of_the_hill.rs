@@ -219,9 +219,12 @@ impl Rules for KingOfTheHill {
             ("hills", self.hills.len() as f32),
             ("state", self.state[0] as f32),
         ];
-        // Split screen: player 2's rider state.
-        if let Some(s) = self.state.get(1) {
-            d.push(("state2", *s as f32));
+        // Split screen: players 2-4's rider states.
+        for (key, s) in ["state2", "state3", "state4"]
+            .into_iter()
+            .zip(self.state.iter().skip(1))
+        {
+            d.push((key, *s as f32));
         }
         d
     }
