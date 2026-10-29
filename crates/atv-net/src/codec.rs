@@ -25,6 +25,7 @@ pub fn encode(packet: &Packet) -> Result<Vec<u8>> {
         Packet::Profile(_) => 11,
         Packet::Ready { .. } => 12,
         Packet::Game(_) => 13,
+        Packet::Progress(_) => 14,
     };
     w.0.extend_from_slice(MAGIC);
     w.byte(VERSION);
@@ -74,6 +75,21 @@ pub fn encode(packet: &Packet) -> Result<Vec<u8>> {
             w.floats(&g.ball);
             w.floats(&g.ball_velocity);
             w.f32(g.ball_yaw);
+            if g.game == 3 {
+                w.byte(g.race.variant);
+                w.byte(g.race.laps);
+                for slot in g.race.grid {
+                    w.byte(slot);
+                }
+            }
+        }
+        Packet::Progress(p) => {
+            p.validate()?;
+            w.byte(p.peer);
+            w.u32(p.serial);
+            w.byte(p.lap);
+            w.f32(p.distance);
+            w.u32(p.finish_ms);
         }
         Packet::SetLobby {
             epoch,
@@ -229,8 +245,19 @@ pub fn decode(bytes: &[u8]) -> Result<Packet> {
             server_ms: u64::from_le_bytes(r.take(8)?.try_into().map_err(|_| Error::InvalidLength)?),
         },
         11 => Packet::Profile(r.participant()?),
+        14 => {
+            let p = RaceProgress {
+                peer: r.peer()?,
+                serial: r.u32()?,
+                lap: r.byte()?,
+                distance: r.f32()?,
+                finish_ms: r.u32()?,
+            };
+            p.validate()?;
+            Packet::Progress(p)
+        }
         13 => {
-            let g = GameState {
+            let mut g = GameState {
                 game: r.byte()?,
                 serial: r.u32()?,
                 phase: r.byte()?,
@@ -243,7 +270,15 @@ pub fn decode(bytes: &[u8]) -> Result<Packet> {
                 ball: r.floats()?,
                 ball_velocity: r.floats()?,
                 ball_yaw: r.f32()?,
+                race: Default::default(),
             };
+            if g.game == 3 {
+                g.race.variant = r.byte()?;
+                g.race.laps = r.byte()?;
+                for slot in &mut g.race.grid {
+                    *slot = r.byte()?;
+                }
+            }
             g.validate()?;
             Packet::Game(Box::new(g))
         }

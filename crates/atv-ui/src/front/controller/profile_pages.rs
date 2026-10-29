@@ -10,11 +10,12 @@ use atv_core::profile::{BookError, NAME_CHARS, NAME_MAX, Profile, ProfileBook, c
 
 /// Profile pages laid out as the editor's: rows on the left and the
 /// details table on the panel.
-pub const DETAIL_PAGES: [&str; 7] = [
+pub const DETAIL_PAGES: [&str; 8] = [
     "hall-of-fame",
     "profile-name",
     "profile-slots",
     "profile-confirm",
+    "profile-unlock",
     "profile-overview",
     "profile-trophies",
     "profile-records",
@@ -203,6 +204,7 @@ impl Frontend {
                 row("profile-load", "Load Profile"),
                 row("profile-view", "View Current Profile"),
                 row("profile-store", "Unlock Items"),
+                row(UNLOCK_PAGE, "Unlock Everything"),
                 row("profile-copy", "Copy Profile"),
                 row("profile-delete", "Delete Profile"),
                 row("passkey", "Pass Key & Saves"),
@@ -248,6 +250,7 @@ impl Frontend {
                 })
                 .collect(),
             "profile-confirm" => vec![row("confirmyes", "Yes"), row("confirmno", "No")],
+            UNLOCK_PAGE => self.unlock_choices(),
             // PAGE24 `ProfileView_Menu`. ATVs, Rider Equipment and Games list
             // Profile Store ownership (PROFILE_STORE.md).
             "profile-view" => vec![
@@ -336,14 +339,11 @@ impl Frontend {
             return self.passkey_status();
         }
         match self.page.as_str() {
-            "profile" | "profile-view" => Some(match self.book.current_profile() {
-                Some(p) => format!(
-                    "Current Profile: {} · Current Profile Points: {}",
-                    p.name,
-                    grouped(p.points)
-                ),
-                None => "No profile loaded".into(),
-            }),
+            // The status bar shows the current profile and its points.
+            "profile" | "profile-view" => match self.book.current_profile() {
+                Some(_) => None,
+                None => Some("No profile loaded".into()),
+            },
             "profile-name" => Some(format!("Up to {NAME_MAX} letters, numbers or - _ . !",)),
             _ => None,
         }
@@ -424,6 +424,7 @@ impl Frontend {
                 ],
                 None => Vec::new(),
             },
+            UNLOCK_PAGE => self.unlock_details(),
             "profile-overview" => current.map_or_else(Vec::new, |p| self.overview(p)),
             "profile-trophies" => current.map_or_else(Vec::new, trophies),
             "profile-records" => current.map_or_else(Vec::new, |p| self.records(p)),
@@ -692,6 +693,9 @@ impl Frontend {
                 }
             }
             "profile-store" => return Some(self.open_store(view)),
+            UNLOCK_PAGE => self.open_unlock(view),
+            "unlockthis" | "unlockall" => self.unlock(action == "unlockall", view, settings),
+            "unlockcancel" => self.go_back(view),
             "view-overview" => self.show("profile-overview", view),
             "view-atvs" => self.view_collection("store-atv", view),
             "view-gear" => self.view_collection("store-gear", view),
@@ -777,9 +781,13 @@ impl Frontend {
         let mut book = self.book.clone();
         let name = self.profile_ui.name.clone();
         let done = match self.profile_ui.name_for {
-            NameFor::Create => book
-                .create(&name)
-                .map(|i| format!("Profile {} created and loaded.", book.profiles[i].name)),
+            NameFor::Create => book.create(&name).map(|i| {
+                // Game Settings → New Profiles (port option).
+                if crate::settings::new_profiles_unlocked(settings) {
+                    atv_core::store::unlock_everything(&mut book.profiles[i]);
+                }
+                format!("Profile {} created and loaded.", book.profiles[i].name)
+            }),
             NameFor::Copy(from) => book.copy(from, &name).map(|_| "Copy Successful.".into()),
         };
         match done {
@@ -855,6 +863,84 @@ impl Frontend {
         self.notice = None;
     }
 
+    /// Unlock Everything (port option): opens the confirmation from the
+    /// Profile Editor, Unlock Items or the Pass Key page.
+    fn open_unlock(&mut self, view: &Viewport) {
+        if self.book.profiles.is_empty() {
+            self.notice = Some(NO_PROFILE.into());
+        } else {
+            self.show(UNLOCK_PAGE, view);
+        }
+    }
+
+    /// The confirmation's rows: the loaded profile and, with several, every
+    /// profile in the save.
+    fn unlock_choices(&self) -> Vec<(String, String)> {
+        let mut rows = Vec::new();
+        if let Some(name) = self.profile_name() {
+            rows.push(("unlockthis".into(), format!("Unlock For {name}")));
+        }
+        let count = self.book.profiles.len();
+        if count > 1 || (count == 1 && self.book.current.is_none()) {
+            rows.push((
+                "unlockall".into(),
+                if count == 1 {
+                    format!("Unlock For {}", self.book.profiles[0].name)
+                } else {
+                    format!("Unlock For All {count} Profiles")
+                },
+            ));
+        }
+        rows.push(("unlockcancel".into(), "Cancel".into()));
+        rows
+    }
+
+    fn unlock_details(&self) -> Vec<(String, String)> {
+        let line = |l: &str, v: String| (l.to_string(), v);
+        let mut lines = vec![line(
+            "Unlocks every ATV, rider gear, track, championship and game for this \
+             profile. Your records and trophies stay as earned.",
+            String::new(),
+        )];
+        for p in &self.book.profiles {
+            let state = if atv_core::store::everything_unlocked(p) {
+                "Everything unlocked"
+            } else {
+                "Not yet"
+            };
+            lines.push(line(&p.name, state.into()));
+        }
+        lines.push(line(
+            "It saves with your Pass Key, so every device on the key gets it, and \
+             a Share Code of this save gives friends everything too.",
+            String::new(),
+        ));
+        lines
+    }
+
+    /// Unlock Everything for the loaded profile or every profile, saved
+    /// (and so pushed to the Pass Key on the next sync check).
+    fn unlock(&mut self, all: bool, view: &Viewport, settings: &mut Settings) {
+        use atv_core::store::{EVERYTHING_MESSAGE, unlock_everything};
+        let mut book = self.book.clone();
+        let mut changed = false;
+        for (i, profile) in book.profiles.iter_mut().enumerate() {
+            if all || book.current == Some(i) {
+                changed |= unlock_everything(profile);
+            }
+        }
+        if changed {
+            self.store_book(settings, book);
+        }
+        self.go_back(view);
+        self.notice = Some(if changed {
+            EVERYTHING_MESSAGE.into()
+        } else {
+            "Everything is already unlocked.".into()
+        });
+        self.refresh(view);
+    }
+
     pub(super) fn profile_back(&self) -> Option<&'static str> {
         Some(match self.page.as_str() {
             "profile" | "hall-of-fame" => "main",
@@ -864,12 +950,15 @@ impl Frontend {
             },
             "profile-slots" => "profile",
             "profile-confirm" => "profile-slots",
-            "profile-view" => "profile",
+            "profile-view" | UNLOCK_PAGE => "profile",
             "profile-overview" | "profile-trophies" | "profile-records" => "profile-view",
             _ => return None,
         })
     }
 }
+
+/// Unlock Everything's confirmation page (port option).
+pub const UNLOCK_PAGE: &str = "profile-unlock";
 
 /// The original No Profile Alert (`0x432490`, `0x432550`), shown where the
 /// port needs a loaded profile.
@@ -974,10 +1063,11 @@ mod tests {
         assert_eq!(main[at + 2], "settings");
         front.run("profile", &view, &mut settings);
         assert_eq!(front.page, "profile");
-        assert_eq!(
-            front.profile_text().as_deref(),
-            Some("Current Profile: PLAYER1 · Current Profile Points: 40")
-        );
+        // The current profile and its points are on the status bar.
+        assert_eq!(front.profile_text(), None);
+        let bar = front.status_bar().unwrap();
+        assert_eq!(bar.profile.as_deref(), Some("PLAYER1"));
+        assert_eq!(bar.points, 40);
         // Create: the name entry starts on the next default name.
         front.run("profile-create", &view, &mut settings);
         assert_eq!(

@@ -225,7 +225,8 @@ impl Scroller {
     /// press is a grab, not a tap.
     pub fn press(&mut self, y: f32, now: f64) -> bool {
         let caught = match self.motion {
-            Motion::Fling { velocity } => velocity.abs() > 0.15,
+            // Any visibly moving content (from 20 px/s) is caught, as natively.
+            Motion::Fling { velocity } => velocity.abs() > 0.02,
             Motion::Spring { .. } => true,
             _ => false,
         };

@@ -68,8 +68,11 @@ try {
   await shot(page, 'main-menu');
   await choose(page, 'profile'); await onPage(page, 'profile');
   f = await state(page);
-  assert.deepEqual(f.choices, ['profile-create', 'profile-load', 'profile-view', 'profile-store', 'profile-copy', 'profile-delete', 'passkey', 'back']);
-  assert.equal(f.profile, 'Current Profile: PLAYER1 · Current Profile Points: 55');
+  assert.deepEqual(f.choices, ['profile-create', 'profile-load', 'profile-view', 'profile-store', 'profile-unlock', 'profile-copy', 'profile-delete', 'passkey', 'back']);
+  // The current profile and its points are on the status bar.
+  assert.equal(f.profile, null);
+  assert.equal(f.status.profile, 'PLAYER1');
+  assert.equal(f.status.points, 55);
   await shot(page, 'editor');
 
   // Create New Profile → name entry → Save Profile.

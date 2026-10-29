@@ -18,6 +18,7 @@ pub mod games_page;
 pub mod navigation;
 pub mod passkey_page;
 pub mod profile_pages;
+pub mod status_page;
 pub use passkey_page::{CloudCommand, CloudView};
 use profile_pages::NO_PROFILE;
 
@@ -413,6 +414,9 @@ pub struct Frontend {
     pub store: StoreView,
     /// The Pass Key sync as the host last reported it.
     pub cloud: CloudView,
+    /// The status bar's open popover and its chip's centre x.
+    status_open: Option<super::status_bar::Chip>,
+    status_anchor: f32,
     /// The Pass Key pages' working state.
     pub passkey: passkey_page::PassKeyUi,
     /// Multiplayer → Split Screen: the next Freestyle or Race rides two
@@ -503,6 +507,8 @@ impl Frontend {
             shift: false,
             store: StoreView::default(),
             cloud: CloudView::default(),
+            status_open: None,
+            status_anchor: 0.,
             passkey: Default::default(),
             split: false,
             split_vertical: settings.get(SPLIT_LAYOUT_KEY).as_deref() == Some("vertical"),
@@ -997,11 +1003,15 @@ impl Frontend {
     /// highlighted series on Championship.
     pub fn profile_text(&self) -> Option<String> {
         match self.page.as_str() {
-            "single" => Some(match self.profile_name() {
-                Some(name) => format!("{name} · {}", profile_line(&self.profile)),
-                // 0x431440: no profile, nothing is saved.
-                None => "No profile loaded · Remember, your progress is not being saved!".into(),
-            }),
+            // The status bar shows the profile and its points; the line
+            // stays only for the original's warning (0x431440: no profile,
+            // nothing is saved).
+            "single" => match self.profile_name() {
+                Some(_) => None,
+                None => {
+                    Some("No profile loaded · Remember, your progress is not being saved!".into())
+                }
+            },
             "championship" => self.series_line(),
             "games" => self.games_line(),
             "objectives" => self.objectives_line(),
@@ -1889,6 +1899,11 @@ impl Frontend {
     /// Keyboard navigation (frontend.js `action`).
     pub fn key(&mut self, code: &str, view: &Viewport, settings: &mut Settings) -> Option<Event> {
         self.reveal_row = true;
+        // An open status popover takes the next key and closes.
+        if self.status_open() && !matches!(code, "ShiftLeft" | "ShiftRight") {
+            self.close_status();
+            return None;
+        }
         if matches!(code, "ShiftLeft" | "ShiftRight") {
             self.shift = true;
             return None;
@@ -2163,7 +2178,10 @@ impl Frontend {
     pub fn press(&mut self, hits: &[(Rect, u32)], pointer: u64, x: f32, y: f32) {
         let inside = |pane: u32| hits.iter().any(|(r, id)| *id == pane && r.contains(x, y));
         // The list sits inside the rows column on Select Track: it wins.
-        let scroll = if inside(LIST) {
+        // An open status popover covers both.
+        let scroll = if self.status_open() {
+            None
+        } else if inside(LIST) {
             Some(Pane::List)
         } else if inside(ROWS) && self.rows.max() > 0. {
             Some(Pane::Rows)
@@ -2262,6 +2280,14 @@ impl Frontend {
             }
         }
         let id = Self::hit(hits, x, y).filter(|id| Some(*id) == pressed.id)?;
+        let rect = hits
+            .iter()
+            .rev()
+            .find(|(r, i)| *i == id && r.contains(x, y))
+            .map(|(r, _)| *r);
+        if self.status_click(id, rect, view) {
+            return None;
+        }
         self.click(id, view, settings)
     }
 
@@ -2483,12 +2509,10 @@ impl Frontend {
             notice: self.notice.clone(),
             profile: self.profile_text(),
             details: self.profile_details(),
-            badge: self.badge_page().then(|| super::Badge {
-                key: self.cloud.key.clone(),
-                status: self.cloud.short.clone(),
-                synced: self.cloud.synced,
-                trouble: self.cloud.trouble,
-            }),
+            // The status bar's save chip replaced the Pass Key badge.
+            badge: None,
+            status: self.status_bar(),
+            toast: None,
             qr: self.passkey_qr(),
             heading: self.profile_heading(),
             lobby: self.lobby.clone(),
@@ -3008,6 +3032,112 @@ mod tests {
         .collect();
     }
 
+    fn row(front: &Frontend, action: &str) -> usize {
+        front
+            .choices()
+            .iter()
+            .position(|(a, _)| a == action)
+            .unwrap_or_else(|| panic!("{action}: {:?}", front.choices()))
+    }
+
+    #[test]
+    fn unlock_everything_opens_the_whole_save_and_saves_it() {
+        let view = view(1280., 720.);
+        let mut settings = Settings::memory();
+        let mut front = Frontend::new(tracks(), &settings, true);
+        store_catalogs(&mut front);
+        // Two profiles; the second is loaded.
+        let mut book = atv_core::profile::ProfileBook::migrate(None);
+        book.create("ACE").unwrap();
+        crate::settings::save_book(&mut settings, &book);
+        front.load_profiles(&settings);
+        let pro = atv_core::championship::series("prosx").unwrap();
+        let free = atv_core::freestyle::series("spstunt").unwrap();
+        assert!(!front.quad_owned(19) && !front.quad_owned(8));
+        assert_eq!(front.race_course_cost("env02"), Some(200));
+        assert!(!front.profile.championships.is_open(pro, true));
+        front.games.kind = atv_core::games::GameKind::ALL
+            .iter()
+            .position(|k| k.event_type() == 12)
+            .unwrap();
+        assert!(front.game_lock().is_some());
+        // Profile Editor → Unlock Everything, then Cancel.
+        front.show("profile", &view);
+        front.selection = row(&front, "profile-unlock");
+        front.key("Enter", &view, &mut settings);
+        assert_eq!(front.page, "profile-unlock");
+        let actions: Vec<&str> = front.choices().iter().map(|(a, _)| a.as_str()).collect();
+        assert_eq!(actions, ["unlockthis", "unlockall", "unlockcancel", "back"]);
+        assert_eq!(front.choices()[0].1, "Unlock For ACE");
+        assert_eq!(front.choices()[1].1, "Unlock For All 2 Profiles");
+        assert!(
+            front.profile_details()[0]
+                .0
+                .contains("records and trophies stay")
+        );
+        front.selection = 2;
+        front.key("Enter", &view, &mut settings);
+        assert_eq!(front.page, "profile");
+        assert_eq!(front.current(), Some("profile-unlock"));
+        assert!(!front.quad_owned(19));
+        // This profile only.
+        front.key("Enter", &view, &mut settings);
+        front.selection = 0;
+        front.key("Enter", &view, &mut settings);
+        assert_eq!(front.page, "profile");
+        assert_eq!(front.notice.as_deref(), Some("Unlocked Everything!"));
+        assert!(front.quad_owned(19) && front.quad_owned(8));
+        assert_eq!(front.race_course_cost("env02"), None);
+        assert_eq!(front.freestyle_cost("free01"), None);
+        assert!(front.profile.championships.is_open(pro, true));
+        assert!(front.profile.championships.freestyle_open(free, true));
+        assert!(front.game_lock().is_none());
+        assert_eq!(front.profile.points, 0);
+        let saved = crate::settings::load_book(&settings);
+        assert!(atv_core::store::everything_unlocked(&saved.profiles[1]));
+        assert!(!atv_core::store::everything_unlocked(&saved.profiles[0]));
+        assert!(atv_core::store::everything_unlocked(
+            &crate::settings::load_profile(&settings)
+        ));
+        // From Unlock Items: every profile; Back returns there.
+        front.selection = row(&front, "profile-store");
+        front.key("Enter", &view, &mut settings);
+        assert_eq!(front.page, "store");
+        front.selection = row(&front, "profile-unlock");
+        front.key("Enter", &view, &mut settings);
+        front.selection = row(&front, "unlockall");
+        front.key("Enter", &view, &mut settings);
+        assert_eq!(front.page, "store");
+        assert_eq!(front.notice.as_deref(), Some("Unlocked Everything!"));
+        let saved = crate::settings::load_book(&settings);
+        assert!(
+            saved
+                .profiles
+                .iter()
+                .all(atv_core::store::everything_unlocked)
+        );
+        // Again: nothing left to unlock.
+        front.selection = row(&front, "profile-unlock");
+        front.key("Enter", &view, &mut settings);
+        front.selection = row(&front, "unlockall");
+        front.key("Enter", &view, &mut settings);
+        assert_eq!(
+            front.notice.as_deref(),
+            Some("Everything is already unlocked.")
+        );
+        // Game Settings → New Profiles: profiles made here start unlocked.
+        settings.set(crate::settings::NEW_PROFILES_KEY, "on");
+        front.show("profile", &view);
+        front.run("profile-create", &view, &mut settings);
+        front.set_profile_name("NEW");
+        front.run("profilesave", &view, &mut settings);
+        assert_eq!(front.profile_name(), Some("NEW"));
+        assert!(atv_core::store::everything_unlocked(&front.profile));
+        // The Pass Key page offers it too.
+        front.show("passkey", &view);
+        assert!(front.choices().iter().any(|(a, _)| a == "profile-unlock"));
+    }
+
     #[test]
     fn store_sells_unlocks_and_gates_single_player() {
         let view = view(1280., 720.);
@@ -3025,10 +3155,10 @@ mod tests {
         front.selection = at;
         front.key("Enter", &view, &mut settings);
         assert_eq!(front.page, "store");
-        assert_eq!(
-            front.profile_text().as_deref(),
-            Some("Current Profile Points: 0")
-        );
+        // The points to spend are on the status bar's emphasized coin chip.
+        assert_eq!(front.profile_text(), None);
+        let bar = front.status_bar().unwrap();
+        assert!(bar.store && bar.points == 0);
         // Cheats: GIMMEPTS adds 1,000 points.
         front.selection = 4;
         front.key("Enter", &view, &mut settings);
@@ -3053,10 +3183,8 @@ mod tests {
         front.key("ArrowRight", &view, &mut settings);
         assert_eq!(front.stage_quad(), 8);
         assert_eq!(front.choices()[0].1, "ATV 2/3 · Locked: Patriot");
-        assert_eq!(
-            front.profile_text().as_deref(),
-            Some("Point Cost: 250 · Current Profile Points: 1,000")
-        );
+        assert_eq!(front.profile_text().as_deref(), Some("Point Cost: 250"));
+        assert_eq!(front.status_bar().unwrap().points, 1_000);
         // Single Player skips the locked ATVs.
         assert!(!front.quad_owned(8) && front.quad_owned(27) && front.quad_owned(6));
         front.selection = 1;
