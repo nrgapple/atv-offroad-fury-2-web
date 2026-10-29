@@ -732,6 +732,126 @@ Two related fixes from the same investigation:
 
 Championships online need a per-round series state on the host (points by
 peer, the next course pushed via Select Track) on top of this race loop.
-Freestyle and King of the Hills / Treasure Hunt need the same host-owned
-`GameState` pattern as Tag/Hockey with their recovered scoring (`GAMES.md`),
-plus a per-rider score report like `Progress`.
+King of the Hills and Treasure Hunt now follow that pattern ("Room games"
+below). Online Freestyle (a shared free-roam stunt session with scores)
+still needs its own host-owned score table.
+
+## Room games: King of the Hills and Treasure Hunt (2026-10-28)
+
+The original plays its Games on one console, two to four players
+(`GAMES.md`: Multiplayer → Split Screen → Games; the online lobbies list a
+"Games Lobby", and the 1 Player overlay layouts exist for one player per
+console, but no original Games protocol was recovered). The port plays
+both games in private relay rooms for every room rider (up to the room's
+four), as an authored adaptation over the recovered single-player rules.
+
+### Flow
+
+- **Start.** Single Player → Games → King of the Hills / Treasure Hunt
+  with **Riders: Online Room** hosts a room on the chosen course (any of
+  the game's Tracks.dat courses) and starts the game for it: its countdown
+  holds ("Waiting for riders: share the room invite") until another rider
+  has loaded the course, so invitees play rather than spectate; Pause →
+  Restart Game starts it at once. Split Screen keeps playing on one
+  console (the row is hidden there). Inside any room, the host's Pause
+  menu lists Play King of the Hills and
+  Play Treasure Hunt when the room's venue ships that game's archive: the
+  same seven Environment and seven Freestyle venues as Tracks.dat's `koth`
+  and `th` course lists (Prospect Springs `E05_KH.RES` / `E05_TH.RES`, ...).
+  The time limit is Games Prep's (`gameMinutes=N` for links and tests).
+  Both pages reload the room's venue with the game's scene (hill bases and
+  `kohflag` flags, or the treasure bombs) and its mode TOY, exactly as the
+  single-player game, then share one 3-2-1 start: the host's countdown is
+  broadcast and each rider is held until GO.
+- **Starts.** Slot N takes the TOY's `Start{N+1}`; courses with fewer
+  starts place riders 10 ft apart beside start 1 (the venue start when the
+  TOY has none).
+- **Play.** The host runs `atv_core::games` for four slots (peer ids 0-3).
+  Treasure Hunt pickups are the host's: it tests every rider's relayed
+  position against the shown group's treasures, so a guest's pickup lands
+  one relay delay after it touches. King of the Hills arming needs the
+  rider's own wheel contact, open stunt and landed chain, which poses do
+  not carry: each guest runs the recovered arming rules (`00220150`,
+  `00220750`, `00221020`) for itself against the mirrored hills and reports
+  a capture (hill, points); the host applies it through `00220b50`'s
+  beat-the-score test, so of two riders' captures of one hill the higher
+  wins whichever arrives first. Guests mirror hill owners and scores, flag
+  colours (red, blue, green, yellow by slot), treasure collectors, the shown
+  group and its "More Treasures in" wait, the clock and the counts; a
+  treasure collected at the host explodes on every page.
+- **Results.** Time Up (or All Treasures Collected after its 5 s sign)
+  shows the same results on every page: present riders only, by count, ties
+  by stunt score (each guest reports its committed stunt score every second).
+  Play Again (host) starts a new game in place for everyone; a guest's
+  Continue → Quit returns to the room's Free Ride.
+- **Joining and leaving.** A rider who leaves drops out of the results and
+  frees their hills (owner cleared, score 0); their collected treasures stay
+  collected. The players are fixed at GO (`GameMarks::players`: everyone
+  present who had loaded the course; riders still loading after the 30 s
+  load wait are left out). A rider joining after GO follows the host onto
+  the course and spectates, as late joiners do in room races: the host
+  ignores their position for pickups and refuses their captures, their
+  page shows "Spectating: you play the next game", the hills, treasures,
+  clock and the same results, and they play from the next Play Again.
+  Restart Game from Pause restarts for everyone from the host and does
+  nothing for a guest.
+- **Host handoff.** If the host leaves mid-game the relay's next host takes
+  over the game from its mirrored state (hill owners and scores, collected
+  treasures, the shown group, clock and counts), drops the old host from
+  the results and finishes the game for the remaining riders; Play Again
+  then belongs to the new host.
+
+### Protocol (version 6, compatible)
+
+- `GameState` games 4 (King of the Hills) and 5 (Treasure Hunt) append
+  `GameMarks` after the shared fields: the venue code (0-13), the players
+  mask (bit N slot N, at most 4 bits), each slot's
+  stunt score and up to 512 marks (owner slot or 255, value): per hill its
+  score, per treasure 1 when in the shown group. Phases: 0 countdown
+  (`timer` = seconds to GO), 1 play (`timer` = Treasure Hunt's wait), 2
+  complete (finish sign), 3 results. Sent at 10 Hz and at once on every phase
+  change or score.
+- `Packet::Claim` (`GameClaim`, codec kind 15): game serial, kind (0 stunt
+  report, 1 capture), hill number, points, the sender's stunt score. A
+  serial-0 claim announces support; the relay records it per connection,
+  sends game 4/5 state only to clients that announced it (older cached
+  clients never see a payload they cannot decode), stamps the sender and
+  forwards claims to the host alone.
+- Validation: both sides refuse phases above 3, venue codes above 13, a
+  players mask naming a fifth slot, more
+  than 512 marks, owners outside the four slots, non-finite or negative
+  values or values above 1e8, counts above 512, claim kinds above 1 and hill
+  numbers above 512. The host also refuses a capture for another game, from
+  a rider not in the room or spectating, for a hill the course lacks, with no points, from
+  more than 400 ft (relayed position) from the hill, or within 0.25 s of
+  that rider's last capture. The relay's per-connection rate budget applies.
+  `crates/atv-net/tests/room_games.rs` round-trips both packets at their
+  limits and checks the refusals, including hand-built truncated or forged
+  bytes.
+
+### Code
+
+`crates/atv-app/src/room_game.rs` (room link, host step, guest mirror and
+claims, claim checks, test hooks), `games.rs` (the shared `GameSession`),
+`atv_core::games` (`Rules::marks_state` / `apply_marks` / `claim` /
+`release`, `Session::mirror`), `atv-net` (`GameMarks`, `GameClaim`),
+`atv-relay` (`games` capability, host-only forwarding).
+
+### Limits
+
+- Guests' King of the Hills captures and Treasure Hunt pickups carry relay
+  latency; the host's own do not.
+- `tools/test_engine_multiplayer_koth.mjs` starts from the Pause row, adds a
+  third rider after GO (spectates, absent from the agreed results) and ends
+  with a guest leaving; `test_engine_multiplayer_treasure.mjs` starts from
+  Games → Riders: Online Room (the held start) and ends with the host
+  leaving (handoff).
+- The browser tests drive captures with `gameTest=hill` (a reported capture
+  after placing the ATV on hill 1), exercising the room claim, check and
+  broadcast; the arming rules themselves are the single-player ones covered
+  by `atv-core` and `test_engine_games*`.
+- Three- and four-rider rooms are covered by the slot logic and unit tests,
+  not by a browser test.
+- No Games Lobby page or Team Select: the room is hosted from Games or
+  started from Pause like Tag and races; no CPU riders fill empty slots
+  (the original's Games have none either).

@@ -43,6 +43,9 @@ pub enum Event {
     /// The host's Play Race: every room rider races this course's race
     /// variant (`atv_game::launch::RaceVariant::ALL` index).
     PlayRace(u8),
+    /// The host's Play King of the Hills / Treasure Hunt (the game's
+    /// event type, 9 or 12) on the room's course.
+    PlayGame(u8),
 }
 
 /// The multiplayer room as the pause menu shows it (the browser's
@@ -59,6 +62,9 @@ pub struct Lobby {
     /// The room course's races the host may start (variant index, menu
     /// label), research/MULTIPLAYER.md "Room races".
     pub races: Vec<(u8, &'static str)>,
+    /// The room course's games the host may start (event type, menu label),
+    /// research/MULTIPLAYER.md "Room games".
+    pub games: Vec<(u8, &'static str)>,
 }
 
 /// The settings a pause action may change.
@@ -415,7 +421,11 @@ impl PauseMenu {
                 .races
                 .iter()
                 .map(|(variant, label)| json!({"id": variant.to_string(), "label": label, "value": ""}))
-                .collect();
+                .chain(lobby.games.iter().map(|(kind, label)| {
+                    json!({"id": format!("game:{kind}"), "label": label, "value": ""})
+                }))
+                .collect::<Vec<_>>()
+                .into();
             request["lobby_players"] = lobby
                 .players
                 .iter()
@@ -540,6 +550,9 @@ impl PauseMenu {
             "hosttrack" => return Some(Event::SelectTrack),
             "playtag" => return Some(Event::PlayTag),
             "playrace" => return Some(Event::PlayRace(0)),
+            _ if action.starts_with("playgame:") => {
+                return action[9..].parse().ok().map(Event::PlayGame);
+            }
             _ if action.starts_with("playrace:") => {
                 return action[9..].parse().ok().map(Event::PlayRace);
             }

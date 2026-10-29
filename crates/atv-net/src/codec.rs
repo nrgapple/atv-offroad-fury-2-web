@@ -26,6 +26,7 @@ pub fn encode(packet: &Packet) -> Result<Vec<u8>> {
         Packet::Ready { .. } => 12,
         Packet::Game(_) => 13,
         Packet::Progress(_) => 14,
+        Packet::Claim(_) => 15,
     };
     w.0.extend_from_slice(MAGIC);
     w.byte(VERSION);
@@ -82,6 +83,25 @@ pub fn encode(packet: &Packet) -> Result<Vec<u8>> {
                     w.byte(slot);
                 }
             }
+            if g.game >= game_kind::KING_OF_THE_HILLS {
+                w.byte(g.marks.venue);
+                w.byte(g.marks.players);
+                w.floats(&g.marks.stunts);
+                w.u16(g.marks.marks.len() as u16);
+                for (owner, value) in &g.marks.marks {
+                    w.byte(*owner);
+                    w.f32(*value);
+                }
+            }
+        }
+        Packet::Claim(c) => {
+            c.validate()?;
+            w.byte(c.peer);
+            w.u32(c.serial);
+            w.byte(c.kind);
+            w.u16(c.index);
+            w.f32(c.points);
+            w.f32(c.stunt);
         }
         Packet::Progress(p) => {
             p.validate()?;
@@ -245,6 +265,18 @@ pub fn decode(bytes: &[u8]) -> Result<Packet> {
             server_ms: u64::from_le_bytes(r.take(8)?.try_into().map_err(|_| Error::InvalidLength)?),
         },
         11 => Packet::Profile(r.participant()?),
+        15 => {
+            let c = GameClaim {
+                peer: r.peer()?,
+                serial: r.u32()?,
+                kind: r.byte()?,
+                index: r.u16()?,
+                points: r.f32()?,
+                stunt: r.f32()?,
+            };
+            c.validate()?;
+            Packet::Claim(c)
+        }
         14 => {
             let p = RaceProgress {
                 peer: r.peer()?,
@@ -271,6 +303,7 @@ pub fn decode(bytes: &[u8]) -> Result<Packet> {
                 ball_velocity: r.floats()?,
                 ball_yaw: r.f32()?,
                 race: Default::default(),
+                marks: Default::default(),
             };
             if g.game == 3 {
                 g.race.variant = r.byte()?;
@@ -278,6 +311,20 @@ pub fn decode(bytes: &[u8]) -> Result<Packet> {
                 for slot in &mut g.race.grid {
                     *slot = r.byte()?;
                 }
+            }
+            if g.game >= game_kind::KING_OF_THE_HILLS {
+                g.marks.venue = r.byte()?;
+                g.marks.players = r.byte()?;
+                g.marks.stunts = r.floats()?;
+                let count = r.u16()? as usize;
+                if count > MAX_MARKS {
+                    return Err(Error::InvalidValue);
+                }
+                let mut marks = Vec::with_capacity(count);
+                for _ in 0..count {
+                    marks.push((r.byte()?, r.f32()?));
+                }
+                g.marks.marks = marks;
             }
             g.validate()?;
             Packet::Game(Box::new(g))

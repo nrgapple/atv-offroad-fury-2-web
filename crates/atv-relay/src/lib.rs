@@ -100,6 +100,10 @@ struct Connection {
     /// never see a packet kind they cannot decode.
     #[serde(default)]
     races: bool,
+    /// The client announced room King of the Hills / Treasure Hunt (a
+    /// serial-0 `Claim`); only such clients receive those games' state.
+    #[serde(default)]
+    games: bool,
     last_seen_ms: f64,
     window_ms: f64,
     messages: u16,
@@ -946,6 +950,7 @@ impl DurableObject for LobbyRoom {
             sequence: None,
             snapshot: None,
             races: false,
+            games: false,
             last_seen_ms: instant,
             window_ms: instant,
             messages: 0,
@@ -1170,8 +1175,13 @@ impl DurableObject for LobbyRoom {
                     && self.lobby(None)?.host == connection.peer =>
             {
                 let race = state.game == 3;
+                let game = state.game >= atv_net::game_kind::KING_OF_THE_HILLS;
                 for (peer, other) in self.connections()? {
-                    if peer != ws && other.ready_map == room.map && (!race || other.races) {
+                    if peer != ws
+                        && other.ready_map == room.map
+                        && (!race || other.races)
+                        && (!game || other.games)
+                    {
                         send(&peer, &Packet::Game(state.clone()))?;
                     }
                 }
@@ -1190,6 +1200,27 @@ impl DurableObject for LobbyRoom {
                     for (peer, other) in self.connections()? {
                         if peer != ws && other.ready_map == room.map && other.races {
                             send(&peer, &Packet::Progress(progress))?;
+                        }
+                    }
+                }
+            }
+            // A rider's room King of the Hills / Treasure Hunt report
+            // (research/MULTIPLAYER.md "Room games"): serial 0 only
+            // announces support; the relay stamps the sender and forwards
+            // the report to the host alone, who validates it.
+            Packet::Claim(mut claim) if connection.player.is_some() => {
+                connection.games = true;
+                let host = self.lobby(None)?.host;
+                if claim.serial != 0
+                    && !room.public
+                    && room.started
+                    && connection.ready_map == room.map
+                    && host != connection.peer
+                {
+                    claim.peer = connection.peer;
+                    for (peer, other) in self.connections()? {
+                        if other.peer == host && other.ready_map == room.map && other.games {
+                            send(&peer, &Packet::Claim(claim))?;
                         }
                     }
                 }
@@ -1490,6 +1521,7 @@ mod tests {
             sequence: None,
             snapshot: None,
             races: false,
+            games: false,
             last_seen_ms: 0.,
             window_ms: 0.,
             messages: 0,
@@ -1539,6 +1571,7 @@ mod tests {
             }),
             snapshot: None,
             races: false,
+            games: false,
             sequence: Some(u32::MAX),
             last_seen_ms: 555.,
             window_ms: 500.,

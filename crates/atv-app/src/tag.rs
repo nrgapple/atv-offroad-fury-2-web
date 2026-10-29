@@ -457,6 +457,7 @@ impl TagSession {
                 ball_velocity: self.ball.velocity,
                 ball_yaw: 0.,
                 race: Default::default(),
+                marks: Default::default(),
             });
             self.sent_carrier = self.game.carrier.map_or(NO_PEER, |c| c as u8);
         }
