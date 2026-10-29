@@ -113,6 +113,9 @@ pub struct Renderer {
     capacity: usize,
     /// Rasterized this frame (for cost reporting).
     pub rasterized: u32,
+    /// Bitmaps rasterized and atlas rebuilds since creation (diagnostics).
+    pub rasterized_total: u64,
+    pub atlas_resets: u64,
     atlas_full: bool,
     format: wgpu::TextureFormat,
     /// `add_target` images: other passes redraw them between prepares.
@@ -290,6 +293,8 @@ impl Renderer {
             instances: Vec::new(),
             batches: Vec::new(),
             rasterized: 0,
+            rasterized_total: 0,
+            atlas_resets: 0,
             atlas_full: false,
             format,
             live: Default::default(),
@@ -451,6 +456,7 @@ impl Renderer {
         if !self.atlas.entries.contains_key(&key) {
             let bitmap = raster();
             self.rasterized += 1;
+            self.rasterized_total += 1;
             if bitmap.width == 0 || bitmap.height == 0 {
                 return None;
             }
@@ -711,6 +717,7 @@ impl Renderer {
             }
         }
         if self.atlas_full && retry {
+            self.atlas_resets += 1;
             self.atlas.reset();
             self.prepare_inner(device, queue, fonts, list, width, height, scale, false);
             return;

@@ -1096,6 +1096,8 @@ async fn prepare(
         objective,
         split: split_layout,
     } = world;
+    // The decode workers start while the course downloads (offload.rs).
+    atv_game::offload::warm();
     // Every archive the ride reads downloads in parallel (game.js prefetchRide).
     if ride && PREFETCH.load(std::sync::atomic::Ordering::Relaxed) {
         let (paths, bank) = atv_game::launch::ride_prefetch(

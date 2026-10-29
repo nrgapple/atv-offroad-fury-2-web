@@ -124,6 +124,8 @@ impl Bank {
             self.samples
                 .insert(key, Arc::new(Pcm::from_vag(&audio, self.rate)));
             self.decode_ms += started.elapsed().as_secs_f64() * 1000.;
+            // Race samples decode while the ride runs: keep its frames (web).
+            crate::yield_frame().await;
         }
         Ok(())
     }
@@ -236,22 +238,28 @@ pub async fn load(
     let sounds = Archive::open(content, "/AUDIO/AUDIO.RES").await?;
     let mut samples = HashMap::new();
     let mut rates = HashMap::new();
-    let mut decode_ms = 0.;
+    // Read every sample, then decode them together (in parallel off the
+    // page's thread on the web: the bank loads while the ride draws).
+    let mut keys = Vec::new();
+    let mut vags = Vec::new();
     for name in names {
         let key = normal(&name);
-        if samples.contains_key(&key) {
+        if keys.contains(&key) {
             continue;
         }
         let Some(index) = find(&sounds, &key) else {
             continue;
         };
-        let vag = sounds.member(index).await?;
-        let started = web_time::Instant::now();
-        let audio = decode_vag(&vag)?;
-        rates.insert(key.clone(), audio.info.sample_rate);
-        samples.insert(key, Arc::new(Pcm::from_vag(&audio, rate)));
-        decode_ms += started.elapsed().as_secs_f64() * 1000.;
+        vags.push(sounds.member(index).await?);
+        keys.push(key);
     }
+    let started = web_time::Instant::now();
+    let inputs: Vec<&[u8]> = vags.iter().map(Vec::as_slice).collect();
+    for (key, (source, pcm)) in keys.into_iter().zip(crate::offload::pcms(&inputs, rate).await?) {
+        rates.insert(key.clone(), source);
+        samples.insert(key, Arc::new(pcm));
+    }
+    let decode_ms = started.elapsed().as_secs_f64() * 1000.;
     let mut vocal_cache = VocalCache::default();
     for name in vocals.iter().flatten().flatten() {
         let key = normal(name);
@@ -374,6 +382,8 @@ async fn load_motorcycle(
         rates.insert(key.clone(), audio.info.sample_rate);
         samples.insert(key, Arc::new(Pcm::from_vag(&audio, rate)));
         decode_ms += started.elapsed().as_secs_f64() * 1000.;
+        // The bank decodes after the ride is drawn: keep its frames (web).
+        crate::yield_frame().await;
     }
     let crowd_venue = ambient
         .iter()

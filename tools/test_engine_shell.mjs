@@ -150,7 +150,7 @@ try {
     return out;
   });
   const shell = cached[`fury-shell-v1-${COMMIT}`] ?? [];
-  for (const name of ['engine.js', 'engine.css', 'atv_app.js', 'atv_app_bg.wasm', 'install.js', 'analytics.js', 'offline.js'])
+  for (const name of ['engine.js', 'engine.css', 'decode-worker.js', 'atv_app.js', 'atv_app_bg.wasm', 'install.js', 'analytics.js', 'offline.js'])
     assert.ok(shell.includes(`/${name}?v=${COMMIT}`), `shell precaches ${name}`);
   assert.ok((cached['fury-pages-v1'] ?? []).includes('/play.html'), 'play.html page cached');
   report.shellFiles = shell.length;

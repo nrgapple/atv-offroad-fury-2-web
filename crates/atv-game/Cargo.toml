@@ -12,13 +12,6 @@ miniz_oxide.workspace = true
 serde_json.workspace = true
 web-time = "1"
 
-[target.'cfg(target_arch = "wasm32")'.dependencies]
-# Load-time decode workers (offload.rs).
-js-sys = "0.3"
-wasm-bindgen = "0.2.129"
-wasm-bindgen-futures = "0.4"
-web-sys = { version = "0.3", features = ["Window", "Navigator", "Worker", "WorkerOptions", "WorkerType", "MessageEvent", "Event"] }
-
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 # Desktop soundtrack: decodes the bundled AAC (.m4a) remaster songs the web
 # streams through a media element (MPL-2.0, research/THIRD_PARTY.md).

@@ -8,6 +8,17 @@
 //! compiled into this crate by default or stored in Git.
 #[cfg(not(target_arch = "wasm32"))]
 pub mod pack;
+#[cfg(target_arch = "wasm32")]
+pub mod pool;
+
+/// Pool job: the SHA-256 of the bytes (32 bytes out). See [`run_job`].
+pub const JOB_SHA256: u32 = 2;
+
+/// Runs a content job ([`JOB_SHA256`]) on this thread; None for other kinds
+/// (the app's decode jobs, `atv_game::offload::run`).
+pub fn run_job(kind: u32, _arg: u32, bytes: &[u8]) -> Option<Result<Vec<u8>>> {
+    (kind == JOB_SHA256).then(|| Ok(Sha256::digest(bytes).to_vec()))
+}
 
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
@@ -464,14 +475,20 @@ impl std::future::Future for Yield {
     }
 }
 
-/// The lowercase hex SHA-256 of `bytes`: WebCrypto on the web where the
-/// page may use it, else hashed here in 512 KiB pieces, yielding between them
-/// so verifying a large file never holds one frame (other riders' models
-/// load mid-ride).
+/// The lowercase hex SHA-256 of `bytes`: on a running decode worker pool
+/// (web), else hashed here in 512 KiB pieces, yielding between them so
+/// verifying a large file never holds one frame (other riders' models load
+/// mid-ride). WebCrypto is not used: Chromium hashes it on the page's own
+/// thread, slower than this hasher.
 async fn digest(bytes: &[u8]) -> String {
+    // While a ride loads its decode workers are up: hash there, beside the
+    // other chunks and decodes, off the page's thread.
     #[cfg(target_arch = "wasm32")]
-    if let Some(native) = web::sha256(bytes).await {
-        return hex(&native);
+    if pool::running()
+        && let Some(Ok(mut out)) = pool::many(JOB_SHA256, 0, &[bytes]).await
+        && let Some(hash) = out.pop()
+    {
+        return hex(&hash);
     }
     let mut hash = Sha256::new();
     for piece in bytes.chunks(512 * 1024) {
@@ -586,18 +603,6 @@ mod web {
         }
     }
 
-    /// SHA-256 through the browser's native WebCrypto (off the wasm thread's
-    /// critical path and several times faster than the wasm hasher); None
-    /// where it is unavailable (an insecure origin), so the caller hashes.
-    pub async fn sha256(bytes: &[u8]) -> Option<Vec<u8>> {
-        let subtle = web_sys::window()?.crypto().ok()?.subtle();
-        let data = js_sys::Uint8Array::from(bytes);
-        let promise = subtle
-            .digest_with_str_and_buffer_source("SHA-256", &data)
-            .ok()?;
-        let digest = JsFuture::from(promise).await.ok()?;
-        Some(js_sys::Uint8Array::new(&digest).to_vec())
-    }
 
     /// A rejection as frontend.js shows it: the Error's `message` (a refused
     /// request is the browser's own "Failed to fetch" TypeError).
@@ -646,6 +651,16 @@ mod tests {
 
     fn manifest(files: &str) -> String {
         format!(r#"{{"version":1,"source_build_sha256":"{SOURCE_BUILD}","files":{files}}}"#)
+    }
+
+    #[test]
+    fn sha_jobs_hash_their_bytes() {
+        let out = run_job(JOB_SHA256, 0, b"abc").unwrap().unwrap();
+        assert_eq!(
+            hex(&out),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+        assert!(run_job(1, 0, b"abc").is_none());
     }
 
     #[test]

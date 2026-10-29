@@ -164,8 +164,9 @@ try {
   if (scenarios.includes('boot')) {
     // Start-up to the title and its first seconds (the "beginning").
     const { page, cdp, errors } = await open('/play.html');
-    await page.waitForFunction(() => window.__bench.firstDraw !== null, null, { timeout: 120000 });
-    const firstDraw = await page.evaluate(() => window.__bench.firstDraw);
+    // The Rust title is drawn by WebGL; the JavaScript game's title is DOM.
+    await page.waitForFunction(() => window.__bench.firstDraw !== null || document.querySelector('#menu-buttons button'), null, { timeout: 120000 });
+    const firstDraw = await page.evaluate(() => window.__bench.firstDraw ?? performance.now());
     await page.waitForTimeout(10000); // Deliberately wall-clock: the first ten seconds after the first frame.
     const frames = await framesSince(page, firstDraw, firstDraw + 10000);
     const bench = await page.evaluate(() => ({ longTasks: window.__bench.longTasks, uploads: window.__bench.uploads, uploadBytes: window.__bench.uploadBytes, programs: window.__bench.programs }));
@@ -189,7 +190,7 @@ try {
     for (const name of pages) {
       const path = target === 'js' ? '/play.html' : name === 'title' ? '/play.html' : `/play.html?front=${name}`;
       const { page, cdp, errors } = await open(path);
-      await page.waitForFunction(() => window.__bench.firstDraw !== null || document.querySelector('#frontend:not([hidden])'), null, { timeout: 120000 });
+      await page.waitForFunction(() => window.__bench.firstDraw !== null || document.querySelector('#menu-buttons button'), null, { timeout: 120000 });
       await page.waitForTimeout(8000); // Deliberately wall-clock: page artwork and previews settle.
       await page.locator('#game').focus().catch(() => {});
       if (target === 'js' && name === 'main') {

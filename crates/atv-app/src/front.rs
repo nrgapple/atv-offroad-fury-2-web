@@ -1881,6 +1881,8 @@ impl Front {
             .is_some_and(|r| r.layer_cached())
             .into();
         out["layerPlan"] = serde_json::json!(self.renderer.as_ref().map(|r| r.layer_plan));
+        // Text/vector bitmaps rasterized and atlas rebuilds so far.
+        out["atlas"] = serde_json::json!(self.renderer.as_ref().map(|r| [r.rasterized_total, r.atlas_resets]));
         // The status bar (front/status_bar.rs): numbers, sync and popover.
         out["status"] = match self.state.status_bar().filter(|_| self.menu.is_none()) {
             Some(b) => serde_json::json!({
