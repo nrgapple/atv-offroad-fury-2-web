@@ -1374,6 +1374,12 @@ impl SceneRenderer {
         self.peers.retain(|peer, (key, ..)| keep(*peer, *key));
     }
 
+    /// How many multiplayer rider slots are shown (split screen's other
+    /// players, or a room's riders).
+    pub fn peers_shown(&self) -> usize {
+        self.peers.values().filter(|(.., visible)| *visible).count()
+    }
+
     /// Poses the presented multiplayer riders; others are hidden. Unlike race
     /// CPUs, riders draw at any distance (drawRemotePlayers in game.js), as
     /// their name tags do. Returns those drawn.

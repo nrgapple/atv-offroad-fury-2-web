@@ -474,22 +474,21 @@ impl Second {
         }
     }
 
-    /// Player 2's camera this frame, and its rider drawn in the scene's
-    /// player 2 slot.
+    /// This player's camera this frame, and its rider's pose for its scene
+    /// slot (`peer(player)`). The caller poses every player's slot in one
+    /// `pose_peers` call: that call hides any slot it is not given.
     pub fn present(
         &mut self,
         gpu: &atv_render::Gpu,
-        scene: &mut atv_render::SceneRenderer,
         venue: &atv_game::venue::Venue,
         dt: f32,
-    ) -> Result<(), String> {
+    ) -> Result<(u8, atv_game::ride::Pose), String> {
         let (camera, focal, pose) =
             self.riding
                 .present_view(gpu, None, venue, SPLIT_PRESENT_ASPECT, dt)?;
         self.camera = camera;
         self.focal_length = focal * self.layout.focal_scale();
-        scene.pose_peers(gpu, &[(peer(self.player), pose)]);
-        Ok(())
+        Ok((peer(self.player), pose))
     }
 }
 

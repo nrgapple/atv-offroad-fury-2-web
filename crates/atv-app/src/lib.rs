@@ -1581,10 +1581,17 @@ impl App {
             Ok(_) => {}
             Err(error) => status(&error),
         }
-        for second in &mut ready.split {
-            if let Err(error) = second.present(&ready.gpu, &mut ready.scene, &ready.venue, dt) {
-                status(&format!("Player {}: {error}", second.player));
+        // Every other player's rider in one call (pose_peers hides the
+        // slots it is not given).
+        if !ready.split.is_empty() {
+            let mut poses = Vec::with_capacity(ready.split.len());
+            for second in &mut ready.split {
+                match second.present(&ready.gpu, &ready.venue, dt) {
+                    Ok(pose) => poses.push(pose),
+                    Err(error) => status(&format!("Player {}: {error}", second.player)),
+                }
             }
+            ready.scene.pose_peers(&ready.gpu, &poses);
         }
         // The speed-rush screen pass shares the FOV kick's amount.
         let motion = riding.ride.frame();
@@ -2408,6 +2415,8 @@ impl App {
                 state["split"] = serde_json::json!({
                     "layout": format!("{:?}", second.layout),
                     "players": ready.split.len() + 1,
+                    // Players 2.. riders drawn in the shared scene.
+                    "ridersShown": ready.scene.peers_shown(),
                     "views": views,
                     "cameras": std::iter::once(camera(&ready.camera, ready.focal_length))
                         .chain(ready.split.iter().map(|s| camera(&s.camera, s.focal_length)))

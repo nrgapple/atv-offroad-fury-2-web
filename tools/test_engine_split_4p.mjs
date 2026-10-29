@@ -114,6 +114,8 @@ try {
     assert.equal(s.layout, 'Quad');
     assert.equal(s.players, 4);
     assert.equal(s.views.length, 4);
+    // Players 2-4's riders all stay drawn (one shared pose call).
+    assert.equal(s.ridersShown, 3, 'every other player is drawn');
     const [a, b, c, d] = s.views;
     assert.ok(a[0] === 0 && a[1] === 0 && b[0] > a[2] && b[1] === 0 && c[0] === 0 && c[1] > a[3] && d[0] > c[2] && d[1] === c[1],
       JSON.stringify(s.views));
@@ -247,6 +249,7 @@ try {
     assert.equal(s.split.layout, 'Quad');
     assert.equal(s.split.players, 3);
     assert.equal(s.split.views.length, 3);
+    assert.equal(s.split.ridersShown, 2, `${name}: players 2 and 3 are drawn`);
     assert.ok(check(s), `${name} seats three players: ${JSON.stringify(s.ride.game ?? s.ride.hockey ?? s.ride.tag)}`);
     await nextFrames(page, 60);
     await shot(page, `split-3p-${name.toLowerCase().replaceAll(' ', '-')}`);
