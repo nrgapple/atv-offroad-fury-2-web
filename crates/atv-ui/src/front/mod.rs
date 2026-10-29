@@ -232,9 +232,12 @@ pub struct Screen {
     pub qr: Option<String>,
 }
 
+/// The wordmark's 3D sway is seen through `perspective: 900px`.
+pub const LOGO_PERSPECTIVE: f32 = 900.;
+
 /// Pages laid out like the main menu: rows on the left, the ride stage
 /// (logo, vehicle and its plate) on the panel.
-fn stage_page(page: &str) -> bool {
+pub fn stage_page(page: &str) -> bool {
     matches!(
         page,
         "main"
@@ -1161,7 +1164,8 @@ fn panel_logo(m: &Metrics, s: &Screen) -> Option<El> {
         ..Default::default()
     };
     style.min_size.height = length(0.);
-    let mut el = El::new(style);
+    // The wordmark sways gently in 3D (Front sets the angles).
+    let mut el = El::new(style).tilt(LOGO_PERSPECTIVE);
     // filter: drop-shadow(0 3px 0 #0006).
     if let Some(shadow) = s.logo_shadow {
         el = el.child(
@@ -2788,7 +2792,8 @@ fn title(m: &Metrics, s: &Screen, mut root: El) -> El {
             height: length(width / 3.),
         },
         ..Default::default()
-    });
+    })
+    .tilt(LOGO_PERSPECTIVE);
     if let Some(shadow) = s.logo_shadow {
         // drop-shadow(0 4px 0 #0009).
         lockup = lockup.child(

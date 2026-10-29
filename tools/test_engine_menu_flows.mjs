@@ -81,12 +81,16 @@ try {
   await page.evaluate(() => window.padButton(0, true));
   await onFront(page, 'main', 10000);
   await page.evaluate(() => window.padButton(0, false));
-  // Idle: once the slide-in is over, the main menu draws nothing.
+  // Idle: once the slide-in is over, the main menu draws nothing (with
+  // reduced motion; otherwise its ATV turntable and wordmark sway animate,
+  // see test_engine_menu_motion.mjs).
+  await page.emulateMedia({ reducedMotion: 'reduce' });
   await page.waitForTimeout(1500); // Time-based on purpose: the page settles and sleeps.
   const before = (await read(page)).frontFrames;
   await page.waitForTimeout(1000); // Time-based on purpose: proving no frames are drawn.
   const idle = (await read(page)).frontFrames - before;
   assert.ok(idle <= 1, `idle main menu drew ${idle} frames in 1 s`);
+  await page.emulateMedia({ reducedMotion: 'no-preference' });
   // The D-pad and the left stick move the selection at once (not on the
   // 15 s Free Ride refresh).
   assert.equal((await front(page)).selection, 0);

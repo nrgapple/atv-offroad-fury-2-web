@@ -1729,7 +1729,8 @@ fn offset_item(item: &mut atv_ui::paint::Item, dy: f32) {
         }
         Item::ImageShadow { dst, .. } => dst.y += dy,
         Item::PushClip { rect, .. } => rect.y += dy,
-        Item::PopClip | Item::PushOpacity(_) | Item::PopOpacity => {}
+        Item::PushTilt { center, .. } => center[1] += dy,
+        Item::PopClip | Item::PushOpacity(_) | Item::PopOpacity | Item::PopTilt => {}
     }
 }
 
