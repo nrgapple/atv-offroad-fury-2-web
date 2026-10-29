@@ -87,6 +87,9 @@ pub struct Gpu {
     /// GPU timestamp queries are available (native Metal/DX12/Vulkan).
     pub timestamps: bool,
     samples: u32,
+    /// The 3D scene's depth and multisample targets are kept at the surface
+    /// size; without them (a UI-only frontend) they shrink to one texel.
+    scene_targets: bool,
     depth: wgpu::TextureView,
     msaa: Option<wgpu::TextureView>,
     /// Why the device was lost (driver reset, GPU removed), once it is.
@@ -151,7 +154,7 @@ impl Gpu {
         self.config.width = width.max(1);
         self.config.height = height.max(1);
         surface.configure(&self.device, &self.config);
-        (self.depth, self.msaa) = targets(&self.device, &self.config, self.samples);
+        (self.depth, self.msaa) = self.make_targets();
         self.surface = Some(surface);
         self.generation = surface_generation();
         Ok(())
@@ -336,6 +339,7 @@ impl Gpu {
             adapter_info: adapter.get_info(),
             timestamps,
             samples,
+            scene_targets: true,
             depth,
             msaa,
             lost,
@@ -351,7 +355,30 @@ impl Gpu {
         if let Some(surface) = self.live_surface() {
             surface.configure(&self.device, &self.config);
         }
-        (self.depth, self.msaa) = targets(&self.device, &self.config, self.samples);
+        (self.depth, self.msaa) = self.make_targets();
+    }
+
+    /// Keeps (true) or drops (false) the scene's depth and multisample
+    /// targets; UI-only frames draw straight to the surface and never use
+    /// them.
+    pub fn set_scene_targets(&mut self, on: bool) {
+        if self.scene_targets != on {
+            self.scene_targets = on;
+            (self.depth, self.msaa) = self.make_targets();
+        }
+    }
+
+    fn make_targets(&self) -> (wgpu::TextureView, Option<wgpu::TextureView>) {
+        if self.scene_targets {
+            targets(&self.device, &self.config, self.samples)
+        } else {
+            let tiny = wgpu::SurfaceConfiguration {
+                width: 1,
+                height: 1,
+                ..self.config.clone()
+            };
+            targets(&self.device, &tiny, self.samples)
+        }
     }
 
     pub fn aspect(&self) -> f32 {
