@@ -9,6 +9,8 @@
 //    are shared, the run ends at the last one, the player with the most
 //    targets wins (002fab40) and the results list both players. Nothing is
 //    saved to the profile (002fce00).
+//    Each view draws its own compass and target tags; player 1's own
+//    sounds use the nearest of both views' listeners (`ride.listeners`).
 // 2. Score Stunt Points with `objectiveTest=timeout` (5 s): point levels
 //    never end a split run; at time out the top score wins, equal scores
 //    share it (002fb960).
@@ -98,6 +100,26 @@ try {
     assert.equal(o.split.taken.length, 13, JSON.stringify(o.split));
     assert.equal(o.run ?? null, null);
     await nextFrames(page, 30);
+    // Each view draws its own target compass (Overlay Set 5 object 31, one
+    // per player) and tags the untouched targets from its own camera.
+    await wait(page, () => {
+      const hud = JSON.parse(document.querySelector('#ui-state')?.textContent || '{}').toolbar?.hud;
+      return hud?.split?.length === 2 && hud.split.every(seat => seat.some(o => o.object === 31));
+    }, null, 30000);
+    const seats = (await read(page)).toolbar.hud.split;
+    const compassAt = seats.map(seat => seat.find(o => o.object === 31));
+    assert.ok(compassAt[1].y > compassAt[0].y || compassAt[1].x > compassAt[0].x, JSON.stringify(compassAt));
+    console.log(`  per-view compass at ${compassAt.map(c => `${c.x.toFixed(0)},${c.y.toFixed(0)}`).join(' / ')}`);
+    await wait(page, () => {
+      const tags = JSON.parse(document.querySelector('#ui-state')?.textContent || '{}').toolbar?.hud?.viewTags;
+      return tags?.length === 2 && tags.every(n => n >= 1);
+    }, null, 60000);
+    console.log(`  target tags per view: ${JSON.stringify((await read(page)).toolbar.hud.viewTags)}`);
+    // Player 1's own positional and venue sounds pick the nearest of both
+    // views' listeners (001742f0); player 1's rider is nearest its camera.
+    await wait(page, () => JSON.parse(document.querySelector('#ui-state')?.textContent || '{}').ride?.listeners?.[0] === 2,
+      null, 30000);
+    assert.deepEqual((await read(page)).ride.listeners, [2, 0]);
     await shot(page, 'split-targets-start');
     // Hits go to the player that touched them, both players score.
     await wait(page, () => {

@@ -574,7 +574,16 @@ What the port does (`atv_core::freestyle::split::SplitRun`):
   layout was not traced): the objective, the shared clock, the shared
   progress and each player's figure in place order ("P2 3 targets · P1 2
   targets"), the leader's score and the newest sign with its player's
-  name. The target compass shows the untouched targets.
+  name. Every view draws its own target compass of the untouched targets:
+  a split target objective uses Overlay Set 5 (`Type=CherryPick`), whose
+  split layouts list the compass (object 31) once per player, at the same
+  positions as Set 2's (2Player-Horiz 65,172 / 65,392; quarters 60,175,
+  370,175, 60,395, 370,395), so each player's compass turns with its own
+  ATV at its layout position. The floating "Target" tags over untouched
+  targets are a port presentation (the original draws only the 3D
+  targets); each view now tags them from its own camera, as player 1's
+  view does (a port choice). `#ui-state.toolbar.hud.split` lists object 31
+  per seat and `.viewTags` the tags each view drew.
 - **Results.** "Congratulations, Player n!" for one winner, "Tie: Player 1
   and Player 2!" for a shared win (the original's `002ddc50` line with the
   seat names), then the objective and each player's place, figure and
@@ -604,11 +613,27 @@ riders' voices, `audio::remote`, up to six engine voices) are each placed
 for the **nearest** of every player's camera, so each player hears its
 own engine at its own view's distance and pan
 (`RemoteAudio::frame` takes the listener list; `spatial_audio::command`
-already implements `001742f0`'s choice). Player 1's own engine, the CPUs
-and venue sounds still use player 1's camera; one riding alone is
-unchanged (a single listener). Not done: player 1's own sound bank
-through the nearest view, and any split-specific mix level (none was
-found).
+already implements `001742f0`'s choice). Player 1's positional sounds use
+the same list (`RideAudio::views`, players 2-4's cameras after player 1's
+own camera listener): rider vocals, chassis and drive-on sounds and body
+impacts, the venue's Soultree emitters (range test and placement: the
+`001c12e0` reading "nearest listener closer than 1.2 x MaxDistance", now
+over every view; `world_sounds::World::step` takes the listener list) and
+the train/actor sounds (`SceneInput::views`). `spatial_audio::nearest`
+reports the chosen listener (`#ui-state.ride.listeners` = [listeners,
+index nearest player 1's rider]). Player 1's engine loop, ambient
+cycles, rain and race stingers are unpositioned 2D voices in the port
+(as in one player), so no listener applies; the port's CPU riders have
+no sounds of their own. One rider alone, and online rooms, pass a single
+listener (views empty), unchanged. Not done: a split-specific mix level
+(none was found) and the engines' voice allocation per human in the
+original (not traced).
+
+Checks (views and audio): `cargo test -p atv-core spatial_audio
+world_sounds` (`nearest_matches_the_command_choice`,
+`split_views_hear_soultree_from_the_nearest_camera`); the browser test
+below asserts object 31 in both seats, at least one target tag in each
+view and `ride.listeners` = [2, 0].
 
 Checks: `cargo test -p atv-core freestyle::split` (shared targets,
 end/winner rules, stunt time out, ties, combos), `cargo test -p atv-ui
@@ -679,8 +704,7 @@ lighter presets.
 - The Players page's ATV stats row, Profile Name panels and original
   panel art; the Force Start trigger.
 - Hall of Fame and profile credit for players 2-4 (needs a product
-  decision: whose profile); player 1's own and CPU/venue sounds from the
-  nearest view.
+  decision: whose profile).
 - The original's split Race event types (Duel, Lap Attack, Practice).
   Championships are single-player in the original ("Split objectives
   and championships").

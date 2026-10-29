@@ -190,11 +190,13 @@ impl World {
         self.soultree_state = vec![SoultreeState::default(); self.soultree.len()];
     }
     /// One frame. `ambient_playing`/`soultree_playing` report each source's
-    /// current clip; a finished one-shot reads false.
+    /// current clip; a finished one-shot reads false. `listeners` holds one
+    /// camera per view: a Soultree source's range and placement use the
+    /// nearest (`001742f0`; split screen passes every player's camera).
     pub fn step(
         &mut self,
         dt: f32,
-        listener: &Listener,
+        listeners: &[Listener],
         ambient_playing: &[bool],
         soultree_playing: &[bool],
     ) -> Result<WorldFrame> {
@@ -234,7 +236,11 @@ impl World {
                 });
             }
         }
+        if listeners.is_empty() {
+            return Err("world sounds need a listener".into());
+        }
         let distance = |p: Vec3| {
+            let listener = &listeners[crate::spatial_audio::nearest(p, listeners)];
             let d: Vec3 = std::array::from_fn(|i| p[i] - listener.position[i]);
             ((d[2] * d[2] + d[1] * d[1]) + d[0] * d[0]).sqrt()
         };
@@ -298,7 +304,7 @@ impl World {
                         min_distance: definition.min_distance,
                         max_distance: definition.max_distance,
                     },
-                    std::slice::from_ref(listener),
+                    listeners,
                 )?,
             ));
         }
@@ -340,7 +346,7 @@ mod tests {
             for _ in 0..(seconds * 10.).round() as usize {
                 starts.extend(
                     world
-                        .step(0.1, &listener(0.), &playing, &[])
+                        .step(0.1, &[listener(0.)], &playing, &[])
                         .unwrap()
                         .ambient,
                 );
@@ -363,18 +369,52 @@ mod tests {
         assert_eq!(run(0.1, [true, false]).len(), 1);
     }
     #[test]
+    fn split_views_hear_soultree_from_the_nearest_camera() {
+        let (_, soultree) = parse(&aud()).unwrap();
+        let mut world = World::new(vec![], soultree.into_iter().take(1).collect(), 1);
+        // Player 1's camera is out of range, player 2's is near the source.
+        let f = world
+            .step(0.02, &[listener(500.), listener(60.)], &[], &[false])
+            .unwrap();
+        assert_eq!(f.soultree.len(), 1);
+        let alone = crate::spatial_audio::command(
+            crate::spatial_audio::Source {
+                position: [0.; 3],
+                velocity: [0.; 3],
+                min_distance: 50.,
+                max_distance: 100.,
+            },
+            &[listener(60.)],
+        )
+        .unwrap();
+        assert_eq!(f.spatial[0].1.volume, alone.volume);
+        assert!(f.spatial[0].1.active);
+        // With player 1 alone the source stays silent.
+        let mut one = World::new(
+            vec![],
+            parse(&aud()).unwrap().1.into_iter().take(1).collect(),
+            1,
+        );
+        assert!(
+            one.step(0.02, &[listener(500.)], &[], &[false])
+                .unwrap()
+                .soultree
+                .is_empty()
+        );
+    }
+    #[test]
     fn soultree_range_start_stop_and_trigger_latch() {
         let (_, soultree) = parse(&aud()).unwrap();
         let mut world = World::new(vec![], soultree.into_iter().take(1).collect(), 1);
         // Beyond 1.2 × MaxDistance is out of range; just inside starts the loop.
         assert!(
             world
-                .step(0.02, &listener(120.1), &[], &[false])
+                .step(0.02, &[listener(120.1)], &[], &[false])
                 .unwrap()
                 .soultree
                 .is_empty()
         );
-        let f = world.step(0.02, &listener(119.), &[], &[false]).unwrap();
+        let f = world.step(0.02, &[listener(119.)], &[], &[false]).unwrap();
         assert!(matches!(
             &f.soultree[..],
             [WorldCommand::Start {
@@ -384,9 +424,9 @@ mod tests {
             }]
         ));
         assert_eq!(f.spatial.len(), 1);
-        let f = world.step(0.02, &listener(60.), &[], &[true]).unwrap();
+        let f = world.step(0.02, &[listener(60.)], &[], &[true]).unwrap();
         assert!(f.soultree.is_empty() && f.spatial[0].1.active);
-        let f = world.step(0.02, &listener(130.), &[], &[true]).unwrap();
+        let f = world.step(0.02, &[listener(130.)], &[], &[true]).unwrap();
         assert!(matches!(
             &f.soultree[..],
             [WorldCommand::Stop { source: 0 }]
@@ -403,7 +443,7 @@ mod tests {
         for _ in 0..3 {
             assert!(
                 never
-                    .step(0.02, &listener(0.), &[], &[false])
+                    .step(0.02, &[listener(0.)], &[], &[false])
                     .unwrap()
                     .soultree
                     .is_empty()
@@ -421,7 +461,9 @@ mod tests {
             })
             .collect();
         let mut world = World::new(vec![], sources, 1);
-        let f = world.step(0.02, &listener(0.), &[], &[false; 20]).unwrap();
+        let f = world
+            .step(0.02, &[listener(0.)], &[], &[false; 20])
+            .unwrap();
         assert_eq!(f.soultree.len(), MAX_SOULTREE_VOICES);
         assert!(f.spatial.iter().all(|(i, _)| *i < MAX_SOULTREE_VOICES));
     }
