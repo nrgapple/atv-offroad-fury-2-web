@@ -62,3 +62,25 @@ runtime until all current guard processes exit. The former watcher plist is save
 only restore/reload it when the watcher is idle. Do not discard the migrated release
 history or copy stale legacy state back over it. A rustup self-update may replace its
 Cargo proxy; rerun the installer to reinstate the guard if that happens.
+
+## Desktop throughput follow-up (2026-10-28)
+
+Strategy: remove the unused native `atv-app` shared-library link by making its
+default library type `rlib`. Web and Android explicitly request `cdylib` through
+Cargo's supported `rustc --crate-type` option. Keep the release optimization level,
+full LTO, game code, graphics settings and content unchanged; ThinLTO is not enabled
+without a native performance comparison. This eliminates unnecessary work without
+trading away runtime optimization. Capture Cargo build timings for future comparisons.
+
+Build macOS before opening the dedicated Docker builder, then close only a VM this
+invocation started. Future starts use two CPUs; retain 8 GiB because an earlier
+4 GiB full-LTO link ran out of memory. Never resize/restart an already running VM.
+Automatic full-platform releases should coalesce main changes for seven days and
+perform at most one release per watcher pass. Explicit release tags remain an
+intentional override. Apply the watcher changes through the existing idle-only handoff.
+
+Validation: focused synthetic tests for phase ordering, VM ownership/environment
+restoration, weekly cooldown and one-release dispatch; CI checks actual native linking,
+WebAssembly output and Android shared-library output without game content. A live
+full-release timing comparison is deferred until the current release and host pressure
+clear. Do not claim a measured speedup or restart the host to obtain one.

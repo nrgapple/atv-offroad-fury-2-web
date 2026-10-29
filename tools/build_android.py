@@ -273,7 +273,7 @@ def write_icons(res, work):
 def build_library(tools, args):
     env = tools.cargo_env()
     profile = 'release'
-    run([CARGO, 'build', '--release', '--locked', '-p', 'atv-app', '--lib', '--target', TRIPLE], cwd=ROOT, env=env)
+    run([CARGO, 'rustc', '--release', '--locked', '-p', 'atv-app', '--lib', '--crate-type', 'cdylib', '--target', TRIPLE], cwd=ROOT, env=env)
     built = Path(env['CARGO_TARGET_DIR']) / TRIPLE / profile / LIBRARY
     if not built.is_file():
         raise SystemExit(f'build_android: cargo did not produce {built}')

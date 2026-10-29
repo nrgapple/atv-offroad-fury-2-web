@@ -11,6 +11,7 @@ owner's machine and never in CI. Outputs go to ~/LargeFiles/fury-desktop/<short-
 (SSD backed). See research/DESKTOP_RELEASES.md.
 """
 import argparse
+from contextlib import ExitStack
 import datetime
 import json
 import os
@@ -182,8 +183,12 @@ def build_macos(ctx, pack):
     env = cargo_env()
     triples = ('aarch64-apple-darwin', 'x86_64-apple-darwin')
     for triple in triples:
-        run([CARGO, 'build', '--release', '--locked', '-p', 'atv-app', '--bin', 'fury', '--target', triple],
+        run([CARGO, 'build', '--release', '--locked', '--timings', '-p', 'atv-app', '--bin', 'fury', '--target', triple],
             cwd=ROOT, env=env)
+        report = Path(env['CARGO_TARGET_DIR']) / 'cargo-timings/cargo-timing.html'
+        if report.is_file():
+            (ctx.out / 'timings').mkdir(exist_ok=True)
+            shutil.copyfile(report, ctx.out / 'timings' / f'{triple}.html')
     target = Path(env['CARGO_TARGET_DIR'])
     stage = ctx.work / 'macos' / ctx.folder('macos-universal')
     shutil.rmtree(stage.parent, ignore_errors=True)
@@ -219,7 +224,7 @@ def build_macos(ctx, pack):
 # A dedicated Colima VM for the Linux and Windows builds, so they get several cores and enough
 # memory without resizing the owner's default VM (which runs other services). Its disk lives on
 # the SSD (COLIMA_HOME). It starts on demand and stops after the build to give the memory back.
-BUILDER_VM = {'profile': 'fury-builder', 'home': Path.home() / 'LargeFiles/colima', 'cpus': 6, 'memory': 8, 'disk': 60}
+BUILDER_VM = {'profile': 'fury-builder', 'home': Path.home() / 'LargeFiles/colima', 'cpus': 2, 'memory': 8, 'disk': 60}
 
 
 class BuilderVM:
@@ -228,6 +233,8 @@ class BuilderVM:
     def __init__(self, profile):
         self.profile = profile
         self.started = False
+        self.previous_host = None
+        self.changed_host = False
 
     def colima(self, *args, **kwargs):
         env = dict(os.environ, COLIMA_HOME=str(BUILDER_VM['home']))
@@ -255,13 +262,25 @@ class BuilderVM:
                         '--mount', f"{Path.home() / '.cargo/registry'}:w", check=True)
             self.started = True
             sock = self.socket()
+        if not sock:
+            self.__exit__(None, None, None)
+            raise OSError(f'Builder VM {self.profile} has no Docker socket after startup')
+        self.previous_host = os.environ.get('DOCKER_HOST')
+        self.changed_host = True
         os.environ['DOCKER_HOST'] = sock if sock.startswith('unix://') else f'unix://{sock}'
         return self
 
     def __exit__(self, *exc):
-        if self.started and not os.environ.get('FURY_KEEP_BUILDER_VM'):
-            print(f'+ stopping the {self.profile} Colima VM', flush=True)
-            self.colima('stop')
+        try:
+            if self.started and not os.environ.get('FURY_KEEP_BUILDER_VM'):
+                print(f'+ stopping the {self.profile} Colima VM', flush=True)
+                self.colima('stop')
+        finally:
+            if self.changed_host:
+                if self.previous_host is None:
+                    os.environ.pop('DOCKER_HOST', None)
+                else:
+                    os.environ['DOCKER_HOST'] = self.previous_host
         return False
 
 
@@ -307,7 +326,7 @@ export "CARGO_TARGET_${U}_LINKER=$L" "CC_$(echo "$TRIPLE" | tr - _)=$L"
 if [ -n "$LIBDIR" ]; then  # the target's libudev and ALSA (multiarch) for cross builds
   export PKG_CONFIG_ALLOW_CROSS=1 "PKG_CONFIG_PATH=$LIBDIR/pkgconfig" "CARGO_TARGET_${U}_RUSTFLAGS=-L $LIBDIR"
 fi
-cargo build --release --locked -p atv-app --bin fury --target "$TRIPLE" -j "${CARGO_BUILD_JOBS:-2}" >&2
+cargo build --release --locked --timings -p atv-app --bin fury --target "$TRIPLE" -j "${CARGO_BUILD_JOBS:-2}" >&2
 cd "/target/$TRIPLE/release" && tar -cf - "$BINARY"
 '''
 
@@ -405,9 +424,7 @@ def main(argv=None):
                         help=f"Colima profile for the Docker builds, started on demand and stopped afterwards "
                              f"(default {BUILDER_VM['profile']}, in {BUILDER_VM['home']}); 'none' uses the current docker")
     args = parser.parse_args(argv)
-    needs_docker = args.smoke_only or any(p != 'macos-universal' for p in args.platforms.split(',') if p)
-    with BuilderVM(args.builder_vm if needs_docker and args.builder_vm != 'none' else None):
-        return build(args, parser)
+    return build(args, parser)
 
 
 def build(args, parser):
@@ -415,28 +432,40 @@ def build(args, parser):
         platform = desktop_archive.platform_of(args.smoke_only.name)
         if platform not in LINUX_TRIPLES:
             parser.error('--smoke-only takes a Linux archive')
-        return 0 if smoke_linux(args.smoke_only.parent, args.smoke_only, platform)['ok'] else 1
-    platforms = [p for p in args.platforms.split(',') if p]
+        with BuilderVM(args.builder_vm if args.builder_vm != 'none' else None):
+            return 0 if smoke_linux(args.smoke_only.parent, args.smoke_only, platform)['ok'] else 1
+    platforms = list(dict.fromkeys(p for p in args.platforms.split(',') if p))
     unknown = set(platforms) - set(PLATFORMS)
     if unknown:
         parser.error(f'unknown platforms {sorted(unknown)}')
+    if not platforms:
+        parser.error('at least one platform is required')
+    # Always finish native compilation before allocating the Docker VM, even when
+    # the requested subset lists a Docker platform first. Keep its caches warm
+    # across Linux/Windows, then release only a VM started by this invocation.
+    platforms.sort(key=lambda p: p != 'macos-universal')
     ctx = Context(args)
     pack = ensure_pack(args)
     results = {}
-    for platform in platforms:
-        print(f'\n=== {platform} ===', flush=True)
-        with timed(ctx, platform):
-            if platform == 'macos-universal':
-                archive = build_macos(ctx, pack)
-            elif platform == 'windows-x86_64':
-                archive = attach_and_archive(ctx, platform, docker_build(ctx, WINDOWS_TRIPLE, 'fury.exe'), pack)
-            else:
-                archive = attach_and_archive(ctx, platform, docker_build(ctx, LINUX_TRIPLES[platform], 'fury'), pack)
-        desktop_archive.check_contents(archive, scratch=ctx.work)
-        results[platform] = {'file': archive.name, 'bytes': archive.stat().st_size, 'seconds': ctx.timings[platform]}
-        print(f'{archive} ({archive.stat().st_size / 1e6:.1f} MB)', flush=True)
-        if args.smoke and platform in LINUX_TRIPLES:
-            results[platform]['smoke'] = smoke_linux(ctx.out, archive, platform)
+    with ExitStack() as resources:
+        docker_ready = False
+        for platform in platforms:
+            print(f'\n=== {platform} ===', flush=True)
+            if platform != 'macos-universal' and not docker_ready:
+                resources.enter_context(BuilderVM(args.builder_vm if args.builder_vm != 'none' else None))
+                docker_ready = True
+            with timed(ctx, platform):
+                if platform == 'macos-universal':
+                    archive = build_macos(ctx, pack)
+                elif platform == 'windows-x86_64':
+                    archive = attach_and_archive(ctx, platform, docker_build(ctx, WINDOWS_TRIPLE, 'fury.exe'), pack)
+                else:
+                    archive = attach_and_archive(ctx, platform, docker_build(ctx, LINUX_TRIPLES[platform], 'fury'), pack)
+            desktop_archive.check_contents(archive, scratch=ctx.work)
+            results[platform] = {'file': archive.name, 'bytes': archive.stat().st_size, 'seconds': ctx.timings[platform]}
+            print(f'{archive} ({archive.stat().st_size / 1e6:.1f} MB)', flush=True)
+            if args.smoke and platform in LINUX_TRIPLES:
+                results[platform]['smoke'] = smoke_linux(ctx.out, archive, platform)
     for record in results.values():
         record['sha256'] = desktop_archive.sha256(ctx.out / record['file'])
     # Rebuilding a subset of platforms for the same commit keeps the other archives.
