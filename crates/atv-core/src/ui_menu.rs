@@ -40,6 +40,7 @@ fn race_actions(id: &str) -> &'static str {
         "3" => "playrace:3",
         "game:9" => "playgame:9",
         "game:12" => "playgame:12",
+        "freestyle" => "playfree",
         _ => "playrace",
     }
 }

@@ -73,7 +73,7 @@ fn room_game_states_refuse_out_of_range_values() {
             ..state(5, 1)
         },
         GameState {
-            game: 6,
+            game: 7,
             ..state(4, 1)
         },
         {
@@ -144,7 +144,7 @@ fn game_claims_round_trip_and_refuse_out_of_range_values() {
             peer: MAX_PLAYERS as u8,
             ..claim
         },
-        GameClaim { kind: 2, ..claim },
+        GameClaim { kind: 3, ..claim },
         GameClaim {
             index: MAX_MARKS as u16 + 1,
             ..claim
@@ -169,7 +169,7 @@ fn game_claims_round_trip_and_refuse_out_of_range_values() {
     assert!(decode(&bytes[..bytes.len() - 1]).is_err());
     let mut forged = bytes.clone();
     let kind_at = bytes.len() - 4 - 4 - 2 - 1;
-    forged[kind_at] = 2;
+    forged[kind_at] = 3;
     assert!(decode(&forged).is_err());
     // A hand-built state whose player mask names a fifth slot is refused.
     let mut bytes = encode(&Packet::Game(Box::new(state(5, 0)))).unwrap();

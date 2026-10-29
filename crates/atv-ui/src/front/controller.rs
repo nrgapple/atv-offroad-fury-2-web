@@ -76,6 +76,15 @@ pub enum Event {
         rider: u16,
         name: String,
     },
+    /// Host Game with Mode: Freestyle: host a room on the course and start
+    /// room Freestyle there once joined (research/MULTIPLAYER.md "Room
+    /// Freestyle").
+    FreestyleHost {
+        environment: String,
+        quad: u16,
+        rider: u16,
+        name: String,
+    },
     /// Back from the garage or course picker opened over a held room ride:
     /// ride again with this look (a new course for the host's Ride).
     RoomRide {
