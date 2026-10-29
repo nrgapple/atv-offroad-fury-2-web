@@ -163,6 +163,8 @@ enum Message {
     SoundFailed(String),
     /// A mini-game's mode TOY loaded (or why not).
     GameToy(Result<String, String>),
+    /// Tracks.dat course names by venue (room results).
+    CourseNames(Result<Vec<(String, String)>, String>),
     Failed(String),
     /// The frontend's GPU, content and venue list are ready.
     FrontReady(Box<Booted>),
@@ -859,6 +861,9 @@ struct App {
     /// The last room King of the Hills / Treasure Hunt serial seen
     /// (research/MULTIPLAYER.md "Room games").
     room_game_serial: u32,
+    /// Each venue's Tracks.dat course name for room results (loaded for a
+    /// room, since a page that joined by link skipped the frontend).
+    course_names: std::collections::HashMap<String, String>,
     /// The next room reload rides this game's course scene.
     room_game_scene: Option<atv_core::games::GameKind>,
     /// Freestyle in a multiplayer room (research/MULTIPLAYER.md "Room
@@ -1530,6 +1535,7 @@ impl App {
     /// One rendered frame of the ride: input, fixed steps, chase view.
     fn ride_frame(&mut self, dt: f32) {
         self.update_diagnostics();
+        self.want_course_names();
         // Other riders' models and engine banks load a slice per frame.
         let loads = Instant::now();
         self.poll_frame_tasks();
@@ -1924,7 +1930,10 @@ impl App {
                                 .and_then(|r| r.frame.as_ref())
                                 .is_none_or(|f| f.phase != "finished")
                         {
-                            overlay.results.show_game("Race Results", summary);
+                            let course = course_label(&self.course_names, &net.environment);
+                            overlay
+                                .results
+                                .show_game("Race Results", format!("Race on {course}. {summary}"));
                             overlay.results.game_continue = true;
                         }
                     }
@@ -1974,6 +1983,9 @@ impl App {
                 );
                 session.table.hold = true;
                 self.room_freestyle = Some(session);
+            }
+            if let Some(session) = &mut self.room_freestyle {
+                session.course = course_label(&self.course_names, &net.environment);
             }
             if let Some(session) = &mut self.room_freestyle
                 && !freestyle_reload
@@ -2440,6 +2452,7 @@ impl App {
                     .chain(split::PLAYER_NAMES[1..].iter().copied())
                     .collect();
                 let summary = if game.room.is_some() {
+                    game.course = course_label(&self.course_names, &game.venue);
                     game.room_results()
                 } else {
                     game.results(&names)
@@ -5161,6 +5174,10 @@ impl ApplicationHandler<Message> for App {
                     game.load(toy);
                 }
             }
+            Message::CourseNames(names) => match names {
+                Ok(names) => self.course_names.extend(names),
+                Err(error) => status(&format!("Course names unavailable: {error}")),
+            },
             Message::SoundtrackReady(result) => {
                 match result {
                     Ok(music) if self.soundtrack.is_none() => {
@@ -8102,6 +8119,14 @@ fn paint_front(gpu: &Gpu, front: &mut front::Front) {
     }
 }
 
+/// A venue's Tracks.dat course name (the venue code until it loads).
+fn course_label(names: &std::collections::HashMap<String, String>, venue: &str) -> String {
+    names
+        .get(venue)
+        .cloned()
+        .unwrap_or_else(|| venue.to_string())
+}
+
 /// Native parity capture of one frontend page with all its artwork.
 #[cfg(not(target_arch = "wasm32"))]
 fn capture_front(booted: Booted, page: &str, path: &std::path::Path, width: u32, height: u32) {
@@ -8758,8 +8783,8 @@ impl App {
         self.room_race = None;
         self.room_freestyle = None;
         self.tag = None;
-        // Every page names the course by its venue (a guest that joined by
-        // link has no Tracks.dat names loaded), so the results agree.
+        // The results name the course from Tracks.dat on every page
+        // (`want_course_names`: a guest that joined by link loads them too).
         self.game = Some(games::GameSession::for_room(
             kind,
             environment.clone(),
@@ -8780,6 +8805,27 @@ impl App {
         );
         self.room_game_scene = Some(kind);
         self.reload_room_with(environment, false, None);
+    }
+
+    /// Loads the Tracks.dat course names once a room rides (room results
+    /// name the course; a page that joined by link skipped the frontend).
+    fn want_course_names(&mut self) {
+        if !self.course_names.is_empty() || self.requested.contains("course-names") {
+            return;
+        }
+        let Some(content) = self
+            .ready
+            .as_ref()
+            .and_then(|r| r.net.as_ref())
+            .map(|n| n.content())
+        else {
+            return;
+        };
+        self.requested.insert("course-names".into());
+        self.spawn(
+            async move { atv_ui::front::assets::course_names(&content).await },
+            Message::CourseNames,
+        );
     }
 
     /// The room host starts Freestyle on the room's course for every rider
@@ -9105,6 +9151,7 @@ pub fn run(options: Options) {
         room_race: None,
         room_race_serial: 0,
         room_game_serial: 0,
+        course_names: Default::default(),
         room_game_scene: None,
         room_game_start: None,
         room_freestyle: None,

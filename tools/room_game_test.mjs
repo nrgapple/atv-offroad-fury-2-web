@@ -112,6 +112,9 @@ export async function roomGame({ prefix, action, hook, verify, label, leaver = '
     assert.equal(g.roomGame.me, 1);
     // One shared countdown, then play.
     await until(guest, game => game.started, 60000, 'guest starts');
+    // The guest's mirrored clock runs (host tables at 10 Hz, local between).
+    const t0 = (await ride(guest)).game.timeLeft;
+    await until(guest, game => game.timeLeft < t0 - 1, 30000, 'the guest clock runs');
     await verify({ host, guest, until, shot, ride });
     // A rider joining after GO follows onto the course and spectates: no
     // pickups or captures, not in the results; the same results show.
@@ -134,6 +137,8 @@ export async function roomGame({ prefix, action, hook, verify, label, leaver = '
     assert.deepEqual(g.roomGame.standings.map(s => [s.rider, s.score]), h.roomGame.standings.map(s => [s.rider, s.score]), 'agreed standings');
     assert.equal(g.game.summary, h.game.summary, 'agreed results');
     assert.match(h.game.summary, /RustHost/);
+    // The course by its Tracks.dat name, not its venue code (env05).
+    assert.match(h.game.summary, / on Prospect Springs: /);
     assert.match(h.game.summary, /RustGuest/);
     if (lateRider) {
       assert.doesNotMatch(h.game.summary, /RustLate/, 'a spectator is not in the results');
@@ -157,8 +162,19 @@ export async function roomGame({ prefix, action, hook, verify, label, leaver = '
     const [stay, go, stayName, goName, goSlot] = leaver === 'host'
       ? [guest, host, 'RustGuest', 'RustHost', 0]
       : [host, guest, 'RustHost', 'RustGuest', 1];
+    const before = (await ride(stay)).game.timeLeft;
     await go.close();
     await stay.bringToFront();
+    if (leaver === 'host') {
+      // Until the relay hands the room over, the guest's clock runs on from
+      // the host's last table (it froze there before), so the handoff does
+      // not stretch the game.
+      await stay.waitForTimeout(3000);
+      const s = await ride(stay);
+      if (!s.roomGame.host && !s.game.over) {
+        assert.ok(s.game.timeLeft < before - 1, `guest clock ran on without its host: ${before} -> ${s.game.timeLeft}`);
+      }
+    }
     h = await until(stay, (game, r) => !r.present[goSlot] && r.host, 90000, 'the leaver is dropped');
     h = await until(stay, game => game.over && game.reported, 120000, 'game 2 results');
     assert.equal(h.roomGame.serial, serial + 1, 'the same game finishes');
