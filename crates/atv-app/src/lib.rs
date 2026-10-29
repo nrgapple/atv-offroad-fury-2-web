@@ -664,6 +664,10 @@ struct App {
     room_game_serial: u32,
     /// The next room reload rides this game's course scene.
     room_game_scene: Option<atv_core::games::GameKind>,
+    /// Games → King of the Hills / Treasure Hunt → Riders: Online Room
+    /// hosted a room; the game (with these minutes) starts once the room
+    /// is joined.
+    room_game_start: Option<(atv_core::games::GameKind, u32)>,
     /// The host's Play Tag reloads the room's venue from its TG archive;
     /// the game starts with these minutes once that ride is ready.
     tag_start: Option<u32>,
@@ -1582,6 +1586,7 @@ impl App {
         let mut course = None;
         let mut room_load = None;
         let mut game_join = None;
+        let mut host_game = None;
         let mut ended = None;
         if let Some(net) = &mut ready.net {
             // Only actual suspension (hidden page, suspended app) sends the
@@ -1642,6 +1647,15 @@ impl App {
             }
             // Room King of the Hills / Treasure Hunt: a guest follows the
             // host's new game onto its course scene.
+            if net.is_host()
+                && net.roster().0.is_some()
+                && self.game.is_none()
+                && let Some((kind, minutes)) = self.room_game_start.take()
+            {
+                let serial = self.room_game_serial.wrapping_add(1).max(1);
+                self.room_game_serial = serial;
+                host_game = Some((kind, serial, minutes));
+            }
             if !net.is_host()
                 && let Some(state) = net.game_state()
                 && let Some(kind) = room_game::kind(state.game)
@@ -1729,6 +1743,13 @@ impl App {
                 self.reload_room(environment, Some(settings));
                 return;
             }
+        }
+        if let Some((kind, serial, minutes)) = host_game {
+            self.start_room_game(kind, true, serial, minutes);
+            if let Some(room) = self.game.as_mut().and_then(|g| g.room.as_mut()) {
+                room.hold = true;
+            }
+            return;
         }
         if let Some((kind, serial, minutes)) = game_join {
             // Play Again on the same course restarts in place; another game
@@ -6112,6 +6133,7 @@ impl App {
                 | Event::Game { .. }
                 | Event::Hockey { .. }
                 | Event::TagHost { .. }
+                | Event::GameHost { .. }
                 | Event::Objective { .. }
         ) {
             let split = self.front.as_ref().and_then(|f| {
@@ -6143,7 +6165,26 @@ impl App {
         self.hockey = None;
         self.tag = None;
         self.tag_start = None;
+        self.room_game_start = None;
         match event {
+            Event::GameHost {
+                kind,
+                environment,
+                minutes,
+                quad,
+                rider,
+                name,
+            } => {
+                self.front_event(Event::Host {
+                    environment,
+                    code: None,
+                    quad,
+                    rider,
+                    name,
+                });
+                // The room's ride moves to the game's course and starts it.
+                self.room_game_start = Some((kind, minutes));
+            }
             Event::Game {
                 kind,
                 venue,
@@ -7235,6 +7276,7 @@ impl App {
             self.game = None;
         }
         self.room_game_serial = 0;
+        self.room_game_start = None;
         if let Some(overlay) = &mut self.overlay {
             overlay.room_race_pending = false;
         }
@@ -8459,6 +8501,7 @@ pub fn run(options: Options) {
         room_race_serial: 0,
         room_game_serial: 0,
         room_game_scene: None,
+        room_game_start: None,
         tag_start: None,
         split_tag: None,
         tag_reload: None,

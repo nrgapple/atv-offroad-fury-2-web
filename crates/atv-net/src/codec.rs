@@ -85,6 +85,7 @@ pub fn encode(packet: &Packet) -> Result<Vec<u8>> {
             }
             if g.game >= game_kind::KING_OF_THE_HILLS {
                 w.byte(g.marks.venue);
+                w.byte(g.marks.players);
                 w.floats(&g.marks.stunts);
                 w.u16(g.marks.marks.len() as u16);
                 for (owner, value) in &g.marks.marks {
@@ -313,6 +314,7 @@ pub fn decode(bytes: &[u8]) -> Result<Packet> {
             }
             if g.game >= game_kind::KING_OF_THE_HILLS {
                 g.marks.venue = r.byte()?;
+                g.marks.players = r.byte()?;
                 g.marks.stunts = r.floats()?;
                 let count = r.u16()? as usize;
                 if count > MAX_MARKS {

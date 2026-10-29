@@ -14,6 +14,7 @@ fn state(game: u8, marks: usize) -> GameState {
         holder: NO_PEER,
         marks: GameMarks {
             venue: 13,
+            players: 0b1111,
             stunts: [MAX_GAME_POINTS, 0., 1.5, 12345.],
             marks: (0..marks)
                 .map(|i| {
@@ -105,6 +106,11 @@ fn room_game_states_refuse_out_of_range_values() {
             s.marks.stunts[2] = f32::INFINITY;
             s
         },
+        {
+            let mut s = state(5, 1);
+            s.marks.players = 1 << RACE_RIDERS;
+            s
+        },
         state(4, MAX_MARKS + 1),
     ];
     for s in bad {
@@ -158,4 +164,17 @@ fn game_claims_round_trip_and_refuse_out_of_range_values() {
     ] {
         assert!(encode(&Packet::Claim(bad)).is_err(), "{bad:?}");
     }
+    // Hand-built claims: truncated, or with a bad kind, are refused.
+    let bytes = encode(&Packet::Claim(claim)).unwrap();
+    assert!(decode(&bytes[..bytes.len() - 1]).is_err());
+    let mut forged = bytes.clone();
+    let kind_at = bytes.len() - 4 - 4 - 2 - 1;
+    forged[kind_at] = 2;
+    assert!(decode(&forged).is_err());
+    // A hand-built state whose player mask names a fifth slot is refused.
+    let mut bytes = encode(&Packet::Game(Box::new(state(5, 0)))).unwrap();
+    let players_at = bytes.len() - 2 - 4 * RACE_RIDERS - 1;
+    assert_eq!(bytes[players_at], 0b1111);
+    bytes[players_at] = 0b1_0000;
+    assert!(decode(&bytes).is_err());
 }

@@ -264,6 +264,10 @@ pub struct GameState {
 pub struct GameMarks {
     /// The course's archive venue (`env05`): 0-7 env01-08, 8-13 free01-06.
     pub venue: u8,
+    /// The slots playing this game (bit N for slot N): riders present at
+    /// GO, less leavers. A rider who joins after GO spectates (no pickups,
+    /// no captures, not in the results) until the next game.
+    pub players: u8,
     /// Each slot's committed stunt score (the results' tie-break).
     pub stunts: [f32; RACE_RIDERS],
     /// King of the Hills: one per hill (owner slot, score to beat).
@@ -401,6 +405,7 @@ impl GameState {
             game_kind::KING_OF_THE_HILLS | game_kind::TREASURE_HUNT
         ) && (self.phase > game_phase::OVER
             || self.marks.venue > 13
+            || self.marks.players >> RACE_RIDERS != 0
             || self.marks.marks.len() > MAX_MARKS
             || self
                 .marks

@@ -13,7 +13,10 @@
 //!   room and near the hill, bounded points, rate) and applies it only
 //!   when it beats the hill's score, as `00220b50` does.
 //! - Slots are peer ids (a private room holds four); a rider who leaves is
-//!   dropped from the results and frees their hills.
+//!   dropped from the results and frees their hills. The host fixes the
+//!   players at GO (`GameMarks::players`); a rider who joins later
+//!   spectates the rest of the game (no pickups or captures, not in the
+//!   results) and plays the next one.
 use crate::games::{GameSession, sample};
 use atv_core::games::{GameKind, Rider};
 pub use atv_game::multiplayer::MAX_GAME_POINTS;
@@ -87,6 +90,14 @@ pub struct RoomLink {
     joined: [bool; SLOTS],
     /// Host: seconds the start has waited for riders to load.
     waited: f32,
+    /// The slots playing this game (bit N for slot N; the host's, mirrored
+    /// by guests): everyone present until GO, then fixed, less leavers.
+    pub players: u8,
+    /// Host: a game started with its room (Games → Riders: Online Room)
+    /// holds its countdown until another rider has loaded the course, so
+    /// invitees play rather than spectate; Pause → Restart Game starts it
+    /// at once.
+    pub hold: bool,
 }
 
 /// The longest the host's start waits for riders still loading (s).
@@ -112,8 +123,28 @@ impl RoomLink {
             sent_claim: None,
             joined: [false; SLOTS],
             waited: 0.,
+            players: 0,
+            hold: false,
         }
     }
+
+    pub fn playing(&self, slot: usize) -> bool {
+        slot < SLOTS && self.players & (1 << slot) != 0
+    }
+
+    /// This rider watches the game (joined after GO).
+    pub fn spectating(&self) -> bool {
+        !self.playing(self.me)
+    }
+}
+
+/// The slots in `present` as a player mask.
+pub fn mask(present: &[bool; SLOTS]) -> u8 {
+    present
+        .iter()
+        .enumerate()
+        .filter(|(_, p)| **p)
+        .fold(0, |m, (slot, _)| m | 1 << slot)
 }
 
 /// Host-side check of a capture claim; returns why it is refused.
@@ -121,6 +152,7 @@ pub fn check_claim(
     claim: &GameClaim,
     serial: u32,
     present: &[bool; SLOTS],
+    players: u8,
     hills: &[[f32; 3]],
     position: Option<[f32; 3]>,
     since_last: f32,
@@ -134,6 +166,9 @@ pub fn check_claim(
     }
     if claim.kind != claim_kind::CAPTURE {
         return Ok(());
+    }
+    if players & (1 << slot) == 0 {
+        return Err("spectating");
     }
     let index = claim.index as usize;
     let Some(hill) = index.checked_sub(1).and_then(|i| hills.get(i)) else {
@@ -213,6 +248,8 @@ impl GameSession {
             room.joined = [false; SLOTS];
             room.waited = 0.;
             room.report = STUNT_REPORT;
+            room.players = mask(&room.present);
+            room.hold = false;
         }
         if let Some(session) = &mut self.session {
             session.restart();
@@ -260,6 +297,12 @@ impl GameSession {
             for slot in 0..SLOTS {
                 room.seen[slot] |= present[slot];
             }
+            // Leavers stop playing; before GO everyone present plays.
+            let started = self.session.as_ref().is_some_and(|s| s.started);
+            if host && !started {
+                room.players = mask(&present);
+            }
+            room.players &= mask(&present);
         }
         if !self.placed {
             self.placed = true;
@@ -362,7 +405,16 @@ impl GameSession {
         // course and report in, so all share the 3-2-1.
         room.joined[me] = true;
         let loading = (0..SLOTS).any(|s| room.present[s] && !room.joined[s]);
-        if !session.started && loading && room.waited < LOAD_WAIT {
+        if room.hold && (0..SLOTS).any(|s| s != me && room.present[s] && room.joined[s]) {
+            room.hold = false;
+        }
+        if !session.started && room.hold {
+            session.notice = Some(atv_core::games::Notice {
+                text: "Waiting for riders: share the room invite (Pause, Restart Game starts now)"
+                    .into(),
+                seconds: 1.,
+            });
+        } else if !session.started && loading && room.waited < LOAD_WAIT {
             room.waited += dt;
         } else if session.started {
             self.go = (self.go - dt).max(0.);
@@ -374,6 +426,8 @@ impl GameSession {
             self.countdown -= dt;
             if self.countdown <= 0. {
                 self.countdown = 0.;
+                // The players are fixed at GO: riders still loading watch.
+                room.players = mask(&room.present) & mask(&room.joined);
                 session.begin();
                 self.go = 1.;
                 self.sounds.push("go.vag");
@@ -391,7 +445,15 @@ impl GameSession {
             let slot = claim.peer as usize;
             let since = room.clock - room.last_claim.get(slot).copied().unwrap_or(0.);
             let position = net.rider_motion(claim.peer).map(|(p, _)| p);
-            match check_claim(&claim, room.serial, &room.present, &hills, position, since) {
+            match check_claim(
+                &claim,
+                room.serial,
+                &room.present,
+                room.players,
+                &hills,
+                position,
+                since,
+            ) {
                 Ok(()) => {
                     room.joined[slot] = true;
                     room.stunts[slot] = claim.stunt;
@@ -422,12 +484,15 @@ impl GameSession {
         ];
         let mut stunts = room.stunts;
         let (own, _) = sample(ride, &mut self.committed[me], None);
-        riders[me] = own;
+        if room.playing(me) {
+            riders[me] = own;
+        }
         stunts[me] = self.committed[me];
         room.stunts[me] = self.committed[me];
         for slot in 0..SLOTS {
             if slot != me
                 && room.present[slot]
+                && room.playing(slot)
                 && let Some((position, _)) = net.rider_motion(slot as u8)
             {
                 riders[slot].position = position;
@@ -478,6 +543,7 @@ impl GameSession {
                 scores,
                 marks: GameMarks {
                     venue: venue_code(&self.venue).unwrap_or(0),
+                    players: room.players,
                     stunts: stunt_out,
                     marks,
                 },
@@ -515,6 +581,14 @@ impl GameSession {
                 0.
             };
             session.mirror(g.phase, g.clock);
+            let watching = room.spectating();
+            room.players = g.marks.players & mask(&room.present);
+            if session.started && room.spectating() && !watching {
+                session.notice = Some(atv_core::games::Notice {
+                    text: "Spectating: you play the next game".into(),
+                    seconds: 5.,
+                });
+            }
             if !was_started && session.started {
                 self.go = 1.;
                 self.sounds.push("go.vag");
@@ -564,7 +638,11 @@ impl GameSession {
         }
         // King of the Hills: this rider's own arming against the mirrored
         // hills; a capture is reported for the host to confirm.
-        if self.kind == GameKind::KingOfTheHills && session.started && session.end.is_none() {
+        if self.kind == GameKind::KingOfTheHills
+            && session.started
+            && session.end.is_none()
+            && room.playing(me)
+        {
             let mut riders = vec![
                 Rider {
                     position: NOWHERE,
@@ -653,7 +731,9 @@ impl GameSession {
         session
             .standings()
             .into_iter()
-            .filter(|s| room.present.get(s.rider).copied().unwrap_or(false))
+            .filter(|s| {
+                room.present.get(s.rider).copied().unwrap_or(false) && room.playing(s.rider)
+            })
             .collect()
     }
 
@@ -667,6 +747,8 @@ impl GameSession {
             "serial": room.serial,
             "me": room.me,
             "present": room.present,
+            "players": room.players,
+            "spectating": room.spectating(),
             "accepted": room.accepted,
             "refused": room.refused,
             "standings": self.room_standings(),
@@ -695,7 +777,7 @@ mod tests {
         let present = [true, true, false, false];
         let hills = [[0., 0., 0.], [1000., 0., 0.]];
         let near = Some([10., 0., 10.]);
-        assert!(check_claim(&claim(1, 1, 500.), 7, &present, &hills, near, 1.).is_ok());
+        assert!(check_claim(&claim(1, 1, 500.), 7, &present, 0b11, &hills, near, 1.).is_ok());
         assert_eq!(
             check_claim(
                 &GameClaim {
@@ -704,6 +786,7 @@ mod tests {
                 },
                 7,
                 &present,
+                0b11,
                 &hills,
                 near,
                 1.
@@ -711,32 +794,37 @@ mod tests {
             Err("another game")
         );
         assert_eq!(
-            check_claim(&claim(2, 1, 500.), 7, &present, &hills, near, 1.),
+            check_claim(&claim(2, 1, 500.), 7, &present, 0b11, &hills, near, 1.),
             Err("not in the game")
         );
         assert_eq!(
-            check_claim(&claim(1, 0, 500.), 7, &present, &hills, near, 1.),
+            check_claim(&claim(1, 0, 500.), 7, &present, 0b11, &hills, near, 1.),
             Err("no such hill")
         );
         assert_eq!(
-            check_claim(&claim(1, 3, 500.), 7, &present, &hills, near, 1.),
+            check_claim(&claim(1, 3, 500.), 7, &present, 0b11, &hills, near, 1.),
             Err("no such hill")
         );
         assert_eq!(
-            check_claim(&claim(1, 2, 500.), 7, &present, &hills, near, 1.),
+            check_claim(&claim(1, 2, 500.), 7, &present, 0b11, &hills, near, 1.),
             Err("too far from the hill")
         );
         assert_eq!(
-            check_claim(&claim(1, 1, 0.), 7, &present, &hills, near, 1.),
+            check_claim(&claim(1, 1, 0.), 7, &present, 0b11, &hills, near, 1.),
             Err("points out of range")
         );
         assert_eq!(
-            check_claim(&claim(1, 1, 500.), 7, &present, &hills, near, 0.1),
+            check_claim(&claim(1, 1, 500.), 7, &present, 0b11, &hills, near, 0.1),
             Err("too soon")
         );
         assert_eq!(
-            check_claim(&claim(1, 1, 500.), 7, &present, &hills, None, 1.),
+            check_claim(&claim(1, 1, 500.), 7, &present, 0b11, &hills, None, 1.),
             Err("no position")
+        );
+        // A rider who joined after GO spectates: no captures.
+        assert_eq!(
+            check_claim(&claim(1, 1, 500.), 7, &present, 0b01, &hills, near, 1.),
+            Err("spectating")
         );
         // A stunt report needs only the game and the room.
         let report = GameClaim {
@@ -745,7 +833,18 @@ mod tests {
             points: 0.,
             ..claim(1, 0, 0.)
         };
-        assert!(check_claim(&report, 7, &present, &hills, None, 0.).is_ok());
+        assert!(check_claim(&report, 7, &present, 0b11, &hills, None, 0.).is_ok());
+    }
+
+    #[test]
+    fn players_are_slot_masks() {
+        assert_eq!(mask(&[true, false, true, false]), 0b0101);
+        let mut room = RoomLink::new(false, 1);
+        room.me = 2;
+        assert!(room.spectating());
+        room.players = 0b0101;
+        assert!(room.playing(0) && !room.playing(1) && !room.spectating());
+        assert!(!room.playing(SLOTS));
     }
 
     #[test]

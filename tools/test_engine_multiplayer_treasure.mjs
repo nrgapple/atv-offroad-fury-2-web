@@ -1,7 +1,8 @@
 // Host-only gate: Treasure Hunt in a multiplayer room (research/
-// MULTIPLAYER.md "Room games"). A Rust host rides a room on Prospect
-// Springs (`?host=1&venue=env05`) and a Rust guest joins by code. The
-// host's Pause → Play Treasure Hunt moves both onto the E05_TH course
+// MULTIPLAYER.md "Room games"). The host starts from Single Player →
+// Games → Treasure Hunt (Prospect Springs) with Riders: Online Room, which
+// hosts a room, and a Rust guest joins by its code. The game moves both
+// onto the E05_TH course
 // (the mode TOY's treasures and bombs) and starts one shared countdown.
 // `gameTest=visit` sets each rider on the next standing treasure each
 // second: the host collects for both riders (the guest's from its relayed
@@ -20,6 +21,7 @@ await roomGame({
   hook: 'visit',
   label: 'Multiplayer Treasure Hunt',
   leaver: 'host',
+  fromGames: 'Treasure Hunt',
   async verify({ host, guest, until, shot }) {
     const h = await until(host, game => game.scores[0] > 0 && game.scores[1] > 0, 60000, 'both collect');
     assert.equal(h.game.kind, 'treasure');

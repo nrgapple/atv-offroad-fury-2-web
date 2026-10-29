@@ -7,7 +7,8 @@
 // (host) or 1600 (guest) points: the host checks the guest's claim against
 // its relayed position and the hill's score, so the guest holds hill 1
 // whichever claim lands first, and both pages show its flag owner. The
-// 20 s clock (`gameTest=fast`) ends in the same results. Play Again starts
+// 20 s clock (`gameTest=fast`) ends in the same results; a third rider who
+// joins after GO spectates (not in the results). Play Again starts
 // game 2 for both; the guest then leaves mid-game and drops out.
 //   PLAYWRIGHT_MODULE=... ATV_TEST_URL=http://127.0.0.1:4187 node tools/test_engine_multiplayer_koth.mjs
 // ATV_GAMES_SHOTS=<dir> saves captures.
@@ -19,6 +20,7 @@ await roomGame({
   action: 'playgame:9',
   hook: 'hill',
   label: 'Multiplayer King of the Hills',
+  late: true,
   async verify({ host, guest, until, shot }) {
     const h = await until(host, game => game.markers[0]?.owner === 1 && game.markers[0]?.score === 1600, 60000, 'the guest captures hill 1');
     assert.equal(h.game.kind, 'koth');
