@@ -10,7 +10,9 @@
 //   steers every player: ?raceLaps=1&autopilot=1 test tooling) to combined
 //   results listing all four, held until the last has finished;
 // - Treasure Hunt for four players (`gameTest=visit` places the players on
-//   treasures in turn) to results listing all four.
+//   treasures in turn) to results listing all four;
+// - King of the Hills, Hockey and Tag for three players start with every
+//   player seated in its own quarter.
 // Host Chromium evidence only.
 import assert from 'node:assert/strict';
 import { mkdir } from 'node:fs/promises';
@@ -220,7 +222,39 @@ try {
     console.log(`  treasure hunt: ${g.summary}`);
     await page.close();
   }
-  console.log('PASS: split screen for four players: menu, Freestyle, a race and Treasure Hunt');
+  // Three players: King of the Hills, Hockey and Tag each start with every
+  // player seated in its own quarter (the fourth quarter stays dark).
+  for (const [name, check] of [
+    ['King of the Hills', s => s.ride.game?.loaded && s.ride.game.players === 3],
+    ['Hockey', s => s.ride.hockey?.split && s.ride.hockey.teams?.length === 3],
+    ['Tag', s => s.ride.tag?.local && s.ride.tag.roster?.length === 3],
+  ]) {
+    const { page, errors } = await open(browser, '', 3);
+    await choose(page, 'splitgames');
+    await onFront(page, 'games');
+    const label = async action => {
+      const f = (await read(page)).front;
+      return f.labels[f.choices.indexOf(action)];
+    };
+    const f = (await read(page)).front;
+    for (let i = f.selection; i < f.choices.indexOf('gametype'); i++) await key(page, 'ArrowDown');
+    for (let i = 0; i < 4 && !(await label('gametype')).startsWith(`Game: ${name}`); i++) await key(page, 'ArrowRight');
+    assert.ok((await label('gametype')).startsWith(`Game: ${name}`), await label('gametype'));
+    await choose(page, 'gamestart');
+    await wait(page, () => (JSON.parse(document.querySelector('#ui-state')?.textContent || '{}').split?.others?.[1]?.steps ?? 0) > 30,
+      null, 300000);
+    const s = await read(page);
+    assert.equal(s.split.layout, 'Quad');
+    assert.equal(s.split.players, 3);
+    assert.equal(s.split.views.length, 3);
+    assert.ok(check(s), `${name} seats three players: ${JSON.stringify(s.ride.game ?? s.ride.hockey ?? s.ride.tag)}`);
+    await nextFrames(page, 60);
+    await shot(page, `split-3p-${name.toLowerCase().replaceAll(' ', '-')}`);
+    assertNoErrors(errors);
+    console.log(`  three players: ${name} started in quarter views`);
+    await page.close();
+  }
+  console.log('PASS: split screen for three and four players: menu, Freestyle, a race, Treasure Hunt, KOTH, Hockey and Tag');
 } finally {
   await browser.close();
 }
