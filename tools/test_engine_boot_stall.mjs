@@ -19,10 +19,12 @@ try {
   const box = await retry.boundingBox();
   assert.ok(box.height >= 44 && box.width >= 44, `target ${JSON.stringify(box)}`);
   assert.ok(box.y + box.height <= 844, 'on screen');
-  await page.unroute('**/atv_app_bg.wasm*');
+  // Tap while still stalled (releasing the request first would let the
+  // engine start and close the loader under the tap). The page reloads.
   const reloaded = page.waitForEvent('load', { timeout: 30000 });
   await retry.tap();
   await reloaded;
+  await page.unroute('**/atv_app_bg.wasm*');
   assertNoErrors(errors);
   console.log('PASS stalled first load offers a reload');
 } finally {
