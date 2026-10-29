@@ -84,6 +84,7 @@ fn split_event(event: &Event) -> bool {
             | Event::Game { .. }
             | Event::Hockey { .. }
             | Event::TagHost { .. }
+            | Event::Objective { .. }
     )
 }
 

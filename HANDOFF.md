@@ -182,16 +182,21 @@ the worktree's `target/`; keep bulk output on the SSD.
   knock the ball loose (not relayed), riders share one Tag start, and the
   ground respawn's rays and the ball test only the heightfield, not
   static objects or stadium walls (`GAMES.md`).
-- Split screen runs two to four players (Freestyle, races, and the Games
-  King of the Hills, Treasure Hunt, Hockey and Tag) with the original
+- Split screen runs two to four players (Freestyle, Freestyle Objectives,
+  races, and the Games King of the Hills, Treasure Hunt, Hockey and Tag)
+  with the original
   Overlays.pb `ScreenLayout` HUD positions, each seat's own gear and paint,
   per-player tire tracks and lingering dust, the original MultiATVRiderSelect
   Players page (each pad joins, dresses and readies its seat), the shared
   split race radar and the quarter stunt-text clock. The Players page's ATV
-  stats row and original panel art, the Multi-Sign animation, split
-  objectives/championships, records and profile credit for players 2-4 (a
-  product decision: whose profile), a per-player audio mix, and online
-  parity for split modes remain (`SPLIT_SCREEN.md`).
+  stats row and original panel art, the Multi-Sign animation, records and
+  profile credit for players 2-4 (a product decision: whose profile), the
+  original's split Race event types (Duel, Lap Attack, Practice), player
+  1's own engine/CPU/venue sounds from the nearest view, and online parity
+  for split modes remain. The original has no split championships
+  (Championships is reachable only from Single Player); split objectives
+  share one objective and clock, and players 2-4's sounds use the nearest
+  view's camera (`SPLIT_SCREEN.md` "Split objectives", "Split audio").
 - Memory-card UI is missing; the Training Course shows
   captions for its 46 spoken lines and lacks the jumbotron replays (`TRAINING.md`);
   races, championships and Profile Store unlocks save to the loaded profile

@@ -885,6 +885,8 @@ pub fn trophy_line(series: &Series, outcome: &RoundOutcome) -> String {
     }
 }
 
+pub mod split;
+
 #[cfg(test)]
 mod tests {
     use super::*;

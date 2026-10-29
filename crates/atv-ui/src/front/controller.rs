@@ -819,6 +819,20 @@ impl Frontend {
                 self.choices.insert(at + i, (action.into(), label.into()));
             }
         }
+        // Split Screen → Freestyle Objectives: offline multiplayer keeps
+        // Freestyle's Objectives event type (only online play drops it,
+        // `0026d010`; research/SPLIT_SCREEN.md "Split objectives").
+        if page == "split" && !self.objective_courses.is_empty() {
+            let at = self
+                .choices
+                .iter()
+                .position(|(a, _)| a == "splitfree")
+                .map_or(self.choices.len(), |i| i + 1);
+            self.choices.insert(
+                at,
+                ("splitobjectives".into(), "Freestyle Objectives".into()),
+            );
+        }
         self.selection = self.selection.min(self.choices.len().saturating_sub(1));
     }
 
@@ -1256,6 +1270,10 @@ impl Frontend {
             "championship" => self.series_line(),
             "games" => self.games_line(),
             "objectives" => self.objectives_line(),
+            "objective-courses" if self.split => Some(
+                "Ride an objective together: shared targets and clock; split screen results are not saved."
+                    .into(),
+            ),
             "objective-courses" => {
                 Some("Ride any Freestyle course's objectives outside a championship.".into())
             }
@@ -2052,6 +2070,11 @@ impl Frontend {
             "objective-courses" => {
                 self.freestyle = None;
                 self.show(action, view);
+            }
+            "splitobjectives" => {
+                self.split = true;
+                self.freestyle = None;
+                self.show("objective-courses", view);
             }
             _ if action.starts_with("objcourse:") => {
                 self.freestyle = None;
@@ -3646,6 +3669,44 @@ mod tests {
         );
         front.key("Escape", &view, &mut settings);
         assert_eq!(front.page, "championship");
+    }
+
+    #[test]
+    fn split_objectives_ride_through_the_players_page() {
+        let view = view(1280., 720.);
+        let mut settings = Settings::memory();
+        let mut front = Frontend::new(tracks(), &settings, true);
+        front.objective_courses = vec!["env01".into()];
+        front.show("split", &view);
+        let at = front
+            .choices()
+            .iter()
+            .position(|(a, _)| a == "splitobjectives")
+            .expect("Split Screen lists Freestyle Objectives");
+        assert_eq!(front.choices()[at - 1].0, "splitfree");
+        front.selection = at;
+        assert_eq!(front.key("Enter", &view, &mut settings), None);
+        assert_eq!(
+            (front.page.as_str(), front.split),
+            ("objective-courses", true)
+        );
+        front.selection = 0;
+        front.key("Enter", &view, &mut settings);
+        assert_eq!(front.page, "objectives");
+        // An objective waits on Players, then starts with the seated players.
+        front.selection = 0;
+        assert_eq!(front.key("Enter", &view, &mut settings), None);
+        assert_eq!(front.page, "splitseats");
+        let go = front
+            .choices()
+            .iter()
+            .position(|(a, _)| a == "splitgo")
+            .unwrap();
+        front.selection = go;
+        assert!(matches!(
+            front.key("Enter", &view, &mut settings),
+            Some(Event::Objective { objective: 0, .. })
+        ));
     }
 
     #[test]
