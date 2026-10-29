@@ -2301,7 +2301,9 @@ impl App {
                 if session.update(&mut riding.ride, ready.net.as_mut(), &mut others)
                     && let Some(overlay) = &mut self.overlay
                 {
-                    overlay.results.show_game("Tag Results", session.summary());
+                    // `[TagOver Menu]` is titled "Race Results" on the disc
+                    // (Overlays.pb `Text1Text`), with a Continue row.
+                    overlay.results.show_game("Race Results", session.summary());
                     // A room keeps riding (Continue); split screen offers
                     // Restart Game and back to Games, like the other games.
                     overlay.results.game_continue = !session.local;
