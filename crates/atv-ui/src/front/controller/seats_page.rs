@@ -38,6 +38,10 @@ pub const SEAT_ROWS: [(&str, &str); 8] = [
     ("paint", "Paint"),
 ];
 
+/// The seated players: count, players 2-4's ATV/rider and look in seat
+/// order.
+pub type Launch = (u8, [(u16, u16); 3], [Appearance; 3]);
+
 /// The Players page's working state.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Seats {
@@ -54,7 +58,7 @@ pub struct Seats {
     pub release: bool,
     /// The seated players: count, players 2-4's ATV/rider and look in
     /// seat order (the joined players compacted, as `0027e360` copies them).
-    pub launch: Option<(u8, [(u16, u16); 3], [Appearance; 3])>,
+    pub launch: Option<Launch>,
 }
 
 impl Seats {
@@ -104,7 +108,7 @@ impl Frontend {
 
     /// The seated players for the app (`split::Request`): the page's
     /// launch, else the Split Screen page's count and seats.
-    pub fn split_launch(&self) -> (u8, [(u16, u16); 3], [Appearance; 3]) {
+    pub fn split_launch(&self) -> Launch {
         self.seats
             .launch
             .unwrap_or((self.split_players, self.split_seconds, self.split_looks))
