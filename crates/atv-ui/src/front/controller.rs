@@ -229,6 +229,7 @@ pub fn stepper(action: &str) -> bool {
             | "famedifficulty"
             | "storeitem"
             | "codeletter"
+            | "hostfstime"
     ) || games_page::game_row(action)
         || GEAR_ROWS.iter().any(|(a, _)| *a == action)
         || action.strip_prefix("seat").is_some_and(|rest| {
@@ -471,6 +472,9 @@ pub struct Frontend {
     /// Host Game → Room: Freestyle: the hosted room starts a room
     /// Freestyle session (research/MULTIPLAYER.md "Room Freestyle").
     pub host_freestyle: bool,
+    /// Host Game → Room: Freestyle's Time Limit, minutes (Classic
+    /// Freestyle's row: 2-20, 2:00 by default as the original's 120 s).
+    pub host_freestyle_minutes: u32,
     /// Split Screen → Players: the seats claimed before a split event.
     pub seats: seats_page::Seats,
     /// The pages Back returns through (`navigation`).
@@ -621,6 +625,7 @@ impl Frontend {
                     .unwrap_or_default()
             }),
             host_freestyle: false,
+            host_freestyle_minutes: (atv_core::freestyle::TIME_LIMIT / 60.) as u32,
             seats: Default::default(),
             history: Vec::new(),
         };
@@ -719,6 +724,7 @@ impl Frontend {
             "page": page,
             "split_vertical": self.split_vertical,
             "host_freestyle": self.host_freestyle,
+            "host_freestyle_minutes": self.host_freestyle_minutes,
             "split_players": self.split_players,
             "split_seconds": (0..usize::from(self.split_players.clamp(2, 4)) - 1)
                 .flat_map(|i| {
@@ -1146,6 +1152,10 @@ impl Frontend {
         match action {
             "codeletter" => return self.step_passkey(direction, view),
             _ if games_page::game_row(action) => self.step_game(action, direction),
+            "hostfstime" => {
+                self.host_freestyle_minutes =
+                    atv_core::games::step_minutes(self.host_freestyle_minutes, direction);
+            }
             "champdifficulty" => {
                 self.champ_expert = !self.champ_expert;
                 self.notice = None;
@@ -3114,6 +3124,21 @@ mod tests {
         front.run("hostmode", &view, &mut settings);
         assert!(front.host_freestyle);
         assert_eq!(front.choices()[1].1, "Room: Freestyle (timed stunts)");
+        // Classic Freestyle's Time Limit row: 2:00 by default, 2-20
+        // minutes, wrapping (`002f60b0`/`002f6190`).
+        assert_eq!(
+            front.choices()[2],
+            ("hostfstime".into(), "Time Limit: 2:00".into())
+        );
+        front.run("hostfstime", &view, &mut settings);
+        assert_eq!(front.choices()[2].1, "Time Limit: 3:00");
+        front.step("hostfstime", -1, &view, &mut settings);
+        front.step("hostfstime", -1, &view, &mut settings);
+        assert_eq!(front.choices()[2].1, "Time Limit: 20:00");
+        front.step("hostfstime", 1, &view, &mut settings);
+        front.step("hostfstime", 1, &view, &mut settings);
+        front.step("hostfstime", 1, &view, &mut settings);
+        assert_eq!(front.host_freestyle_minutes, 4);
         front.set_field("create-code", "fs12ab34");
         front.run("hosttrack", &view, &mut settings);
         assert_eq!((front.page.as_str(), front.hosting), ("tracks", true));
@@ -3123,9 +3148,10 @@ mod tests {
                 if code.as_deref() == Some("FS12AB34") && environment == "env01"),
             "{event:?}"
         );
-        // Back to Free Ride: an ordinary hosted room.
+        // Back to Free Ride: an ordinary hosted room, without the row.
         front.key("Escape", &view, &mut settings);
         front.run("hostmode", &view, &mut settings);
+        assert!(!front.choices().iter().any(|(a, _)| a == "hostfstime"));
         front.run("hosttrack", &view, &mut settings);
         assert!(matches!(
             front.key("Enter", &view, &mut settings),

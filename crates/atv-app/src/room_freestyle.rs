@@ -24,9 +24,6 @@ use atv_game::ride::Ride;
 
 /// Room slots (a private room's capacity; peer ids 0-3).
 pub const SLOTS: usize = atv_game::multiplayer::RACE_RIDERS;
-/// The session's time limit: the Freestyle event clock (`00289d50`
-/// settings +0x57c, 120 s on a new profile).
-pub const TIME_LIMIT: f32 = atv_core::freestyle::TIME_LIMIT;
 /// The longest the host's start waits for riders still loading (s).
 pub const LOAD_WAIT: f32 = 30.;
 /// Seconds the host keeps "Time Up" up for riders' last reports before the
@@ -36,13 +33,29 @@ pub const FINAL_WAIT: f32 = 2.;
 /// Seconds between a rider's reports (and at once on every change).
 const REPORT: f32 = 0.5;
 
-/// The host's session length: the Freestyle clock (`freestyleTest=fast`:
-/// 25 s for tests).
-pub fn session_seconds() -> f32 {
+/// The host's session length: Host Game's Time Limit (Classic Freestyle's
+/// row, 2-20 minutes; `freestyleTest=fast`: 25 s for tests).
+pub fn session_seconds(minutes: u32) -> f32 {
     if crate::url_flag("freestyleTest=fast") {
         25.
     } else {
-        TIME_LIMIT
+        limit_seconds(minutes)
+    }
+}
+
+/// `minutes` (clamped to the original row's 2-20) in seconds.
+pub fn limit_seconds(minutes: u32) -> f32 {
+    minutes.clamp(atv_core::games::MIN_MINUTES, atv_core::games::MAX_MINUTES) as f32 * 60.
+}
+
+/// The session length a rider infers from the host's clock at the start
+/// (whole minutes; a test's short clock is kept as it is), so a guest who
+/// takes the room over replays the same length.
+pub fn limit_from_clock(clock: f32) -> f32 {
+    if clock < 60. * atv_core::games::MIN_MINUTES as f32 - 1. {
+        clock.max(1.).ceil()
+    } else {
+        limit_seconds((clock / 60.).ceil() as u32)
     }
 }
 
@@ -397,6 +410,8 @@ impl Tracker {
 /// The room's Freestyle session on this page.
 pub struct RoomFreestyle {
     pub table: Table,
+    /// The session's length, seconds (Play Again keeps it).
+    pub limit: f32,
     pub host: bool,
     pub me: usize,
     pub names: [String; SLOTS],
@@ -441,6 +456,7 @@ impl RoomFreestyle {
     pub fn new(host: bool, serial: u32, limit: f32, course: String) -> Self {
         Self {
             table: Table::new(serial, limit),
+            limit,
             host,
             me: 0,
             names: Default::default(),
@@ -481,7 +497,7 @@ impl RoomFreestyle {
 
     /// The session's length (a guest takes the host's clock at the start).
     fn limit(&self) -> f32 {
-        session_seconds()
+        self.limit
     }
 
     pub fn spectating(&self) -> bool {
@@ -806,6 +822,25 @@ impl RoomFreestyle {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn time_limit_is_host_games_row_and_play_again_keeps_it() {
+        // Host Game's Time Limit (Classic Freestyle's 2-20 minutes).
+        assert_eq!(limit_seconds(2), 120.);
+        assert_eq!(limit_seconds(7), 420.);
+        assert_eq!(limit_seconds(0), 120.);
+        assert_eq!(limit_seconds(40), 1200.);
+        // A guest reads the length from the host's first clock.
+        assert_eq!(limit_from_clock(419.6), 420.);
+        assert_eq!(limit_from_clock(120.), 120.);
+        assert_eq!(limit_from_clock(1199.), 1200.);
+        assert_eq!(limit_from_clock(25.), 25.);
+        let mut s = RoomFreestyle::new(true, 1, limit_seconds(5), "Course".into());
+        assert_eq!(s.table.clock, 300.);
+        s.table.clock = 12.;
+        s.restart(2);
+        assert_eq!((s.table.serial, s.table.clock, s.limit), (2, 300., 300.));
+    }
 
     fn report(peer: u8, serial: u32, score: f32, best: f32, combos: u16) -> GameClaim {
         GameClaim {

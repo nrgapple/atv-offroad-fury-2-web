@@ -968,8 +968,26 @@ capability), the Host Game Room row and the Pause row.
   replay a guest's stunts (poses do not carry the stunt chain), so a
   modified client could report inflated points. Room games' King of the
   Hills captures carry the same trust.
-- The session length is the 120 s Freestyle clock; there is no Time Limit
-  row for it yet (`freestyleTest=fast` shortens it to 25 s for tests).
+- The session length is Host Game's **Time Limit** row, shown under
+  "Room: Freestyle" (2026-10-29): 2:00 by default, stepping 2-20 minutes
+  and wrapping. Exact-build evidence: Freestyle Prep (`0026a720` mode 2)
+  shows a Time Limit row for event types 3 and 4 (`002f6270`); type 4,
+  Classic (`0021add0` names 0-6 Single Race, Practice, Lap Attack,
+  Objectives, Classic, Duel, Freeride), steps 2-20 minutes and wraps
+  (`002f60b0`/`002f6190`, printed `%d:00` by `0026df60`), and Start writes
+  minutes x 60 to the event clock (+0x57c, `0026b7a0`); the profile
+  default is 120 s (`0021add0`). (Objectives' row toggles 2:00 /
+  "Practice"; Freeride shows "N/A"; neither applies to a room.) The host
+  owns the length: it is the session table's clock, so guests take it from
+  the first table (whole minutes, `limit_from_clock`), and Play Again and a
+  handed-over host keep it. Pause → Play Freestyle uses the same row's
+  value. `freestyleTest=fast` still forces 25 s for tests. The row is not
+  saved between visits (port choice).
+- Results are titled "Race Results", as the original's
+  `[ClassicFreeStyleOver Menu]` (Overlays.pb `Text1Text`); the room games'
+  `[TreasureOver Menu]`/`[HillKingOver Menu]` use the same title, so King
+  of the Hills and Treasure Hunt keep it (`#ui-state` `ride.resultsTitle`
+  is asserted in both browser tests).
 - No Hall of Fame, records or Profile Points are saved from a room
   session (the manual: online competition saves neither).
 - `tools/test_engine_multiplayer_freestyle.mjs` (relay group) hosts from
