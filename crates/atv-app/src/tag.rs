@@ -64,6 +64,40 @@ pub struct TagSession {
     chain_seen_others: Vec<usize>,
     /// Split screen: the first ball was tossed.
     tossed: bool,
+    /// Host: each remote rider's last fresh pose and the step it was seen,
+    /// held through short network gaps (`remote_motion`).
+    held: Vec<Option<Held>>,
+    /// Host: rider steps ridden on a held pose so far (diagnostics).
+    holds: u32,
+}
+
+/// A remote rider's last fresh position, velocity and step.
+type Held = ([f32; 3], [f32; 3], u64);
+
+/// A remote rider missing from the relay for longer than this (seconds)
+/// is absent (it cannot touch or carry the ball); a shorter gap is held.
+pub const REMOTE_HOLD: f32 = 3.0;
+
+/// The host's view of a remote rider for the rules: its fresh pose, else
+/// (a late or throttled peer) its last fresh position at rest for up to
+/// [`REMOTE_HOLD`], else absent. A network gap is not a wreck: the
+/// original's riders are all local, so a missing pose must not drop the
+/// carrier's ball (research/GAMES.md "Online").
+fn remote_motion(
+    held: &mut Option<Held>,
+    fresh: Option<([f32; 3], [f32; 3])>,
+    step: u64,
+) -> ([f32; 3], [f32; 3], bool) {
+    const ABSENT: ([f32; 3], [f32; 3], bool) = ([0., -1000., 0.], [0.; 3], true);
+    if let Some((p, v)) = fresh {
+        *held = Some((p, v, step));
+        return (p, v, false);
+    }
+    let limit = (REMOTE_HOLD / atv_game::ride::STEP) as u64;
+    match *held {
+        Some((p, _, seen)) if step.saturating_sub(seen) <= limit => (p, [0.; 3], false),
+        _ => ABSENT,
+    }
 }
 
 /// The game's clock: Games Prep's minutes (`0026b7a0`, 2-20, default 5);
@@ -113,6 +147,8 @@ impl TagSession {
             local: false,
             chain_seen_others: Vec::new(),
             tossed: false,
+            held: Vec::new(),
+            holds: 0,
         }
     }
 
@@ -234,6 +270,7 @@ impl TagSession {
                 self.me = me;
                 self.game = Game::new(self.roster.len(), self.game.time_limit);
                 self.finished = false;
+                self.held.clear();
             }
             changed
         };
@@ -286,6 +323,7 @@ impl TagSession {
                 f.wreck.phase != atv_core::wreck::Phase::Riding,
             )
         };
+        self.held.resize(self.roster.len(), None);
         let riders: Vec<([f32; 3], [f32; 3], bool)> = self
             .roster
             .iter()
@@ -299,9 +337,11 @@ impl TagSession {
                         .get(i.wrapping_sub(1))
                         .map_or(([0., -1000., 0.], [0.; 3], true), |r| motion(r))
                 } else {
-                    net.as_deref()
-                        .and_then(|net| net.rider_motion(*id))
-                        .map_or(([0., -1000., 0.], [0.; 3], true), |(p, v)| (p, v, false))
+                    let fresh = net.as_deref().and_then(|net| net.rider_motion(*id));
+                    if fresh.is_none() && self.held[i].is_some() {
+                        self.holds += 1;
+                    }
+                    remote_motion(&mut self.held[i], fresh, steps)
                 }
             })
             .collect();
@@ -582,6 +622,7 @@ impl TagSession {
             "respawns": [self.respawns.0, self.respawns.1],
             "attached": self.game.attached,
             "local": self.local,
+            "holds": self.holds,
         })
     }
 }
@@ -598,4 +639,57 @@ fn terrain_ray(ground: impl Fn(f32, f32) -> f32, a: [f32; 3], b: [f32; 3]) -> Op
         let p = [a[0] + d[0] * t, a[1] + d[1] * t, a[2] + d[2] * t];
         (ground(p[0], p[2]) >= p[1]).then_some(p)
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_network_gap_is_held_not_a_wreck() {
+        let step = |s: f32| (s / atv_game::ride::STEP) as u64;
+        let mut held = None;
+        // Never seen: absent.
+        assert!(remote_motion(&mut held, None, 0).2);
+        let p = [10., 2., 30.];
+        let fresh = remote_motion(&mut held, Some((p, [5., 0., 0.])), 100);
+        assert_eq!(fresh, (p, [5., 0., 0.], false));
+        // A throttled guest's poses stop for a second: it still rides
+        // (and keeps carrying) where it was last seen, at rest.
+        assert_eq!(
+            remote_motion(&mut held, None, 100 + step(1.)),
+            (p, [0.; 3], false)
+        );
+        // Long gone: absent, so a carrier drops the ball.
+        assert!(remote_motion(&mut held, None, 100 + step(REMOTE_HOLD) + 2).2);
+        // Back again.
+        assert!(!remote_motion(&mut held, Some((p, [0.; 3])), 900).2);
+    }
+
+    #[test]
+    fn a_held_carrier_keeps_scoring() {
+        // The guest carries; its poses go stale for 1.5 s. The rules see a
+        // riding carrier, so its possession (and score) continues.
+        let dt = atv_game::ride::STEP;
+        let mut game = Game::new(2, 30.);
+        let mut held = None;
+        let p = [0., 0., 0.];
+        remote_motion(&mut held, Some((p, [0.; 3])), 0);
+        let mut riders = [
+            Rider::default(),
+            Rider {
+                touches_ball: true,
+                ..Rider::default()
+            },
+        ];
+        game.tick(dt, &riders, false);
+        assert_eq!(game.carrier, Some(1));
+        riders[1].touches_ball = false;
+        for step in 1..=(1.5 / dt) as u64 {
+            riders[1].wrecked = remote_motion(&mut held, None, step).2;
+            game.tick(dt, &riders, false);
+        }
+        assert_eq!(game.carrier, Some(1));
+        assert!(game.records[1].score >= atv_core::tag::POINTS_PER_SECOND);
+    }
 }
