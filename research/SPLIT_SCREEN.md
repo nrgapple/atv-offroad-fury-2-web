@@ -292,7 +292,10 @@ What the port does:
   fine terrain patch (all players' patches merge when they touch), rumble
   on its own pad, and engine/impact voices through the room riders' mixer.
   Every local player is every other's contact body (lower player number
-  takes the -1 tie side).
+  takes the -1 tie side). Players 2-4's riders are posed in one
+  `pose_peers` call per frame (the call hides every slot it is not given;
+  posing each player separately had left only the last player's rider
+  drawn, so in games players 2 and 3 could not see their own ATV).
 - **Input.** Player N plays the Nth connected controller; the keyboard's
   halves stay players 1 and 2 (players 3 and 4 need pads). Any player's
   Start opens player 1's Pause menu over every view.
@@ -328,7 +331,9 @@ four-player standings merge with no CPUs), the Split Screen menu unit test
 stand-in pads): the Players row, four-player Freestyle in quarters with
 players 3 and 4 each driving only on their own pad, a one-lap four-player
 race with no CPUs to results listing all four, and four-player Treasure
-Hunt to results listing all four.
+Hunt to results listing all four; three-player King of the Hills, Hockey
+and Tag each start in quarter views with players 2 and 3 drawn
+(`split.ridersShown`).
 
 ## Measurements
 
@@ -346,6 +351,24 @@ Split screen draws the scene twice and steps a second ride, so CPU draw
 rises by about 1-4 ms on this host; the players rode close together, so the
 terrain kept one merged fine patch. The frame cadence is noisy in headless
 Chromium. Phones were not measured.
+
+Three and four players (2026-10-29, same host and page, one run each
+after 600 frames, every stand-in pad on the throttle, ENV01 Freestyle,
+`?split=q&splitn=3|4`; the 1P/2P rows re-measured in the same session for
+comparison, so the absolute numbers differ from the table above):
+
+| Ride | Frame (ms) | Frame p95 (ms) | CPU draw (ms) |
+| --- | --- | --- | --- |
+| One player | 12.0 | 26.7 | 2.9 |
+| Two players top/bottom | 12.7 | 27.3 | 3.9 |
+| Two players side by side | 12.9 | 27.2 | 3.8 |
+| Three players (quarters) | 19.5 | 23.9 | 7.0 |
+| Four players (quarters) | 10.9 | 12.8 | 6.9 |
+
+Four views cost about 3 ms more CPU draw than two on this host (the scene
+is drawn once per view); the frame cadence is noisy in headless Chromium
+under the shared host's load (the three-player frame time is not
+meaningfully worse than four). Host only; phones were not measured.
 
 ## Left for later slices
 
