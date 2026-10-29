@@ -29,6 +29,9 @@ pub struct Terrain {
     pub max: f32,
     /// 256x256 base layers, one per original texture record.
     pub layers: Vec<Image>,
+    /// Each layer's box-filtered mip levels below it, computed with the
+    /// decode (offload.rs); empty when not computed (the renderer filters).
+    pub layer_mips: Vec<Vec<Vec<u8>>>,
     /// Layer per 64-cell tile, row-major, `mapping_width` x `mapping_height`.
     pub mapping: Vec<u16>,
     pub mapping_width: u32,
@@ -489,11 +492,13 @@ pub async fn load_with(
         );
     }
     let mut layers = Vec::with_capacity(layout.records.len());
+    let mut layer_mips = Vec::with_capacity(layout.records.len());
     for (record, image) in layout
         .records
         .iter()
-        .zip(crate::offload::ipums(&sources, false).await?)
+        .zip(crate::offload::ipums_with(&sources, false, true).await?)
     {
+        layer_mips.push(image.mips);
         if record.width != 256 || record.height != 256 || image.rgba.len() != 256 * 256 * 4 {
             return Err("unsupported terrain texture image".into());
         }
@@ -715,6 +720,7 @@ pub async fn load_with(
             min,
             max,
             layers,
+            layer_mips,
             mapping,
             mapping_width,
             mapping_height,

@@ -777,3 +777,11 @@ Back/open transition 12 -> 63 fps, engine callback p95 273 -> 18 ms, longest
 task 308 -> 231 ms (busy 0.96 -> 0.49). List scrolling (callback p50 7 ms,
 p95 30 ms at x4) and the garage slide-in (150 ms) remain.
 
+### Terrain mip chains on the decode workers (follow-up)
+
+The terrain layers' box-filtered mip chains (`atv_core::texture::downsample`,
+moved there from atv-render unchanged) are now produced by the same decode job
+as each layer, so the main thread only uploads them. Host Chromium x4: the
+"Building the scenery textures" stage 1.82 -> 0.80 s (env01) and 0.99 s (env08);
+longest load task 1.82 -> 0.83 s; longest frozen loader gap 1.8 -> 1.3 s.
+
