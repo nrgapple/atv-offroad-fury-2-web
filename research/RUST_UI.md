@@ -846,3 +846,18 @@ phones; Select Track shows two whole cards; Single Race has no squeezed list,
 its picker shows three whole cards (two on a landscape phone) and opens and
 closes by touch, keyboard and a stand-in controller; stage text clear of the
 rim. Physical iPhones are not tested here.
+
+### Garage vehicle picker (2026-10-29)
+
+The garage squeezed its vehicle list under the vehicle and rider rows: two
+names on a portrait phone, one in landscape. The list is now a picker like
+Single Race's: the vehicle row's arrows step through owned vehicles, and a tap
+on it, Enter or A opens **Choose Vehicle** (the full ATV and motorcycle list
+under a smaller stage that still shows the model and rider); a pick, Enter,
+Escape, B or Done closes it (`Frontend::vehicle_sheet`). The garage stage
+takes about half the portrait height again. Stepper labels ellipsize (giving
+way after the value) instead of running under the value ("ATV 1/24 ·
+Unlocked" on the store pages), and vehicle names fall back to the store's
+list, so a locked ATV's plate no longer reads "Vehicle 22".
+`test_engine_menu_phone_layout.mjs` covers the picker (touch and keyboard) and
+the store label at every size.
