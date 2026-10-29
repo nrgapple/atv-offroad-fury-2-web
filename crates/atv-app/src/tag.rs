@@ -674,10 +674,13 @@ mod tests {
         let mut held = None;
         let p = [0., 0., 0.];
         remote_motion(&mut held, Some((p, [0.; 3])), 0);
-        let mut riders = [Rider::default(), Rider {
-            touches_ball: true,
-            ..Rider::default()
-        }];
+        let mut riders = [
+            Rider::default(),
+            Rider {
+                touches_ball: true,
+                ..Rider::default()
+            },
+        ];
         game.tick(dt, &riders, false);
         assert_eq!(game.carrier, Some(1));
         riders[1].touches_ball = false;
