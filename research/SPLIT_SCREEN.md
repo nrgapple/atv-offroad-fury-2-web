@@ -196,7 +196,8 @@ What the port does:
   Player 2 (the split race standings' names) with their count and stunt
   score;
   Hockey Results lists each player's goals with the team score.
-- **Tag** is slice 4 below. Freestyle objectives/target runs are not split.
+- **Tag** is slice 4 below. Freestyle objectives are split since "Split
+  objectives" below.
 
 Checks: `atv-core` unit tests `split_screen_players_collect_and_rank_separately`
 (Treasure Hunt: per-player counts, progress, places and the stunt-score
@@ -505,6 +506,120 @@ their pads and rows, three players ride; players 1 and 4 seat as two) and
 the radar assertions in `test_engine_split_screen.mjs` (two players side
 by side) and `test_engine_split_4p.mjs` (four players).
 
+## Split objectives and championships (2026-10-29)
+
+Exact-build evidence (USA v2.00 `SCUS_972.11`, private Ghidra exports of
+the functions named; bounded reading, no runtime traces):
+
+- **No split championships.** Main Menu (`00264dc0`) sets the multiplayer
+  flag (game state +0x1a08) to 1 only for Multiplayer (page 3); Single
+  Player and Profile Editor clear it. The Championship page (5) is opened
+  only by Single Player (`002658b0`, menu kind +0x1a0c = 4).
+  MultiPlayerSelect (`002670a0`, Split Screen) has three rows, each to
+  TrackSelect (6): Race (event mode 7, kind +0x1a11 = 1), Freestyle (mode
+  2, kind 2) and Games (mode 3, kind 3). No multiplayer path reaches a
+  series, its points table or the championship results, so the port adds
+  none.
+- **Split event types.** The TrackSelect type cycler (`0026d010`, also
+  run on page entry in `0026a720`) skips Duel unless the multiplayer flag
+  is set and, online only, skips Objectives, Lap Attack and Duel (strings
+  `0x433c60/68/78`). With Tracks.dat's masks (race tracks 103 = Freeride,
+  Duel, Ghost/Lap Attack, Practice, Single Race; stunt tracks 88 =
+  Freeride, Classic, Objectives) offline split screen offers **Freestyle
+  Objectives** and the race types Duel, Lap Attack and Practice. TrackSelect
+  then opens MultiATVRiderSelect (8) when the flag is set (`0026ba60`).
+- **One objective for every player.** The objective classes keep
+  per-player state: CherryPick's hit (`002fab40`, vtable `0045f550` +0x7c)
+  counts targets per player (+0xac[p]), adds the bonus points to that
+  player's score and the bonus seconds to the one clock, and removes the
+  target's compass icon from all four players' compasses. The targets'
+  triggers are registered for every player's quad (`002fae60`), so a
+  target goes to the first player to touch it. Combos are listed per
+  player (`002fc050`, 0x6c bytes a player). The Stunt objective keeps one
+  level counter (`002fb720` +0xb0): a level's sign shows once, on the view
+  of the player whose score passed it.
+- **Ranking.** After each change the event ranks the players (vtable
+  +0x9c): `002fb380` by targets then score, `002fbbb0` by score,
+  `002fc450` by combos then score; the comparator `002fa120` orders by
+  score, highest first (`002fa0d0`/`002fa190`, the target and combo
+  comparators, are inferred from their use, not exported). Each player's
+  place is stored (+0x28).
+- **End.** The last target ends a target run: every player with a target
+  completed it and the players with the most targets win (+0x4c; +0xa4
+  marks a tie). A player's last combo ends a combo run with that player
+  the winner. Point levels complete only with one human (`002fb720`
+  checks the human count +0x84 == 1), so a split stunt run plays to the
+  clock. At time out (vtable +0x98: `002fb230`, `002fb960`, `002fc2e0`)
+  the leader wins with every player tied with it on targets/combos and
+  score. `002fd980` adds the whole seconds left x 100 to each completed
+  player's score.
+- **No saving.** `002fce00` saves completion bits and pays Profile Points
+  only with one human; with more it writes each player's Freestyle record
+  (`00332c50`), which the port leaves out (records for players 2-4 await
+  the product decision).
+
+What the port does (`atv_core::freestyle::split::SplitRun`):
+
+- **Split Screen → Freestyle Objectives** (after Freestyle) opens the
+  standalone Freestyle Objectives course list (the courses with an OB
+  archive) and Select Objective; an objective waits on the Players page
+  like every split event, then rides with the seated players.
+- Every player starts at the objective's `DefaultStartPosition`, players
+  2-4 beside player 1 as at a split Freeride start (a port choice). Each
+  player's ATV takes targets through the same trigger-body test as one
+  player; the hit's sound, explosion and cherry follow the shared target.
+  Combos, stunt scores and signs are each player's own; the clock, level
+  counter and targets are shared, with the recovered end and winner rules.
+- **HUD.** One objective panel (the original's split objective overlay
+  layout was not traced): the objective, the shared clock, the shared
+  progress and each player's figure in place order ("P2 3 targets · P1 2
+  targets"), the leader's score and the newest sign with its player's
+  name. The target compass shows the untouched targets.
+- **Results.** "Congratulations, Player n!" for one winner, "Tie: Player 1
+  and Player 2!" for a shared win (the original's `002ddc50` line with the
+  seat names), then the objective and each player's place, figure and
+  score; Restart Objective and Continue as in one-player objectives.
+  Nothing is saved (no completion bits, Profile Points or records).
+- `#ui-state.ride.objective.split` reports the players, clock, which
+  player took each target, scores, outcomes, places and winners;
+  `.summary` the results text.
+
+Not built, with reasons: the original's split **Race event types** Duel
+(two players, no CPUs), Lap Attack (ghost) and Practice: the port has no
+single-player Duel/Lap Attack either, so they belong with that work.
+Championships stay single-player, as in the original.
+
+## Split audio (2026-10-29)
+
+Exact-build evidence: the renderer camera is the listener (`00215e30`);
+the positional-sound setup `001742f0` loops over the listener list (count
++100, entries +0x6c) and picks the nearest by a strict distance
+comparison before computing volume, pan and Doppler (AUDIO.md). One
+listener per view is the reading for split screen (each view's camera
+registers one); the engines' voice allocation per human in split was not
+traced.
+
+What the port does: players 2-4's engines and body impacts (the room
+riders' voices, `audio::remote`, up to six engine voices) are each placed
+for the **nearest** of every player's camera, so each player hears its
+own engine at its own view's distance and pan
+(`RemoteAudio::frame` takes the listener list; `spatial_audio::command`
+already implements `001742f0`'s choice). Player 1's own engine, the CPUs
+and venue sounds still use player 1's camera; one riding alone is
+unchanged (a single listener). Not done: player 1's own sound bank
+through the nearest view, and any split-specific mix level (none was
+found).
+
+Checks: `cargo test -p atv-core freestyle::split` (shared targets,
+end/winner rules, stunt time out, ties, combos), `cargo test -p atv-ui
+split_objectives_ride_through_the_players_page`, and
+`tools/test_engine_split_objectives.mjs` (content group: two players ride
+Prospect Springs' green targets to the end through the real trigger
+test, Restart Objective, player 2's engine voice live through the
+nearest-listener path (`#ui-state.ride.remoteVoices`), then a timed-out
+Score Stunt Points run). The audio check proves the voice plays; its
+gains per view were not measured in the browser.
+
 ## Measurements
 
 Host only (Apple Silicon Mac mini, headless Chromium on Metal, 1280x720,
@@ -564,8 +679,10 @@ lighter presets.
 - The Players page's ATV stats row, Profile Name panels and original
   panel art; the Force Start trigger.
 - Hall of Fame and profile credit for players 2-4 (needs a product
-  decision: whose profile); a per-player audio mix (not investigated).
-- Freestyle objectives and championships split screen (King of the
-  Hills, Treasure Hunt and Hockey are slice 3, Tag slice 4).
+  decision: whose profile); player 1's own and CPU/venue sounds from the
+  nearest view.
+- The original's split Race event types (Duel, Lap Attack, Practice).
+  Championships are single-player in the original ("Split objectives
+  and championships").
 - Online parity: every split-screen mode in relay rooms up to the room's
   player cap.

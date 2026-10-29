@@ -65,6 +65,11 @@ Open: the course
 unlock side effects for other modes (`00323640`), runtime confirmation of the
 round-to-course mapping, and whether a lesser trophy after a better one pays.
 
+Championships are single player: only Single Player opens the
+Championship page; Multiplayer → Split Screen offers Race, Freestyle
+(with Objectives) and Games (SPLIT_SCREEN.md "Split objectives and
+championships").
+
 ## Port
 
 - `atv_core::championship`: the six racing series whose courses the port
