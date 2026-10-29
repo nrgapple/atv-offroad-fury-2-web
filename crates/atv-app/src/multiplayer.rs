@@ -779,6 +779,12 @@ impl Net {
         if self.ready_sent && self.session.lobby.as_ref().is_some_and(|l| !l.public) {
             self.send_progress(Default::default());
             self.send_claim(Default::default());
+            // Room Freestyle reports and tables (research/MULTIPLAYER.md
+            // "Room Freestyle").
+            self.send_claim(atv_game::multiplayer::GameClaim {
+                kind: atv_game::multiplayer::claim_kind::FREESTYLE,
+                ..Default::default()
+            });
         }
     }
 
@@ -1068,6 +1074,9 @@ impl Net {
             started: lobby.started,
             races: room_races(&self.environment),
             games: room_games(&self.environment, &self.content()),
+            // Room Freestyle rides every venue a room can (research/
+            // MULTIPLAYER.md "Room Freestyle").
+            freestyle: !lobby.public,
             players: lobby
                 .players
                 .iter()

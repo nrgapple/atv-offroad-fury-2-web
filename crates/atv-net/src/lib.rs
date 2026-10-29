@@ -287,7 +287,14 @@ pub mod game_kind {
     pub const RACE: u8 = 3;
     pub const KING_OF_THE_HILLS: u8 = 4;
     pub const TREASURE_HUNT: u8 = 5;
+    /// Room Freestyle (research/MULTIPLAYER.md "Room Freestyle"): the host's
+    /// score table. `GameMarks` carries one mark per slot (slot, best
+    /// combo points), `stunts` each slot's session stunt score and `scores`
+    /// each slot's different combos; `venue` is unused (0).
+    pub const FREESTYLE: u8 = 6;
 }
+/// Most slots a room Freestyle table carries (one mark per room slot).
+pub const FREESTYLE_MARKS: usize = RACE_RIDERS;
 /// Room King of the Hills / Treasure Hunt phases (GameState::phase).
 pub mod game_phase {
     /// Riders load the course; `timer` is the start countdown.
@@ -304,10 +311,12 @@ pub mod game_phase {
 pub struct GameClaim {
     pub peer: PeerId,
     /// The game (GameState serial) it belongs to; 0 announces that the
-    /// sender understands room games 4 and 5.
+    /// sender understands room games 4 and 5 (kind 2: and room Freestyle).
     pub serial: u32,
     /// 0 a stunt-score report; 1 a King of the Hills capture of hill
-    /// `index` (its 1-based number) with `points`.
+    /// `index` (its 1-based number) with `points`; 2 a room Freestyle
+    /// report: `stunt` the session stunt score, `points` the best combo,
+    /// `index` the different combos landed.
     pub kind: u8,
     pub index: u16,
     pub points: f32,
@@ -317,12 +326,14 @@ pub struct GameClaim {
 pub mod claim_kind {
     pub const STUNT: u8 = 0;
     pub const CAPTURE: u8 = 1;
+    pub const FREESTYLE: u8 = 2;
 }
 impl GameClaim {
     pub fn validate(&self) -> Result<()> {
         if !valid_peer(self.peer)
-            || self.kind > claim_kind::CAPTURE
+            || self.kind > claim_kind::FREESTYLE
             || self.index as usize > MAX_MARKS
+            || (self.kind == claim_kind::FREESTYLE && self.points > self.stunt)
             || !self.points.is_finite()
             || !(0. ..=MAX_GAME_POINTS).contains(&self.points)
             || !self.stunt.is_finite()
@@ -422,7 +433,35 @@ impl GameState {
         {
             return Err(Error::InvalidValue);
         }
-        if !(1..=5).contains(&self.game)
+        // Room Freestyle: one mark per slot, owned by that slot (or none),
+        // its best combo no more than its session score.
+        if self.game == game_kind::FREESTYLE
+            && (self.phase > game_phase::OVER
+                || self.marks.venue != 0
+                || self.marks.players >> RACE_RIDERS != 0
+                || self.marks.marks.len() > FREESTYLE_MARKS
+                || self
+                    .marks
+                    .stunts
+                    .iter()
+                    .any(|s| !s.is_finite() || !(0. ..=MAX_GAME_POINTS).contains(s))
+                || self
+                    .marks
+                    .marks
+                    .iter()
+                    .enumerate()
+                    .any(|(slot, (owner, v))| {
+                        (*owner != NO_PEER && *owner as usize != slot)
+                            || !v.is_finite()
+                            || !(0. ..=MAX_GAME_POINTS).contains(v)
+                            || *v > self.marks.stunts[slot]
+                    })
+                || self.scores.iter().any(|&s| s as usize > MAX_MARKS)
+                || self.holder != NO_PEER)
+        {
+            return Err(Error::InvalidValue);
+        }
+        if !(1..=6).contains(&self.game)
             || self.phase > 8
             || self.banner > 16
             || (self.holder != NO_PEER && !valid_peer(self.holder))
