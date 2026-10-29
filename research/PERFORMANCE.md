@@ -765,6 +765,18 @@ list costs 7-30 ms per frame at x4 and opening the page 300 ms (course-photo
 blur filters and text rasterization at 3x), and the garage's slide-in
 150 ms; they are the next targets.
 
+### UI atlas at 3x (follow-up)
+
+At 3x the Select Track page's labels did not fit the UI's 2048x2048 text and
+shape atlas, so opening it rebuilt the atlas four times and re-rasterized
+about 1,000 labels (canvas `getImageData` readbacks, ~0.3 s unthrottled per
+open). The atlas now grows once to 4096x4096 (64 MiB, only when a frame
+overflows it; within the device's texture limit) instead of being rebuilt.
+Host Chromium x4, Select Track: labels rasterized per open about 1,000 -> 7;
+Back/open transition 12 -> 63 fps, engine callback p95 273 -> 18 ms, longest
+task 308 -> 231 ms (busy 0.96 -> 0.49). List scrolling (callback p50 7 ms,
+p95 30 ms at x4) and the garage slide-in (150 ms) remain.
+
 ### Terrain mip chains on the decode workers (follow-up)
 
 The terrain layers' box-filtered mip chains (`atv_core::texture::downsample`,
