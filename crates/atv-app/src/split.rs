@@ -344,12 +344,22 @@ impl Second {
             ride.paint(),
         )?;
         let mut riding = crate::riding::Riding::new(ride, venue);
-        // Player 2's own wheel dust, chunks and spray (startSimulation's
-        // wheel effects for its ATV); tire tracks and lingering dust stay
-        // player 1's (one pass each).
+        // The player's own wheel dust, chunks and spray (startSimulation's
+        // wheel effects for its ATV), and its own Enhanced/High tire
+        // tracks and lingering dust.
         if let Some(mut effects) =
             atv_game::wheel_effects::load(content, venue, selection.quad).await?
         {
+            // `?splitTrails=0` (host measurements) keeps them player 1's.
+            if !crate::url_flag("splitTrails=0") {
+                effects.set_lingering_dust(usize::from(graphics.dust), venue);
+                effects.set_tire_tracks(
+                    usize::from(graphics.tire_tracks.0),
+                    f32::from(graphics.tire_tracks.1),
+                    venue,
+                );
+                effects.set_track_zones(*riding.dirt.zones());
+            }
             effects.reset(&riding.ride)?;
             scene.set_second_wheel_effects(gpu, usize::from(player) - 2, Some(&effects));
             riding.effects = Some(effects);

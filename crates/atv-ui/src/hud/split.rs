@@ -131,12 +131,7 @@ impl Meter {
         let Some(overlays) = seat.layout.players.get(seat.player) else {
             return drawn;
         };
-        let m = Mapping::new(
-            part(seat.name, seat.player),
-            width,
-            height,
-            seat.top_inset,
-        );
+        let m = Mapping::new(part(seat.name, seat.player), width, height, seat.top_inset);
         let f = Logical {
             unit: m.unit,
             logical_width: m.width,
@@ -414,8 +409,14 @@ AlterJustification=2\nOverlay1Text1Justification=L\n\
         let layout = &layouts[&(1, "4Player")];
         assert_eq!(layout.players.len(), 4);
         assert_eq!(layout.players[1][0].at, [615., 23.]);
-        assert_eq!(layout.players[0][0].section.get("text1justification"), Some("L"));
-        assert_eq!(layout.players[1][0].section.get("text1justification"), Some("R"));
+        assert_eq!(
+            layout.players[0][0].section.get("text1justification"),
+            Some("L")
+        );
+        assert_eq!(
+            layout.players[1][0].section.get("text1justification"),
+            Some("R")
+        );
         assert_eq!(
             layout.players[2][0].section.text("text1text").as_deref(),
             Some("LAP TIME")

@@ -1554,9 +1554,11 @@ impl App {
             .iter_mut()
             .map(|second| {
                 if let Some(effects) = &mut second.riding.effects {
-                    ready
-                        .scene
-                        .accept_second_wheel_effects(usize::from(second.player) - 2, effects);
+                    ready.scene.accept_second_wheel_effects(
+                        &ready.gpu,
+                        usize::from(second.player) - 2,
+                        effects,
+                    );
                 }
                 second.riding.ride.frame().origin
             })
@@ -2418,6 +2420,10 @@ impl App {
                             serde_json::json!({
                                 "particles": f.particles.len(),
                                 "emitted": f.total_emitted.iter().sum::<u64>(),
+                                // Its own Enhanced/High tire tracks and
+                                // lingering dust.
+                                "tracks": e.tracks.as_ref().map(|(t, ..)| t.total),
+                                "dust": e.dust.as_ref().map(|d| d.emitter.emitted),
                             })
                         }),
                         "rumbles": s.riding.rumble.pulses,
@@ -3585,6 +3591,13 @@ impl App {
         if let Some(effects) = &mut riding.effects {
             effects.set_track_zones(*riding.dirt.zones());
         }
+        for second in &mut ready.split {
+            let r = &mut second.riding;
+            r.dirt.set_heavy(prefs.alpha("heavy-mud"));
+            if let Some(effects) = &mut r.effects {
+                effects.set_track_zones(*r.dirt.zones());
+            }
+        }
         let mode = atv_game::crash::CrashMode::parse(&prefs.crash_mode).unwrap_or_default();
         if riding
             .crashes
@@ -3626,6 +3639,18 @@ impl App {
                     &ready.venue,
                 );
                 effects.set_track_zones(*riding.dirt.zones());
+            }
+            // Split screen: players 2-4's own tracks and dust follow too.
+            for second in &mut ready.split {
+                if let Some(effects) = &mut second.riding.effects {
+                    effects.set_lingering_dust(usize::from(graphics.dust), &ready.venue);
+                    effects.set_tire_tracks(
+                        usize::from(graphics.tire_tracks.0),
+                        f32::from(graphics.tire_tracks.1),
+                        &ready.venue,
+                    );
+                    effects.set_track_zones(*second.riding.dirt.zones());
+                }
             }
             ready.scene.set_graphics(&ready.gpu, &ready.venue, graphics);
         }

@@ -161,7 +161,8 @@ pub fn split_layouts(all: &HashMap<String, Section>) -> HashMap<(u32, &'static s
                 .unwrap_or(0.) as usize;
             let mut layout = SplitLayout::default();
             for i in 1..=count {
-                let key = format!("overlayset{set}-screenlayout-{name}-overlay{i}").to_ascii_lowercase();
+                let key =
+                    format!("overlayset{set}-screenlayout-{name}-overlay{i}").to_ascii_lowercase();
                 let Some(overlay) = all.get(&key) else {
                     continue;
                 };
@@ -452,7 +453,9 @@ pub async fn load(
     // The split layouts' multiplayer objects (fonts and meter icons).
     for n in [19, 20, 21, 23, 24, 33] {
         if let Some(layout) = all.get(&format!("overlayobject-{n}")) {
-            opened.section_assets(layout, &mut fonts, &mut images).await?;
+            opened
+                .section_assets(layout, &mut fonts, &mut images)
+                .await?;
         }
     }
     let mut lamps = true;
