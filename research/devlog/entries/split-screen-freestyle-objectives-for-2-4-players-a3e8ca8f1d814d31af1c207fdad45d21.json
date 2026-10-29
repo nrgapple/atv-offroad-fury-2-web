@@ -1,0 +1,15 @@
+{
+  "id": "split-screen-freestyle-objectives-for-2-4-players-a3e8ca8f1d814d31af1c207fdad45d21",
+  "timestamp": "2026-10-29T11:25:53.376937+00:00",
+  "recorded_at": "2026-10-29T11:26:28.722147+00:00",
+  "kind": "build",
+  "title": "Split screen: Freestyle Objectives for 2\u20134 players",
+  "summary": "The original's split Freestyle Objectives mode is now playable for 2\u20134 players: split layout, per-player compass and target tags, shared clock, and round-robin results.",
+  "details": [
+    "Split Screen \u2192 Freestyle Objectives \u2192 course \u2192 objective launches a shared objective for all players; all share one clock and target set. Objectives go to the first player to touch them, combos count per player, and players rank by targets/combos collected then score. The run ends at the last target, the first player to complete the last combo, or time out; the leader and tied leaders win. Results show 'Congratulations, Player n!' or announce ties. Each player sees their own compass (per-player split layout) and target tags in their view. Sounds play from the nearest player's camera position, as the original picks the nearest listener. Restart Objective and Continue both work.",
+    "Verification: split-targets-start shows layout with 2 players each with compass and view of targets at course start (13 targets, time 2:00, p1 and p2 at 0). split-targets-results shows completion with both players' target counts (p1 7, p2 6) and a winning results dialog addressing Player 1 by name."
+  ],
+  "limitation": "Split Duel, Lap Attack, and Practice race types are not yet built. Compass scale on split is not traced. Per-view audio levels are not measured. CPU riders are silent in the port.",
+  "image": "/devlog-images/split-screen-freestyle-objectives-for-2-4-players-a3e8ca8f1d814d31af1c207fdad45d21.png",
+  "caption": "Results after completion: Player 1 wins with 7 targets vs Player 2's 6; split-screen results are not saved."
+}
