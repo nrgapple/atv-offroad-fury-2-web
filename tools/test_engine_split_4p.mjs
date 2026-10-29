@@ -13,6 +13,13 @@
 //   treasures in turn) to results listing all four;
 // - King of the Hills, Hockey and Tag for three players start with every
 //   player seated in its own quarter.
+// Fidelity follow-up (research/SPLIT_SCREEN.md "Per-player fidelity"):
+// - each player's HUD sits at the original Overlays.pb
+//   ScreenLayout-3Player/-4Player positions (`hud.split`: drawn objects and
+//   their anchors per player): the quarter speed meter (object 33), and in
+//   a race the multiplayer LAP TIME/LAP/SCORE/PLACE objects 19/20/21/41;
+// - players 2-4's own Gear and Paint rows dress and paint their riders;
+// - on High graphics players 2-4 lay their own tire tracks and dust.
 // Host Chromium evidence only.
 import assert from 'node:assert/strict';
 import { mkdir } from 'node:fs/promises';
@@ -38,6 +45,27 @@ async function choose(page, action) {
   await key(page, 'Enter');
 }
 const split = async page => (await read(page)).split;
+const seats = async page => {
+  const s = await read(page);
+  return (s.toolbar?.hud ?? s.hud)?.split ?? [];
+};
+const anchor = (seat, object) => seat.find(o => o.object === object);
+// Each player's drawn objects lie in its own quarter of a 1280x720 page
+// (anchors may sit up to 12 frame units over the divider: player 2's SCORE
+// is placed at 308,63 and drawn from its 24-unit text offset).
+function inQuarters(list, objects, players) {
+  const slack = 12 * 360 / 224 + 1;
+  assert.equal(list.length, players, JSON.stringify(list));
+  list.forEach((seat, i) => {
+    const [left, top] = [(i % 2) * 640, Math.floor(i / 2) * 360];
+    for (const object of objects) {
+      const at = anchor(seat, object);
+      assert.ok(at, `player ${i + 1} draws object ${object}: ${JSON.stringify(seat)}`);
+      assert.ok(at.x >= left - slack && at.x <= left + 640 + slack && at.y >= top && at.y <= top + 360,
+        `player ${i + 1} object ${object} in its quarter: ${JSON.stringify(at)}`);
+    }
+  });
+}
 const distance = (a, b) => Math.hypot(a[0] - b[0], a[2] - b[2]);
 async function shot(page, name) {
   if (!SHOTS) return;
@@ -54,7 +82,10 @@ async function open(browser, search, players) {
     localStorage.setItem('atv2-keyboard-help-seen-v1', '1');
     localStorage.setItem('atv-player-selection', JSON.stringify({ quadId: 1, riderId: 0 }));
     localStorage.removeItem('atv-split-screen');
-    for (const n of [2, 3, 4]) localStorage.removeItem(`atv-split-player${n}`);
+    for (const n of [2, 3, 4]) {
+      localStorage.removeItem(`atv-split-player${n}`);
+      localStorage.removeItem(`atv-split-look${n}`);
+    }
     if (players) localStorage.setItem('atv-split-players', String(players));
     else localStorage.removeItem('atv-split-players');
     const make = index => {
@@ -90,7 +121,7 @@ const browser = await launch({ args: ['--autoplay-policy=no-user-gesture-require
 try {
   // The Players row, then Freestyle for four players.
   {
-    const { page, errors } = await open(browser, '', 0);
+    const { page, errors } = await open(browser, '&graphics=high', 0);
     let f = (await read(page)).front;
     assert.ok(f.choices.includes('splitlayout') && !f.choices.includes('split3quad'), JSON.stringify(f.choices));
     await choose(page, 'splitplayers');
@@ -100,11 +131,22 @@ try {
       JSON.stringify(f.choices));
     await choose(page, 'splitplayers');
     f = (await read(page)).front;
-    assert.ok(f.choices.includes('split4quad') && f.choices.length === 10, JSON.stringify(f.choices));
+    assert.ok(f.choices.includes('split4quad') && f.choices.length === 16, JSON.stringify(f.choices));
     assert.equal(await page.evaluate(() => localStorage.getItem('atv-split-players')), '4');
     // Player 4: the female rider.
     await choose(page, 'split4rider');
     assert.equal((await page.evaluate(() => localStorage.getItem('atv-split-player4'))).split(',')[1], '1');
+    // Players 2 and 4: their own paint (Red, Orange) and player 3 its own
+    // jersey line, saved.
+    await choose(page, 'split2paint');
+    await choose(page, 'split4paint');
+    await choose(page, 'split4paint');
+    await choose(page, 'split3gear');
+    f = (await read(page)).front;
+    assert.ok(f.labels[f.choices.indexOf('split2paint')].endsWith('Paint: Red'), JSON.stringify(f.labels));
+    assert.ok(f.labels[f.choices.indexOf('split4paint')].endsWith('Paint: Orange'), JSON.stringify(f.labels));
+    const look3 = await page.evaluate(() => localStorage.getItem('atv-split-look3'));
+    assert.equal((await page.evaluate(() => localStorage.getItem('atv-split-look4'))).split(',')[7], '2');
     await choose(page, 'splitfree');
     await onFront(page, 'tracks');
     await key(page, 'Enter');
@@ -121,6 +163,18 @@ try {
       JSON.stringify(s.views));
     assert.deepEqual(s.pads, [true, true, true, true]);
     assert.equal(s.others[2].rider, 1, 'player 4 rides its own rider choice');
+    // Each player's own gear and paint: player 1 the Garage's original.
+    assert.deepEqual(s.others.map(o => o.paint), [1, 0, 2], JSON.stringify(s.others.map(o => o.paint)));
+    assert.equal(s.others[0].paintMode[0], 1, 'player 2 is repainted');
+    assert.deepEqual(s.others[1].gear, look3.split(',').slice(0, 7).map(Number), `player 3 gear ${look3}`);
+    // The original ScreenLayout-4Player quarter speed meters (object 33 at
+    // 20,155 / 597,155 / 20,372 / 597,372 in the Stunt set's 285/597
+    // columns): each player's in its own quarter, players 2 and 4 at the
+    // right edge, players 3 and 4 in the bottom row.
+    let hud = await seats(page);
+    inQuarters(hud, [33], 4);
+    const meters = hud.map(seat => anchor(seat, 33));
+    assert.ok(meters[1].x > 1200 && meters[3].x > 1200 && meters[2].y > 560, JSON.stringify(meters));
     // Four distinct starts, one chase camera behind each rider.
     const origins = [s.player1.origin, ...s.others.map(o => o.origin)];
     for (let i = 0; i < 4; i++) for (let j = i + 1; j < 4; j++) {
@@ -140,8 +194,13 @@ try {
     await wait(page, () => JSON.parse(document.querySelector('#ui-state').textContent).split.others[2].speed > 10, null, 30000);
     s = await split(page);
     assert.ok(s.others[2].throttle > 0.9 && s.others[1].throttle === 0, JSON.stringify(s.others));
-    // Player 3's dust, and a terrain patch per player (merged while close).
+    // Player 3's dust, player 4's own tire tracks and lingering dust (High
+    // graphics), and a terrain patch per player (merged while close).
     assert.ok(s.others[1].effects && s.others[1].effects.emitted > 0, JSON.stringify(s.others[1].effects));
+    await wait(page, () => (JSON.parse(document.querySelector('#ui-state').textContent).split.others[2].effects?.tracks ?? 0) > 0,
+      null, 30000);
+    s = await split(page);
+    assert.ok(s.others[2].effects.tracks > 0 && s.others[2].effects.dust !== null, JSON.stringify(s.others[2].effects));
     assert.ok(s.terrainPatches >= 1 && s.terrainPatches <= 4, `terrain patches ${s.terrainPatches}`);
     await nextFrames(page, 30);
     await shot(page, 'split-4p-freestyle');
@@ -166,6 +225,15 @@ try {
     assert.deepEqual(names.filter(n => n.startsWith('Player')), ['Player 2', 'Player 3', 'Player 4']);
     assert.equal(s.player1.race.linkedHumans, 3);
     await nextFrames(page, 60);
+    // The race's ScreenLayout-4Player objects: LAP TIME 19, LAP 20, SCORE
+    // 21, PLACE 41 and the quarter speed meter 33, each in its quarter;
+    // player 1's LAP TIME left-aligned at 20,23 and player 2's at 615,23.
+    const hud = await seats(page);
+    inQuarters(hud, [19, 20, 21, 33, 41], 4);
+    const unit = 360 / 224;
+    assert.ok(Math.abs(anchor(hud[0], 19).x - 20 * unit) < 2, JSON.stringify(anchor(hud[0], 19)));
+    assert.ok(Math.abs(anchor(hud[1], 19).x - (1280 - 25 * unit)) < 2, JSON.stringify(anchor(hud[1], 19)));
+    assert.ok(Math.abs(anchor(hud[2], 19).y - (360 + 7 * unit)) < 2, JSON.stringify(anchor(hud[2], 19)));
     await shot(page, 'split-4p-race');
     await wait(page, () => {
       const s = JSON.parse(document.querySelector('#ui-state').textContent).split;
@@ -251,6 +319,9 @@ try {
     assert.equal(s.split.views.length, 3);
     assert.equal(s.split.ridersShown, 2, `${name}: players 2 and 3 are drawn`);
     assert.ok(check(s), `${name} seats three players: ${JSON.stringify(s.ride.game ?? s.ride.hockey ?? s.ride.tag)}`);
+    // Three seats of the ScreenLayout-3Player layout and none in the
+    // fourth quarter.
+    assert.equal((s.toolbar?.hud ?? s.hud)?.split?.length, 3, JSON.stringify((s.toolbar?.hud ?? s.hud)?.split));
     await nextFrames(page, 60);
     await shot(page, `split-3p-${name.toLowerCase().replaceAll(' ', '-')}`);
     assertNoErrors(errors);

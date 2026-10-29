@@ -1050,10 +1050,16 @@ pub fn layout(request: Request) -> Result<Frame> {
             let seats = [
                 "split2quad",
                 "split2rider",
+                "split2gear",
+                "split2paint",
                 "split3quad",
                 "split3rider",
+                "split3gear",
+                "split3paint",
                 "split4quad",
                 "split4rider",
+                "split4gear",
+                "split4paint",
             ];
             let mut rows: Vec<(&str, &str)> = vec![
                 ("Race", "splitrace"),

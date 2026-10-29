@@ -218,6 +218,8 @@ pub struct Request {
     pub layout: Layout,
     pub players: u8,
     pub seconds: [Option<atv_game::ride::Selection>; 3],
+    /// Players 2-4's own gear and paint (none dresses player 1's).
+    pub looks: [Option<atv_game::ride::gear::Appearance>; 3],
 }
 
 impl Request {
@@ -273,14 +275,21 @@ impl Second {
         (selection, appearance, race, crash, graphics): Shared,
     ) -> Result<Self, String> {
         let layout = request.view_layout();
-        // The player's own Garage ATV and rider; gear stays player 1's
-        // (the Garage gear is the profile's).
+        // The player's own Garage ATV, rider, gear and paint (the Split
+        // Screen page's rows; a link without them rides player 1's).
+        let seat = usize::from(player.saturating_sub(2));
         let selection = request
             .seconds
-            .get(usize::from(player.saturating_sub(2)))
+            .get(seat)
             .copied()
             .flatten()
             .unwrap_or(selection);
+        let appearance = request
+            .looks
+            .get(seat)
+            .copied()
+            .flatten()
+            .unwrap_or(appearance);
         first.ride.set_camera_layout(layout.camera_layout())?;
         // Player 2 races its own copy of the course with no CPUs: player
         // 1's race holds the field, and the standings merge both.
@@ -335,12 +344,22 @@ impl Second {
             ride.paint(),
         )?;
         let mut riding = crate::riding::Riding::new(ride, venue);
-        // Player 2's own wheel dust, chunks and spray (startSimulation's
-        // wheel effects for its ATV); tire tracks and lingering dust stay
-        // player 1's (one pass each).
+        // The player's own wheel dust, chunks and spray (startSimulation's
+        // wheel effects for its ATV), and its own Enhanced/High tire
+        // tracks and lingering dust.
         if let Some(mut effects) =
             atv_game::wheel_effects::load(content, venue, selection.quad).await?
         {
+            // `?splitTrails=0` (host measurements) keeps them player 1's.
+            if !crate::url_flag("splitTrails=0") {
+                effects.set_lingering_dust(usize::from(graphics.dust), venue);
+                effects.set_tire_tracks(
+                    usize::from(graphics.tire_tracks.0),
+                    f32::from(graphics.tire_tracks.1),
+                    venue,
+                );
+                effects.set_track_zones(*riding.dirt.zones());
+            }
             effects.reset(&riding.ride)?;
             scene.set_second_wheel_effects(gpu, usize::from(player) - 2, Some(&effects));
             riding.effects = Some(effects);
@@ -379,7 +398,20 @@ impl Second {
     #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
     fn resume_part(&self) -> String {
         let s = self.riding.ride.selection();
-        format!("split{}={}.{}", self.player, s.quad, s.rider)
+        let look = self.riding.ride.appearance();
+        let look: Vec<_> = look
+            .gear
+            .iter()
+            .chain([&look.paint])
+            .map(u8::to_string)
+            .collect();
+        format!(
+            "split{n}={}.{}&look{n}={}",
+            s.quad,
+            s.rider,
+            look.join("."),
+            n = self.player
+        )
     }
 
     /// Uploads player 2's rider into a rebuilt scene (a restored context).
