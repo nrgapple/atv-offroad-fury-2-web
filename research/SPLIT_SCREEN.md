@@ -316,12 +316,11 @@ What the port does:
   four Tag records). Each view gets its own game panel, compass and world
   tags; the results list every player.
 
-Port choices and gaps: the empty third-player quarter is dark; per-view
-HUD elements reuse the port's single-screen layout scaled to the quarter
-(not yet the `ScreenLayout-4Player` positions); player 3/4 gear, paint,
-Hall of Fame and profile credit are player 1's; tire tracks and lingering
-dust stay player 1's; the ControllerSelect claiming page is still not
-reproduced (players follow controller connection order).
+Port choices and gaps: the empty third-player quarter is dark; Hall of
+Fame and profile credit are player 1's; the ControllerSelect claiming page
+is still not reproduced (players follow controller connection order). The
+`ScreenLayout` HUD positions, per-seat gear/paint and per-player tire
+tracks and dust followed (see "Per-player fidelity").
 
 Checks: `split.rs` unit tests (quarter rects and order, quarter camera
 layout, player names and scene slots, Freeride starts for players 3/4, a
@@ -334,6 +333,78 @@ race with no CPUs to results listing all four, and four-player Treasure
 Hunt to results listing all four; three-player King of the Hills, Hockey
 and Tag each start in quarter views with players 2 and 3 drawn
 (`split.ridersShown`).
+
+## Per-player fidelity (2026-10-29)
+
+Exact-build evidence (USA v2.00 `SCUS_972.11`, `pause/Overlays.pb`):
+
+- **Layouts.** Every overlay set heads its layouts with
+  `NumOverlays-ScreenLayout-1Player`, `-2Player-Horiz`, `-2Player-Vertical`,
+  `-3Player` and `-4Player` (the executable's format strings
+  `%s-ScreenLayout-<layout>` / `NumOverlays-ScreenLayout-<layout>`), and
+  `002edf00` builds each `OverlaySet<n>-ScreenLayout-<layout>-Overlay<i>`
+  from its `OverlayObject`, `NumOverlay` and `Overlay1`..`Overlay4`
+  positions. Split layouts use multiplayer objects: 19 lap time, 20 lap,
+  21 score, 23 infotext, 24 stunt text (three and four players; two use
+  12), 33 speed meter (three and four players; two use 5), 35 signage
+  (`SignageName=Multi-`, the `Multi-Sign-N` sections), 41 place, 31 compass,
+  38/39 the horizontal and vertical separators, and the single overlays 10
+  (321 lights at 256,208) and 13 (radar). `AlterJustification=2` with
+  `Overlay<k>Text<j>Justification` re-justifies the left-hand players' text
+  (player 1 and 3 LAP TIME left-aligned at 20,23 / 20,231, player 2 and 4
+  right-aligned at 615). Object 33 has `NumText=0`: three- and four-player
+  speed meters show the preload/speed bar without the digits. Positions
+  differ by set: the Race set puts the quarter meter at 20,155 (left), the
+  Stunt and game sets at 285,155 (right side of the quarter).
+- **CHEESY GPS.** Object 32 (`Type=CheesyGPS`, string at `0x43c168`) is
+  not a map. `002edf00` maps the type to overlay kind 15 and drops it
+  (count 0) when a global flag is set; its `Text1Value=25` is the value
+  formatter `002dce10`, which prints `"%4.2f, %4.2f, %4.2f"` from the
+  player's position (+0x720..0x728). It is a debug coordinate readout at
+  10,10, listed in the one-player layout too, so it does not fill the
+  three-player layout's empty quarter. The three-player layout lists no
+  overlay for that quarter (only the full-length separators 38 and 39).
+  What the renderer draws there was not traced; the port keeps it dark.
+
+What the port does:
+
+- **HUD positions.** `atv_ui::hud::assets::split_layouts` reads the split
+  layouts of sets 1 (Race), 2 (Stunt: Freestyle), 6-9 (Treasure Hunt, King
+  of the Hills, Tag, Hockey) and 11 (Enduro) from the original Overlays.pb,
+  merging each overlay's texts and per-player justification overrides into
+  its object section. `Meter::paint_seat` (`hud/split.rs`) draws each
+  player's speed meter, stunt text, compass and, in races, LAP TIME, LAP,
+  SCORE, PLACE, infotext and Multi-Sign signs at its layout position. Each
+  player's part of the 640x448 frame (a half or a quarter) maps onto its
+  view scaled by height; on wider views left-third items keep the left
+  edge, right-third items the right edge and the middle stays centred (the
+  single-screen rule), and the top-right view's upper right items sit
+  under the port's toolbar. The 321 lights draw once, centred on the
+  whole frame (object 10). Two players use the `2Player-Horiz`/`-Vertical`
+  layouts the same way. `#ui-state.hud.split` lists each player's drawn
+  objects and anchors.
+- **Gear and paint per seat.** The Split Screen page adds **Player N
+  Gear** (Original and each owned jersey line of the Garage catalog, with
+  its matching sleeves and pants) and **Player N Paint** (the Garage's
+  paints) after each player's ATV and Rider rows, saved as
+  `atv-split-look<n>` ("g0,..,g6,paint"). Each seat's ride is dressed and
+  its scene slot painted with its own look. `?look2=..&look4=` (web) or
+  `FURY_LOOK2`-`4` (desktop, eight dot-separated numbers) set it for a
+  direct split ride; the resume link carries it. A port adaptation: the
+  original's per-player Garage pages were not traced, and the gloves,
+  boots, helmet and goggles stay Original for players 2-4.
+- **Tire tracks and lingering dust per player.** On Enhanced/High each of
+  players 2-4 gets its own track builder and dust emitter (and its own
+  Heavy mud zones), uploaded to its own `Trails` passes in the renderer and
+  drawn in every view after player 1's. `?splitTrails=0` keeps them player
+  1's (host measurements).
+
+Not built: records/Hall of Fame and profile credit for players 2-4 need a
+product decision (whose profile they credit). The split radar (object 13,
+a single overlay at 251,159 for three and four players) stays hidden, and
+the Multi-Sign animation uses the single-player sign timing. Object 24's
+own stunt-text scale clock (ScaleSize 1.5) is not applied; the stunt text
+keeps object 12's animation values.
 
 ## Measurements
 
@@ -372,10 +443,10 @@ meaningfully worse than four). Host only; phones were not measured.
 
 ## Left for later slices
 
-- The ControllerSelect claiming page; the `ScreenLayout-3Player`/
-  `-4Player` HUD positions (the port scales its single-screen HUD).
-- Player 2's own gear and paint, Hall of Fame and profile credit; its tire
-  tracks and lingering dust; a per-player audio mix.
+- The ControllerSelect claiming page; the split radar (object 13) and
+  object 24's stunt-text clock.
+- Hall of Fame and profile credit for players 2-4 (needs a product
+  decision: whose profile); a per-player audio mix.
 - Freestyle objectives and championships split screen (King of the
   Hills, Treasure Hunt and Hockey are slice 3, Tag slice 4).
 - Online parity: every split-screen mode in relay rooms up to the room's

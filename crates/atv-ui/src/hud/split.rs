@@ -150,7 +150,13 @@ impl Meter {
                 }
                 31 => match frame.compass.filter(|_| self.has_compass()) {
                     Some(compass) if frame.race.is_none() => {
-                        self.draw_compass(list, compass, None, at, m.unit);
+                        // The 128-unit face at its layout position would
+                        // cross a half or quarter's edge (60,177 in a
+                        // 224-unit quarter): it draws at the part's share
+                        // of the frame height (an assumption; the
+                        // compass's split scale was not traced).
+                        let k = m.part[3] / 448.;
+                        self.draw_compass(list, compass, None, [at[0] / k, at[1] / k], m.unit * k);
                         true
                     }
                     _ => false,
