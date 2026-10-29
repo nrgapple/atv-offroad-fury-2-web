@@ -286,16 +286,17 @@ impl GameSession {
                 }
             }
             // Leavers drop out of the game (their hills free up).
-            for slot in 0..SLOTS {
-                if room.present[slot] && !present[slot] {
-                    if let Some(session) = &mut self.session {
-                        session.rules.release(slot);
-                    }
+            for (slot, (was, now)) in room.present.iter().zip(present).enumerate() {
+                if *was
+                    && !now
+                    && let Some(session) = &mut self.session
+                {
+                    session.rules.release(slot);
                 }
             }
             room.present = present;
-            for slot in 0..SLOTS {
-                room.seen[slot] |= present[slot];
+            for (seen, now) in room.seen.iter_mut().zip(present) {
+                *seen |= now;
             }
             // Leavers stop playing; before GO everyone present plays.
             let started = self.session.as_ref().is_some_and(|s| s.started);
@@ -489,13 +490,13 @@ impl GameSession {
         }
         stunts[me] = self.committed[me];
         room.stunts[me] = self.committed[me];
-        for slot in 0..SLOTS {
+        for (slot, rider) in riders.iter_mut().enumerate() {
             if slot != me
                 && room.present[slot]
                 && room.playing(slot)
                 && let Some((position, _)) = net.rider_motion(slot as u8)
             {
-                riders[slot].position = position;
+                rider.position = position;
             }
         }
         session.tick(dt, &riders, &stunts);
