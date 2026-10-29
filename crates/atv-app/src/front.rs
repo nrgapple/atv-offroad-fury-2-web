@@ -64,7 +64,24 @@ struct Preview {
     /// The menu rider's idle playlist (animated) and when it last posed.
     animated: bool,
     posed: f64,
+    /// Turntable: the current turn rate (rad/s) — a drag's fling easing
+    /// back to the slow showroom spin — and when a drag last moved it.
+    spin: f32,
+    dragged: f64,
 }
+
+/// The showroom turntable's rate (rad/s): one turn in about 14 s.
+const TURNTABLE: f32 = 0.45;
+/// How quickly a fling eases back to the turntable rate (time constant, s).
+const SPIN_EASE: f32 = 0.6;
+/// The fastest fling (rad/s).
+const SPIN_MAX: f32 = 12.;
+/// Left/Right on a focused preview hold the turntable this long (ms).
+const SPIN_HOLD: f64 = 2500.;
+/// The wordmark's sway: amplitude (degrees) and period (s) of the yaw and
+/// the pitch, out of step so the motion does not repeat visibly.
+const SWAY_YAW: (f32, f64) = (7., 7.);
+const SWAY_PITCH: (f32, f64) = (3., 5.3);
 
 pub struct Front {
     fonts: Fonts,
@@ -144,6 +161,12 @@ pub struct Front {
     /// The coin chip's count towards a changed Profile Points total.
     coins: CoinCount,
     toast: Toast,
+    /// The turntable's clock, and Left/Right's hold on it (ms).
+    spun_at: f64,
+    spin_hold: f64,
+    /// When the wordmark began swaying (None: still), and its angles.
+    sway_since: Option<f64>,
+    tilt: [f32; 2],
 }
 
 /// frontend.js `Math.floor(Math.random() * tips.length)`.
@@ -235,6 +258,10 @@ impl Front {
             page_cache: None,
             coins: CoinCount::default(),
             toast: Toast::default(),
+            spun_at: 0.,
+            spin_hold: 0.,
+            sway_since: None,
+            tilt: [0.; 2],
         };
         front.state.refresh(&view);
         front
@@ -388,10 +415,77 @@ impl Front {
             || self.indicating()
             || self.coins.counting(self.now())
             || self.toast.showing(self.now())
+            || self.spinning()
+            || self.swaying()
             || self.menu.is_none()
                 && (matches!(self.state.page.as_str(), "title" | "loading")
                     || (matches!(self.state.page.as_str(), "garage" | "gear")
                         && self.previews[1].as_ref().is_some_and(|p| p.animated)))
+    }
+
+    /// A preview turns on its own: the turntable (unless reduced motion),
+    /// or a fling still settling.
+    fn spinning(&self) -> bool {
+        let reduced = crate::reduced_motion();
+        self.menu.is_none()
+            && self.previews.iter().enumerate().any(|(slot, p)| {
+                p.as_ref().is_some_and(|p| {
+                    p.target.is_some() && (p.spin.abs() > 1e-3 || (slot == 0 && !reduced))
+                })
+            })
+    }
+
+    /// The page shows the swaying wordmark.
+    fn swaying(&self) -> bool {
+        self.menu.is_none()
+            && !crate::reduced_motion()
+            && (self.state.page == "title" || front::stage_page(&self.state.page))
+    }
+
+    /// Advances the turntable: the vehicle spins slowly on its own; a drag
+    /// turns it directly and lets go with its speed, which eases back to
+    /// the turntable's. Reduced motion keeps both still (a drag still turns).
+    fn spin_previews(&mut self, now: f64) {
+        let dt = ((now - self.spun_at) / 1000.).clamp(0., 0.1) as f32;
+        self.spun_at = now;
+        let reduced = crate::reduced_motion();
+        let held = now < self.spin_hold;
+        let ease = 1. - atv_core::math::Det::exp_d(-dt / SPIN_EASE);
+        for (slot, preview) in self.previews.iter_mut().enumerate() {
+            let Some(p) = preview else { continue };
+            if self.turning.is_some_and(|(_, s, _)| s == slot) {
+                continue;
+            }
+            if reduced {
+                p.spin = 0.;
+                continue;
+            }
+            let cruise = if slot == 0 && !held { TURNTABLE } else { 0. };
+            p.spin += (cruise - p.spin) * ease;
+            if (p.spin - cruise).abs() < 1e-3 {
+                p.spin = cruise;
+            }
+            if p.spin != 0. && dt > 0. {
+                p.model.yaw = (p.model.yaw + p.spin * dt) % std::f32::consts::TAU;
+                p.dirty = true;
+            }
+        }
+    }
+
+    /// The wordmark's sway angles (yaw, pitch radians), easing in from rest.
+    fn sway(&mut self, now: f64) -> [f32; 2] {
+        if !self.swaying() {
+            self.sway_since = None;
+            return [0.; 2];
+        }
+        let t = (now - *self.sway_since.get_or_insert(now)) / 1000.;
+        let wave = |(degrees, period): (f32, f64)| {
+            let phase = (t / period).fract() as f32 * std::f32::consts::TAU;
+            degrees.to_radians() * atv_core::math::Det::sin_d(phase)
+        };
+        // A second's ease-in so the logo does not jump when a page opens.
+        let ease = (t as f32).min(1.);
+        [wave(SWAY_YAW) * ease, wave(SWAY_PITCH) * ease]
     }
 
     /// A scroll indicator is showing or fading out.
@@ -544,8 +638,11 @@ impl Front {
                 if let Some(preview) = &mut self.previews[slot] {
                     // Dragging right turns by -dx here; ArrowRight matches it.
                     preview.model.yaw -= step;
+                    preview.spin = 0.;
                     preview.dirty = true;
                 }
+                // The turntable waits while the keys turn it.
+                self.spin_hold = self.now() + SPIN_HOLD;
                 return None;
             }
         }
@@ -608,6 +705,12 @@ impl Front {
             .map(|(_, id)| usize::from(*id == MODEL_RIDER));
         self.turning = slot.map(|slot| (pointer, slot, x));
         self.preview_focus = slot;
+        // Touching the preview stops it, as a hand on a turntable.
+        let now = self.now();
+        if let Some(p) = slot.and_then(|slot| self.previews[slot].as_mut()) {
+            p.spin = 0.;
+            p.dragged = now;
+        }
     }
 
     pub fn moved(&mut self, pointer: u64, x: f32, y: f32, mouse: bool) {
@@ -625,17 +728,34 @@ impl Front {
         if let Some((p, slot, last)) = self.turning
             && p == pointer
         {
-            if let Some(preview) = &mut self.previews[slot] {
-                preview.model.yaw -= (x - last) * 0.015;
+            let now = self.now();
+            if let Some(preview) = &mut self.previews[slot]
+                && x != last
+            {
+                let turn = -(x - last) * 0.015;
+                preview.model.yaw += turn;
                 preview.dirty = true;
+                // The drag's speed, smoothed over the last few moves.
+                let dt = ((now - preview.dragged) / 1000.).max(1. / 240.) as f32;
+                let rate = (turn / dt).clamp(-SPIN_MAX, SPIN_MAX);
+                preview.spin = preview.spin * 0.4 + rate * 0.6;
+                preview.dragged = now;
             }
             self.turning = Some((p, slot, x));
         }
     }
 
     pub fn release(&mut self, pointer: u64, x: f32, y: f32) -> Option<Event> {
-        if self.turning.is_some_and(|(p, ..)| p == pointer) {
+        if let Some((_, slot, _)) = self.turning.filter(|(p, ..)| *p == pointer) {
             self.turning = None;
+            // A finger held still before letting go leaves no fling.
+            let now = self.now();
+            if let Some(p) = &mut self.previews[slot]
+                && (now - p.dragged > 100. || crate::reduced_motion())
+            {
+                p.spin = 0.;
+            }
+            self.spun_at = now;
         }
         if self.menu.is_some() {
             let event = self
@@ -1009,6 +1129,11 @@ impl Front {
         let photos = &art.photos;
         let photo = |id: &str| photos.get(id).map(|(thumb, _)| *thumb);
         self.update_previews(device, queue, now);
+        self.spin_previews(now);
+        self.tilt = self.sway(now);
+        if let Some(renderer) = &self.renderer {
+            renderer.set_tilt(queue, self.tilt[0], self.tilt[1]);
+        }
         let mut screen = self.state.screen(
             art.backdrop,
             art.backdrop_track,
@@ -1073,7 +1198,7 @@ impl Front {
             screen.rows_scroll = self.state.rows.offset();
             self.render_page(&screen);
         }
-        // Preview targets follow their slots (canvas size x min(DPR, 2)).
+        // Preview targets follow their slots at the surface's density.
         if self.fit_previews(device) {
             screen.quad_model = image(0, &self.previews[0]);
             screen.rider_model = image(1, &self.previews[1]);
@@ -1545,6 +1670,14 @@ impl Front {
     fn set_preview(&mut self, slot: usize, key: String, model: ModelPreview, animated: bool) {
         // Keep the old image until the new one is sized and drawn.
         let target = self.previews[slot].take().and_then(|p| p.target);
+        // A new vehicle keeps the turntable's angle and pace.
+        let (yaw, spin) = self.previews[slot]
+            .as_ref()
+            .map_or((model.yaw, 0.), |p| (p.model.yaw, p.spin));
+        let mut model = model;
+        if slot == 0 {
+            model.yaw = yaw;
+        }
         self.previews[slot] = Some(Preview {
             key,
             model,
@@ -1552,6 +1685,8 @@ impl Front {
             dirty: true,
             animated,
             posed: 0.,
+            spin,
+            dragged: 0.,
         });
     }
 
@@ -1561,7 +1696,9 @@ impl Front {
         let Some(renderer) = &mut self.renderer else {
             return false;
         };
-        let scale = self.view.scale.min(2.);
+        // The browser's ModelView capped its canvas at 2x; the frontend now
+        // draws at the display's full density, so the previews do too.
+        let scale = self.view.scale;
         let mut changed = false;
         for (slot, id) in [(0, MODEL_QUAD), (1, MODEL_RIDER)] {
             let Some(preview) = &mut self.previews[slot] else {
@@ -1683,6 +1820,31 @@ impl Front {
             })).collect::<Vec<_>>(),
         });
         out["kinetic"] = kinetic;
+        // Turntable rates and preview images' pixel sizes (they follow the
+        // surface density); the UI's backing [width, height, scale]; the
+        // wordmark's sway [yaw, pitch].
+        out["modelSpin"] = serde_json::json!(
+            self.previews
+                .iter()
+                .map(|p| p.as_ref().map(|p| p.spin))
+                .collect::<Vec<_>>()
+        );
+        out["modelTargets"] = serde_json::json!(
+            self.previews
+                .iter()
+                .map(|p| p.as_ref().and_then(|p| p.target).map(|(_, w, h)| [w, h]))
+                .collect::<Vec<_>>()
+        );
+        out["surface"] =
+            serde_json::json!([self.upload_size.0, self.upload_size.1, self.upload_size.2]);
+        out["tilt"] = serde_json::json!(self.tilt);
+        // The last frame drew its still parts from the UI layer cache.
+        out["layerCached"] = self
+            .renderer
+            .as_ref()
+            .is_some_and(|r| r.layer_cached())
+            .into();
+        out["layerPlan"] = serde_json::json!(self.renderer.as_ref().map(|r| r.layer_plan));
         // The status bar (front/status_bar.rs): numbers, sync and popover.
         out["status"] = match self.state.status_bar().filter(|_| self.menu.is_none()) {
             Some(b) => serde_json::json!({

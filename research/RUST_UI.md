@@ -738,3 +738,65 @@ the first. Evidence: `tools/test_engine_menu_music.mjs` (host Chromium: silent b
 a gesture, then the tune loaded and the output peaking at 0.24; Music off: silent);
 `test_engine_front` passes (ride and Quit to Main Menu).
 
+
+## Crisp menus, turntable and wordmark sway (2026-10-29)
+
+**Blur cause.** The whole surface (3D scene and UI) was capped at the ride's
+adaptive render ratio, 1.5 backing pixels per CSS pixel (`RENDER_RATIO`,
+game.js renderScale), including the menus, which draw no 3D scene. On a DPR 3
+phone every menu pixel was upscaled 2x by the compositor; the 3D previews were
+also capped at 2x. Text was already rasterized at the surface scale, so it
+inherited the softness. Desktop Metal/DX12 and Android Vulkan builds applied
+the same cap.
+
+**Change.** While the frontend owns the screen (`App::ready` is None) the
+surface uses the display's full density up to 3x (`MENU_RATIO`); a ride
+switches back to `RENDER_RATIO` before its first frame (`sync_surface_density`).
+Layout stays in CSS pixels; text, icons, the wordmark and the previews
+rasterize at the new scale. The frontend's device no longer keeps the 3D
+scene's depth and 4x multisample targets (`Gpu::set_scene_targets`): at
+1170x2532 they would be ~95 MB the menus never use. The ride's HUD and Pause
+menu still draw at the ride's render ratio (one surface; a separate native UI
+target over a reduced scene would cost a full-screen upscale each ride frame).
+
+**Turntable.** The menu vehicle preview (every stage page, the garage, the
+Profile Store pages) turns at 0.45 rad/s (one turn in ~14 s). Touching it stops
+it; a drag turns it directly and lets go with its speed (up to 12 rad/s),
+which eases back to the turntable rate (0.6 s time constant). Left/Right on a
+focused preview hold the turntable for 2.5 s. The garage rider keeps its idle
+animation and turns only when dragged (with the same fling).
+
+**Wordmark sway.** The Fury Remastered wordmark on the title and the stage
+pages tilts in 3D: yaw ±7° over 7 s and pitch ±3° over 5.3 s, through a 900 px
+perspective, easing in over the first second. `El::tilt` emits
+`Item::PushTilt`/`PopTilt`; the UI shader projects tilted images (and their
+drop shadows) with a perspective-correct w; the angles live in the UI globals
+uniform (`Renderer::set_tilt`), so the display list does not change while it
+sways. prefers-reduced-motion keeps both still and the idle menu draws nothing
+again (a drag still turns the preview, without a fling).
+
+**Layer cache.** At 3x a stage page's boxes, gradients and shadows cost too
+much to redraw every frame (host Chromium: main menu 21 fps with the
+turntable). The UI renderer now marks instances that change between prepares
+(tilted images, `add_target` images such as previews, and anything drawn
+later that overlaps them), renders the rest once into a layer texture when
+the list holds still, and each frame draws the layer plus the moving
+instances. A changed list draws directly (slides do not pay for the cache).
+
+Measured (host Chromium/ANGLE Metal, Apple M4, 390x844 DPR 3, 4x CPU
+throttle, rAF intervals over 3 s; physical phones not measured):
+
+| Page | Before (1.5x surface) | After (3x surface) |
+| --- | --- | --- |
+| Main menu, idle | static (0 frames drawn) | turntable + sway, median 15.1 ms, p95 29.9 ms, ~60 fps |
+| Main menu, dragging the preview | median 16.8 ms, p95 35.3 ms | median 14.0 ms, p95 33.2 ms |
+| Title (Press Start pulse) | median 15.9 ms, p95 27.3 ms | median 15.8 ms, p95 37.6 ms (with sway) |
+
+Without the layer cache the 3x main menu ran at median 46.8 ms. Frontend CPU
+prepare per animated frame is ~1.4-3 ms unthrottled. GPU memory: surface
+1170x2532 (12 MB) plus the layer (12 MB) instead of 585x1266 plus ~24 MB of
+unused scene targets. Test: `tools/test_engine_menu_motion.mjs` (Chromium and
+WebKit at 390x844 DPR 3: canvas and surface 1170x2532, preview at 3x, a menu
+row's text edges stepping >150 luminance in one device pixel, turntable
+rate, fling and ease-back, sway on the title and main menu, reduced motion
+still and idle).
