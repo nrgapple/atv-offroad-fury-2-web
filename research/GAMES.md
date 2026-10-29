@@ -140,8 +140,8 @@ game's end (`002d10d0`, `002210e0`).
 
 - **One player, no opponents.** The original is split-screen or online only;
   Single Player → Games plays it alone. Multiplayer → Split Screen → Games
-  plays King of the Hills, Treasure Hunt and Hockey for two local players
-  (SPLIT_SCREEN.md "Slice 3").
+  plays King of the Hills, Treasure Hunt, Hockey and Tag for two local
+  players (SPLIT_SCREEN.md "Slice 3", "Slice 4").
 - **Scenes and models.** King of the Hills rides its own scene
   (`env05kh.scn`, read with its mode TOY over the Freeride archive), so the
   original `kohbase` bases, `kohflag` flags and spotlights stand at the
@@ -534,8 +534,10 @@ carrier is "it" and scores while holding the ball.
 - **Games page.** Single Player → Games lists Tag with its fourteen
   Tracks.dat courses (Prospect Springs and Tioga Valley open, the rest
   by course unlocks). The original reaches Games only from Multiplayer →
-  Split Screen and has no CPU riders, so the port keeps Tag human-only:
-  Start Game hosts a private multiplayer room on the chosen venue (the
+  Split Screen and has no CPU riders, so the port keeps Tag human-only.
+  From Multiplayer → Split Screen → Games, Start Game plays it for two
+  local players on the Tag course (SPLIT_SCREEN.md "Slice 4"); from
+  Single Player → Games, Start Game hosts a private multiplayer room on the chosen venue (the
   invite is shared from Pause as usual) and starts Tag on its Tag course
   with the page's time limit. The host's Pause → Play Tag uses the same
   minutes (`tagMinutes=N` in a link).
