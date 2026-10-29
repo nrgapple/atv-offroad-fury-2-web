@@ -9,7 +9,7 @@
   <key>Label</key><string>com.furyremastered.desktop-release</string>
   <key>ProgramArguments</key>
   <array>
-    <string>/usr/bin/python3</string>
+    <string>@PYTHON@</string>
     <string>@HOME@/.local/share/project-service-data/fury-desktop-release/runtime/desktop_release_watcher.py</string>
     <string>--repo</string><string>@REPO@</string>
     <string>--auto-main</string>

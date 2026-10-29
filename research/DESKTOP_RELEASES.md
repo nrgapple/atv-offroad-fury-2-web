@@ -228,11 +228,19 @@ state lock before migrating state and reloading launchd. Inspect
 The installed watcher uses Background priority and nice 10. Do not bootout or kickstart
 an active release to apply an update.
 
-macOS privacy protection blocks a launchd job from reading the external SSD until Python
-has Full Disk Access: in System Settings, Privacy & Security, Full Disk Access, add
-`/usr/bin/python3` and Xcode's
-`Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/Resources/Python.app`.
-Without it the job exits with code 2 (`launchctl print gui/$(id -u)/com.furyremastered.desktop-release`).
+macOS privacy protection requires approval for the application owning the actual interpreter.
+On this host, Python is embedded in **Xcode.app**. Grant Xcode access to Removable Volumes
+under Files and Folders, or add `/Applications/Xcode.app` to Full Disk Access if that
+narrower option is unavailable. Approving only the nested Python app was insufficient:
+TCC's authorization subject was `com.apple.dt.Xcode`. The installer now pins the running
+framework executable reported by `ps`; it does not use `/usr/bin/python3`, whose shared
+Apple launcher identity was being attributed to `/usr/bin/git` in background checks.
+No privacy database is modified by these tools. The user grants access in System Settings.
+
+A newly launched one-shot job using the framework executable passed source/content reads
+and SSD output writes after Xcode was approved. Existing releases were not restarted.
+After an Xcode upgrade or interpreter relocation, rerun the installer from the intended
+Python runtime. The `@PYTHON@` template placeholder is filled by the installer.
 
 The job needs the SSD, Docker (Colima running), `gh` signed in and the private content
 package (`private/reports/hosted-content` in the shared checkout) when it fires; a pass

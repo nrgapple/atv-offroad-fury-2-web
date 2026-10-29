@@ -21,6 +21,21 @@ BUDGET = Path.home() / '.local/share/project-service-data/fury-build-budget'
 LABEL = 'com.furyremastered.desktop-release'
 
 
+def launch_python():
+    """Use the actual approved interpreter, not Apple's shared tool launcher.
+
+    On macOS sys.executable can name a re-exec wrapper. TCC may attribute
+    /usr/bin/python3 to another tool with the same launcher signing identity.
+    ps reports the running framework executable whose enclosing app was approved.
+    """
+    if sys.platform == 'darwin':
+        actual = Path(subprocess.check_output(['ps', '-p', str(os.getpid()), '-o', 'comm='], text=True).strip())
+        if not actual.is_absolute() or not actual.is_file():
+            raise ValueError('Cannot identify the running Python executable for launchd')
+        return str(actual)
+    return sys.executable
+
+
 def cargo_install(tools, home=Path.home()):
     cargo = home / '.cargo/bin/cargo'
     backup = cargo.with_name('cargo.fury-original')
@@ -32,7 +47,7 @@ def cargo_install(tools, home=Path.home()):
     runtime.mkdir(parents=True, exist_ok=True)
     shutil.copy2(tools / 'host_build.py', runtime / 'host_build.py')
     import shlex
-    content = '#!/bin/sh\n' + marker + '\nexec /usr/bin/python3 ' + shlex.quote(str(runtime / 'host_build.py')) + ' --cargo-proxy -- "$@"\n'
+    content = '#!/bin/sh\n' + marker + '\nexec ' + shlex.quote(launch_python()) + ' ' + shlex.quote(str(runtime / 'host_build.py')) + ' --cargo-proxy -- "$@"\n'
     if not backup.exists() and not backup.is_symlink():
         if not cargo.is_symlink():
             raise ValueError('Original rustup proxy backup is missing')
@@ -71,6 +86,7 @@ def finish_handoff(repo):
             template = (SERVICE / 'runtime/com.furyremastered.desktop-release.plist.in').read_text()
             template = template.replace('@REPO@', str(repo)).replace('@HOME@', str(Path.home()))
             config = plistlib.loads(template.encode())
+            config['ProgramArguments'][0] = launch_python()
             destination = Path.home() / 'Library/LaunchAgents' / (LABEL + '.plist')
             temporary = destination.with_suffix('.new')
             temporary.write_bytes(plistlib.dumps(config))
@@ -125,7 +141,7 @@ def main():
             subprocess.run(['launchctl', 'remove', handoff], check=True)
         job = {
             'Label': handoff, 'RunAtLoad': True, 'ProcessType': 'Background',
-            'ProgramArguments': ['/usr/bin/python3', str(runtime / 'install_host_build_budget.py'),
+            'ProgramArguments': [launch_python(), str(runtime / 'install_host_build_budget.py'),
                                  '--finish-handoff', '--repo', str(args.repo)],
             'StandardOutPath': str(SERVICE / 'handoff.log'),
             'StandardErrorPath': str(SERVICE / 'handoff.log'),
