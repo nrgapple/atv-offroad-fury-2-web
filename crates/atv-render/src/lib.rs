@@ -604,7 +604,8 @@ pub struct SceneRenderer {
     wheel_effects: Option<wheel_effects::WheelEffectsPass>,
     /// Split screen: player 2's wheel dust, chunks and spray (no tire
     /// tracks or lingering dust).
-    second_wheel_effects: Option<wheel_effects::WheelEffectsPass>,
+    /// Split screen: players 2-4's wheel effects (by player - 2).
+    second_wheel_effects: Vec<Option<wheel_effects::WheelEffectsPass>>,
     /// Enhanced/High tire tracks.
     tire_tracks: Option<tire_tracks::TireTracksPass>,
     /// Enhanced/High lingering dust puffs.
@@ -778,7 +779,7 @@ impl SceneRenderer {
             profiler: profile::Profiler::default(),
             gpu_timer: None,
             wheel_effects: None,
-            second_wheel_effects: None,
+            second_wheel_effects: Vec::new(),
             lingering_dust: None,
             burst: None,
             tire_tracks: None,
@@ -1179,23 +1180,33 @@ impl SceneRenderer {
         ));
     }
 
-    /// Split screen: installs (or, with none, removes) player 2's wheel
-    /// effects.
+    /// Split screen: installs (or, with none, removes) the wheel effects
+    /// of player `index + 2`.
     pub fn set_second_wheel_effects(
         &mut self,
         gpu: &Gpu,
+        index: usize,
         effects: Option<&atv_game::wheel_effects::WheelEffects>,
     ) {
-        self.second_wheel_effects =
+        if self.second_wheel_effects.len() <= index {
+            self.second_wheel_effects.resize_with(index + 1, || None);
+        }
+        self.second_wheel_effects[index] =
             effects.map(|e| wheel_effects::WheelEffectsPass::new(gpu, &self.world, e));
     }
 
-    /// Player 2's latest wheel-effect frame (split screen).
+    /// Split screen: drops every other player's wheel effects.
+    pub fn clear_second_wheel_effects(&mut self) {
+        self.second_wheel_effects.clear();
+    }
+
+    /// Player `index + 2`'s latest wheel-effect frame (split screen).
     pub fn accept_second_wheel_effects(
         &mut self,
+        index: usize,
         effects: &mut atv_game::wheel_effects::WheelEffects,
     ) {
-        if let Some(pass) = &mut self.second_wheel_effects {
+        if let Some(Some(pass)) = self.second_wheel_effects.get_mut(index) {
             pass.accept(effects);
         }
     }
@@ -1361,6 +1372,12 @@ impl SceneRenderer {
     /// Drops riders that left or changed model.
     pub fn retain_peers(&mut self, mut keep: impl FnMut(u8, PeerLook) -> bool) {
         self.peers.retain(|peer, (key, ..)| keep(*peer, *key));
+    }
+
+    /// How many multiplayer rider slots are shown (split screen's other
+    /// players, or a room's riders).
+    pub fn peers_shown(&self) -> usize {
+        self.peers.values().filter(|(.., visible)| *visible).count()
     }
 
     /// Poses the presented multiplayer riders; others are hidden. Unlike race
@@ -1753,7 +1770,7 @@ impl SceneRenderer {
         if let Some(pass) = &mut self.wheel_effects {
             (stats.wheel_draws, stats.wheel_triangles) = pass.prepare(gpu, &view.camera);
         }
-        if let Some(pass) = &mut self.second_wheel_effects {
+        for pass in self.second_wheel_effects.iter_mut().flatten() {
             let (draws, triangles) = pass.prepare(gpu, &view.camera);
             stats.wheel_draws += draws;
             stats.wheel_triangles += triangles;
@@ -2032,7 +2049,7 @@ impl SceneRenderer {
             if let Some(effects) = &self.wheel_effects {
                 effects.draw(&mut pass, &self.world);
             }
-            if let Some(effects) = &self.second_wheel_effects {
+            for effects in self.second_wheel_effects.iter().flatten() {
                 effects.draw(&mut pass, &self.world);
             }
             if let Some(dust) = &self.lingering_dust {

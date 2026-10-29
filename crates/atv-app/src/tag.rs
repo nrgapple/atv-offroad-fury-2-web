@@ -6,8 +6,8 @@
 //! and draws the ball as that model (a screen tag on other venues).
 //!
 //! Split screen (research/SPLIT_SCREEN.md "Slice 4"): the same session runs
-//! the rules for two local riders with no room (`new_local`): this console
-//! is the host, player 1 rider slot 0 and player 2 slot 1.
+//! the rules for two to four local riders with no room (`new_local`): this
+//! console is the host, player N rider slot N - 1.
 use atv_core::math::Det;
 use atv_core::tag::{Ball, Bounds, DropReason, Event, Game, Rider};
 use atv_game::multiplayer::{GameState, NO_PEER};
@@ -58,10 +58,10 @@ pub struct TagSession {
     pub crowd: bool,
     /// Ground respawns so far (diagnostics: ray throws, start returns).
     respawns: (u32, u32),
-    /// Split screen: two local players and no room.
+    /// Split screen: two to four local players and no room.
     pub local: bool,
-    /// Player 2's open-chain length last step (split screen).
-    chain_seen_2: usize,
+    /// Players 2-4's open-chain lengths last step (split screen).
+    chain_seen_others: Vec<usize>,
     /// Split screen: the first ball was tossed.
     tossed: bool,
 }
@@ -111,21 +111,22 @@ impl TagSession {
             respawns: (0, 0),
             crowd: false,
             local: false,
-            chain_seen_2: 0,
+            chain_seen_others: Vec::new(),
             tossed: false,
         }
     }
 
     /// Split screen: a two-player game on this console (no room).
-    pub fn new_local(minutes: u32) -> Self {
+    pub fn new_local(minutes: u32, players: usize) -> Self {
+        let players = players.clamp(2, 4);
         let mut session = Self::new(true, minutes);
         session.local = true;
-        session.roster = vec![0, 1];
-        session.names = vec![
-            crate::split::PLAYER_1.to_string(),
-            crate::split::PLAYER_2.to_string(),
-        ];
-        session.game = Game::new(2, session.game.time_limit);
+        session.roster = (0..players as u8).collect();
+        session.names = (1..=players as u8)
+            .map(|n| crate::split::player_name(n).to_string())
+            .collect();
+        session.game = Game::new(players, session.game.time_limit);
+        session.chain_seen_others = vec![0; players - 1];
         session
     }
 
@@ -157,15 +158,16 @@ impl TagSession {
     }
 
     /// Advances the game; true once, when it ends.
-    /// `net`: the room (None in split screen); `second`: split screen's
-    /// player 2.
+    /// `net`: the room (None in split screen); `others`: split screen's
+    /// players 2-4.
     pub fn update(
         &mut self,
         ride: &mut Ride,
         net: Option<&mut crate::multiplayer::Net>,
-        second: Option<&mut Ride>,
+        others: &mut [&mut Ride],
     ) -> bool {
-        let ended = self.advance(ride, net, second.as_deref());
+        let shared: Vec<&Ride> = others.iter().map(|r| &**r).collect();
+        let ended = self.advance(ride, net, &shared);
         // `00246310`/`00246000`: the carrier's ATV runs handicapped; each
         // rider owns its ATV, so each applies its own.
         let handicap = |ride: &mut Ride, slot: usize, game: &Game, any: bool| {
@@ -176,17 +178,17 @@ impl TagSession {
         };
         let any = !self.roster.is_empty();
         handicap(ride, self.me, &self.game, any);
-        if self.local
-            && let Some(ride2) = second
-        {
-            handicap(ride2, 1, &self.game, any);
+        if self.local {
+            for (index, ride2) in others.iter_mut().enumerate() {
+                handicap(ride2, index + 1, &self.game, any);
+            }
         }
         ended
     }
 
     /// Split screen Restart Game: a new game for both players.
     pub fn restart_local(&mut self) {
-        let mut fresh = Self::new_local(self.minutes);
+        let mut fresh = Self::new_local(self.minutes, self.roster.len());
         fresh.model = self.model;
         fresh.start = self.start;
         fresh.crowd = self.crowd;
@@ -202,7 +204,7 @@ impl TagSession {
         &mut self,
         ride: &Ride,
         net: Option<&mut crate::multiplayer::Net>,
-        second: Option<&Ride>,
+        others: &[&Ride],
     ) -> bool {
         let terrain = ride.terrain();
         let bounds = Bounds::from_cells(terrain.width_cells, terrain.depth_cells, terrain.spacing);
@@ -292,8 +294,10 @@ impl TagSession {
                 if i == self.me {
                     own
                 } else if self.local {
-                    // Split screen: player 2's own ride.
-                    second.map_or(([0., -1000., 0.], [0.; 3], true), motion)
+                    // Split screen: that player's own ride.
+                    others
+                        .get(i.wrapping_sub(1))
+                        .map_or(([0., -1000., 0.], [0.; 3], true), |r| motion(r))
                 } else {
                     net.as_deref()
                         .and_then(|net| net.rider_motion(*id))
@@ -308,10 +312,16 @@ impl TagSession {
         let chain = ride.chain_len();
         let own_trick = chain > self.chain_seen;
         self.chain_seen = chain;
-        // Split screen: player 2's tricks are local too.
-        let chain_2 = second.filter(|_| self.local).map_or(0, |r| r.chain_len());
-        let second_trick = chain_2 > self.chain_seen_2;
-        self.chain_seen_2 = chain_2;
+        // Split screen: the other players' tricks are local too.
+        let mut other_tricks = vec![false; others.len()];
+        if self.local {
+            self.chain_seen_others.resize(others.len(), 0);
+            for (index, r) in others.iter().enumerate() {
+                let chain = r.chain_len();
+                other_tricks[index] = chain > self.chain_seen_others[index];
+                self.chain_seen_others[index] = chain;
+            }
+        }
         if let Some(t) = &mut self.throw_test
             && self.throw_ins > 0
         {
@@ -353,7 +363,10 @@ impl TagSession {
                 .map(|(i, (p, _, wrecked))| Rider {
                     wrecked: *wrecked,
                     stunt_started: step == 0
-                        && ((i == self.me && own_trick) || (self.local && i == 1 && second_trick)),
+                        && ((i == self.me && own_trick)
+                            || (self.local
+                                && i > 0
+                                && other_tricks.get(i - 1).copied().unwrap_or(false))),
                     touches_ball: carrier.is_none()
                         && flat(*p, self.ball.position) < BALL_REACH
                         && (p[1] - self.ball.position[1]).abs() < 8.,
@@ -493,7 +506,7 @@ impl TagSession {
         self.view_for(self.me)
     }
 
-    /// A local player's panel (split screen: player 2 is slot 1).
+    /// A local player's panel (split screen: player N is slot N - 1).
     pub fn view_for(&self, me: usize) -> atv_ui::hud::training::View {
         let mine = self.game.records.get(me).map_or(0, |r| r.score);
         atv_ui::hud::training::View {

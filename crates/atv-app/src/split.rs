@@ -1,6 +1,6 @@
-//! Local two-player split screen (research/SPLIT_SCREEN.md): the screen
-//! layout, the second player's keyboard keys and controller slot, and the
-//! combined race standings.
+//! Local split screen for two to four players (research/SPLIT_SCREEN.md):
+//! the screen layout, player 2's keyboard keys, each player's controller
+//! slot, and the combined race standings.
 //!
 //! Each player rides their own full `Riding` on the shared venue and scene;
 //! the other player is drawn through the scene's multiplayer rider slots,
@@ -8,14 +8,31 @@
 //! (`Preset<n>h`) and vertical (`Preset<n>v`) split sections of
 //! `FollowCamPresets.pb`.
 
-/// The scene's multiplayer slot that draws player 2's rider (relay slots
-/// stay below it; a split ride has no room).
+/// The scene's multiplayer slot that draws player 2's rider; players 3
+/// and 4 take the next slots (relay slots stay below them; a split ride
+/// has no room).
 pub const PEER: u8 = 250;
+
+/// The most local players (the manual's four-player split screen).
+pub const MAX_PLAYERS: u8 = 4;
 
 /// The second rider's name on the race results and standings.
 pub const PLAYER_2: &str = "Player 2";
 /// Player 1 as player 2's race lists it.
 pub const PLAYER_1: &str = "Player 1";
+
+/// Each local player's name on standings and results ("Player N").
+pub const PLAYER_NAMES: [&str; 4] = [PLAYER_1, PLAYER_2, "Player 3", "Player 4"];
+
+/// Player `n`'s name (1-based).
+pub fn player_name(n: u8) -> &'static str {
+    PLAYER_NAMES[usize::from(n.clamp(1, MAX_PLAYERS)) - 1]
+}
+
+/// The scene slot that draws player `n` (2-4).
+pub fn peer(n: u8) -> u8 {
+    PEER + n.clamp(2, MAX_PLAYERS) - 2
+}
 
 /// Thin dark line between the two views (CSS pixels at scale 1; authored).
 const DIVIDER: u32 = 2;
@@ -27,6 +44,9 @@ pub enum Layout {
     Horizontal,
     /// Side by side.
     Vertical,
+    /// Three or four players: a quarter of the screen each (the camera
+    /// loader's quarter-screen presets, `Preset<n>q`).
+    Quad,
 }
 
 impl Layout {
@@ -39,22 +59,33 @@ impl Layout {
     }
 
     /// The camera loader's layout enum (`atv_core::camera::presets`):
-    /// 1 horizontal split, 2 vertical split.
+    /// 1 horizontal split, 2 vertical split, 3 quarter screen.
     pub fn camera_layout(self) -> u32 {
         match self {
             Self::Horizontal => 1,
             Self::Vertical => 2,
+            Self::Quad => 3,
+        }
+    }
+
+    /// Columns and rows of views.
+    pub fn grid(self) -> (u32, u32) {
+        match self {
+            Self::Horizontal => (1, 2),
+            Self::Vertical => (2, 1),
+            Self::Quad => (2, 2),
         }
     }
 
     /// The aspect each split preset's field of view was authored for: half
     /// of the PS2's 4:3 frame (full width × half height, or half width ×
-    /// full height). An assumption: the build's split viewport rectangles
-    /// were not traced.
+    /// full height; a quarter keeps 4:3). An assumption: the build's split
+    /// viewport rectangles were not traced.
     pub fn reference_aspect(self) -> f32 {
         match self {
             Self::Horizontal => 8. / 3.,
             Self::Vertical => 2. / 3.,
+            Self::Quad => 4. / 3.,
         }
     }
 
@@ -65,28 +96,40 @@ impl Layout {
         self.reference_aspect() / (4. / 3.)
     }
 
-    /// Each player's view (x, y, width, height in surface pixels): player 1
-    /// on top or on the left.
-    pub fn rects(self, width: u32, height: u32, scale: f32) -> [[u32; 4]; 2] {
+    /// Each view (x, y, width, height in surface pixels) in player order:
+    /// player 1 on top or on the left; quarters read left to right, top to
+    /// bottom (two views, or four for `Quad`; three players leave the
+    /// fourth quarter empty).
+    pub fn rects(self, width: u32, height: u32, scale: f32) -> Vec<[u32; 4]> {
         let divider = ((DIVIDER as f32 * scale.max(1.)).round() as u32).max(1);
-        match self {
-            Self::Horizontal => {
-                let first = height.saturating_sub(divider) / 2;
-                let second_y = first + divider;
-                [
-                    [0, 0, width, first.max(1)],
-                    [0, second_y, width, height.saturating_sub(second_y).max(1)],
-                ]
-            }
-            Self::Vertical => {
-                let first = width.saturating_sub(divider) / 2;
-                let second_x = first + divider;
-                [
-                    [0, 0, first.max(1), height],
-                    [second_x, 0, width.saturating_sub(second_x).max(1), height],
-                ]
-            }
-        }
+        // The two spans of a length cut by the divider.
+        let halves = |length: u32| {
+            let first = length.saturating_sub(divider) / 2;
+            let second = first + divider;
+            [
+                (0, first.max(1)),
+                (second, length.saturating_sub(second).max(1)),
+            ]
+        };
+        let (columns, rows) = self.grid();
+        let xs = if columns == 2 {
+            halves(width).to_vec()
+        } else {
+            vec![(0, width)]
+        };
+        let ys = if rows == 2 {
+            halves(height).to_vec()
+        } else {
+            vec![(0, height)]
+        };
+        ys.iter()
+            .flat_map(|&(y, h)| xs.iter().map(move |&(x, w)| [x, y, w, h]))
+            .collect()
+    }
+
+    /// The layout for `players` (three or four always share quarters).
+    pub fn for_players(self, players: u8) -> Self {
+        if players > 2 { Self::Quad } else { self }
     }
 }
 
@@ -124,23 +167,28 @@ pub fn player_2_key(held: &dyn Fn(&str) -> bool, code: &str) -> bool {
         .any(|(key, binding)| *binding == code && held(key))
 }
 
-/// Where player 2 starts: Freeride, ten feet to player 1's right; a race,
-/// the grid slot after the field's last (`Course::grid` spacing).
-pub fn freeride_start(origin: [f32; 3], yaw: f32) -> ([f32; 3], f32) {
+/// Player `n`'s Freeride start: ten feet to the right of the player before
+/// it (player 2 ten feet right of player 1; a port choice, the original's
+/// split starts were not traced). In a race each takes the grid slot after
+/// the field's last (`Course::grid` spacing).
+pub fn freeride_start_for(origin: [f32; 3], yaw: f32, n: u8) -> ([f32; 3], f32) {
     use atv_core::math::Det;
     let (sin, cos) = yaw.sin_cos_d();
+    let feet = 10. * f32::from(n.saturating_sub(1));
     (
-        [origin[0] + cos * 10., origin[1], origin[2] - sin * 10.],
+        [origin[0] + cos * feet, origin[1], origin[2] - sin * feet],
         yaw,
     )
 }
 
 impl Layout {
-    /// `?split=` / `FURY_SPLIT`: `h` (or `1`) horizontal, `v` vertical.
+    /// `?split=` / `FURY_SPLIT`: `h` (or `1`) horizontal, `v` vertical,
+    /// `q` quarters (three or four players).
     pub fn requested(value: Option<&str>) -> Option<Self> {
         match value? {
             "h" | "horizontal" | "1" => Some(Self::Horizontal),
             "v" | "vertical" => Some(Self::Vertical),
+            "q" | "quad" => Some(Self::Quad),
             _ => None,
         }
     }
@@ -151,6 +199,7 @@ impl Layout {
         match self {
             Self::Horizontal => "h",
             Self::Vertical => "v",
+            Self::Quad => "q",
         }
     }
 }
@@ -162,16 +211,32 @@ pub fn with_query(url: &str, query: &str) -> String {
     format!("{url}{joiner}{query}")
 }
 
-/// A split ride's request: the layout, and player 2's own Garage choice
-/// (none rides player 1's).
+/// A split ride's request: the layout, the number of players (2-4) and
+/// players 2-4's own Garage choices (none rides player 1's).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Request {
     pub layout: Layout,
-    pub second: Option<atv_game::ride::Selection>,
+    pub players: u8,
+    pub seconds: [Option<atv_game::ride::Selection>; 3],
 }
 
-/// Player 2: its own ride on the shared venue, its view and its camera.
+impl Request {
+    /// Players 2.. and their Garage choices.
+    pub fn others(&self) -> impl Iterator<Item = (u8, Option<atv_game::ride::Selection>)> + '_ {
+        (2..=self.players.clamp(2, MAX_PLAYERS)).map(|n| (n, self.seconds[usize::from(n) - 2]))
+    }
+
+    /// The screen layout these players share.
+    pub fn view_layout(&self) -> Layout {
+        self.layout.for_players(self.players)
+    }
+}
+
+/// Player 2, 3 or 4: its own ride on the shared venue, its view and its
+/// camera.
 pub struct Second {
+    /// The player number (2-4).
+    pub player: u8,
     pub layout: Layout,
     pub riding: crate::riding::Riding,
     pub camera: atv_render::Camera,
@@ -194,8 +259,9 @@ pub type Shared = (
 );
 
 impl Second {
-    /// Loads player 2 beside player 1 (`first`) and switches both to the
-    /// layout's original split camera presets.
+    /// Loads player `player` (2-4) beside player 1 (`first`) and switches
+    /// both to the layout's original split camera presets.
+    #[allow(clippy::too_many_arguments)]
     pub async fn load(
         gpu: &atv_render::Gpu,
         content: &atv_content::Content,
@@ -203,12 +269,18 @@ impl Second {
         scene: &mut atv_render::SceneRenderer,
         first: &mut crate::riding::Riding,
         request: Request,
+        player: u8,
         (selection, appearance, race, crash, graphics): Shared,
     ) -> Result<Self, String> {
-        let layout = request.layout;
-        // Player 2's own Garage ATV and rider; gear stays player 1's (the
-        // Garage gear is the profile's).
-        let selection = request.second.unwrap_or(selection);
+        let layout = request.view_layout();
+        // The player's own Garage ATV and rider; gear stays player 1's
+        // (the Garage gear is the profile's).
+        let selection = request
+            .seconds
+            .get(usize::from(player.saturating_sub(2)))
+            .copied()
+            .flatten()
+            .unwrap_or(selection);
         first.ride.set_camera_layout(layout.camera_layout())?;
         // Player 2 races its own copy of the course with no CPUs: player
         // 1's race holds the field, and the standings merge both.
@@ -226,17 +298,21 @@ impl Second {
         atv_game::yield_frame().await;
         ride.set_camera_layout(layout.camera_layout())?;
         let (origin, yaw) = match first.ride.race() {
-            // The grid slot after the field's last.
+            // The grid slots after the field's last, in player order.
             Some(state) => {
                 let riders = state.race.grid_slots().len();
-                state.race.course.grid(riders as u32 + 1, riders)
+                state
+                    .race
+                    .course
+                    .grid((riders + usize::from(player) - 1) as u32, riders)
             }
             None => {
                 let start = venue.scene.start_position;
                 let direction = venue.scene.start_direction;
-                let (mut origin, yaw) = freeride_start(
+                let (mut origin, yaw) = freeride_start_for(
                     start,
                     atv_core::math::Det::atan2_d(direction[0], direction[2]),
+                    player,
                 );
                 if let Some(ground) = ride.ground(origin[0], origin[2]) {
                     origin[1] = ground + 2.5;
@@ -253,7 +329,7 @@ impl Second {
         scene.set_peer(
             gpu,
             venue,
-            PEER,
+            peer(player),
             key,
             (&ride.quad, &ride.rider),
             ride.paint(),
@@ -266,7 +342,7 @@ impl Second {
             atv_game::wheel_effects::load(content, venue, selection.quad).await?
         {
             effects.reset(&riding.ride)?;
-            scene.set_second_wheel_effects(gpu, Some(&effects));
+            scene.set_second_wheel_effects(gpu, usize::from(player) - 2, Some(&effects));
             riding.effects = Some(effects);
         }
         riding.interpolation = graphics.interpolation;
@@ -283,6 +359,7 @@ impl Second {
             state.autopilot_always = true;
         }
         Ok(Self {
+            player,
             layout,
             riding,
             camera: atv_render::Camera {
@@ -298,17 +375,11 @@ impl Second {
         })
     }
 
-    /// `split=..&split2=quad.rider`: this split ride as a link's query
-    /// (the context-loss resume link reopens it split).
+    /// `splitN=quad.rider`: this player's part of a link's query.
     #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
-    pub fn resume_query(&self) -> String {
+    fn resume_part(&self) -> String {
         let s = self.riding.ride.selection();
-        format!(
-            "split={}&split2={}.{}",
-            self.layout.param(),
-            s.quad,
-            s.rider
-        )
+        format!("split{}={}.{}", self.player, s.quad, s.rider)
     }
 
     /// Uploads player 2's rider into a rebuilt scene (a restored context).
@@ -320,7 +391,11 @@ impl Second {
         scene: &mut atv_render::SceneRenderer,
     ) -> Result<(), String> {
         let ride = &self.riding.ride;
-        scene.set_second_wheel_effects(gpu, self.riding.effects.as_ref());
+        scene.set_second_wheel_effects(
+            gpu,
+            usize::from(self.player) - 2,
+            self.riding.effects.as_ref(),
+        );
         let selection = ride.selection();
         let key: atv_game::multiplayer::remote::Key = (
             selection.quad,
@@ -330,15 +405,17 @@ impl Second {
         scene.set_peer(
             gpu,
             venue,
-            PEER,
+            peer(self.player),
             key,
             (&ride.quad, &ride.rider),
             ride.paint(),
         )
     }
 
-    /// One rendered frame of player 2's riding: its keys and controller,
-    /// with player 1 and player 1's CPUs as its contact bodies (`others`).
+    /// One rendered frame of this player's riding: its keys (player 2's
+    /// keyboard half; players 3 and 4 play controllers only) and
+    /// controller, with the other players and player 1's CPUs as its
+    /// contact bodies (`others`).
     pub fn frame(
         &mut self,
         keys: &dyn Fn(&str) -> bool,
@@ -348,7 +425,8 @@ impl Second {
         others: Vec<atv_game::multiplayer::PeerBody>,
     ) -> Result<(), String> {
         self.pad = pad.is_some();
-        let held = |code: &str| player_2_key(keys, code);
+        let player_2 = self.player == 2;
+        let held = |code: &str| player_2 && player_2_key(keys, code);
         let sample = crate::riding::Sample {
             keys: &held,
             pad,
@@ -375,7 +453,7 @@ impl Second {
                 ([m[12], m[13], m[14]], v)
             });
         atv_game::audio::remote::Rider {
-            peer: PEER,
+            peer: peer(self.player),
             quad: ride.selection().quad,
             position: f.origin,
             velocity: f.linear_velocity,
@@ -396,34 +474,51 @@ impl Second {
         }
     }
 
-    /// Player 2's camera this frame, and its rider drawn in the scene's
-    /// player 2 slot.
+    /// This player's camera this frame, and its rider's pose for its scene
+    /// slot (`peer(player)`). The caller poses every player's slot in one
+    /// `pose_peers` call: that call hides any slot it is not given.
     pub fn present(
         &mut self,
         gpu: &atv_render::Gpu,
-        scene: &mut atv_render::SceneRenderer,
         venue: &atv_game::venue::Venue,
         dt: f32,
-    ) -> Result<(), String> {
+    ) -> Result<(u8, atv_game::ride::Pose), String> {
         let (camera, focal, pose) =
             self.riding
                 .present_view(gpu, None, venue, SPLIT_PRESENT_ASPECT, dt)?;
         self.camera = camera;
         self.focal_length = focal * self.layout.focal_scale();
-        scene.pose_peers(gpu, &[(PEER, pose)]);
-        Ok(())
+        Ok((peer(self.player), pose))
     }
 }
 
-/// Links each player's race to the other before their steps: player 1's
-/// CPUs see player 2 as a human peer, each race's PLACE and finish signs
-/// read the combined place, and player 1's race is not over (no CPU
-/// estimates) until player 2 has finished too. Returns the contact bodies
-/// player 2 rides against: player 1, then each CPU.
+/// `split=..&splitn=..&split2=quad.rider..`: a split ride as a link's
+/// query (the context-loss resume link reopens it split).
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+pub fn resume_query(players: &[Second]) -> Option<String> {
+    let first = players.first()?;
+    let mut query = format!(
+        "split={}&splitn={}",
+        first.layout.param(),
+        players.len() + 1
+    );
+    for player in players {
+        query.push('&');
+        query.push_str(&player.resume_part());
+    }
+    Some(query)
+}
+
+/// Links each player's race to the others before their steps: player 1's
+/// CPUs see the other players as human peers, each race's PLACE and finish
+/// signs read the combined place, and no race is over (no CPU estimates)
+/// until every player has finished. Returns, for each of players 2..,
+/// the contact bodies it rides against: player 1, each CPU, then the
+/// other local players.
 pub fn link(
     first: &mut atv_game::ride::Ride,
-    second: &mut atv_game::ride::Ride,
-) -> Vec<atv_game::multiplayer::PeerBody> {
+    others: &mut [Second],
+) -> Vec<Vec<atv_game::multiplayer::PeerBody>> {
     let finished = |ride: &atv_game::ride::Ride| {
         ride.race()
             .and_then(|r| r.frame.as_ref())
@@ -435,39 +530,69 @@ pub fn link(
             .map(|f| f.position)
             .filter(|p| *p > 0)
     };
-    let (first_done, second_done) = (finished(first), finished(second));
-    let (first_place, second_place) = (placed(first), placed(second));
-    let f2 = second.frame();
-    let human = (f2.origin, f2.linear_velocity, f2.orientation);
+    let first_done = finished(first);
+    let done: Vec<bool> = others.iter().map(|s| finished(&s.riding.ride)).collect();
+    let first_place = placed(first);
+    let humans: Vec<_> = others
+        .iter()
+        .map(|s| {
+            let f = s.riding.ride.frame();
+            (f.origin, f.linear_velocity, f.orientation)
+        })
+        .collect();
     if let Some(state) = first.race_mut() {
         state.split = atv_game::ride::race::SplitLink {
-            human: Some(human),
+            humans,
             place: first_place,
-            waiting: !second_done,
+            waiting: done.iter().any(|d| !d),
         };
     }
-    if let Some(state) = second.race_mut() {
-        state.split = atv_game::ride::race::SplitLink {
-            human: None,
-            place: second_place,
-            waiting: !first_done,
-        };
-    }
-    std::iter::once(body(first, -1.))
-        .chain(
-            first
-                .race_cpu_bodies()
-                .into_iter()
-                .map(
-                    |(position, velocity, orientation)| atv_game::multiplayer::PeerBody {
-                        position,
-                        velocity,
-                        orientation,
-                        tie: -1.,
-                    },
-                ),
+    let cpus: Vec<atv_game::multiplayer::PeerBody> = first
+        .race_cpu_bodies()
+        .into_iter()
+        .map(
+            |(position, velocity, orientation)| atv_game::multiplayer::PeerBody {
+                position,
+                velocity,
+                orientation,
+                tie: -1.,
+            },
         )
-        .collect()
+        .collect();
+    let local: Vec<(u8, atv_game::multiplayer::PeerBody)> = others
+        .iter()
+        .map(|s| (s.player, body(&s.riding.ride, 1.)))
+        .collect();
+    let mut bodies = Vec::with_capacity(others.len());
+    for (index, second) in others.iter_mut().enumerate() {
+        let place = placed(&second.riding.ride);
+        let waiting = !first_done
+            || done
+                .iter()
+                .enumerate()
+                .any(|(other, d)| other != index && !d);
+        if let Some(state) = second.riding.ride.race_mut() {
+            state.split = atv_game::ride::race::SplitLink {
+                humans: Vec::new(),
+                place,
+                waiting,
+            };
+        }
+        let own = second.player;
+        bodies.push(
+            std::iter::once(body(first, -1.))
+                .chain(cpus.iter().copied())
+                .chain(local.iter().filter(|(p, _)| *p != own).map(|(p, b)| {
+                    // The lower player number takes the -1 side of a tie.
+                    atv_game::multiplayer::PeerBody {
+                        tie: if *p < own { -1. } else { 1. },
+                        ..*b
+                    }
+                }))
+                .collect(),
+        );
+    }
+    bodies
 }
 
 /// Split views present at the 4:3 reference (no portrait adaptation); the
@@ -512,17 +637,25 @@ pub fn order(rows: &[Row]) -> Vec<usize> {
     order
 }
 
-/// Adds player 2 (the only rider of its own race) to player 1's race
-/// frame: the standings gain player 2's row in running order, and each
-/// player's place and field count both. Player 2's frame gets its combined
-/// place too. Idempotent: an earlier merge's row is replaced.
+/// Adds players 2.. (each the only rider of its own race) to player 1's
+/// race frame: the standings gain their rows in running order, and each
+/// player's place and field count them all. Each other player's frame
+/// gets its combined place too. Idempotent: an earlier merge's rows are
+/// replaced. `origins`: player 1's, then each other player's.
 pub fn merge_race(
     first: &mut atv_core::race::Frame,
-    second: &mut atv_core::race::Frame,
-    origins: [[f32; 3]; 2],
+    others: &mut [&mut atv_core::race::Frame],
+    origins: &[[f32; 3]],
 ) {
-    first.standings.retain(|s| s.name != PLAYER_2);
-    first.opponents.retain(|o| o.name != PLAYER_2);
+    let names: Vec<&str> = (0..others.len())
+        .map(|i| player_name(i as u8 + 2))
+        .collect();
+    first
+        .standings
+        .retain(|s| !names.contains(&s.name.as_str()));
+    first
+        .opponents
+        .retain(|o| !names.contains(&o.name.as_str()));
     let cpus: Vec<atv_core::race::Opponent> = first
         .opponents
         .iter()
@@ -531,34 +664,45 @@ pub fn merge_race(
             ..o.clone()
         })
         .collect();
-    let Some(own) = second.standings.iter().find(|s| s.player) else {
+    let finished: Vec<bool> = others.iter().map(|o| o.phase == "finished").collect();
+    let mut merged = vec![false; others.len()];
+    for (i, other) in others.iter().enumerate() {
+        let Some(own) = other.standings.iter().find(|s| s.player) else {
+            continue;
+        };
+        merged[i] = true;
+        first.standings.push(atv_core::race::Standing {
+            name: names[i].into(),
+            position: 0,
+            laps: own.laps,
+            // A finished player keeps its time; an unfinished one is
+            // placed by distance (no estimate: the race waits for all).
+            time: own.time.filter(|_| finished[i]),
+            best: own.best,
+            estimated: false,
+            progress: own.progress,
+            stunt: own.stunt,
+            player: false,
+        });
+    }
+    if !merged.iter().any(|m| *m) {
         return;
+    }
+    let player_of = |s: &atv_core::race::Standing| -> u8 {
+        if s.player {
+            1
+        } else {
+            names
+                .iter()
+                .position(|n| *n == s.name)
+                .map_or(0, |i| i as u8 + 2)
+        }
     };
-    let p2 = atv_core::race::Standing {
-        name: PLAYER_2.into(),
-        position: 0,
-        laps: own.laps,
-        // A finished player 2 keeps its time; an unfinished one is placed
-        // by distance (no estimate: the race waits for both players).
-        time: own.time.filter(|_| second.phase == "finished"),
-        best: own.best,
-        estimated: false,
-        progress: own.progress,
-        stunt: own.stunt,
-        player: false,
-    };
-    first.standings.push(p2);
     let rows: Vec<Row> = first
         .standings
         .iter()
         .map(|s| Row {
-            player: if s.player {
-                1
-            } else if s.name == PLAYER_2 {
-                2
-            } else {
-                0
-            },
+            player: player_of(s),
             time: s.time,
             progress: s.progress,
         })
@@ -582,21 +726,20 @@ pub fn merge_race(
             .position(|&i| rows[i].player == player)
             .map_or(field, |p| p + 1)
     };
+    let progress_of = |player: u8| {
+        sorted
+            .iter()
+            .find(|s| player_of(s) == player)
+            .map_or(0., |s| s.progress)
+    };
     first.position = place_of(1);
     first.field = field;
-    second.position = place_of(2);
-    second.field = field;
     // The PLACE trees and the track map: each player's race lists the
-    // other player among its opponents, with every rider's combined rank.
+    // other players among its opponents, with every rider's combined rank.
     let cpu_ranks: Vec<usize> = cpus
         .iter()
         .map(|o| rank_by_name(&sorted, &o.name))
         .collect();
-    let p1_progress = sorted.iter().find(|s| s.player).map_or(0., |s| s.progress);
-    let p2_progress = sorted
-        .iter()
-        .find(|s| s.name == PLAYER_2)
-        .map_or(0., |s| s.progress);
     let opponent =
         |name: &str, origin: [f32; 3], distance: f32, finished: bool| atv_core::race::Opponent {
             name: name.into(),
@@ -606,32 +749,56 @@ pub fn merge_race(
             finished,
             physical: None,
         };
+    let locals: Vec<(u8, atv_core::race::Opponent)> = (0..others.len())
+        .filter(|i| merged[*i])
+        .map(|i| {
+            let n = i as u8 + 2;
+            (
+                n,
+                opponent(
+                    names[i],
+                    origins.get(i + 1).copied().unwrap_or_default(),
+                    progress_of(n),
+                    finished[i],
+                ),
+            )
+        })
+        .collect();
+    let first_opponent = opponent(
+        PLAYER_1,
+        origins.first().copied().unwrap_or_default(),
+        progress_of(1),
+        first.phase == "finished",
+    );
     first.ranks = std::iter::once(place_of(1))
         .chain(cpu_ranks.iter().copied())
-        .chain(std::iter::once(place_of(2)))
+        .chain(locals.iter().map(|(n, _)| place_of(*n)))
         .collect();
-    first.opponents.push(opponent(
-        PLAYER_2,
-        origins[1],
-        p2_progress,
-        second.phase == "finished",
-    ));
-    second.ranks = [place_of(2), place_of(1)]
-        .into_iter()
-        .chain(cpu_ranks.iter().copied())
-        .collect();
-    second.opponents = std::iter::once(opponent(
-        PLAYER_1,
-        origins[0],
-        p1_progress,
-        first.phase == "finished",
-    ))
-    .chain(cpus)
-    .collect();
+    first
+        .opponents
+        .extend(locals.iter().map(|(_, o)| o.clone()));
+    for (i, other) in others.iter_mut().enumerate() {
+        if !merged[i] {
+            continue;
+        }
+        let own = i as u8 + 2;
+        other.position = place_of(own);
+        other.field = field;
+        let rest = locals.iter().filter(|(n, _)| *n != own);
+        other.ranks = [place_of(own), place_of(1)]
+            .into_iter()
+            .chain(cpu_ranks.iter().copied())
+            .chain(rest.clone().map(|(n, _)| place_of(*n)))
+            .collect();
+        other.opponents = std::iter::once(first_opponent.clone())
+            .chain(cpus.iter().cloned())
+            .chain(rest.map(|(_, o)| o.clone()))
+            .collect();
+    }
     first.standings = sorted;
     // The PLACE tree's names stand at their combined ranks (the original
     // tree's 0.3 s slide `002e5150` follows each race's own ranks only).
-    for frame in [&mut *first, &mut *second] {
+    for frame in std::iter::once(&mut *first).chain(others.iter_mut().map(|f| &mut **f)) {
         let atv_core::race::Frame { hud, ranks, .. } = frame;
         if let Some(hud) = hud {
             hud.tree = ranks.iter().map(|r| (*r as f32 - 1.) * 23.).collect();
@@ -658,22 +825,49 @@ mod tests {
             "https://x/play.html?map=a&split=v"
         );
         assert_eq!(with_query("/play.html", "split=h"), "/play.html?split=h");
-        for layout in [Layout::Horizontal, Layout::Vertical] {
+        for layout in [Layout::Horizontal, Layout::Vertical, Layout::Quad] {
             assert_eq!(Layout::requested(Some(layout.param())), Some(layout));
         }
-        let [a, b] = Layout::Horizontal.rects(1280, 720, 1.);
-        assert_eq!(a, [0, 0, 1280, 359]);
-        assert_eq!(b, [0, 361, 1280, 359]);
-        let [a, b] = Layout::Vertical.rects(1281, 720, 2.);
-        assert_eq!(a, [0, 0, 638, 720]);
-        assert_eq!(b, [642, 0, 639, 720]);
+        assert_eq!(
+            Layout::Horizontal.rects(1280, 720, 1.),
+            [[0, 0, 1280, 359], [0, 361, 1280, 359]]
+        );
+        assert_eq!(
+            Layout::Vertical.rects(1281, 720, 2.),
+            [[0, 0, 638, 720], [642, 0, 639, 720]]
+        );
+        // Quarters: left to right, top to bottom.
+        assert_eq!(
+            Layout::Quad.rects(1280, 720, 1.),
+            [
+                [0, 0, 639, 359],
+                [641, 0, 639, 359],
+                [0, 361, 639, 359],
+                [641, 361, 639, 359]
+            ]
+        );
         // Degenerate surfaces keep non-empty views.
-        let [a, b] = Layout::Vertical.rects(1, 1, 1.);
-        assert!(a[2] >= 1 && b[2] >= 1);
+        for layout in [Layout::Vertical, Layout::Quad] {
+            assert!(
+                layout
+                    .rects(1, 1, 1.)
+                    .iter()
+                    .all(|r| r[2] >= 1 && r[3] >= 1)
+            );
+        }
         assert_eq!(Layout::Horizontal.camera_layout(), 1);
         assert_eq!(Layout::Vertical.camera_layout(), 2);
+        assert_eq!(Layout::Quad.camera_layout(), 3);
         assert!((Layout::Horizontal.focal_scale() - 2.).abs() < 1e-6);
         assert!((Layout::Vertical.focal_scale() - 0.5).abs() < 1e-6);
+        assert!((Layout::Quad.focal_scale() - 1.).abs() < 1e-6);
+        // Three and four players always share quarters.
+        assert_eq!(Layout::Vertical.for_players(2), Layout::Vertical);
+        assert_eq!(Layout::Vertical.for_players(3), Layout::Quad);
+        assert_eq!(Layout::requested(Some("q")), Some(Layout::Quad));
+        assert_eq!(peer(2), PEER);
+        assert_eq!(peer(4), PEER + 2);
+        assert_eq!(player_name(3), "Player 3");
     }
 
     #[test]
@@ -755,7 +949,7 @@ mod tests {
             ],
         );
         let mut second = frame("racing", vec![standing("You", None, 700., true)]);
-        merge_race(&mut first, &mut second, [[0.; 3], [1.; 3]]);
+        merge_race(&mut first, &mut [&mut second], &[[0.; 3], [1.; 3]]);
         let names: Vec<_> = first.standings.iter().map(|s| s.name.as_str()).collect();
         assert_eq!(names, ["CPU A", PLAYER_2, "You", "CPU B"]);
         assert_eq!((first.position, first.field), (3, 4));
@@ -763,7 +957,7 @@ mod tests {
         // Merging again replaces the row; a finished player 2 leads by time.
         second.phase = "finished";
         second.standings[0].time = Some(61.5);
-        merge_race(&mut first, &mut second, [[0.; 3], [1.; 3]]);
+        merge_race(&mut first, &mut [&mut second], &[[0.; 3], [1.; 3]]);
         assert_eq!(first.standings.len(), 4);
         assert_eq!(first.standings[0].name, PLAYER_2);
         assert_eq!(first.standings[0].position, 1);
@@ -783,9 +977,43 @@ mod tests {
     }
 
     #[test]
+    fn standings_merge_four_players_without_cpus() {
+        let mut first = frame("racing", vec![standing("You", None, 300., true)]);
+        let mut p2 = frame("finished", vec![standing("You", Some(70.), 1000., true)]);
+        let mut p3 = frame("racing", vec![standing("You", None, 900., true)]);
+        let mut p4 = frame("racing", vec![standing("You", None, 100., true)]);
+        let origins = [[0.; 3], [1.; 3], [2.; 3], [3.; 3]];
+        for _ in 0..2 {
+            merge_race(&mut first, &mut [&mut p2, &mut p3, &mut p4], &origins);
+        }
+        let names: Vec<_> = first.standings.iter().map(|s| s.name.as_str()).collect();
+        assert_eq!(names, [PLAYER_2, "Player 3", "You", "Player 4"]);
+        assert_eq!(
+            [first.position, p2.position, p3.position, p4.position],
+            [3, 1, 2, 4]
+        );
+        assert!([&first, &p2, &p3, &p4].iter().all(|f| f.field == 4));
+        // Each race lists the three other players, with their ranks.
+        let names = |f: &atv_core::race::Frame| {
+            f.opponents
+                .iter()
+                .map(|o| o.name.clone())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(names(&first), [PLAYER_2, "Player 3", "Player 4"]);
+        assert_eq!(names(&p3), [PLAYER_1, PLAYER_2, "Player 4"]);
+        assert_eq!(first.ranks, [3, 1, 2, 4]);
+        assert_eq!(p3.ranks, [2, 3, 1, 4]);
+        assert!(p3.opponents[1].finished && !p3.opponents[2].finished);
+    }
+
+    #[test]
     fn freeride_start_is_beside_player_1() {
-        let (p, yaw) = freeride_start([100., 5., 100.], 0.);
+        let (p, yaw) = freeride_start_for([100., 5., 100.], 0., 2);
         assert_eq!(yaw, 0.);
         assert!((p[0] - 110.).abs() < 1e-4 && (p[2] - 100.).abs() < 1e-4);
+        // Players 3 and 4 line up further right.
+        let (p, _) = freeride_start_for([100., 5., 100.], 0., 4);
+        assert!((p[0] - 130.).abs() < 1e-4);
     }
 }
