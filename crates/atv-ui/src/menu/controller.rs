@@ -749,7 +749,9 @@ impl PauseMenu {
             | "pad-lean"
             | "pad-triggers"
             | "pad-camera"
-            | "pad-deadzone" => {
+            | "pad-deadzone"
+            | "musicvolume"
+            | "sfxvolume" => {
                 if let Some(s) = self.rows.slider(action).cloned() {
                     self.set_slider(action, s.value + s.step * direction as f32, ctx);
                 }
@@ -777,6 +779,7 @@ impl PauseMenu {
                         .set(CONTROLLER_STORAGE_KEY, &b.tuning.to_json());
                 }
             }
+            "musicvolume" | "sfxvolume" => ctx.prefs.set_volume(action, value, ctx.settings),
             _ => ctx.touch.set_steering_sensitivity(value, ctx.settings),
         }
         if action.starts_with("minimap") {

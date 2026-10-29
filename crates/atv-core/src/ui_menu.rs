@@ -2082,6 +2082,25 @@ pub fn layout(request: Request) -> Result<Frame> {
                         ("Defaults".to_string(), "bindreset"),
                     ]
                 };
+                if music {
+                    // Touch menus draw the two volumes as sliders (drag, or
+                    // Left/Right in 5% steps); their rows keep their order.
+                    for (action, label, value) in [
+                        ("musicvolume", "Music volume", request.music_volume),
+                        ("sfxvolume", "Sound effects volume", request.sfx_volume),
+                    ] {
+                        f.sliders.push(Slider {
+                            action,
+                            label,
+                            rect: [24., 0., w - 48., 44.],
+                            value: value as f32,
+                            min: 0.,
+                            max: 100.,
+                            step: 5.,
+                            selected: false,
+                        });
+                    }
+                }
                 let columns = actions.len() as f32;
                 for (i, (label, action)) in actions.iter().enumerate() {
                     f.button(
@@ -2100,6 +2119,17 @@ pub fn layout(request: Request) -> Result<Frame> {
             }
         }
         _ => unreachable!(),
+    }
+    if request.page == "music" && request.capture_label.is_empty() {
+        // Music, the volumes and Sound come first (they lead the touch
+        // page), then the songs, the pager and Back.
+        let lead = ["musictoggle", "musicvolume", "sfxvolume", "soundmode"];
+        let (mut first, rest): (Vec<String>, Vec<String>) = f
+            .choices
+            .drain(..)
+            .partition(|c| lead.contains(&c.as_str()));
+        first.extend(rest);
+        f.choices = first;
     }
     Ok(f)
 }
