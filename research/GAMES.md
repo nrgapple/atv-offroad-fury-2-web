@@ -545,7 +545,13 @@ carrier is "it" and scores while holding the ball.
   original's full speed (a ball carried on an ATV is not thrown) and the
   knock-loose draw for its own tricks; remote riders' trick starts are
   not relayed, so a guest carrier's ball is never knocked loose (that
-  needs a guest-to-host game message). Each rider applies the engine
+  needs a guest-to-host game message). A remote rider whose poses stop
+  arriving (a throttled tab, a congested link) is not treated as wrecked:
+  the host holds its last fresh position at rest for up to 3 s
+  (`tag::REMOTE_HOLD`) and only then treats it as absent, so a network gap
+  no longer drops a guest carrier's ball as a wreck (before 2026-10-29 a
+  1 s pose gap did, which made guest possessions collapse under host
+  load). Each rider applies the engine
   handicap to its own ATV while it is the carrier (motorcycles, a port
   extra, are not handicapped). The host runs `00246500`'s ground respawn:
   its rays are cast against the heightfield in 1-unit steps (static
