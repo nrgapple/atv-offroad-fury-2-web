@@ -1,0 +1,14 @@
+{
+  "id": "split-screen-players-page-shared-radar-full-gear-for-e-680244c07f8841e0bcbac82bfa2211fa",
+  "timestamp": "2026-10-29T10:30:17.745895+00:00",
+  "recorded_at": "2026-10-29T10:30:27.724311+00:00",
+  "kind": "build",
+  "title": "Split screen: Players page, shared radar, full gear for every seat",
+  "summary": "Every split event (Freestyle, Race, Games, Hockey, Tag) now opens the original's Players page for pad 2\u20134 to join and ready; each seat picks ATV, rider, jersey line, helmet, goggles, gloves, boots and paint. The shared race radar centers on the divider in 2P and on the quarters' crossing in 3/4P. 3/4-player stunt text uses the original's smaller 1.5 scale.",
+  "details": [
+    "Pads 2\u20134 press START on the Players page to join and ready; the event starts once player 1 and every joined player are ready, or with 'Start Event \u00b7 N Players'. Keyboard, mouse and touch drive the rows. The race radar is the original's single shared overlay with red, blue, green and yellow player dots."
+  ],
+  "limitation": "The Players page lacks the original's stats row and profile name widgets and its preview panel is empty. Radar scale in split is untraced. No per-player audio mix yet. Records and credit for players 2\u20134 await a decision.",
+  "image": "/devlog-images/split-screen-players-page-shared-radar-full-gear-for-e-680244c07f8841e0bcbac82bfa2211fa.png",
+  "caption": "The Players page after player 2 has joined and is selecting gear; player 1 is ready."
+}
