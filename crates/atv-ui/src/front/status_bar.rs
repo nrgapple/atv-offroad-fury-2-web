@@ -444,6 +444,14 @@ pub(super) fn bar(m: &Metrics, bar: &StatusBar, hovered: Option<u32>) -> El {
         padding: sides(m.safe[0], m.sides().1 - 4., 0., m.sides().0 - 4.),
         ..Default::default()
     });
+    if !bar.minimal && !m.portrait {
+        // Landscape: the profile chip sits on the red rows and the others
+        // on the silver stage; a dark band joins them into one bar.
+        row = row.paint(Paint::fill(Gradient::new(
+            180.,
+            &[(0., Color::hex("#000000b3")), (1., Color::hex("#00000000"))],
+        )));
+    }
     if !bar.minimal {
         let name = bar.profile.as_deref();
         let shown = match name {

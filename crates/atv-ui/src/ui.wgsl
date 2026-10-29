@@ -4,6 +4,8 @@
 
 struct Globals {
     viewport: vec4<f32>,
+    // Tilted images' sway: yaw, pitch (radians).
+    tilt: vec4<f32>,
 };
 
 @group(0) @binding(0) var<uniform> globals: Globals;
@@ -69,8 +71,26 @@ fn vs(@builtin(vertex_index) index: u32, i: Instance) -> Varyings {
         screen = pivot + vec2(d.x * c - d.y * s, d.x * s + d.y * c);
     }
     var out: Varyings;
+    // Tilted images (border = perspective, centre, on): rotate the quad in
+    // 3D about its centre and project it; w makes the texture coordinates
+    // perspective-correct.
+    var w = 1.;
+    if (i.params.x > 2.5 && i.border.w > .5) {
+        let d = screen - i.border.yz;
+        let cy = cos(globals.tilt.x);
+        let sy = sin(globals.tilt.x);
+        let cx = cos(globals.tilt.y);
+        let sx = sin(globals.tilt.y);
+        // Yaw about the vertical axis, then pitch about the horizontal.
+        let x1 = d.x * cy;
+        let z1 = d.x * sy;
+        let y2 = d.y * cx - z1 * sx;
+        let z2 = d.y * sx + z1 * cx;
+        w = max((i.border.x - z2) / i.border.x, .1);
+        screen = i.border.yz + vec2(x1, y2) / w;
+    }
     let ndc = screen / globals.viewport.xy * 2. - 1.;
-    out.position = vec4(ndc.x, -ndc.y, 0., 1.);
+    out.position = vec4(ndc.x * w, -ndc.y * w, 0., w);
     out.local = vec4(local, corner);
     out.screen = screen;
     out.shape = i.shape;

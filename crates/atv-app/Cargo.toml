@@ -5,7 +5,9 @@ version.workspace = true
 publish.workspace = true
 
 [lib]
-crate-type = ["cdylib", "rlib"]
+# Desktop binaries need only the Rust library. Web/Android builders explicitly
+# request cdylib, avoiding an unused native shared-library optimization/link pass.
+crate-type = ["rlib"]
 
 [[bin]]
 name = "fury"

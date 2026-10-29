@@ -69,6 +69,8 @@ export const TESTS = {
   'test_engine_menu_scroll.mjs': { group: 'content' },
   'test_engine_status_bar.mjs': { group: 'content' },
   'test_engine_menu_transitions.mjs': { group: 'content' },
+  'test_engine_menu_motion.mjs': { group: 'content' },
+  'test_engine_menu_phone_layout.mjs': { group: 'content' },
   'test_engine_context_loss.mjs': { group: 'content' },
   'test_engine_menu_music.mjs': { group: 'content' },
   'test_engine_freeride_full.mjs': {

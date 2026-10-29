@@ -1239,6 +1239,7 @@ impl App {
             return;
         }
         self.sync_wake();
+        self.sync_surface_density();
         let now = Instant::now();
         let dt = (now - self.last).as_secs_f32().min(0.1);
         self.last = now;
@@ -4611,9 +4612,12 @@ impl ApplicationHandler<Message> for App {
                 }
                 self.last = Instant::now();
                 if let Some(window) = &self.window {
+                    // The ride draws at its render ratio from its first frame.
+                    MENU_SURFACE.with(|m| m.set(false));
                     let size = render_size(window);
                     let ready = self.ready.as_mut().unwrap();
                     fit_surface(window, &mut ready.gpu, size, self.suspended);
+                    ready.gpu.set_scene_targets(true);
                     if ready.riding.is_some() {
                         let mut overlay = overlay::Overlay::new(
                             &ready.gpu.device,
@@ -7040,6 +7044,24 @@ impl App {
         }
     }
 
+    /// The frontend draws at the display's full density and the ride at its
+    /// render ratio: switches the surface when one hands over to the other.
+    /// Only a ride draws the 3D scene, so only its device keeps the scene's
+    /// depth and multisample targets (at DPR 3 a portrait phone's would be
+    /// ~95 MB the menus never touch).
+    fn sync_surface_density(&mut self) {
+        let menu = self.ready.is_none();
+        if MENU_SURFACE.with(|m| m.replace(menu)) != menu {
+            self.resize_surface();
+        }
+        if let Some(gpu) = &mut self.gpu {
+            gpu.set_scene_targets(false);
+        }
+        if let Some(ready) = &mut self.ready {
+            ready.gpu.set_scene_targets(true);
+        }
+    }
+
     /// Reconfigures the surfaces and UI views for the window's size and the
     /// current render ratio (resize, rotation, adaptive resolution steps).
     fn resize_surface(&mut self) {
@@ -8533,6 +8555,10 @@ thread_local! {
     /// The adaptive render ratio (backing pixels per CSS pixel, at most the
     /// display's): render_scale::RenderScale's current step.
     static RENDER_RATIO: std::cell::Cell<f64> = const { std::cell::Cell::new(1.5) };
+    /// The frontend is on screen (no ride): its UI-only frames draw at the
+    /// display's full density (at most MENU_RATIO), not the ride's render
+    /// ratio, so menu text, icons and previews stay sharp on phones.
+    static MENU_SURFACE: std::cell::Cell<bool> = const { std::cell::Cell::new(true) };
     /// Desktop: the GPU backend scales a surface smaller than the window up
     /// to it (Metal, DX12), so the render ratio applies.
     static SURFACE_SCALES: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
@@ -8546,12 +8572,27 @@ fn render_ratio_applies() -> bool {
     cfg!(target_arch = "wasm32") || SURFACE_SCALES.with(|s| s.get())
 }
 
+/// The frontend's backing pixels per CSS pixel: the display's own, up to
+/// a DPR 3 phone (the menus are a few textured quads; no 3D scene).
+const MENU_RATIO: f64 = 3.;
+
+/// The render ratio in force: the frontend's full density, else the ride's
+/// adaptive RENDER_RATIO; never above the display's.
+fn render_ratio(device: f64) -> f64 {
+    let cap = if MENU_SURFACE.with(|m| m.get()) {
+        MENU_RATIO
+    } else {
+        RENDER_RATIO.with(|r| r.get())
+    };
+    cap.min(device).max(0.1)
+}
+
 /// Backing pixels per logical (CSS) pixel of the surface: the display's,
-/// capped at RENDER_RATIO where the render ratio applies.
+/// capped at the render ratio where the render ratio applies.
 fn surface_scale(window: &Window) -> f64 {
     let device = window.scale_factor();
     if render_ratio_applies() {
-        RENDER_RATIO.with(|r| r.get()).min(device).max(0.1)
+        render_ratio(device)
     } else {
         device
     }
@@ -8588,8 +8629,7 @@ fn render_size(window: &Window) -> winit::dpi::PhysicalSize<u32> {
         if let Some(canvas) = window.canvas() {
             let rect = canvas.get_bounding_client_rect();
             if rect.width() > 0. && rect.height() > 0. {
-                let device = window.scale_factor();
-                let ratio = RENDER_RATIO.with(|r| r.get()).min(device).max(0.1);
+                let ratio = render_ratio(window.scale_factor());
                 return winit::dpi::PhysicalSize::new(
                     ((rect.width() * ratio).round() as u32).max(1),
                     ((rect.height() * ratio).round() as u32).max(1),
