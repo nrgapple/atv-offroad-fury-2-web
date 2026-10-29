@@ -19,6 +19,7 @@ not on origin/main. Local only, never CI.
 import argparse
 import fcntl
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -42,6 +43,7 @@ RELEASE_PATHS = ('crates', 'third_party', 'Cargo.toml', 'Cargo.lock', 'tools/bui
                  'tools/pack_content.py', 'tools/desktop_archive.py', 'tools/build_android.py',
                  'web/fury-app-icons.json')
 KEEP_BUILDS = 3
+AUTO_RELEASE_HOURS = 7 * 24
 
 
 def git(repo, *args):
@@ -222,11 +224,14 @@ def main(argv=None):
     parser.add_argument('--repo', type=Path, default=ROOT, help='checkout used to talk to origin (never modified)')
     parser.add_argument('--state', type=Path, default=STATE)
     parser.add_argument('--auto-main', action='store_true', help='also release origin/main when the apps changed')
-    parser.add_argument('--min-hours', type=float, default=12, help='least time between automatic releases (default 12)')
+    parser.add_argument('--min-hours', type=float, default=AUTO_RELEASE_HOURS,
+                        help='least time between automatic releases/attempts (default 168: weekly)')
     parser.add_argument('--log', type=Path, help='append output here (launchd cannot open files on the SSD itself)')
     parser.add_argument('--dry-run', action='store_true')
     parser.add_argument('--preflight-only', action='store_true', help='check actual service storage access without building')
     args = parser.parse_args(argv)
+    if not math.isfinite(args.min_hours) or args.min_hours <= 0:
+        parser.error('--min-hours must be a finite positive number')
     if os.environ.get('GITHUB_ACTIONS') or os.environ.get('CI'):
         sys.exit('desktop_release_watcher: local machine only, never CI')
     if args.log:
@@ -254,7 +259,7 @@ def main(argv=None):
             print('release failure backoff is active')
             return 0
         todo = {tag: (sha, True) for tag, sha in pending(tags, state).items()}
-        if args.auto_main:
+        if args.auto_main and not todo:
             subprocess.run(['git', 'fetch', '--quiet', 'origin', 'main', *(f'refs/tags/{t}:refs/tags/{t}' for t in tags)],
                            cwd=args.repo, check=True)
             tag, detail = main_candidate(args.repo, tags, state, args.min_hours)
@@ -265,7 +270,9 @@ def main(argv=None):
         if not todo:
             print('nothing to build')
             return 0
-        for tag, (sha, from_remote) in todo.items():
+        # One release per pass: don't drain a backlog or append an automatic release
+        # after explicit tags. Remaining tags stay pending for a later admission check.
+        for tag, (sha, from_remote) in list(todo.items())[:1]:
             print(f'{"would build" if args.dry_run else "building"} {tag} ({sha})', flush=True)
             if args.dry_run:
                 continue

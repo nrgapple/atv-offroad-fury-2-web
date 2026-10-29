@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!-- Template for the LaunchAgent that builds and publishes desktop archives for new
-     desktop-v* tags and for origin/main when the apps changed (at most every 12 hours).
+     desktop-v* tags and for origin/main when the apps changed (at most every 168 hours).
      Replace @REPO@ (the shared checkout) and @HOME@, then install per
      research/DESKTOP_RELEASES.md. -->
 <plist version="1.0">
@@ -13,6 +13,7 @@
     <string>@HOME@/.local/share/project-service-data/fury-desktop-release/runtime/desktop_release_watcher.py</string>
     <string>--repo</string><string>@REPO@</string>
     <string>--auto-main</string>
+    <string>--min-hours</string><string>168</string>
     <string>--log</string><string>@HOME@/.local/share/project-service-data/fury-desktop-release/watcher.log</string>
   </array>
   <key>ProcessType</key><string>Background</string>
