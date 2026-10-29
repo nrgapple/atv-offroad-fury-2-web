@@ -417,10 +417,20 @@ impl Frontend {
     }
 
     pub(super) fn quad_label(&self, quad: u16) -> String {
+        // The garage catalog, else the store's own list (its pages browse
+        // ATVs the garage does not list yet), never a bare "Vehicle 22".
         self.catalog
             .iter()
             .find(|v| v.id == quad)
-            .map_or(format!("Vehicle {quad}"), |v| v.label.clone())
+            .map(|v| v.label.clone())
+            .or_else(|| {
+                self.store
+                    .atvs
+                    .iter()
+                    .find(|a| a.id == quad && !a.name.is_empty())
+                    .map(|a| a.name.clone())
+            })
+            .unwrap_or_else(|| format!("Vehicle {quad}"))
     }
 
     /// A race course's lock: None when open, else its cost.
