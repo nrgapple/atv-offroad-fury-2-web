@@ -562,6 +562,57 @@ pub struct Graphics {
 /// A multiplayer rider's look: quad, rider and appearance bytes.
 pub type PeerLook = atv_game::multiplayer::remote::Key;
 
+/// One rider's Enhanced/High tire tracks and lingering dust passes, built
+/// on first use at the effects' capacity.
+#[derive(Default)]
+struct Trails {
+    tracks: Option<tire_tracks::TireTracksPass>,
+    dust: Option<lingering_dust::LingeringDustPass>,
+}
+
+impl Trails {
+    fn accept(
+        &mut self,
+        gpu: &Gpu,
+        world: &world::World,
+        effects: &mut atv_game::wheel_effects::WheelEffects,
+    ) {
+        let now = effects.frame().time;
+        match &mut effects.tracks {
+            Some((tracks, ..)) => {
+                if self
+                    .tracks
+                    .as_ref()
+                    .is_none_or(|p| p.capacity() != tracks.capacity)
+                {
+                    self.tracks = Some(tire_tracks::TireTracksPass::new(
+                        gpu,
+                        world,
+                        tracks.capacity,
+                    ));
+                    tracks.dirty = Some((0, tracks.capacity));
+                }
+                if let Some(pass) = &mut self.tracks {
+                    pass.accept(gpu, tracks, now);
+                }
+            }
+            None => self.tracks = None,
+        }
+        match &effects.dust {
+            Some(dust) => {
+                let capacity = dust.emitter.capacity;
+                if self.dust.as_ref().is_none_or(|p| p.capacity() != capacity) {
+                    self.dust = Some(lingering_dust::LingeringDustPass::new(gpu, world, capacity));
+                }
+                if let Some(pass) = &mut self.dust {
+                    pass.accept(gpu, &dust.emitter, now);
+                }
+            }
+            None => self.dust = None,
+        }
+    }
+}
+
 pub struct SceneRenderer {
     terrain: terrain::TerrainPass,
     world: world::World,
@@ -604,7 +655,11 @@ pub struct SceneRenderer {
     wheel_effects: Option<wheel_effects::WheelEffectsPass>,
     /// Split screen: player 2's wheel dust, chunks and spray (no tire
     /// tracks or lingering dust).
-    second_wheel_effects: Option<wheel_effects::WheelEffectsPass>,
+    /// Split screen: players 2-4's wheel effects (by player - 2).
+    second_wheel_effects: Vec<Option<wheel_effects::WheelEffectsPass>>,
+    /// Split screen: players 2-4's own tire tracks and lingering dust
+    /// (drawn in every view, like their wheel effects).
+    second_trails: Vec<Trails>,
     /// Enhanced/High tire tracks.
     tire_tracks: Option<tire_tracks::TireTracksPass>,
     /// Enhanced/High lingering dust puffs.
@@ -778,7 +833,8 @@ impl SceneRenderer {
             profiler: profile::Profiler::default(),
             gpu_timer: None,
             wheel_effects: None,
-            second_wheel_effects: None,
+            second_wheel_effects: Vec::new(),
+            second_trails: Vec::new(),
             lingering_dust: None,
             burst: None,
             tire_tracks: None,
@@ -1179,25 +1235,42 @@ impl SceneRenderer {
         ));
     }
 
-    /// Split screen: installs (or, with none, removes) player 2's wheel
-    /// effects.
+    /// Split screen: installs (or, with none, removes) the wheel effects
+    /// of player `index + 2`.
     pub fn set_second_wheel_effects(
         &mut self,
         gpu: &Gpu,
+        index: usize,
         effects: Option<&atv_game::wheel_effects::WheelEffects>,
     ) {
-        self.second_wheel_effects =
+        if self.second_wheel_effects.len() <= index {
+            self.second_wheel_effects.resize_with(index + 1, || None);
+        }
+        self.second_wheel_effects[index] =
             effects.map(|e| wheel_effects::WheelEffectsPass::new(gpu, &self.world, e));
     }
 
-    /// Player 2's latest wheel-effect frame (split screen).
+    /// Split screen: drops every other player's wheel effects.
+    pub fn clear_second_wheel_effects(&mut self) {
+        self.second_wheel_effects.clear();
+        self.second_trails.clear();
+    }
+
+    /// Player `index + 2`'s latest wheel-effect frame, tire tracks and
+    /// lingering dust (split screen).
     pub fn accept_second_wheel_effects(
         &mut self,
+        gpu: &Gpu,
+        index: usize,
         effects: &mut atv_game::wheel_effects::WheelEffects,
     ) {
-        if let Some(pass) = &mut self.second_wheel_effects {
+        if let Some(Some(pass)) = self.second_wheel_effects.get_mut(index) {
             pass.accept(effects);
         }
+        if self.second_trails.len() <= index {
+            self.second_trails.resize_with(index + 1, Trails::default);
+        }
+        self.second_trails[index].accept(gpu, &self.world, effects);
     }
 
     /// The latest wheel-effect frame and every wet birth since the last call.
@@ -1209,47 +1282,13 @@ impl SceneRenderer {
         if let Some(pass) = &mut self.wheel_effects {
             pass.accept(effects);
         }
-        let now = effects.frame().time;
-        match &mut effects.tracks {
-            Some((tracks, ..)) => {
-                if self
-                    .tire_tracks
-                    .as_ref()
-                    .is_none_or(|p| p.capacity() != tracks.capacity)
-                {
-                    self.tire_tracks = Some(tire_tracks::TireTracksPass::new(
-                        gpu,
-                        &self.world,
-                        tracks.capacity,
-                    ));
-                    tracks.dirty = Some((0, tracks.capacity));
-                }
-                if let Some(pass) = &mut self.tire_tracks {
-                    pass.accept(gpu, tracks, now);
-                }
-            }
-            None => self.tire_tracks = None,
-        }
-        match &effects.dust {
-            Some(dust) => {
-                let capacity = dust.emitter.capacity;
-                if self
-                    .lingering_dust
-                    .as_ref()
-                    .is_none_or(|p| p.capacity() != capacity)
-                {
-                    self.lingering_dust = Some(lingering_dust::LingeringDustPass::new(
-                        gpu,
-                        &self.world,
-                        capacity,
-                    ));
-                }
-                if let Some(pass) = &mut self.lingering_dust {
-                    pass.accept(gpu, &dust.emitter, effects.frame().time);
-                }
-            }
-            None => self.lingering_dust = None,
-        }
+        let mut trails = Trails {
+            tracks: self.tire_tracks.take(),
+            dust: self.lingering_dust.take(),
+        };
+        trails.accept(gpu, &self.world, effects);
+        self.tire_tracks = trails.tracks;
+        self.lingering_dust = trails.dust;
     }
 
     /// The Alpha landing-burst pool after this frame's steps (`now` its clock,
@@ -1361,6 +1400,12 @@ impl SceneRenderer {
     /// Drops riders that left or changed model.
     pub fn retain_peers(&mut self, mut keep: impl FnMut(u8, PeerLook) -> bool) {
         self.peers.retain(|peer, (key, ..)| keep(*peer, *key));
+    }
+
+    /// How many multiplayer rider slots are shown (split screen's other
+    /// players, or a room's riders).
+    pub fn peers_shown(&self) -> usize {
+        self.peers.values().filter(|(.., visible)| *visible).count()
     }
 
     /// Poses the presented multiplayer riders; others are hidden. Unlike race
@@ -1753,7 +1798,7 @@ impl SceneRenderer {
         if let Some(pass) = &mut self.wheel_effects {
             (stats.wheel_draws, stats.wheel_triangles) = pass.prepare(gpu, &view.camera);
         }
-        if let Some(pass) = &mut self.second_wheel_effects {
+        for pass in self.second_wheel_effects.iter_mut().flatten() {
             let (draws, triangles) = pass.prepare(gpu, &view.camera);
             stats.wheel_draws += draws;
             stats.wheel_triangles += triangles;
@@ -1767,6 +1812,18 @@ impl SceneRenderer {
             let (draws, triangles) = pass.prepare(gpu, &view.camera, effects_far);
             stats.wheel_draws += draws;
             stats.wheel_triangles += triangles;
+        }
+        for trails in &mut self.second_trails {
+            if let Some(pass) = &mut trails.tracks {
+                let (draws, triangles) = pass.prepare(gpu);
+                stats.wheel_draws += draws;
+                stats.wheel_triangles += triangles;
+            }
+            if let Some(pass) = &mut trails.dust {
+                let (draws, triangles) = pass.prepare(gpu, &view.camera, effects_far);
+                stats.wheel_draws += draws;
+                stats.wheel_triangles += triangles;
+            }
         }
         if let Some(pass) = &mut self.burst {
             let (draws, triangles) = pass.prepare(gpu, &view.camera, effects_far);
@@ -1998,6 +2055,9 @@ impl SceneRenderer {
             if let Some(tracks) = &self.tire_tracks {
                 tracks.draw(&mut pass, &self.world);
             }
+            for tracks in self.second_trails.iter().filter_map(|t| t.tracks.as_ref()) {
+                tracks.draw(&mut pass, &self.world);
+            }
             self.profiler.mark("encode.train_shadows_tracks");
             if let Some(vegetation) = &self.vegetation {
                 vegetation.draw(&mut pass, &self.world);
@@ -2032,10 +2092,13 @@ impl SceneRenderer {
             if let Some(effects) = &self.wheel_effects {
                 effects.draw(&mut pass, &self.world);
             }
-            if let Some(effects) = &self.second_wheel_effects {
+            for effects in self.second_wheel_effects.iter().flatten() {
                 effects.draw(&mut pass, &self.world);
             }
             if let Some(dust) = &self.lingering_dust {
+                dust.draw(&mut pass, &self.world);
+            }
+            for dust in self.second_trails.iter().filter_map(|t| t.dust.as_ref()) {
                 dust.draw(&mut pass, &self.world);
             }
             if let Some(burst) = &self.burst {

@@ -18,6 +18,7 @@ pub mod games_page;
 pub mod navigation;
 pub mod passkey_page;
 pub mod profile_pages;
+pub mod seats_page;
 pub mod status_page;
 pub use passkey_page::{CloudCommand, CloudView};
 use profile_pages::NO_PROFILE;
@@ -61,6 +62,27 @@ pub enum Event {
     TagHost {
         environment: String,
         minutes: u32,
+        quad: u16,
+        rider: u16,
+        name: String,
+    },
+    /// Games → King of the Hills / Treasure Hunt with Riders: Online Room:
+    /// host a room on the course and start the game there for every room
+    /// rider (research/MULTIPLAYER.md "Room games").
+    GameHost {
+        kind: atv_core::games::GameKind,
+        environment: String,
+        minutes: u32,
+        quad: u16,
+        rider: u16,
+        name: String,
+    },
+    /// Host Game with Mode: Freestyle: host a room on the course and start
+    /// room Freestyle there once joined (research/MULTIPLAYER.md "Room
+    /// Freestyle").
+    FreestyleHost {
+        environment: String,
+        code: Option<String>,
         quad: u16,
         rider: u16,
         name: String,
@@ -209,6 +231,12 @@ pub fn stepper(action: &str) -> bool {
             | "codeletter"
     ) || games_page::game_row(action)
         || GEAR_ROWS.iter().any(|(a, _)| *a == action)
+        || action.strip_prefix("seat").is_some_and(|rest| {
+            rest.len() > 1
+                && seats_page::SEAT_ROWS
+                    .iter()
+                    .any(|(row, _)| *row == &rest[1..])
+        })
 }
 
 /// The original catalog names pants and sleeves generically ("pants 10").
@@ -426,14 +454,25 @@ pub struct Frontend {
     status_anchor: f32,
     /// The Pass Key pages' working state.
     pub passkey: passkey_page::PassKeyUi,
-    /// Multiplayer → Split Screen: the next Freestyle or Race rides two
-    /// local players (research/SPLIT_SCREEN.md).
+    /// Multiplayer → Split Screen: the next Freestyle or Race rides
+    /// `split_players` local players (research/SPLIT_SCREEN.md).
     pub split: bool,
-    /// Split Screen layout: side by side, else top and bottom (saved).
+    /// Split Screen layout for two players: side by side, else top and
+    /// bottom (saved). Three and four players share quarters.
     pub split_vertical: bool,
-    /// Split Screen: player 2's own ATV and rider (0 male, 1 female),
+    /// Split Screen: how many local players (2-4, saved).
+    pub split_players: u8,
+    /// Split Screen: players 2-4's own ATV and rider (0 male, 1 female),
     /// chosen on the Split Screen page (saved).
-    pub split_second: (u16, u16),
+    pub split_seconds: [(u16, u16); 3],
+    /// Split Screen: players 2-4's own gear and quad paint, chosen on the
+    /// Split Screen page (saved).
+    pub split_looks: [Appearance; 3],
+    /// Host Game → Room: Freestyle: the hosted room starts a room
+    /// Freestyle session (research/MULTIPLAYER.md "Room Freestyle").
+    pub host_freestyle: bool,
+    /// Split Screen → Players: the seats claimed before a split event.
+    pub seats: seats_page::Seats,
     /// The pages Back returns through (`navigation`).
     history: Vec<navigation::Visit>,
 }
@@ -442,6 +481,45 @@ pub struct Frontend {
 pub const SPLIT_LAYOUT_KEY: &str = "atv-split-screen";
 /// Saved player 2 ATV and rider ("quad,rider").
 pub const SPLIT_SECOND_KEY: &str = "atv-split-player2";
+/// Saved Split Screen player count (2-4).
+pub const SPLIT_PLAYERS_KEY: &str = "atv-split-players";
+
+/// Player `n`'s saved ATV and rider key (`atv-split-player2`..4).
+pub fn split_player_key(n: u8) -> String {
+    format!("atv-split-player{n}")
+}
+
+/// Player `n`'s saved gear and paint key (`atv-split-look2`..4):
+/// the seven gear indices and the paint, comma-separated.
+pub fn split_look_key(n: u8) -> String {
+    format!("atv-split-look{n}")
+}
+
+/// A saved split look ("g0,..,g6,paint"); none when malformed.
+pub fn parse_split_look(value: &str) -> Option<Appearance> {
+    let parts: Vec<u8> = value
+        .split([',', '.'])
+        .map(|v| v.trim().parse().ok())
+        .collect::<Option<_>>()?;
+    let [g0, g1, g2, g3, g4, g5, g6, paint] = parts[..] else {
+        return None;
+    };
+    let look = Appearance {
+        gear: [g0, g1, g2, g3, g4, g5, g6],
+        paint,
+    };
+    look.valid().then_some(look)
+}
+
+/// A split look as saved ("g0,..,g6,paint").
+pub fn split_look_value(look: &Appearance) -> String {
+    look.gear
+        .iter()
+        .chain([&look.paint])
+        .map(u8::to_string)
+        .collect::<Vec<_>>()
+        .join(",")
+}
 
 /// Player 2's ATVs: the 26 original quads (rooms and the rider slot that
 /// draws player 2 carry ATVs only).
@@ -521,14 +599,29 @@ impl Frontend {
             passkey: Default::default(),
             split: false,
             split_vertical: settings.get(SPLIT_LAYOUT_KEY).as_deref() == Some("vertical"),
-            split_second: settings
-                .get(SPLIT_SECOND_KEY)
-                .and_then(|v| {
-                    let (q, r) = v.split_once(',')?;
-                    Some((q.parse().ok()?, r.parse().ok()?))
-                })
-                .filter(|(q, r): &(u16, u16)| (1..=SPLIT_QUADS).contains(q) && *r <= 1)
-                .unwrap_or((2, 0)),
+            split_players: settings
+                .get(SPLIT_PLAYERS_KEY)
+                .and_then(|v| v.parse().ok())
+                .filter(|n| (2..=4).contains(n))
+                .unwrap_or(2),
+            split_seconds: [2u8, 3, 4].map(|n| {
+                settings
+                    .get(&split_player_key(n))
+                    .and_then(|v| {
+                        let (q, r) = v.split_once(',')?;
+                        Some((q.parse().ok()?, r.parse().ok()?))
+                    })
+                    .filter(|(q, r): &(u16, u16)| (1..=SPLIT_QUADS).contains(q) && *r <= 1)
+                    .unwrap_or((u16::from(n), 0))
+            }),
+            split_looks: [2u8, 3, 4].map(|n| {
+                settings
+                    .get(&split_look_key(n))
+                    .and_then(|v| parse_split_look(&v))
+                    .unwrap_or_default()
+            }),
+            host_freestyle: false,
+            seats: Default::default(),
             history: Vec::new(),
         };
         front.load_profiles(settings);
@@ -576,6 +669,11 @@ impl Frontend {
             self.selection = self.selection.min(self.choices.len().saturating_sub(1));
             return;
         }
+        if self.page == "splitseats" {
+            self.choices = self.seat_choices();
+            self.selection = self.selection.min(self.choices.len().saturating_sub(1));
+            return;
+        }
         if self.page == "games" {
             self.choices = self.game_choices();
             self.selection = self.selection.min(self.choices.len().saturating_sub(1));
@@ -620,13 +718,28 @@ impl Frontend {
         let request = json!({
             "page": page,
             "split_vertical": self.split_vertical,
-            "split_second": [
-                format!("Player 2 ATV: {}", self.quad_label(self.split_second.0)),
-                format!(
-                    "Player 2 Rider: {}",
-                    if self.split_second.1 == 1 { "Female" } else { "Male" }
-                ),
-            ],
+            "host_freestyle": self.host_freestyle,
+            "split_players": self.split_players,
+            "split_seconds": (0..usize::from(self.split_players.clamp(2, 4)) - 1)
+                .flat_map(|i| {
+                    let (quad, rider) = self.split_seconds[i];
+                    let look = self.split_looks[i];
+                    [
+                        format!("Player {} ATV: {}", i + 2, self.quad_label(quad)),
+                        format!(
+                            "Player {} Rider: {}",
+                            i + 2,
+                            if rider == 1 { "Female" } else { "Male" }
+                        ),
+                        format!("Player {} Gear: {}", i + 2, self.jersey_label(look)),
+                        format!(
+                            "Player {} Paint: {}",
+                            i + 2,
+                            PAINTS[usize::from(look.paint).min(PAINTS.len() - 1)]
+                        ),
+                    ]
+                })
+                .collect::<Vec<_>>(),
             "width": view.width.clamp(240., 16384.),
             "height": view.height.clamp(240., 16384.),
             "selection": self.selection,
@@ -720,6 +833,20 @@ impl Frontend {
             for (i, (action, label)) in rows.into_iter().enumerate() {
                 self.choices.insert(at + i, (action.into(), label.into()));
             }
+        }
+        // Split Screen → Freestyle Objectives: offline multiplayer keeps
+        // Freestyle's Objectives event type (only online play drops it,
+        // `0026d010`; research/SPLIT_SCREEN.md "Split objectives").
+        if page == "split" && !self.objective_courses.is_empty() {
+            let at = self
+                .choices
+                .iter()
+                .position(|(a, _)| a == "splitfree")
+                .map_or(self.choices.len(), |i| i + 1);
+            self.choices.insert(
+                at,
+                ("splitobjectives".into(), "Freestyle Objectives".into()),
+            );
         }
         self.selection = self.selection.min(self.choices.len().saturating_sub(1));
     }
@@ -888,30 +1015,33 @@ impl Frontend {
         self.set_race_filter(&next);
     }
 
+    /// A look's item name in one gear slot (Original for the rider's own;
+    /// pants and sleeves take their jersey line's name).
+    pub(super) fn gear_name(&self, a: Appearance, slot: &str) -> String {
+        let at = SLOTS.iter().position(|s| *s == slot).unwrap_or(0);
+        let index = usize::from(a.gear[at]);
+        let item = index
+            .checked_sub(1)
+            .and_then(|i| self.gear_catalog.get(at)?.items.get(i))
+            .map(|item| item.name.clone());
+        match item {
+            None => "Original".to_string(),
+            Some(item) if generic_name(&item) => {
+                let shirt = SLOTS.iter().position(|s| *s == "shirt").unwrap_or(3);
+                self.gear_catalog
+                    .get(shirt)
+                    .and_then(|c| c.items.get(index - 1))
+                    .map_or(item, |i| i.name.clone())
+            }
+            Some(item) => item,
+        }
+    }
+
     /// Gear rows' values (frontend.js `gearRows`): helmet, jersey, pants,
     /// gloves, boots, goggles and the quad paint.
     pub fn gear_rows(&self) -> Vec<String> {
         let a = self.appearance;
-        let name = |slot: &str| {
-            let at = SLOTS.iter().position(|s| *s == slot).unwrap_or(0);
-            let index = usize::from(a.gear[at]);
-            let item = index
-                .checked_sub(1)
-                .and_then(|i| self.gear_catalog.get(at)?.items.get(i))
-                .map(|item| item.name.clone());
-            match item {
-                None => "Original".to_string(),
-                // Pants and sleeves share the jersey line of their index.
-                Some(item) if generic_name(&item) => {
-                    let shirt = SLOTS.iter().position(|s| *s == "shirt").unwrap_or(3);
-                    self.gear_catalog
-                        .get(shirt)
-                        .and_then(|c| c.items.get(index - 1))
-                        .map_or(item, |i| i.name.clone())
-                }
-                Some(item) => item,
-            }
-        };
+        let name = |slot: &str| self.gear_name(a, slot);
         vec![
             name("helmet"),
             name("shirt"),
@@ -921,6 +1051,45 @@ impl Frontend {
             name("goggle"),
             PAINTS[usize::from(a.paint)].to_string(),
         ]
+    }
+
+    /// A look's jersey line (the Garage's Jersey row name), or Original.
+    fn jersey_label(&self, look: Appearance) -> String {
+        let shirt = SLOTS.iter().position(|s| *s == "shirt").unwrap_or(3);
+        usize::from(look.gear[shirt])
+            .checked_sub(1)
+            .and_then(|i| self.gear_catalog.get(shirt)?.items.get(i))
+            .map_or_else(|| "Original".to_string(), |item| item.name.clone())
+    }
+
+    /// Split Screen → Player N Gear: the next owned jersey line (Original
+    /// and the catalog's jerseys, as the Garage's Jersey row steps), with
+    /// its matching sleeves and pants (the catalog's lines share an index).
+    fn step_split_gear(&self, mut look: Appearance) -> Appearance {
+        let at = SLOTS.iter().position(|s| *s == "shirt").unwrap_or(3);
+        let items = self.gear_catalog.get(at).map_or(0, |c| c.items.len());
+        if items == 0 {
+            return look;
+        }
+        for _ in 0..=items {
+            look.gear[at] = (usize::from(look.gear[at]) + 1).rem_euclid(items + 1) as u8;
+            if self.gear_choice_owned(at, look.gear[at]) {
+                break;
+            }
+        }
+        for slot in ["sleeve", "pant"] {
+            let Some(s) = SLOTS.iter().position(|n| *n == slot) else {
+                continue;
+            };
+            let count = self.gear_catalog.get(s).map_or(0, |c| c.items.len());
+            let index = look.gear[at].min(count.min(255) as u8);
+            look.gear[s] = if self.gear_choice_owned(s, index) {
+                index
+            } else {
+                0
+            };
+        }
+        look
     }
 
     /// frontend.js `stepGear`: one row through Original and the catalog;
@@ -956,6 +1125,10 @@ impl Frontend {
 
     /// A value row stepped by Left/Right, its arrows or a tap (+1).
     fn step(&mut self, action: &str, direction: i32, view: &Viewport, settings: &mut Settings) {
+        if self.page == "splitseats" {
+            self.seat_action(action, direction, view, settings);
+            return;
+        }
         if matches!(
             action,
             "profileletter"
@@ -1112,6 +1285,10 @@ impl Frontend {
             "championship" => self.series_line(),
             "games" => self.games_line(),
             "objectives" => self.objectives_line(),
+            "objective-courses" if self.split => Some(
+                "Ride an objective together: shared targets and clock; split screen results are not saved."
+                    .into(),
+            ),
             "objective-courses" => {
                 Some("Ride any Freestyle course's objectives outside a championship.".into())
             }
@@ -1677,6 +1854,15 @@ impl Frontend {
             self.room = None;
             return Some(self.room_ride(Some(track.id)));
         }
+        if self.hosting && self.host_freestyle {
+            return Some(Event::FreestyleHost {
+                environment: track.id,
+                code: Some(self.create_code.clone()).filter(|c| !c.is_empty()),
+                quad: self.quad_id,
+                rider: self.rider_id,
+                name: self.room_name(),
+            });
+        }
         if self.hosting {
             // Select Track refused a motorcycle, as frontend.js does.
             return Some(Event::Host {
@@ -1807,6 +1993,11 @@ impl Frontend {
         if let Some(event) = self.profile_action(action, view, settings) {
             return event;
         }
+        if self.page == "splitseats"
+            && let Some(event) = self.seat_action(action, 1, view, settings)
+        {
+            return event;
+        }
         match action {
             "main" | "single" | "tracks" | "multiplayer" | "race" | "gear" | "split" => {
                 self.show(action, view)
@@ -1822,11 +2013,24 @@ impl Frontend {
                     view,
                 );
             }
-            // Player 2's own garage (the original seats each player at a
-            // pad with its own ATV and rider choice).
-            "split2quad" | "split2rider" => {
-                let (mut quad, mut rider) = self.split_second;
-                if action == "split2rider" {
+            // Split Screen's player count: 2, 3 or 4 (the manual's
+            // multitap split screen).
+            "splitplayers" => {
+                self.split_players = self.split_players % 4 + 1;
+                if self.split_players < 2 {
+                    self.split_players = 2;
+                }
+                settings.set(SPLIT_PLAYERS_KEY, &self.split_players.to_string());
+                self.refresh(view);
+            }
+            // Players 2-4's own garage (the original seats each player at
+            // a pad with its own ATV and rider choice).
+            "split2quad" | "split2rider" | "split3quad" | "split3rider" | "split4quad"
+            | "split4rider" => {
+                let n = action.as_bytes()[5] - b'0';
+                let index = usize::from(n) - 2;
+                let (mut quad, mut rider) = self.split_seconds[index];
+                if action.ends_with("rider") {
                     rider = 1 - rider.min(1);
                 } else {
                     for _ in 0..SPLIT_QUADS {
@@ -1836,8 +2040,24 @@ impl Frontend {
                         }
                     }
                 }
-                self.split_second = (quad, rider);
-                settings.set(SPLIT_SECOND_KEY, &format!("{quad},{rider}"));
+                self.split_seconds[index] = (quad, rider);
+                settings.set(&split_player_key(n), &format!("{quad},{rider}"));
+                self.refresh(view);
+            }
+            // Players 2-4's own gear and paint (each original player
+            // dresses in its own Garage).
+            "split2gear" | "split2paint" | "split3gear" | "split3paint" | "split4gear"
+            | "split4paint" => {
+                let n = action.as_bytes()[5] - b'0';
+                let index = usize::from(n) - 2;
+                let mut look = self.split_looks[index];
+                if action.ends_with("paint") {
+                    look.paint = (look.paint + 1) % PAINTS.len() as u8;
+                } else {
+                    look = self.step_split_gear(look);
+                }
+                self.split_looks[index] = look;
+                settings.set(&split_look_key(n), &split_look_value(&look));
                 self.refresh(view);
             }
             "splitlayout" => {
@@ -1875,6 +2095,11 @@ impl Frontend {
                 self.freestyle = None;
                 self.show(action, view);
             }
+            "splitobjectives" => {
+                self.split = true;
+                self.freestyle = None;
+                self.show("objective-courses", view);
+            }
             _ if action.starts_with("objcourse:") => {
                 self.freestyle = None;
                 self.objective_course = Some(action["objcourse:".len()..].to_string());
@@ -1892,6 +2117,11 @@ impl Frontend {
                 self.notice = None;
                 self.focus = None;
                 self.show(action, view);
+            }
+            // Host Game's Room row: Free Ride or Freestyle.
+            "hostmode" => {
+                self.host_freestyle = !self.host_freestyle;
+                self.refresh(view);
             }
             "share" if self.page == "lobby" => return Some(Event::CopyInvite),
             "leave" if self.page == "lobby" => return self.leave_lobby(view),
@@ -1999,6 +2229,11 @@ impl Frontend {
 
     /// Keyboard navigation (frontend.js `action`).
     pub fn key(&mut self, code: &str, view: &Viewport, settings: &mut Settings) -> Option<Event> {
+        let event = self.key_inner(code, view, settings);
+        self.seat_gate(event, view)
+    }
+
+    fn key_inner(&mut self, code: &str, view: &Viewport, settings: &mut Settings) -> Option<Event> {
         self.reveal_row = true;
         // An open status popover takes the next key and closes.
         if self.status_open() && !matches!(code, "ShiftLeft" | "ShiftRight") {
@@ -2086,7 +2321,8 @@ impl Frontend {
             }
             (
                 "race" | "gear" | "games" | "profile-name" | "profile-records" | "hall-of-fame"
-                | "passkey-entry" | "store-atv" | "store-gear" | "store-games" | "store-tracks",
+                | "passkey-entry" | "store-atv" | "store-gear" | "store-games" | "store-tracks"
+                | "splitseats",
                 "left" | "right",
             ) => {
                 // Only value rows step; Start Race, the link and Back do not.
@@ -2374,6 +2610,19 @@ impl Frontend {
     }
 
     pub fn release(
+        &mut self,
+        hits: &[(Rect, u32)],
+        pointer: u64,
+        x: f32,
+        y: f32,
+        view: &Viewport,
+        settings: &mut Settings,
+    ) -> Option<Event> {
+        let event = self.release_inner(hits, pointer, x, y, view, settings);
+        self.seat_gate(event, view)
+    }
+
+    fn release_inner(
         &mut self,
         hits: &[(Rect, u32)],
         pointer: u64,
@@ -2851,6 +3100,37 @@ mod tests {
             Some("That code is reserved. Choose another.")
         );
         assert_eq!(front.page, "create-lobby");
+    }
+
+    #[test]
+    fn host_game_room_freestyle_hosts_a_freestyle_room() {
+        let view = view(1280., 720.);
+        let mut settings = Settings::memory();
+        let mut front = Frontend::new(tracks(), &settings, true);
+        front.show("create-lobby", &view);
+        let rows: Vec<&str> = front.choices().iter().map(|(a, _)| a.as_str()).collect();
+        assert_eq!(&rows[..3], ["hosttrack", "hostmode", "garage"]);
+        assert_eq!(front.choices()[1].1, "Room: Free Ride");
+        front.run("hostmode", &view, &mut settings);
+        assert!(front.host_freestyle);
+        assert_eq!(front.choices()[1].1, "Room: Freestyle (timed stunts)");
+        front.set_field("create-code", "fs12ab34");
+        front.run("hosttrack", &view, &mut settings);
+        assert_eq!((front.page.as_str(), front.hosting), ("tracks", true));
+        let event = front.key("Enter", &view, &mut settings);
+        assert!(
+            matches!(event, Some(Event::FreestyleHost { ref code, ref environment, .. })
+                if code.as_deref() == Some("FS12AB34") && environment == "env01"),
+            "{event:?}"
+        );
+        // Back to Free Ride: an ordinary hosted room.
+        front.key("Escape", &view, &mut settings);
+        front.run("hostmode", &view, &mut settings);
+        front.run("hosttrack", &view, &mut settings);
+        assert!(matches!(
+            front.key("Enter", &view, &mut settings),
+            Some(Event::Host { .. })
+        ));
     }
 
     #[test]
@@ -3452,6 +3732,44 @@ mod tests {
     }
 
     #[test]
+    fn split_objectives_ride_through_the_players_page() {
+        let view = view(1280., 720.);
+        let mut settings = Settings::memory();
+        let mut front = Frontend::new(tracks(), &settings, true);
+        front.objective_courses = vec!["env01".into()];
+        front.show("split", &view);
+        let at = front
+            .choices()
+            .iter()
+            .position(|(a, _)| a == "splitobjectives")
+            .expect("Split Screen lists Freestyle Objectives");
+        assert_eq!(front.choices()[at - 1].0, "splitfree");
+        front.selection = at;
+        assert_eq!(front.key("Enter", &view, &mut settings), None);
+        assert_eq!(
+            (front.page.as_str(), front.split),
+            ("objective-courses", true)
+        );
+        front.selection = 0;
+        front.key("Enter", &view, &mut settings);
+        assert_eq!(front.page, "objectives");
+        // An objective waits on Players, then starts with the seated players.
+        front.selection = 0;
+        assert_eq!(front.key("Enter", &view, &mut settings), None);
+        assert_eq!(front.page, "splitseats");
+        let go = front
+            .choices()
+            .iter()
+            .position(|(a, _)| a == "splitgo")
+            .unwrap();
+        front.selection = go;
+        assert!(matches!(
+            front.key("Enter", &view, &mut settings),
+            Some(Event::Objective { objective: 0, .. })
+        ));
+    }
+
+    #[test]
     fn standalone_objectives_pick_a_course_and_save_its_bits() {
         let view = view(1280., 720.);
         let mut settings = Settings::memory();
@@ -3613,6 +3931,72 @@ mod tests {
     }
 
     #[test]
+    fn split_events_wait_on_the_players_page_until_seated() {
+        let view = view(1280., 720.);
+        let mut settings = Settings::memory();
+        let mut front = Frontend::new(tracks(), &settings, true);
+        front.show("split", &view);
+        front.split = true;
+        front.show("tracks", &view);
+        // Start on Freestyle opens Players with the last two players joined.
+        assert_eq!(front.key("Enter", &view, &mut settings), None);
+        assert_eq!(front.page, "splitseats");
+        let actions: Vec<_> = front.choices().iter().map(|(a, _)| a.clone()).collect();
+        assert_eq!(actions[..3], ["splitgo", "seat1ready", "seat2ready"]);
+        assert!(actions.contains(&"seat2helmet".to_string()));
+        assert!(actions.contains(&"seat3join".to_string()));
+        // Player 3's pad: START joins; its D-pad moves to Rider and steps it.
+        let idle = [0f32; 17];
+        let press = |front: &mut Frontend, settings: &mut Settings, button: usize| {
+            let mut pad = idle;
+            pad[button] = 1.;
+            let event = front.seat_pad(2, Some((&pad, &[0.; 4])), &view, settings);
+            front.seat_pad(2, Some((&idle, &[0.; 4])), &view, settings);
+            event
+        };
+        front.seat_pad(2, Some((&idle, &[0.; 4])), &view, &mut settings);
+        press(&mut front, &mut settings, 9);
+        assert!(front.seats.joined[2]);
+        press(&mut front, &mut settings, 13);
+        press(&mut front, &mut settings, 15);
+        assert_eq!(
+            front.split_seconds[1].1, 1,
+            "player 3 rides the female rider"
+        );
+        // Player 3's helmet steps like Rider Gear's (Original when locked).
+        let helmet = front
+            .choices()
+            .iter()
+            .position(|(a, _)| a == "seat3helmet")
+            .unwrap();
+        front.selection = helmet;
+        front.key("ArrowRight", &view, &mut settings);
+        assert_eq!(front.seats.cursor[2], 3);
+        // Everyone ready: player 1's row, player 2's row, player 3's START.
+        for row in ["seat1ready", "seat2ready"] {
+            front.selection = front.choices().iter().position(|(a, _)| a == row).unwrap();
+            assert_eq!(front.key("Enter", &view, &mut settings), None);
+        }
+        let event = press(&mut front, &mut settings, 9);
+        assert!(matches!(event, Some(Event::Ride { .. })), "{event:?}");
+        let (players, seconds, _) = front.split_launch();
+        assert_eq!(players, 3);
+        assert_eq!(seconds[1].1, 1);
+        assert_eq!(settings.get(SPLIT_PLAYERS_KEY).as_deref(), Some("3"));
+        // Players 1 and 4 only: player 4 rides seat 2 (pad order compacts).
+        front.split_players = 2;
+        front.show("tracks", &view);
+        front.key("Enter", &view, &mut settings);
+        front.seats.joined = [true, false, false, true];
+        front.split_seconds[2] = (7, 1);
+        front.selection = 0;
+        let event = front.key("Enter", &view, &mut settings);
+        assert!(matches!(event, Some(Event::Ride { .. })));
+        let (players, seconds, _) = front.split_launch();
+        assert_eq!((players, seconds[0]), (2, (7, 1)));
+    }
+
+    #[test]
     fn split_screen_branch_marks_two_players_until_it_is_left() {
         let view = view(1280., 720.);
         let mut settings = Settings::memory();
@@ -3624,15 +4008,21 @@ mod tests {
         assert_eq!((front.page.as_str(), front.split), ("split", false));
         let actions: Vec<_> = front.choices().iter().map(|(a, _)| a.clone()).collect();
         assert_eq!(
-            actions[..4],
-            ["splitrace", "splitfree", "splitgames", "splitlayout"]
+            actions[..5],
+            [
+                "splitrace",
+                "splitfree",
+                "splitgames",
+                "splitplayers",
+                "splitlayout"
+            ]
         );
         // The layout row toggles and is saved.
-        front.selection = 3;
+        front.selection = 4;
         front.key("Enter", &view, &mut settings);
         assert!(front.split_vertical);
         assert_eq!(settings.get(SPLIT_LAYOUT_KEY).as_deref(), Some("vertical"));
-        assert!(front.choices()[3].1.contains("Side by Side"));
+        assert!(front.choices()[4].1.contains("Side by Side"));
         // Games opens the Games page for two players.
         front.selection = 2;
         front.key("Enter", &view, &mut settings);
@@ -3655,19 +4045,78 @@ mod tests {
         // Player 2's own ATV and rider rows, saved.
         front.show("split", &view);
         let actions: Vec<_> = front.choices().iter().map(|(a, _)| a.clone()).collect();
-        assert_eq!(actions[4..6], ["split2quad", "split2rider"]);
-        let quad = front.split_second.0;
-        front.selection = 4;
-        front.key("Enter", &view, &mut settings);
-        assert_ne!(front.split_second.0, quad);
+        assert_eq!(actions[5..7], ["split2quad", "split2rider"]);
+        let quad = front.split_seconds[0].0;
         front.selection = 5;
         front.key("Enter", &view, &mut settings);
-        assert_eq!(front.split_second.1, 1);
-        assert!(front.choices()[5].1.contains("Female"));
+        assert_ne!(front.split_seconds[0].0, quad);
+        front.selection = 6;
+        front.key("Enter", &view, &mut settings);
+        assert_eq!(front.split_seconds[0].1, 1);
+        assert!(front.choices()[6].1.contains("Female"));
         assert_eq!(
-            Frontend::new(tracks(), &settings, true).split_second,
-            front.split_second
+            Frontend::new(tracks(), &settings, true).split_seconds,
+            front.split_seconds
         );
+        // Player 2's own gear and paint rows, saved.
+        let actions: Vec<_> = front.choices().iter().map(|(a, _)| a.clone()).collect();
+        assert_eq!(actions[7..9], ["split2gear", "split2paint"]);
+        assert!(front.choices()[8].1.contains("Paint: Original"));
+        front.selection = 8;
+        front.key("Enter", &view, &mut settings);
+        assert_eq!(front.split_looks[0].paint, 1);
+        assert!(front.choices()[8].1.contains("Paint: Red"));
+        front.selection = 7;
+        front.key("Enter", &view, &mut settings);
+        assert!(front.choices()[7].1.starts_with("Player 2 Gear: "));
+        assert_eq!(
+            Frontend::new(tracks(), &settings, true).split_looks,
+            front.split_looks
+        );
+        assert_eq!(
+            parse_split_look(&split_look_value(&front.split_looks[0])),
+            Some(front.split_looks[0])
+        );
+        assert_eq!(parse_split_look("1,2,3"), None);
+        // Three and four players: quarters (no layout row) and rows for
+        // players 3 and 4, saved.
+        front.selection = 3;
+        front.key("Enter", &view, &mut settings);
+        assert_eq!(front.split_players, 3);
+        let actions: Vec<_> = front.choices().iter().map(|(a, _)| a.clone()).collect();
+        assert!(!actions.contains(&"splitlayout".to_string()));
+        assert!(front.choices()[3].1.contains("Players: 3"));
+        assert_eq!(
+            actions[4..],
+            [
+                "split2quad",
+                "split2rider",
+                "split2gear",
+                "split2paint",
+                "split3quad",
+                "split3rider",
+                "split3gear",
+                "split3paint"
+            ]
+        );
+        front.key("Enter", &view, &mut settings);
+        assert_eq!(front.split_players, 4);
+        let actions: Vec<_> = front.choices().iter().map(|(a, _)| a.clone()).collect();
+        assert_eq!(actions.len(), 16);
+        assert_eq!(
+            actions[12..],
+            ["split4quad", "split4rider", "split4gear", "split4paint"]
+        );
+        front.selection = 13;
+        front.key("Enter", &view, &mut settings);
+        assert_eq!(front.split_seconds[2].1, 1);
+        let restored = Frontend::new(tracks(), &settings, true);
+        assert_eq!(restored.split_players, 4);
+        assert_eq!(restored.split_seconds, front.split_seconds);
+        // Four wraps back to two.
+        front.selection = 3;
+        front.key("Enter", &view, &mut settings);
+        assert_eq!(front.split_players, 2);
     }
 
     #[test]

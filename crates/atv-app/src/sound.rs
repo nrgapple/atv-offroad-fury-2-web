@@ -806,19 +806,26 @@ impl Sound {
     /// multiplayer listener, they are heard from the drawn camera (after the
     /// chase, crash and big-air presentation) moving with the player's
     /// vehicle; the player's own and venue sounds keep the follow camera.
+    ///
+    /// `views` are split screen's players 2-4 cameras: each voice is heard
+    /// from the nearest of every player's camera (`001742f0` picks the
+    /// nearest listener; research/SPLIT_SCREEN.md "Split audio").
     pub fn remote_frame(
         &mut self,
         riders: &[atv_game::audio::remote::Rider],
         own: [f32; 3],
         camera: &atv_render::Camera,
         velocity: [f32; 3],
+        views: &[atv_core::spatial_audio::Listener],
     ) -> Vec<u16> {
         let wanted = self.remote.wanted(riders);
-        let listener = atv_core::spatial_audio::Listener {
+        let listeners: Vec<_> = std::iter::once(atv_core::spatial_audio::Listener {
             position: camera.eye(),
             forward: camera.axes().forward,
             velocity,
-        };
+        })
+        .chain(views.iter().copied())
+        .collect();
         let audible = self.output.started.get() && self.focused;
         if let Ok(mut mixer) = self.output.mixer.lock() {
             let bank = &self.ride.bank;
@@ -827,7 +834,7 @@ impl Sound {
                 &mut mixer,
                 bank.effects.as_ref(),
                 &impact,
-                &listener,
+                &listeners,
                 Some(own),
                 riders,
                 audible,

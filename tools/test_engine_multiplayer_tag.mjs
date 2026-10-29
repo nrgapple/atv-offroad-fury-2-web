@@ -111,7 +111,7 @@ try {
   assert.ok(h.scores[0] > 0 && h.scores[1] > 0, JSON.stringify(h.scores));
   await shot(guest, 'mp-tag-guest-results');
   assertNoErrors(errors);
-  console.log(`Multiplayer Tag: start, carry, transfer and results verified (${h.summary})`);
+  console.log(`Multiplayer Tag: start, carry, transfer and results verified (${h.summary}; host held remote poses ${h.holds ?? 0} steps)`);
 } finally {
   await browser.close();
 }

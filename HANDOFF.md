@@ -93,8 +93,8 @@ section is authoritative.
 | Menus and UI | Browser-native screens driven by Rust menu logic; Profile Editor and View Profile pages over a local profile book; Profile Store unlocks and memory-card UI missing | `UI.md`, `MENU_SCREENS.md`, `DESIGN_SYSTEM.md` |
 | Audio | Recovered VAG decoding, 21-song catalog/shuffle streamed as AAC with VAG fallback, Jukebox player, engine banks, impacts, train; SPU2 mixer/reverb not reproduced | `AUDIO.md` |
 | Racing | All 32 National-rules race courses plus the 16 original Enduro courses (gate races) and 3 Short Tracks; recovered CPU driver decisions (Normal/Expert, jump preload, track-edge and cheat flags, the Enduro gate driver and off-track-only static avoidance) inside authored race rules | `RACING.md` |
-| Games (mini-games) | Hockey rules recovered (face-off, drop, goals, hat tricks, sudden death, game over) and playable from a temporary Main Menu row on Coonce Arena by one human against an empty net, the puck an authored flat-ice body shown as a screen tag; Tag's recovered ball-tag rules (possession, scoring, knock loose, carrier engine handicap, boundary throw-in, tie order, Games Prep time limit) play in multiplayer rooms on the fourteen original `*_TG.RES` courses with the `tagball.psg` model (Games → Tag hosts the room); King of the Hills and Treasure Hunt are separate work | `GAMES.md` |
-| Multiplayer | Authored four-player rooms through the Rust relay: Freeride, Tag (on the original TG courses), Hockey and host-started room races (National, Enduro and Short Track courses, shared grid and countdown, per-rider laps, host-agreed results, leavers ranked DNF, late joiners spectate, the race survives a host handoff; no CPU fill, championships or online Freestyle/KOTH/TH yet); authored rider contacts; local two-player split screen (Multiplayer → Split Screen: Freestyle and races with CPUs, top/bottom or side by side, the original split camera presets, per-controller and split-keyboard input, combined race results; player 2's own ATV and rider, engine sound, wheel dust, rumble, terrain patch, and a shared race place with CPUs avoiding player 2; split Games: King of the Hills, Treasure Hunt and Hockey for both players with per-view HUDs); no three/four-player split, split Tag or original protocol | `MULTIPLAYER.md`, `SPLIT_SCREEN.md`, `MULTIPLAYER_ORIGINAL.md`, `SECURITY.md` |
+| Games (mini-games) | Hockey rules recovered (face-off, drop, goals, hat tricks, sudden death, game over) and playable from a temporary Main Menu row on Coonce Arena by one human against an empty net, the puck an authored flat-ice body shown as a screen tag; Tag's recovered ball-tag rules (possession, scoring, knock loose, carrier engine handicap, boundary throw-in, tie order, Games Prep time limit) play in multiplayer rooms on the fourteen original `*_TG.RES` courses with the `tagball.psg` model (Games → Tag hosts the room); King of the Hills and Treasure Hunt play alone, in local split screen, and in multiplayer rooms on every original `*_KH`/`*_TH` course (Games → Riders: Online Room hosts the room, or the room host's Pause row) with the same recovered rules | `GAMES.md`, `MULTIPLAYER.md` |
+| Multiplayer | Authored four-player rooms through the Rust relay: Freeride, Tag (on the original TG courses), Hockey and host-started room races (National, Enduro and Short Track courses, shared grid and countdown, per-rider laps, host-agreed results, leavers ranked DNF, late joiners spectate, the race survives a host handoff; King of the Hills and Treasure Hunt for every room rider on the original KH/TH courses (Games → Riders: Online Room or the host's Pause row; host-authoritative pickups, guest-reported hill captures checked by the host, shared start, agreed results, Play Again, leavers dropped, late joiners spectate, host handoff); room Freestyle on every room course (Host Game → Room: Freestyle or the host's Pause row; a timed session with a host-owned score table of each rider's own stunt score, best combo and different combos, shared start, agreed results, Play Again, leavers dropped, late joiners spectate, host handoff); no CPU fill or championships yet); authored rider contacts; local split screen (Multiplayer → Split Screen: Freestyle and races with CPUs, top/bottom or side by side, the original split camera presets, per-controller and split-keyboard input, combined race results; player 2's own ATV and rider, engine sound, wheel dust, rumble, terrain patch, and a shared race place with CPUs avoiding player 2; split Games: King of the Hills, Treasure Hunt, Hockey and Tag with per-view HUDs; three and four players in quarter views with the original quarter camera presets, per-pad input and no CPUs, as the manual specifies; the original ScreenLayout HUD positions, per-seat gear/paint and per-player tire tracks/dust); no original protocol | `MULTIPLAYER.md`, `SPLIT_SCREEN.md`, `MULTIPLAYER_ORIGINAL.md`, `SECURITY.md` |
 | Motorcycles | Riding controller recovered component by component from MX vs. ATV Unleashed (steer/bank, tires/suspension, engine/clutch, wheelie/stoppie, air control, preload, flips, wreck rules) through authored terrain/surface/input adapters; native whole-step parity unmeasured; Single Player only | `MOTORCYCLES.md` |
 | Crash effects | Optional authored presentation layer (Crazy/Gorn); enhancement-isolation checks show it leaves the simulation unchanged | `CRASH_EFFECTS.md` |
 | Input | Remappable keyboard/controller bindings; one-handed and two-thumb touch are authored adaptations | `CONTROLS.md`, `TOUCH.md` |
@@ -170,21 +170,35 @@ the worktree's `target/`; keep bulk output on the SSD.
   emitters run from their TOYs (`AMBIENT_EFFECTS.md`).
 - Single Player mini-games have no opponents: the original runs them split
   screen (or online) with human riders only. Multiplayer → Split Screen →
-  Games plays King of the Hills, Treasure Hunt and Hockey for two local
-  players (`SPLIT_SCREEN.md` "Slice 3"); Tag there still hosts a room.
+  Games plays King of the Hills, Treasure Hunt, Hockey and Tag for two
+  local players (`SPLIT_SCREEN.md` "Slice 3", "Slice 4").
   Single Player → Games plays Treasure
   Hunt and King of the Hills alone (with the original bombs, hill flags,
-  hill pills and compass), Hockey is
+  hill pills and compass) or in an online room (Riders: Online Room;
+  guests' pickups and captures carry relay latency and a guest's capture
+  is host-checked, `MULTIPLAYER.md` "Room games"), Hockey is
   a one-human practice and Tag plays only with other humans in a hosted
   room (no CPU riders, as in the original); a guest carrier's tricks do not
   knock the ball loose (not relayed), riders share one Tag start, and the
   ground respawn's rays and the ball test only the heightfield, not
   static objects or stadium walls (`GAMES.md`).
-- Split screen is two players only (Freestyle, races, and the Games King of
-  the Hills, Treasure Hunt and Hockey): three and four players, the
-  ControllerSelect claiming page, split Tag/objectives/championships, player 2's own gear/paint, records and profile credit,
-  tire tracks and a per-player audio mix, and online parity for split modes
-  remain (`SPLIT_SCREEN.md`).
+- Split screen runs two to four players (Freestyle, Freestyle Objectives,
+  races, and the Games King of the Hills, Treasure Hunt, Hockey and Tag)
+  with the original
+  Overlays.pb `ScreenLayout` HUD positions, each seat's own gear and paint,
+  per-player tire tracks and lingering dust, the original MultiATVRiderSelect
+  Players page (each pad joins, dresses and readies its seat), the shared
+  split race radar and the quarter stunt-text clock. The Players page's ATV
+  stats row and original panel art, the Multi-Sign animation, records and
+  profile credit for players 2-4 (a product decision: whose profile), the
+  original's split Race event types (Duel, Lap Attack, Practice) and
+  online championships remain. The original has no split championships
+  (Championships is reachable only from Single Player); split objectives
+  share one objective and clock with each view's own target compass and
+  tags, and every player's positional and venue sounds use the nearest
+  view's camera (`SPLIT_SCREEN.md` "Split objectives", "Split audio"). Room
+  Freestyle trusts each rider's own score report within the host's bounds
+  (no replay of its stunts; `MULTIPLAYER.md` "Room Freestyle").
 - Memory-card UI is missing; the Training Course shows
   captions for its 46 spoken lines and lacks the jumbotron replays (`TRAINING.md`);
   races, championships and Profile Store unlocks save to the loaded profile

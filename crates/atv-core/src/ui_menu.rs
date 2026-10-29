@@ -38,6 +38,9 @@ fn race_actions(id: &str) -> &'static str {
         "1" => "playrace:1",
         "2" => "playrace:2",
         "3" => "playrace:3",
+        "game:9" => "playgame:9",
+        "game:12" => "playgame:12",
+        "freestyle" => "playfree",
         _ => "playrace",
     }
 }
@@ -50,9 +53,17 @@ pub struct Request {
     /// Game Settings "Split Screen Vertical"), else one above the other.
     #[serde(default)]
     pub split_vertical: bool,
-    /// Split Screen: player 2's own ATV and rider labels.
+    /// Host Game: the room starts Freestyle for its riders (research/
+    /// MULTIPLAYER.md "Room Freestyle"), else a Free Ride.
     #[serde(default)]
-    pub split_second: [String; 2],
+    pub host_freestyle: bool,
+    /// Split Screen: how many local players (2-4).
+    #[serde(default)]
+    pub split_players: u8,
+    /// Split Screen: players 2.. own ATV and rider labels (two per
+    /// player).
+    #[serde(default)]
+    pub split_seconds: Vec<String>,
     #[serde(default)]
     pub loading_status: String,
     #[serde(default = "default_quad")]
@@ -1032,22 +1043,46 @@ pub fn layout(request: Request) -> Result<Frame> {
             // Multiplayer → Split Screen → MultiPlayerSelect (Race,
             // Freestyle, Games), and the Game Settings layout row the
             // original keeps under Options.
+            // Two players choose top/bottom or side by side; three and four
+            // share quarters (the camera loader's `Preset<n>q`).
+            let players = request.split_players.clamp(2, 4);
             let layout = if request.split_vertical {
                 "Screen: Side by Side"
             } else {
                 "Screen: Top and Bottom"
             };
-            for (i, (label, action)) in [
+            let count = format!("Players: {players}");
+            let seats = [
+                "split2quad",
+                "split2rider",
+                "split2gear",
+                "split2paint",
+                "split3quad",
+                "split3rider",
+                "split3gear",
+                "split3paint",
+                "split4quad",
+                "split4rider",
+                "split4gear",
+                "split4paint",
+            ];
+            let mut rows: Vec<(&str, &str)> = vec![
                 ("Race", "splitrace"),
                 ("Freestyle", "splitfree"),
                 ("Games", "splitgames"),
-                (layout, "splitlayout"),
-                (request.split_second[0].as_str(), "split2quad"),
-                (request.split_second[1].as_str(), "split2rider"),
-            ]
-            .iter()
-            .enumerate()
-            {
+                (count.as_str(), "splitplayers"),
+            ];
+            if players == 2 {
+                rows.push((layout, "splitlayout"));
+            }
+            rows.extend(
+                request
+                    .split_seconds
+                    .iter()
+                    .zip(seats)
+                    .map(|(label, action)| (label.as_str(), action)),
+            );
+            for (i, (label, action)) in rows.iter().enumerate() {
                 f.choices.push((*action).into());
                 f.button(
                     label,
@@ -1091,7 +1126,7 @@ pub fn layout(request: Request) -> Result<Frame> {
             }
             // Hosting continues to the original track picker; its Ride starts
             // the game at once so friends can drop in from the invite.
-            let rows = [
+            let mut rows = vec![
                 if creating {
                     ("Select Track", "hosttrack")
                 } else {
@@ -1099,6 +1134,18 @@ pub fn layout(request: Request) -> Result<Frame> {
                 },
                 ("Garage", "garage"),
             ];
+            // What the hosted room starts with: everyone free rides, or
+            // a timed Freestyle session with a shared score table.
+            if creating {
+                rows.insert(
+                    1,
+                    if request.host_freestyle {
+                        ("Room: Freestyle (timed stunts)", "hostmode")
+                    } else {
+                        ("Room: Free Ride", "hostmode")
+                    },
+                );
+            }
             for (i, (label, action)) in rows.iter().enumerate() {
                 f.choices.push((*action).into());
                 f.button(
@@ -2255,7 +2302,9 @@ mod tests {
         Request {
             page: page.into(),
             split_vertical: false,
-            split_second: Default::default(),
+            host_freestyle: false,
+            split_players: 2,
+            split_seconds: Vec::new(),
             loading_status: "Reading original ATV...".into(),
             quad_id: 1,
             rider_id: 0,
@@ -2346,7 +2395,9 @@ mod tests {
         let create = layout(request("create-lobby", 390., 844.)).unwrap();
         assert_eq!(create.inputs.len(), 2);
         assert_eq!(create.inputs[1].action, "create-code");
-        assert_eq!(create.choices, ["hosttrack", "garage"]);
+        // The Room row: a Free Ride, or room Freestyle for every rider.
+        assert_eq!(create.choices, ["hosttrack", "hostmode", "garage"]);
+        assert!(create.hits.iter().any(|h| h.label == "Room: Free Ride"));
         let join = layout(request("join-lobby", 390., 844.)).unwrap();
         assert_eq!(join.inputs[1].action, "room-code");
         assert_eq!(join.choices, ["join", "garage"]);
@@ -2365,6 +2416,11 @@ mod tests {
                     label: label.to_string(),
                     value: String::new(),
                 })
+                .chain(std::iter::once(ControlRow {
+                    id: "freestyle".into(),
+                    label: "Play Freestyle".into(),
+                    value: String::new(),
+                }))
                 .collect();
             layout(input).unwrap()
         };
@@ -2377,7 +2433,10 @@ mod tests {
         // One row per race the room's course ships (research/MULTIPLAYER.md).
         assert!(host.choices.contains(&"playrace".to_string()));
         assert!(host.choices.contains(&"playrace:1".to_string()));
+        // Room Freestyle on any course (research/MULTIPLAYER.md).
+        assert!(host.choices.contains(&"playfree".to_string()));
         assert!(!guest.choices.contains(&"playrace".to_string()));
+        assert!(!guest.choices.contains(&"playfree".to_string()));
         let solo = layout(request("pause", 1280., 720.)).unwrap();
         assert!(!solo.choices.contains(&"changeride".to_string()));
         assert_eq!(solo.choices.last().unwrap(), "main");

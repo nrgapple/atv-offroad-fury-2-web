@@ -61,22 +61,29 @@ pub struct HudInput<'a> {
     pub game: Option<atv_ui::hud::games::View>,
     /// A target run's or mini-game's compass (Overlay Sets 5-7).
     pub compass: Option<atv_ui::hud::race::CompassView>,
-    /// Split screen: player 2's instruments in its own view (split.rs).
-    pub second: Option<SecondHud<'a>>,
+    /// Split screen: players 2-4's instruments, each in its own view
+    /// (split.rs).
+    pub others: Vec<SecondHud<'a>>,
+    /// Split screen: the original layout (`2Player-Horiz`, `-Vertical`,
+    /// `3Player`, `4Player`) and the mode's overlay set (1 Race, 2 Stunt,
+    /// 6-9 games, 11 Enduro) whose positions place each player's HUD.
+    pub split_layout: Option<(&'static str, u32)>,
 }
 
-/// Player 2's HUD: its speed and stunt text, its race overlays and, in a
-/// mini-game, its own game panel, compass and world tags.
+/// Player 2, 3 or 4's HUD: its speed and stunt text, its race overlays
+/// and, in a mini-game, its own game panel, compass and world tags.
 pub struct SecondHud<'a> {
-    /// Side by side, else one view above the other.
-    pub vertical: bool,
+    /// The layout's columns and rows of views (split.rs `Layout::grid`).
+    pub grid: (u32, u32),
+    /// This player's view: its column and row.
+    pub cell: (u32, u32),
     pub hud: atv_core::hud::Frame,
     pub race: Option<(&'a atv_core::race::Frame, f32, [f32; 3])>,
     pub game: Option<atv_ui::hud::games::View>,
-    /// Split Hockey: player 2's team panel.
+    /// Split Hockey or Tag: this player's panel.
     pub training: Option<atv_ui::hud::training::View>,
     pub compass: Option<atv_ui::hud::race::CompassView>,
-    /// World tags (hill pills, treasures) from player 2's camera: the
+    /// World tags (hill pills, treasures) from this player's camera: the
     /// tags, its origin and its view's view-projection.
     pub peers: Option<(&'a [atv_ui::hud::peers::Peer], [f32; 3], [f32; 16])>,
     pub eye: Option<[f32; 3]>,
@@ -103,12 +110,19 @@ type ResultsCache = (Viewport, Results, String, DisplayList, Vec<(Rect, u32)>);
 type ToolbarCache = (Viewport, toolbar::State, DisplayList, Vec<(Rect, u32)>);
 
 pub struct Overlay {
+    /// Split screen: each player's drawn HUD objects and their anchors
+    /// (CSS px) on the latest frame, player order (`#ui-state` for tests).
+    pub split_hud: Vec<Vec<(u32, [f32; 2])>>,
+    /// The shared split race radar's top-left corner (CSS px) last frame.
+    pub split_radar: Option<[f32; 2]>,
     /// Split screen: a race's results wait until both players finish.
     pub hold_results: bool,
     /// The multiplayer room for the pause menu's online rows.
     pub lobby: Option<atv_ui::menu::controller::Lobby>,
     /// Name tags drawn on the latest frame (tests).
     pub tags: usize,
+    /// The same per view, player order (split screen; one entry alone).
+    pub view_tags: Vec<usize>,
     /// The compass icons drawn on the latest frame, if a compass was (tests).
     compass_icons: Option<Vec<String>>,
     pub fonts: Fonts,
@@ -240,10 +254,13 @@ impl Overlay {
             race_overlays,
             race_fade: None,
             hold_results: false,
+            split_hud: Vec::new(),
+            split_radar: None,
             results: Results::default(),
             results_cache: None,
             help_open: false,
             tags: 0,
+            view_tags: Vec::new(),
             compass_icons: None,
             lobby: None,
             help_until: None,
@@ -714,24 +731,43 @@ impl Overlay {
         let intro = race.is_some_and(|(frame, ..)| frame.phase == "intro");
         let shown = hud.as_ref().filter(|_| active && !intro);
         // Split screen: each player's instruments fit its own view (player
-        // 1 on top or on the left).
-        let second = shown.and_then(|h| h.second.as_ref());
-        let (hw, hh) = match second {
-            Some(s) if s.vertical => (view.width / 2., view.height),
-            Some(_) => (view.width, view.height / 2.),
-            None => (view.width, view.height),
+        // 1 on top or on the left; quarters left to right, top to bottom).
+        let others: &[SecondHud] = shown.map_or(&[], |h| h.others.as_slice());
+        let second = others.first();
+        let (columns, rows) = second.map_or((1, 1), |s| s.grid);
+        let (hw, hh) = (view.width / columns as f32, view.height / rows as f32);
+        // Each other player's view offset (CSS px).
+        let offset_of = |s: &SecondHud| {
+            (
+                if s.cell.0 > 0 { view.width - hw } else { 0. },
+                if s.cell.1 > 0 { view.height - hh } else { 0. },
+            )
         };
-        // The line between the views (split.rs DIVIDER, 2 CSS px).
-        match second {
-            Some(s) if s.vertical => self.list.rect(
+        // The lines between the views (split.rs DIVIDER, 2 CSS px).
+        if columns > 1 {
+            self.list.rect(
                 Rect::new(hw - 1., 0., 2., view.height),
                 atv_ui::Color::rgb(0, 0, 0),
-            ),
-            Some(_) => self.list.rect(
+            );
+        }
+        if rows > 1 {
+            self.list.rect(
                 Rect::new(0., hh - 1., view.width, 2.),
                 atv_ui::Color::rgb(0, 0, 0),
-            ),
-            None => {}
+            );
+        }
+        // Three players leave the last quarter dark (an assumption: the
+        // original's empty quarter was not traced).
+        if columns * rows > 1 && others.len() + 1 < (columns * rows) as usize {
+            self.list.rect(
+                Rect::new(
+                    view.width - hw + 1.,
+                    view.height - hh + 1.,
+                    hw - 1.,
+                    hh - 1.,
+                ),
+                atv_ui::Color::rgb(0, 0, 0),
+            );
         }
         let instrument = shown.map(|h| Instrument {
             speed: h.hud.speed_text.clone(),
@@ -777,7 +813,16 @@ impl Overlay {
         if let Some(meter) = &mut self.meter {
             meter.split = second.is_some();
         }
-        if let (Some(meter), Some(h)) = (&self.meter, shown) {
+        // Split screen: the original layout's seats, when Overlays.pb has it.
+        let seated = shown
+            .and_then(|h| h.split_layout)
+            .filter(|_| second.is_some())
+            .filter(|(name, set)| {
+                self.meter
+                    .as_ref()
+                    .is_some_and(|m| m.split_layout(*set, name).is_some())
+            });
+        if let (Some(meter), Some(h)) = (&self.meter, shown.filter(|_| seated.is_none())) {
             let speed = match race {
                 Some(_) => self.race_overlays.shown("speed"),
                 None => !self.minimap.settings.enabled || second.is_some(),
@@ -853,7 +898,123 @@ impl Overlay {
             self.list.items.extend_from_slice(&list.items);
             self.hits.extend_from_slice(hits);
         }
-        if let (Some(meter), Some(h)) = (&self.meter, shown) {
+        self.split_hud.clear();
+        self.split_radar = None;
+        if let (Some(meter), Some(h), Some((name, set))) = (&self.meter, shown, seated)
+            && let Some(layout) = meter.split_layout(set, name)
+        {
+            use atv_ui::hud::split::{Seat, SeatFrame};
+            // The toolbar sits over the top-right view's upper right items.
+            let toolbar_bottom = self.toolbar_cache.as_ref().map_or(0., |(.., hits)| {
+                hits.iter().map(|(r, _)| r.bottom()).fold(0., f32::max)
+            });
+            let inset = |cell: (u32, u32)| {
+                if cell.0 + 1 == columns && cell.1 == 0 {
+                    toolbar_bottom
+                } else {
+                    0.
+                }
+            };
+            let mut items = DisplayList::default();
+            fn view_of<'r>(
+                race: Option<(&'r atv_core::race::Frame, f32, [f32; 3])>,
+                settings: &'r OverlaySettings,
+            ) -> Option<RaceView<'r>> {
+                race.map(|(frame, score, origin)| RaceView {
+                    frame,
+                    score,
+                    origin,
+                    top_inset: 0.,
+                    settings,
+                })
+            }
+            let first = view_of(race, &self.race_overlays);
+            let drawn = meter.paint_seat(
+                &mut self.fonts,
+                &mut items,
+                &Seat {
+                    layout,
+                    name,
+                    player: 0,
+                    top_inset: inset((0, 0)),
+                },
+                &SeatFrame {
+                    hud: &h.hud,
+                    race: first.as_ref(),
+                    compass: h.compass.as_ref(),
+                    speed_visible: true,
+                },
+                hw,
+                hh,
+            );
+            self.split_hud.push(drawn);
+            // The 321 lights are one overlay centred on the whole frame
+            // (object 10 at 256,208 in every split layout).
+            if let Some(lights) = race.and_then(|(frame, ..)| frame.lights) {
+                meter.paint_lamps(&mut items, lights, view.width, view.height);
+            }
+            // The race radar is one overlay the whole frame shares (object
+            // 13): every racer, each human in its player colour.
+            self.split_radar = None;
+            if let Some((frame, _, origin)) = race
+                && self.race_overlays.shown("radar")
+            {
+                use atv_ui::hud::split::RadarDot;
+                let players: Vec<&str> = (2..=4).map(crate::split::player_name).collect();
+                let dots: Vec<RadarDot> = std::iter::once(RadarDot {
+                    origin,
+                    player: Some(0),
+                })
+                .chain(frame.opponents.iter().map(|o| {
+                    RadarDot {
+                        origin: o.origin,
+                        player: players
+                            .iter()
+                            .position(|n| *n == o.name)
+                            .map(|i| i as u8 + 1),
+                    }
+                }))
+                .collect();
+                self.split_radar =
+                    meter.paint_split_radar(&mut items, layout, &dots, view.width, view.height);
+            }
+            self.compass_icons = h
+                .compass
+                .as_ref()
+                .filter(|_| race.is_none() && meter.has_compass())
+                .map(|c| c.icons.iter().map(|(_, i)| i.clone()).collect());
+            self.list.items.splice(hud_at..hud_at, items.items);
+            for second in others {
+                let mut items = DisplayList::default();
+                let race = view_of(second.race, &self.race_overlays);
+                let mut drawn = meter.paint_seat(
+                    &mut self.fonts,
+                    &mut items,
+                    &Seat {
+                        layout,
+                        name,
+                        player: (second.cell.1 * columns + second.cell.0) as usize,
+                        top_inset: inset(second.cell),
+                    },
+                    &SeatFrame {
+                        hud: &second.hud,
+                        race: race.as_ref(),
+                        compass: second.compass.as_ref(),
+                        speed_visible: true,
+                    },
+                    hw,
+                    hh,
+                );
+                let (dx, dy) = offset_of(second);
+                items.translate(dx, dy);
+                for (_, at) in &mut drawn {
+                    at[0] += dx;
+                    at[1] += dy;
+                }
+                self.split_hud.push(drawn);
+                self.list.items.extend(items.items);
+            }
+        } else if let (Some(meter), Some(h)) = (&self.meter, shown) {
             let mut items = DisplayList::default();
             if let Some((frame, score, origin)) = race {
                 // toolbarBottom(): the toolbar's bottom edge.
@@ -888,8 +1049,9 @@ impl Overlay {
                 meter.paint_stunt(&mut self.fonts, &mut items, &h.hud, hw, hh);
             }
             self.list.items.splice(hud_at..hud_at, items.items);
-            // Player 2's instruments, painted for its view and moved there.
-            if let Some(second) = second {
+            // The other players' instruments, painted for their views and
+            // moved there.
+            for second in others {
                 let mut items = DisplayList::default();
                 let speed = second.race.is_none() || self.race_overlays.shown("speed");
                 meter.paint_speed(&mut self.fonts, &mut items, &second.hud, speed, hw, hh);
@@ -919,11 +1081,7 @@ impl Overlay {
                 {
                     meter.paint_compass(&mut items, compass, hw, hh);
                 }
-                let (dx, dy) = if second.vertical {
-                    (view.width - hw, 0.)
-                } else {
-                    (0., view.height - hh)
-                };
+                let (dx, dy) = offset_of(second);
                 items.translate(dx, dy);
                 self.list.items.extend(items.items);
             }
@@ -946,20 +1104,20 @@ impl Overlay {
             ..view
         };
         self.tags = 0;
-        let views = [
-            shown.and_then(|h| h.peers.map(|p| (p, h.eye, (0., 0.)))),
-            second.and_then(|s| {
-                s.peers.map(|p| {
-                    let offset = if s.vertical {
-                        (view.width - hw, 0.)
-                    } else {
-                        (0., view.height - hh)
-                    };
-                    (p, s.eye, offset)
-                })
-            }),
-        ];
-        for ((peers, origin, vp), eye, (dx, dy)) in views.into_iter().flatten() {
+        let views: Vec<_> =
+            std::iter::once(shown.and_then(|h| h.peers.map(|p| (p, h.eye, (0., 0.)))))
+                .chain(
+                    others
+                        .iter()
+                        .map(|s| s.peers.map(|p| (p, s.eye, offset_of(s)))),
+                )
+                .collect();
+        self.view_tags = vec![0; views.len()];
+        for (index, ((peers, origin, vp), eye, (dx, dy))) in views
+            .into_iter()
+            .enumerate()
+            .filter_map(|(i, v)| v.map(|v| (i, v)))
+        {
             // `002207e0` hides a hill pill whose point the camera's ray to
             // it does not reach (`00169b60` against the terrain).
             let hidden = |p: &&atv_ui::hud::peers::Peer| {
@@ -973,7 +1131,7 @@ impl Overlay {
             };
             let visible: Vec<_> = peers.iter().filter(|p| !hidden(p)).cloned().collect();
             let mut list = DisplayList::default();
-            self.tags += atv_ui::hud::peers::paint_tags(
+            let drawn = atv_ui::hud::peers::paint_tags(
                 &mut self.fonts,
                 &mut list,
                 &sub,
@@ -982,6 +1140,8 @@ impl Overlay {
                 &vp,
                 self.meter.as_ref().and_then(|m| m.pills.as_ref()),
             );
+            self.tags += drawn;
+            self.view_tags[index] = drawn;
             list.translate(dx, dy);
             self.list.items.extend(list.items);
         }
@@ -1067,17 +1227,19 @@ impl Overlay {
             );
             self.list.items.extend_from_slice(&list.items);
         }
-        // Split Hockey: player 2's team panel in its own view.
-        if let Some(second) = second
-            && let Some(training) = second.training.as_ref()
-        {
-            let (dx, dy, top) = if second.vertical {
-                let top = self.toolbar_cache.as_ref().map_or(0., |(.., hits)| {
+        // Split Hockey and Tag: each other player's panel in its own view
+        // (under the toolbar when the view is on the top row).
+        for second in others {
+            let Some(training) = second.training.as_ref() else {
+                continue;
+            };
+            let (dx, dy) = offset_of(second);
+            let top = if dy == 0. {
+                self.toolbar_cache.as_ref().map_or(0., |(.., hits)| {
                     hits.iter().map(|(r, _)| r.bottom()).fold(0., f32::max)
-                }) + 8.;
-                (view.width - hw, 0., top)
+                }) + 8.
             } else {
-                (0., view.height - hh, 8.)
+                8.
             };
             let mut list = DisplayList::default();
             layout::render(
@@ -1097,22 +1259,24 @@ impl Overlay {
         let toolbar_bottom = self.toolbar_cache.as_ref().map_or(0., |(.., hits)| {
             hits.iter().map(|(r, _)| r.bottom()).fold(0., f32::max)
         });
-        let panels = [
+        let panels: Vec<_> = std::iter::once(
             shown
                 .and_then(|h| h.game.as_ref())
                 .map(|g| (g, toolbar_bottom + 8., (0., 0.))),
-            second.and_then(|s| {
-                let offset = if s.vertical {
-                    (view.width - hw, 0.)
-                } else {
-                    (0., view.height - hh)
-                };
-                // Side by side, player 2's view is also under the toolbar.
-                let top = if s.vertical { toolbar_bottom + 8. } else { 8. };
-                s.game.as_ref().map(|g| (g, top, offset))
-            }),
-        ];
-        for (game, top, (dx, dy)) in panels.into_iter().flatten() {
+        )
+        .chain(others.iter().map(|s| {
+            let offset = offset_of(s);
+            // A view on the top row is also under the toolbar.
+            let top = if offset.1 == 0. {
+                toolbar_bottom + 8.
+            } else {
+                8.
+            };
+            s.game.as_ref().map(|g| (g, top, offset))
+        }))
+        .flatten()
+        .collect();
+        for (game, top, (dx, dy)) in panels {
             let mut list = DisplayList::default();
             // The original 321 lamps replace the countdown digits when the
             // course archive has their art.
@@ -1593,6 +1757,14 @@ impl Overlay {
                 "helpOpen": self.help_open,
                 // Tags and King of the Hills pills drawn last frame.
                 "tags": self.tags,
+                // Split screen: the tags each player's view drew.
+                "viewTags": self.view_tags,
+                // Split screen: each player's drawn objects (Overlays.pb
+                // object numbers) and anchors in CSS px.
+                "split": self.split_hud.iter().map(|seat| seat.iter().map(|(object, at)| {
+                    serde_json::json!({"object": object, "x": at[0], "y": at[1]})
+                }).collect::<Vec<_>>()).collect::<Vec<_>>(),
+                "splitRadar": self.split_radar,
                 // A target run's or mini-game's compass icons; whether the
                 // King of the Hills pills use the original art.
                 "compass": self.compass_icons,

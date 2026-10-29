@@ -274,6 +274,40 @@ impl Rules for TreasureHunt {
         std::mem::take(&mut self.triggered)
     }
 
+    fn marks_state(&self) -> Vec<(Option<usize>, f32)> {
+        self.treasures
+            .iter()
+            .map(|t| (t.collected_by, f32::from(u8::from(t.group == self.group))))
+            .collect()
+    }
+
+    fn apply_marks(&mut self, marks: &[(Option<usize>, f32)], scores: &[i32], wait: f32) {
+        if marks.len() != self.treasures.len() {
+            return;
+        }
+        let mut shown = None;
+        for (t, (collector, in_group)) in self.treasures.iter_mut().zip(marks) {
+            let collector = collector.filter(|c| *c < self.riders);
+            // A treasure the host saw collected: its explosion plays here.
+            if t.collected_by.is_none() && collector.is_some() {
+                self.triggered.push(t.name.clone());
+            }
+            t.collected_by = collector;
+            if *in_group > 0.5 && shown.is_none() {
+                shown = Some(t.group);
+            }
+        }
+        if let Some(g) = shown {
+            self.group = g;
+            self.used[g] = true;
+        }
+        for (count, score) in self.collected.iter_mut().zip(scores) {
+            *count = *score;
+        }
+        self.wait = wait.clamp(0., NEXT_GROUP_DELAY);
+        self.finished = self.remaining() == 0;
+    }
+
     fn diagnostics(&self) -> Vec<(&'static str, f32)> {
         vec![
             ("targets", self.targets as f32),
@@ -428,5 +462,34 @@ mod tests {
             .map(|s| (s.rider, s.score))
             .collect();
         assert_eq!(rows, [(0, 2), (1, 1)]);
+    }
+
+    /// Room games: a guest mirrors the host's collectors, shown group and
+    /// wait; newly collected treasures trigger their explosions there.
+    #[test]
+    fn room_guests_mirror_the_hosts_treasures() {
+        let t = toy(&[&["a", "b"], &["c"]]);
+        let mut host = TreasureHunt::new(&t, 2).unwrap();
+        let mut guest = TreasureHunt::new(&t, 2).unwrap();
+        host.begin();
+        let at = |x: f32| Rider {
+            position: [x, 0., 0.],
+            ..Rider::default()
+        };
+        host.update(0.1, &[at(100.), at(200.)]);
+        assert_eq!(host.collected, vec![1, 1]);
+        host.update(0.1, &[at(0.), at(0.)]);
+        guest.apply_marks(&host.marks_state(), &host.scores(), host.wait);
+        assert_eq!(
+            guest.take_triggered(),
+            vec!["a".to_string(), "b".to_string()]
+        );
+        assert_eq!(guest.collected, vec![1, 1]);
+        assert!(guest.wait > 0.);
+        assert!(guest.markers().is_empty(), "waiting for the next group");
+        assert_eq!(guest.marks_state(), host.marks_state());
+        // A mismatched course is ignored.
+        guest.apply_marks(&[(None, 0.)], &[0, 0], 0.);
+        assert_eq!(guest.collected, vec![1, 1]);
     }
 }

@@ -78,6 +78,139 @@ pub struct OverlayAssets {
     pub lamps: bool,
     /// OverlaySet1 single-player race overlays (races only).
     pub race: Option<RaceAssets>,
+    /// The split-screen layouts (`OverlaySet<n>-ScreenLayout-<layout>`)
+    /// by overlay set and layout name.
+    pub split: HashMap<(u32, &'static str), SplitLayout>,
+}
+
+/// The overlay sets whose split layouts the port draws: 1 Race, 2 Stunt
+/// (Freeride and Freestyle), 5 CherryPick (target objectives), 6 Treasure
+/// Hunt, 7 King of the Hills, 8 Tag, 9 Hockey and 11 Enduro.
+pub const SPLIT_SETS: [u32; 8] = [1, 2, 5, 6, 7, 8, 9, 11];
+/// The split layouts' section names (`003029a0`'s layout enum 1-3 and the
+/// three-player variant of 3).
+pub const SPLIT_LAYOUTS: [&str; 4] = ["2Player-Horiz", "2Player-Vertical", "3Player", "4Player"];
+/// The objects one split layout places per player: the multiplayer lap
+/// time, lap, score, infotext and stunt text, both speed meters, the
+/// compass and the place number (the signage, object 35, is listed too),
+/// and the single 321 lights (10) and race radar (13) the frame shares.
+pub const SPLIT_OBJECTS: [u32; 13] = [5, 12, 19, 20, 21, 23, 24, 31, 33, 35, 41, 10, 13];
+
+/// One overlay of a split layout placed for one player: the object, its
+/// position on the 640x448 frame and the object's section with the set's
+/// texts and that player's justification overrides applied.
+#[derive(Clone, Debug)]
+pub struct Placed {
+    pub object: u32,
+    pub at: [f32; 2],
+    pub section: Section,
+}
+
+/// `OverlaySet<n>-ScreenLayout-<layout>`: each player's overlays (in the
+/// layout's player order) and the single overlays the whole frame shares.
+#[derive(Clone, Debug, Default)]
+pub struct SplitLayout {
+    pub players: Vec<Vec<Placed>>,
+    pub shared: Vec<Placed>,
+}
+
+/// Every `[Section]` of a document, sliced once (keys lower-cased).
+pub fn sections(bytes: &[u8]) -> HashMap<String, Section> {
+    let text: String = bytes.iter().map(|&b| char::from(b)).collect();
+    let mut starts = Vec::new();
+    let mut at = 0;
+    for line in text.split_inclusive('\n') {
+        let trimmed = line.trim_end_matches(['\r', '\n']).trim_end();
+        if trimmed.starts_with('[') && trimmed.ends_with(']') && !trimmed[1..].contains('[') {
+            starts.push((at, trimmed[1..trimmed.len() - 1].to_ascii_lowercase()));
+        }
+        at += line.len();
+    }
+    let mut out = HashMap::new();
+    for (i, (begin, name)) in starts.iter().enumerate() {
+        let end = starts.get(i + 1).map_or(bytes.len(), |s| s.0);
+        let Ok(document) = ui::Document::parse(&bytes[*begin..end]) else {
+            continue;
+        };
+        let Some(first) = document.sections.first() else {
+            continue;
+        };
+        let fields = first
+            .fields
+            .iter()
+            .rev()
+            .map(|f| (f.key.to_ascii_lowercase(), f.value.clone()))
+            .collect();
+        out.entry(name.clone()).or_insert(Section { fields });
+    }
+    out
+}
+
+/// The split layouts of [`SPLIT_SETS`] (`002edf00` reads
+/// `NumOverlays-ScreenLayout-<layout>` and each `Overlay<n>` section's
+/// `OverlayObject`, `NumOverlay` positions and `Overlay<k>Text<j>
+/// Justification` overrides under `AlterJustification`).
+pub fn split_layouts(all: &HashMap<String, Section>) -> HashMap<(u32, &'static str), SplitLayout> {
+    let mut out = HashMap::new();
+    for set in SPLIT_SETS {
+        let Some(head) = all.get(&format!("overlayset{set}")) else {
+            continue;
+        };
+        for name in SPLIT_LAYOUTS {
+            let count = head
+                .number(&format!("numoverlays-screenlayout-{name}"))
+                .unwrap_or(0.) as usize;
+            let mut layout = SplitLayout::default();
+            for i in 1..=count {
+                let key =
+                    format!("overlayset{set}-screenlayout-{name}-overlay{i}").to_ascii_lowercase();
+                let Some(overlay) = all.get(&key) else {
+                    continue;
+                };
+                let Some(object) = overlay.number("overlayobject").map(|n| n as u32) else {
+                    continue;
+                };
+                if !SPLIT_OBJECTS.contains(&object) {
+                    continue;
+                }
+                let Some(base) = all.get(&format!("overlayobject-{object}")) else {
+                    continue;
+                };
+                let n = overlay.number("numoverlay").unwrap_or(0.) as usize;
+                for k in 1..=n {
+                    let Some(at) = overlay.pair(&format!("overlay{k}")) else {
+                        continue;
+                    };
+                    let mut section = base.clone();
+                    let own = format!("overlay{k}");
+                    for (field, value) in &overlay.fields {
+                        if let Some(rest) = field.strip_prefix(&own)
+                            && rest.starts_with("text")
+                        {
+                            section.fields.insert(rest.to_string(), value.clone());
+                        } else if field.starts_with("text") {
+                            section.fields.insert(field.clone(), value.clone());
+                        }
+                    }
+                    let placed = Placed {
+                        object,
+                        at,
+                        section,
+                    };
+                    if matches!(object, 10 | 13) {
+                        layout.shared.push(placed);
+                    } else {
+                        if layout.players.len() < k {
+                            layout.players.resize(k, Vec::new());
+                        }
+                        layout.players[k - 1].push(placed);
+                    }
+                }
+            }
+            out.insert((set, name), layout);
+        }
+    }
+    out
 }
 
 /// web/hud.js `initRace`: the race layouts, sign icons, the radar map from
@@ -87,6 +220,9 @@ pub struct RaceAssets {
     pub layout: HashMap<u32, Section>,
     /// `Single-Sign-N` by sign id.
     pub signs: HashMap<u8, Section>,
+    /// `Multi-Sign-N` by sign id: the split layouts' signage (object 35,
+    /// `SignageName=Multi-`).
+    pub multi_signs: HashMap<u8, Section>,
     /// Radar map image name and its world bounds (left, top, right, bottom);
     /// none on Enduro courses, whose mode TOYs have no [Radar].
     pub radar: Option<(String, [f32; 4])>,
@@ -298,14 +434,30 @@ pub async fn load(
         .member("Overlays.pb")
         .await?
         .ok_or("original Overlays.pb is missing")?;
-    let speed = section(&overlays, "OverlayObject-5").ok_or("OverlayObject-5 missing")?;
-    let stunt = section(&overlays, "OverlayObject-12").ok_or("OverlayObject-12 missing")?;
+    let all = sections(&overlays);
+    let speed = all
+        .get("overlayobject-5")
+        .cloned()
+        .ok_or("OverlayObject-5 missing")?;
+    let stunt = all
+        .get("overlayobject-12")
+        .cloned()
+        .ok_or("OverlayObject-12 missing")?;
+    let split = split_layouts(&all);
     let mut fonts = HashMap::new();
     let mut images = HashMap::new();
     for layout in [&speed, &stunt] {
         opened
             .section_assets(layout, &mut fonts, &mut images)
             .await?;
+    }
+    // The split layouts' multiplayer objects (fonts and meter icons).
+    for n in [19, 20, 21, 23, 24, 33] {
+        if let Some(layout) = all.get(&format!("overlayobject-{n}")) {
+            opened
+                .section_assets(layout, &mut fonts, &mut images)
+                .await?;
+        }
     }
     let mut lamps = true;
     for name in LAMPS {
@@ -360,6 +512,7 @@ pub async fn load(
         images,
         lamps,
         race,
+        split,
     })
 }
 
@@ -379,10 +532,16 @@ async fn race_assets(
         layout.insert(n, found);
     }
     let mut signs = HashMap::new();
+    let mut multi_signs = HashMap::new();
     for (id, name) in SIGNS {
         let found = section(overlays, name).ok_or(format!("{name} missing"))?;
         opened.section_assets(&found, fonts, images).await?;
         signs.insert(id, found);
+        let multi = name.replace("Single-", "Multi-");
+        if let Some(found) = section(overlays, &multi) {
+            opened.section_assets(&found, fonts, images).await?;
+            multi_signs.insert(id, found);
+        }
     }
     let toy = opened
         .member(&format!("{environment}{}.toy", variant.stem()))
@@ -397,6 +556,7 @@ async fn race_assets(
         return Ok(RaceAssets {
             layout,
             signs,
+            multi_signs,
             radar: None,
         });
     };
@@ -426,10 +586,22 @@ async fn race_assets(
             rgba,
         },
     );
+    // Split races colour each human's racer by its player slot
+    // (`002e6160`: 0xff0000, 0xff, 0xff00, 0xffff00; CPUs white).
+    let copies: Vec<_> = (1..4)
+        .map(|slot| {
+            (
+                tinted_name(RACER, slot),
+                tinted(&images[RACER], super::peers::color(slot)),
+            )
+        })
+        .collect();
+    images.extend(copies);
     let bound = |key: &str| radar.number(key).ok_or(format!("Radar {key} missing"));
     Ok(RaceAssets {
         layout,
         signs,
+        multi_signs,
         radar: Some((
             stem,
             [

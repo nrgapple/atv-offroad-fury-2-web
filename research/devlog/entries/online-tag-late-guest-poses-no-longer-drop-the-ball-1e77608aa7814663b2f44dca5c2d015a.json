@@ -1,0 +1,12 @@
+{
+  "id": "online-tag-late-guest-poses-no-longer-drop-the-ball-1e77608aa7814663b2f44dca5c2d015a",
+  "timestamp": "2026-10-29T08:26:08.066007+00:00",
+  "recorded_at": "2026-10-29T08:26:08.066007+00:00",
+  "kind": "build",
+  "title": "Online Tag: late guest poses no longer drop the ball",
+  "summary": "In online Tag rooms the host treated a guest whose poses were more than a second late as wrecked, so a guest carrier on a slow or busy link kept losing the ball before scoring. The host now holds a late rider at its last position for up to 3 s before treating it as absent.",
+  "details": [
+    "Verified: multiplayer_tag relay browser test passes twice (the host held 69 and 95 late steps that previously would have dropped the ball), multiplayer_hockey and split_tag pass."
+  ],
+  "limitation": "Verified on a local relay on the host only, not production."
+}
