@@ -158,6 +158,7 @@ export async function roomGame({ prefix, action, hook, verify, label, leaver = '
       ? [guest, host, 'RustGuest', 'RustHost', 0]
       : [host, guest, 'RustHost', 'RustGuest', 1];
     await go.close();
+    await stay.bringToFront();
     h = await until(stay, (game, r) => !r.present[goSlot] && r.host, 90000, 'the leaver is dropped');
     h = await until(stay, game => game.over && game.reported, 120000, 'game 2 results');
     assert.equal(h.roomGame.serial, serial + 1, 'the same game finishes');

@@ -52,7 +52,7 @@ pub struct GameSession {
     /// `gameTest=visit` places the ATV on the next standing treasure each
     /// second; `gameTest=hill` sets the ATV on hill 1, then lifts it off
     /// the hill (armed) for a stunt.
-    fast: bool,
+    pub(crate) fast: bool,
     pub(crate) visit: bool,
     pub(crate) hill: u8,
     /// `gameTest=hillride`: instead of lifting the ATV, launch it across

@@ -253,6 +253,11 @@ impl GameSession {
         }
         if let Some(session) = &mut self.session {
             session.restart();
+            // `gameTest=fast`: a room's next game runs 45 s, room for a
+            // rider leaving mid-game to be seen gone first.
+            if self.fast {
+                session.time_left = session.time_left.min(45.);
+            }
         }
         self.reported = false;
         self.placed = false;
