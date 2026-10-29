@@ -1,0 +1,19 @@
+{
+  "id": "sharper-phone-menus-and-phone-layouts-9714f034299446d8b7e1022aa6d2f261",
+  "timestamp": "2026-10-15T01:00:44.080955+00:00",
+  "recorded_at": "2026-10-29T23:22:19.637120+00:00",
+  "kind": "build",
+  "title": "Sharper phone menus and phone layouts",
+  "summary": "Phone menus now render at full device density (up to 3x) with improved layouts and responsive design",
+  "details": [
+    "Menus draw at full device density, up to 3x (previously capped at 1.5x)",
+    "Idle menus redraw nothing (performance optimization)",
+    "Spinning ATV turntable and 3D title sway (both under reduced motion)",
+    "Single Race course picker and Garage 'Choose Vehicle' picker with scroll cue",
+    "Stage text positioned inside curved rim",
+    "Options > Audio sliders with shorter Pass Key copy"
+  ],
+  "limitation": "Host emulation only; no physical phone verification",
+  "image": "/devlog-images/sharper-phone-menus-and-phone-layouts-9714f034299446d8b7e1022aa6d2f261.png",
+  "caption": "Phone menu at full device density"
+}
