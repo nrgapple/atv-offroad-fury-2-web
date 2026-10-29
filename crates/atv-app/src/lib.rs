@@ -1962,7 +1962,7 @@ impl App {
                 self.room_freestyle = Some(room_freestyle::RoomFreestyle::new(
                     false,
                     state.serial,
-                    state.clock,
+                    room_freestyle::limit_from_clock(state.clock),
                     net.environment.clone(),
                 ));
                 if let Some(overlay) = &mut self.overlay {
@@ -1980,7 +1980,7 @@ impl App {
                 let mut session = room_freestyle::RoomFreestyle::new(
                     true,
                     serial,
-                    room_freestyle::session_seconds(),
+                    room_freestyle::session_seconds(freestyle_minutes(&self.front)),
                     net.environment.clone(),
                 );
                 session.table.hold = true;
@@ -1994,7 +1994,9 @@ impl App {
                 && let Some(summary) = session.frame(&mut riding.ride, net)
                 && let Some(overlay) = &mut self.overlay
             {
-                overlay.results.show_game("Freestyle Results", summary);
+                // The original's `[ClassicFreeStyleOver Menu]` is titled "Race
+                // Results", like the games' and races' (Overlays.pb).
+                overlay.results.show_game("Race Results", summary);
                 overlay.results.game_continue = true;
             }
             if let Some(overlay) = &mut self.overlay {
@@ -2301,7 +2303,9 @@ impl App {
                 if session.update(&mut riding.ride, ready.net.as_mut(), &mut others)
                     && let Some(overlay) = &mut self.overlay
                 {
-                    overlay.results.show_game("Tag Results", session.summary());
+                    // `[TagOver Menu]` is titled "Race Results" on the disc
+                    // (Overlays.pb `Text1Text`), with a Continue row.
+                    overlay.results.show_game("Race Results", session.summary());
                     // A room keeps riding (Continue); split screen offers
                     // Restart Game and back to Games, like the other games.
                     overlay.results.game_continue = !session.local;
@@ -3106,6 +3110,9 @@ impl App {
                 })),
                 "results": self.overlay.as_ref().filter(|o| o.results.shown)
                     .map(|o| o.results.buttons()),
+                // A game's results title (`show_game`).
+                "resultsTitle": self.overlay.as_ref().filter(|o| o.results.shown)
+                    .and_then(|o| o.results.game.clone()),
                 // The Hall of Fame name entry: records broken and the name.
                 "fame": self.overlay.as_ref().filter(|o| o.results.shown)
                     .and_then(|o| o.results.fame.as_ref())
@@ -8158,6 +8165,16 @@ fn paint_front(gpu: &Gpu, front: &mut front::Front) {
 }
 
 /// A venue's Tracks.dat course name (the venue code until it loads).
+/// Room Freestyle's Time Limit: Host Game's row, minutes (2:00 without a
+/// front end, the original's 120 s).
+fn freestyle_minutes(front: &Option<Rc<RefCell<front::Front>>>) -> u32 {
+    front
+        .as_ref()
+        .map_or((atv_core::freestyle::TIME_LIMIT / 60.) as u32, |f| {
+            f.borrow().state.host_freestyle_minutes
+        })
+}
+
 fn course_label(names: &std::collections::HashMap<String, String>, venue: &str) -> String {
     names
         .get(venue)
@@ -8892,7 +8909,7 @@ impl App {
         self.room_freestyle = Some(room_freestyle::RoomFreestyle::new(
             true,
             serial,
-            room_freestyle::session_seconds(),
+            room_freestyle::session_seconds(freestyle_minutes(&self.front)),
             environment.clone(),
         ));
         if let Some(overlay) = &mut self.overlay {

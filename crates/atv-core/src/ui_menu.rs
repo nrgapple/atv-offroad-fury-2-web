@@ -57,6 +57,10 @@ pub struct Request {
     /// MULTIPLAYER.md "Room Freestyle"), else a Free Ride.
     #[serde(default)]
     pub host_freestyle: bool,
+    /// Host Game → Room: Freestyle: the session's Time Limit, minutes
+    /// (Freestyle Prep's Classic row, `002f60b0`/`002f6190`: 2-20, wraps).
+    #[serde(default)]
+    pub host_freestyle_minutes: u32,
     /// Split Screen: how many local players (2-4).
     #[serde(default)]
     pub split_players: u8,
@@ -1128,23 +1132,36 @@ pub fn layout(request: Request) -> Result<Frame> {
             // the game at once so friends can drop in from the invite.
             let mut rows = vec![
                 if creating {
-                    ("Select Track", "hosttrack")
+                    ("Select Track".to_string(), "hosttrack")
                 } else {
-                    ("Join Game", "join")
+                    ("Join Game".to_string(), "join")
                 },
-                ("Garage", "garage"),
+                ("Garage".to_string(), "garage"),
             ];
             // What the hosted room starts with: everyone free rides, or
-            // a timed Freestyle session with a shared score table.
+            // a timed Freestyle session with a shared score table and
+            // Classic Freestyle's Time Limit row.
             if creating {
                 rows.insert(
                     1,
                     if request.host_freestyle {
-                        ("Room: Freestyle (timed stunts)", "hostmode")
+                        ("Room: Freestyle (timed stunts)".to_string(), "hostmode")
                     } else {
-                        ("Room: Free Ride", "hostmode")
+                        ("Room: Free Ride".to_string(), "hostmode")
                     },
                 );
+                if request.host_freestyle {
+                    rows.insert(
+                        2,
+                        (
+                            format!(
+                                "Time Limit: {}:00",
+                                request.host_freestyle_minutes.clamp(2, 20)
+                            ),
+                            "hostfstime",
+                        ),
+                    );
+                }
             }
             for (i, (label, action)) in rows.iter().enumerate() {
                 f.choices.push((*action).into());
@@ -2129,6 +2146,25 @@ pub fn layout(request: Request) -> Result<Frame> {
                         ("Defaults".to_string(), "bindreset"),
                     ]
                 };
+                if music {
+                    // Touch menus draw the two volumes as sliders (drag, or
+                    // Left/Right in 5% steps); their rows keep their order.
+                    for (action, label, value) in [
+                        ("musicvolume", "Music volume", request.music_volume),
+                        ("sfxvolume", "Sound effects volume", request.sfx_volume),
+                    ] {
+                        f.sliders.push(Slider {
+                            action,
+                            label,
+                            rect: [24., 0., w - 48., 44.],
+                            value: value as f32,
+                            min: 0.,
+                            max: 100.,
+                            step: 5.,
+                            selected: false,
+                        });
+                    }
+                }
                 let columns = actions.len() as f32;
                 for (i, (label, action)) in actions.iter().enumerate() {
                     f.button(
@@ -2147,6 +2183,17 @@ pub fn layout(request: Request) -> Result<Frame> {
             }
         }
         _ => unreachable!(),
+    }
+    if request.page == "music" && request.capture_label.is_empty() {
+        // Music, the volumes and Sound come first (they lead the touch
+        // page), then the songs, the pager and Back.
+        let lead = ["musictoggle", "musicvolume", "sfxvolume", "soundmode"];
+        let (mut first, rest): (Vec<String>, Vec<String>) = f
+            .choices
+            .drain(..)
+            .partition(|c| lead.contains(&c.as_str()));
+        first.extend(rest);
+        f.choices = first;
     }
     Ok(f)
 }
@@ -2273,6 +2320,7 @@ mod tests {
             page: page.into(),
             split_vertical: false,
             host_freestyle: false,
+            host_freestyle_minutes: 2,
             split_players: 2,
             split_seconds: Vec::new(),
             loading_status: "Reading original ATV...".into(),

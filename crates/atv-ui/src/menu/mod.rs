@@ -589,8 +589,22 @@ pub fn element(view: &Viewport, state: &State, images: &glyphs::GlyphImages) -> 
             ..Default::default()
         });
         let big = state.page == "settings";
+        // Audio: Music, the two volume sliders and Sound lead the page, over
+        // the song list and its pager; Back alone closes it.
+        let mut audio = column(6.);
+        let audio_page = state.page == "music";
         for (i, action) in choices.iter().enumerate() {
-            if let Some(s) = state.rows.slider(action) {
+            if audio_page
+                && matches!(
+                    action.as_str(),
+                    "musictoggle" | "musicvolume" | "sfxvolume" | "soundmode"
+                )
+            {
+                audio = audio.child(match state.rows.slider(action) {
+                    Some(s) => slider(i, s),
+                    None => button(i, action, false, false),
+                });
+            } else if let Some(s) = state.rows.slider(action) {
                 settings = settings.child(slider(i, s));
             } else if PAGER.contains(&action.as_str()) {
                 pager = pager.child(button(i, action, true, false));
@@ -673,6 +687,9 @@ pub fn element(view: &Viewport, state: &State, images: &glyphs::GlyphImages) -> 
                 }));
             }
             body = body.child(warning);
+        }
+        if audio_page {
+            body = body.child(audio);
         }
         body = body.child(settings);
         if state.page == "controls" {

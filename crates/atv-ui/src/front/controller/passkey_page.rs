@@ -312,7 +312,10 @@ impl Frontend {
                     Some(key) => lines.push(line("Your Pass Key", key.clone())),
                     None => {
                         lines.push(line("No Pass Key yet", String::new()));
-                        lines.push(line("It appears once you save progress.", String::new()));
+                        lines.push(line(
+                            "Save progress to get one, then use it on another device.",
+                            String::new(),
+                        ));
                     }
                 }
                 if self.cloud.key.is_some() {
@@ -328,10 +331,12 @@ impl Frontend {
                     lines.push(line("Previous Pass Key", self.cloud.previous_key.clone()));
                 }
                 // One short line; the save chip's popover keeps the details.
-                lines.push(line(
-                    "Enter it on another device to keep playing. Keep it private.",
-                    String::new(),
-                ));
+                if self.cloud.key.is_some() {
+                    lines.push(line(
+                        "Enter it on another device to keep playing. Keep it private.",
+                        String::new(),
+                    ));
+                }
                 lines
             }
             "passkey-entry" => {

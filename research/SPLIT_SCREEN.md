@@ -236,16 +236,18 @@ its `*_TG.RES` courses (GAMES.md "Tag").
   have the ball" or "Player N has the ball: tag them!"); the carrier
   banner names the player in both views. The ball's minimap marker shows
   in both views.
-- **Results.** Tag Results list Player 1 / Player 2 by score with Restart
-  Game (a new game, both players back at the Tag start) and the results
-  page's Quit row, which returns to the Games page as the other games do;
+- **Results.** The results, titled "Race Results" like the disc's
+  `[TagOver Menu]` (Overlays.pb `Text1Text`), list Player 1 / Player 2 by
+  score with Restart Game (a new game, both players back at the Tag start)
+  and the results page's Continue row, which returns to the Games page as
+  the other games do;
   Pause → Restart Game restarts too.
 
 Port choices: the original's split Tag start spread and per-viewport HUD
 placement were not traced. Check: `tools/test_engine_split_tag.mjs`
 (content group) plays Prospect Springs' Tag top/bottom with `tagReach=60`
 (both parked players tag each other, so both carry), a 30 s clock
-(`tagTest=fast`) to Tag Results naming both players, then Restart Game.
+(`tagTest=fast`) to the Tag results naming both players, then Restart Game.
 Host Chromium only.
 
 ## Three and four players (2026-10-28)

@@ -12,7 +12,7 @@
 // `tagReach=60` (a wide contact for automation) the guest, parked beside
 // the host, takes the ball once the 2 s immunity passes; the carrier and
 // the scores reach both pages, and a 30 s clock (`tagTest=fast`) ends in
-// Tag Results on both.
+// Tag results (titled Race Results) on both.
 //   PLAYWRIGHT_MODULE=... ATV_TEST_URL=http://127.0.0.1:4187 node tools/test_engine_multiplayer_tag.mjs
 // ATV_GAMES_SHOTS=<dir> saves captures.
 import assert from 'node:assert/strict';

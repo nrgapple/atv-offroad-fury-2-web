@@ -861,3 +861,15 @@ Unlocked" on the store pages), and vehicle names fall back to the store's
 list, so a locked ATV's plate no longer reads "Vehicle 22".
 `test_engine_menu_phone_layout.mjs` covers the picker (touch and keyboard) and
 the store label at every size.
+
+### Audio page and Pass Key copy (2026-10-29)
+
+Options → Audio opened on the song pager, put Back in the middle and left
+Music, Volume and SFX as tap-to-cycle buttons under it. Music, the music and
+sound-effects volumes (now sliders: drag, or Left/Right in 5% steps, as the
+steering slider) and Sound lead the page and its choices, then the songs, the
+pager and Back (`atv_core::ui_menu` reorders the music page's choices;
+`Preferences::set_volume`). Pass Key with no key says one sentence ("Save
+progress to get one, then use it on another device."); with a key, the key,
+its status and one line. `test_engine_audio_page.mjs` scrolls the taller panel
+to its targets.
