@@ -409,6 +409,8 @@ pub struct RoomFreestyle {
     seen_countdown: bool,
     /// This rider's GO was taken (its tracker started).
     began: bool,
+    /// Guest: the host table last mirrored.
+    mirrored: Option<GameState>,
     /// The ride's step count at the last frame (None: not seen yet).
     steps: Option<u64>,
     report: f32,
@@ -447,6 +449,7 @@ impl RoomFreestyle {
             placed: false,
             seen_countdown: false,
             began: false,
+            mirrored: None,
             steps: None,
             report: REPORT,
             sent: None,
@@ -542,7 +545,14 @@ impl RoomFreestyle {
                 .game_state()
                 .filter(|g| g.game == game_kind::FREESTYLE && g.serial == self.table.serial)
                 .cloned();
-            if let Some(g) = &state {
+            // The room keeps the host's last table: mirror each one once,
+            // so the clock runs on locally between them.
+            let fresh = state
+                .as_ref()
+                .filter(|g| self.mirrored.as_ref() != Some(*g))
+                .cloned();
+            if let Some(g) = &fresh {
+                self.mirrored = Some(g.clone());
                 let before = self.table.phase;
                 let timer = self.table.timer;
                 self.table.mirror(g);
@@ -584,6 +594,12 @@ impl RoomFreestyle {
             *seconds -= dt;
         }
         self.go = (self.go - dt).max(0.);
+        // A guest runs the mirrored clock on between the host's tables, so
+        // a host that vanishes (until the relay hands the room over) does
+        // not stretch the session: at 0:00 this rider stops scoring.
+        if !host && self.table.phase == game_phase::PLAY {
+            self.table.clock = (self.table.clock - dt).max(0.);
+        }
         if host {
             for claim in net.take_claims() {
                 if claim.kind != claim_kind::FREESTYLE {
@@ -619,7 +635,7 @@ impl RoomFreestyle {
             ride.take_chains();
             self.tracker.begin(ride.committed_points());
         }
-        if self.table.phase == game_phase::PLAY && playing {
+        if self.table.phase == game_phase::PLAY && self.table.clock > 0. && playing {
             let chains = ride.take_chains();
             self.tracker.sample(ride.committed_points(), &chains);
             self.test_hook(dt);

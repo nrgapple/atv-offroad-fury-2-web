@@ -912,6 +912,10 @@ the table, ranking, reports and validation) is an authored adaptation.
 - **Host handoff.** If the host leaves, the relay's next host runs the
   session on from its mirror of the table (clock, phase, rows), drops the
   old host and finishes it; Play Again then belongs to the new host.
+  Guests run the mirrored clock on between the host's tables and stop
+  scoring at 0:00, so the seconds before the relay notices a vanished host
+  do not lengthen the session (the browser test caught a 54 s session on
+  a 25 s clock before this).
 
 ### Protocol (version 6, compatible)
 

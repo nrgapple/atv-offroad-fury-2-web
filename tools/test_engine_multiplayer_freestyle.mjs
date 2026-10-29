@@ -150,6 +150,8 @@ try {
   assert.match(g.roomFreestyle.summary, /RustGuest/);
   assert.doesNotMatch(g.roomFreestyle.summary, /RustHost/, 'the leaver is dropped');
   assert.equal(g.roomFreestyle.standings.length, 1);
+  // The handoff does not stretch the 25 s session (one chain a second).
+  assert.ok(g.roomFreestyle.standings[0].combos <= 27, JSON.stringify(g.roomFreestyle.standings));
   await shot(guest, 'FS-after-host-left');
   assertNoErrors(errors);
   console.log(`Multiplayer Freestyle: menu-hosted held start, shared table and results (${first}), a spectating late joiner, Play Again and a host handoff (${g.roomFreestyle.summary}) verified`);
