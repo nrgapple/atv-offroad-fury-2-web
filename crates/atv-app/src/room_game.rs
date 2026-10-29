@@ -301,7 +301,11 @@ impl GameSession {
         let markers = session.rules.markers();
         if self.visit && self.test_clock >= 1. {
             // Odd slots take the last standing treasure, so riders differ.
-            let next = if me % 2 == 1 { markers.last() } else { markers.first() };
+            let next = if me % 2 == 1 {
+                markers.last()
+            } else {
+                markers.first()
+            };
             if let Some(m) = next {
                 self.test_clock = 0.;
                 self.visits += 1;

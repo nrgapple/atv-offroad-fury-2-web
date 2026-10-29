@@ -782,6 +782,11 @@ four), as an authored adaptation over the recovered single-player rules.
   collected. A rider joining mid-game follows the host onto the course and
   plays the rest of it. Restart Game from Pause restarts for everyone from
   the host and does nothing for a guest.
+- **Host handoff.** If the host leaves mid-game the relay's next host takes
+  over the game from its mirrored state (hill owners and scores, collected
+  treasures, the shown group, clock and counts), drops the old host from
+  the results and finishes the game for the remaining riders; Play Again
+  then belongs to the new host.
 
 ### Protocol (version 6, compatible)
 
@@ -820,6 +825,8 @@ claims, claim checks, test hooks), `games.rs` (the shared `GameSession`),
 
 - Guests' King of the Hills captures and Treasure Hunt pickups carry relay
   latency; the host's own do not.
+- `tools/test_engine_multiplayer_koth.mjs` ends with a guest leaving and
+  `test_engine_multiplayer_treasure.mjs` with the host leaving (handoff).
 - The browser tests drive captures with `gameTest=hill` (a reported capture
   after placing the ATV on hill 1), exercising the room claim, check and
   broadcast; the arming rules themselves are the single-player ones covered

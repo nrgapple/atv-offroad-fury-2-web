@@ -4,7 +4,7 @@
 import assert from 'node:assert/strict';
 import { assertNoErrors, base, launch, newPage, nextFrames } from './browser/harness.mjs';
 
-export async function roomGame({ prefix, action, hook, verify, label }) {
+export async function roomGame({ prefix, action, hook, verify, label, leaver = 'guest' }) {
   const shots = process.env.ATV_GAMES_SHOTS || '';
   const errors = [];
   const code = `${prefix}${String(Date.now()).slice(-6)}`;
@@ -87,14 +87,21 @@ export async function roomGame({ prefix, action, hook, verify, label }) {
     const serial = h.roomGame.serial;
     h = await until(host, (game, r) => r.serial === serial + 1 && game.started, 120000, 'game 2 starts');
     await until(guest, (game, r) => r.serial === serial + 1 && game.started, 60000, 'guest plays game 2');
-    await guest.close();
-    h = await until(host, (game, r) => !r.present[1], 60000, 'the guest is dropped');
-    h = await until(host, game => game.over && game.reported, 120000, 'game 2 results');
-    assert.match(h.game.summary, /RustHost/);
-    assert.doesNotMatch(h.game.summary, /RustGuest/, 'the leaver is dropped');
+    // `leaver: 'host'`: the host leaves instead; the guest takes over the
+    // room (host handoff) and finishes the game alone from its mirror.
+    const [stay, go, stayName, goName, goSlot] = leaver === 'host'
+      ? [guest, host, 'RustGuest', 'RustHost', 0]
+      : [host, guest, 'RustHost', 'RustGuest', 1];
+    await go.close();
+    h = await until(stay, (game, r) => !r.present[goSlot] && r.host, 90000, 'the leaver is dropped');
+    h = await until(stay, game => game.over && game.reported, 120000, 'game 2 results');
+    assert.equal(h.roomGame.serial, serial + 1, 'the same game finishes');
+    assert.match(h.game.summary, new RegExp(stayName));
+    assert.doesNotMatch(h.game.summary, new RegExp(goName), 'the leaver is dropped');
     assert.equal(h.roomGame.standings.length, 1);
+    await shot(stay, `${prefix}-after-${leaver}-left`);
     assertNoErrors(errors);
-    console.log(`${label}: shared start, host-authoritative play and results (${first}), Play Again and a mid-game leaver (${h.game.summary}) verified`);
+    console.log(`${label}: shared start, host-authoritative play and results (${first}), Play Again and a mid-game ${leaver} leaving (${h.game.summary}) verified`);
   } finally {
     await browser.close();
   }

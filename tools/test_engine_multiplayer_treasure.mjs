@@ -7,7 +7,8 @@
 // second: the host collects for both riders (the guest's from its relayed
 // position), both pages show the same counts, and the 20 s clock
 // (`gameTest=fast`) ends in the same results. Play Again starts game 2 for
-// both; the guest then leaves mid-game and drops out of the results.
+// both; the host then leaves mid-game: the guest takes the room over and
+// finishes game 2 alone from its mirrored state (host handoff).
 //   PLAYWRIGHT_MODULE=... ATV_TEST_URL=http://127.0.0.1:4187 node tools/test_engine_multiplayer_treasure.mjs
 // ATV_GAMES_SHOTS=<dir> saves captures.
 import assert from 'node:assert/strict';
@@ -18,6 +19,7 @@ await roomGame({
   action: 'playgame:12',
   hook: 'visit',
   label: 'Multiplayer Treasure Hunt',
+  leaver: 'host',
   async verify({ host, guest, until, shot }) {
     const h = await until(host, game => game.scores[0] > 0 && game.scores[1] > 0, 60000, 'both collect');
     assert.equal(h.game.kind, 'treasure');
