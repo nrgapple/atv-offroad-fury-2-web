@@ -504,21 +504,9 @@ impl Front {
         let page = self.state.page.as_str();
         let mut wants = Vec::new();
         if self.menu.is_none()
-            && (matches!(
-                page,
-                "main"
-                    | "single"
-                    | "championship"
-                    | "objectives"
-                    | "objective-courses"
-                    | "profile"
-                    | "profile-view"
-                    | "garage"
-                    | "gear"
-                    | "multiplayer"
-                    | "create-lobby"
-                    | "join-lobby"
-            ) || atv_ui::front::controller::store_page(page))
+            && (matches!(page, "profile-view" | "garage" | "gear")
+                || front::stage_page(page)
+                || atv_ui::front::controller::store_page(page))
         {
             let quad = self.state.stage_quad();
             if !self.art.vehicles.iter().any(|(q, ..)| *q == quad) {
@@ -956,20 +944,11 @@ impl Front {
         let px = ((logo_css * view.scale).round() as u32).clamp(64, 2048);
         let logo_key = format!("logo:{px}");
         let mut logo = None;
-        if matches!(
-            page.as_str(),
-            "title"
-                | "main"
-                | "single"
-                | "championship"
-                | "objectives"
-                | "objective-courses"
-                | "profile"
-                | "profile-view"
-                | "multiplayer"
-                | "create-lobby"
-                | "join-lobby"
-        ) || atv_ui::front::controller::store_page(&page)
+        // Every page laid out with the stage shows the wordmark (Games,
+        // Split Screen and its Players page drew an empty stage).
+        if matches!(page.as_str(), "title" | "profile-view")
+            || front::stage_page(&page)
+            || atv_ui::front::controller::store_page(&page)
         {
             let drawn = self.image(device, queue, &logo_key, |_| Some(logo::raster(px)));
             let shadow_alpha = if page == "title" { 0.6 } else { 0.4 };
@@ -1534,21 +1513,9 @@ impl Front {
     fn update_previews(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, now: f64) {
         let page = self.state.page.clone();
         let shown = self.menu.is_none()
-            && (matches!(
-                page.as_str(),
-                "main"
-                    | "single"
-                    | "championship"
-                    | "objectives"
-                    | "objective-courses"
-                    | "profile"
-                    | "profile-view"
-                    | "garage"
-                    | "gear"
-                    | "multiplayer"
-                    | "create-lobby"
-                    | "join-lobby"
-            ) || atv_ui::front::controller::store_page(&page));
+            && (matches!(page.as_str(), "profile-view" | "garage" | "gear")
+                || front::stage_page(&page)
+                || atv_ui::front::controller::store_page(&page));
         let quad = self.state.stage_quad();
         let garage = matches!(page.as_str(), "garage" | "gear");
         // The garage look: paint on ATVs (motorcycles keep their livery).

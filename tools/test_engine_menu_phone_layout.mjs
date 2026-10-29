@@ -125,6 +125,18 @@ try {
       }
       if (shots) await page.screenshot({ path: `${shots}/${name}-${p}.png` });
     }
+    // Every stage page shows the vehicle (Games and the Split Screen pages
+    // drew an empty stage).
+    for (const p of ['games', 'split', 'splitseats']) {
+      await page.goto(url(`/play.html?uiDiagnostics=1&front=${p}`));
+      await onPage(page, p);
+      await page.waitForFunction(
+        () => JSON.parse(document.querySelector('#ui-state').textContent).front.modelTargets?.[0],
+        null,
+        { timeout: 60000 }
+      );
+      assertFixed(await front(page), `${name} ${p}`, viewport);
+    }
     // Single Player: its modes fit without scrolling on every phone.
     await page.goto(url('/play.html?uiDiagnostics=1&front=single'));
     await onPage(page, 'single');
