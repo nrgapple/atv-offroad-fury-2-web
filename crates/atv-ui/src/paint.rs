@@ -140,6 +140,17 @@ pub enum Item {
     /// Multiply following items' alpha until `PopOpacity`.
     PushOpacity(f32),
     PopOpacity,
+    /// Following images (and image shadows) sway in 3D until `PopTilt`:
+    /// rotated about `center` by the renderer's current tilt angles
+    /// ([`crate::Renderer::set_tilt`]) and seen through a CSS-style
+    /// `perspective` (CSS pixels). The angles live in a uniform, so an
+    /// animated sway does not change the display list. Boxes and text are
+    /// not tilted.
+    PushTilt {
+        center: [f32; 2],
+        perspective: f32,
+    },
+    PopTilt,
 }
 
 #[derive(Default, Clone, Debug, PartialEq)]
@@ -175,7 +186,11 @@ impl DisplayList {
                     pivot[1] += dy;
                 }
                 Item::ImageShadow { dst, .. } | Item::PushClip { rect: dst, .. } => shift(dst),
-                Item::PopClip | Item::PushOpacity(_) | Item::PopOpacity => {}
+                Item::PushTilt { center, .. } => {
+                    center[0] += dx;
+                    center[1] += dy;
+                }
+                Item::PopClip | Item::PushOpacity(_) | Item::PopOpacity | Item::PopTilt => {}
             }
         }
     }

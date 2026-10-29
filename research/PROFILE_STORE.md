@@ -117,13 +117,39 @@ whether G-Ride is listed in the store.
 - **Training reward.** Completing Main Menu → Training Course grants the
   coloured Talons and ATV2 gear to the loaded profile (`0021f440`,
   [TRAINING.md](TRAINING.md)); SHOWROOM/THREADS/IGIVEUP also open them.
+- **GOLDCUPS and the Freestyle championships.** `003238a0` runs for all 16
+  event types, so GOLDCUPS and IGIVEUP also open Pro Freestyle (and both
+  Freestyle championships on Expert) now that the port offers them.
+- **Unlock Everything (port option, not in the original).** One row in
+  Profile Editor (under Unlock Items), at the end of Unlock Items and on
+  the Pass Key page opens a confirmation ("Unlocks every ATV, rider gear,
+  track, championship and game for this profile. Your records and trophies
+  stay as earned.") with Unlock For <loaded profile>, Unlock For All N
+  Profiles when the save holds several, and Cancel; it then shows the
+  original "Unlocked Everything!". `store::unlock_everything` applies
+  IGIVEUP and GABRIEL and adds the `EVERYTHING` flag to the profile's cheats
+  list, which also opens what no original cheat reaches: the G-Ride ATV and
+  gear (the memory-card reward) and the games' last courses. It is
+  idempotent and grants no Profile Points, purchases, trophies, records or
+  Percent Complete (flags never count, as with the cheats); the Training
+  Course then counts as completed (its Talons are owned) and skips the
+  prize line. Game Settings → **New Profiles: Everything Unlocked** (device
+  setting `atv-new-profiles-unlocked`, default off) gives every profile
+  created on this device Unlock Everything; it is a device setting like the
+  rest of Game Settings, while the unlocks themselves live in the profiles
+  and travel with the Pass Key ([CLOUD_SAVE.md](CLOUD_SAVE.md)).
 - **Limits.** The session cheats WIDESCRN, FLYPAPER, GETONUP, STOPCAM and SYNC30HZ
   report "(not available in this port)"; EATDIRT and BRINGIT arm the next
   Single Race's AI cheats; no G-Ride memory-card reward.
 
 Checks: `atv-core` store tests (catalogs, new-profile ownership, purchase
 rule, Training items, Jersey, courses/games and cascade, cheats);
-`atv-ui` `store_sells_unlocks_and_gates_single_player`;
+`atv-ui` `store_sells_unlocks_and_gates_single_player` and
+`unlock_everything_opens_the_whole_save_and_saves_it`;
+`tools/test_engine_unlock_everything.mjs` presses Unlock Everything on a new
+profile, finds the Talon Black, Rockbridge Park, Short Tracks, Pro Supercross
+Expert, Pro Freestyle and King of the Hills open, reloads, and loads the
+synced Pass Key in a fresh browser with everything open;
 `tools/test_engine_profile_store.mjs` enters GIMMEPTS, buys the Patriot,
 is refused the Talon Black, reloads and picks the Patriot in the garage
 while a locked ATV stays unselectable.

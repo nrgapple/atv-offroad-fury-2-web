@@ -575,6 +575,7 @@ impl Net {
                 self.last_traffic = now_f;
                 // A fresh arrival starts apart from nobody: contacts wait.
                 self.session.ghost(now);
+                self.announce_races();
             }
             if let Some((at, tries)) = self.meet
                 && self.ready_sent
@@ -677,6 +678,7 @@ impl Net {
         {
             self.ready_sent = self.socket.send(bytes);
             self.last_traffic = now_f;
+            self.announce_races();
         }
         if !self.ready_sent || now_f - self.last_send < 50. {
             return;
@@ -724,7 +726,8 @@ impl Net {
                 }
             };
             ride.step_with(&controls, 0., &mut touch)?;
-            // Rooms do not race; drain the step's (empty) race events.
+            // Held behind a menu: drain the step's race events (a room race
+            // keeps its own progress in `room_race`).
             let _ = ride.take_race_events();
         }
         Ok(())
@@ -756,6 +759,35 @@ impl Net {
         {
             self.socket.send(bytes);
         }
+    }
+
+    /// This rider's room-race progress (research/MULTIPLAYER.md "Room
+    /// races"); serial 0 announces race support to the relay.
+    pub fn send_progress(&mut self, progress: atv_game::multiplayer::RaceProgress) {
+        if self.closed.is_none()
+            && self.ready_sent
+            && let Ok(bytes) = self.session.progress_packet(progress)
+        {
+            self.socket.send(bytes);
+        }
+    }
+
+    /// Tell the relay this client takes room-race packets (a serial-0
+    /// progress), after each Ready so reconnects announce again.
+    fn announce_races(&mut self) {
+        if self.ready_sent && self.session.lobby.as_ref().is_some_and(|l| !l.public) {
+            self.send_progress(Default::default());
+        }
+    }
+
+    /// Other riders' latest room-race progress.
+    pub fn race_progress(&self) -> &BTreeMap<u8, atv_game::multiplayer::RaceProgress> {
+        &self.session.progress
+    }
+
+    /// The latest relay round trip (ms).
+    pub fn rtt_ms(&self) -> Option<u32> {
+        self.session.rtt_ms
     }
 
     pub fn is_host(&self) -> bool {
@@ -1016,6 +1048,7 @@ impl Net {
             host: me == Some(lobby.host),
             public: lobby.public,
             started: lobby.started,
+            races: room_races(&self.environment),
             players: lobby
                 .players
                 .iter()
@@ -1142,6 +1175,25 @@ pub async fn load_model(content: Rc<Content>, key: Key) -> Result<RemoteModel, (
     remote::load_model(&content, key)
         .await
         .map_err(|e| (key, e))
+}
+
+/// The races a room on `environment` can start (research/MULTIPLAYER.md
+/// "Room races"): variant index and pause-menu row.
+pub fn room_races(environment: &str) -> Vec<(u8, &'static str)> {
+    atv_game::launch::RaceVariant::ALL
+        .iter()
+        .enumerate()
+        .filter(|(_, v)| v.exists(environment))
+        .map(|(at, v)| {
+            let label = match v {
+                atv_game::launch::RaceVariant::National => "Play Race",
+                atv_game::launch::RaceVariant::EnduroLong => "Play Enduro Long",
+                atv_game::launch::RaceVariant::EnduroShort => "Play Enduro Short",
+                atv_game::launch::RaceVariant::ShortTrack => "Play Short Track",
+            };
+            (at as u8, label)
+        })
+        .collect()
 }
 
 #[cfg(test)]

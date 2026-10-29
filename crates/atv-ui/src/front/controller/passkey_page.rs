@@ -206,6 +206,8 @@ impl Frontend {
                 if self.cloud.key.is_some() {
                     rows.push(row("savehistory", "Save History"));
                 }
+                // Unlocks travel with the key (port option).
+                rows.push(row(super::profile_pages::UNLOCK_PAGE, "Unlock Everything"));
                 rows
             }
             // The current revision is the save itself; the older ones can
@@ -310,10 +312,7 @@ impl Frontend {
                     Some(key) => lines.push(line("Your Pass Key", key.clone())),
                     None => {
                         lines.push(line("No Pass Key yet", String::new()));
-                        lines.push(line(
-                            "Your Pass Key appears once you save progress.",
-                            String::new(),
-                        ));
+                        lines.push(line("It appears once you save progress.", String::new()));
                     }
                 }
                 if self.cloud.key.is_some() {
@@ -328,9 +327,9 @@ impl Frontend {
                 if !self.cloud.previous_key.is_empty() {
                     lines.push(line("Previous Pass Key", self.cloud.previous_key.clone()));
                 }
+                // One short line; the save chip's popover keeps the details.
                 lines.push(line(
-                    "Enter your Pass Key on another device or browser to continue this save. \
-                     Anyone with it can continue it; Share Progress gives others a copy instead.",
+                    "Enter it on another device to keep playing. Keep it private.",
                     String::new(),
                 ));
                 lines
@@ -698,7 +697,10 @@ mod tests {
         assert!(actions(&front).contains(&"passkey"));
         front.run("passkey", &view, &mut settings);
         assert_eq!(front.page, "passkey");
-        assert_eq!(actions(&front), ["enterkey", "entershare", "back"]);
+        assert_eq!(
+            actions(&front),
+            ["enterkey", "entershare", "profile-unlock", "back"]
+        );
         assert_eq!(front.profile_details()[0].0, "No Pass Key yet");
         front.cloud.key = Some("FURY-28T5-CY4T-QKFF-03ZD".into());
         front.cloud.files = true;
@@ -713,6 +715,7 @@ mod tests {
                 "entershare",
                 "savefiles",
                 "savehistory",
+                "profile-unlock",
                 "back"
             ]
         );

@@ -20,6 +20,7 @@ mod random;
 mod render_scale;
 pub mod replay;
 mod riding;
+mod room_race;
 mod sound;
 mod soundtrack;
 mod split;
@@ -653,6 +654,10 @@ struct App {
     hockey: Option<hockey::HockeySession>,
     /// Tag in a multiplayer room (`atv_core::tag`).
     tag: Option<tag::TagSession>,
+    /// A race in a multiplayer room (research/MULTIPLAYER.md "Room races").
+    room_race: Option<room_race::RoomRace>,
+    /// The last room race serial seen, so the host numbers the next one.
+    room_race_serial: u32,
     /// The host's Play Tag reloads the room's venue from its TG archive;
     /// the game starts with these minutes once that ride is ready.
     tag_start: Option<u32>,
@@ -1241,6 +1246,7 @@ impl App {
             return;
         }
         self.sync_wake();
+        self.sync_surface_density();
         let now = Instant::now();
         let dt = (now - self.last).as_secs_f32().min(0.1);
         self.last = now;
@@ -1595,6 +1601,7 @@ impl App {
         let mut loads = Vec::new();
         let mut engine_loads = Vec::new();
         let mut course = None;
+        let mut room_load = None;
         let mut ended = None;
         if let Some(net) = &mut ready.net {
             // Only actual suspension (hidden page, suspended app) sends the
@@ -1634,6 +1641,48 @@ impl App {
             let content = net.content();
             loads.extend(tick.loads.into_iter().map(|key| (content.clone(), key)));
             course = tick.course;
+            // Room races: a guest follows the host's new race; the race
+            // runs per rider and the host settles the results.
+            let (me, _) = net.roster();
+            if !net.is_host()
+                && let (Some(me), Some(state)) = (me, net.game_state())
+                && state.game == 3
+                && state.serial != self.room_race_serial
+                && state.phase != atv_game::multiplayer::race_phase::RESULTS
+            {
+                self.room_race_serial = state.serial;
+                let (race, load) = room_race::RoomRace::guest(state, me, &net.environment);
+                self.room_race = Some(race);
+                if let Some(overlay) = &mut self.overlay {
+                    overlay.results = Default::default();
+                }
+                if let Some(room_race::Action::Load(settings)) = load {
+                    room_load = Some(settings);
+                }
+            }
+            if let Some(race) = &mut self.room_race {
+                match race.frame(&mut riding.ride, net) {
+                    Some(room_race::Action::Load(settings)) => room_load = Some(settings),
+                    Some(room_race::Action::Results(summary)) => {
+                        // A rider who did not cross the line still sees the
+                        // agreed order (the race panel shows it otherwise).
+                        if let Some(overlay) = &mut self.overlay
+                            && riding
+                                .ride
+                                .race()
+                                .and_then(|r| r.frame.as_ref())
+                                .is_none_or(|f| f.phase != "finished")
+                        {
+                            overlay.results.show_game("Race Results", summary);
+                            overlay.results.game_continue = true;
+                        }
+                    }
+                    None => {}
+                }
+            }
+            if let Some(overlay) = &mut self.overlay {
+                overlay.room_race_pending = self.room_race.as_ref().is_some_and(|r| r.pending());
+            }
             let remote = riding
                 .sound
                 .as_ref()
@@ -1674,12 +1723,24 @@ impl App {
             return;
         }
         if let Some(environment) = course {
-            self.reload_room(environment);
+            self.room_race = None;
+            self.reload_room(environment, None);
             return;
+        }
+        if let Some(settings) = room_load {
+            let environment = self
+                .ready
+                .as_ref()
+                .and_then(|r| r.net.as_ref())
+                .map(|n| n.environment.clone());
+            if let Some(environment) = environment {
+                self.reload_room(environment, Some(settings));
+                return;
+            }
         }
         // A guest following the host's Tag onto its course.
         if let Some(environment) = self.tag_reload.take() {
-            self.reload_room_with(environment, true);
+            self.reload_room_with(environment, true, None);
             return;
         }
         // The Training Course ended (`00225980` phase 3): back to the main
@@ -2539,6 +2600,7 @@ impl App {
                 "training": self.training.as_ref().map(|t| t.state(riding.ride.frame().origin)),
                 "trainingArrows": ready.venue.training_arrows.map(|m| m.len()),
                 "game": self.game.as_ref().map(games::GameSession::state),
+                "roomRace": self.room_race.as_ref().map(room_race::RoomRace::state),
                 "hockey": self.hockey.as_ref().map(|h| h.state(riding.ride.frame().origin)),
                 "tag": self.tag.as_ref().map(|t| t.state()),
                 "tagBall": ready.venue.tag_ball,
@@ -3116,6 +3178,12 @@ impl App {
                     }
                 }
             }
+            // Play Race (room host): every room rider races this course
+            // (research/MULTIPLAYER.md "Room races").
+            Event::PlayRace(variant) => {
+                self.start_room_race(variant);
+                self.menu_event(Event::Resume);
+            }
             // Play Tag (room host): a Tag game for the room on this course.
             Event::PlayTag => {
                 let ok = self.ready.as_ref().is_some_and(|r| {
@@ -3133,7 +3201,7 @@ impl App {
                     // room's ride from its TG archive, then start.
                     self.menu_event(Event::Resume);
                     self.tag_start = Some(minutes);
-                    self.reload_room_with(environment, true);
+                    self.reload_room_with(environment, true, None);
                     return;
                 }
                 if ok {
@@ -3558,6 +3626,36 @@ impl App {
             overlay::Action::RaceQuit if self.tag.as_ref().is_some_and(|t| t.local) => {
                 // Back to the Games page that started it.
                 self.quit_to(Some("games"));
+            }
+            // Room race results: the host starts the next race, a guest
+            // waits for it; Quit returns to the room's Free Ride.
+            overlay::Action::RaceRetry if self.room_race.is_some() => {
+                if let Some(overlay) = &mut self.overlay {
+                    overlay.results = Default::default();
+                }
+                if self
+                    .ready
+                    .as_ref()
+                    .and_then(|r| r.net.as_ref())
+                    .is_some_and(|n| n.is_host())
+                {
+                    let variant = self.room_race.as_ref().map_or(0, |r| r.field.info.variant);
+                    self.start_room_race(variant);
+                }
+            }
+            overlay::Action::RaceQuit if self.room_race.is_some() => {
+                self.room_race = None;
+                if let Some(overlay) = &mut self.overlay {
+                    overlay.results = Default::default();
+                }
+                let environment = self
+                    .ready
+                    .as_ref()
+                    .and_then(|r| r.net.as_ref())
+                    .map(|n| n.environment.clone());
+                if let Some(environment) = environment {
+                    self.reload_room(environment, None);
+                }
             }
             overlay::Action::RaceRetry if self.tag.is_some() => {
                 if self
@@ -4588,9 +4686,12 @@ impl ApplicationHandler<Message> for App {
                 }
                 self.last = Instant::now();
                 if let Some(window) = &self.window {
+                    // The ride draws at its render ratio from its first frame.
+                    MENU_SURFACE.with(|m| m.set(false));
                     let size = render_size(window);
                     let ready = self.ready.as_mut().unwrap();
                     fit_surface(window, &mut ready.gpu, size, self.suspended);
+                    ready.gpu.set_scene_targets(true);
                     if ready.riding.is_some() {
                         let mut overlay = overlay::Overlay::new(
                             &ready.gpu.device,
@@ -6940,7 +7041,7 @@ impl App {
         }
         self.poll_frame_tasks();
         if let Some(environment) = course {
-            self.reload_room(environment);
+            self.reload_room(environment, None);
         }
     }
 
@@ -7019,6 +7120,24 @@ impl App {
         }
     }
 
+    /// The frontend draws at the display's full density and the ride at its
+    /// render ratio: switches the surface when one hands over to the other.
+    /// Only a ride draws the 3D scene, so only its device keeps the scene's
+    /// depth and multisample targets (at DPR 3 a portrait phone's would be
+    /// ~95 MB the menus never touch).
+    fn sync_surface_density(&mut self) {
+        let menu = self.ready.is_none();
+        if MENU_SURFACE.with(|m| m.replace(menu)) != menu {
+            self.resize_surface();
+        }
+        if let Some(gpu) = &mut self.gpu {
+            gpu.set_scene_targets(false);
+        }
+        if let Some(ready) = &mut self.ready {
+            ready.gpu.set_scene_targets(true);
+        }
+    }
+
     /// Reconfigures the surfaces and UI views for the window's size and the
     /// current render ratio (resize, rotation, adaptive resolution steps).
     fn resize_surface(&mut self) {
@@ -7079,6 +7198,12 @@ impl App {
             }
             return;
         }
+        // A room race ends with its room (its results never come).
+        self.room_race = None;
+        self.room_race_serial = 0;
+        if let Some(overlay) = &mut self.overlay {
+            overlay.room_race_pending = false;
+        }
         let Some(ready) = &mut self.ready else { return };
         ready.net = None;
         ready.scene.retain_peers(|_, _| false);
@@ -7108,6 +7233,9 @@ impl App {
         self.game = None;
         self.hockey = None;
         self.tag = None;
+        // A room race ends with its room; the next room numbers from 1.
+        self.room_race = None;
+        self.room_race_serial = 0;
         let Some(ready) = self.ready.take() else {
             return false;
         };
@@ -7955,15 +8083,60 @@ impl App {
             .unwrap_or(atv_core::games::DEFAULT_MINUTES)
     }
 
-    /// The room moved to another course: reload the ride there, keeping the
-    /// room (web/multiplayer.js `follow` -> `ride`).
-    fn reload_room(&mut self, environment: String) {
-        self.tag_start = None;
-        self.reload_room_with(environment, false);
+    /// The room host starts a race on the room's course for every rider in
+    /// the room, with the Race menu's lap count (`raceLaps=N` for tests).
+    fn start_room_race(&mut self, variant: u8) {
+        let laps = (1..=5u8)
+            .find(|n| url_flag(&format!("raceLaps={n}")))
+            .or_else(|| {
+                self.front
+                    .as_ref()
+                    .map(|f| f.borrow().state.race.laps.clamp(1, 5) as u8)
+            })
+            .unwrap_or(3);
+        let Some(ready) = &mut self.ready else { return };
+        let Some(net) = ready.net.as_mut().filter(|n| n.is_host()) else {
+            return;
+        };
+        let exists = atv_game::launch::RaceVariant::ALL
+            .get(variant as usize)
+            .is_some_and(|v| v.exists(&net.environment));
+        if !exists {
+            if let Some(menu) = self.overlay.as_mut().and_then(|o| o.menu.as_mut()) {
+                menu.notice = Some("Select a race track first.".into());
+            }
+            return;
+        }
+        let Some((race, room_race::Action::Load(settings))) =
+            room_race::RoomRace::host(net, self.room_race_serial, variant, laps, fresh_seed())
+        else {
+            return;
+        };
+        self.room_race_serial = race.field.serial;
+        self.room_race = Some(race);
+        self.tag = None;
+        if let Some(overlay) = &mut self.overlay {
+            overlay.results = Default::default();
+        }
+        let environment = net.environment.clone();
+        self.reload_room(environment, Some(settings));
     }
 
-    /// Reloads the room's ride; `tag` reads the venue's Tag course.
-    fn reload_room_with(&mut self, environment: String, tag: bool) {
+    /// The room moved to another course: reload the ride there, keeping the
+    /// room (web/multiplayer.js `follow` -> `ride`).
+    fn reload_room(&mut self, environment: String, race: Option<atv_game::ride::race::Settings>) {
+        self.tag_start = None;
+        self.reload_room_with(environment, false, race);
+    }
+
+    /// Reloads the room's ride; `tag` reads the venue's Tag course and
+    /// `race` starts a room race there.
+    fn reload_room_with(
+        &mut self,
+        environment: String,
+        tag: bool,
+        race: Option<atv_game::ride::race::Settings>,
+    ) {
         let game_scene = if tag {
             self.tag_course(&environment)
         } else {
@@ -7990,7 +8163,7 @@ impl App {
                 rider: p.rider,
             }),
             appearance: net.ride.appearance,
-            race: None,
+            race,
             weather: net.ride.weather,
             steps: None,
             graphics: net.ride.graphics,
@@ -8175,6 +8348,8 @@ pub fn run(options: Options) {
         game: None,
         hockey: None,
         tag: None,
+        room_race: None,
+        room_race_serial: 0,
         tag_start: None,
         split_tag: None,
         tag_reload: None,
@@ -8459,6 +8634,10 @@ thread_local! {
     /// The adaptive render ratio (backing pixels per CSS pixel, at most the
     /// display's): render_scale::RenderScale's current step.
     static RENDER_RATIO: std::cell::Cell<f64> = const { std::cell::Cell::new(1.5) };
+    /// The frontend is on screen (no ride): its UI-only frames draw at the
+    /// display's full density (at most MENU_RATIO), not the ride's render
+    /// ratio, so menu text, icons and previews stay sharp on phones.
+    static MENU_SURFACE: std::cell::Cell<bool> = const { std::cell::Cell::new(true) };
     /// Desktop: the GPU backend scales a surface smaller than the window up
     /// to it (Metal, DX12), so the render ratio applies.
     static SURFACE_SCALES: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
@@ -8472,12 +8651,27 @@ fn render_ratio_applies() -> bool {
     cfg!(target_arch = "wasm32") || SURFACE_SCALES.with(|s| s.get())
 }
 
+/// The frontend's backing pixels per CSS pixel: the display's own, up to
+/// a DPR 3 phone (the menus are a few textured quads; no 3D scene).
+const MENU_RATIO: f64 = 3.;
+
+/// The render ratio in force: the frontend's full density, else the ride's
+/// adaptive RENDER_RATIO; never above the display's.
+fn render_ratio(device: f64) -> f64 {
+    let cap = if MENU_SURFACE.with(|m| m.get()) {
+        MENU_RATIO
+    } else {
+        RENDER_RATIO.with(|r| r.get())
+    };
+    cap.min(device).max(0.1)
+}
+
 /// Backing pixels per logical (CSS) pixel of the surface: the display's,
-/// capped at RENDER_RATIO where the render ratio applies.
+/// capped at the render ratio where the render ratio applies.
 fn surface_scale(window: &Window) -> f64 {
     let device = window.scale_factor();
     if render_ratio_applies() {
-        RENDER_RATIO.with(|r| r.get()).min(device).max(0.1)
+        render_ratio(device)
     } else {
         device
     }
@@ -8514,8 +8708,7 @@ fn render_size(window: &Window) -> winit::dpi::PhysicalSize<u32> {
         if let Some(canvas) = window.canvas() {
             let rect = canvas.get_bounding_client_rect();
             if rect.width() > 0. && rect.height() > 0. {
-                let device = window.scale_factor();
-                let ratio = RENDER_RATIO.with(|r| r.get()).min(device).max(0.1);
+                let ratio = render_ratio(window.scale_factor());
                 return winit::dpi::PhysicalSize::new(
                     ((rect.width() * ratio).round() as u32).max(1),
                     ((rect.height() * ratio).round() as u32).max(1),

@@ -143,6 +143,9 @@ pub struct El {
     /// `overflow: auto` scroll position: children move up by this much and
     /// are clipped to the padding box (radius = the box's first radius).
     pub scroll: Option<f32>,
+    /// A 3D sway (`perspective` in CSS pixels) for the element's images and
+    /// its descendants' about its centre ([`crate::paint::Item::PushTilt`]).
+    pub tilt: Option<f32>,
 }
 
 impl El {
@@ -175,6 +178,11 @@ impl El {
     }
     pub fn scroll(mut self, offset: f32) -> Self {
         self.scroll = Some(offset);
+        self
+    }
+    /// Sways the element's images in 3D about its centre (see `tilt`).
+    pub fn tilt(mut self, perspective: f32) -> Self {
+        self.tilt = Some(perspective);
         self
     }
     pub fn opacity(mut self, opacity: f32) -> Self {
@@ -449,6 +457,12 @@ fn paint(
     if grouped {
         list.opacity(el.opacity);
     }
+    if let Some(perspective) = el.tilt {
+        list.push(crate::paint::Item::PushTilt {
+            center: [rect.x + rect.w / 2., rect.y + rect.h / 2.],
+            perspective,
+        });
+    }
     if el.paint.visible() {
         list.push(crate::paint::Item::Box(el.paint.at(rect)));
     }
@@ -584,6 +598,9 @@ fn paint(
             paint(tree, id, child, rect.x, rect.y, fonts, list, hits);
         }
     }
+    if el.tilt.is_some() {
+        list.push(crate::paint::Item::PopTilt);
+    }
     if grouped {
         list.unopacity();
     }
@@ -680,5 +697,58 @@ mod tests {
         let get = |id| hits.iter().find(|(_, i)| *i == id).unwrap().0;
         assert_eq!(get(1).w, 596.);
         assert_eq!(get(2).w, 596., "{:?}", get(2));
+    }
+
+    #[test]
+    fn a_tilted_element_wraps_its_images_about_its_centre() {
+        let logo = El::new(Style {
+            size: Size {
+                width: Dimension::length(300.),
+                height: Dimension::length(100.),
+            },
+            ..Default::default()
+        })
+        .tilt(900.)
+        .content(Content::Image {
+            image: ImageId(7),
+            size: [300., 100.],
+            fit: Fit::Fill,
+            shadow: None,
+        });
+        let root = El::new(Style {
+            padding: sides(20., 0., 0., 40.),
+            ..Default::default()
+        })
+        .child(logo);
+        let mut list = DisplayList::default();
+        render(
+            &root,
+            &mut Fonts::new(),
+            640.,
+            480.,
+            &mut list,
+            &mut Vec::new(),
+        );
+        let at = |f: &dyn Fn(&crate::paint::Item) -> bool| list.items.iter().position(f);
+        let push = at(&|i| matches!(i, crate::paint::Item::PushTilt { .. })).unwrap();
+        let image = at(&|i| matches!(i, crate::paint::Item::Image { .. })).unwrap();
+        let pop = at(&|i| matches!(i, crate::paint::Item::PopTilt)).unwrap();
+        assert!(push < image && image < pop);
+        assert_eq!(
+            list.items[push],
+            crate::paint::Item::PushTilt {
+                center: [190., 70.],
+                perspective: 900.
+            }
+        );
+        // A page slide moves the pivot with the image.
+        list.translate(10., 0.);
+        assert!(matches!(
+            list.items[push],
+            crate::paint::Item::PushTilt {
+                center: [200., 70.],
+                ..
+            }
+        ));
     }
 }

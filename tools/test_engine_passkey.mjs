@@ -1,6 +1,6 @@
 // Pass Key cloud saves in the Rust engine (research/CLOUD_SAVE.md, client
 // section). A browser context with saved progress gets a Pass Key, syncs it and
-// shows it on the badge; a fresh context enters that key (typed into the Pass
+// shows it on the status bar's save chip; a fresh context enters that key (typed into the Pass
 // Key page) and continues the same progress; a share code copies progress into a
 // third context's save as a new profile; Export Save / Import Save round-trips a
 // file; Save History lists the kept revisions and restores an older one (mocked
@@ -22,7 +22,9 @@ import { assertNoErrors, launch, newPage, nextFrames, url } from './browser/harn
 const live = process.env.ATV_PASSKEY_LIVE === '1';
 const forward = process.env.ATV_PASSKEY_API?.replace(/\/+$/, '');
 const shots = process.env.ATV_PASSKEY_SHOTS;
-const BADGE = 2413;
+// The status bar's save chip and its popover's link (front/status_bar.rs).
+const SAVE_CHIP = 2463;
+const POPOVER_LINK = 2464;
 const ui = page => page.evaluate(() => JSON.parse(document.querySelector('#ui-state')?.textContent || '{}').front || {});
 const onPage = (page, name, timeout = 90000) =>
   page.waitForFunction(name => JSON.parse(document.querySelector('#ui-state')?.textContent || '{}').front?.page === name, name, { timeout });
@@ -38,10 +40,13 @@ async function choose(page, action) {
   await key(page, 'Enter');
 }
 async function clickBadge(page) {
-  const f = await ui(page);
-  const hit = f.hits.find(h => h.id === BADGE);
-  assert.ok(hit, `badge on ${f.page}`);
-  await page.mouse.click(hit.x + hit.width / 2, hit.y + hit.height / 2);
+  for (const id of [SAVE_CHIP, POPOVER_LINK]) {
+    const f = await ui(page);
+    const hit = f.hits.find(h => h.id === id);
+    assert.ok(hit, `${id} on ${f.page}`);
+    await page.mouse.click(hit.x + hit.width / 2, hit.y + hit.height / 2);
+    await nextFrames(page, 4);
+  }
   await onPage(page, 'passkey');
 }
 async function shot(page, name) {
@@ -149,6 +154,7 @@ try {
   assert.match(synced.key, /^FURY-[0-9A-HJKMNP-TV-Z]{4}(-[0-9A-HJKMNP-TV-Z]{4}){3}$/);
   const passKey = synced.key;
   assert.equal(await a.page.evaluate(() => localStorage.getItem('fury-pass-key')), passKey);
+  assert.equal((await ui(a.page)).status.sync, 'Saved', 'the save chip shows the sync');
   if (!live && !forward) assert.equal(saves.get(symbols(passKey)).save.profiles.profiles[0].points, 340);
   await shot(a.page, 'title-badge');
   await key(a.page, 'Enter'); await onPage(a.page, 'main');
@@ -228,12 +234,12 @@ try {
   await onPage(d.page, 'title');
   await d.page.mouse.click(195, 300);
   await key(d.page, 'Enter'); await onPage(d.page, 'main');
-  // Portrait menus keep the corner for their rows: Profile Editor → Pass Key & Saves.
-  assert.ok(!(await ui(d.page)).hits.some(h => h.id === BADGE), 'no badge over the phone main menu');
+  // The save chip sits in the status bar, clear of the rows: Profile Editor → Pass Key & Saves.
+  assert.ok((await ui(d.page)).hits.some(h => h.id === SAVE_CHIP), 'save chip on the phone main menu');
   await choose(d.page, 'profile'); await onPage(d.page, 'profile');
   await shot(d.page, 'phone-profile');
   await choose(d.page, 'passkey'); await onPage(d.page, 'passkey');
-  assert.ok((await ui(d.page)).hits.some(h => h.id === BADGE), 'badge on the phone Pass Key page');
+  assert.ok((await ui(d.page)).hits.some(h => h.id === SAVE_CHIP), 'save chip on the phone Pass Key page');
   await shot(d.page, 'phone-passkey-page');
   await choose(d.page, 'savefiles'); await onPage(d.page, 'passkey-file');
   const [chooser] = await Promise.all([d.page.waitForEvent('filechooser'), choose(d.page, 'importsave')]);

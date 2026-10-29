@@ -67,7 +67,10 @@ export const TESTS = {
   'test_engine_menu_navigation.mjs': { group: 'content' },
   'test_engine_menu_divider.mjs': { group: 'content' },
   'test_engine_menu_scroll.mjs': { group: 'content' },
+  'test_engine_status_bar.mjs': { group: 'content' },
   'test_engine_menu_transitions.mjs': { group: 'content' },
+  'test_engine_menu_motion.mjs': { group: 'content' },
+  'test_engine_menu_phone_layout.mjs': { group: 'content' },
   'test_engine_context_loss.mjs': { group: 'content' },
   'test_engine_menu_music.mjs': { group: 'content' },
   'test_engine_freeride_full.mjs': {
@@ -77,6 +80,10 @@ export const TESTS = {
   'test_engine_multiplayer_tag.mjs': {
     group: 'relay',
     reason: 'needs the multiplayer relay at the same origin (Rust host and guest Tag room); run with --url'
+  },
+  'test_engine_multiplayer_race.mjs': {
+    group: 'relay',
+    reason: 'needs the multiplayer relay at the same origin (Rust host and guest race a Supercross room); run with --url'
   },
   'test_engine_games_tag.mjs': {
     group: 'relay',
@@ -151,6 +158,7 @@ export const TESTS = {
   'test_engine_profile_store.mjs': { group: 'content', timeout: 600 },
   'test_engine_profile_editor.mjs': { group: 'content', timeout: 900 },
   'test_engine_passkey.mjs': { group: 'content', timeout: 600 },
+  'test_engine_unlock_everything.mjs': { group: 'content', timeout: 600 },
   'test_engine_profile_stunts.mjs': { group: 'content', timeout: 900 },
   'test_engine_hall_of_fame.mjs': { group: 'content', timeout: 900 },
   'test_engine_text_fields_touch.mjs': { group: 'content' },

@@ -133,6 +133,8 @@ impl Frontend {
                 row("store-games", "Games"),
                 row("store-tracks", "Tracks"),
                 row("store-cheats", "Cheats"),
+                // Port option: every item at once (profile_pages).
+                row(super::profile_pages::UNLOCK_PAGE, "Unlock Everything"),
             ],
             "store-cheats" => vec![row("cheatenter", "Enter")],
             _ => {
@@ -182,18 +184,14 @@ impl Frontend {
     /// The readout under the rows: the item's cost and the remaining
     /// points (the store pages' "Point Cost:" and "Current Profile
     /// Points:").
+    /// The highlighted item's cost or unlock rule (the status bar's coin
+    /// chip, emphasized on these pages, shows the points to spend).
     pub(super) fn store_text(&self) -> Option<String> {
-        let points = format!(
-            "Current Profile Points: {}",
-            store::grouped(store::remaining(&self.profile))
-        );
         if matches!(self.page.as_str(), "store" | "store-cheats") {
-            return Some(points);
+            return None;
         }
         let items = self.store_items();
-        let Some(item) = items.get(self.store.item) else {
-            return Some(points);
-        };
+        let item = items.get(self.store.item)?;
         let detail = if item.owned {
             "Unlocked".to_string()
         } else if let Some(how) = item.how {
@@ -201,7 +199,7 @@ impl Frontend {
         } else {
             format!("Point Cost: {}", store::grouped(item.cost))
         };
-        Some(format!("{detail} · {points}"))
+        Some(detail)
     }
 
     /// Opens a store page on its first item.

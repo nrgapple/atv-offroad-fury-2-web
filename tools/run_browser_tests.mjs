@@ -8,7 +8,8 @@
 //   node tools/run_browser_tests.mjs --only test_fog.mjs,test_race.mjs
 //   node tools/run_browser_tests.mjs --group relay --url http://127.0.0.1:8787
 //   node tools/run_browser_tests.mjs --list
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
+import { spawnOwned, stopOwned } from './browser/owned_process.mjs';
 import { existsSync, rmSync } from 'node:fs';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
@@ -71,6 +72,16 @@ if (args.only) {
 }
 if (!runs.length) { console.log('No tests selected.'); process.exit(0); }
 
+// Direct node invocations share the same lease as make and Cargo.
+if (!process.env.CI && spawnSync('python3', [path.join(ROOT, 'tools/host_build.py'), '--owns']).status !== 0) {
+  const child = spawn('python3', [path.join(ROOT, 'tools/host_build.py'), '--', process.execPath,
+    ...process.argv.slice(1)], { stdio: 'inherit' });
+  for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP']) process.on(signal, () => child.kill(signal));
+  child.on('error', error => { console.error(error); process.exit(1); });
+  child.on('exit', (code, signal) => process.exit(code ?? (signal ? 130 : 1)));
+  await new Promise(() => {});
+}
+
 if (!process.env.PLAYWRIGHT_MODULE) {
   try { (await import('node:module')).createRequire(import.meta.url).resolve('playwright'); }
   catch { console.error('Set PLAYWRIGHT_MODULE to an installed Playwright package (see research/BROWSER_TESTS.md).'); process.exit(2); }
@@ -97,11 +108,12 @@ async function site(mode) {
       'Content tests need the ignored hosted-content package; see research/BROWSER_TESTS.md.');
   }
   const port = await freePort();
-  const child = spawn('python3', ['tools/serve_web.py', '--bind', '127.0.0.1', '--port', String(port), '--content', content],
+  const child = spawnOwned('python3', ['tools/serve_web.py', '--bind', '127.0.0.1', '--port', String(port), '--content', content],
     { cwd: ROOT, stdio: ['ignore', 'ignore', 'pipe'] });
   let stderr = '';
   child.stderr.on('data', chunk => { stderr += chunk; });
   const url = `http://127.0.0.1:${port}`;
+  servers.set(mode, { url, child }); // register before readiness: failure must clean up
   for (let attempt = 0; ; attempt++) {
     if (child.exitCode !== null) throw new Error(`serve_web.py exited: ${stderr}`);
     try { if ((await fetch(`${url}/index.html`)).ok) break; } catch {}
@@ -125,17 +137,22 @@ function runTest({ name, group }, url) {
     }
   }
   const timeout = (entry.timeout ?? DEFAULT_TIMEOUT) * 1000;
-  return new Promise(resolve => {
+  return new Promise((resolve, reject) => {
     const started = Date.now();
-    const child = spawn(process.execPath, [path.join('tools', name)], { cwd: ROOT, env, stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawnOwned(process.execPath, [path.join('tools', name)], { cwd: ROOT, env, stdio: ['ignore', 'pipe', 'pipe'] });
     running = child;
+    child.once('error', reject);
+    // Close can wait on pipes inherited by a leaked descendant; clean on exit first.
+    child.once('exit', () => stopOwned(child, 'SIGKILL'));
     let output = '', timedOut = false;
     const collect = stream => chunk => { output += chunk; if (args.verbose) stream.write(chunk); };
     child.stdout.on('data', collect(process.stdout));
     child.stderr.on('data', collect(process.stderr));
-    const timer = setTimeout(() => { timedOut = true; child.kill('SIGKILL'); }, timeout);
+    const timer = setTimeout(() => { timedOut = true; stopOwned(child, 'SIGKILL'); }, timeout);
     child.on('close', async code => {
       clearTimeout(timer);
+      stopOwned(child, 'SIGKILL');
+      running = null;
       await mkdir(LOGS, { recursive: true });
       await writeFile(path.join(LOGS, name.replace(/\.mjs$/, '.log')), output);
       resolve({ ok: code === 0 && !timedOut, code, timedOut, seconds: (Date.now() - started) / 1000, output });
@@ -148,8 +165,8 @@ let exitCode = 0;
 let running = null;
 // Interrupted runs must not leave the test or its local servers behind.
 for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP']) process.on(signal, () => {
-  running?.kill('SIGKILL');
-  for (const { child } of servers.values()) child.kill();
+  if (running) stopOwned(running, 'SIGKILL');
+  for (const { child } of servers.values()) stopOwned(child, 'SIGKILL');
   if (emptyContent) rmSync(emptyContent, { recursive: true, force: true });
   process.exit(130);
 });
@@ -177,7 +194,7 @@ try {
     if (!result.ok) { exitCode = 1; if (args.bail) break; }
   }
 } finally {
-  for (const { child } of servers.values()) child.kill();
+  for (const { child } of servers.values()) stopOwned(child, 'SIGKILL');
   if (emptyContent) await rm(emptyContent, { recursive: true, force: true });
 }
 
