@@ -764,3 +764,12 @@ menu paths are the Select Track and Single Race pages: scrolling the course
 list costs 7-30 ms per frame at x4 and opening the page 300 ms (course-photo
 blur filters and text rasterization at 3x), and the garage's slide-in
 150 ms; they are the next targets.
+
+### Terrain mip chains on the decode workers (follow-up)
+
+The terrain layers' box-filtered mip chains (`atv_core::texture::downsample`,
+moved there from atv-render unchanged) are now produced by the same decode job
+as each layer, so the main thread only uploads them. Host Chromium x4: the
+"Building the scenery textures" stage 1.82 -> 0.80 s (env01) and 0.99 s (env08);
+longest load task 1.82 -> 0.83 s; longest frozen loader gap 1.8 -> 1.3 s.
+
