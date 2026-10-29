@@ -195,8 +195,7 @@ What the port does:
   Player 2 (the split race standings' names) with their count and stunt
   score;
   Hockey Results lists each player's goals with the team score.
-- **Tag** is not split yet: its Start Game still hosts a multiplayer room
-  (GAMES.md "Tag"). Freestyle objectives/target runs are not split either.
+- **Tag** is slice 4 below. Freestyle objectives/target runs are not split.
 
 Checks: `atv-core` unit tests `split_screen_players_collect_and_rank_separately`
 (Treasure Hunt: per-player counts, progress, places and the stunt-score
@@ -214,6 +213,38 @@ sudden death) on its 20 s clock to "Red wins!" and results listing both
 players' goals. Host Chromium only; player 2 keyboard halves and second
 pads are the slice 1 input path (`test_engine_split_screen.mjs`), not
 re-driven in the games test.
+
+## Slice 4 (2026-10-28): Tag
+
+Split Screen → Games → Tag's Start Game plays Tag on this console instead
+of hosting a room. Evidence: Tag's four rider records (slice 3 list) and
+its `*_TG.RES` courses (GAMES.md "Tag").
+
+- **Course.** The ride loads the venue's Tag course (`*_TG.RES` over the
+  Freeride archive: the mode TOY's start and `tagball.psg`), the same scene
+  a room's Play Tag reloads to. Player 2 starts ten feet to player 1's
+  right (the split Freeride spot), not on the overlapping room start.
+- **Rules.** The room code runs it: `TagSession::new_local` is a host
+  session with roster `[0, 1]` and no `Net`. Both rides feed
+  `atv_core::tag` every step (possession, scoring, knock loose from each
+  player's own trick starts, the carrier engine handicap on whichever local
+  ATV carries, the boundary throw-in, ground respawn, tie order and the
+  Games page time limit); nothing is relayed.
+- **HUD.** Each view draws its own Tag panel (clock, its own score, "You
+  have the ball" or "Player N has the ball: tag them!"); the carrier
+  banner names the player in both views. The ball's minimap marker shows
+  in both views.
+- **Results.** Tag Results list Player 1 / Player 2 by score with Restart
+  Game (a new game, both players back at the Tag start) and the results
+  page's Quit row, which returns to the Games page as the other games do;
+  Pause → Restart Game restarts too.
+
+Port choices: the original's split Tag start spread and per-viewport HUD
+placement were not traced. Check: `tools/test_engine_split_tag.mjs`
+(content group) plays Prospect Springs' Tag top/bottom with `tagReach=60`
+(both parked players tag each other, so both carry), a 30 s clock
+(`tagTest=fast`) to Tag Results naming both players, then Restart Game.
+Host Chromium only.
 
 ## Measurements
 
@@ -238,7 +269,7 @@ Chromium. Phones were not measured.
   ControllerSelect claiming page.
 - Player 2's own gear and paint, Hall of Fame and profile credit; its tire
   tracks and lingering dust; a per-player audio mix.
-- Tag, Freestyle objectives and championships split screen (King of the
-  Hills, Treasure Hunt and Hockey are slice 3).
+- Freestyle objectives and championships split screen (King of the
+  Hills, Treasure Hunt and Hockey are slice 3, Tag slice 4).
 - Online parity: every split-screen mode in relay rooms up to the room's
   player cap.

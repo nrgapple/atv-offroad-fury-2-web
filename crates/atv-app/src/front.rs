@@ -1842,6 +1842,7 @@ impl Front {
         out["tilt"] = serde_json::json!(self.tilt);
         // Single Race's course picker is open.
         out["courseSheet"] = self.state.course_sheet.into();
+        out["vehicleSheet"] = self.state.vehicle_sheet.into();
         // The last frame drew its still parts from the UI layer cache.
         out["layerCached"] = self
             .renderer

@@ -122,6 +122,8 @@ impl Frontend {
                 "Jump off a hill and land a stunt that beats its score to capture it.".into()
             }
             GameKind::Hockey => "Score in the far goal before the time runs out.".into(),
+            // Split screen plays it on this console (research/SPLIT_SCREEN.md).
+            GameKind::Tag if self.split => "Keep the ball away; tag the carrier to take it. Two players on this screen.".into(),
             GameKind::Tag => "Keep the ball away; tag the carrier to take it. Tag needs other riders: Start Game hosts a Multiplayer room on this course (share its invite).".into(),
         })
     }
@@ -153,7 +155,8 @@ impl Frontend {
         let (venue, course) = self.game_courses().get(self.games.course)?.clone();
         // Tag needs opponents (the original's split screen; no CPU riders):
         // Start Game hosts a multiplayer room on the Tag course, which
-        // starts Tag with this time limit (research/GAMES.md "Tag").
+        // starts Tag with this time limit (research/GAMES.md "Tag"). From
+        // Split Screen the app plays it locally for both players instead.
         if kind == GameKind::Tag {
             if !self.tracks.iter().any(|t| t.id == venue) {
                 self.notice = Some(format!("{course} is not available."));
