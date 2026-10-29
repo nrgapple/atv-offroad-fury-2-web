@@ -2332,7 +2332,7 @@ impl Frontend {
             (
                 "race" | "gear" | "games" | "profile-name" | "profile-records" | "hall-of-fame"
                 | "passkey-entry" | "store-atv" | "store-gear" | "store-games" | "store-tracks"
-                | "splitseats",
+                | "splitseats" | "create-lobby",
                 "left" | "right",
             ) => {
                 // Only value rows step; Start Race, the link and Back do not.
@@ -3138,6 +3138,12 @@ mod tests {
         front.step("hostfstime", 1, &view, &mut settings);
         front.step("hostfstime", 1, &view, &mut settings);
         front.step("hostfstime", 1, &view, &mut settings);
+        assert_eq!(front.host_freestyle_minutes, 4);
+        // The arrow keys step the focused row too.
+        (front.focus, front.selection) = (None, 2);
+        front.key("ArrowRight", &view, &mut settings);
+        assert_eq!(front.host_freestyle_minutes, 5);
+        front.key("ArrowLeft", &view, &mut settings);
         assert_eq!(front.host_freestyle_minutes, 4);
         front.set_field("create-code", "fs12ab34");
         front.run("hosttrack", &view, &mut settings);
