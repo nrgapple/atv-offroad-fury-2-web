@@ -673,3 +673,94 @@ longest event-loop turn was 279-359 ms (the start-of-ride scene partition in
 `Ride::start`). Before, the whole load ran inside one blocking call (a first cold run
 took 6.8 s), during which the window could not answer the OS. These are host-only
 measurements, not results from other desktops.
+
+## Phone menus and loading (Rust engine, host emulation, 2026-10-29)
+
+Reported on a physical iPhone: menus visibly choppy, especially at first, and
+slow map loads, unlike the retired JavaScript game. Everything below is **host
+emulation** (Apple M4, headless Playwright Chromium/ANGLE Metal and WebKit,
+390x844 CSS at DPR 3 with touch, CDP CPU throttling for Chromium); none of it
+is a physical-phone measurement. `tools/benchmark_phone.mjs` produces every
+row (fresh browser context per scenario, cold HTTP cache, local
+`tools/serve_web.py` with the private content package, no compression). It
+wraps `requestAnimationFrame` to time each engine callback, counts WebGL draws
+per frame, timestamps the loader's `#status` stages and records Chromium long
+tasks. Baseline: main `74bbe9f`; candidate: branch `perf/phone-menus-loading`.
+The JavaScript reference is `tools/js_reference.py serve` (pinned `8e1b94f`).
+Reports: `work/verification/phone-perf/*.json`.
+
+### Causes found
+
+- **Every animated menu page was laid out from scratch every frame.** The
+  title's Press Start pulse value was part of every page's `Screen`, so the
+  page cache (`Front::render_page`) missed on each frame of any animating page
+  (turntable, wordmark sway) and ran the whole taffy layout: about 1 ms per
+  frame unthrottled on the main menu and 3.5 ms in the garage (CPU profile).
+- **Loads ran as one long main-thread task.** The web build is single-threaded
+  and `yield_frame` only re-polled at once (a microtask), so the venue load
+  froze the page for 12.9 s at x4 (the loader drew 15 frames in 17 s). The
+  JavaScript game decoded in a Web Worker and kept its main thread free.
+- **Main-thread decode work per env01 ride (unthrottled CPU profile, 3.75 s
+  total):** terrain-layer IPU decode 1.07 s, sky tiles plus their Enhanced
+  smoothing 0.84 s, scene-collision plant re-heighting 0.26 s (each terrain
+  contact scanned every leaf), inflate 0.48 s, SHA-256 chunk checks 0.20 s,
+  shader compiles 0.2 s, texture uploads 0.27 s; the ride's sound bank
+  (resampling 0.34 s) ran in the first riding seconds.
+- **First tap in the menus:** the menu tune (two VAG channels, decoded and
+  resampled) and the first rows of course photos decode on the page's thread;
+  host headless Chromium also spends 0.4 s creating the `AudioContext` there
+  (not measured on a phone).
+
+### Changes
+
+- The title is laid out once at a fixed pulse and only its Press Start
+  overlay's alpha is retinted each frame (`front::retint_pulse`); other pages
+  keep a constant pulse, so an animating page reuses its laid-out display list.
+- `atv_content::yield_frame` (used by `atv_game::yield_frame`) hands the
+  thread back to the browser through a `MessageChannel` task once 8 ms of work
+  has run since the last real yield; the loader paints and input is handled
+  between load steps. Work and order are unchanged.
+- A decode pool (`atv_content::pool`, `web/decode-worker.js`): 2-4 module Web
+  Workers (cores minus one) instantiate the page's own compiled WebAssembly
+  module and run `atv_game::offload::run` jobs: IPUM terrain layers and sky
+  tiles (with smoothing), the ride's sound-bank VAGs (decode + resample), the
+  menu tune, the course photos, and SHA-256 chunk checks while the pool runs.
+  Each job runs the same Rust function as inline decoding, so outputs are
+  byte-identical; without workers (old shell, failure) jobs run inline. The
+  pool starts with a ride load and stops after 20 s idle. Desktop runs the same
+  jobs on scoped threads.
+- Terrain contacts find their leaf through a 16-cell block index
+  (`LeafIndex`), falling back to the scan if the leaf list does not match it.
+- `Still loading? Reload` appears on the boot loader after 20 s and reloads
+  without the offline service worker (the menu agent's proposal for a first
+  visit that hung for minutes in the iOS Simulator; its cause is not yet
+  reproduced on the host).
+
+WebCrypto was tried for the chunk checks and dropped: Chromium hashes on the
+page's thread (31 ms per 2 MiB, slower than the wasm hasher); WebKit hashes off
+thread.
+
+### Before and after (host Chromium, x4 CPU throttle)
+
+| Scenario | main `74bbe9f` | candidate | JS reference |
+| --- | --- | --- | --- |
+| env01 `drive=1` link to first ride frame | 19.5 s | 9.8 s | 10.9 s |
+| Longest frozen loader gap | 12.9 s | 1.8 s | (DOM loader, worker decode) |
+| Loader frames drawn during the load | 15 | 87 | - |
+| Load stage "Reading original ENV01" | 11.4 s | 3.2 s | - |
+| Load stage "scene collisions" | 2.0 s | 0.7 s | - |
+| First 5 s of riding: fps / worst frame | 49 / 473 ms | 56 / 133 ms | 72 / 42 ms |
+| Main menu idle: engine callback p50 / busy | 5.4 ms / 0.48 | 2.1 ms / 0.24 | 0.2 ms / 0.12 (DOM) |
+| Garage idle: callback p50 / busy | 8.2 ms / 0.67 | 2.5 ms / 0.24 | - |
+| Title idle: callback p50 | 4.0 ms | 2.6 ms | 0.1 ms (DOM) |
+| Single Player idle: callback p50 | 5.1 ms | 2.1 ms | - |
+| First key on the main menu: longest task | 258 ms | 56 ms | 0 |
+| Boot: long tasks in the first 10 s | 3 (1,109 ms) | 3 (557 ms) | 0 |
+
+Frame intervals in headless Chromium are not vsync-locked (they alternate
+about 11/26 ms in every build, the JavaScript game included), so callback time
+and main-thread busy fraction are the comparable numbers. The remaining slow
+menu paths are the Select Track and Single Race pages: scrolling the course
+list costs 7-30 ms per frame at x4 and opening the page 300 ms (course-photo
+blur filters and text rasterization at 3x), and the garage's slide-in
+150 ms; they are the next targets.

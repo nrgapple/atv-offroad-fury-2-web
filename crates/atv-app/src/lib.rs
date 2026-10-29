@@ -1096,6 +1096,8 @@ async fn prepare(
         objective,
         split: split_layout,
     } = world;
+    // The decode workers start while the course downloads (offload.rs).
+    atv_game::offload::warm();
     // Every archive the ride reads downloads in parallel (game.js prefetchRide).
     if ride && PREFETCH.load(std::sync::atomic::Ordering::Relaxed) {
         let (paths, bank) = atv_game::launch::ride_prefetch(
@@ -9282,9 +9284,21 @@ pub fn run(options: Options) {
     }
 }
 
+/// One load-time decode job in a decode worker (web/decode-worker.js), which
+/// runs this module without a page: `atv_game::offload::run`.
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen::prelude::wasm_bindgen]
+pub fn offload_job(kind: u32, arg: u32, bytes: &[u8]) -> Result<Vec<u8>, String> {
+    atv_game::offload::run(kind, arg, bytes)
+}
+
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen::prelude::wasm_bindgen(start)]
 pub fn start() {
+    // A decode worker instantiates this module too: no page, no game.
+    if web_sys::window().is_none() {
+        return;
+    }
     // A panic stops the engine; without this the page shows a frozen frame
     // (the status line is hidden). Show the message, as a start-up failure
     // does, so a phone screenshot says what broke; the console keeps the trace.

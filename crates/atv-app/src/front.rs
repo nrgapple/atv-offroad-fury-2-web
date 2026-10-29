@@ -163,6 +163,8 @@ pub struct Front {
     toast: Toast,
     /// The turntable's clock, and Left/Right's hold on it (ms).
     spun_at: f64,
+    /// The title's Press Start pulse this frame (1-1.18).
+    pulse: f32,
     spin_hold: f64,
     /// When the wordmark began swaying (None: still), and its angles.
     sway_since: Option<f64>,
@@ -259,6 +261,7 @@ impl Front {
             coins: CoinCount::default(),
             toast: Toast::default(),
             spun_at: 0.,
+            pulse: 1.,
             spin_hold: 0.,
             sway_since: None,
             tilt: [0.; 2],
@@ -1120,7 +1123,16 @@ impl Front {
         // ms-pulse: brightness 1 → 1.18 → 1 over 1.8 s, ease-in-out.
         let phase = (now / 1800.).fract() as f32;
         let wave = 0.5 - 0.5 * atv_core::math::Det::cos_d(phase * std::f32::consts::TAU);
-        let pulse = 1. + 0.18 * wave;
+        self.pulse = 1. + 0.18 * wave;
+        // Only the title pulses. It is laid out once at PULSE_LAYOUT and its
+        // overlay retinted per frame (render_page); every other page keeps a
+        // constant value, so an animating page (turntable, sway) reuses its
+        // laid-out display list instead of a full layout each frame.
+        let pulse = if self.menu.is_none() && self.state.page == "title" {
+            front::PULSE_LAYOUT
+        } else {
+            1.
+        };
         let photos = &art.photos;
         let photo = |id: &str| photos.get(id).map(|(thumb, _)| *thumb);
         self.update_previews(device, queue, now);
@@ -1337,6 +1349,9 @@ impl Front {
                 }
             }
             None => self.list.items.extend_from_slice(&cache.content.items),
+        }
+        if screen.pulse > 1. {
+            front::retint_pulse(&mut self.list.items[start..], self.pulse);
         }
         self.content = start..self.list.items.len();
     }
@@ -1833,6 +1848,12 @@ impl Front {
             .is_some_and(|r| r.layer_cached())
             .into();
         out["layerPlan"] = serde_json::json!(self.renderer.as_ref().map(|r| r.layer_plan));
+        // Text/vector bitmaps rasterized and atlas rebuilds so far.
+        out["atlas"] = serde_json::json!(
+            self.renderer
+                .as_ref()
+                .map(|r| [r.rasterized_total, r.atlas_resets])
+        );
         // The status bar (front/status_bar.rs): numbers, sync and popover.
         out["status"] = match self.state.status_bar().filter(|_| self.menu.is_none()) {
             Some(b) => serde_json::json!({
