@@ -129,6 +129,8 @@ try {
   assert.equal(ll.roomFreestyle.summary, h.roomFreestyle.summary, 'the spectator sees the same results');
   assert.match(h.roomFreestyle.summary, /^Freestyle on .*: Time Up\. 1\. RustGuest: Score [\d,]+, Best Combo 1,100, Combos \d+\. 2\. RustHost: Score [\d,]+, Best Combo 1,000/);
   assert.doesNotMatch(h.roomFreestyle.summary, /RustLate/);
+  // The course by its Tracks.dat name on every page, not its venue code.
+  assert.doesNotMatch(g.roomFreestyle.summary, /^Freestyle on (env|free|nat|sx|train)\w*:/);
   await shot(host, 'FS-host-results');
   await shot(guest, 'FS-guest-results');
   const first = h.roomFreestyle.summary;
