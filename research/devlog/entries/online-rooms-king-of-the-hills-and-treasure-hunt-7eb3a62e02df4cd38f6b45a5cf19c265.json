@@ -1,0 +1,14 @@
+{
+  "id": "online-rooms-king-of-the-hills-and-treasure-hunt-7eb3a62e02df4cd38f6b45a5cf19c265",
+  "timestamp": "2026-10-29T07:37:16.876781+00:00",
+  "recorded_at": "2026-10-29T08:02:13.193466+00:00",
+  "kind": "build",
+  "title": "Online rooms: King of the Hills and Treasure Hunt",
+  "summary": "Single Player \u2192 Games \u2192 King of the Hills / Treasure Hunt has a Riders: Solo / Online Room row; Online Room hosts a room on the chosen original course, the countdown waits for riders, host-authoritative captures/pickups and scores replicate, agreed results, Play Again, leavers and host handoff, late joiners spectate.",
+  "details": [
+    "Tests: multiplayer_koth, multiplayer_treasure, multiplayer_race, multiplayer_hockey, multiplayer_end, games pass against a local relay; multiplayer_tag fails and is being investigated separately."
+  ],
+  "limitation": "no Games Lobby/Team Select or CPU fill",
+  "image": "/devlog-images/online-rooms-king-of-the-hills-and-treasure-hunt-7eb3a62e02df4cd38f6b45a5cf19c265.png",
+  "caption": "Treasure Hunt online room: guest gameplay collecting tokens"
+}

@@ -81,6 +81,14 @@ export const TESTS = {
     group: 'relay',
     reason: 'needs the multiplayer relay at the same origin (Rust host and guest Tag room); run with --url'
   },
+  'test_engine_multiplayer_koth.mjs': {
+    group: 'relay',
+    reason: 'needs the multiplayer relay at the same origin (Rust host and guest King of the Hills room); run with --url'
+  },
+  'test_engine_multiplayer_treasure.mjs': {
+    group: 'relay',
+    reason: 'needs the multiplayer relay at the same origin (Rust host and guest Treasure Hunt room); run with --url'
+  },
   'test_engine_multiplayer_race.mjs': {
     group: 'relay',
     reason: 'needs the multiplayer relay at the same origin (Rust host and guest race a Supercross room); run with --url'

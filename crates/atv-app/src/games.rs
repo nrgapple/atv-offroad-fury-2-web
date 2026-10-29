@@ -12,7 +12,7 @@ pub const COUNTDOWN: f32 = 3.;
 /// more red lamp each counted second (with its beep), green at GO for a
 /// second. The port's 3 s hold starts on the first red lamp, so the
 /// original's all-off step is not shown.
-fn lamp_step(started: bool, countdown: f32, go: f32) -> Option<u8> {
+pub(crate) fn lamp_step(started: bool, countdown: f32, go: f32) -> Option<u8> {
     if !started {
         Some((4 - countdown.ceil().clamp(1., 3.) as i32) as u8)
     } else if go > 0. {
@@ -32,39 +32,39 @@ pub struct GameSession {
     pub session: Option<Session>,
     /// Why the game could not load.
     pub error: Option<String>,
-    starts: Vec<Start>,
+    pub(crate) starts: Vec<Start>,
     /// Seconds left on the start countdown.
     pub countdown: f32,
     /// The green lamp's second after GO (`002e81f0` hides it 1 s later).
-    go: f32,
-    placed: bool,
-    steps: u64,
+    pub(crate) go: f32,
+    pub(crate) placed: bool,
+    pub(crate) steps: u64,
     /// Each player's committed stunt score at the last sample.
-    committed: [f32; 4],
+    pub(crate) committed: [f32; crate::room_game::SLOTS],
     /// Local players: 1, or 2-4 in split screen (player N is rider N - 1,
     /// research/SPLIT_SCREEN.md "Slice 3", "Three and four players").
     pub players: usize,
     /// The results were shown.
     pub reported: bool,
     /// The last results summary (diagnostics).
-    summary: Option<String>,
+    pub(crate) summary: Option<String>,
     /// Test tooling: `gameTest=fast` ends the clock after 20 s;
     /// `gameTest=visit` places the ATV on the next standing treasure each
     /// second; `gameTest=hill` sets the ATV on hill 1, then lifts it off
     /// the hill (armed) for a stunt.
-    fast: bool,
-    visit: bool,
-    hill: u8,
+    pub(crate) fast: bool,
+    pub(crate) visit: bool,
+    pub(crate) hill: u8,
     /// `gameTest=hillride`: instead of lifting the ATV, launch it across
     /// the hilltop at 40 ft/s with a 12 ft/s lip (direction N of four, the next on each restart)
     /// so it rides off the hill for a real stunt.
     ride_off: Option<u8>,
-    test_clock: f32,
+    pub(crate) test_clock: f32,
     /// `gameTest=visit` placements so far.
-    visits: u32,
+    pub(crate) visits: u32,
     /// A mode TOY without `Start%d` keeps the venue's ride start: player
     /// 1's first pose, so Restart Game returns both players there.
-    venue_start: Option<([f32; 3], f32)>,
+    pub(crate) venue_start: Option<([f32; 3], f32)>,
     /// `gameTest=hill`: a landed chain's points for the next sample (an
     /// ATV placed in the air opens no stunt).
     inject: Option<(usize, f32)>,
@@ -74,9 +74,12 @@ pub struct GameSession {
     /// The last finished chain: landed, committed delta, stunt sum.
     last_chain: Option<(bool, f32, f32)>,
     /// One-shot sounds for the ride's mixer (start beeps, pickups).
-    sounds: Vec<&'static str>,
+    pub(crate) sounds: Vec<&'static str>,
     /// Each hill's `kohflag` scene model (`00208840` binds the nearest).
     pub flags: Option<Vec<Option<usize>>>,
+    /// A multiplayer room's game (research/MULTIPLAYER.md "Room games"):
+    /// riders are room slots (peer ids 0-3).
+    pub room: Option<crate::room_game::RoomLink>,
 }
 
 /// The player colours at +0x210 (`00220220`): red, blue, green, yellow.
@@ -102,8 +105,8 @@ impl GameSession {
             go: 0.,
             placed: false,
             steps: 0,
-            committed: [0.; 4],
-            players: players.clamp(1, 4),
+            committed: [0.; crate::room_game::SLOTS],
+            players: players.clamp(1, crate::room_game::SLOTS),
             reported: false,
             summary: None,
             fast: crate::url_flag("gameTest=fast"),
@@ -126,6 +129,7 @@ impl GameSession {
             sounds: Vec::new(),
             flags: None,
             last_chain: None,
+            room: None,
         }
     }
 
@@ -574,7 +578,7 @@ impl GameSession {
 /// stunt and the chain finished since the last sample (its points: what it
 /// added to the committed stunt score, else its stunts' sum, `00221020`).
 /// Returns the rider and the finished chain's (landed, delta, sum).
-fn sample(
+pub(crate) fn sample(
     ride: &mut Ride,
     committed: &mut f32,
     inject: Option<f32>,

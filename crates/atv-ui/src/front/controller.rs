@@ -65,6 +65,17 @@ pub enum Event {
         rider: u16,
         name: String,
     },
+    /// Games → King of the Hills / Treasure Hunt with Riders: Online Room:
+    /// host a room on the course and start the game there for every room
+    /// rider (research/MULTIPLAYER.md "Room games").
+    GameHost {
+        kind: atv_core::games::GameKind,
+        environment: String,
+        minutes: u32,
+        quad: u16,
+        rider: u16,
+        name: String,
+    },
     /// Back from the garage or course picker opened over a held room ride:
     /// ride again with this look (a new course for the host's Ride).
     RoomRide {
