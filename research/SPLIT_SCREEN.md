@@ -441,6 +441,25 @@ is drawn once per view); the frame cadence is noisy in headless Chromium
 under the shared host's load (the three-player frame time is not
 meaningfully worse than four). Host only; phones were not measured.
 
+Per-player tire tracks and lingering dust (2026-10-29, same host and
+page, High graphics, ENV01, four players on the throttle, about 12 s after
+the start, `?splitTrails=0` keeping them player 1's; one run per row, the
+shared host was busy with other builds):
+
+| Ride | Frame (ms) | Frame p95 (ms) | CPU draw (ms) |
+| --- | --- | --- | --- |
+| Four players, trails player 1's | 27.0 / 27.2 / 30.2 | 33.1 / 32.1 / 37.5 | 9.8 / 12.9 / 27.0 |
+| Four players, trails per player | 32.3 / 32.6 / 39.7 | 40.9 / 39.8 / 51.5 | 11.2 / 11.3 / 15.9 |
+| Four players Enhanced, trails player 1's | 42.0 | 55.3 | 24.4 |
+| Four players Enhanced, trails per player | 45.0 | 61.3 | 27.6 |
+
+CPU draw differences stay inside this host's run-to-run noise; frame time
+was 3-10 ms higher with every player's trails on High (each of four
+views draws up to four 3600-segment track buffers and 96-puff dust pools).
+Enhanced (600 segments, 24 puffs) and Original (no trails) cost less or
+nothing. Host only; phones were not measured, and phones default to the
+lighter presets.
+
 ## Left for later slices
 
 - The ControllerSelect claiming page; the split radar (object 13) and
