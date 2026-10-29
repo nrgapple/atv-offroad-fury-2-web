@@ -800,6 +800,14 @@ four), as an authored adaptation over the recovered single-player rules.
   treasures, the shown group, clock and counts), drops the old host from
   the results and finishes the game for the remaining riders; Play Again
   then belongs to the new host.
+  Guests mirror each host table once and run the clock (and the start
+  countdown and signs) on between tables, so the seconds before the relay
+  notices a vanished host do not freeze or lengthen the game (they used to
+  re-apply the host's last table every frame, holding the clock).
+- **Course names.** Every room results page (races, games, Freestyle)
+  names the course by its Tracks.dat name; a page that joined by link
+  loads the names from `STARTAPP.RES` when it starts riding the room
+  (the venue code shows only until they load).
 
 ### Protocol (version 6, compatible)
 

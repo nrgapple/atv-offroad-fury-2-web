@@ -100,6 +100,9 @@ pub struct RoomLink {
     pub hold: bool,
     /// Guest: this game's countdown was seen (else it joined under way).
     seen_countdown: bool,
+    /// Guest: the host table last mirrored (the room keeps the host's
+    /// last one; each is applied once).
+    mirrored: Option<GameState>,
 }
 
 /// The longest the host's start waits for riders still loading (s).
@@ -128,6 +131,7 @@ impl RoomLink {
             players: 0,
             hold: false,
             seen_countdown: false,
+            mirrored: None,
         }
     }
 
@@ -254,6 +258,7 @@ impl GameSession {
             room.players = mask(&room.present);
             room.hold = false;
             room.seen_countdown = false;
+            room.mirrored = None;
         }
         if let Some(session) = &mut self.session {
             session.restart();
@@ -577,14 +582,30 @@ impl GameSession {
             .filter(|g| g.game == code && g.serial == room.serial)
             .cloned();
         let (own, _) = sample(ride, &mut self.committed[me], None);
-        if let Some(g) = &state {
+        // Mirror each host table once; between them the clock, the start
+        // countdown and the signs run on here, so a host that vanishes
+        // (until the relay hands the room over) does not stop the game.
+        let previous = room.mirrored.clone();
+        let fresh = state.as_ref().filter(|g| previous.as_ref() != Some(*g));
+        if fresh.is_none() {
+            session.coast(dt);
+            if !session.started {
+                self.countdown = (self.countdown - dt).max(0.);
+            }
+        }
+        if let Some(g) = fresh {
+            room.mirrored = Some(g.clone());
             let was_started = session.started;
             // A late joiner's first state is already under way: no lamps.
             let late = !was_started && !room.seen_countdown && g.phase != 0;
             room.seen_countdown |= g.phase == 0;
             if !session.started && g.phase == 0 {
-                let before = self.countdown.ceil();
-                if g.timer.ceil() < before || self.countdown >= crate::games::COUNTDOWN {
+                // A lamp per whole second of the host's countdown.
+                let before = previous
+                    .as_ref()
+                    .filter(|p| p.phase == 0)
+                    .map(|p| p.timer.ceil());
+                if before.is_none_or(|b| g.timer.ceil() < b) {
                     self.sounds.push("beep01.vag");
                 }
             }

@@ -595,6 +595,22 @@ impl Session {
         }
     }
 
+    /// A room guest between the host's tables: the mirrored clock runs on
+    /// during play (stopping at 0:00; the end stays the host's) and the
+    /// signs count down. Without it a guest whose host vanished sits on
+    /// the host's last clock until the relay hands the room over.
+    pub fn coast(&mut self, dt: f32) {
+        if let Some(n) = &mut self.notice {
+            n.seconds -= dt;
+            if n.seconds <= 0. {
+                self.notice = None;
+            }
+        }
+        if self.started && self.end.is_none() {
+            self.time_left = (self.time_left - dt).max(0.);
+        }
+    }
+
     /// The room phase code [`Self::mirror`] reads.
     pub fn phase(&self) -> u8 {
         match (self.started, self.end) {
@@ -672,6 +688,30 @@ mod tests {
         s.restart();
         s.mirror(3, 0.);
         assert_eq!((s.end, s.phase()), (Some(End::TimeUp), 3));
+    }
+
+    #[test]
+    fn room_guests_run_the_mirrored_clock_between_tables() {
+        let koth = "[KingOfTheHill]\nNumberOfHills=1\n[Triggers]\nNumberOfTriggers=1\n\
+             [Trigger1]\nName=Hill1\nNumberOfActions=1\nPosition=0,0,0\nBox=20,20,20\n\
+             [Trigger1Action1]\nActionType=Hilltop\nHillNumber=1\n";
+        let mut s = Session::new(rules_for(GameKind::KingOfTheHills, koth, 4).unwrap(), 5, 4);
+        // The countdown holds the clock.
+        s.coast(1.);
+        assert_eq!(s.time_left, 300.);
+        s.mirror(1, 20.);
+        s.notice = Some(Notice {
+            text: "ATV 2 captured hill 1".into(),
+            seconds: 1.,
+        });
+        for _ in 0..50 {
+            s.coast(0.5);
+        }
+        // The clock runs on and stops at 0:00; the end is the host's.
+        assert_eq!((s.time_left, s.end, s.notice.is_none()), (0., None, true));
+        s.mirror(3, 0.);
+        s.coast(1.);
+        assert_eq!(s.time_left, 0.);
     }
 
     #[test]
