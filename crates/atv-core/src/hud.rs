@@ -33,6 +33,17 @@ impl Default for Config {
     }
 }
 impl Config {
+    /// OverlayObject-24 in the exact build's Overlays.pb: the stunt text the
+    /// three- and four-player `ScreenLayout`s place per player (two players
+    /// keep object 12). Its clock lists the same ScaleUp/Stay/Down,
+    /// ColorChange and AlphaOut times as object 12 but pulses the score to
+    /// ScaleSize 1.5 instead of 2.0.
+    pub fn quarter() -> Self {
+        Self {
+            scale_size: 1.5,
+            ..Self::default()
+        }
+    }
     pub fn from_document(doc: &Document) -> Result<Self> {
         let mut c = Self::default();
         for (key, out) in [
@@ -158,6 +169,11 @@ impl State {
             // is still unknown; this does not establish pixel-exact shake parity.
             random: OriginalRandom::with_seed(1),
         }
+    }
+    /// Swap the stunt text clock (object 12's or a split layout's object
+    /// 24, [`Config::quarter`]); the next drive keeps it.
+    pub fn set_config(&mut self, config: Config) {
+        self.config = config;
     }
     /// Begin a new drive using the already loaded original HUD configuration
     /// and chosen units. No score, preload tail or text animation crosses reset.
@@ -436,6 +452,20 @@ impl State {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn quarter_stunt_text_pulses_to_object_24s_scale() {
+        let mut s = State::new(Config::quarter());
+        // Object 24 rises at (1.5 - 1) / 0.05 = 10 per second (object 12:
+        // 20), so 0.03 s into the pulse the score is 1.3 times its size.
+        s.reset();
+        assert!(s.name_event("Superman"));
+        s.finish_event(true, 1);
+        s.step(0.03, 0., false, 0., false, 0.).unwrap();
+        assert!(
+            (s.frame().stunt_scale - 1.3).abs() < 1e-3,
+            "reset keeps the clock"
+        );
+    }
     #[test]
     fn speed_has_original_truncation_clamp_and_two_digit_minimum() {
         let mut s = State::default();

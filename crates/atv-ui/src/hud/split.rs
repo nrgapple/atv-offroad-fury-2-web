@@ -105,7 +105,79 @@ impl Mapping {
     }
 }
 
+/// One racer on the shared split radar: its world origin and its colour
+/// slot (0-3 the human players' red, blue, green and yellow; none for a
+/// CPU rider, drawn white).
+pub struct RadarDot {
+    pub origin: [f32; 3],
+    pub player: Option<u8>,
+}
+
 impl Meter {
+    /// The race radar of a split layout (object 13, one overlay the whole
+    /// frame shares: `2Player-Horiz` 20,165, `-Vertical` 256,305, three
+    /// and four players 251,159 over the views' crossing). The north-up
+    /// course map draws at its native size like the single-screen radar;
+    /// every racer is a dot, CPUs white and each human in its player
+    /// colour (`002e6160`), drawn last to first so player 1 stays on top.
+    /// Returns the map's top-left corner (CSS px) when drawn.
+    pub fn paint_split_radar(
+        &self,
+        list: &mut DisplayList,
+        layout: &SplitLayout,
+        dots: &[RadarDot],
+        width: f32,
+        height: f32,
+    ) -> Option<[f32; 2]> {
+        use super::assets::{RACER, RACER_PLAYER, tinted_name};
+        use crate::paint::{Item, Rect};
+        let placed = layout.shared.iter().find(|p| p.object == 13)?;
+        let (map, [left, north, right, _]) = self.assets.race.as_ref()?.radar.as_ref()?;
+        let (&map_id, map_image) = (self.images.get(map)?, self.assets.images.get(map)?);
+        let m = Mapping::new([0., 0., 640., 448.], width, height, 0.);
+        let origin = m.at(placed.at);
+        let (mw, mh) = (map_image.width as f32, map_image.height as f32);
+        let scale = (right - left) / mw;
+        let unit = m.unit;
+        let image = |list: &mut DisplayList, id, src: Rect, x: f32, y: f32, w: f32, h: f32| {
+            list.push(Item::Image {
+                image: id,
+                src,
+                dst: Rect::new(x * unit, y * unit, w * unit, h * unit),
+                rotation: 0.,
+                pivot: [0., 0.],
+            });
+        };
+        image(
+            list,
+            map_id,
+            Rect::new(0., 0., mw, mh),
+            origin[0],
+            origin[1],
+            mw,
+            mh,
+        );
+        for dot in dots.iter().rev() {
+            let name = match dot.player {
+                None => RACER.to_string(),
+                Some(0) => RACER_PLAYER.to_string(),
+                Some(slot) => tinted_name(RACER, slot),
+            };
+            let (Some(&id), Some(icon)) = (self.images.get(&name), self.assets.images.get(&name))
+            else {
+                continue;
+            };
+            let p = dot.origin;
+            let x = ((p[0] - left) / scale).trunc().clamp(0., (mw - 8.).max(0.));
+            let y = ((north - p[2]) / scale)
+                .trunc()
+                .clamp(0., (mh - 8.).max(0.));
+            let src = Rect::new(0., 0., icon.width as f32, icon.height as f32);
+            image(list, id, src, origin[0] + x, origin[1] + y, 8., 8.);
+        }
+        Some([origin[0] * unit, origin[1] * unit])
+    }
+
     /// The split layout of overlay set `set`, when Overlays.pb listed it.
     pub fn split_layout(&self, set: u32, name: &str) -> Option<&SplitLayout> {
         self.assets
@@ -429,5 +501,29 @@ AlterJustification=2\nOverlay1Text1Justification=L\n\
         );
         assert_eq!(layout.shared.len(), 1);
         assert_eq!(layout.shared[0].at, [256., 208.]);
+    }
+
+    #[test]
+    fn the_split_radar_is_one_overlay_over_the_views_crossing() {
+        let doc = b"[OverlaySet1]\nType=Race\nNumOverlays-ScreenLayout-4Player=1\n\
+NumOverlays-ScreenLayout-2Player-Vertical=1\n\
+[OverlaySet1-ScreenLayout-4Player-Overlay1]\nOverlayObject=13\nNumOverlay = 1\nOverlay1 = 251,159\n\
+[OverlaySet1-ScreenLayout-2Player-Vertical-Overlay1]\nOverlayObject=13\nNumOverlay = 1\nOverlay1 = 256,305\n\
+[OverlayObject-13]\nType=Radar\n";
+        let all = super::super::assets::sections(doc);
+        let layouts = super::super::assets::split_layouts(&all);
+        let quad = &layouts[&(1, "4Player")];
+        assert!(quad.players.iter().all(Vec::is_empty));
+        assert_eq!(quad.shared[0].object, 13);
+        // A 1280x720 frame: the radar keeps the middle column centred
+        // (251 is 69 units left of the centre) and its 159-unit top.
+        let m = Mapping::new([0., 0., 640., 448.], 1280., 720., 0.);
+        let at = m.at(quad.shared[0].at);
+        assert!((at[0] - (1280. / m.unit / 2. - 69.)).abs() < 1e-3);
+        assert!((at[1] - 159.).abs() < 1e-3);
+        // Side by side: bottom-anchored, 143 units above the bottom.
+        let vertical = &layouts[&(1, "2Player-Vertical")];
+        let at = m.at(vertical.shared[0].at);
+        assert!((at[1] - (720. / m.unit - 143.)).abs() < 1e-3);
     }
 }

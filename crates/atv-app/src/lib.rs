@@ -6279,14 +6279,16 @@ impl App {
                             | Event::Hockey { .. }
                             | Event::TagHost { .. }
                     ))
-                .then(|| split::Request {
-                    layout: split::Layout::from_vertical(f.state.split_vertical),
-                    players: f.state.split_players.clamp(2, split::MAX_PLAYERS),
-                    seconds: f
-                        .state
-                        .split_seconds
-                        .map(|(quad, rider)| Some(atv_game::ride::Selection { quad, rider })),
-                    looks: f.state.split_looks.map(Some),
+                .then(|| {
+                    // The players seated on the Players page (pad order).
+                    let (players, seconds, looks) = f.state.split_launch();
+                    split::Request {
+                        layout: split::Layout::from_vertical(f.state.split_vertical),
+                        players: players.clamp(2, split::MAX_PLAYERS),
+                        seconds: seconds
+                            .map(|(quad, rider)| Some(atv_game::ride::Selection { quad, rider })),
+                        looks: looks.map(Some),
+                    }
                 })
             });
             self.split_request = split;
@@ -7478,12 +7480,28 @@ impl App {
         self.front_frames += 1;
         let pin = front.borrow().pad_pin();
         self.gamepad.set_pin(pin);
-        let pad = self.gamepad.sample();
+        // Split Screen → Players: each controller claims its own seat, so
+        // only the first drives the menu (research/SPLIT_SCREEN.md).
+        let seats = front.borrow().state.page == "splitseats" && front.borrow().menu.is_none();
+        let pad = if seats {
+            self.gamepad.sample_slot(0)
+        } else {
+            self.gamepad.sample()
+        };
         let mut f = front.borrow_mut();
         f.pad_name = self.gamepad.name();
         f.pads = self.gamepad.connected();
         f.pad_standard = self.gamepad.standard();
-        let event = f.pad(pad.as_ref());
+        let mut event = f.pad(pad.as_ref());
+        if seats && event.is_none() {
+            for slot in 1..split::MAX_PLAYERS as usize {
+                let pad = self.gamepad.sample_slot(slot);
+                event = f.seat_pad(slot, pad.as_ref());
+                if event.is_some() {
+                    break;
+                }
+            }
+        }
         paint_front(gpu, &mut f);
         #[cfg(target_arch = "wasm32")]
         {

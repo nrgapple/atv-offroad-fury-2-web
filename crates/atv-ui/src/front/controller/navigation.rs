@@ -179,6 +179,7 @@ impl Frontend {
                 "single" | "multiplayer" | "profile" | "hall-of-fame" => "main",
                 "tracks" if self.hosting => "create-lobby",
                 "tracks" | "race" if self.split => "split",
+                "splitseats" => "split",
                 "tracks" | "race" | "championship" | "games" | "objective-courses" | "garage" => {
                     "single"
                 }

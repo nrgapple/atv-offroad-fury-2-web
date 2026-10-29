@@ -880,6 +880,12 @@ impl Ride {
         Ok(())
     }
 
+    /// The stunt text clock (`atv_core::hud::Config`): split layouts for
+    /// three and four players use Overlays.pb object 24's.
+    pub fn set_stunt_text(&mut self, config: atv_core::hud::Config) {
+        self.hud.set_config(config);
+    }
+
     /// Change camera (op 47 with cycle).
     pub fn cycle_camera(&mut self) {
         self.sim.camera.cycle();
