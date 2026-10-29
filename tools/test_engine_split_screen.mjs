@@ -36,6 +36,13 @@ async function choose(page, action) {
   for (let i = f.selection; i > at; i--) await key(page, 'ArrowUp');
   await key(page, 'Enter');
 }
+
+// Split Screen → Players (MultiATVRiderSelect): the saved players are
+// seated; Start Event starts with them.
+async function seated(page) {
+  await onFront(page, 'splitseats');
+  await choose(page, 'splitgo');
+}
 const split = async page => (await read(page)).split;
 const distance = (a, b) => Math.hypot(a[0] - b[0], a[2] - b[2]);
 async function shot(page, name) {
@@ -102,6 +109,7 @@ try {
     await choose(page, 'splitfree');
     await onFront(page, 'tracks');
     await key(page, 'Enter');
+    await seated(page);
     await wait(page, () => JSON.parse(document.querySelector('#ui-state')?.textContent || '{}').split?.player2?.steps > 30,
       null, 180000);
     let s = await split(page);
@@ -169,6 +177,7 @@ try {
     await choose(page, 'splitrace');
     await onFront(page, 'race');
     await choose(page, 'racestart');
+    await seated(page);
     await wait(page, () => JSON.parse(document.querySelector('#ui-state')?.textContent || '{}').split?.player2?.race?.phase === 'racing',
       null, 180000);
     let s = await split(page);
@@ -181,6 +190,13 @@ try {
     // Player 1's CPUs ride against player 2 (a human peer to avoid).
     assert.equal(s.player1.race.linkedHuman, true);
     await nextFrames(page, 120);
+    // One race radar for both views (object 13, 2Player-Vertical 256,305:
+    // centred across the divider, bottom-anchored).
+    const state = await read(page);
+    const radar = (state.toolbar?.hud ?? state.hud)?.splitRadar;
+    const unit = 720 / 448;
+    assert.ok(radar && Math.abs(radar[0] - (640 - 64 * unit)) < 2 && Math.abs(radar[1] - 305 * unit) < 2,
+      `split radar ${JSON.stringify(radar)}`);
     await shot(page, 'split-race-vertical');
     // Player 2's finish sign shows its combined place (not its own race's).
     await wait(page, () => JSON.parse(document.querySelector('#ui-state').textContent).split.player2.race.phase === 'finished',

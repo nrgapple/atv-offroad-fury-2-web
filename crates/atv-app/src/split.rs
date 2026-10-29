@@ -68,6 +68,15 @@ impl Layout {
         }
     }
 
+    /// The stunt text clock each player's view uses: Overlays.pb object
+    /// 24 in the three- and four-player layouts, object 12 otherwise.
+    pub fn stunt_text(self) -> atv_core::hud::Config {
+        match self {
+            Self::Quad => atv_core::hud::Config::quarter(),
+            _ => atv_core::hud::Config::default(),
+        }
+    }
+
     /// Columns and rows of views.
     pub fn grid(self) -> (u32, u32) {
         match self {
@@ -291,6 +300,8 @@ impl Second {
             .flatten()
             .unwrap_or(appearance);
         first.ride.set_camera_layout(layout.camera_layout())?;
+        let stunt_text = layout.stunt_text();
+        first.ride.set_stunt_text(stunt_text);
         // Player 2 races its own copy of the course with no CPUs: player
         // 1's race holds the field, and the standings merge both.
         let race = race.map(|r| atv_game::ride::race::Settings { cpu: 0, ..r });
@@ -306,6 +317,7 @@ impl Second {
         ride.dress(content, appearance).await?;
         atv_game::yield_frame().await;
         ride.set_camera_layout(layout.camera_layout())?;
+        ride.set_stunt_text(stunt_text);
         let (origin, yaw) = match first.ride.race() {
             // The grid slots after the field's last, in player order.
             Some(state) => {

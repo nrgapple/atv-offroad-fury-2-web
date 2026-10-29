@@ -92,8 +92,9 @@ pub const SPLIT_SETS: [u32; 7] = [1, 2, 6, 7, 8, 9, 11];
 pub const SPLIT_LAYOUTS: [&str; 4] = ["2Player-Horiz", "2Player-Vertical", "3Player", "4Player"];
 /// The objects one split layout places per player: the multiplayer lap
 /// time, lap, score, infotext and stunt text, both speed meters, the
-/// compass and the place number (the signage, object 35, is listed too).
-pub const SPLIT_OBJECTS: [u32; 12] = [5, 12, 19, 20, 21, 23, 24, 31, 33, 35, 41, 10];
+/// compass and the place number (the signage, object 35, is listed too),
+/// and the single 321 lights (10) and race radar (13) the frame shares.
+pub const SPLIT_OBJECTS: [u32; 13] = [5, 12, 19, 20, 21, 23, 24, 31, 33, 35, 41, 10, 13];
 
 /// One overlay of a split layout placed for one player: the object, its
 /// position on the 640x448 frame and the object's section with the set's
@@ -196,7 +197,7 @@ pub fn split_layouts(all: &HashMap<String, Section>) -> HashMap<(u32, &'static s
                         at,
                         section,
                     };
-                    if object == 10 {
+                    if matches!(object, 10 | 13) {
                         layout.shared.push(placed);
                     } else {
                         if layout.players.len() < k {
@@ -585,6 +586,17 @@ async fn race_assets(
             rgba,
         },
     );
+    // Split races colour each human's racer by its player slot
+    // (`002e6160`: 0xff0000, 0xff, 0xff00, 0xffff00; CPUs white).
+    let copies: Vec<_> = (1..4)
+        .map(|slot| {
+            (
+                tinted_name(RACER, slot),
+                tinted(&images[RACER], super::peers::color(slot)),
+            )
+        })
+        .collect();
+    images.extend(copies);
     let bound = |key: &str| radar.number(key).ok_or(format!("Radar {key} missing"));
     Ok(RaceAssets {
         layout,

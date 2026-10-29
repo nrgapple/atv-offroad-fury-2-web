@@ -19,7 +19,8 @@
 //   their anchors per player): the quarter speed meter (object 33), and in
 //   a race the multiplayer LAP TIME/LAP/SCORE/PLACE objects 19/20/21/41;
 // - players 2-4's own Gear and Paint rows dress and paint their riders;
-// - on High graphics players 2-4 lay their own tire tracks and dust.
+// - on High graphics players 2-4 lay their own tire tracks and dust;
+// - the race radar (object 13) draws once over the quarters' crossing.
 // Host Chromium evidence only.
 import assert from 'node:assert/strict';
 import { mkdir } from 'node:fs/promises';
@@ -43,6 +44,13 @@ async function choose(page, action) {
   for (let i = f.selection; i < at; i++) await key(page, 'ArrowDown');
   for (let i = f.selection; i > at; i--) await key(page, 'ArrowUp');
   await key(page, 'Enter');
+}
+
+// Split Screen → Players (MultiATVRiderSelect): the saved players are
+// seated; Start Event starts with them.
+async function seated(page) {
+  await onFront(page, 'splitseats');
+  await choose(page, 'splitgo');
 }
 const split = async page => (await read(page)).split;
 const seats = async page => {
@@ -150,6 +158,7 @@ try {
     await choose(page, 'splitfree');
     await onFront(page, 'tracks');
     await key(page, 'Enter');
+    await seated(page);
     await wait(page, () => (JSON.parse(document.querySelector('#ui-state')?.textContent || '{}').split?.others?.[2]?.steps ?? 0) > 30,
       null, 240000);
     let s = await split(page);
@@ -215,6 +224,7 @@ try {
     await choose(page, 'splitrace');
     await onFront(page, 'race');
     await choose(page, 'racestart');
+    await seated(page);
     await wait(page, () => JSON.parse(document.querySelector('#ui-state')?.textContent || '{}').split?.others?.[2]?.race?.phase === 'racing',
       null, 240000);
     let s = await split(page);
@@ -234,6 +244,12 @@ try {
     assert.ok(Math.abs(anchor(hud[0], 19).x - 20 * unit) < 2, JSON.stringify(anchor(hud[0], 19)));
     assert.ok(Math.abs(anchor(hud[1], 19).x - (1280 - 25 * unit)) < 2, JSON.stringify(anchor(hud[1], 19)));
     assert.ok(Math.abs(anchor(hud[2], 19).y - (360 + 7 * unit)) < 2, JSON.stringify(anchor(hud[2], 19)));
+    // The race radar (object 13) is one overlay over the quarters'
+    // crossing (251,159 on the 640x448 frame), not one per view.
+    const state = await read(page);
+    const radar = (state.toolbar?.hud ?? state.hud)?.splitRadar;
+    assert.ok(radar && Math.abs(radar[0] - (640 - 69 * unit)) < 2 && Math.abs(radar[1] - 159 * unit) < 2,
+      `split radar ${JSON.stringify(radar)}`);
     await shot(page, 'split-4p-race');
     await wait(page, () => {
       const s = JSON.parse(document.querySelector('#ui-state').textContent).split;
@@ -264,6 +280,7 @@ try {
     for (let i = 0; i < 4 && !(await label('gametype')).startsWith('Game: Treasure Hunt'); i++) await key(page, 'ArrowRight');
     assert.ok((await label('gametype')).startsWith('Game: Treasure Hunt'));
     await choose(page, 'gamestart');
+    await seated(page);
     await wait(page, () => {
       const s = JSON.parse(document.querySelector('#ui-state')?.textContent || '{}');
       return s.ride?.game?.loaded && (s.split?.others?.[2]?.steps ?? 0) > 10;
@@ -311,6 +328,7 @@ try {
     for (let i = 0; i < 4 && !(await label('gametype')).startsWith(`Game: ${name}`); i++) await key(page, 'ArrowRight');
     assert.ok((await label('gametype')).startsWith(`Game: ${name}`), await label('gametype'));
     await choose(page, 'gamestart');
+    await seated(page);
     await wait(page, () => (JSON.parse(document.querySelector('#ui-state')?.textContent || '{}').split?.others?.[1]?.steps ?? 0) > 30,
       null, 300000);
     const s = await read(page);

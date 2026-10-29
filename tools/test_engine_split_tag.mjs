@@ -34,6 +34,13 @@ async function choose(page, action) {
   await select(page, action);
   await key(page, 'Enter');
 }
+
+// Split Screen → Players (MultiATVRiderSelect): the saved players are
+// seated; Start Event starts with them.
+async function seated(page) {
+  await onFront(page, 'splitseats');
+  await choose(page, 'splitgo');
+}
 const label = async (page, action) => {
   const f = (await read(page)).front;
   return f.labels[f.choices.indexOf(action)];
@@ -82,6 +89,7 @@ try {
   assert.ok((await label(page, 'gametype')).startsWith('Game: Tag'));
   assert.equal(await label(page, 'gamecourse'), 'Course: Prospect Springs');
   await choose(page, 'gamestart');
+  await seated(page);
   await wait(page, () => {
     const s = JSON.parse(document.querySelector('#ui-state')?.textContent || '{}');
     return s.ride?.environment === 'env05' && s.ride?.tag && s.split?.player2?.steps > 10;

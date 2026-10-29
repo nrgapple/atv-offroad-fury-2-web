@@ -690,6 +690,22 @@ impl Front {
         self.front_event(event)
     }
 
+    /// Split Screen → Players: controller `slot`'s (players 2-4) own seat.
+    pub fn seat_pad(
+        &mut self,
+        slot: usize,
+        pad: Option<&atv_game::ride::bindings::Pad>,
+    ) -> Option<Event> {
+        let view = self.view;
+        let event = self.state.seat_pad(
+            slot,
+            pad.map(|p| (&p.buttons[..], &p.axes[..])),
+            &view,
+            &mut self.settings,
+        );
+        self.front_event(event)
+    }
+
     pub fn press(&mut self, pointer: u64, x: f32, y: f32) {
         if self.menu.is_some() {
             self.with_menu(|m, ctx, hits, _| m.press(hits, pointer, x, y, ctx));
