@@ -773,11 +773,35 @@ impl Net {
     }
 
     /// Tell the relay this client takes room-race packets (a serial-0
-    /// progress), after each Ready so reconnects announce again.
+    /// progress) and room King of the Hills / Treasure Hunt packets (a
+    /// serial-0 claim), after each Ready so reconnects announce again.
     fn announce_races(&mut self) {
         if self.ready_sent && self.session.lobby.as_ref().is_some_and(|l| !l.public) {
             self.send_progress(Default::default());
+            self.send_claim(Default::default());
+            // Room Freestyle reports and tables (research/MULTIPLAYER.md
+            // "Room Freestyle").
+            self.send_claim(atv_game::multiplayer::GameClaim {
+                kind: atv_game::multiplayer::claim_kind::FREESTYLE,
+                ..Default::default()
+            });
         }
+    }
+
+    /// This rider's room-game report to the host (research/MULTIPLAYER.md
+    /// "Room games").
+    pub fn send_claim(&mut self, claim: atv_game::multiplayer::GameClaim) {
+        if self.closed.is_none()
+            && self.ready_sent
+            && let Ok(bytes) = self.session.claim_packet(claim)
+        {
+            self.socket.send(bytes);
+        }
+    }
+
+    /// Riders' room-game reports (host).
+    pub fn take_claims(&mut self) -> Vec<atv_game::multiplayer::GameClaim> {
+        std::mem::take(&mut self.session.claims)
     }
 
     /// Other riders' latest room-race progress.
@@ -1049,6 +1073,10 @@ impl Net {
             public: lobby.public,
             started: lobby.started,
             races: room_races(&self.environment),
+            games: room_games(&self.environment, &self.content()),
+            // Room Freestyle rides every venue a room can (research/
+            // MULTIPLAYER.md "Room Freestyle").
+            freestyle: !lobby.public,
             players: lobby
                 .players
                 .iter()
@@ -1194,6 +1222,24 @@ pub fn room_races(environment: &str) -> Vec<(u8, &'static str)> {
             (at as u8, label)
         })
         .collect()
+}
+
+/// The games a room on `environment` can start (research/MULTIPLAYER.md
+/// "Room games"): King of the Hills and Treasure Hunt where the package
+/// has the venue's game archive (the Tracks.dat `koth` / `th` courses).
+pub fn room_games(environment: &str, content: &Content) -> Vec<(u8, &'static str)> {
+    use atv_core::games::GameKind;
+    [
+        (GameKind::KingOfTheHills, "Play King of the Hills"),
+        (GameKind::TreasureHunt, "Play Treasure Hunt"),
+    ]
+    .into_iter()
+    .filter(|(kind, _)| {
+        crate::room_game::venue_code(environment).is_some()
+            && atv_core::games::game_archive(*kind, environment).is_some_and(|p| content.has(&p))
+    })
+    .map(|(kind, label)| (kind.event_type(), label))
+    .collect()
 }
 
 #[cfg(test)]

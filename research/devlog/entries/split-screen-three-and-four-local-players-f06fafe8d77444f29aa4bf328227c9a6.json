@@ -1,0 +1,14 @@
+{
+  "id": "split-screen-three-and-four-local-players-f06fafe8d77444f29aa4bf328227c9a6",
+  "timestamp": "2026-10-29T06:45:54.032606+00:00",
+  "recorded_at": "2026-10-29T08:02:07.629553+00:00",
+  "kind": "build",
+  "title": "Split screen: three and four local players",
+  "summary": "Multiplayer \u2192 Split Screen now takes 2, 3 or 4 local players with quarter views, per-controller seats, and per-player ATV/rider rows; Freestyle, races (3\u20134 players race without CPUs, as the manual specifies), King of the Hills, Treasure Hunt, Hockey and Tag.",
+  "details": [
+    "fixed only the last rider being drawn with 3\u20134 players; host-only perf at 1280x720: CPU draw 1P 2.9 ms, 2P 3.9, 3P 7.0, 4P 6.9 ms (headless desktop Chromium, not a phone). Tests: browser split_4p, split_screen, split_games, split_tag, menu_flows, front pass."
+  ],
+  "limitation": "tire tracks/dust player 1 only",
+  "image": "/devlog-images/split-screen-three-and-four-local-players-f06fafe8d77444f29aa4bf328227c9a6.png",
+  "caption": "3-player split-screen King of the Hills (fourth quarter dark)"
+}

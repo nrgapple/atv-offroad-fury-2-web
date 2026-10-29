@@ -140,8 +140,8 @@ game's end (`002d10d0`, `002210e0`).
 
 - **One player, no opponents.** The original is split-screen or online only;
   Single Player → Games plays it alone. Multiplayer → Split Screen → Games
-  plays King of the Hills, Treasure Hunt and Hockey for two local players
-  (SPLIT_SCREEN.md "Slice 3").
+  plays King of the Hills, Treasure Hunt, Hockey and Tag for two local
+  players (SPLIT_SCREEN.md "Slice 3", "Slice 4").
 - **Scenes and models.** King of the Hills rides its own scene
   (`env05kh.scn`, read with its mode TOY over the Freeride archive), so the
   original `kohbase` bases, `kohflag` flags and spotlights stand at the
@@ -382,6 +382,11 @@ Arena plays Hockey with human opponents. This is an authored adaptation,
 not the original's network play (no original Games protocol was
 recovered):
 
+- **King of the Hills and Treasure Hunt** play in rooms too, on the
+  venue's KH/TH course for every room rider, with the same
+  `atv_core::games` rules (Games → Riders: Online Room hosts one;
+  `MULTIPLAYER.md` "Room games").
+
 - **Host-owned game.** The room host runs `atv_core::hockey` and the puck
   for the roster in peer order, teams alternating Red/Blue (Team Select
   is not reproduced). Each rider still owns its ATV; the host pushes the
@@ -534,8 +539,10 @@ carrier is "it" and scores while holding the ball.
 - **Games page.** Single Player → Games lists Tag with its fourteen
   Tracks.dat courses (Prospect Springs and Tioga Valley open, the rest
   by course unlocks). The original reaches Games only from Multiplayer →
-  Split Screen and has no CPU riders, so the port keeps Tag human-only:
-  Start Game hosts a private multiplayer room on the chosen venue (the
+  Split Screen and has no CPU riders, so the port keeps Tag human-only.
+  From Multiplayer → Split Screen → Games, Start Game plays it for two
+  local players on the Tag course (SPLIT_SCREEN.md "Slice 4"); from
+  Single Player → Games, Start Game hosts a private multiplayer room on the chosen venue (the
   invite is shared from Pause as usual) and starts Tag on its Tag course
   with the page's time limit. The host's Pause → Play Tag uses the same
   minutes (`tagMinutes=N` in a link).
@@ -543,7 +550,13 @@ carrier is "it" and scores while holding the ball.
   original's full speed (a ball carried on an ATV is not thrown) and the
   knock-loose draw for its own tricks; remote riders' trick starts are
   not relayed, so a guest carrier's ball is never knocked loose (that
-  needs a guest-to-host game message). Each rider applies the engine
+  needs a guest-to-host game message). A remote rider whose poses stop
+  arriving (a throttled tab, a congested link) is not treated as wrecked:
+  the host holds its last fresh position at rest for up to 3 s
+  (`tag::REMOTE_HOLD`) and only then treats it as absent, so a network gap
+  no longer drops a guest carrier's ball as a wreck (before 2026-10-29 a
+  1 s pose gap did, which made guest possessions collapse under host
+  load). Each rider applies the engine
   handicap to its own ATV while it is the carrier (motorcycles, a port
   extra, are not handicapped). The host runs `00246500`'s ground respawn:
   its rays are cast against the heightfield in 1-unit steps (static

@@ -148,6 +148,16 @@ change threshold and quantized 4096 pitch. `002f4500` converts heading into two
 piecewise integer stereo gains. Web Audio receives these explicit gains and
 pitch; it does not substitute a browser distance falloff or spatial panner.
 
+Split screen (2026-10-29): with one listener per view, `001742f0`'s
+nearest-listener choice places each positional sound for the nearest
+player's camera. The port applies it to players 2-4's engine and impact
+voices (`audio::remote`, which takes the listener list) and to player 1's
+positional sounds: vocals, chassis, drive-on, body impacts, Soultree range
+and placement, trains and actors (`RideAudio::views`). Player 1's engine
+loop, ambient cycles and rain are unpositioned 2D voices; the port's CPUs
+have no sounds. One rider alone and online rooms pass a single listener,
+unchanged (SPLIT_SCREEN.md "Split audio").
+
 Bounded original-instruction comparisons cover 1,200 attenuation/heading/Doppler
 cases (249,428 instructions), 2,166 ordinary stereo gain cases and 2,401 pitch
 cases (589,081 instructions), with zero compared integer differences. The source

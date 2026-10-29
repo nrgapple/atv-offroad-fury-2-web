@@ -14,7 +14,7 @@ use crate::{
 use atv_core::race::Frame;
 
 /// 002e0770: overlay text without a colour draws 190,190,190.
-const RACE_TEXT: Color = Color::rgb(190, 190, 190);
+pub(super) const RACE_TEXT: Color = Color::rgb(190, 190, 190);
 const RACE_GOLD: Color = Color::rgb(218, 192, 31);
 
 /// What a compass shows: the player's heading (yaw about +Y, forward =
@@ -129,7 +129,7 @@ impl Meter {
     /// −heading, other riders and the icon list (`+0x8c`) clamped to the
     /// 33 px rim, an Enduro's next gate only inside it, and the
     /// `compassarrow` player marker at the centre pointing up.
-    fn draw_compass(
+    pub(super) fn draw_compass(
         &self,
         list: &mut DisplayList,
         view: &CompassView,
@@ -677,6 +677,7 @@ mod tests {
             images,
             lamps: false,
             race: None,
+            split: Default::default(),
         });
         for (i, name) in [COMPASS[0], COMPASS[1], RADAR_TARGET].iter().enumerate() {
             meter

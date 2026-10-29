@@ -148,6 +148,24 @@ pub async fn boot(content: &Content) -> Result<Boot, String> {
     })
 }
 
+/// Each published venue's Tracks.dat course name (for pages that skipped
+/// the frontend, such as a room joined by link).
+pub async fn course_names(content: &Content) -> Result<Vec<(String, String)>, String> {
+    let startapp = Archive::open(content, "/STARTAPP.RES").await?;
+    let index = startapp
+        .named("tracks.dat")
+        .ok_or("original tracks.dat is missing")?;
+    let bytes = startapp.member(index).await?;
+    let tracks = sections(&bytes)?;
+    Ok(
+        unlocked_courses(&tracks, &|path| content.manifest.record(path).is_some())
+            .into_iter()
+            .filter(|t| !t.name.is_empty())
+            .map(|t| (t.id, t.name))
+            .collect(),
+    )
+}
+
 /// Every course photograph: the two halves joined and trimmed. Archives
 /// register in order, so a name in two archives resolves to the earlier.
 pub async fn photos(content: &Content, tracks: &[Track]) -> Result<Vec<(String, Rgba)>, String> {

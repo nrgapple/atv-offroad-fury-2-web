@@ -44,6 +44,9 @@ pub const START: u32 = 2411;
 pub const SHARE: u32 = 2412;
 /// The Pass Key badge (title, main menu and Profile Editor pages).
 pub const PASSKEY: u32 = 2413;
+/// The stage panel and its text table (layout checks only; not targets).
+pub const STAGE: u32 = 2414;
+pub const DETAILS: u32 = 2415;
 /// Value rows' Previous/Next arrows, by choice index.
 pub const STEP_PREV: u32 = 2430;
 pub const STEP_NEXT: u32 = 2440;
@@ -151,6 +154,11 @@ pub struct Badge {
 /// Everything a page draws.
 #[derive(Clone, Debug, PartialEq, Default)]
 pub struct Screen {
+    /// Single Race's course picker is open (the setup rows give way to the
+    /// event tabs and the full course list).
+    pub course_sheet: bool,
+    /// The garage's vehicle picker is open (the rows give way to the list).
+    pub vehicle_sheet: bool,
     pub page: String,
     /// (action, label) in keyboard order.
     pub choices: Vec<(String, String)>,
@@ -267,6 +275,7 @@ pub fn stage_page(page: &str) -> bool {
             | "single"
             | "multiplayer"
             | "split"
+            | "splitseats"
             | "championship"
             | "objectives"
             | "objective-courses"
@@ -609,18 +618,25 @@ fn page_element(m: &Metrics, s: &Screen) -> El {
                     0.36
                 }
             }
+            // Phones give the rows the room (Safari's toolbars take ~150px
+            // more): Single Player's six modes stay on screen.
             page if stage_page(page) => {
                 if h <= 640. {
-                    0.4
+                    0.28
+                } else if h <= 820. {
+                    0.36
                 } else {
                     0.5
                 }
             }
+            // The vehicle and rider rows need little room; the picker, when
+            // open, takes the rest under a smaller stage.
+            "garage" if s.vehicle_sheet => 0.28,
             "garage" => {
                 if h <= 640. {
-                    0.3
+                    0.48
                 } else {
-                    0.4
+                    0.52
                 }
             }
             "gear" => {
@@ -688,12 +704,22 @@ fn page_element(m: &Metrics, s: &Screen) -> El {
                 area((4, 5), (1, 2)),
             )
         }
-    } else {
+    } else if loading {
         (
             area((1, 2), (1, 2)),
             area((1, 3), (2, 3)),
             area((2, 3), (1, 2)),
             area((3, 4), (1, 3)),
+        )
+    } else {
+        // Landscape: the rows column runs to the bottom edge and Back sits
+        // under the stage (bottom right, under the thumb), so a phone under
+        // Safari's toolbar shows more rows.
+        (
+            area((1, 2), (1, 2)),
+            area((1, 3), (2, 3)),
+            area((2, 4), (1, 2)),
+            area((3, 4), (2, 3)),
         )
     };
     let mut panel = panel(m, s, loading);
@@ -814,6 +840,7 @@ fn page_title(page: &str) -> &'static str {
         "single" => "Single Player",
         "multiplayer" => "Multiplayer",
         "split" => "Split Screen",
+        "splitseats" => "Players",
         "create-lobby" => "Create Lobby",
         "join-lobby" => "Join Lobby",
         "lobby" => "Free Ride Lobby",
@@ -943,9 +970,12 @@ fn panel(m: &Metrics, s: &Screen, loading: bool) -> El {
         sides(
             if loading { 34. } else { 4. },
             m.sides().1,
-            // Clear of the sweeping lower edge, which rises 56px at the left.
+            // Clear of the sweeping lower edge, which rises 56px at the left
+            // (about 40px over the gutter, where text lines start).
             if matches!(s.page.as_str(), "tracks" | "race") || stage_page(&s.page) {
                 if m.h <= 640. { 16. } else { 22. }
+            } else if !s.details.is_empty() {
+                44.
             } else {
                 10.
             },
@@ -963,7 +993,7 @@ fn panel(m: &Metrics, s: &Screen, loading: bool) -> El {
             clamp(64., m.w * 0.04 + m.h * 0.12, 160.),
         )
     };
-    let mut panel = El::new(style);
+    let mut panel = El::new(style).id(STAGE);
     if m.portrait {
         // `.ms-panel::before`: silver reaching up behind the heading with a
         // sweeping elliptical lower-left corner.
@@ -1019,6 +1049,8 @@ fn panel(m: &Metrics, s: &Screen, loading: bool) -> El {
             }
             panel = panel.child(slot).child(plate(m, s));
         }
+        // A portrait course picker gives the whole screen to the list.
+        "race" if s.course_sheet && m.portrait => {}
         "tracks" | "lobby" | "race" => panel = panel.child(hero(m, s)),
         "garage" | "gear" => {
             // `.ms-models`: the rider just behind the ATV's rear wheel.
@@ -1097,14 +1129,33 @@ fn details(m: &Metrics, s: &Screen) -> El {
     });
     for (i, (label, value)) in s.details.iter().enumerate() {
         let lead = i == 0 && !value.is_empty();
+        // A status heading (the first line without a value) stands out; the
+        // sentences under it read as body copy, lighter and smaller, with
+        // room between lines, not as a block of bold.
+        let heading = i == 0 && value.is_empty();
+        let prose = value.is_empty() && !heading;
         let label_style = TextStyle::new(
             display(
-                size,
-                if value.is_empty() || lead { 800 } else { 700 },
+                if heading {
+                    size * 1.08
+                } else if prose {
+                    size * 0.94
+                } else {
+                    size
+                },
+                if heading || lead {
+                    800
+                } else if prose {
+                    600
+                } else {
+                    700
+                },
                 false,
             ),
-            Color::hex(if value.is_empty() || lead {
+            Color::hex(if heading || lead {
                 "#111"
+            } else if prose {
+                "#2b2b2b"
             } else {
                 "#3a3a3a"
             }),
@@ -1122,7 +1173,7 @@ fn details(m: &Metrics, s: &Screen) -> El {
             .content(Content::Text {
                 text: text.to_string(),
                 style,
-                line_height: size * 1.2,
+                line_height: size * if prose { 1.3 } else { 1.2 },
                 wrap: true,
             })
         };
@@ -1141,8 +1192,10 @@ fn details(m: &Metrics, s: &Screen) -> El {
             line = line.child(
                 El::new(Style {
                     flex_shrink: 0.,
+                    // A Pass Key (24 characters) and the sync status read
+                    // whole on a phone; short labels give way.
                     max_size: Size {
-                        width: percent(0.55),
+                        width: percent(0.72),
                         height: auto(),
                     },
                     ..Default::default()
@@ -1156,7 +1209,7 @@ fn details(m: &Metrics, s: &Screen) -> El {
         }
         table = table.child(line);
     }
-    table
+    table.id(DETAILS)
 }
 
 fn panel_logo(m: &Metrics, s: &Screen) -> Option<El> {
@@ -1234,13 +1287,21 @@ fn plate(m: &Metrics, s: &Screen) -> El {
 fn hero(m: &Metrics, s: &Screen) -> El {
     let mut hero = column(if m.portrait { 8. } else { 16. });
     hero.justify_content = JustifyContent::CENTER;
-    // padding-bottom: 6vh applies in both orientations.
-    hero.padding = sides(0., 0., m.h * 0.06, 0.);
+    // padding-bottom: 6vh applies in both orientations; a portrait phone's
+    // Single Race keeps half of it for the setup rows.
+    let race_portrait = m.portrait && matches!(s.page.as_str(), "race" | "tracks");
+    hero.padding = sides(0., 0., m.h * if race_portrait { 0.03 } else { 0.06 }, 0.);
     if !m.portrait {
         hero.flex_grow = 1.;
     }
     let aspect = if m.portrait {
-        if m.h <= 640. { 2.4 } else { 16. / 9. }
+        // Short phones (and Single Race on every phone) take a wider,
+        // lower photo so the rows keep their room.
+        if m.h <= 640. || race_portrait {
+            2.4
+        } else {
+            16. / 9.
+        }
     } else {
         1.5
     };
@@ -1481,7 +1542,7 @@ fn left(m: &Metrics, s: &Screen) -> El {
     style.padding = if m.portrait {
         sides(14., m.sides().1, 10., m.sides().0)
     } else {
-        sides(0., 0., 12., m.sides().0)
+        sides(0., 0., 12. + m.safe[2], m.sides().0)
     };
     if s.page == "loading" {
         style.justify_content = JustifyContent::CENTER;
@@ -1517,6 +1578,7 @@ fn left(m: &Metrics, s: &Screen) -> El {
                 | "single"
                 | "multiplayer"
                 | "split"
+                | "splitseats"
                 | "championship"
                 | "objectives"
                 | "objective-courses"
@@ -1603,23 +1665,26 @@ fn left(m: &Metrics, s: &Screen) -> El {
                 ));
             }
         }
+        "race" if s.course_sheet => {
+            // The course picker: event tabs over every course, full height.
+            left = left.child(tabs(m, s)).child(course_list(m, s));
+        }
         "race" => {
-            // `.ms-race-settings`: the value rows under the course list.
+            // The setup rows: Course (its arrows step, a tap opens the
+            // picker), Laps, CPU riders and Difficulty. They scroll in the
+            // column like any rows, so none runs under Back.
             let mut settings = El::new(column(2.));
             settings.style.flex_shrink = 0.;
-            settings.style.padding = sides(4., if m.portrait { 0. } else { 8. }, 0., 0.);
-            settings.paint.border = [1., 0., 0., 0.];
-            settings.paint.border_color = Color::hex("#ffffff26");
-            settings.style.border = sides(1., 0., 0., 0.);
+            settings.style.padding = sides(0., if m.portrait { 0. } else { 8. }, 0., 0.);
             for (index, (action, label)) in s.choices.iter().enumerate() {
-                if matches!(action.as_str(), "racelaps" | "racecpu" | "racedifficulty") {
+                if matches!(
+                    action.as_str(),
+                    "racetrack" | "racelaps" | "racecpu" | "racedifficulty"
+                ) {
                     settings = settings.child(stepper_row(m, s, index, label));
                 }
             }
-            left = left
-                .child(tabs(m, s))
-                .child(course_list(m, s))
-                .child(settings);
+            left = left.child(settings);
             if let Some(notice) = s.notice.as_ref().filter(|_| s.toast.is_none()) {
                 left = left.child(text(
                     notice.clone(),
@@ -1693,7 +1758,7 @@ fn left(m: &Metrics, s: &Screen) -> El {
         "loading" => left = left.child(shot(s)),
         _ => {}
     }
-    if matches!(s.page.as_str(), "tracks" | "race" | "garage" | "loading") {
+    if matches!(s.page.as_str(), "tracks" | "garage" | "loading") || s.course_sheet {
         // Their lists scroll instead.
         return left;
     }
@@ -2250,8 +2315,10 @@ fn garage_left(m: &Metrics, s: &Screen, mut left: El) -> El {
         ))
         .child(switch.id(RIDER));
     rows = rows.child(rider_row);
-    left = left.child(rows);
-    // The vehicle list: every ATV under one heading.
+    if !s.vehicle_sheet {
+        left = left.child(rows);
+    }
+    // The vehicle list (the picker): every ATV under one heading.
     let mut list_style = column(10.);
     list_style.flex_grow = 1.;
     list_style.flex_shrink = 1.;
@@ -2345,7 +2412,10 @@ fn garage_left(m: &Metrics, s: &Screen, mut left: El) -> El {
         }
         list = list.child(group);
     }
-    left = left.child(list);
+    // The picker has the list; otherwise the rows and actions sit together.
+    if s.vehicle_sheet {
+        left = left.child(list);
+    }
     // Done (the garage's Back), under the list.
     let done_size = if m.short { 18. } else { 22. };
     let mut actions = row(10.);
@@ -2371,7 +2441,12 @@ fn garage_left(m: &Metrics, s: &Screen, mut left: El) -> El {
     }
     let mut actions = El::new(actions);
     // `.ms-pill-secondary.ms-gear-link`: Rider gear opens its own page.
-    if let Some(index) = s.choices.iter().position(|(a, _)| a == "gear") {
+    if let Some(index) = s
+        .choices
+        .iter()
+        .position(|(a, _)| a == "gear")
+        .filter(|_| !s.vehicle_sheet)
+    {
         let id = ROW + index as u32;
         let selected = s.selection == index;
         let hovered = s.hovered == Some(id) && !selected;
@@ -2618,9 +2693,13 @@ fn hints(m: &Metrics, s: &Screen) -> Option<El> {
     .paint(Paint::fill(Color::hex("#0000008f")).radius(5.))
     .id(BACK)
     .child(arrow(true, 16., color, false))
-    .child(text("Back", style, size));
+    .child(text(
+        if s.course_sheet { "Done" } else { "Back" },
+        style,
+        size,
+    ));
     // Race setup keeps its share link beside Back (`.ms-hint-share`).
-    let share = (s.page == "race")
+    let share = (s.page == "race" && !s.course_sheet)
         .then(|| s.choices.iter().position(|(a, _)| a == "copyride"))
         .flatten()
         .map(|index| {
@@ -2709,15 +2788,32 @@ fn stepper_row(m: &Metrics, s: &Screen, index: usize, label: &str) -> El {
     };
     let mut label_style = row(14.);
     label_style.flex_grow = 1.;
-    label_style.flex_shrink = 1.;
+    // The value gives way first; the label ellipsizes only after it.
+    label_style.flex_shrink = 0.25;
     label_style.min_size = Size {
         width: length(0.),
         height: length(m.row),
     };
+    // A long label ("ATV 1/24 · Unlocked") ellipsizes rather than run
+    // under the value.
     let label_el = El::new(label_style)
         .id(ROW + index as u32)
         .child(bullet_slot(selected))
-        .child(text(name, text_style, m.row_font * 1.1));
+        .child(
+            El::new(Style {
+                flex_shrink: 1.,
+                min_size: Size {
+                    width: length(0.),
+                    height: auto(),
+                },
+                ..Default::default()
+            })
+            .content(Content::Ellipsis {
+                text: name.to_string(),
+                style: text_style,
+                line_height: m.row_font * 1.1,
+            }),
+        );
     let cycle = |left: bool, id: u32| {
         let hovered = s.hovered == Some(id);
         El::new(Style {
@@ -2797,7 +2893,11 @@ fn stepper_row(m: &Metrics, s: &Screen, index: usize, label: &str) -> El {
 fn title(m: &Metrics, s: &Screen, mut root: El) -> El {
     root.style.grid_template_columns = vec![fr(1.)];
     root.style.grid_template_rows = vec![fr(1.), auto()];
-    let width = (0.88 * m.w).min(760.);
+    // The wordmark yields height to Press Start and the links (about 150px
+    // with the save chip above it): a phone in landscape under Safari's
+    // toolbar has ~330px, where a 0.88w wordmark pushed Start off screen.
+    let room = (m.h - m.safe[0] - m.safe[2] - 200.).max(60.);
+    let width = (0.88 * m.w).min(760.).min(room * 3.);
     let mut lockup = El::new(Style {
         grid_row: taffy::Line {
             start: line(1),

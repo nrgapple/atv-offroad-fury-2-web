@@ -70,6 +70,7 @@ export const TESTS = {
   'test_engine_status_bar.mjs': { group: 'content' },
   'test_engine_menu_transitions.mjs': { group: 'content' },
   'test_engine_menu_motion.mjs': { group: 'content' },
+  'test_engine_menu_phone_layout.mjs': { group: 'content' },
   'test_engine_context_loss.mjs': { group: 'content' },
   'test_engine_menu_music.mjs': { group: 'content' },
   'test_engine_freeride_full.mjs': {
@@ -79,6 +80,18 @@ export const TESTS = {
   'test_engine_multiplayer_tag.mjs': {
     group: 'relay',
     reason: 'needs the multiplayer relay at the same origin (Rust host and guest Tag room); run with --url'
+  },
+  'test_engine_multiplayer_koth.mjs': {
+    group: 'relay',
+    reason: 'needs the multiplayer relay at the same origin (Rust host and guest King of the Hills room); run with --url'
+  },
+  'test_engine_multiplayer_treasure.mjs': {
+    group: 'relay',
+    reason: 'needs the multiplayer relay at the same origin (Rust host and guest Treasure Hunt room); run with --url'
+  },
+  'test_engine_multiplayer_freestyle.mjs': {
+    group: 'relay',
+    reason: 'needs the multiplayer relay at the same origin (Host Game → Room: Freestyle; Rust guest and late spectator, host handoff); run with --url'
   },
   'test_engine_multiplayer_race.mjs': {
     group: 'relay',
@@ -146,6 +159,10 @@ export const TESTS = {
   'test_engine_race.mjs': { group: 'content' },
   'test_engine_split_screen.mjs': { group: 'content', timeout: 900 },
   'test_engine_split_games.mjs': { group: 'content', timeout: 900 },
+  'test_engine_split_tag.mjs': { group: 'content', timeout: 600 },
+  'test_engine_split_4p.mjs': { group: 'content', timeout: 1500 },
+  'test_engine_split_seats.mjs': { group: 'content', timeout: 900 },
+  'test_engine_split_objectives.mjs': { group: 'content', timeout: 900 },
   'test_engine_race_grid.mjs': { group: 'content' },
   'test_engine_race_finish_gate.mjs': { group: 'content' },
   'test_engine_race_alternates.mjs': { group: 'content', timeout: 900 },

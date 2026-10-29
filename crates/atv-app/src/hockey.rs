@@ -157,17 +157,18 @@ impl HockeySession {
         }
     }
 
-    /// Split screen: player 1 skates for Red and player 2 for Blue (the
+    /// Split screen: players 1 and 3 skate for Red, 2 and 4 for Blue (the
     /// rooms' alternating teams; the original Hockey Team Select page was
     /// not traced, so this is a port choice).
-    pub fn new_split() -> Self {
+    pub fn new_split(players: usize) -> Self {
         let mut session = Self::new();
-        session.game = Game::new(session.game.arena, vec![0, 1], session.game.time_limit);
+        let teams = (0..players.clamp(2, 4)).map(|i| i % 2).collect();
+        session.game = Game::new(session.game.arena, teams, session.game.time_limit);
         session.split = true;
         session
     }
 
-    fn face_off(&mut self, ride: &mut Ride, second: Option<&mut Ride>) {
+    fn face_off(&mut self, ride: &mut Ride, others: &mut [&mut Ride]) {
         // The pause's end (`00336200`), setup and Restart Game stop the
         // hat-trick group before the riders line up.
         self.hats.push(false);
@@ -175,23 +176,26 @@ impl HockeySession {
         if let Err(error) = ride.place_beside(origin, yaw, [0.; 3]) {
             crate::status(&format!("Hockey face-off placement failed: {error}"));
         }
-        // Split screen: player 2 lines up at rider slot 1's spot.
-        if self.split
-            && let Some(ride2) = second
-        {
-            let (origin, yaw) = self.game.face_off(1);
-            if let Err(error) = ride2.place_beside(origin, yaw, [0.; 3]) {
-                crate::status(&format!("Player 2 face-off placement failed: {error}"));
+        // Split screen: player N lines up at rider slot N - 1's spot.
+        if self.split {
+            for (index, ride2) in others.iter_mut().enumerate() {
+                let (origin, yaw) = self.game.face_off(index + 1);
+                if let Err(error) = ride2.place_beside(origin, yaw, [0.; 3]) {
+                    crate::status(&format!(
+                        "Player {} face-off placement failed: {error}",
+                        index + 2
+                    ));
+                }
             }
         }
         self.puck = Puck::held(&self.game.arena);
     }
 
     /// Pause → Restart (`003377f0`).
-    pub fn restart(&mut self, ride: &mut Ride, second: Option<&mut Ride>) {
+    pub fn restart(&mut self, ride: &mut Ride, others: &mut [&mut Ride]) {
         self.game.restart();
         self.finished = false;
-        self.face_off(ride, second);
+        self.face_off(ride, others);
         self.steps = ride.steps();
     }
 
@@ -209,7 +213,7 @@ impl HockeySession {
         &mut self,
         ride: &mut Ride,
         net: Option<&mut crate::multiplayer::Net>,
-        mut second: Option<&mut Ride>,
+        others: &mut [&mut Ride],
     ) -> bool {
         let mut net = net;
         if let Some(net) = net.as_deref_mut() {
@@ -235,7 +239,7 @@ impl HockeySession {
         }
         if !self.placed {
             self.placed = true;
-            self.face_off(ride, second.as_deref_mut());
+            self.face_off(ride, others);
             self.steps = ride.steps();
         }
         let steps = ride.steps();
@@ -261,13 +265,13 @@ impl HockeySession {
         // Every rider in slot order: the human's own ATV, the others' latest
         // relayed poses (out of reach while unknown).
         let riders: Vec<([f32; 3], [f32; 3])> = if self.roster.is_empty() {
-            // Split screen: player 2's ATV is rider slot 1.
+            // Split screen: player N's ATV is rider slot N - 1.
             let mut riders = vec![own];
-            if self.split
-                && let Some(ride2) = second.as_deref()
-            {
-                let f = ride2.frame();
-                riders.push((f.origin, f.linear_velocity));
+            if self.split {
+                riders.extend(others.iter().map(|r| {
+                    let f = r.frame();
+                    (f.origin, f.linear_velocity)
+                }));
             }
             riders
         } else {
@@ -314,7 +318,7 @@ impl HockeySession {
                     self.hats.push(true);
                 }
                 match event {
-                    Event::FaceOff => self.face_off(ride, second.as_deref_mut()),
+                    Event::FaceOff => self.face_off(ride, others),
                     Event::Drop => {
                         self.puck = Puck::drop(&self.game.arena, || crate::random::unit() as f32);
                         if self.tee > 0 {
@@ -381,6 +385,7 @@ impl HockeySession {
             ball_velocity: self.puck.velocity,
             ball_yaw: self.puck.yaw,
             race: Default::default(),
+            marks: Default::default(),
         });
     }
 
@@ -473,7 +478,7 @@ impl HockeySession {
         self.view_for(origin, self.me)
     }
 
-    /// A local player's panel (split screen: player 2 is rider 1).
+    /// A local player's panel (split screen: player N is rider N - 1).
     pub fn view_for(&self, origin: [f32; 3], me: usize) -> atv_ui::hud::training::View {
         let g = &self.game;
         let [red, blue] = g.scores;
@@ -529,13 +534,17 @@ impl HockeySession {
     fn goal_line(&self) -> String {
         let goals = |i: usize| self.game.goals.get(i).copied().unwrap_or(0);
         if self.split {
-            format!(
-                "{} (Red) goals: {}, {} (Blue) goals: {}",
-                crate::split::PLAYER_1,
-                goals(0),
-                crate::split::PLAYER_2,
-                goals(1)
-            )
+            (0..self.game.teams.len())
+                .map(|i| {
+                    let team = atv_core::hockey::TEAMS[self.game.teams[i].min(1)];
+                    format!(
+                        "{} ({team}) goals: {}",
+                        crate::split::player_name(i as u8 + 1),
+                        goals(i)
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(", ")
         } else {
             format!("Your goals: {}", goals(self.me))
         }

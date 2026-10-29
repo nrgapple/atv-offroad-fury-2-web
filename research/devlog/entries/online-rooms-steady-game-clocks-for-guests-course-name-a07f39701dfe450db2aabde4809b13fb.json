@@ -1,0 +1,15 @@
+{
+  "id": "online-rooms-steady-game-clocks-for-guests-course-name-a07f39701dfe450db2aabde4809b13fb",
+  "timestamp": "2026-10-29T11:25:56.380270+00:00",
+  "recorded_at": "2026-10-29T11:26:37.816141+00:00",
+  "kind": "build",
+  "title": "Online rooms: steady game clocks for guests, course names in results",
+  "summary": "Guests' clocks now run steady between host updates in King of the Hills and Treasure Hunt. Room results now display course names instead of internal venue codes.",
+  "details": [
+    "In online King of the Hills and Treasure Hunt, guests' clocks no longer freeze when the host goes quiet (e.g. during room transitions). Guests now interpolate and run their own clock between host updates, and the host still controls game end state. Room game, Freestyle and race results now display course names (e.g. 'Freestyle on Caribou Peak', 'Treasure Hunt on Prospect Springs') instead of internal venue codes.",
+    "Verification: FS-guest-results shows a guest's Freestyle completion with the result text 'Freestyle on Caribou Peak: Time Up. 1. RustGuest: Score 26,400, Best Combo 1,100, Combos 24. 2. RustHost: Score 24,000, Best Combo 1,000, Combos 24.' TH-after-host-left shows Treasure Hunt results as 'Treasure Hunt on Prospect Springs: Time Up. 1. RustGuest: Tokens Collected 10, Stunt Score 0.' after host departure, with the guest's clock running to completion."
+  ],
+  "limitation": "CPU riders cannot yet fill online room races; this requires relay protocol work.",
+  "image": "/devlog-images/online-rooms-steady-game-clocks-for-guests-course-name-a07f39701dfe450db2aabde4809b13fb.png",
+  "caption": "Treasure Hunt on Prospect Springs: results display course name; guest clock ran to completion after host left."
+}

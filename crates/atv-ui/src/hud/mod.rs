@@ -8,6 +8,7 @@ pub mod objective;
 pub mod peers;
 pub mod race;
 pub mod results;
+pub mod split;
 pub mod toolbar;
 pub mod training;
 

@@ -1,0 +1,14 @@
+{
+  "id": "online-rooms-timed-freestyle-sessions-b0ee4abb5a9d4bcb92b296a7c8274112",
+  "timestamp": "2026-10-29T10:30:17.763068+00:00",
+  "recorded_at": "2026-10-29T10:30:36.519446+00:00",
+  "kind": "build",
+  "title": "Online rooms: timed Freestyle sessions",
+  "summary": "Host Game has a 'Room: Freestyle (timed stunts)' option for any of the 40 Freestyle venues. The host's pause menu in a private room also offers Play Freestyle. A shared countdown waits for riders; a 120-second session uses the original Freestyle event clock. Each rider's stunts are scored by the existing stunt scoring and the host keeps and broadcasts one score table so everyone sees the same standings: time, combos, place, score and leader. Results list every rider with score, best combo and combos.",
+  "details": [
+    "The host chooses Room: Freestyle from Host Game or Play Freestyle from the pause menu in a private room. A shared countdown waits for riders to be ready. The 120-second session runs the original Freestyle event clock. Stunt scoring is the existing system. The host broadcasts one score table with time, combos, place, score and leader. Results list every rider with score, best combo and combos. Late joiners spectate. If the host leaves, the next host finishes the session."
+  ],
+  "limitation": "Scores are self-reported (the host checks bounds). Fixed 120 s with no time-limit option. No records or Hall of Fame credit online. Three and four riders tested in unit tests only.",
+  "image": "/devlog-images/online-rooms-timed-freestyle-sessions-b0ee4abb5a9d4bcb92b296a7c8274112.png",
+  "caption": "Host's Freestyle Results panel showing two riders with their scores and best combos; RustGuest leads with 26,400 points and 24 total combos."
+}

@@ -1,0 +1,14 @@
+{
+  "id": "split-screen-original-per-player-hud-layouts-own-gear--2b75799204f54ee0a70b15849eeb19d4",
+  "timestamp": "2026-10-29T08:04:58.584572+00:00",
+  "recorded_at": "2026-10-29T08:26:01.408325+00:00",
+  "kind": "build",
+  "title": "Split screen: original per-player HUD layouts, own gear and paint",
+  "summary": "Split-screen HUDs now use the original game's own 2-, 3- and 4-player overlay layouts (speed meter, stunt text, compass, lap/place/score readouts at the original positions; start lights centred once); each seat picks its own jersey gear and ATV paint on the Split Screen page; on Enhanced/High graphics every player lays its own tire tracks and dust.",
+  "details": [
+    "The original's 2-, 3- and 4-player HUD layouts position the readouts for each player as they appear on the original hardware. Players 1, 2, 3, 4 now each see their own gear choice and ATV paint selection on the Split Screen page, with effect on-screen. When graphics is set to Enhanced or High, each player's trails and dust are rendered in separate draw calls, providing full visual fidelity. Start lights are centred once at race start."
+  ],
+  "limitation": "Players 2\u20134 records/profile credit not built (needs a decision); split radar hidden; helmet/gloves/boots/goggles stay Original for players 2\u20134; no controller-select page or per-player audio mix. Performance on host with 4 players High graphics: frame time ~27\u219232 ms with every player's trails (noisy).",
+  "image": "/devlog-images/split-screen-original-per-player-hud-layouts-own-gear--2b75799204f54ee0a70b15849eeb19d4.png",
+  "caption": "Four-player split-screen freestyle with custom ATV paint and gear for each seat"
+}

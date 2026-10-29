@@ -20,6 +20,8 @@ mod random;
 mod render_scale;
 pub mod replay;
 mod riding;
+mod room_freestyle;
+mod room_game;
 mod room_race;
 mod sound;
 mod soundtrack;
@@ -136,8 +138,8 @@ struct Ready {
     hud_assets: Option<atv_ui::hud::assets::OverlayAssets>,
     /// The multiplayer room this ride is in.
     net: Option<multiplayer::Net>,
-    /// Local split screen's second player (split.rs).
-    split: Option<split::Second>,
+    /// Local split screen's players 2-4 (split.rs); empty riding alone.
+    split: Vec<split::Second>,
 }
 
 struct PendingSound {
@@ -161,6 +163,8 @@ enum Message {
     SoundFailed(String),
     /// A mini-game's mode TOY loaded (or why not).
     GameToy(Result<String, String>),
+    /// Tracks.dat course names by venue (room results).
+    CourseNames(Result<Vec<(String, String)>, String>),
     Failed(String),
     /// The frontend's GPU, content and venue list are ready.
     FrontReady(Box<Booted>),
@@ -290,6 +294,9 @@ struct ObjectiveSession {
     /// A championship round (else Single Player → Freestyle Objectives):
     /// its trophy can come mid-event (`003230f0`).
     championship: bool,
+    /// Split screen: one objective for every seated player
+    /// (`atv_core::freestyle::split`); `run` stays empty.
+    split: Option<atv_core::freestyle::split::SplitRun>,
 }
 
 /// A target hit's sound.
@@ -430,9 +437,124 @@ impl ObjectiveSession {
         Some((summary, fame))
     }
 
+    /// Split screen: advances the shared objective with every player's
+    /// ride (player 1's clock). Returns the results summary once, when the
+    /// run ends. Nothing is saved (`002fce00` saves only one human's run).
+    fn update_split(
+        &mut self,
+        ride: &mut atv_game::ride::Ride,
+        others: &mut [&mut atv_game::ride::Ride],
+        venue: Option<&atv_game::venue::Objective>,
+    ) -> Option<String> {
+        use atv_core::freestyle::{course_objectives, split::SplitRun};
+        let players = others.len() + 1;
+        if self.split.is_none() {
+            let objective = venue
+                .and_then(|v| v.objectives.get(self.objective).cloned())
+                .or_else(|| {
+                    course_objectives(&self.course)?
+                        .into_iter()
+                        .nth(self.objective)
+                })?;
+            if matches!(objective.kind, atv_core::freestyle::Kind::CherryPick { .. })
+                && venue.is_none_or(|v| v.targets.is_empty())
+            {
+                return None;
+            }
+            self.targets = venue.map(|v| v.targets.clone()).unwrap_or_default();
+            // Everyone starts at the objective's start, players 2-4 beside
+            // player 1 as at a split Freeride start (a port choice).
+            if let Some(start) = objective.start {
+                let _ = ride.place_beside(start.position, start.yaw(), [0.; 3]);
+                for (i, other) in others.iter_mut().enumerate() {
+                    let (at, yaw) =
+                        split::freeride_start_for(start.position, start.yaw(), i as u8 + 2);
+                    let _ = other.place_beside(at, yaw, [0.; 3]);
+                }
+            }
+            let committed: Vec<f32> = std::iter::once(ride.committed_points())
+                .chain(others.iter().map(|r| r.committed_points()))
+                .collect();
+            let mut run = SplitRun::new(objective, self.objective, &committed);
+            if url_flag("objectiveTest=timeout") {
+                run.time_left = 5.;
+            }
+            self.split = Some(run);
+            self.visit_clock = ride.steps();
+            self.steps = ride.steps();
+            self.recorded = false;
+            for r in std::iter::once(&mut *ride).chain(others.iter_mut().map(|r| &mut **r)) {
+                r.take_chains();
+                r.take_free_records();
+            }
+        }
+        if !self.targets.is_empty() && url_flag("objectiveTest=targets") {
+            self.test_visit_split(ride, others);
+        }
+        let steps = ride.steps();
+        let dt = steps.saturating_sub(self.steps) as f32 * atv_game::ride::STEP;
+        self.steps = steps;
+        let run = self.split.as_mut()?;
+        let mut committed = Vec::with_capacity(players);
+        for p in 0..players {
+            let r: &mut atv_game::ride::Ride = if p == 0 { ride } else { others[p - 1] };
+            for (success, ids) in r.take_chains() {
+                run.chain(p, success, &ids);
+            }
+            // Players 2-4 keep no records (needs a product decision);
+            // split screen saves none of player 1's either (`002fce00`).
+            r.take_free_records();
+            if !self.targets.is_empty() && !run.finished() {
+                for target in run.touch_bodies(p, &self.targets, &r.trigger_bodies()) {
+                    self.sounds.push(TARGET_SOUND);
+                    self.triggered.push(target);
+                }
+            }
+            committed.push(r.committed_points());
+        }
+        run.tick(dt, &committed);
+        if !run.finished() || self.recorded {
+            return None;
+        }
+        self.recorded = true;
+        Some(split_objective_summary(run))
+    }
+
+    /// Test tooling (`objectiveTest=targets`) in split screen: the players
+    /// take turns rolling through the next untouched target.
+    fn test_visit_split(
+        &mut self,
+        ride: &mut atv_game::ride::Ride,
+        others: &mut [&mut atv_game::ride::Ride],
+    ) {
+        let Some(run) = &self.split else { return };
+        let steps = ride.steps();
+        if steps < self.visit_clock + 90 {
+            return;
+        }
+        self.visit_clock = steps;
+        let Some(next) = run.untouched().next() else {
+            return;
+        };
+        let Some(t) = self.targets.get(next) else {
+            return;
+        };
+        // Target i goes to player i % players.
+        let p = next % (others.len() + 1);
+        let r: &mut atv_game::ride::Ride = if p == 0 { ride } else { others[p - 1] };
+        let [x, y, z] = t.position;
+        let _ = r.place_beside([x, y, z - 8.], 0., [0., 0., 20.]);
+    }
+
     /// The run (re)starts on the ride's current clock and points, the
     /// rider at the objective's `DefaultStartPosition`.
     fn start(&mut self, ride: &mut atv_game::ride::Ride) {
+        // Split screen: the shared run starts again on the next update,
+        // placing every player.
+        if self.split.take().is_some() {
+            self.recorded = false;
+            return;
+        }
         let Some(run) = &mut self.run else { return };
         if let Some(start) = run.objective.start
             && let Err(error) = ride.place_beside(start.position, start.yaw(), [0.; 3])
@@ -484,6 +606,11 @@ impl ObjectiveSession {
 
     /// Each target's cherry model and whether it shows (hit ones hide).
     fn cherries(&self) -> Vec<(usize, bool)> {
+        if let Some(run) = &self.split {
+            return (0..self.targets.len())
+                .map(|i| (i, run.taken.get(i).is_some_and(Option::is_none)))
+                .collect();
+        }
         let Some(run) = &self.run else {
             return Vec::new();
         };
@@ -496,6 +623,16 @@ impl ObjectiveSession {
     /// lists the visible `cherry` models; a hit removes its icon,
     /// `002fab40` → `002e78d0`). None outside a running target run.
     fn compass_targets(&self) -> Option<Vec<[f32; 3]>> {
+        if let Some(run) = &self.split {
+            if run.finished() || self.targets.is_empty() {
+                return None;
+            }
+            return Some(
+                run.untouched()
+                    .filter_map(|i| self.targets.get(i).map(|t| t.position))
+                    .collect(),
+            );
+        }
         let run = self.run.as_ref().filter(|r| !r.finished())?;
         if self.targets.is_empty() {
             return None;
@@ -512,18 +649,23 @@ impl ObjectiveSession {
 
     /// The untouched targets' screen tags and map markers (green or red).
     fn markers(&self) -> Vec<atv_ui::hud::peers::Peer> {
-        let Some(run) = self.run.as_ref().filter(|r| !r.finished()) else {
-            return Vec::new();
+        let untouched: Vec<bool> = match (&self.split, &self.run) {
+            (Some(split), _) if !split.finished() => {
+                split.taken.iter().map(Option::is_none).collect()
+            }
+            (None, Some(run)) if !run.finished() => run.hits.iter().map(|h| !h).collect(),
+            _ => return Vec::new(),
         };
-        let red = run
-            .objective
-            .description
-            .to_ascii_lowercase()
-            .contains("red");
+        let description = match (&self.split, &self.run) {
+            (Some(split), _) => &split.objective().description,
+            (None, Some(run)) => &run.objective.description,
+            _ => return Vec::new(),
+        };
+        let red = description.to_ascii_lowercase().contains("red");
         self.targets
             .iter()
             .enumerate()
-            .filter(|(i, _)| !run.hits.get(*i).copied().unwrap_or(true))
+            .filter(|(i, _)| untouched.get(*i).copied().unwrap_or(false))
             .map(|(_, t)| atv_ui::hud::peers::Peer {
                 slot: if red { 0 } else { 2 },
                 name: "Target".into(),
@@ -541,6 +683,28 @@ impl ObjectiveSession {
 
     /// The HUD panel.
     fn view(&self) -> Option<atv_ui::hud::objective::View> {
+        if let Some(run) = &self.split {
+            // One panel for everyone (the original's split objective
+            // overlay was not traced): the shared progress, each player's
+            // figure in place order, the leader's score and the newest sign.
+            let standings: Vec<String> = run
+                .order()
+                .into_iter()
+                .map(|p| format!("P{} {}", p + 1, run.stat(p)))
+                .collect();
+            let lead = run.order()[0];
+            let message = run.runs.iter().enumerate().find_map(|(p, r)| {
+                r.notice()
+                    .map(|n| format!("{}: {n}", split::player_name(p as u8 + 1)))
+            });
+            return Some(atv_ui::hud::objective::View {
+                description: run.objective().description.clone(),
+                time_left: run.time_left,
+                progress: format!("{} · {}", run.progress(), standings.join(" · ")),
+                score: run.runs[lead].score as i64,
+                message,
+            });
+        }
         let run = self.run.as_ref()?;
         Some(atv_ui::hud::objective::View {
             description: run.objective.description.clone(),
@@ -550,6 +714,42 @@ impl ObjectiveSession {
             message: run.notice().map(str::to_string),
         })
     }
+}
+
+/// The split objective's results (`002ddc50` "Congratulations, %s" for
+/// the winners; the standings in place order are the port's layout).
+fn split_objective_summary(run: &atv_core::freestyle::split::SplitRun) -> String {
+    let name = |p: usize| split::player_name(p as u8 + 1);
+    let winners = run.winners.clone().unwrap_or_default();
+    let headline = match winners.as_slice() {
+        [one] => format!("Congratulations, {}!", name(*one)),
+        many => format!(
+            "Tie: {}!",
+            many.iter()
+                .map(|p| name(*p))
+                .collect::<Vec<_>>()
+                .join(" and ")
+        ),
+    };
+    let places = run.places();
+    let standings: Vec<String> = run
+        .order()
+        .into_iter()
+        .map(|p| {
+            format!(
+                "{} {} {}, {} pts",
+                ["1st", "2nd", "3rd", "4th"][places[p].clamp(1, 4) - 1],
+                name(p),
+                run.stat(p),
+                atv_ui::hud::objective::grouped(run.runs[p].score as i64)
+            )
+        })
+        .collect();
+    format!(
+        "{headline} {} · {} · Split screen results are not saved.",
+        run.objective().description,
+        standings.join(" · ")
+    )
 }
 
 struct App {
@@ -658,9 +858,32 @@ struct App {
     room_race: Option<room_race::RoomRace>,
     /// The last room race serial seen, so the host numbers the next one.
     room_race_serial: u32,
+    /// The last room King of the Hills / Treasure Hunt serial seen
+    /// (research/MULTIPLAYER.md "Room games").
+    room_game_serial: u32,
+    /// Each venue's Tracks.dat course name for room results (loaded for a
+    /// room, since a page that joined by link skipped the frontend).
+    course_names: std::collections::HashMap<String, String>,
+    /// The next room reload rides this game's course scene.
+    room_game_scene: Option<atv_core::games::GameKind>,
+    /// Freestyle in a multiplayer room (research/MULTIPLAYER.md "Room
+    /// Freestyle").
+    room_freestyle: Option<room_freestyle::RoomFreestyle>,
+    /// The last room Freestyle serial seen, so the host numbers the next.
+    room_freestyle_serial: u32,
+    /// A room Freestyle hosted from the menus starts (holding its start for
+    /// an invitee) once the room is joined.
+    room_freestyle_start: bool,
+    /// Games → King of the Hills / Treasure Hunt → Riders: Online Room
+    /// hosted a room; the game (with these minutes) starts once the room
+    /// is joined.
+    room_game_start: Option<(atv_core::games::GameKind, u32)>,
     /// The host's Play Tag reloads the room's venue from its TG archive;
     /// the game starts with these minutes once that ride is ready.
     tag_start: Option<u32>,
+    /// Split screen → Games → Tag: a local two-player game starts with
+    /// these minutes once both rides are ready (no room).
+    split_tag: Option<(u32, String)>,
     /// A guest's pending move to the room's Tag course.
     tag_reload: Option<String>,
     /// The held room the next frontend ride resumes.
@@ -959,9 +1182,15 @@ async fn prepare(
     );
     let mut pending_sound = None;
     // Split screen starts both players' countdowns together: no pre-race
-    // camera tour (it frames one rider).
+    // camera tour (it frames one rider). Three and four players exclude
+    // CPU riders (manual p. 16: two-player split screen can include them).
     let race = race.map(|r| atv_game::ride::race::Settings {
         intro: r.intro && split_layout.is_none(),
+        cpu: if split_layout.is_some_and(|s| s.players > 2) {
+            0
+        } else {
+            r.cpu
+        },
         ..r
     });
     let riding = if ride {
@@ -1108,10 +1337,11 @@ async fn prepare(
         None
     };
     let mut riding = riding;
-    let split = match (split_layout, &mut riding) {
-        (Some(request), Some(first)) => {
-            progress(&gpu, "Reading player 2…");
-            Some(
+    let mut split = Vec::new();
+    if let (Some(request), Some(first)) = (split_layout, &mut riding) {
+        for (player, _) in request.others() {
+            progress(&gpu, &format!("Reading player {player}…"));
+            split.push(
                 split::Second::load(
                     &gpu,
                     &content,
@@ -1119,13 +1349,13 @@ async fn prepare(
                     &mut scene,
                     first,
                     request,
+                    player,
                     (selection, appearance, race, crash, graphics),
                 )
                 .await?,
-            )
+            );
         }
-        _ => None,
-    };
+    }
     let hud_assets = if riding.is_some() {
         match atv_ui::hud::assets::load(
             &content,
@@ -1305,6 +1535,7 @@ impl App {
     /// One rendered frame of the ride: input, fixed steps, chase view.
     fn ride_frame(&mut self, dt: f32) {
         self.update_diagnostics();
+        self.want_course_names();
         // Other riders' models and engine banks load a slice per frame.
         let loads = Instant::now();
         self.poll_frame_tasks();
@@ -1347,18 +1578,19 @@ impl App {
         self.gamepad
             .set_pin(riding.bindings.tuning.selected.clone());
         // Split screen: player 1 plays the first connected controller (and
-        // the keyboard's left side), player 2 the second (split.rs).
-        let split_on = ready.split.is_some();
+        // the keyboard's left side), player 2 the second (and the right
+        // side), players 3 and 4 the third and fourth (split.rs).
+        let split_on = !ready.split.is_empty();
         let pad = if split_on {
             self.gamepad.sample_slot(0)
         } else {
             self.gamepad.sample()
         };
-        let pad2 = if split_on {
-            self.gamepad.sample_slot(1)
-        } else {
-            None
-        };
+        let other_pads: Vec<_> = ready
+            .split
+            .iter()
+            .map(|s| self.gamepad.sample_slot(usize::from(s.player) - 1))
+            .collect();
         if let Some(overlay) = &mut self.overlay {
             overlay.pad_name = self.gamepad.name();
             overlay.pads = self.gamepad.connected();
@@ -1419,54 +1651,66 @@ impl App {
         let sampler = |now: u64, ride: &atv_game::ride::Ride| {
             net.map_or_else(Vec::new, |n| n.contact_bodies_at(now, ride))
         };
-        // Split screen: each player is the other's contact body.
-        let split_others = ready
+        // Split screen: each player is the others' contact body.
+        let split_others = if ready.split.is_empty() {
+            Vec::new()
+        } else {
+            split::link(&mut riding.ride, &mut ready.split)
+        };
+        let split_bodies: Vec<_> = ready
             .split
-            .as_mut()
-            .map(|s| split::link(&mut riding.ride, &mut s.riding.ride));
-        let split_body = ready
-            .split
-            .as_ref()
-            .map(|s| split::body(&s.riding.ride, 1.));
-        let split_sampler =
-            move |_: u64, _: &atv_game::ride::Ride| split_body.into_iter().collect::<Vec<_>>();
+            .iter()
+            .map(|s| split::body(&s.riding.ride, 1.))
+            .collect();
+        let split_sampler = |_: u64, _: &atv_game::ride::Ride| split_bodies.clone();
         let peers = net
             .map(|n| (n.session_now(), &sampler as riding::PeerSampler))
-            .or_else(|| split_body.map(|_| (0, &split_sampler as riding::PeerSampler)));
+            .or_else(|| {
+                (!split_bodies.is_empty()).then_some((0, &split_sampler as riding::PeerSampler))
+            });
         if let Err(error) = riding.frame(&sample, &mut touch, dt, peers) {
             status(&format!("Simulation stopped: {error}"));
             ready.riding = None;
             return;
         }
-        if let Some(second) = &mut ready.split {
-            // Player 2 rides while player 1 does: either player's pause
-            // opens player 1's Pause menu over both views.
+        if split_on {
+            // The other players ride while player 1 does: any player's
+            // pause opens player 1's Pause menu over every view.
             if !riding.paused && !riding.held && focused {
-                // Player 1 as it stands after this frame's steps.
-                let mut others = split_others.unwrap_or_default();
-                if let Some(first) = others.first_mut() {
-                    *first = split::body(&riding.ride, -1.);
-                }
-                if let Err(error) = second.frame(&all_keys, pad2.as_ref(), sample_now, dt, others) {
-                    status(&format!("Player 2 stopped: {error}"));
-                }
-                if second.riding.paused {
-                    second.riding.paused = false;
-                    second.riding.clear_input();
-                    riding.paused = true;
-                    riding.clear_input();
-                    riding.sync_sound();
+                let first_body = split::body(&riding.ride, -1.);
+                for ((second, mut others), pad) in
+                    ready.split.iter_mut().zip(split_others).zip(&other_pads)
+                {
+                    // Player 1 as it stands after this frame's steps.
+                    if let Some(first) = others.first_mut() {
+                        *first = first_body;
+                    }
+                    if let Err(error) =
+                        second.frame(&all_keys, pad.as_ref(), sample_now, dt, others)
+                    {
+                        status(&format!("Player {} stopped: {error}", second.player));
+                    }
+                    if second.riding.paused {
+                        second.riding.paused = false;
+                        second.riding.clear_input();
+                        riding.paused = true;
+                        riding.clear_input();
+                        riding.sync_sound();
+                    }
                 }
             }
-            let origins = [
-                riding.ride.frame().origin,
-                second.riding.ride.frame().origin,
-            ];
-            if let (Some(first), Some(other)) = (
-                riding.ride.race_mut().and_then(|r| r.frame.as_mut()),
-                second.riding.ride.race_mut().and_then(|r| r.frame.as_mut()),
-            ) {
-                split::merge_race(first, other, origins);
+            let origins: Vec<[f32; 3]> = std::iter::once(riding.ride.frame().origin)
+                .chain(ready.split.iter().map(|s| s.riding.ride.frame().origin))
+                .collect();
+            if let Some(first) = riding.ride.race_mut().and_then(|r| r.frame.as_mut()) {
+                let mut others: Vec<&mut atv_core::race::Frame> = ready
+                    .split
+                    .iter_mut()
+                    .filter_map(|s| s.riding.ride.race_mut().and_then(|r| r.frame.as_mut()))
+                    .collect();
+                if others.len() + 1 == origins.len() {
+                    split::merge_race(first, &mut others, &origins);
+                }
             }
         }
         // Rumble.pulse: the frame's impacts on the active controller.
@@ -1481,9 +1725,10 @@ impl App {
                 riding.rumble.sent(pulse);
             }
         }
-        if let Some(second) = &mut ready.split {
+        for second in &mut ready.split {
+            let slot = usize::from(second.player) - 1;
             for pulse in std::mem::take(&mut second.riding.pulses) {
-                if self.gamepad.rumble_slot(1, pulse) {
+                if self.gamepad.rumble_slot(slot, pulse) {
                     second.riding.rumble.sent(pulse);
                 }
             }
@@ -1523,17 +1768,25 @@ impl App {
         if let Some(effects) = &mut riding.effects {
             ready.scene.accept_wheel_effects(&ready.gpu, effects);
         }
-        // Split screen: player 2's wheel effects, and its own fine terrain
-        // patch beside player 1's.
-        riding.split_origin = ready.split.as_mut().map(|second| {
-            if let Some(effects) = &mut second.riding.effects {
-                ready.scene.accept_second_wheel_effects(effects);
-            }
-            second.riding.ride.frame().origin
-        });
+        // Split screen: the other players' wheel effects, and their own
+        // fine terrain patches beside player 1's.
+        riding.split_origin = ready
+            .split
+            .iter_mut()
+            .map(|second| {
+                if let Some(effects) = &mut second.riding.effects {
+                    ready.scene.accept_second_wheel_effects(
+                        &ready.gpu,
+                        usize::from(second.player) - 2,
+                        effects,
+                    );
+                }
+                second.riding.ride.frame().origin
+            })
+            .collect();
         // A split view presents at the preset's reference and scales the
         // focal length to its layout (split.rs).
-        let (present_aspect, focal_scale) = match &ready.split {
+        let (present_aspect, focal_scale) = match ready.split.first() {
             Some(second) => (split::SPLIT_PRESENT_ASPECT, second.layout.focal_scale()),
             None => (ready.gpu.aspect(), 1.),
         };
@@ -1551,10 +1804,17 @@ impl App {
             Ok(_) => {}
             Err(error) => status(&error),
         }
-        if let Some(second) = &mut ready.split
-            && let Err(error) = second.present(&ready.gpu, &mut ready.scene, &ready.venue, dt)
-        {
-            status(&format!("Player 2: {error}"));
+        // Every other player's rider in one call (pose_peers hides the
+        // slots it is not given).
+        if !ready.split.is_empty() {
+            let mut poses = Vec::with_capacity(ready.split.len());
+            for second in &mut ready.split {
+                match second.present(&ready.gpu, &ready.venue, dt) {
+                    Ok(pose) => poses.push(pose),
+                    Err(error) => status(&format!("Player {}: {error}", second.player)),
+                }
+            }
+            ready.scene.pose_peers(&ready.gpu, &poses);
         }
         // The speed-rush screen pass shares the FOV kick's amount.
         let motion = riding.ride.frame();
@@ -1572,6 +1832,9 @@ impl App {
         let mut engine_loads = Vec::new();
         let mut course = None;
         let mut room_load = None;
+        let mut game_join = None;
+        let mut host_game = None;
+        let mut freestyle_reload = false;
         let mut ended = None;
         if let Some(net) = &mut ready.net {
             // Only actual suspension (hidden page, suspended app) sends the
@@ -1604,6 +1867,7 @@ impl App {
                     motion.origin,
                     &ready.camera,
                     motion.linear_velocity,
+                    &[],
                 ) {
                     engine_loads.push((quad, sound.load_remote_engine(quad)));
                 }
@@ -1623,12 +1887,35 @@ impl App {
                 self.room_race_serial = state.serial;
                 let (race, load) = room_race::RoomRace::guest(state, me, &net.environment);
                 self.room_race = Some(race);
+                self.room_freestyle = None;
                 if let Some(overlay) = &mut self.overlay {
                     overlay.results = Default::default();
                 }
                 if let Some(room_race::Action::Load(settings)) = load {
                     room_load = Some(settings);
                 }
+            }
+            // Room King of the Hills / Treasure Hunt: a guest follows the
+            // host's new game onto its course scene.
+            if net.is_host()
+                && net.roster().0.is_some()
+                && self.game.is_none()
+                && let Some((kind, minutes)) = self.room_game_start.take()
+            {
+                let serial = self.room_game_serial.wrapping_add(1).max(1);
+                self.room_game_serial = serial;
+                host_game = Some((kind, serial, minutes));
+            }
+            if !net.is_host()
+                && let Some(state) = net.game_state()
+                && let Some(kind) = room_game::kind(state.game)
+                && state.serial != self.room_game_serial
+                && state.phase != atv_game::multiplayer::game_phase::OVER
+            {
+                self.room_game_serial = state.serial;
+                let minutes = (state.clock / 60.).ceil() as u32;
+                game_join = Some((kind, state.serial, minutes));
+                self.room_freestyle = None;
             }
             if let Some(race) = &mut self.room_race {
                 match race.frame(&mut riding.ride, net) {
@@ -1643,12 +1930,70 @@ impl App {
                                 .and_then(|r| r.frame.as_ref())
                                 .is_none_or(|f| f.phase != "finished")
                         {
-                            overlay.results.show_game("Race Results", summary);
+                            let course = course_label(&self.course_names, &net.environment);
+                            overlay
+                                .results
+                                .show_game("Race Results", format!("Race on {course}. {summary}"));
                             overlay.results.game_continue = true;
                         }
                     }
                     None => {}
                 }
+            }
+            // Room Freestyle: a guest follows the host's new session; the
+            // host starts one hosted from the menus once the room is joined.
+            if !net.is_host()
+                && let Some(state) = net.game_state()
+                && state.game == atv_game::multiplayer::game_kind::FREESTYLE
+                && state.serial != self.room_freestyle_serial
+                && state.phase != atv_game::multiplayer::game_phase::OVER
+            {
+                self.room_freestyle_serial = state.serial;
+                // A race or game scene goes back to the room's Free Ride.
+                freestyle_reload = riding.ride.race().is_some()
+                    || self.room_race.is_some()
+                    || self.game.as_ref().is_some_and(|g| g.room.is_some());
+                self.room_race = None;
+                if self.game.as_ref().is_some_and(|g| g.room.is_some()) {
+                    self.game = None;
+                }
+                self.room_freestyle = Some(room_freestyle::RoomFreestyle::new(
+                    false,
+                    state.serial,
+                    state.clock,
+                    net.environment.clone(),
+                ));
+                if let Some(overlay) = &mut self.overlay {
+                    overlay.results = Default::default();
+                }
+            }
+            if net.is_host()
+                && net.roster().0.is_some()
+                && self.room_freestyle_start
+                && self.room_freestyle.is_none()
+            {
+                self.room_freestyle_start = false;
+                let serial = self.room_freestyle_serial.wrapping_add(1).max(1);
+                self.room_freestyle_serial = serial;
+                let mut session = room_freestyle::RoomFreestyle::new(
+                    true,
+                    serial,
+                    room_freestyle::session_seconds(),
+                    net.environment.clone(),
+                );
+                session.table.hold = true;
+                self.room_freestyle = Some(session);
+            }
+            if let Some(session) = &mut self.room_freestyle {
+                session.course = course_label(&self.course_names, &net.environment);
+            }
+            if let Some(session) = &mut self.room_freestyle
+                && !freestyle_reload
+                && let Some(summary) = session.frame(&mut riding.ride, net)
+                && let Some(overlay) = &mut self.overlay
+            {
+                overlay.results.show_game("Freestyle Results", summary);
+                overlay.results.game_continue = true;
             }
             if let Some(overlay) = &mut self.overlay {
                 overlay.room_race_pending = self.room_race.as_ref().is_some_and(|r| r.pending());
@@ -1660,17 +2005,37 @@ impl App {
             let tags = self.overlay.as_ref().map_or(0, |o| o.tags);
             publish_multiplayer(net, riding.contacts, &riding.ride, remote, tags);
         }
-        // Split screen: player 2's engine and body impacts play through the
-        // room riders' voices, heard from player 1's camera (one output; the
-        // original's split-screen mix was not traced).
-        if let (Some(second), Some(sound)) = (&mut ready.split, &mut riding.sound) {
+        // Split screen: players 2-4's engines and body impacts play through
+        // the room riders' voices on the one output, each heard from the
+        // nearest player's camera (`001742f0` picks the nearest of the
+        // views' listeners; research/SPLIT_SCREEN.md "Split audio"). Player
+        // 1's positional and venue sounds use the same listener list from
+        // the next step (`RideAudio::views`).
+        if ready.split.is_empty()
+            && let Some(sound) = &mut riding.sound
+            && !sound.ride.views.is_empty()
+        {
+            sound.ride.views.clear();
+        }
+        if let (false, Some(sound)) = (ready.split.is_empty(), &mut riding.sound) {
             let motion = riding.ride.frame();
-            let rider = second.audio_rider();
+            let riders: Vec<_> = ready.split.iter_mut().map(|s| s.audio_rider()).collect();
+            let views: Vec<_> = ready
+                .split
+                .iter()
+                .map(|s| atv_core::spatial_audio::Listener {
+                    position: s.camera.eye(),
+                    forward: s.camera.axes().forward,
+                    velocity: s.riding.ride.frame().linear_velocity,
+                })
+                .collect();
+            sound.ride.views.clone_from(&views);
             for quad in sound.remote_frame(
-                &[rider],
+                &riders,
                 motion.origin,
                 &ready.camera,
                 motion.linear_velocity,
+                &views,
             ) {
                 engine_loads.push((quad, sound.load_remote_engine(quad)));
             }
@@ -1694,8 +2059,20 @@ impl App {
         }
         if let Some(environment) = course {
             self.room_race = None;
+            self.room_freestyle = None;
             self.reload_room(environment, None);
             return;
+        }
+        if freestyle_reload {
+            let environment = self
+                .ready
+                .as_ref()
+                .and_then(|r| r.net.as_ref())
+                .map(|n| n.environment.clone());
+            if let Some(environment) = environment {
+                self.reload_room(environment, None);
+                return;
+            }
         }
         if let Some(settings) = room_load {
             let environment = self
@@ -1706,6 +2083,32 @@ impl App {
             if let Some(environment) = environment {
                 self.reload_room(environment, Some(settings));
                 return;
+            }
+        }
+        if let Some((kind, serial, minutes)) = host_game {
+            self.start_room_game(kind, true, serial, minutes);
+            if let Some(room) = self.game.as_mut().and_then(|g| g.room.as_mut()) {
+                room.hold = true;
+            }
+            return;
+        }
+        if let Some((kind, serial, minutes)) = game_join {
+            // Play Again on the same course restarts in place; another game
+            // moves to its course scene.
+            let ride = self.ready.as_mut().and_then(|r| r.riding.as_mut());
+            match (&mut self.game, ride) {
+                (Some(game), Some(riding))
+                    if game.kind == kind && game.room.is_some() && game.session.is_some() =>
+                {
+                    game.room_restart(&mut riding.ride, serial);
+                    if let Some(overlay) = &mut self.overlay {
+                        overlay.results = Default::default();
+                    }
+                }
+                _ => {
+                    self.start_room_game(kind, false, serial, minutes);
+                    return;
+                }
             }
         }
         // A guest following the host's Tag onto its course.
@@ -1750,7 +2153,18 @@ impl App {
                     .map(|f| f.borrow().state.player_name.trim().to_string())
                     .filter(|n| !n.is_empty())
                     .unwrap_or_else(|| "Rider".into());
-                if let Some((summary, fame)) =
+                if !ready.split.is_empty() {
+                    let mut others: Vec<_> =
+                        ready.split.iter_mut().map(|s| &mut s.riding.ride).collect();
+                    if let Some(summary) = session.update_split(
+                        &mut riding.ride,
+                        &mut others,
+                        ready.venue.objective.as_ref(),
+                    ) && let Some(overlay) = &mut self.overlay
+                    {
+                        overlay.results.show_objective(summary);
+                    }
+                } else if let Some((summary, fame)) =
                     session.update(&mut riding.ride, ready.venue.objective.as_ref(), &player)
                     && let Some(overlay) = &mut self.overlay
                 {
@@ -1808,11 +2222,19 @@ impl App {
         }
         // Tag: the host starts it from Pause; guests join when its state
         // arrives. Leaving the room ends it.
-        if ready.net.is_none() {
+        if ready.net.is_none() && !ready.split.is_empty() && self.tag.is_none() {
+            // Split screen Tag: every ride is ready.
+            if let Some((minutes, _)) = self.split_tag.take() {
+                let mut session = tag::TagSession::new_local(minutes, ready.split.len() + 1);
+                session.model = ready.venue.tag_ball;
+                self.tag = Some(session);
+            }
+        } else if ready.net.is_none() && !self.tag.as_ref().is_some_and(|t| t.local) {
             if self.tag.take().is_some() {
                 tag::TagSession::release(&mut riding.ride);
             }
             self.tag_start = None;
+        } else if ready.net.is_none() {
         } else if self.tag.is_none()
             && self.tag_start.is_some()
             && !ready.venue.tag_ball
@@ -1865,18 +2287,22 @@ impl App {
                 self.tag = Some(session);
             }
         }
-        let tag_view = match (&mut self.tag, ready.net.as_mut()) {
-            (Some(session), Some(net)) => {
+        let tag_view = match &mut self.tag {
+            Some(session) if session.local || ready.net.is_some() => {
                 if ready.venue.tag_ball {
                     ready.scene.pose_prop(&ready.gpu, &session.ball_matrix());
                 }
                 session.start = ready.venue.scene.start_position;
                 session.crowd = ready.venue.scene.crowd_present;
-                if session.update(&mut riding.ride, net)
+                let mut others: Vec<_> =
+                    ready.split.iter_mut().map(|s| &mut s.riding.ride).collect();
+                if session.update(&mut riding.ride, ready.net.as_mut(), &mut others)
                     && let Some(overlay) = &mut self.overlay
                 {
                     overlay.results.show_game("Tag Results", session.summary());
-                    overlay.results.game_continue = true;
+                    // A room keeps riding (Continue); split screen offers
+                    // Restart Game and back to Games, like the other games.
+                    overlay.results.game_continue = !session.local;
                 }
                 let sounds = session.take_sounds();
                 if let Some(sound) = &mut riding.sound {
@@ -1913,18 +2339,17 @@ impl App {
             (None, Some(session)) => {
                 // Game over: the HockeyOver page (Restart Game, Quit to
                 // Main Menu).
-                if session.update(
-                    &mut riding.ride,
-                    ready.net.as_mut(),
-                    ready.split.as_mut().map(|s| &mut s.riding.ride),
-                ) && let Some(overlay) = &mut self.overlay
+                let mut others: Vec<_> =
+                    ready.split.iter_mut().map(|s| &mut s.riding.ride).collect();
+                if session.update(&mut riding.ride, ready.net.as_mut(), &mut others)
+                    && let Some(overlay) = &mut self.overlay
                 {
                     overlay
                         .results
                         .show_game("Hockey Results", session.summary());
                 }
                 riding.locked = session.held();
-                if let Some(second) = &mut ready.split {
+                for second in &mut ready.split {
                     second.riding.locked = session.held();
                 }
                 ready.scene.pose_prop(&ready.gpu, &session.puck_matrix());
@@ -1953,12 +2378,16 @@ impl App {
         // open the results.
         let game_view = match &mut self.game {
             Some(game) => {
-                game.update(
-                    &mut riding.ride,
-                    ready.split.as_mut().map(|s| &mut s.riding.ride),
-                );
+                match (&game.room, ready.net.as_mut()) {
+                    (Some(_), Some(net)) => game.room_update(&mut riding.ride, net),
+                    _ => {
+                        let mut others: Vec<_> =
+                            ready.split.iter_mut().map(|s| &mut s.riding.ride).collect();
+                        game.update(&mut riding.ride, &mut others);
+                    }
+                }
                 riding.locked |= game.locked();
-                if let Some(second) = &mut ready.split {
+                for second in &mut ready.split {
                     second.riding.locked = game.locked();
                 }
                 for (model, rgb) in game.flag_colors(&ready.venue.scene.models) {
@@ -2028,18 +2457,47 @@ impl App {
                         .filter(|n| !n.is_empty())
                         .unwrap_or_else(|| "You".into())
                 };
-                if let Some(summary) = game.results(&[&player, split::PLAYER_2])
+                let names: Vec<&str> = std::iter::once(player.as_str())
+                    .chain(split::PLAYER_NAMES[1..].iter().copied())
+                    .collect();
+                let summary = if game.room.is_some() {
+                    game.course = course_label(&self.course_names, &game.venue);
+                    game.room_results()
+                } else {
+                    game.results(&names)
+                };
+                if let Some(summary) = summary
                     && let Some(overlay) = &mut self.overlay
                 {
                     overlay.results.show_game("Race Results", summary);
+                    // A room game: Play Again (host) or Continue to the
+                    // room's Free Ride.
+                    if game.room.is_some() {
+                        overlay.results.game_continue = true;
+                    }
                 }
-                game.view(0)
+                game.view(game.room.as_ref().map_or(0, |r| r.me))
             }
             None => None,
         };
+        // Room Freestyle: the games panel (clock, combos, place, score and
+        // the leader), the start lamps' sounds and the held start.
+        let game_view = match &mut self.room_freestyle {
+            Some(session) if game_view.is_none() => {
+                riding.locked |= session.locked();
+                let sounds = std::mem::take(&mut session.sounds);
+                if let Some(sound) = &mut riding.sound {
+                    for name in sounds {
+                        sound.one_shot(name);
+                    }
+                }
+                Some(session.view())
+            }
+            _ => game_view,
+        };
         if let Some(overlay) = &mut self.overlay {
-            // Split screen: the race is over once both players finish.
-            overlay.hold_results = ready.split.as_ref().is_some_and(|s| {
+            // Split screen: the race is over once every player finishes.
+            overlay.hold_results = ready.split.iter().any(|s| {
                 s.riding
                     .ride
                     .race()
@@ -2047,7 +2505,10 @@ impl App {
                     .is_some_and(|f| f.phase != "finished")
             });
             overlay.training = self.training.is_some();
-            overlay.game = self.game.is_some() || self.hockey.is_some();
+            overlay.game = self.game.is_some()
+                || self.room_freestyle.is_some()
+                || self.hockey.is_some()
+                || self.tag.as_ref().is_some_and(|t| t.local);
             if riding.input_cleared {
                 overlay.clear_input();
             }
@@ -2111,10 +2572,22 @@ impl App {
                     .collect::<Vec<_>>()
             });
             // Player 2's view shows the same game tags (hill pills, treasures).
+            let local_tag = self.tag.as_ref().filter(|t| t.local).map(|t| t.markers());
             let game_peers = game_markers
                 .clone()
                 .or_else(|| self.hockey.as_ref().map(|h| h.markers()))
-                .filter(|_| ready.split.is_some());
+                .or_else(|| local_tag.clone())
+                // Split Freestyle Objectives: every view tags the untouched
+                // targets from its own camera (a port choice like player 1's
+                // tags: the original draws only the 3D targets).
+                .or_else(|| {
+                    self.objective
+                        .as_ref()
+                        .filter(|o| o.split.is_some())
+                        .map(|o| o.markers())
+                        .filter(|m| !m.is_empty())
+                })
+                .filter(|_| !ready.split.is_empty());
             let hud_peers = ready
                 .net
                 .as_ref()
@@ -2133,15 +2606,21 @@ impl App {
                         .map(|o| o.markers())
                         .filter(|m| !m.is_empty())
                 })
-                .or_else(|| self.hockey.as_ref().map(|h| h.markers()));
+                .or_else(|| self.hockey.as_ref().map(|h| h.markers()))
+                .or(local_tag);
             // Split screen: each view projects at its own rectangle's aspect.
-            let rects = ready.split.as_ref().map(|s| {
+            let rects: Option<Vec<f32>> = ready.split.first().map(|s| {
                 s.layout
                     .rects(gpu.config.width, gpu.config.height, 1.)
+                    .into_iter()
                     .map(|[_, _, w, h]| w as f32 / h.max(1) as f32)
+                    .collect()
             });
             let view_projection = ready.camera.view_projection(
-                rects.map_or(gpu.aspect(), |r| r[0]),
+                rects
+                    .as_ref()
+                    .and_then(|r| r.first().copied())
+                    .unwrap_or(gpu.aspect()),
                 ready.focal_length,
                 1.,
                 10_000.,
@@ -2192,15 +2671,98 @@ impl App {
                     icons,
                 }
             };
-            // Split screen: player 2's mini-game panel, compass and tags.
-            let second_game = self.game.as_ref().and_then(|g| g.view(1));
-            let second_compass = ready
+            // Split screen: the other players' mini-game panels, compasses
+            // and tags.
+            // A split target objective's compass is each player's too
+            // (Overlay Set 5 places object 31 once per view).
+            let compass_for = |s: &split::Second| {
+                compass_icons
+                    .clone()
+                    .filter(|_| match &self.game {
+                        Some(g) => g.view(usize::from(s.player) - 1).is_some(),
+                        None => self.objective.as_ref().is_some_and(|o| o.split.is_some()),
+                    })
+                    .map(|icons| compass_of(s.riding.ride.frame(), icons))
+            };
+            let others: Vec<overlay::SecondHud> = ready
                 .split
-                .as_ref()
-                .zip(compass_icons.clone())
-                .filter(|_| second_game.is_some())
-                .map(|(s, icons)| compass_of(s.riding.ride.frame(), icons));
+                .iter()
+                .map(|s| {
+                    let ride = &s.riding.ride;
+                    let index = usize::from(s.player) - 1;
+                    let (columns, rows) = s.layout.grid();
+                    overlay::SecondHud {
+                        grid: (columns, rows),
+                        cell: (index as u32 % columns, index as u32 / columns),
+                        hud: ride.hud(),
+                        race: ride
+                            .race()
+                            .and_then(|r| r.frame.as_ref())
+                            .map(|f| (f, ride.committed_points(), ride.frame().origin)),
+                        game: self
+                            .game
+                            .as_ref()
+                            .filter(|g| g.players > index)
+                            .and_then(|g| g.view(index)),
+                        compass: compass_for(s),
+                        training: self
+                            .hockey
+                            .as_ref()
+                            .filter(|h| h.split)
+                            .map(|h| h.view_for(ride.frame().origin, index))
+                            .or_else(|| {
+                                self.tag
+                                    .as_ref()
+                                    .filter(|t| t.local)
+                                    .map(|t| t.view_for(index))
+                            }),
+                        peers: game_peers.as_deref().map(|peers| {
+                            (
+                                peers,
+                                ride.frame().origin,
+                                s.camera.view_projection(
+                                    rects
+                                        .as_ref()
+                                        .and_then(|r| r.get(index).copied())
+                                        .unwrap_or(1.),
+                                    s.focal_length,
+                                    1.,
+                                    10_000.,
+                                ),
+                            )
+                        }),
+                        eye: Some(s.camera.eye()),
+                    }
+                })
+                .collect();
             let compass = compass_icons.map(|icons| compass_of(frame, icons));
+            // Split screen: the original layout and the mode's overlay set.
+            let split_layout = ready.split.first().map(|s| {
+                let name = atv_ui::hud::split::layout_name(
+                    ready.split.len() + 1,
+                    s.layout == split::Layout::Vertical,
+                );
+                let race = ride.race().and_then(|r| r.frame.as_ref());
+                let set = match (race, self.game.as_ref().map(|g| g.kind)) {
+                    (Some(f), _) if f.enduro_gate.is_some() => 11,
+                    (Some(_), _) => 1,
+                    (None, Some(atv_core::games::GameKind::TreasureHunt)) => 6,
+                    (None, Some(atv_core::games::GameKind::KingOfTheHills)) => 7,
+                    _ if self.hockey.as_ref().is_some_and(|h| h.split) => 9,
+                    _ if self.tag.as_ref().is_some_and(|t| t.local) => 8,
+                    // A target objective (`CherryPick`) uses its own set,
+                    // whose split layouts list the compass per player.
+                    _ if self
+                        .objective
+                        .as_ref()
+                        .is_some_and(|o| o.split.is_some() && !o.targets.is_empty()) =>
+                    {
+                        5
+                    }
+                    _ => 2,
+                };
+                (name, set)
+            });
             overlay.prepare(
                 &gpu.device,
                 &gpu.queue,
@@ -2227,38 +2789,8 @@ impl App {
                     training: training_view,
                     game: game_view,
                     compass,
-                    second: ready.split.as_ref().map(|s| {
-                        let ride = &s.riding.ride;
-                        overlay::SecondHud {
-                            vertical: s.layout == split::Layout::Vertical,
-                            hud: ride.hud(),
-                            race: ride
-                                .race()
-                                .and_then(|r| r.frame.as_ref())
-                                .map(|f| (f, ride.committed_points(), ride.frame().origin)),
-                            game: second_game
-                                .filter(|_| self.game.as_ref().is_some_and(|g| g.players > 1)),
-                            compass: second_compass,
-                            training: self
-                                .hockey
-                                .as_ref()
-                                .filter(|h| h.split)
-                                .map(|h| h.view_for(ride.frame().origin, 1)),
-                            peers: game_peers.as_deref().map(|peers| {
-                                (
-                                    peers,
-                                    ride.frame().origin,
-                                    s.camera.view_projection(
-                                        rects.map_or(1., |r| r[1]),
-                                        s.focal_length,
-                                        1.,
-                                        10_000.,
-                                    ),
-                                )
-                            }),
-                            eye: Some(s.camera.eye()),
-                        }
-                    }),
+                    others,
+                    split_layout,
                 }),
                 Some(&mut riding.bindings),
             );
@@ -2269,10 +2801,7 @@ impl App {
             state["camera"]["preset"] = riding.ride.camera().0.preset.into();
             state["paused"] = riding.paused.into();
             // Split screen (tools/test_engine_split_screen.mjs).
-            if let Some(second) = &ready.split {
-                let ride = &second.riding.ride;
-                let f = ride.frame();
-                let applied = ride.applied();
+            if let Some(second) = ready.split.first() {
                 let camera = |c: &atv_render::Camera, focal: f32| {
                     serde_json::json!([c.x, c.y, c.z, c.yaw, c.pitch, focal])
                 };
@@ -2284,7 +2813,8 @@ impl App {
                             "position": f.position, "field": f.field,
                             "elapsed": f.elapsed,
                             "sign": f.hud.as_ref().and_then(|h| h.sign.as_ref()).map(|s| s.id),
-                            "linkedHuman": state.split.human.is_some(),
+                            "linkedHuman": !state.split.humans.is_empty(),
+                            "linkedHumans": state.split.humans.len(),
                             "waiting": state.split.waiting,
                             "standings": f.standings.iter().map(|s| serde_json::json!({
                                 "name": s.name, "position": s.position, "time": s.time,
@@ -2293,19 +2823,64 @@ impl App {
                         })
                     })
                 };
-                state["split"] = serde_json::json!({
-                    "layout": format!("{:?}", second.layout),
-                    "views": second.layout.rects(
+                let player = |s: &split::Second| {
+                    let ride = &s.riding.ride;
+                    let f = ride.frame();
+                    let applied = ride.applied();
+                    serde_json::json!({
+                        "player": s.player,
+                        "origin": f.origin,
+                        "speed": f.speed_magnitude,
+                        "steps": ride.steps(),
+                        "throttle": applied.throttle,
+                        "steer": applied.steer,
+                        "race": race(ride),
+                        "quad": ride.selection().quad,
+                        "rider": ride.selection().rider,
+                        "gear": ride.appearance().gear,
+                        "paint": ride.appearance().paint,
+                        "paintMode": ride.paint(),
+                        "locked": s.riding.locked,
+                        "effects": s.riding.effects.as_ref().map(|e| {
+                            let f = e.frame();
+                            serde_json::json!({
+                                "particles": f.particles.len(),
+                                "emitted": f.total_emitted.iter().sum::<u64>(),
+                                // Its own Enhanced/High tire tracks and
+                                // lingering dust.
+                                "tracks": e.tracks.as_ref().map(|(t, ..)| t.total),
+                                "dust": e.dust.as_ref().map(|d| d.emitter.emitted),
+                            })
+                        }),
+                        "rumbles": s.riding.rumble.pulses,
+                    })
+                };
+                let players: Vec<_> = ready.split.iter().map(player).collect();
+                let views: Vec<_> = second
+                    .layout
+                    .rects(
                         ready.gpu.config.width,
                         ready.gpu.config.height,
                         self.window.as_ref().map_or(1., |w| w.scale_factor()) as f32,
-                    ),
-                    "cameras": [
-                        camera(&ready.camera, ready.focal_length),
-                        camera(&second.camera, second.focal_length),
-                    ],
-                    "presets": [riding.ride.camera().0.preset, ride.camera().0.preset],
-                    "pads": [pad.is_some(), second.pad],
+                    )
+                    .into_iter()
+                    .take(ready.split.len() + 1)
+                    .collect();
+                state["split"] = serde_json::json!({
+                    "layout": format!("{:?}", second.layout),
+                    "players": ready.split.len() + 1,
+                    // Players 2.. riders drawn in the shared scene.
+                    "ridersShown": ready.scene.peers_shown(),
+                    "views": views,
+                    "cameras": std::iter::once(camera(&ready.camera, ready.focal_length))
+                        .chain(ready.split.iter().map(|s| camera(&s.camera, s.focal_length)))
+                        .collect::<Vec<_>>(),
+                    "presets": std::iter::once(riding.ride.camera().0.preset)
+                        .chain(ready.split.iter().map(|s| s.riding.ride.camera().0.preset))
+                        .collect::<Vec<_>>(),
+                    "pads": std::iter::once(pad.is_some())
+                        .chain(ready.split.iter().map(|s| s.pad))
+                        .collect::<Vec<_>>(),
                     "resultsHeld": self.overlay.as_ref().is_some_and(|o| o.hold_results),
                     "resultsShown": self.overlay.as_ref().is_some_and(|o| o.results.shown),
                     "resultsRows": self.overlay.as_ref().map(|o| o.results.rows.clone()),
@@ -2316,24 +2891,8 @@ impl App {
                         "race": race(&riding.ride),
                         "quad": riding.ride.selection().quad,
                     },
-                    "player2": {
-                        "origin": f.origin,
-                        "speed": f.speed_magnitude,
-                        "steps": ride.steps(),
-                        "throttle": applied.throttle,
-                        "steer": applied.steer,
-                        "race": race(ride),
-                        "quad": ride.selection().quad,
-                        "rider": ride.selection().rider,
-                        "effects": second.riding.effects.as_ref().map(|e| {
-                            let f = e.frame();
-                            serde_json::json!({
-                                "particles": f.particles.len(),
-                                "emitted": f.total_emitted.iter().sum::<u64>(),
-                            })
-                        }),
-                        "rumbles": second.riding.rumble.pulses,
-                    },
+                    "player2": players.first(),
+                    "others": players,
                     "terrainPatches": ready.scene.terrain_patches(),
                 });
             }
@@ -2505,12 +3064,16 @@ impl App {
                 "trainingArrows": ready.venue.training_arrows.map(|m| m.len()),
                 "game": self.game.as_ref().map(games::GameSession::state),
                 "roomRace": self.room_race.as_ref().map(room_race::RoomRace::state),
+                "roomGame": self.game.as_ref().map(games::GameSession::room_state),
+                "roomFreestyle": self.room_freestyle.as_ref().map(room_freestyle::RoomFreestyle::state),
                 "hockey": self.hockey.as_ref().map(|h| h.state(riding.ride.frame().origin)),
                 "tag": self.tag.as_ref().map(|t| t.state()),
                 "tagBall": ready.venue.tag_ball,
                 "engineEffect": riding.ride.engine_effect(),
                 "start": ready.venue.scene.start_position,
                 "oneShots": riding.sound.as_ref().map(|s| s.ride.race.stats.one_shots.clone()),
+                // Players 2-4's (and room riders') engine voices and starts.
+                "remoteVoices": riding.sound.as_ref().map(|s| (s.remote.voices(), s.remote.starts)),
                 "objective": self.objective.as_ref().map(|o| serde_json::json!({
                     "series": o.series, "expert": o.expert, "course": o.course,
                     "objective": o.objective, "recorded": o.recorded,
@@ -2524,6 +3087,20 @@ impl App {
                     "start": o.run.as_ref().and_then(|r| r.objective.start),
                     "cherries": ready.venue.objective.as_ref()
                         .map(|v| v.models.iter().filter(|m| m.is_some()).count()),
+                    // Split screen's shared run (`atv_core::freestyle::split`).
+                    "split": o.split.as_ref().map(|r| serde_json::json!({
+                        "players": r.runs.len(),
+                        "timeLeft": r.time_left,
+                        "taken": r.taken,
+                        "scores": r.runs.iter().map(|p| p.score).collect::<Vec<_>>(),
+                        "outcomes": r.runs.iter()
+                            .map(|p| p.outcome.map(|x| format!("{x:?}"))).collect::<Vec<_>>(),
+                        "places": r.places(),
+                        "winners": r.winners,
+                        "progress": r.progress(),
+                    })),
+                    "summary": self.overlay.as_ref().filter(|ov| ov.results.shown && o.split.is_some())
+                        .and_then(|ov| ov.results.objective.clone()),
                 })),
                 "results": self.overlay.as_ref().filter(|o| o.results.shown)
                     .map(|o| o.results.buttons()),
@@ -2532,6 +3109,14 @@ impl App {
                     .and_then(|o| o.results.fame.as_ref())
                     .map(|f| serde_json::json!({"broken": f.broken, "name": f.name})),
             });
+            // Player 1's positional sounds: listeners (one per view) and the
+            // one nearest player 1's rider (0 = player 1's camera).
+            state["ride"]["listeners"] = serde_json::json!(
+                riding
+                    .sound
+                    .as_ref()
+                    .map(|s| (s.ride.stats.listeners, s.ride.stats.nearest))
+            );
             // The saved settings the ride applies (tools/test_engine_settings.mjs).
             let graphics = ready.scene.graphics();
             let mixer = riding.sound.as_ref().and_then(|s| {
@@ -2604,22 +3189,23 @@ impl App {
                 overlay.draw(encoder, target);
             }
         };
-        let rendered = match &ready.split {
+        let rendered = match ready.split.first() {
             Some(second) => {
-                let [a, b] = second.layout.rects(
+                let rects = second.layout.rects(
                     ready.gpu.config.width,
                     ready.gpu.config.height,
                     device as f32,
                 );
-                let second_view = View {
-                    camera: second.camera,
-                    focal_length: second.focal_length,
-                };
-                ready.scene.render_views(
-                    &ready.gpu,
-                    &[(first_view, a), (second_view, b)],
-                    &mut draw_overlay,
-                )
+                let views: Vec<(View, [u32; 4])> = std::iter::once(first_view)
+                    .chain(ready.split.iter().map(|s| View {
+                        camera: s.camera,
+                        focal_length: s.focal_length,
+                    }))
+                    .zip(rects)
+                    .collect();
+                ready
+                    .scene
+                    .render_views(&ready.gpu, &views, &mut draw_overlay)
             }
             None => ready
                 .scene
@@ -2975,8 +3561,9 @@ impl App {
         let Some(riding) = ready.riding.as_mut() else {
             return;
         };
-        // Split screen: player 2's ride restarts a game with player 1's.
-        let second = ready.split.as_mut().map(|s| &mut s.riding.ride);
+        // Split screen: the other players' rides restart a game with
+        // player 1's.
+        let mut second: Vec<_> = ready.split.iter_mut().map(|s| &mut s.riding.ride).collect();
         match event {
             // Restart Race (frontend.js reset({restart:true})): the whole
             // event reloads, also after the finish.
@@ -2989,8 +3576,30 @@ impl App {
             // Restart Game (`00220d10`, `002d1450`): the game starts over
             // at its start, in place.
             Event::Reset if self.game.is_some() => {
+                // A room game restarts for everyone, from the host only.
+                let host = ready.net.as_ref().is_some_and(|n| n.is_host());
                 if let Some(game) = &mut self.game {
-                    game.restart(&mut riding.ride, second);
+                    if game.room.is_none() {
+                        game.restart(&mut riding.ride, &mut second);
+                    } else if host {
+                        let serial = self.room_game_serial.wrapping_add(1).max(1);
+                        self.room_game_serial = serial;
+                        game.room_restart(&mut riding.ride, serial);
+                    }
+                }
+                if let Some(overlay) = &mut self.overlay {
+                    overlay.results = Default::default();
+                }
+                self.menu_event(Event::Resume);
+            }
+            // Room Freestyle: Restart Game starts a new session for the
+            // room, from the host only (it also starts a held one now).
+            Event::Reset if self.room_freestyle.is_some() => {
+                let host = ready.net.as_ref().is_some_and(|n| n.is_host());
+                if host && let Some(session) = &mut self.room_freestyle {
+                    let serial = self.room_freestyle_serial.wrapping_add(1).max(1);
+                    self.room_freestyle_serial = serial;
+                    session.restart(serial);
                 }
                 if let Some(overlay) = &mut self.overlay {
                     overlay.results = Default::default();
@@ -2998,9 +3607,13 @@ impl App {
                 self.menu_event(Event::Resume);
             }
             // Restart (`003377f0`): scores and clock reset, a new face-off.
+            Event::Reset if self.tag.as_ref().is_some_and(|t| t.local) => {
+                self.restart_split_tag();
+                self.menu_event(Event::Resume);
+            }
             Event::Reset if self.hockey.is_some() => {
                 if let Some(session) = &mut self.hockey {
-                    session.restart(&mut riding.ride, second);
+                    session.restart(&mut riding.ride, &mut second);
                 }
                 self.menu_event(Event::Resume);
             }
@@ -3081,6 +3694,33 @@ impl App {
             Event::PlayRace(variant) => {
                 self.start_room_race(variant);
                 self.menu_event(Event::Resume);
+            }
+            // Play King of the Hills / Treasure Hunt (room host): the game
+            // for every room rider on this course (research/MULTIPLAYER.md
+            // "Room games").
+            Event::PlayGame(event) => {
+                self.menu_event(Event::Resume);
+                let host = self
+                    .ready
+                    .as_ref()
+                    .and_then(|r| r.net.as_ref())
+                    .is_some_and(|n| n.is_host());
+                if let Some(kind) = atv_core::games::GameKind::from_event_type(event)
+                    .filter(|k| room_game::code(*k).is_some())
+                    && host
+                {
+                    let serial = self.room_game_serial.wrapping_add(1).max(1);
+                    self.room_game_serial = serial;
+                    let minutes = self.room_game_minutes();
+                    self.start_room_game(kind, true, serial, minutes);
+                }
+            }
+            // Play Freestyle (room host): a timed stunt session for every
+            // room rider on this course (research/MULTIPLAYER.md "Room
+            // Freestyle").
+            Event::PlayFreestyle => {
+                self.menu_event(Event::Resume);
+                self.start_room_freestyle();
             }
             // Play Tag (room host): a Tag game for the room on this course.
             Event::PlayTag => {
@@ -3173,6 +3813,7 @@ impl App {
                                 motion.origin,
                                 &ready.camera,
                                 motion.linear_velocity,
+                                &[],
                             );
                         }
                     }
@@ -3340,12 +3981,12 @@ impl App {
     fn remember_ride(&self) {
         #[cfg(target_arch = "wasm32")]
         if let Some(storage) = web_sys::window().and_then(|w| w.session_storage().ok().flatten()) {
-            // A split ride reopens split, with player 2's own ATV and rider.
+            // A split ride reopens split, with each player's own ATV and
+            // rider.
             let split = self
                 .ready
                 .as_ref()
-                .and_then(|r| r.split.as_ref())
-                .map(split::Second::resume_query);
+                .and_then(|r| split::resume_query(&r.split));
             let _ = match self.ride_link() {
                 Some((url, _)) => storage.set_item(
                     "fury-resume",
@@ -3433,7 +4074,7 @@ impl App {
             ecosystem_collision_off: !prefs.ecosystem_collision && !riding.online,
         };
         // Split screen: player 2 rides the same settings.
-        if let Some(second) = &mut ready.split {
+        for second in &mut ready.split {
             second.riding.vibration = prefs.vibration;
             second.riding.chase_assist = prefs.chase_assist;
             second.riding.ride.options = riding.ride.options;
@@ -3451,6 +4092,13 @@ impl App {
         // Tire tracks read the (Heavy mud) zones game.js passes.
         if let Some(effects) = &mut riding.effects {
             effects.set_track_zones(*riding.dirt.zones());
+        }
+        for second in &mut ready.split {
+            let r = &mut second.riding;
+            r.dirt.set_heavy(prefs.alpha("heavy-mud"));
+            if let Some(effects) = &mut r.effects {
+                effects.set_track_zones(*r.dirt.zones());
+            }
         }
         let mode = atv_game::crash::CrashMode::parse(&prefs.crash_mode).unwrap_or_default();
         if riding
@@ -3494,6 +4142,18 @@ impl App {
                 );
                 effects.set_track_zones(*riding.dirt.zones());
             }
+            // Split screen: players 2-4's own tracks and dust follow too.
+            for second in &mut ready.split {
+                if let Some(effects) = &mut second.riding.effects {
+                    effects.set_lingering_dust(usize::from(graphics.dust), &ready.venue);
+                    effects.set_tire_tracks(
+                        usize::from(graphics.tire_tracks.0),
+                        f32::from(graphics.tire_tracks.1),
+                        &ready.venue,
+                    );
+                    effects.set_track_zones(*second.riding.dirt.zones());
+                }
+            }
             ready.scene.set_graphics(&ready.gpu, &ready.venue, graphics);
         }
     }
@@ -3505,7 +4165,7 @@ impl App {
         let Some(riding) = ready.riding.as_mut() else {
             return;
         };
-        let second = ready.split.as_mut().map(|s| &mut s.riding.ride);
+        let mut second: Vec<_> = ready.split.iter_mut().map(|s| &mut s.riding.ride).collect();
         match action {
             overlay::Action::Pause => {
                 if !riding.held {
@@ -3518,6 +4178,13 @@ impl App {
                 }
             }
             overlay::Action::Camera => riding.cycle_requested = true,
+            overlay::Action::RaceRetry if self.tag.as_ref().is_some_and(|t| t.local) => {
+                self.restart_split_tag();
+            }
+            overlay::Action::RaceQuit if self.tag.as_ref().is_some_and(|t| t.local) => {
+                // Back to the Games page that started it.
+                self.quit_to(Some("games"));
+            }
             // Room race results: the host starts the next race, a guest
             // waits for it; Quit returns to the room's Free Ride.
             overlay::Action::RaceRetry if self.room_race.is_some() => {
@@ -3548,6 +4215,53 @@ impl App {
                     self.reload_room(environment, None);
                 }
             }
+            // Room Freestyle results: the host's Play Again starts the next
+            // session, a guest waits for it; Quit returns to the room's
+            // Free Ride on the same course (no reload: it is that ride).
+            overlay::Action::RaceRetry if self.room_freestyle.is_some() => {
+                if let Some(overlay) = &mut self.overlay {
+                    overlay.results = Default::default();
+                }
+                if ready.net.as_ref().is_some_and(|n| n.is_host())
+                    && let Some(session) = &mut self.room_freestyle
+                {
+                    let serial = self.room_freestyle_serial.wrapping_add(1).max(1);
+                    self.room_freestyle_serial = serial;
+                    session.restart(serial);
+                }
+            }
+            overlay::Action::RaceQuit if self.room_freestyle.is_some() => {
+                self.room_freestyle = None;
+                riding.locked = false;
+                if let Some(overlay) = &mut self.overlay {
+                    overlay.results = Default::default();
+                }
+            }
+            // Room King of the Hills / Treasure Hunt results: the host's
+            // Play Again starts the next game, a guest waits for it;
+            // Continue returns to the room's Free Ride.
+            overlay::Action::RaceRetry if self.game.as_ref().is_some_and(|g| g.room.is_some()) => {
+                if let Some(overlay) = &mut self.overlay {
+                    overlay.results = Default::default();
+                }
+                if ready.net.as_ref().is_some_and(|n| n.is_host())
+                    && let Some(game) = &mut self.game
+                {
+                    let serial = self.room_game_serial.wrapping_add(1).max(1);
+                    self.room_game_serial = serial;
+                    game.room_restart(&mut riding.ride, serial);
+                }
+            }
+            overlay::Action::RaceQuit if self.game.as_ref().is_some_and(|g| g.room.is_some()) => {
+                self.game = None;
+                if let Some(overlay) = &mut self.overlay {
+                    overlay.results = Default::default();
+                }
+                let environment = ready.net.as_ref().map(|n| n.environment.clone());
+                if let Some(environment) = environment {
+                    self.reload_room(environment, None);
+                }
+            }
             overlay::Action::RaceRetry if self.tag.is_some() => {
                 if self
                     .ready
@@ -3573,7 +4287,7 @@ impl App {
             }
             overlay::Action::RaceRetry if self.game.is_some() => {
                 if let Some(game) = &mut self.game {
-                    game.restart(&mut riding.ride, second);
+                    game.restart(&mut riding.ride, &mut second);
                 }
                 if let Some(overlay) = &mut self.overlay {
                     overlay.results = Default::default();
@@ -3581,7 +4295,7 @@ impl App {
             }
             overlay::Action::RaceRetry if self.hockey.is_some() => {
                 if let Some(session) = &mut self.hockey {
-                    session.restart(&mut riding.ride, second);
+                    session.restart(&mut riding.ride, &mut second);
                 }
                 if let Some(overlay) = &mut self.overlay {
                     overlay.results = Default::default();
@@ -3691,6 +4405,7 @@ impl App {
             return;
         };
         session.run = None;
+        session.split = None;
         session.recorded = false;
         let course = session.course.clone();
         if self.front.is_some() && self.quit_to(None) {
@@ -4495,6 +5210,10 @@ impl ApplicationHandler<Message> for App {
                     game.load(toy);
                 }
             }
+            Message::CourseNames(names) => match names {
+                Ok(names) => self.course_names.extend(names),
+                Err(error) => status(&format!("Course names unavailable: {error}")),
+            },
             Message::SoundtrackReady(result) => {
                 match result {
                     Ok(music) if self.soundtrack.is_none() => {
@@ -5971,6 +6690,9 @@ impl App {
                 | Event::Training { .. }
                 | Event::Game { .. }
                 | Event::Hockey { .. }
+                | Event::TagHost { .. }
+                | Event::GameHost { .. }
+                | Event::FreestyleHost { .. }
                 | Event::Objective { .. }
         ) {
             let split = self.front.as_ref().and_then(|f| {
@@ -5982,13 +6704,19 @@ impl App {
                             | Event::Race { .. }
                             | Event::Game { .. }
                             | Event::Hockey { .. }
+                            | Event::TagHost { .. }
+                            | Event::Objective { .. }
                     ))
-                .then(|| split::Request {
-                    layout: split::Layout::from_vertical(f.state.split_vertical),
-                    second: Some(atv_game::ride::Selection {
-                        quad: f.state.split_second.0,
-                        rider: f.state.split_second.1,
-                    }),
+                .then(|| {
+                    // The players seated on the Players page (pad order).
+                    let (players, seconds, looks) = f.state.split_launch();
+                    split::Request {
+                        layout: split::Layout::from_vertical(f.state.split_vertical),
+                        players: players.clamp(2, split::MAX_PLAYERS),
+                        seconds: seconds
+                            .map(|(quad, rider)| Some(atv_game::ride::Selection { quad, rider })),
+                        looks: looks.map(Some),
+                    }
                 })
             });
             self.split_request = split;
@@ -6001,7 +6729,45 @@ impl App {
         self.hockey = None;
         self.tag = None;
         self.tag_start = None;
+        self.room_game_start = None;
+        self.room_freestyle = None;
+        self.room_freestyle_start = false;
         match event {
+            Event::FreestyleHost {
+                environment,
+                code,
+                quad,
+                rider,
+                name,
+            } => {
+                self.front_event(Event::Host {
+                    environment,
+                    code,
+                    quad,
+                    rider,
+                    name,
+                });
+                // The room's Freestyle starts once the room is joined.
+                self.room_freestyle_start = true;
+            }
+            Event::GameHost {
+                kind,
+                environment,
+                minutes,
+                quad,
+                rider,
+                name,
+            } => {
+                self.front_event(Event::Host {
+                    environment,
+                    code: None,
+                    quad,
+                    rider,
+                    name,
+                });
+                // The room's ride moves to the game's course and starts it.
+                self.room_game_start = Some((kind, minutes));
+            }
             Event::Game {
                 kind,
                 venue,
@@ -6013,7 +6779,9 @@ impl App {
                 let Some(content) = self.content.clone() else {
                     return;
                 };
-                let players = if self.split_request.is_some() { 2 } else { 1 };
+                let players = self
+                    .split_request
+                    .map_or(1, |r| usize::from(r.players.clamp(2, split::MAX_PLAYERS)));
                 self.game = Some(games::GameSession::new(
                     kind,
                     venue.clone(),
@@ -6044,10 +6812,9 @@ impl App {
                 self.start_ride(venue, quad, rider, None, None);
             }
             Event::Hockey { quad, rider } => {
-                self.hockey = Some(if self.split_request.is_some() {
-                    hockey::HockeySession::new_split()
-                } else {
-                    hockey::HockeySession::new()
+                self.hockey = Some(match self.split_request {
+                    Some(request) => hockey::HockeySession::new_split(usize::from(request.players)),
+                    None => hockey::HockeySession::new(),
                 });
                 self.start_ride("game01".into(), quad, rider, None, None);
             }
@@ -6088,6 +6855,7 @@ impl App {
                     triggered: Vec::new(),
                     visit_clock: 0,
                     championship,
+                    split: None,
                 });
                 self.start_ride(environment, quad, rider, None, None);
             }
@@ -6204,6 +6972,18 @@ impl App {
                     net.resume_at = None;
                 }
                 self.pending_room = Some(net);
+                self.start_ride(environment, quad, rider, None, None);
+            }
+            // Split screen: Tag for both local players on the venue's Tag
+            // course, no room (research/SPLIT_SCREEN.md "Slice 4").
+            Event::TagHost {
+                environment,
+                minutes,
+                quad,
+                rider,
+                ..
+            } if self.split_request.is_some() => {
+                self.split_tag = Some((minutes, environment.clone()));
                 self.start_ride(environment, quad, rider, None, None);
             }
             Event::TagHost {
@@ -6548,20 +7328,29 @@ impl App {
             // King of the Hills rides its own scene (the hill bases, flags
             // and spotlights of `env05kh.scn`) over the Freeride archive;
             // Treasure Hunt reads its mode TOY and bombs the same way.
-            game_scene: self.game.as_ref().and_then(|g| {
-                let path = atv_core::games::game_archive(g.kind, &g.venue)?;
-                let suffix = match g.kind {
-                    atv_core::games::GameKind::KingOfTheHills => "kh",
-                    // Treasure Hunt: its mode TOY and bomb models over the
-                    // Freeride scene (no `th.scn` ships).
-                    atv_core::games::GameKind::TreasureHunt => "th",
-                    _ => return None,
-                };
-                self.content
-                    .as_ref()
-                    .is_some_and(|c| c.has(&path))
-                    .then(|| (path, format!("{}{suffix}", g.venue)))
-            }),
+            game_scene: self
+                .game
+                .as_ref()
+                .and_then(|g| {
+                    let path = atv_core::games::game_archive(g.kind, &g.venue)?;
+                    let suffix = match g.kind {
+                        atv_core::games::GameKind::KingOfTheHills => "kh",
+                        // Treasure Hunt: its mode TOY and bomb models over the
+                        // Freeride scene (no `th.scn` ships).
+                        atv_core::games::GameKind::TreasureHunt => "th",
+                        _ => return None,
+                    };
+                    self.content
+                        .as_ref()
+                        .is_some_and(|c| c.has(&path))
+                        .then(|| (path, format!("{}{suffix}", g.venue)))
+                })
+                // Split screen Tag rides the venue's Tag course.
+                .or_else(|| {
+                    self.split_tag
+                        .as_ref()
+                        .and_then(|(_, venue)| tag_scene(self.content.as_ref(), venue))
+                }),
             // A Freestyle objective reads the course's OB archive (its
             // `.obj`, and a target run's TOY and cherries).
             objective: self.objective.as_ref().and_then(|o| {
@@ -7067,6 +7856,16 @@ impl App {
         // A room race ends with its room (its results never come).
         self.room_race = None;
         self.room_race_serial = 0;
+        // So does a room King of the Hills / Treasure Hunt.
+        if self.game.as_ref().is_some_and(|g| g.room.is_some()) {
+            self.game = None;
+        }
+        self.room_game_serial = 0;
+        self.room_game_start = None;
+        // And a room Freestyle.
+        self.room_freestyle = None;
+        self.room_freestyle_serial = 0;
+        self.room_freestyle_start = false;
         if let Some(overlay) = &mut self.overlay {
             overlay.room_race_pending = false;
         }
@@ -7078,7 +7877,13 @@ impl App {
             riding.server_clock = None;
             let motion = riding.ride.frame();
             if let Some(sound) = &mut riding.sound {
-                sound.remote_frame(&[], motion.origin, &ready.camera, motion.linear_velocity);
+                sound.remote_frame(
+                    &[],
+                    motion.origin,
+                    &ready.camera,
+                    motion.linear_velocity,
+                    &[],
+                );
             }
         }
         if let Some(overlay) = &mut self.overlay {
@@ -7092,6 +7897,7 @@ impl App {
         let Some(front) = self.front.clone() else {
             return false;
         };
+        self.split_tag = None;
         // Leaving mid-course keeps nothing (the original saves only the
         // ending's reward).
         self.training = None;
@@ -7101,6 +7907,8 @@ impl App {
         // A room race ends with its room; the next room numbers from 1.
         self.room_race = None;
         self.room_race_serial = 0;
+        self.room_freestyle = None;
+        self.room_freestyle_serial = 0;
         let Some(ready) = self.ready.take() else {
             return false;
         };
@@ -7132,12 +7940,28 @@ impl App {
         self.front_frames += 1;
         let pin = front.borrow().pad_pin();
         self.gamepad.set_pin(pin);
-        let pad = self.gamepad.sample();
+        // Split Screen → Players: each controller claims its own seat, so
+        // only the first drives the menu (research/SPLIT_SCREEN.md).
+        let seats = front.borrow().state.page == "splitseats" && front.borrow().menu.is_none();
+        let pad = if seats {
+            self.gamepad.sample_slot(0)
+        } else {
+            self.gamepad.sample()
+        };
         let mut f = front.borrow_mut();
         f.pad_name = self.gamepad.name();
         f.pads = self.gamepad.connected();
         f.pad_standard = self.gamepad.standard();
-        let event = f.pad(pad.as_ref());
+        let mut event = f.pad(pad.as_ref());
+        if seats && event.is_none() {
+            for slot in 1..split::MAX_PLAYERS as usize {
+                let pad = self.gamepad.sample_slot(slot);
+                event = f.seat_pad(slot, pad.as_ref());
+                if event.is_some() {
+                    break;
+                }
+            }
+        }
         paint_front(gpu, &mut f);
         #[cfg(target_arch = "wasm32")]
         {
@@ -7331,6 +8155,14 @@ fn paint_front(gpu: &Gpu, front: &mut front::Front) {
     }
 }
 
+/// A venue's Tracks.dat course name (the venue code until it loads).
+fn course_label(names: &std::collections::HashMap<String, String>, venue: &str) -> String {
+    names
+        .get(venue)
+        .cloned()
+        .unwrap_or_else(|| venue.to_string())
+}
+
 /// Native parity capture of one frontend page with all its artwork.
 #[cfg(not(target_arch = "wasm32"))]
 fn capture_front(booted: Booted, page: &str, path: &std::path::Path, width: u32, height: u32) {
@@ -7447,7 +8279,8 @@ fn capture(ready: &mut Ready, path: &std::path::Path, width: u32, height: u32, u
                     training: None,
                     game: None,
                     compass: None,
-                    second: None,
+                    others: Vec::new(),
+                    split_layout: None,
                 }),
                 None,
             );
@@ -7902,6 +8735,43 @@ impl App {
         tag_scene(room.as_ref().or(self.content.as_ref()), environment)
     }
 
+    /// Split screen Tag's Restart Game: a new game, both players back at
+    /// the Tag course start (player 2 beside player 1).
+    fn restart_split_tag(&mut self) {
+        let Some(ready) = self.ready.as_mut() else {
+            return;
+        };
+        let start = ready.venue.scene.start_position;
+        let d = ready.venue.scene.start_direction;
+        let yaw = atv_core::math::Det::atan2_d(d[0], d[2]);
+        if let Some(riding) = ready.riding.as_mut() {
+            tag::TagSession::release(&mut riding.ride);
+            if let Err(error) = riding.ride.place_beside(start, yaw, [0.; 3]) {
+                status(&format!("Tag restart placement failed: {error}"));
+            }
+        }
+        for second in &mut ready.split {
+            let player = second.player;
+            let ride = &mut second.riding.ride;
+            tag::TagSession::release(ride);
+            let (mut at, yaw) = split::freeride_start_for(start, yaw, player);
+            if let Some(ground) = ride.ground(at[0], at[2]) {
+                at[1] = ground + 2.5;
+            }
+            if let Err(error) = ride.place_beside(at, yaw, [0.; 3]) {
+                status(&format!(
+                    "Player {player} Tag restart placement failed: {error}"
+                ));
+            }
+        }
+        if let Some(session) = &mut self.tag {
+            session.restart_local();
+        }
+        if let Some(overlay) = &mut self.overlay {
+            overlay.results = Default::default();
+        }
+    }
+
     /// Tag's time limit: Games Prep's minutes (the Games page's Time Limit
     /// row, `0026b7a0`), `tagMinutes=N` for links and tests.
     fn tag_minutes(&self) -> u32 {
@@ -7909,6 +8779,126 @@ impl App {
             .find(|m| url_flag(&format!("tagMinutes={m}")))
             .or_else(|| self.front.as_ref().map(|f| f.borrow().state.games.minutes))
             .unwrap_or(atv_core::games::DEFAULT_MINUTES)
+    }
+
+    /// Room games' time limit: Games Prep's minutes (`gameMinutes=N` for
+    /// links and tests).
+    fn room_game_minutes(&self) -> u32 {
+        (atv_core::games::MIN_MINUTES..=atv_core::games::MAX_MINUTES)
+            .find(|m| url_flag(&format!("gameMinutes={m}")))
+            .or_else(|| self.front.as_ref().map(|f| f.borrow().state.games.minutes))
+            .unwrap_or(atv_core::games::DEFAULT_MINUTES)
+    }
+
+    /// Starts (host) or joins (guest) a room King of the Hills / Treasure
+    /// Hunt: the game session, its mode TOY from the room's package and
+    /// the reload onto the game's course scene.
+    fn start_room_game(
+        &mut self,
+        kind: atv_core::games::GameKind,
+        host: bool,
+        serial: u32,
+        minutes: u32,
+    ) {
+        let Some((environment, content)) = self
+            .ready
+            .as_ref()
+            .and_then(|r| r.net.as_ref())
+            .map(|n| (n.environment.clone(), n.content()))
+        else {
+            return;
+        };
+        let Some(path) = atv_core::games::game_archive(kind, &environment)
+            .filter(|p| content.has(p) && room_game::venue_code(&environment).is_some())
+        else {
+            if let Some(menu) = self.overlay.as_mut().and_then(|o| o.menu.as_mut()) {
+                menu.notice = Some(format!("{} is not on this course.", kind.name()));
+            }
+            return;
+        };
+        self.room_race = None;
+        self.room_freestyle = None;
+        self.tag = None;
+        // The results name the course from Tracks.dat on every page
+        // (`want_course_names`: a guest that joined by link loads them too).
+        self.game = Some(games::GameSession::for_room(
+            kind,
+            environment.clone(),
+            minutes,
+            host,
+            serial,
+        ));
+        if let Some(overlay) = &mut self.overlay {
+            overlay.results = Default::default();
+        }
+        let at = environment.clone();
+        self.spawn(
+            async move {
+                let bytes = content.file(&path).await.map_err(|e| e.to_string())?;
+                games::mode_toy(&bytes, kind, &at)
+            },
+            Message::GameToy,
+        );
+        self.room_game_scene = Some(kind);
+        self.reload_room_with(environment, false, None);
+    }
+
+    /// Loads the Tracks.dat course names once a room rides (room results
+    /// name the course; a page that joined by link skipped the frontend).
+    fn want_course_names(&mut self) {
+        if !self.course_names.is_empty() || self.requested.contains("course-names") {
+            return;
+        }
+        let Some(content) = self
+            .ready
+            .as_ref()
+            .and_then(|r| r.net.as_ref())
+            .map(|n| n.content())
+        else {
+            return;
+        };
+        self.requested.insert("course-names".into());
+        self.spawn(
+            async move { atv_ui::front::assets::course_names(&content).await },
+            Message::CourseNames,
+        );
+    }
+
+    /// The room host starts Freestyle on the room's course for every rider
+    /// in the room (research/MULTIPLAYER.md "Room Freestyle"). A race or
+    /// game scene goes back to the room's Free Ride first.
+    fn start_room_freestyle(&mut self) {
+        let Some(ready) = &mut self.ready else { return };
+        let Some(net) = ready.net.as_ref().filter(|n| n.is_host()) else {
+            return;
+        };
+        let environment = net.environment.clone();
+        let reload = ready
+            .riding
+            .as_ref()
+            .is_some_and(|r| r.ride.race().is_some())
+            || self.room_race.is_some()
+            || self.game.as_ref().is_some_and(|g| g.room.is_some())
+            || self.tag.is_some();
+        let serial = self.room_freestyle_serial.wrapping_add(1).max(1);
+        self.room_freestyle_serial = serial;
+        self.room_race = None;
+        self.tag = None;
+        if self.game.as_ref().is_some_and(|g| g.room.is_some()) {
+            self.game = None;
+        }
+        self.room_freestyle = Some(room_freestyle::RoomFreestyle::new(
+            true,
+            serial,
+            room_freestyle::session_seconds(),
+            environment.clone(),
+        ));
+        if let Some(overlay) = &mut self.overlay {
+            overlay.results = Default::default();
+        }
+        if reload {
+            self.reload_room(environment, None);
+        }
     }
 
     /// The room host starts a race on the room's course for every rider in
@@ -7942,6 +8932,7 @@ impl App {
         };
         self.room_race_serial = race.field.serial;
         self.room_race = Some(race);
+        self.room_freestyle = None;
         self.tag = None;
         if let Some(overlay) = &mut self.overlay {
             overlay.results = Default::default();
@@ -7965,8 +8956,25 @@ impl App {
         tag: bool,
         race: Option<atv_game::ride::race::Settings>,
     ) {
+        let room_game = self.room_game_scene.take();
         let game_scene = if tag {
             self.tag_course(&environment)
+        } else if let Some(kind) = room_game {
+            // A room King of the Hills / Treasure Hunt rides the game's
+            // scene over the Freeride archive, as the single-player game.
+            let suffix = if kind == atv_core::games::GameKind::KingOfTheHills {
+                "kh"
+            } else {
+                "th"
+            };
+            let content = self
+                .ready
+                .as_ref()
+                .and_then(|r| r.net.as_ref())
+                .map(|n| n.content());
+            atv_core::games::game_archive(kind, &environment)
+                .filter(|p| content.as_ref().is_some_and(|c| c.has(p)))
+                .map(|p| (p, format!("{environment}{suffix}")))
         } else {
             None
         };
@@ -8178,7 +9186,15 @@ pub fn run(options: Options) {
         tag: None,
         room_race: None,
         room_race_serial: 0,
+        room_game_serial: 0,
+        course_names: Default::default(),
+        room_game_scene: None,
+        room_game_start: None,
+        room_freestyle: None,
+        room_freestyle_serial: 0,
+        room_freestyle_start: false,
         tag_start: None,
+        split_tag: None,
         tag_reload: None,
         pending_room: None,
         pending_fresh: false,
@@ -8677,46 +9693,53 @@ impl Diagnostics {
 /// `?debug=` on the web; `ATV_DEBUG` natively.
 /// `?split2=quad.rider` (web) or `FURY_SPLIT2` (desktop): player 2's own
 /// ATV (1-26) and rider (0 male, 1 female) for a direct split ride.
-fn split_second_param() -> Option<atv_game::ride::Selection> {
+/// `?key=` (web) or the `env` variable (desktop).
+fn link_param(key: &str, env: &str) -> Option<String> {
     #[cfg(target_arch = "wasm32")]
-    let value = web_sys::window()
-        .and_then(|w| w.location().search().ok())
-        .and_then(|search| {
-            search.trim_start_matches('?').split('&').find_map(|pair| {
-                let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
-                (key == "split2").then(|| value.to_string())
-            })
-        });
+    {
+        let _ = env;
+        let search = web_sys::window()?.location().search().ok()?;
+        search.trim_start_matches('?').split('&').find_map(|pair| {
+            let (k, value) = pair.split_once('=').unwrap_or((pair, ""));
+            (k == key).then(|| value.to_string())
+        })
+    }
     #[cfg(not(target_arch = "wasm32"))]
-    let value = std::env::var("FURY_SPLIT2").ok();
+    {
+        let _ = key;
+        std::env::var(env).ok()
+    }
+}
+
+/// `?splitN=quad.rider` (web) or `FURY_SPLITN` (desktop): player N's ATV
+/// and rider.
+fn split_player_param(n: u8) -> Option<atv_game::ride::Selection> {
+    let value = link_param(&format!("split{n}"), &format!("FURY_SPLIT{n}"));
     let (quad, rider) = value?
         .split_once('.')
         .and_then(|(q, r)| Some((q.parse().ok()?, r.parse().ok()?)))?;
     ((1..=26).contains(&quad) && rider <= 1).then_some(atv_game::ride::Selection { quad, rider })
 }
 
-/// `?split=h|v` with `?split2=quad.rider` (web), or FURY_SPLIT and
-/// FURY_SPLIT2 (desktop): a direct split ride (tests, host measurements and
-/// the context-loss resume link).
+/// `?split=h|v|q` with `?splitn=2-4` and `?split2=quad.rider` (to
+/// `split4`) (web), or FURY_SPLIT, FURY_SPLITN and FURY_SPLIT2-4 (desktop):
+/// a direct split ride (tests, host measurements and the context-loss
+/// resume link). `q` alone means four players.
 fn split_link_param() -> Option<split::Request> {
-    split::Layout::requested(split_param().as_deref()).map(|layout| split::Request {
+    let layout = split::Layout::requested(link_param("split", "FURY_SPLIT").as_deref())?;
+    let players = link_param("splitn", "FURY_SPLITN")
+        .and_then(|n| n.parse::<u8>().ok())
+        .filter(|n| (2..=split::MAX_PLAYERS).contains(n))
+        .unwrap_or(if layout == split::Layout::Quad { 4 } else { 2 });
+    Some(split::Request {
         layout,
-        second: split_second_param(),
+        players,
+        seconds: [2, 3, 4].map(split_player_param),
+        looks: [2, 3, 4].map(|n| {
+            link_param(&format!("look{n}"), &format!("FURY_LOOK{n}"))
+                .and_then(|v| atv_ui::front::controller::parse_split_look(&v))
+        }),
     })
-}
-
-/// `?split=h|v` (web) or `FURY_SPLIT` (desktop).
-fn split_param() -> Option<String> {
-    #[cfg(target_arch = "wasm32")]
-    {
-        let search = web_sys::window()?.location().search().ok()?;
-        search.trim_start_matches('?').split('&').find_map(|pair| {
-            let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
-            (key == "split").then(|| value.to_string())
-        })
-    }
-    #[cfg(not(target_arch = "wasm32"))]
-    std::env::var("FURY_SPLIT").ok()
 }
 
 fn debug_param() -> Option<String> {

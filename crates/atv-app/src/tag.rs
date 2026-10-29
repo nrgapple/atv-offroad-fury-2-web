@@ -4,6 +4,10 @@
 //! its `*_TG` courses; the port reloads the room's venue from its TG
 //! archive (the mode TOY's start, `tagball.psg`) when a game starts there,
 //! and draws the ball as that model (a screen tag on other venues).
+//!
+//! Split screen (research/SPLIT_SCREEN.md "Slice 4"): the same session runs
+//! the rules for two to four local riders with no room (`new_local`): this
+//! console is the host, player N rider slot N - 1.
 use atv_core::math::Det;
 use atv_core::tag::{Ball, Bounds, DropReason, Event, Game, Rider};
 use atv_game::multiplayer::{GameState, NO_PEER};
@@ -54,6 +58,46 @@ pub struct TagSession {
     pub crowd: bool,
     /// Ground respawns so far (diagnostics: ray throws, start returns).
     respawns: (u32, u32),
+    /// Split screen: two to four local players and no room.
+    pub local: bool,
+    /// Players 2-4's open-chain lengths last step (split screen).
+    chain_seen_others: Vec<usize>,
+    /// Split screen: the first ball was tossed.
+    tossed: bool,
+    /// Host: each remote rider's last fresh pose and the step it was seen,
+    /// held through short network gaps (`remote_motion`).
+    held: Vec<Option<Held>>,
+    /// Host: rider steps ridden on a held pose so far (diagnostics).
+    holds: u32,
+}
+
+/// A remote rider's last fresh position, velocity and step.
+type Held = ([f32; 3], [f32; 3], u64);
+
+/// A remote rider missing from the relay for longer than this (seconds)
+/// is absent (it cannot touch or carry the ball); a shorter gap is held.
+pub const REMOTE_HOLD: f32 = 3.0;
+
+/// The host's view of a remote rider for the rules: its fresh pose, else
+/// (a late or throttled peer) its last fresh position at rest for up to
+/// [`REMOTE_HOLD`], else absent. A network gap is not a wreck: the
+/// original's riders are all local, so a missing pose must not drop the
+/// carrier's ball (research/GAMES.md "Online").
+fn remote_motion(
+    held: &mut Option<Held>,
+    fresh: Option<([f32; 3], [f32; 3])>,
+    step: u64,
+) -> ([f32; 3], [f32; 3], bool) {
+    const ABSENT: ([f32; 3], [f32; 3], bool) = ([0., -1000., 0.], [0.; 3], true);
+    if let Some((p, v)) = fresh {
+        *held = Some((p, v, step));
+        return (p, v, false);
+    }
+    let limit = (REMOTE_HOLD / atv_game::ride::STEP) as u64;
+    match *held {
+        Some((p, _, seen)) if step.saturating_sub(seen) <= limit => (p, [0.; 3], false),
+        _ => ABSENT,
+    }
 }
 
 /// The game's clock: Games Prep's minutes (`0026b7a0`, 2-20, default 5);
@@ -100,7 +144,26 @@ impl TagSession {
             start: [0.; 3],
             respawns: (0, 0),
             crowd: false,
+            local: false,
+            chain_seen_others: Vec::new(),
+            tossed: false,
+            held: Vec::new(),
+            holds: 0,
         }
+    }
+
+    /// Split screen: a two-player game on this console (no room).
+    pub fn new_local(minutes: u32, players: usize) -> Self {
+        let players = players.clamp(2, 4);
+        let mut session = Self::new(true, minutes);
+        session.local = true;
+        session.roster = (0..players as u8).collect();
+        session.names = (1..=players as u8)
+            .map(|n| crate::split::player_name(n).to_string())
+            .collect();
+        session.game = Game::new(players, session.game.time_limit);
+        session.chain_seen_others = vec![0; players - 1];
+        session
     }
 
     fn name(&self, slot: usize) -> String {
@@ -117,7 +180,8 @@ impl TagSession {
         self.carrier_seen = carrier;
         if let Some(c) = carrier {
             // `00246310`: "You are it!" (1.6 s) / "%s has the ball!" (2 s).
-            self.banner = Some(if c == self.me {
+            // Split screen names the carrier in both views.
+            self.banner = Some(if c == self.me && !self.local {
                 ("You are it!".into(), atv_core::tag::YOU_ARE_IT_BANNER)
             } else {
                 (
@@ -130,16 +194,41 @@ impl TagSession {
     }
 
     /// Advances the game; true once, when it ends.
-    pub fn update(&mut self, ride: &mut Ride, net: &mut crate::multiplayer::Net) -> bool {
-        let ended = self.advance(ride, net);
+    /// `net`: the room (None in split screen); `others`: split screen's
+    /// players 2-4.
+    pub fn update(
+        &mut self,
+        ride: &mut Ride,
+        net: Option<&mut crate::multiplayer::Net>,
+        others: &mut [&mut Ride],
+    ) -> bool {
+        let shared: Vec<&Ride> = others.iter().map(|r| &**r).collect();
+        let ended = self.advance(ride, net, &shared);
         // `00246310`/`00246000`: the carrier's ATV runs handicapped; each
         // rider owns its ATV, so each applies its own.
-        let carrying =
-            !self.game.over && self.game.carrier == Some(self.me) && !self.roster.is_empty();
-        if carrying != (ride.engine_effect() != 0.) {
-            ride.set_carrier_handicap(carrying);
+        let handicap = |ride: &mut Ride, slot: usize, game: &Game, any: bool| {
+            let carrying = !game.over && game.carrier == Some(slot) && any;
+            if carrying != (ride.engine_effect() != 0.) {
+                ride.set_carrier_handicap(carrying);
+            }
+        };
+        let any = !self.roster.is_empty();
+        handicap(ride, self.me, &self.game, any);
+        if self.local {
+            for (index, ride2) in others.iter_mut().enumerate() {
+                handicap(ride2, index + 1, &self.game, any);
+            }
         }
         ended
+    }
+
+    /// Split screen Restart Game: a new game for both players.
+    pub fn restart_local(&mut self) {
+        let mut fresh = Self::new_local(self.minutes, self.roster.len());
+        fresh.model = self.model;
+        fresh.start = self.start;
+        fresh.crowd = self.crowd;
+        *self = fresh;
     }
 
     /// The game ended or was left: no handicap remains.
@@ -147,22 +236,48 @@ impl TagSession {
         ride.set_carrier_handicap(false);
     }
 
-    fn advance(&mut self, ride: &Ride, net: &mut crate::multiplayer::Net) -> bool {
+    fn advance(
+        &mut self,
+        ride: &Ride,
+        net: Option<&mut crate::multiplayer::Net>,
+        others: &[&Ride],
+    ) -> bool {
         let terrain = ride.terrain();
         let bounds = Bounds::from_cells(terrain.width_cells, terrain.depth_cells, terrain.spacing);
-        let (me, roster) = net.roster();
-        let Some(me) = me.and_then(|id| roster.iter().position(|r| *r == id)) else {
-            return false;
+        let host = self.local || net.as_deref().is_some_and(|n| n.is_host());
+        let fresh = if self.local {
+            // The first update (and Restart Game) tosses the first ball.
+            let fresh = !self.tossed;
+            if fresh {
+                self.tossed = true;
+                self.finished = false;
+                // The clock starts now, not at the ride's first step.
+                self.steps = ride.steps();
+            }
+            fresh
+        } else {
+            let Some(net) = net.as_deref() else {
+                return false;
+            };
+            let (me, roster) = net.roster();
+            let Some(me) = me.and_then(|id| roster.iter().position(|r| *r == id)) else {
+                return false;
+            };
+            self.names = net.names(&roster);
+            let changed = roster != self.roster;
+            if changed {
+                self.roster = roster;
+                self.me = me;
+                self.game = Game::new(self.roster.len(), self.game.time_limit);
+                self.finished = false;
+                self.held.clear();
+            }
+            changed
         };
-        self.names = net.names(&roster);
-        if roster != self.roster {
-            self.roster = roster;
-            self.me = me;
-            self.game = Game::new(self.roster.len(), self.game.time_limit);
-            self.finished = false;
+        if fresh {
             let o = ride.frame().origin;
             self.ball = Ball::toss(o, [0.; 3]);
-            if crate::url_flag("tagTest=throw") && net.is_host() {
+            if crate::url_flag("tagTest=throw") && host {
                 // Past the west margin (`0020aec0`), level with the host.
                 self.ball.position = [bounds.cell[0] * 40., o[1] + 20., o[2]];
                 self.ball.velocity = [0.; 3];
@@ -179,9 +294,9 @@ impl TagSession {
                 self.banner = None;
             }
         }
-        if !net.is_host() {
+        if !host {
             self.host = false;
-            return self.follow(net);
+            return net.as_deref().is_some_and(|net| self.follow(net));
         }
         self.host = true;
         if n == 0 || self.finished {
@@ -200,6 +315,15 @@ impl TagSession {
             frame.linear_velocity,
             frame.wreck.phase != atv_core::wreck::Phase::Riding,
         );
+        let motion = |ride: &Ride| {
+            let f = ride.frame();
+            (
+                f.origin,
+                f.linear_velocity,
+                f.wreck.phase != atv_core::wreck::Phase::Riding,
+            )
+        };
+        self.held.resize(self.roster.len(), None);
         let riders: Vec<([f32; 3], [f32; 3], bool)> = self
             .roster
             .iter()
@@ -207,9 +331,17 @@ impl TagSession {
             .map(|(i, id)| {
                 if i == self.me {
                     own
+                } else if self.local {
+                    // Split screen: that player's own ride.
+                    others
+                        .get(i.wrapping_sub(1))
+                        .map_or(([0., -1000., 0.], [0.; 3], true), |r| motion(r))
                 } else {
-                    net.rider_motion(*id)
-                        .map_or(([0., -1000., 0.], [0.; 3], true), |(p, v)| (p, v, false))
+                    let fresh = net.as_deref().and_then(|net| net.rider_motion(*id));
+                    if fresh.is_none() && self.held[i].is_some() {
+                        self.holds += 1;
+                    }
+                    remote_motion(&mut self.held[i], fresh, steps)
                 }
             })
             .collect();
@@ -220,6 +352,16 @@ impl TagSession {
         let chain = ride.chain_len();
         let own_trick = chain > self.chain_seen;
         self.chain_seen = chain;
+        // Split screen: the other players' tricks are local too.
+        let mut other_tricks = vec![false; others.len()];
+        if self.local {
+            self.chain_seen_others.resize(others.len(), 0);
+            for (index, r) in others.iter().enumerate() {
+                let chain = r.chain_len();
+                other_tricks[index] = chain > self.chain_seen_others[index];
+                self.chain_seen_others[index] = chain;
+            }
+        }
         if let Some(t) = &mut self.throw_test
             && self.throw_ins > 0
         {
@@ -260,7 +402,11 @@ impl TagSession {
                 .enumerate()
                 .map(|(i, (p, _, wrecked))| Rider {
                     wrecked: *wrecked,
-                    stunt_started: i == self.me && own_trick && step == 0,
+                    stunt_started: step == 0
+                        && ((i == self.me && own_trick)
+                            || (self.local
+                                && i > 0
+                                && other_tricks.get(i - 1).copied().unwrap_or(false))),
                     touches_ball: carrier.is_none()
                         && flat(*p, self.ball.position) < BALL_REACH
                         && (p[1] - self.ball.position[1]).abs() < 8.,
@@ -323,6 +469,9 @@ impl TagSession {
             }
         }
         self.announce(self.game.carrier);
+        let Some(net) = net.filter(|_| !self.local) else {
+            return ended;
+        };
         // 20 Hz and on every change of carrier.
         let changed = self.game.carrier.map_or(NO_PEER, |c| c as u8) != self.sent_carrier;
         if changed || ended || steps >= self.sent_step + 3 {
@@ -348,6 +497,7 @@ impl TagSession {
                 ball_velocity: self.ball.velocity,
                 ball_yaw: 0.,
                 race: Default::default(),
+                marks: Default::default(),
             });
             self.sent_carrier = self.game.carrier.map_or(NO_PEER, |c| c as u8);
         }
@@ -393,11 +543,16 @@ impl TagSession {
     }
 
     pub fn view(&self) -> atv_ui::hud::training::View {
-        let mine = self.game.records.get(self.me).map_or(0, |r| r.score);
+        self.view_for(self.me)
+    }
+
+    /// A local player's panel (split screen: player N is slot N - 1).
+    pub fn view_for(&self, me: usize) -> atv_ui::hud::training::View {
+        let mine = self.game.records.get(me).map_or(0, |r| r.score);
         atv_ui::hud::training::View {
             title: format!("Tag   {}   You {mine}", self.clock()),
             caption: Some(match self.game.carrier {
-                Some(c) if c == self.me => "You have the ball: keep it away!".into(),
+                Some(c) if c == me => "You have the ball: keep it away!".into(),
                 Some(c) => format!("{} has the ball: tag them!", self.name(c)),
                 None => "Grab the ball!".into(),
             }),
@@ -466,6 +621,8 @@ impl TagSession {
             "knocks": self.knocks,
             "respawns": [self.respawns.0, self.respawns.1],
             "attached": self.game.attached,
+            "local": self.local,
+            "holds": self.holds,
         })
     }
 }
@@ -482,4 +639,57 @@ fn terrain_ray(ground: impl Fn(f32, f32) -> f32, a: [f32; 3], b: [f32; 3]) -> Op
         let p = [a[0] + d[0] * t, a[1] + d[1] * t, a[2] + d[2] * t];
         (ground(p[0], p[2]) >= p[1]).then_some(p)
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_network_gap_is_held_not_a_wreck() {
+        let step = |s: f32| (s / atv_game::ride::STEP) as u64;
+        let mut held = None;
+        // Never seen: absent.
+        assert!(remote_motion(&mut held, None, 0).2);
+        let p = [10., 2., 30.];
+        let fresh = remote_motion(&mut held, Some((p, [5., 0., 0.])), 100);
+        assert_eq!(fresh, (p, [5., 0., 0.], false));
+        // A throttled guest's poses stop for a second: it still rides
+        // (and keeps carrying) where it was last seen, at rest.
+        assert_eq!(
+            remote_motion(&mut held, None, 100 + step(1.)),
+            (p, [0.; 3], false)
+        );
+        // Long gone: absent, so a carrier drops the ball.
+        assert!(remote_motion(&mut held, None, 100 + step(REMOTE_HOLD) + 2).2);
+        // Back again.
+        assert!(!remote_motion(&mut held, Some((p, [0.; 3])), 900).2);
+    }
+
+    #[test]
+    fn a_held_carrier_keeps_scoring() {
+        // The guest carries; its poses go stale for 1.5 s. The rules see a
+        // riding carrier, so its possession (and score) continues.
+        let dt = atv_game::ride::STEP;
+        let mut game = Game::new(2, 30.);
+        let mut held = None;
+        let p = [0., 0., 0.];
+        remote_motion(&mut held, Some((p, [0.; 3])), 0);
+        let mut riders = [
+            Rider::default(),
+            Rider {
+                touches_ball: true,
+                ..Rider::default()
+            },
+        ];
+        game.tick(dt, &riders, false);
+        assert_eq!(game.carrier, Some(1));
+        riders[1].touches_ball = false;
+        for step in 1..=(1.5 / dt) as u64 {
+            riders[1].wrecked = remote_motion(&mut held, None, step).2;
+            game.tick(dt, &riders, false);
+        }
+        assert_eq!(game.carrier, Some(1));
+        assert!(game.records[1].score >= atv_core::tag::POINTS_PER_SECOND);
+    }
 }

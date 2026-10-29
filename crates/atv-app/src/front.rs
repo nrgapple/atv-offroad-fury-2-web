@@ -693,6 +693,22 @@ impl Front {
         self.front_event(event)
     }
 
+    /// Split Screen → Players: controller `slot`'s (players 2-4) own seat.
+    pub fn seat_pad(
+        &mut self,
+        slot: usize,
+        pad: Option<&atv_game::ride::bindings::Pad>,
+    ) -> Option<Event> {
+        let view = self.view;
+        let event = self.state.seat_pad(
+            slot,
+            pad.map(|p| (&p.buttons[..], &p.axes[..])),
+            &view,
+            &mut self.settings,
+        );
+        self.front_event(event)
+    }
+
     pub fn press(&mut self, pointer: u64, x: f32, y: f32) {
         if self.menu.is_some() {
             self.with_menu(|m, ctx, hits, _| m.press(hits, pointer, x, y, ctx));
@@ -1225,11 +1241,13 @@ impl Front {
         let pane =
             |hits: &[(Rect, u32)], id: u32| hits.iter().find(|(_, i)| *i == id).map(|(r, _)| *r);
         if let Some(r) = pane(&self.hits, atv_ui::front::LIST) {
+            self.state.list.paint_edges(&mut self.list, r);
             self.state
                 .list
                 .paint_indicator(&mut self.list, r, scroll_now);
         }
         if let Some(r) = pane(&self.hits, atv_ui::front::ROWS) {
+            self.state.rows.paint_edges(&mut self.list, r);
             self.state
                 .rows
                 .paint_indicator(&mut self.list, r, scroll_now);
@@ -1853,6 +1871,9 @@ impl Front {
         out["surface"] =
             serde_json::json!([self.upload_size.0, self.upload_size.1, self.upload_size.2]);
         out["tilt"] = serde_json::json!(self.tilt);
+        // Single Race's course picker is open.
+        out["courseSheet"] = self.state.course_sheet.into();
+        out["vehicleSheet"] = self.state.vehicle_sheet.into();
         // The last frame drew its still parts from the UI layer cache.
         out["layerCached"] = self
             .renderer

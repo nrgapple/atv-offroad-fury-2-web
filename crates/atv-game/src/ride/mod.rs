@@ -753,6 +753,13 @@ impl Ride {
         gear::PAINT_PALETTE[usize::from(self.appearance.paint)]
     }
 
+    /// The scene start Reset ATV returns to (origin, yaw): room Freestyle
+    /// places its riders beside it (research/MULTIPLAYER.md "Room
+    /// Freestyle").
+    pub fn start_pose(&self) -> ([f32; 3], f32) {
+        self.start
+    }
+
     /// Finished stunt chains since the last call: success and the stunt ids
     /// in order (Freestyle objectives).
     pub fn take_chains(&mut self) -> Vec<(bool, Vec<usize>)> {
@@ -878,6 +885,12 @@ impl Ride {
         let presets = atv_core::camera::presets(&self.sim.camera_presets, layout)?;
         self.sim.camera = FollowCamera::new(presets, CAMERA_SPEED_REFERENCE)?;
         Ok(())
+    }
+
+    /// The stunt text clock (`atv_core::hud::Config`): split layouts for
+    /// three and four players use Overlays.pb object 24's.
+    pub fn set_stunt_text(&mut self, config: atv_core::hud::Config) {
+        self.hud.set_config(config);
     }
 
     /// Change camera (op 47 with cycle).

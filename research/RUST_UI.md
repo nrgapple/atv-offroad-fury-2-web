@@ -800,3 +800,64 @@ WebKit at 390x844 DPR 3: canvas and surface 1170x2532, preview at 3x, a menu
 row's text edges stepping >150 luminance in one device pixel, turntable
 rate, fling and ease-back, sway on the title and main menu, reduced motion
 still and idle).
+
+## Phone menu layout (2026-10-29)
+
+Driven by real-iPhone reports, an iOS Simulator pass (Safari's toolbars leave
+about 390x664 in portrait and 844x330 in landscape) and a WebKit audit at DPR 3.
+
+- **Single Race.** The setup squeezed a course list to one card (portrait) or
+  none (landscape), the event tabs wrapped over two lines, and the Copy ride
+  link/Back footer covered Difficulty. The setup is now four stepper rows in
+  the scrolling rows column (Course, Laps, CPU riders, Difficulty) under a
+  lower 2.4:1 photo. Course's arrows step the course; a tap on it, Enter or
+  a controller's A opens the **course picker**: the event tabs over a
+  full-height card list (portrait drops the photo for it), titled Choose
+  Course. A card picks and closes it; the arrows walk the courses, Q/E or
+  LB/RB the tabs, and Enter, Escape, B or the Done button close it on the
+  page (`Frontend::course_sheet`; no history entry, as a sheet).
+- **Scroll cue.** A rows column or list with more than 12px past an edge
+  fades that edge and shows a small gold down triangle (`Scroller::paint_edges`),
+  so rows below the fold are discoverable.
+- **Portrait stages** give rows more room: stage pages take 36% of the
+  height below the status bar on phones up to 820px (28% up to 640px), so
+  Single Player's six modes fit without scrolling; Select Track's photo is
+  2.4:1 too.
+- **Landscape** rows columns run to the bottom edge; Back (and Copy ride
+  link) sit under the stage at the bottom right. The status bar gets a dark
+  band so the profile chip (on red) and the others (on silver) read as one
+  bar. The title's wordmark yields height so Press Start and its links stay
+  on screen at 330px.
+- **Stage text.** Pages with a text table on the portrait stage (Pass Key,
+  profile pages) keep 44px under it, clear of the silver's curved lower
+  edge (about 40px high over the gutter). Status headings are 800, sentences
+  600 at 0.94x with 1.3 line height; values may take 72% of the width so a
+  Pass Key reads whole. The Pass Key page says one short sentence
+  ("Enter it on another device to keep playing. Keep it private."); the
+  save chip's popover keeps the details.
+- **Visible viewport.** The canvas is `100dvh` tall (100vh fallback), so
+  Safari's toolbars no longer cover the bottom of the menus.
+
+Test: `tools/test_engine_menu_phone_layout.mjs` (Chromium; 390x664, 390x844,
+844x330, 844x390, iPad, desktop): Back, Start Race and Copy ride link on
+screen and clear of the scroll panes; rows clear of them where nothing
+scrolls; Press Start on screen; Single Player's modes fit on portrait
+phones; Select Track shows two whole cards; Single Race has no squeezed list,
+its picker shows three whole cards (two on a landscape phone) and opens and
+closes by touch, keyboard and a stand-in controller; stage text clear of the
+rim. Physical iPhones are not tested here.
+
+### Garage vehicle picker (2026-10-29)
+
+The garage squeezed its vehicle list under the vehicle and rider rows: two
+names on a portrait phone, one in landscape. The list is now a picker like
+Single Race's: the vehicle row's arrows step through owned vehicles, and a tap
+on it, Enter or A opens **Choose Vehicle** (the full ATV and motorcycle list
+under a smaller stage that still shows the model and rider); a pick, Enter,
+Escape, B or Done closes it (`Frontend::vehicle_sheet`). The garage stage
+takes about half the portrait height again. Stepper labels ellipsize (giving
+way after the value) instead of running under the value ("ATV 1/24 ·
+Unlocked" on the store pages), and vehicle names fall back to the store's
+list, so a locked ATV's plate no longer reads "Vehicle 22".
+`test_engine_menu_phone_layout.mjs` covers the picker (touch and keyboard) and
+the store label at every size.
