@@ -7,6 +7,10 @@ use crate::{
 use std::collections::HashMap;
 
 const ATLAS: u32 = 2048;
+/// The atlas grows once to this size when one frame's text and shapes do not
+/// fit (menus at 3x a phone's display), rather than being rebuilt over and
+/// over: a page opening at 3x re-rasterized every label four times.
+const ATLAS_GROWN: u32 = 4096;
 
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable, Default)]
@@ -55,6 +59,8 @@ struct Entry {
 
 /// Shelf-packed premultiplied RGBA cache for text, shapes and gradient ramps.
 struct Atlas {
+    /// Width and height in texels.
+    size: u32,
     texture: wgpu::Texture,
     bind: wgpu::BindGroup,
     entries: HashMap<String, Entry>,
@@ -66,15 +72,15 @@ struct Atlas {
 impl Atlas {
     fn allocate(&mut self, width: u32, height: u32) -> Option<(u32, u32)> {
         let (w, h) = (width + 2, height + 2);
-        if w > ATLAS || h > ATLAS {
+        if w > self.size || h > self.size {
             return None;
         }
-        if self.shelf_x + w > ATLAS {
+        if self.shelf_x + w > self.size {
             self.shelf_y += self.shelf_h;
             self.shelf_x = 0;
             self.shelf_h = 0;
         }
-        if self.shelf_y + h > ATLAS {
+        if self.shelf_y + h > self.size {
             return None;
         }
         let at = (self.shelf_x + 1, self.shelf_y + 1);
@@ -281,6 +287,7 @@ impl Renderer {
             globals,
             globals_bind,
             atlas: Atlas {
+                size: ATLAS,
                 texture: atlas_texture,
                 bind,
                 entries: HashMap::new(),
@@ -463,7 +470,10 @@ impl Renderer {
             // Never overwrite texels already referenced by this frame. If the
             // cache fills, rebuild the entire frame against a fresh atlas.
             let at = self.atlas.allocate(bitmap.width, bitmap.height);
-            if at.is_none() && bitmap.width + 2 <= ATLAS && bitmap.height + 2 <= ATLAS {
+            if at.is_none()
+                && bitmap.width + 2 <= self.atlas.size
+                && bitmap.height + 2 <= self.atlas.size
+            {
                 self.atlas_full = true;
             }
             let (x, y) = at?;
@@ -489,7 +499,7 @@ impl Renderer {
             );
         }
         let e = self.atlas.entries.get_mut(&key)?;
-        let s = ATLAS as f32;
+        let s = self.atlas.size as f32;
         Some((
             [
                 e.x as f32 / s,
@@ -718,6 +728,13 @@ impl Renderer {
         }
         if self.atlas_full && retry {
             self.atlas_resets += 1;
+            let grown = ATLAS_GROWN.min(device.limits().max_texture_dimension_2d);
+            if self.atlas.size < grown {
+                self.atlas.size = grown;
+                self.atlas.texture = Self::texture(device, grown, grown, "ui atlas");
+                self.atlas.bind =
+                    Self::bind(device, &self.layout, &self.sampler, &self.atlas.texture);
+            }
             self.atlas.reset();
             self.prepare_inner(device, queue, fonts, list, width, height, scale, false);
             return;
@@ -935,7 +952,7 @@ impl Renderer {
                     rgba: ramp.clone(),
                 }) {
                     source = Source::Atlas;
-                    let texel = 0.5 / ATLAS as f32;
+                    let texel = 0.5 / self.atlas.size as f32;
                     instance.uv = [uv[0] + texel, uv[1], uv[2] - texel, uv[3]];
                     instance.params = [0., 0., paint.rotation, 1.];
                     instance.cut = [g.angle_degrees.to_radians(), 0., 0., 0.];
@@ -957,7 +974,7 @@ impl Renderer {
                     rgba: ramp.clone(),
                 }) {
                     source = Source::Atlas;
-                    let texel = 0.5 / ATLAS as f32;
+                    let texel = 0.5 / self.atlas.size as f32;
                     instance.uv = [uv[0] + texel, uv[1], uv[2] - texel, uv[3]];
                     instance.params = [0., 0., paint.rotation, 2.];
                     instance.cut = [0., center[0], center[1], *ellipse as u8 as f32];
