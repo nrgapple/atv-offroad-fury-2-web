@@ -8193,13 +8193,22 @@ impl App {
         };
         self.room_race = None;
         self.tag = None;
-        self.game = Some(games::GameSession::for_room(
-            kind,
-            environment.clone(),
-            minutes,
-            host,
-            serial,
-        ));
+        let mut session =
+            games::GameSession::for_room(kind, environment.clone(), minutes, host, serial);
+        // The course's Tracks.dat name for the results, when loaded.
+        if let Some(name) = self.front.as_ref().and_then(|f| {
+            let f = f.borrow();
+            f.state
+                .store
+                .courses
+                .iter()
+                .find(|l| l.kind == kind.event_type())
+                .and_then(|l| l.courses.iter().find(|c| c.scene == environment))
+                .map(|c| c.name.clone())
+        }) {
+            session.course = name;
+        }
+        self.game = Some(session);
         if let Some(overlay) = &mut self.overlay {
             overlay.results = Default::default();
         }

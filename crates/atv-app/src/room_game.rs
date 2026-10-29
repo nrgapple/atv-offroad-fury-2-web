@@ -98,6 +98,8 @@ pub struct RoomLink {
     /// invitees play rather than spectate; Pause → Restart Game starts it
     /// at once.
     pub hold: bool,
+    /// Guest: this game's countdown was seen (else it joined under way).
+    seen_countdown: bool,
 }
 
 /// The longest the host's start waits for riders still loading (s).
@@ -125,6 +127,7 @@ impl RoomLink {
             waited: 0.,
             players: 0,
             hold: false,
+            seen_countdown: false,
         }
     }
 
@@ -250,6 +253,7 @@ impl GameSession {
             room.report = STUNT_REPORT;
             room.players = mask(&room.present);
             room.hold = false;
+            room.seen_countdown = false;
         }
         if let Some(session) = &mut self.session {
             session.restart();
@@ -575,6 +579,9 @@ impl GameSession {
         let (own, _) = sample(ride, &mut self.committed[me], None);
         if let Some(g) = &state {
             let was_started = session.started;
+            // A late joiner's first state is already under way: no lamps.
+            let late = !was_started && !room.seen_countdown && g.phase != 0;
+            room.seen_countdown |= g.phase == 0;
             if !session.started && g.phase == 0 {
                 let before = self.countdown.ceil();
                 if g.timer.ceil() < before || self.countdown >= crate::games::COUNTDOWN {
@@ -589,13 +596,7 @@ impl GameSession {
             session.mirror(g.phase, g.clock);
             let watching = room.spectating();
             room.players = g.marks.players & mask(&room.present);
-            if session.started && room.spectating() && !watching {
-                session.notice = Some(atv_core::games::Notice {
-                    text: "Spectating: you play the next game".into(),
-                    seconds: 5.,
-                });
-            }
-            if !was_started && session.started {
+            if !was_started && session.started && !late {
                 self.go = 1.;
                 self.sounds.push("go.vag");
             }
@@ -629,6 +630,12 @@ impl GameSession {
                         });
                     }
                 }
+            }
+            if session.started && room.spectating() && !watching {
+                session.notice = Some(atv_core::games::Notice {
+                    text: "Spectating: you play the next game".into(),
+                    seconds: 5.,
+                });
             }
             for (slot, s) in g.marks.stunts.iter().enumerate() {
                 if slot != me && slot < session.stunt.len() {
