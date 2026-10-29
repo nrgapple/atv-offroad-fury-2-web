@@ -1213,11 +1213,13 @@ impl Front {
         let pane =
             |hits: &[(Rect, u32)], id: u32| hits.iter().find(|(_, i)| *i == id).map(|(r, _)| *r);
         if let Some(r) = pane(&self.hits, atv_ui::front::LIST) {
+            self.state.list.paint_edges(&mut self.list, r);
             self.state
                 .list
                 .paint_indicator(&mut self.list, r, scroll_now);
         }
         if let Some(r) = pane(&self.hits, atv_ui::front::ROWS) {
+            self.state.rows.paint_edges(&mut self.list, r);
             self.state
                 .rows
                 .paint_indicator(&mut self.list, r, scroll_now);
@@ -1838,6 +1840,8 @@ impl Front {
         out["surface"] =
             serde_json::json!([self.upload_size.0, self.upload_size.1, self.upload_size.2]);
         out["tilt"] = serde_json::json!(self.tilt);
+        // Single Race's course picker is open.
+        out["courseSheet"] = self.state.course_sheet.into();
         // The last frame drew its still parts from the UI layer cache.
         out["layerCached"] = self
             .renderer

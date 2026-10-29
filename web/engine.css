@@ -4,7 +4,8 @@ html.app-standalone, html.app-standalone body { background: #210504; }
 html, body, canvas, #status { user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; }
 /* WebKit inherits user-select: none, which leaves iOS text fields untypeable. */
 .atv-text-input { user-select: text; -webkit-user-select: text; -webkit-touch-callout: default; touch-action: manipulation; }
-canvas { display: block; width: var(--app-width, 100vw); height: var(--app-height, 100vh); touch-action: none; outline: none; }
+/* 100dvh: the visible viewport, so Safari's toolbars never cover the menus' bottom row (100vh fallback). */
+canvas { display: block; width: var(--app-width, 100vw); height: 100vh; height: var(--app-height, 100dvh); touch-action: none; outline: none; }
 #frontend { display: none; }
 /* The JavaScript game sized its UI border-box (game.css); without it the install banner's
    padding and border overflow its min(520px, 100% - 20px) width on phones. */
