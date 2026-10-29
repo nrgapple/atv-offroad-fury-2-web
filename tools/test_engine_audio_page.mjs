@@ -13,8 +13,17 @@ const audio = page => page.evaluate(() => JSON.parse(document.documentElement.ge
 const until = (page, predicate, arg, timeout = 30000) => page.waitForFunction(predicate, arg, { timeout });
 async function key(page, code) { await page.keyboard.down(code); await nextFrames(page, 2); await page.keyboard.up(code); await nextFrames(page, 3); }
 async function click(page, action) {
-  const m = await menu(page), hit = m.hits.find(h => h.action === action);
+  const { height } = page.viewportSize();
+  let m = await menu(page), hit = m.hits.find(h => h.action === action);
   assert.ok(hit, `${action} on ${m.page}: ${m.hits.map(h => h.action)}`);
+  // The Audio panel scrolls (volumes lead it): bring the target into view.
+  for (let i = 0; i < 12 && (hit.y < 0 || hit.y + hit.height > height); i++) {
+    await page.mouse.move(640, height / 2);
+    await page.mouse.wheel(0, hit.y < 0 ? -120 : 120);
+    await nextFrames(page, 8);
+    m = await menu(page);
+    hit = m.hits.find(h => h.action === action);
+  }
   await page.mouse.click(hit.x + hit.width / 2, hit.y + hit.height / 2); await nextFrames(page, 4);
 }
 const songs = m => m.hits.filter(h => h.action.startsWith('song:')).map(h => ({ ...h, label: m.labels[h.action] ?? '' }));

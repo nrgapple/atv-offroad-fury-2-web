@@ -16,7 +16,7 @@ addEventListener('pagehide', () => usage.report(1));
 // the install banner, its help dialog and the Host/Join text fields (Rust's
 // text_inputs.rs) keep their native taps, so a tap focuses a field and opens
 // the soft keyboard.
-const shell = event => event.target instanceof Element && event.target.closest('#app-install-banner, #app-install-help, .loading-retry, input, textarea');
+const shell = event => event.target instanceof Element && event.target.closest('#app-install-banner, #app-install-help, input, textarea');
 const cancel = event => { if (event.cancelable && !shell(event)) event.preventDefault(); };
 for (const type of ['touchstart', 'touchmove', 'gesturestart', 'gesturechange', 'gestureend']) document.addEventListener(type, cancel, { passive: false });
 for (const type of ['selectstart', 'contextmenu']) document.addEventListener(type, cancel);
@@ -36,24 +36,6 @@ addEventListener('error', event => {
   line.textContent = `The game stopped: ${error?.message ?? event.message}. Reload to try again.`;
   line.classList.add('fatal');
 });
-// A first load that stalls (a transfer that never finishes, a stuck service
-// worker on iOS Safari) would leave "Now Loading..." up for good: after 20 s
-// the loader offers a reload that starts without the offline worker.
-setTimeout(() => {
-  const screen = document.getElementById('loading-screen');
-  if (!screen || screen.hidden || screen.querySelector('.loading-retry')) return;
-  const retry = document.createElement('button');
-  retry.type = 'button';
-  retry.className = 'loading-retry';
-  retry.textContent = 'Still loading? Reload';
-  retry.addEventListener('click', async () => {
-    try {
-      for (const registration of (await navigator.serviceWorker?.getRegistrations?.()) ?? []) await registration.unregister();
-    } catch { /* Reload anyway. */ }
-    location.reload();
-  });
-  screen.querySelector('.loading-panel')?.append(retry);
-}, 20000);
 // A module that will not start closes the boot loader and shows its error
 // on the notice line, as the JavaScript game did for a startup failure, after
 // one reload (without the offline worker; offline.js recoverFailedStart).
