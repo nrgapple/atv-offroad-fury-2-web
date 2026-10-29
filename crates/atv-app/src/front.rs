@@ -112,6 +112,8 @@ pub struct Front {
     /// last: going back to the garage or a stage page reuses its model's GPU
     /// mesh and textures instead of building it again (a 3x phone frame).
     stash: Vec<(String, ModelPreview, bool)>,
+    /// Previews built and reused from the stash (diagnostics).
+    preview_counts: [u32; 2],
     /// A pointer turning a preview: (pointer, slot, last x).
     turning: Option<(u64, usize, f32)>,
     /// The preview last pressed: Left/Right turn it (ModelView keydown).
@@ -232,6 +234,7 @@ impl Front {
             split_ms: [0.; 3],
             previews: [None, None],
             stash: Vec::new(),
+            preview_counts: [0; 2],
             turning: None,
             preview_focus: None,
             wanted: [None, None],
@@ -1580,6 +1583,7 @@ impl Front {
             && let Some((_, model, _)) = self.art.vehicles.iter().find(|(q, ..)| *q == quad)
         {
             let lookup = texture(&model.textures);
+            self.preview_counts[0] += 1;
             match ModelPreview::new(
                 device,
                 queue,
@@ -1655,6 +1659,7 @@ impl Front {
                 }
                 let lookup = texture(&textures);
                 let pose = rider.rider.pose(time).ok().map(|(_, p)| p.world_matrices);
+                self.preview_counts[0] += 1;
                 match ModelPreview::new(
                     device,
                     queue,
@@ -1703,6 +1708,7 @@ impl Front {
     /// A stashed preview built for `key`, if any.
     fn unstash(&mut self, key: &str) -> Option<(ModelPreview, bool)> {
         let index = self.stash.iter().position(|(k, ..)| k == key)?;
+        self.preview_counts[1] += 1;
         let (_, model, animated) = self.stash.remove(index);
         Some((model, animated))
     }
@@ -1878,6 +1884,8 @@ impl Front {
         out["surface"] =
             serde_json::json!([self.upload_size.0, self.upload_size.1, self.upload_size.2]);
         out["tilt"] = serde_json::json!(self.tilt);
+        // Previews built, and reused from pages just left.
+        out["previewBuilds"] = serde_json::json!(self.preview_counts);
         // Single Race's course picker is open.
         out["courseSheet"] = self.state.course_sheet.into();
         out["vehicleSheet"] = self.state.vehicle_sheet.into();
