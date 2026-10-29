@@ -615,7 +615,10 @@ end/winner rules, stunt time out, ties, combos), `cargo test -p atv-ui
 split_objectives_ride_through_the_players_page`, and
 `tools/test_engine_split_objectives.mjs` (content group: two players ride
 Prospect Springs' green targets to the end through the real trigger
-test, then a timed-out Score Stunt Points run).
+test, Restart Objective, player 2's engine voice live through the
+nearest-listener path (`#ui-state.ride.remoteVoices`), then a timed-out
+Score Stunt Points run). The audio check proves the voice plays; its
+gains per view were not measured in the browser.
 
 ## Measurements
 

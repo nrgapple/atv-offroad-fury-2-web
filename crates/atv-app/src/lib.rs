@@ -2938,6 +2938,8 @@ impl App {
                 "engineEffect": riding.ride.engine_effect(),
                 "start": ready.venue.scene.start_position,
                 "oneShots": riding.sound.as_ref().map(|s| s.ride.race.stats.one_shots.clone()),
+                // Players 2-4's (and room riders') engine voices and starts.
+                "remoteVoices": riding.sound.as_ref().map(|s| (s.remote.voices(), s.remote.starts)),
                 "objective": self.objective.as_ref().map(|o| serde_json::json!({
                     "series": o.series, "expert": o.expert, "course": o.course,
                     "objective": o.objective, "recorded": o.recorded,

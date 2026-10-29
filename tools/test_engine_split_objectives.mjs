@@ -112,6 +112,12 @@ try {
     if (hud.compass) assert.ok(Math.abs(hud.compass.length - left) <= 1, `compass ${hud.compass.length} vs ${left}`);
     console.log(`  compass ${hud.compass ? hud.compass.length : 'not drawn'} for ${left} untouched targets`);
     await shot(page, 'split-targets-hit');
+    // Player 2's engine plays through a remote voice placed for the
+    // nearest view's camera (SPLIT_SCREEN.md "Split audio").
+    await wait(page, () => (JSON.parse(document.querySelector('#ui-state')?.textContent || '{}').ride?.remoteVoices?.[0] ?? 0) >= 1,
+      null, 30000);
+    const voices = (await read(page)).ride?.remoteVoices;
+    console.log(`  remote engine voices (count, starts): ${JSON.stringify(voices)}`);
     await wait(page, () => JSON.parse(document.querySelector('#ui-state')?.textContent || '{}').ride?.objective?.recorded,
       null, 300000);
     o = await objective(page);
