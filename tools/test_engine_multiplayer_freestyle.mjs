@@ -79,6 +79,13 @@ try {
   await key(host, 'Enter');
   let f = await front();
   assert.equal(f.labels[f.choices.indexOf('hostmode')], 'Room: Freestyle (timed stunts)');
+  // Classic Freestyle's Time Limit row (2:00 by default, 2-20 minutes);
+  // freestyleTest=fast still runs the session for 25 s.
+  assert.equal(f.labels[f.choices.indexOf('hostfstime')], 'Time Limit: 2:00');
+  await pick('hostfstime');
+  await key(host, 'ArrowRight');
+  f = await front();
+  assert.equal(f.labels[f.choices.indexOf('hostfstime')], 'Time Limit: 3:00');
   await shot(host, 'FS-host-form');
   await pick('hosttrack');
   await key(host, 'Enter');
@@ -127,6 +134,8 @@ try {
   const ll = await ride(late);
   assert.equal(g.roomFreestyle.summary, h.roomFreestyle.summary, 'agreed results');
   assert.equal(ll.roomFreestyle.summary, h.roomFreestyle.summary, 'the spectator sees the same results');
+  // The original `[ClassicFreeStyleOver Menu]` title (Overlays.pb).
+  for (const r of [h, g, ll]) assert.equal(r.resultsTitle, 'Race Results');
   assert.match(h.roomFreestyle.summary, /^Freestyle on .*: Time Up\. 1\. RustGuest: Score [\d,]+, Best Combo 1,100, Combos \d+\. 2\. RustHost: Score [\d,]+, Best Combo 1,000/);
   assert.doesNotMatch(h.roomFreestyle.summary, /RustLate/);
   // The course by its Tracks.dat name on every page, not its venue code.
