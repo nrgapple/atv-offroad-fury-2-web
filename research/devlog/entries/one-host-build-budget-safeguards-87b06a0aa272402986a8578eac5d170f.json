@@ -1,0 +1,16 @@
+{
+  "id": "one-host-build-budget-safeguards-87b06a0aa272402986a8578eac5d170f",
+  "timestamp": "2026-10-29T01:09:37.722111+00:00",
+  "recorded_at": "2026-10-29T01:09:37.722111+00:00",
+  "kind": "verification",
+  "title": "One-host build budget safeguards",
+  "summary": "Added host-side coordination for heavy builds and browser tests, with bounded Cargo parallelism and safer cleanup of tracked test processes.",
+  "details": [
+    "A cooperative lease admits one heavy task on the host; Cargo defaults to two jobs, work already in progress can finish, and failures trigger a cooldown even when the commit changes.",
+    "Release-state persistence is atomic and fail-closed. Browser-test cleanup tracks descendant processes. The one-shot launchd handoff waits for the previous watcher to exit, preserving the active release pass.",
+    "Stopped seven orphaned test-stack processes after confirming they had no active endpoint clients; active release and live services were preserved.",
+    "Host-only verification passed 17 focused host guard, release, and interpreter-routing tests; 23 desktop release tests; 12 Android build tests; and 2 owned-process Node tests (54 total), plus Python compilation and Node syntax checks. A host admission probe deferred correctly under elevated memory pressure.",
+    "The launchd storage preflight and background Git read both passed using the actual Python framework executable after Xcode received macOS external-volume access. No build started and no active service was restarted."
+  ],
+  "limitation": "This is host tooling only, with no game logic changes or gameplay performance claim. Background release activation remains staged until the current release pass exits."
+}

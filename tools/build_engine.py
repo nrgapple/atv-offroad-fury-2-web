@@ -9,12 +9,16 @@ import hashlib
 import os
 import shutil
 import subprocess
+import sys
+from host_build import ensure_guard
+
+ensure_guard(__file__, sys.argv[1:])
 
 ROOT = Path(__file__).resolve().parents[1]
 cargo = shutil.which('cargo') or str(Path.home() / '.cargo/bin/cargo')
 bindgen = shutil.which('wasm-bindgen') or str(Path.home() / '.cargo/bin/wasm-bindgen')
 target = Path(os.environ.get('CARGO_TARGET_DIR', ROOT / 'target')) / 'engine-checkouts' / hashlib.sha256(str(ROOT.resolve()).encode()).hexdigest()[:16]
-subprocess.run([cargo, 'build', '--locked', '--release', '-p', 'atv-app', '--lib', '--target', 'wasm32-unknown-unknown', '--target-dir', str(target)], cwd=ROOT, check=True)
+subprocess.run([cargo, 'rustc', '--locked', '--release', '-p', 'atv-app', '--lib', '--crate-type', 'cdylib', '--target', 'wasm32-unknown-unknown', '--target-dir', str(target)], cwd=ROOT, check=True)
 dist = ROOT / 'web/dist'
 dist.mkdir(exist_ok=True)
 # Flat names keep the release allowlist and cache-busting rules unchanged.
