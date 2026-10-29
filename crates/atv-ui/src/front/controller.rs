@@ -437,6 +437,9 @@ pub struct Frontend {
     /// Split Screen: players 2-4's own ATV and rider (0 male, 1 female),
     /// chosen on the Split Screen page (saved).
     pub split_seconds: [(u16, u16); 3],
+    /// Split Screen: players 2-4's own gear and quad paint, chosen on the
+    /// Split Screen page (saved).
+    pub split_looks: [Appearance; 3],
     /// The pages Back returns through (`navigation`).
     history: Vec<navigation::Visit>,
 }
@@ -451,6 +454,38 @@ pub const SPLIT_PLAYERS_KEY: &str = "atv-split-players";
 /// Player `n`'s saved ATV and rider key (`atv-split-player2`..4).
 pub fn split_player_key(n: u8) -> String {
     format!("atv-split-player{n}")
+}
+
+/// Player `n`'s saved gear and paint key (`atv-split-look2`..4):
+/// the seven gear indices and the paint, comma-separated.
+pub fn split_look_key(n: u8) -> String {
+    format!("atv-split-look{n}")
+}
+
+/// A saved split look ("g0,..,g6,paint"); none when malformed.
+pub fn parse_split_look(value: &str) -> Option<Appearance> {
+    let parts: Vec<u8> = value
+        .split([',', '.'])
+        .map(|v| v.trim().parse().ok())
+        .collect::<Option<_>>()?;
+    let [g0, g1, g2, g3, g4, g5, g6, paint] = parts[..] else {
+        return None;
+    };
+    let look = Appearance {
+        gear: [g0, g1, g2, g3, g4, g5, g6],
+        paint,
+    };
+    look.valid().then_some(look)
+}
+
+/// A split look as saved ("g0,..,g6,paint").
+pub fn split_look_value(look: &Appearance) -> String {
+    look.gear
+        .iter()
+        .chain([&look.paint])
+        .map(u8::to_string)
+        .collect::<Vec<_>>()
+        .join(",")
 }
 
 /// Player 2's ATVs: the 26 original quads (rooms and the rider slot that
@@ -545,6 +580,12 @@ impl Frontend {
                     })
                     .filter(|(q, r): &(u16, u16)| (1..=SPLIT_QUADS).contains(q) && *r <= 1)
                     .unwrap_or((u16::from(n), 0))
+            }),
+            split_looks: [2u8, 3, 4].map(|n| {
+                settings
+                    .get(&split_look_key(n))
+                    .and_then(|v| parse_split_look(&v))
+                    .unwrap_or_default()
             }),
             history: Vec::new(),
         };
@@ -641,12 +682,19 @@ impl Frontend {
             "split_seconds": (0..usize::from(self.split_players.clamp(2, 4)) - 1)
                 .flat_map(|i| {
                     let (quad, rider) = self.split_seconds[i];
+                    let look = self.split_looks[i];
                     [
                         format!("Player {} ATV: {}", i + 2, self.quad_label(quad)),
                         format!(
                             "Player {} Rider: {}",
                             i + 2,
                             if rider == 1 { "Female" } else { "Male" }
+                        ),
+                        format!("Player {} Gear: {}", i + 2, self.jersey_label(look)),
+                        format!(
+                            "Player {} Paint: {}",
+                            i + 2,
+                            PAINTS[usize::from(look.paint).min(PAINTS.len() - 1)]
                         ),
                     ]
                 })
@@ -945,6 +993,45 @@ impl Frontend {
             name("goggle"),
             PAINTS[usize::from(a.paint)].to_string(),
         ]
+    }
+
+    /// A look's jersey line (the Garage's Jersey row name), or Original.
+    fn jersey_label(&self, look: Appearance) -> String {
+        let shirt = SLOTS.iter().position(|s| *s == "shirt").unwrap_or(3);
+        usize::from(look.gear[shirt])
+            .checked_sub(1)
+            .and_then(|i| self.gear_catalog.get(shirt)?.items.get(i))
+            .map_or_else(|| "Original".to_string(), |item| item.name.clone())
+    }
+
+    /// Split Screen → Player N Gear: the next owned jersey line (Original
+    /// and the catalog's jerseys, as the Garage's Jersey row steps), with
+    /// its matching sleeves and pants (the catalog's lines share an index).
+    fn step_split_gear(&self, mut look: Appearance) -> Appearance {
+        let at = SLOTS.iter().position(|s| *s == "shirt").unwrap_or(3);
+        let items = self.gear_catalog.get(at).map_or(0, |c| c.items.len());
+        if items == 0 {
+            return look;
+        }
+        for _ in 0..=items {
+            look.gear[at] = (usize::from(look.gear[at]) + 1).rem_euclid(items + 1) as u8;
+            if self.gear_choice_owned(at, look.gear[at]) {
+                break;
+            }
+        }
+        for slot in ["sleeve", "pant"] {
+            let Some(s) = SLOTS.iter().position(|n| *n == slot) else {
+                continue;
+            };
+            let count = self.gear_catalog.get(s).map_or(0, |c| c.items.len());
+            let index = look.gear[at].min(count.min(255) as u8);
+            look.gear[s] = if self.gear_choice_owned(s, index) {
+                index
+            } else {
+                0
+            };
+        }
+        look
     }
 
     /// frontend.js `stepGear`: one row through Original and the catalog;
@@ -1875,6 +1962,22 @@ impl Frontend {
                 }
                 self.split_seconds[index] = (quad, rider);
                 settings.set(&split_player_key(n), &format!("{quad},{rider}"));
+                self.refresh(view);
+            }
+            // Players 2-4's own gear and paint (each original player
+            // dresses in its own Garage).
+            "split2gear" | "split2paint" | "split3gear" | "split3paint" | "split4gear"
+            | "split4paint" => {
+                let n = action.as_bytes()[5] - b'0';
+                let index = usize::from(n) - 2;
+                let mut look = self.split_looks[index];
+                if action.ends_with("paint") {
+                    look.paint = (look.paint + 1) % PAINTS.len() as u8;
+                } else {
+                    look = self.step_split_gear(look);
+                }
+                self.split_looks[index] = look;
+                settings.set(&split_look_key(n), &split_look_value(&look));
                 self.refresh(view);
             }
             "splitlayout" => {
@@ -3711,6 +3814,26 @@ mod tests {
             Frontend::new(tracks(), &settings, true).split_seconds,
             front.split_seconds
         );
+        // Player 2's own gear and paint rows, saved.
+        let actions: Vec<_> = front.choices().iter().map(|(a, _)| a.clone()).collect();
+        assert_eq!(actions[7..9], ["split2gear", "split2paint"]);
+        assert!(front.choices()[8].1.contains("Paint: Original"));
+        front.selection = 8;
+        front.key("Enter", &view, &mut settings);
+        assert_eq!(front.split_looks[0].paint, 1);
+        assert!(front.choices()[8].1.contains("Paint: Red"));
+        front.selection = 7;
+        front.key("Enter", &view, &mut settings);
+        assert!(front.choices()[7].1.starts_with("Player 2 Gear: "));
+        assert_eq!(
+            Frontend::new(tracks(), &settings, true).split_looks,
+            front.split_looks
+        );
+        assert_eq!(
+            parse_split_look(&split_look_value(&front.split_looks[0])),
+            Some(front.split_looks[0])
+        );
+        assert_eq!(parse_split_look("1,2,3"), None);
         // Three and four players: quarters (no layout row) and rows for
         // players 3 and 4, saved.
         front.selection = 3;
@@ -3721,14 +3844,26 @@ mod tests {
         assert!(front.choices()[3].1.contains("Players: 3"));
         assert_eq!(
             actions[4..],
-            ["split2quad", "split2rider", "split3quad", "split3rider"]
+            [
+                "split2quad",
+                "split2rider",
+                "split2gear",
+                "split2paint",
+                "split3quad",
+                "split3rider",
+                "split3gear",
+                "split3paint"
+            ]
         );
         front.key("Enter", &view, &mut settings);
         assert_eq!(front.split_players, 4);
         let actions: Vec<_> = front.choices().iter().map(|(a, _)| a.clone()).collect();
-        assert_eq!(actions.len(), 10);
-        assert_eq!(actions[8..], ["split4quad", "split4rider"]);
-        front.selection = 9;
+        assert_eq!(actions.len(), 16);
+        assert_eq!(
+            actions[12..],
+            ["split4quad", "split4rider", "split4gear", "split4paint"]
+        );
+        front.selection = 13;
         front.key("Enter", &view, &mut settings);
         assert_eq!(front.split_seconds[2].1, 1);
         let restored = Frontend::new(tracks(), &settings, true);

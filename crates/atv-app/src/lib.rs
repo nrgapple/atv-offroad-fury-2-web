@@ -2317,6 +2317,24 @@ impl App {
                 })
                 .collect();
             let compass = compass_icons.map(|icons| compass_of(frame, icons));
+            // Split screen: the original layout and the mode's overlay set.
+            let split_layout = ready.split.first().map(|s| {
+                let name = atv_ui::hud::split::layout_name(
+                    ready.split.len() + 1,
+                    s.layout == split::Layout::Vertical,
+                );
+                let race = ride.race().and_then(|r| r.frame.as_ref());
+                let set = match (race, self.game.as_ref().map(|g| g.kind)) {
+                    (Some(f), _) if f.enduro_gate.is_some() => 11,
+                    (Some(_), _) => 1,
+                    (None, Some(atv_core::games::GameKind::TreasureHunt)) => 6,
+                    (None, Some(atv_core::games::GameKind::KingOfTheHills)) => 7,
+                    _ if self.hockey.as_ref().is_some_and(|h| h.split) => 9,
+                    _ if self.tag.as_ref().is_some_and(|t| t.local) => 8,
+                    _ => 2,
+                };
+                (name, set)
+            });
             overlay.prepare(
                 &gpu.device,
                 &gpu.queue,
@@ -2344,6 +2362,7 @@ impl App {
                     game: game_view,
                     compass,
                     others,
+                    split_layout,
                 }),
                 Some(&mut riding.bindings),
             );
@@ -2390,6 +2409,9 @@ impl App {
                         "race": race(ride),
                         "quad": ride.selection().quad,
                         "rider": ride.selection().rider,
+                        "gear": ride.appearance().gear,
+                        "paint": ride.appearance().paint,
+                        "paintMode": ride.paint(),
                         "locked": s.riding.locked,
                         "effects": s.riding.effects.as_ref().map(|e| {
                             let f = e.frame();
@@ -6110,6 +6132,7 @@ impl App {
                         .state
                         .split_seconds
                         .map(|(quad, rider)| Some(atv_game::ride::Selection { quad, rider })),
+                    looks: f.state.split_looks.map(Some),
                 })
             });
             self.split_request = split;
@@ -7592,6 +7615,7 @@ fn capture(ready: &mut Ready, path: &std::path::Path, width: u32, height: u32, u
                     game: None,
                     compass: None,
                     others: Vec::new(),
+                    split_layout: None,
                 }),
                 None,
             );
@@ -8889,6 +8913,10 @@ fn split_link_param() -> Option<split::Request> {
         layout,
         players,
         seconds: [2, 3, 4].map(split_player_param),
+        looks: [2, 3, 4].map(|n| {
+            link_param(&format!("look{n}"), &format!("FURY_LOOK{n}"))
+                .and_then(|v| atv_ui::front::controller::parse_split_look(&v))
+        }),
     })
 }
 
