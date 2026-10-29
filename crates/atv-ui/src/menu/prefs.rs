@@ -168,6 +168,22 @@ impl Preferences {
         }
     }
 
+    /// Sets a volume slider (0–100%): "musicvolume" or "sfxvolume".
+    pub fn set_volume(&mut self, action: &str, percent: f32, settings: &mut Settings) {
+        let value = (percent / 100.).clamp(0., 1.);
+        match action {
+            "musicvolume" => {
+                self.music_volume = value;
+                self.save_music(settings);
+            }
+            "sfxvolume" => {
+                self.sfx_volume = value;
+                self.save_audio(settings);
+            }
+            _ => {}
+        }
+    }
+
     fn save_audio(&self, settings: &mut Settings) {
         settings.set(
             "atv-audio-v1",
