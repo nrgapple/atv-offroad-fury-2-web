@@ -396,13 +396,14 @@ impl Scroller {
     /// the list goes on (Safari's toolbars can leave half a menu below the
     /// fold with nothing to show it).
     pub fn paint_edges(&self, list: &mut crate::paint::DisplayList, pane: crate::Rect) {
-        if self.max <= 1. || pane.h < 80. {
+        // A few pixels of row padding past the edge is not "more".
+        if self.max <= 12. || pane.h < 80. {
             return;
         }
         let fade = |list: &mut crate::paint::DisplayList, y: f32, down: bool| {
             let (from, to) = (
                 crate::Color::hex("#00000000"),
-                crate::Color::hex("#000000a0"),
+                crate::Color::hex("#00000073"),
             );
             let stops = if down {
                 [(0., from), (1., to)]

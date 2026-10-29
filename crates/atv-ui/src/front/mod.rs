@@ -44,6 +44,9 @@ pub const START: u32 = 2411;
 pub const SHARE: u32 = 2412;
 /// The Pass Key badge (title, main menu and Profile Editor pages).
 pub const PASSKEY: u32 = 2413;
+/// The stage panel and its text table (layout checks only; not targets).
+pub const STAGE: u32 = 2414;
+pub const DETAILS: u32 = 2415;
 /// Value rows' Previous/Next arrows, by choice index.
 pub const STEP_PREV: u32 = 2430;
 pub const STEP_NEXT: u32 = 2440;
@@ -589,13 +592,13 @@ fn page_element(m: &Metrics, s: &Screen) -> El {
                     0.36
                 }
             }
-            // Short phones (Safari's toolbars take ~150px) give the rows
-            // the room: Single Player's six modes stay on screen.
+            // Phones give the rows the room (Safari's toolbars take ~150px
+            // more): Single Player's six modes stay on screen.
             page if stage_page(page) => {
                 if h <= 640. {
-                    0.3
-                } else if h <= 720. {
-                    0.4
+                    0.28
+                } else if h <= 820. {
+                    0.36
                 } else {
                     0.5
                 }
@@ -937,9 +940,12 @@ fn panel(m: &Metrics, s: &Screen, loading: bool) -> El {
         sides(
             if loading { 34. } else { 4. },
             m.sides().1,
-            // Clear of the sweeping lower edge, which rises 56px at the left.
+            // Clear of the sweeping lower edge, which rises 56px at the left
+            // (about 40px over the gutter, where text lines start).
             if matches!(s.page.as_str(), "tracks" | "race") || stage_page(&s.page) {
                 if m.h <= 640. { 16. } else { 22. }
+            } else if !s.details.is_empty() {
+                44.
             } else {
                 10.
             },
@@ -957,7 +963,7 @@ fn panel(m: &Metrics, s: &Screen, loading: bool) -> El {
             clamp(64., m.w * 0.04 + m.h * 0.12, 160.),
         )
     };
-    let mut panel = El::new(style);
+    let mut panel = El::new(style).id(STAGE);
     if m.portrait {
         // `.ms-panel::before`: silver reaching up behind the heading with a
         // sweeping elliptical lower-left corner.
@@ -1013,6 +1019,8 @@ fn panel(m: &Metrics, s: &Screen, loading: bool) -> El {
             }
             panel = panel.child(slot).child(plate(m, s));
         }
+        // A portrait course picker gives the whole screen to the list.
+        "race" if s.course_sheet && m.portrait => {}
         "tracks" | "lobby" | "race" => panel = panel.child(hero(m, s)),
         "garage" | "gear" => {
             // `.ms-models`: the rider just behind the ATV's rear wheel.
@@ -1091,14 +1099,33 @@ fn details(m: &Metrics, s: &Screen) -> El {
     });
     for (i, (label, value)) in s.details.iter().enumerate() {
         let lead = i == 0 && !value.is_empty();
+        // A status heading (the first line without a value) stands out; the
+        // sentences under it read as body copy, lighter and smaller, with
+        // room between lines, not as a block of bold.
+        let heading = i == 0 && value.is_empty();
+        let prose = value.is_empty() && !heading;
         let label_style = TextStyle::new(
             display(
-                size,
-                if value.is_empty() || lead { 800 } else { 700 },
+                if heading {
+                    size * 1.08
+                } else if prose {
+                    size * 0.94
+                } else {
+                    size
+                },
+                if heading || lead {
+                    800
+                } else if prose {
+                    600
+                } else {
+                    700
+                },
                 false,
             ),
-            Color::hex(if value.is_empty() || lead {
+            Color::hex(if heading || lead {
                 "#111"
+            } else if prose {
+                "#2b2b2b"
             } else {
                 "#3a3a3a"
             }),
@@ -1116,7 +1143,7 @@ fn details(m: &Metrics, s: &Screen) -> El {
             .content(Content::Text {
                 text: text.to_string(),
                 style,
-                line_height: size * 1.2,
+                line_height: size * if prose { 1.3 } else { 1.2 },
                 wrap: true,
             })
         };
@@ -1135,8 +1162,10 @@ fn details(m: &Metrics, s: &Screen) -> El {
             line = line.child(
                 El::new(Style {
                     flex_shrink: 0.,
+                    // A Pass Key (24 characters) and the sync status read
+                    // whole on a phone; short labels give way.
                     max_size: Size {
-                        width: percent(0.55),
+                        width: percent(0.72),
                         height: auto(),
                     },
                     ..Default::default()
@@ -1150,7 +1179,7 @@ fn details(m: &Metrics, s: &Screen) -> El {
         }
         table = table.child(line);
     }
-    table
+    table.id(DETAILS)
 }
 
 fn panel_logo(m: &Metrics, s: &Screen) -> Option<El> {
@@ -1230,16 +1259,19 @@ fn hero(m: &Metrics, s: &Screen) -> El {
     hero.justify_content = JustifyContent::CENTER;
     // padding-bottom: 6vh applies in both orientations; a portrait phone's
     // Single Race keeps half of it for the setup rows.
-    let race_portrait = m.portrait && s.page == "race";
+    let race_portrait = m.portrait && matches!(s.page.as_str(), "race" | "tracks");
     hero.padding = sides(0., 0., m.h * if race_portrait { 0.03 } else { 0.06 }, 0.);
     if !m.portrait {
         hero.flex_grow = 1.;
     }
     let aspect = if m.portrait {
-        // Short phones (and Single Race below ~760px) take a wider, lower
-        // photo so the rows keep their room.
-        let short = if race_portrait { 760. } else { 640. };
-        if m.h <= short { 2.4 } else { 16. / 9. }
+        // Short phones (and Single Race on every phone) take a wider,
+        // lower photo so the rows keep their room.
+        if m.h <= 640. || race_portrait {
+            2.4
+        } else {
+            16. / 9.
+        }
     } else {
         1.5
     };

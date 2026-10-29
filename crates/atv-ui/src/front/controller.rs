@@ -2215,7 +2215,7 @@ impl Frontend {
                     && !(Self::in_rows(*id) && rows.is_some_and(|l| !l.contains(x, y)))
             })
             .map(|(_, id)| *id)
-            .find(|id| *id != LIST && *id != ROWS)
+            .find(|id| !matches!(*id, LIST | ROWS | super::STAGE | super::DETAILS))
     }
 
     /// Mouse movement: hover, and a row under a moving mouse takes the
