@@ -35,6 +35,7 @@ fn flat() -> Terrain {
         hierarchy_nodes: 1,
         width_cells: 16,
         depth_cells: 16,
+        leaf_index: Default::default(),
     }
 }
 /// A vertical test wall facing -z at `z`, 200 ft wide and 60 ft tall.

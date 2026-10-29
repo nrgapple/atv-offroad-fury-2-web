@@ -538,11 +538,7 @@ pub async fn load_with(
         .iter()
         .position(|m| last_component(&m.name).eq_ignore_ascii_case(&scene.cube_file))
         .ok_or("Original scene sky is missing.")?;
-    let sky = Some(crate::sky::load(
-        &archive.extract(sky_index)?,
-        options.sky_smooth,
-    )
-    .await?);
+    let sky = Some(crate::sky::load(&archive.extract(sky_index)?, options.sky_smooth).await?);
     crate::yield_frame().await;
     // Enduro gates (`0022a340`): a `<venue>endwgate` at every waypoint but
     // the last, which holds the `<venue>endfgate` finish gate; both collide.

@@ -67,7 +67,7 @@ fn fail_all(pool: &mut Pool, reason: &str) {
     for (_, p) in pool.pending.drain() {
         let _ = p.reject.call1(&JsValue::NULL, &JsValue::from_str(reason));
     }
-    for w in pool.workers.drain(..).collect::<Vec<_>>() {
+    for w in std::mem::take(&mut pool.workers) {
         w.worker.terminate();
         pool.retired.push(w);
     }
@@ -238,11 +238,7 @@ fn submit(kind: u32, arg: u32, input: &[u8]) -> Option<js_sys::Promise> {
 
 /// The outputs of `inputs` from the pool; None when there is no pool
 /// (the caller decodes inline). A job error is the decode's own error.
-pub async fn many(
-    kind: u32,
-    arg: u32,
-    inputs: &[&[u8]],
-) -> Option<crate::Result<Vec<Vec<u8>>>> {
+pub async fn many(kind: u32, arg: u32, inputs: &[&[u8]]) -> Option<crate::Result<Vec<Vec<u8>>>> {
     let promises = js_sys::Array::new();
     for input in inputs {
         promises.push(submit(kind, arg, input)?.as_ref());
@@ -258,9 +254,7 @@ pub async fn many(
                 if POOL.with(|p| p.borrow().broken) {
                     return None;
                 }
-                Err(error
-                    .as_string()
-                    .unwrap_or_else(|| "decode failed".into()))
+                Err(error.as_string().unwrap_or_else(|| "decode failed".into()))
             }
         },
     )

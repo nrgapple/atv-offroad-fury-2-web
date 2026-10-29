@@ -202,7 +202,10 @@ pub async fn photos(content: &Content, tracks: &[Track]) -> Result<Vec<(String, 
         let [Ok((lw, lh, left)), Ok((rw, rh, right))] = pair else {
             continue;
         };
-        let (left, right) = (Rgba::new(*lw, *lh, left.clone()), Rgba::new(*rw, *rh, right.clone()));
+        let (left, right) = (
+            Rgba::new(*lw, *lh, left.clone()),
+            Rgba::new(*rw, *rh, right.clone()),
+        );
         out.push((id, Rgba::join(&left, &right).trim_dark()));
         atv_content::yield_frame().await;
     }

@@ -515,12 +515,15 @@ mod web {
     /// thread back (about half a 60 Hz frame).
     pub const SLICE_MS: f64 = 8.;
 
+    /// The wake-up channel and its message handler.
+    type Channel = (web_sys::MessageChannel, Closure<dyn FnMut()>);
+
     thread_local! {
         /// When the browser last had the thread (a real yield resumed).
         static RESUMED: Cell<f64> = const { Cell::new(0.) };
         /// One channel posts every yield's wake-up message; resolvers wait
         /// in order.
-        static CHANNEL: RefCell<Option<(web_sys::MessageChannel, Closure<dyn FnMut()>)>> =
+        static CHANNEL: RefCell<Option<Channel>> =
             const { RefCell::new(None) };
         static WAITING: RefCell<VecDeque<js_sys::Function>> = const { RefCell::new(VecDeque::new()) };
     }
@@ -553,14 +556,19 @@ mod web {
                         let _ = resolve.call0(&wasm_bindgen::JsValue::NULL);
                     }
                 });
-                ports.port1().set_onmessage(Some(wake.as_ref().unchecked_ref()));
+                ports
+                    .port1()
+                    .set_onmessage(Some(wake.as_ref().unchecked_ref()));
                 *channel = Some((ports, wake));
             }
             let (ports, _) = channel.as_ref()?;
             let promise = js_sys::Promise::new(&mut |resolve, _| {
                 WAITING.with(|w| w.borrow_mut().push_back(resolve));
             });
-            ports.port2().post_message(&wasm_bindgen::JsValue::NULL).ok()?;
+            ports
+                .port2()
+                .post_message(&wasm_bindgen::JsValue::NULL)
+                .ok()?;
             Some(promise)
         })
     }
@@ -602,7 +610,6 @@ mod web {
             }
         }
     }
-
 
     /// A rejection as frontend.js shows it: the Error's `message` (a refused
     /// request is the browser's own "Failed to fetch" TypeError).

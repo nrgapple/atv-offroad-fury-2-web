@@ -41,9 +41,8 @@ pub fn run(kind: u32, arg: u32, bytes: &[u8]) -> Result<Vec<u8>> {
         IPUM => {
             let image = atv_core::ipu::decode_ipum(bytes)?;
             let smooth = (arg & SMOOTH != 0).then(|| image.smoothed_rgba());
-            let mut out = Vec::with_capacity(
-                8 + image.rgba.len() + smooth.as_ref().map_or(0, Vec::len),
-            );
+            let mut out =
+                Vec::with_capacity(8 + image.rgba.len() + smooth.as_ref().map_or(0, Vec::len));
             out.extend_from_slice(&image.info.width.to_le_bytes());
             out.extend_from_slice(&image.info.height.to_le_bytes());
             out.extend_from_slice(&image.rgba);
@@ -162,7 +161,10 @@ pub async fn psts(inputs: &[&[u8]]) -> Result<Vec<Result<(u32, u32, Vec<u8>)>>> 
         .into_iter()
         .map(|out| {
             let out = out?;
-            let word = |at: usize| out.get(at..at + 4).map(|b| u32::from_le_bytes(b.try_into().unwrap()));
+            let word = |at: usize| {
+                out.get(at..at + 4)
+                    .map(|b| u32::from_le_bytes(b.try_into().unwrap()))
+            };
             let (Some(w), Some(h)) = (word(0), word(4)) else {
                 return Err("short decode result".into());
             };
@@ -236,7 +238,10 @@ pub async fn many(kind: u32, arg: u32, inputs: &[&[u8]]) -> Result<Vec<Vec<u8>>>
                 .collect();
             handles
                 .into_iter()
-                .map(|h| h.join().unwrap_or_else(|_| Err("decode thread panicked".into())))
+                .map(|h| {
+                    h.join()
+                        .unwrap_or_else(|_| Err("decode thread panicked".into()))
+                })
                 .collect()
         });
         let mut outputs = Vec::with_capacity(inputs.len());
@@ -247,7 +252,6 @@ pub async fn many(kind: u32, arg: u32, inputs: &[&[u8]]) -> Result<Vec<Vec<u8>>>
         Ok(outputs)
     }
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -274,7 +278,13 @@ mod tests {
         let (source, back) = unpack_pcm(&out, 48000).unwrap();
         assert_eq!(source, 22050);
         assert_eq!(
-            (back.channels, back.frames, &back.data, back.loop_markers, back.rate),
+            (
+                back.channels,
+                back.frames,
+                &back.data,
+                back.loop_markers,
+                back.rate
+            ),
             (2, 2, &pcm.data, pcm.loop_markers, 48000)
         );
     }

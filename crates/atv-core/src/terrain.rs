@@ -32,6 +32,62 @@ pub struct Terrain {
     pub hierarchy_nodes: usize,
     pub width_cells: u32,
     pub depth_cells: u32,
+    /// Which leaf holds each 16-cell block, built on the first contact query
+    /// (see [`LeafIndex`]).
+    pub leaf_index: LeafCache,
+}
+
+/// [`LeafIndex`], built on first use (`Default` for a new terrain).
+#[derive(Debug, Default)]
+pub struct LeafCache(std::sync::OnceLock<Option<LeafIndex>>);
+
+/// The leaf covering each 16x16-cell block, so a contact query finds its
+/// leaf directly instead of scanning every leaf (thousands per course; the
+/// vehicle queries contacts several times per step, and loading resamples
+/// every plant). Built only when every leaf sits on the 16-cell grid with no
+/// two leaves on one block, where it names exactly the leaf the scan finds
+/// first. A lookup still checks that the leaf covers the cell and scans
+/// otherwise, so a leaf list changed after the build answers as before.
+#[derive(Debug)]
+struct LeafIndex {
+    columns: u32,
+    rows: u32,
+    /// Leaf index + 1 per block, 0 for none.
+    blocks: Vec<u32>,
+}
+
+impl LeafIndex {
+    fn build(leaves: &[TerrainLeaf]) -> Option<Self> {
+        let columns = leaves.iter().map(|l| l.x / 16 + 1).max()?;
+        let rows = leaves.iter().map(|l| l.z / 16 + 1).max()?;
+        let mut blocks = vec![0u32; (columns as usize).checked_mul(rows as usize)?];
+        for (index, leaf) in leaves.iter().enumerate() {
+            if leaf.x % 16 != 0 || leaf.z % 16 != 0 {
+                return None;
+            }
+            let slot = &mut blocks[(leaf.z / 16 * columns + leaf.x / 16) as usize];
+            if *slot != 0 {
+                return None;
+            }
+            *slot = u32::try_from(index + 1).ok()?;
+        }
+        Some(Self {
+            columns,
+            rows,
+            blocks,
+        })
+    }
+
+    fn get(&self, cell_x: u32, cell_z: u32) -> Option<usize> {
+        let (bx, bz) = (cell_x / 16, cell_z / 16);
+        if bx >= self.columns || bz >= self.rows {
+            return None;
+        }
+        match self.blocks[(bz * self.columns + bx) as usize] {
+            0 => None,
+            n => Some(n as usize - 1),
+        }
+    }
 }
 
 /// Dense render heights, row-major Z then X, as the browser's terrain mesh
@@ -212,6 +268,7 @@ pub fn decode_tr2(data: &[u8]) -> Result<Terrain> {
         leaves: hierarchy.leaves,
         width_cells,
         depth_cells,
+        leaf_index: LeafCache::default(),
     })
 }
 
@@ -468,9 +525,18 @@ impl Terrain {
         cell_x: u32,
         cell_z: u32,
     ) -> Result<Option<TerrainContact>> {
-        let Some(leaf) = self.leaves.iter().find(|leaf| {
+        let covers = |leaf: &&TerrainLeaf| {
             cell_x >= leaf.x && cell_x < leaf.x + 16 && cell_z >= leaf.z && cell_z < leaf.z + 16
-        }) else {
+        };
+        let indexed = self
+            .leaf_index
+            .0
+            .get_or_init(|| LeafIndex::build(&self.leaves))
+            .as_ref()
+            .and_then(|index| index.get(cell_x, cell_z))
+            .and_then(|i| self.leaves.get(i))
+            .filter(covers);
+        let Some(leaf) = indexed.or_else(|| self.leaves.iter().find(covers)) else {
             return Ok(None);
         };
         let local_x = (cell_x - leaf.x) as usize;

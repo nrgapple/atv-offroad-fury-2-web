@@ -255,7 +255,10 @@ pub async fn load(
     }
     let started = web_time::Instant::now();
     let inputs: Vec<&[u8]> = vags.iter().map(Vec::as_slice).collect();
-    for (key, (source, pcm)) in keys.into_iter().zip(crate::offload::pcms(&inputs, rate).await?) {
+    for (key, (source, pcm)) in keys
+        .into_iter()
+        .zip(crate::offload::pcms(&inputs, rate).await?)
+    {
         rates.insert(key.clone(), source);
         samples.insert(key, Arc::new(pcm));
     }
