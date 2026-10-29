@@ -104,6 +104,11 @@ struct Connection {
     /// serial-0 `Claim`); only such clients receive those games' state.
     #[serde(default)]
     games: bool,
+    /// The client announced room Freestyle (a serial-0 `Claim` of kind 2);
+    /// only such clients receive its score table and only such a host
+    /// receives Freestyle reports.
+    #[serde(default)]
+    freestyle: bool,
     last_seen_ms: f64,
     window_ms: f64,
     messages: u16,
@@ -951,6 +956,7 @@ impl DurableObject for LobbyRoom {
             snapshot: None,
             races: false,
             games: false,
+            freestyle: false,
             last_seen_ms: instant,
             window_ms: instant,
             messages: 0,
@@ -1176,11 +1182,13 @@ impl DurableObject for LobbyRoom {
             {
                 let race = state.game == 3;
                 let game = state.game >= atv_net::game_kind::KING_OF_THE_HILLS;
+                let freestyle = state.game == atv_net::game_kind::FREESTYLE;
                 for (peer, other) in self.connections()? {
                     if peer != ws
                         && other.ready_map == room.map
                         && (!race || other.races)
                         && (!game || other.games)
+                        && (!freestyle || other.freestyle)
                     {
                         send(&peer, &Packet::Game(state.clone()))?;
                     }
@@ -1210,6 +1218,9 @@ impl DurableObject for LobbyRoom {
             // the report to the host alone, who validates it.
             Packet::Claim(mut claim) if connection.player.is_some() => {
                 connection.games = true;
+                // Room Freestyle (research/MULTIPLAYER.md "Room Freestyle").
+                let freestyle = claim.kind == atv_net::claim_kind::FREESTYLE;
+                connection.freestyle |= freestyle;
                 let host = self.lobby(None)?.host;
                 if claim.serial != 0
                     && !room.public
@@ -1219,7 +1230,11 @@ impl DurableObject for LobbyRoom {
                 {
                     claim.peer = connection.peer;
                     for (peer, other) in self.connections()? {
-                        if other.peer == host && other.ready_map == room.map && other.games {
+                        if other.peer == host
+                            && other.ready_map == room.map
+                            && other.games
+                            && (!freestyle || other.freestyle)
+                        {
                             send(&peer, &Packet::Claim(claim))?;
                         }
                     }
@@ -1522,6 +1537,7 @@ mod tests {
             snapshot: None,
             races: false,
             games: false,
+            freestyle: false,
             last_seen_ms: 0.,
             window_ms: 0.,
             messages: 0,
@@ -1572,6 +1588,7 @@ mod tests {
             snapshot: None,
             races: false,
             games: false,
+            freestyle: false,
             sequence: Some(u32::MAX),
             last_seen_ms: 555.,
             window_ms: 500.,

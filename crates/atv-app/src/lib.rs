@@ -20,6 +20,7 @@ mod random;
 mod render_scale;
 pub mod replay;
 mod riding;
+mod room_freestyle;
 mod room_game;
 mod room_race;
 mod sound;
@@ -860,6 +861,14 @@ struct App {
     room_game_serial: u32,
     /// The next room reload rides this game's course scene.
     room_game_scene: Option<atv_core::games::GameKind>,
+    /// Freestyle in a multiplayer room (research/MULTIPLAYER.md "Room
+    /// Freestyle").
+    room_freestyle: Option<room_freestyle::RoomFreestyle>,
+    /// The last room Freestyle serial seen, so the host numbers the next.
+    room_freestyle_serial: u32,
+    /// A room Freestyle hosted from the menus starts (holding its start for
+    /// an invitee) once the room is joined.
+    room_freestyle_start: bool,
     /// Games → King of the Hills / Treasure Hunt → Riders: Online Room
     /// hosted a room; the game (with these minutes) starts once the room
     /// is joined.
@@ -1819,6 +1828,7 @@ impl App {
         let mut room_load = None;
         let mut game_join = None;
         let mut host_game = None;
+        let mut freestyle_reload = false;
         let mut ended = None;
         if let Some(net) = &mut ready.net {
             // Only actual suspension (hidden page, suspended app) sends the
@@ -1871,6 +1881,7 @@ impl App {
                 self.room_race_serial = state.serial;
                 let (race, load) = room_race::RoomRace::guest(state, me, &net.environment);
                 self.room_race = Some(race);
+                self.room_freestyle = None;
                 if let Some(overlay) = &mut self.overlay {
                     overlay.results = Default::default();
                 }
@@ -1898,6 +1909,7 @@ impl App {
                 self.room_game_serial = state.serial;
                 let minutes = (state.clock / 60.).ceil() as u32;
                 game_join = Some((kind, state.serial, minutes));
+                self.room_freestyle = None;
             }
             if let Some(race) = &mut self.room_race {
                 match race.frame(&mut riding.ride, net) {
@@ -1918,6 +1930,58 @@ impl App {
                     }
                     None => {}
                 }
+            }
+            // Room Freestyle: a guest follows the host's new session; the
+            // host starts one hosted from the menus once the room is joined.
+            if !net.is_host()
+                && let Some(state) = net.game_state()
+                && state.game == atv_game::multiplayer::game_kind::FREESTYLE
+                && state.serial != self.room_freestyle_serial
+                && state.phase != atv_game::multiplayer::game_phase::OVER
+            {
+                self.room_freestyle_serial = state.serial;
+                // A race or game scene goes back to the room's Free Ride.
+                freestyle_reload = riding.ride.race().is_some()
+                    || self.room_race.is_some()
+                    || self.game.as_ref().is_some_and(|g| g.room.is_some());
+                self.room_race = None;
+                if self.game.as_ref().is_some_and(|g| g.room.is_some()) {
+                    self.game = None;
+                }
+                self.room_freestyle = Some(room_freestyle::RoomFreestyle::new(
+                    false,
+                    state.serial,
+                    state.clock,
+                    net.environment.clone(),
+                ));
+                if let Some(overlay) = &mut self.overlay {
+                    overlay.results = Default::default();
+                }
+            }
+            if net.is_host()
+                && net.roster().0.is_some()
+                && self.room_freestyle_start
+                && self.room_freestyle.is_none()
+            {
+                self.room_freestyle_start = false;
+                let serial = self.room_freestyle_serial.wrapping_add(1).max(1);
+                self.room_freestyle_serial = serial;
+                let mut session = room_freestyle::RoomFreestyle::new(
+                    true,
+                    serial,
+                    room_freestyle::session_seconds(),
+                    net.environment.clone(),
+                );
+                session.table.hold = true;
+                self.room_freestyle = Some(session);
+            }
+            if let Some(session) = &mut self.room_freestyle
+                && !freestyle_reload
+                && let Some(summary) = session.frame(&mut riding.ride, net)
+                && let Some(overlay) = &mut self.overlay
+            {
+                overlay.results.show_game("Freestyle Results", summary);
+                overlay.results.game_continue = true;
             }
             if let Some(overlay) = &mut self.overlay {
                 overlay.room_race_pending = self.room_race.as_ref().is_some_and(|r| r.pending());
@@ -1974,8 +2038,20 @@ impl App {
         }
         if let Some(environment) = course {
             self.room_race = None;
+            self.room_freestyle = None;
             self.reload_room(environment, None);
             return;
+        }
+        if freestyle_reload {
+            let environment = self
+                .ready
+                .as_ref()
+                .and_then(|r| r.net.as_ref())
+                .map(|n| n.environment.clone());
+            if let Some(environment) = environment {
+                self.reload_room(environment, None);
+                return;
+            }
         }
         if let Some(settings) = room_load {
             let environment = self
@@ -2382,6 +2458,21 @@ impl App {
             }
             None => None,
         };
+        // Room Freestyle: the games panel (clock, combos, place, score and
+        // the leader), the start lamps' sounds and the held start.
+        let game_view = match &mut self.room_freestyle {
+            Some(session) if game_view.is_none() => {
+                riding.locked |= session.locked();
+                let sounds = std::mem::take(&mut session.sounds);
+                if let Some(sound) = &mut riding.sound {
+                    for name in sounds {
+                        sound.one_shot(name);
+                    }
+                }
+                Some(session.view())
+            }
+            _ => game_view,
+        };
         if let Some(overlay) = &mut self.overlay {
             // Split screen: the race is over once every player finishes.
             overlay.hold_results = ready.split.iter().any(|s| {
@@ -2393,6 +2484,7 @@ impl App {
             });
             overlay.training = self.training.is_some();
             overlay.game = self.game.is_some()
+                || self.room_freestyle.is_some()
                 || self.hockey.is_some()
                 || self.tag.as_ref().is_some_and(|t| t.local);
             if riding.input_cleared {
@@ -2932,6 +3024,7 @@ impl App {
                 "game": self.game.as_ref().map(games::GameSession::state),
                 "roomRace": self.room_race.as_ref().map(room_race::RoomRace::state),
                 "roomGame": self.game.as_ref().map(games::GameSession::room_state),
+                "roomFreestyle": self.room_freestyle.as_ref().map(room_freestyle::RoomFreestyle::state),
                 "hockey": self.hockey.as_ref().map(|h| h.state(riding.ride.frame().origin)),
                 "tag": self.tag.as_ref().map(|t| t.state()),
                 "tagBall": ready.venue.tag_ball,
@@ -3450,6 +3543,20 @@ impl App {
                 }
                 self.menu_event(Event::Resume);
             }
+            // Room Freestyle: Restart Game starts a new session for the
+            // room, from the host only (it also starts a held one now).
+            Event::Reset if self.room_freestyle.is_some() => {
+                let host = ready.net.as_ref().is_some_and(|n| n.is_host());
+                if host && let Some(session) = &mut self.room_freestyle {
+                    let serial = self.room_freestyle_serial.wrapping_add(1).max(1);
+                    self.room_freestyle_serial = serial;
+                    session.restart(serial);
+                }
+                if let Some(overlay) = &mut self.overlay {
+                    overlay.results = Default::default();
+                }
+                self.menu_event(Event::Resume);
+            }
             // Restart (`003377f0`): scores and clock reset, a new face-off.
             Event::Reset if self.tag.as_ref().is_some_and(|t| t.local) => {
                 self.restart_split_tag();
@@ -3558,6 +3665,13 @@ impl App {
                     let minutes = self.room_game_minutes();
                     self.start_room_game(kind, true, serial, minutes);
                 }
+            }
+            // Play Freestyle (room host): a timed stunt session for every
+            // room rider on this course (research/MULTIPLAYER.md "Room
+            // Freestyle").
+            Event::PlayFreestyle => {
+                self.menu_event(Event::Resume);
+                self.start_room_freestyle();
             }
             // Play Tag (room host): a Tag game for the room on this course.
             Event::PlayTag => {
@@ -4050,6 +4164,28 @@ impl App {
                     .map(|n| n.environment.clone());
                 if let Some(environment) = environment {
                     self.reload_room(environment, None);
+                }
+            }
+            // Room Freestyle results: the host's Play Again starts the next
+            // session, a guest waits for it; Quit returns to the room's
+            // Free Ride on the same course (no reload: it is that ride).
+            overlay::Action::RaceRetry if self.room_freestyle.is_some() => {
+                if let Some(overlay) = &mut self.overlay {
+                    overlay.results = Default::default();
+                }
+                if ready.net.as_ref().is_some_and(|n| n.is_host())
+                    && let Some(session) = &mut self.room_freestyle
+                {
+                    let serial = self.room_freestyle_serial.wrapping_add(1).max(1);
+                    self.room_freestyle_serial = serial;
+                    session.restart(serial);
+                }
+            }
+            overlay::Action::RaceQuit if self.room_freestyle.is_some() => {
+                self.room_freestyle = None;
+                riding.locked = false;
+                if let Some(overlay) = &mut self.overlay {
+                    overlay.results = Default::default();
                 }
             }
             // Room King of the Hills / Treasure Hunt results: the host's
@@ -6503,6 +6639,7 @@ impl App {
                 | Event::Hockey { .. }
                 | Event::TagHost { .. }
                 | Event::GameHost { .. }
+                | Event::FreestyleHost { .. }
                 | Event::Objective { .. }
         ) {
             let split = self.front.as_ref().and_then(|f| {
@@ -6540,7 +6677,26 @@ impl App {
         self.tag = None;
         self.tag_start = None;
         self.room_game_start = None;
+        self.room_freestyle = None;
+        self.room_freestyle_start = false;
         match event {
+            Event::FreestyleHost {
+                environment,
+                code,
+                quad,
+                rider,
+                name,
+            } => {
+                self.front_event(Event::Host {
+                    environment,
+                    code,
+                    quad,
+                    rider,
+                    name,
+                });
+                // The room's Freestyle starts once the room is joined.
+                self.room_freestyle_start = true;
+            }
             Event::GameHost {
                 kind,
                 environment,
@@ -7653,6 +7809,10 @@ impl App {
         }
         self.room_game_serial = 0;
         self.room_game_start = None;
+        // And a room Freestyle.
+        self.room_freestyle = None;
+        self.room_freestyle_serial = 0;
+        self.room_freestyle_start = false;
         if let Some(overlay) = &mut self.overlay {
             overlay.room_race_pending = false;
         }
@@ -7694,6 +7854,8 @@ impl App {
         // A room race ends with its room; the next room numbers from 1.
         self.room_race = None;
         self.room_race_serial = 0;
+        self.room_freestyle = None;
+        self.room_freestyle_serial = 0;
         let Some(ready) = self.ready.take() else {
             return false;
         };
@@ -8594,6 +8756,7 @@ impl App {
             return;
         };
         self.room_race = None;
+        self.room_freestyle = None;
         self.tag = None;
         // Every page names the course by its venue (a guest that joined by
         // link has no Tracks.dat names loaded), so the results agree.
@@ -8617,6 +8780,43 @@ impl App {
         );
         self.room_game_scene = Some(kind);
         self.reload_room_with(environment, false, None);
+    }
+
+    /// The room host starts Freestyle on the room's course for every rider
+    /// in the room (research/MULTIPLAYER.md "Room Freestyle"). A race or
+    /// game scene goes back to the room's Free Ride first.
+    fn start_room_freestyle(&mut self) {
+        let Some(ready) = &mut self.ready else { return };
+        let Some(net) = ready.net.as_ref().filter(|n| n.is_host()) else {
+            return;
+        };
+        let environment = net.environment.clone();
+        let reload = ready
+            .riding
+            .as_ref()
+            .is_some_and(|r| r.ride.race().is_some())
+            || self.room_race.is_some()
+            || self.game.as_ref().is_some_and(|g| g.room.is_some())
+            || self.tag.is_some();
+        let serial = self.room_freestyle_serial.wrapping_add(1).max(1);
+        self.room_freestyle_serial = serial;
+        self.room_race = None;
+        self.tag = None;
+        if self.game.as_ref().is_some_and(|g| g.room.is_some()) {
+            self.game = None;
+        }
+        self.room_freestyle = Some(room_freestyle::RoomFreestyle::new(
+            true,
+            serial,
+            room_freestyle::session_seconds(),
+            environment.clone(),
+        ));
+        if let Some(overlay) = &mut self.overlay {
+            overlay.results = Default::default();
+        }
+        if reload {
+            self.reload_room(environment, None);
+        }
     }
 
     /// The room host starts a race on the room's course for every rider in
@@ -8650,6 +8850,7 @@ impl App {
         };
         self.room_race_serial = race.field.serial;
         self.room_race = Some(race);
+        self.room_freestyle = None;
         self.tag = None;
         if let Some(overlay) = &mut self.overlay {
             overlay.results = Default::default();
@@ -8906,6 +9107,9 @@ pub fn run(options: Options) {
         room_game_serial: 0,
         room_game_scene: None,
         room_game_start: None,
+        room_freestyle: None,
+        room_freestyle_serial: 0,
+        room_freestyle_start: false,
         tag_start: None,
         split_tag: None,
         tag_reload: None,

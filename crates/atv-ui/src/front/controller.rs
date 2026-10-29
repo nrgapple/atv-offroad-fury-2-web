@@ -77,6 +77,16 @@ pub enum Event {
         rider: u16,
         name: String,
     },
+    /// Host Game with Mode: Freestyle: host a room on the course and start
+    /// room Freestyle there once joined (research/MULTIPLAYER.md "Room
+    /// Freestyle").
+    FreestyleHost {
+        environment: String,
+        code: Option<String>,
+        quad: u16,
+        rider: u16,
+        name: String,
+    },
     /// Back from the garage or course picker opened over a held room ride:
     /// ride again with this look (a new course for the host's Ride).
     RoomRide {
@@ -458,6 +468,9 @@ pub struct Frontend {
     /// Split Screen: players 2-4's own gear and quad paint, chosen on the
     /// Split Screen page (saved).
     pub split_looks: [Appearance; 3],
+    /// Host Game → Room: Freestyle: the hosted room starts a room
+    /// Freestyle session (research/MULTIPLAYER.md "Room Freestyle").
+    pub host_freestyle: bool,
     /// Split Screen → Players: the seats claimed before a split event.
     pub seats: seats_page::Seats,
     /// The pages Back returns through (`navigation`).
@@ -607,6 +620,7 @@ impl Frontend {
                     .and_then(|v| parse_split_look(&v))
                     .unwrap_or_default()
             }),
+            host_freestyle: false,
             seats: Default::default(),
             history: Vec::new(),
         };
@@ -704,6 +718,7 @@ impl Frontend {
         let request = json!({
             "page": page,
             "split_vertical": self.split_vertical,
+            "host_freestyle": self.host_freestyle,
             "split_players": self.split_players,
             "split_seconds": (0..usize::from(self.split_players.clamp(2, 4)) - 1)
                 .flat_map(|i| {
@@ -1839,6 +1854,15 @@ impl Frontend {
             self.room = None;
             return Some(self.room_ride(Some(track.id)));
         }
+        if self.hosting && self.host_freestyle {
+            return Some(Event::FreestyleHost {
+                environment: track.id,
+                code: Some(self.create_code.clone()).filter(|c| !c.is_empty()),
+                quad: self.quad_id,
+                rider: self.rider_id,
+                name: self.room_name(),
+            });
+        }
         if self.hosting {
             // Select Track refused a motorcycle, as frontend.js does.
             return Some(Event::Host {
@@ -2093,6 +2117,11 @@ impl Frontend {
                 self.notice = None;
                 self.focus = None;
                 self.show(action, view);
+            }
+            // Host Game's Room row: Free Ride or Freestyle.
+            "hostmode" => {
+                self.host_freestyle = !self.host_freestyle;
+                self.refresh(view);
             }
             "share" if self.page == "lobby" => return Some(Event::CopyInvite),
             "leave" if self.page == "lobby" => return self.leave_lobby(view),
@@ -3071,6 +3100,37 @@ mod tests {
             Some("That code is reserved. Choose another.")
         );
         assert_eq!(front.page, "create-lobby");
+    }
+
+    #[test]
+    fn host_game_room_freestyle_hosts_a_freestyle_room() {
+        let view = view(1280., 720.);
+        let mut settings = Settings::memory();
+        let mut front = Frontend::new(tracks(), &settings, true);
+        front.show("create-lobby", &view);
+        let rows: Vec<&str> = front.choices().iter().map(|(a, _)| a.as_str()).collect();
+        assert_eq!(&rows[..3], ["hosttrack", "hostmode", "garage"]);
+        assert_eq!(front.choices()[1].1, "Room: Free Ride");
+        front.run("hostmode", &view, &mut settings);
+        assert!(front.host_freestyle);
+        assert_eq!(front.choices()[1].1, "Room: Freestyle (timed stunts)");
+        front.set_field("create-code", "fs12ab34");
+        front.run("hosttrack", &view, &mut settings);
+        assert_eq!((front.page.as_str(), front.hosting), ("tracks", true));
+        let event = front.key("Enter", &view, &mut settings);
+        assert!(
+            matches!(event, Some(Event::FreestyleHost { ref code, ref environment, .. })
+                if code.as_deref() == Some("FS12AB34") && environment == "env01"),
+            "{event:?}"
+        );
+        // Back to Free Ride: an ordinary hosted room.
+        front.key("Escape", &view, &mut settings);
+        front.run("hostmode", &view, &mut settings);
+        front.run("hosttrack", &view, &mut settings);
+        assert!(matches!(
+            front.key("Enter", &view, &mut settings),
+            Some(Event::Host { .. })
+        ));
     }
 
     #[test]

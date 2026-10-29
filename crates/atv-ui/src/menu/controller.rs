@@ -46,6 +46,10 @@ pub enum Event {
     /// The host's Play King of the Hills / Treasure Hunt (the game's
     /// event type, 9 or 12) on the room's course.
     PlayGame(u8),
+    /// The host's Play Freestyle: a timed stunt session with a shared
+    /// score table for every room rider (research/MULTIPLAYER.md "Room
+    /// Freestyle").
+    PlayFreestyle,
 }
 
 /// The multiplayer room as the pause menu shows it (the browser's
@@ -65,6 +69,8 @@ pub struct Lobby {
     /// The room course's games the host may start (event type, menu label),
     /// research/MULTIPLAYER.md "Room games".
     pub games: Vec<(u8, &'static str)>,
+    /// The host may start room Freestyle on the room's course.
+    pub freestyle: bool,
 }
 
 /// The settings a pause action may change.
@@ -424,6 +430,9 @@ impl PauseMenu {
                 .chain(lobby.games.iter().map(|(kind, label)| {
                     json!({"id": format!("game:{kind}"), "label": label, "value": ""})
                 }))
+                .chain(lobby.freestyle.then(|| {
+                    json!({"id": "freestyle", "label": "Play Freestyle", "value": ""})
+                }))
                 .collect::<Vec<_>>()
                 .into();
             request["lobby_players"] = lobby
@@ -550,6 +559,7 @@ impl PauseMenu {
             "hosttrack" => return Some(Event::SelectTrack),
             "playtag" => return Some(Event::PlayTag),
             "playrace" => return Some(Event::PlayRace(0)),
+            "playfree" => return Some(Event::PlayFreestyle),
             _ if action.starts_with("playgame:") => {
                 return action[9..].parse().ok().map(Event::PlayGame);
             }

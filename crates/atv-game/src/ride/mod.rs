@@ -753,6 +753,13 @@ impl Ride {
         gear::PAINT_PALETTE[usize::from(self.appearance.paint)]
     }
 
+    /// The scene start Reset ATV returns to (origin, yaw): room Freestyle
+    /// places its riders beside it (research/MULTIPLAYER.md "Room
+    /// Freestyle").
+    pub fn start_pose(&self) -> ([f32; 3], f32) {
+        self.start
+    }
+
     /// Finished stunt chains since the last call: success and the stunt ids
     /// in order (Freestyle objectives).
     pub fn take_chains(&mut self) -> Vec<(bool, Vec<usize>)> {
