@@ -5,7 +5,7 @@
 // one `atv_core::tag` game holds both riders (player 1 slot 0, player 2
 // slot 1), `tagReach=60` (a wide contact for automation) lets the parked
 // players tag each other so both carry the ball, both views draw their own
-// Tag panel, a 30 s clock (`tagTest=fast`) ends in Tag Results naming
+// Tag panel, a 30 s clock (`tagTest=fast`) ends in the Tag results (titled Race Results) naming
 // Player 1 and Player 2, and Restart Game starts both over.
 // ATV_SPLIT_TAG_SHOTS=<dir> saves captures. Host Chromium evidence.
 import assert from 'node:assert/strict';
@@ -108,7 +108,10 @@ try {
   t = await until(page, t => t.finished, 60000);
   await wait(page, () => (JSON.parse(document.querySelector('#ui-state')?.textContent || '{}').ride?.results?.length ?? 0) > 0,
     null, 30000);
-  t = (await read(page)).ride.tag;
+  s = await read(page);
+  // The disc's [TagOver Menu] is titled "Race Results".
+  assert.equal(s.ride.resultsTitle, 'Race Results');
+  t = s.ride.tag;
   assert.match(t.summary, /1\. Player [12] \d+ {3}2\. Player [12] \d+/);
   assert.ok(t.scores[0] + t.scores[1] > 0, `points scored: ${t.scores}`);
   await shot(page, 'tag-split-results');

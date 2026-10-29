@@ -508,8 +508,9 @@ carrier is "it" and scores while holding the ball.
   state arrives and mirror it. A tag is two ATVs within 7 units centre
   to centre, or a rider within 5 units of a loose ball (authored contact
   sizes). "You are it!" / "%s has the ball!" / "%s dropped the ball!"
-  banners and `tagBeep.vag` play; the end opens Tag Results (places by
-  score, Restart Game for the host, Continue). Check:
+  banners and `tagBeep.vag` play; the end opens the results, titled "Race
+  Results" as the disc's `[TagOver Menu]` (places by score, Restart Game
+  for the host, Continue). Check:
   `tools/test_engine_multiplayer_tag.mjs` (relay group: Pause → Play
   Tag, the host carries and scores, the guest takes the ball with the
   `tagReach=60` test hook, both reach the same results).
