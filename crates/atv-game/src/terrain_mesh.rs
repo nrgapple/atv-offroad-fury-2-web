@@ -224,6 +224,7 @@ mod tests {
             min: 0.,
             max: 0.,
             layers: vec![],
+            layer_mips: vec![],
             mapping: vec![],
             mapping_width: 0,
             mapping_height: 0,

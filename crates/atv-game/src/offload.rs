@@ -19,6 +19,9 @@ use crate::Result;
 pub const IPUM: u32 = 1;
 /// [`IPUM`] flag: also produce the deblocked/smoothed tile (Enhanced sky).
 pub const SMOOTH: u32 = 1;
+/// [`IPUM`] flag: also produce the box-filtered mip chain below the image
+/// (`atv_core::texture::downsample`, the renderer's own), down to 1x1.
+pub const MIPS: u32 = 2;
 /// An original VAG decoded and resampled to the output rate (`arg`).
 pub const VAG_PCM: u32 = 3;
 /// An original PST texture's top level as RGBA (menu photos and art).
@@ -31,6 +34,8 @@ pub struct Decoded {
     pub height: u32,
     pub rgba: Vec<u8>,
     pub smooth: Option<Vec<u8>>,
+    /// The mip levels below `rgba` when asked ([`MIPS`]).
+    pub mips: Vec<Vec<u8>>,
 }
 
 /// Runs one job on this thread: the function every worker runs.
@@ -48,6 +53,13 @@ pub fn run(kind: u32, arg: u32, bytes: &[u8]) -> Result<Vec<u8>> {
             out.extend_from_slice(&image.rgba);
             if let Some(smooth) = smooth {
                 out.extend_from_slice(&smooth);
+            }
+            if arg & MIPS != 0 {
+                let (mut pixels, mut w, mut h) = (image.rgba, image.info.width, image.info.height);
+                while w > 1 || h > 1 {
+                    (pixels, w, h) = atv_core::texture::downsample(&pixels, w, h);
+                    out.extend_from_slice(&pixels);
+                }
             }
             Ok(out)
         }
@@ -78,7 +90,7 @@ pub fn run(kind: u32, arg: u32, bytes: &[u8]) -> Result<Vec<u8>> {
     }
 }
 
-fn unpack_ipum(out: Vec<u8>, smooth: bool) -> Result<Decoded> {
+fn unpack_ipum(out: Vec<u8>, smooth: bool, mips: bool) -> Result<Decoded> {
     let word = |at: usize| -> Result<u32> {
         Ok(u32::from_le_bytes(
             out.get(at..at + 4)
@@ -89,27 +101,52 @@ fn unpack_ipum(out: Vec<u8>, smooth: bool) -> Result<Decoded> {
     };
     let (width, height) = (word(0)?, word(4)?);
     let size = width as usize * height as usize * 4;
-    let expected = 8 + size * if smooth { 2 } else { 1 };
+    let mut levels = Vec::new();
+    if mips {
+        let (mut w, mut h) = (width, height);
+        while w > 1 || h > 1 {
+            (w, h) = ((w / 2).max(1), (h / 2).max(1));
+            levels.push(w as usize * h as usize * 4);
+        }
+    }
+    let expected = 8 + size * if smooth { 2 } else { 1 } + levels.iter().sum::<usize>();
     if out.len() != expected {
         return Err("decode result size mismatch".into());
     }
     let rgba = out[8..8 + size].to_vec();
-    let smooth = smooth.then(|| out[8 + size..].to_vec());
+    let mut at = 8 + size;
+    let smooth = smooth.then(|| {
+        at += size;
+        out[at - size..at].to_vec()
+    });
+    let mips = levels
+        .into_iter()
+        .map(|n| {
+            at += n;
+            out[at - n..at].to_vec()
+        })
+        .collect();
     Ok(Decoded {
         width,
         height,
         rgba,
         smooth,
+        mips,
     })
 }
 
 /// Decodes IPUM images (terrain layers, sky tiles) in parallel, in order.
 pub async fn ipums(inputs: &[&[u8]], smooth: bool) -> Result<Vec<Decoded>> {
-    let arg = if smooth { SMOOTH } else { 0 };
+    ipums_with(inputs, smooth, false).await
+}
+
+/// [`ipums`], with each image's mip chain when `mips` (terrain layers).
+pub async fn ipums_with(inputs: &[&[u8]], smooth: bool, mips: bool) -> Result<Vec<Decoded>> {
+    let arg = if smooth { SMOOTH } else { 0 } | if mips { MIPS } else { 0 };
     let outputs = many(IPUM, arg, inputs).await?;
     outputs
         .into_iter()
-        .map(|out| unpack_ipum(out, smooth))
+        .map(|out| unpack_ipum(out, smooth, mips))
         .collect()
 }
 
@@ -301,10 +338,14 @@ mod tests {
         out.extend_from_slice(&1u32.to_le_bytes());
         out.extend_from_slice(&[1, 2, 3, 4, 5, 6, 7, 8]);
         out.extend_from_slice(&[9; 8]);
-        let decoded = unpack_ipum(out.clone(), true).unwrap();
+        let decoded = unpack_ipum(out.clone(), true, false).unwrap();
         assert_eq!((decoded.width, decoded.height), (2, 1));
         assert_eq!(decoded.rgba, [1, 2, 3, 4, 5, 6, 7, 8]);
         assert_eq!(decoded.smooth.as_deref(), Some(&[9u8; 8][..]));
-        assert!(unpack_ipum(out, false).is_err());
+        assert!(unpack_ipum(out.clone(), false, false).is_err());
+        // A 2x1 image's chain is one 1x1 level.
+        out.extend_from_slice(&[7; 4]);
+        let decoded = unpack_ipum(out, true, true).unwrap();
+        assert_eq!(decoded.mips, [vec![7u8; 4]]);
     }
 }

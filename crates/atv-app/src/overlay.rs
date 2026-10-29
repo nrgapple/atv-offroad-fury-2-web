@@ -2005,6 +2005,7 @@ mod pill_tests {
             min: 0.,
             max: 30.,
             layers: Vec::new(),
+            layer_mips: Vec::new(),
             mapping: Vec::new(),
             mapping_width: 0,
             mapping_height: 0,
