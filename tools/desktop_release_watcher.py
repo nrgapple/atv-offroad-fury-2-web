@@ -238,66 +238,65 @@ def main(argv=None):
         print('Storage preflight passed; no build started')
         return 0
     args.state.parent.mkdir(parents=True, exist_ok=True)
-    lock = open(args.state.with_suffix('.lock'), 'w')
-    try:
-        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except BlockingIOError:
-        print('another watcher pass is running')
-        return 0
-    # Migration is safe only after the previous watcher has exited (installer enforces this).
-    legacy = OUT_ROOT / 'watcher-state.json'
-    if args.state == STATE and not STATE.exists() and legacy.exists():
-        save_state(STATE, load_state(legacy, {}))
-    tags = remote_tags(args.repo)
-    state = load_state(args.state, tags)
-    if state.get('retry_after', 0) > time.time():
-        print('release failure backoff is active')
-        return 0
-    todo = {tag: (sha, True) for tag, sha in pending(tags, state).items()}
-    if args.auto_main:
-        subprocess.run(['git', 'fetch', '--quiet', 'origin', 'main', *(f'refs/tags/{t}:refs/tags/{t}' for t in tags)],
-                       cwd=args.repo, check=True)
-        tag, detail = main_candidate(args.repo, tags, state, args.min_hours)
-        if tag:
-            todo[tag] = (detail, False)
-        else:
-            print(f'origin/main: {detail}')
-    if not todo:
-        print('nothing to build')
-        return 0
-    for tag, (sha, from_remote) in todo.items():
-        print(f'{"would build" if args.dry_run else "building"} {tag} ({sha})', flush=True)
-        if args.dry_run:
-            continue
-        log_path = args.state.parent / f'watcher-{tag}.log'
+    with open(args.state.with_suffix('.lock'), 'a') as lock:
         try:
-            with lease(wait=0):
-                state['last_attempt'] = {'commit': sha, 'tag': tag, 'at': int(time.time())}
-                save_state(args.state, state)  # durable before any expensive work
-                try:
-                    preflight(args.repo)
-                    with open(log_path, 'w') as log:
-                        android_error = process(args.repo, tag, sha, log, fetch_tag=from_remote)
-                    state.setdefault('done', {})[tag] = {'commit': sha, 'at': int(time.time())}
-                    state.pop('retry_after', None)
-                    if android_error:
-                        state['done'][tag]['android_error'] = android_error
-                    notify(f'{tag} published' + (' without Android, see ' + log_path.name if android_error else ''))
-                except (subprocess.CalledProcessError, OSError, ValueError) as e:
-                    state.setdefault('failed', {})[tag] = {'commit': sha, 'at': int(time.time()),
-                                                          'error': str(e), 'log': str(log_path)}
-                    state['retry_after'] = int(time.time()) + 3600
-                    save_state(args.state, state)
-                    notify(f'{tag} failed, see {log_path.name}')
-                    return 1
-                save_state(args.state, state)
-        except BlockingIOError as exc:
-            print(f'release deferred without interrupting active work: {exc}')
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            print('another watcher pass is running')
             return 0
-    if not args.dry_run:
-        prune_builds(state)
-    return 0
-
+        # Migration is safe only after the previous watcher has exited (installer enforces this).
+        legacy = OUT_ROOT / 'watcher-state.json'
+        if args.state == STATE and not STATE.exists() and legacy.exists():
+            save_state(STATE, load_state(legacy, {}))
+        tags = remote_tags(args.repo)
+        state = load_state(args.state, tags)
+        if state.get('retry_after', 0) > time.time():
+            print('release failure backoff is active')
+            return 0
+        todo = {tag: (sha, True) for tag, sha in pending(tags, state).items()}
+        if args.auto_main:
+            subprocess.run(['git', 'fetch', '--quiet', 'origin', 'main', *(f'refs/tags/{t}:refs/tags/{t}' for t in tags)],
+                           cwd=args.repo, check=True)
+            tag, detail = main_candidate(args.repo, tags, state, args.min_hours)
+            if tag:
+                todo[tag] = (detail, False)
+            else:
+                print(f'origin/main: {detail}')
+        if not todo:
+            print('nothing to build')
+            return 0
+        for tag, (sha, from_remote) in todo.items():
+            print(f'{"would build" if args.dry_run else "building"} {tag} ({sha})', flush=True)
+            if args.dry_run:
+                continue
+            log_path = args.state.parent / f'watcher-{tag}.log'
+            try:
+                with lease(wait=0):
+                    state['last_attempt'] = {'commit': sha, 'tag': tag, 'at': int(time.time())}
+                    save_state(args.state, state)  # durable before any expensive work
+                    try:
+                        preflight(args.repo)
+                        with open(log_path, 'w') as log:
+                            android_error = process(args.repo, tag, sha, log, fetch_tag=from_remote)
+                        state.setdefault('done', {})[tag] = {'commit': sha, 'at': int(time.time())}
+                        state.pop('retry_after', None)
+                        if android_error:
+                            state['done'][tag]['android_error'] = android_error
+                        notify(f'{tag} published' + (' without Android, see ' + log_path.name if android_error else ''))
+                    except (subprocess.CalledProcessError, OSError, ValueError) as e:
+                        state.setdefault('failed', {})[tag] = {'commit': sha, 'at': int(time.time()),
+                                                              'error': str(e), 'log': str(log_path)}
+                        state['retry_after'] = int(time.time()) + 3600
+                        save_state(args.state, state)
+                        notify(f'{tag} failed, see {log_path.name}')
+                        return 1
+                    save_state(args.state, state)
+            except BlockingIOError as exc:
+                print(f'release deferred without interrupting active work: {exc}')
+                return 0
+        if not args.dry_run:
+            prune_builds(state)
+        return 0
 
 if __name__ == '__main__':
     sys.exit(main())
