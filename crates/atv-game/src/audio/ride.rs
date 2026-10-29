@@ -85,6 +85,11 @@ pub struct RideAudio {
     /// Active Rain weather: `rain.vag` loops on the effects bus (playWeather).
     pub rain: bool,
     rain_voice: Option<VoiceId>,
+    /// Split screen: players 2-4's camera listeners. Player 1's positional
+    /// sounds (rider vocals, chassis, drive-on, body impacts, Soultree,
+    /// trains and actors) are placed for the nearest of player 1's camera
+    /// and these (`001742f0`); empty with one view, which is unchanged.
+    pub views: Vec<Listener>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -101,6 +106,10 @@ pub struct Stats {
     pub actor: u32,
     pub rain: u32,
     pub history: Vec<String>,
+    /// The last frame's listener count and the index (0 = player 1's
+    /// camera) nearest player 1's rider, for split-screen diagnostics.
+    pub listeners: usize,
+    pub nearest: usize,
 }
 
 /// Body-attached sounds, their voices, emitter matrices (now, one step
@@ -183,6 +192,7 @@ impl RideAudio {
             actor_voices: HashMap::new(),
             rain: false,
             rain_voice: None,
+            views: Vec::new(),
         }
     }
 
@@ -239,6 +249,7 @@ impl RideAudio {
             cars: cars.iter().map(|c| c.0).collect(),
             previous_cars: cars.iter().map(|c| c.1).collect(),
             definitions: definitions.to_vec(),
+            views: self.views.clone(),
         })?;
         let mut started = 0;
         for (index, command) in commands.iter().enumerate() {
@@ -384,9 +395,17 @@ impl RideAudio {
             self.last = Some((listener, step.rider_position, step.quad.wheels));
             return Ok(());
         }
-        self.body_impact(mixer, step, &listener)?;
-        self.quad_step(mixer, step, &listener)?;
+        let listeners = self.listeners(listener);
+        self.body_impact(mixer, step, &listeners)?;
+        self.quad_step(mixer, step, &listeners)?;
         Ok(())
+    }
+
+    /// Player 1's camera listener, then the other views' (split screen).
+    fn listeners(&self, own: Listener) -> Vec<Listener> {
+        std::iter::once(own)
+            .chain(self.views.iter().take(7).copied())
+            .collect()
     }
 
     /// Rider body impacts (op 77 per frame).
@@ -394,7 +413,7 @@ impl RideAudio {
         &mut self,
         mixer: &mut Mixer,
         step: &AudioStep,
-        listener: &Listener,
+        listeners: &[Listener],
     ) -> Result<()> {
         let Some(config) = &self.bank.effects else {
             return Ok(());
@@ -410,7 +429,7 @@ impl RideAudio {
                 min_distance: config.min_distance,
                 max_distance: config.max_distance,
             },
-            std::slice::from_ref(listener),
+            listeners,
         )?);
         let playing = mixer.playing(self.effect_voice);
         let random = &mut self.impact_random;
@@ -450,9 +469,10 @@ impl RideAudio {
         &mut self,
         mixer: &mut Mixer,
         step: &AudioStep,
-        listener: &Listener,
+        listeners: &[Listener],
     ) -> Result<()> {
         let distance = |p: [f32; 3]| {
+            let listener = &listeners[spatial_audio::nearest(p, listeners)];
             let d: [f32; 3] = std::array::from_fn(|i| p[i] - listener.position[i]);
             (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt()
         };
@@ -614,7 +634,7 @@ impl RideAudio {
                 }
             }
         }
-        self.last = Some((*listener, position, frame.wheels));
+        self.last = Some((listeners[0], position, frame.wheels));
         Ok(())
     }
 
@@ -627,6 +647,9 @@ impl RideAudio {
         let Some((listener, rider, wheels)) = self.last else {
             return Ok(());
         };
+        let listeners = self.listeners(listener);
+        self.stats.listeners = listeners.len();
+        self.stats.nearest = spatial_audio::nearest(rider, &listeners);
         let source = |position, velocity, min_distance, max_distance| Source {
             position,
             velocity,
@@ -648,13 +671,13 @@ impl RideAudio {
         };
         let command = spatial_audio::command(
             source(rider, self.motion.velocity, qs::VOCAL_MIN, qs::VOCAL_MAX),
-            std::slice::from_ref(&listener),
+            &listeners,
         )?;
         apply(mixer, self.vocal_voice, gains(&command, 100, 1.));
         if let Some((position, velocity, volume)) = self.chassis_source {
             let command = spatial_audio::command(
                 source(position, velocity, qs::CHASSIS_MIN, qs::CHASSIS_MAX),
-                std::slice::from_ref(&listener),
+                &listeners,
             )?;
             apply(mixer, self.chassis_voice, gains(&command, volume, 1.));
         } else {
@@ -669,7 +692,7 @@ impl RideAudio {
                 }
                 let command = spatial_audio::command(
                     source(*wheel, [0.; 3], sound.min_distance, sound.max_distance),
-                    std::slice::from_ref(&listener),
+                    &listeners,
                 )
                 .ok()?;
                 // SPU pitch 4096 plays at 48 kHz.
@@ -687,7 +710,7 @@ impl RideAudio {
                 self.stats.rain += 1;
             }
         }
-        self.world_frame(mixer, &listener)?;
+        self.world_frame(mixer, &listeners)?;
         self.engine_frame(mixer, step)
     }
 
@@ -710,7 +733,7 @@ impl RideAudio {
         self.clutch_down = bike.clutch;
     }
 
-    fn world_frame(&mut self, mixer: &mut Mixer, listener: &Listener) -> Result<()> {
+    fn world_frame(&mut self, mixer: &mut Mixer, listeners: &[Listener]) -> Result<()> {
         let dt = std::mem::take(&mut self.world_dt);
         let Some(world) = &mut self.world else {
             return Ok(());
@@ -724,7 +747,7 @@ impl RideAudio {
         let soultree: Vec<bool> = (0..world.soultree.len())
             .map(|i| mixer.playing(self.soultree_voices.get(&i).copied()))
             .collect();
-        let frame = world.step(dt.min(0.1), listener, &ambient, &soultree)?;
+        let frame = world.step(dt.min(0.1), listeners, &ambient, &soultree)?;
         for command in frame.ambient {
             if let WorldCommand::Start {
                 source,

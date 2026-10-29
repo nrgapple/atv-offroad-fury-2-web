@@ -84,9 +84,9 @@ pub struct OverlayAssets {
 }
 
 /// The overlay sets whose split layouts the port draws: 1 Race, 2 Stunt
-/// (Freeride and Freestyle), 6 Treasure Hunt, 7 King of the Hills, 8 Tag,
-/// 9 Hockey and 11 Enduro.
-pub const SPLIT_SETS: [u32; 7] = [1, 2, 6, 7, 8, 9, 11];
+/// (Freeride and Freestyle), 5 CherryPick (target objectives), 6 Treasure
+/// Hunt, 7 King of the Hills, 8 Tag, 9 Hockey and 11 Enduro.
+pub const SPLIT_SETS: [u32; 8] = [1, 2, 5, 6, 7, 8, 9, 11];
 /// The split layouts' section names (`003029a0`'s layout enum 1-3 and the
 /// three-player variant of 3).
 pub const SPLIT_LAYOUTS: [&str; 4] = ["2Player-Horiz", "2Player-Vertical", "3Player", "4Player"];
