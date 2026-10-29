@@ -140,7 +140,7 @@ try {
     assert.ok(f.choices.includes('seat3ready') && f.choices.includes('seat3helmet'), JSON.stringify(f.choices));
     assert.match(await label(page, 'splitgo'), /3 Players/);
     for (let i = 0; i < 3; i++) await pad(page, 2, 13);
-    assert.match(await label(page, 'seat3helmet'), /^> Player 3 Helmet: Original/);
+    assert.match(await label(page, 'seat3helmet'), /^> P3 Helmet: Original/);
     await pad(page, 2, 15);
     const helmet = await label(page, 'seat3helmet');
     assert.ok(!helmet.endsWith('Original'), helmet);

@@ -148,7 +148,7 @@ impl Frontend {
                 };
                 rows.push((
                     format!("seat{n}{row}"),
-                    format!("{marker}Player {n} {label}: {}", self.seat_value(i, row)),
+                    format!("{marker}P{n} {label}: {}", self.seat_value(i, row)),
                 ));
             }
             rows.push((format!("seat{n}leave"), format!("Player {n}: Leave")));
