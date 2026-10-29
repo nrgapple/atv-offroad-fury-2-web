@@ -9,6 +9,9 @@ on:
       - 'crates/**'
       - 'Cargo.toml'
       - 'Cargo.lock'
+      - 'tools/build_android.py'
+      - 'tools/build_desktop.py'
+      - 'tools/build_engine.py'
       - '.github/workflows/desktop-check.yml'
   workflow_dispatch:
 
@@ -32,8 +35,8 @@ jobs:
           persist-credentials: false
       - name: Install Rust toolchain
         run: rustup toolchain install stable --profile minimal
-      - name: Compile the desktop app (no content)
-        run: cargo check --locked -p atv-app --bin fury
+      - name: Compile and link the desktop app (no content)
+        run: cargo build --locked -p atv-app --bin fury
       - name: Test the content readers on this OS
         run: cargo test --locked -p atv-content
       - name: Compile with the embedded-content feature using a synthetic pack
@@ -66,6 +69,8 @@ jobs:
           export CC_aarch64_linux_android="$bin/aarch64-linux-android26-clang"
           export AR_aarch64_linux_android="$bin/llvm-ar"
           cargo clippy --locked -p atv-app --lib --target aarch64-linux-android -- -D warnings
+          cargo rustc --locked -p atv-app --lib --crate-type cdylib --target aarch64-linux-android
+          test -s target/aarch64-linux-android/debug/libatv_app.so
 
   # Content-free determinism: the simulation's maths (atv_core::math) and a
   # scripted synthetic ride must reproduce the browser build's bit patterns on

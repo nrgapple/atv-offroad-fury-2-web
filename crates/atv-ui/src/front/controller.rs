@@ -18,6 +18,7 @@ pub mod games_page;
 pub mod navigation;
 pub mod passkey_page;
 pub mod profile_pages;
+pub mod status_page;
 pub use passkey_page::{CloudCommand, CloudView};
 use profile_pages::NO_PROFILE;
 
@@ -401,6 +402,10 @@ pub struct Frontend {
     pub race_courses: Vec<String>,
     pub race: RaceSetup,
     pub race_filter: String,
+    /// Single Race's course picker is open over the setup rows: the event
+    /// tabs and every course as a full-height card list (a phone's column
+    /// had room for one card, or none).
+    pub course_sheet: bool,
     /// Rider gear and quad paint (normalizedAppearance), and the original
     /// Profile Store catalog that names and bounds it.
     pub appearance: Appearance,
@@ -413,6 +418,9 @@ pub struct Frontend {
     pub store: StoreView,
     /// The Pass Key sync as the host last reported it.
     pub cloud: CloudView,
+    /// The status bar's open popover and its chip's centre x.
+    status_open: Option<super::status_bar::Chip>,
+    status_anchor: f32,
     /// The Pass Key pages' working state.
     pub passkey: passkey_page::PassKeyUi,
     /// Multiplayer → Split Screen: the next Freestyle or Race rides two
@@ -497,12 +505,15 @@ impl Frontend {
             race_courses: Vec::new(),
             race,
             race_filter: "all".into(),
+            course_sheet: false,
             appearance,
             gear_catalog: Vec::new(),
             shown: crate::transition::next_show(),
             shift: false,
             store: StoreView::default(),
             cloud: CloudView::default(),
+            status_open: None,
+            status_anchor: 0.,
             passkey: Default::default(),
             split: false,
             split_vertical: settings.get(SPLIT_LAYOUT_KEY).as_deref() == Some("vertical"),
@@ -770,6 +781,49 @@ impl Frontend {
         self.reveal = true;
     }
 
+    /// Opens Single Race's course picker on the current course.
+    pub fn open_course_sheet(&mut self, view: &Viewport) {
+        self.course_sheet = true;
+        if let Some(index) = self.choices.iter().position(|(a, _)| a == "racetrack") {
+            self.selection = index;
+        }
+        self.list = Scroller::default();
+        self.reveal = true;
+        self.fresh = true;
+        self.shown = crate::transition::next_show();
+        self.refresh(view);
+    }
+
+    /// Closes the course picker back to the setup rows, on the Course row.
+    fn close_course_sheet(&mut self, view: &Viewport) {
+        self.course_sheet = false;
+        self.shown = crate::transition::next_show();
+        self.refresh(view);
+    }
+
+    /// Keys (and controller buttons) while the course picker is open: the
+    /// arrows walk the courses, Q/E (LB/RB) the event tabs, and Enter or
+    /// Back closes it on the course chosen.
+    fn sheet_key(&mut self, code: &str, view: &Viewport, settings: &mut Settings) -> Option<Event> {
+        match code {
+            "ArrowUp" | "ArrowLeft" => self.step("racetrack", -1, view, settings),
+            "ArrowDown" | "ArrowRight" => self.step("racetrack", 1, view, settings),
+            "PageUp" | "KeyQ" => {
+                self.cycle_race_filter(-1);
+                self.refresh(view);
+            }
+            "PageDown" | "KeyE" => {
+                self.cycle_race_filter(1);
+                self.refresh(view);
+            }
+            "Enter" | "Space" | "NumpadEnter" | "Escape" | "Backspace" => {
+                self.close_course_sheet(view)
+            }
+            _ => {}
+        }
+        None
+    }
+
     fn cycle_race_filter(&mut self, direction: i32) {
         let tabs = self.race_tabs();
         if tabs.is_empty() {
@@ -997,11 +1051,15 @@ impl Frontend {
     /// highlighted series on Championship.
     pub fn profile_text(&self) -> Option<String> {
         match self.page.as_str() {
-            "single" => Some(match self.profile_name() {
-                Some(name) => format!("{name} · {}", profile_line(&self.profile)),
-                // 0x431440: no profile, nothing is saved.
-                None => "No profile loaded · Remember, your progress is not being saved!".into(),
-            }),
+            // The status bar shows the profile and its points; the line
+            // stays only for the original's warning (0x431440: no profile,
+            // nothing is saved).
+            "single" => match self.profile_name() {
+                Some(_) => None,
+                None => {
+                    Some("No profile loaded · Remember, your progress is not being saved!".into())
+                }
+            },
             "championship" => self.series_line(),
             "games" => self.games_line(),
             "objectives" => self.objectives_line(),
@@ -1447,6 +1505,7 @@ impl Frontend {
             self.notice = None;
         }
         self.page = page.into();
+        self.course_sheet = false;
         // Only the Split Screen branch's own pages keep two players.
         if matches!(page, "title" | "main" | "single" | "multiplayer" | "split") {
             self.split = false;
@@ -1776,6 +1835,8 @@ impl Frontend {
             }
             "objfinish" => self.finish_objectives(view, settings),
             "copyride" if self.page == "race" => return Some(Event::CopyRaceLink),
+            // A tap on the Course row opens the picker (its arrows step).
+            "racetrack" if self.page == "race" => self.open_course_sheet(view),
             _ if stepper(action) => self.step(action, 1, view, settings),
             "create-lobby" | "join-lobby" => {
                 self.notice = None;
@@ -1889,6 +1950,11 @@ impl Frontend {
     /// Keyboard navigation (frontend.js `action`).
     pub fn key(&mut self, code: &str, view: &Viewport, settings: &mut Settings) -> Option<Event> {
         self.reveal_row = true;
+        // An open status popover takes the next key and closes.
+        if self.status_open() && !matches!(code, "ShiftLeft" | "ShiftRight") {
+            self.close_status();
+            return None;
+        }
         if matches!(code, "ShiftLeft" | "ShiftRight") {
             self.shift = true;
             return None;
@@ -1899,6 +1965,9 @@ impl Frontend {
         if code == "Tab" {
             self.tab(self.shift);
             return None;
+        }
+        if self.course_sheet && self.page == "race" {
+            return self.sheet_key(code, view, settings);
         }
         // A focused field owns editing keys; the arrows move on.
         if let Some(index) = self.focus {
@@ -1958,9 +2027,9 @@ impl Frontend {
                 self.cycle_race_filter(if action == "prevtab" { -1 } else { 1 });
                 self.refresh(view);
             }
-            // Accepting the course list starts the race, as Ride does.
+            // Accepting the Course row opens the course picker.
             ("race", "accept") if self.current() == Some("racetrack") => {
-                return self.race_event(settings);
+                self.open_course_sheet(view);
             }
             (
                 "race" | "gear" | "games" | "profile-name" | "profile-records" | "hall-of-fame"
@@ -2146,7 +2215,7 @@ impl Frontend {
                     && !(Self::in_rows(*id) && rows.is_some_and(|l| !l.contains(x, y)))
             })
             .map(|(_, id)| *id)
-            .find(|id| *id != LIST && *id != ROWS)
+            .find(|id| !matches!(*id, LIST | ROWS | super::STAGE | super::DETAILS))
     }
 
     /// Mouse movement: hover, and a row under a moving mouse takes the
@@ -2163,7 +2232,10 @@ impl Frontend {
     pub fn press(&mut self, hits: &[(Rect, u32)], pointer: u64, x: f32, y: f32) {
         let inside = |pane: u32| hits.iter().any(|(r, id)| *id == pane && r.contains(x, y));
         // The list sits inside the rows column on Select Track: it wins.
-        let scroll = if inside(LIST) {
+        // An open status popover covers both.
+        let scroll = if self.status_open() {
+            None
+        } else if inside(LIST) {
             Some(Pane::List)
         } else if inside(ROWS) && self.rows.max() > 0. {
             Some(Pane::Rows)
@@ -2262,6 +2334,14 @@ impl Frontend {
             }
         }
         let id = Self::hit(hits, x, y).filter(|id| Some(*id) == pressed.id)?;
+        let rect = hits
+            .iter()
+            .rev()
+            .find(|(r, i)| *i == id && r.contains(x, y))
+            .map(|(r, _)| *r);
+        if self.status_click(id, rect, view) {
+            return None;
+        }
         self.click(id, view, settings)
     }
 
@@ -2272,6 +2352,7 @@ impl Frontend {
         }
         self.focus = None;
         match id {
+            BACK | DONE if self.course_sheet => self.close_course_sheet(view),
             BACK | DONE => return self.back(view),
             super::PASSKEY => self.open_passkey(view),
             START => return self.race_event(settings),
@@ -2333,12 +2414,17 @@ impl Frontend {
                 self.refresh(view);
             }
             _ if (COURSE..COURSE + 100).contains(&id) && self.page == "race" => {
-                // frontend.js `selectRaceCourse`: the course row takes focus.
+                // frontend.js `selectRaceCourse`: the course row takes focus;
+                // picking a card closes the picker.
                 self.race.course = self.race_order().get((id - COURSE) as usize)?.clone();
                 if let Some(index) = self.choices.iter().position(|(a, _)| a == "racetrack") {
                     self.selection = index;
                 }
-                self.refresh(view);
+                if self.course_sheet {
+                    self.close_course_sheet(view);
+                } else {
+                    self.refresh(view);
+                }
             }
             _ if (COURSE..COURSE + 100).contains(&id) => {
                 let index = *self.order().get((id - COURSE) as usize)?;
@@ -2483,14 +2569,17 @@ impl Frontend {
             notice: self.notice.clone(),
             profile: self.profile_text(),
             details: self.profile_details(),
-            badge: self.badge_page().then(|| super::Badge {
-                key: self.cloud.key.clone(),
-                status: self.cloud.short.clone(),
-                synced: self.cloud.synced,
-                trouble: self.cloud.trouble,
-            }),
+            // The status bar's save chip replaced the Pass Key badge.
+            badge: None,
+            status: self.status_bar(),
+            toast: None,
             qr: self.passkey_qr(),
-            heading: self.profile_heading(),
+            heading: if self.course_sheet && self.page == "race" {
+                Some("Choose Course".into())
+            } else {
+                self.profile_heading()
+            },
+            course_sheet: self.course_sheet && self.page == "race",
             lobby: self.lobby.clone(),
             motion: None,
             backdrop,
@@ -3131,10 +3220,10 @@ mod tests {
         front.selection = at;
         front.key("Enter", &view, &mut settings);
         assert_eq!(front.page, "store");
-        assert_eq!(
-            front.profile_text().as_deref(),
-            Some("Current Profile Points: 0")
-        );
+        // The points to spend are on the status bar's emphasized coin chip.
+        assert_eq!(front.profile_text(), None);
+        let bar = front.status_bar().unwrap();
+        assert!(bar.store && bar.points == 0);
         // Cheats: GIMMEPTS adds 1,000 points.
         front.selection = 4;
         front.key("Enter", &view, &mut settings);
@@ -3159,10 +3248,8 @@ mod tests {
         front.key("ArrowRight", &view, &mut settings);
         assert_eq!(front.stage_quad(), 8);
         assert_eq!(front.choices()[0].1, "ATV 2/3 · Locked: Patriot");
-        assert_eq!(
-            front.profile_text().as_deref(),
-            Some("Point Cost: 250 · Current Profile Points: 1,000")
-        );
+        assert_eq!(front.profile_text().as_deref(), Some("Point Cost: 250"));
+        assert_eq!(front.status_bar().unwrap().points, 1_000);
         // Single Player skips the locked ATVs.
         assert!(!front.quad_owned(8) && front.quad_owned(27) && front.quad_owned(6));
         front.selection = 1;
@@ -3560,7 +3647,31 @@ mod tests {
             front.key("Enter", &view, &mut settings),
             Some(Event::CopyRaceLink)
         );
+        // Enter on the Course row opens the course picker: the arrows walk
+        // the courses, the tabs filter them, Back closes it on the page.
         front.selection = 0;
+        assert_eq!(front.key("Enter", &view, &mut settings), None);
+        assert!(front.course_sheet);
+        assert_eq!(front.page, "race");
+        front.key("ArrowDown", &view, &mut settings);
+        assert_eq!(front.race.course, "nat01");
+        front.key("ArrowUp", &view, &mut settings);
+        front.key("PageDown", &view, &mut settings);
+        assert_eq!(front.race_filter, "env");
+        front.key("PageUp", &view, &mut settings);
+        assert_eq!(front.key("Escape", &view, &mut settings), None);
+        assert!(!front.course_sheet);
+        assert_eq!(
+            (front.page.as_str(), front.current()),
+            ("race", Some("racetrack"))
+        );
+        assert_eq!(front.race.course, "env01");
+        // Start Race.
+        front.selection = front
+            .choices()
+            .iter()
+            .position(|(a, _)| a == "racestart")
+            .unwrap();
         assert_eq!(
             front.key("Enter", &view, &mut settings),
             Some(Event::Race {

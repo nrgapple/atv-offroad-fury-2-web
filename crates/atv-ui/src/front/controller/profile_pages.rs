@@ -339,14 +339,11 @@ impl Frontend {
             return self.passkey_status();
         }
         match self.page.as_str() {
-            "profile" | "profile-view" => Some(match self.book.current_profile() {
-                Some(p) => format!(
-                    "Current Profile: {} · Current Profile Points: {}",
-                    p.name,
-                    grouped(p.points)
-                ),
-                None => "No profile loaded".into(),
-            }),
+            // The status bar shows the current profile and its points.
+            "profile" | "profile-view" => match self.book.current_profile() {
+                Some(_) => None,
+                None => Some("No profile loaded".into()),
+            },
             "profile-name" => Some(format!("Up to {NAME_MAX} letters, numbers or - _ . !",)),
             _ => None,
         }
@@ -1066,10 +1063,11 @@ mod tests {
         assert_eq!(main[at + 2], "settings");
         front.run("profile", &view, &mut settings);
         assert_eq!(front.page, "profile");
-        assert_eq!(
-            front.profile_text().as_deref(),
-            Some("Current Profile: PLAYER1 · Current Profile Points: 40")
-        );
+        // The current profile and its points are on the status bar.
+        assert_eq!(front.profile_text(), None);
+        let bar = front.status_bar().unwrap();
+        assert_eq!(bar.profile.as_deref(), Some("PLAYER1"));
+        assert_eq!(bar.points, 40);
         // Create: the name entry starts on the next default name.
         front.run("profile-create", &view, &mut settings);
         assert_eq!(

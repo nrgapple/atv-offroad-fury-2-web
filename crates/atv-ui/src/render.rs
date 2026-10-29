@@ -34,6 +34,16 @@ enum Source {
     Image(ImageId),
 }
 
+/// A frame whose display list is unchanged but some of whose images move
+/// (a swaying wordmark, a turning 3D preview) redraws only those over a
+/// cached copy of the rest, so an animated menu costs one full-screen copy
+/// a frame instead of every box, shadow and gradient again.
+struct LayerCache {
+    view: wgpu::TextureView,
+    bind: wgpu::BindGroup,
+    size: (u32, u32),
+}
+
 struct Entry {
     x: u32,
     y: u32,
@@ -104,6 +114,20 @@ pub struct Renderer {
     /// Rasterized this frame (for cost reporting).
     pub rasterized: u32,
     atlas_full: bool,
+    format: wgpu::TextureFormat,
+    /// `add_target` images: other passes redraw them between prepares.
+    live: std::collections::HashSet<ImageId>,
+    /// Instances that change between prepares (tilted or live images), when
+    /// the rest can be cached under them: nothing static drawn later
+    /// overlaps them. Empty: draw everything each frame.
+    dynamic: Vec<bool>,
+    layer: Option<LayerCache>,
+    /// The instances changed since the last draw, and the layer holds the
+    /// current static instances.
+    fresh: std::cell::Cell<bool>,
+    layer_valid: std::cell::Cell<bool>,
+    /// Why the last prepare did (not) cache: (reason, moving, instances).
+    pub layer_plan: (&'static str, usize, usize),
 }
 
 fn upload(
@@ -229,7 +253,8 @@ impl Renderer {
         });
         let globals = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("ui globals"),
-            size: 16,
+            // viewport (width, height, scale), tilt (yaw, pitch radians)
+            size: 32,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -266,7 +291,19 @@ impl Renderer {
             batches: Vec::new(),
             rasterized: 0,
             atlas_full: false,
+            format,
+            live: Default::default(),
+            dynamic: Vec::new(),
+            layer: None,
+            fresh: std::cell::Cell::new(true),
+            layer_valid: std::cell::Cell::new(false),
+            layer_plan: ("none", 0, 0),
         }
+    }
+
+    /// The last frame drew its static layer from the cache.
+    pub fn layer_cached(&self) -> bool {
+        !self.dynamic.is_empty() && self.layer_valid.get()
     }
 
     fn texture(device: &wgpu::Device, width: u32, height: u32, label: &str) -> wgpu::Texture {
@@ -374,6 +411,7 @@ impl Renderer {
                 height: height.max(1),
             },
         );
+        self.live.insert(id);
         id
     }
 
@@ -396,6 +434,7 @@ impl Renderer {
 
     pub fn remove_image(&mut self, id: ImageId) {
         self.images.remove(&id);
+        self.live.remove(&id);
     }
 
     pub fn image_size(&self, id: ImageId) -> Option<(u32, u32)> {
@@ -509,10 +548,13 @@ impl Renderer {
         let full = [0., 0., width as f32, height as f32];
         let mut clips: Vec<([f32; 4], f32)> = vec![(full, 0.)];
         let mut opacity = vec![1f32];
+        // Image tilt: perspective, centre x/y (physical pixels), on.
+        let mut tilts = vec![[0f32; 4]];
         let s = scale;
         for item in &list.items {
             let (clip, clip_radius) = *clips.last().unwrap();
             let alpha = *opacity.last().unwrap();
+            let tilt = *tilts.last().unwrap();
             let base = Instance {
                 clip,
                 extra: [clip_radius, 0., 0., 0.],
@@ -531,6 +573,15 @@ impl Renderer {
                 Item::PopClip => {
                     if clips.len() > 1 {
                         clips.pop();
+                    }
+                }
+                Item::PushTilt {
+                    center,
+                    perspective,
+                } => tilts.push([perspective * s, center[0] * s, center[1] * s, 1.]),
+                Item::PopTilt => {
+                    if tilts.len() > 1 {
+                        tilts.pop();
                     }
                 }
                 Item::PushOpacity(o) => opacity.push(alpha * o),
@@ -627,6 +678,7 @@ impl Renderer {
                             ],
                             params: [3., 0., 0., 1.],
                             cut: [sigma * du, sigma * dv, 0., 0.],
+                            border: tilt,
                             extra: [clip_radius, 0., 0., 0.],
                             ..base
                         },
@@ -651,6 +703,7 @@ impl Renderer {
                             uv: [src.x / iw, src.y / ih, src.right() / iw, src.bottom() / ih],
                             params: [3., 0., *rotation, 0.],
                             extra: [clip_radius, pivot[0] * s, pivot[1] * s, 0.],
+                            border: tilt,
                             ..base
                         },
                     );
@@ -662,6 +715,7 @@ impl Renderer {
             self.prepare_inner(device, queue, fonts, list, width, height, scale, false);
             return;
         }
+        self.plan_layer(device, width, height);
         if self.instances.len() > self.capacity {
             self.capacity = self.instances.len().next_power_of_two();
             self.buffer = Self::instance_buffer(device, self.capacity);
@@ -671,6 +725,123 @@ impl Renderer {
             &self.globals,
             0,
             bytemuck::cast_slice(&[width as f32, height as f32, scale, 0.]),
+        );
+    }
+
+    /// Marks the instances that move between prepares and, when the rest
+    /// can sit in a cached layer under them, appends the layer's full-frame
+    /// quad (drawn from the cache before them).
+    fn plan_layer(&mut self, device: &wgpu::Device, width: u32, height: u32) {
+        self.fresh.set(true);
+        self.layer_valid.set(false);
+        self.dynamic.clear();
+        let mut dynamic = vec![false; self.instances.len()];
+        for (source, range) in &self.batches {
+            for i in range.clone() {
+                let instance = &self.instances[i as usize];
+                let image = instance.params[0] > 2.5;
+                let tilted = image && instance.border[3] > 0.5;
+                let live = image && matches!(source, Source::Image(id) if self.live.contains(id));
+                dynamic[i as usize] = tilted || live;
+            }
+        }
+        let total = self.instances.len();
+        let Some(first) = dynamic.iter().position(|d| *d) else {
+            self.layer = None;
+            self.layer_plan = ("still", 0, total);
+            return;
+        };
+        // Moving images' reach: a sway grows a quad a few percent.
+        let bounds = |r: [f32; 4], grow: f32| {
+            let (gx, gy) = (r[2] * grow + 1., r[3] * grow + 1.);
+            [r[0] - gx, r[1] - gy, r[0] + r[2] + gx, r[1] + r[3] + gy]
+        };
+        let reach = |i: &Instance| {
+            if i.params[0] > 2.5 && i.border[3] > 0.5 {
+                bounds(i.rect, 0.08)
+            } else if i.params[2] != 0. {
+                // A rotated item turns about a pivot inside it.
+                bounds(i.rect, 1.)
+            } else {
+                bounds(i.rect, 0.)
+            }
+        };
+        let mut moving: Vec<[f32; 4]> = Vec::new();
+        let mut redrawn = 0.;
+        for (instance, moves) in self.instances.iter().zip(dynamic.iter_mut()).skip(first) {
+            let b = reach(instance);
+            // Anything drawn over a moving image is redrawn with it.
+            if !*moves
+                && moving
+                    .iter()
+                    .any(|m| b[0] < m[2] && m[0] < b[2] && b[1] < m[3] && m[1] < b[3])
+            {
+                *moves = true;
+            }
+            if *moves {
+                moving.push(b);
+                redrawn += (b[2] - b[0]) * (b[3] - b[1]);
+            }
+        }
+        // As much moving as a whole frame (a scrim or popover over the
+        // stage): no gain.
+        let count = dynamic.iter().filter(|d| **d).count();
+        if redrawn > width as f32 * height as f32 {
+            self.layer = None;
+            self.layer_plan = ("covered", count, total);
+            return;
+        }
+        self.layer_plan = ("cached", count, total);
+        if self
+            .layer
+            .as_ref()
+            .is_none_or(|l| l.size != (width, height))
+        {
+            let texture = device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("ui layer"),
+                size: wgpu::Extent3d {
+                    width: width.max(1),
+                    height: height.max(1),
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: self.format,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING
+                    | wgpu::TextureUsages::RENDER_ATTACHMENT,
+                view_formats: &[],
+            });
+            let bind = Self::bind(device, &self.layout, &self.sampler, &texture);
+            let view = texture.create_view(&Default::default());
+            self.layer = Some(LayerCache {
+                view,
+                bind,
+                size: (width, height),
+            });
+        }
+        self.dynamic = dynamic;
+        // The layer's quad, after every instance (drawn first when cached).
+        let (w, h) = (width as f32, height as f32);
+        self.instances.push(Instance {
+            rect: [0., 0., w, h],
+            color: [1.; 4],
+            uv: [0., 0., 1., 1.],
+            params: [3., 0., 0., 0.],
+            clip: [0., 0., w, h],
+            ..Default::default()
+        });
+    }
+
+    /// The 3D sway of tilted images ([`Item::PushTilt`]): `yaw` turns
+    /// about the vertical axis and `pitch` about the horizontal one
+    /// (radians). Only a uniform changes, so an unchanged display list is
+    /// not prepared again.
+    pub fn set_tilt(&self, queue: &wgpu::Queue, yaw: f32, pitch: f32) {
+        queue.write_buffer(
+            &self.globals,
+            16,
+            bytemuck::cast_slice(&[yaw, pitch, 0., 0.]),
         );
     }
 
@@ -826,22 +997,70 @@ impl Renderer {
         if self.instances.is_empty() {
             return;
         }
-        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+        let layer = self.layer.as_ref().filter(|_| !self.dynamic.is_empty());
+        // A changed list draws directly (pages sliding change every frame);
+        // a list that holds still is cached under its moving images.
+        let fresh = self.fresh.replace(false);
+        let Some(layer) = layer.filter(|_| !fresh) else {
+            self.layer_valid.set(false);
+            self.pass(encoder, target, wgpu::LoadOp::Load, |_| true);
+            return;
+        };
+        if !self.layer_valid.replace(true) {
+            self.pass(
+                encoder,
+                &layer.view,
+                wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                |i| !self.dynamic[i],
+            );
+        }
+        let mut pass = Self::begin(encoder, target, wgpu::LoadOp::Load);
+        pass.set_pipeline(&self.pipeline);
+        pass.set_bind_group(0, &self.globals_bind, &[]);
+        pass.set_vertex_buffer(0, self.buffer.slice(..));
+        let quad = self.dynamic.len() as u32;
+        pass.set_bind_group(1, &layer.bind, &[]);
+        pass.draw(0..6, quad..quad + 1);
+        self.draw_batches(&mut pass, |i| self.dynamic[i]);
+    }
+
+    fn begin<'a>(
+        encoder: &'a mut wgpu::CommandEncoder,
+        target: &'a wgpu::TextureView,
+        load: wgpu::LoadOp<wgpu::Color>,
+    ) -> wgpu::RenderPass<'a> {
+        encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("ui"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                 view: target,
                 depth_slice: None,
                 resolve_target: None,
                 ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Load,
+                    load,
                     store: wgpu::StoreOp::Store,
                 },
             })],
             ..Default::default()
-        });
+        })
+    }
+
+    /// One pass drawing the instances `keep` selects, in order.
+    fn pass(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        target: &wgpu::TextureView,
+        load: wgpu::LoadOp<wgpu::Color>,
+        keep: impl Fn(usize) -> bool,
+    ) {
+        let mut pass = Self::begin(encoder, target, load);
         pass.set_pipeline(&self.pipeline);
         pass.set_bind_group(0, &self.globals_bind, &[]);
         pass.set_vertex_buffer(0, self.buffer.slice(..));
+        self.draw_batches(&mut pass, keep);
+    }
+
+    /// Draws the batches' runs of instances `keep` selects.
+    fn draw_batches(&self, pass: &mut wgpu::RenderPass<'_>, keep: impl Fn(usize) -> bool) {
         for (source, range) in &self.batches {
             let bind = match source {
                 Source::Image(id) => match self.images.get(id) {
@@ -850,8 +1069,23 @@ impl Renderer {
                 },
                 _ => &self.atlas.bind,
             };
-            pass.set_bind_group(1, bind, &[]);
-            pass.draw(0..6, range.clone());
+            let mut set = false;
+            let mut run: Option<u32> = None;
+            for i in range.start..=range.end {
+                let inside = i < range.end && keep(i as usize);
+                match (inside, run) {
+                    (true, None) => run = Some(i),
+                    (false, Some(start)) => {
+                        if !set {
+                            pass.set_bind_group(1, bind, &[]);
+                            set = true;
+                        }
+                        pass.draw(0..6, start..i);
+                        run = None;
+                    }
+                    _ => {}
+                }
+            }
         }
     }
 }

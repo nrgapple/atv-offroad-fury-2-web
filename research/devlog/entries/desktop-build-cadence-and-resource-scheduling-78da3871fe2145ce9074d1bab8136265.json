@@ -1,0 +1,16 @@
+{
+  "id": "desktop-build-cadence-and-resource-scheduling-78da3871fe2145ce9074d1bab8136265",
+  "timestamp": "2026-10-29T01:52:21.286676+00:00",
+  "recorded_at": "2026-10-29T01:52:21.286676+00:00",
+  "kind": "verification",
+  "title": "Desktop build cadence and resource scheduling",
+  "summary": "Refined host desktop build linkage and full-platform release scheduling while preserving the current release and existing VM state.",
+  "details": [
+    "The native atv-app crate defaults to an rlib; Web and Android builders explicitly request a cdylib. Desktop release opt-level=s and full LTO remain unchanged, with no game or settings changes.",
+    "Builder VM startup moves until after Mac compilation. Newly started builder VMs use 2 CPUs and retain 8 GiB because 4 GiB caused documented out-of-memory failures. Already-running VMs are not resized or stopped, and DOCKER_HOST is restored after use.",
+    "Full-platform releases are scheduled every 168 hours, at most one release per pass; explicit tags override the cadence. The updated weekly watcher is staged through the existing idle-only handoff and activation still waits for the original release to exit.",
+    "Host-only verification passed 64 Python tests across desktop release, host build, desktop host build, and Android build suites, including the 12 new desktop scheduling tests. Python compilation and git diff --check also passed. No game build was started on the overloaded host.",
+    "CI changes now include content-free native binary linking and Android cdylib linking; these checks are pending PR CI. The existing web build continues to verify the WebAssembly target."
+  ],
+  "limitation": "Host tooling only: no game logic or settings changes, no measured build speedup or native gameplay FPS comparison, and no reboot or interrupted services. Native and Android link validation remains pending CI."
+}
