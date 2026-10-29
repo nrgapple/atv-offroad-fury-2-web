@@ -83,7 +83,14 @@ pub struct RoomLink {
     pub refused: u32,
     /// Guest: the claim last sent (hill, score), so it is sent once.
     sent_claim: Option<(usize, u32)>,
+    /// Host: slots that reported in this game (loaded the course).
+    joined: [bool; SLOTS],
+    /// Host: seconds the start has waited for riders to load.
+    waited: f32,
 }
+
+/// The longest the host's start waits for riders still loading (s).
+pub const LOAD_WAIT: f32 = 30.;
 
 impl RoomLink {
     pub fn new(host: bool, serial: u32) -> Self {
@@ -99,10 +106,12 @@ impl RoomLink {
             stunts: [0.; SLOTS],
             last_claim: [-1.; SLOTS],
             clock: 0.,
-            report: 0.,
+            report: STUNT_REPORT,
             accepted: 0,
             refused: 0,
             sent_claim: None,
+            joined: [false; SLOTS],
+            waited: 0.,
         }
     }
 }
@@ -201,6 +210,9 @@ impl GameSession {
             room.stunts = [0.; SLOTS];
             room.seen = room.present;
             room.sent_claim = None;
+            room.joined = [false; SLOTS];
+            room.waited = 0.;
+            room.report = STUNT_REPORT;
         }
         if let Some(session) = &mut self.session {
             session.restart();
@@ -288,7 +300,9 @@ impl GameSession {
         self.test_clock += dt;
         let markers = session.rules.markers();
         if self.visit && self.test_clock >= 1. {
-            if let Some(m) = markers.first() {
+            // Odd slots take the last standing treasure, so riders differ.
+            let next = if me % 2 == 1 { markers.last() } else { markers.first() };
+            if let Some(m) = next {
                 self.test_clock = 0.;
                 self.visits += 1;
                 let _ = ride.place_beside(m.position, 0., [0.; 3]);
@@ -340,7 +354,13 @@ impl GameSession {
         let session = self.session.as_mut().unwrap();
         let room = self.room.as_mut().unwrap();
         room.clock += dt;
-        if session.started {
+        // The start waits (up to LOAD_WAIT) for every rider to load the
+        // course and report in, so all share the 3-2-1.
+        room.joined[me] = true;
+        let loading = (0..SLOTS).any(|s| room.present[s] && !room.joined[s]);
+        if !session.started && loading && room.waited < LOAD_WAIT {
+            room.waited += dt;
+        } else if session.started {
             self.go = (self.go - dt).max(0.);
         } else {
             if self.countdown >= crate::games::COUNTDOWN {
@@ -369,6 +389,7 @@ impl GameSession {
             let position = net.rider_motion(claim.peer).map(|(p, _)| p);
             match check_claim(&claim, room.serial, &room.present, &hills, position, since) {
                 Ok(()) => {
+                    room.joined[slot] = true;
                     room.stunts[slot] = claim.stunt;
                     if claim.kind == claim_kind::CAPTURE && session.started && session.end.is_none()
                     {

@@ -1727,8 +1727,23 @@ impl App {
             }
         }
         if let Some((kind, serial, minutes)) = game_join {
-            self.start_room_game(kind, false, serial, minutes);
-            return;
+            // Play Again on the same course restarts in place; another game
+            // moves to its course scene.
+            let ride = self.ready.as_mut().and_then(|r| r.riding.as_mut());
+            match (&mut self.game, ride) {
+                (Some(game), Some(riding))
+                    if game.kind == kind && game.room.is_some() && game.session.is_some() =>
+                {
+                    game.room_restart(&mut riding.ride, serial);
+                    if let Some(overlay) = &mut self.overlay {
+                        overlay.results = Default::default();
+                    }
+                }
+                _ => {
+                    self.start_room_game(kind, false, serial, minutes);
+                    return;
+                }
+            }
         }
         // A guest following the host's Tag onto its course.
         if let Some(environment) = self.tag_reload.take() {
@@ -2068,7 +2083,7 @@ impl App {
                         overlay.results.game_continue = true;
                     }
                 }
-                game.view(0)
+                game.view(game.room.as_ref().map_or(0, |r| r.me))
             }
             None => None,
         };

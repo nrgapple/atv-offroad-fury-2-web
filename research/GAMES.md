@@ -382,6 +382,10 @@ Arena plays Hockey with human opponents. This is an authored adaptation,
 not the original's network play (no original Games protocol was
 recovered):
 
+- **King of the Hills and Treasure Hunt** play in rooms too, on the
+  venue's KH/TH course for every room rider (`MULTIPLAYER.md` "Room
+  games").
+
 - **Host-owned game.** The room host runs `atv_core::hockey` and the puck
   for the roster in peer order, teams alternating Red/Blue (Team Select
   is not reproduced). Each rider still owns its ATV; the host pushes the
