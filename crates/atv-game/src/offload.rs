@@ -21,6 +21,8 @@ pub const IPUM: u32 = 1;
 pub const SMOOTH: u32 = 1;
 /// An original VAG decoded and resampled to the output rate (`arg`).
 pub const VAG_PCM: u32 = 3;
+/// An original PST texture's top level as RGBA (menu photos and art).
+pub const PST: u32 = 4;
 
 /// One decoded IPUM image: its RGBA and, when asked, the smoothed RGBA.
 #[derive(Clone, Debug, PartialEq)]
@@ -62,6 +64,14 @@ pub fn run(kind: u32, arg: u32, bytes: &[u8]) -> Result<Vec<u8>> {
             for v in &pcm.data {
                 out.extend_from_slice(&v.to_le_bytes());
             }
+            Ok(out)
+        }
+        PST => {
+            let texture = atv_core::texture::decode_pst(bytes)?;
+            let mut out = Vec::with_capacity(8 + texture.rgba.len());
+            out.extend_from_slice(&texture.info.width.to_le_bytes());
+            out.extend_from_slice(&texture.info.height.to_le_bytes());
+            out.extend_from_slice(&texture.rgba);
             Ok(out)
         }
         _ => atv_content::run_job(kind, arg, bytes)
@@ -140,6 +150,44 @@ pub async fn pcms(inputs: &[&[u8]], rate: u32) -> Result<Vec<(u32, crate::audio:
         .iter()
         .map(|out| unpack_pcm(out, rate))
         .collect()
+}
+
+/// Original PST textures' RGBA (width, height, pixels) in parallel, in
+/// order; a texture that does not decode is its own error.
+pub async fn psts(inputs: &[&[u8]]) -> Result<Vec<Result<(u32, u32, Vec<u8>)>>> {
+    // One failing texture must not fail the others: decode each as its own
+    // job result.
+    let outputs = many_each(PST, 0, inputs).await?;
+    Ok(outputs
+        .into_iter()
+        .map(|out| {
+            let out = out?;
+            let word = |at: usize| out.get(at..at + 4).map(|b| u32::from_le_bytes(b.try_into().unwrap()));
+            let (Some(w), Some(h)) = (word(0), word(4)) else {
+                return Err("short decode result".into());
+            };
+            if out.len() != 8 + w as usize * h as usize * 4 {
+                return Err("decode result size mismatch".into());
+            }
+            Ok((w, h, out[8..].to_vec()))
+        })
+        .collect())
+}
+
+/// [`many`] with each job's own outcome (one bad input does not fail the
+/// rest): on the web a failed job is retried inline for its error.
+async fn many_each(kind: u32, arg: u32, inputs: &[&[u8]]) -> Result<Vec<Result<Vec<u8>>>> {
+    match many(kind, arg, inputs).await {
+        Ok(outputs) => Ok(outputs.into_iter().map(Ok).collect()),
+        Err(_) => {
+            let mut outputs = Vec::with_capacity(inputs.len());
+            for input in inputs {
+                outputs.push(run(kind, arg, input));
+                crate::yield_frame().await;
+            }
+            Ok(outputs)
+        }
+    }
 }
 
 /// Starts the web pool ahead of the first job (a ride load), so its workers

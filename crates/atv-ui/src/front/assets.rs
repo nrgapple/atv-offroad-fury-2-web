@@ -180,7 +180,10 @@ pub async fn photos(content: &Content, tracks: &[Track]) -> Result<Vec<(String, 
             .iter()
             .find_map(|a| a.named(name).map(|index| (a, index)))
     };
-    let mut out = Vec::new();
+    // Read every half, then decode them together: forty photos decode
+    // behind the title on the decode workers (web), not the title's thread.
+    let mut ids = Vec::new();
+    let mut halves = Vec::new();
     for track in tracks.iter().filter(|t| !t.image.is_empty()) {
         let (Some((a, ia)), Some((b, ib))) = (
             find(&format!("{}a.pst", track.image)),
@@ -188,11 +191,19 @@ pub async fn photos(content: &Content, tracks: &[Track]) -> Result<Vec<(String, 
         ) else {
             continue;
         };
-        let (Ok(left), Ok(right)) = (pst(&a.member(ia).await?), pst(&b.member(ib).await?)) else {
+        halves.push(a.member(ia).await?);
+        halves.push(b.member(ib).await?);
+        ids.push(track.id.clone());
+    }
+    let inputs: Vec<&[u8]> = halves.iter().map(Vec::as_slice).collect();
+    let decoded = atv_game::offload::psts(&inputs).await?;
+    let mut out = Vec::new();
+    for (id, pair) in ids.into_iter().zip(decoded.chunks(2)) {
+        let [Ok((lw, lh, left)), Ok((rw, rh, right))] = pair else {
             continue;
         };
-        out.push((track.id.clone(), Rgba::join(&left, &right).trim_dark()));
-        // Forty photos decode behind the title: let it keep animating (web).
+        let (left, right) = (Rgba::new(*lw, *lh, left.clone()), Rgba::new(*rw, *rh, right.clone()));
+        out.push((id, Rgba::join(&left, &right).trim_dark()));
         atv_content::yield_frame().await;
     }
     Ok(out)
