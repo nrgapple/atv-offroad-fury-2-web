@@ -53,6 +53,10 @@ pub struct Request {
     /// Game Settings "Split Screen Vertical"), else one above the other.
     #[serde(default)]
     pub split_vertical: bool,
+    /// Host Game: the room starts Freestyle for its riders (research/
+    /// MULTIPLAYER.md "Room Freestyle"), else a Free Ride.
+    #[serde(default)]
+    pub host_freestyle: bool,
     /// Split Screen: how many local players (2-4).
     #[serde(default)]
     pub split_players: u8,
@@ -1122,7 +1126,7 @@ pub fn layout(request: Request) -> Result<Frame> {
             }
             // Hosting continues to the original track picker; its Ride starts
             // the game at once so friends can drop in from the invite.
-            let rows = [
+            let mut rows = vec![
                 if creating {
                     ("Select Track", "hosttrack")
                 } else {
@@ -1130,6 +1134,18 @@ pub fn layout(request: Request) -> Result<Frame> {
                 },
                 ("Garage", "garage"),
             ];
+            // What the hosted room starts with: everyone free rides, or
+            // a timed Freestyle session with a shared score table.
+            if creating {
+                rows.insert(
+                    1,
+                    if request.host_freestyle {
+                        ("Room: Freestyle (timed stunts)", "hostmode")
+                    } else {
+                        ("Room: Free Ride", "hostmode")
+                    },
+                );
+            }
             for (i, (label, action)) in rows.iter().enumerate() {
                 f.choices.push((*action).into());
                 f.button(
@@ -2256,6 +2272,7 @@ mod tests {
         Request {
             page: page.into(),
             split_vertical: false,
+            host_freestyle: false,
             split_players: 2,
             split_seconds: Vec::new(),
             loading_status: "Reading original ATV...".into(),
@@ -2348,7 +2365,9 @@ mod tests {
         let create = layout(request("create-lobby", 390., 844.)).unwrap();
         assert_eq!(create.inputs.len(), 2);
         assert_eq!(create.inputs[1].action, "create-code");
-        assert_eq!(create.choices, ["hosttrack", "garage"]);
+        // The Room row: a Free Ride, or room Freestyle for every rider.
+        assert_eq!(create.choices, ["hosttrack", "hostmode", "garage"]);
+        assert!(create.hits.iter().any(|h| h.label == "Room: Free Ride"));
         let join = layout(request("join-lobby", 390., 844.)).unwrap();
         assert_eq!(join.inputs[1].action, "room-code");
         assert_eq!(join.choices, ["join", "garage"]);
@@ -2367,6 +2386,11 @@ mod tests {
                     label: label.to_string(),
                     value: String::new(),
                 })
+                .chain(std::iter::once(ControlRow {
+                    id: "freestyle".into(),
+                    label: "Play Freestyle".into(),
+                    value: String::new(),
+                }))
                 .collect();
             layout(input).unwrap()
         };
@@ -2379,7 +2403,10 @@ mod tests {
         // One row per race the room's course ships (research/MULTIPLAYER.md).
         assert!(host.choices.contains(&"playrace".to_string()));
         assert!(host.choices.contains(&"playrace:1".to_string()));
+        // Room Freestyle on any course (research/MULTIPLAYER.md).
+        assert!(host.choices.contains(&"playfree".to_string()));
         assert!(!guest.choices.contains(&"playrace".to_string()));
+        assert!(!guest.choices.contains(&"playfree".to_string()));
         let solo = layout(request("pause", 1280., 720.)).unwrap();
         assert!(!solo.choices.contains(&"changeride".to_string()));
         assert_eq!(solo.choices.last().unwrap(), "main");

@@ -6442,13 +6442,14 @@ impl App {
         match event {
             Event::FreestyleHost {
                 environment,
+                code,
                 quad,
                 rider,
                 name,
             } => {
                 self.front_event(Event::Host {
                     environment,
-                    code: None,
+                    code,
                     quad,
                     rider,
                     name,
