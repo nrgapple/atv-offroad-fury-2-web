@@ -384,4 +384,6 @@ def main(argv=None):
 
 
 if __name__ == '__main__':
+    from host_build import ensure_guard
+    ensure_guard(__file__, sys.argv[1:])
     main()

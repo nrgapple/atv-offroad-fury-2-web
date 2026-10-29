@@ -9,6 +9,10 @@ import hashlib
 import os
 import shutil
 import subprocess
+import sys
+from host_build import ensure_guard
+
+ensure_guard(__file__, sys.argv[1:])
 
 ROOT = Path(__file__).resolve().parents[1]
 cargo = shutil.which('cargo') or str(Path.home() / '.cargo/bin/cargo')

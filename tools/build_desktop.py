@@ -156,6 +156,9 @@ def cargo_env():
     env = dict(os.environ)
     env['PATH'] = f"{Path.home() / '.cargo/bin'}:{env['PATH']}"
     env.setdefault('CARGO_TARGET_DIR', str(OUT_ROOT / 'target'))
+    env.setdefault('CARGO_BUILD_JOBS', '2')
+    if not env.get('CI') and env.get('FURY_SCCACHE') != '0' and shutil.which('sccache'):
+        env.setdefault('RUSTC_WRAPPER', str(ROOT / 'tools/sccache-rustc'))
     env['MACOSX_DEPLOYMENT_TARGET'] = MACOS_MINIMUM
     return env
 
@@ -304,7 +307,7 @@ export "CARGO_TARGET_${U}_LINKER=$L" "CC_$(echo "$TRIPLE" | tr - _)=$L"
 if [ -n "$LIBDIR" ]; then  # the target's libudev and ALSA (multiarch) for cross builds
   export PKG_CONFIG_ALLOW_CROSS=1 "PKG_CONFIG_PATH=$LIBDIR/pkgconfig" "CARGO_TARGET_${U}_RUSTFLAGS=-L $LIBDIR"
 fi
-cargo build --release --locked -p atv-app --bin fury --target "$TRIPLE" -j "$(nproc)" >&2
+cargo build --release --locked -p atv-app --bin fury --target "$TRIPLE" -j "${CARGO_BUILD_JOBS:-2}" >&2
 cd "/target/$TRIPLE/release" && tar -cf - "$BINARY"
 '''
 
@@ -456,4 +459,6 @@ def build(args, parser):
 
 
 if __name__ == '__main__':
+    from host_build import ensure_guard
+    ensure_guard(__file__, sys.argv[1:])
     sys.exit(main())

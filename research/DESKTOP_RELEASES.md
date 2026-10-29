@@ -194,28 +194,39 @@ a Linux launch failed, builds the Android APK with `build_android.py --output <o
 same clean commit, match its checksum and pass the APK member allowlist) with release notes
 stating exactly what was launched. A failed Android build still publishes the desktop archives;
 the state entry records `android_error` and the notification says so. Results go
-to `~/LargeFiles/fury-desktop/watcher-state.json` and a macOS notification; per-release logs are
-`watcher-<tag>.log` beside it, the job log is `watcher.log` (written by the watcher via `--log`,
-because launchd cannot open files on the external SSD and fails the job with `EX_CONFIG`). The
-first pass, with no state file yet, adopts the `desktop-v*` tags already on origin as published. A failed release is not retried
-until its entry is removed from the state file's `failed` map. A lock file stops overlapping
-passes. After each pass, local archive folders of published releases beyond the newest three
-are deleted (they remain on GitHub Releases and can be rebuilt from their commit).
+to `~/.local/share/project-service-data/fury-desktop-release/watcher-state.json` and a macOS
+notification; job and per-release logs live beside that state. The small installed runtime
+also stays there, independent of the shared checkout's current revision. Archives, caches,
+content and temporary worktrees stay on the verified external SSD.
+
+State writes are atomic and errors fail closed. The 12-hour automatic-attempt cooldown
+includes failures and newer main commits; any release failure additionally backs off the
+whole watcher for one hour. New explicit tags remain pending during that backoff. A busy
+host defers without recording a failed attempt. The watcher checks the SSD UUID, source
+and content readability, and output writability before starting a build. It shares the
+host heavy-work lease with local builds/tests and never interrupts an existing job.
+
+The first pass adopts existing remote tags. A failed tag is not retried until its failed
+entry is deliberately removed; removing it does not bypass the global cooldown. The
+legacy state is migrated only after its old writer exits. Published archive retention
+remains three releases; unmerged work and failed build evidence are preserved.
 
 Bump the workspace `version` in `Cargo.toml` for a notable release; the next automatic pass
 publishes it under the new number.
 
-Install or update (from the shared checkout, which the job only fetches in):
+Install or update from a tested task worktree (see [host budget](HOST_BUILD_BUDGET.md)):
 
 ```sh
-python3 tools/desktop_release_watcher.py --auto-main --dry-run   # what it would build now
-sed -e "s|@REPO@|$HOME/Projects/atv-offroad-fury-2-web|g" -e "s|@HOME@|$HOME|g" \
-  tools/desktop/com.furyremastered.desktop-release.plist.in \
-  > ~/Library/LaunchAgents/com.furyremastered.desktop-release.plist
-launchctl bootout gui/$(id -u)/com.furyremastered.desktop-release 2>/dev/null
-launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.furyremastered.desktop-release.plist
-# stop: launchctl bootout gui/$(id -u)/com.furyremastered.desktop-release
+python3 tools/install_host_build_budget.py --repo "$HOME/Projects/atv-offroad-fury-2-web" --apply
 ```
+
+The installer preserves the rustup Cargo proxy, installs a reversible guard for future
+Cargo invocations, disables new starts of the old watcher without stopping its active
+pass, and starts a one-shot handoff. That handoff waits for the active watcher and its
+state lock before migrating state and reloading launchd. Inspect
+`~/.local/share/project-service-data/fury-desktop-release/handoff.json` and `handoff.log`.
+The installed watcher uses Background priority and nice 10. Do not bootout or kickstart
+an active release to apply an update.
 
 macOS privacy protection blocks a launchd job from reading the external SSD until Python
 has Full Disk Access: in System Settings, Privacy & Security, Full Disk Access, add
