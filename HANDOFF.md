@@ -191,11 +191,11 @@ the worktree's `target/`; keep bulk output on the SSD.
   split race radar and the quarter stunt-text clock. The Players page's ATV
   stats row and original panel art, the Multi-Sign animation, records and
   profile credit for players 2-4 (a product decision: whose profile), the
-  original's split Race event types (Duel, Lap Attack, Practice), player
-  1's own engine/CPU/venue sounds from the nearest view, and online
-  championships remain. The original has no split championships
+  original's split Race event types (Duel, Lap Attack, Practice) and
+  online championships remain. The original has no split championships
   (Championships is reachable only from Single Player); split objectives
-  share one objective and clock, and players 2-4's sounds use the nearest
+  share one objective and clock with each view's own target compass and
+  tags, and every player's positional and venue sounds use the nearest
   view's camera (`SPLIT_SCREEN.md` "Split objectives", "Split audio"). Room
   Freestyle trusts each rider's own score report within the host's bounds
   (no replay of its stunts; `MULTIPLAYER.md` "Room Freestyle").

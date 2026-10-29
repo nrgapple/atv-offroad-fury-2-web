@@ -121,6 +121,8 @@ pub struct Overlay {
     pub lobby: Option<atv_ui::menu::controller::Lobby>,
     /// Name tags drawn on the latest frame (tests).
     pub tags: usize,
+    /// The same per view, player order (split screen; one entry alone).
+    pub view_tags: Vec<usize>,
     /// The compass icons drawn on the latest frame, if a compass was (tests).
     compass_icons: Option<Vec<String>>,
     pub fonts: Fonts,
@@ -258,6 +260,7 @@ impl Overlay {
             results_cache: None,
             help_open: false,
             tags: 0,
+            view_tags: Vec::new(),
             compass_icons: None,
             lobby: None,
             help_until: None,
@@ -1108,9 +1111,13 @@ impl Overlay {
                         .iter()
                         .map(|s| s.peers.map(|p| (p, s.eye, offset_of(s)))),
                 )
-                .flatten()
                 .collect();
-        for ((peers, origin, vp), eye, (dx, dy)) in views {
+        self.view_tags = vec![0; views.len()];
+        for (index, ((peers, origin, vp), eye, (dx, dy))) in views
+            .into_iter()
+            .enumerate()
+            .filter_map(|(i, v)| v.map(|v| (i, v)))
+        {
             // `002207e0` hides a hill pill whose point the camera's ray to
             // it does not reach (`00169b60` against the terrain).
             let hidden = |p: &&atv_ui::hud::peers::Peer| {
@@ -1124,7 +1131,7 @@ impl Overlay {
             };
             let visible: Vec<_> = peers.iter().filter(|p| !hidden(p)).cloned().collect();
             let mut list = DisplayList::default();
-            self.tags += atv_ui::hud::peers::paint_tags(
+            let drawn = atv_ui::hud::peers::paint_tags(
                 &mut self.fonts,
                 &mut list,
                 &sub,
@@ -1133,6 +1140,8 @@ impl Overlay {
                 &vp,
                 self.meter.as_ref().and_then(|m| m.pills.as_ref()),
             );
+            self.tags += drawn;
+            self.view_tags[index] = drawn;
             list.translate(dx, dy);
             self.list.items.extend(list.items);
         }
@@ -1748,6 +1757,8 @@ impl Overlay {
                 "helpOpen": self.help_open,
                 // Tags and King of the Hills pills drawn last frame.
                 "tags": self.tags,
+                // Split screen: the tags each player's view drew.
+                "viewTags": self.view_tags,
                 // Split screen: each player's drawn objects (Overlays.pb
                 // object numbers) and anchors in CSS px.
                 "split": self.split_hud.iter().map(|seat| seat.iter().map(|(object, at)| {

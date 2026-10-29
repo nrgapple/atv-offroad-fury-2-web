@@ -1996,7 +1996,15 @@ impl App {
         // Split screen: players 2-4's engines and body impacts play through
         // the room riders' voices on the one output, each heard from the
         // nearest player's camera (`001742f0` picks the nearest of the
-        // views' listeners; research/SPLIT_SCREEN.md "Split audio").
+        // views' listeners; research/SPLIT_SCREEN.md "Split audio"). Player
+        // 1's positional and venue sounds use the same listener list from
+        // the next step (`RideAudio::views`).
+        if ready.split.is_empty()
+            && let Some(sound) = &mut riding.sound
+            && !sound.ride.views.is_empty()
+        {
+            sound.ride.views.clear();
+        }
         if let (false, Some(sound)) = (ready.split.is_empty(), &mut riding.sound) {
             let motion = riding.ride.frame();
             let riders: Vec<_> = ready.split.iter_mut().map(|s| s.audio_rider()).collect();
@@ -2009,6 +2017,7 @@ impl App {
                     velocity: s.riding.ride.frame().linear_velocity,
                 })
                 .collect();
+            sound.ride.views.clone_from(&views);
             for quad in sound.remote_frame(
                 &riders,
                 motion.origin,
@@ -2555,6 +2564,16 @@ impl App {
                 .clone()
                 .or_else(|| self.hockey.as_ref().map(|h| h.markers()))
                 .or_else(|| local_tag.clone())
+                // Split Freestyle Objectives: every view tags the untouched
+                // targets from its own camera (a port choice like player 1's
+                // tags: the original draws only the 3D targets).
+                .or_else(|| {
+                    self.objective
+                        .as_ref()
+                        .filter(|o| o.split.is_some())
+                        .map(|o| o.markers())
+                        .filter(|m| !m.is_empty())
+                })
                 .filter(|_| !ready.split.is_empty());
             let hud_peers = ready
                 .net
@@ -2641,14 +2660,14 @@ impl App {
             };
             // Split screen: the other players' mini-game panels, compasses
             // and tags.
+            // A split target objective's compass is each player's too
+            // (Overlay Set 5 places object 31 once per view).
             let compass_for = |s: &split::Second| {
                 compass_icons
                     .clone()
-                    .filter(|_| {
-                        self.game
-                            .as_ref()
-                            .and_then(|g| g.view(usize::from(s.player) - 1))
-                            .is_some()
+                    .filter(|_| match &self.game {
+                        Some(g) => g.view(usize::from(s.player) - 1).is_some(),
+                        None => self.objective.as_ref().is_some_and(|o| o.split.is_some()),
                     })
                     .map(|icons| compass_of(s.riding.ride.frame(), icons))
             };
@@ -2718,6 +2737,15 @@ impl App {
                     (None, Some(atv_core::games::GameKind::KingOfTheHills)) => 7,
                     _ if self.hockey.as_ref().is_some_and(|h| h.split) => 9,
                     _ if self.tag.as_ref().is_some_and(|t| t.local) => 8,
+                    // A target objective (`CherryPick`) uses its own set,
+                    // whose split layouts list the compass per player.
+                    _ if self
+                        .objective
+                        .as_ref()
+                        .is_some_and(|o| o.split.is_some() && !o.targets.is_empty()) =>
+                    {
+                        5
+                    }
                     _ => 2,
                 };
                 (name, set)
@@ -3068,6 +3096,14 @@ impl App {
                     .and_then(|o| o.results.fame.as_ref())
                     .map(|f| serde_json::json!({"broken": f.broken, "name": f.name})),
             });
+            // Player 1's positional sounds: listeners (one per view) and the
+            // one nearest player 1's rider (0 = player 1's camera).
+            state["ride"]["listeners"] = serde_json::json!(
+                riding
+                    .sound
+                    .as_ref()
+                    .map(|s| (s.ride.stats.listeners, s.ride.stats.nearest))
+            );
             // The saved settings the ride applies (tools/test_engine_settings.mjs).
             let graphics = ready.scene.graphics();
             let mixer = riding.sound.as_ref().and_then(|s| {

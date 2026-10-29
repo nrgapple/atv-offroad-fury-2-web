@@ -504,6 +504,20 @@ AlterJustification=2\nOverlay1Text1Justification=L\n\
     }
 
     #[test]
+    fn a_split_target_objective_places_a_compass_per_player() {
+        // Overlay Set 5 (CherryPick) lists the compass once per player.
+        let doc = b"[OverlaySet5]\nType=CherryPick\nNumOverlays-ScreenLayout-2Player-Horiz=1\n\
+[OverlaySet5-ScreenLayout-2Player-Horiz-Overlay1]\nOverlayObject=31\nNumOverlay = 2\n\
+Overlay1 = 65,172\nOverlay2 = 65,392\n[OverlayObject-31]\nType=Compass\n";
+        let all = super::super::assets::sections(doc);
+        let layouts = super::super::assets::split_layouts(&all);
+        let layout = &layouts[&(5, "2Player-Horiz")];
+        assert_eq!(layout.players.len(), 2);
+        assert_eq!(layout.players[0][0].object, 31);
+        assert_eq!(layout.players[1][0].at, [65., 392.]);
+    }
+
+    #[test]
     fn the_split_radar_is_one_overlay_over_the_views_crossing() {
         let doc = b"[OverlaySet1]\nType=Race\nNumOverlays-ScreenLayout-4Player=1\n\
 NumOverlays-ScreenLayout-2Player-Vertical=1\n\
