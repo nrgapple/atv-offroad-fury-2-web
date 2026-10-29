@@ -1213,11 +1213,13 @@ impl Front {
         let pane =
             |hits: &[(Rect, u32)], id: u32| hits.iter().find(|(_, i)| *i == id).map(|(r, _)| *r);
         if let Some(r) = pane(&self.hits, atv_ui::front::LIST) {
+            self.state.list.paint_edges(&mut self.list, r);
             self.state
                 .list
                 .paint_indicator(&mut self.list, r, scroll_now);
         }
         if let Some(r) = pane(&self.hits, atv_ui::front::ROWS) {
+            self.state.rows.paint_edges(&mut self.list, r);
             self.state
                 .rows
                 .paint_indicator(&mut self.list, r, scroll_now);

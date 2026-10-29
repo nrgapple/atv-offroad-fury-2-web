@@ -729,7 +729,7 @@ mod tests {
             &mut list,
             &mut Vec::new(),
         );
-        let at = |f: &dyn Fn(&crate::paint::Item) -> bool| list.items.iter().position(|i| f(i));
+        let at = |f: &dyn Fn(&crate::paint::Item) -> bool| list.items.iter().position(f);
         let push = at(&|i| matches!(i, crate::paint::Item::PushTilt { .. })).unwrap();
         let image = at(&|i| matches!(i, crate::paint::Item::Image { .. })).unwrap();
         let pop = at(&|i| matches!(i, crate::paint::Item::PopTilt)).unwrap();

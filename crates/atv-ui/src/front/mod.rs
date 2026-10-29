@@ -151,6 +151,9 @@ pub struct Badge {
 /// Everything a page draws.
 #[derive(Clone, Debug, PartialEq, Default)]
 pub struct Screen {
+    /// Single Race's course picker is open (the setup rows give way to the
+    /// event tabs and the full course list).
+    pub course_sheet: bool,
     pub page: String,
     /// (action, label) in keyboard order.
     pub choices: Vec<(String, String)>,
@@ -586,8 +589,12 @@ fn page_element(m: &Metrics, s: &Screen) -> El {
                     0.36
                 }
             }
+            // Short phones (Safari's toolbars take ~150px) give the rows
+            // the room: Single Player's six modes stay on screen.
             page if stage_page(page) => {
                 if h <= 640. {
+                    0.3
+                } else if h <= 720. {
                     0.4
                 } else {
                     0.5
@@ -665,12 +672,22 @@ fn page_element(m: &Metrics, s: &Screen) -> El {
                 area((4, 5), (1, 2)),
             )
         }
-    } else {
+    } else if loading {
         (
             area((1, 2), (1, 2)),
             area((1, 3), (2, 3)),
             area((2, 3), (1, 2)),
             area((3, 4), (1, 3)),
+        )
+    } else {
+        // Landscape: the rows column runs to the bottom edge and Back sits
+        // under the stage (bottom right, under the thumb), so a phone under
+        // Safari's toolbar shows more rows.
+        (
+            area((1, 2), (1, 2)),
+            area((1, 3), (2, 3)),
+            area((2, 4), (1, 2)),
+            area((3, 4), (2, 3)),
         )
     };
     let mut panel = panel(m, s, loading);
@@ -1211,13 +1228,18 @@ fn plate(m: &Metrics, s: &Screen) -> El {
 fn hero(m: &Metrics, s: &Screen) -> El {
     let mut hero = column(if m.portrait { 8. } else { 16. });
     hero.justify_content = JustifyContent::CENTER;
-    // padding-bottom: 6vh applies in both orientations.
-    hero.padding = sides(0., 0., m.h * 0.06, 0.);
+    // padding-bottom: 6vh applies in both orientations; a portrait phone's
+    // Single Race keeps half of it for the setup rows.
+    let race_portrait = m.portrait && s.page == "race";
+    hero.padding = sides(0., 0., m.h * if race_portrait { 0.03 } else { 0.06 }, 0.);
     if !m.portrait {
         hero.flex_grow = 1.;
     }
     let aspect = if m.portrait {
-        if m.h <= 640. { 2.4 } else { 16. / 9. }
+        // Short phones (and Single Race below ~760px) take a wider, lower
+        // photo so the rows keep their room.
+        let short = if race_portrait { 760. } else { 640. };
+        if m.h <= short { 2.4 } else { 16. / 9. }
     } else {
         1.5
     };
@@ -1458,7 +1480,7 @@ fn left(m: &Metrics, s: &Screen) -> El {
     style.padding = if m.portrait {
         sides(14., m.sides().1, 10., m.sides().0)
     } else {
-        sides(0., 0., 12., m.sides().0)
+        sides(0., 0., 12. + m.safe[2], m.sides().0)
     };
     if s.page == "loading" {
         style.justify_content = JustifyContent::CENTER;
@@ -1580,23 +1602,26 @@ fn left(m: &Metrics, s: &Screen) -> El {
                 ));
             }
         }
+        "race" if s.course_sheet => {
+            // The course picker: event tabs over every course, full height.
+            left = left.child(tabs(m, s)).child(course_list(m, s));
+        }
         "race" => {
-            // `.ms-race-settings`: the value rows under the course list.
+            // The setup rows: Course (its arrows step, a tap opens the
+            // picker), Laps, CPU riders and Difficulty. They scroll in the
+            // column like any rows, so none runs under Back.
             let mut settings = El::new(column(2.));
             settings.style.flex_shrink = 0.;
-            settings.style.padding = sides(4., if m.portrait { 0. } else { 8. }, 0., 0.);
-            settings.paint.border = [1., 0., 0., 0.];
-            settings.paint.border_color = Color::hex("#ffffff26");
-            settings.style.border = sides(1., 0., 0., 0.);
+            settings.style.padding = sides(0., if m.portrait { 0. } else { 8. }, 0., 0.);
             for (index, (action, label)) in s.choices.iter().enumerate() {
-                if matches!(action.as_str(), "racelaps" | "racecpu" | "racedifficulty") {
+                if matches!(
+                    action.as_str(),
+                    "racetrack" | "racelaps" | "racecpu" | "racedifficulty"
+                ) {
                     settings = settings.child(stepper_row(m, s, index, label));
                 }
             }
-            left = left
-                .child(tabs(m, s))
-                .child(course_list(m, s))
-                .child(settings);
+            left = left.child(settings);
             if let Some(notice) = s.notice.as_ref().filter(|_| s.toast.is_none()) {
                 left = left.child(text(
                     notice.clone(),
@@ -1670,7 +1695,7 @@ fn left(m: &Metrics, s: &Screen) -> El {
         "loading" => left = left.child(shot(s)),
         _ => {}
     }
-    if matches!(s.page.as_str(), "tracks" | "race" | "garage" | "loading") {
+    if matches!(s.page.as_str(), "tracks" | "garage" | "loading") || s.course_sheet {
         // Their lists scroll instead.
         return left;
     }
@@ -2595,9 +2620,13 @@ fn hints(m: &Metrics, s: &Screen) -> Option<El> {
     .paint(Paint::fill(Color::hex("#0000008f")).radius(5.))
     .id(BACK)
     .child(arrow(true, 16., color, false))
-    .child(text("Back", style, size));
+    .child(text(
+        if s.course_sheet { "Done" } else { "Back" },
+        style,
+        size,
+    ));
     // Race setup keeps its share link beside Back (`.ms-hint-share`).
-    let share = (s.page == "race")
+    let share = (s.page == "race" && !s.course_sheet)
         .then(|| s.choices.iter().position(|(a, _)| a == "copyride"))
         .flatten()
         .map(|index| {
@@ -2774,7 +2803,11 @@ fn stepper_row(m: &Metrics, s: &Screen, index: usize, label: &str) -> El {
 fn title(m: &Metrics, s: &Screen, mut root: El) -> El {
     root.style.grid_template_columns = vec![fr(1.)];
     root.style.grid_template_rows = vec![fr(1.), auto()];
-    let width = (0.88 * m.w).min(760.);
+    // The wordmark yields height to Press Start and the links (about 150px
+    // with the save chip above it): a phone in landscape under Safari's
+    // toolbar has ~330px, where a 0.88w wordmark pushed Start off screen.
+    let room = (m.h - m.safe[0] - m.safe[2] - 200.).max(60.);
+    let width = (0.88 * m.w).min(760.).min(room * 3.);
     let mut lockup = El::new(Style {
         grid_row: taffy::Line {
             start: line(1),

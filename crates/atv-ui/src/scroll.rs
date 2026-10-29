@@ -391,6 +391,57 @@ impl Scroller {
         }));
     }
 
+    /// The scroll cue: while more content lies past an edge, that edge of
+    /// `pane` fades to shadow, and a small gold chevron at the bottom says
+    /// the list goes on (Safari's toolbars can leave half a menu below the
+    /// fold with nothing to show it).
+    pub fn paint_edges(&self, list: &mut crate::paint::DisplayList, pane: crate::Rect) {
+        if self.max <= 1. || pane.h < 80. {
+            return;
+        }
+        let fade = |list: &mut crate::paint::DisplayList, y: f32, down: bool| {
+            let (from, to) = (
+                crate::Color::hex("#00000000"),
+                crate::Color::hex("#000000a0"),
+            );
+            let stops = if down {
+                [(0., from), (1., to)]
+            } else {
+                [(0., to), (1., from)]
+            };
+            list.push(crate::paint::Item::Box(crate::paint::BoxPaint {
+                rect: crate::Rect::new(pane.x, y, pane.w, 28.),
+                fill: Some(crate::color::Gradient::new(180., &stops).into()),
+                ..Default::default()
+            }));
+        };
+        if self.offset > 1. {
+            fade(list, pane.y, false);
+        }
+        if self.offset < self.max - 1. {
+            fade(list, pane.bottom() - 28., true);
+            // A down triangle in the rows' arrow style (20-unit box at 0.8).
+            list.push(crate::paint::Item::Shape {
+                shape: crate::text::Shape {
+                    path: "M3 7h14l-7 8z".into(),
+                    bounds: [0., 0., 20., 20.],
+                    unit: 0.8,
+                    fill: crate::Color::hex("#f1d84e"),
+                    stroke: None,
+                    drop_shadow: Some(crate::text::Shadow {
+                        dx: 0.,
+                        dy: 1.,
+                        blur: 2.,
+                        color: crate::Color::hex("#000a"),
+                    }),
+                },
+                x: pane.x + pane.w / 2. - 8.,
+                y: pane.bottom() - 17.,
+                rotation: 0.,
+            });
+        }
+    }
+
     /// Advances the motion to `now`. Returns true while it moves.
     pub fn tick(&mut self, now: f64) -> bool {
         let dt = self.clock.map_or(0., |c| (now - c).clamp(0., 50.)) as f32;

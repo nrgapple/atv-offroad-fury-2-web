@@ -402,6 +402,10 @@ pub struct Frontend {
     pub race_courses: Vec<String>,
     pub race: RaceSetup,
     pub race_filter: String,
+    /// Single Race's course picker is open over the setup rows: the event
+    /// tabs and every course as a full-height card list (a phone's column
+    /// had room for one card, or none).
+    pub course_sheet: bool,
     /// Rider gear and quad paint (normalizedAppearance), and the original
     /// Profile Store catalog that names and bounds it.
     pub appearance: Appearance,
@@ -501,6 +505,7 @@ impl Frontend {
             race_courses: Vec::new(),
             race,
             race_filter: "all".into(),
+            course_sheet: false,
             appearance,
             gear_catalog: Vec::new(),
             shown: crate::transition::next_show(),
@@ -774,6 +779,49 @@ impl Frontend {
         }
         self.list.reset();
         self.reveal = true;
+    }
+
+    /// Opens Single Race's course picker on the current course.
+    pub fn open_course_sheet(&mut self, view: &Viewport) {
+        self.course_sheet = true;
+        if let Some(index) = self.choices.iter().position(|(a, _)| a == "racetrack") {
+            self.selection = index;
+        }
+        self.list = Scroller::default();
+        self.reveal = true;
+        self.fresh = true;
+        self.shown = crate::transition::next_show();
+        self.refresh(view);
+    }
+
+    /// Closes the course picker back to the setup rows, on the Course row.
+    fn close_course_sheet(&mut self, view: &Viewport) {
+        self.course_sheet = false;
+        self.shown = crate::transition::next_show();
+        self.refresh(view);
+    }
+
+    /// Keys (and controller buttons) while the course picker is open: the
+    /// arrows walk the courses, Q/E (LB/RB) the event tabs, and Enter or
+    /// Back closes it on the course chosen.
+    fn sheet_key(&mut self, code: &str, view: &Viewport, settings: &mut Settings) -> Option<Event> {
+        match code {
+            "ArrowUp" | "ArrowLeft" => self.step("racetrack", -1, view, settings),
+            "ArrowDown" | "ArrowRight" => self.step("racetrack", 1, view, settings),
+            "PageUp" | "KeyQ" => {
+                self.cycle_race_filter(-1);
+                self.refresh(view);
+            }
+            "PageDown" | "KeyE" => {
+                self.cycle_race_filter(1);
+                self.refresh(view);
+            }
+            "Enter" | "Space" | "NumpadEnter" | "Escape" | "Backspace" => {
+                self.close_course_sheet(view)
+            }
+            _ => {}
+        }
+        None
     }
 
     fn cycle_race_filter(&mut self, direction: i32) {
@@ -1457,6 +1505,7 @@ impl Frontend {
             self.notice = None;
         }
         self.page = page.into();
+        self.course_sheet = false;
         // Only the Split Screen branch's own pages keep two players.
         if matches!(page, "title" | "main" | "single" | "multiplayer" | "split") {
             self.split = false;
@@ -1786,6 +1835,8 @@ impl Frontend {
             }
             "objfinish" => self.finish_objectives(view, settings),
             "copyride" if self.page == "race" => return Some(Event::CopyRaceLink),
+            // A tap on the Course row opens the picker (its arrows step).
+            "racetrack" if self.page == "race" => self.open_course_sheet(view),
             _ if stepper(action) => self.step(action, 1, view, settings),
             "create-lobby" | "join-lobby" => {
                 self.notice = None;
@@ -1915,6 +1966,9 @@ impl Frontend {
             self.tab(self.shift);
             return None;
         }
+        if self.course_sheet && self.page == "race" {
+            return self.sheet_key(code, view, settings);
+        }
         // A focused field owns editing keys; the arrows move on.
         if let Some(index) = self.focus {
             let fields = self.fields();
@@ -1973,9 +2027,9 @@ impl Frontend {
                 self.cycle_race_filter(if action == "prevtab" { -1 } else { 1 });
                 self.refresh(view);
             }
-            // Accepting the course list starts the race, as Ride does.
+            // Accepting the Course row opens the course picker.
             ("race", "accept") if self.current() == Some("racetrack") => {
-                return self.race_event(settings);
+                self.open_course_sheet(view);
             }
             (
                 "race" | "gear" | "games" | "profile-name" | "profile-records" | "hall-of-fame"
@@ -2298,6 +2352,7 @@ impl Frontend {
         }
         self.focus = None;
         match id {
+            BACK | DONE if self.course_sheet => self.close_course_sheet(view),
             BACK | DONE => return self.back(view),
             super::PASSKEY => self.open_passkey(view),
             START => return self.race_event(settings),
@@ -2359,12 +2414,17 @@ impl Frontend {
                 self.refresh(view);
             }
             _ if (COURSE..COURSE + 100).contains(&id) && self.page == "race" => {
-                // frontend.js `selectRaceCourse`: the course row takes focus.
+                // frontend.js `selectRaceCourse`: the course row takes focus;
+                // picking a card closes the picker.
                 self.race.course = self.race_order().get((id - COURSE) as usize)?.clone();
                 if let Some(index) = self.choices.iter().position(|(a, _)| a == "racetrack") {
                     self.selection = index;
                 }
-                self.refresh(view);
+                if self.course_sheet {
+                    self.close_course_sheet(view);
+                } else {
+                    self.refresh(view);
+                }
             }
             _ if (COURSE..COURSE + 100).contains(&id) => {
                 let index = *self.order().get((id - COURSE) as usize)?;
@@ -2514,7 +2574,12 @@ impl Frontend {
             status: self.status_bar(),
             toast: None,
             qr: self.passkey_qr(),
-            heading: self.profile_heading(),
+            heading: if self.course_sheet && self.page == "race" {
+                Some("Choose Course".into())
+            } else {
+                self.profile_heading()
+            },
+            course_sheet: self.course_sheet && self.page == "race",
             lobby: self.lobby.clone(),
             motion: None,
             backdrop,
@@ -3582,7 +3647,31 @@ mod tests {
             front.key("Enter", &view, &mut settings),
             Some(Event::CopyRaceLink)
         );
+        // Enter on the Course row opens the course picker: the arrows walk
+        // the courses, the tabs filter them, Back closes it on the page.
         front.selection = 0;
+        assert_eq!(front.key("Enter", &view, &mut settings), None);
+        assert!(front.course_sheet);
+        assert_eq!(front.page, "race");
+        front.key("ArrowDown", &view, &mut settings);
+        assert_eq!(front.race.course, "nat01");
+        front.key("ArrowUp", &view, &mut settings);
+        front.key("PageDown", &view, &mut settings);
+        assert_eq!(front.race_filter, "env");
+        front.key("PageUp", &view, &mut settings);
+        assert_eq!(front.key("Escape", &view, &mut settings), None);
+        assert!(!front.course_sheet);
+        assert_eq!(
+            (front.page.as_str(), front.current()),
+            ("race", Some("racetrack"))
+        );
+        assert_eq!(front.race.course, "env01");
+        // Start Race.
+        front.selection = front
+            .choices()
+            .iter()
+            .position(|(a, _)| a == "racestart")
+            .unwrap();
         assert_eq!(
             front.key("Enter", &view, &mut settings),
             Some(Event::Race {
