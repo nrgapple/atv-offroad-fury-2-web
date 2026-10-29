@@ -444,11 +444,7 @@ impl Frontend {
 
     fn vehicle_name(&self, id: Option<u16>) -> String {
         match id {
-            Some(id) => self
-                .catalog
-                .iter()
-                .find(|v| v.id == id)
-                .map_or(format!("Vehicle {id}"), |v| v.label.clone()),
+            Some(id) => self.quad_label(id),
             None => "None".into(),
         }
     }

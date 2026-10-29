@@ -19,6 +19,8 @@ const SHARE = 2412;
 const ROWS = 2450;
 const ROWS_END = 2451;
 const STAGE = 2414;
+const VEHICLE = 2300;
+const STEP_PREV = 2430;
 const DETAILS = 2415;
 const shots = process.env.ATV_PHONE_SHOTS || '';
 const read = page => page.evaluate(() => JSON.parse(document.querySelector('#ui-state')?.textContent || '{}'));
@@ -131,6 +133,8 @@ try {
       assert.ok(f.kinetic.rows[1] <= 12, `${name}: Single Player modes fit (${f.kinetic.rows[1]}px to scroll)`);
     }
 
+    // Pickers show three whole entries (two on a landscape phone).
+    const least = viewport.height <= 400 && viewport.width > viewport.height ? 2 : 3;
     // Single Race: four setup rows; the Course row opens the picker.
     await page.goto(url('/play.html?uiDiagnostics=1&front=race'));
     await onPage(page, 'race');
@@ -147,8 +151,6 @@ try {
     const list = hit(f, LIST);
     assert.ok(list, `${name}: course list`);
     const cards = f.hits.filter(h => h.id >= COURSE && h.id < COURSE + 100 && h.y >= list.y && h.y + h.height <= list.y + list.height);
-    // A landscape phone (390px or less tall) has room for two under the tabs.
-    const least = viewport.height <= 400 && viewport.width > viewport.height ? 2 : 3;
     assert.ok(cards.length >= least, `${name}: at least ${least} whole cards in the picker (${cards.length})`);
     for (const c of cards) assert.ok(c.height >= 44, `${name}: card target ${JSON.stringify(c)}`);
     assertFixed(f, `${name} picker`, viewport);
@@ -180,6 +182,43 @@ try {
     await tap(page, hit(f, BACK));
     f = await front(page);
     assert.deepEqual([f.page, f.courseSheet], ['race', false], `${name}: Done closes the picker`);
+    // The garage: the vehicle row opens the vehicle picker; a pick closes it.
+    await page.goto(url('/play.html?uiDiagnostics=1&front=garage'));
+    await onPage(page, 'garage');
+    f = await front(page);
+    assert.equal(f.vehicleSheet, false);
+    assert.ok(!hit(f, LIST), `${name}: no squeezed vehicle list in the garage`);
+    assertFixed(f, `${name} garage`, viewport);
+    const quad = f.quad;
+    await tap(page, hit(f, ROW + f.choices.indexOf('quadprev')));
+    f = await front(page);
+    assert.equal(f.vehicleSheet, true, `${name}: a tap on the vehicle opens the picker`);
+    const vehicles = hit(f, LIST);
+    const items = f.hits.filter(h => h.id >= VEHICLE && h.id < VEHICLE + 100 && h.y >= vehicles.y && h.y + h.height <= vehicles.y + vehicles.height);
+    assert.ok(items.length >= least, `${name}: at least ${least} whole vehicles in the picker (${items.length})`);
+    if (shots) await page.screenshot({ path: `${shots}/${name}-garage-picker.png` });
+    const pick = items.find(h => h.id !== VEHICLE + quad);
+    await tap(page, pick);
+    f = await front(page);
+    assert.deepEqual([f.vehicleSheet, f.quad], [false, pick.id - VEHICLE], `${name}: a pick closes the picker`);
+    await key(page, 'Enter');
+    assert.equal((await front(page)).vehicleSheet, true, `${name}: Enter on the vehicle opens the picker`);
+    await key(page, 'ArrowRight');
+    await key(page, 'Escape');
+    f = await front(page);
+    assert.deepEqual([f.page, f.vehicleSheet], ['garage', false], `${name}: Escape closes the vehicle picker only`);
+    // A store item's long label ellipsizes before its value.
+    await page.goto(url('/play.html?uiDiagnostics=1&front=store-atv'));
+    await onPage(page, 'store-atv');
+    f = await front(page);
+    const item = f.choices.indexOf('storeitem');
+    if (item >= 0) {
+      const [labelBox, prev] = [hit(f, ROW + item), hit(f, STEP_PREV + item)];
+      assert.ok(labelBox && prev && labelBox.x + labelBox.width <= prev.x + 0.5, `${name}: store label clear of its arrows`);
+    }
+    await page.goto(url('/play.html?uiDiagnostics=1&front=race'));
+    await onPage(page, 'race');
+    f = await front(page);
     // The rows column: every setup row reachable (on screen or scrollable).
     const rows = hit(f, ROWS);
     for (const action of ['racetrack', 'racelaps', 'racecpu', 'racedifficulty']) {

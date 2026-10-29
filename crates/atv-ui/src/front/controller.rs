@@ -406,6 +406,9 @@ pub struct Frontend {
     /// tabs and every course as a full-height card list (a phone's column
     /// had room for one card, or none).
     pub course_sheet: bool,
+    /// The garage's vehicle picker is open: the full ATV and motorcycle
+    /// list over the column (it had room for one or two names).
+    pub vehicle_sheet: bool,
     /// Rider gear and quad paint (normalizedAppearance), and the original
     /// Profile Store catalog that names and bounds it.
     pub appearance: Appearance,
@@ -506,6 +509,7 @@ impl Frontend {
             race,
             race_filter: "all".into(),
             course_sheet: false,
+            vehicle_sheet: false,
             appearance,
             gear_catalog: Vec::new(),
             shown: crate::transition::next_show(),
@@ -779,6 +783,51 @@ impl Frontend {
         }
         self.list.reset();
         self.reveal = true;
+    }
+
+    /// Opens the garage's vehicle picker on the current vehicle.
+    pub fn open_vehicle_sheet(&mut self, view: &Viewport) {
+        self.vehicle_sheet = true;
+        if let Some(index) = self.choices.iter().position(|(a, _)| a == "quadprev") {
+            self.selection = index;
+        }
+        self.notice = None;
+        self.list = Scroller::default();
+        self.reveal = true;
+        self.fresh = true;
+        self.shown = crate::transition::next_show();
+        self.refresh(view);
+    }
+
+    fn close_vehicle_sheet(&mut self, view: &Viewport) {
+        self.vehicle_sheet = false;
+        self.shown = crate::transition::next_show();
+        self.refresh(view);
+    }
+
+    /// Keys while the vehicle picker is open: the arrows walk the owned
+    /// vehicles (as the vehicle row's arrows do), Enter or Back closes it.
+    fn vehicle_sheet_key(
+        &mut self,
+        code: &str,
+        view: &Viewport,
+        settings: &mut Settings,
+    ) -> Option<Event> {
+        match code {
+            "ArrowUp" | "ArrowLeft" => {
+                self.run("quadprev", view, settings);
+                self.reveal = true;
+            }
+            "ArrowDown" | "ArrowRight" => {
+                self.run("quadnext", view, settings);
+                self.reveal = true;
+            }
+            "Enter" | "Space" | "NumpadEnter" | "Escape" | "Backspace" => {
+                self.close_vehicle_sheet(view)
+            }
+            _ => {}
+        }
+        None
     }
 
     /// Opens Single Race's course picker on the current course.
@@ -1506,6 +1555,7 @@ impl Frontend {
         }
         self.page = page.into();
         self.course_sheet = false;
+        self.vehicle_sheet = false;
         // Only the Split Screen branch's own pages keep two players.
         if matches!(page, "title" | "main" | "single" | "multiplayer" | "split") {
             self.split = false;
@@ -1969,6 +2019,9 @@ impl Frontend {
         if self.course_sheet && self.page == "race" {
             return self.sheet_key(code, view, settings);
         }
+        if self.vehicle_sheet && self.page == "garage" {
+            return self.vehicle_sheet_key(code, view, settings);
+        }
         // A focused field owns editing keys; the arrows move on.
         if let Some(index) = self.focus {
             let fields = self.fields();
@@ -2082,6 +2135,10 @@ impl Frontend {
                 self.selection = order[at.rem_euclid(order.len() as i32) as usize];
             }
             (_, "back") => return self.back(view),
+            // Accepting the garage's vehicle row opens the vehicle picker.
+            ("garage", "accept") if matches!(self.current(), Some("quadprev" | "quadnext")) => {
+                self.open_vehicle_sheet(view);
+            }
             (_, "accept") => {
                 let action = self.current()?.to_string();
                 return self.run(&action, view, settings);
@@ -2353,6 +2410,7 @@ impl Frontend {
         self.focus = None;
         match id {
             BACK | DONE if self.course_sheet => self.close_course_sheet(view),
+            BACK | DONE if self.vehicle_sheet => self.close_vehicle_sheet(view),
             BACK | DONE => return self.back(view),
             super::PASSKEY => self.open_passkey(view),
             START => return self.race_event(settings),
@@ -2401,6 +2459,12 @@ impl Frontend {
                 let index = (id - ROW) as usize;
                 let action = self.choices.get(index)?.0.clone();
                 self.selection = index;
+                // A tap on the garage's vehicle name opens the picker (its
+                // arrows step).
+                if self.page == "garage" && matches!(action.as_str(), "quadprev" | "quadnext") {
+                    self.open_vehicle_sheet(view);
+                    return None;
+                }
                 return self.run(&action, view, settings);
             }
             _ if (TAB..TAB + 10).contains(&id) && self.page == "race" => {
@@ -2451,7 +2515,11 @@ impl Frontend {
                 {
                     self.quad_id = quad;
                     self.save(settings);
-                    self.refresh(view);
+                    if self.vehicle_sheet {
+                        self.close_vehicle_sheet(view);
+                    } else {
+                        self.refresh(view);
+                    }
                 }
             }
             _ => {}
@@ -2576,10 +2644,13 @@ impl Frontend {
             qr: self.passkey_qr(),
             heading: if self.course_sheet && self.page == "race" {
                 Some("Choose Course".into())
+            } else if self.vehicle_sheet && self.page == "garage" {
+                Some("Choose Vehicle".into())
             } else {
                 self.profile_heading()
             },
             course_sheet: self.course_sheet && self.page == "race",
+            vehicle_sheet: self.vehicle_sheet && self.page == "garage",
             lobby: self.lobby.clone(),
             motion: None,
             backdrop,

@@ -157,6 +157,8 @@ pub struct Screen {
     /// Single Race's course picker is open (the setup rows give way to the
     /// event tabs and the full course list).
     pub course_sheet: bool,
+    /// The garage's vehicle picker is open (the rows give way to the list).
+    pub vehicle_sheet: bool,
     pub page: String,
     /// (action, label) in keyboard order.
     pub choices: Vec<(String, String)>,
@@ -603,11 +605,14 @@ fn page_element(m: &Metrics, s: &Screen) -> El {
                     0.5
                 }
             }
+            // The vehicle and rider rows need little room; the picker, when
+            // open, takes the rest under a smaller stage.
+            "garage" if s.vehicle_sheet => 0.28,
             "garage" => {
                 if h <= 640. {
-                    0.3
+                    0.48
                 } else {
-                    0.4
+                    0.52
                 }
             }
             "gear" => {
@@ -2284,8 +2289,10 @@ fn garage_left(m: &Metrics, s: &Screen, mut left: El) -> El {
         ))
         .child(switch.id(RIDER));
     rows = rows.child(rider_row);
-    left = left.child(rows);
-    // The vehicle list: every ATV under one heading.
+    if !s.vehicle_sheet {
+        left = left.child(rows);
+    }
+    // The vehicle list (the picker): every ATV under one heading.
     let mut list_style = column(10.);
     list_style.flex_grow = 1.;
     list_style.flex_shrink = 1.;
@@ -2379,7 +2386,10 @@ fn garage_left(m: &Metrics, s: &Screen, mut left: El) -> El {
         }
         list = list.child(group);
     }
-    left = left.child(list);
+    // The picker has the list; otherwise the rows and actions sit together.
+    if s.vehicle_sheet {
+        left = left.child(list);
+    }
     // Done (the garage's Back), under the list.
     let done_size = if m.short { 18. } else { 22. };
     let mut actions = row(10.);
@@ -2405,7 +2415,12 @@ fn garage_left(m: &Metrics, s: &Screen, mut left: El) -> El {
     }
     let mut actions = El::new(actions);
     // `.ms-pill-secondary.ms-gear-link`: Rider gear opens its own page.
-    if let Some(index) = s.choices.iter().position(|(a, _)| a == "gear") {
+    if let Some(index) = s
+        .choices
+        .iter()
+        .position(|(a, _)| a == "gear")
+        .filter(|_| !s.vehicle_sheet)
+    {
         let id = ROW + index as u32;
         let selected = s.selection == index;
         let hovered = s.hovered == Some(id) && !selected;
@@ -2747,15 +2762,32 @@ fn stepper_row(m: &Metrics, s: &Screen, index: usize, label: &str) -> El {
     };
     let mut label_style = row(14.);
     label_style.flex_grow = 1.;
-    label_style.flex_shrink = 1.;
+    // The value gives way first; the label ellipsizes only after it.
+    label_style.flex_shrink = 0.25;
     label_style.min_size = Size {
         width: length(0.),
         height: length(m.row),
     };
+    // A long label ("ATV 1/24 · Unlocked") ellipsizes rather than run
+    // under the value.
     let label_el = El::new(label_style)
         .id(ROW + index as u32)
         .child(bullet_slot(selected))
-        .child(text(name, text_style, m.row_font * 1.1));
+        .child(
+            El::new(Style {
+                flex_shrink: 1.,
+                min_size: Size {
+                    width: length(0.),
+                    height: auto(),
+                },
+                ..Default::default()
+            })
+            .content(Content::Ellipsis {
+                text: name.to_string(),
+                style: text_style,
+                line_height: m.row_font * 1.1,
+            }),
+        );
     let cycle = |left: bool, id: u32| {
         let hovered = s.hovered == Some(id);
         El::new(Style {
