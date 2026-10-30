@@ -94,9 +94,22 @@ pub struct Gpu {
     msaa: Option<wgpu::TextureView>,
     /// Why the device was lost (driver reset, GPU removed), once it is.
     lost: std::sync::Arc<std::sync::Mutex<Option<String>>>,
+    /// When the last frame was handed to the surface (Show FPS counts
+    /// presented frames, not scheduled ones).
+    presented: std::cell::Cell<Option<web_time::Instant>>,
 }
 
 impl Gpu {
+    /// The time of the frame presented since the last call, if any.
+    pub fn take_presented(&self) -> Option<web_time::Instant> {
+        self.presented.take()
+    }
+
+    fn present(&self, frame: wgpu::SurfaceTexture) {
+        self.queue.present(frame);
+        self.presented.set(Some(web_time::Instant::now()));
+    }
+
     /// The device is gone (desktop: a driver reset; web: a lost WebGL
     /// context): its resources draw nothing, and the app rebuilds on a new
     /// device. The reason, for the status line.
@@ -189,7 +202,7 @@ impl Gpu {
         let mut encoder = self.clear(&target);
         draw(&mut encoder, &target);
         self.queue.submit([encoder.finish()]);
-        self.queue.present(frame);
+        self.present(frame);
         Ok(())
     }
 
@@ -343,6 +356,7 @@ impl Gpu {
             depth,
             msaa,
             lost,
+            presented: std::cell::Cell::new(None),
         })
     }
 
@@ -1622,7 +1636,7 @@ impl SceneRenderer {
         self.profiler.mark("finish");
         gpu.queue.submit([commands]);
         self.profiler.mark("submit");
-        gpu.queue.present(frame);
+        gpu.present(frame);
         self.profiler.mark("present");
         self.profiler.end_frame();
         stats.acquire_ms = acquire_ms;
@@ -1679,7 +1693,7 @@ impl SceneRenderer {
         let mut encoder = gpu.device.create_command_encoder(&Default::default());
         overlay(&mut encoder, &target);
         gpu.queue.submit([encoder.finish()]);
-        gpu.queue.present(frame);
+        gpu.present(frame);
         self.profiler.end_frame();
         total.acquire_ms = acquire_ms;
         Ok(total)
