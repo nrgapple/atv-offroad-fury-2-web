@@ -852,6 +852,11 @@ impl Net {
         self.session.is_host()
     }
 
+    /// The room host's peer id.
+    pub fn host_peer(&self) -> Option<u8> {
+        self.session.lobby.as_ref().map(|l| l.host)
+    }
+
     /// (own peer id, roster ids ascending).
     pub fn roster(&self) -> (Option<u8>, Vec<u8>) {
         (self.session.peer, self.session.roster())

@@ -1333,7 +1333,7 @@ impl Ride {
         poses: &[(u8, atv_net::Snapshot, bool)],
         dt: f32,
     ) -> Result<()> {
-        let Some(state) = self.race.as_mut() else {
+        let Some(state) = self.race.as_mut().filter(|s| !s.puppets_retired) else {
             return Ok(());
         };
         let nodes: &[atv_core::mesh::Node] = match state.cpu_rider.as_deref() {

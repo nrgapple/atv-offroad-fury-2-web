@@ -472,6 +472,10 @@ pub struct RoomRace {
     cpu_sequence: u32,
     /// The CPUs' latest positions here (diagnostics).
     cpu_origins: Vec<[f32; 3]>,
+    /// Guest: the host whose CPUs this race draws; once the room passes to
+    /// another rider they are retired.
+    cpu_host: Option<u8>,
+    cpus_retired: bool,
 }
 
 /// Ride settings for this rider's slot in `field`: the host races the
@@ -548,6 +552,8 @@ impl RoomRace {
                 last_cpus: 0.,
                 cpu_sequence: 0,
                 cpu_origins: Vec::new(),
+                cpu_host: None,
+                cpus_retired: false,
             },
             Action::Load(load),
         ))
@@ -582,6 +588,8 @@ impl RoomRace {
                 last_cpus: 0.,
                 cpu_sequence: 0,
                 cpu_origins: Vec::new(),
+                cpu_host: None,
+                cpus_retired: false,
             },
             load,
         )
@@ -607,6 +615,7 @@ impl RoomRace {
             self.field.adopt(now);
             self.last_broadcast = 0.;
             ride.retire_room_cpus();
+            self.cpus_retired = true;
         }
         // The ride is this race once its reload carries the race's serial.
         self.loaded = ride.race().is_some_and(|r| {
@@ -690,8 +699,18 @@ impl RoomRace {
             if let (Some(p), Some(id)) = (mine, me) {
                 self.field.report(RaceProgress { peer: id, ..p });
             }
-            // The host's CPUs: their progress and drawn motion.
-            if self.field.info.cpus > 0 {
+            // The host's CPUs: their progress and drawn motion, until the
+            // room passes to another guest (who never simulated them).
+            if self.field.info.cpus > 0 && !self.cpus_retired {
+                let host = net.host_peer();
+                if self.cpu_host.is_none() {
+                    self.cpu_host = host;
+                } else if host.is_some() && host != self.cpu_host {
+                    self.cpus_retired = true;
+                    ride.retire_room_cpus();
+                }
+            }
+            if self.field.info.cpus > 0 && !self.cpus_retired {
                 for p in net.cpu_progress(self.field.serial) {
                     self.field.report(p);
                 }
@@ -777,6 +796,10 @@ impl RoomRace {
         now: f64,
     ) {
         let frames = ride.room_cpu_frames();
+        // A host who inherited the race only drew the old host's CPUs.
+        if frames.is_empty() || self.cpus_retired {
+            return;
+        }
         self.cpu_origins = frames.iter().map(|f| f.frame.origin).collect();
         for f in &frames {
             self.field.report(RaceProgress {
@@ -847,6 +870,7 @@ impl RoomRace {
             "cpuGrid": self.field.info.cpu_grid,
             "cpuScores": self.field.info.cpu_scores,
             "cpuOrigins": self.cpu_origins,
+            "cpusRetired": self.cpus_retired,
         })
     }
 }
