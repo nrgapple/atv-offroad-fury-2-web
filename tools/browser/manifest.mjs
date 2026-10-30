@@ -72,6 +72,7 @@ export const TESTS = {
   'test_engine_menu_transitions.mjs': { group: 'content' },
   'test_engine_menu_motion.mjs': { group: 'content' },
   'test_engine_menu_phone_layout.mjs': { group: 'content' },
+  'test_engine_selector_latency.mjs': { group: 'content' },
   'test_engine_context_loss.mjs': { group: 'content' },
   'test_engine_menu_music.mjs': { group: 'content' },
   'test_engine_freeride_full.mjs': {

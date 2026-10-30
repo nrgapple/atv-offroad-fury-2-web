@@ -886,3 +886,49 @@ pager and Back (`atv_core::ui_menu` reorders the music page's choices;
 progress to get one, then use it on another device."); with a key, the key,
 its status and one line. `test_engine_audio_page.mjs` scrolls the taller panel
 to its targets.
+
+### Selector input (2026-10-29)
+
+Reported on an iPhone: cycling Single Race's courses got slow, and fast taps
+often did not change the course. Host emulation (Playwright, 390x844 DPR 3
+touch; Chromium at x4 CPU throttle, WebKit unthrottled; `work/` probe, not a
+physical phone) on the live build:
+
+- **Overlapping taps were dropped.** The frontend kept one press: a second
+  finger down before the first lifted replaced it, and the first release
+  (`take().filter(pointer)`) then discarded both. Two thumbs alternating at
+  4-10 taps a second stepped once in ten taps (9 of 10 dropped); one finger
+  at 1-10 taps a second and keys dropped none. Options/Jukebox rows (the
+  pause menu) lost one of each overlapping pair the same way.
+- **No auto-repeat.** Held keys stepped once (the key's repeats were
+  ignored), a held controller direction once, a held arrow never repeated.
+- **Each new course built its artwork on the input's frame**: the blurred
+  backdrop and the graded photo, 15-40 ms at x4 (frame prepare 30-67 ms, 3-10
+  long tasks per 10 steps), per course id although a venue's race, enduro and
+  stadium courses share a photo. Single Race also shrank all 51 thumbnails
+  on open for a list it shows only in the picker.
+- The Choose Course picker opened only from the Course row (tap or Enter);
+  nothing on the page said so.
+
+Changes: presses are tracked per pointer (`Frontend::pressed`,
+`PauseMenu::pressed`), one finger at a time scrolls a pane, and a finger
+down while another drags neither scrolls nor taps. A finger held on a step
+arrow (photo arrows, garage vehicle arrows, stepper rows) repeats after
+0.4 s every 110 ms and its release adds no step; held D-pad/stick directions
+repeat at the same rate; held arrow keys step at the system's key-repeat
+rate (front pages and the Options menu). Course artwork is lazy
+(`Front::course_image`): the frame that changes the course draws its name
+with the last course's images, later frames build one image each, the
+current course first, then the neighbours in the stepping direction (+1,
+-1, +2), keyed per venue; stale courses skipped in a burst are never built.
+Single Race's photo and course name open Choose Course, and an **All
+courses** button sits on the photo (`front::COURSES`).
+
+Host Chromium x4, Single Race (live `d5d8e3e` -> candidate): two-finger taps
+at 10/s dropped 9/10 -> 0/10; held key 1 step -> one per key event; input to
+new name p95 84 -> 64 ms (taps), 55 -> 19 ms (keys); long tasks per 10 taps
+3-10 -> 0. `tools/test_engine_selector_latency.mjs` (Chromium x4 and WebKit):
+10 rapid taps, 10 overlapping two-finger taps (Chromium) and 10 rapid keys
+on Single Race and the garage each step exactly ten times, every input shows
+in the next frame published after it, a held finger and a held key repeat,
+the photo catches up with the course, and the photo opens the picker.
