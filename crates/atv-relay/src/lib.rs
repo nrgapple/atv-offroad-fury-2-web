@@ -1194,6 +1194,22 @@ impl DurableObject for LobbyRoom {
                     }
                 }
             }
+            // The room-race host's CPU riders (research/MULTIPLAYER.md "Room
+            // race CPUs"): only the host of a started private room sends
+            // them; race-aware riders on the map receive them.
+            Packet::Cpus(motion)
+                if connection.player.is_some()
+                    && !room.public
+                    && room.started
+                    && connection.ready_map == room.map
+                    && self.lobby(None)?.host == connection.peer =>
+            {
+                for (peer, other) in self.connections()? {
+                    if peer != ws && other.ready_map == room.map && other.races {
+                        send(&peer, &Packet::Cpus(motion.clone()))?;
+                    }
+                }
+            }
             // A rider's room-race progress (research/MULTIPLAYER.md "Room
             // races"): serial 0 only announces support; the relay stamps the
             // sender and forwards progress to race-aware riders on the map.

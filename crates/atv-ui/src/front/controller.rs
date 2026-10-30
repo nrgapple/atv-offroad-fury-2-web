@@ -230,6 +230,7 @@ pub fn stepper(action: &str) -> bool {
             | "storeitem"
             | "codeletter"
             | "hostfstime"
+            | "hostcpus"
     ) || games_page::game_row(action)
         || GEAR_ROWS.iter().any(|(a, _)| *a == action)
         || action.strip_prefix("seat").is_some_and(|rest| {
@@ -238,6 +239,14 @@ pub fn stepper(action: &str) -> bool {
                     .iter()
                     .any(|(row, _)| *row == &rest[1..])
         })
+}
+
+/// Host Game → CPU Riders: Off, Fill to 4, Fill to 5 (the original race's
+/// fields with three or four CPUs), wrapping.
+pub fn step_cpu_field(value: u8, direction: i32) -> u8 {
+    const VALUES: [u8; 3] = [0, 4, 5];
+    let at = VALUES.iter().position(|v| *v == value).unwrap_or(0) as i32;
+    VALUES[(at + direction.signum()).rem_euclid(VALUES.len() as i32) as usize]
 }
 
 /// The original catalog names pants and sleeves generically ("pants 10").
@@ -475,6 +484,10 @@ pub struct Frontend {
     /// Host Game → Room: Freestyle's Time Limit, minutes (Classic
     /// Freestyle's row: 2-20, 2:00 by default as the original's 120 s).
     pub host_freestyle_minutes: u32,
+    /// Host Game → CPU Riders: room races fill their field to this many
+    /// riders with host-simulated CPUs (0 off, 4 or 5; research/
+    /// MULTIPLAYER.md "Room race CPUs").
+    pub host_cpu_field: u8,
     /// Split Screen → Players: the seats claimed before a split event.
     pub seats: seats_page::Seats,
     /// The pages Back returns through (`navigation`).
@@ -626,6 +639,7 @@ impl Frontend {
             }),
             host_freestyle: false,
             host_freestyle_minutes: (atv_core::freestyle::TIME_LIMIT / 60.) as u32,
+            host_cpu_field: 0,
             seats: Default::default(),
             history: Vec::new(),
         };
@@ -725,6 +739,7 @@ impl Frontend {
             "split_vertical": self.split_vertical,
             "host_freestyle": self.host_freestyle,
             "host_freestyle_minutes": self.host_freestyle_minutes,
+            "host_cpu_field": self.host_cpu_field,
             "split_players": self.split_players,
             "split_seconds": (0..usize::from(self.split_players.clamp(2, 4)) - 1)
                 .flat_map(|i| {
@@ -1156,6 +1171,7 @@ impl Frontend {
                 self.host_freestyle_minutes =
                     atv_core::games::step_minutes(self.host_freestyle_minutes, direction);
             }
+            "hostcpus" => self.host_cpu_field = step_cpu_field(self.host_cpu_field, direction),
             "champdifficulty" => {
                 self.champ_expert = !self.champ_expert;
                 self.notice = None;
@@ -3119,8 +3135,20 @@ mod tests {
         let mut front = Frontend::new(tracks(), &settings, true);
         front.show("create-lobby", &view);
         let rows: Vec<&str> = front.choices().iter().map(|(a, _)| a.as_str()).collect();
-        assert_eq!(&rows[..3], ["hosttrack", "hostmode", "garage"]);
+        assert_eq!(&rows[..4], ["hosttrack", "hostmode", "hostcpus", "garage"]);
         assert_eq!(front.choices()[1].1, "Room: Free Ride");
+        // Room races' CPU fill: Off by default (the manual's human-only
+        // races), stepping Off / Fill to 4 / Fill to 5 and wrapping.
+        assert_eq!(front.choices()[2].1, "CPU Riders: Off");
+        front.run("hostcpus", &view, &mut settings);
+        assert_eq!(front.choices()[2].1, "CPU Riders: Fill to 4");
+        (front.focus, front.selection) = (None, 2);
+        front.key("ArrowRight", &view, &mut settings);
+        assert_eq!(front.host_cpu_field, 5);
+        front.key("ArrowRight", &view, &mut settings);
+        assert_eq!(front.host_cpu_field, 0);
+        front.key("ArrowLeft", &view, &mut settings);
+        assert_eq!(front.host_cpu_field, 5);
         front.run("hostmode", &view, &mut settings);
         assert!(front.host_freestyle);
         assert_eq!(front.choices()[1].1, "Room: Freestyle (timed stunts)");

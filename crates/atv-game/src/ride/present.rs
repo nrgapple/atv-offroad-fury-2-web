@@ -289,6 +289,7 @@ struct Segment {
     now: f64,
     /// Milliseconds.
     duration: f64,
+    ticks: u32,
 }
 
 /// What a rendered frame draws.
@@ -349,6 +350,7 @@ impl Presentation {
                     current: current.clone(),
                     now,
                     duration: ticks as f64 * 1000. / 60. / scale,
+                    ticks: ticks as u32,
                 });
             }
         }
@@ -377,17 +379,32 @@ impl Presentation {
                 current: current.clone(),
                 now,
                 duration: ticks as f64 * 1000. / 60. / scale,
+                ticks,
             });
         }
     }
 
     /// The state to draw at `now`; `active`: focused, not lost, no menu.
-    pub fn sample(&mut self, frame: &Snapshot, now: f64, active: bool) -> Presented {
+    /// `phase`: the fraction of the next fixed step already accumulated.
+    /// When given (Alpha slow motion), the blend tracks simulated time one
+    /// step behind the latest state instead of a wall-clock segment, so a
+    /// changing time scale or uneven step arrival never freezes or snaps.
+    pub fn sample(
+        &mut self,
+        frame: &Snapshot,
+        now: f64,
+        active: bool,
+        phase: Option<f32>,
+    ) -> Presented {
         if !active {
             self.reset();
         }
+        let at = |s: &Segment| match phase {
+            Some(p) => (s.ticks as f32 - 1. + p.clamp(0., 1.)) / s.ticks as f32,
+            None => ((now - s.now) / s.duration).clamp(0., 1.) as f32,
+        };
         if let Some(s) = &self.bike {
-            let alpha = ((now - s.now) / s.duration).clamp(0., 1.) as f32;
+            let alpha = at(s);
             return Presented {
                 snapshot: blend_bike(s, frame, alpha),
                 alpha,
@@ -395,7 +412,7 @@ impl Presentation {
             };
         }
         if let Some(s) = &self.quad {
-            let t = ((now - s.now) / s.duration).clamp(0., 1.) as f32;
+            let t = at(s);
             if t < 1. {
                 return Presented {
                     snapshot: blend_quad(s, t),
@@ -549,5 +566,58 @@ mod tests {
                 2.75, 3.5, 1.,
             ],
         );
+    }
+
+    /// A quad moving one unit per step along X.
+    fn at(x: f32) -> Snapshot {
+        Snapshot {
+            origin: [x, 0., 0.],
+            orientation: [0., 0., 0., 1.],
+            reset_count: 0,
+            bike: None,
+            quad_nodes: Vec::new(),
+            rider_nodes: Vec::new(),
+            rider_world: None,
+            crash: None,
+            camera: CameraFrame {
+                position: [x, 3., -10.],
+                target: [x, 0., 0.],
+                fov: 60.,
+                preset: 0,
+            },
+            camera_mode: CameraMode::Follow,
+            opponents: None,
+        }
+    }
+
+    #[test]
+    fn slow_motion_phase_moves_with_scaled_time_at_uneven_frames() {
+        let mut p = Presentation::default();
+        let (mut accumulator, mut x, mut now, mut drawn) = (0f32, 0f32, 0f64, None);
+        let mut delivered = at(x);
+        for frame in 0..400 {
+            // A phone's uneven frames while the time scale eases 1 -> 0.3 -> 1.
+            let dt = if frame % 3 == 0 { 0.021 } else { 0.0145 };
+            let scale =
+                1. - 0.7 * atv_core::math::Det::sin_d(frame as f32 / 400. * std::f32::consts::PI);
+            now += f64::from(dt) * 1000.;
+            accumulator += dt * scale;
+            let ticks = (accumulator * 60.).floor() as u32;
+            if ticks > 0 {
+                accumulator -= ticks as f32 / 60.;
+                x += ticks as f32;
+                let current = at(x);
+                p.accept(&delivered, &current, now, ticks, true, true, scale);
+                delivered = current;
+            }
+            let shown = p.sample(&delivered, now, true, Some(accumulator * 60.));
+            let origin = shown.snapshot.origin[0];
+            if let Some(last) = drawn {
+                // Drawn motion is exactly simulated time: no freeze, no snap.
+                let moved: f32 = origin - last;
+                assert!((moved - dt * scale * 60.).abs() < 1e-3, "{frame}: {moved}");
+            }
+            drawn = Some(origin);
+        }
     }
 }

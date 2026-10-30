@@ -353,9 +353,72 @@ pub struct RaceInfo {
     pub laps: u8,
     /// Start slot (1…riders) by peer id; 0 = not in this race.
     pub grid: [u8; RACE_RIDERS],
+    /// CPU riders the host simulates (research/MULTIPLAYER.md "Room race
+    /// CPUs"); 0 for a human-only race. Encoded only when nonzero.
+    pub cpus: u8,
+    /// Start slot of each CPU (index < `cpus`), 0 beyond.
+    pub cpu_grid: [u8; RACE_CPUS],
+    /// The host's roster draw: its ATV (1-26, picks the CPU quad group),
+    /// rider (0 male, 1 female: the CPU riders' names and outfits) and
+    /// difficulty (1 Normal, 2 Expert), so every peer draws the same field.
+    pub roster_quad: u8,
+    pub roster_rider: u8,
+    pub difficulty: u8,
+    /// Results for each CPU, as `GameState::scores` for the riders.
+    pub cpu_scores: [u32; RACE_CPUS],
 }
 /// Riders in a room race: a private room's capacity (peer ids 0…3).
 pub const RACE_RIDERS: usize = 4;
+/// Most CPU riders in a room race (the original race's four CPUs).
+pub const RACE_CPUS: usize = 4;
+/// A room-race CPU's id in standings and motion: `CPU_PEER + index`, after
+/// the four room slots (never a room participant's id in a private room).
+pub const CPU_PEER: PeerId = RACE_RIDERS as PeerId;
+/// One CPU rider's motion and progress in [`CpuMotion`].
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CpuRider {
+    /// CPU index (0 … `RaceInfo::cpus` - 1).
+    pub index: u8,
+    pub lap: u8,
+    /// Race distance (ft), as [`RaceProgress::distance`].
+    pub distance: f32,
+    /// Finish time (ms of race clock), 0 while racing.
+    pub finish_ms: u32,
+    /// Compact pose (`peer` = [`CPU_PEER`] + index, with animation).
+    pub pose: Snapshot,
+}
+/// The room-race host's CPU riders (kind 16; relayed only from the host of
+/// a started private room to race-aware riders).
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct CpuMotion {
+    /// The race (GameState serial).
+    pub serial: u32,
+    pub riders: Vec<CpuRider>,
+}
+impl CpuMotion {
+    pub fn validate(&self) -> Result<()> {
+        let mut seen = 0u8;
+        if self.serial == 0 || self.riders.len() > RACE_CPUS {
+            return Err(Error::InvalidValue);
+        }
+        for r in &self.riders {
+            if r.index as usize >= RACE_CPUS
+                || seen & (1 << r.index) != 0
+                || r.pose.peer != CPU_PEER + r.index
+                || r.pose.animation.is_none()
+                || r.lap > 10
+                || !r.distance.is_finite()
+                || !(-10_000. ..=1_000_000.).contains(&r.distance)
+                || r.finish_ms > RACE_MAX_MS
+            {
+                return Err(Error::InvalidValue);
+            }
+            seen |= 1 << r.index;
+            r.pose.validate()?;
+        }
+        Ok(())
+    }
+}
 /// Room race phases (GameState::phase for game 3).
 pub mod race_phase {
     /// Riders load the course and wait on the grid.
@@ -402,14 +465,32 @@ impl RaceProgress {
 pub const NO_PEER: PeerId = 255;
 impl GameState {
     pub fn validate(&self) -> Result<()> {
-        if self.game == 3
-            && (self.race.variant > 3
-                || !(1..=5).contains(&self.race.laps)
-                || self.race.grid.iter().any(|&g| g as usize > RACE_RIDERS)
+        if self.game == 3 {
+            let r = &self.race;
+            let cpus = usize::from(r.cpus);
+            let field = RACE_RIDERS + cpus;
+            if r.variant > 3
+                || !(1..=5).contains(&r.laps)
+                || cpus > RACE_CPUS
+                || r.grid.iter().any(|&g| g as usize > field)
+                || r.cpu_grid
+                    .iter()
+                    .enumerate()
+                    .any(|(i, &g)| (i < cpus) != (g > 0) || g as usize > field)
+                || (cpus > 0
+                    && (!(1..=26).contains(&r.roster_quad)
+                        || r.roster_rider > 1
+                        || !(1..=2).contains(&r.difficulty)))
+                || (cpus == 0 && (r.roster_quad != 0 || r.roster_rider != 0 || r.difficulty != 0))
+                || r.cpu_scores
+                    .iter()
+                    .enumerate()
+                    .any(|(i, &s)| (s > RACE_MAX_MS && s < RACE_DNF) || (i >= cpus && s != 0))
                 || self.phase > race_phase::RESULTS
-                || self.scores.iter().any(|&s| s > RACE_MAX_MS && s < RACE_DNF))
-        {
-            return Err(Error::InvalidValue);
+                || self.scores.iter().any(|&s| s > RACE_MAX_MS && s < RACE_DNF)
+            {
+                return Err(Error::InvalidValue);
+            }
         }
         if matches!(
             self.game,
@@ -519,6 +600,9 @@ pub enum Packet {
     Progress(RaceProgress),
     /// A rider's room King of the Hills / Treasure Hunt report.
     Claim(GameClaim),
+    /// The room-race host's CPU riders (research/MULTIPLAYER.md "Room race
+    /// CPUs").
+    Cpus(Box<CpuMotion>),
 }
 
 pub(crate) fn bounded(values: &[f32], limit: f32) -> bool {

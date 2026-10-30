@@ -18,6 +18,8 @@ pub struct AirBlurPass {
     scene: Option<((u32, u32), wgpu::TextureView, wgpu::BindGroup)>,
     format: wgpu::TextureFormat,
     pub amount: f32,
+    /// Phones and tablets take fewer taps (as speed rush does).
+    pub coarse: bool,
 }
 
 impl AirBlurPass {
@@ -99,6 +101,7 @@ impl AirBlurPass {
             scene: None,
             format: gpu.config.format,
             amount: 0.,
+            coarse: false,
         }
     }
 
@@ -150,7 +153,12 @@ impl AirBlurPass {
             self.scene = Some((size, view, group));
         }
         let uniform = BlurUniform {
-            params: [size.0 as f32, size.1 as f32, self.amount.min(1.), 0.],
+            params: [
+                size.0 as f32,
+                size.1 as f32,
+                self.amount.min(1.),
+                if self.coarse { 6. } else { 10. },
+            ],
         };
         gpu.queue
             .write_buffer(&self.uniforms, 0, bytemuck::bytes_of(&uniform));

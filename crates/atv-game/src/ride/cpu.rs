@@ -408,6 +408,18 @@ impl CpuRacer {
         self.throttle
     }
 
+    /// The rider's replicable animation recipe (room race CPU motion).
+    pub fn recipe(&self) -> rider_pose::Recipe {
+        self.rider.recipe()
+    }
+
+    /// The detached rider's world matrix and velocity during a wreck.
+    pub fn rider_wreck(&self) -> Option<([f32; 16], [f32; 3])> {
+        self.wreck
+            .frame()
+            .map(|w| (w.world_matrix, w.linear_velocity))
+    }
+
     pub fn stuck_time(&self) -> f32 {
         self.stuck
     }
@@ -425,6 +437,110 @@ impl CpuRacer {
         self.rider.reset(nodes)?;
         self.mode = None;
         self.driver.repositioned();
+        Ok(())
+    }
+}
+
+/// A room race's CPU on a guest (research/MULTIPLAYER.md "Room race
+/// CPUs"): it does not race here; it is drawn from the host's relayed
+/// motion with its own quad linkage and the CPU rider rig, as a remote
+/// rider is (`multiplayer::remote::Local`).
+pub struct Puppet {
+    quad_pose: Rc<QuadPose>,
+    rider: rider_pose::Animator,
+    wreck: wreck_animation::Animator,
+    crash: u32,
+    wreck_time: f32,
+    initialized: bool,
+    /// The drawn pose: the grid until the host's motion arrives.
+    pub pose: Option<super::Pose>,
+    /// (origin, velocity, orientation) the player pushes against; None
+    /// until heard and while stale.
+    pub body: Option<([f32; 3], [f32; 3], [f32; 4])>,
+}
+
+impl Puppet {
+    pub(super) fn new(
+        (animator, wreck): (&rider_pose::Animator, &wreck_animation::Animator),
+        nodes: &[Node],
+        model: &CpuModel,
+        index: usize,
+    ) -> Result<Self> {
+        Ok(Self {
+            quad_pose: model.quad_pose.clone(),
+            rider: animator.fork_racer(nodes)?,
+            wreck: wreck.fork_racer(nodes, 97211 + index as u64 * 47)?,
+            crash: 0,
+            wreck_time: 0.,
+            initialized: false,
+            pose: None,
+            body: None,
+        })
+    }
+
+    /// Pose from a presented snapshot `dt` seconds after the last.
+    pub fn present(
+        &mut self,
+        nodes: &[Node],
+        s: &atv_net::Snapshot,
+        dt: f32,
+        stale: bool,
+    ) -> Result<()> {
+        let a = s.animation.as_ref().ok_or("CPU animation missing")?;
+        let quad_nodes = self.quad_pose.sample(a.steering, a.wheels, a.compression)?;
+        let step = if stale { 0. } else { dt };
+        let blend_dt = if self.initialized { dt } else { 0.25 };
+        self.initialized = true;
+        let quad_world = s.atv.to_column_major();
+        let (rider_world, rider_nodes) = if s.rider_state == atv_net::RiderState::Wreck {
+            if self.crash != s.crash_serial {
+                self.crash = s.crash_serial;
+                self.wreck_time = 0.;
+            }
+            self.wreck_time += step;
+            // The air/bounce clips run on this receiver's clock; the
+            // detached root is replicated (as for remote riders).
+            let settled = s.rider_velocity.iter().map(|v| v * v).sum::<f32>() < 4.;
+            let clip = if settled {
+                self.crash as usize % 4
+            } else {
+                4 + self.crash as usize % 4
+            };
+            let m = self.wreck.motion(clip).ok_or("CPU wreck clip missing")?;
+            let time = self.wreck_time.rem_euclid(m.animation.duration.max(0.001));
+            (
+                s.rider.to_column_major(),
+                m.animation
+                    .sample_pose(nodes, time, m.sampling)?
+                    .world_matrices,
+            )
+        } else {
+            self.wreck_time = 0.;
+            (
+                quad_world,
+                self.rider
+                    .present(
+                        nodes,
+                        rider_pose::Recipe {
+                            clips: a.clips,
+                            count: a.count,
+                            phase: a.phase,
+                            first_weight: a.first_weight,
+                            pair_weight: a.pair_weight,
+                            look_phase: a.look_phase,
+                        },
+                        blend_dt,
+                    )?
+                    .world_matrices,
+            )
+        };
+        self.pose = Some(super::Pose {
+            quad_world,
+            quad_nodes,
+            rider_world,
+            rider_nodes,
+        });
+        self.body = (!stale).then_some((s.atv.position, s.velocity, s.atv.rotation));
         Ok(())
     }
 }

@@ -27,6 +27,7 @@ pub fn encode(packet: &Packet) -> Result<Vec<u8>> {
         Packet::Game(_) => 13,
         Packet::Progress(_) => 14,
         Packet::Claim(_) => 15,
+        Packet::Cpus(_) => 16,
     };
     w.0.extend_from_slice(MAGIC);
     w.byte(VERSION);
@@ -82,6 +83,19 @@ pub fn encode(packet: &Packet) -> Result<Vec<u8>> {
                 for slot in g.race.grid {
                     w.byte(slot);
                 }
+                // CPU fill: absent for a human-only race (the pre-CPU size).
+                if g.race.cpus > 0 {
+                    w.byte(g.race.cpus);
+                    w.byte(g.race.roster_quad);
+                    w.byte(g.race.roster_rider);
+                    w.byte(g.race.difficulty);
+                    for slot in g.race.cpu_grid {
+                        w.byte(slot);
+                    }
+                    for s in g.race.cpu_scores {
+                        w.u32(s);
+                    }
+                }
             }
             if g.game >= game_kind::KING_OF_THE_HILLS {
                 w.byte(g.marks.venue);
@@ -102,6 +116,20 @@ pub fn encode(packet: &Packet) -> Result<Vec<u8>> {
             w.u16(c.index);
             w.f32(c.points);
             w.f32(c.stunt);
+        }
+        Packet::Cpus(m) => {
+            m.validate()?;
+            w.u32(m.serial);
+            w.byte(m.riders.len() as u8);
+            for r in &m.riders {
+                w.byte(r.index);
+                w.byte(r.lap);
+                w.f32(r.distance);
+                w.u32(r.finish_ms);
+                let pose = crate::compact::encode(&r.pose, None)?;
+                w.u16(u16::try_from(pose.len()).map_err(|_| Error::InvalidLength)?);
+                w.0.extend_from_slice(&pose);
+            }
         }
         Packet::Progress(p) => {
             p.validate()?;
@@ -277,6 +305,35 @@ pub fn decode(bytes: &[u8]) -> Result<Packet> {
             c.validate()?;
             Packet::Claim(c)
         }
+        16 => {
+            let serial = r.u32()?;
+            let count = r.byte()? as usize;
+            if count > RACE_CPUS {
+                return Err(Error::InvalidValue);
+            }
+            let mut riders = Vec::with_capacity(count);
+            for _ in 0..count {
+                let index = r.byte()?;
+                let lap = r.byte()?;
+                let distance = r.f32()?;
+                let finish_ms = r.u32()?;
+                let len = r.u16()? as usize;
+                let pose = match crate::compact::decode(r.take(len)?, false)? {
+                    Packet::Snapshot(s) => *s,
+                    _ => return Err(Error::InvalidValue),
+                };
+                riders.push(CpuRider {
+                    index,
+                    lap,
+                    distance,
+                    finish_ms,
+                    pose,
+                });
+            }
+            let m = CpuMotion { serial, riders };
+            m.validate()?;
+            Packet::Cpus(Box::new(m))
+        }
         14 => {
             let p = RaceProgress {
                 peer: r.peer()?,
@@ -310,6 +367,21 @@ pub fn decode(bytes: &[u8]) -> Result<Packet> {
                 g.race.laps = r.byte()?;
                 for slot in &mut g.race.grid {
                     *slot = r.byte()?;
+                }
+                if r.offset < bytes.len() {
+                    g.race.cpus = r.byte()?;
+                    if g.race.cpus == 0 {
+                        return Err(Error::InvalidValue);
+                    }
+                    g.race.roster_quad = r.byte()?;
+                    g.race.roster_rider = r.byte()?;
+                    g.race.difficulty = r.byte()?;
+                    for slot in &mut g.race.cpu_grid {
+                        *slot = r.byte()?;
+                    }
+                    for s in &mut g.race.cpu_scores {
+                        *s = r.u32()?;
+                    }
                 }
             }
             if g.game >= game_kind::KING_OF_THE_HILLS {
