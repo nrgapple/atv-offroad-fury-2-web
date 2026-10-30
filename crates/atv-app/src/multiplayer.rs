@@ -139,6 +139,7 @@ pub fn invite_url(relay: &str, environment: &str, quad: u16, rider: u16, code: &
             player: "",
             race: None,
             room: Some(code),
+            event: Default::default(),
         },
     )
 }
