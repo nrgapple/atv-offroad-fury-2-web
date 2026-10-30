@@ -2080,6 +2080,7 @@ impl Front {
                 "courses": self.state.race_courses.len(), "course": self.state.race.course,
                 "laps": self.state.race.laps, "cpu": self.state.race.cpu,
                 "difficulty": self.state.race.difficulty, "filter": self.state.race_filter,
+                "event": self.state.race.event.key(),
             },
             "gear": {
                 "gear": self.state.appearance.gear, "paint": self.state.appearance.paint,

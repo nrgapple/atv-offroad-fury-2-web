@@ -370,7 +370,7 @@ impl Meter {
             }
             20 if shown("lap") => {
                 text(list, &label("LAP"), 1);
-                text(list, &format!("{} / {}", frame.lap, frame.laps), 2);
+                text(list, &frame.lap_text(), 2);
             }
             21 if shown("score") => {
                 text(list, &label("SCORE"), 1);

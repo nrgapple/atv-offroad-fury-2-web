@@ -3075,6 +3075,15 @@ impl App {
             }
             // The ride's course and championship round, and the results
             // buttons (tools/test_engine_championship.mjs).
+            // The Practice event type and the player's race frame
+            // (tools/test_engine_race_practice.mjs).
+            let race_lap = riding.ride.race().and_then(|r| r.frame.as_ref()).map(|f| {
+                serde_json::json!({
+                    "phase": f.phase, "lap": f.lap, "laps": f.laps,
+                    "laps_done": f.lap_times.len(), "field": f.field, "elapsed": f.elapsed,
+                })
+            });
+            let practice = riding.ride.race().map(|r| r.settings().practice);
             state["ride"] = serde_json::json!({
                 "environment": ready.venue.environment,
                 "championship": riding.ride.race().and_then(|r| r.settings().championship),
@@ -3130,6 +3139,8 @@ impl App {
                     .and_then(|o| o.results.fame.as_ref())
                     .map(|f| serde_json::json!({"broken": f.broken, "name": f.name})),
             });
+            state["ride"]["practice"] = practice.into();
+            state["ride"]["raceLap"] = race_lap.into();
             // Player 1's positional sounds: listeners (one per view) and the
             // one nearest player 1's rider (0 = player 1's camera).
             state["ride"]["listeners"] = serde_json::json!(
@@ -3355,9 +3366,8 @@ impl App {
                         .join(", ")
                 ),
                 _ => format!(
-                    " · LAP {}/{} · PLACE {}/{}{}",
-                    f.lap,
-                    f.laps,
+                    " · LAP {} · PLACE {}/{}{}",
+                    f.lap_text().replace(' ', ""),
                     f.position,
                     f.field,
                     if f.wrong_way { " · WRONG WAY" } else { "" }
@@ -6668,6 +6678,7 @@ impl App {
                     difficulty: setup.race.difficulty,
                     // frontend.js keeps a link's cheats in raceSettings.
                     cheats: (setup.race.aggressive, setup.race.all_out),
+                    event: Default::default(),
                 },
                 &view,
             );
@@ -6911,9 +6922,11 @@ impl App {
                 difficulty,
                 cheats: (aggressive, all_out),
                 championship,
+                practice,
             } => {
                 let settings = atv_game::ride::race::Settings {
                     championship,
+                    practice,
                     // `?raceLaps=1` (test tooling): one-lap menu races, so a
                     // browser test can race championship rounds in turn.
                     laps: if url_flag("raceLaps=1") { 1 } else { laps },
@@ -9500,6 +9513,8 @@ pub fn start() {
                 course: param("course")
                     .and_then(|v| atv_game::launch::RaceVariant::from_key(&v))
                     .unwrap_or_default(),
+                // `event=practice`: the Practice event type.
+                practice: param("event").as_deref() == Some("practice"),
                 ..defaults
             }
         }),

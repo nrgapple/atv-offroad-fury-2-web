@@ -1724,7 +1724,7 @@ fn left(m: &Metrics, s: &Screen) -> El {
         }
         "race" => {
             // The setup rows: Course (its arrows step, a tap opens the
-            // picker), Laps, CPU riders and Difficulty. They scroll in the
+            // picker), Event, Laps, CPU riders and Difficulty. They scroll in the
             // column like any rows, so none runs under Back.
             let mut settings = El::new(column(2.));
             settings.style.flex_shrink = 0.;
@@ -1732,7 +1732,7 @@ fn left(m: &Metrics, s: &Screen) -> El {
             for (index, (action, label)) in s.choices.iter().enumerate() {
                 if matches!(
                     action.as_str(),
-                    "racetrack" | "racelaps" | "racecpu" | "racedifficulty"
+                    "racetrack" | "raceevent" | "racelaps" | "racecpu" | "racedifficulty"
                 ) {
                     settings = settings.child(stepper_row(m, s, index, label));
                 }

@@ -48,9 +48,11 @@ try {
   assert.ok(f.race.courses >= 30, `race courses ${f.race.courses}`);
   await pick(page, 'race'); await key(page, 'Enter'); await onPage(page, 'race');
   f = await front(page);
-  assert.deepEqual(f.choices.filter(c => c !== 'back'), ['racetrack', 'racelaps', 'racecpu', 'racedifficulty', 'racestart', 'copyride']);
-  assert.deepEqual([f.race.course, f.race.laps, f.race.cpu, f.race.difficulty], ['env01', 3, 3, 1]);
+  assert.deepEqual(f.choices.filter(c => c !== 'back'), ['racetrack', 'raceevent', 'racelaps', 'racecpu', 'racedifficulty', 'racestart', 'copyride']);
+  assert.deepEqual([f.race.course, f.race.laps, f.race.cpu, f.race.difficulty, f.race.event], ['env01', 3, 3, 1, 'race']);
+  assert.equal(label(f, 'raceevent'), 'Event: Single Race');
   // Steppers: Left/Right on value rows; the preview arrows step the course.
+  await key(page, 'ArrowDown');
   await key(page, 'ArrowDown'); await key(page, 'ArrowLeft');
   await key(page, 'ArrowDown'); await key(page, 'ArrowRight');
   f = await front(page);

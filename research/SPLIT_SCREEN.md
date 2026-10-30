@@ -596,8 +596,10 @@ What the port does (`atv_core::freestyle::split::SplitRun`):
   `.summary` the results text.
 
 Not built, with reasons: the original's split **Race event types** Duel
-(two players, no CPUs), Lap Attack (ghost) and Practice: the port has no
+(two players, no CPUs) and Lap Attack (ghost): the port has no
 single-player Duel/Lap Attack either, so they belong with that work.
+Practice is built for one player and split screen (research/RACING.md
+"Practice event type").
 Championships stay single-player, as in the original.
 
 ## Split audio (2026-10-29)
@@ -708,7 +710,8 @@ lighter presets.
   panel art; the Force Start trigger.
 - Hall of Fame and profile credit for players 2-4 (needs a product
   decision: whose profile).
-- The original's split Race event types (Duel, Lap Attack, Practice).
+- The original's split Race event types Duel and Lap Attack (Practice
+  is built: research/RACING.md "Practice event type").
   Championships are single-player in the original ("Split objectives
   and championships").
 - Online parity: every split-screen mode in relay rooms up to the room's

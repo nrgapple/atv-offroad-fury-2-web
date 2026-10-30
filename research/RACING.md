@@ -1439,3 +1439,70 @@ whether the original's CPUs wreck in the same places is unverified, and the
 underlying causes (the leader limit at sx15's jump, the post-reset line at
 sx05 node 44, the Enduro pin at env05endl) are unchanged. A skip moves a CPU
 up to 500ft along the route without riding it.
+
+## Practice event type — 2026-10-30
+
+Exact-build evidence (USA v2.00 `SCUS_972.11`, private exports; bounded
+reading, no runtime traces):
+
+- **Names and masks.** `0021add0` names event types 0-6 (profile +0x15f0 +
+  0x40 n): Single Race, Practice (0x42c070), Lap Attack, Objectives,
+  Classic, Duel, Freeride. Every Tracks.dat race list (Nat, Amateur/Pro
+  SX, Short/Long Enduro, Short Track) has `RaceTypeMask=103` (Single Race,
+  Practice, Lap Attack, Duel, Freeride), so Practice is offered on every
+  race course.
+- **Cycler.** `0026d010` (and `0026a720` on page entry) steps the type
+  (`002f5db0` increments and wraps), skips Duel (0x433c60) unless profile
+  +0x1a08 (multiplayer) is set, and online (+0x7d8) loops past Objectives,
+  Lap Attack and Duel.
+- **Track Select rows.** `0026df60` prints the event type name and the
+  Laps value from `002f5e60`, which is 0 for event types 1, 2 and 6
+  (Practice, Lap Attack, Freeride) on race tracks; 0 prints "N/A"
+  (0x433be0).
+- **Start.** `0026b7a0` writes the session mode to profile +0 (0, 1, 2, 5
+  for Single Race, Practice, Lap Attack, Duel; Classic 0, Freeride 1,
+  Objectives 1 or 0 by its timer) and the laps (`002f5e60`, so 0) to
+  +0x578.
+- **CPUs.** `0021d9f0` returns the rider count; it gives no CPUs for modes
+  2 and 5 (Lap Attack, Duel) and otherwise, with fewer than three humans,
+  5 − humans CPUs: Practice races the same CPU field as Single Race (four
+  CPUs alone, three with two humans). The CPU setup `001f9690` stores 2 at
+  the CPU driver's +0xd4 for mode 1 (1 for mode 0); what +0xd4 changes was
+  not traced.
+- **No finish.** The race-over handler `001f1990` (placings, results,
+  stats) runs only for modes 0 and 5. The lap-gate hook `00215f00` acts
+  only while the lap is below +0x578 (never with 0). The lap event
+  `001e9a00` still shows "Lap Time %s" (0x428570) on every lap, but "Final
+  Lap" only in mode 0. The LAP overlay `002db860` prints "%d / %d" for
+  modes 0 and 5, and for Practice "%d" with the current lap (+0x2c + 1,
+  unbounded).
+- **Pause.** `002de690` picks the restart row by track kind (profile +4),
+  not the event type: a race course shows "Restart Race" in Practice too.
+
+What the port does (`atv_core::race_event`, `Race::set_practice`):
+
+- Single Player → Race and Split Screen → Race show **Event: Single Race /
+  Practice** after Course; Left/Right steps it through the types the
+  course mask and mode allow (`race_event::offered`) and the port has
+  built. Lap Attack and Duel are listed in the cycler and slot in once
+  `EventType::built` includes them. The choice is saved with the race
+  setup (`event` key). Practice reads **Laps: N/A** and the row does not
+  step.
+- A Practice ride (`race::Settings::practice`; `?race=1&event=practice` for
+  direct links) races the same CPU field as Single Race (the port's CPU
+  riders row; three or four players have none, as in split races). Laps
+  count and time with the "Lap Time" infotext and lap history; the LAP
+  overlay shows the lap alone; no Final Lap sign, no finish, no results
+  page, no Hall of Fame or personal records, no Profile Points. Pause →
+  Restart Race restarts it; Quit to Main Menu ends it.
+- `#ui-state` `ride.practice` and `ride.raceLap` report it;
+  `tools/test_engine_race_practice.mjs` picks Practice in the menu, rides a
+  Supercross lap with the race path driver and quits from Pause.
+
+Assumptions and gaps: the CPU driver's Practice value (+0xd4 = 2) is not
+traced, so the port's CPUs race normally and keep lapping. The original
+gives a fixed CPU field (5 − humans); the port keeps its CPU riders row for
+Practice as for Single Race. The original's L1+R1 Practice reset is not
+separately gated (the port's reset works in every ride). Copy ride link
+does not carry the event type yet. The original's record writes outside
+race over (if any) were not traced; the port keeps none.

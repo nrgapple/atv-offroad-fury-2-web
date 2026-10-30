@@ -306,7 +306,7 @@ impl Meter {
         }
         if let Some(l) = layout(2).filter(|_| shown("lap")) {
             text(list, "LAP", at(354., 23.), l, 1, None, 1., None, [0.; 2]);
-            let value = format!("{} / {}", frame.lap, frame.laps);
+            let value = frame.lap_text();
             text(list, &value, at(354., 23.), l, 2, None, 1., None, [0.; 2]);
         }
         if let Some(l) = layout(3).filter(|_| shown("score")) {

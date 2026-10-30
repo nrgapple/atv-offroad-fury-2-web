@@ -119,6 +119,8 @@ pub enum Event {
         cheats: (bool, bool),
         /// A championship round: the series index and Expert.
         championship: Option<(usize, bool)>,
+        /// The Practice event type (research/RACING.md "Practice").
+        practice: bool,
     },
     /// Single Race → Copy ride link: the race setup's link.
     CopyRaceLink,
@@ -168,6 +170,9 @@ pub struct RaceSetup {
     /// kept through Start Race and Copy ride link, never saved
     /// (frontend.js `raceSettings` vs `normalizedRace`).
     pub cheats: (bool, bool),
+    /// The Track Select event type (`atv_core::race_event`): Single Race or
+    /// Practice so far.
+    pub event: atv_core::race_event::EventType,
 }
 
 impl RaceSetup {
@@ -193,11 +198,16 @@ impl RaceSetup {
                 1
             },
             cheats: (false, false),
+            event: value["event"]
+                .as_str()
+                .and_then(atv_core::race_event::EventType::from_key)
+                .filter(|e| e.built())
+                .unwrap_or_default(),
         }
     }
 
     pub fn value(&self) -> Value {
-        json!({"course": self.course, "laps": self.laps, "cpu": self.cpu, "difficulty": self.difficulty})
+        json!({"course": self.course, "laps": self.laps, "cpu": self.cpu, "difficulty": self.difficulty, "event": self.event.key()})
     }
 }
 
@@ -216,7 +226,8 @@ const GEAR_ROWS: [(&str, &str); 7] = [
 pub fn stepper(action: &str) -> bool {
     matches!(
         action,
-        "racetrack"
+        "raceevent"
+            | "racetrack"
             | "racelaps"
             | "racecpu"
             | "racedifficulty"
@@ -789,6 +800,8 @@ impl Frontend {
             "race_laps": self.race.laps,
             "race_cpu": self.race.cpu,
             "race_difficulty": self.race.difficulty,
+            "race_event": self.race.event.name(),
+            "race_practice": !self.race.event.has_laps(),
             "gear_rows": if page == "gear" { self.gear_rows() } else { Vec::new() },
             "menu_logo": true,
             "menu_atv": true,
@@ -1206,6 +1219,13 @@ impl Frontend {
                     self.reveal = true;
                 }
             }
+            "raceevent" => {
+                // The Track Select type cycler (`0026d010`).
+                let offered = self.race_events();
+                self.race.event = atv_core::race_event::step(self.race.event, direction, &offered);
+            }
+            // Practice has no lap count ("N/A", `002f5e60`).
+            "racelaps" if !self.race.event.has_laps() => {}
             "racelaps" => {
                 self.race.laps = ((self.race.laps as i32 - 1 + direction).rem_euclid(5) + 1) as u32
             }
@@ -1251,7 +1271,15 @@ impl Frontend {
             difficulty: self.race.difficulty,
             cheats: self.race.cheats,
             championship: None,
+            practice: self.race.event == atv_core::race_event::EventType::Practice,
         })
+    }
+
+    /// The race page's event types: every race course's Tracks.dat mask
+    /// (103), Duel only in split screen (`0026d010`), and only the types
+    /// the port has built.
+    pub fn race_events(&self) -> Vec<atv_core::race_event::EventType> {
+        atv_core::race_event::offered(atv_core::race_event::RACE_TRACK_MASK, self.split, false)
     }
 
     /// The Championship page rows: each series with its progress, then the
@@ -1641,6 +1669,7 @@ impl Frontend {
             difficulty: if expert { 2 } else { 1 },
             cheats: (false, false),
             championship: Some((index, expert)),
+            practice: false,
         })
     }
 
@@ -3328,6 +3357,7 @@ mod tests {
                 cpu: 3,
                 difficulty: 1,
                 cheats: (true, true),
+                event: Default::default(),
             },
             &view,
         );
@@ -4049,6 +4079,7 @@ mod tests {
                 difficulty: 1,
                 cheats: (false, false),
                 championship: Some((0, false)),
+                practice: false,
             })
         );
         // Amateur Nationals: env05, five laps.
@@ -4084,6 +4115,41 @@ mod tests {
         assert!(front.choices()[0].1.ends_with("Locked"));
         front.key("Escape", &view, &mut settings);
         assert_eq!(front.page, "single");
+    }
+
+    #[test]
+    fn split_screen_race_offers_practice() {
+        let view = view(1280., 720.);
+        let mut settings = Settings::memory();
+        let mut front = Frontend::new(tracks(), &settings, true);
+        front.set_race_courses(vec!["env01".into()], &view);
+        front.split = true;
+        // Duel is allowed in split screen but not built yet (#451).
+        assert_eq!(
+            front.race_events(),
+            [
+                atv_core::race_event::EventType::SingleRace,
+                atv_core::race_event::EventType::Practice
+            ]
+        );
+        front.show("race", &view);
+        front.selection = front
+            .choices()
+            .iter()
+            .position(|(a, _)| a == "raceevent")
+            .unwrap();
+        front.key("ArrowRight", &view, &mut settings);
+        assert!(matches!(
+            front.race_event(&mut settings),
+            Some(Event::Race { practice: true, .. })
+        ));
+        // The saved setup keeps the event type.
+        let saved: Value = serde_json::from_str(&settings.get(SELECTION_KEY).unwrap()).unwrap();
+        assert_eq!(saved["race"]["event"], "practice");
+        assert_eq!(
+            RaceSetup::from_value(&saved["race"]).event,
+            atv_core::race_event::EventType::Practice
+        );
     }
 
     #[test]
@@ -4341,6 +4407,23 @@ mod tests {
         // Left/Right on the course row walk the race courses.
         front.key("ArrowRight", &view, &mut settings);
         assert_eq!(front.race.course, "nat01");
+        // The event type row cycles Single Race and Practice (`0026d010`).
+        front.key("ArrowDown", &view, &mut settings);
+        assert_eq!(front.current(), Some("raceevent"));
+        front.key("ArrowRight", &view, &mut settings);
+        assert_eq!(front.race.event, atv_core::race_event::EventType::Practice);
+        assert!(front.choices()[front.selection].1.contains("Practice"));
+        // Practice has no lap count: Laps reads N/A and does not step.
+        front.key("ArrowDown", &view, &mut settings);
+        assert!(front.choices()[front.selection].1.contains("N/A"));
+        front.key("ArrowRight", &view, &mut settings);
+        assert_eq!(front.race.laps, 3);
+        front.key("ArrowUp", &view, &mut settings);
+        front.key("ArrowLeft", &view, &mut settings);
+        assert_eq!(
+            front.race.event,
+            atv_core::race_event::EventType::SingleRace
+        );
         front.key("ArrowDown", &view, &mut settings);
         front.key("ArrowRight", &view, &mut settings);
         assert_eq!(front.race.laps, 4);
@@ -4405,6 +4488,7 @@ mod tests {
                 difficulty: 2,
                 cheats: (false, false),
                 championship: None,
+                practice: false,
             })
         );
         let saved: Value = serde_json::from_str(&settings.get(SELECTION_KEY).unwrap()).unwrap();

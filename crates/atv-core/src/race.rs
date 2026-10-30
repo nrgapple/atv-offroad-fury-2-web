@@ -1617,6 +1617,17 @@ pub struct Frame {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub championship: Option<crate::championship::Round>,
 }
+impl Frame {
+    /// The LAP overlay value (`002db860`): "%d / %d" in a race, the lap
+    /// alone ("%d") in Practice (lap count 0).
+    pub fn lap_text(&self) -> String {
+        if self.laps == 0 {
+            self.lap.to_string()
+        } else {
+            format!("{} / {}", self.lap, self.laps)
+        }
+    }
+}
 pub struct Race {
     pub course: Course,
     pub laps: u32,
@@ -1651,6 +1662,10 @@ pub struct Race {
     pub waiting: bool,
     /// Race over has run (every human finished, or the Enduro timeout).
     over: bool,
+    /// Practice (event type 1, research/RACING.md "Practice"): no lap count
+    /// (`002f5e60` gives 0), so no rider finishes and race over never runs
+    /// (`001f1990` handles only modes 0 and 5).
+    practice: bool,
 }
 impl Race {
     /// A race with the riders in slot order (player in slot 1), as when the
@@ -1747,9 +1762,23 @@ impl Race {
             records: None,
             waiting: false,
             over: false,
+            practice: false,
             random: crate::engine_audio::OriginalRandom::with_seed(97211 + 5 * 47),
             finishes: Vec::new(),
         })
+    }
+    /// Makes this a Practice: laps are counted and timed but never end the
+    /// race, and no records are kept.
+    pub fn set_practice(&mut self) {
+        self.practice = true;
+        self.records = None;
+    }
+    pub fn practice(&self) -> bool {
+        self.practice
+    }
+    /// The lap count that finishes a rider: none in Practice.
+    fn lap_limit(&self) -> u32 {
+        if self.practice { u32::MAX } else { self.laps }
     }
     /// The player's grid origin and heading in its start slot.
     pub fn player_grid(&self) -> ([f32; 3], f32) {
@@ -1877,8 +1906,11 @@ impl Race {
         }
     }
     /// Keeps the player's Hall of Fame and personal records this race.
+    /// Practice keeps none (its race over never runs).
     pub fn set_records(&mut self, records: crate::hall_of_fame::RecordWatch) {
-        self.records = Some(records);
+        if !self.practice {
+            self.records = Some(records);
+        }
     }
     pub fn records(&self) -> Option<&crate::hall_of_fame::RecordWatch> {
         self.records.as_ref()
@@ -1896,6 +1928,7 @@ impl Race {
         self.player.finish.is_some()
     }
     pub fn step(&mut self, p: [f32; 3], dt: f32) {
+        let limit = self.lap_limit();
         if self.intro {
             self.player.last = p;
             return;
@@ -1913,14 +1946,12 @@ impl Race {
                 self.over = true;
                 self.race_over();
             }
-            self.player
-                .update(p, &self.course, self.elapsed, self.laps, dt);
+            self.player.update(p, &self.course, self.elapsed, limit, dt);
             return;
         }
         self.elapsed += dt;
         let judged = self.player.judged_laps;
-        self.player
-            .update(p, &self.course, self.elapsed, self.laps, dt);
+        self.player.update(p, &self.course, self.elapsed, limit, dt);
         if let Some(records) = &mut self.records {
             if self.player.judged_laps > judged {
                 records.lap(self.player.last_lap);
@@ -2089,6 +2120,7 @@ impl Race {
         yaw: f32,
         physical: Option<CpuPose>,
     ) {
+        let limit = self.lap_limit();
         let o = &mut self.opponents[index];
         let p = &mut self.progress[index];
         if p.finish.is_none() {
@@ -2098,7 +2130,7 @@ impl Race {
         o.yaw = yaw;
         o.physical = physical;
         let was = p.finish.is_some();
-        p.update(origin, &self.course, self.elapsed, self.laps, 1. / 60.);
+        p.update(origin, &self.course, self.elapsed, limit, 1. / 60.);
         o.finished = p.finish.is_some();
         if !was && o.finished {
             let place = self.finished_count();
@@ -2374,8 +2406,14 @@ impl Race {
                 None
             },
             elapsed: self.elapsed,
-            lap: (self.player.completed + 1).min(self.laps),
-            laps: self.laps,
+            // Practice's lap HUD prints the lap alone (`002db860`: "%d"
+            // for modes other than 0, 2 and 5) and its lap count is 0.
+            lap: if self.practice {
+                self.player.completed + 1
+            } else {
+                (self.player.completed + 1).min(self.laps)
+            },
+            laps: if self.practice { 0 } else { self.laps },
             lap_time: if self.player.finish.is_some() {
                 self.player.last_lap
             } else {
@@ -3710,6 +3748,28 @@ mod tests {
         assert_eq!(f.standings[0].laps, 2);
         r.step([0.; 3], 1.);
         assert_eq!(r.elapsed, 12.);
+    }
+    #[test]
+    fn practice_counts_laps_without_finishing() {
+        let mut r = Race::new(course(), 1, vec!["CPU".into()], 1).unwrap();
+        r.set_practice();
+        r.set_records(Default::default());
+        assert!(r.records().is_none());
+        r.countdown = 0.;
+        for _ in 0..3 {
+            for p in [[0., 0., 100.], [100., 0., 100.], [100., 0., 0.], [0.; 3]] {
+                r.step(p, 1.);
+            }
+        }
+        let f = r.frame(0.);
+        assert_eq!(f.phase, "racing");
+        assert_eq!(f.lap_times.len(), 3);
+        assert_eq!((f.lap, f.laps), (4, 0));
+        assert!(!r.player_finished());
+        assert!(r.take_finishes().is_empty());
+        // The clock keeps running: no race over.
+        r.step([0., 0., 100.], 1.);
+        assert_eq!(r.elapsed, 13.);
     }
     #[test]
     fn rejects_malformed_setup_and_course() {
