@@ -72,7 +72,15 @@ pub struct Settings {
     /// finish and results (`001f1990`), no Final Lap sign (`001e9a00`) and
     /// no Profile Points.
     pub duel: bool,
+    /// The original Lap Attack event type (research/RACING.md "Lap Attack
+    /// event type"): no CPUs (`0021d9f0`; the launcher passes `cpu: 0`), no
+    /// lap count, finish or results (as Practice), and a ghost of the
+    /// player's best lap (`001f6c60` mode 2).
+    pub lap_attack: bool,
 }
+
+/// Lap Attack's new best lap infotext (`00216750`: 0x42bb70).
+const GHOST_BEST: &str = "New Lap Attack Lap Set!";
 
 /// A room race's CPU field (see [`Settings::room_cpus`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -101,6 +109,7 @@ impl Default for Settings {
             room_cpus: None,
             practice: false,
             duel: false,
+            lap_attack: false,
         }
     }
 }
@@ -288,6 +297,8 @@ pub struct RaceState {
     pub puppets: Vec<Puppet>,
     /// The host who raced them left: the guest's CPUs are no longer drawn.
     pub puppets_retired: bool,
+    /// Lap Attack's best-lap ghost (none in other event types).
+    pub ghost: Option<atv_core::race_ghost::Ghost>,
 }
 
 /// A room race host's CPU for the room ([`Ride::room_cpu_frames`]).
@@ -498,7 +509,10 @@ impl Ride {
             settings.difficulty,
             settings.seed ^ GRID_STREAM,
         )?;
-        if settings.practice {
+        // Lap Attack counts and times laps without a finish or records,
+        // as Practice (`002f5e60` gives both 0 laps; `001f1990` runs only
+        // for modes 0 and 5).
+        if settings.practice || settings.lap_attack {
             race.set_practice();
         }
         // Race creation 001f9690: difficulty plus the EATDIRT/BRINGIT flags.
@@ -623,6 +637,9 @@ impl Ride {
             room: None,
             puppets: puppet_list,
             puppets_retired: false,
+            ghost: settings
+                .lap_attack
+                .then(atv_core::race_ghost::Ghost::default),
         });
         Ok(())
     }
@@ -853,6 +870,20 @@ impl Ride {
         }
         race.waiting = state.split.waiting;
         race.step(player.origin, STEP);
+        // Lap Attack: the ghost records the player's fixed-step motion once
+        // the race is live and keeps the fastest lap ("New Lap Attack Lap
+        // Set!", `00216750`, 1.5 s).
+        if let Some(ghost) = &mut state.ghost
+            && !race.holding()
+        {
+            if race.laps_completed(None) > laps_before[0] && ghost.lap(race.player_last_lap()) {
+                state.hud.say(GHOST_BEST.into(), 1.5);
+            }
+            ghost.record(atv_core::race_ghost::Sample {
+                origin: player.origin,
+                orientation: player.orientation,
+            });
+        }
         race.record_player_stunt(committed);
         race.record_player_jump(
             player.grounded.iter().any(|g| *g),
@@ -1236,6 +1267,8 @@ impl Ride {
             room_standings(&mut frame, rows);
         }
         frame.duel = state.settings.duel;
+        frame.lap_attack = state.settings.lap_attack;
+        frame.ghost = state.ghost.as_ref().and_then(|g| g.frame());
         frame.hud = Some(state.hud.step(
             STEP,
             &race_hud::Input {

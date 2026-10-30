@@ -1621,6 +1621,12 @@ pub struct Frame {
     /// Profile Points (`001f1e30` credits only a lone human).
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub duel: bool,
+    /// The Lap Attack event type (research/RACING.md "Lap Attack event
+    /// type") and its best-lap ghost, attached by the simulation.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub lap_attack: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ghost: Option<crate::race_ghost::Frame>,
 }
 impl Frame {
     /// The LAP overlay value (`002db860`): "%d / %d" in a race, the lap
@@ -2076,6 +2082,10 @@ impl Race {
             .filter(|p| p.finish.is_some())
             .count()
     }
+    /// The player's latest completed lap time.
+    pub fn player_last_lap(&self) -> f32 {
+        self.player.last_lap
+    }
     pub fn laps_completed(&self, cpu: Option<usize>) -> u32 {
         self.rider(cpu).completed
     }
@@ -2473,6 +2483,8 @@ impl Race {
             gate: None,
             championship: None,
             duel: false,
+            lap_attack: false,
+            ghost: None,
             opponents: self.opponents.clone(),
             player_stunts: self.player_stunts,
             records: self

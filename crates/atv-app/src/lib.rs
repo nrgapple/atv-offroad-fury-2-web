@@ -3101,6 +3101,26 @@ impl App {
             });
             let practice = riding.ride.race().map(|r| r.settings().practice);
             let duel = riding.ride.race().map(|r| r.settings().duel);
+            // Lap Attack and its best-lap ghost
+            // (tools/test_engine_race_lap_attack.mjs).
+            let lap_attack = riding.ride.race().map(|r| r.settings().lap_attack);
+            let ghost = riding
+                .ride
+                .race()
+                .and_then(|r| r.frame.as_ref())
+                .and_then(|f| f.ghost)
+                .map(|g| {
+                    serde_json::json!({
+                        "best": g.best, "samples": g.samples, "opacity": g.opacity,
+                        "playing": g.pose.is_some(),
+                        "origin": g.pose.map(|p| p.origin),
+                    })
+                });
+            let best_lap = riding
+                .ride
+                .race()
+                .and_then(|r| r.frame.as_ref())
+                .and_then(|f| f.best);
             state["ride"] = serde_json::json!({
                 "environment": ready.venue.environment,
                 "championship": riding.ride.race().and_then(|r| r.settings().championship),
@@ -3158,6 +3178,9 @@ impl App {
             });
             state["ride"]["practice"] = practice.into();
             state["ride"]["duel"] = duel.into();
+            state["ride"]["lapAttack"] = lap_attack.into();
+            state["ride"]["ghost"] = ghost.into();
+            state["ride"]["bestLap"] = best_lap.into();
             state["ride"]["raceLap"] = race_lap.into();
             // Player 1's positional sounds: listeners (one per view) and the
             // one nearest player 1's rider (0 = player 1's camera).
@@ -6968,16 +6991,18 @@ impl App {
                 championship,
                 practice,
                 duel,
+                lap_attack,
             } => {
                 let settings = atv_game::ride::race::Settings {
                     championship,
                     practice,
                     duel,
+                    lap_attack,
                     // `?raceLaps=1` (test tooling): one-lap menu races, so a
                     // browser test can race championship rounds in turn.
                     laps: if url_flag("raceLaps=1") { 1 } else { laps },
-                    // A Duel races no CPUs (`0021d9f0`).
-                    cpu: if duel { 0 } else { cpu as usize },
+                    // A Duel and Lap Attack race no CPUs (`0021d9f0`).
+                    cpu: if duel || lap_attack { 0 } else { cpu as usize },
                     difficulty,
                     aggressive,
                     all_out,
@@ -9561,14 +9586,17 @@ pub fn start() {
             let defaults = atv_game::ride::race::Settings::default();
             // `event=duel` with `split=`: the split-screen Duel (no CPUs).
             let duel = param("event").as_deref() == Some("duel") && param("split").is_some();
+            // `event=lapattack`: Lap Attack (no CPUs, the best-lap ghost).
+            let lap_attack = param("event").as_deref() == Some("lapattack");
             atv_game::ride::race::Settings {
                 laps: number("laps").map_or(defaults.laps, |v| v as u32),
-                cpu: if duel {
+                cpu: if duel || lap_attack {
                     0
                 } else {
                     number("cpu").map_or(defaults.cpu, |v| v as usize)
                 },
                 duel,
+                lap_attack,
                 difficulty: number("difficulty").map_or(defaults.difficulty, |v| v as u32),
                 seed: number("seed").unwrap_or(defaults.seed),
                 // `course=enduro-long|enduro-short|short-track`: the venue's
