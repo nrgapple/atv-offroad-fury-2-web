@@ -82,48 +82,36 @@ impl EngineAudioConfig {
             impact_samples,
         })
     }
-    /// Single-player authored set. Multiplayer may substitute shared engine sets
-    /// to fit the original sound-memory budget (00213210).
+    /// The quad's own authored set (`EngineSets` `QuadN`). In a race the
+    /// shared sound table `00213210` may instead give a slot another set
+    /// ([`assign_sets`]); [`Self::parse_set`] reads such a set by name.
     pub fn parse(bytes: &[u8], quad: u32) -> Result<Self> {
-        if bytes.len() > 1024 * 1024 {
-            return Err("engine audio table exceeds limit".into());
+        let data = clean_table(bytes)?;
+        let (set, stroke) = quad_set(&data, quad)?;
+        Self::from_set(&data, &set.to_string(), stroke)
+    }
+
+    /// A set by its section name: the authored number, or the number with
+    /// the `A` suffix `00213210` appends for CPU slots (`250A Params`,
+    /// `Idle-250A`...). The stroke is the first quad's mapping to that
+    /// number (it only steers the substitution, not playback).
+    pub fn parse_set(bytes: &[u8], set: &str) -> Result<Self> {
+        let data = clean_table(bytes)?;
+        let number: u32 = set
+            .trim_end_matches('A')
+            .parse()
+            .map_err(|_| "invalid engine set name")?;
+        if set.is_empty() || set.len() > 8 {
+            return Err("invalid engine set name".into());
         }
-        // AUD permits inline semicolon comments, including after scalar values.
-        // Preserve quoted semicolons for the strict value parser to reject.
-        let text = std::str::from_utf8(bytes).map_err(|_| "engine audio table is not UTF-8")?;
-        let cleaned: String = text
-            .lines()
-            .map(|line| {
-                let mut quoted = false;
-                let end = line
-                    .char_indices()
-                    .find_map(|(i, c)| {
-                        if c == '"' {
-                            quoted = !quoted;
-                        }
-                        (c == ';' && !quoted).then_some(i)
-                    })
-                    .unwrap_or(line.len());
-                let line = &line[..end];
-                // Authored zero-count banks retain empty Sound_1 placeholders.
-                // Required sample entries still fail lookup instead of becoming paths.
-                if line
-                    .split_once('=')
-                    .is_some_and(|(_, v)| v.trim().is_empty())
-                {
-                    "\n".into()
-                } else {
-                    format!("{line}\n")
-                }
-            })
-            .collect();
-        let data = PhysicsData::parse(cleaned.as_bytes())?;
-        let mapping = &data.first("EngineSets", &format!("Quad{quad}"))?.value;
-        let (set, stroke) = mapping
-            .split_once(',')
-            .ok_or("invalid engine set mapping")?;
-        let set: u32 = set.trim().parse().map_err(|_| "invalid engine set")?;
-        let stroke = stroke.trim().parse().map_err(|_| "invalid engine stroke")?;
+        let stroke = (1..=64)
+            .filter_map(|quad| quad_set(&data, quad).ok())
+            .find(|(s, _)| *s == number)
+            .map_or(0, |(_, stroke)| stroke);
+        Self::from_set(&data, set, stroke)
+    }
+
+    fn from_set(data: &PhysicsData, set: &str, stroke: u32) -> Result<Self> {
         let section = format!("{set} Params");
         let value = |key, default| -> Result<f32> {
             match data.first(&section, key) {
@@ -177,6 +165,115 @@ impl EngineAudioConfig {
         }
         Ok(result)
     }
+}
+
+/// `vehicle.aud` with its inline comments and empty placeholders removed.
+fn clean_table(bytes: &[u8]) -> Result<PhysicsData> {
+    if bytes.len() > 1024 * 1024 {
+        return Err("engine audio table exceeds limit".into());
+    }
+    // AUD permits inline semicolon comments, including after scalar values.
+    // Preserve quoted semicolons for the strict value parser to reject.
+    let text = std::str::from_utf8(bytes).map_err(|_| "engine audio table is not UTF-8")?;
+    let cleaned: String = text
+        .lines()
+        .map(|line| {
+            let mut quoted = false;
+            let end = line
+                .char_indices()
+                .find_map(|(i, c)| {
+                    if c == '"' {
+                        quoted = !quoted;
+                    }
+                    (c == ';' && !quoted).then_some(i)
+                })
+                .unwrap_or(line.len());
+            let line = &line[..end];
+            // Authored zero-count banks retain empty Sound_1 placeholders.
+            // Required sample entries still fail lookup instead of becoming paths.
+            if line
+                .split_once('=')
+                .is_some_and(|(_, v)| v.trim().is_empty())
+            {
+                "\n".into()
+            } else {
+                format!("{line}\n")
+            }
+        })
+        .collect();
+    PhysicsData::parse(cleaned.as_bytes())
+}
+
+/// `EngineSets` `QuadN = set,stroke`.
+fn quad_set(data: &PhysicsData, quad: u32) -> Result<(u32, u32)> {
+    let mapping = &data.first("EngineSets", &format!("Quad{quad}"))?.value;
+    let (set, stroke) = mapping
+        .split_once(',')
+        .ok_or("invalid engine set mapping")?;
+    let set = set.trim().parse().map_err(|_| "invalid engine set")?;
+    let stroke = stroke.trim().parse().map_err(|_| "invalid engine stroke")?;
+    Ok((set, stroke))
+}
+
+/// Each quad's `(set, stroke)` from `vehicle.aud` `EngineSets`, quad 1 first.
+pub fn engine_sets(bytes: &[u8]) -> Result<Vec<(u32, u32)>> {
+    let data = clean_table(bytes)?;
+    let count = data.first_scalar("EngineSets", "NumQuads")?;
+    if !(1. ..=64.).contains(&count) || count.fract() != 0. {
+        return Err("invalid engine set count".into());
+    }
+    (1..=count as u32).map(|quad| quad_set(&data, quad)).collect()
+}
+
+/// The engine set each racer slot loads, as the shared sound table
+/// `00213210` chooses them for a race (USA v2.00). `slots` holds every
+/// quad's authored `(set, stroke)` in slot order: player 1 first, then the
+/// other humans and online riders (`own` counts these, game settings +0x10
+/// plus +0x1870), then the CPUs (+0x580, the remaining slots).
+///
+/// Player 1 keeps its set. The first later slot whose stroke differs from
+/// player 1's names the "other" set; when that slot is a CPU it takes the
+/// set's reduced `A` variant. A budget of 7 then pays for the remaining
+/// distinct sets in slot order: a human's own set costs 5 and a CPU's `A`
+/// variant 2 (a slot repeating an earlier slot's name is free). Once a slot
+/// cannot be paid for it borrows player 1's set (same stroke) or the other
+/// set. These are the original's sound-memory rules, not a voice count.
+pub fn assign_sets(slots: &[(u32, u32)], own: usize) -> Vec<String> {
+    let mut names: Vec<String> = slots.iter().map(|(set, _)| set.to_string()).collect();
+    let Some(&(_, stroke)) = slots.first() else {
+        return names;
+    };
+    let first = names[0].clone();
+    let mut other = String::new();
+    let mut budget = 7;
+    if let Some(i) = (1..slots.len()).find(|&i| slots[i].1 != stroke) {
+        if i < own {
+            budget = 2;
+        } else {
+            names[i].push('A');
+            budget = 5;
+        }
+        other = names[i].clone();
+    }
+    for i in 1..slots.len() {
+        if names[..i].contains(&names[i]) {
+            continue;
+        }
+        let borrowed = if slots[i].1 == stroke { &first } else { &other };
+        if budget < 2 {
+            names[i] = borrowed.clone();
+        } else if names[i] != other {
+            if i >= own {
+                budget -= 2;
+                names[i].push('A');
+            } else if budget < 5 {
+                names[i] = borrowed.clone();
+            } else {
+                budget -= 5;
+            }
+        }
+    }
+    names
 }
 
 #[derive(Debug, Clone, Copy, Serialize)]
@@ -575,6 +672,57 @@ mod tests {
             (0..5).map(|_| random.next_u31()).collect::<Vec<_>>(),
             vec![1481765933, 1085377743, 1270216262, 1191391529, 812669700]
         );
+    }
+    #[test]
+    fn race_sets_follow_the_sound_table_budget() {
+        // One player (two-stroke 252) and five CPUs.
+        let slots = [(252, 2), (290, 4), (261, 4), (401, 4), (250, 2), (350, 2)];
+        // 290 is the first other stroke: a CPU, so its A variant (7 - 2 = 5
+        // left); 261A costs 2 (3 left), 401A 2 (1 left); then the budget is
+        // spent: 250 (same stroke) borrows player 1's 252, 350 too.
+        assert_eq!(
+            assign_sets(&slots, 1),
+            ["252", "290A", "261A", "401A", "252", "252"]
+        );
+        // A repeated set is free; a CPU sharing player 1's set keeps it whole.
+        assert_eq!(
+            assign_sets(&[(252, 2), (252, 2), (250, 2), (250, 2)], 1),
+            ["252", "252", "250A", "250A"]
+        );
+        // Split screen: player 2 (four-stroke) is the other set and keeps it
+        // (5 of 7 spent); its CPUs can then afford one A set, no more.
+        assert_eq!(
+            assign_sets(&[(252, 2), (290, 4), (250, 2), (300, 4), (253, 2)], 2),
+            ["252", "290", "250A", "290", "252"]
+        );
+        // Two humans on one stroke: player 2's own set costs 5.
+        assert_eq!(
+            assign_sets(&[(252, 2), (250, 2), (253, 2), (254, 2)], 2),
+            ["252", "250", "253A", "252"]
+        );
+        assert!(assign_sets(&[], 1).is_empty());
+    }
+    #[test]
+    fn cpu_a_sets_parse_with_their_reduced_lists() {
+        let table = b"[EngineSets]\nNumQuads=1\nQuad1=250,2\n\
+[250A Params]\nMinAttenuationDistance=30.0\nMaxAttenuationDistance=250.0\nDopplerFactor=1.3\n\
+[Reset-250A]\nNumSounds = 1\nSound_1 = Engine\\strt400.vag\n\
+[Idle-250A]\nNumSounds = 0\nSound_1 = \n\
+[Decel-250A]\nNumSounds = 1\nSound_1 = Engine\\250Decel.vag\n\
+[Rev-250A]\nNumSounds = 0\nSound_1 = \n\
+[LowAccel-250A]\nNumSounds = 1\nSound_1 = Engine\\Low01.vag\n\
+[MidAccel-250A]\nNumSounds = 1\nSound_1 = Engine\\Mid01.vag\n\
+[HighAccel-250A]\nNumSounds = 1\nSound_1 = Engine\\High01.vag\n\
+[Power-250A]\nNumSounds = 1\nSound_1 = Engine\\Power01.vag\n\
+[Sputter-250A]\nNumSounds = 1\nSound_1 = Engine\\Sput12.vag\n";
+        assert_eq!(engine_sets(table).unwrap(), [(250, 2)]);
+        let config = EngineAudioConfig::parse_set(table, "250A").unwrap();
+        assert_eq!(config.engine_set, "250A");
+        assert_eq!(config.stroke, 2);
+        assert!(config.samples[EngineSound::Idle as usize].is_empty());
+        assert_eq!(config.max_distance, 250.);
+        assert!(EngineAudioConfig::parse_set(table, "250").is_err());
+        assert!(EngineAudioConfig::parse_set(table, "x").is_err());
     }
     #[test]
     fn sample_selection_avoids_immediate_repetition() {
