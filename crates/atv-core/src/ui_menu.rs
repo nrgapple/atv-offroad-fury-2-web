@@ -2431,6 +2431,8 @@ mod tests {
             race_laps: 3,
             race_cpu: 3,
             race_difficulty: 1,
+            race_event: String::new(),
+            race_practice: false,
             race_available: false,
             race_course: "env01".into(),
             race_active: false,

@@ -3075,16 +3075,18 @@ impl App {
             }
             // The ride's course and championship round, and the results
             // buttons (tools/test_engine_championship.mjs).
+            // The Practice event type and the player's race frame
+            // (tools/test_engine_race_practice.mjs).
+            let race_lap = riding.ride.race().and_then(|r| r.frame.as_ref()).map(|f| {
+                serde_json::json!({
+                    "phase": f.phase, "lap": f.lap, "laps": f.laps,
+                    "laps_done": f.lap_times.len(), "field": f.field, "elapsed": f.elapsed,
+                })
+            });
+            let practice = riding.ride.race().map(|r| r.settings().practice);
             state["ride"] = serde_json::json!({
                 "environment": ready.venue.environment,
                 "championship": riding.ride.race().and_then(|r| r.settings().championship),
-                // The Practice event type and the player's race frame
-                // (tools/test_engine_race_practice.mjs).
-                "practice": riding.ride.race().map(|r| r.settings().practice),
-                "raceLap": riding.ride.race().and_then(|r| r.frame.as_ref()).map(|f| serde_json::json!({
-                    "phase": f.phase, "lap": f.lap, "laps": f.laps, "laps_done": f.lap_times.len(),
-                    "field": f.field, "elapsed": f.elapsed,
-                })),
                 "training": self.training.as_ref().map(|t| t.state(riding.ride.frame().origin)),
                 "trainingArrows": ready.venue.training_arrows.map(|m| m.len()),
                 "game": self.game.as_ref().map(games::GameSession::state),
@@ -3137,6 +3139,8 @@ impl App {
                     .and_then(|o| o.results.fame.as_ref())
                     .map(|f| serde_json::json!({"broken": f.broken, "name": f.name})),
             });
+            state["ride"]["practice"] = practice.into();
+            state["ride"]["raceLap"] = race_lap.into();
             // Player 1's positional sounds: listeners (one per view) and the
             // one nearest player 1's rider (0 = player 1's camera).
             state["ride"]["listeners"] = serde_json::json!(
