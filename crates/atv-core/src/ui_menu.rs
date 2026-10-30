@@ -2959,6 +2959,7 @@ mod tests {
                 "minimap-config",
                 "race-overlays",
                 "speed-rush",
+                "show-fps",
                 "fullscreen",
                 "back"
             ]

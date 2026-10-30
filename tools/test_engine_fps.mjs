@@ -47,11 +47,11 @@ try {
   await click(page, 'settings'); await onPage(page, 'settings');
   await click(page, 'hud-settings'); await onPage(page, 'hud-settings');
   const m = (await state(page)).toolbar.menu;
-  assert.equal(m.labels[m.choices.indexOf('show-fps')], 'Show FPS: Off');
+  assert.equal(m.labels['show-fps'], 'Show FPS: Off');
   await click(page, 'show-fps');
   assert.equal(await page.evaluate(() => localStorage.getItem('atv-show-fps')), 'on');
   const after = (await state(page)).toolbar.menu;
-  assert.equal(after.labels[after.choices.indexOf('show-fps')], 'Show FPS: On');
+  assert.equal(after.labels['show-fps'], 'Show FPS: On');
   await key(page, 'Escape'); await onPage(page, 'settings');
   await key(page, 'Escape'); await onPage(page, 'pause');
   await click(page, 'resume');
