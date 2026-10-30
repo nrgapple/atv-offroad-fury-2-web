@@ -5687,6 +5687,22 @@ impl ApplicationHandler<Message> for App {
                             self.gesture();
                             if !event.repeat && self.keys.insert(code) {
                                 self.key_pressed(code);
+                            } else if event.repeat
+                                && matches!(
+                                    code,
+                                    KeyCode::ArrowUp
+                                        | KeyCode::ArrowDown
+                                        | KeyCode::ArrowLeft
+                                        | KeyCode::ArrowRight
+                                )
+                                && let Some(front) = self.front_input()
+                            {
+                                // A held arrow steps the menus at the
+                                // system's key-repeat rate (selectors, rows).
+                                let event = front.borrow_mut().key(&format!("{code:?}"));
+                                if let Some(event) = event {
+                                    self.front_event(event);
+                                }
                             }
                         }
                         ElementState::Released => {
@@ -7962,6 +7978,9 @@ impl App {
         f.pads = self.gamepad.connected();
         f.pad_standard = self.gamepad.standard();
         let mut event = f.pad(pad.as_ref());
+        if event.is_none() {
+            event = f.tick_hold();
+        }
         if seats && event.is_none() {
             for slot in 1..split::MAX_PLAYERS as usize {
                 let pad = self.gamepad.sample_slot(slot);

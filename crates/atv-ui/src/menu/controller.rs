@@ -116,7 +116,8 @@ pub struct PauseMenu {
     /// The panel's kinetic scroll (crate::scroll).
     pub scroller: Scroller,
     hovered: Option<usize>,
-    pressed: Option<Pressed>,
+    /// Each finger down is its own tap (overlapping fast taps).
+    pressed: Vec<Pressed>,
     pad: u32,
     /// The rows were built for this request.
     key: String,
@@ -163,6 +164,8 @@ struct Pressed {
     slider: Option<Rect>,
     /// It caught a moving panel: a grab, never a tap.
     caught: bool,
+    /// This finger drives the panel's scroll (one at a time).
+    scroll: bool,
 }
 
 /// Each page's Back target (frontend.js returns).
@@ -185,7 +188,7 @@ impl PauseMenu {
             rows: Rows::default(),
             scroller: Scroller::default(),
             hovered: None,
-            pressed: None,
+            pressed: Vec::new(),
             pad: u32::MAX,
             key: String::new(),
             keyboard: true,
@@ -243,7 +246,12 @@ impl PauseMenu {
             selection: self.selection,
             hovered: self.hovered,
             // Pressed feedback ends once the finger scrolls.
-            pressed: self.pressed.as_ref().filter(|p| !p.moved).map(|p| p.index),
+            pressed: self
+                .pressed
+                .iter()
+                .rev()
+                .find(|p| !p.moved)
+                .map(|p| p.index),
             scroll: self.scroller.offset(),
             one_handed: ctx.touch.one_handed(),
             capture: self.capture.as_ref().map(|c| c.label.clone()),
@@ -1130,23 +1138,40 @@ impl PauseMenu {
             self.key.clear();
             self.follow_binding_row();
         }
-        let caught = slider.is_none() && self.scroller.press(y, crate::scroll::now());
-        self.pressed = Some(Pressed {
+        // One finger scrolls the panel; a second one down while it drags
+        // neither scrolls nor taps.
+        let others = self.pressed.iter().filter(|p| p.pointer != pointer);
+        let (mut other, mut dragging) = (false, false);
+        for p in others.filter(|p| p.scroll) {
+            other = true;
+            dragging |= p.moved || p.caught;
+        }
+        let scroll = slider.is_none() && !other;
+        let caught = scroll && self.scroller.press(y, crate::scroll::now());
+        self.pressed.retain(|p| p.pointer != pointer);
+        self.pressed.push(Pressed {
             pointer,
-            index: target.map_or(usize::MAX, |(i, _)| i),
+            index: if dragging {
+                usize::MAX
+            } else {
+                target.map_or(usize::MAX, |(i, _)| i)
+            },
             x,
             y,
             moved: caught,
             slider,
             caught,
+            scroll,
         });
         if slider.is_some() {
-            self.drag_slider(x, ctx);
+            self.drag_slider(pointer, x, ctx);
         }
     }
 
-    fn drag_slider(&mut self, x: f32, ctx: &mut Context) {
-        let Some(p) = &self.pressed else { return };
+    fn drag_slider(&mut self, pointer: u64, x: f32, ctx: &mut Context) {
+        let Some(p) = self.pressed.iter().find(|p| p.pointer == pointer) else {
+            return;
+        };
         let (Some(r), Some(action)) = (p.slider, self.rows.choices.get(p.index).cloned()) else {
             return;
         };
@@ -1176,22 +1201,19 @@ impl PauseMenu {
         max_scroll: f32,
         ctx: &mut Context,
     ) -> bool {
-        let Some(p) = &mut self.pressed else {
+        let Some(p) = self.pressed.iter_mut().find(|p| p.pointer == pointer) else {
             return false;
         };
-        if p.pointer != pointer {
-            return false;
-        }
         if (x - p.x).hypot(y - p.y) > 8. {
             p.moved = true;
         }
         if p.slider.is_some() {
-            self.drag_slider(x, ctx);
-        } else {
+            self.drag_slider(pointer, x, ctx);
+        } else if p.scroll {
             let viewport = self.scroller.viewport();
             self.scroller.set_bounds(max_scroll, viewport);
             if self.scroller.drag(y, crate::scroll::now())
-                && let Some(p) = &mut self.pressed
+                && let Some(p) = self.pressed.iter_mut().find(|p| p.pointer == pointer)
             {
                 p.moved = true;
             }
@@ -1207,7 +1229,8 @@ impl PauseMenu {
         y: f32,
         ctx: &mut Context,
     ) -> Option<Event> {
-        let p = self.pressed.take_if(|p| p.pointer == pointer)?;
+        let at = self.pressed.iter().position(|p| p.pointer == pointer)?;
+        let p = self.pressed.remove(at);
         // The Jukebox ranges apply on release (`onchange`).
         if p.slider.is_some() {
             return match self.rows.choices.get(p.index).map(String::as_str) {
@@ -1222,7 +1245,9 @@ impl PauseMenu {
                 _ => None,
             };
         }
-        self.scroller.release(crate::scroll::now());
+        if p.scroll {
+            self.scroller.release(crate::scroll::now());
+        }
         if p.moved || p.caught {
             return None;
         }
@@ -1244,7 +1269,7 @@ impl PauseMenu {
     }
 
     pub fn cancel_pointer(&mut self) {
-        self.pressed = None;
+        self.pressed.clear();
         self.hovered = None;
         self.scroller.cancel();
     }
