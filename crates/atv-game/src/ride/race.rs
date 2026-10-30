@@ -869,6 +869,7 @@ impl Ride {
             race.restore_checkpoint(None, player.origin);
         }
         race.waiting = state.split.waiting;
+        let judged = race.player_judged_laps();
         race.step(player.origin, STEP);
         // Lap Attack: the ghost records the player's fixed-step motion once
         // the race is live and keeps the fastest lap ("New Lap Attack Lap
@@ -876,7 +877,10 @@ impl Ride {
         if let Some(ghost) = &mut state.ghost
             && !race.holding()
         {
-            if race.laps_completed(None) > laps_before[0] && ghost.lap(race.player_last_lap()) {
+            // Only a lap judged for the best lap can become the ghost.
+            if race.laps_completed(None) > laps_before[0]
+                && ghost.lap(race.player_last_lap(), race.player_judged_laps() > judged)
+            {
                 state.hud.say(GHOST_BEST.into(), 1.5);
             }
             ghost.record(atv_core::race_ghost::Sample {

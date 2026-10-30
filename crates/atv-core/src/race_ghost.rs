@@ -56,14 +56,17 @@ impl Ghost {
         self.step += 1;
     }
 
-    /// A lap completed in `time` seconds: a new best replaces the ghost.
-    /// Either way recording and playback restart for the next lap. Returns
-    /// whether the lap is the new best.
-    pub fn lap(&mut self, time: f32) -> bool {
+    /// A lap completed in `time` seconds: a new best replaces the ghost,
+    /// if the race `judged` it for the best lap (Supercross's first lap
+    /// from the grid is not). Either way recording and playback restart for
+    /// the next lap. Returns whether the lap is the new best.
+    pub fn lap(&mut self, time: f32, judged: bool) -> bool {
         let lap = std::mem::take(&mut self.current);
         self.step = 0;
-        let better =
-            !lap.is_empty() && time > 0. && self.best.as_ref().is_none_or(|(best, _)| time < *best);
+        let better = judged
+            && !lap.is_empty()
+            && time > 0.
+            && self.best.as_ref().is_none_or(|(best, _)| time < *best);
         if better {
             self.best = Some((time, lap));
         }
@@ -111,7 +114,7 @@ mod tests {
         for i in 0..120 {
             ghost.record(sample(i));
         }
-        assert!(ghost.lap(2.0));
+        assert!(ghost.lap(2.0, true));
         // Playback follows the recorded samples exactly, from the lap start.
         for i in 0..120 {
             ghost.record(sample(1000 + i));
@@ -129,12 +132,12 @@ mod tests {
         for i in 0..100 {
             ghost.record(sample(i));
         }
-        assert!(ghost.lap(10.));
+        assert!(ghost.lap(10., true));
         for i in 0..200 {
             ghost.record(sample(500 + i));
         }
         // A slower lap keeps the old ghost.
-        assert!(!ghost.lap(12.));
+        assert!(!ghost.lap(12., true));
         assert_eq!(ghost.best(), Some(10.));
         ghost.record(sample(9));
         assert_eq!(ghost.pose(), Some(sample(0)));
@@ -143,9 +146,25 @@ mod tests {
         }
         // The current lap restarted at the slower lap's end: this one is 51
         // steps and faster.
-        assert!(ghost.lap(8.));
+        assert!(ghost.lap(8., true));
         assert_eq!(ghost.frame().unwrap().samples, 51);
         assert_eq!(ghost.frame().unwrap().best, 8.);
+    }
+
+    #[test]
+    fn an_unjudged_lap_never_becomes_the_ghost() {
+        let mut ghost = Ghost::default();
+        for i in 0..80 {
+            ghost.record(sample(i));
+        }
+        assert!(!ghost.lap(5., false));
+        assert!(ghost.frame().is_none());
+        for i in 0..90 {
+            ghost.record(sample(200 + i));
+        }
+        assert!(ghost.lap(6., true));
+        ghost.record(sample(0));
+        assert_eq!(ghost.pose(), Some(sample(200)));
     }
 
     #[test]
@@ -156,7 +175,7 @@ mod tests {
                 for i in 0..(90 - lap * 10) {
                     ghost.record(sample(i * 3 + lap));
                 }
-                ghost.lap(9. - lap as f32);
+                ghost.lap(9. - lap as f32, true);
             }
             ghost.record(sample(0));
             ghost.frame()

@@ -2086,6 +2086,11 @@ impl Race {
     pub fn player_last_lap(&self) -> f32 {
         self.player.last_lap
     }
+    /// The player's laps judged for the best lap (`00248b20` skips a
+    /// negative lap and, with Track flag 8, the first one).
+    pub fn player_judged_laps(&self) -> u32 {
+        self.player.judged_laps
+    }
     pub fn laps_completed(&self, cpu: Option<usize>) -> u32 {
         self.rider(cpu).completed
     }
