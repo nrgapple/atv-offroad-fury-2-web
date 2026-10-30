@@ -796,7 +796,8 @@ above.
   CPU's full physics, driver and race-station state), so `Field::adopt`
   marks them gone: they stop being drawn and pushed against, nobody waits
   for them, and they rank on their last relayed progress (DNF unless they
-  had already finished). The race runs on for the humans as before.
+  had already finished). Every other guest retires them too when it sees
+  the room's host change. The race runs on for the humans as before.
 - **Late joiners** spectate as before; the CPUs are visible once their
   motion arrives.
 
