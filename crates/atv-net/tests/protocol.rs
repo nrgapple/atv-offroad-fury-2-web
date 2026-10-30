@@ -965,6 +965,7 @@ fn race_cpu_fill_and_cpu_motion_round_trip_and_reject_bad_values() {
         velocity: [30., 0., 2.],
         speed: 30.,
         rpm: 5000.,
+        throttle: 0.75,
         animation: Some(Box::new(AnimationState {
             count: 1,
             ..Default::default()
@@ -993,6 +994,9 @@ fn race_cpu_fill_and_cpu_motion_round_trip_and_reject_bad_values() {
             assert_eq!(m.riders[2].distance, 1502.);
             assert_eq!(m.riders[0].finish_ms, 70_000);
             assert_eq!(m.riders[1].pose.peer, CPU_PEER + 1);
+            // The guests' CPU engine inputs (research/AUDIO.md "CPU riders").
+            assert!((m.riders[1].pose.throttle - 0.75).abs() < 1e-4);
+            assert_eq!(m.riders[1].pose.speed, 30.);
         }
         other => panic!("{other:?}"),
     }

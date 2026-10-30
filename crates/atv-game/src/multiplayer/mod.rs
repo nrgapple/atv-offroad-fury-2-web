@@ -805,6 +805,9 @@ pub fn cpu_motion(
                     rider,
                     rider_velocity,
                     rpm: frame.rpm,
+                    // The guests' engine sound inputs (research/AUDIO.md
+                    // "CPU riders"): the snapshot's existing fields.
+                    throttle: f.throttle.clamp(-1., 1.),
                     speed: frame.speed_magnitude,
                     // The wreck count stands in for a crash serial.
                     crash_serial: frame.reset_count,

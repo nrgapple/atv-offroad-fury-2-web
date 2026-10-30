@@ -809,8 +809,12 @@ Code: `crates/atv-net` (`RaceInfo` CPU fields, `CpuMotion`, kind 16),
 (`CpuFill`, `Field::with_cpus`, CPU ids, results), the Host Game row
 (`atv_core::ui_menu`, `atv-ui` `hostcpus`).
 
-Limits: CPU engine sounds are not played on guests (the host hears its own
-CPUs); guests see CPUs about the smoothing delay plus half the relay round
+- **Guest audio.** Guests hear the CPUs' engines from the relayed motion
+  (the snapshot's speed and the host driver's throttle; research/AUDIO.md
+  "CPU riders"); they stop when the CPUs retire.
+
+Limits: guests hear only the CPUs' engines (no vocals, body impacts or
+chassis sounds: the motion carries no audio events); guests see CPUs about the smoothing delay plus half the relay round
 trip behind the host's simulation, so close contacts with a CPU are judged
 on slightly different positions on each machine; CPU stunts are drawn from
 the replicated animation recipe only.
