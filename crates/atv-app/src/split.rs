@@ -515,6 +515,8 @@ impl Second {
                 && f.grounded.iter().any(|g| *g),
             crash_serial: self.crash.0,
             stale: false,
+            engine: None,
+            cpu: false,
         }
     }
 

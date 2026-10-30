@@ -737,6 +737,38 @@ impl Ride {
         })
     }
 
+    /// Every race CPU's sound inputs since the last call (none outside a
+    /// race, or before the CPUs ride).
+    pub fn take_cpu_sounds(&mut self) -> Vec<super::cpu::CpuSound> {
+        let Some(state) = &mut self.race else {
+            return Vec::new();
+        };
+        if state.frame.is_none() {
+            return Vec::new();
+        }
+        let roster = &state.roster;
+        state
+            .cpus
+            .iter_mut()
+            .enumerate()
+            .map(|(index, cpu)| {
+                let f = cpu.vehicle.frame();
+                let entry = roster.get(index);
+                super::cpu::CpuSound {
+                    index,
+                    quad: entry.map_or(0, |e| e.quad),
+                    female: entry.is_some_and(|e| e.female),
+                    origin: f.origin,
+                    velocity: f.linear_velocity,
+                    throttle: cpu.throttle(),
+                    speed: f.speed_magnitude,
+                    riding: f.wreck.phase == Phase::Riding && f.grounded.iter().any(|g| *g),
+                    steps: cpu.take_sound(),
+                }
+            })
+            .collect()
+    }
+
     pub(super) fn step_race(&mut self) -> Result<()> {
         let committed = self.committed_points();
         let Some(state) = &mut self.race else {

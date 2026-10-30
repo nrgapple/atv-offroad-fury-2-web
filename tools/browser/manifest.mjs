@@ -162,6 +162,7 @@ export const TESTS = {
   },
   'test_engine_preview.mjs': { group: 'content-free' },
   'test_engine_race.mjs': { group: 'content' },
+  'test_engine_cpu_audio.mjs': { group: 'content' },
   'test_engine_split_screen.mjs': { group: 'content', timeout: 900 },
   'test_engine_split_games.mjs': { group: 'content', timeout: 900 },
   'test_engine_split_tag.mjs': { group: 'content', timeout: 600 },

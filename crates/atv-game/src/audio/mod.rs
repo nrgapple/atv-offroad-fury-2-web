@@ -2,6 +2,7 @@
 //! decisions in atv-core and a software mixer with the browser game's Web
 //! Audio semantics. Platform output lives in atv-app.
 pub mod bank;
+pub mod cpu;
 pub mod hype;
 pub mod menu;
 pub mod mixer;

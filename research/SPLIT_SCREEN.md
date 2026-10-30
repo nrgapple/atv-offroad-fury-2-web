@@ -625,8 +625,9 @@ the train/actor sounds (`SceneInput::views`). `spatial_audio::nearest`
 reports the chosen listener (`#ui-state.ride.listeners` = [listeners,
 index nearest player 1's rider]). Player 1's engine loop, ambient
 cycles, rain and race stingers are unpositioned 2D voices in the port
-(as in one player), so no listener applies; the port's CPU riders have
-no sounds of their own. One rider alone, and online rooms, pass a single
+(as in one player), so no listener applies; race CPUs' engines, vocals,
+impacts and chassis sounds are heard from the nearest view (AUDIO.md "CPU
+riders"). One rider alone, and online rooms, pass a single
 listener (views empty), unchanged. Not done: a split-specific mix level
 (none was found) and the engines' voice allocation per human in the
 original (not traced).

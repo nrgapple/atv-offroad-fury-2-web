@@ -607,6 +607,11 @@ pub struct Sound {
     pub cpu: f64,
     /// Other riders' engines and impacts in a multiplayer room.
     pub remote: atv_game::audio::remote::RemoteAudio,
+    /// Race CPUs' vocals, body impacts and chassis sounds (their engines
+    /// play through `remote`).
+    pub cpu_riders: atv_game::audio::cpu::CpuAudio,
+    /// Player 1's quad (slot 0 of the race sound table).
+    quad: u16,
     /// Mixer render time per rendered frame (ms), averaged over a second.
     pub mix: f64,
     mix_mark: (f64, u32, web_time::Instant),
@@ -710,6 +715,8 @@ impl Sound {
                 }),
             cpu: 0.,
             remote: Default::default(),
+            cpu_riders: Default::default(),
+            quad: settings.selection.quad,
             mix: 0.,
             mix_mark: (0., 0, web_time::Instant::now()),
             boom: (None, 0),
@@ -802,23 +809,32 @@ impl Sound {
     }
 
     /// Other riders' engines and body impacts this frame; returns the
-    /// remote quads whose engine banks should load. Like game.js's
-    /// multiplayer listener, they are heard from the drawn camera (after the
-    /// chase, crash and big-air presentation) moving with the player's
-    /// vehicle; the player's own and venue sounds keep the follow camera.
+    /// engine banks that should load. Like game.js's multiplayer listener,
+    /// they are heard from the drawn camera (after the chase, crash and
+    /// big-air presentation) moving with the player's vehicle; the player's
+    /// own and venue sounds keep the follow camera.
     ///
     /// `views` are split screen's players 2-4 cameras: each voice is heard
     /// from the nearest of every player's camera (`001742f0` picks the
     /// nearest listener; research/SPLIT_SCREEN.md "Split audio").
+    ///
+    /// `cpus` are a race's CPU riders (player 1's race, which split screen
+    /// shares): their engines join the other riders' voices with the set
+    /// the race sound table `00213210` assigns each slot, and their vocals,
+    /// body impacts and chassis sounds play through `cpu_riders`.
     pub fn remote_frame(
         &mut self,
         riders: &[atv_game::audio::remote::Rider],
+        cpus: &[atv_game::ride::cpu::CpuSound],
         own: [f32; 3],
         camera: &atv_render::Camera,
         velocity: [f32; 3],
         views: &[atv_core::spatial_audio::Listener],
-    ) -> Vec<u16> {
-        let wanted = self.remote.wanted(riders);
+    ) -> Vec<atv_game::audio::remote::EngineKey> {
+        let mut riders = riders.to_vec();
+        riders.extend(cpus.iter().map(cpu_rider));
+        assign_engine_sets(&mut riders, self.quad, &self.ride.bank.engine_sets);
+        let wanted = self.remote.wanted(&riders);
         let listeners: Vec<_> = std::iter::once(atv_core::spatial_audio::Listener {
             position: camera.eye(),
             forward: camera.axes().forward,
@@ -828,7 +844,13 @@ impl Sound {
         .collect();
         let audible = self.output.started.get() && self.focused;
         if let Ok(mut mixer) = self.output.mixer.lock() {
-            let bank = &self.ride.bank;
+            let bank = &mut self.ride.bank;
+            if let Err(error) = self
+                .cpu_riders
+                .frame(&mut mixer, bank, &listeners, cpus, audible)
+            {
+                eprintln!("CPU sound: {error}");
+            }
             let impact = |name: &str| bank.get(name).cloned();
             if let Err(error) = self.remote.frame(
                 &mut mixer,
@@ -836,7 +858,7 @@ impl Sound {
                 &impact,
                 &listeners,
                 Some(own),
-                riders,
+                &riders,
                 audible,
             ) {
                 eprintln!("remote sound: {error}");
@@ -845,17 +867,17 @@ impl Sound {
         wanted
     }
 
-    /// Loads a remote quad's engine bank at this output's rate.
+    /// Loads a remote rider's engine bank at this output's rate.
     pub fn load_remote_engine(
         &self,
-        quad: u16,
+        key: atv_game::audio::remote::EngineKey,
     ) -> impl std::future::Future<Output = Result<atv_game::audio::remote::Engine, String>> + 'static
     {
         let content = self.content.clone();
         let rate = self.ride.bank.rate();
         async move {
             let (config, samples) =
-                atv_game::audio::bank::load_remote_engine(&content, u32::from(quad), rate).await?;
+                atv_game::audio::bank::load_remote_engine(&content, key, rate).await?;
             Ok(atv_game::audio::remote::Engine { config, samples })
         }
     }
@@ -1043,6 +1065,20 @@ impl Sound {
                 "clock": mixer.seconds(), "voices": mixer.voices(),
                 "intOut": mixer.snapshot().iter().filter(|v| v.0 == "intout").count(),
                 "engineCommands": self.ride.stats.engine_commands,
+                // Race CPUs: engine voices (part of the other riders'),
+                // their starts and range stops, and the rider/quad cues.
+                "cpu": {
+                    "engines": self.remote.cpu_voices(),
+                    "engineStarts": self.remote.cpu_starts,
+                    "engineCulls": self.remote.cpu_culls,
+                    "vocals": self.cpu_riders.stats.vocals,
+                    "impacts": self.cpu_riders.stats.impacts,
+                    "chassis": self.cpu_riders.stats.chassis,
+                    "voices": mixer.snapshot().iter()
+                        .filter(|v| v.0.starts_with("cpu ")).count(),
+                    "levels": self.remote.levels.iter().filter(|l| l.1)
+                        .map(|l| serde_json::json!([l.0, l.2, l.3])).collect::<Vec<_>>(),
+                },
                 // Keyframed actor loops: defined, their samples in the
                 // package, and voices playing now.
                 "actorSounds": {
@@ -1094,6 +1130,59 @@ impl Sound {
     }
 }
 
+/// A race CPU as the other riders' engine voices hear it.
+fn cpu_rider(cpu: &atv_game::ride::cpu::CpuSound) -> atv_game::audio::remote::Rider {
+    atv_game::audio::remote::Rider {
+        peer: atv_game::audio::remote::CPU_PEER + cpu.index.min(31) as u8,
+        quad: u16::try_from(cpu.quad).unwrap_or(0),
+        position: cpu.origin,
+        velocity: cpu.velocity,
+        rider_position: cpu.origin,
+        rider_velocity: cpu.velocity,
+        throttle: cpu.throttle,
+        speed: cpu.speed,
+        riding: cpu.riding,
+        // Their body impacts play through CpuAudio's recovered emitter.
+        crash_serial: 0,
+        stale: false,
+        engine: None,
+        cpu: true,
+    }
+}
+
+/// With CPUs in the race, each rider's engine set as `00213210` assigns
+/// the race's slots: player 1 (`quad`), then the other humans in order,
+/// then the CPUs. Without CPUs, or without the table (a motorcycle bank),
+/// everyone keeps their quad's own set.
+fn assign_engine_sets(
+    riders: &mut [atv_game::audio::remote::Rider],
+    quad: u16,
+    sets: &[(u32, u32)],
+) {
+    use atv_game::audio::remote::EngineKey;
+    if sets.is_empty() || !riders.iter().any(|r| r.cpu) {
+        return;
+    }
+    let set = |quad: u16| sets.get(usize::from(quad).wrapping_sub(1)).copied();
+    let Some(first) = set(quad) else { return };
+    // Humans first, then CPUs (a stable order over the slots).
+    let mut order: Vec<usize> = (0..riders.len()).collect();
+    order.sort_by_key(|&i| riders[i].cpu);
+    let mut slots = vec![first];
+    let mut mapped = Vec::new();
+    for &i in &order {
+        if let Some(s) = set(riders[i].quad) {
+            slots.push(s);
+            mapped.push(i);
+        }
+    }
+    let own = 1 + mapped.iter().filter(|&&i| !riders[i].cpu).count();
+    let names = atv_core::engine_audio::assign_sets(&slots, own);
+    for (&i, name) in mapped.iter().zip(&names[1..]) {
+        riders[i].engine = EngineKey::from_set_name(name);
+    }
+}
+
 impl Drop for Sound {
     /// Leaving the ride (GameAudio.raceMusic('leave')): the stingers, crowd
     /// and soundtrack hold end with it.
@@ -1101,6 +1190,7 @@ impl Drop for Sound {
         if let Ok(mut mixer) = self.output.mixer.lock() {
             self.ride.race.stop(&mut mixer);
             self.remote.stop_all(&mut mixer);
+            self.cpu_riders.stop_all(&mut mixer);
         }
         if let Ok(mut music) = self.music.try_borrow_mut() {
             music.ride_ended();
