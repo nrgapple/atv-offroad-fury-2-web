@@ -381,7 +381,10 @@ impl RemoteAudio {
                     start = None;
                 } else if start.is_none() && voice.culled && voice.voice.is_none() {
                     // Back in range: the current sample restarts.
-                    start = voice.current.clone().map(|(name, looping)| (name, looping, false));
+                    start = voice
+                        .current
+                        .clone()
+                        .map(|(name, looping)| (name, looping, false));
                 }
                 if start.is_some() {
                     voice.culled = false;
@@ -412,7 +415,11 @@ impl RemoteAudio {
                         1.,
                         Bus::Sfx,
                         false,
-                        if rider.cpu { "cpu engine" } else { "remote engine" },
+                        if rider.cpu {
+                            "cpu engine"
+                        } else {
+                            "remote engine"
+                        },
                     );
                     voice.voice = Some((id, pcm.duration(), now));
                     self.starts += 1;
@@ -522,7 +529,7 @@ mod tests {
                 samples,
                 impact_samples: Vec::new(),
             },
-            samples: (0..10).map(|k| (format!("s{k}"), loop_pcm())).collect(),
+            samples: (0..10).map(|k| (format!("s{k}.vag"), loop_pcm())).collect(),
         }
     }
 
@@ -604,9 +611,18 @@ mod tests {
 
     #[test]
     fn set_names_round_trip() {
-        assert_eq!(EngineKey::Set(290, true).set_name().as_deref(), Some("290A"));
-        assert_eq!(EngineKey::from_set_name("290A"), Some(EngineKey::Set(290, true)));
-        assert_eq!(EngineKey::from_set_name("252"), Some(EngineKey::Set(252, false)));
+        assert_eq!(
+            EngineKey::Set(290, true).set_name().as_deref(),
+            Some("290A")
+        );
+        assert_eq!(
+            EngineKey::from_set_name("290A"),
+            Some(EngineKey::Set(290, true))
+        );
+        assert_eq!(
+            EngineKey::from_set_name("252"),
+            Some(EngineKey::Set(252, false))
+        );
         assert_eq!(EngineKey::from_set_name("x"), None);
         assert_eq!(EngineKey::Quad(3).set_name(), None);
     }
@@ -639,7 +655,7 @@ mod tests {
         let mut audio = RemoteAudio::default();
         assert_eq!(audio.wanted(&[cpu(10.)]), [key]);
         audio.add_engine(key, engine());
-        let mut level = |audio: &mut RemoteAudio, mixer: &mut Mixer, x: f32| {
+        let level = |audio: &mut RemoteAudio, mixer: &mut Mixer, x: f32| {
             audio
                 .frame(
                     mixer,

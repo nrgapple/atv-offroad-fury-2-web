@@ -64,6 +64,11 @@ pub struct Bank {
     pub engine: EngineAudioConfig,
     pub effects: Option<sound_effects::Config>,
     pub vocals: Option<[Vec<String>; 6]>,
+    /// Both genders' vocal lists (race CPUs ride with either).
+    pub vocal_banks: Option<qs::VocalBanks>,
+    /// Each quad's `vehicle.aud` `EngineSets` (set, stroke), quad 1 first;
+    /// empty for a motorcycle bank.
+    pub engine_sets: Vec<(u32, u32)>,
     pub chassis: Option<qs::ChassisBanks>,
     pub drive: Vec<qs::DriveOnSound>,
     pub ambient: Vec<world_sounds::Ambient>,
@@ -135,7 +140,7 @@ impl Bank {
 /// table and the engine samples, decoded at `rate`.
 pub async fn load_remote_engine(
     content: &Content,
-    quad: u32,
+    key: super::remote::EngineKey,
     rate: u32,
 ) -> Result<(EngineAudioConfig, HashMap<String, Arc<Pcm>>)> {
     let table = Archive::open(content, "/AUDIOTBL.RES").await?;
@@ -144,7 +149,13 @@ pub async fn load_remote_engine(
         .iter()
         .position(|m| m.name.to_ascii_lowercase().ends_with("vehicle.aud"))
         .ok_or("original vehicle audio table is missing")?;
-    let engine = EngineAudioConfig::parse(&table.member(index).await?, quad)?;
+    let bytes = table.member(index).await?;
+    let engine = match key {
+        super::remote::EngineKey::Quad(quad) => EngineAudioConfig::parse(&bytes, u32::from(quad))?,
+        super::remote::EngineKey::Set(..) => {
+            EngineAudioConfig::parse_set(&bytes, &key.set_name().unwrap_or_default())?
+        }
+    };
     let sounds = Archive::open(content, "/AUDIO/AUDIO.RES").await?;
     let mut samples = HashMap::new();
     for name in engine.samples.iter().flatten() {
@@ -203,11 +214,14 @@ pub async fn load(
     let effects = rider
         .as_deref()
         .and_then(|bytes| sound_effects::Config::parse(bytes).ok());
-    let vocals = rider
+    let vocal_banks = rider
         .as_deref()
-        .and_then(|bytes| qs::VocalBanks::parse(bytes).ok())
+        .and_then(|bytes| qs::VocalBanks::parse(bytes).ok());
+    let vocals = vocal_banks
+        .as_ref()
         .map(|banks| banks.lists(female).clone());
     let chassis = qs::ChassisBanks::parse(&vehicle).ok();
+    let engine_sets = atv_core::engine_audio::engine_sets(&vehicle).unwrap_or_default();
 
     let course = Archive::open(content, course_archive).await?;
     let (mut drive, mut ambient, mut soultree) = (Vec::new(), Vec::new(), Vec::new());
@@ -264,7 +278,12 @@ pub async fn load(
     }
     let decode_ms = started.elapsed().as_secs_f64() * 1000.;
     let mut vocal_cache = VocalCache::default();
-    for name in vocals.iter().flatten().flatten() {
+    // Both genders' clips stay encoded: race CPUs use either list.
+    let all_vocals = vocal_banks
+        .iter()
+        .flat_map(|b| b.female.iter().chain(&b.male))
+        .flatten();
+    for name in all_vocals {
         let key = normal(name);
         if samples.contains_key(&key) || vocal_cache.encoded.contains_key(&key) {
             continue;
@@ -289,6 +308,8 @@ pub async fn load(
         engine,
         effects,
         vocals,
+        vocal_banks,
+        engine_sets,
         chassis,
         drive,
         ambient,
@@ -403,6 +424,8 @@ async fn load_motorcycle(
         engine,
         effects: None,
         vocals: None,
+        vocal_banks: None,
+        engine_sets: Vec::new(),
         chassis: None,
         drive: Vec::new(),
         ambient,
@@ -442,6 +465,8 @@ pub(crate) fn test_bank(
         },
         effects,
         vocals: None,
+        vocal_banks: None,
+        engine_sets: Vec::new(),
         chassis: None,
         drive: Vec::new(),
         ambient: Vec::new(),

@@ -1005,6 +1005,8 @@ impl Net {
                 riding: s.rider_state == atv_game::multiplayer::RiderState::Riding,
                 crash_serial: s.crash_serial,
                 stale: sampled.stale,
+                engine: None,
+                cpu: false,
             });
             // The roster lists the rider's look; the session only admits
             // snapshots whose models match it.

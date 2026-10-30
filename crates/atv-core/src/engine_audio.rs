@@ -222,7 +222,9 @@ pub fn engine_sets(bytes: &[u8]) -> Result<Vec<(u32, u32)>> {
     if !(1. ..=64.).contains(&count) || count.fract() != 0. {
         return Err("invalid engine set count".into());
     }
-    (1..=count as u32).map(|quad| quad_set(&data, quad)).collect()
+    (1..=count as u32)
+        .map(|quad| quad_set(&data, quad))
+        .collect()
 }
 
 /// The engine set each racer slot loads, as the shared sound table
