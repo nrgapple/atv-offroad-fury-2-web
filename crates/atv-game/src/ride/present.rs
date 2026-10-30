@@ -598,7 +598,8 @@ mod tests {
         for frame in 0..400 {
             // A phone's uneven frames while the time scale eases 1 -> 0.3 -> 1.
             let dt = if frame % 3 == 0 { 0.021 } else { 0.0145 };
-            let scale = 1. - 0.7 * atv_core::math::Det::sin_d(frame as f32 / 400. * std::f32::consts::PI);
+            let scale =
+                1. - 0.7 * atv_core::math::Det::sin_d(frame as f32 / 400. * std::f32::consts::PI);
             now += f64::from(dt) * 1000.;
             accumulator += dt * scale;
             let ticks = (accumulator * 60.).floor() as u32;
