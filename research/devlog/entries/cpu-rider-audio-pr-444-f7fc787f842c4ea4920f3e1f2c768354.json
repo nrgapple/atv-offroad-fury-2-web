@@ -1,0 +1,12 @@
+{
+  "id": "cpu-rider-audio-pr-444-f7fc787f842c4ea4920f3e1f2c768354",
+  "timestamp": "2026-10-30T02:06:06.632404+00:00",
+  "recorded_at": "2026-10-30T02:06:06.632404+00:00",
+  "kind": "build",
+  "title": "CPU rider audio (PR #444)",
+  "summary": "Race CPUs now have engine voices, vocals, body impacts and chassis sounds instead of being silent.",
+  "details": [
+    "CPU engines play through the other riders' voices (six nearest), each slot using the engine set the race sound table assigns, with that set's Min/Max ranges. The new audio::cpu module runs the player's sound decisions per CPU: Bang, Jostle, wreck and Fall vocals (gender from the roster), the body-impact latch, and landing, wreck and quad-to-quad chassis clips, with the 100ft vocal and 70ft chassis culls. Every sound is heard from the nearest listener, so split screen hears CPUs from the nearest view. Verification: cargo test audio:: (31) and engine_audio (7) pass, clippy is clean, and the browser tests test_engine_cpu_audio (2 CPU engine voices with stereo levels in an ENV01 race), test_engine_race and test_rust_audio pass. No screenshot applies."
+  ],
+  "limitation": "No terrain or splash sounds for CPUs. Vocal, impact and chassis sounds are covered only by unit tests. Nothing was compared by listening. Room guests have no CPU sound. The 48-voice and priority budget is untraced."
+}
