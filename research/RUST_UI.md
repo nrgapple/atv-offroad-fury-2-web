@@ -493,14 +493,22 @@ default, toggled from the menu (Enter or Left/Right) and saved under `atv-alpha`
 shared with play.html. The Rust ride runs three of them:
 
 - Air slow-mo and the big-air camera: `atv_game::ride::hype::HypeDirector` ports
-  web/hype.js (big-air detection from clearance, rise and air time; one apex slow
-  motion per jump at 0.3x with its ease in/hold/ease out, ended by touchdown or a
-  wreck; the landing dip spring; the chase pull-in, flattening and FOV widening).
+  web/hype.js (big-air detection from clearance, rise and air time; the landing dip
+  spring; the chase pull-in, flattening and FOV widening). Since 2026-10-24 one
+  apex "moment" per jump (0.2 s ease in, 0.55 s hold, 0.4 s ease out, real time;
+  ended early by touchdown, a wreck or dropping under 4 ft) drives slow motion
+  (0.3x), the chase camera, the air blur and the muffle/wind together, scaled by
+  the jump's size (0.5 at a barely qualifying apex, 1 at full big air). Previously
+  the camera and blur eased in on their own during the climb and held to touchdown
+  while slow motion started at the apex, so they fired at different times.
   It steps once per accepted simulation step (live rides, autodrive and the Reset
   frame; before 2026-10-22 only autodrive stepped it, so live rides never left the
   ground for it) and updates once per rendered frame; slow motion
-  scales the step accumulator (Freestyle only, as in the browser) and stretches the
-  presenters' segments, so even Original ATVs interpolate while it runs. Clearance
+  scales the step accumulator (Freestyle only, as in the browser). With the toggle
+  on every ATV interpolates, and the presenters blend by the accumulator's phase
+  (one step behind the latest state) rather than by wall-clock segments: steps
+  arrive every three to four frames at an easing rate, which segments juddered
+  across on phones' uneven frames (freeze, then snap). Clearance
   reads the physics terrain under the rider; the browser reads its rendered terrain
   height (the same heights after `render_heights`, sampled bilinearly rather than by
   the triangle the physics uses).
@@ -555,7 +563,9 @@ in both games (`private/reports/rust-ui/alpha-landing/env05-{rust-web,javascript
   `private/reports/rust-ui/air-blur/env05-{rust-web,javascript}.png` (blur 0.83 /
   0.90); `tools/test_engine_air_blur.mjs` (drawn when on, 0 when off while the
   director still measures air). Costs one full-screen copy and ten taps per pixel
-  only during big air.
+  (six on coarse-pointer devices, over the same blur length) only during big air.
+  With the toggle on the pass and its frame texture are created before the first
+  jump, so big air no longer stalls on pipeline creation mid-flight.
 - Speed & air muffle: `audio::hype::HypeAudio` in the mixer ports setHype for the
   mixer's music bus (a lowpass from 22 kHz towards 320 Hz, Q 0.7 dB, and a level down
   to 0.7, eased like setTargetAtTime per 128-frame block) and the wind rush (2 s of
@@ -571,7 +581,10 @@ in both games (`private/reports/rust-ui/alpha-landing/env05-{rust-web,javascript
   Not measured: what the graphed soundtrack sounds like on phones.
 
 Evidence for the Alpha flags: `atv-game` unit test (a launched 40 ft/s jump fires
-one apex, one slow motion reaching 0.3x and a landing over 30 ft/s);
+one apex, one slow motion reaching 0.3x and a landing over 30 ft/s; slow motion,
+camera, blur and muffle share one envelope frame by frame; the slow-motion presenter
+moves exactly with scaled time at alternating 14.5/21 ms frames, where wall-clock
+segments fail);
 `tools/test_engine_alpha.mjs` (rows, saved toggles, applied ride flags); the presenter
 and interpolation tests are unchanged at scale 1. Host only.
 

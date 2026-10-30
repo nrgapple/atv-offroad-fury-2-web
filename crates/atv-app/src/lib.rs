@@ -1827,8 +1827,10 @@ impl App {
             motion.origin,
             motion.linear_velocity,
         );
-        // Alpha Air dark blur follows the director's big-air amount.
-        ready.scene.set_air_blur(&ready.gpu, riding.air_blur());
+        // Alpha Air dark blur follows the director's big-air moment.
+        ready
+            .scene
+            .set_air_blur(&ready.gpu, riding.alpha_air_blur, riding.air_blur());
         let room_started = Instant::now();
         let mut loads = Vec::new();
         let mut engine_loads = Vec::new();
