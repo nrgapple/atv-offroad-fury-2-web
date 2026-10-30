@@ -4117,6 +4117,41 @@ mod tests {
     }
 
     #[test]
+    fn split_screen_race_offers_practice() {
+        let view = view(1280., 720.);
+        let mut settings = Settings::memory();
+        let mut front = Frontend::new(tracks(), &settings, true);
+        front.set_race_courses(vec!["env01".into()], &view);
+        front.split = true;
+        // Duel is allowed in split screen but not built yet (#451).
+        assert_eq!(
+            front.race_events(),
+            [
+                atv_core::race_event::EventType::SingleRace,
+                atv_core::race_event::EventType::Practice
+            ]
+        );
+        front.show("race", &view);
+        front.selection = front
+            .choices()
+            .iter()
+            .position(|(a, _)| a == "raceevent")
+            .unwrap();
+        front.key("ArrowRight", &view, &mut settings);
+        assert!(matches!(
+            front.race_event(&mut settings),
+            Some(Event::Race { practice: true, .. })
+        ));
+        // The saved setup keeps the event type.
+        let saved: Value = serde_json::from_str(&settings.get(SELECTION_KEY).unwrap()).unwrap();
+        assert_eq!(saved["race"]["event"], "practice");
+        assert_eq!(
+            RaceSetup::from_value(&saved["race"]).event,
+            atv_core::race_event::EventType::Practice
+        );
+    }
+
+    #[test]
     fn split_events_wait_on_the_players_page_until_seated() {
         let view = view(1280., 720.);
         let mut settings = Settings::memory();
