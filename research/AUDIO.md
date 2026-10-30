@@ -380,6 +380,18 @@ heard from the nearest listener, so split screen's views apply, and split
 races share player 1's CPUs. `?audioDiagnostics=1` reports them under
 `data-engine-audio` `cpu`.
 
+Room race guests (research/MULTIPLAYER.md "Room race CPUs") hear the
+host's CPUs' engines the same way: each heard puppet's presented host
+motion (position, velocity, speed, riding from the relayed rider state, and
+the host CPU driver's throttle, which the host now fills into the CPU
+snapshot's existing throttle field; no wire format change) becomes a CPU
+rider for `assign_sets` (the guest is player 1, then the room's humans,
+then the CPUs) and the range rules. Stale or not yet heard CPUs are
+silent, and retired CPUs (host handoff) stop. Assumption: an older host
+leaves that field at 0, so its CPUs play by speed with no throttle. Guests
+get no CPU vocals, body impacts or chassis sounds: the motion carries no
+audio events.
+
 Authored bounds and limitations: engines keep the room riders' six
 nearest voices (`ENGINE_VOICES`; the original has 48 SPU2 voices and its
 emitter priorities, the 3/10 constructor arguments, were not traced).

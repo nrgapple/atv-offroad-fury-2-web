@@ -457,6 +457,33 @@ pub struct Puppet {
     /// (origin, velocity, orientation) the player pushes against; None
     /// until heard and while stale.
     pub body: Option<([f32; 3], [f32; 3], [f32; 4])>,
+    /// The engine inputs of the host's latest presented motion; None until
+    /// heard and while stale (research/AUDIO.md "CPU riders").
+    pub sound: Option<PuppetSound>,
+}
+
+/// A puppet CPU's engine inputs from the host's motion: the host's CPU
+/// throttle and speed, and riding from the relayed rider state.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct PuppetSound {
+    pub origin: [f32; 3],
+    pub velocity: [f32; 3],
+    pub throttle: f32,
+    pub speed: f32,
+    pub riding: bool,
+}
+
+impl PuppetSound {
+    /// The engine inputs of a presented snapshot (None while stale).
+    pub fn from_snapshot(s: &atv_net::Snapshot, stale: bool) -> Option<Self> {
+        (!stale).then_some(Self {
+            origin: s.atv.position,
+            velocity: s.velocity,
+            throttle: s.throttle,
+            speed: s.speed,
+            riding: s.rider_state == atv_net::RiderState::Riding,
+        })
+    }
 }
 
 impl Puppet {
@@ -475,6 +502,7 @@ impl Puppet {
             initialized: false,
             pose: None,
             body: None,
+            sound: None,
         })
     }
 
@@ -541,13 +569,38 @@ impl Puppet {
             rider_nodes,
         });
         self.body = (!stale).then_some((s.atv.position, s.velocity, s.atv.rotation));
+        self.sound = PuppetSound::from_snapshot(s, stale);
         Ok(())
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::stuck_clock;
+    use super::{PuppetSound, stuck_clock};
+
+    #[test]
+    fn puppet_sound_reads_the_host_motion_until_stale() {
+        let s = atv_net::Snapshot {
+            velocity: [20., 0., 1.],
+            throttle: 0.6,
+            speed: 20.,
+            rider_state: atv_net::RiderState::Riding,
+            ..Default::default()
+        };
+        let heard = PuppetSound::from_snapshot(&s, false).unwrap();
+        assert_eq!(
+            (heard.throttle, heard.speed, heard.riding),
+            (0.6, 20., true)
+        );
+        assert_eq!(heard.velocity, [20., 0., 1.]);
+        assert!(PuppetSound::from_snapshot(&s, true).is_none());
+        let wreck = atv_net::Snapshot {
+            rider_state: atv_net::RiderState::Wreck,
+            ..s
+        };
+        assert!(!PuppetSound::from_snapshot(&wreck, false).unwrap().riding);
+    }
+
     #[test]
     fn grid_hold_never_counts_as_stuck() {
         let mut stuck = 0.;
