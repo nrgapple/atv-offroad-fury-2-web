@@ -32,8 +32,25 @@ try {
   const link = new URL(copied);
   assert.equal(link.pathname, '/play.html');
   assert.deepEqual(Object.fromEntries(link.searchParams), { mode: 'single', activity: 'freestyle', map: 'env03', quad: '3', rider: '1', player: 'Ada L', play: '1' });
+  // A Practice link (issue #473): the copied link names the event, and
+  // opening it starts Practice again.
+  await page.goto(url('/play.html?mode=single&activity=race&map=sx01&quad=3&rider=1&laps=3&cpu=3&event=practice&play=1&uiDiagnostics=1&weather=off'));
+  await page.waitForFunction(() => JSON.parse(document.querySelector('#ui-state')?.textContent || '{}').ride?.practice === true, null, { timeout: 180000 });
+  await nextFrames(page, 10);
+  await page.mouse.click(640, 400);
+  await key(page, 'Escape');
+  await page.waitForFunction(() => JSON.parse(document.querySelector('#ui-state').textContent).toolbar?.menu?.page === 'pause');
+  const pm = (await read(page)).toolbar.menu, practiceHit = pm.hits.find(h => h.action === 'copyride');
+  assert.ok(practiceHit, `copyride on practice pause: ${pm.choices}`);
+  await page.mouse.click(practiceHit.x + practiceHit.width / 2, practiceHit.y + practiceHit.height / 2);
+  await page.waitForFunction(() => JSON.parse(document.querySelector('#ui-state').textContent).toolbar?.menu?.notice === 'Ride link copied.', null, { timeout: 10000 });
+  const practiceLink = new URL(await page.evaluate(() => navigator.clipboard.readText()));
+  assert.equal(practiceLink.searchParams.get('activity'), 'race');
+  assert.equal(practiceLink.searchParams.get('event'), 'practice', practiceLink.href);
+  await page.goto(url(`${practiceLink.pathname}${practiceLink.search}&uiDiagnostics=1&weather=off`));
+  await page.waitForFunction(() => JSON.parse(document.querySelector('#ui-state')?.textContent || '{}').ride?.practice === true, null, { timeout: 180000 });
   assertNoErrors(errors);
-  console.log(`PASS: Rust Copy ride link: ${copied}`);
+  console.log(`PASS: Rust Copy ride link: ${copied}; Practice: ${practiceLink.search}`);
 } finally {
   await browser.close();
 }

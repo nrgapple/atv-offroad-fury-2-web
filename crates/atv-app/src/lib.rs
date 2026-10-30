@@ -4006,6 +4006,16 @@ impl App {
             let s = r.settings();
             (s.laps, s.cpu, s.difficulty, s.aggressive, s.all_out)
         });
+        let event = riding.ride.race().map_or(Default::default(), |r| {
+            let s = r.settings();
+            if s.practice {
+                atv_core::race_event::EventType::Practice
+            } else if s.duel {
+                atv_core::race_event::EventType::Duel
+            } else {
+                atv_core::race_event::EventType::SingleRace
+            }
+        });
         // This page; desktop links open the site's play.html (buildRideUrl),
         // as its invites do.
         let page = multiplayer::share_page(&default_relay());
@@ -4025,6 +4035,7 @@ impl App {
                 player: &player,
                 race,
                 room: None,
+                event,
             },
         );
         Some((url, "Ride link copied."))
@@ -6722,7 +6733,7 @@ impl App {
                     difficulty: setup.race.difficulty,
                     // frontend.js keeps a link's cheats in raceSettings.
                     cheats: (setup.race.aggressive, setup.race.all_out),
-                    event: Default::default(),
+                    event: setup.race.event,
                 },
                 &view,
             );
@@ -6742,11 +6753,30 @@ impl App {
                 f.state.remember_freestyle(&mut f.settings);
             }
         }
+        // `event=`, as the race page offers it in this mode (Duel only with
+        // `?split=`).
+        let event = if atv_core::race_event::offered(
+            atv_core::race_event::RACE_TRACK_MASK,
+            self.split_link.is_some(),
+            false,
+        )
+        .contains(&setup.race.event)
+        {
+            setup.race.event
+        } else {
+            atv_core::race_event::EventType::SingleRace
+        };
         let settings = race.then(|| {
             let defaults = atv_game::ride::race::Settings::default();
             atv_game::ride::race::Settings {
                 laps: setup.race.laps,
-                cpu: setup.race.cpu as usize,
+                cpu: if event.has_cpus() {
+                    setup.race.cpu as usize
+                } else {
+                    0
+                },
+                practice: event == atv_core::race_event::EventType::Practice,
+                duel: event == atv_core::race_event::EventType::Duel,
                 difficulty: setup.race.difficulty,
                 // The original EATDIRT and BRINGIT cheats (cheats=).
                 aggressive: setup.race.aggressive,
@@ -7306,6 +7336,9 @@ impl App {
                     race.cheats.1,
                 )),
                 room: None,
+                // The event this mode offers (a saved Duel reads Single
+                // Race outside split screen).
+                event: f.state.race_event_type(),
             },
         );
         f.state.notice = Some(url.clone());

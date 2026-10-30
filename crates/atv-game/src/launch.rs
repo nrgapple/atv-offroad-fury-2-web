@@ -285,6 +285,8 @@ pub struct RaceLink {
     /// EATDIRT (Aggressive AI) and BRINGIT (All Out AI).
     pub aggressive: bool,
     pub all_out: bool,
+    /// `event=`: the race page's event type (Single Race when absent).
+    pub event: atv_core::race_event::EventType,
 }
 
 /// A parsed ride link (launch.js `parseLaunch`).
@@ -368,6 +370,8 @@ pub struct RideLink<'a> {
     pub race: Option<(u32, usize, u32, bool, bool)>,
     /// A multiplayer invite's room code (`mode=multiplayer&action=join`).
     pub room: Option<&'a str>,
+    /// A race's event type; Single Race adds nothing to the link.
+    pub event: atv_core::race_event::EventType,
 }
 
 /// launch.js `buildRideUrl`: `page` (e.g. `https://host/play.html`) with
@@ -423,6 +427,9 @@ pub fn ride_url(page: &str, link: &RideLink) -> String {
         if !cheats.is_empty() {
             pairs.push(("cheats", cheats.join(",")));
         }
+        if link.event != atv_core::race_event::EventType::SingleRace {
+            pairs.push(("event", link.event.key().into()));
+        }
     }
     pairs.push(("play", "1".into()));
     let encode = |v: &str| {
@@ -448,7 +455,7 @@ pub fn ride_url(page: &str, link: &RideLink) -> String {
 
 /// launch.js `parseLaunch`: `tracks` are (id, display name) for map names.
 pub fn parse_launch(search: &str, tracks: &[(String, String)]) -> Launch {
-    const ALIASES: [(&str, &[&str]); 14] = [
+    const ALIASES: [(&str, &[&str]); 15] = [
         ("map", &["map", "environment"]),
         ("quad", &["quad", "vehicle", "atv"]),
         ("rider", &["rider"]),
@@ -463,6 +470,7 @@ pub fn parse_launch(search: &str, tracks: &[(String, String)]) -> Launch {
         ("difficulty", &["difficulty"]),
         ("cheats", &["cheats", "cheat"]),
         ("course", &["course"]),
+        ("event", &["event"]),
     ];
     let params = query_pairs(search);
     let mut errors = Vec::new();
@@ -505,6 +513,7 @@ pub fn parse_launch(search: &str, tracks: &[(String, String)]) -> Launch {
             course: "env01".into(),
             aggressive: false,
             all_out: false,
+            event: Default::default(),
         },
     };
     if !launch.requested {
@@ -681,12 +690,24 @@ pub fn parse_launch(search: &str, tracks: &[(String, String)]) -> Launch {
         errors.push("Races use the original Environment, National and Supercross courses.".into());
     }
     if launch.activity != "race"
-        && ["laps", "cpu", "difficulty", "cheats"]
+        && ["laps", "cpu", "difficulty", "cheats", "event"]
             .iter()
             .any(|k| has(k))
     {
-        errors.push("Laps/cpu/difficulty/cheats requires activity=race.".into());
+        errors.push("Laps/cpu/difficulty/cheats/event requires activity=race.".into());
     }
+    // `event=practice|duel|...`: a race page event type the port has built
+    // (the menus still gate it by mode, e.g. Duel needs split screen).
+    let event = match value("event") {
+        None => atv_core::race_event::EventType::SingleRace,
+        Some(key) => match atv_core::race_event::EventType::from_key(&key.to_lowercase()) {
+            Some(event) if event.built() => event,
+            _ => {
+                errors.push(format!("Unsupported event: {}.", shown(&key)));
+                atv_core::race_event::EventType::SingleRace
+            }
+        },
+    };
     let variant = match value("course") {
         None => RaceVariant::National,
         Some(key) => match RaceVariant::from_key(&key.to_lowercase()) {
@@ -719,6 +740,7 @@ pub fn parse_launch(search: &str, tracks: &[(String, String)]) -> Launch {
         },
         aggressive,
         all_out,
+        event,
     };
     launch.errors = errors;
     launch
@@ -769,6 +791,7 @@ mod tests {
                 player: "Ada L",
                 race: None,
                 room: None,
+                event: Default::default(),
             },
         );
         assert_eq!(
@@ -784,12 +807,54 @@ mod tests {
                 player: "Rider",
                 race: Some((2, 4, 2, true, false)),
                 room: None,
+                event: Default::default(),
             },
         );
         assert!(race.ends_with("activity=race&map=nat01&quad=1&rider=0&player=Rider&laps=2&cpu=4&difficulty=expert&cheats=eatdirt&play=1"));
         let parsed = parse_launch(&race[race.find('?').unwrap()..], &[]);
         assert!(parsed.errors.is_empty(), "{:?}", parsed.errors);
         assert_eq!(parsed.race.difficulty, 2);
+        assert_eq!(
+            parsed.race.event,
+            atv_core::race_event::EventType::SingleRace
+        );
+        // A Practice link names its event and opens Practice.
+        let practice = ride_url(
+            "/play.html",
+            &RideLink {
+                map: "sx01",
+                quad: 1,
+                rider: 0,
+                player: "Rider",
+                race: Some((3, 3, 1, false, false)),
+                room: None,
+                event: atv_core::race_event::EventType::Practice,
+            },
+        );
+        assert!(
+            practice.ends_with("laps=3&cpu=3&event=practice&play=1"),
+            "{practice}"
+        );
+        let parsed = parse_launch(&practice[practice.find('?').unwrap()..], &[]);
+        assert!(parsed.errors.is_empty(), "{:?}", parsed.errors);
+        assert_eq!(parsed.race.event, atv_core::race_event::EventType::Practice);
+        // Unknown or unbuilt event types and non-race links are refused.
+        let bad = parse_launch("?activity=race&map=sx01&event=bogus&play=1", &[]);
+        assert!(
+            bad.errors.iter().any(|e| e.contains("Unsupported event")),
+            "{:?}",
+            bad.errors
+        );
+        assert_eq!(bad.race.event, atv_core::race_event::EventType::SingleRace);
+        let freestyle = parse_launch("?activity=freestyle&map=env01&event=practice&play=1", &[]);
+        assert!(
+            freestyle
+                .errors
+                .iter()
+                .any(|e| e.contains("event requires activity=race")),
+            "{:?}",
+            freestyle.errors
+        );
         // An invite (buildRideUrl with mode multiplayer, without the player).
         let invite = ride_url(
             "https://furyremastered.com/play.html",
@@ -800,6 +865,7 @@ mod tests {
                 player: "",
                 race: None,
                 room: Some("ABCD1234"),
+                event: Default::default(),
             },
         );
         assert_eq!(
@@ -872,6 +938,7 @@ mod tests {
                 player: "",
                 race: Some((3, 3, 1, false, false)),
                 room: None,
+                event: Default::default(),
             },
         );
         assert!(
