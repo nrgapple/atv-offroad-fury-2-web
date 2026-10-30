@@ -932,3 +932,14 @@ new name p95 84 -> 64 ms (taps), 55 -> 19 ms (keys); long tasks per 10 taps
 on Single Race and the garage each step exactly ten times, every input shows
 in the next frame published after it, a held finger and a held key repeat,
 the photo catches up with the course, and the photo opens the picker.
+
+Follow-up (garage, gear, store): stepping vehicles loaded every vehicle
+passed (a 0.1-0.5 s model load each at x4), and each paint or gear step
+rebuilt the preview on its frame (50-75 ms). A vehicle now loads once it has
+been on the stage for 150 ms (`VEHICLE_SETTLE`; the load yields between its
+phases), and a new paint or gear look on the same model is built once wanted
+for 120 ms, the last look staying up meanwhile (`Front::look_settled`), so a
+burst moves the label on every step and builds only where it stops. Held
+D-pad/stick directions repeat in the Options menu too. Host Chromium x4, 10
+taps a second (input to new label p95): garage 168 -> 68 ms, helmet 193 -> 68
+ms, quad colour 100 -> 88 ms; long tasks per 10 garage steps 14 -> 1.
