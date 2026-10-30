@@ -9,6 +9,7 @@ mod cloud;
 mod content_sync;
 #[cfg(target_arch = "wasm32")]
 mod context;
+mod fps;
 mod front;
 mod gamepad;
 mod games;
@@ -807,6 +808,8 @@ struct App {
     pad_seen: bool,
     /// Frontend frames drawn (`?uiDiagnostics=1`).
     front_frames: u64,
+    /// Display → Show FPS: the presented-frame readout.
+    fps: fps::FpsHud,
     /// The left mouse press belongs to the UI, not the camera drag.
     mouse_ui: bool,
     ui_backdrop: Option<[u8; 3]>,
@@ -2812,6 +2815,19 @@ impl App {
                 }),
                 Some(&mut riding.bindings),
             );
+            self.fps.prepare(
+                &gpu.device,
+                &gpu.queue,
+                gpu.config.format,
+                &mut overlay.fonts,
+                &overlay.view,
+                (gpu.config.width, gpu.config.height),
+                overlay.prefs.show_fps,
+                fps::Place::Ride {
+                    toolbar_right: overlay.fps_clear.0,
+                    map: overlay.fps_clear.1.map(|r| [r.x, r.y, r.w, r.h]),
+                },
+            );
         }
         self.meter.ui += ui_started.elapsed().as_secs_f64() * 1000.;
         if self.ui_diagnostics {
@@ -3207,9 +3223,11 @@ impl App {
             game["speedUnits"] = riding.ride.hud().units.into();
             game["vegetationQuery"] = (!riding.ride.frame().skip_vegetation_query).into();
             game["ecosystemCollisionOff"] = riding.ride.options.ecosystem_collision_off.into();
+            state["fps"] = self.fps.state();
             publish_ui_state(&state.to_string());
         }
         let overlay = self.overlay.as_ref().filter(|_| !self.hide_ui);
+        let fps = &self.fps;
         let render_started = Instant::now();
         let mut acquire = 0.;
         let first_view = View {
@@ -3217,8 +3235,10 @@ impl App {
             focal_length: ready.focal_length,
         };
         let mut draw_overlay = |encoder: &mut wgpu::CommandEncoder, target: &wgpu::TextureView| {
-            if let Some(overlay) = overlay {
-                overlay.draw(encoder, target);
+            // The FPS readout joins the HUD's pass; drawn alone without one.
+            match overlay {
+                Some(overlay) => overlay.draw(encoder, target, fps.renderer()),
+                None => fps.draw(encoder, target),
             }
         };
         let rendered = match ready.split.first() {
@@ -5837,6 +5857,11 @@ impl ApplicationHandler<Message> for App {
             }
             WindowEvent::RedrawRequested => {
                 self.step();
+                // Show FPS counts the frames the surface presented.
+                let gpu = self.gpu.as_ref().or(self.ready.as_ref().map(|r| &r.gpu));
+                if let Some(at) = gpu.and_then(|g| g.take_presented()) {
+                    self.fps.presented(at);
+                }
                 // After the frame: a pause it opened may be its last frame.
                 self.sync_usage();
                 self.sync_wake();
@@ -5887,6 +5912,14 @@ impl ApplicationHandler<Message> for App {
         if matches!(cause, StartCause::ResumeTimeReached { .. }) {
             if self.asleep {
                 self.paused_tick();
+            }
+            if self.asleep
+                && self.visible
+                && self.effective_focused()
+                && self.fps.idle_due().is_some_and(|due| Instant::now() >= due)
+            {
+                self.fps.mark_idle_frame();
+                self.wake();
             }
             #[cfg(not(target_arch = "wasm32"))]
             self.presence_tick();
@@ -5984,6 +6017,15 @@ impl App {
         if self.asleep && self.effective_focused() {
             let poll = if self.pad_seen { 16 } else { 50 };
             at(now + std::time::Duration::from_millis(poll));
+        }
+        // Show FPS: one frame after the app went idle says so, rather than
+        // leaving the last active rate on screen.
+        if self.asleep
+            && self.visible
+            && self.effective_focused()
+            && let Some(due) = self.fps.idle_due()
+        {
+            at(due);
         }
         // Android: while the soft keyboard is up, check that it still is; the
         // player closing it (Back) unfocuses the field and restores the form.
@@ -7533,7 +7575,7 @@ impl App {
             f.begin_loading(&environment);
             f.championship_briefing(championship);
             f.fame_briefing(fame);
-            paint_front(&gpu, &mut f);
+            paint_front(&gpu, &mut f, None);
             // The loader paints between load stages only; publish its state
             // now (tools/test_engine_championship_loading.mjs).
             if self.ui_diagnostics {
@@ -7559,7 +7601,7 @@ impl App {
             status(text);
             if let Ok(mut f) = painter.try_borrow_mut() {
                 f.state.loading_stage(text);
-                paint_front(gpu, &mut f);
+                paint_front(gpu, &mut f, None);
             }
         });
         let held = self.pending_room.take();
@@ -8017,7 +8059,7 @@ impl App {
                 }
             }
         }
-        paint_front(gpu, &mut f);
+        paint_front(gpu, &mut f, Some(&mut self.fps));
         #[cfg(target_arch = "wasm32")]
         {
             let (fields, rects) = (f.state.fields(), f.field_rects());
@@ -8046,6 +8088,7 @@ impl App {
                     // Frontend frames drawn and the page's focus (tests: idle
                     // menus draw nothing; Host/Join inputs keep the focus).
                     "frontFrames": self.front_frames,
+                    "fps": self.fps.state(),
                     "focused": self.effective_focused(),
                     "diagnostics": {
                         "mode": self.diagnostics.mode.name(),
@@ -8202,10 +8245,17 @@ impl App {
     }
 }
 
-/// Lays out and presents one frontend frame.
-fn paint_front(gpu: &Gpu, front: &mut front::Front) {
+/// Lays out and presents one frontend frame (with the FPS readout, except
+/// on the loader's frames between load stages).
+fn paint_front(gpu: &Gpu, front: &mut front::Front, mut fps: Option<&mut fps::FpsHud>) {
     front.prepare(&gpu.device, &gpu.queue, gpu.config.width, gpu.config.height);
-    if let Err(error) = gpu.present_with(&mut |encoder, target| front.draw(encoder, target)) {
+    if let Some(fps) = fps.as_deref_mut() {
+        front.prepare_fps(gpu, fps);
+    }
+    let fps = fps.as_deref();
+    if let Err(error) = gpu.present_with(&mut |encoder, target| {
+        front.draw(encoder, target, fps.and_then(|f| f.renderer()));
+    }) {
         status(&error);
     }
 }
@@ -8293,7 +8343,7 @@ fn capture_front(booted: Booted, page: &str, path: &std::path::Path, width: u32,
         front.prepare(&gpu.device, &gpu.queue, width, height);
     }
     match gpu.capture_ui(width, height, &mut |encoder, target| {
-        front.draw(encoder, target)
+        front.draw(encoder, target, None)
     }) {
         Ok(rgba) => image_png(path, width, height, &rgba),
         Err(error) => status(&error),
@@ -8356,7 +8406,7 @@ fn capture(ready: &mut Ready, path: &std::path::Path, width: u32, height: u32, u
         .scene
         .capture_with(&ready.gpu, &view, width, height, &mut |encoder, target| {
             if let Some(overlay) = &mut overlay {
-                overlay.draw(encoder, target);
+                overlay.draw(encoder, target, None);
             }
         })
         .expect("capture frame");
@@ -9238,6 +9288,7 @@ pub fn run(options: Options) {
         pad_buttons: 0,
         pad_seen: false,
         front_frames: 0,
+        fps: fps::FpsHud::new(fps_param()),
         mouse_ui: false,
         ui_backdrop: None,
         ui_diagnostics: ui_diagnostics_enabled(),
@@ -9557,6 +9608,25 @@ fn js_sys_decode(text: &str) -> Option<String> {
     js_sys::decode_uri_component(text)
         .ok()
         .and_then(|s| s.as_string())
+}
+
+/// `?fps=1` shows the FPS readout for this session (`?fps=0` hides it),
+/// whatever Display → Show FPS says.
+fn fps_param() -> Option<bool> {
+    #[cfg(target_arch = "wasm32")]
+    return web_sys::window()
+        .and_then(|w| w.location().search().ok())
+        .and_then(|s| {
+            s.trim_start_matches('?').split('&').find_map(|p| match p {
+                "fps=1" | "fps=on" => Some(true),
+                "fps=0" | "fps=off" => Some(false),
+                _ => None,
+            })
+        });
+    #[cfg(not(target_arch = "wasm32"))]
+    std::env::var("FURY_FPS")
+        .ok()
+        .map(|v| v == "1" || v == "on")
 }
 
 // Opt-in browser integration diagnostics. Normal play never serializes a frame.

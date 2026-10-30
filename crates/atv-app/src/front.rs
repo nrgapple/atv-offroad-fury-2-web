@@ -339,6 +339,21 @@ impl Front {
         self.uploaded = DisplayList::default();
     }
 
+    /// Display → Show FPS over the menus: the readout follows the menu row
+    /// and uses this frontend's fonts and viewport.
+    pub fn prepare_fps(&mut self, gpu: &atv_render::Gpu, fps: &mut crate::fps::FpsHud) {
+        fps.prepare(
+            &gpu.device,
+            &gpu.queue,
+            gpu.config.format,
+            &mut self.fonts,
+            &self.view,
+            (gpu.config.width, gpu.config.height),
+            self.prefs.show_fps,
+            crate::fps::Place::Menu,
+        );
+    }
+
     /// Settings → Diagnostics as saved by the menu row.
     pub fn diagnostics_pref(&self) -> &str {
         &self.prefs.diagnostics
@@ -1695,7 +1710,13 @@ impl Front {
         self.menu_hits = hits;
     }
 
-    pub fn draw(&mut self, encoder: &mut wgpu::CommandEncoder, target: &wgpu::TextureView) {
+    /// The page, then `extra` (the FPS readout) in the same pass.
+    pub fn draw(
+        &mut self,
+        encoder: &mut wgpu::CommandEncoder,
+        target: &wgpu::TextureView,
+        extra: Option<&atv_ui::Renderer>,
+    ) {
         let Some(renderer) = &self.renderer else {
             return;
         };
@@ -1707,7 +1728,7 @@ impl Front {
                 preview.dirty = false;
             }
         }
-        renderer.draw(encoder, target);
+        renderer.draw_with(encoder, target, extra);
     }
 
     /// The Host/Join fields' boxes from the latest layout (CSS pixels).

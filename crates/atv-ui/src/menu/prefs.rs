@@ -53,6 +53,8 @@ pub struct Preferences {
     /// created here start with Unlock Everything
     /// (`settings::new_profiles_unlocked`).
     pub new_profiles_unlocked: bool,
+    /// Display → Show FPS (port option, this device; [`crate::fps`]).
+    pub show_fps: bool,
 }
 
 /// web/alpha.js `ALPHA_FEATURES`: authored experiments, each off by default.
@@ -137,6 +139,7 @@ impl Preferences {
                 "stereo",
             ),
             new_profiles_unlocked: crate::settings::new_profiles_unlocked(settings),
+            show_fps: get(crate::fps::KEY).as_deref() == Some("on"),
         }
     }
 
@@ -297,6 +300,10 @@ impl Preferences {
                 };
                 settings.set(crate::settings::NEW_PROFILES_KEY, v);
             }
+            "show-fps" => {
+                self.show_fps = !self.show_fps;
+                settings.set(crate::fps::KEY, if self.show_fps { "on" } else { "off" });
+            }
             "sound-configuration" => {
                 self.sound_configuration =
                     cycle(&SOUND_CONFIGURATIONS, &self.sound_configuration, direction).into();
@@ -414,6 +421,11 @@ mod tests {
             Some(r#"["radar"]"#)
         );
         assert_eq!(Preferences::load(&settings, true).overlays_off, ["radar"]);
+        // Show FPS: off by default, saved per device.
+        assert!(!prefs.show_fps);
+        prefs.apply("show-fps", 1, false, &mut settings);
+        assert_eq!(settings.get("atv-show-fps").as_deref(), Some("on"));
+        assert!(Preferences::load(&settings, false).show_fps);
     }
 
     #[test]

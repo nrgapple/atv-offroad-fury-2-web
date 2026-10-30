@@ -7,6 +7,7 @@
 pub mod cloud;
 pub mod color;
 pub mod diagnostics;
+pub mod fps;
 pub mod front;
 pub mod hud;
 pub mod layout;

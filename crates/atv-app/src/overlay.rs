@@ -165,6 +165,9 @@ pub struct Overlay {
     /// One-handed flips armed with a buzz (diagnostics).
     pub flip_buzzes: u32,
     pub prefs: Preferences,
+    /// The toolbar's right edge and the top-right map, if shown (CSS px):
+    /// what the FPS readout keeps clear of.
+    pub fps_clear: (f32, Option<Rect>),
     /// Controller glyph rasters for the bindings pages.
     glyphs: atv_ui::menu::glyphs::GlyphImages,
     /// The ride's soundtrack player view (set by the host each frame while
@@ -288,6 +291,7 @@ impl Overlay {
             prepare_ms: 0.,
             diagnostics: Vec::new(),
             backdrop: None,
+            fps_clear: (0., None),
             frontend: false,
             race: false,
             training: false,
@@ -856,6 +860,11 @@ impl Overlay {
             && !self.minimap.settings.bottom_left
             && bar_right + 8. > map.x
             && bar_top < map.bottom();
+        // Show FPS keeps clear of the toolbar and a top-right map.
+        self.fps_clear = (
+            bar_right,
+            (map_visible && !self.minimap.settings.bottom_left).then_some(map),
+        );
         let state = toolbar::State {
             paused,
             hovered: self.hovered.and_then(toolbar::Button::from_id),
@@ -1789,8 +1798,14 @@ impl Overlay {
         }
     }
 
-    pub fn draw(&self, encoder: &mut wgpu::CommandEncoder, target: &wgpu::TextureView) {
-        self.renderer.draw(encoder, target);
+    /// The HUD and menus, then `extra` (the FPS readout) in the same pass.
+    pub fn draw(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        target: &wgpu::TextureView,
+        extra: Option<&Renderer>,
+    ) {
+        self.renderer.draw_with(encoder, target, extra);
     }
 }
 
