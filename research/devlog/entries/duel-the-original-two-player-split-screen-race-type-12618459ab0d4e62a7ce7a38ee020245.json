@@ -1,0 +1,22 @@
+{
+  "id": "duel-the-original-two-player-split-screen-race-type-12618459ab0d4e62a7ce7a38ee020245",
+  "timestamp": "2026-10-30T04:50:55.501025+00:00",
+  "recorded_at": "2026-10-30T05:34:04.527269+00:00",
+  "kind": "build",
+  "title": "Duel: the original two-player split-screen race type",
+  "summary": "Split-screen Race setup now offers Duel in the Event row (Single Player never does). A Duel is two players and no CPUs (CPU riders reads N/A), uses the Laps row with no Final Lap sign, and the winner is whoever finishes first. No points or profile credit are awarded. Shipped in PR #476 and live at furyremastered.com; part of issue #451.",
+  "details": [
+    "Behavior comes from the exact USA v2.00 build (research/RACING.md, section Duel event type). Screenshots show the setup page (Event Duel, Laps 2, CPU riders N/A) and the split-screen finish with the Hall of Fame name entry. Verification: the new browser test test_engine_race_duel, which races a two-player Supercross Duel to the results, passes on the host and against furyremastered.com."
+  ],
+  "limitation": "The two-player cap rests on the manual. The original's Duel results title was not traced, so the normal race results panel is kept. Only player 1 gets the Hall of Fame entry (#477). Copy ride link drops the event type (#473). Lap Attack is still to come.",
+  "images": [
+    {
+      "path": "/devlog-images/duel-the-original-two-player-split-screen-race-type-12618459ab0d4e62a7ce7a38ee020245.png",
+      "caption": "Race setup in split screen: Event Duel, Laps 2, CPU riders N/A."
+    },
+    {
+      "path": "/devlog-images/duel-the-original-two-player-split-screen-race-type-2-12618459ab0d4e62a7ce7a38ee020245.png",
+      "caption": "Both views at the finish in split screen (1/2 and 2/2) with the Hall of Fame name entry."
+    }
+  ]
+}
