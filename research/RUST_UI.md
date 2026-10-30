@@ -943,3 +943,37 @@ burst moves the label on every step and builds only where it stops. Held
 D-pad/stick directions repeat in the Options menu too. Host Chromium x4, 10
 taps a second (input to new label p95): garage 168 -> 68 ms, helmet 193 -> 68
 ms, quad colour 100 -> 88 ms; long tasks per 10 garage steps 14 -> 1.
+
+**Picker audit (#447).** Pre-fix `d5d8e3e` against `1417cdd` (#446 + #466),
+measured interleaved on one host (Chromium x4 CPU throttle, 390x844 DPR 3
+touch; 10 inputs at 10 a second; latency = input to the frame showing the new
+value, p50/p95 ms; "two thumbs" = alternating overlapping touches; physical
+phones not measured). Before, two-thumb taps registered 1 of 10 everywhere,
+so their latency is that one step's.
+
+| Selector | Input | Latency before | Latency after | Dropped before | Dropped after |
+| --- | --- | --- | --- | --- | --- |
+| Single Race course (photo arrows) | taps / two thumbs / keys | 51/80, 51, 43/57 | 51/69, 66/85, 22/38 | 0, 9, 0 | 0, 0, 0 |
+| Garage vehicle | taps / two thumbs / keys | 164/180, 59, 53/165 | 58/166, 57/94, 24/69 | 0, 9, 0 | 0, 0, 0 |
+| Rider Gear helmet | taps / two thumbs / keys | 99/118, 91, 80/103 | 48/63, 50/60, 23/39 | 0, 9, 0 | 0, 0, 0 |
+| Quad colour | taps / two thumbs / keys | 155/187, 81, 63/75 | 65/95, 64/77, 27/34 | 0, 9, 0 | 0, 0, 0 |
+| Championships series (Down) | keys | 51/105 | 51/112 | 0 | 0 |
+| Freestyle Objectives course (Down) | keys | 40/48 | 28/48 | 0 | 0 |
+| Games: game / course / time limit | taps | 53/65, 68/78, 65/77 | 56/65, 49/78, 46/58 | 0 | 0 |
+| Games (two thumbs) | two thumbs | 38-51 | 52/65-58/70 | 9 | 0 |
+| Host Game room mode | taps / two thumbs | 49/61, 37 | 50/68, 45/50 | 0, 9 | 0, 0 |
+| Select Track / room course | taps / two thumbs / keys | 137/156, 80, 84/101 | 96/157, 102/132, 56/73 | 0, 9, 0 | 0, 0, 0 |
+| Store ATV | taps / two thumbs / keys | 128/157, 56, 47/62 | 41/58, 43/65, 20/38 | 0, 9, 0 | 0, 0, 0 |
+| Store gear | taps / two thumbs / keys | 49/63, 43, 20/41 | 50/100, 48/53, 20/29 | 0, 9, 0 | 0, 0, 0 |
+| Hall of Fame course | taps / two thumbs | 38/52, 37 | 44/59, 62/78 | 0, 9 | 0, 0 |
+| Profile records course | taps / two thumbs | 38/47, 46 | 35/38, 63/90 | 0, 9 | 0, 0 |
+| Held arrow key (Single Race) | 2 s hold, 50 key events | 1 step | 50 steps | 49 | 0 |
+
+Long tasks per 10 steps fell from 10-14 to 1 on the garage, gear and store
+ATV pages and from 1-2 to 0 on Single Race. Not driven by this harness:
+Split Screen seats (controllers; held directions now repeat per seat),
+Training lessons (no stepper; course row only), Jukebox songs and Game
+Settings values (Options menu rows: per-pointer presses, held keys and
+D-pad repeat). Remaining costs: Select Track and Championships still spend a
+50-75 ms frame per step on list relayout (#468); a settled garage vehicle
+still loads on the page's thread, 0.1-0.45 s at x4 (#469).
