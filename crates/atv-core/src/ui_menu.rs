@@ -214,6 +214,9 @@ pub struct Request {
     /// this device start with Unlock Everything.
     #[serde(default)]
     pub new_profiles_unlocked: bool,
+    /// Display → Show FPS (port option): the presented-frame readout.
+    #[serde(default)]
+    pub show_fps: bool,
     #[serde(default)]
     pub speed_rush: String,
     /// Display → Graphics choice (auto/original/enhanced/high) and, for Auto,
@@ -1645,6 +1648,14 @@ pub fn layout(request: Request) -> Result<Frame> {
                     ("Minimap configuration", "minimap-config"),
                     ("Race overlays", "race-overlays"),
                     (speed_label, "speed-rush"),
+                    (
+                        if request.show_fps {
+                            "Show FPS: On"
+                        } else {
+                            "Show FPS: Off"
+                        },
+                        "show-fps",
+                    ),
                 ],
             };
             if request.page == "hud-settings" && request.fullscreen {
@@ -2429,6 +2440,7 @@ mod tests {
             ecosystem_collision: true,
             sound_configuration: String::new(),
             new_profiles_unlocked: false,
+            show_fps: false,
             speed_rush: "normal".into(),
             graphics_preset: String::new(),
             graphics_resolved: String::new(),
@@ -2991,6 +3003,7 @@ mod tests {
                 "minimap-config",
                 "race-overlays",
                 "speed-rush",
+                "show-fps",
                 "fullscreen",
                 "back"
             ]

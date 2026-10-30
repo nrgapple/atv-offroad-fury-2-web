@@ -43,6 +43,7 @@ export const TESTS = {
   },
   'test_engine_settings.mjs': { group: 'content' },
   'test_engine_game_settings.mjs': { group: 'content' },
+  'test_engine_fps.mjs': { group: 'content' },
   'test_engine_session_settings.mjs': { group: 'content' },
   'test_engine_links.mjs': { group: 'content' },
   'test_engine_wake_lock.mjs': { group: 'content' },

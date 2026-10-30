@@ -1,0 +1,14 @@
+{
+  "id": "practice-event-type-for-single-race-and-split-screen-a08c6bfd65c841aea097d712670977ed",
+  "timestamp": "2026-10-30T04:18:02.364402+00:00",
+  "recorded_at": "2026-10-30T04:31:13.842166+00:00",
+  "kind": "build",
+  "title": "Practice event type for Single Race and split screen",
+  "summary": "Single Race and split-screen Race gain an Event row (Single Race / Practice), matching the original game's Practice race type (PR #472, closes #449). Practice is offered on every race course with the same CPU field as Single Race, no lap limit (Laps shows N/A), lap times every lap, and no finish, results, records or points.",
+  "details": [
+    "Behavior was established from the exact USA v2.00 build; evidence is in research/RACING.md. A new browser test rides a Sausalito lap against 3 CPUs."
+  ],
+  "limitation": "Split-screen Practice is covered by a unit test only. Copy ride link drops the event type (#473). Duel and Lap Attack are still to come (#451).",
+  "image": "/devlog-images/practice-event-type-for-single-race-and-split-screen-a08c6bfd65c841aea097d712670977ed.png",
+  "caption": "Single Race setup showing Event: Practice, Laps N/A, CPU riders 3 on Sausalito."
+}

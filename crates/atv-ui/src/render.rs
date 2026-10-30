@@ -137,6 +137,8 @@ pub struct Renderer {
     layer_valid: std::cell::Cell<bool>,
     /// Why the last prepare did (not) cache: (reason, moving, instances).
     pub layer_plan: (&'static str, usize, usize),
+    /// The atlas grows once to this size when a frame does not fit.
+    atlas_grown: u32,
 }
 
 fn upload(
@@ -174,6 +176,18 @@ fn upload(
 
 impl Renderer {
     pub fn new(device: &wgpu::Device, format: wgpu::TextureFormat) -> Self {
+        Self::with_atlas(device, format, ATLAS, ATLAS_GROWN)
+    }
+
+    /// A renderer whose atlas starts at `size` texels square and grows at
+    /// most to `grown` (a small overlay such as the FPS readout: its few
+    /// glyphs need a fraction of the menus' atlas).
+    pub fn with_atlas(
+        device: &wgpu::Device,
+        format: wgpu::TextureFormat,
+        size: u32,
+        grown: u32,
+    ) -> Self {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("ui"),
             source: wgpu::ShaderSource::Wgsl(include_str!("ui.wgsl").into()),
@@ -275,7 +289,7 @@ impl Renderer {
                 resource: globals.as_entire_binding(),
             }],
         });
-        let atlas_texture = Self::texture(device, ATLAS, ATLAS, "ui atlas");
+        let atlas_texture = Self::texture(device, size, size, "ui atlas");
         let bind = Self::bind(device, &layout, &sampler, &atlas_texture);
         let capacity = 256;
         Self {
@@ -287,7 +301,7 @@ impl Renderer {
             globals,
             globals_bind,
             atlas: Atlas {
-                size: ATLAS,
+                size,
                 texture: atlas_texture,
                 bind,
                 entries: HashMap::new(),
@@ -310,6 +324,7 @@ impl Renderer {
             fresh: std::cell::Cell::new(true),
             layer_valid: std::cell::Cell::new(false),
             layer_plan: ("none", 0, 0),
+            atlas_grown: grown.max(size),
         }
     }
 
@@ -728,7 +743,9 @@ impl Renderer {
         }
         if self.atlas_full && retry {
             self.atlas_resets += 1;
-            let grown = ATLAS_GROWN.min(device.limits().max_texture_dimension_2d);
+            let grown = self
+                .atlas_grown
+                .min(device.limits().max_texture_dimension_2d);
             if self.atlas.size < grown {
                 self.atlas.size = grown;
                 self.atlas.texture = Self::texture(device, grown, grown, "ui atlas");
@@ -1018,7 +1035,23 @@ impl Renderer {
     }
 
     pub fn draw(&self, encoder: &mut wgpu::CommandEncoder, target: &wgpu::TextureView) {
+        self.draw_with(encoder, target, None);
+    }
+
+    /// Draws the list, then `extra`'s (a small overlay such as the FPS
+    /// readout, prepared by its own renderer) in the same pass: no further
+    /// full-frame load and store for it on tiled GPUs.
+    pub fn draw_with(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        target: &wgpu::TextureView,
+        extra: Option<&Renderer>,
+    ) {
         if self.instances.is_empty() {
+            if let Some(extra) = extra.filter(|e| !e.instances.is_empty()) {
+                let mut pass = Self::begin(encoder, target, wgpu::LoadOp::Load);
+                extra.draw_into(&mut pass);
+            }
             return;
         }
         let layer = self.layer.as_ref().filter(|_| !self.dynamic.is_empty());
@@ -1027,7 +1060,11 @@ impl Renderer {
         let fresh = self.fresh.replace(false);
         let Some(layer) = layer.filter(|_| !fresh) else {
             self.layer_valid.set(false);
-            self.pass(encoder, target, wgpu::LoadOp::Load, |_| true);
+            let mut pass = Self::begin(encoder, target, wgpu::LoadOp::Load);
+            self.draw_into(&mut pass);
+            if let Some(extra) = extra {
+                extra.draw_into(&mut pass);
+            }
             return;
         };
         if !self.layer_valid.replace(true) {
@@ -1046,6 +1083,21 @@ impl Renderer {
         pass.set_bind_group(1, &layer.bind, &[]);
         pass.draw(0..6, quad..quad + 1);
         self.draw_batches(&mut pass, |i| self.dynamic[i]);
+        if let Some(extra) = extra {
+            extra.draw_into(&mut pass);
+        }
+    }
+
+    /// Every instance into a pass already begun on the target (a list
+    /// without a cached layer).
+    fn draw_into(&self, pass: &mut wgpu::RenderPass<'_>) {
+        if self.instances.is_empty() {
+            return;
+        }
+        pass.set_pipeline(&self.pipeline);
+        pass.set_bind_group(0, &self.globals_bind, &[]);
+        pass.set_vertex_buffer(0, self.buffer.slice(..));
+        self.draw_batches(pass, |_| true);
     }
 
     fn begin<'a>(

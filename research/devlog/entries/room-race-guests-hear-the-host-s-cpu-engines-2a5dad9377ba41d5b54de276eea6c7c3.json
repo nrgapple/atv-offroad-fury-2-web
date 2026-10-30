@@ -1,0 +1,12 @@
+{
+  "id": "room-race-guests-hear-the-host-s-cpu-engines-2a5dad9377ba41d5b54de276eea6c7c3",
+  "timestamp": "2026-10-30T04:31:13.682552+00:00",
+  "recorded_at": "2026-10-30T04:31:13.682552+00:00",
+  "kind": "build",
+  "title": "Room race guests hear the host's CPU engines",
+  "summary": "Online room guests now hear the CPU riders' engines. They use the same engine sets and ranges as local CPUs, and the host sends each CPU's real throttle in an existing packet field, so there is no protocol change (PR #467, closes #450).",
+  "details": [
+    "Verified by the room CPU browser test: the guest plays 2 CPU engine voices. Reuses the local CPU engine-voice path on the guest, driven by the throttle value the host already sends."
+  ],
+  "limitation": "Guests do not yet hear CPU yells or crash sounds. Not compared against the original by listening."
+}

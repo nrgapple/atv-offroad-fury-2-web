@@ -977,3 +977,37 @@ Settings values (Options menu rows: per-pointer presses, held keys and
 D-pad repeat). Remaining costs: Select Track and Championships still spend a
 50-75 ms frame per step on list relayout (#468); a settled garage vehicle
 still loads on the page's thread, 0.1-0.45 s at x4 (#469).
+
+### Show FPS (2026-10-30)
+
+Options → Display → **Show FPS** (off by default, saved per device under
+`atv-show-fps`; `?fps=1`/`?fps=0` override it for one page session, and
+`FURY_FPS=1` on desktop) shows a small readout: "60 FPS" over the mean frame
+time and the longest frame of the last second ("16.7 ms · max 18").
+
+- **What it counts.** `Gpu` stamps every frame it hands to the surface
+  (`queue.present` in `present_with`, `render_with` and `render_views`); the
+  app records those stamps after each redraw. On the web these are the
+  animation frames that actually drew; natively the swapchain presents. The
+  rate is the presents inside a rolling 1 s window (an interval that began
+  before it counts by its fraction), not a target, tick rate or smoothed
+  estimate (`atv_ui::fps::FrameRate`, a fixed 512-entry ring).
+- **On-demand menus.** Idle menus and paused rides draw nothing (#414); the
+  readout does not change that. About 1.1 s after the last frame the app
+  draws one more frame that says "idle", then sleeps again. A menu that
+  draws a few frames for an input reads that low rate.
+- **Cost.** The text is rebuilt at most twice a second. Each character is
+  its own atlas glyph on whole device pixels (monospace cells), so changing
+  numbers reuse a few dozen glyphs and nothing rasterizes after the first
+  readouts. The readout has its own small `Renderer` (512² atlas) and is
+  drawn inside the frame's existing UI pass (`Renderer::draw_with`), so the
+  menus' display list, layer cache and pass count are unchanged.
+- **Placement.** Menus: bottom-left on portrait screens (the status bar has
+  the top, Back the bottom right), the middle of the status bar otherwise.
+  Rides: the top-right corner above the speed and lap times, or under a
+  top-right minimap when it is shown. All inside the safe-area insets.
+
+Test: `tools/test_engine_fps.mjs` (Display row, saved choice, readout
+within 10% of an independent rAF count in the page, refreshes, `?fps=1`
+idle menu reading "idle" without drawing more frames). Host headless
+Chromium only; physical phones not measured.

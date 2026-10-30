@@ -384,6 +384,7 @@ impl PauseMenu {
         let mut request = request;
         // Past json!'s recursion limit.
         request["new_profiles_unlocked"] = p.new_profiles_unlocked.into();
+        request["show_fps"] = p.show_fps.into();
         if let Some(b) = ctx.bindings.as_deref() {
             let t = &b.tuning;
             // gamepads.js controllerLabel: Auto, a pinned pad, or a pinned
