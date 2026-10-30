@@ -892,7 +892,9 @@ fn race_cpu_fill_and_cpu_motion_round_trip_and_reject_bad_values() {
         scores: [0; 4],
         ..state.clone()
     };
-    let plain_len = atv_net::encode(&Packet::Game(Box::new(plain))).unwrap().len();
+    let plain_len = atv_net::encode(&Packet::Game(Box::new(plain)))
+        .unwrap()
+        .len();
     assert_eq!(bytes.len(), plain_len + 24);
     for bad in [
         RaceInfo { cpus: 5, ..race },
@@ -943,7 +945,10 @@ fn race_cpu_fill_and_cpu_motion_round_trip_and_reject_bad_values() {
             race: bad,
             ..state.clone()
         };
-        assert!(atv_net::encode(&Packet::Game(Box::new(g))).is_err(), "{bad:?}");
+        assert!(
+            atv_net::encode(&Packet::Game(Box::new(g))).is_err(),
+            "{bad:?}"
+        );
     }
     // A zero CPU count in an encoded block is rejected.
     let mut zero = bytes.clone();
@@ -997,7 +1002,10 @@ fn race_cpu_fill_and_cpu_motion_round_trip_and_reject_bad_values() {
     let mut bad = motion.clone();
     bad.riders[1].index = 0;
     bad.riders[1].pose.peer = CPU_PEER;
-    assert!(atv_net::encode(&Packet::Cpus(Box::new(bad))).is_err(), "duplicate");
+    assert!(
+        atv_net::encode(&Packet::Cpus(Box::new(bad))).is_err(),
+        "duplicate"
+    );
     let mut bad = motion.clone();
     bad.riders[0].distance = f32::NAN;
     assert!(atv_net::encode(&Packet::Cpus(Box::new(bad))).is_err());
@@ -1007,7 +1015,10 @@ fn race_cpu_fill_and_cpu_motion_round_trip_and_reject_bad_values() {
     let mut bad = motion.clone();
     bad.riders.push(bad.riders[0].clone());
     bad.riders.push(bad.riders[0].clone());
-    assert!(atv_net::encode(&Packet::Cpus(Box::new(bad))).is_err(), "five CPUs");
+    assert!(
+        atv_net::encode(&Packet::Cpus(Box::new(bad))).is_err(),
+        "five CPUs"
+    );
     // Truncated or padded packets are rejected.
     let mut short = bytes.clone();
     short.truncate(bytes.len() - 1);

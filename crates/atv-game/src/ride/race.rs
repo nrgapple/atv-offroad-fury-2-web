@@ -1022,7 +1022,9 @@ impl Ride {
         // A room race guest pushes against the host's CPUs; the host's
         // CPUs push back on the host's machine (each applies its own half).
         if !state.puppets_retired {
-            for &(origin, velocity, orientation) in state.puppets.iter().filter_map(|p| p.body.as_ref()) {
+            for &(origin, velocity, orientation) in
+                state.puppets.iter().filter_map(|p| p.body.as_ref())
+            {
                 if vehicle.peer_contact(origin, velocity, orientation, 1.) {
                     race.contacts += 1;
                 }
@@ -1345,7 +1347,9 @@ impl Ride {
             };
             puppet.present(nodes, snapshot, dt, *stale)?;
             let origin = snapshot.atv.position;
-            state.race.reposition_cpu(index, origin, yaw(snapshot.atv.rotation), None);
+            state
+                .race
+                .reposition_cpu(index, origin, yaw(snapshot.atv.rotation), None);
         }
         Ok(())
     }

@@ -2432,9 +2432,14 @@ mod tests {
         let create = layout(request("create-lobby", 390., 844.)).unwrap();
         assert_eq!(create.inputs.len(), 2);
         assert_eq!(create.inputs[1].action, "create-code");
-        // The Room row: a Free Ride, or room Freestyle for every rider.
-        assert_eq!(create.choices, ["hosttrack", "hostmode", "garage"]);
+        // The Room row: a Free Ride, or room Freestyle for every rider;
+        // then the room races' CPU fill (Off by default).
+        assert_eq!(
+            create.choices,
+            ["hosttrack", "hostmode", "hostcpus", "garage"]
+        );
         assert!(create.hits.iter().any(|h| h.label == "Room: Free Ride"));
+        assert!(create.hits.iter().any(|h| h.label == "CPU Riders: Off"));
         let join = layout(request("join-lobby", 390., 844.)).unwrap();
         assert_eq!(join.inputs[1].action, "room-code");
         assert_eq!(join.choices, ["join", "garage"]);

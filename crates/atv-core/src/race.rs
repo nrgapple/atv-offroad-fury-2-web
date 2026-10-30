@@ -1799,7 +1799,9 @@ impl Race {
             o.yaw = yaw;
             *p = Progress::new(origin, &self.course);
         }
-        self.grid_slots = std::iter::once(slot).chain(cpu_slots.iter().copied()).collect();
+        self.grid_slots = std::iter::once(slot)
+            .chain(cpu_slots.iter().copied())
+            .collect();
         Ok(())
     }
     /// A CPU's finish time (race seconds), once across the line.

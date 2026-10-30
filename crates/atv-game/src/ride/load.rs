@@ -282,9 +282,8 @@ pub async fn load_with(
             progress("Reading original race…");
             // A room race's CPUs follow the host's roster draw (its ATV
             // group and rider), so every peer races the same field.
-            let (roster_quad, roster_rider) = settings
-                .room_cpus
-                .map_or((quad, rider), |c| c.roster);
+            let (roster_quad, roster_rider) =
+                settings.room_cpus.map_or((quad, rider), |c| c.roster);
             let mut setup = race_setup(
                 content,
                 &archive,

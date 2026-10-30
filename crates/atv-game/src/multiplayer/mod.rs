@@ -777,7 +777,9 @@ pub fn cpu_motion(
                 index,
                 lap: f.lap.min(10) as u8,
                 distance: f.distance.clamp(-10_000., 1_000_000.),
-                finish_ms: f.finish.map_or(0, |t| ((t * 1000.) as u32).clamp(1, RACE_MAX_MS)),
+                finish_ms: f
+                    .finish
+                    .map_or(0, |t| ((t * 1000.) as u32).clamp(1, RACE_MAX_MS)),
                 pose: Snapshot {
                     peer: atv_net::CPU_PEER + index,
                     sequence,

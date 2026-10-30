@@ -113,6 +113,7 @@ pub struct Field {
 
 /// Start slots for the riders (ascending ids) from the original shuffle
 /// (`001f6350`, `atv_core::race::start_slots`) on a per-race seed.
+#[cfg(test)]
 pub fn grid(ids: &[u8], seed: u64) -> [u8; RACE_RIDERS] {
     grid_with_cpus(ids, 0, seed).0
 }
@@ -147,6 +148,7 @@ pub fn is_cpu(id: u8) -> bool {
 
 impl Field {
     /// A new race for `ids` (the room roster, ascending) at `now` (ms).
+    #[cfg(test)]
     pub fn new(serial: u32, variant: u8, laps: u8, ids: &[u8], seed: u64, now: f64) -> Self {
         Self::with_cpus(serial, variant, laps, ids, CpuFill::default(), seed, now)
     }
@@ -161,7 +163,10 @@ impl Field {
         seed: u64,
         now: f64,
     ) -> Self {
-        let humans = ids.iter().filter(|id| (**id as usize) < RACE_RIDERS).count();
+        let humans = ids
+            .iter()
+            .filter(|id| (**id as usize) < RACE_RIDERS)
+            .count();
         let cpus = fill.count(humans.min(RACE_RIDERS));
         let (grid, cpu_grid) = grid_with_cpus(ids, cpus, seed);
         let some = cpus > 0;
@@ -393,7 +398,12 @@ impl Field {
 pub fn results(state: &GameState, name: &dyn Fn(u8) -> String) -> Vec<Row> {
     let score = |id: u8| match id as usize {
         i if i < RACE_RIDERS => state.scores[i],
-        i => state.race.cpu_scores.get(i - RACE_RIDERS).copied().unwrap_or(0),
+        i => state
+            .race
+            .cpu_scores
+            .get(i - RACE_RIDERS)
+            .copied()
+            .unwrap_or(0),
     };
     let mut ids: Vec<u8> = (0..FIELD as u8).filter(|id| score(*id) > 0).collect();
     ids.sort_by_key(|id| (score(*id), *id));

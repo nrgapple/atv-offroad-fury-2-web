@@ -481,8 +481,7 @@ impl GameState {
                     && (!(1..=26).contains(&r.roster_quad)
                         || r.roster_rider > 1
                         || !(1..=2).contains(&r.difficulty)))
-                || (cpus == 0
-                    && (r.roster_quad != 0 || r.roster_rider != 0 || r.difficulty != 0))
+                || (cpus == 0 && (r.roster_quad != 0 || r.roster_rider != 0 || r.difficulty != 0))
                 || r.cpu_scores
                     .iter()
                     .enumerate()
