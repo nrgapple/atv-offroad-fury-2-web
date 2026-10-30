@@ -1123,6 +1123,7 @@ mod tests {
             hierarchy_nodes: 1,
             width_cells: 16,
             depth_cells: 16,
+            leaf_index: Default::default(),
         };
         let materials = [crate::materials::TerrainMaterial {
             grip: 0.,

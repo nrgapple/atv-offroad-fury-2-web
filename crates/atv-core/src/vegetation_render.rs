@@ -418,6 +418,7 @@ pub(crate) mod tests {
             hierarchy_nodes: 1,
             width_cells: 16,
             depth_cells: 16,
+            leaf_index: Default::default(),
         }
     }
     type Planted = (u8, bool, [u16; 3], i8, i8);

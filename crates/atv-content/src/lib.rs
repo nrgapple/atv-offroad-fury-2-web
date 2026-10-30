@@ -8,6 +8,17 @@
 //! compiled into this crate by default or stored in Git.
 #[cfg(not(target_arch = "wasm32"))]
 pub mod pack;
+#[cfg(target_arch = "wasm32")]
+pub mod pool;
+
+/// Pool job: the SHA-256 of the bytes (32 bytes out). See [`run_job`].
+pub const JOB_SHA256: u32 = 2;
+
+/// Runs a content job ([`JOB_SHA256`]) on this thread; None for other kinds
+/// (the app's decode jobs, `atv_game::offload::run`).
+pub fn run_job(kind: u32, _arg: u32, bytes: &[u8]) -> Option<Result<Vec<u8>>> {
+    (kind == JOB_SHA256).then(|| Ok(Sha256::digest(bytes).to_vec()))
+}
 
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
@@ -297,14 +308,7 @@ impl Content {
         };
         #[cfg(not(target_arch = "wasm32"))]
         let bytes = self.store.read(&name).await?;
-        // Hash in 512 KiB pieces, yielding between them, so verifying a large
-        // file never holds one frame (other riders' models load mid-ride).
-        let mut digest = Sha256::new();
-        for piece in bytes.chunks(512 * 1024) {
-            digest.update(piece);
-            yield_once().await;
-        }
-        if bytes.len() != chunk.bytes || hex(&digest.finalize()) != chunk.sha256 {
+        if bytes.len() != chunk.bytes || digest(&bytes).await != chunk.sha256 {
             return Err(INTEGRITY.into());
         }
         let bytes = std::rc::Rc::new(bytes);
@@ -385,12 +389,7 @@ impl Content {
             .ok_or_else(|| format!("invalid stream record for {path}"))?;
         // Read past the chunk cache: a song is several megabytes, read once.
         let bytes = self.store.read(&format!("{digest}.m4a")).await?;
-        let mut hash = Sha256::new();
-        for piece in bytes.chunks(512 * 1024) {
-            hash.update(piece);
-            yield_once().await;
-        }
-        if bytes.len() != stream.bytes || hex(&hash.finalize()) != digest {
+        if bytes.len() != stream.bytes || self::digest(&bytes).await != digest {
             return Err(INTEGRITY.into());
         }
         Ok(Some(bytes))
@@ -427,24 +426,76 @@ impl Content {
 
 /// Returns to the caller's executor once (the app polls mid-ride loads a
 /// slice per frame; other executors re-poll at once).
+///
+/// On the web a load runs on the page's main thread between its awaits, so
+/// re-polling at once would never let the browser paint or answer input
+/// during a long decode. Once the current stretch of work has run for
+/// [`web::SLICE_MS`], the yield instead waits for a fresh task (a
+/// `MessageChannel` message): the loader paints, pointer and key events
+/// arrive, and the load resumes right after. The work and its order are
+/// unchanged; only where the browser gets the thread back.
+pub fn yield_frame() -> impl std::future::Future<Output = ()> {
+    #[cfg(target_arch = "wasm32")]
+    {
+        web::Breathe::new()
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    Yield(false)
+}
+
+/// Whether the current stretch of main-thread work has run long enough that
+/// the next [`yield_frame`] gives the browser the thread (always false on
+/// desktop, whose app polls loads in slices itself).
+pub fn slice_spent() -> bool {
+    #[cfg(target_arch = "wasm32")]
+    return web::spent();
+    #[cfg(not(target_arch = "wasm32"))]
+    false
+}
+
 fn yield_once() -> impl std::future::Future<Output = ()> {
-    struct Yield(bool);
-    impl std::future::Future for Yield {
-        type Output = ();
-        fn poll(
-            mut self: std::pin::Pin<&mut Self>,
-            cx: &mut std::task::Context<'_>,
-        ) -> std::task::Poll<()> {
-            if self.0 {
-                std::task::Poll::Ready(())
-            } else {
-                self.0 = true;
-                cx.waker().wake_by_ref();
-                std::task::Poll::Pending
-            }
+    yield_frame()
+}
+
+struct Yield(bool);
+
+impl std::future::Future for Yield {
+    type Output = ();
+    fn poll(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<()> {
+        if self.0 {
+            std::task::Poll::Ready(())
+        } else {
+            self.0 = true;
+            cx.waker().wake_by_ref();
+            std::task::Poll::Pending
         }
     }
-    Yield(false)
+}
+
+/// The lowercase hex SHA-256 of `bytes`: on a running decode worker pool
+/// (web), else hashed here in 512 KiB pieces, yielding between them so
+/// verifying a large file never holds one frame (other riders' models load
+/// mid-ride). WebCrypto is not used: Chromium hashes it on the page's own
+/// thread, slower than this hasher.
+async fn digest(bytes: &[u8]) -> String {
+    // While a ride loads its decode workers are up: hash there, beside the
+    // other chunks and decodes, off the page's thread.
+    #[cfg(target_arch = "wasm32")]
+    if pool::running()
+        && let Some(Ok(mut out)) = pool::many(JOB_SHA256, 0, &[bytes]).await
+        && let Some(hash) = out.pop()
+    {
+        return hex(&hash);
+    }
+    let mut hash = Sha256::new();
+    for piece in bytes.chunks(512 * 1024) {
+        hash.update(piece);
+        yield_once().await;
+    }
+    hex(&hash.finalize())
 }
 
 fn hex(bytes: &[u8]) -> String {
@@ -454,8 +505,111 @@ fn hex(bytes: &[u8]) -> String {
 #[cfg(target_arch = "wasm32")]
 mod web {
     use super::Fetch;
+    use std::cell::{Cell, RefCell};
+    use std::collections::VecDeque;
     use wasm_bindgen::JsCast;
+    use wasm_bindgen::prelude::Closure;
     use wasm_bindgen_futures::JsFuture;
+
+    /// Main-thread work between two browser tasks before a yield hands the
+    /// thread back (about half a 60 Hz frame).
+    pub const SLICE_MS: f64 = 8.;
+
+    /// The wake-up channel and its message handler.
+    type Channel = (web_sys::MessageChannel, Closure<dyn FnMut()>);
+
+    thread_local! {
+        /// When the browser last had the thread (a real yield resumed).
+        static RESUMED: Cell<f64> = const { Cell::new(0.) };
+        /// One channel posts every yield's wake-up message; resolvers wait
+        /// in order.
+        static CHANNEL: RefCell<Option<Channel>> =
+            const { RefCell::new(None) };
+        static WAITING: RefCell<VecDeque<js_sys::Function>> = const { RefCell::new(VecDeque::new()) };
+    }
+
+    fn now() -> f64 {
+        web_sys::window()
+            .and_then(|w| w.performance())
+            .map_or_else(js_sys::Date::now, |p| p.now())
+    }
+
+    pub fn spent() -> bool {
+        let now = now();
+        RESUMED.with(|r| {
+            // The first check after an idle stretch starts a new slice.
+            if now - r.get() > 1000. {
+                r.set(now);
+            }
+            now - r.get() >= SLICE_MS
+        })
+    }
+
+    /// A promise resolved by the next message task.
+    fn next_task() -> Option<js_sys::Promise> {
+        CHANNEL.with(|channel| {
+            let mut channel = channel.borrow_mut();
+            if channel.is_none() {
+                let ports = web_sys::MessageChannel::new().ok()?;
+                let wake = Closure::<dyn FnMut()>::new(|| {
+                    if let Some(resolve) = WAITING.with(|w| w.borrow_mut().pop_front()) {
+                        let _ = resolve.call0(&wasm_bindgen::JsValue::NULL);
+                    }
+                });
+                ports
+                    .port1()
+                    .set_onmessage(Some(wake.as_ref().unchecked_ref()));
+                *channel = Some((ports, wake));
+            }
+            let (ports, _) = channel.as_ref()?;
+            let promise = js_sys::Promise::new(&mut |resolve, _| {
+                WAITING.with(|w| w.borrow_mut().push_back(resolve));
+            });
+            ports
+                .port2()
+                .post_message(&wasm_bindgen::JsValue::NULL)
+                .ok()?;
+            Some(promise)
+        })
+    }
+
+    /// [`super::yield_frame`] on the web: a real yield once the slice is
+    /// spent, else the executor's immediate re-poll.
+    pub enum Breathe {
+        Quick(super::Yield),
+        Task(JsFuture),
+    }
+
+    impl Breathe {
+        pub fn new() -> Self {
+            if spent()
+                && let Some(promise) = next_task()
+            {
+                Breathe::Task(JsFuture::from(promise))
+            } else {
+                Breathe::Quick(super::Yield(false))
+            }
+        }
+    }
+
+    impl std::future::Future for Breathe {
+        type Output = ();
+        fn poll(
+            self: std::pin::Pin<&mut Self>,
+            cx: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<()> {
+            match self.get_mut() {
+                Breathe::Quick(y) => std::pin::Pin::new(y).poll(cx),
+                Breathe::Task(f) => match std::pin::Pin::new(f).poll(cx) {
+                    std::task::Poll::Ready(_) => {
+                        RESUMED.with(|r| r.set(now()));
+                        std::task::Poll::Ready(())
+                    }
+                    std::task::Poll::Pending => std::task::Poll::Pending,
+                },
+            }
+        }
+    }
 
     /// A rejection as frontend.js shows it: the Error's `message` (a refused
     /// request is the browser's own "Failed to fetch" TypeError).
@@ -504,6 +658,16 @@ mod tests {
 
     fn manifest(files: &str) -> String {
         format!(r#"{{"version":1,"source_build_sha256":"{SOURCE_BUILD}","files":{files}}}"#)
+    }
+
+    #[test]
+    fn sha_jobs_hash_their_bytes() {
+        let out = run_job(JOB_SHA256, 0, b"abc").unwrap().unwrap();
+        assert_eq!(
+            hex(&out),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+        assert!(run_job(1, 0, b"abc").is_none());
     }
 
     #[test]

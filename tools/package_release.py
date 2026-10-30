@@ -13,7 +13,7 @@ STATIC_FILES = {'fury-remastered-home-180-v1.png', 'fury-remastered-home-192-v1.
                 'devlog.css', 'devlog.js', 'offline.js', 'sw.js',
                 # The game: the shared Rust engine (crates/atv-app, tools/build_engine.py).
                 # play.html is its page; engine.html is the same page's pre-switch name.
-                'play.html', 'engine.html', 'engine.css', 'engine.js', 'atv_app.js', 'atv_app_bg.wasm'}
+                'play.html', 'engine.html', 'engine.css', 'engine.js', 'decode-worker.js', 'atv_app.js', 'atv_app_bg.wasm'}
 # Built into web/dist by tools/build_engine.py rather than authored in web/
 # (engine.html is play.html under its pre-switch name).
 GENERATED_FILES = {'atv_app.js', 'atv_app_bg.wasm', 'engine.html'}

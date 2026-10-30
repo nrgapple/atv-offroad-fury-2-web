@@ -32,6 +32,7 @@ canvas { display: block; width: var(--app-width, 100vw); height: 100vh; height: 
 #loading-detail { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 .loading-meter { justify-self: center; width: min(420px, 70vw); height: 28px; padding: 4px; border-radius: 999px; border: 2px solid #cfcfcf; background: #0b0b0b; overflow: hidden; }
 .loading-meter::after { content: ''; display: block; height: 100%; width: 40%; border-radius: 999px; background: linear-gradient(180deg, #e9d36a 0%, #c3a227 45%, #8f7410 55%, #6d5708 100%); animation: loading-sweep 1.4s ease-in-out infinite; }
+.loading-retry { position: absolute; left: 50%; bottom: max(72px, calc(var(--app-safe-bottom) + 64px)); transform: translateX(-50%); min-height: 44px; padding: 0 20px; border: 2px solid #f1d84e; border-radius: 5px; background: #000000a6; color: #f6e061; font: 700 18px/1 var(--atv-font-display); cursor: pointer; }
 @keyframes loading-sweep { from { transform: translateX(-110%); } to { transform: translateX(360%); } }
 @media (prefers-reduced-motion: reduce) { .loading-meter::after { animation: none; width: 100%; opacity: .65; } }
 

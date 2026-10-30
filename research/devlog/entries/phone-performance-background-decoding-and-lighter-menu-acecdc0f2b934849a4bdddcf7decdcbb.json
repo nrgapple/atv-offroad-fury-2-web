@@ -1,0 +1,21 @@
+{
+  "id": "phone-performance-background-decoding-and-lighter-menu-acecdc0f2b934849a4bdddcf7decdcbb",
+  "timestamp": "2026-10-13T04:41:18.690675+00:00",
+  "recorded_at": "2026-10-29T23:22:24.836806+00:00",
+  "kind": "build",
+  "title": "Phone performance: background decoding and lighter menus",
+  "summary": "Web Worker pool handles background asset decoding; loads yield every 8 ms for smooth animation and 2-5x performance gains",
+  "details": [
+    "Web Worker pool decodes terrain textures, sky, sound banks, menu tune and course photos",
+    "Loads yield every 8 ms, keeping the loader animated and responsive",
+    "Terrain lookup index, UI atlas grows once, previews reused",
+    "'Still loading? Reload' option appears after 20 s",
+    "env01 load time: 19.5 s \u2192 9.8 s (old JS game 10.9 s)",
+    "Longest frozen loader gap: 12.9 s \u2192 1.3 s",
+    "Main menu engine time: 5.4 ms/frame \u2192 2.1 ms/frame",
+    "Select Track menu: 12 fps \u2192 63 fps"
+  ],
+  "limitation": "Host Chromium at 4x CPU throttle (390x844 DPR 3), not physical phone; first-visit stall root cause unknown; second-load caching not implemented yet",
+  "image": "/devlog-images/phone-performance-background-decoding-and-lighter-menu-acecdc0f2b934849a4bdddcf7decdcbb.png",
+  "caption": "Responsive menu transitions during loading"
+}
