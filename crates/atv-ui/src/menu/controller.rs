@@ -119,6 +119,8 @@ pub struct PauseMenu {
     /// Each finger down is its own tap (overlapping fast taps).
     pressed: Vec<Pressed>,
     pad: u32,
+    /// Held D-pad/stick directions' next repeat (Up, Down, Left, Right).
+    pad_repeat: [f64; 4],
     /// The rows were built for this request.
     key: String,
     /// Bindings page: keyboard (true) or controller rows, page and row.
@@ -189,6 +191,7 @@ impl PauseMenu {
             scroller: Scroller::default(),
             hovered: None,
             pressed: Vec::new(),
+            pad_repeat: [f64::INFINITY; 4],
             pad: u32::MAX,
             key: String::new(),
             keyboard: true,
@@ -1069,8 +1072,21 @@ impl PauseMenu {
         set(5, buttons[14] > 0.5 || axes[0] < -0.55);
         set(6, buttons[15] > 0.5 || axes[0] > 0.55);
         // The press that opened the menu does not also act in it.
-        let fresh = held & !self.pad;
+        let mut fresh = held & !self.pad;
         self.pad = held;
+        // A held direction repeats (Settings values, the song list), as on
+        // the front pages.
+        let now = crate::scroll::now();
+        for (i, bit) in (3..=6).enumerate() {
+            if fresh & 1 << bit != 0 {
+                self.pad_repeat[i] = now + crate::front::controller::REPEAT_DELAY;
+            } else if held & 1 << bit == 0 {
+                self.pad_repeat[i] = f64::INFINITY;
+            } else if now >= self.pad_repeat[i] {
+                fresh |= 1 << bit;
+                self.pad_repeat[i] = now + crate::front::controller::REPEAT_EVERY;
+            }
+        }
         let mut event = None;
         for (bit, code) in [
             (3, "ArrowUp"),
@@ -1266,6 +1282,11 @@ impl PauseMenu {
         let viewport = self.scroller.viewport();
         self.scroller.set_bounds(max_scroll, viewport);
         self.scroller.wheel(dy);
+    }
+
+    /// A held direction will repeat: frames must keep coming.
+    pub fn repeating(&self) -> bool {
+        self.pad_repeat.iter().any(|t| t.is_finite())
     }
 
     pub fn cancel_pointer(&mut self) {
