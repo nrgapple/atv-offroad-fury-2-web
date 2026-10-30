@@ -1616,6 +1616,11 @@ pub struct Frame {
     /// A championship round's context, attached by the simulation.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub championship: Option<crate::championship::Round>,
+    /// The Duel event type (research/RACING.md "Duel event type"), attached
+    /// by the simulation: two humans, no CPUs, no Final Lap sign, and no
+    /// Profile Points (`001f1e30` credits only a lone human).
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub duel: bool,
 }
 impl Frame {
     /// The LAP overlay value (`002db860`): "%d / %d" in a race, the lap
@@ -2467,6 +2472,7 @@ impl Race {
             crowd: None,
             gate: None,
             championship: None,
+            duel: false,
             opponents: self.opponents.clone(),
             player_stunts: self.player_stunts,
             records: self

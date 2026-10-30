@@ -1310,7 +1310,13 @@ impl Overlay {
                 // Online competition saves neither profile progress nor Hall
                 // of Fame records (USA manual pp. 36–37).
                 if self.results.finish(frame) {
-                    if self.lobby.is_none() {
+                    if self.lobby.is_none() && frame.duel {
+                        // A Duel seats two humans: `001f1e30` credits Profile
+                        // Points and personal records only to a lone human,
+                        // but still offers the Hall of Fame (`003325d0`).
+                        self.results.no_award();
+                        self.record_fame(frame);
+                    } else if self.lobby.is_none() {
                         self.credit_profile(frame);
                         self.record_fame(frame);
                     } else {

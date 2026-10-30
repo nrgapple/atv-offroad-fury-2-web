@@ -34,6 +34,9 @@ pub struct Input<'a> {
     pub racing: bool,
     pub finished: bool,
     pub laps: u32,
+    /// Show "Final Lap" as the last lap begins (`001e9a00` does in Single
+    /// Race only, so not in a Duel).
+    pub final_lap_sign: bool,
     /// Player's completed lap times, oldest first.
     pub lap_times: &'a [f32],
     pub best_lap: Option<usize>,
@@ -162,7 +165,7 @@ impl RaceHud {
                 self.say(format!("Lap Time {}", time_text(*time)), LAP_TIME_SECONDS);
             }
             self.history = Some(HISTORY_SECONDS);
-            if laps as u32 + 1 == input.laps {
+            if input.final_lap_sign && laps as u32 + 1 == input.laps {
                 self.show(FINAL_LAP);
             }
         }
@@ -296,6 +299,7 @@ mod tests {
             racing: true,
             finished: false,
             laps: 3,
+            final_lap_sign: true,
             lap_times: laps,
             best_lap: None,
             place: ranks[0],
@@ -365,6 +369,16 @@ mod tests {
         }
         assert!(f.history.is_none());
         assert_eq!(f.listing_alpha, 1.);
+    }
+    #[test]
+    fn a_duel_shows_lap_time_but_no_final_lap() {
+        let mut hud = RaceHud::default();
+        let laps = [62.5, 60.25];
+        let mut i = input(&laps, &[1, 2]);
+        i.final_lap_sign = false;
+        let f = hud.step(0.1, &i);
+        assert_eq!(f.infotext.as_deref(), Some("Lap Time 01:00.25"));
+        assert!(f.sign.is_none(), "no Final Lap outside Single Race");
     }
     #[test]
     fn finish_place_sign_and_sliding_names() {

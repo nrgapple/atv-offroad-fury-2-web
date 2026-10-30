@@ -14,8 +14,10 @@
 //!   (profile +0x1a08) is set, and online (+0x7d8) also skips Objectives
 //!   and Lap Attack.
 //!
-//! The port builds only some types; [`EventType::built`] lists them, so Duel
-//! and Lap Attack slot in by adding them there.
+//! The port builds only some types; [`EventType::built`] lists them, so Lap
+//! Attack slots in by adding it there. Duel (research/RACING.md "Duel event
+//! type") is two humans with no CPUs (`0021d9f0`), so the cycler offers it
+//! only in split screen.
 use serde::Serialize;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize)]
@@ -77,10 +79,25 @@ impl EventType {
     pub fn from_key(key: &str) -> Option<Self> {
         ALL.into_iter().find(|t| t.key() == key)
     }
-    /// The race page's types the port has built (Duel and Lap Attack come
-    /// later; Freeride on a race course is not offered there).
+    /// The race page's types the port has built (Lap Attack comes later;
+    /// Freeride on a race course is not offered there).
     pub fn built(self) -> bool {
-        matches!(self, Self::SingleRace | Self::Practice)
+        matches!(self, Self::SingleRace | Self::Practice | Self::Duel)
+    }
+    /// The rider count's CPU share (`0021d9f0`): Lap Attack and Duel race
+    /// no CPUs.
+    pub fn has_cpus(self) -> bool {
+        !matches!(self, Self::LapAttack | Self::Duel)
+    }
+    /// The most humans the event seats: Duel is two players only (USA
+    /// manual pp. 16-17); the others take the split screen's four.
+    pub fn max_players(self) -> usize {
+        if self == Self::Duel { 2 } else { 4 }
+    }
+    /// The lap event's "Final Lap" sign (`001e9a00`) shows only in mode 0
+    /// (Single Race), not in a Duel.
+    pub fn final_lap_sign(self) -> bool {
+        self == Self::SingleRace
     }
     /// The race-session mode the Start handler `0026b7a0` writes to profile
     /// +0: 0 for Single Race, 1 for Practice, 2 for Lap Attack, 5 for Duel.
@@ -142,8 +159,14 @@ mod tests {
             offered(RACE_TRACK_MASK, false, false),
             vec![EventType::SingleRace, EventType::Practice]
         );
+        // Split screen adds Duel (`0026d010` skips it otherwise).
         assert_eq!(
             offered(RACE_TRACK_MASK, true, false),
+            vec![EventType::SingleRace, EventType::Practice, EventType::Duel]
+        );
+        // Online skips Duel even with the multiplayer flag.
+        assert_eq!(
+            offered(RACE_TRACK_MASK, true, true),
             vec![EventType::SingleRace, EventType::Practice]
         );
         // Stunt lists (88) have neither.
@@ -167,6 +190,20 @@ mod tests {
         assert_eq!(step(EventType::Practice, 1, &o), EventType::SingleRace);
         assert_eq!(step(EventType::SingleRace, -1, &o), EventType::Practice);
         assert_eq!(step(EventType::Duel, 1, &o), EventType::SingleRace);
+    }
+
+    #[test]
+    fn duel_is_two_players_with_laps_a_finish_and_no_cpus() {
+        let d = EventType::Duel;
+        assert!(d.has_laps() && d.has_finish());
+        assert!(!d.has_cpus() && !d.final_lap_sign());
+        assert_eq!(d.max_players(), 2);
+        assert_eq!(d.index(), 5);
+        assert_eq!(EventType::from_key("duel"), Some(d));
+        assert!(EventType::SingleRace.has_cpus() && EventType::SingleRace.final_lap_sign());
+        let split = offered(RACE_TRACK_MASK, true, false);
+        assert_eq!(step(EventType::Practice, 1, &split), d);
+        assert_eq!(step(d, 1, &split), EventType::SingleRace);
     }
 
     #[test]

@@ -3084,6 +3084,7 @@ impl App {
                 })
             });
             let practice = riding.ride.race().map(|r| r.settings().practice);
+            let duel = riding.ride.race().map(|r| r.settings().duel);
             state["ride"] = serde_json::json!({
                 "environment": ready.venue.environment,
                 "championship": riding.ride.race().and_then(|r| r.settings().championship),
@@ -3140,6 +3141,7 @@ impl App {
                     .map(|f| serde_json::json!({"broken": f.broken, "name": f.name})),
             });
             state["ride"]["practice"] = practice.into();
+            state["ride"]["duel"] = duel.into();
             state["ride"]["raceLap"] = race_lap.into();
             // Player 1's positional sounds: listeners (one per view) and the
             // one nearest player 1's rider (0 = player 1's camera).
@@ -6923,14 +6925,17 @@ impl App {
                 cheats: (aggressive, all_out),
                 championship,
                 practice,
+                duel,
             } => {
                 let settings = atv_game::ride::race::Settings {
                     championship,
                     practice,
+                    duel,
                     // `?raceLaps=1` (test tooling): one-lap menu races, so a
                     // browser test can race championship rounds in turn.
                     laps: if url_flag("raceLaps=1") { 1 } else { laps },
-                    cpu: cpu as usize,
+                    // A Duel races no CPUs (`0021d9f0`).
+                    cpu: if duel { 0 } else { cpu as usize },
                     difficulty,
                     aggressive,
                     all_out,
@@ -9503,9 +9508,16 @@ pub fn start() {
         race: param("race").is_some_and(|v| v == "1").then(|| {
             let number = |key: &str| param(key).and_then(|v| v.parse::<u64>().ok());
             let defaults = atv_game::ride::race::Settings::default();
+            // `event=duel` with `split=`: the split-screen Duel (no CPUs).
+            let duel = param("event").as_deref() == Some("duel") && param("split").is_some();
             atv_game::ride::race::Settings {
                 laps: number("laps").map_or(defaults.laps, |v| v as u32),
-                cpu: number("cpu").map_or(defaults.cpu, |v| v as usize),
+                cpu: if duel {
+                    0
+                } else {
+                    number("cpu").map_or(defaults.cpu, |v| v as usize)
+                },
+                duel,
                 difficulty: number("difficulty").map_or(defaults.difficulty, |v| v as u32),
                 seed: number("seed").unwrap_or(defaults.seed),
                 // `course=enduro-long|enduro-short|short-track`: the venue's
