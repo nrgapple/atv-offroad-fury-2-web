@@ -208,7 +208,10 @@ enum Message {
     /// Lobby page showed: (the room, its course).
     RoomJoined(Box<Result<(multiplayer::Net, String), String>>),
     /// Another rider's engine bank finished loading.
-    RemoteEngine(u16, Box<Result<atv_game::audio::remote::Engine, String>>),
+    RemoteEngine(
+        atv_game::audio::remote::EngineKey,
+        Box<Result<atv_game::audio::remote::Engine, String>>,
+    ),
     /// Web: the canvas lost its WebGL context, and got it back (context.rs).
     #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
     ContextLost,
@@ -1827,11 +1830,14 @@ impl App {
             motion.origin,
             motion.linear_velocity,
         );
-        // Alpha Air dark blur follows the director's big-air amount.
-        ready.scene.set_air_blur(&ready.gpu, riding.air_blur());
+        // Alpha Air dark blur follows the director's big-air moment.
+        ready
+            .scene
+            .set_air_blur(&ready.gpu, riding.alpha_air_blur, riding.air_blur());
         let room_started = Instant::now();
         let mut loads = Vec::new();
         let mut engine_loads = Vec::new();
+        let mut room_riders = Vec::new();
         let mut course = None;
         let mut room_load = None;
         let mut game_join = None;
@@ -1862,18 +1868,9 @@ impl App {
             if let Some(closed) = &net.closed {
                 ended = Some((room_page(net.shared()), closed.clone()));
             }
-            if let Some(sound) = &mut riding.sound {
-                let motion = riding.ride.frame();
-                for quad in sound.remote_frame(
-                    &net.riders,
-                    motion.origin,
-                    &ready.camera,
-                    motion.linear_velocity,
-                    &[],
-                ) {
-                    engine_loads.push((quad, sound.load_remote_engine(quad)));
-                }
-            }
+            // The room riders' voices play below with the split players'
+            // and race CPUs' (one remote frame per rendered frame).
+            room_riders.clone_from(&net.riders);
             let content = net.content();
             loads.extend(tick.loads.into_iter().map(|key| (content.clone(), key)));
             course = tick.course;
@@ -2021,9 +2018,15 @@ impl App {
         {
             sound.ride.views.clear();
         }
-        if let (false, Some(sound)) = (ready.split.is_empty(), &mut riding.sound) {
+        // Race CPUs (player 1's race, shared by split screen) join the
+        // same voices: engines by the race sound table's sets, plus their
+        // vocals, body impacts and chassis sounds (research/AUDIO.md "CPU
+        // riders").
+        if let Some(sound) = &mut riding.sound {
+            let cpus = riding.ride.take_cpu_sounds();
             let motion = riding.ride.frame();
-            let riders: Vec<_> = ready.split.iter_mut().map(|s| s.audio_rider()).collect();
+            let mut riders = std::mem::take(&mut room_riders);
+            riders.extend(ready.split.iter_mut().map(|s| s.audio_rider()));
             let views: Vec<_> = ready
                 .split
                 .iter()
@@ -2033,15 +2036,24 @@ impl App {
                     velocity: s.riding.ride.frame().linear_velocity,
                 })
                 .collect();
-            sound.ride.views.clone_from(&views);
-            for quad in sound.remote_frame(
-                &riders,
-                motion.origin,
-                &ready.camera,
-                motion.linear_velocity,
-                &views,
-            ) {
-                engine_loads.push((quad, sound.load_remote_engine(quad)));
+            if !ready.split.is_empty() {
+                sound.ride.views.clone_from(&views);
+            }
+            if ready.net.is_some()
+                || !riders.is_empty()
+                || !cpus.is_empty()
+                || sound.remote.voices() > 0
+            {
+                for key in sound.remote_frame(
+                    &riders,
+                    &cpus,
+                    motion.origin,
+                    &ready.camera,
+                    motion.linear_velocity,
+                    &views,
+                ) {
+                    engine_loads.push((key, sound.load_remote_engine(key)));
+                }
             }
         }
         for (quad, future) in engine_loads {
@@ -3819,6 +3831,7 @@ impl App {
                         if let Some(sound) = &mut riding.sound {
                             sound.remote_frame(
                                 &[],
+                                &[],
                                 motion.origin,
                                 &ready.camera,
                                 motion.linear_velocity,
@@ -5459,7 +5472,7 @@ impl ApplicationHandler<Message> for App {
                     window.request_redraw();
                 }
             }
-            Message::RemoteEngine(quad, engine) => match *engine {
+            Message::RemoteEngine(key, engine) => match *engine {
                 Ok(engine) => {
                     if let Some(sound) = self
                         .ready
@@ -5467,7 +5480,7 @@ impl ApplicationHandler<Message> for App {
                         .and_then(|r| r.riding.as_mut())
                         .and_then(|r| r.sound.as_mut())
                     {
-                        sound.remote.add_engine(quad, engine);
+                        sound.remote.add_engine(key, engine);
                     }
                 }
                 Err(error) => status(&format!("Remote engine sound unavailable: {error}")),
@@ -7904,6 +7917,7 @@ impl App {
             if let Some(sound) = &mut riding.sound {
                 sound.remote_frame(
                     &[],
+                    &[],
                     motion.origin,
                     &ready.camera,
                     motion.linear_velocity,
@@ -8963,9 +8977,30 @@ impl App {
             }
             return;
         }
-        let Some((race, room_race::Action::Load(settings))) =
-            room_race::RoomRace::host(net, self.room_race_serial, variant, laps, fresh_seed())
-        else {
+        // Host Game → CPU Riders (`roomCpus=N` test hook): the field size
+        // CPUs fill to, with the host's garage and Race difficulty.
+        let field = (0..=5u8)
+            .find(|n| url_flag(&format!("roomCpus={n}")))
+            .or_else(|| self.front.as_ref().map(|f| f.borrow().state.host_cpu_field))
+            .unwrap_or(0);
+        let (quad, rider) = net.look();
+        let fill = room_race::CpuFill {
+            field,
+            quad: quad.clamp(1, 26) as u8,
+            rider: rider.min(1) as u8,
+            difficulty: self
+                .front
+                .as_ref()
+                .map_or(1, |f| f.borrow().state.race.difficulty.clamp(1, 2) as u8),
+        };
+        let Some((race, room_race::Action::Load(settings))) = room_race::RoomRace::host(
+            net,
+            self.room_race_serial,
+            variant,
+            laps,
+            fill,
+            fresh_seed(),
+        ) else {
             return;
         };
         self.room_race_serial = race.field.serial;

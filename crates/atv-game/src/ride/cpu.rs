@@ -73,8 +73,57 @@ fn stuck_clock(stuck: f32, hold: bool, riding: bool, speed: f32, dt: f32) -> f32
     }
 }
 
+/// One fixed step's sound inputs for a CPU's quad and rider emitters: the
+/// fields of the player's [`super::sound::AudioStep`] that the original
+/// per-quad (`001e33c0`: engine, chassis) and per-rider (`002d6380`:
+/// vocals, body impact) emitters read. Every rider object builds these
+/// emitters, CPUs included.
+#[derive(Clone, Debug, Default)]
+pub struct CpuSoundStep {
+    pub events: atv_core::vehicle::AudioEvents,
+    pub chassis: atv_core::quad_sounds::ChassisInput,
+    pub origin: [f32; 3],
+    pub velocity: [f32; 3],
+    /// The actor sound position (`001e7600`): the quad origin while riding
+    /// or attached; detached phases keep the last attached point.
+    pub rider_position: [f32; 3],
+    /// The detached rider body's sampled contact delta (zero while riding).
+    pub rider_impact: [f32; 3],
+    pub riding: bool,
+    /// The vehicle reset count (a reset clears the emitters' latches).
+    pub reset_count: u32,
+}
+
+/// A CPU racer as the audio layer hears it this frame.
+#[derive(Clone, Debug, Default)]
+pub struct CpuSound {
+    /// The CPU's index in the race (its roster entry).
+    pub index: usize,
+    /// The original quad number (`vehicle.aud` `QuadN`).
+    pub quad: u32,
+    /// Rider +268: the Female vocal lists.
+    pub female: bool,
+    pub origin: [f32; 3],
+    pub velocity: [f32; 3],
+    pub throttle: f32,
+    pub speed: f32,
+    /// On the ground and not wrecked or recovering (the engine state's
+    /// riding input, as the room riders' `RiderState::Riding`).
+    pub riding: bool,
+    pub steps: Vec<CpuSoundStep>,
+}
+
+/// Steps of sound kept for the audio layer between reads (the player's
+/// frontend batch bound); older steps are dropped while nothing reads them.
+pub const SOUND_STEPS: usize = 64;
+
 pub struct CpuRacer {
     pub vehicle: Vehicle,
+    /// Sound inputs since the audio layer last took them.
+    sound: Vec<CpuSoundStep>,
+    /// The throttle the driver applied on the latest step.
+    throttle: f32,
+    rider_audio_position: [f32; 3],
     driver: Driver,
     rider: rider_pose::Animator,
     wreck: wreck_animation::Animator,
@@ -121,8 +170,12 @@ impl CpuRacer {
         let rider = animator.fork_racer(nodes)?;
         let mut wreck = wreck.fork_racer(nodes, 97211 + index as u64 * 47)?;
         wreck.set_static_obstacles(sim.obstacles.clone());
+        let rider_audio_position = vehicle.frame().origin;
         Ok(Self {
             vehicle,
+            sound: Vec::new(),
+            throttle: 0.,
+            rider_audio_position,
             rider,
             wreck,
             mode: None,
@@ -209,6 +262,7 @@ impl CpuRacer {
         self.vehicle.set_rider_mode(self.mode);
         self.vehicle
             .set_forced_landing(self.rider.landing_frame().is_some());
+        self.throttle = input.throttle;
         let wreck = &mut self.wreck;
         let stepped =
             self.vehicle
@@ -278,6 +332,7 @@ impl CpuRacer {
             DT,
         );
         let rider_wreck = self.wreck.frame();
+        self.capture_sound(&frame, rider_wreck.as_ref(), world)?;
         let rider_matrices = if rider_wreck.is_some() {
             self.wreck.pose(world.nodes)?.world_matrices
         } else {
@@ -306,6 +361,65 @@ impl CpuRacer {
         Ok((frame, pose, repositioned))
     }
 
+    fn capture_sound(
+        &mut self,
+        frame: &VehicleFrame,
+        rider: Option<&wreck_animation::Frame>,
+        world: &World<'_>,
+    ) -> Result<()> {
+        let events = self.vehicle.take_audio_events();
+        if frame.wreck.phase == Phase::Riding
+            || rider.is_none_or(|r| r.phase == wreck_animation::Phase::Attached)
+        {
+            self.rider_audio_position = frame.origin;
+        }
+        let ground = world
+            .terrain
+            .contact(frame.origin[0], frame.origin[2])?
+            .map(|hit| hit.height);
+        if self.sound.len() >= SOUND_STEPS {
+            self.sound.remove(0);
+        }
+        self.sound.push(CpuSoundStep {
+            chassis: atv_core::quad_sounds::ChassisInput {
+                impact: events.impact,
+                wrecked: frame.wreck.phase != Phase::Riding,
+                airborne: ground.is_some_and(|g| frame.origin[1] - g > 2.),
+                chassis_contact: frame.chassis_contact_count + frame.obstacle_contact_count > 0,
+            },
+            events,
+            origin: frame.origin,
+            velocity: frame.linear_velocity,
+            rider_position: self.rider_audio_position,
+            rider_impact: rider.map_or([0.; 3], |r| r.sampled_impact_delta),
+            riding: frame.wreck.phase == Phase::Riding,
+            reset_count: frame.reset_count,
+        });
+        Ok(())
+    }
+
+    /// The sound steps since the last call, oldest first.
+    pub fn take_sound(&mut self) -> Vec<CpuSoundStep> {
+        std::mem::take(&mut self.sound)
+    }
+
+    /// The throttle the driver applied on the latest step.
+    pub fn throttle(&self) -> f32 {
+        self.throttle
+    }
+
+    /// The rider's replicable animation recipe (room race CPU motion).
+    pub fn recipe(&self) -> rider_pose::Recipe {
+        self.rider.recipe()
+    }
+
+    /// The detached rider's world matrix and velocity during a wreck.
+    pub fn rider_wreck(&self) -> Option<([f32; 16], [f32; 3])> {
+        self.wreck
+            .frame()
+            .map(|w| (w.world_matrix, w.linear_velocity))
+    }
+
     pub fn stuck_time(&self) -> f32 {
         self.stuck
     }
@@ -323,6 +437,110 @@ impl CpuRacer {
         self.rider.reset(nodes)?;
         self.mode = None;
         self.driver.repositioned();
+        Ok(())
+    }
+}
+
+/// A room race's CPU on a guest (research/MULTIPLAYER.md "Room race
+/// CPUs"): it does not race here; it is drawn from the host's relayed
+/// motion with its own quad linkage and the CPU rider rig, as a remote
+/// rider is (`multiplayer::remote::Local`).
+pub struct Puppet {
+    quad_pose: Rc<QuadPose>,
+    rider: rider_pose::Animator,
+    wreck: wreck_animation::Animator,
+    crash: u32,
+    wreck_time: f32,
+    initialized: bool,
+    /// The drawn pose: the grid until the host's motion arrives.
+    pub pose: Option<super::Pose>,
+    /// (origin, velocity, orientation) the player pushes against; None
+    /// until heard and while stale.
+    pub body: Option<([f32; 3], [f32; 3], [f32; 4])>,
+}
+
+impl Puppet {
+    pub(super) fn new(
+        (animator, wreck): (&rider_pose::Animator, &wreck_animation::Animator),
+        nodes: &[Node],
+        model: &CpuModel,
+        index: usize,
+    ) -> Result<Self> {
+        Ok(Self {
+            quad_pose: model.quad_pose.clone(),
+            rider: animator.fork_racer(nodes)?,
+            wreck: wreck.fork_racer(nodes, 97211 + index as u64 * 47)?,
+            crash: 0,
+            wreck_time: 0.,
+            initialized: false,
+            pose: None,
+            body: None,
+        })
+    }
+
+    /// Pose from a presented snapshot `dt` seconds after the last.
+    pub fn present(
+        &mut self,
+        nodes: &[Node],
+        s: &atv_net::Snapshot,
+        dt: f32,
+        stale: bool,
+    ) -> Result<()> {
+        let a = s.animation.as_ref().ok_or("CPU animation missing")?;
+        let quad_nodes = self.quad_pose.sample(a.steering, a.wheels, a.compression)?;
+        let step = if stale { 0. } else { dt };
+        let blend_dt = if self.initialized { dt } else { 0.25 };
+        self.initialized = true;
+        let quad_world = s.atv.to_column_major();
+        let (rider_world, rider_nodes) = if s.rider_state == atv_net::RiderState::Wreck {
+            if self.crash != s.crash_serial {
+                self.crash = s.crash_serial;
+                self.wreck_time = 0.;
+            }
+            self.wreck_time += step;
+            // The air/bounce clips run on this receiver's clock; the
+            // detached root is replicated (as for remote riders).
+            let settled = s.rider_velocity.iter().map(|v| v * v).sum::<f32>() < 4.;
+            let clip = if settled {
+                self.crash as usize % 4
+            } else {
+                4 + self.crash as usize % 4
+            };
+            let m = self.wreck.motion(clip).ok_or("CPU wreck clip missing")?;
+            let time = self.wreck_time.rem_euclid(m.animation.duration.max(0.001));
+            (
+                s.rider.to_column_major(),
+                m.animation
+                    .sample_pose(nodes, time, m.sampling)?
+                    .world_matrices,
+            )
+        } else {
+            self.wreck_time = 0.;
+            (
+                quad_world,
+                self.rider
+                    .present(
+                        nodes,
+                        rider_pose::Recipe {
+                            clips: a.clips,
+                            count: a.count,
+                            phase: a.phase,
+                            first_weight: a.first_weight,
+                            pair_weight: a.pair_weight,
+                            look_phase: a.look_phase,
+                        },
+                        blend_dt,
+                    )?
+                    .world_matrices,
+            )
+        };
+        self.pose = Some(super::Pose {
+            quad_world,
+            quad_nodes,
+            rider_world,
+            rider_nodes,
+        });
+        self.body = (!stale).then_some((s.atv.position, s.velocity, s.atv.rotation));
         Ok(())
     }
 }

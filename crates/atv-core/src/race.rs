@@ -1772,6 +1772,42 @@ impl Race {
         self.grid_slots = vec![slot];
         Ok(())
     }
+    /// A room race with CPU riders (research/MULTIPLAYER.md "Room race
+    /// CPUs", authored): the player takes start slot `slot` and each CPU
+    /// its `cpu_slots` entry on a grid of `riders` (humans and CPUs). Only
+    /// before the race moves; one slot per CPU.
+    pub fn set_room_grid(&mut self, slot: u32, riders: usize, cpu_slots: &[u32]) -> Result<()> {
+        let valid = |s: u32| (1..=riders as u32).contains(&s);
+        if self.elapsed != 0.
+            || !(1..=8).contains(&riders)
+            || cpu_slots.len() != self.opponents.len()
+            || !valid(slot)
+            || cpu_slots.iter().any(|s| !valid(*s) || *s == slot)
+        {
+            return Err("invalid room race grid".into());
+        }
+        self.player_grid = self.course.grid(slot, riders);
+        self.player = Progress::new(self.player_grid.0, &self.course);
+        for ((o, p), s) in self
+            .opponents
+            .iter_mut()
+            .zip(&mut self.progress)
+            .zip(cpu_slots)
+        {
+            let (origin, yaw) = self.course.grid(*s, riders);
+            o.origin = origin;
+            o.yaw = yaw;
+            *p = Progress::new(origin, &self.course);
+        }
+        self.grid_slots = std::iter::once(slot)
+            .chain(cpu_slots.iter().copied())
+            .collect();
+        Ok(())
+    }
+    /// A CPU's finish time (race seconds), once across the line.
+    pub fn cpu_finish(&self, index: usize) -> Option<f32> {
+        self.progress.get(index).and_then(|p| p.finish)
+    }
     /// The player's race distance from the grid along the racing line.
     pub fn player_distance(&self) -> f32 {
         self.player.distance

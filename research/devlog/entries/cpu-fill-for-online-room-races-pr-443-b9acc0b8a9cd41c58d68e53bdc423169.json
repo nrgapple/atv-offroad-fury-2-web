@@ -1,0 +1,12 @@
+{
+  "id": "cpu-fill-for-online-room-races-pr-443-b9acc0b8a9cd41c58d68e53bdc423169",
+  "timestamp": "2026-10-30T02:06:06.490740+00:00",
+  "recorded_at": "2026-10-30T02:06:06.490740+00:00",
+  "kind": "build",
+  "title": "CPU fill for online room races (PR #443)",
+  "summary": "Hosts can now fill an online room race with up to 4 or 5 CPU riders. Guests see the CPUs in the race, the standings and the results.",
+  "details": [
+    "Host Game has a new CPU Riders row (Off, Fill to 4, Fill to 5). It is off by default because the manual has online races human-only, and it is hidden for Room: Freestyle. The host simulates the CPUs with the ordinary race AI, using the host's Race difficulty, ATV group and rider for the roster draw, so every peer gets the same names and quads. A new CPU packet (kind 16, 10 Hz racing, 2 Hz otherwise) carries each CPU's laps, distance, finish time and pose. Guests draw them as puppets and include them in the PLACE tree, standings and agreed results. Verification: protocol, room_race and menu unit tests, workspace tests and clippy pass, and the relay browser test test_engine_multiplayer_race_cpus passes with a five-rider grid where the guest sees the CPUs move and both pages agree on the results. No screenshot was captured."
+  ],
+  "limitation": "Guests do not hear CPU engines. Guests see the CPUs slightly behind the host (smoothing delay plus half the relay round trip), so close contacts are judged on slightly different positions. Host handoff with CPUs is covered by unit tests only."
+}

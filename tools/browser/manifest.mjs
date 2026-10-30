@@ -99,6 +99,10 @@ export const TESTS = {
     group: 'relay',
     reason: 'needs the multiplayer relay at the same origin (Rust host and guest race a Supercross room); run with --url'
   },
+  'test_engine_multiplayer_race_cpus.mjs': {
+    group: 'relay',
+    reason: 'needs the multiplayer relay at the same origin (Rust host and guest race a Supercross room filled with host-simulated CPUs); run with --url'
+  },
   'test_engine_games_tag.mjs': {
     group: 'relay',
     reason: 'needs the multiplayer relay at the same origin (Games → Tag hosts a room; a Rust guest joins); run with --url'
@@ -159,6 +163,7 @@ export const TESTS = {
   },
   'test_engine_preview.mjs': { group: 'content-free' },
   'test_engine_race.mjs': { group: 'content' },
+  'test_engine_cpu_audio.mjs': { group: 'content' },
   'test_engine_split_screen.mjs': { group: 'content', timeout: 900 },
   'test_engine_split_games.mjs': { group: 'content', timeout: 900 },
   'test_engine_split_tag.mjs': { group: 'content', timeout: 600 },

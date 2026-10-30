@@ -626,8 +626,9 @@ race packet, start synchronization or result agreement has been recovered
 - **Next race.** On the results panel the host's Race Again starts a new race
   (new serial, new grid) for everyone; Quit returns the rider to the room's
   Free Ride on the same course.
-- **No CPU fill yet.** The manual has online races human-only; optional CPU
-  fill (host-simulated CPUs replicated to guests) is not built.
+- **CPU fill.** The manual has online races human-only; the port adds an
+  optional host-simulated CPU field ("Room race CPUs" below), off by
+  default.
 
 ### Protocol (version 6, compatible)
 
@@ -727,6 +728,92 @@ Two related fixes from the same investigation:
 - A room race ends with its room: when the room closes while no frontend is
   open, the race state is cleared instead of holding the ride on a race whose
   host is gone.
+
+### Room race CPUs (2026-10-29)
+
+User decision: every mode that works in split screen also works in online
+rooms; two-player split races run with CPUs, so room races can too. The
+original's online races are human-only (manual) and its online protocol is
+not used: this is a **port adaptation**, authored on the room-race loop
+above.
+
+- **Setup.** Host Game shows **CPU Riders: Off / Fill to 4 / Fill to 5**
+  (Left/Right or Enter steps it; hidden while Room: Freestyle is chosen).
+  Off is the default (the manual's human-only races). Fill to N tops the
+  race up to N riders with CPUs, at most four, so 2 humans with Fill to 5
+  race 3 CPUs and 4 humans with Fill to 4 race none. 4 and 5 are the
+  original single race's fields with three or four CPUs (the Race menu's
+  CPU choices); 5 is also the most names the original PLACE tree shows.
+  The CPUs use the host's Race difficulty and the host's ATV group and
+  rider for the original roster draw (`race_roster::select`), so every peer
+  draws the same names, quads and outfits from the race serial.
+  `roomCpus=N` (web) sets the fill for tests.
+- **Grid.** One original start-slot shuffle (`001f6350`) over the humans
+  then the CPUs (`room_race::grid_with_cpus`, as the original draws the
+  player first). `Race::set_room_grid` places the player and every CPU on
+  the shared `Course::grid(slot, riders)`.
+- **Host simulates.** The room host's own race runs the CPUs with the
+  ordinary race AI, recovery and contacts (as single player and split
+  screen). The room's riders are human peers to them through the split
+  screen's `SplitLink::humans` (the CPUs steer around them, RaceStatus flag
+  4, and push against them), and `SplitLink::waiting` holds the host's race
+  open until the room's results so the CPUs finish for real rather than
+  getting estimated times at the host's own finish.
+- **Relay message.** The host sends `Packet::Cpus` (kind 16) 10 times a
+  second while racing (2 Hz on the grid): the race serial and, per CPU, its
+  index, laps, race distance, finish ms and a compact full pose (the
+  rider snapshot codec, id `CPU_PEER + index` = 4–7, quad, steering, wheels,
+  suspension, rider animation recipe, wreck root). Three CPUs encode in
+  about 450 bytes. Validation: serial nonzero, at most four CPUs, unique
+  indices, id matching the index, bounded laps, distance and times, every
+  pose validated as a rider snapshot; truncated or padded packets are
+  rejected. The relay forwards it only from the host of a started private
+  room, ready on the room's map, to race-aware riders on that map (the same
+  rule as race `GameState`), under the per-connection message and byte
+  budget.
+- **Race state.** `GameState` game 3 appends a 24-byte CPU block only when
+  the race has CPUs (count, the host's roster ATV, rider and difficulty,
+  each CPU's start slot and each CPU's result), so a human-only race keeps
+  the previous 6-byte race block. Validation bounds the count (≤ 4), slots
+  (within the field), roster values and results like the riders'.
+- **Guests draw.** A guest loads the same race with the CPUs as puppets
+  (`cpu::Puppet`): no AI or physics, each drawn from the host's motion
+  through the remote riders' jitter buffer and Hermite smoothing, with its
+  own quad linkage and the CPU rider rig (the remote riders' presentation,
+  the wreck clips on the guest's clock). A guest whose rider differs from
+  the host's loads the host's rider rig for the CPUs. The guest's ATV pushes
+  against them (its own half; the host's CPUs push back on the host).
+  The HUD PLACE tree, place sign, field size and the radar include them.
+- **Standings and results.** CPU progress joins the host's `Field` under
+  ids 4–7: CPUs are ranked with the riders (finishers by time, then laps
+  and distance). The race ends when every rider in the room and every CPU
+  has finished, or at the finish wait after the first finisher; CPUs still
+  riding then rank as not finished by distance, as riders do. The agreed
+  results carry CPU rows (`RaceInfo::cpu_scores`), so every peer's results
+  panel and summary list them by their roster names.
+- **Host leaving.** Authored decision: the CPUs are **retired**, not handed
+  over. The new host's mirror never simulated them (it would need each
+  CPU's full physics, driver and race-station state), so `Field::adopt`
+  marks them gone: they stop being drawn and pushed against, nobody waits
+  for them, and they rank on their last relayed progress (DNF unless they
+  had already finished). Every other guest retires them too when it sees
+  the room's host change. The race runs on for the humans as before.
+- **Late joiners** spectate as before; the CPUs are visible once their
+  motion arrives.
+
+Code: `crates/atv-net` (`RaceInfo` CPU fields, `CpuMotion`, kind 16),
+`crates/atv-relay` (forwarding), `atv_game::multiplayer::cpu_motion`,
+`atv_game::ride::race` (`RoomCpus`, `room_cpu_frames`,
+`present_room_cpus`, `retire_room_cpus`), `ride::cpu::Puppet`,
+`atv_core::race::Race::set_room_grid`, `crates/atv-app/src/room_race.rs`
+(`CpuFill`, `Field::with_cpus`, CPU ids, results), the Host Game row
+(`atv_core::ui_menu`, `atv-ui` `hostcpus`).
+
+Limits: CPU engine sounds are not played on guests (the host hears its own
+CPUs); guests see CPUs about the smoothing delay plus half the relay round
+trip behind the host's simulation, so close contacts with a CPU are judged
+on slightly different positions on each machine; CPU stunts are drawn from
+the replicated animation recipe only.
 
 ### Next modes
 

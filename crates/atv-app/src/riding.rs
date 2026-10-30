@@ -437,10 +437,7 @@ impl Riding {
         // Alpha slow motion stretches real time between fixed steps
         // (Freestyle only: races and multiplayer rooms keep real time;
         // game.js updateHype `!raceSettings && !liveMultiplayer()`).
-        let landed = self.hype.update(
-            dt,
-            slowmo_allowed(self.alpha_slowmo, self.ride.race().is_some(), self.online),
-        );
+        let landed = self.hype.update(dt, self.slowmo());
         if let Some(landing) = landed {
             self.land(&landing)?;
         }
@@ -496,7 +493,7 @@ impl Riding {
                 self.clock,
                 ticks,
                 continuous,
-                self.interpolation || self.hype.time_scale < 1.,
+                self.interpolation || self.slowmo(),
                 self.hype.time_scale,
             ),
             None => self.presentation.reset(),
@@ -528,7 +525,12 @@ impl Riding {
         }
         let active = self.focused && !self.menu_open;
         let delivered = self.delivered.as_ref().unwrap();
-        let presented = self.presentation.sample(delivered, self.clock, active);
+        // Slow motion blends by the step accumulator: steps arrive every few
+        // frames at an easing rate, which wall-clock segments judder across.
+        let phase = self.slowmo().then_some(self.accumulator * 60.);
+        let presented = self
+            .presentation
+            .sample(delivered, self.clock, active, phase);
         self.presented = (presented.interpolated, presented.alpha);
         if let Some(log) = &mut self.present_log {
             let s = &presented.snapshot;
@@ -636,6 +638,11 @@ impl Riding {
         if let Some(sound) = &mut self.sound {
             sound.set_lifecycle(self.focused, self.paused);
         }
+    }
+
+    /// Alpha slow motion applies to this ride (Freestyle only).
+    fn slowmo(&self) -> bool {
+        slowmo_allowed(self.alpha_slowmo, self.ride.race().is_some(), self.online)
     }
 
     /// Frames draw through the presenters: every motorcycle, and ATVs with

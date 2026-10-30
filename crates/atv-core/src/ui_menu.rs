@@ -61,6 +61,11 @@ pub struct Request {
     /// (Freestyle Prep's Classic row, `002f60b0`/`002f6190`: 2-20, wraps).
     #[serde(default)]
     pub host_freestyle_minutes: u32,
+    /// Host Game → CPU Riders: room races fill the field to this many
+    /// riders with CPUs (0 off, 4 or 5; research/MULTIPLAYER.md "Room race
+    /// CPUs").
+    #[serde(default)]
+    pub host_cpu_field: u8,
     /// Split Screen: how many local players (2-4).
     #[serde(default)]
     pub split_players: u8,
@@ -1150,6 +1155,19 @@ pub fn layout(request: Request) -> Result<Frame> {
                         ("Room: Free Ride".to_string(), "hostmode")
                     },
                 );
+                // Room races started from Pause fill their field with CPUs.
+                if !request.host_freestyle {
+                    rows.insert(
+                        2,
+                        (
+                            match request.host_cpu_field {
+                                0 => "CPU Riders: Off".to_string(),
+                                n => format!("CPU Riders: Fill to {n}"),
+                            },
+                            "hostcpus",
+                        ),
+                    );
+                }
                 if request.host_freestyle {
                     rows.insert(
                         2,
@@ -2321,6 +2339,7 @@ mod tests {
             split_vertical: false,
             host_freestyle: false,
             host_freestyle_minutes: 2,
+            host_cpu_field: 0,
             split_players: 2,
             split_seconds: Vec::new(),
             loading_status: "Reading original ATV...".into(),
@@ -2413,9 +2432,14 @@ mod tests {
         let create = layout(request("create-lobby", 390., 844.)).unwrap();
         assert_eq!(create.inputs.len(), 2);
         assert_eq!(create.inputs[1].action, "create-code");
-        // The Room row: a Free Ride, or room Freestyle for every rider.
-        assert_eq!(create.choices, ["hosttrack", "hostmode", "garage"]);
+        // The Room row: a Free Ride, or room Freestyle for every rider;
+        // then the room races' CPU fill (Off by default).
+        assert_eq!(
+            create.choices,
+            ["hosttrack", "hostmode", "hostcpus", "garage"]
+        );
         assert!(create.hits.iter().any(|h| h.label == "Room: Free Ride"));
+        assert!(create.hits.iter().any(|h| h.label == "CPU Riders: Off"));
         let join = layout(request("join-lobby", 390., 844.)).unwrap();
         assert_eq!(join.inputs[1].action, "room-code");
         assert_eq!(join.choices, ["join", "garage"]);

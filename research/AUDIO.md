@@ -154,8 +154,8 @@ player's camera. The port applies it to players 2-4's engine and impact
 voices (`audio::remote`, which takes the listener list) and to player 1's
 positional sounds: vocals, chassis, drive-on, body impacts, Soultree range
 and placement, trains and actors (`RideAudio::views`). Player 1's engine
-loop, ambient cycles and rain are unpositioned 2D voices; the port's CPUs
-have no sounds. One rider alone and online rooms pass a single listener,
+loop, ambient cycles and rain are unpositioned 2D voices; race CPUs are
+heard from the nearest view too ("CPU riders" below). One rider alone and online rooms pass a single listener,
 unchanged (SPLIT_SCREEN.md "Split audio").
 
 Bounded original-instruction comparisons cover 1,200 attenuation/heading/Doppler
@@ -335,6 +335,60 @@ HOCKYWIN) belongs to the hockey event mode (`00335590`); the port's Hockey
 ([GAMES.md](GAMES.md)) raises its crowd events but does not play these
 sounds yet. The amateur/pro crowd reactions are described in `RACING.md`.
 
+## CPU riders (2026-10-29)
+
+Before this change race CPUs were silent. Exact-build evidence (private
+Ghidra exports; decompiled-contract reconstructions with unit tests, not
+bounded native comparisons):
+
+- Every rider object builds the same emitters, CPUs included: the per-quad
+  setup `001e33c0` creates the engine (`002ca5b0`/`002ca8f0`, the slot's
+  record in the sound table, slot × 0xd0) and chassis (`002cd4e0`/
+  `002cd6c0`) emitters; the per-rider setup `002d6380` creates the vocal
+  (`002cc430`/`002cc640`) and body impact (`002cce90`/`002ccf90`) emitters.
+- The race's shared sound table `00213210` chooses each slot's engine set
+  from `EngineSets` `QuadN = set,stroke` (slot quads at game settings
+  +0x514). Player 1 keeps its set. The first later slot of a different
+  stroke names the "other" set; a human there keeps it (budget 2 left), a
+  CPU takes its reduced `A` variant (`250A Params`, `Idle-250A`...; budget
+  5 left); with no such slot the budget is 7. Then, in slot order, a slot
+  repeating an earlier name is free; once the budget is below 2 a slot
+  borrows player 1's set (same stroke) or the other set; a human's own set
+  costs 5 (else it borrows), a CPU's `A` variant 2. Humans are counted as
+  settings +0x10 plus +0x1870. `assign_sets` in `atv-core::engine_audio`
+  reproduces this.
+- `002ca8f0` takes the set's Min/MaxAttenuationDistance, except in game
+  mode 9 (settings +4), where it uses 3000/4000ft; what mode 9 is has not
+  been identified, and the port uses the set's distances.
+- The sound manager `001736f0` stops an emitter whose nearest listener is
+  out of range (`001c12e0`: a looping sample while not closer than 1.2 ×
+  MaxDistance, a one-shot beyond MaxDistance; loop/one-shot flags from
+  `002cb8e0`) and restarts its current sample on return.
+
+What the port does: `Ride::take_cpu_sounds` hands the audio layer each
+CPU's fixed steps since the last rendered frame (bounded at 64 steps):
+audio events (wreck entry, hard landing, quad contact, sampled impact),
+chassis inputs, the actor sound position cache (`001e7600`) and the rider
+body's sampled contact. Engines join the other riders' voices
+(`audio::remote`, `cpu: true`, set from `assign_sets`, the set's
+attenuation, the range stop/restart above). Vocals (gender from the race
+roster), body impacts and chassis landing/wreck/quad-to-quad clips run
+through `audio::cpu`, which applies the same atv-core decisions as the
+player (one voice per emitter, vocal cull 100ft, chassis 70ft, impact
+config distances) with its own random streams per CPU. Every position is
+heard from the nearest listener, so split screen's views apply, and split
+races share player 1's CPUs. `?audioDiagnostics=1` reports them under
+`data-engine-audio` `cpu`.
+
+Authored bounds and limitations: engines keep the room riders' six
+nearest voices (`ENGINE_VOICES`; the original has 48 SPU2 voices and its
+emitter priorities, the 3/10 constructor arguments, were not traced).
+CPUs get no terrain drive-on or water splash sounds yet, their random
+seeds are authored, assignment applies only when CPUs race (split screen
+without CPUs and online rooms keep each quad's own set), and a player on a
+motorcycle (no `vehicle.aud` table in its bank) leaves CPUs on their
+quads' own sets with engine sound only. Not compared by listening.
+
 ## Separate SFX volume
 
 Settings → Audio has **SFX** beside the music volume (0–100% in 25% steps,
@@ -365,8 +419,9 @@ emulation (host Chromium, 390×844 DPR3, CPU ×4, ENV07 with 55 Soultree and 4
 ambient sources, 20s of driving): the batched worker call ran 54 times per
 second with a 0.25ms mean (0.9ms p95) round trip, 1.5KB requests, two Soultree
 voices live and 66 buffer sources created; main-thread script time was within
-noise of the same run with the request emptied (1.28s vs 1.39s). Remote/CPU
-riders' vocals, material sounds, hockey reactions and hardware listening
+noise of the same run with the request emptied (1.28s vs 1.39s). Race CPUs
+now have engines, vocals, body impacts and chassis sounds ("CPU riders"
+below); online room riders' vocals, material sounds, hockey reactions and hardware listening
 remain open.
 
 ## Optional Enhanced sound
