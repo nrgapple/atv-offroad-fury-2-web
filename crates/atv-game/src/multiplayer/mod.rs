@@ -10,16 +10,17 @@
 //! JavaScript game's socket glue. The wire format, codec, deltas and
 //! smoothing are atv-net's, shared with the JavaScript game and the relay.
 pub mod remote;
-pub use atv_net::RiderState;
+pub use atv_net::{RiderState, Snapshot};
 pub mod spawn;
 
 use crate::Result;
 use crate::ride::Ride;
 pub use atv_net::{
-    GameClaim, GameMarks, GameState, MAX_GAME_POINTS, MAX_MARKS, NO_PEER, RACE_DNF, RACE_MAX_MS,
-    RACE_RIDERS, RaceInfo, RaceProgress, claim_kind, game_kind, game_phase, race_phase,
+    CPU_PEER, CpuMotion, CpuRider, GameClaim, GameMarks, GameState, MAX_GAME_POINTS, MAX_MARKS,
+    NO_PEER, RACE_CPUS, RACE_DNF, RACE_MAX_MS, RACE_RIDERS, RaceInfo, RaceProgress, claim_kind,
+    game_kind, game_phase, race_phase,
 };
-use atv_net::{Lobby, Packet, Participant, PoseBuffer, SampledPose, Snapshot};
+use atv_net::{Lobby, Packet, Participant, PoseBuffer, SampledPose};
 use std::collections::BTreeMap;
 
 /// The wire protocol version (atv-net), shared with the JavaScript game.
@@ -135,6 +136,11 @@ pub struct Session {
     /// Riders' room-game reports the host has not taken yet (the relay
     /// forwards them to the host only; bounded).
     pub claims: Vec<atv_net::GameClaim>,
+    /// The room-race host's CPU riders (`Packet::Cpus`): the race serial,
+    /// each CPU's pose history by index and its latest progress.
+    pub cpu_serial: u32,
+    pub cpu_buffers: BTreeMap<u8, PoseBuffer>,
+    pub cpu_progress: BTreeMap<u8, atv_net::RaceProgress>,
 }
 
 fn encode(packet: &Packet) -> Result<Vec<u8>> {
@@ -361,6 +367,33 @@ impl Session {
             // The relay stamps the sender.
             Packet::Progress(progress) => {
                 self.progress.insert(progress.peer, progress);
+            }
+            // The host's CPU riders (the relay forwards them only from the
+            // host): a new race restarts their histories.
+            Packet::Cpus(motion) => {
+                if motion.serial != self.cpu_serial {
+                    self.cpu_serial = motion.serial;
+                    self.cpu_buffers.clear();
+                    self.cpu_progress.clear();
+                }
+                for r in motion.riders {
+                    let id = atv_net::CPU_PEER + r.index;
+                    self.cpu_progress.insert(
+                        r.index,
+                        atv_net::RaceProgress {
+                            peer: id,
+                            serial: motion.serial,
+                            lap: r.lap,
+                            distance: r.distance,
+                            finish_ms: r.finish_ms,
+                        },
+                    );
+                    let buffer = self.cpu_buffers.entry(r.index).or_default();
+                    if buffer.push(r.pose.clone(), now_ms).is_err() {
+                        buffer.clear();
+                        buffer.push(r.pose, now_ms).map_err(|e| e.to_string())?;
+                    }
+                }
             }
             // Room King of the Hills / Treasure Hunt reports: kept for the
             // host's game, which validates them (a bounded queue).
@@ -630,6 +663,19 @@ impl Session {
         }))
     }
 
+    /// The host's CPU riders as a packet.
+    pub fn cpu_packet(&self, motion: atv_net::CpuMotion) -> Result<Vec<u8>> {
+        encode(&Packet::Cpus(Box::new(motion)))
+    }
+
+    /// Each CPU rider's presented pose (the remote riders' smoothing).
+    pub fn present_cpus(&mut self, now_ms: u64) -> Vec<(u8, SampledPose)> {
+        self.cpu_buffers
+            .iter_mut()
+            .filter_map(|(&index, buffer)| buffer.present(now_ms, 0.).map(|pose| (index, pose)))
+            .collect()
+    }
+
     /// The rider's own room-game report as a packet.
     pub fn claim_packet(&self, claim: atv_net::GameClaim) -> Result<Vec<u8>> {
         let peer = self.peer.ok_or("join multiplayer first")?;
@@ -686,6 +732,90 @@ impl Session {
             })
             .collect()
     }
+}
+
+/// A room race host's CPU riders as one relay message (research/
+/// MULTIPLAYER.md "Room race CPUs"): each CPU's progress and a compact pose
+/// built as a rider's own snapshot is, under id [`CPU_PEER`] + index.
+pub fn cpu_motion(
+    serial: u32,
+    sequence: u32,
+    time_ms: u32,
+    rider_model: u16,
+    frames: &[crate::ride::race::RoomCpuFrame],
+) -> Result<atv_net::CpuMotion> {
+    let transform =
+        |m: [f32; 16]| atv_net::Transform::from_column_major(m).map_err(|e| e.to_string());
+    let riders = frames
+        .iter()
+        .take(atv_net::RACE_CPUS)
+        .map(|f| {
+            let frame = &f.frame;
+            let atv = transform(vehicle_world(frame))?;
+            let (rider, rider_velocity, rider_state) = match f.wreck {
+                Some((world, velocity)) => (transform(world)?, velocity, RiderState::Wreck),
+                None => (
+                    atv,
+                    frame.linear_velocity,
+                    if frame.wreck.phase == atv_core::wreck::Phase::Recovering {
+                        RiderState::Recovering
+                    } else if frame.grounded.iter().any(|v| *v) {
+                        RiderState::Riding
+                    } else {
+                        RiderState::Airborne
+                    },
+                ),
+            };
+            let basis = atv_core::dynamics::basis(frame.orientation);
+            let angular_velocity = std::array::from_fn(|i| {
+                (0..3)
+                    .map(|j| basis[j][i] * frame.local_angular_velocity[j])
+                    .sum()
+            });
+            let index = f.index as u8;
+            Ok(atv_net::CpuRider {
+                index,
+                lap: f.lap.min(10) as u8,
+                distance: f.distance.clamp(-10_000., 1_000_000.),
+                finish_ms: f
+                    .finish
+                    .map_or(0, |t| ((t * 1000.) as u32).clamp(1, RACE_MAX_MS)),
+                pose: Snapshot {
+                    peer: atv_net::CPU_PEER + index,
+                    sequence,
+                    time_ms,
+                    atv_model: f.quad,
+                    rider_model,
+                    atv,
+                    velocity: frame.linear_velocity,
+                    angular_velocity,
+                    animation: Some(Box::new(atv_net::AnimationState {
+                        steering: frame.visual_steering_angle,
+                        wheels: frame.wheel_angles,
+                        compression: frame.wheel_compression,
+                        clips: f.recipe.clips,
+                        count: f.recipe.count,
+                        phase: f.recipe.phase,
+                        first_weight: f.recipe.first_weight,
+                        pair_weight: f.recipe.pair_weight,
+                        look_phase: f.recipe.look_phase,
+                        paused: false,
+                    })),
+                    rider_state,
+                    rider,
+                    rider_velocity,
+                    rpm: frame.rpm,
+                    speed: frame.speed_magnitude,
+                    // The wreck count stands in for a crash serial.
+                    crash_serial: frame.reset_count,
+                    ..Default::default()
+                },
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let motion = atv_net::CpuMotion { serial, riders };
+    motion.validate().map_err(|e| e.to_string())?;
+    Ok(motion)
 }
 
 /// This client's train car matrices, to place riders standing on a car.

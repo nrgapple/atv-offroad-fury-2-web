@@ -8946,9 +8946,30 @@ impl App {
             }
             return;
         }
-        let Some((race, room_race::Action::Load(settings))) =
-            room_race::RoomRace::host(net, self.room_race_serial, variant, laps, fresh_seed())
-        else {
+        // Host Game → CPU Riders (`roomCpus=N` test hook): the field size
+        // CPUs fill to, with the host's garage and Race difficulty.
+        let field = (0..=5u8)
+            .find(|n| url_flag(&format!("roomCpus={n}")))
+            .or_else(|| self.front.as_ref().map(|f| f.borrow().state.host_cpu_field))
+            .unwrap_or(0);
+        let (quad, rider) = net.look();
+        let fill = room_race::CpuFill {
+            field,
+            quad: quad.clamp(1, 26) as u8,
+            rider: rider.min(1) as u8,
+            difficulty: self
+                .front
+                .as_ref()
+                .map_or(1, |f| f.borrow().state.race.difficulty.clamp(1, 2) as u8),
+        };
+        let Some((race, room_race::Action::Load(settings))) = room_race::RoomRace::host(
+            net,
+            self.room_race_serial,
+            variant,
+            laps,
+            fill,
+            fresh_seed(),
+        ) else {
             return;
         };
         self.room_race_serial = race.field.serial;
