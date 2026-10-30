@@ -6,6 +6,8 @@
 // host's relayed motion and sees them move; the race path driver
 // (`autopilot=1`) rides both humans through one lap (`raceLaps=1`) and both
 // pages show the same Race Results with every CPU ranked among the riders.
+// The guest (`audioDiagnostics=1`) also hears the host's CPUs' engines from
+// their relayed motion (research/AUDIO.md "CPU riders").
 //   PLAYWRIGHT_MODULE=... ATV_TEST_URL=http://127.0.0.1:4187 node tools/test_engine_multiplayer_race_cpus.mjs
 // ATV_GAMES_SHOTS=<dir> saves captures.
 import assert from 'node:assert/strict';
@@ -53,7 +55,7 @@ try {
   await host.goto(`${base}/play.html?host=1&venue=sx01&room=${code}&name=RustHost&roomCpus=5&${flags}`);
   await host.waitForFunction(c => JSON.parse(window.furyMultiplayer ?? 'null')?.code === c, code, { timeout: 180000 });
   const guest = await open();
-  await guest.goto(`${base}/play.html?room=${code}&dropAfter=9999&name=RustGuest&${flags}`);
+  await guest.goto(`${base}/play.html?room=${code}&dropAfter=9999&name=RustGuest&audioDiagnostics=1&${flags}`);
   await guest.waitForFunction(() => JSON.parse(window.furyMultiplayer ?? 'null')?.drawn >= 1, null, { timeout: 180000 });
   await host.waitForFunction(() => JSON.parse(window.furyMultiplayer ?? 'null')?.drawn >= 1, null, { timeout: 60000 });
 
@@ -81,6 +83,23 @@ try {
   const before = g.cpuOrigins;
   await until(host, r => r.went && r.phase >= 2, 90000, 'host racing');
   g = await until(guest, r => r.phase >= 2 && moved(r.cpuOrigins, before), 120000, 'guest sees the CPUs move');
+  // The guest hears them: a click starts its output, and the host's CPUs
+  // join its engine voices with the race sound table's sets.
+  await guest.bringToFront();
+  await guest.mouse.click(320, 180);
+  const engineAudio = p => p.evaluate(() => JSON.parse(document.documentElement.getAttribute('data-engine-audio') || '{}'));
+  let heard;
+  for (const deadline = Date.now() + 60000; ;) {
+    heard = await engineAudio(guest);
+    if (heard.started && heard.cpu?.engines >= 1 && heard.cpu.levels.some(l => l[2][0] + l[2][1] > 0)) break;
+    if (Date.now() > deadline) throw new Error(`guest CPU engines: ${JSON.stringify(heard.cpu)} errors ${errors.slice(0, 5).join(' | ')}`);
+    await guest.waitForTimeout(250);
+  }
+  assert.ok(heard.cpu.engines <= 3, `guest CPU engine voices: ${heard.cpu.engines}`);
+  assert.ok(heard.cpu.engineStarts >= heard.cpu.engines, `guest CPU engine starts: ${heard.cpu.engineStarts}`);
+  assert.ok(heard.cpu.voices >= heard.cpu.engines, `guest CPU-labelled mixer voices: ${heard.cpu.voices}`);
+  console.log(`guest CPU audio: ${heard.cpu.engines} engine voices, ${heard.cpu.engineStarts} starts, levels ${JSON.stringify(heard.cpu.levels)}`);
+  await host.bringToFront();
   h = await until(host, r => r.progress.filter(p => p.peer >= 4).length === 3 && r.progress.some(p => p.peer >= 4 && p.distance > 50), 120000, 'CPU progress');
   g = await until(guest, r => r.progress.filter(p => p.peer >= 4).length === 3, 60000, 'guest has CPU progress');
   await shot(guest, 'mp-race-cpus-guest-racing');

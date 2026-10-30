@@ -78,6 +78,11 @@ const SPIN_EASE: f32 = 0.6;
 const SPIN_MAX: f32 = 12.;
 /// Left/Right on a focused preview hold the turntable this long (ms).
 const SPIN_HOLD: f64 = 2500.;
+/// A vehicle stepped to loads its model once shown this long (ms).
+const VEHICLE_SETTLE: f64 = 150.;
+/// A new paint or gear look on the same model is built once wanted this
+/// long (ms); until then the last look stays up.
+const LOOK_SETTLE: f64 = 120.;
 /// The wordmark's sway: amplitude (degrees) and period (s) of the yaw and
 /// the pitch, out of step so the motion does not repeat visibly.
 const SWAY_YAW: (f32, f64) = (7., 7.);
@@ -175,6 +180,26 @@ pub struct Front {
     /// When the wordmark began swaying (None: still), and its angles.
     sway_since: Option<f64>,
     tilt: [f32; 2],
+    /// Course artwork built lazily (`course_art`): the page and course
+    /// shown last frame, this frame's build budget, an image still to
+    /// build, and the last image shown per kind (shown until the new
+    /// course's is ready).
+    art_course: (String, Option<String>),
+    art_budget: u32,
+    art_pending: bool,
+    art_shown: HashMap<&'static str, String>,
+    /// The current course's image keys (diagnostics: shown == wanted once
+    /// the artwork caught up).
+    art_wanted: HashMap<&'static str, String>,
+    /// The direction of the last course step (prefetch that way first).
+    art_direction: i32,
+    /// The vehicle on the stage and since when (ms): stepping through
+    /// vehicles loads only the one it rests on (`wants`).
+    stage_quad: (u16, f64),
+    /// Each preview slot's wanted look and since when (ms), and whether a
+    /// new look waits to settle (`look_settled`).
+    look_since: [(String, f64); 2],
+    look_waiting: bool,
 }
 
 /// frontend.js `Math.floor(Math.random() * tips.length)`.
@@ -273,6 +298,15 @@ impl Front {
             spin_hold: 0.,
             sway_since: None,
             tilt: [0.; 2],
+            art_course: (String::new(), None),
+            art_budget: 0,
+            art_pending: false,
+            art_shown: HashMap::new(),
+            art_wanted: HashMap::new(),
+            art_direction: 1,
+            stage_quad: (u16::MAX, f64::NEG_INFINITY),
+            look_since: Default::default(),
+            look_waiting: false,
         };
         front.state.refresh(&view);
         front
@@ -444,6 +478,11 @@ impl Front {
             || self.toast.showing(self.now())
             || self.spinning()
             || self.swaying()
+            || self.art_pending
+            || self.quad_waiting()
+            || self.look_waiting
+            || self.menu.is_none() && self.state.repeating()
+            || self.menu.as_ref().is_some_and(|m| m.repeating())
             || self.menu.is_none()
                 && (matches!(self.state.page.as_str(), "title" | "loading")
                     || (matches!(self.state.page.as_str(), "garage" | "gear")
@@ -536,7 +575,10 @@ impl Front {
                 || atv_ui::front::controller::store_page(page))
         {
             let quad = self.state.stage_quad();
-            if !self.art.vehicles.iter().any(|(q, ..)| *q == quad) {
+            // A vehicle's model takes 0.1-0.5 s of this thread to load (x4
+            // CPU): one stepped past within VEHICLE_SETTLE is never loaded,
+            // so a burst of steps loads only the one it stops on.
+            if !self.art.vehicles.iter().any(|(q, ..)| *q == quad) && self.quad_settled(quad) {
                 wants.push(Want::Vehicle(quad));
             }
             let rider = self.state.rider_id;
@@ -553,6 +595,39 @@ impl Front {
             }
         }
         wants
+    }
+
+    /// Rebuilding a preview for a new paint or gear look costs 50-75 ms
+    /// at x4 CPU. While the look is still being stepped through, the slot
+    /// keeps its last look of the same model (`same` prefix) and the new
+    /// one is built once it has been wanted for LOOK_SETTLE: the label
+    /// moves on every step, the model only where the steps stop.
+    fn look_settled(&mut self, slot: usize, key: &str, same: &str, now: f64) -> bool {
+        if self.look_since[slot].0 != key {
+            self.look_since[slot] = (key.to_string(), now);
+        }
+        let shown = self.previews[slot]
+            .as_ref()
+            .is_some_and(|p| p.key != key && p.key.starts_with(same));
+        if !shown || now - self.look_since[slot].1 >= LOOK_SETTLE {
+            return true;
+        }
+        self.look_waiting = true;
+        self.wanted[slot] = self.previews[slot].as_ref().map(|p| p.key.clone());
+        false
+    }
+
+    /// The stage has shown `quad` long enough to load it (or shows no
+    /// vehicle yet, as when a page opens).
+    fn quad_settled(&self, quad: u16) -> bool {
+        self.art.vehicles.is_empty()
+            || (self.stage_quad.0 == quad && self.now() - self.stage_quad.1 >= VEHICLE_SETTLE)
+    }
+
+    /// A stepped-to vehicle waits to settle: frames keep coming until it
+    /// loads.
+    fn quad_waiting(&self) -> bool {
+        self.menu.is_none() && self.now() - self.stage_quad.1 < VEHICLE_SETTLE + 50.
     }
 
     pub fn add_vehicle(&mut self, quad: u16, model: PreviewModel, rider: Option<MenuRider>) {
@@ -801,6 +876,16 @@ impl Front {
         self.front_event(event)
     }
 
+    /// A finger held on a step arrow repeats its step (each frame).
+    pub fn tick_hold(&mut self) -> Option<Event> {
+        if self.menu.is_some() {
+            return None;
+        }
+        let view = self.view;
+        let event = self.state.tick_hold(&self.hits, &view, &mut self.settings);
+        self.front_event(event)
+    }
+
     pub fn cancel_pointer(&mut self) {
         self.turning = None;
         self.state.cancel_pointer();
@@ -865,7 +950,7 @@ impl Front {
     /// Keeps the last few course images of a kind so stepping back and
     /// forth through the list does not redo their filters.
     fn keep_recent(&mut self, key: &str) {
-        const KEEP: usize = 6;
+        const KEEP: usize = 8;
         self.recent.retain(|k| k != key);
         self.recent.push(key.to_string());
         let prefix = format!("{}:", key.rsplit_once(':').map_or(key, |(p, _)| p));
@@ -904,6 +989,116 @@ impl Front {
         (shrink, sigma / shrink as f32)
     }
 
+    /// The courses a course page steps through, in order.
+    fn course_ids(&self, page: &str) -> Vec<String> {
+        if page == "race" {
+            self.state.race_order()
+        } else {
+            self.state
+                .order()
+                .iter()
+                .map(|&i| self.state.tracks[i].id.clone())
+                .collect()
+        }
+    }
+
+    /// A course image's cache key: per venue, so a venue's race, enduro
+    /// and stadium courses share one photo's work.
+    fn course_key(kind: &str, id: &str) -> String {
+        let venue = atv_game::launch::race_venue(id);
+        match kind {
+            "bg" => format!("bg:track:{venue}"),
+            _ => format!("hero:course:{venue}"),
+        }
+    }
+
+    /// Builds a course image (the blurred backdrop or the graded photo).
+    fn course_rgba(art: &Art, kind: &str, id: &str, box_w: f32, box_h: f32) -> Option<Rgba> {
+        let photo = art.photos.get(atv_game::launch::race_venue(id))?;
+        if kind == "bg" {
+            let (shrink, sigma) = Self::blur_plan(photo, box_w, box_h, 16.);
+            let mut image = photo.shrink(shrink);
+            image.filter(&[
+                Filter::Grayscale(1.),
+                Filter::Contrast(1.1),
+                Filter::Brightness(1.4),
+            ]);
+            image.blur(sigma);
+            // `.ms-backdrop::before`: the scenic tint, multiplied.
+            image.multiply([0xb5, 0x16, 0x16]);
+            Some(image)
+        } else {
+            let mut photo = photo.clone();
+            photo.filter(&[Filter::Saturate(1.08), Filter::Contrast(1.04)]);
+            Some(photo)
+        }
+    }
+
+    /// The current course's image of `kind`: cached, built within this
+    /// frame's budget, or else the last one shown (built on a later frame).
+    fn course_image(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        kind: &'static str,
+        id: &str,
+        box_w: f32,
+        box_h: f32,
+    ) -> Option<Img> {
+        let key = Self::course_key(kind, id);
+        self.art_wanted.insert(kind, key.clone());
+        let cached = self.images.contains_key(&key);
+        if !cached && self.art_budget == 0 {
+            self.art_pending = true;
+            let last = self.art_shown.get(kind)?.clone();
+            let img = self.images.get(&last).copied();
+            if img.is_some() {
+                self.keep_recent(&last);
+            }
+            return img;
+        }
+        if !cached {
+            self.art_budget -= 1;
+        }
+        let img = self.image(device, queue, &key, |art| {
+            Self::course_rgba(art, kind, id, box_w, box_h)
+        });
+        if img.is_some() {
+            self.art_shown.insert(kind, key.clone());
+            self.keep_recent(&key);
+        }
+        img
+    }
+
+    /// Builds a neighbouring course's image when this frame has budget.
+    fn prefetch_course_image(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        kind: &'static str,
+        id: &str,
+        box_w: f32,
+        box_h: f32,
+    ) {
+        let key = Self::course_key(kind, id);
+        if self.images.contains_key(&key) {
+            return;
+        }
+        if self.art_budget == 0 {
+            self.art_pending = true;
+            return;
+        }
+        self.art_budget -= 1;
+        if self
+            .image(device, queue, &key, |art| {
+                Self::course_rgba(art, kind, id, box_w, box_h)
+            })
+            .is_some()
+        {
+            self.keep_recent(&key);
+        }
+    }
+
     fn artwork(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) -> Artwork {
         let view = self.view;
         if self.image_view != (view.width, view.height) {
@@ -924,31 +1119,45 @@ impl Front {
                 .get(self.state.track)
                 .map(|t| t.id.clone()),
         };
+        // Course artwork (the graded photo and the blurred backdrop) costs
+        // 15-40 ms a course on a phone-speed thread. A step never waits for
+        // it: the frame that changes the course draws the new name with the
+        // last course's images, and later frames build one image each, the
+        // current course's first, then its neighbours' (`course_image`).
+        let course_page = matches!(page.as_str(), "tracks" | "lobby" | "loading" | "race");
+        let shown = (page.clone(), track_id.clone());
+        let stepped = shown.0 == self.art_course.0 && shown.1 != self.art_course.1;
+        if stepped && let (Some(from), Some(to)) = (&self.art_course.1, &track_id) {
+            let ids = self.course_ids(&page);
+            if let (Some(a), Some(b)) = (
+                ids.iter().position(|i| i == from),
+                ids.iter().position(|i| i == to),
+            ) {
+                let n = ids.len() as i32;
+                let forward = (b as i32 - a as i32).rem_euclid(n);
+                self.art_direction = if forward <= n / 2 { 1 } else { -1 };
+            }
+        }
+        self.art_budget = if !course_page || stepped {
+            0
+        } else if shown.0 != self.art_course.0 {
+            // A page opening builds its course at once, as before.
+            2
+        } else {
+            1
+        };
+        self.art_course = shown;
+        self.art_pending = false;
         // Course select, the lobby and the loader show the course photo as
         // backdrop.
         let mut backdrop_track = false;
         let mut backdrop = None;
-        if matches!(page.as_str(), "tracks" | "lobby" | "loading" | "race")
+        if course_page
             && let Some(id) = &track_id
             && self.art.photos.contains_key(id)
         {
-            let key = format!("bg:track:{id}");
-            backdrop = self.image(device, queue, &key, |art| {
-                let photo = art.photos.get(atv_game::launch::race_venue(id))?;
-                let (shrink, sigma) = Self::blur_plan(photo, box_w, box_h, 16.);
-                let mut image = photo.shrink(shrink);
-                image.filter(&[
-                    Filter::Grayscale(1.),
-                    Filter::Contrast(1.1),
-                    Filter::Brightness(1.4),
-                ]);
-                image.blur(sigma);
-                // `.ms-backdrop::before`: the scenic tint, multiplied.
-                image.multiply([0xb5, 0x16, 0x16]);
-                Some(image)
-            });
+            backdrop = self.course_image(device, queue, "bg", id, box_w, box_h);
             backdrop_track = backdrop.is_some();
-            self.keep_recent(&key);
         }
         if backdrop.is_none() {
             backdrop = self.image(device, queue, "bg:page01", |art| {
@@ -997,17 +1206,14 @@ impl Front {
         let mut photos = HashMap::new();
         if matches!(page.as_str(), "tracks" | "lobby" | "race") {
             let thumb_px = 72. * view.scale * 1.5;
-            // The lobby shows only the room's course (`.ms-track-hero`).
+            // The lobby shows only the room's course (`.ms-track-hero`);
+            // Single Race lists its courses only in the picker.
             let ids: Vec<String> = if page == "lobby" {
                 track_id.iter().cloned().collect()
-            } else if page == "race" {
-                self.state.race_order()
+            } else if page == "race" && !self.state.course_sheet {
+                Vec::new()
             } else {
-                self.state
-                    .order()
-                    .iter()
-                    .map(|&i| self.state.tracks[i].id.clone())
-                    .collect()
+                self.course_ids(&page)
             };
             for id in &ids {
                 if let Some(img) = self.image(device, queue, &format!("thumb:{id}"), |art| {
@@ -1019,16 +1225,31 @@ impl Front {
                 }
             }
             if let Some(id) = &track_id {
-                let key = format!("hero:{id}");
-                let hero = self.image(device, queue, &key, |art| {
-                    let mut photo = art.photos.get(atv_game::launch::race_venue(id))?.clone();
-                    photo.filter(&[Filter::Saturate(1.08), Filter::Contrast(1.04)]);
-                    Some(photo)
-                });
+                let hero = self.course_image(device, queue, "hero", id, box_w, box_h);
                 if let Some(hero) = hero {
                     photos.entry(id.clone()).or_insert((hero, None)).1 = Some(hero);
                 }
-                self.keep_recent(&key);
+            }
+            // Spare frames build the neighbours, so the next step finds
+            // its images ready.
+            if self.art_budget > 0
+                && matches!(page.as_str(), "tracks" | "race")
+                && let Some(id) = &track_id
+            {
+                let ids = self.course_ids(&page);
+                if let Some(at) = ids.iter().position(|i| i == id) {
+                    let n = ids.len() as i32;
+                    let d = self.art_direction;
+                    for offset in [d, -d, 2 * d] {
+                        let next = ids[(at as i32 + offset).rem_euclid(n) as usize].clone();
+                        if !self.art.photos.contains_key(&next) {
+                            continue;
+                        }
+                        for kind in ["bg", "hero"] {
+                            self.prefetch_course_image(device, queue, kind, &next, box_w, box_h);
+                        }
+                    }
+                }
             }
         }
         // Garage stats: uiQuad.txt meters, maker logo and top speed.
@@ -1117,6 +1338,10 @@ impl Front {
             self.uploaded = DisplayList::default();
         }
         let view = self.view;
+        let quad = self.state.stage_quad();
+        if quad != self.stage_quad.0 {
+            self.stage_quad = (quad, self.now());
+        }
         let art = self.artwork(device, queue);
         let art_ms = started.elapsed().as_secs_f64() * 1000.;
         let now = self.now();
@@ -1590,6 +1815,7 @@ impl Front {
         // Slot 0: the vehicle in its bind (or MX resting) pose.
         let key = format!("vehicle:{quad}:{paint:?}");
         self.wanted = [shown.then(|| key.clone()), None];
+        self.look_waiting = false;
         if !shown {
             for preview in std::mem::take(&mut self.previews).into_iter().flatten() {
                 self.stash_preview(preview);
@@ -1601,6 +1827,8 @@ impl Front {
             self.set_preview(0, key.clone(), model, animated);
         } else if self.previews[0].as_ref().is_none_or(|p| p.key != key)
             && self.unbuilt[0].as_ref() != Some(&key)
+            && self.art.vehicles.iter().any(|(q, ..)| *q == quad)
+            && self.look_settled(0, &key, &format!("vehicle:{quad}:"), now)
             && let Some((_, model, _)) = self.art.vehicles.iter().find(|(q, ..)| *q == quad)
         {
             let lookup = texture(&model.textures);
@@ -1649,6 +1877,11 @@ impl Front {
             self.set_preview(1, key, model, animated);
             return;
         }
+        let time = ((now - self.garage_since) / 1000.).max(0.) as f32;
+        self.wanted[1] = Some(key.clone());
+        let same = format!("rider:{}", self.state.rider_id);
+        let settled = self.previews[1].as_ref().is_some_and(|p| p.key == key)
+            || self.look_settled(1, &key, &same, now);
         let rider = if quad >= 27 {
             self.art
                 .vehicles
@@ -1658,10 +1891,10 @@ impl Front {
         } else {
             self.art.menu_riders.get(&self.state.rider_id)
         };
-        let time = ((now - self.garage_since) / 1000.).max(0.) as f32;
-        self.wanted[1] = Some(key.clone());
         if let Some(rider) = rider {
-            if self.previews[1].as_ref().is_none_or(|p| p.key != key)
+            // Unsettled, the last look idles on (posed below).
+            if settled
+                && self.previews[1].as_ref().is_none_or(|p| p.key != key)
                 && self.unbuilt[1].as_ref() != Some(&key)
             {
                 let mut textures = rider.textures.clone();
@@ -1699,7 +1932,7 @@ impl Front {
                     }
                 }
             } else if let Some(preview) = &mut self.previews[1]
-                && preview.key == key
+                && Some(&preview.key) == self.wanted[1].as_ref()
                 && now - preview.posed >= 33.
                 && let Ok((_, pose)) = rider.rider.pose(time)
             {
@@ -1909,6 +2142,11 @@ impl Front {
         out["previewBuilds"] = serde_json::json!(self.preview_counts);
         // Single Race's course picker is open.
         out["courseSheet"] = self.state.course_sheet.into();
+        // Course artwork: the images shown and wanted per kind, and whether
+        // a later frame still builds one.
+        out["courseArt"] = serde_json::json!({
+            "shown": self.art_shown, "wanted": self.art_wanted, "pending": self.art_pending,
+        });
         out["vehicleSheet"] = self.state.vehicle_sheet.into();
         // The last frame drew its still parts from the UI layer cache.
         out["layerCached"] = self

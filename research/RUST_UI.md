@@ -887,6 +887,97 @@ progress to get one, then use it on another device."); with a key, the key,
 its status and one line. `test_engine_audio_page.mjs` scrolls the taller panel
 to its targets.
 
+### Selector input (2026-10-29)
+
+Reported on an iPhone: cycling Single Race's courses got slow, and fast taps
+often did not change the course. Host emulation (Playwright, 390x844 DPR 3
+touch; Chromium at x4 CPU throttle, WebKit unthrottled; `work/` probe, not a
+physical phone) on the live build:
+
+- **Overlapping taps were dropped.** The frontend kept one press: a second
+  finger down before the first lifted replaced it, and the first release
+  (`take().filter(pointer)`) then discarded both. Two thumbs alternating at
+  4-10 taps a second stepped once in ten taps (9 of 10 dropped); one finger
+  at 1-10 taps a second and keys dropped none. Options/Jukebox rows (the
+  pause menu) lost one of each overlapping pair the same way.
+- **No auto-repeat.** Held keys stepped once (the key's repeats were
+  ignored), a held controller direction once, a held arrow never repeated.
+- **Each new course built its artwork on the input's frame**: the blurred
+  backdrop and the graded photo, 15-40 ms at x4 (frame prepare 30-67 ms, 3-10
+  long tasks per 10 steps), per course id although a venue's race, enduro and
+  stadium courses share a photo. Single Race also shrank all 51 thumbnails
+  on open for a list it shows only in the picker.
+- The Choose Course picker opened only from the Course row (tap or Enter);
+  nothing on the page said so.
+
+Changes: presses are tracked per pointer (`Frontend::pressed`,
+`PauseMenu::pressed`), one finger at a time scrolls a pane, and a finger
+down while another drags neither scrolls nor taps. A finger held on a step
+arrow (photo arrows, garage vehicle arrows, stepper rows) repeats after
+0.4 s every 110 ms and its release adds no step; held D-pad/stick directions
+repeat at the same rate; held arrow keys step at the system's key-repeat
+rate (front pages and the Options menu). Course artwork is lazy
+(`Front::course_image`): the frame that changes the course draws its name
+with the last course's images, later frames build one image each, the
+current course first, then the neighbours in the stepping direction (+1,
+-1, +2), keyed per venue; stale courses skipped in a burst are never built.
+Single Race's photo and course name open Choose Course, and an **All
+courses** button sits on the photo (`front::COURSES`).
+
+Host Chromium x4, Single Race (live `d5d8e3e` -> candidate): two-finger taps
+at 10/s dropped 9/10 -> 0/10; held key 1 step -> one per key event; input to
+new name p95 84 -> 64 ms (taps), 55 -> 19 ms (keys); long tasks per 10 taps
+3-10 -> 0. `tools/test_engine_selector_latency.mjs` (Chromium x4 and WebKit):
+10 rapid taps, 10 overlapping two-finger taps (Chromium) and 10 rapid keys
+on Single Race and the garage each step exactly ten times, every input shows
+in the next frame published after it, a held finger and a held key repeat,
+the photo catches up with the course, and the photo opens the picker.
+
+Follow-up (garage, gear, store): stepping vehicles loaded every vehicle
+passed (a 0.1-0.5 s model load each at x4), and each paint or gear step
+rebuilt the preview on its frame (50-75 ms). A vehicle now loads once it has
+been on the stage for 150 ms (`VEHICLE_SETTLE`; the load yields between its
+phases), and a new paint or gear look on the same model is built once wanted
+for 120 ms, the last look staying up meanwhile (`Front::look_settled`), so a
+burst moves the label on every step and builds only where it stops. Held
+D-pad/stick directions repeat in the Options menu too. Host Chromium x4, 10
+taps a second (input to new label p95): garage 168 -> 68 ms, helmet 193 -> 68
+ms, quad colour 100 -> 88 ms; long tasks per 10 garage steps 14 -> 1.
+
+**Picker audit (#447).** Pre-fix `d5d8e3e` against `1417cdd` (#446 + #466),
+measured interleaved on one host (Chromium x4 CPU throttle, 390x844 DPR 3
+touch; 10 inputs at 10 a second; latency = input to the frame showing the new
+value, p50/p95 ms; "two thumbs" = alternating overlapping touches; physical
+phones not measured). Before, two-thumb taps registered 1 of 10 everywhere,
+so their latency is that one step's.
+
+| Selector | Input | Latency before | Latency after | Dropped before | Dropped after |
+| --- | --- | --- | --- | --- | --- |
+| Single Race course (photo arrows) | taps / two thumbs / keys | 51/80, 51, 43/57 | 51/69, 66/85, 22/38 | 0, 9, 0 | 0, 0, 0 |
+| Garage vehicle | taps / two thumbs / keys | 164/180, 59, 53/165 | 58/166, 57/94, 24/69 | 0, 9, 0 | 0, 0, 0 |
+| Rider Gear helmet | taps / two thumbs / keys | 99/118, 91, 80/103 | 48/63, 50/60, 23/39 | 0, 9, 0 | 0, 0, 0 |
+| Quad colour | taps / two thumbs / keys | 155/187, 81, 63/75 | 65/95, 64/77, 27/34 | 0, 9, 0 | 0, 0, 0 |
+| Championships series (Down) | keys | 51/105 | 51/112 | 0 | 0 |
+| Freestyle Objectives course (Down) | keys | 40/48 | 28/48 | 0 | 0 |
+| Games: game / course / time limit | taps | 53/65, 68/78, 65/77 | 56/65, 49/78, 46/58 | 0 | 0 |
+| Games (two thumbs) | two thumbs | 38-51 | 52/65-58/70 | 9 | 0 |
+| Host Game room mode | taps / two thumbs | 49/61, 37 | 50/68, 45/50 | 0, 9 | 0, 0 |
+| Select Track / room course | taps / two thumbs / keys | 137/156, 80, 84/101 | 96/157, 102/132, 56/73 | 0, 9, 0 | 0, 0, 0 |
+| Store ATV | taps / two thumbs / keys | 128/157, 56, 47/62 | 41/58, 43/65, 20/38 | 0, 9, 0 | 0, 0, 0 |
+| Store gear | taps / two thumbs / keys | 49/63, 43, 20/41 | 50/100, 48/53, 20/29 | 0, 9, 0 | 0, 0, 0 |
+| Hall of Fame course | taps / two thumbs | 38/52, 37 | 44/59, 62/78 | 0, 9 | 0, 0 |
+| Profile records course | taps / two thumbs | 38/47, 46 | 35/38, 63/90 | 0, 9 | 0, 0 |
+| Held arrow key (Single Race) | 2 s hold, 50 key events | 1 step | 50 steps | 49 | 0 |
+
+Long tasks per 10 steps fell from 10-14 to 1 on the garage, gear and store
+ATV pages and from 1-2 to 0 on Single Race. Not driven by this harness:
+Split Screen seats (controllers; held directions now repeat per seat),
+Training lessons (no stepper; course row only), Jukebox songs and Game
+Settings values (Options menu rows: per-pointer presses, held keys and
+D-pad repeat). Remaining costs: Select Track and Championships still spend a
+50-75 ms frame per step on list relayout (#468); a settled garage vehicle
+still loads on the page's thread, 0.1-0.45 s at x4 (#469).
+
 ### Show FPS (2026-10-30)
 
 Options → Display → **Show FPS** (off by default, saved per device under

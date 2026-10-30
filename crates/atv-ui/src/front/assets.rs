@@ -384,12 +384,14 @@ pub async fn vehicle_models(
     let bytes = content.file(&models.quad).await?;
     if models.motorcycle {
         let model = atv_core::motorcycle::Model::load(&bytes, quad)?;
+        atv_content::yield_frame().await;
         let archive = Resource::parse(&bytes)?;
         let vehicle = PreviewModel {
             textures: ride_textures(atv_game::ride::textures::load(&model.mesh, &archive)?),
             mesh: model.mesh.clone(),
             pose: Some(model.pose(0., [0., 0.], [0., 0.]).to_vec()),
         };
+        atv_content::yield_frame().await;
         let textures = ride_textures(atv_game::ride::textures::load(&model.rider, &archive)?);
         // atv-web `motorcycles::menu`: breathing between each selection idle.
         let mut clips = Vec::new();
@@ -439,11 +441,12 @@ pub async fn vehicle_models(
         })
         .ok_or("ATV mesh is missing")?;
     let mesh = atv_core::mesh::decode_psg(&archive.extract(index)?)?;
+    // Hand the thread back between phases (input stays live during a load).
+    atv_content::yield_frame().await;
     let materials = content.file(&models.quad_materials).await?;
-    let textures = ride_textures(atv_game::ride::textures::load(
-        &mesh,
-        &Resource::parse(&materials)?,
-    )?);
+    let materials = Resource::parse(&materials)?;
+    atv_content::yield_frame().await;
+    let textures = ride_textures(atv_game::ride::textures::load(&mesh, &materials)?);
     Ok((
         PreviewModel {
             mesh,

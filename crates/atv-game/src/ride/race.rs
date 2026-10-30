@@ -288,6 +288,8 @@ pub struct RoomCpuFrame {
     /// Finish time (race seconds).
     pub finish: Option<f32>,
     pub frame: atv_core::vehicle::VehicleFrame,
+    /// The throttle its driver applied (the guests' engine sound input).
+    pub throttle: f32,
     pub recipe: atv_core::rider_pose::Recipe,
     /// The detached rider's world matrix and velocity during a wreck.
     pub wreck: Option<([f32; 16], [f32; 3])>,
@@ -404,6 +406,33 @@ impl Player<'_> {
 }
 
 /// Body yaw from an orientation quaternion, as the browser computes it.
+/// A room race guest's CPUs as the audio layer hears them: each heard
+/// puppet's host motion (quad and gender from the roster every peer draws
+/// alike) with no fixed steps, so only their engines play.
+fn puppet_sounds(
+    puppets: impl Iterator<Item = Option<super::cpu::PuppetSound>>,
+    roster: &[Entry],
+) -> Vec<super::cpu::CpuSound> {
+    puppets
+        .enumerate()
+        .filter_map(|(index, sound)| {
+            let sound = sound?;
+            let entry = roster.get(index);
+            Some(super::cpu::CpuSound {
+                index,
+                quad: entry.map_or(0, |e| e.quad),
+                female: entry.is_some_and(|e| e.female),
+                origin: sound.origin,
+                velocity: sound.velocity,
+                throttle: sound.throttle,
+                speed: sound.speed,
+                riding: sound.riding,
+                steps: Vec::new(),
+            })
+        })
+        .collect()
+}
+
 fn yaw(orientation: [f32; 4]) -> f32 {
     let [w, x, y, z] = orientation;
     (2. * (w * y + x * z)).atan2_d(1. - 2. * (y * y + x * x))
@@ -747,6 +776,15 @@ impl Ride {
             return Vec::new();
         }
         let roster = &state.roster;
+        // A room race guest hears the host's CPUs from their relayed motion
+        // (engine only: the motion carries no audio events), none once
+        // retired (research/AUDIO.md "CPU riders").
+        if !state.puppets.is_empty() {
+            if state.puppets_retired {
+                return Vec::new();
+            }
+            return puppet_sounds(state.puppets.iter().map(|p| p.sound), roster);
+        }
         state
             .cpus
             .iter_mut()
@@ -1352,6 +1390,7 @@ impl Ride {
                 distance: race.race_distance(index),
                 finish: race.cpu_finish(index),
                 frame: cpu.vehicle.frame(),
+                throttle: cpu.throttle(),
                 recipe: cpu.recipe(),
                 wreck: cpu.rider_wreck(),
             })
@@ -1461,5 +1500,48 @@ impl Ride {
                 })
             })
             .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Entry, puppet_sounds};
+    use crate::ride::cpu::PuppetSound;
+
+    fn entry(quad: u32, female: bool) -> Entry {
+        Entry {
+            ai: 0,
+            name: String::new(),
+            number: 0,
+            quad,
+            female,
+            outfit: Default::default(),
+        }
+    }
+
+    #[test]
+    fn guest_cpu_sounds_follow_heard_puppets_and_roster() {
+        let roster = vec![entry(7, false), entry(12, true), entry(3, false)];
+        let heard = PuppetSound {
+            origin: [1., 2., 3.],
+            velocity: [4., 0., 0.],
+            throttle: 0.8,
+            speed: 40.,
+            riding: true,
+        };
+        // The second CPU is stale (or not heard yet): it stays silent.
+        let sounds = puppet_sounds([Some(heard), None, Some(heard)].into_iter(), &roster);
+        assert_eq!(sounds.len(), 2);
+        assert_eq!(
+            (sounds[0].index, sounds[0].quad, sounds[0].female),
+            (0, 7, false)
+        );
+        assert_eq!((sounds[1].index, sounds[1].quad), (2, 3));
+        assert_eq!(sounds[0].throttle, 0.8);
+        assert_eq!(sounds[0].speed, 40.);
+        assert!(sounds[0].riding);
+        assert_eq!(sounds[0].origin, [1., 2., 3.]);
+        // Engine only: the host's motion carries no audio events.
+        assert!(sounds.iter().all(|s| s.steps.is_empty()));
     }
 }

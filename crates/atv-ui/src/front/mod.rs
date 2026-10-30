@@ -47,6 +47,9 @@ pub const PASSKEY: u32 = 2413;
 /// The stage panel and its text table (layout checks only; not targets).
 pub const STAGE: u32 = 2414;
 pub const DETAILS: u32 = 2415;
+/// Single Race: the photo, the course name and its "All courses" button
+/// open the course picker.
+pub const COURSES: u32 = 2416;
 /// Value rows' Previous/Next arrows, by choice index.
 pub const STEP_PREV: u32 = 2430;
 pub const STEP_NEXT: u32 = 2440;
@@ -1351,6 +1354,12 @@ fn hero(m: &Metrics, s: &Screen) -> El {
     // The lobby's `.ms-track-hero` is the photo and name only.
     let lobby = s.page == "lobby";
     let race = s.page == "race";
+    if race {
+        // A tap on the photo opens the course picker; a button says so.
+        photo = photo
+            .id(COURSES)
+            .child(all_courses(s.hovered == Some(COURSES)));
+    }
     for (left, id) in [(true, PREV), (false, NEXT)] {
         if lobby {
             break;
@@ -1424,7 +1433,7 @@ fn hero(m: &Metrics, s: &Screen) -> El {
         ..Default::default()
     })
     .child({
-        let name = El::new(Style {
+        let mut name = El::new(Style {
             min_size: Size {
                 width: length(0.),
                 height: auto(),
@@ -1437,6 +1446,9 @@ fn hero(m: &Metrics, s: &Screen) -> El {
             line_height: name_size * 1.05,
             wrap: false,
         });
+        if race {
+            name = name.id(COURSES);
+        }
         let mut copy = El::new(Style {
             flex_grow: 1.,
             flex_shrink: 1.,
@@ -1474,6 +1486,47 @@ fn hero(m: &Metrics, s: &Screen) -> El {
     }));
     hero.flex_shrink = 1.;
     El::new(hero).child(photo).child(caption)
+}
+
+/// Single Race's "All courses" button over the photo's foot: a list
+/// glyph and the label, on the arrows' dark glass.
+fn all_courses(hovered: bool) -> El {
+    let bar = || {
+        El::new(Style {
+            size: Size {
+                width: length(12.),
+                height: length(2.),
+            },
+            flex_shrink: 0.,
+            ..Default::default()
+        })
+        .paint(Paint::fill(Color::WHITE).radius(1.))
+    };
+    let glyph = El::new(column(3.)).child(bar()).child(bar()).child(bar());
+    let mut style = absolute(None, None, Some(8.), Some(0.));
+    style.inset.right = LengthPercentageAuto::length(0.);
+    style.display = Display::Flex;
+    style.justify_content = JustifyContent::CENTER;
+    let mut pill = row(8.);
+    pill.padding = sides(0., 12., 0., 12.);
+    pill.min_size = Size {
+        width: auto(),
+        height: length(32.),
+    };
+    El::new(style).child(
+        El::new(pill)
+            .paint(
+                Paint::fill(Color::hex(if hovered { "#000000b3" } else { "#0000008c" }))
+                    .radius(16.),
+            )
+            .id(COURSES)
+            .child(glyph)
+            .child(text(
+                "ALL COURSES",
+                TextStyle::new(display(13., 800, false), Color::WHITE).spacing(13. * 0.08),
+                16.,
+            )),
+    )
 }
 
 /// `.ms-pill`: Ride, Done and Press Start.

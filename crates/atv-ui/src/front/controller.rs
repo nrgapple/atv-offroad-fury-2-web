@@ -327,11 +327,23 @@ pub fn loading_stage(text: &str) -> (&'static str, f32) {
     (status, progress)
 }
 
+/// A held arrow (a finger, a D-pad or stick direction) repeats its step
+/// after this long (ms)...
+pub const REPEAT_DELAY: f64 = 400.;
+/// ...and then this often (ms): about nine steps a second.
+pub const REPEAT_EVERY: f64 = 110.;
+
 struct Pressed {
     pointer: u64,
     id: Option<u32>,
     x: f32,
     y: f32,
+    /// Where the finger is now (a held arrow repeats while it stays on it).
+    at: (f32, f32),
+    /// A held arrow's next repeat (ms, `scroll::now`); infinite otherwise.
+    repeat_at: f64,
+    /// The arrow already stepped while held: its release does not step again.
+    repeated: bool,
     moved: bool,
     /// The press began in a scrolling region (the list or the rows).
     scroll: Option<Pane>,
@@ -378,8 +390,12 @@ pub struct Frontend {
     /// The page just opened: its list shows the current card without a glide.
     fresh: bool,
     hovered: Option<u32>,
-    pressed: Option<Pressed>,
+    /// Fingers (and the mouse) down, each its own tap: fast taps with two
+    /// thumbs overlap, and one finger's press must not drop another's.
+    pressed: Vec<Pressed>,
     pad: u32,
+    /// Held D-pad/stick directions' next repeat (Up, Down, Left, Right).
+    pad_repeat: [f64; 4],
     garage_return: String,
     /// The garage vehicles from ui_menu's catalog.
     pub catalog: Vec<super::Vehicle>,
@@ -571,7 +587,8 @@ impl Frontend {
             reveal_row: false,
             fresh: false,
             hovered: None,
-            pressed: None,
+            pressed: Vec::new(),
+            pad_repeat: [f64::INFINITY; 4],
             pad: u32::MAX,
             garage_return: "single".into(),
             catalog: Vec::new(),
@@ -1766,7 +1783,7 @@ impl Frontend {
         self.selection = 0;
         self.list = Scroller::default();
         self.rows = Scroller::default();
-        self.pressed = None;
+        self.pressed.clear();
         self.hovered = None;
         self.reveal = matches!(page, "tracks" | "garage" | "race");
         self.fresh = true;
@@ -2477,7 +2494,7 @@ impl Frontend {
         set(7, buttons(4) > 0.5);
         set(8, buttons(5) > 0.5);
         // Buttons held when the page opened act only after a release.
-        let fresh = if self.pad == u32::MAX {
+        let mut fresh = if self.pad == u32::MAX {
             0
         } else {
             held & !self.pad
@@ -2487,6 +2504,18 @@ impl Frontend {
         } else {
             held
         };
+        // A held direction repeats, as a held arrow key does.
+        let now = crate::scroll::now();
+        for (i, bit) in (3..=6).enumerate() {
+            if fresh & 1 << bit != 0 {
+                self.pad_repeat[i] = now + REPEAT_DELAY;
+            } else if held & 1 << bit == 0 || self.pad == u32::MAX {
+                self.pad_repeat[i] = f64::INFINITY;
+            } else if now >= self.pad_repeat[i] {
+                fresh |= 1 << bit;
+                self.pad_repeat[i] = now + REPEAT_EVERY;
+            }
+        }
         let mut event = None;
         for (bit, code) in [
             (3, "ArrowUp"),
@@ -2552,7 +2581,17 @@ impl Frontend {
         let inside = |pane: u32| hits.iter().any(|(r, id)| *id == pane && r.contains(x, y));
         // The list sits inside the rows column on Select Track: it wins.
         // An open status popover covers both.
-        let scroll = if self.status_open() {
+        // One finger scrolls at a time: a second one down while another
+        // drives a pane neither scrolls nor taps (as a native scroll view).
+        let other = self
+            .pressed
+            .iter()
+            .any(|p| p.pointer != pointer && p.scroll.is_some());
+        let scrolling = self
+            .pressed
+            .iter()
+            .any(|p| p.pointer != pointer && p.scroll.is_some() && (p.moved || p.caught));
+        let scroll = if self.status_open() || other {
             None
         } else if inside(LIST) {
             Some(Pane::List)
@@ -2566,15 +2605,61 @@ impl Frontend {
             Some(pane) => self.pane(pane).press(y, now),
             None => false,
         };
-        self.pressed = Some(Pressed {
+        let id = Self::hit(hits, x, y).filter(|_| !scrolling);
+        self.pressed.retain(|p| p.pointer != pointer);
+        self.pressed.push(Pressed {
             pointer,
-            id: Self::hit(hits, x, y),
+            id,
             x,
             y,
+            at: (x, y),
+            repeat_at: if id.is_some_and(Self::arrow) {
+                now + REPEAT_DELAY
+            } else {
+                f64::INFINITY
+            },
+            repeated: false,
             moved: caught,
             scroll,
             caught,
         });
+    }
+
+    /// Step arrows: held, they repeat.
+    fn arrow(id: u32) -> bool {
+        matches!(id, PREV | NEXT | QUAD_PREV | QUAD_NEXT)
+            || (STEP_PREV..STEP_PREV + 10).contains(&id)
+            || (STEP_NEXT..STEP_NEXT + 10).contains(&id)
+    }
+
+    /// A finger held on a step arrow repeats its step (after
+    /// [`REPEAT_DELAY`], every [`REPEAT_EVERY`]) while it stays on the
+    /// arrow and the content does not scroll. Called every frame.
+    pub fn tick_hold(
+        &mut self,
+        hits: &[(Rect, u32)],
+        view: &Viewport,
+        settings: &mut Settings,
+    ) -> Option<Event> {
+        let now = crate::scroll::now();
+        let due = self.pressed.iter_mut().find(|p| p.repeat_at <= now)?;
+        let (x, y) = due.at;
+        let id = due.id?;
+        if due.moved || Self::hit(hits, x, y) != Some(id) {
+            due.repeat_at = f64::INFINITY;
+            return None;
+        }
+        due.repeat_at = now + REPEAT_EVERY;
+        due.repeated = true;
+        let event = self.click(id, view, settings);
+        self.seat_gate(event, view)
+    }
+
+    /// A held arrow or direction will repeat: frames must keep coming.
+    pub fn repeating(&self) -> bool {
+        self.pressed.iter().any(|p| p.repeat_at.is_finite())
+            || self.pad_repeat.iter().any(|t| t.is_finite())
+            || self.seats.repeating()
     }
 
     fn pane(&mut self, pane: Pane) -> &mut Scroller {
@@ -2586,16 +2671,17 @@ impl Frontend {
 
     /// Touch/mouse drag: lists and overflowing rows follow the finger.
     pub fn drag(&mut self, pointer: u64, x: f32, y: f32) {
-        let Some(p) = self.pressed.as_mut().filter(|p| p.pointer == pointer) else {
+        let Some(p) = self.pressed.iter_mut().find(|p| p.pointer == pointer) else {
             return;
         };
         let scroll = p.scroll;
+        p.at = (x, y);
         if (x - p.x).hypot(y - p.y) > 8. {
             p.moved = true;
         }
         if let Some(pane) = scroll
             && self.pane(pane).drag(y, crate::scroll::now())
-            && let Some(p) = self.pressed.as_mut()
+            && let Some(p) = self.pressed.iter_mut().find(|p| p.pointer == pointer)
         {
             // The content follows the finger: this press is a scroll.
             p.moved = true;
@@ -2614,7 +2700,8 @@ impl Frontend {
     }
 
     pub fn cancel_pointer(&mut self) {
-        self.pressed = None;
+        self.pressed.clear();
+        self.pad_repeat = [f64::INFINITY; 4];
         self.hovered = None;
         self.list.cancel();
         self.rows.cancel();
@@ -2657,7 +2744,15 @@ impl Frontend {
         view: &Viewport,
         settings: &mut Settings,
     ) -> Option<Event> {
-        let pressed = self.pressed.take().filter(|p| p.pointer == pointer)?;
+        let at = self.pressed.iter().position(|p| p.pointer == pointer)?;
+        let pressed = self.pressed.remove(at);
+        // A held arrow stepped while held; letting go does not step again.
+        if pressed.repeated {
+            if let Some(pane) = pressed.scroll {
+                self.pane(pane).release(crate::scroll::now());
+            }
+            return None;
+        }
         if let Some(pane) = pressed.scroll {
             self.pane(pane).release(crate::scroll::now());
             // A drag scrolls; a grab stops a fling. Neither selects.
@@ -2690,6 +2785,7 @@ impl Frontend {
             super::PASSKEY => self.open_passkey(view),
             START => return self.race_event(settings),
             SHARE if self.page == "race" => return Some(Event::CopyRaceLink),
+            super::COURSES if self.page == "race" => self.open_course_sheet(view),
             PREV | NEXT if self.page == "race" => {
                 if let Some(index) = self.choices.iter().position(|(a, _)| a == "racetrack") {
                     self.selection = index;
@@ -4177,6 +4273,52 @@ mod tests {
         front.selection = 3;
         front.key("Enter", &view, &mut settings);
         assert_eq!(front.split_players, 2);
+    }
+
+    #[test]
+    fn overlapping_taps_each_step_and_a_held_arrow_repeats() {
+        let view = view(390., 844.);
+        let mut settings = Settings::memory();
+        let mut front = Frontend::new(tracks(), &settings, true);
+        front.set_race_courses(
+            vec!["env01".into(), "nat01".into(), "sx01".into(), "sx02".into()],
+            &view,
+        );
+        front.show("race", &view);
+        let arrow = Rect {
+            x: 300.,
+            y: 150.,
+            w: 46.,
+            h: 56.,
+        };
+        let hits = [(arrow, NEXT)];
+        // Two thumbs: the second lands before the first lifts.
+        front.press(&hits, 1, 320., 170.);
+        front.press(&hits, 2, 324., 176.);
+        front.release(&hits, 1, 320., 170., &view, &mut settings);
+        front.press(&hits, 1, 318., 168.);
+        front.release(&hits, 2, 324., 176., &view, &mut settings);
+        front.release(&hits, 1, 318., 168., &view, &mut settings);
+        assert_eq!(
+            front.race.course, "sx02",
+            "three overlapping taps, three steps"
+        );
+        // A finger held on the arrow repeats; letting go adds no step.
+        front.press(&hits, 3, 320., 170.);
+        assert!(front.repeating());
+        assert_eq!(front.tick_hold(&hits, &view, &mut settings), None);
+        assert_eq!(front.race.course, "sx02", "not before the repeat delay");
+        for p in &mut front.pressed {
+            p.repeat_at = 0.;
+        }
+        front.tick_hold(&hits, &view, &mut settings);
+        assert_eq!(front.race.course, "env01");
+        front.release(&hits, 3, 320., 170., &view, &mut settings);
+        assert_eq!(
+            front.race.course, "env01",
+            "the release of a repeated arrow"
+        );
+        assert!(!front.repeating());
     }
 
     #[test]
