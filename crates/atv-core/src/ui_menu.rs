@@ -869,6 +869,17 @@ pub fn layout(request: Request) -> Result<Frame> {
             let preview = [w * 0.55, 100., w * 0.4, (h - 210.).min(w * 0.4 * 0.64)];
             for (i, (label, action)) in rows.iter().enumerate() {
                 let rect = match (portrait, *action) {
+                    // Portrait shares the last row: Start Race beside Copy
+                    // ride link, so the seven rows keep six rows' height.
+                    (true, "racestart" | "copyride") => {
+                        let half = (list_w.max(290.) - 8.) / 2.;
+                        let x = if *action == "racestart" {
+                            24.
+                        } else {
+                            32. + half
+                        };
+                        [x, 140. + 5. * 56., half, 54.]
+                    }
                     (true, _) => [24., 140. + i as f32 * 56., list_w.max(290.), 54.],
                     (false, "copyride") => [168., h - 68., 200., 56.],
                     (false, "racestart") => {
