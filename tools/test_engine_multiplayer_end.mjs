@@ -1,7 +1,8 @@
 // Host-only gate: leaving and losing a room in the Rust engine, as
 // web/multiplayer.js and game.js do:
 // - Pause → Leave Game in a private room returns to the Multiplayer page,
-//   in Arlington Free Ride to the main menu (multiplayer.js `leave`);
+//   and in Arlington Free Ride too (Free Ride sits under Multiplayer,
+//   research/MENU_FLOW.md);
 // - a room that closes for good (here: another tab reclaims this rider's slot
 //   key, so the relay closes the socket with "Connection replaced") ends the
 //   ride on the Multiplayer page with the reason on the notice line
@@ -27,6 +28,7 @@ async function choose(page, action) {
   const at = f.choices.indexOf(action);
   assert.ok(at >= 0, `${action} in ${f.choices}`);
   for (let i = f.selection; i < at; i++) await key(page, 'ArrowDown');
+  for (let i = f.selection; i > at; i--) await key(page, 'ArrowUp');
   await key(page, 'Enter');
 }
 // Riding in the room: the pause menu's Leave Game.
@@ -96,15 +98,13 @@ try {
   await thief.close();
   console.log(`  room closed: the ride ended on Multiplayer with "${notice}"`);
 
-  // 3. Leave Game from Arlington Free Ride: the main menu.
-  await key(page, 'Escape');
-  await onPage(page, 'main');
+  // 3. Leave Game from Arlington Free Ride (under Multiplayer): back on Multiplayer.
   await choose(page, 'freeride');
   await wait(page, () => /^FREERD/.test(JSON.parse(window.furyMultiplayer ?? 'null')?.code ?? ''));
   await wait(page, () => JSON.parse(document.querySelector('#ui-state')?.textContent || '{}').toolbar);
   await leaveGame(page);
-  await onPage(page, 'main');
-  console.log('  Free Ride: Leave Game → main menu');
+  await onPage(page, 'multiplayer');
+  console.log('  Free Ride: Leave Game → Multiplayer');
   assertNoErrors(errors);
   console.log('PASS: Rust rooms leave and end on the JavaScript pages');
 } finally {

@@ -22,8 +22,16 @@ pub struct Riding {
     pub paused: bool,
     /// A replayed parity state: input never resumes it.
     pub held: bool,
+    /// The Training Course holds the ATV while a line plays (+0x94c): the
+    /// player's drive input is replaced by a full brake.
+    pub locked: bool,
     /// Fine terrain patch centre, in terrain cells.
     center: [f32; 2],
+    /// Split screen: players 2-4's origins this frame, each of which gets
+    /// its own fine terrain patch (`terrain_mesh::disjoint`), and those
+    /// patches' centres.
+    pub split_origin: Vec<[f32; 3]>,
+    split_center: Vec<[f32; 2]>,
     pub steps_last_frame: u32,
     /// The toolbar Camera button (game.js `cameraCycle`).
     pub cycle_requested: bool,
@@ -172,7 +180,10 @@ impl Riding {
             rush: SpeedRush::default(),
             paused: false,
             held: false,
+            locked: false,
             center: cells(venue, origin),
+            split_origin: Vec::new(),
+            split_center: Vec::new(),
             steps_last_frame: 0,
             cycle_requested: false,
             menu_open: false,
@@ -456,6 +467,12 @@ impl Riding {
             self.orbit = 0.;
             self.ride.cycle_camera();
         }
+        if self.locked {
+            read.controls = Controls {
+                brake: 1.,
+                ..Controls::default()
+            };
+        }
         self.run_with(&read.controls, count, peers)?;
         // A camera cycle snaps.
         self.accept_batch(count, self.focused && !self.menu_open && !cycle)
@@ -598,6 +615,8 @@ impl Riding {
     ) -> Result<(), String> {
         let origin = self.ride.frame().origin;
         self.center = cells(venue, origin);
+        // Player 2's patch returns on the next presented frame.
+        self.split_center.clear();
         scene.rebuild(gpu, venue, Some([origin[0], origin[2]]));
         scene.set_ride(gpu, venue, &self.ride.quad, &self.ride.rider)?;
         scene.set_ride_paint(self.ride.paint());
@@ -658,6 +677,21 @@ impl Riding {
         aspect: f32,
         dt: f32,
     ) -> Result<(Camera, f32), String> {
+        self.present_view(gpu, Some(scene), venue, aspect, dt)
+            .map(|(camera, focal, _)| (camera, focal))
+    }
+
+    /// The presented camera, focal length and pose. With no scene (split
+    /// screen's second player, drawn as a scene rider slot) nothing is
+    /// posed or recentred here.
+    pub fn present_view(
+        &mut self,
+        gpu: &Gpu,
+        mut scene: Option<&mut SceneRenderer>,
+        venue: &Venue,
+        aspect: f32,
+        dt: f32,
+    ) -> Result<(Camera, f32, atv_game::ride::Pose), String> {
         // render(): the motorcycle presenter, else (Enhanced/High) the ATV
         // presenter, between the delivered 60 Hz states; Original ATVs draw
         // the latest state.
@@ -725,9 +759,29 @@ impl Riding {
         } = view;
         // buildTerrainMesh again once the rider leaves 48 cells of the patch.
         let at = cells(venue, frame.origin);
-        if (at[0] - self.center[0]).abs() > 48. || (at[1] - self.center[1]).abs() > 48. {
+        let far = |at: [f32; 2], center: [f32; 2]| {
+            (at[0] - center[0]).abs() > 48. || (at[1] - center[1]).abs() > 48.
+        };
+        let split_at: Vec<[f32; 2]> = self.split_origin.iter().map(|o| cells(venue, *o)).collect();
+        let split_moved = split_at.len() != self.split_center.len()
+            || split_at
+                .iter()
+                .zip(&self.split_center)
+                .any(|(at, center)| far(*at, *center));
+        if let Some(scene) = scene.as_deref_mut()
+            && (far(at, self.center) || split_moved)
+        {
             self.center = at;
-            scene.recenter_terrain(gpu, venue, [frame.origin[0], frame.origin[2]]);
+            self.split_center = split_at;
+            if self.split_origin.is_empty() {
+                scene.recenter_terrain(gpu, venue, [frame.origin[0], frame.origin[2]]);
+            } else {
+                let centers: Vec<[f32; 2]> = std::iter::once(frame.origin)
+                    .chain(self.split_origin.iter().copied())
+                    .map(|o| [o[0], o[2]])
+                    .collect();
+                scene.recenter_terrain_many(gpu, venue, &centers);
+            }
         }
         let (mut pose, cpu_poses) = match shown {
             Some(shown) => (shown.pose(), shown.cpu_poses()),
@@ -772,33 +826,35 @@ impl Riding {
                 ];
             }
         }
-        let crash = self.crashes.as_ref().and_then(|c| c.frame());
-        scene.set_crash(
-            gpu,
-            crash.map_or(&[][..], |c| &c.severed_nodes[..]),
-            crash
-                .filter(|_| {
-                    self.crashes
-                        .as_ref()
-                        .is_some_and(|c| c.mode == atv_game::crash::CrashMode::Gorn)
-                })
-                .map(|c| &c.blood),
-        );
-        scene.accept_burst(
-            gpu,
-            self.alpha_landing_burst
-                .then_some((&self.burst, self.ride.steps() as f32 / 60.)),
-        );
-        let mud = if self.ride.is_motorcycle() {
-            self.ride.mud_amount()
-        } else if self.dirt_enabled || self.dirt.heavy() {
-            self.dirt.amount()
-        } else {
-            0.
-        };
-        scene.set_ride_mud(mud, !self.ride.is_motorcycle());
-        scene.pose_ride(gpu, &pose);
-        scene.pose_race_cpus(gpu, &cpu_poses, position);
+        if let Some(scene) = scene {
+            let crash = self.crashes.as_ref().and_then(|c| c.frame());
+            scene.set_crash(
+                gpu,
+                crash.map_or(&[][..], |c| &c.severed_nodes[..]),
+                crash
+                    .filter(|_| {
+                        self.crashes
+                            .as_ref()
+                            .is_some_and(|c| c.mode == atv_game::crash::CrashMode::Gorn)
+                    })
+                    .map(|c| &c.blood),
+            );
+            scene.accept_burst(
+                gpu,
+                self.alpha_landing_burst
+                    .then_some((&self.burst, self.ride.steps() as f32 / 60.)),
+            );
+            let mud = if self.ride.is_motorcycle() {
+                self.ride.mud_amount()
+            } else if self.dirt_enabled || self.dirt.heavy() {
+                self.dirt.amount()
+            } else {
+                0.
+            };
+            scene.set_ride_mud(mud, !self.ride.is_motorcycle());
+            scene.pose_ride(gpu, &pose);
+            scene.pose_race_cpus(gpu, &cpu_poses, position);
+        }
         Ok((
             Camera {
                 x: position[0],
@@ -808,6 +864,7 @@ impl Riding {
                 pitch,
             },
             focal_length * self.rush.focal_scale(),
+            pose,
         ))
     }
 }

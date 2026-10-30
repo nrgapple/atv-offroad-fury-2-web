@@ -56,6 +56,9 @@ impl MaterialPass {
 /// unbound base pass leaves one untextured draw.
 pub struct Material {
     pub passes: Vec<MaterialPass>,
+    /// `[General] EnableMultiPassCull` (`001bf430`, default on): beyond
+    /// 130 ft only the first pass draws (research/VISIBILITY.md).
+    pub multipass_cull: bool,
 }
 
 pub fn last_component(name: &str) -> &str {
@@ -168,7 +171,10 @@ fn load(archive: &Resource, name: &str, multi_pass: bool) -> Result<Material> {
         Some(Some(_)) => passes.into_iter().flatten().collect(),
         _ => vec![MaterialPass::untextured()],
     };
-    Ok(Material { passes })
+    Ok(Material {
+        passes,
+        multipass_cull: atv_core::model_lod::multipass_cull(&text),
+    })
 }
 
 fn decode(bytes: &[u8], atm: bool, tga: bool, animated: bool) -> Result<MaterialImage> {

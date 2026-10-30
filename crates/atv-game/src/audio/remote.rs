@@ -145,7 +145,7 @@ impl RemoteAudio {
         mixer: &mut Mixer,
         effects: Option<&sound_effects::Config>,
         impact_sample: &dyn Fn(&str) -> Option<Arc<Pcm>>,
-        listener: &Listener,
+        listeners: &[Listener],
         own: Option<[f32; 3]>,
         riders: &[Rider],
         audible: bool,
@@ -187,7 +187,7 @@ impl RemoteAudio {
                     min_distance: 15.,
                     max_distance: 300.,
                 },
-                std::slice::from_ref(listener),
+                listeners,
             )?;
             if voiced.contains(&rider.peer)
                 && let Some(engine) = self.engines.get(&rider.quad)
@@ -268,7 +268,7 @@ impl RemoteAudio {
                         min_distance: config.min_distance,
                         max_distance: config.max_distance,
                     },
-                    std::slice::from_ref(listener),
+                    listeners,
                 )?;
                 if let Some(pcm) = impact_sample(&config.body_impact[index]) {
                     if let Some(old) = self.impacts.remove(&rider.peer) {
@@ -343,7 +343,7 @@ mod tests {
                 &mut mixer,
                 Some(&effects),
                 &sample,
-                &listener,
+                std::slice::from_ref(&listener),
                 Some([0.; 3]),
                 &[rider(1, 20., 0)],
                 true,
@@ -355,7 +355,7 @@ mod tests {
                 &mut mixer,
                 Some(&effects),
                 &sample,
-                &listener,
+                std::slice::from_ref(&listener),
                 Some([0.; 3]),
                 &[rider(1, 20., 1)],
                 true,
@@ -368,7 +368,7 @@ mod tests {
                 &mut mixer,
                 Some(&effects),
                 &sample,
-                &listener,
+                std::slice::from_ref(&listener),
                 Some([0.; 3]),
                 &[rider(1, 20., 2)],
                 false,

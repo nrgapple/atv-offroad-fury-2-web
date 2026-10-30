@@ -14,8 +14,19 @@ use crate::{
 use atv_core::race::Frame;
 
 /// 002e0770: overlay text without a colour draws 190,190,190.
-const RACE_TEXT: Color = Color::rgb(190, 190, 190);
+pub(super) const RACE_TEXT: Color = Color::rgb(190, 190, 190);
 const RACE_GOLD: Color = Color::rgb(218, 192, 31);
+
+/// What a compass shows: the player's heading (yaw about +Y, forward =
+/// (sin, cos)) and origin, other riders and the mode's icons, each with
+/// the image name it draws (tinted copies are named `<icon>#<slot>`).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct CompassView {
+    pub yaw: f32,
+    pub origin: [f32; 3],
+    pub racers: Vec<([f32; 3], String)>,
+    pub icons: Vec<([f32; 3], String)>,
+}
 
 /// Original MM:SS.hh (rounded hundredths); 0 shows dashes (`overlayTime`).
 pub fn overlay_time(t: f32) -> String {
@@ -83,6 +94,127 @@ pub struct RaceView<'a> {
 }
 
 impl Meter {
+    /// Enduro compass (`QuadzillaCompass`, `002e6e80`): a heading-up face
+    /// (turned by −yaw), the player's arrow fixed at the centre, the other
+    /// riders clamped to the 33px rim (10.09 ft per pixel, single player) and
+    /// the next gate's icon, turned to the gate's direction, only within it.
+    fn compass(
+        &self,
+        list: &mut DisplayList,
+        frame: &Frame,
+        origin: [f32; 3],
+        center: [f32; 2],
+        unit: f32,
+    ) {
+        let racers: Vec<_> = frame
+            .opponents
+            .iter()
+            .map(|cpu| (cpu.origin, RACER.to_string()))
+            .collect();
+        self.draw_compass(
+            list,
+            &CompassView {
+                yaw: frame.yaw,
+                origin,
+                racers,
+                icons: Vec::new(),
+            },
+            frame.enduro_next,
+            center,
+            unit,
+        );
+    }
+
+    /// `QuadzillaCompass` (`002e6e80`): the `compassbkg` face turned by
+    /// −heading, other riders and the icon list (`+0x8c`) clamped to the
+    /// 33 px rim, an Enduro's next gate only inside it, and the
+    /// `compassarrow` player marker at the centre pointing up.
+    pub(super) fn draw_compass(
+        &self,
+        list: &mut DisplayList,
+        view: &CompassView,
+        gate_next: Option<([f32; 3], [f32; 2])>,
+        center: [f32; 2],
+        unit: f32,
+    ) {
+        const FEET_PER_PIXEL: f32 = 333. / 33.;
+        const RADIUS: f32 = 33.;
+        let [face, arrow, gate] = super::assets::COMPASS;
+        let (h, z) = (view.yaw.sin(), view.yaw.cos());
+        // angle(h, t): positive toward the rider's right, clockwise on screen.
+        let angle = |t: [f32; 2]| (z * t[0] - h * t[1]).atan2(h * t[0] + z * t[1]);
+        let sprite = |list: &mut DisplayList, name: &str, at: [f32; 2], rotation: f32| {
+            let (Some(&id), Some(image)) = (self.images.get(name), self.assets.images.get(name))
+            else {
+                return;
+            };
+            let (w, h) = (image.width as f32, image.height as f32);
+            list.push(Item::Image {
+                image: id,
+                src: Rect::new(0., 0., w, h),
+                dst: Rect::new(
+                    (at[0] - w / 2.) * unit,
+                    (at[1] - h / 2.) * unit,
+                    w * unit,
+                    h * unit,
+                ),
+                rotation,
+                pivot: [at[0] * unit, at[1] * unit],
+            });
+        };
+        sprite(list, face, center, -view.yaw);
+        let origin = view.origin;
+        let place = |p: [f32; 3], clamp: bool| {
+            let d = [p[0] - origin[0], p[2] - origin[2]];
+            let r = (d[0].hypot(p[1] - origin[1]).hypot(d[1])) / FEET_PER_PIXEL;
+            let r = if clamp { r.min(RADIUS) } else { r };
+            let a = angle(d);
+            (r, [center[0] + r * a.sin(), center[1] - r * a.cos()])
+        };
+        for (position, icon) in &view.racers {
+            let (_, at) = place(*position, true);
+            sprite(list, icon, at, 0.);
+        }
+        for (position, icon) in &view.icons {
+            let (_, at) = place(*position, true);
+            sprite(list, icon, at, 0.);
+        }
+        if let Some((position, direction)) = gate_next {
+            let (r, at) = place(position, false);
+            if r < RADIUS {
+                let gate_yaw = direction[0].atan2(direction[1]);
+                sprite(list, gate, at, gate_yaw - view.yaw);
+            }
+        }
+        sprite(list, arrow, center, 0.);
+    }
+
+    /// The compass of a Freestyle target run (Overlay Set 5) or a
+    /// mini-game (Sets 6/7): object 31 at 70,375 on the 640x448 frame,
+    /// laid out like the race overlays. Nothing without the compass art.
+    pub fn paint_compass(
+        &self,
+        list: &mut DisplayList,
+        view: &CompassView,
+        width: f32,
+        height: f32,
+    ) {
+        if !self.has_compass() {
+            return;
+        }
+        let unit = (height / 448.).min(width / 480.);
+        let h = height / unit;
+        self.draw_compass(list, view, None, [70., h - (448. - 375.)], unit);
+    }
+
+    /// The archives carried `compassbkg` and `compassarrow`.
+    pub fn has_compass(&self) -> bool {
+        let [face, arrow, _] = super::assets::COMPASS;
+        [face, arrow]
+            .iter()
+            .all(|n| self.images.contains_key(*n) && self.assets.images.contains_key(*n))
+    }
+
     /// Race overlays for a `width` x `height` CSS-pixel viewport.
     pub fn paint_race(
         &self,
@@ -182,6 +314,15 @@ impl Meter {
             let value = format!("{}", (race.score + 0.5).floor());
             text(list, &value, at(178., 23.), l, 2, None, 1., None, [0.; 2]);
         }
+        // Enduro GATE indicator (Overlay Set 11 object 40, value 22
+        // `002df0b0` "%d of %d").
+        if let (Some(l), Some([gate, gates])) = (layout(40), frame.enduro_gate)
+            && shown("lap")
+        {
+            text(list, "GATE", at(25., 270.), l, 1, None, 1., None, [0.; 2]);
+            let value = format!("{gate} of {gates}");
+            text(list, &value, at(25., 270.), l, 2, None, 1., None, [0.; 2]);
+        }
         // Position: the name tree (object 4) or the place number (object 41).
         if let Some(l) = layout(41).filter(|_| position == "place") {
             text(list, "PLACE", at(20., 23.), l, 1, None, 1., None, [0.; 2]);
@@ -194,10 +335,28 @@ impl Meter {
         }
         if let Some(tree) = layout(4).filter(|_| position == "name") {
             // PLACE position tree: each rider slot's name slides to its rank.
-            let names: Vec<String> = std::iter::once("YOU".to_string())
-                .chain(frame.opponents.iter().map(|o| o.name.clone()))
-                .map(|n| n.chars().take(9).collect())
-                .collect();
+            // A room race (research/MULTIPLAYER.md "Room races") has no CPU
+            // opponents: its standings list every room rider in race order.
+            let room = frame.opponents.is_empty() && frame.standings.len() > 1;
+            let names: Vec<String> = if room {
+                frame
+                    .standings
+                    .iter()
+                    .map(|s| {
+                        if s.player {
+                            "YOU".to_string()
+                        } else {
+                            s.name.clone()
+                        }
+                    })
+                    .map(|n| n.chars().take(9).collect())
+                    .collect()
+            } else {
+                std::iter::once("YOU".to_string())
+                    .chain(frame.opponents.iter().map(|o| o.name.clone()))
+                    .map(|n| n.chars().take(9).collect())
+                    .collect()
+            };
             text(
                 list,
                 "PLACE",
@@ -224,16 +383,24 @@ impl Meter {
                 );
             }
             for (slot, name) in names.iter().take(5).enumerate() {
-                let y = hud.tree.get(slot).copied().unwrap_or_else(|| {
-                    (frame.ranks.get(slot).copied().unwrap_or(1) as f32 - 1.) * 23.
-                });
+                let y = if room {
+                    slot as f32 * 23.
+                } else {
+                    hud.tree.get(slot).copied().unwrap_or_else(|| {
+                        (frame.ranks.get(slot).copied().unwrap_or(1) as f32 - 1.) * 23.
+                    })
+                };
                 text(
                     list,
                     name,
                     at(20., 23.),
                     tree,
                     7,
-                    Some(if slot == 0 { RACE_GOLD } else { RACE_TEXT }),
+                    Some(if (room && name == "YOU") || (!room && slot == 0) {
+                        RACE_GOLD
+                    } else {
+                        RACE_TEXT
+                    }),
                     1.,
                     None,
                     [0., y],
@@ -373,7 +540,13 @@ impl Meter {
         if !shown("radar") {
             return;
         }
-        let (map, [left, north, right, _]) = &assets.radar;
+        if frame.enduro_gate.is_some() {
+            self.compass(list, frame, race.origin, at(70., 375.), unit);
+            return;
+        }
+        let Some((map, [left, north, right, _])) = &assets.radar else {
+            return;
+        };
         let (Some(&map_id), Some(map_image)) = (self.images.get(map), self.assets.images.get(map))
         else {
             return;
@@ -413,6 +586,11 @@ impl Meter {
             dot(list, cpu.origin, RACER);
         }
         dot(list, race.origin, RACER_PLAYER);
+    }
+
+    /// The course archive carries the 321 lamp art.
+    pub fn has_lamps(&self) -> bool {
+        self.assets.lamps
     }
 
     /// 321 LIGHTS: four 32x32 lamps from (256,208) in 640x448, centred on
@@ -478,5 +656,69 @@ mod tests {
         let s = OverlaySettings::load(&settings);
         assert!(!s.shown("radar") && s.shown("timing"));
         assert_eq!(s.position, "place");
+    }
+
+    #[test]
+    fn compass_clamps_mode_icons_to_the_rim_heading_up() {
+        use super::super::assets::{COMPASS, HudImage, OverlayAssets, RADAR_TARGET};
+        let image = |w| HudImage {
+            width: w,
+            height: w,
+            rgba: vec![255; (w * w * 4) as usize],
+        };
+        let mut images = std::collections::HashMap::new();
+        for (name, w) in [(COMPASS[0], 128), (COMPASS[1], 8), (RADAR_TARGET, 8)] {
+            images.insert(name.to_string(), image(w));
+        }
+        let mut meter = Meter::new(OverlayAssets {
+            speed: Section::default(),
+            stunt: Section::default(),
+            fonts: Default::default(),
+            images,
+            lamps: false,
+            race: None,
+            split: Default::default(),
+        });
+        for (i, name) in [COMPASS[0], COMPASS[1], RADAR_TARGET].iter().enumerate() {
+            meter
+                .images
+                .insert(name.to_string(), crate::paint::ImageId(i as u32));
+        }
+        assert!(meter.has_compass());
+        // Facing +X: a target 1000 ft ahead sits at the top of the rim, one
+        // 50 ft to the right (−Z) lies inside it.
+        let view = CompassView {
+            yaw: std::f32::consts::FRAC_PI_2,
+            origin: [0.; 3],
+            racers: Vec::new(),
+            icons: vec![
+                ([1000., 0., 0.], RADAR_TARGET.into()),
+                ([0., 0., -50.], RADAR_TARGET.into()),
+            ],
+        };
+        let mut list = DisplayList::default();
+        meter.paint_compass(&mut list, &view, 640., 448.);
+        let images: Vec<_> = list
+            .items
+            .iter()
+            .filter_map(|i| match i {
+                Item::Image {
+                    image,
+                    dst,
+                    rotation,
+                    ..
+                } => Some((image.0, dst.x + dst.w / 2., dst.y + dst.h / 2., *rotation)),
+                _ => None,
+            })
+            .collect();
+        // Face (turned by −yaw), two targets, the arrow last at 70,375.
+        assert_eq!(images.len(), 4);
+        assert_eq!(images[0].0, 0);
+        assert!((images[0].3 + std::f32::consts::FRAC_PI_2).abs() < 1e-5);
+        let (cx, cy) = (images[3].1, images[3].2);
+        assert!((cx - 70.).abs() < 1e-3 && (cy - 375.).abs() < 1e-3);
+        assert!((images[1].1 - cx).abs() < 1e-3 && (cy - images[1].2 - 33.).abs() < 1e-3);
+        let right = 50. / (333. / 33.);
+        assert!((images[2].1 - cx - right).abs() < 1e-3 && (images[2].2 - cy).abs() < 1e-3);
     }
 }

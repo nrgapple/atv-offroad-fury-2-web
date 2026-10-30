@@ -1,12 +1,16 @@
 //! In-ride HUD pieces drawn by the engine.
 pub mod assets;
+pub mod games;
 pub mod help;
 pub mod meter;
 pub mod minimap;
+pub mod objective;
 pub mod peers;
 pub mod race;
 pub mod results;
+pub mod split;
 pub mod toolbar;
+pub mod training;
 
 /// The viewport in CSS pixels and the device traits media queries test.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]

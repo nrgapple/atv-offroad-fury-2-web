@@ -30,8 +30,9 @@ fn scene(sim: &Simulation) -> Result<Option<SceneCollision>> {
     if sim.mud_obstacles.len() == sim.obstacles.len() {
         scene.set_mud_obstacles(sim.mud_obstacles.clone())?;
     }
-    if let Some(train) = &sim.train {
-        scene.install_dynamic(super::train_obstacles(&train.borrow())?)?;
+    let dynamic = super::dynamic_obstacles(sim)?;
+    if !dynamic.is_empty() {
+        scene.install_dynamic(dynamic)?;
     }
     Ok(Some(scene))
 }
@@ -160,6 +161,7 @@ impl Ride {
                 clutch: controls.clutch,
             }),
             train_cars: self.train_cars(),
+            actor_emitters: self.actor_emitters(),
         }
     }
 

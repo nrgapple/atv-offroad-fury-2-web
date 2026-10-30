@@ -28,11 +28,16 @@ used; these are approximate composites, not captures.
 | Pause | Near-black translucent rounded panel, italic title strip, gold pill | Same, as one compact list over the frozen ride |
 | 3D previews | Lit original models on the gray panel | Drawn opaque. The UI rider textures (`RIDEINFO.RES` `atv2_*_ui`) keep a specular/reflection mask in alpha (about 50/255 on shirt, pants and sleeves); treating it as transparency let the silver panel show through and turned the black jersey gray. Rider materials never alpha-cut |
 
-Original stats sliders, gear rows, profile pages and the four-player colour
-columns are not reproduced; the port has no matching systems yet.
+Original stats sliders, gear rows and the four-player colour columns are not
+reproduced; the port has no matching systems yet. The Profile Editor and View
+Profile pages use the main-menu layout (rows left, ride stage on the editor and
+view menus) with a label/value table on the silver panel for the name entry,
+profile lists, alerts, Overview, Trophies and Records (`PROFILE.md`).
 
 ## Navigation and value rows
 
+- Which page each row opens and where Back returns (a page history that
+  restores the row, as the original's) are in [MENU_FLOW.md](MENU_FLOW.md).
 - Value rows (race Course, Laps, CPU riders, Difficulty and every Rider gear row) have real
   previous/next buttons either side of the value on every row; tapping the label
   still steps forward. Left/Right step only value rows, so they never start a race,
@@ -76,12 +81,70 @@ pass (six viewports including 390×844 and 320×568, all 26 quads, rider changes
 touch, keyboard and controller, model/control separation, loading and driving).
 Physical phones, Safari/WebKit and exact original appearance are not verified.
 
-## Settings from the main menu
+## Options from the main menu
 
-Settings, Controls, Display, Audio and Extras opened from the main menu use the
+Options (the shared Settings pages: Jukebox, Game Settings, Controls, Display,
+Audio, Extras) opened from the main menu use the
 frontend backdrop and keep the original menu tune. The racing soundtrack plays
 there only after a song is chosen or music is toggled on the Audio page. From
 Pause they keep the ride panel and soundtrack.
+
+## Game Settings (2026-10-27)
+
+The original Options → Game Settings page (`Settings_Game`, PAGE15 labels:
+Split Screen Horizontal/Vertical, Music and Sound FX Volume, Sound
+Configuration Stereo / Stereo (Swapped) / Dolby / Mono, Measurement
+Standard (U.S. system) / Metric, Display Mode 480p/480i, Ecosystem
+Collision On/Off) is Settings → Game Settings in the port, with the rows
+that have an effect on a browser or desktop build. Exact-build evidence
+(bounded reading of the private Ghidra exports):
+
+- **Measurement.** `0020f780` stores the speed factor at settings +0x564
+  from the profile's flag +0x6b0: clear → 1.08 (`0x3f8a3d71`), set →
+  0.68182. The speedometer multiplies ft/s by it and labels "Kph" unless
+  the factor is 0.68182 ("Mph", `002e2030`). Every jump record line tests
+  the factor: the race and Freestyle record hooks (`00332810`,
+  `00332e30`) print "New Longest Jump %d %s!" with ft × 0.3048 and
+  "Meters", and the Hall of Fame / loading pages (`002585c0`) print "%d %s"
+  the same way. The port applies all of these (`hall_of_fame::Units`).
+- **Ecosystem Collision** (settings +0x674). Off sets query bit 0 on the
+  quad's, rider's and wheels' collision objects at setup (`001e1fd0`,
+  `001e4c90`, `001e92c0`); the broad phase (`0011f2c0`, `0011f9a0`) skips
+  objects of class "Vegetation" for objects with that bit. The edge launch
+  sets the same bit for one second and clears it only when +0x674 is set
+  (`001e5260`), so with collision off it stays set. Every race record hook
+  returns early when +0x674 is clear (`00324b40`, `00324cc0`, `00324e60`,
+  `00324f50`, `003249c0`, `00332810`); Freestyle's (`00332e30`) does not.
+  Network play forces it on (`0020f780`, +0x7d8). Turning it off shows the
+  Warning alert 0x90 (`0025e120`): "If Ecosystem Collision is turned off
+  freestyle / records will still be kept, but race records will not. /
+  NOTE: In i.LINK, LAN, and online play, / Ecosystem Collision is always
+  on. / Are you sure you wish to turn off / Ecosystem Collision?" with
+  Yes/No. The port asks the same, applies the setting to the player's quad
+  and every CPU quad (the vehicle's vegetation query flag, the one the
+  edge launch already used), keeps it on in multiplayer rooms, and skips
+  race records while it is off.
+- **Sound Configuration.** Stereo, Stereo (Swapped) and Mono apply to the
+  port's mixed output (all effects, the menu tune and the desktop
+  soundtrack) and to the web's streamed soundtrack, whose Web Audio graph
+  then routes a splitter/merger crossover (Swapped) or a one-channel
+  speakers down-mix ((L + R) / 2, Mono); the menus apply it as well as
+  rides. Stereo keeps the song playing straight from its element. Dolby is
+  the PS2's Pro Logic matrix surround; there is no matrix decoder behind a
+  browser or desktop output, so it renders as Stereo.
+
+Authored or not ported: the original keeps Measurement in the profile
+(+0x6b0) and saves the settings with it; the port keeps one device-wide
+choice like its other settings. Split Screen Horizontal/Vertical is the
+Screen row of Multiplayer → Split Screen ([SPLIT_SCREEN.md](SPLIT_SCREEN.md));
+Display Mode (480p/480i) has no counterpart; the
+volumes stay on Settings → Audio. Where the original stores +0x674 between
+sessions was not traced. The port's motorcycles (not in the original
+game) keep their vegetation collision.
+
+Checks: `atv-core` `hall_of_fame` units test (Meters/Kph lines, record
+messages), `atv-ui` preference and menu tests, mixer configuration test,
+and `tools/test_engine_game_settings.mjs`.
 
 ## Loading screens
 
@@ -109,3 +172,75 @@ records. The per-course 640x448 `LDSCREEN.RES` backdrops are not used: the origi
 loader's panels and bars are painted into those images, which cannot match a
 responsive layout. Records ("Fastest Lap", profile points) are not shown because
 the port has no saved records.
+
+## Stage rim (2026-10-28)
+
+The portrait stage's lower edge is one elliptical corner wider than half the
+screen (`border-radius: 75% / 56px` on a box 120% wide). The UI shader chose a
+box's corner by quadrant, so that curve stopped at the centre line and the
+straight edge took over about 3px lower: the white rim between the silver
+stage and the red controls broke in two. Corners now own the rectangle their
+radii span, with the CSS rule that scales every radius when two corners on a
+side overlap. Portrait stage pages keep 16/22px under the plate so the vehicle
+name clears the sweep. `tools/test_engine_menu_divider.mjs` follows the rim
+column by column (portrait) and row by row (landscape skew) in Chromium and
+WebKit at DPR 1 and 3; production before the fix jumped 3.33px at the centre.
+
+## Safe areas, tabs, garage and scroll indicator (2026-10-28)
+
+- Frontend pages and the Settings/Options panel follow `env(safe-area-inset-*)`
+  (`viewport-fit=cover`): the heading clears the status bar, row text clears a
+  landscape notch (the gold pill may still run under it, as it runs off the
+  edge), and Back clears the home indicator. The pause panel's inset and width
+  subtract the insets too. `atv-ui` test: iPhone portrait and landscape insets
+  on Main, Single Player and Select Track.
+- Select Track's event tabs wrap on portrait as in landscape; on a 390px phone
+  Supercross and Arena used to run off the screen with no way to reach them.
+- Garage: the ATV/BIKE row is tall enough for the kind over the name inside its
+  pill, and the stats block keeps clear of the stage's 7-degree skewed edge
+  (h/2 x tan 7deg at the bottom), where "Top speed" was clipped.
+- A thin scroll indicator (3px, 55% white) shows on the right of a list, rows
+  column or settings panel while it moves or is held, stays 500 ms, then fades
+  over 300 ms; it never shows on content that fits.
+
+## Status bar (2026-10-28)
+
+Menu pages carry a mobile-game style status bar across the top
+(`atv-ui/src/front/status_bar.rs`, state in `controller/status_page.rs`), so
+points and progress no longer sit in text under the rows:
+
+| Chip | Shows | Popover (tap) | Link |
+| --- | --- | --- | --- |
+| Profile (left) | gold avatar with the initial, profile name ("No profile"/"Guest" without one) | races, wins, points earned, best stunt | View Profile (Profile Editor without a profile) |
+| Coins | Profile Points to spend; counts up/down over 700 ms when the total changes (purchase, race reward, cheat, Unlock Everything); gold ring on Profile Store pages | available, earned, spent | Profile Store |
+| Trophies | championship trophies won of the 14 the port offers (7 series x Normal/Expert) | won, and each series' Normal / Expert trophy | View Trophies |
+| Save | Pass Key sync as a cloud: check (saved), arrow (saving), slash (offline), "!" (error), grey (no key yet) | status line and key | Open Pass Key |
+
+- Progressive disclosure: phones show icons and numbers only; widths from
+  900px add short labels (POINTS, TROPHIES, the sync word). Popovers sit under
+  their chip, close on a tap outside, Escape/Back or any key, and their link
+  navigates through the normal page history.
+- The bar is 48px (40px on short landscape phones) below the top safe area;
+  chips keep 44px-wide targets. Pages lay out below it, so no row, list or
+  Back can sit under it, and their kinetic scrolling is unchanged.
+- The title shows the save chip alone; the course loader, Options/Jukebox over
+  the menu and rides show no bar (the HUD rules in rides).
+- It replaces the bottom-left PASS KEY badge and the points lines on Single
+  Player ("Profile Points N · races · wins"), the Profile Editor ("Current
+  Profile Points") and the Profile Store; the store keeps the item's cost or
+  unlock rule, and the no-profile warning stays.
+- Notices ("Unlocked Everything!", "Invalid cheat!", a locked vehicle) show
+  as a toast under the bar (fade in 150 ms, hold 3 s, fade 300 ms) instead of
+  under the rows, where phone portrait needed a scroll to see them. The coin
+  chip also glows for 700 ms when the profile's unlocks change (Unlock
+  Everything, a purchase) even when the points do not.
+- Icons are vector shapes in the menu gold. The original trophy art
+  (`trophy_goldon`…, PAGE26) is not in the hosted runtime package.
+- Controllers and keyboards reach the same pages through the menus (Profile
+  Editor, View Profile, Unlock Items, Pass Key); no button is mapped to the
+  bar.
+
+Checks: `tools/test_engine_status_bar.mjs` (four sizes, no overlap with page
+targets, popovers, links, title, rides), `test_engine_profile_store.mjs`
+(count-up after GIMMEPTS), `test_engine_profile_menu.mjs`,
+`test_engine_profile_editor.mjs`.

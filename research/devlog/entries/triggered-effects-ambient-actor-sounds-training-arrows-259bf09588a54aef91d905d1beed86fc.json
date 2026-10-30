@@ -1,0 +1,14 @@
+{
+  "id": "triggered-effects-ambient-actor-sounds-training-arrows-259bf09588a54aef91d905d1beed86fc",
+  "timestamp": "2026-10-27T16:20:00-04:00",
+  "recorded_at": "2026-10-27T20:15:45.589185+00:00",
+  "kind": "build",
+  "title": "Triggered effects, ambient actor sounds, training arrows and exact freestyle target hits",
+  "summary": "Four checkpoints shipped 2026-10-27. Toy triggers now fire their original effects: Treasure Hunt bomb collects burst in orange sparks, Freestyle target hits burst in green/red cherry explosions, Coonce Arena hat tricks throw hats and Supercross fireworks draw their own coloured sparks. Ambient blimp, plane and helicopter loops play positionally with Doppler, and the SX10 stadium roof opens as authored. The Training Course shows the original bobbing arrow pointers, and Freestyle targets are hit by the quad's registered bodies instead of the ATV origin.",
+  "details": [
+    "PR #375: effects recovered from the exact build's trigger Particles actions and the CPU spark-stream path (bomb_explosion.emt); King of the Hills has no capture effect in the original. PR #378: 36 actor loop sounds (blimp/plane/helicopter) with distance attenuation and Doppler, samples now hosted; SX10 stadium roof trigger opens once with a 15% chance per entry, as authored. PR #376: Training Course arrows are the original pointers, scaled 9 ft, bobbing 7.2 ft and turning over the marked circles. PR #377: Freestyle targets are hit by the registered bodies (wheels, hull, rays) like the original; a thrown rider no longer collects targets. Verification: Rust unit tests, private all-content sweeps and browser tests (toy_explosions, toy_actors, training, freestyle_targets, games) pass on host. Host-only; no phone or PS2 hardware comparison."
+  ],
+  "limitation": "Actor moving collision (UseCollision) is not connected. The burst is placed at the bomb's position at collection. Treasure Hunt and King of the Hills trigger body pairing is untraced.",
+  "image": "/devlog-images/triggered-effects-ambient-actor-sounds-training-arrows-259bf09588a54aef91d905d1beed86fc.png",
+  "caption": "Treasure Hunt bomb collected: orange spark burst from bomb_explosion.emt"
+}

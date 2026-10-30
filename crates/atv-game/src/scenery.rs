@@ -6,14 +6,17 @@ use crate::{
 };
 use atv_core::{
     mesh,
+    model_lod::ModelLod,
     resource::Resource,
     scene::Scene,
     scenery_material::{Scroll, TextureClock},
 };
 use std::rc::Rc;
 
-/// One LOD0 group drawn with one material pass.
+/// One LOD group drawn with one material pass.
 pub struct Chunk {
+    /// The PSG level of detail (0 finest) this group belongs to.
+    pub lod: u8,
     /// x y z, nx ny nz, u v per vertex.
     pub vertices: Vec<f32>,
     /// Authored vertex RGBA (prelit passes), 128 per channel otherwise.
@@ -47,12 +50,21 @@ impl Chunk {
 
 pub struct Draw {
     pub chunk: usize,
+    /// The scene model this draw belongs to (index into `Scene::models`).
+    pub model: usize,
     pub matrix: [f32; 16],
     pub unlit: bool,
     /// Stadium camera-flash pool index (hidden until lit), or None.
     pub flash: Option<usize>,
     /// Part of the race's drop gate (posed each step after GO).
     pub gate: bool,
+    /// Part of Enduro gate N (faded unless it is the rider's next gate).
+    pub enduro_gate: Option<usize>,
+    /// The chunk's level of detail (only the model's selected level draws).
+    pub lod: u8,
+    /// A later pass of a material with `EnableMultiPassCull`: skipped while
+    /// the model is beyond 130 ft (`001b2390` -> `001b90b0`).
+    pub far_cull: bool,
     pub min: [f32; 3],
     pub max: [f32; 3],
 }
@@ -66,31 +78,46 @@ pub struct Scenery {
     pub skipped_groups: usize,
     /// Stadium `[CameraFlash]` settings and the cameraflash pool size.
     pub flashes: Option<(atv_core::race_crowd::FlashConfig, usize)>,
+    /// Per scene model: its LOD thresholds and bounds (`001b3a90`), None
+    /// when its mesh is unsupported.
+    pub lods: Vec<Option<ModelLod>>,
+}
+
+/// An Enduro gate's scene model and the banner textures that replace its
+/// `frontarrow`/`backarrow` placeholders (`00229670`).
+pub struct EnduroDress {
+    pub model: usize,
+    pub front: String,
+    pub back: String,
 }
 
 /// `common` is the venue TOY, read for `[CameraFlash]`; `gate` is the scene
-/// model index of a race's drop gate.
+/// model index of a race's drop gate; `enduro` dresses the Enduro gates.
 pub fn load(
     archive: &Resource,
     scene: &Scene,
     common: Option<&[u8]>,
     gate: Option<usize>,
+    enduro: &[EnduroDress],
 ) -> Result<Scenery> {
     let mut scenery = Scenery::default();
     let mut materials = Materials::default();
-    let mut geometry: Vec<(String, Vec<usize>)> = Vec::new();
+    let mut geometry: Vec<(String, Vec<usize>, Option<ModelLod>)> = Vec::new();
     for model in &scene.models {
-        if geometry.iter().any(|(name, _)| *name == model.name) {
+        if geometry.iter().any(|(name, ..)| *name == model.name) {
             continue;
         }
         let path = format!("geometry/{}.psg", model.name);
+        // Animated TOY models (the Freestyle targets' cherries) ship under
+        // `anim/`.
         let index = member_at(archive, &path)
+            .or_else(|| member_at(archive, &format!("anim/{}.psg", model.name)))
             .ok_or_else(|| format!("Original scene mesh is missing: {}", model.name))?;
         match model_chunks(archive, index, &mut materials, &mut scenery) {
-            Ok(chunks) => geometry.push((model.name.clone(), chunks)),
+            Ok((chunks, lod)) => geometry.push((model.name.clone(), chunks, Some(lod))),
             Err(error) => {
                 scenery.unsupported.push((model.name.clone(), error));
-                geometry.push((model.name.clone(), Vec::new()));
+                geometry.push((model.name.clone(), Vec::new(), None));
             }
         }
     }
@@ -103,19 +130,71 @@ pub fn load(
                 flashes += 1;
                 flashes - 1
             });
-        let Some((_, chunks)) = geometry.iter().find(|(name, _)| *name == model.name) else {
+        let Some((_, chunks, lod)) = geometry.iter().find(|(name, ..)| *name == model.name) else {
+            scenery.lods.push(None);
             continue;
         };
+        scenery.lods.push(lod.clone());
+        let dress = enduro.iter().position(|d| d.model == index);
         for &chunk in chunks {
+            // A gate banner draws its own arrow texture: a copy of the
+            // placeholder chunk with the chosen material.
+            let chunk = match dress.map(|d| &enduro[d]) {
+                Some(d) => {
+                    let banner = match scenery.chunks[chunk]
+                        .material_name
+                        .to_ascii_lowercase()
+                        .as_str()
+                    {
+                        "frontarrow" => Some(&d.front),
+                        "backarrow" => Some(&d.back),
+                        _ => None,
+                    };
+                    match banner {
+                        Some(name) => {
+                            let material = materials.get(archive, name, true)?;
+                            let c = &scenery.chunks[chunk];
+                            if material.passes.len() <= c.pass_index {
+                                return Err(format!(
+                                    "Enduro banner {name} has no pass {}",
+                                    c.pass_index
+                                ));
+                            }
+                            let copy = Chunk {
+                                lod: c.lod,
+                                vertices: c.vertices.clone(),
+                                colors: c.colors.clone(),
+                                reflection: c.reflection.clone(),
+                                indices: c.indices.clone(),
+                                material,
+                                material_name: name.clone(),
+                                pass_index: c.pass_index,
+                                nodes: c.nodes.clone(),
+                                min: c.min,
+                                max: c.max,
+                            };
+                            scenery.chunks.push(copy);
+                            scenery.chunks.len() - 1
+                        }
+                        None => chunk,
+                    }
+                }
+                None => chunk,
+            };
             let c = &scenery.chunks[chunk];
             let prelit = c.pass().pass.as_ref().is_some_and(|p| p.prelit);
+            let far_cull = c.pass_index > 0 && c.material.multipass_cull;
             let (min, max) = world_bounds(c.min, c.max, &model.world_matrix);
             scenery.draws.push(Draw {
                 chunk,
+                model: index,
                 matrix: model.world_matrix,
                 unlit: prelit || !model.use_lighting,
                 flash,
                 gate: gate == Some(index),
+                enduro_gate: dress,
+                lod: c.lod,
+                far_cull,
                 min,
                 max,
             });
@@ -135,20 +214,31 @@ fn model_chunks(
     index: usize,
     materials: &mut Materials,
     scenery: &mut Scenery,
-) -> Result<Vec<usize>> {
+) -> Result<(Vec<usize>, ModelLod)> {
     // Static scene setters replace the PSG root; upload root-relative geometry.
     let mesh = mesh::decode_psg_for_scene(&archive.extract(index)?)?;
-    let lod = mesh.lods.first().ok_or("PSG has no LOD")?;
+    if mesh.lods.is_empty() {
+        return Err("PSG has no LOD".into());
+    }
+    let model_lod = ModelLod::from_mesh(&mesh)?;
+    // Every stored level loads (001b2730); 001b3a90 picks one per frame.
     let mut resolved = Vec::new();
-    for group in &lod.groups {
-        let name = mesh
-            .materials
-            .get(group.material as usize)
-            .ok_or("PSG group material is missing")?;
-        resolved.push((group, name, materials.get(archive, name, true)?));
+    for (level, lod) in mesh.lods.iter().enumerate() {
+        for group in &lod.groups {
+            let name = mesh
+                .materials
+                .get(group.material as usize)
+                .ok_or("PSG group material is missing")?;
+            resolved.push((
+                level as u8,
+                group,
+                name,
+                materials.get(archive, name, true)?,
+            ));
+        }
     }
     let mut chunks = Vec::new();
-    for (group, name, material) in resolved {
+    for (level, group, name, material) in resolved {
         for (pass_index, pass) in material.passes.iter().enumerate() {
             let reflection = pass.pass.as_ref().map_or(0, |p| p.reflection_plane);
             if pass.reflective && reflection == 0 {
@@ -193,6 +283,7 @@ fn model_chunks(
                 return Err("PSG index exceeds group".into());
             }
             scenery.chunks.push(Chunk {
+                lod: level,
                 vertices,
                 colors,
                 reflection: local,
@@ -211,7 +302,7 @@ fn model_chunks(
             chunks.push(scenery.chunks.len() - 1);
         }
     }
-    Ok(chunks)
+    Ok((chunks, model_lod))
 }
 
 /// Axis-aligned bounds of a transformed box (worldBounds in render-support.js).

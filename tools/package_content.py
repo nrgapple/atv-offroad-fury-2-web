@@ -53,6 +53,32 @@ STARTUP += ('/TRACKS/TRACKSB/TRAINING/T00_TR.RES', '/TRACKS/TRACKSA/GAME01/G01_S
 STARTUP += tuple(f'/TRACKS/TRACKSA/ENV{i:02}/E{i:02}_NAT.RES' for i in range(2,9))
 STARTUP += tuple(f'/TRACKS/TRACKSA/NAT{i:02}/N{i:02}_NAT.RES' for i in range(1,9))
 STARTUP += tuple(f'/TRACKS/TRACKSB/SX{i:02}/S{i:02}_NAT.RES' for i in range(1,17))
+# Original Enduro (long ENDL, short ENDS) and Short Track (ST) races. Each
+# variant archive repeats its venue's National race data; the package keeps
+# only the members that differ (compact_race_variant) and the engine reads
+# them over the venue's NAT archive. ENDL is listed above for placements.
+VARIANTS = tuple(f'/TRACKS/TRACKSA/ENV{i:02}/E{i:02}_ENDS.RES' for i in range(1, 9))
+VARIANTS += tuple(f'/TRACKS/TRACKSA/ENV{i:02}/E{i:02}_ST.RES' for i in (1, 6, 7))
+STARTUP += VARIANTS
+# Original King of the Hills (KH) and Treasure Hunt (TH) game archives for
+# the 14 Environment and Freestyle venues (research/GAMES.md). Each repeats
+# its venue's Freeride archive; the package keeps only the members that
+# differ (compact_game_archive), which the engine reads for the game's mode
+# TOY (hills, treasures and starts) over the Freeride ride.
+GAME_VENUES = tuple((f'ENV{i:02}', f'E{i:02}') for i in range(1, 9)) + tuple((f'FREE{i:02}', f'F{i:02}') for i in range(1, 7))
+# Tag (TG) archives repeat the Freeride scene byte for byte under the
+# Tag name; their own members are the mode TOY (start), `tagball.psg` with
+# its hulls and texture, and the ball radar icon (about 31-93 KB each).
+GAMES = tuple(f'/TRACKS/TRACKSA/{folder}/{stem}_{suffix}.RES' for folder, stem in GAME_VENUES for suffix in ('KH', 'TH', 'TG'))
+STARTUP += GAMES
+# Original Freestyle objective (OB) archives of the 11 championship courses
+# (research/CHAMPIONSHIPS.md "Freestyle objectives"). Each repeats its
+# venue's Freeride archive; the package keeps only the members that differ
+# (compact_objective_archive): the course `.obj`, the green/red target TOYs,
+# the cherry models, motion and explosions, and the radar target icon.
+OBJECTIVE_VENUES = tuple((f'ENV{i:02}', f'E{i:02}') for i in (1, 2, 4, 5, 6, 8)) + tuple((f'FREE{i:02}', f'F{i:02}') for i in (1, 2, 3, 4, 6))
+OBJECTIVES = tuple(f'/TRACKS/TRACKSA/{folder}/{stem}_OB.RES' for folder, stem in OBJECTIVE_VENUES)
+STARTUP += OBJECTIVES
 # Original Profile Store gear catalog (uiRider.txt only) for rider customization.
 STARTUP += ('/UI/RESOURCE/RIDEINFO.RES',)
 STARTUP += tuple(f'/UI/RESOURCE/TP/TP_{group}.RES' for group in ('PNAT','ASX','PSX','HOCK'))
@@ -243,6 +269,27 @@ def selected_train_names(toy):
     return names
 
 
+def selected_actor_loop_names(toy):
+    """Keyframed TOY actors' [AnimationNLoopSoundM] samples (blimps, planes)."""
+    data = config(toy)
+    count = int(re.match(r'-?\d*', data.get('animations', {}).get('numberofanimations', '0')).group() or 0)
+    if not 0 <= count <= 4096:
+        raise ValueError('invalid TOY animation count')
+    names = set()
+    for index in range(1, count + 1):
+        section = data.get(f'animation{index}', {})
+        if section.get('animationtype', '').lower() != 'keyframed':
+            continue
+        sounds = int(re.match(r'-?\d*', section.get('numberofloopingsounds', '0')).group() or 0)
+        if not 0 <= sounds <= 32:
+            raise ValueError('invalid actor loop count')
+        for sound in range(1, sounds + 1):
+            loop = data.get(f'animation{index}loopsound{sound}', {})
+            if loop.get('soundresourcefile', '').strip():
+                names.add(sound_path(loop['soundresourcefile']))
+    return names
+
+
 def selected_body_impact_names(table):
     """Rider BodyImpact samples only; unused voice/wreck banks stay excluded."""
     section = config(table).get('bodyimpact', {})
@@ -426,15 +473,81 @@ def compact_rider_motions(data, catalogs):
     return pack_resource(selected)
 
 
-def compact_map_placements(data, environment):
-    """ENDL supplies only the common placement TOY; FR owns map rendering data."""
+def compact_map_placements(data, environment, national=None):
+    """ENDL supplies the common placement TOY (FR owns map rendering data) and,
+    given the venue's National race archive, its own Enduro race members."""
     resource = Resource(data)
     matches = [i for i, (name, _, _) in enumerate(resource.members)
                if name.lower().split('/')[-1] == f'{environment.lower()}.toy']
     if len(matches) != 1:
         raise ValueError('expected one common map placement member')
     index = matches[0]
-    return pack_resource([(resource.members[index][0], resource.extract(index))])
+    members = [(resource.members[index][0], resource.extract(index))]
+    if national is not None:
+        members += [m for m in race_variant_members(resource, national) if m[0] != members[0][0]]
+    return pack_resource(members)
+
+
+def race_variant_members(resource, national):
+    """Members of a variant race archive absent from, or different in, the
+    venue's National race archive, which the engine reads underneath."""
+    base = Resource(national)
+    shared = {}
+    for i, (name, _, size) in enumerate(base.members):
+        shared[name.lower()] = (size, i)
+    selected = []
+    for i, (name, _, size) in enumerate(resource.members):
+        data = resource.extract(i)
+        match = shared.get(name.lower())
+        if match and match[0] == size and base.extract(match[1]) == data:
+            continue
+        selected.append((name, data))
+    if not any(name.lower().endswith('e.tdf') for name, _ in selected):
+        raise ValueError('race variant has no course of its own')
+    return selected
+
+
+def compact_game_archive(data, freeride):
+    """A game archive's members absent from, or different in, the venue's
+    Freeride archive; it must carry its own mode TOY."""
+    base = Resource(freeride)
+    shared = {name.lower(): (size, i) for i, (name, _, size) in enumerate(base.members)}
+    resource = Resource(data)
+    selected = []
+    for i, (name, _, size) in enumerate(resource.members):
+        member = resource.extract(i)
+        match = shared.get(name.lower())
+        if match and match[0] == size and base.extract(match[1]) == member:
+            continue
+        selected.append((name, member))
+    if not any(name.lower().endswith(('kh.toy', 'th.toy', 'tg.toy')) for name, _ in selected):
+        raise ValueError('game archive has no mode TOY of its own')
+    return pack_resource(selected)
+
+
+def compact_objective_archive(data, freeride):
+    """An objective archive's members absent from, or different in, the
+    venue's Freeride archive; it must carry its course `.obj` and both
+    target TOYs."""
+    base = Resource(freeride)
+    shared = {name.lower(): (size, i) for i, (name, _, size) in enumerate(base.members)}
+    resource = Resource(data)
+    selected = []
+    for i, (name, _, size) in enumerate(resource.members):
+        member = resource.extract(i)
+        match = shared.get(name.lower())
+        if match and match[0] == size and base.extract(match[1]) == member:
+            continue
+        selected.append((name, member))
+    names = [name.lower() for name, _ in selected]
+    for suffix in ('.obj', 'gcp.toy', 'rcp.toy', 'cherryg.psg', 'cherryr.psg', 'cherry.mot'):
+        if not any(name.endswith(suffix) for name in names):
+            raise ValueError(f'objective archive lacks its {suffix}')
+    return pack_resource(selected)
+
+
+def compact_race_variant(data, national):
+    return pack_resource(race_variant_members(Resource(data), national))
 
 
 def compact_vancouver_thumbnail(data):
@@ -614,6 +727,9 @@ def main():
             return {'bytes': len(data), 'sha256': digest, 'url': f'/content/{digest}.bin'}
         records = []
         originals = {}
+        def national(path):
+            folder, name = path.rsplit('/', 1)
+            return source(f'{folder}/{name.split("_")[0]}_NAT.RES')
         for path in STARTUP:
             data = source(path)
             originals[path] = data
@@ -629,12 +745,20 @@ def main():
             elif path == '/UI/RESOURCE/RIDEINFO.RES':
                 data = compact_gear_catalog(data)
             elif path.endswith('_ENDL.RES'):
-                data = compact_map_placements(data, path.split('/')[-2])
+                data = compact_map_placements(data, path.split('/')[-2], national(path))
+            elif path in VARIANTS:
+                data = compact_race_variant(data, national(path))
+            elif path in OBJECTIVES:
+                folder, name = path.rsplit('/', 1)
+                data = compact_objective_archive(data, source(f'{folder}/{name.split("_")[0]}_FR.RES'))
+            elif path in GAMES:
+                folder, name = path.rsplit('/', 1)
+                data = compact_game_archive(data, source(f'{folder}/{name.split("_")[0]}_FR.RES'))
             elif path == '/RIDER/RIDER_MT.RES':
                 outfits = ai_outfit_names(Resource(originals['/TRACKS/TRACKSA/ENV01/E01_NAT.RES']).named('airiders.pb'))
                 outfits |= gear_catalog_names(source('/UI/RESOURCE/RIDEINFO.RES'))
                 data = compact_rider_materials(originals['/RIDER/MRIDER.RES'], data, (originals['/RIDER/FRIDER.RES'],), outfits)
-            record = {'path': path, 'lba': by_path[path.lower()]['lba'], 'directory': False, 'lazy': path.startswith(('/QUAD/', '/UI/LOADICON/')) or path in ('/RIDER/FRIDER.RES', JUKEBOX), **blob(data)}
+            record = {'path': path, 'lba': by_path[path.lower()]['lba'], 'directory': False, 'lazy': path.startswith(('/QUAD/', '/UI/LOADICON/')) or path in ('/RIDER/FRIDER.RES', JUKEBOX) or path in VARIANTS or path in GAMES or path in OBJECTIVES, **blob(data)}
             if data != originals[path]:
                 record.update(repacked=True, member_count=len(Resource(data).members))
             records.append(record)
@@ -649,6 +773,11 @@ def main():
         weather_names = {'rain.vag'} #00213bf0, only the active scene Rain loop.
         # Race start: 321 countdown beep/go (002e79a0) and the Supercross gate drop.
         race_names = {'beep01.vag', 'go.vag', 'gate.vag'}
+        # Hockey (00335590): goal siren, game-over horn and the puck hits;
+        # Tag's possession beep (00244d20).
+        game_names = {'siren02.vag', 'gameover.vag', 'puck1.vag', 'puck2.vag', 'tagbeep.vag'}
+        # Treasure Hunt's pickup (002d0590 loads iconhit.vag, 002d0d70 plays it).
+        game_names |= {'iconhit.vag'}
         # Supercross stadium crowd (CrowdPresent): the venue Soultree ambient
         # loops (<venue>.aud); crowd.aud itself ships in each race archive.
         crowd_names = {'crowd/crowdf1/crdloop3.vag', 'crowd/crowdf1/crdloop4.vag',
@@ -664,7 +793,10 @@ def main():
                 lowered = name.replace('\\', '/').lower()
                 if lowered.startswith('tracks/') and lowered.endswith('.aud'):
                     venue_names |= selected_venue_sound_names(venue.extract(i))
-        names = engine_names | train_names | body_names | menu_names | weather_names | race_names | crowd_names | chassis_names | venue_names
+                elif lowered.endswith('.toy'):
+                    # Keyframed actors' engine loops (research/AMBIENT_ACTORS.md).
+                    venue_names |= selected_actor_loop_names(venue.extract(i))
+        names = engine_names | train_names | body_names | menu_names | weather_names | race_names | game_names | crowd_names | chassis_names | venue_names
         audio = Resource(source('/AUDIO/AUDIO.RES'))
         samples = [(name, audio.extract(i)) for i, (name, _, _) in enumerate(audio.members) if name.lower().removeprefix('audio/') in names]
         if len(samples) != len(names):
@@ -674,6 +806,11 @@ def main():
         if len(crowd_clips) != 18:
             raise ValueError('exact-build crowd reactions expected 18 clips')
         samples += [(path.removeprefix('/'), source(by_path[path]['path'])) for path in crowd_clips]
+        # Crowd\hockey.aud's four reactions (HCHEER01/04, HOCKYWIN, HOCKYEND).
+        hockey_clips = sorted(path for path in by_path if re.fullmatch(r'/audio/crowd/hockey/[a-z0-9]+\.vag', path))
+        if len(hockey_clips) != 4:
+            raise ValueError('exact-build hockey crowd expected four clips')
+        samples += [(path.removeprefix('/'), source(by_path[path]['path'])) for path in hockey_clips]
         # Race intro/outro stingers (IntOut\intout.aud): INT001-INT006 at race
         # load, OUT004 (win) and the OUT001 loop at race over (00217bb0, 00216260).
         intout = sorted(path for path in by_path if re.fullmatch(r'/audio/intout/(int00[1-6]|out00[14])\.vag', path))

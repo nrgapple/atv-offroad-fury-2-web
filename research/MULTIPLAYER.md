@@ -543,3 +543,457 @@ counter design, which reported from the join and leave message path. During
 that stall, `workerd`'s main thread spun in its isolate lock queue at 99% CPU.
 It did not recur in the three runs after reports moved to the alarm and
 recipients were cached. Production behaviour is not measured.
+
+## Room races (2026-10-28)
+
+User decision (status.md "Product decisions"): online rooms offer every mode
+split-screen offers. This slice adds **races** to private rooms. Original
+evidence is limited to the manual (pages 16–17, 36–37: online races are
+human-only, the host's unlocks decide availability, online competition saves
+neither profile progress nor Hall of Fame records) and the exact-build lobby
+strings (`Race Lobby`, `Under Host Control`, host-forced start). No original
+race packet, start synchronization or result agreement has been recovered
+(`MULTIPLAYER_ORIGINAL.md`), so the protocol below is **authored**.
+
+### Rules
+
+- **Start.** The room host opens Pause on a race course the room is on
+  (Select Track picks it: National `nat01`–`nat08`, Supercross `sx01`–`sx16`,
+  or an Enduro venue `env01`–`env08`) and chooses one row per race that
+  course ships (`multiplayer::room_races`, `RaceVariant::exists`): Play Race
+  (the National/Supercross race), Play Enduro Long, Play Enduro Short and,
+  on `env01`/`env06`/`env07`, Play Short Track. These are every race course
+  the single-player Race menu offers. Laps come from the host's Race menu
+  setting (1–5; `raceLaps=N` test hook). The host's unlocks decide
+  availability: the track list is the host's. A guest loads the race only
+  when its own build ships that course (an untrusted host cannot name a
+  missing course).
+- **Grid.** Start slots come from the original shuffle (`001f6350`,
+  `atv_core::race::start_slots`) over the riders in the room, drawn by the
+  host and broadcast, so every peer sees the same grid. Each rider takes its
+  own slot on the course's grid (`Course::grid(slot, riders)`).
+- **Everyone races locally.** Each rider runs the recovered race rules for its
+  own ATV: checkpoints, laps, finish gate, track window, resets, the
+  QuadzillaCountdownOverlay lamps. Remote riders are the room's ordinary
+  rider replicas (smoothing, contacts); they are not CPU racers.
+- **3-2-1-GO together.** The race holds on the grid (the intro hold, no
+  pre-race shots) until the host has a progress report from every rider on
+  the grid (or 30 s, authored). The host then broadcasts the 4 s countdown;
+  guests start it at the host's remaining time less half the relay round
+  trip.
+- **Progress.** Each rider sends its laps, race distance and finish time
+  every 200 ms (`Packet::Progress`). The HUD position/field and the race
+  standings use every room rider's progress (finishers by time, then laps and
+  distance).
+- **Finish and results (host authoritative).** The race ends when every
+  rider still in the room has finished, or 30 s after the first finisher
+  (authored; the original's online race-over rule is not recovered). The host
+  freezes the order into `GameState::scores` (finish ms by peer; riders who
+  did not finish hold `RACE_DNF + n` in the host's order) and broadcasts
+  phase RESULTS. Every peer shows the race's own results panel with those
+  rows, or the mini-game results panel for a rider who did not cross the
+  line. Online races credit no Profile Points and record no Hall of Fame
+  entries (manual); the results panel shows "-" for points. The HUD's PLACE
+  tree and the finish place sign (First/Second/Third Place) use the room
+  standings, not the rider's solo race.
+- **Late joiners and leavers.** A rider who first sees a race already past
+  its countdown (a late joiner) has no grid slot to take: it free-rides the
+  course as a spectator, sees the agreed Race Results when they arrive, and
+  joins the next race. A rider who leaves is not waited for and ranks as not
+  finished; the host remembers it as gone, so a late joiner who reuses the
+  leaver's room slot id is neither waited for nor credited with the
+  leaver's progress. If every racer leaves the race ends.
+- **Host leaving.** The relay hands the room to the lowest remaining rider
+  (drop-in rooms, above). That rider's mirror of the race becomes the host
+  race (`Field::adopt`): the countdown keeps its time left, an already
+  running finish wait restarts, and the old host ranks as not finished. It
+  has every rider's relayed progress, so the race runs on to agreed results.
+  The original's online host leaving is not recovered; this is authored.
+- **Finish-time desync.** Each rider times its own race locally from its
+  own GO (started at the host's countdown less half the relay round trip),
+  so times can differ from a shared clock by up to about half the round
+  trip. The host never re-times: the first finish time a rider reports
+  stands, later reports cannot erase or change it, and the host's frozen
+  `scores` are what every peer shows.
+- **Slow links at the finish wait.** When the 30 s finish wait runs out, a
+  rider still in the room whose progress has not changed for 3 s
+  (`STALE_MS`) may have crossed the line behind a slow link: the host waits
+  up to 30 s more (`LATE_GRACE_MS`) for its report before ranking it not
+  finished. A late finish time that arrives in that window ranks by its time
+  (an earlier time can still win). Measured cause: on a heavily loaded host
+  machine (load average ~200) the local relay round trip reached 26–40 s, and
+  without the grace a rider who finished first was ranked DNF. Authored.
+- **Next race.** On the results panel the host's Race Again starts a new race
+  (new serial, new grid) for everyone; Quit returns the rider to the room's
+  Free Ride on the same course.
+- **No CPU fill yet.** The manual has online races human-only; optional CPU
+  fill (host-simulated CPUs replicated to guests) is not built.
+
+### Protocol (version 6, compatible)
+
+- `GameState` game 3 (Race): phases 0 grid, 1 countdown (`timer` = seconds
+  to GO), 2 racing, 3 results. Game 3 appends a 6-byte race block (variant,
+  laps, start slot by peer 0–3); Hockey and Tag packets are unchanged.
+  Validation bounds laps 1–5, variant 0–3, slots 0–4, times ≤ 2 h.
+- `Packet::Progress` (kind 14, 18-byte body): serial, laps (≤ 10), distance
+  (finite, bounded), finish ms (≤ 2 h). The relay stamps the sender's peer id
+  and forwards it only within a started private room on the room's map.
+- **Mixed versions.** A client announces race support with a serial-0
+  `Progress`; the relay forwards race `GameState` and `Progress` only to
+  such clients, so a stale cached client in the room never receives a packet
+  kind it cannot decode (it keeps free-riding). The relay ships in the same
+  Worker deployment as the game (CI `make relay` then `package_release.py`),
+  so new clients never meet an older relay on production.
+
+### Code
+
+- `crates/atv-app/src/room_race.rs`: `Field`, the participant list (rider
+  ids with start slots) and host state machine with unit tests (grid,
+  countdown, finish, leavers, a leaver's reused id, host handoff, late joiners, finish wait, standings), and `RoomRace`, its
+  glue to the room socket and ride. A local split-screen race can drive
+  `Field` by reporting each local player's progress under its own id.
+- `atv_game::ride::race::Settings::room` (slot, riders) and `Ride::room_go`;
+  `atv_core::race::Race::set_player_grid`; `RaceState::room` standings.
+- Relay: `crates/atv-relay` `Packet::Progress` handling and the `races` flag.
+- Browser gate: `tools/test_engine_multiplayer_race.mjs` (relay group): two
+  pages race a Supercross room, agree the results, the guest quits back to
+  the room's Free Ride, the host's Race Again starts a second race the guest
+  joins, and the guest leaves mid-race (host finishes, guest ranks DNF).
+
+### Verification (2026-10-28, host only)
+
+- `cargo test -p atv-app room_race`: grid, countdown, finish, leavers, a
+  leaver's reused id, host handoff, late-joiner loading, slow-link grace,
+  standings.
+- `tools/test_engine_multiplayer_race.mjs` passed end to end against a local
+  relay (wrangler dev) behind `tools/serve_multiplayer.mjs` on a machine at
+  load average ~100: agreed results, quit to the room, Race Again, mid-race
+  leaver ranked DNF. At load averages above ~200 the local relay's delivery
+  stalled for 30–60 s and runs failed on timing (the guest's finish or the
+  host's results arrived too late); this is a host-load limit of the local
+  setup, but it is not measured on production.
+- The relay's room-race forwarding (host-only race state, stamped progress,
+  race-aware riders only) was checked with the room-race section of
+  `tools/test_multiplayer_relay.mjs` on a fresh room. The full script stops
+  earlier on main as well: its host-reservation assertions predate drop-in
+  rooms (a guest may now join before the host; `Connection replaced`).
+
+### Stale relayed poses no longer end the room (2026-10-28)
+
+Race 2 of the browser gate stalled because the **host left the room** with
+`Invalid session message: multiplayer packet: InvalidValue` right after it
+reloaded the course. Evidence (ignored `work/probe/evidence-before-fix/` in the task worktree): the
+rejected message was an ordinary full compact pose (kind 9, 127-byte body,
+peer 1, sequence 1279, sender time 154,907 ms, steering code 30 = 0.004 rad),
+which decodes and validates. The error came from the host's pose buffer, not
+the codec: `PoseBuffer::push` returned `InvalidValue` when a sender's clock
+advanced more than 5 s beyond receipt time, and `Session::receive` turned
+that into a closed session. The relay hands a rider who reports `Ready` every
+other rider's last stored pose; that copy can be seconds old (a paused rider
+sends every 5 s, a background tab is throttled), so the stored pose arrived
+late and the guest's next live pose then ran more than 5 s ahead of it.
+
+- A sender clock running more than `SENDER_JUMP_MS` (5 s) ahead of receipt
+  now restarts that peer's timeline at the new pose (like a teleport) instead
+  of failing. Out-of-order and duplicate poses are still dropped; a pose with
+  another peer's id or a regressed local receipt clock is still rejected by
+  the buffer, and `Session::receive` then restarts only that rider's buffer
+  (the packet itself already decoded and validated) rather than the room.
+- Latent codec edge found by the new property-style round-trip tests
+  (`crates/atv-net/tests/compact_limits.rs`: every bounded field at and just
+  inside its limit, plus 20,000 random valid poses): visual steering at the
+  3.9 rad limit encoded as code 31949, which decodes as 3.900024 and failed
+  validation. The encoder now clamps the code to 31948; the decoder accepts
+  exactly one code of overshoot from older senders (clamped back to 3.9) and
+  still rejects anything further, escapes and non-finite values. ATV visual
+  steering stays near ±0.52 rad, so this was not the race 2 cause. Every
+  other quantized field (wheels, compression, phase, weights, look phase,
+  velocities, angular velocity, rpm, throttle, speed, rotations) was checked
+  to decode within its validated range, and a decoded pose re-encodes (as
+  the relay does) to the same pose apart from sub-code quaternion
+  renormalization.
+- Verified (host only, local wrangler relay, load average 40–65): the full
+  `test_engine_multiplayer_race.mjs` gate passed, and the same scenario
+  with 4x CDP CPU throttling on both pages, which failed at race 2 with the
+  `InvalidValue` exit before the fix, passed through Race Again and the
+  mid-race leaver.
+
+Two related fixes from the same investigation:
+
+- The relay's per-connection budget is the same average (120 messages and
+  1 MiB a second) over a 3 s window (360 messages / 3 MiB), so packets that
+  queued during a stall (a starved tab, a congested link) and arrive together
+  no longer close the socket with `Message rate exceeded`.
+- A room race ends with its room: when the room closes while no frontend is
+  open, the race state is cleared instead of holding the ride on a race whose
+  host is gone.
+
+### Next modes
+
+Championships online need a per-round series state on the host (points by
+peer, the next course pushed via Select Track) on top of this race loop.
+King of the Hills and Treasure Hunt now follow that pattern ("Room games"
+below). Online Freestyle now has its own host-owned score table ("Room
+Freestyle" below).
+
+## Room games: King of the Hills and Treasure Hunt (2026-10-28)
+
+The original plays its Games on one console, two to four players
+(`GAMES.md`: Multiplayer → Split Screen → Games; the online lobbies list a
+"Games Lobby", and the 1 Player overlay layouts exist for one player per
+console, but no original Games protocol was recovered). The port plays
+both games in private relay rooms for every room rider (up to the room's
+four), as an authored adaptation over the recovered single-player rules.
+
+### Flow
+
+- **Start.** Single Player → Games → King of the Hills / Treasure Hunt
+  with **Riders: Online Room** hosts a room on the chosen course (any of
+  the game's Tracks.dat courses) and starts the game for it: its countdown
+  holds ("Waiting for riders: share the room invite") until another rider
+  has loaded the course, so invitees play rather than spectate; Pause →
+  Restart Game starts it at once. Split Screen keeps playing on one
+  console (the row is hidden there). Inside any room, the host's Pause
+  menu lists Play King of the Hills and
+  Play Treasure Hunt when the room's venue ships that game's archive: the
+  same seven Environment and seven Freestyle venues as Tracks.dat's `koth`
+  and `th` course lists (Prospect Springs `E05_KH.RES` / `E05_TH.RES`, ...).
+  The time limit is Games Prep's (`gameMinutes=N` for links and tests).
+  Both pages reload the room's venue with the game's scene (hill bases and
+  `kohflag` flags, or the treasure bombs) and its mode TOY, exactly as the
+  single-player game, then share one 3-2-1 start: the host's countdown is
+  broadcast and each rider is held until GO.
+- **Starts.** Slot N takes the TOY's `Start{N+1}`; courses with fewer
+  starts place riders 10 ft apart beside start 1 (the venue start when the
+  TOY has none).
+- **Play.** The host runs `atv_core::games` for four slots (peer ids 0-3).
+  Treasure Hunt pickups are the host's: it tests every rider's relayed
+  position against the shown group's treasures, so a guest's pickup lands
+  one relay delay after it touches. King of the Hills arming needs the
+  rider's own wheel contact, open stunt and landed chain, which poses do
+  not carry: each guest runs the recovered arming rules (`00220150`,
+  `00220750`, `00221020`) for itself against the mirrored hills and reports
+  a capture (hill, points); the host applies it through `00220b50`'s
+  beat-the-score test, so of two riders' captures of one hill the higher
+  wins whichever arrives first. Guests mirror hill owners and scores, flag
+  colours (red, blue, green, yellow by slot), treasure collectors, the shown
+  group and its "More Treasures in" wait, the clock and the counts; a
+  treasure collected at the host explodes on every page.
+- **Results.** Time Up (or All Treasures Collected after its 5 s sign)
+  shows the same results on every page: present riders only, by count, ties
+  by stunt score (each guest reports its committed stunt score every second).
+  Play Again (host) starts a new game in place for everyone; a guest's
+  Continue → Quit returns to the room's Free Ride.
+- **Joining and leaving.** A rider who leaves drops out of the results and
+  frees their hills (owner cleared, score 0); their collected treasures stay
+  collected. The players are fixed at GO (`GameMarks::players`: everyone
+  present who had loaded the course; riders still loading after the 30 s
+  load wait are left out). A rider joining after GO follows the host onto
+  the course and spectates, as late joiners do in room races: the host
+  ignores their position for pickups and refuses their captures, their
+  page shows "Spectating: you play the next game", the hills, treasures,
+  clock and the same results, and they play from the next Play Again.
+  Restart Game from Pause restarts for everyone from the host and does
+  nothing for a guest.
+- **Host handoff.** If the host leaves mid-game the relay's next host takes
+  over the game from its mirrored state (hill owners and scores, collected
+  treasures, the shown group, clock and counts), drops the old host from
+  the results and finishes the game for the remaining riders; Play Again
+  then belongs to the new host.
+  Guests mirror each host table once and run the clock (and the start
+  countdown and signs) on between tables, so the seconds before the relay
+  notices a vanished host do not freeze or lengthen the game (they used to
+  re-apply the host's last table every frame, holding the clock).
+- **Course names.** Every room results page (races, games, Freestyle)
+  names the course by its Tracks.dat name; a page that joined by link
+  loads the names from `STARTAPP.RES` when it starts riding the room
+  (the venue code shows only until they load).
+
+### Protocol (version 6, compatible)
+
+- `GameState` games 4 (King of the Hills) and 5 (Treasure Hunt) append
+  `GameMarks` after the shared fields: the venue code (0-13), the players
+  mask (bit N slot N, at most 4 bits), each slot's
+  stunt score and up to 512 marks (owner slot or 255, value): per hill its
+  score, per treasure 1 when in the shown group. Phases: 0 countdown
+  (`timer` = seconds to GO), 1 play (`timer` = Treasure Hunt's wait), 2
+  complete (finish sign), 3 results. Sent at 10 Hz and at once on every phase
+  change or score.
+- `Packet::Claim` (`GameClaim`, codec kind 15): game serial, kind (0 stunt
+  report, 1 capture), hill number, points, the sender's stunt score. A
+  serial-0 claim announces support; the relay records it per connection,
+  sends game 4/5 state only to clients that announced it (older cached
+  clients never see a payload they cannot decode), stamps the sender and
+  forwards claims to the host alone.
+- Validation: both sides refuse phases above 3, venue codes above 13, a
+  players mask naming a fifth slot, more
+  than 512 marks, owners outside the four slots, non-finite or negative
+  values or values above 1e8, counts above 512, claim kinds above 1 and hill
+  numbers above 512. The host also refuses a capture for another game, from
+  a rider not in the room or spectating, for a hill the course lacks, with no points, from
+  more than 400 ft (relayed position) from the hill, or within 0.25 s of
+  that rider's last capture. The relay's per-connection rate budget applies.
+  `crates/atv-net/tests/room_games.rs` round-trips both packets at their
+  limits and checks the refusals, including hand-built truncated or forged
+  bytes.
+
+### Code
+
+`crates/atv-app/src/room_game.rs` (room link, host step, guest mirror and
+claims, claim checks, test hooks), `games.rs` (the shared `GameSession`),
+`atv_core::games` (`Rules::marks_state` / `apply_marks` / `claim` /
+`release`, `Session::mirror`), `atv-net` (`GameMarks`, `GameClaim`),
+`atv-relay` (`games` capability, host-only forwarding).
+
+### Limits
+
+- Guests' King of the Hills captures and Treasure Hunt pickups carry relay
+  latency; the host's own do not.
+- `tools/test_engine_multiplayer_koth.mjs` starts from the Pause row, adds a
+  third rider after GO (spectates, absent from the agreed results) and ends
+  with a guest leaving; `test_engine_multiplayer_treasure.mjs` starts from
+  Games → Riders: Online Room (the held start) and ends with the host
+  leaving (handoff).
+- The browser tests drive captures with `gameTest=hill` (a reported capture
+  after placing the ATV on hill 1), exercising the room claim, check and
+  broadcast; the arming rules themselves are the single-player ones covered
+  by `atv-core` and `test_engine_games*`.
+- Three- and four-rider rooms are covered by the slot logic and unit tests,
+  not by a browser test.
+- No Games Lobby page or Team Select: the room is hosted from Games or
+  started from Pause like Tag and races; no CPU riders fill empty slots
+  (the original's Games have none either).
+
+## Room Freestyle (2026-10-29)
+
+The manual lists a Freestyle Lobby for online play and the executable has
+the `Freestyle Lobby` label (`MULTIPLAYER_ORIGINAL.md`), but no original
+online Freestyle rules or protocol were recovered. What is recovered is the
+single-player material the session is built from: the committed stunt
+points the Freestyle HUD shows, the stunt chains, the ComboMambo rule that
+counts a landed chain of two or more stunts once per different sequence
+(`002fc050`), and the Freestyle event clock (`00289d50`, settings +0x57c,
+120 s on a new profile). Everything else here (one shared timed session,
+the table, ranking, reports and validation) is an authored adaptation.
+
+### Flow
+
+- **Start.** Main Menu → Multiplayer → Host Game → **Room: Freestyle (timed
+  stunts)** → Select Track → Ride hosts a room on any of the 40 Freestyle
+  venues and starts a session there. Its start holds ("Waiting for riders:
+  share the room invite") until another rider has loaded the course, so
+  invitees play rather than spectate; Pause → Restart Game starts it at
+  once. In any private room, the host's Pause menu lists **Play
+  Freestyle** on every course. A session started over a room race or room
+  game first returns everyone to the room's Free Ride ride on the course.
+- **Starts.** Each rider is set ten feet to the side of the scene start
+  per slot (split screen's Freeride starts) and held through one shared
+  3-2-1 with the start lamps and beeps.
+- **Scoring.** Each rider scores itself with the ride's recovered stunt
+  scoring: the session score is the stunt points committed since GO, the
+  best combo the most one landed chain added, and combos the different
+  chains of two or more stunts. Points only add (a Reset ATV that clears
+  the ride's score frame takes nothing back).
+- **Table.** Riders report their row to the host at least twice a second
+  and on every change; the host checks each report and broadcasts the
+  table, clock and phase at 10 Hz and at once on every phase change. Every
+  page shows the host's table; a rider's own line is shown live from its
+  own count.
+- **HUD.** The games panel (no new UI): FREESTYLE, the clock (red under
+  ten seconds), COMBOS and PLACE, SCORE, and on its last line the leader
+  ("LEADER name score") when someone else leads, or the current sign.
+- **Time Up.** At 0:00 the host shows Time Up and waits 2 s
+  (`FINAL_WAIT`) for reports of chains landed at the buzzer, then freezes
+  the table. The results list every playing rider still in the room by
+  score, then best combo, then combos: "1. name: Score s, Best Combo b,
+  Combos c." The same results show on every page.
+- **Next session.** On the results the host's Play Again starts a new
+  session in place for everyone; Quit (or a guest's Continue → Quit)
+  returns to the room's Free Ride on the same course without a reload.
+- **Joining and leaving.** The players are fixed at GO: everyone present
+  who had loaded (riders still loading after the 30 s load wait watch). A
+  rider who joins after GO spectates ("Spectating: you ride the next
+  session"), is not in the table or results, sees the same results and
+  rides the next session. A rider who leaves drops out of the table; a
+  late joiner who reuses that slot is not credited with it. If every
+  player leaves, the session ends.
+- **Host handoff.** If the host leaves, the relay's next host runs the
+  session on from its mirror of the table (clock, phase, rows), drops the
+  old host and finishes it; Play Again then belongs to the new host.
+  Guests run the mirrored clock on between the host's tables and stop
+  scoring at 0:00, so the seconds before the relay notices a vanished host
+  do not lengthen the session (the browser test caught a 54 s session on
+  a 25 s clock before this).
+
+### Protocol (version 6, compatible)
+
+- `GameState` game 6 (`game_kind::FREESTYLE`) carries the `GameMarks` tail
+  of games 4 and 5: `stunts` each slot's session score, one mark per slot
+  (that slot, or `NO_PEER` when not playing; its best combo), `scores` each
+  slot's combos and `players` the playing mask; `venue` is unused (0, the
+  room's map names the course). Phases as room games: 0 countdown
+  (`timer` seconds to GO), 1 play, 2 Time Up (`timer` the final wait), 3
+  results.
+- `GameClaim` kind 2 (`claim_kind::FREESTYLE`): `stunt` the session score,
+  `points` the best combo, `index` the combos. A serial-0 kind-2 claim
+  announces support: the relay records it per connection, sends game 6
+  only to such clients and forwards kind-2 reports only to such a host,
+  so an older cached client never receives a game code or claim kind it
+  would refuse.
+- Validation (both sides): phase at most 3, venue 0, at most four marks,
+  each owned by its own slot or none, finite values within 0-1e8, a best
+  combo no more than that slot's score, combos at most 512, no holder;
+  claims: kind at most 2 and, for kind 2, a best combo no more than the
+  score. The host also refuses a report for another session, from a rider
+  not in the room, out of range, from a spectator, a non-zero row before
+  GO, or one lower than that rider's last accepted row. Reports after the
+  table is final change nothing. `crates/atv-net/tests/room_freestyle.rs`
+  round-trips both packets at their limits and checks the refusals,
+  including hand-built forged or truncated bytes.
+
+### Code
+
+`crates/atv-app/src/room_freestyle.rs` (`Table`: the session rules, report
+checks, standings, broadcast and mirror; `Tracker`: a rider's own score;
+`RoomFreestyle`: the glue to the room socket, HUD and results; unit tests
+for the start, load wait and hold, report checks, Time Up and the final
+wait, standings order, leavers and late joiners, three and four riders, the
+mirror and handoff, and the tracker), `Ride::start_pose`, `atv-net`
+(`game_kind::FREESTYLE`, `claim_kind::FREESTYLE`), `atv-relay` (`freestyle`
+capability), the Host Game Room row and the Pause row.
+
+### Limits
+
+- Scores are self-reported: the host bounds and orders them but cannot
+  replay a guest's stunts (poses do not carry the stunt chain), so a
+  modified client could report inflated points. Room games' King of the
+  Hills captures carry the same trust.
+- The session length is Host Game's **Time Limit** row, shown under
+  "Room: Freestyle" (2026-10-29): 2:00 by default, stepping 2-20 minutes
+  and wrapping. Exact-build evidence: Freestyle Prep (`0026a720` mode 2)
+  shows a Time Limit row for event types 3 and 4 (`002f6270`); type 4,
+  Classic (`0021add0` names 0-6 Single Race, Practice, Lap Attack,
+  Objectives, Classic, Duel, Freeride), steps 2-20 minutes and wraps
+  (`002f60b0`/`002f6190`, printed `%d:00` by `0026df60`), and Start writes
+  minutes x 60 to the event clock (+0x57c, `0026b7a0`); the profile
+  default is 120 s (`0021add0`). (Objectives' row toggles 2:00 /
+  "Practice"; Freeride shows "N/A"; neither applies to a room.) The host
+  owns the length: it is the session table's clock, so guests take it from
+  the first table (whole minutes, `limit_from_clock`), and Play Again and a
+  handed-over host keep it. Pause → Play Freestyle uses the same row's
+  value. `freestyleTest=fast` still forces 25 s for tests. The row is not
+  saved between visits (port choice).
+- Results are titled "Race Results", as the original's
+  `[ClassicFreeStyleOver Menu]` (Overlays.pb `Text1Text`); the room games'
+  `[TreasureOver Menu]`/`[HillKingOver Menu]` use the same title, so King
+  of the Hills and Treasure Hunt keep it (`#ui-state` `ride.resultsTitle`
+  is asserted in both browser tests).
+- No Hall of Fame, records or Profile Points are saved from a room
+  session (the manual: online competition saves neither).
+- `tools/test_engine_multiplayer_freestyle.mjs` (relay group) hosts from
+  Host Game → Room: Freestyle, adds a guest and a late spectator, checks
+  the agreed results, Play Again and a host handoff. Its scores come from
+  `freestyleTest=score` (one landed two-stunt chain each second through
+  the tracker); the ride's own stunt scoring is the single-player one.
+  Three- and four-rider sessions are covered by the unit tests, not a
+  browser test.

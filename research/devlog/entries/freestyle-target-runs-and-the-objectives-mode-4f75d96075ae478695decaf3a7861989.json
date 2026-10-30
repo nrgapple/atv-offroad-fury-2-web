@@ -1,0 +1,28 @@
+{
+  "id": "freestyle-target-runs-and-the-objectives-mode-4f75d96075ae478695decaf3a7861989",
+  "timestamp": "2026-10-27T17:32:19.642609+00:00",
+  "recorded_at": "2026-10-27T17:32:19.642609+00:00",
+  "kind": "build",
+  "title": "Freestyle target runs and the Objectives mode",
+  "summary": "All four Freestyle objective types now play on furyremastered.com: Hit Every Green/Red Target joins Bust 10 Different Combos and Score Stunt Points, so gold is now reachable in both Freestyle championships. Single Player \u2192 Freestyle Objectives lets you play any course's objectives outside a championship, and completed objectives still save.",
+  "details": [
+    "Recovered from the exact build: each target is a one-time 5 ft trigger sphere marked by a 10 ft flat target that spins and bobs (cherry.MOT); a hit adds bonus points and seconds, plays the pickup sound and shows \"Target Collected\" for 1 s; the last shows \"All Targets Collected\" for 5 s and ends the run. Any completed objective adds the seconds left \u00d7 100 to the score. Each objective has its own start position. The trophy, reward and unlock arrive the moment the completed count reaches the threshold (Amateur 24/30/36, Pro 18/24/30).",
+    "The courses' objective archives (11) were uploaded to the hosted content and verified.",
+    "Verification: unit tests, a new browser test that plays a championship green run and a standalone red run with real trigger hits, all 22 target runs loaded in a private check, and nearby menu/objective tests pass on host Chromium; the new test also passed against the live site. PRs #357, #359, #362; the championship browser test was updated for the Hall of Fame name entry (#366)."
+  ],
+  "limitation": "target explosions are not drawn; targets show as screen tags and minimap dots instead of the original compass; the hit test checks the ATV and rider positions, not every body; Select Objective is a front-end page; env03, env07 and free05 have no objective archive.",
+  "images": [
+    {
+      "path": "/devlog-images/freestyle-targets-green-start.png",
+      "caption": "A green target run starts"
+    },
+    {
+      "path": "/devlog-images/freestyle-targets-cherry-closeup.png",
+      "caption": "A green target in the Nassau stadium"
+    },
+    {
+      "path": "/devlog-images/freestyle-targets-standalone-courses.png",
+      "caption": "Single Player → Freestyle Objectives"
+    }
+  ]
+}

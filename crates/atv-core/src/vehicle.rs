@@ -213,6 +213,8 @@ pub struct Vehicle {
     body: BodyState,
     body_config: BodyConfig,
     engine: Drivetrain,
+    /// Engine +0x9c/+0xa0/+0x68.. (Tag's carrier handicap, `00246310`).
+    engine_modifiers: EngineModifiers,
     wheels: [WheelState; 4],
     wheel_config: [WheelConfig; 4],
     wheel_rest: [Vec3; 4],
@@ -294,6 +296,11 @@ pub struct Vehicle {
     race_checkpoint: Option<(Vec3, f32)>,
     /// A race checkpoint reset awaiting 001dd440 ground placement.
     ground_placement: bool,
+    /// 001e35d0 placement flags of the pending race reset: bit 1 steps the
+    /// point aside from other racers, bit 2 searches for a clear spot.
+    reset_flags: u32,
+    /// Other racers' positions (RaceStatus +0x60) for the 001e35d0 sidestep.
+    reset_peers: Vec<Vec3>,
     reset_count: u32,
     flips: Option<crate::flip_tricks::FlipTricks>,
     flip_controls: (u8, [f32; 2]),
@@ -304,6 +311,8 @@ pub struct Vehicle {
     /// moving support (the Arlington train) and its body contacts keep
     /// friction. Off retains the recovered world-frame 001d8540 path.
     realistic_train: bool,
+    /// Game Settings → Ecosystem Collision (settings +0x674).
+    ecosystem_collision: bool,
 }
 impl Vehicle {
     pub fn new(mesh: &Mesh, data: &PhysicsData, origin: Vec3, yaw: f32) -> Result<Self> {
@@ -418,6 +427,7 @@ impl Vehicle {
             body,
             body_config,
             engine: Drivetrain::new(EngineConfig::from_physics(data)?)?,
+            engine_modifiers: EngineModifiers::default(),
             wheels: [WheelState::default(); 4],
             wheel_stops: stops.try_into().map_err(|_| "wheel stop count")?,
             wheel_config: configs.try_into().map_err(|_| "wheel count")?,
@@ -504,12 +514,15 @@ impl Vehicle {
             reset_yaw: yaw,
             race_checkpoint: None,
             ground_placement: false,
+            reset_flags: 0,
+            reset_peers: Vec::new(),
             reset_count: 0,
             flips: None,
             flip_controls: (0, [0.; 2]),
             arcade_spin: None,
             flip_events: Vec::new(),
             realistic_train: false,
+            ecosystem_collision: true,
         })
     }
     /// Optional Extras flips (authored, from MX vs. ATV Unleashed). Off drops
@@ -539,6 +552,19 @@ impl Vehicle {
     /// Optional Extras realistic train riding (authored). Off is original.
     pub fn set_realistic_train(&mut self, enabled: bool) {
         self.realistic_train = enabled;
+    }
+    /// Game Settings → Ecosystem Collision. Off sets query bit 0 (skip
+    /// "Vegetation" objects) on the quad's and rider's collision objects at
+    /// setup (`001e1fd0`, `001e4c90`, `001e92c0`), and the edge launch's
+    /// one-second vegetation skip is then never cleared (`001e5260`).
+    pub fn set_ecosystem_collision(&mut self, on: bool) {
+        if self.ecosystem_collision == on {
+            return;
+        }
+        self.ecosystem_collision = on;
+        if !self.boundary_launch.active {
+            self.skip_vegetation_query = !on;
+        }
     }
     /// Touch flip request (see flip_tricks::Request); ignored while off.
     pub fn request_flip(&mut self, trick: crate::flip_tricks::Trick, launch: bool, hold: f32) {
@@ -616,11 +642,54 @@ impl Vehicle {
         self.linkage = Some(linkage);
         self.linkage_matrices = None;
     }
+    /// Engine modifiers applied by game rules (Tag's carrier handicap,
+    /// `00246310`/`00246000`); default none.
+    pub fn engine_modifiers(&self) -> EngineModifiers {
+        self.engine_modifiers
+    }
+
+    pub fn set_engine_modifiers(&mut self, modifiers: EngineModifiers) {
+        self.engine_modifiers = modifiers;
+    }
+
+    /// The engine's `[Engine] TopSpeed`, feet/second.
+    pub fn top_speed(&self) -> f32 {
+        self.engine.config().top_speed
+    }
+
     pub fn linkage_matrices(&self) -> Option<&[[f32; 16]]> {
         self.linkage_matrices.as_deref()
     }
     pub fn applied_drive_controls(&self) -> (f32, f32, bool) {
         self.applied_drive_controls
+    }
+    /// The quad's bodies a CherryPick reset registers with the target
+    /// triggers (`002fae60`), in world space: the four wheel spheres at
+    /// their rest centres, the `ao.col` chassis hull points and the
+    /// `ar.col` actor rays. The chassis rigid body and the passive `f.col`
+    /// actor have no separate port shape (the hull covers the chassis).
+    pub fn trigger_bodies(&self) -> Vec<crate::freestyle::TriggerBody> {
+        use crate::freestyle::TriggerBody;
+        let b = self.body.basis();
+        let origin = self.body.origin(&self.body_config);
+        let world = |local: Vec3| add(origin, transform(b, local));
+        let mut bodies: Vec<TriggerBody> = (0..4)
+            .map(|i| TriggerBody::Sphere {
+                center: world(self.wheel_rest[i]),
+                radius: self.wheel_config[i].radius,
+            })
+            .collect();
+        bodies.extend(self.chassis_points.iter().map(|&p| TriggerBody::Sphere {
+            center: world(p),
+            radius: 0.,
+        }));
+        if let Some(rays) = &self.obstacle_rays {
+            bodies.extend(rays.rays.iter().map(|r| TriggerBody::Segment {
+                start: world(r.start),
+                end: world(r.end),
+            }));
+        }
+        bodies
     }
     ///Presentation-only original tire values; reading this does not step physics.
     pub fn wheel_effect_state(&self) -> WheelEffectState {
@@ -692,17 +761,184 @@ impl Vehicle {
         if !self.wreck.step(dt, rider_grounded) {
             return Ok(false);
         }
-        self.reset_to_checkpoint()?;
+        // 001e5260 → 001e8d10: wreck recovery places with flags 1.
+        self.reset_to_checkpoint_with(RESET_SIDESTEP)?;
         Ok(true)
     }
     ///001e35d0 is shared by wreck recovery and the expired deep-water clock.
+    /// This sets the checkpoint unconditionally (the grid, 001f80e0); race
+    /// updates go through [`Self::offer_race_checkpoint`].
     pub fn set_race_checkpoint(&mut self, checkpoint: Option<(Vec3, f32)>) {
         self.race_checkpoint = checkpoint
             .filter(|(origin, yaw)| origin.iter().all(|v| v.is_finite()) && yaw.is_finite());
     }
-    /// Immediate recovery at the current (race) checkpoint.
+    /// RaceStatus offers each on-track racer's reset point every update
+    /// (00248b20 → interface +0x20 → 001ea860). The vehicle keeps it only
+    /// when 001ea4d0 accepts it: all wheels down, not wrecked, upright
+    /// (up.y ≥ 0.8), ground above the water, no vegetation within 20ft and
+    /// no static object across the eight 20ft clearance rays; a platform
+    /// under the point raises it. Otherwise the previous checkpoint stays.
+    pub fn offer_race_checkpoint(
+        &mut self,
+        terrain: &Terrain,
+        point: Vec3,
+        yaw: f32,
+    ) -> Result<bool> {
+        if !point.iter().all(|v| v.is_finite()) || !yaw.is_finite() {
+            return Ok(false);
+        }
+        let Some(ground) = terrain.contact(point[0], point[2])? else {
+            return Ok(false);
+        };
+        let (candidate, allowed) = crate::boundary_launch::checkpoint_candidate(
+            point,
+            crate::boundary_launch::CheckpointGates {
+                boundary_flight: self.boundary_launch.active,
+                player_kind_two: false,
+                forced: false,
+                all_wheels_grounded: self.contacts.iter().all(|c| c.grounded),
+                wrecked: self.wreck.phase != crate::wreck::Phase::Riding,
+                body_up_y: self.body.basis()[1][1],
+                terrain_height: ground.height,
+                water_height: self.water_height,
+            },
+        )?;
+        if !allowed {
+            return Ok(false);
+        }
+        let Some(support) = self.checkpoint_support(candidate, yaw)? else {
+            return Ok(false);
+        };
+        self.race_checkpoint = Some((support, yaw));
+        Ok(true)
+    }
+    /// Port adaptation (`cpu_recovery` skip-ahead): the 001ea4d0 point test
+    /// as forced (the rider's own wheels and wreck state are not asked,
+    /// since a stranded CPU is the reason for the call): ground above the
+    /// cached water height and the 001ea050 clearance. Keeps the point when
+    /// it passes.
+    pub fn offer_recovery_checkpoint(
+        &mut self,
+        terrain: &Terrain,
+        point: Vec3,
+        yaw: f32,
+    ) -> Result<bool> {
+        if !point.iter().all(|v| v.is_finite()) || !yaw.is_finite() {
+            return Ok(false);
+        }
+        let Some(ground) = terrain.contact(point[0], point[2])? else {
+            return Ok(false);
+        };
+        let (candidate, allowed) = crate::boundary_launch::checkpoint_candidate(
+            [point[0], ground.height, point[2]],
+            crate::boundary_launch::CheckpointGates {
+                boundary_flight: false,
+                player_kind_two: false,
+                forced: true,
+                all_wheels_grounded: true,
+                wrecked: false,
+                body_up_y: 1.,
+                terrain_height: ground.height,
+                water_height: self.water_height,
+            },
+        )?;
+        if !allowed {
+            return Ok(false);
+        }
+        let Some(support) = self.checkpoint_support(candidate, yaw)? else {
+            return Ok(false);
+        };
+        self.race_checkpoint = Some((support, yaw));
+        Ok(true)
+    }
+    /// Other racers' current positions for the reset sidestep.
+    pub fn set_reset_peers(&mut self, peers: impl IntoIterator<Item = Vec3>) {
+        self.reset_peers.clear();
+        self.reset_peers.extend(peers);
+    }
+    /// Immediate recovery at the current (race) checkpoint: the off-track
+    /// reset (001eb0a0 → 001e8f90 flags 3).
     pub fn reset_now(&mut self) -> Result<()> {
-        self.reset_to_checkpoint()
+        self.reset_to_checkpoint_with(RESET_SIDESTEP | RESET_CLEAR_SPOT)
+    }
+    /// 001ea050 clearance of a checkpoint candidate: vegetation within 20ft
+    /// or a horizontal ray hit rejects it; a down-ray hit raises it.
+    fn checkpoint_support(&mut self, candidate: Vec3, yaw: f32) -> Result<Option<Vec3>> {
+        if self.wreck_physics.is_none() {
+            return Ok(Some(candidate));
+        }
+        if let Some(scene) = &mut self.scene_collision {
+            //001ea050 queries the same cache at radius twenty,
+            //then uses its own strict trim and plant exclusion.
+            let query = scene.cached_query(candidate, 20., |_, _| true)?;
+            if scene.vegetation_blocks_checkpoint(&query)? {
+                return Ok(None);
+            }
+            let selected: Vec<_> = scene
+                .static_selection(&query)
+                .into_iter()
+                .cloned()
+                .collect();
+            crate::wreck::checkpoint_static_support(candidate, yaw, &selected)
+        } else {
+            crate::wreck::checkpoint_static_support(candidate, yaw, &self.obstacles)
+        }
+    }
+    /// 001e35d0 placement of a race reset before 001dd440. Bit 1: while
+    /// another racer lies within 5ft (horizontal), step 5ft sideways from
+    /// it, perpendicular to the reset direction. Bit 2: from the point, try
+    /// rings of radius 1, 6, 11 … 1000ft (21 samples each, x = r·c,
+    /// z = r·√(1 − c), the original formula) until 001ea4d0 (forced: only
+    /// the water and clearance tests) accepts one.
+    fn place_reset(&mut self, terrain: &Terrain, mut origin: Vec3, yaw: f32) -> Result<Vec3> {
+        let flags = std::mem::take(&mut self.reset_flags);
+        let direction = [yaw.sin_d(), 0., yaw.cos_d()];
+        if flags & RESET_SIDESTEP != 0 {
+            // Bounded: the original loops until no racer is within 5ft.
+            for _ in 0..64 {
+                let mut moved = false;
+                for peer in &self.reset_peers {
+                    let dx = origin[0] - peer[0];
+                    let dz = origin[2] - peer[2];
+                    if dx * dx + dz * dz < 25. {
+                        moved = true;
+                        if dx * direction[2] - dz * direction[0] > 0. {
+                            origin[0] += direction[2] * 5.;
+                            origin[2] -= direction[0] * 5.;
+                        } else {
+                            origin[0] -= direction[2] * 5.;
+                            origin[2] += direction[0] * 5.;
+                        }
+                    }
+                }
+                if !moved {
+                    break;
+                }
+            }
+        }
+        if flags & RESET_CLEAR_SPOT != 0 {
+            let base = origin;
+            let (mut radius, mut c, mut s) = (1f32, -1f32, 0f32);
+            while !self.reset_spot_clear(terrain, origin, yaw)? && radius <= 1000. {
+                origin[0] = base[0] + radius * c;
+                c += 0.1;
+                origin[2] = base[2] + radius * s;
+                if c > 1. {
+                    c = -1.;
+                    radius += 5.;
+                }
+                s = (1. - c).sqrt();
+            }
+        }
+        Ok(origin)
+    }
+    fn reset_spot_clear(&mut self, terrain: &Terrain, origin: Vec3, yaw: f32) -> Result<bool> {
+        match terrain.contact(origin[0], origin[2])? {
+            Some(ground) if ground.height > self.water_height => {
+                Ok(self.checkpoint_support(origin, yaw)?.is_some())
+            }
+            _ => Ok(false),
+        }
     }
     /// 001dd440 ground placement (race grid, and race resets through
     /// 001e35d0). The heading stays horizontal and the up axis rolls toward
@@ -754,14 +990,22 @@ impl Vehicle {
         self.ground_placement = false;
         Ok(())
     }
+    fn reset_to_checkpoint_with(&mut self, flags: u32) -> Result<()> {
+        self.reset_to_checkpoint()?;
+        if self.race_checkpoint.is_some() {
+            self.reset_flags = flags;
+        }
+        Ok(())
+    }
     fn reset_to_checkpoint(&mut self) -> Result<()> {
+        self.reset_flags = 0;
         let (reset_origin, reset_yaw) = self
             .race_checkpoint
             .unwrap_or((self.reset_origin, self.reset_yaw));
         self.body_config.center_of_mass = self.base_center;
         self.body_config.max_speed_squared = crate::boundary_launch::NORMAL_MAX_SPEED_SQUARED;
         self.boundary_launch.reset();
-        self.skip_vegetation_query = false;
+        self.skip_vegetation_query = !self.ecosystem_collision;
         self.body = BodyState::new(
             reset_origin,
             [(reset_yaw * 0.5).cos_d(), 0., (reset_yaw * 0.5).sin_d(), 0.],
@@ -1147,11 +1391,13 @@ impl Vehicle {
             .ok_or("original terrain material table is required")?;
         //001e5870 checks +814 before physics, even when the rider is wrecked.
         if self.water_failure.reset_due() {
-            self.reset_to_checkpoint()?;
+            // 001e5260: the expired deep-water clock places with flags 3.
+            self.reset_to_checkpoint_with(RESET_SIDESTEP | RESET_CLEAR_SPOT)?;
         }
         if std::mem::take(&mut self.ground_placement)
             && let Some((origin, yaw)) = self.race_checkpoint
         {
+            let origin = self.place_reset(terrain, origin, yaw)?;
             let (origin, orientation) = self.ground_pose(terrain, origin, yaw)?;
             self.body = BodyState::new(origin, orientation, &self.body_config)?;
         }
@@ -1402,7 +1648,7 @@ impl Vehicle {
                 // 001dd830 supplies total speed with the sign of body-local Z.
                 speed_ft_per_second: magnitude * if speed < 0.0 { -1.0 } else { 1.0 },
                 allow_shifting: self.contacts[2].grounded || self.contacts[3].grounded,
-                modifiers: EngineModifiers::default(),
+                modifiers: self.engine_modifiers,
             },
             &driven,
         )?;
@@ -1908,7 +2154,7 @@ impl Vehicle {
         );
         //001e5260 runs edge launch after physics and before impact/wreck gates.
         // Query bit0 excludes vegetation expansion, not terrain/static objects.
-        if self.boundary_launch.tick(dt, true)? {
+        if self.boundary_launch.tick(dt, self.ecosystem_collision)? {
             self.skip_vegetation_query = false;
         }
         if !self.boundary_launch.active
@@ -2026,28 +2272,7 @@ impl Vehicle {
             if allowed {
                 let forward = self.body.basis()[2];
                 let yaw = forward[0].atan2_d(forward[2]);
-                let support = if self.wreck_physics.is_some() {
-                    if let Some(scene) = &mut self.scene_collision {
-                        //001ea050 queries the same cache at radius twenty,
-                        //then uses its own strict trim and plant exclusion.
-                        let query = scene.cached_query(candidate, 20., |_, _| true)?;
-                        if scene.vegetation_blocks_checkpoint(&query)? {
-                            None
-                        } else {
-                            let selected: Vec<_> = scene
-                                .static_selection(&query)
-                                .into_iter()
-                                .cloned()
-                                .collect();
-                            crate::wreck::checkpoint_static_support(candidate, yaw, &selected)?
-                        }
-                    } else {
-                        crate::wreck::checkpoint_static_support(candidate, yaw, &self.obstacles)?
-                    }
-                } else {
-                    Some(candidate)
-                };
-                if let Some(support) = support {
+                if let Some(support) = self.checkpoint_support(candidate, yaw)? {
                     self.reset_origin = support;
                     self.reset_yaw = yaw;
                 }
@@ -2070,6 +2295,11 @@ impl Vehicle {
         Ok(self.frame())
     }
 }
+
+/// 001e35d0 flag 1: step a race reset aside from other racers.
+const RESET_SIDESTEP: u32 = 1;
+/// 001e35d0 flag 2: search outward for a clear reset spot.
+const RESET_CLEAR_SPOT: u32 = 2;
 
 /// Moving-support velocity field used by realistic train riding.
 #[derive(Debug, Clone, Copy, Default)]
@@ -2116,6 +2346,41 @@ mod tests {
                 assert!((a - c).abs() < 1e-5, "{q:?}");
             }
         }
+    }
+    #[test]
+    fn race_checkpoint_offers_need_a_settled_quad_and_resets_step_aside() {
+        let (mut vehicle, terrain) = fixture();
+        vehicle
+            .place_on_ground(&terrain, [500., 0., 500.], 0.)
+            .unwrap();
+        vehicle.set_race_checkpoint(Some(([500., 0., 500.], 0.)));
+        // 001ea4d0 (+0x904): the wheels have no contact before a step.
+        assert!(
+            !vehicle
+                .offer_race_checkpoint(&terrain, [500., 0., 520.], 0.)
+                .unwrap()
+        );
+        for _ in 0..120 {
+            vehicle
+                .step(&terrain, VehicleInput::default(), 1. / 60.)
+                .unwrap();
+        }
+        assert!(vehicle.contacts.iter().all(|c| c.grounded));
+        assert!(
+            vehicle
+                .offer_race_checkpoint(&terrain, [500., 0., 520.], 0.)
+                .unwrap()
+        );
+        assert_eq!(vehicle.race_checkpoint, Some(([500., 0., 520.], 0.)));
+        // 001e35d0 flag 1: a racer on the point moves the reset 5ft aside,
+        // perpendicular to the reset direction (+z here).
+        vehicle.set_reset_peers([[500.5, 0., 520.]]);
+        vehicle.reset_now().unwrap();
+        let frame = vehicle
+            .step(&terrain, VehicleInput::default(), 1. / 60.)
+            .unwrap();
+        assert!((frame.origin[0] - 495.).abs() < 0.1, "{:?}", frame.origin);
+        assert!((frame.origin[2] - 520.).abs() < 0.1, "{:?}", frame.origin);
     }
     #[test]
     fn ground_placement_rests_wheels_on_the_terrain() {
@@ -2320,6 +2585,39 @@ mod tests {
             vehicle.body_config.max_speed_squared,
             crate::boundary_launch::NORMAL_MAX_SPEED_SQUARED
         );
+    }
+    #[test]
+    fn ecosystem_collision_off_keeps_the_vegetation_query_bit() {
+        let (mut vehicle, terrain) = fixture();
+        enable_test_wrecks(&mut vehicle);
+        vehicle.set_ecosystem_collision(false);
+        assert!(vehicle.frame().skip_vegetation_query);
+        let config = crate::boundary_launch::Config {
+            terrain_width: 4.,
+            terrain_breadth: 4.,
+            width_scale: 1.,
+            breadth_scale: 1.,
+        };
+        vehicle.set_boundary(config, false).unwrap();
+        vehicle.body =
+            BodyState::new([100., 100., 500.], [1., 0., 0., 0.], &vehicle.body_config).unwrap();
+        vehicle.body.linear_velocity = [-50., -10., 0.];
+        for _ in 0..62 {
+            vehicle
+                .step_with_boundary_random(&terrain, VehicleInput::default(), 1. / 60., || [0; 4])
+                .unwrap();
+        }
+        // 001e5260 clears the launch's bit after a second only with +0x674.
+        assert!(vehicle.frame().boundary_launch.active);
+        assert!(vehicle.frame().skip_vegetation_query);
+        for _ in 0..600 {
+            if vehicle.advance_wreck(1. / 60., true).unwrap() {
+                break;
+            }
+        }
+        assert!(vehicle.frame().skip_vegetation_query);
+        vehicle.set_ecosystem_collision(true);
+        assert!(!vehicle.frame().skip_vegetation_query);
     }
     #[test]
     fn crowd_boundary_allows_the_original_extended_margin() {
@@ -3152,6 +3450,7 @@ mod tests {
             hierarchy_nodes: 64,
             width_cells: 128,
             depth_cells: 128,
+            leaf_index: Default::default(),
         };
         (v, t)
     }
@@ -3462,6 +3761,33 @@ mod tests {
         assert_eq!(bypassed.scene_query.vegetation_proxy_queries, 0);
         assert_eq!(bypassed.obstacle_contact_count, 0);
         assert!(bypassed.linear_velocity[2] > 9.);
+    }
+
+    #[test]
+    fn trigger_bodies_are_the_wheels_and_hull_in_world_space() {
+        use crate::freestyle::TriggerBody;
+        let (mut vehicle, _) = fixture();
+        vehicle.set_chassis_points(&[[0., 1., 0.]]).unwrap();
+        let origin = vehicle.body.origin(&vehicle.body_config);
+        let bodies = vehicle.trigger_bodies();
+        // Four wheel spheres, then the hull point; no rider body.
+        assert_eq!(bodies.len(), 5);
+        for (i, body) in bodies[..4].iter().enumerate() {
+            let TriggerBody::Sphere { center, radius } = *body else {
+                panic!("wheel {i} is not a sphere");
+            };
+            let expected = add(
+                origin,
+                transform(vehicle.body.basis(), vehicle.wheel_rest[i]),
+            );
+            assert!((0..3).all(|a| (center[a] - expected[a]).abs() < 1e-4));
+            assert_eq!(radius, vehicle.wheel_config[i].radius);
+        }
+        let TriggerBody::Sphere { center, radius: 0. } = bodies[4] else {
+            panic!("hull point");
+        };
+        let expected = add(origin, transform(vehicle.body.basis(), [0., 1., 0.]));
+        assert!((0..3).all(|a| (center[a] - expected[a]).abs() < 1e-4));
     }
 
     #[test]

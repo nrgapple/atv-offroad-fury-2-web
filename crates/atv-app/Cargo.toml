@@ -5,7 +5,9 @@ version.workspace = true
 publish.workspace = true
 
 [lib]
-crate-type = ["cdylib", "rlib"]
+# Desktop binaries need only the Rust library. Web/Android builders explicitly
+# request cdylib, avoiding an unused native shared-library optimization/link pass.
+crate-type = ["rlib"]
 
 [[bin]]
 name = "fury"
@@ -23,7 +25,6 @@ atv-render = { path = "../atv-render" }
 atv-ui = { path = "../atv-ui" }
 wgpu = { version = "30", default-features = false, features = ["std", "wgsl", "metal", "dx12", "vulkan", "gles", "webgl"] }
 cpal = { version = "0.18", features = ["wasm-bindgen"] }
-gilrs = "0.11"
 serde_json.workspace = true
 web-time = "1"
 winit = "0.30.13"
@@ -36,6 +37,13 @@ tungstenite = { version = "0.28", default-features = false, features = ["handsha
 ureq = { version = "3", default-features = false, features = ["rustls"] }
 # Verifies downloaded content blobs (content_sync.rs, Android).
 sha2 = "0.11"
+# Pass Keys from the OS random source (cloud.rs).
+getrandom = "0.3"
+
+# Controllers everywhere but Android (gamepad/android.rs; gilrs has no
+# Android backend).
+[target.'cfg(not(target_os = "android"))'.dependencies]
+gilrs = "0.11"
 
 # Desktop only: Android keeps the screen on through its activity window flag
 # and has no clipboard backend in arboard (research/ANDROID.md).
@@ -49,6 +57,8 @@ arboard = { version = "3", default-features = false }
 # research/ANDROID.md and src/android.rs.
 [target.'cfg(target_os = "android")'.dependencies]
 winit = { version = "0.30.13", features = ["android-native-activity"] }
+# Controller names and presence (gamepad/android.rs); already used by cpal.
+jni = "0.22"
 # stderr to logcat (android.rs).
 libc = "0.2"
 
@@ -57,4 +67,4 @@ console_error_panic_hook = "0.1"
 js-sys = "0.3"
 wasm-bindgen = "0.2.129"
 wasm-bindgen-futures = "0.4"
-web-sys = { version = "0.3", features = ["Window", "Document", "Storage", "Navigator", "Clipboard", "VisibilityState", "Element", "HtmlAudioElement", "HtmlCanvasElement", "WebGl2RenderingContext", "HtmlImageElement", "CanvasRenderingContext2d", "ImageData", "HtmlElement", "HtmlMediaElement", "Blob", "BlobPropertyBag", "Url", "Location", "console", "MediaQueryList", "CssStyleDeclaration", "WebSocket", "BinaryType", "MessageEvent", "CloseEvent", "Request", "RequestInit", "Response", "Headers", "HtmlInputElement", "KeyboardEvent", "Event", "EventTarget", "MediaError", "AddEventListenerOptions", "AudioContext", "AudioContextState", "BaseAudioContext", "AudioNode", "AudioParam", "GainNode", "BiquadFilterNode", "BiquadFilterType", "MediaElementAudioSourceNode", "AudioDestinationNode", "AnalyserNode"] }
+web-sys = { version = "0.3", features = ["Window", "Document", "Storage", "Navigator", "Crypto", "Clipboard", "VisibilityState", "Element", "HtmlAudioElement", "HtmlCanvasElement", "WebGl2RenderingContext", "HtmlImageElement", "CanvasRenderingContext2d", "ImageData", "HtmlElement", "HtmlMediaElement", "Blob", "BlobPropertyBag", "Url", "Location", "console", "MediaQueryList", "CssStyleDeclaration", "WebSocket", "BinaryType", "MessageEvent", "CloseEvent", "Request", "RequestInit", "Response", "Headers", "HtmlInputElement", "KeyboardEvent", "Event", "EventTarget", "MediaError", "AddEventListenerOptions", "AudioContext", "AudioContextState", "BaseAudioContext", "AudioNode", "AudioParam", "GainNode", "BiquadFilterNode", "BiquadFilterType", "MediaElementAudioSourceNode", "AudioDestinationNode", "AnalyserNode", "ChannelSplitterNode", "ChannelMergerNode", "ChannelCountMode", "ChannelInterpretation"] }

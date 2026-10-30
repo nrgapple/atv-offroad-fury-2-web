@@ -21,7 +21,14 @@ for the scalar branches, not whole-race replay):
   ahead-only leader speed policy with its 60ft/s floor (`002536b0`).
 - Direction avoidance `0024f840` → `00252080`: peer near/far relative velocity,
   eight-ray static attenuation, vegetation response and the track-edge tail
-  (AI flag 0x400000). The 0x10 response scale reads the aim node.
+  (AI flag 0x400000). The 0x10 response scale reads the aim node. The rays
+  (origin raised 1ft, VehicleAI +0x3c8) and plants are queried only while
+  the racer is off the track; on it only peers and the track-edge tail act.
+- Enduro CPUs: VehicleAI mode 4 (`00250ae0`), the National driver whose
+  lookahead is aimed through the next gate from its own route stations, the
+  45ft/s Enduro leader floor and the Enduro reset point (the rider's own
+  position facing the next gate). The off-track lookahead limit is half the
+  Track window (62.5ft). See "Enduro CPU driver and off-track avoidance".
 - Difficulty: race creation `001f9690` sets AI flag 0x400 (the leader speed
   limit) for every difficulty except Expert. Race setup offers Normal/Expert.
 - Jump hook `0024ebb0` and preload release `001ebb10` (flag 0x40 jumps), the
@@ -35,36 +42,55 @@ for the scalar branches, not whole-race replay):
 - CPU wreck decision, passive body, wreck clips and rider controller reuse the
   player's Vehicle path. Grid fallback 4.66ft behind the start gate (`001f8410`)
   with the course `RiderSpacing`.
+- Start slots: the `001f6350` pair shuffle and the `001f8410` race-mode row
+  (slot − n/2 spacings across the start, side from section 0's first turn),
+  for the player and every CPU. See "Start slots" below.
+- Track window and finish gate: the 125ft forward and 75ft backward route
+  window (Track +0x34/+0x38, set by the race track loader `00215900`), the `001a95b0` gate crossing
+  test on the tag 16 box, and the TDF tag 41 Track flags 4 (first crossing
+  only arms the rider) and 8 (first lap is no best lap). See "Finish gate and
+  track window" below.
+
+- Reset points (`00248b20` → interface +0x20 → `001ea860`/`001ea4d0`), the
+  tag 23 flag-1 no-reset nodes, the off-track reset (`001eb0a0`, 5s, RaceStatus
+  +0xcc), reset placement flags (`001e35d0`) and the forward-only committed
+  station that centres the track window. See "CPU reset points and the
+  committed station" below.
 
 **Authored** (integration adaptations, not original behavior):
 
-- Race rules: countdown, laps, timing, ranking and HUD. Progress follows
-  the racing line inside the TDF edge polygon with an authored window (150ft
-  ahead, 60ft behind); the original Track +0x34/+0x38 values and the native
-  `001a95b0` finish-box test are not ported.
+- Race rules: countdown, timing, ranking and HUD. Progress follows the
+  racing line inside the TDF edge polygon within the recovered 125/75ft window;
+  laps count through the recovered finish gate test. The skip of Track flag 4
+  is treated as used up at the start on env07 and sx13, whose start row
+  stands just past the gate (see below).
+- CPU racing-line projection keeps its authored 60ft/150ft window.
 - Route projection near each racer's station and ground/contact mapping; host
   Rust `sin`/`atan2` instead of PS2 trigonometry/VU precision.
 - Per-CPU random streams seeded `97211 + 47 × index` instead of the native
-  global random stream.
-- Off-track (5 s) and stuck (under 3ft/s for 4 s) CPU recovery to the race
-  checkpoint; the original consumer of the off-track timer is unrecovered.
-  The stuck clock runs only after GO: counting the braked grid hold reset
-  every CPU at GO onto one shared checkpoint, stacked on each other.
+  global random stream; the start-slot shuffle draws from its own stream on
+  the race seed.
+- Stuck (under 3ft/s for 4 s) CPU recovery to the race checkpoint: the
+  original has no stuck reset. The stuck clock runs only after GO: counting
+  the braked grid hold reset every CPU at GO onto one shared checkpoint.
+  The off-track reset (5 s) and the reset point itself are now recovered
+  ("CPU reset points and the committed station" below).
 - Rider-to-rider contact through the multiplayer `peer_contact` proxy.
 - The motorcycle race preview is kinematic route following at fixed speeds; it
   never runs for ATV racers.
 
 **Missing or unverified:**
 
-- Native start slots (`001f8410` cases 3–10, slot table `001f6350`): recovered
-  below but not connected; the grid keeps the symmetric row.
 - Championship-only difficulty effects (see "CPU difficulty" below), the All
   Out AI filters and angular-rate write, scene query category/order and actor
   update ordering.
-- Championship points, firework triggers and whole-race PS2 replay parity.
-- The Supercross start gate rotation, the race-load
-  announcer cue and the Stunt Score and Profile Points results columns. See
+- Whole-race PS2 replay parity (firework triggers and their CPU spark
+  streams are connected; see "Supercross fireworks"). Championship points
+  and series are in `CHAMPIONSHIPS.md` (Nationals and Supercross only).
+- The Supercross start gate rotation and the race-load announcer cue. See
   "Race start and race over" and "Pre-race camera and 321 lights" below.
+- Results show Stunt Score and Profile Points (`001f1e30`, see `PROFILE.md`);
+  CPU stunt scores read 0 because the port does not score CPU tricks.
 
 ## Initial preview (historical)
 
@@ -337,10 +363,9 @@ progress, the course menu in three layouts and page/GL errors.
 Limitations: CPU corner speed is not original on courses whose TDF speeds are all
 the 150ft/s sentinel (e.g. `env02`, `nat01`). The recovered driver has no corner
 braking and the project does not guess one, so CPUs can overshoot early corners
-and use the existing wreck/recovery path. Supercross firework streams beyond the
-ambient GPU packet budget are reported as unsupported instead of failing the
-load; firework triggers, championship points and original finish-line box tests
-remain unconnected. Race resources need the updated R2 content package.
+and use the existing wreck/recovery path. Supercross firework triggers and streams
+were connected later ("Supercross fireworks"); championship points and the
+original finish-line box tests are covered in their own sections. Race resources need the updated R2 content package.
 
 ## Track progress, off-track, recovery and rider contact — 2026-10-15
 
@@ -365,9 +390,28 @@ The port now follows this model. It replaces the radius checkpoints, which
 riders could miss and which stalled their progress:
 
 - `Course` keeps the authored edge pairs and every alternate polyline.
-- `Course::locate` accepts a rider only inside an edge polygon within 150ft
-  ahead or 60ft behind its station. These window values are authored; the
-  original Track +0x34/+0x38 values are unrecovered.
+- `Course::locate` accepts a rider only inside an edge polygon within the
+  Track window, 125ft ahead or 75ft behind its station (Track +0x34/+0x38,
+  "Finish gate and track window" below). The window applies to alternate
+  lines too: a rider inside an alternate's polygon counts only when the
+  mapped route position lies in the window. sx14's 12→57 alternate crosses
+  the circuit about 1,000ft further on; before this rule every rider passing
+  there was mapped back to near the fork and lost about 1,000ft of race
+  distance (observed in host Chromium: all four riders dropped from ~1,545ft
+  to ~518ft between 1,700 and 2,400 frames). The native query `0017be80`
+  searches only the window, so the rule follows it; how it walks alternate
+  sections internally was not traced.
+- CPU avoidance and ramps. sx14's main line climbs onto the `sx14bridge`
+  static object just past checkpoint 57. All eight flat avoidance rays
+  (`00252080`, 100ft, origin raised 1ft) meet its 11° approach ramp about
+  36ft ahead, and the successive attenuation turned every CPU and the race
+  path driver 90° south, where they stalled. `00252080` tests every
+  STATICOBJECT CollisionObject (it skips only VEHICLE/RIDER bodies that are
+  not PHYSICSBODY; mask names from the registry at `0x44c570`), but only
+  while the racer is off the track (2026-10-27, "Enduro CPU driver and
+  off-track avoidance" below), so an on-track CPU never casts them at the
+  ramp. The earlier authored rule that ignored upward-facing rising hits is
+  removed.
 - Progress is the race distance along the racing line, so laps count when the
   furthest distance passes the finish gate. Cutting across the infield,
   teleporting or reversing cannot skip or re-count the course. Alternate lines
@@ -485,9 +529,11 @@ Port:
   takeover is not identified; `001f9690` creates no driver for human racers,
   and `001f1990` changes their rider state without an identified driver.
   Player input, tricks and Reset are ignored until Restart.
-- The results table shows rider, total time and best lap, with Continue →
-  Restart / Quit Event and Hide Menu / Show Results. Stunt Score and Profile
-  Points are omitted: the port has no per-race stunt total or profiles.
+- The results table shows rider, total time, best lap, stunt score and
+  Profile Points, with Continue → Restart / Quit Event and Hide Menu / Show
+  Results. Since 2026-10-26 the stunt score is the player's points scored
+  between GO and the finish and Profile Points follow `001f1e30`
+  (`PROFILE.md`).
   Keyboard: Enter continues or confirms, Escape hides, shows or goes back.
   Controller: A continues/confirms, B goes back or hides, X hides/shows.
 
@@ -690,9 +736,14 @@ instance and `[FireworkTriggers]`.
   the field crosses after GO. Trigger 1 is the finish gate on the last lap.
 
 Port: `race_fireworks::Controller` runs the triggers and sequence and drives
-the ambient emitters by race TOY emitter and instance. A race with firework
-triggers keeps every stream emitter instead of the static packet budget; the
-bounded GPU ring takes the bursts. The gate test is an authored plane
+the ambient emitters by race TOY emitter and instance. The firework EMTs
+lack `UseGpuParticles`, so the original builds their streams as CPU atlas
+sprites (`001a0130`; at least `MinParticlesPerFrame` streams per step, 500
+for an explosion) in the coloured spark frames of the course's
+Particles.prt; the port now does the same in its bounded 900-slot stream
+pool, which a full explosion fills as the native 1,500-slot manager does
+(AMBIENT_EFFECTS.md "Triggered bursts"). Earlier builds drew them through
+the fountain GPU ring with tile 0 of the GPU atlas. The gate test is an authored plane
 crossing, not the RaceStatus gate (`002487c0`); the gate drop rotation is
 still not reproduced.
 
@@ -799,14 +850,7 @@ the direction to it. All Out AI requests direction × target speed and
 frame. Its write to quad +0x294 and the AI +0x90/+0x94/+0x98 filters are not
 reproduced. The port exposes both only as `cheats=eatdirt,bringit` links.
 
-**Start slots** (not connected). `001f6350` fills a slot table 1…n and,
-unless settings+0x7d8, swaps each pair with probability 0.5, so the player can
-start in any slot. For race modes 3–10 `001f8410` places rider k at the tag 15
-box center − 4.66 × forward + sign × (slot − n/2) × RiderSpacing × (fz, 0,
-−fx). The sign is −1 when the first two node directions of section 0 turn
-with a positive cross-product y, else 1. Race scenes declare no extra start
-markers. Connecting this needs the player's own start slot in the browser
-spawn and restart path, so the port keeps its symmetric row.
+**Start slots.** See "Original start slots — 2026-10-26" below.
 
 Private comparisons (finite binary32 interpreter over the original bytes,
 delay slots included, no hooks; `private/reports/racing/cpu-ai-probes.json`)
@@ -837,3 +881,561 @@ The port finds the nearest probe segment in the station window instead of the
 whole section and tests the four-corner edge quad instead of the native
 hexagon. It does not prove whole-race behavior.
 
+## Original start slots — 2026-10-26
+
+Exact-build evidence (private exports of `001f6350`, `001f6c60`, `001f80e0`,
+`001f8410` and `0017d980`; bounded reading, no instruction comparison):
+
+- **Slot table `001f6350`.** Race setup stores the rider count (+0x88) and
+  fills a table of slots 1…n. Unless settings +0x7d8 is set, it visits every
+  pair i < j once, in order, and swaps the two entries when libc rand × 2⁻³¹
+  exceeds 0.5. Rider k (1-based) later reads `table[k − 1]`.
+- **Rider order `001f6c60`.** The human racers (settings +0x84) are created
+  first, then the CPUs, so in single player the player is rider 1 and takes
+  `table[0]`. Settings +0x7d8 also selects a per-player creation path in
+  `001f6c60` and `001f80e0`; it is probably the network/link race flag, but
+  this is not confirmed. Single races here take the shuffled branch.
+- **Grid row `001f8410`, race modes 3–10.** With a track start box (Track
+  +0x54, TDF tag 15) the rider stands at the box center with y = 0, facing
+  the box forward f, then moves 4.66ft back and
+  `sign × (slot − n × 0.5) × RiderSpacing` along (fz, 0, −fx). The product
+  uses floats: with five riders the slots sit −1.5, −0.5, 0.5, 1.5 and 2.5
+  spacings from the center line, so the row is one spacing wider on one side.
+- **Row side.** `sign` comes from section 0's first node and its next two
+  nodes. `0017d980` returns the normalized vector from a node to its next
+  node; the sign is −1 when the cross product of the first two such vectors
+  has a positive y, else 1, and −1 when the track or either next node is
+  missing. Of the 32 race TDFs, 11 give −1 and 21 give 1.
+- Scene start markers (+0x348 list) take precedence for slots below their
+  count; race scenes declare none.
+
+Port:
+
+- `race::start_slots` draws the table and `Course::grid` places a slot;
+  `Race::seeded` gives the player `table[0]` and each CPU the next entries.
+  The player is placed in its slot before the grid settles (`place_racer`),
+  so the player can start anywhere in the row instead of always in the
+  middle.
+- The draw uses `OriginalRandom` (the recovered libc generator) on the race
+  seed with a fixed stream offset, not the native global random stream, so
+  the original's sequence of draws is not reproduced. Restart Race reuses
+  the same seed and therefore the same slots; whether the original reshuffles
+  on restart is not established.
+- The row height still comes from the route (then ground placement), not the
+  native y = 0 followed by its ground drop.
+- Section 0 is the TDF's section id 0. The `0017d980` node-length check
+  (node +0x40 > 0) is assumed to pass on shipped courses.
+- The race modes 3–10 mapping to Environment, National and Supercross races
+  follows the earlier start-box reading, not a separate recovery of the mode
+  numbers.
+
+Checks: unit tests cover the shuffle against a per-pair reference (every slot
+reachable for the player), the row offsets and side, slot validation and the
+seeded race. The private all-courses test reports each course's side and how
+many of five slots lie inside the track polygon: 30 of 32 courses keep all five
+at 8ft spacing; env01 keeps 3 and env06 none (its start box was already outside
+the polygon; the old symmetric row had the same misses). `test_engine_race_grid.mjs`
+loads ENV01 with four CPUs for four seeds and checks that every rider stands in
+its slot of one evenly spaced row, and that the player's slot changes with the
+seed (slots 3, 3, 2 and 4 in host Chromium).
+
+## Finish gate and track window — 2026-10-26
+
+Exact-build evidence (private exports of the Track constructor `00179330`,
+loader `00179680`, track query `0017be80`, route distance `0017d3c0`, box
+constructor `001a9400`, box placement `0017da40`, gate test `001a95b0` with
+its line intersection `0012b6d0`, and RaceStatus reset `00247900` and update
+`00248b20`; bounded reading, no instruction comparison):
+
+- **Track window.** The Track constructor sets +0x34 and +0x38 to 200ft and
+  the TDF loader does not write them, but the race track loader `00215900`
+  then stores 125ft in +0x34 and 75ft in +0x38 (corrected 2026-10-27; the
+  first reading stopped at the constructor). RaceStatus passes them to
+  `0017be80` as the forward and backward route limits of the on-track
+  query, so a rider can move up to 125ft forward or 75ft back along the
+  route between updates. The port's old window was 150ft ahead and 60ft
+  behind, then 200ft both ways.
+- **Gate line.** Tags 15, 16 and 25 build boxes with flags 3; after loading
+  each box gets a 150ft ceiling (+0x74). For such a box `001a95b0` treats the
+  segment from center − half extents to center + half extents in x/z as the
+  gate line (the authored half extents point across the track), and
+  intersects it with the rider's motion from its previous position (+0x70) to
+  its current one (+0x60). It returns 1 when the crossing lies within the
+  motion and within the gate, no higher than the ceiling above the gate
+  center, and the motion has a non-negative dot product with the box
+  direction; 2 when the motion crosses the gate's line beside the gate; 0
+  otherwise, including when the previous position is exactly zero.
+- **Laps.** Each update RaceStatus measures the forward route distance
+  (`0017d3c0`, −1 on alternate sections) from the rider's previous track
+  position to the finish box's track position (`0017da40`, where the route
+  crosses the gate line). Only when that distance is in [0, 125ft) does a
+  gate result of 1 count: lap counter +0x2c increases, the lap time is
+  elapsed time less the lap start (a negative time is clamped to zero and
+  skips the best-lap update), and the rider finishes when the counter reaches
+  the race's laps. A pass beside the gate (result 2) counts nothing, so that
+  lap needs another circuit.
+- **Port deviation (authored, 2026-10-27): crossings slightly past the box
+  position.** The port's race distance is accumulated from window offsets,
+  and the box position is where the *main racing line* meets the gate line.
+  A rider off the line meets a skewed gate a little later on the route: on
+  sx03 every CPU's previous distance was 0.6ft past the box position when it
+  drove through the gate, so the literal [0, 125ft) test wrapped to a whole
+  lap and the lap never counted (CPUs ran on past 7,000ft; env01 and sx13 the
+  same). Once a rider's distance has reached the box position, a previous
+  distance up to 75ft (Track +0x38) past it now also counts. A grid just past
+  the gate (env01, 4ft) has not reached it, so the start is unaffected. How
+  native `0017be80` places an off-line rider along a skewed segment was not
+  traced; it may avoid the case without this allowance. Headless 1-lap,
+  3-CPU sweep of all 32 courses (seed 7, 150 s): all CPUs finish on 25 courses
+  (13 before this and the ramp rule); nat04/06/07 are longer than the window;
+  env04, env06, nat02 and sx11 still have CPUs looping off the line.
+- **Track flags (TDF tag 41, Track +0x30).** Reset `00247900` sets rider flag
+  0x10000 for Track flag 4 and 0x20000 for flag 8. Flag 0x10000 turns the
+  next gate crossing into a no-lap crossing that only clears it; flag 0x20000
+  keeps the next counted lap out of the best-lap comparison and is then
+  cleared. All 32 race TDFs set flag 8; env07, sx06, sx11, sx13 and sx16 also
+  set flag 4. On sx06, sx11 and sx16 the gate lies 700–1,860ft ahead of the
+  start row, so the partial first pass is not a lap.
+
+Port:
+
+- `race::TRACK_AHEAD`/`TRACK_BEHIND` are 125ft and 75ft. `Gate::crossing` is the gate
+  test; `Course::gate_distance` finds where the main racing line first
+  crosses the gate line (`finish_at`). `Progress` counts a lap when the
+  rider's previous race distance lies less than 125ft before the next gate
+  position and its motion crosses the gate; it applies flags 4 and 8 as
+  above. Hand-built courses without a finish gate keep the old
+  distance-to-checkpoint rule. The race frame and script trace report
+  `finish_at`, `track_flags` and each rider's laps and race distance.
+- **Scene gate boxes (2026-10-27).** After loading, `00215900` walks the
+  scene's static models and, for one whose name contains `natsgate`,
+  overwrites the start box (Track +0x54); for one containing `natfgate`
+  (`stfgate` on a Short Track) the finish box (+0x58): center = the model's
+  position (+0xf0), half extents = its right axis (+0xc0) × model +0x110,
+  +0x70 = model +0x110, ceiling +0x74 = model +0x114, direction = its look
+  axis (+0xe0); then `0017b290` re-places the box on the route. The last
+  matching model wins. Environment scenes have no `natsgate`, so their start
+  box stays the TDF one. Compared with the TDF tag 16 boxes on all 35 courses
+  (private probe), the scene finish gates sit within about 1–30 ft on most
+  courses, but env05's is 11 ft past the grid instead of 1,517 ft into the
+  lap, sx13's is 11 ft ahead of the grid instead of 24 ft behind it (its
+  Track flag 4 then arms on that first crossing, so the old env07/sx13
+  assumption below is no longer needed there), and sx14's lies 145 ft
+  further on.
+- Model +0x100/+0x110/+0x154 are copied from the PSG node header without
+  arithmetic (`00166d10`): the model-space bounding-box centre, its half
+  extents (+0x110 across the model's x, +0x114 its y) and a sphere radius.
+- The port uses the scene finish gate for every National-rules race
+  (`Course::set_finish_gate`), as wide as the gate PSG's stored half extent.
+  The ceiling stays 150 ft (the original's +0x114 half height is not
+  ported); the start box keeps the TDF tag 15 box, since moving it would
+  also move the grid and the route order. Racing env05 and sx13 one lap
+  with the scene gates finishes after one full circuit (1,759 ft and
+  3,957 ft; sx13's flag 4 arms the first crossing).
+- The `0.0 <= +0x70` guard before the lap test (the previous position's x) is
+  not reproduced; all shipped race coordinates are positive.
+- **Assumption.** On env07 and sx13 the start row stands about 20ft past the
+  finish gate while Track flag 4 is set. Read literally, the skipped crossing
+  would come only after a full circuit and the first lap would be two
+  circuits long. The port treats the skip as already used when the grid lies
+  within 75ft past the gate (Track +0x38). The original may instead clear the flag through
+  a crossing during start placement; this is not established.
+- CPU steering keeps its authored projection window (60ft behind, 2 × 150ft
+  ahead); the original CPU driver's use of the Track window is not ported.
+
+Checks: unit tests cover the gate test (through, backward, beside, short,
+above the ceiling, zero previous position, slanted gate), the window values,
+flags 4 and 8 on a synthetic course, and a pass beside the gate. The private
+all-courses test drives a two-lap race along the racing line on all 32 TDFs:
+each finishes at the second counted gate crossing within 150ft of the
+predicted distance, and all 60 alternate lines still rejoin in order.
+`test_engine_race_finish_gate.mjs` races SX06 with three CPUs for about 105s
+in host Chromium: CPUs past the gate for the first time have 0 laps, and CPUs
+past it a second time (5,632–6,041ft) have 1.
+
+## Enduro and Short Track races — 2026-10-27
+
+Each Environment venue ships two more race archives besides `E0n_NAT.RES`:
+a long and a short Enduro (`E0n_ENDL.RES`, `E0n_ENDS.RES`), and Rockbridge
+Park, Caribou Peak and San Jacinto Isles a Short Track (`E0n_ST.RES`). Each
+repeats the venue's National archive (terrain, scenery, roster) and adds its
+own scene, mode TOY and TDF (`<venue><endl|ends|st>.scn|.toy`,
+`<venue><stem>E.tdf`). Enduro archives also carry `<venue><stem>E.wpt`,
+the `<venue>endwgate`/`endfgate` gate models, gate arrow textures
+(`<venue>arrow1..8`), the compass art and the radar gate icon; their TDFs
+have no tag 15/16 start or finish box.
+
+Exact-build evidence (private reading of `SCUS_972.11`, nothing traced):
+
+- **Variant.** `002f65e0` maps the event type to the track variant;
+  `0021d8b0` builds `tracks\<venue><suffix>E`: Amateur Enduro reads the
+  short course (`ends`), Pro Enduro, the Waypoint Editor and User Created
+  Enduro the long one (`endl`), Short Tracks `st`. Enduro laps are 3
+  (`00289d50`). The event factory `001dfb00` builds an EnduroRaceEvent for
+  Enduro and a NationalRaceEvent for Short Tracks.
+- **Waypoints (`0022a340`).** The `.wpt` holds 0x18 bytes of names, a u32
+  count, then `count` records of x, z, dirx, dirz (shipped files are padded
+  to the editor's 50 records). Every waypoint but the last places a
+  `endwgate` model (with collision) 2 ft above the ground, oriented right
+  (dz, 0, −dx) and forward (dx, 0, dz); the last places the `endfgate`
+  finish gate. Each gate gets a race box with flags 5: the direction test
+  is skipped, so a gate counts in either direction.
+- **Rules (RaceStatus type 1, `0024a490`).** Only a rider's next gate is
+  tested. Crossing it credits the distance to the following gate and moves
+  on; crossing the last gate counts a lap (lap time, best lap with no
+  first-lap exclusion) and wraps to gate 0. Passing beside a gate does
+  nothing, so a missed gate must be ridden back to; there is no penalty.
+  Race distance is the credited gate distance less the distance to the next
+  gate; places sort by gates passed, then by that distance. Type 1 runs no
+  on-track query (no route window, Off Track or Wrong Way).
+- **Grid (`001f8410`).** One row 10 ft past the last gate, facing its
+  direction, slots `RiderSpacing × (slot − n/2)` across it.
+- **HUD (Overlays.pb set 11).** The race overlays without the radar, plus
+  a compass (object 31), "Cheesy GPS" (32) and "GATE n of m" (object 40,
+  value 22 `002df0b0`, at 25,270).
+- **Short Tracks** use the National rules (RaceStatus type 2) with their
+  own TDF (gates 15/16) and 5 laps.
+
+Port:
+
+- `atv_game::launch::RaceVariant` names the venue's races; course ids are
+  the venue for its National race and `<venue><stem>` otherwise
+  (`env05ends`), and ride links add `course=enduro-long|enduro-short|short-track`.
+  The content package keeps only each variant archive's members that differ
+  from the National archive (`tools/package_content.py`
+  `compact_race_variant`, about 45–70 KB per Enduro, 11–14 KB per Short
+  Track; ENDL keeps its placement TOY too), and the engine reads them over
+  the National archive (`Resource::overlay`, which joins the two block
+  tables without inflating anything).
+- `atv_core::enduro` parses the waypoints and builds the gate boxes and
+  model matrices; `Course::set_enduro` switches a race to the gate rules
+  above and the Enduro grid. Like the original RaceStatus (`0020f780`
+  +0x94), an Enduro also ends for everyone 30 s after the first rider
+  finishes, with the unfinished riders' times estimated as at any race
+  over. The venue draws and collides with the gate
+  models. The HUD drops the radar and shows "GATE n of m".
+- Single Race lists each published variant under its venue's tab
+  ("Prospect Springs Enduro Short").
+
+**Authored or approximate:** the gate width is the `endwgate` PSG's stored
+half extent across the gate (model +0x110, as the original reads it);
+the gate ceiling is the National 150 ft. The CPUs drive the Enduro TDF
+route aimed by their next gate, as the original's VehicleAI mode 4 does
+("Enduro CPU driver and off-track avoidance" below).
+
+**Gate banners, fading and compass (2026-10-27).** Exact-build reading
+(`00229e90`, `00229670`, `00229cb0`, `00228ea0`, `001b42e0`, `002e68e0`,
+`002e6e80`; not traced):
+
+- Each gate's banners show the turn to the next gate (the last gate points
+  at gate 0): θ = atan2(D·right, D·forward) with D the next gate minus this
+  one and right (dz, 0, −dx). 22.5° bins pick the front face's
+  `<venue>arrow1` (straight), `2`/`3`/`4` (45°/90°/135° right),
+  `8`/`7`/`6` (left) or `5r`/`5l` (U-turn), and the back face the same turn
+  seen riding the other way. They replace the gate models' `frontarrow` and
+  `backarrow` placeholder textures, per gate.
+- Every frame the rider's next gate draws with model alpha 1.0 and every
+  other gate with 0.4 (the model colour multiplier; all gate materials
+  alpha-blend), so the gates ahead read as one highlighted target.
+- The Compass overlay (`QuadzillaCompass`, Overlay Set 11 object 31 at
+  70,375) is a heading-up radar, not a guidance arrow: the `compassbkg`
+  face turns by −heading, the `compassarrow` player marker stays at the
+  centre pointing up, other riders are `radaricon_racer` dots clamped to a
+  33 px rim (10.09 ft per pixel in single player, about 333 ft), and the next
+  gate is a `radaricon_gate` icon at its relative position, turned by its
+  direction less the heading, drawn only inside the rim.
+- "Cheesy GPS" (object 32) is never created in retail (its factory case
+  clears the object); it would print a debug position.
+
+Port: `enduro::arrow_textures` picks the banners and the venue dresses each
+gate with its own banner chunks; the scenery shader multiplies its output
+alpha by a per-draw model alpha that the race sets from the next gate
+(`SceneryPass::fade_enduro_gates`). The HUD draws the compass from the race
+frame's heading, the opponents and the next gate. The compass arrow keeps
+its white art: the participant tint (0xff0000 read in GS byte order may be
+blue) is unverified. Fading only applies to the gates out of the rider's
+view in the captured frames, so it is not visually confirmed.
+
+Checks: `atv-core` `enduro` and `race::tests::enduro_gates_count_in_order_and_last_gate_laps`,
+`resource` overlay test, `atv-game` launch variant test,
+`tools/test_release_content.py`; `tools/test_engine_enduro_race.mjs` races
+env05's short Enduro (13 gates, a one-lap finish) and loads env06's Short
+Track (it skips when the content package predates the variant archives).
+
+## CPU reset points and the committed station — 2026-10-27
+
+Headless sweeps (determinism example, 1 lap, 3 CPUs, 18,000 frames) left CPUs
+looping on env04, env06, nat02 and sx11. The exact build explains most of it:
+
+- **Reset points are validated.** RaceStatus `00248b20` offers each on-track
+  racer its reset point every update through vehicle interface +0x20
+  (vtable `0x456054`, thunk `001eba70` → `001ea860`). The vehicle keeps it only
+  when `001ea4d0` accepts: all four wheels down (+0x904, set in `001e5260`), not
+  wrecked (+0x7f0), up axis y ≥ 0.8, ground above the cached water height,
+  no Vegetation within 20ft and no CollisionObject across the eight 20ft rays
+  at 3ft (`001ea050`); a hit under the point raises it. Otherwise the previous
+  point stays. The port called `set_race_checkpoint` unconditionally, so a CPU
+  that wrecked against a static object was put back on that spot (sx11 node
+  34, ~(236, 89, 490)) and wrecked again.
+- **No-reset nodes.** Before the callback the reset node walks forward past
+  nodes whose TDF tag 23 point flags (node +4, Track loader case 0x17) have bit
+  1, stopping at the finish box's node (+0x58 → +0x84). sx11 flags nodes 28 and
+  34–35 (its big jump), env04 24–31 and env06 1–3, 71–75, 79–83.
+- **Off-track reset.** When RaceStatus flag 0x100 is set and a racer's
+  off-track clock (+0xf0) reaches +0xcc (5s, constructor `00247570`), it calls
+  interface +0x50 → `001eb9d0` → `001eb0a0` → `001e8f90(vehicle, 3)`.
+- **Placement** (`001e35d0`): flag 1 steps the point 5ft sideways
+  (perpendicular to the reset direction, away from the racer) while any other
+  racer lies within 5ft; flag 2 then tries rings of radius 1, 6, 11 … 1000ft
+  (21 samples, x = r·c, z = r·√(1 − c) — the original formula) until
+  `001ea4d0` (forced: water and clearance only) accepts. Wreck recovery
+  (`001e8d10`) uses flag 1; off-track and deep water (`001e5260`) use 3. The
+  reset copies RaceStatus +0xd0 into the racer's stations (+0xb8/+0xc4).
+- **Committed station.** `0017be80` searches the 125/75ft window around the
+  committed station +0xc4 and returns the current one (+0xb8); +0xc4 takes it
+  only when it lies ahead (0 < +0x18 < window). Reset points use +0xc4. The
+  port's station followed riders backwards; on nat02's hairpin (nodes 91–96,
+  legs 60ft apart) vegetation pushed CPUs onto the other leg and the station
+  drifted down it, so they circled for minutes.
+
+Port: `Vehicle::offer_race_checkpoint`, `Course::reset_station`,
+`Race::{accept_checkpoint, restore_checkpoint}`, `Progress::committed`.
+
+Authored around it: on a reset the race distance returns to the accepted
+point (the original keeps lap distance separately); a finish crossing
+counted or skipped since the accepted point only re-arms the skip flag
+(without this sx11's CPUs, reset before the gate after its jump, finished the
+1-lap race at 760ft); the 4s stuck reset stays (no original); the
+`+0x10 < 10` pull-back of reset points just past the finish and RaceStatus
++0x64 mode 2 (which skips validation) are not ported. The water height in the
+validation is the vehicle's cached height at its own position, as in the
+original.
+
+Sweep, all CPUs finish (courses of 32; base = origin/main b002182):
+
+| seed | base | now | still failing |
+| --- | --- | --- | --- |
+| 7 | 29 (env04, env06, sx11) | 30 | env04 (2 CPUs), sx15 (1) |
+| 11 | 27 (env04, env06, env07, nat02, sx11) | 30 | env04 (1), sx15 (2) |
+| 23 | 27 (env04, env06, env07, nat02, sx11) | 29 | env04 (1), nat02 (1), sx15 (2) |
+
+Without the committed station (reset points only) seeds 11 and 23 reached 29
+each, with nat02 still circling at its hairpin.
+
+Remaining loops: env04's CPUs drown at its water crossing near
+(3154, 115, 3259) (node 68, flag 0x80) and are reset to the same accepted
+point every 5.5s; on sx15 a CPU reset at node 41 (621, 170) is turned south-west
+by the static avoidance rays (6–8 hits against the jump south of it), leaves
+the track and returns there after 5s off track. Points at node 42 are
+rejected because the 20ft rays meet that jump. Both depend on the
+unrecovered avoidance ray height (+0x3c8) and water-crossing behavior.
+Both are resolved by the next section: the ray height is the original 1ft,
+but the rays run only off the track, and the off-track lookahead is 62.5ft.
+
+## Enduro CPU driver and off-track avoidance — 2026-10-27
+
+Exact-build reading of `SCUS_972.11` (private Ghidra exports; nothing traced
+or executed):
+
+- **Mode.** Race creation `001f9690` sets VehicleAI +0xd0 from the track
+  variant: Enduro (variants 0/1) mode **4**, Nationals, Supercross and Short
+  Tracks (3–5) mode 2, Freestyle 3 (no driver). The mode dispatch `0024ee40`
+  runs `0024f9d0` for mode 2 and `00250ae0` for mode 4. The same switch sets
+  the leader speed floor +0x414: 45ft/s in Enduro, 60ft/s otherwise
+  (`002536b0` reads it). The lookahead constants are set after it for every
+  mode: +0x240 = 25, +0x248 = 4, +0x244 = 60.
+- **`00250ae0` is the National driver aimed by the next gate.** Its steering,
+  lane, speed, jump, trick and lean tail is the same code as `0024f9d0`
+  (`0024f840` heading wrapper included); only the lookahead base and length
+  differ. With a Track (every race: `0020f780` loads it unless the Waypoint
+  Editor is open) it keeps its own route stations, because RaceStatus type 1
+  runs no track query:
+  - +0xb8 (current) is initialized from the rider position (`0017b290`) and
+    +0xc4 (committed) copies it.
+  - Entry +0x14 / +0x10 are re-measured as the route distance (`0017d3c0`)
+    from +0xb8 / +0xc4 to the next gate's route position (gate box +0x84,
+    from `0017da40`).
+  - Unless the rider has finished, +0xc4 takes +0xb8 (and +0x310 the rider
+    position) only when 60 < +0x14 < +0x10. `0017be80` then searches the
+    125/75ft window around +0xc4 for +0xb8; its result is the on-track flag
+    +0x3c.
+  - Off the track: `0017e420` looks for a point inside the track polygon on
+    any section; if found it is driven to with the ordinary lookahead (25 + 4
+    × distance, at most 60ft), otherwise the base is +0xc4 with the lookahead
+    limited to Track +0x34 × 0.5 = 62.5ft.
+  - On the track, while the gate is still ahead (x/z dot of gate − +0x310
+    and gate − rider ≥ 0): beyond 60ft of the gate the ordinary lookahead
+    from +0xb8; within 60ft the base is +0xc4 and the lookahead 120 − +0x14,
+    which carries the aim through the gate. A rider that has passed beside
+    the gate (the gate lies between it and +0x310) aims from +0xc4 by the
+    route distance from the gate to +0xb8: back before the gate, so it turns
+    round to take the gate it missed.
+  - On a flag-0x10 node mode 4 keeps the lane offset but applies it mirrored
+    (−1), where mode 2 keeps it unmirrored.
+  - Without a Track (the Waypoint Editor), it aims straight at the next gate
+    from the side it approaches (not ported).
+- **The guidance vector +0x1a0 is the Enduro reset point**, not a steering
+  input. `0024a490` passes every racer's position (+0x60) and +0x1a0 to
+  interface +0x20, which for a quad is `001eba70` → `001ea860`: the vehicle
+  keeps them as its reset point when `001ea4d0` accepts. So an Enduro reset
+  returns the rider where it last stood validly, facing the next gate (or,
+  within 50ft of it, a point sliding on to the gate after it). A reset's
+  stations come back null (rider entry +0xd0 is cleared by `00247900` and
+  type 1 never sets it), so mode 4 searches the route again. Type 1 sets no
+  RaceStatus flag 0x100, so Enduro has no off-track reset.
+- **Static avoidance runs only off the track.** In `00252080` the scene
+  query (the eight 100ft rays and the vegetation response) sits behind
+  `lw v0,0x3c(v0)` / `bne v0,zero` at `002524a0`/`002524a4`: with race entry
+  +0x3c set (on the track) it skips to the peer loop at `00252e28`. The peer
+  correction and the track-edge tail (flag 0x400000) run either way.
+- **Ray origin height.** +0x3c8 is 1.0ft: the VehicleAI constructor
+  `0024ef20` stores `lui t5,0x3f80` at `0024f5d4` (with +0x3c4 = 8 rays and
+  +0x3cc = 100ft). No other VehicleAI writer touches it (race creation
+  `001f9690` and `0024f6e0` do not), so the port's 1ft was already the
+  original value.
+- **Off-track lookahead (mode 2).** `0024f9d0` limits the off-track
+  lookahead to Track +0x34 × 0.5 = 62.5ft. The port had used half the lap.
+
+Port: `race_ai::Driver` (mode 4 in `enduro_guidance`, `Context::on_track`,
+`Context::enduro`), `Race::{enduro_guidance, enduro_target, checkpoint}`,
+`Course::nearest_station`; the scene query in `cpu_avoidance::direction` is
+skipped while the racer is on the track.
+
+Also found by the sweep: Caribou Peak's Short Track (`env01st`) failed to
+load ("unsupported physics assignment"): its mode TOY's `[Radar]` section has
+a line `=65.0` without a key. The scene/TOY reader now drops keyless lines
+as it drops valueless ones (an indexed lookup can never match them).
+
+Headless sweep (`determinism` example, 1 lap, 3 CPUs, 18,000 frames, the
+player idle on the grid; courses where every CPU finishes; base = origin/main
+97a7cd0):
+
+| seed | National rules (32) base → now | Enduro (16) base → now | Short Tracks (3) base → now |
+| --- | --- | --- | --- |
+| 7 | 30 → 31 (sx15) | 6 → 15 (env05endl) | 2 → 3 |
+| 11 | 30 → 29 (sx03, sx05, sx15) | 5 → 16 | 2 → 3 |
+| 23 | 29 → 31 (sx15) | 6 → 16 | 2 → 3 |
+
+env04 (all seeds) and nat02 (seed 23) now finish; every Enduro course
+finishes on at least two seeds (base: 6 of 16). CPUs also finish sooner, for
+example env03 seed 7 at 4,506 instead of 6,414 frames.
+
+Remaining failures, all wreck loops: on sx15 (every seed) a CPU limited by
+the leader policy to 75ft/s (150 × 0.5, the player idle 1,500ft behind) takes
+the 220ft/s jump at nodes 32–34 too slowly, lands on its face, wrecks, is
+reset to the accepted point at node 30 and repeats. On sx05 and sx03 (seed
+11) a CPU reset at a corner just before a flag-0x40 jump (sx05 node 44)
+cuts inside, about 20ft off the line but within the 72–87ft-wide track,
+meets the jump off line and wrecks again; with the static rays no longer
+cast on the track nothing steers it back. On env05endl (seed 7) one CPU
+stays behind. The idle player makes the leader limit act all race long,
+which a real race does not; whether the original's CPUs wreck in the same
+places is unverified. With the race path driver riding for the player
+(`determinism --autopilot`, seed 7) every CPU finishes on all 51 courses.
+
+In `tools/test_engine_race_alternates.mjs` (sx14, seed 7, autopilot) the
+player and a CPU now collide at the corner after the bridge and are reset
+about 360ft back, to the last reset point accepted before the bridge (the
+bridge's own points fail `001ea4d0`'s clearance rays). The test now tells
+such a reset (the rider's position jumps) from the alternate-line remap it
+guards against (the rider stays in place).
+
+Follow-up on the remaining wreck loops (2026-10-27, no fix found):
+
+- sx03/sx05 (seed 11; sx05 also on seed 7 in a rerun, so the outcome is
+  chaotic) loop at sx05 nodes 44–47: the accepted reset point (581, 88, 494)
+  lies on the corner before the flag-0x58 jump at node 47. After a reset the
+  CPU understeers through the corner about 20ft inside the line, meets the
+  jump off line at about 50ft/s and wrecks again.
+- What the reset path does, read for this: `001e35d0` places the rider, sets
+  race entry flags 0x80000 and 0x800 (`0024df70` is only the jump-distance
+  record), copies entry +0xd0 (the reset node) to the stations +0xb8/+0xc4
+  as the port does, and clears +0x274/+0x278 of the object at vehicle
+  +0x150 (if that is the VehicleAI, its aim base, which makes the next
+  `0024f9d0` frame start from the committed station: no lasting effect).
+  Nothing in it resets or changes the lane offset (+0x158 slews toward the
+  goal +0x15c, which is re-drawn only when the aim node changes), so no
+  recovered rule moves the post-reset line. The `+0x10 < 10` pull-back
+  applies only to reset points within 10ft past the finish gate.
+- env05endl (seed 7): two CPUs end pinned against obstacles 30ft from the
+  line but inside the wide Enduro polygon (so on the track, no rays),
+  throttle held, bouncing between 1 and 15ft/s. The authored stuck clock
+  (under 3ft/s) keeps restarting. Tried: a displacement-based stuck clock
+  (within 12ft for 4s). It did not help: the stuck reset goes to the Enduro
+  reset point, which is the rider's own last valid position, so the CPU is
+  put back where it was pinned. Not shipped.
+
+## Authored CPU anti-stuck recovery (port adaptation) — 2026-10-28
+
+**Not original behavior.** The user approved authored recovery where the
+recovered rules leave a CPU looping or stranded (`status.md` "Product
+decisions"). It lives in its own module, `atv_core::cpu_recovery`, with
+the race-side helpers `Race::{recovery_stations, accept_recovery_station,
+race_distance, cpu_finished}`, `Course::retreat` and
+`Vehicle::offer_recovery_checkpoint`, all labelled port adaptation. It
+applies to CPU riders only (never the player or the autopilot); while it
+stays idle the recovered rules run unchanged.
+
+The rule (per CPU, on the fixed race step):
+
+- **Detector.** It tracks the CPU's race distance (route progress, not
+  speed) and each reset (wreck recovery, the off-track reset and the
+  authored 4s stuck reset). A reset whose race distance lies within 80ft of
+  the previous reset's counts as a repeat; reaching 400ft past it clears
+  the repeats. Separately, riding (not wrecked, not on the grid hold)
+  without gaining 25ft of race distance for 15s is a stall.
+- **Assist** from the second repeat (the third reset to about one place):
+  the leader speed limit (`002536b0`) is lifted and the lane goal is held
+  on the racing line (the lane draw still runs, so the random stream is
+  unchanged), until the CPU clears the spot. Two resets to one accepted
+  point are common in ordinary races and are left to the recovered rules.
+- **Skip ahead** on the third repeat or a stall: the CPU is reset to the
+  first point 80, 120, 160 … 500ft further along the racing line (moved
+  past no-reset nodes) that passes the forced `001ea4d0` test (ground above
+  water, `001ea050` clearance); if none passes, the furthest candidate is
+  placed by the off-track reset's ring search. The skip becomes the
+  accepted reset state, so race distance gains the skipped route length.
+  It never crosses the finish gate (candidates stop 20ft short, so a lap is
+  never skipped) and in Enduro never reaches the next gate; an Enduro CPU
+  that has passed beside its gate is put 40ft before that gate, facing it.
+  A skip never causes a DNF and never moves a finished CPU.
+
+Why these escalations: on sx15 the leader limit holds a CPU to 75ft/s at
+a jump built for 220ft/s, so it lands on its nose every time; on sx03/sx05
+(seed 11) a CPU reset at a corner meets the next jump off line; on
+env05endl (seed 7) a CPU pinned against an obstacle inside the wide Enduro
+polygon is reset to its own last valid position, where it is pinned again.
+
+Evidence: headless sweep, `determinism` example, 1 lap, 3 CPUs, 18,000
+frames, player idle on the grid, seeds 7/11/23, all 51 courses. "Before" is
+origin/main 39fbfc5 (race and CPU code identical to 166f36c, on which this
+branch is based); courses where every CPU finishes:
+
+| seed | National (32) before → after | Enduro (16) | Short Tracks (3) |
+| --- | --- | --- | --- |
+| 7 | 31 (sx15) → 32 | 15 (env05endl) → 16 | 3 → 3 |
+| 11 | 29 (sx03, sx05, sx15) → 32 | 16 → 16 | 3 → 3 |
+| 23 | 31 (sx15) → 32 | 16 → 16 | 3 → 3 |
+
+Before: 147 of 153 course/seed runs had every CPU finish; after (final
+thresholds, rebuilt on origin/main 3f21cd5): 153 of 153.
+
+No regression where no CPU is stuck: with the layer idle the run is
+bit-identical to main. 61 of the 153 runs never acted; 5 sampled across
+all course types (nat01, sx12, env01endl, env03endl, env06st) have equal
+trace fingerprints to the pre-branch main binary. It does act more often
+than hoped: 91 runs switch the assist on for at least one CPU (in the
+idle-player sweep CPUs often reset three times to one accepted point, as
+the leader limit keeps them slow on jumps). Skips stay rarer: 21 runs, 48
+skips in total, on sx02, sx03, sx05, sx13, sx15, env01ends, env02endl,
+env05endl and env07endl (at most 8 for one CPU, env05endl seed 7).
+
+Checks: `atv-core` `cpu_recovery` tests (single wreck, two resets, assist
+then skip, clearing, stall, wreck time, steady progress) and the `race`
+recovery-station tests (finish gate, Enduro gate, `retreat`).
+
+Limits: the thresholds are authored and tuned on the idle-player sweep;
+whether the original's CPUs wreck in the same places is unverified, and the
+underlying causes (the leader limit at sx15's jump, the post-reset line at
+sx05 node 44, the Enduro pin at env05endl) are unchanged. A skip moves a CPU
+up to 500ft along the route without riding it.

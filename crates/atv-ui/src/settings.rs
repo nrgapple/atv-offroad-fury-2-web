@@ -78,7 +78,9 @@ impl Settings {
                 .get(key)
                 .cloned();
         }
-        // Prefer this session after a write, including quota/private-mode failures.
+        // A write storage refused (quota, private mode) lasts for this
+        // session. Saved writes read back from storage, so a key another
+        // instance (or tab) wrote since is never shadowed by an older copy.
         if let Some(value) = self.values.get(key) {
             return Some(value.clone());
         }
@@ -105,12 +107,19 @@ impl Settings {
             return serde_json::to_string_pretty(&file)
                 .is_ok_and(|text| std::fs::write(path, text).is_ok());
         }
-        self.values.insert(key.into(), value.into());
         #[cfg(target_arch = "wasm32")]
         {
             // Private mode or quota: keep the session value.
-            storage().is_some_and(|storage| storage.set_item(key, value).is_ok())
+            let saved = storage().is_some_and(|storage| storage.set_item(key, value).is_ok());
+            if saved {
+                self.values.remove(key);
+            } else {
+                self.values.insert(key.into(), value.into());
+            }
+            saved
         }
+        #[cfg(not(target_arch = "wasm32"))]
+        self.values.insert(key.into(), value.into());
         // Desktop in-memory settings (tests, captures) need no storage.
         #[cfg(not(target_arch = "wasm32"))]
         true
@@ -123,6 +132,121 @@ fn read_file(path: &std::path::Path) -> BTreeMap<String, String> {
         .ok()
         .and_then(|text| serde_json::from_str(&text).ok())
         .unwrap_or_default()
+}
+
+/// The loaded player profile (Profile Points and race record, PROFILE.md).
+/// Before profile books this was the one implicit profile; it now mirrors
+/// the book's loaded profile, so older saves and tools keep reading it.
+pub const PROFILE_KEY: &str = "fury-profile";
+/// The saved profiles and which one is loaded (the memory card's profile
+/// save files; PROFILE.md "Port").
+pub const PROFILES_KEY: &str = "fury-profiles";
+
+/// The saved profile book. A save from before profile books migrates: its
+/// implicit profile becomes the loaded "PLAYER1". The `fury-profile` mirror
+/// is authoritative for the loaded profile's record (it is what races
+/// credit and what older tools write).
+/// Game Settings → Measurement (`atv-measurement`, see menu::prefs).
+pub fn units(settings: &Settings) -> atv_core::hall_of_fame::Units {
+    if settings.get("atv-measurement").as_deref() == Some("metric") {
+        atv_core::hall_of_fame::Units::Metric
+    } else {
+        atv_core::hall_of_fame::Units::Standard
+    }
+}
+
+/// Game Settings → Ecosystem Collision (`atv-ecosystem-collision`).
+pub fn ecosystem_collision(settings: &Settings) -> bool {
+    settings.get("atv-ecosystem-collision").as_deref() != Some("off")
+}
+
+/// Game Settings → New Profiles (`atv-new-profiles-unlocked`, port option):
+/// "on" gives profiles created on this device Unlock Everything. A device
+/// setting like the rest of Game Settings; unlocks themselves live in the
+/// profiles and travel with the Pass Key.
+pub const NEW_PROFILES_KEY: &str = "atv-new-profiles-unlocked";
+
+pub fn new_profiles_unlocked(settings: &Settings) -> bool {
+    settings.get(NEW_PROFILES_KEY).as_deref() == Some("on")
+}
+
+pub fn load_book(settings: &Settings) -> atv_core::profile::ProfileBook {
+    use atv_core::profile::{Profile, ProfileBook};
+    let mirror: Option<Profile> = settings
+        .get(PROFILE_KEY)
+        .and_then(|text| serde_json::from_str(&text).ok());
+    let saved: Option<ProfileBook> = settings
+        .get(PROFILES_KEY)
+        .and_then(|text| serde_json::from_str(&text).ok());
+    let mut book = match saved {
+        Some(book) => book,
+        None => return ProfileBook::migrate(mirror),
+    };
+    book.normalize();
+    if let (Some(current), Some(mut mirror)) = (book.current_mut(), mirror) {
+        mirror.name = std::mem::take(&mut current.name);
+        *current = mirror;
+    }
+    book
+}
+
+/// Saves the book and mirrors its loaded profile under `fury-profile`
+/// (`null` with none loaded); false when it lasts only for this session.
+pub fn save_book(settings: &mut Settings, book: &atv_core::profile::ProfileBook) -> bool {
+    let mirror = match book.current_profile() {
+        Some(profile) => serde_json::to_string(profile).ok(),
+        None => Some("null".into()),
+    };
+    let saved = serde_json::to_string(book).is_ok_and(|text| settings.set(PROFILES_KEY, &text));
+    saved && mirror.is_some_and(|text| settings.set(PROFILE_KEY, &text))
+}
+
+/// The loaded profile; with none loaded, a new unnamed one (which nothing
+/// saves).
+pub fn load_profile(settings: &Settings) -> atv_core::profile::Profile {
+    load_book(settings)
+        .current_profile()
+        .cloned()
+        .unwrap_or_default()
+}
+
+/// Whether a profile is loaded (races credit it only then, `001f1e30`).
+pub fn profile_loaded(settings: &Settings) -> bool {
+    load_book(settings).current.is_some()
+}
+
+/// Autosaves the loaded profile; false when none is loaded or it lasts only
+/// for this session.
+pub fn save_profile(settings: &mut Settings, profile: &atv_core::profile::Profile) -> bool {
+    let mut book = load_book(settings);
+    let Some(current) = book.current_mut() else {
+        return false;
+    };
+    let name = std::mem::take(&mut current.name);
+    *current = profile.clone();
+    if current.name.is_empty() {
+        current.name = name;
+    }
+    save_book(settings, &book)
+}
+
+/// The Hall of Fame (`hall_of_fame`): every course's records, kept apart
+/// from the profiles.
+pub const HALL_OF_FAME_KEY: &str = "fury-hall-of-fame";
+
+pub fn load_hall_of_fame(settings: &Settings) -> atv_core::hall_of_fame::HallOfFame {
+    settings
+        .get(HALL_OF_FAME_KEY)
+        .and_then(|text| serde_json::from_str(&text).ok())
+        .unwrap_or_default()
+}
+
+/// False when it lasts only for this session.
+pub fn save_hall_of_fame(
+    settings: &mut Settings,
+    hall: &atv_core::hall_of_fame::HallOfFame,
+) -> bool {
+    serde_json::to_string(hall).is_ok_and(|text| settings.set(HALL_OF_FAME_KEY, &text))
 }
 
 /// bindings.js `storageError`: the notice when a binding cannot be saved.
@@ -180,5 +304,60 @@ mod tests {
         let text = std::fs::read_to_string(&path).unwrap();
         assert!(text.contains("atv-other") && text.contains("enhanced"));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+#[cfg(test)]
+mod profile_book_tests {
+    use super::*;
+    use atv_core::profile::Profile;
+
+    #[test]
+    fn an_implicit_profile_migrates_and_stays_mirrored() {
+        let mut settings = Settings::memory();
+        settings.set(PROFILE_KEY, "{\"points\":40,\"races\":2}");
+        let book = load_book(&settings);
+        assert_eq!(book.current, Some(0));
+        assert_eq!(book.profiles[0].name, "PLAYER1");
+        assert_eq!(load_profile(&settings).points, 40);
+        // A race credit keeps the name and lands in both keys.
+        let mut p = load_profile(&settings);
+        p.record_race(1, 10, 0.);
+        assert!(save_profile(&mut settings, &p));
+        let book = load_book(&settings);
+        assert_eq!(
+            (book.profiles[0].name.as_str(), book.profiles[0].points),
+            ("PLAYER1", 50)
+        );
+        let mirror: Profile = serde_json::from_str(&settings.get(PROFILE_KEY).unwrap()).unwrap();
+        assert_eq!((mirror.name.as_str(), mirror.points), ("PLAYER1", 50));
+    }
+
+    #[test]
+    fn no_loaded_profile_saves_nothing() {
+        let mut settings = Settings::memory();
+        let mut book = load_book(&settings);
+        book.create("ACE").unwrap();
+        book.delete(0).unwrap();
+        book.delete(0).unwrap();
+        assert!(save_book(&mut settings, &book));
+        assert!(!profile_loaded(&settings));
+        assert!(!save_profile(&mut settings, &Profile::default()));
+        assert_eq!(settings.get(PROFILE_KEY).as_deref(), Some("null"));
+        assert!(load_book(&settings).profiles.is_empty());
+    }
+
+    #[test]
+    fn a_written_mirror_updates_the_loaded_profile() {
+        let mut settings = Settings::memory();
+        let mut book = load_book(&settings);
+        book.create("TWO").unwrap();
+        save_book(&mut settings, &book);
+        // Tools and older code write the mirror directly.
+        settings.set(PROFILE_KEY, "{\"points\":9}");
+        let book = load_book(&settings);
+        let p = book.current_profile().unwrap();
+        assert_eq!((p.name.as_str(), p.points), ("TWO", 9));
+        assert_eq!(book.profiles[0].name, "PLAYER1");
     }
 }

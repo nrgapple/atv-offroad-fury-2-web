@@ -8,7 +8,8 @@ simulation and original-game equivalence are separate gates.
 
 The all-venue FR/TR/SO census finds 105 raw emitter sections and 435 actor
 animation records across 40 venues. Native NumberOfEmitters indexes 80 declarations: NAT06's
-13 additional cloud sections and Training's 12 objective sections are dormant.
+13 additional cloud sections and Training's 12 objective sections are dormant
+(the lesson rules themselves are in [TRAINING.md](TRAINING.md)).
 Declarations can expand to multiple attachments; neither count means active
 browser effects. The private report retains common and mode sidecars separately.
 FREE06 FR adds 13 dust-wall records, Arlington FR adds locomotive smoke, and
@@ -76,8 +77,9 @@ range, stable descending depth and at most two blend-family instance draws.
 An original 128×512 atlas plus instance/corner buffers uses 286,192 GPU bytes.
 This is an additional GPU texture copy; decoded atlas bytes share tire sources.
 
-Hat effects (type9), moving attachments and other actor animation families
-remain explicit diagnostics at this component gate. Visibility callback scheduling, lighting, GS transparency ordering/fog precision
+Moving attachments other than type0 smoke and other actor animation
+families remain explicit diagnostics at this component gate (type9 hats and
+gameplay-started bursts: "Triggered bursts" below). Visibility callback scheduling, lighting, GS transparency ordering/fog precision
 and original scene-level manager sharing remain incomplete.
 
 ## Static type11 fountain streams
@@ -112,6 +114,109 @@ Native shared manager batching with wheels, global RNG order, camera-dependent
 fog-plane overrides, moving emitters, and complete VU/GS precision remain outside
 this component. The authored packet budget rejects configurations that could
 produce more than 4,800 births in the maximum accepted 0.1-second step.
+
+## Triggered bursts: Treasure Hunt bombs, Freestyle cherries, hats, fireworks
+
+Exact-build evidence (private Ghidra exports; bounded reading, no runtime
+traces):
+
+- **Per-TOY emitter numbers.** `002427b0` appends every loaded TOY's
+  `[ParticleEmitterN]` sections. Before each TOY's sections load,
+  `001fe070` stores the count already declared (manager +0x30) at +0x3e4;
+  the `Particles` action loader (`0023f3c0`) and Hockey's
+  `[HatTrickEmitters]` loader (`00335de0`) add it, so an `EmitterNumber` is
+  local to its own TOY. Race fireworks (`002229c4`) read it the same way.
+- **The action.** Trigger action type 11 is `Particles` (`0023fb30`) with
+  `EmitterNumber`, `InstanceNumber` and `TurnOn` (default on). Its enter
+  callback (`0023f460`) queues the instance's start (`0019a3c0`: vtable
+  +0x88, +0x80, +0x20) or stop (`0019a420`: +0x84, +0x18) for emitter
+  types 0, 1, 2, 8, 9, 11, 12 and 13. Only actions within the trigger's
+  `NumberOfActions` load, so Treasure Hunt's authored fourth action (stop
+  `bombsparks.emt`) never runs.
+- **Start/stop.** +0x88 is `0019ac30`: DelayTime, then by EmitMode the
+  OneShotTime (mode 1, clearing the emitted flag), a random on-time (mode 2)
+  or TimedTimeOn (mode 3). +0x80 (`0019abc0`) switches the emitter on with a
+  zero accumulator; +0x20/+0x18 (`00105d90`/`00105d50`) set or clear its
+  active bits. +0x84 (`0019abe0`) switches it off; type9's override
+  (`0019f300`) lets a running one-shot finish. The EMT loader (`0019ad90`)
+  already sets the mode-1 remaining time, so a `StartOn` one-shot bursts
+  once after the constructor's dirty step.
+- **Treasure Hunt.** Each `envNNth.toy` declares one type11
+  `bomb_explosion.emt` with `AttachToSoultree=bomb.mcf`,
+  `NumberOfInstances` = the treasures and `StartOn=F`. `00241120` attaches
+  instance N to the Nth keyframed animation whose MCF matches (after the
+  static models), so it follows that bomb's model node. Each treasure
+  trigger runs `HideAnimation`, `Treasure` and `Particles` (that bomb's
+  instance). `bombsparks.emt` is declared in a section beyond
+  `NumberOfEmitters` and ships in no archive: no sparks exist.
+- **Freestyle targets.** Each `gcp`/`rcp` target TOY declares one static
+  type11 `cherryg_explosion.emt`/`cherryr_explosion.emt` per target at the
+  trigger position; the target's `Particles` action starts it. The first
+  emitter is `StartOn=F` and the others are `StartOn=T`, so those burst once
+  as the course loads (usually far from the start); the port keeps that.
+- **CPU streams.** The burst EMTs (and every Supercross firework EMT) lack
+  `UseGpuParticles` (0x260, default off). Type11 then runs `001a0130`
+  instead of the GPU path `0019f580`: the same stream construction, written
+  as CPU atlas particles (frame +0x194 advancing per stream within the
+  group; growth drawn before life; X/Y mirrors gated by `RandomMirrorAbout*`),
+  stopping the whole emission when the manager is full. Both paths emit
+  max(EmitRate × dt, `MinParticlesPerFrame`) streams: 50 per step for the
+  bursts, 500 for firework explosions. The burst groups are single orange
+  (bomb), red and green spark frames of each venue's Particles.prt.
+- **Hockey hats.** `game01so.toy` declares four type9 `hats*.emt`
+  (continuous, DelayTime 0.5 s, 1 hat/s, 4 s life, GroundLevel 91,
+  restitution 0.2) listed under `[HatTrickEmitters]`. `003360f0` builds a
+  ParticleGroupController from them; setup (`00335590`) deactivates it, a
+  hat trick (`003368c0`) starts it (`0020eb90`) and the pause's end
+  (`00336200`) and Restart Game (`003377f0`) stop it (`0020ec20`). Type9
+  births (`0019eb60`): the native accumulator, at least
+  `MinParticlesPerFrame`; X/Z spread; authored velocity plus Y noise when
+  `ApplySpreadToVelocity`; a random group frame (or a forced set); life
+  shortened by a shared serial (×1, 0.875, 0.75, 0.625); `AgeAtBirth`.
+- **King of the Hills.** No KH TOY declares an emitter or `Particles`
+  action, and the capture (`00220b50`) only tints the flag, re-ranks and
+  shows the sign: there is no capture effect to draw.
+
+Port: `ambient_effects::plan` tags each placement with its TOY (common,
+mode or the objective's target TOY, appended third) and TOY-local number,
+and resolves MCF attachments from the loaded TOYs' `[Animations]` in order.
+`Effects::trigger` applies the start/stop above. A Treasure Hunt collect
+(`Rules::take_triggered`) starts its bomb's instance at the bomb's current
+posed position; a Freestyle hit starts its target's emitter; the Hockey
+session starts/stops the hat group. Game loads now append the game's own
+mode TOY (the original's), not the Freeride TOY the overlay archive also
+carries. Type11 without `UseGpuParticles` becomes CPU sprites in a separate
+900-slot stream pool (static 600 + 900 = the native 1,500-slot manager), so
+a burst cannot starve placed smoke; a full pool stops the burst and counts
+one drop. Supercross fireworks take the same CPU path and now draw their
+original coloured spark frames instead of tile 0 of the fountain GPU atlas.
+
+A private sweep (`every_treasure_and_target_explosion_resolves`) loads all
+14 Treasure Hunt TOYs and 26 target TOYs from their archives: all 581
+`Particles` actions name an emitter of their own TOY whose EMT and atlas
+group resolve, bomb instance N is the bomb that trigger hides, and each
+start draws sprites at its trigger (one ENV04 green target's emitter is
+authored 2 ft away). The finite private birth, stream, timer and fog gates
+still match unchanged.
+
+Host browser gate `tools/test_engine_toy_explosions.mjs` (content group):
+Treasure Hunt collects on Prospect Springs (`gameTest=visit`) and a green
+target run (`objectiveTest=targets`) each start a burst whose stream-pool
+sprites are drawn additively and end within ParticleLife; Hockey with
+`hockeyGoal=3` (three teed drops) reaches a hat trick, the four hat
+emitters throw hats after their delay and the next face-off stops them.
+State is published as `#ui-state` `ambient` (starts, live per pool, drawn
+sprites). On Supercross the pre-race explosions keep the 900-slot stream
+pool full while they run (most sparks are far and sub-pixel), as the native
+pool would be; the start-gate streams draw as coloured sparks. Screenshots
+stay in ignored private storage. These are host checks, not physical-phone
+or PS2 comparisons.
+
+Open: the explosion follows the bomb's pose at the collect rather than its
+node for the 0.1 s burst; the `001a0130` stale-update skip (+0x1a0 > 0.25 s),
+StartingZone/zone gating, MovingEmitter stream scaling and the native shared
+pool/global RNG order are not reproduced; the 0x400 forced-set list of
+type9 is reduced to its two-set default. No hardware comparison exists.
 
 ## Host verification
 
@@ -210,5 +315,6 @@ the same lifecycle gate also passes on motorcycles at desktop and portrait
 one private JS alpha gate are opt-in); formatting, strict Clippy, WASM build,
 `make verify` and 35 release tests (one skipped) pass. Public release remains
 owned by the release coordinator. Moving Arlington locomotive smoke was later
-connected (TRAIN.md). Callback-gated hockey hats, zone-visibility gating and
-other animated actor families remain explicit gaps.
+connected (TRAIN.md). Callback-gated hockey hats and zone-visibility gating
+remain explicit gaps. The keyframed actor records themselves (crows, fish,
+windmills, blimps...) are drawn and animated; see [AMBIENT_ACTORS.md](AMBIENT_ACTORS.md).

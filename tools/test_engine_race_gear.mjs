@@ -4,13 +4,19 @@
 // look), plus the `?menu=race` shortcut and a `play=0` race link opening the
 // setup. Host browser evidence (frontend.js race/gear pages).
 import assert from 'node:assert/strict';
-import { assertNoErrors, launch, newPage, nextFrames, url } from './browser/harness.mjs';
+import { assertNoErrors, launch, newPage, nextFrames, unlockStore, url } from './browser/harness.mjs';
 
 const read = page => page.evaluate(() => JSON.parse(document.querySelector('#ui-state')?.textContent || '{}'));
 const front = async page => (await read(page)).front;
 const wait = (page, predicate, arg, timeout = 60000) => page.waitForFunction(predicate, arg, { timeout });
 const onPage = (page, name) => wait(page, name => JSON.parse(document.querySelector('#ui-state')?.textContent || '{}').front?.page === name, name);
 async function key(page, code) { await page.keyboard.down(code); await nextFrames(page, 2); await page.keyboard.up(code); await nextFrames(page, 3); }
+// Down (wrapping) to a row: Back returns to the row a page was left by.
+async function pick(page, action) {
+  for (let i = 0; i < 12 && (await front(page)).choices[(await front(page)).selection] !== action; i++) await key(page, 'ArrowDown');
+  const f = await front(page);
+  assert.equal(f.choices[f.selection], action);
+}
 async function click(page, id) {
   const hit = (await front(page)).hits.find(h => h.id === id);
   assert.ok(hit, `hit ${id}`);
@@ -24,6 +30,8 @@ const browser = await launch();
 try {
   const errors = [];
   const page = await newPage(browser, { viewport: { width: 1280, height: 720 } }, errors);
+  // Single Player picks follow the profile's unlocks (PROFILE_STORE.md).
+  await unlockStore(page);
   await page.addInitScript(() => {
     if (sessionStorage.getItem('seeded')) return;
     sessionStorage.setItem('seeded', '1');
@@ -36,9 +44,9 @@ try {
   await key(page, 'Enter'); await onPage(page, 'main');
   await key(page, 'Enter'); await onPage(page, 'single');
   let f = await front(page);
-  assert.deepEqual(f.choices, ['tracks', 'race', 'garage']);
+  assert.deepEqual(f.choices, ['race', 'tracks', 'objective-courses', 'championship', 'games', 'garage']);
   assert.ok(f.race.courses >= 30, `race courses ${f.race.courses}`);
-  await key(page, 'ArrowDown'); await key(page, 'Enter'); await onPage(page, 'race');
+  await pick(page, 'race'); await key(page, 'Enter'); await onPage(page, 'race');
   f = await front(page);
   assert.deepEqual(f.choices.filter(c => c !== 'back'), ['racetrack', 'racelaps', 'racecpu', 'racedifficulty', 'racestart', 'copyride']);
   assert.deepEqual([f.race.course, f.race.laps, f.race.cpu, f.race.difficulty], ['env01', 3, 3, 1]);
@@ -52,7 +60,9 @@ try {
   assert.equal((await front(page)).race.difficulty, 2);
   await click(page, NEXT);
   f = await front(page);
-  assert.equal(f.race.course, 'env02');
+  // The next course follows env01 in the list: env02, or env01's Enduro
+  // variants when the content package carries them.
+  assert.ok(['env02', 'env01endl', 'env01ends'].includes(f.race.course), f.race.course);
   assert.equal(f.choices[f.selection], 'racetrack');
   // Event tabs: Supercross lists only its courses.
   await key(page, 'PageUp');
@@ -72,9 +82,11 @@ try {
   assert.ok(notice === 'Ride link copied.' || notice.includes(`activity=race&map=${course}&`) && /laps=2&cpu=4&difficulty=expert/.test(notice), notice);
 
   // Garage → Rider Gear: steppers and the dressed previews.
-  // Back opens Single Player on its first row (frontend.js `show`).
+  // Back returns to Single Player on the Race row (MENU_FLOW.md).
   await key(page, 'Escape'); await onPage(page, 'single');
-  await key(page, 'ArrowDown'); await key(page, 'ArrowDown'); await key(page, 'Enter'); await onPage(page, 'garage');
+  f = await front(page);
+  assert.equal(f.choices[f.selection], 'race');
+  await pick(page, 'garage'); await key(page, 'Enter'); await onPage(page, 'garage');
   f = await front(page);
   await click(page, ROW + f.choices.indexOf('gear')); await onPage(page, 'gear');
   await wait(page, () => JSON.parse(document.querySelector('#ui-state').textContent).front.gear.catalog === 7);
@@ -101,13 +113,14 @@ try {
   await nextFrames(page, 10);
   if (shots) await page.screenshot({ path: `${shots}/rider-gear.png` });
   await key(page, 'Escape'); await onPage(page, 'garage');
-  assert.equal((await front(page)).selection, 0);
+  f = await front(page);
+  assert.equal(f.choices[f.selection], 'gear', 'Back returns to the Rider Gear row');
   await nextFrames(page, 10);
   if (shots) await page.screenshot({ path: `${shots}/garage-dressed.png` });
 
   // Start Race: the race loads with the chosen laps and CPU riders.
   await key(page, 'Escape'); await onPage(page, 'single');
-  await key(page, 'ArrowDown'); await key(page, 'Enter'); await onPage(page, 'race');
+  await pick(page, 'race'); await key(page, 'Enter'); await onPage(page, 'race');
   f = await front(page);
   assert.deepEqual([f.race.course, f.race.laps, f.race.cpu], [course, 2, 4]);
   await click(page, START);
@@ -122,6 +135,8 @@ try {
 
   // `?menu=race` opens the setup; a race link without play shows its setup.
   const shortcut = await newPage(browser, { viewport: { width: 390, height: 844 } }, []);
+  // Single Player picks follow the profile's unlocks (PROFILE_STORE.md).
+  await unlockStore(shortcut);
   await shortcut.goto(url('/play.html?menu=race&uiDiagnostics=1'));
   await onPage(shortcut, 'race');
   if (shots) await shortcut.screenshot({ path: `${shots}/race-portrait.png` });

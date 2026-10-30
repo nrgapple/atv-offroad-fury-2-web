@@ -1,0 +1,18 @@
+{
+  "id": "treasure-hunt-draws-its-original-bombs-e724ca1765714e318e32c57406a4978c",
+  "timestamp": "2026-10-27T17:32:24.908861+00:00",
+  "recorded_at": "2026-10-27T17:32:24.908861+00:00",
+  "kind": "build",
+  "title": "Treasure Hunt draws its original bombs",
+  "summary": "Treasure Hunt now draws the original bomb model at each live treasure, looping its original animation, and hides a bomb when it is collected or while the next group waits. Checked on all 14 venues (one bomb per treasure).",
+  "details": [
+    "Verification: private all-venue check, browser games test passes on host Chromium. PR #368."
+  ],
+  "limitation": "the sparks and explosion bursts are not emitted yet; the screen tags remain.",
+  "images": [
+    {
+      "path": "/devlog-images/treasure-bombs/treasure-start.png",
+      "caption": "The first bomb waits beyond the start lamps"
+    }
+  ]
+}

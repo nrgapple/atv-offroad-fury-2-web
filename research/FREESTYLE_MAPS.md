@@ -80,14 +80,17 @@ reset. Six source hay approaches observe18–56 wheel-support frames on four
 routes and9–222 body-contact frames across all six. A source-scaled position
 beyond3768 still triggers the extended boundary. The same no-input test fails on
 the preceding public build because boundary flight is active. These are host
-browser checks; public deployment is a separate gate.
+browser checks; public deployment is a separate gate. The six Training
+lessons themselves (Main Menu → Training Course) are recovered separately in
+[TRAINING.md](TRAINING.md).
 
 Coonce's original SO archive lacks the standard jump HUD images. To use this
 hockey venue in authored Freestyle, the required-runtime packager aggregates the
 five original ENV01 preload PSTs into the small shared OVERLAYS archive (42,385
 bytes). This avoids loading a second full environment for HUD art. The arena's
 terrain/scenery remain its own source resources; this is a Freestyle HUD adaptation,
-not a recovered hockey-mode HUD or rules implementation.
+not a recovered hockey-mode HUD. The Hockey rules and its single-player
+entry are recovered separately in [GAMES.md](GAMES.md).
 
 White Sands uses eleven 4-fps animated water signature frames. All source frames
 remain resident in GPU atlases and the Rust source clock selects frame pairs.

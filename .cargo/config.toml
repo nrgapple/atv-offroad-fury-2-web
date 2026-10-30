@@ -1,0 +1,6 @@
+# Each checkout and worktree builds into its own target/, even for direct cargo
+# commands. A shared home-level target-dir lets parallel worktree builds
+# overwrite each other's wasm, examples and test binaries. Make and the build
+# tools still honor CARGO_TARGET_DIR; sccache keeps sharing compiler output.
+[build]
+target-dir = "target"

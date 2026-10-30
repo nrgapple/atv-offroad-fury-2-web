@@ -1,0 +1,14 @@
+{
+  "id": "enduro-and-short-track-races-590e2fbfc81f4aaaadd5c048b5cc1a62",
+  "timestamp": "2026-10-27T00:43:20.652193+00:00",
+  "recorded_at": "2026-10-27T00:47:11.229337+00:00",
+  "kind": "build",
+  "title": "Enduro and Short Track races",
+  "summary": "Every Environment venue now races its original long and short Enduro courses, and Rockbridge Park, Caribou Peak and San Jacinto Isles their Short Tracks, from Single Race (51 race courses).",
+  "details": [
+    "An Enduro is the original gate race: the course's waypoint file places a waypoint gate at every waypoint and the finish gate last; riders must cross their next gate (either direction, a missed gate must be ridden back to), the finish gate counts the lap, the grid lines up 10 ft past the finish gate, and the HUD shows the original \"GATE n of m\" indicator instead of the radar. Short Tracks keep the National rules with their own course. Exact-build USA v2.00 code read (not traced) shows Amateur Enduro uses the short course, Pro Enduro the long one; RaceStatus type 1 gate rules; .wpt format (count + x, z, direction records, padded to 50). The content package stores only each variant's own members (about 45\u201370 KB per Enduro, 11\u201314 KB per Short Track) read over the venue's National race archive. Unit tests: atv-core 525, atv-game 57, atv-ui 80. Browser test test_engine_enduro_race runs env05 short Enduro (13 gates, one-lap finish at 83.9 s with autopilot) and env06 Short Track finish gate, alongside existing race, finish-gate and grid tests, on a host build."
+  ],
+  "limitation": "Host-only; public site needs the new content archives published by the release owner; gate width read from collision mesh; gates drawn opaque with default arrow textures; no compass/GPS overlays; CPUs follow the route line; race ends when the player finishes (original also ends 30 s after the first finisher); Enduro championships not yet offered.",
+  "image": "/devlog-images/enduro-and-short-track-races-590e2fbfc81f4aaaadd5c048b5cc1a62.png",
+  "caption": "Single Race menu now shows original Enduro long and short courses for each venue, plus Short Tracks for Rockbridge Park, Caribou Peak and San Jacinto Isles (51 total race courses)."
+}

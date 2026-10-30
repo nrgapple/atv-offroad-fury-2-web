@@ -33,6 +33,8 @@ struct Mesh {
     vertices: wgpu::Buffer,
     indices: wgpu::Buffer,
     chunks: Vec<Chunk>,
+    /// Fine patches drawn (split screen keeps one per player).
+    patches: usize,
 }
 
 /// The texture views the terrain bind group holds.
@@ -136,7 +138,7 @@ impl TerrainPass {
     ) -> Self {
         let device = &gpu.device;
         let terrain = &venue.terrain;
-        let colors = upload_layers(gpu, &terrain.layers);
+        let colors = upload_layers(gpu, &terrain.layers, &terrain.layer_mips);
         let mapping = device.create_texture_with_data(
             &gpu.queue,
             &wgpu::TextureDescriptor {
@@ -156,7 +158,7 @@ impl TerrainPass {
             wgpu::util::TextureDataOrder::LayerMajor,
             bytemuck::cast_slice(&terrain.mapping),
         );
-        let detail = upload_layers(gpu, std::slice::from_ref(&terrain.detail));
+        let detail = upload_layers(gpu, std::slice::from_ref(&terrain.detail), &[]);
         let fog = venue.scene.fog.as_ref();
         let globals = Globals {
             view_projection: [0.; 16],
@@ -343,6 +345,26 @@ impl TerrainPass {
         self.mesh = mesh(gpu, &venue.terrain, Some(center));
     }
 
+    /// Split screen: a fine patch around each local player
+    /// (`terrain_mesh::disjoint`).
+    pub fn recenter_many(&mut self, gpu: &Gpu, venue: &Venue, centers: &[[f32; 2]]) {
+        let patches = centers
+            .iter()
+            .map(|c| terrain_mesh::patch(&venue.terrain, *c))
+            .collect();
+        let patches = terrain_mesh::disjoint(patches);
+        self.mesh = upload(
+            gpu,
+            terrain_mesh::build_patches(&venue.terrain, &patches),
+            patches.len(),
+        );
+    }
+
+    /// Fine patches in the drawn mesh.
+    pub fn patches(&self) -> usize {
+        self.mesh.patches
+    }
+
     /// The High vehicle shadow map this frame (shadowReceive), or none.
     pub fn set_shadow(&mut self, matrix: Option<&[f32; 16]>, texel: f32) {
         match matrix {
@@ -406,8 +428,9 @@ impl TerrainPass {
 }
 
 /// Same-size RGBA8 images as one texture (array), with a box-filtered mip
-/// chain as WebGL's generateMipmap produces.
-fn upload_layers(gpu: &Gpu, images: &[Image]) -> wgpu::Texture {
+/// chain as WebGL's generateMipmap produces: `mips[layer]` when the decode
+/// already computed it (the same filter, on a decode worker), else here.
+fn upload_layers(gpu: &Gpu, images: &[Image], mips: &[Vec<Vec<u8>>]) -> wgpu::Texture {
     let (width, height) = (images[0].width, images[0].height);
     let levels = 32 - width.max(height).leading_zeros();
     let texture = gpu.device.create_texture(&wgpu::TextureDescriptor {
@@ -425,6 +448,7 @@ fn upload_layers(gpu: &Gpu, images: &[Image]) -> wgpu::Texture {
         view_formats: &[],
     });
     for (layer, image) in images.iter().enumerate() {
+        let ready = mips.get(layer).filter(|m| m.len() + 1 == levels as usize);
         let (mut w, mut h, mut pixels) = (width, height, image.rgba.clone());
         for level in 0..levels {
             gpu.queue.write_texture(
@@ -450,34 +474,28 @@ fn upload_layers(gpu: &Gpu, images: &[Image]) -> wgpu::Texture {
                     depth_or_array_layers: 1,
                 },
             );
-            (pixels, w, h) = downsample(&pixels, w, h);
+            let (pw, ph) = (w, h);
+            (w, h) = ((w / 2).max(1), (h / 2).max(1));
+            pixels = match ready.and_then(|m| m.get(level as usize)) {
+                Some(next) if next.len() == (w * h * 4) as usize => next.clone(),
+                _ => crate::texture::downsample(&pixels, pw, ph).0,
+            };
         }
     }
     texture
 }
 
-fn downsample(pixels: &[u8], w: u32, h: u32) -> (Vec<u8>, u32, u32) {
-    let (nw, nh) = ((w / 2).max(1), (h / 2).max(1));
-    let mut out = vec![0u8; (nw * nh * 4) as usize];
-    for y in 0..nh {
-        for x in 0..nw {
-            for c in 0..4 {
-                let mut sum = 0u32;
-                for (dx, dy) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
-                    let (sx, sy) = ((x * 2 + dx).min(w - 1), (y * 2 + dy).min(h - 1));
-                    sum += pixels[((sy * w + sx) * 4 + c) as usize] as u32;
-                }
-                out[((y * nw + x) * 4 + c) as usize] = ((sum + 2) / 4) as u8;
-            }
-        }
-    }
-    (out, nw, nh)
+fn mesh(gpu: &Gpu, terrain: &atv_game::venue::Terrain, center: Option<[f32; 2]>) -> Mesh {
+    let patch = center.map(|center| terrain_mesh::patch(terrain, center));
+    upload(
+        gpu,
+        terrain_mesh::build(terrain, patch),
+        usize::from(patch.is_some()),
+    )
 }
 
-fn mesh(gpu: &Gpu, terrain: &atv_game::venue::Terrain, center: Option<[f32; 2]>) -> Mesh {
+fn upload(gpu: &Gpu, built: Vec<terrain_mesh::Chunk>, patches: usize) -> Mesh {
     let device = &gpu.device;
-    let patch = center.map(|center| terrain_mesh::patch(terrain, center));
-    let built = terrain_mesh::build(terrain, patch);
     let (mut vertices, mut indices, mut chunks) = (Vec::new(), Vec::new(), Vec::new());
     for chunk in &built {
         let base = (vertices.len() / terrain_mesh::FLOATS_PER_VERTEX) as u32;
@@ -502,5 +520,6 @@ fn mesh(gpu: &Gpu, terrain: &atv_game::venue::Terrain, center: Option<[f32; 2]>)
             usage: wgpu::BufferUsages::INDEX,
         }),
         chunks,
+        patches,
     }
 }

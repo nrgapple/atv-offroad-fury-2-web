@@ -1,0 +1,16 @@
+{
+  "id": "championship-loading-screen-briefing-a377a6b1ee8f441a95ab1cc16bd15c44",
+  "timestamp": "2026-10-26T22:33:43.190849+00:00",
+  "recorded_at": "2026-10-26T22:35:42.302847+00:00",
+  "kind": "build",
+  "title": "Championship loading screen briefing",
+  "summary": "Loading a championship round now shows the original briefing: the round, the current championship points and the points and place still required to advance.",
+  "details": [
+    "Exact-build evidence: the loading screen routine 002591f0 prints 'You Are Currently On Track: %d of %d', the current points, 'Points Required to Advance' (4r+2 minus points, never negative) and 'Place Required to Advance' from 00322d80: 0 points missing is 5th, 1 is 4th, 2 is 3rd, 3-4 is 2nd, 5-7 is 1st, 8 or more and the final round show N/A.",
+    "The port shows these lines with the series and difficulty in a Championship panel above the usual loading tip.",
+    "Verification: atv-core championship tests (place mapping and briefing lines); new browser test test_engine_championship_loading.mjs starts a saved Amateur Supercross round 3 with 7 points from the Championship page and checks the briefing on the Sausalito (sx01) loader: 3 of 6, 7 points, 3 required, 2nd place; front, menu flow and profile menu tests pass."
+  ],
+  "limitation": "One implicit local profile; Enduro, Freestyle and Short Tracks championships are still not offered.",
+  "image": "/devlog-images/championship-loading-screen-briefing-a377a6b1ee8f441a95ab1cc16bd15c44.png",
+  "caption": "Championship briefing on the loading screen for Amateur Supercross round 3 (host Chromium)."
+}

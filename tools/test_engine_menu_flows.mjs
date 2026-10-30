@@ -9,7 +9,7 @@
 //   Race → race setup.
 // Host Chromium evidence with a stand-in standard gamepad.
 import assert from 'node:assert/strict';
-import { assertNoErrors, launch, newPage, nextFrames, url } from './browser/harness.mjs';
+import { assertNoErrors, launch, newPage, nextFrames, unlockStore, url } from './browser/harness.mjs';
 
 const read = page => page.evaluate(() => JSON.parse(document.querySelector('#ui-state')?.textContent || '{}'));
 const front = async page => (await read(page)).front;
@@ -33,6 +33,7 @@ async function choose(page, action) {
   const at = f.choices.indexOf(action);
   assert.ok(at >= 0, `${action} in ${f.choices}`);
   for (let i = f.selection; i < at; i++) await key(page, 'ArrowDown');
+  for (let i = f.selection; i > at; i--) await key(page, 'ArrowUp');
   await key(page, 'Enter');
 }
 // Time from a pad change until the menu shows `predicate` (ms).
@@ -48,6 +49,8 @@ const browser = await launch({ args: ['--autoplay-policy=no-user-gesture-require
 try {
   const errors = [];
   const page = await newPage(browser, { viewport: { width: 1280, height: 720 }, serviceWorkers: 'block' }, errors);
+  // Single Player picks follow the profile's unlocks (PROFILE_STORE.md).
+  await unlockStore(page);
   await page.addInitScript(() => {
     localStorage.setItem('atv2-keyboard-help-seen-v1', '1');
     localStorage.removeItem('atv-player-selection');
@@ -78,12 +81,16 @@ try {
   await page.evaluate(() => window.padButton(0, true));
   await onFront(page, 'main', 10000);
   await page.evaluate(() => window.padButton(0, false));
-  // Idle: once the slide-in is over, the main menu draws nothing.
+  // Idle: once the slide-in is over, the main menu draws nothing (with
+  // reduced motion; otherwise its ATV turntable and wordmark sway animate,
+  // see test_engine_menu_motion.mjs).
+  await page.emulateMedia({ reducedMotion: 'reduce' });
   await page.waitForTimeout(1500); // Time-based on purpose: the page settles and sleeps.
   const before = (await read(page)).frontFrames;
   await page.waitForTimeout(1000); // Time-based on purpose: proving no frames are drawn.
   const idle = (await read(page)).frontFrames - before;
   assert.ok(idle <= 1, `idle main menu drew ${idle} frames in 1 s`);
+  await page.emulateMedia({ reducedMotion: 'no-preference' });
   // The D-pad and the left stick move the selection at once (not on the
   // 15 s Free Ride refresh).
   assert.equal((await front(page)).selection, 0);

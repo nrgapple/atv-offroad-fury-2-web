@@ -12,7 +12,7 @@ from urllib.parse import unquote, urlsplit
 ROOT = Path(__file__).resolve().parents[1] / 'web/dist'
 PROJECT = Path(__file__).resolve().parents[1]
 CONTENT = PROJECT / 'private/reports/hosted-content'
-ALLOWED = {'play.html', 'engine.html', 'engine.css', 'engine.js', 'atv_app.js', 'atv_app_bg.wasm', 'fury-remastered-home-180-v1.png', 'fury-remastered-home-192-v1.png', 'fury-remastered-home-512-v1.png', 'fury-remastered-maskable-192-v1.png', 'fury-remastered-maskable-512-v1.png', 'favicon.ico', 'app-icon.svg', 'apple-touch-icon.png', 'app-icon-512.png', 'fury-remastered.svg', 'manifest.webmanifest', 'install.js', 'install.css', 'index.html', 'landing.css', 'landing.js', 'design-system.css', 'analytics.js', 'deployment.json', 'devlog.html', 'devlog.css', 'devlog.js', 'devlog.json', 'offline.js', 'sw.js'}
+ALLOWED = {'play.html', 'engine.html', 'engine.css', 'engine.js', 'decode-worker.js', 'atv_app.js', 'atv_app_bg.wasm', 'fury-remastered-home-180-v1.png', 'fury-remastered-home-192-v1.png', 'fury-remastered-home-512-v1.png', 'fury-remastered-maskable-192-v1.png', 'fury-remastered-maskable-512-v1.png', 'favicon.ico', 'app-icon.svg', 'apple-touch-icon.png', 'app-icon-512.png', 'fury-remastered.svg', 'manifest.webmanifest', 'install.js', 'install.css', 'index.html', 'landing.css', 'landing.js', 'design-system.css', 'analytics.js', 'deployment.json', 'devlog.html', 'devlog.css', 'devlog.js', 'devlog.json', 'offline.js', 'sw.js'}
 
 class StaticServer(ThreadingHTTPServer):
     # ES-module startup opens more connections than Python's default five-slot

@@ -292,7 +292,9 @@ dependencies = [
  "atv-ui",
  "console_error_panic_hook",
  "cpal",
+ "getrandom 0.3.4",
  "gilrs",
+ "jni",
  "js-sys",
  "keepawake",
  "libc",
@@ -395,6 +397,8 @@ dependencies = [
  "cosmic-text",
  "js-sys",
  "pollster",
+ "qrcodegen",
+ "serde",
  "serde_json",
  "swash",
  "taffy",
@@ -2593,6 +2597,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3d595e54a326bc53c1c197b32d295e14b169e3cfeaa8dc82b529f947fba6bcf5"
 
 [[package]]
+name = "qrcodegen"
+version = "1.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4339fc7a1021c9c1621d87f5e3505f2805c8c105420ba2f2a4df86814590c142"
+
+[[package]]
 name = "quick-xml"
 version = "0.41.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4281,8 +4291,6 @@ checksum = "589f6da84c646204747d1270a2a5661ea66ed1cced2631d546fdfb155959f9ec"
 [[package]]
 name = "winit"
 version = "0.30.13"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a6755fa58a9f8350bd1e472d4c3fcc25f824ec358933bba33306d0b63df5978d"
 dependencies = [
  "ahash",
  "android-activity",

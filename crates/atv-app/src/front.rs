@@ -64,7 +64,24 @@ struct Preview {
     /// The menu rider's idle playlist (animated) and when it last posed.
     animated: bool,
     posed: f64,
+    /// Turntable: the current turn rate (rad/s) — a drag's fling easing
+    /// back to the slow showroom spin — and when a drag last moved it.
+    spin: f32,
+    dragged: f64,
 }
+
+/// The showroom turntable's rate (rad/s): one turn in about 14 s.
+const TURNTABLE: f32 = 0.45;
+/// How quickly a fling eases back to the turntable rate (time constant, s).
+const SPIN_EASE: f32 = 0.6;
+/// The fastest fling (rad/s).
+const SPIN_MAX: f32 = 12.;
+/// Left/Right on a focused preview hold the turntable this long (ms).
+const SPIN_HOLD: f64 = 2500.;
+/// The wordmark's sway: amplitude (degrees) and period (s) of the yaw and
+/// the pitch, out of step so the motion does not repeat visibly.
+const SWAY_YAW: (f32, f64) = (7., 7.);
+const SWAY_PITCH: (f32, f64) = (3., 5.3);
 
 pub struct Front {
     fonts: Fonts,
@@ -91,6 +108,12 @@ pub struct Front {
     split_ms: [f64; 3],
     /// Vehicle (0) and garage rider (1) previews.
     previews: [Option<Preview>; 2],
+    /// Built previews of pages just left (key, model, animated), newest
+    /// last: going back to the garage or a stage page reuses its model's GPU
+    /// mesh and textures instead of building it again (a 3x phone frame).
+    stash: Vec<(String, ModelPreview, bool)>,
+    /// Previews built and reused from the stash (diagnostics).
+    preview_counts: [u32; 2],
     /// A pointer turning a preview: (pointer, slot, last x).
     turning: Option<(u64, usize, f32)>,
     /// The preview last pressed: Left/Right turn it (ModelView keydown).
@@ -135,6 +158,23 @@ pub struct Front {
     transition: PageTransition,
     /// This frame's slide of the page or the menu panel over it.
     motion: Option<atv_ui::transition::Motion>,
+    /// The content layer's items in `list` (the snapshot a transition
+    /// slides out), the last menu state drawn, and the menu page leaving.
+    content: std::ops::Range<usize>,
+    last_menu: Option<pause::State>,
+    exit_menu: Option<pause::State>,
+    page_cache: Option<PageCache>,
+    /// The coin chip's count towards a changed Profile Points total.
+    coins: CoinCount,
+    toast: Toast,
+    /// The turntable's clock, and Left/Right's hold on it (ms).
+    spun_at: f64,
+    /// The title's Press Start pulse this frame (1-1.18).
+    pulse: f32,
+    spin_hold: f64,
+    /// When the wordmark began swaying (None: still), and its angles.
+    sway_since: Option<f64>,
+    tilt: [f32; 2],
 }
 
 /// frontend.js `Math.floor(Math.random() * tips.length)`.
@@ -193,6 +233,8 @@ impl Front {
             diagnostics: Vec::new(),
             split_ms: [0.; 3],
             previews: [None, None],
+            stash: Vec::new(),
+            preview_counts: [0; 2],
             turning: None,
             preview_focus: None,
             wanted: [None, None],
@@ -220,6 +262,17 @@ impl Front {
             slide: true,
             transition: PageTransition::default(),
             motion: None,
+            content: 0..0,
+            last_menu: None,
+            exit_menu: None,
+            page_cache: None,
+            coins: CoinCount::default(),
+            toast: Toast::default(),
+            spun_at: 0.,
+            pulse: 1.,
+            spin_hold: 0.,
+            sway_since: None,
+            tilt: [0.; 2],
         };
         front.state.refresh(&view);
         front
@@ -244,6 +297,7 @@ impl Front {
     /// Frees the GPU textures and renderer while a ride runs.
     pub fn release_gpu(&mut self) {
         self.previews = [None, None];
+        self.stash.clear();
         self.jukebox_art = None;
         self.renderer = None;
         self.images.clear();
@@ -271,6 +325,11 @@ impl Front {
         (self.prefs.music_enabled, self.prefs.music_volume)
     }
 
+    /// Game Settings → Sound Configuration.
+    pub fn sound_configuration(&self) -> atv_game::audio::mixer::Configuration {
+        atv_game::audio::mixer::Configuration::parse(&self.prefs.sound_configuration)
+    }
+
     /// Back from a ride: saved settings may have changed meanwhile.
     pub fn resume(&mut self, page: &str) {
         self.settings = Settings::load();
@@ -279,6 +338,7 @@ impl Front {
         crate::sound::sync_audio_session(&mut self.prefs);
         self.minimap = MinimapSettings::load(&self.settings);
         self.bindings = pause::controller::load_bindings(&mut self.settings);
+        self.state.load_profiles(&self.settings);
         self.state.loading = None;
         self.state.show(page, &self.view);
     }
@@ -288,10 +348,43 @@ impl Front {
         // The loader paints only between load stages (the load holds the
         // GPU), where a slide would freeze part way or blank; the browser's
         // compositor runs it through the load. It opens at rest.
-        self.transition.observe(Some(self.state.shown), true);
+        self.transition
+            .observe(Some(self.state.shown), "loading", true, &[]);
         self.shot_started = self.now();
         self.tip_chosen = false;
         self.choose_tip();
+    }
+
+    /// A championship round's loading screen (`002591f0`): the round, the
+    /// saved points and what the round needs.
+    pub fn championship_briefing(&mut self, round: Option<(usize, bool)>) {
+        let lines = round
+            .and_then(|(index, expert)| {
+                let series = atv_core::championship::SERIES.get(index)?;
+                let profile = atv_ui::settings::load_profile(&Settings::load());
+                let progress = profile.championships.progress(series, expert);
+                Some(atv_core::championship::briefing(series, &progress, expert))
+            })
+            .unwrap_or_default();
+        self.state.set_briefing(lines);
+    }
+
+    /// A race's loading screen Hall of Fame (`002585c0`): the course's
+    /// first holders on the race's difficulty.
+    pub fn fame_briefing(&mut self, race: Option<(String, bool)>) {
+        let lines = race
+            .map(|(course, expert)| {
+                let saved = Settings::load();
+                let hall = atv_ui::settings::load_hall_of_fame(&saved);
+                atv_core::hall_of_fame::briefing(
+                    hall.course(&course, expert),
+                    &course,
+                    expert,
+                    atv_ui::settings::units(&saved),
+                )
+            })
+            .unwrap_or_default();
+        self.state.set_fame_briefing(lines);
     }
 
     fn choose_tip(&mut self) {
@@ -329,10 +422,93 @@ impl Front {
     pub fn animating(&self) -> bool {
         self.transition.active()
             || self.jukebox_open()
+            || self.state.scrolling()
+            || self.menu.as_ref().is_some_and(|m| m.scroller.active())
+            || self.indicating()
+            || self.coins.counting(self.now())
+            || self.toast.showing(self.now())
+            || self.spinning()
+            || self.swaying()
             || self.menu.is_none()
                 && (matches!(self.state.page.as_str(), "title" | "loading")
                     || (matches!(self.state.page.as_str(), "garage" | "gear")
                         && self.previews[1].as_ref().is_some_and(|p| p.animated)))
+    }
+
+    /// A preview turns on its own: the turntable (unless reduced motion),
+    /// or a fling still settling.
+    fn spinning(&self) -> bool {
+        let reduced = crate::reduced_motion();
+        self.menu.is_none()
+            && self.previews.iter().enumerate().any(|(slot, p)| {
+                p.as_ref().is_some_and(|p| {
+                    p.target.is_some() && (p.spin.abs() > 1e-3 || (slot == 0 && !reduced))
+                })
+            })
+    }
+
+    /// The page shows the swaying wordmark.
+    fn swaying(&self) -> bool {
+        self.menu.is_none()
+            && !crate::reduced_motion()
+            && (self.state.page == "title" || front::stage_page(&self.state.page))
+    }
+
+    /// Advances the turntable: the vehicle spins slowly on its own; a drag
+    /// turns it directly and lets go with its speed, which eases back to
+    /// the turntable's. Reduced motion keeps both still (a drag still turns).
+    fn spin_previews(&mut self, now: f64) {
+        let dt = ((now - self.spun_at) / 1000.).clamp(0., 0.1) as f32;
+        self.spun_at = now;
+        let reduced = crate::reduced_motion();
+        let held = now < self.spin_hold;
+        let ease = 1. - atv_core::math::Det::exp_d(-dt / SPIN_EASE);
+        for (slot, preview) in self.previews.iter_mut().enumerate() {
+            let Some(p) = preview else { continue };
+            if self.turning.is_some_and(|(_, s, _)| s == slot) {
+                continue;
+            }
+            if reduced {
+                p.spin = 0.;
+                continue;
+            }
+            let cruise = if slot == 0 && !held { TURNTABLE } else { 0. };
+            p.spin += (cruise - p.spin) * ease;
+            if (p.spin - cruise).abs() < 1e-3 {
+                p.spin = cruise;
+            }
+            if p.spin != 0. && dt > 0. {
+                p.model.yaw = (p.model.yaw + p.spin * dt) % std::f32::consts::TAU;
+                p.dirty = true;
+            }
+        }
+    }
+
+    /// The wordmark's sway angles (yaw, pitch radians), easing in from rest.
+    fn sway(&mut self, now: f64) -> [f32; 2] {
+        if !self.swaying() {
+            self.sway_since = None;
+            return [0.; 2];
+        }
+        let t = (now - *self.sway_since.get_or_insert(now)) / 1000.;
+        let wave = |(degrees, period): (f32, f64)| {
+            let phase = (t / period).fract() as f32 * std::f32::consts::TAU;
+            degrees.to_radians() * atv_core::math::Det::sin_d(phase)
+        };
+        // A second's ease-in so the logo does not jump when a page opens.
+        let ease = (t as f32).min(1.);
+        [wave(SWAY_YAW) * ease, wave(SWAY_PITCH) * ease]
+    }
+
+    /// A scroll indicator is showing or fading out.
+    fn indicating(&self) -> bool {
+        let now = atv_ui::scroll::now();
+        self.state.list.indicator_alpha(now) > 0.
+            || self.state.rows.indicator_alpha(now) > 0.
+            || self
+                .menu
+                .as_ref()
+                .is_some_and(|m| m.scroller.indicator_alpha(now) > 0.)
     }
 
     /// Models the current page needs that are not loaded yet.
@@ -340,18 +516,11 @@ impl Front {
         let page = self.state.page.as_str();
         let mut wants = Vec::new();
         if self.menu.is_none()
-            && matches!(
-                page,
-                "main"
-                    | "single"
-                    | "garage"
-                    | "gear"
-                    | "multiplayer"
-                    | "create-lobby"
-                    | "join-lobby"
-            )
+            && (matches!(page, "profile-view" | "garage" | "gear")
+                || front::stage_page(page)
+                || atv_ui::front::controller::store_page(page))
         {
-            let quad = self.state.quad_id;
+            let quad = self.state.stage_quad();
             if !self.art.vehicles.iter().any(|(q, ..)| *q == quad) {
                 wants.push(Want::Vehicle(quad));
             }
@@ -469,8 +638,11 @@ impl Front {
                 if let Some(preview) = &mut self.previews[slot] {
                     // Dragging right turns by -dx here; ArrowRight matches it.
                     preview.model.yaw -= step;
+                    preview.spin = 0.;
                     preview.dirty = true;
                 }
+                // The turntable waits while the keys turn it.
+                self.spin_hold = self.now() + SPIN_HOLD;
                 return None;
             }
         }
@@ -493,6 +665,7 @@ impl Front {
     pub fn pad(&mut self, pad: Option<&atv_game::ride::bindings::Pad>) -> Option<Event> {
         if self.menu.is_some() {
             self.menu_reveal = true;
+            self.state.hold_pad();
             let event = self.with_menu(|m, ctx, _, _| m.pad(pad, ctx)).flatten();
             return self.menu_event(event);
         }
@@ -517,6 +690,22 @@ impl Front {
         self.front_event(event)
     }
 
+    /// Split Screen → Players: controller `slot`'s (players 2-4) own seat.
+    pub fn seat_pad(
+        &mut self,
+        slot: usize,
+        pad: Option<&atv_game::ride::bindings::Pad>,
+    ) -> Option<Event> {
+        let view = self.view;
+        let event = self.state.seat_pad(
+            slot,
+            pad.map(|p| (&p.buttons[..], &p.axes[..])),
+            &view,
+            &mut self.settings,
+        );
+        self.front_event(event)
+    }
+
     pub fn press(&mut self, pointer: u64, x: f32, y: f32) {
         if self.menu.is_some() {
             self.with_menu(|m, ctx, hits, _| m.press(hits, pointer, x, y, ctx));
@@ -532,6 +721,12 @@ impl Front {
             .map(|(_, id)| usize::from(*id == MODEL_RIDER));
         self.turning = slot.map(|slot| (pointer, slot, x));
         self.preview_focus = slot;
+        // Touching the preview stops it, as a hand on a turntable.
+        let now = self.now();
+        if let Some(p) = slot.and_then(|slot| self.previews[slot].as_mut()) {
+            p.spin = 0.;
+            p.dragged = now;
+        }
     }
 
     pub fn moved(&mut self, pointer: u64, x: f32, y: f32, mouse: bool) {
@@ -549,17 +744,34 @@ impl Front {
         if let Some((p, slot, last)) = self.turning
             && p == pointer
         {
-            if let Some(preview) = &mut self.previews[slot] {
-                preview.model.yaw -= (x - last) * 0.015;
+            let now = self.now();
+            if let Some(preview) = &mut self.previews[slot]
+                && x != last
+            {
+                let turn = -(x - last) * 0.015;
+                preview.model.yaw += turn;
                 preview.dirty = true;
+                // The drag's speed, smoothed over the last few moves.
+                let dt = ((now - preview.dragged) / 1000.).max(1. / 240.) as f32;
+                let rate = (turn / dt).clamp(-SPIN_MAX, SPIN_MAX);
+                preview.spin = preview.spin * 0.4 + rate * 0.6;
+                preview.dragged = now;
             }
             self.turning = Some((p, slot, x));
         }
     }
 
     pub fn release(&mut self, pointer: u64, x: f32, y: f32) -> Option<Event> {
-        if self.turning.is_some_and(|(p, ..)| p == pointer) {
+        if let Some((_, slot, _)) = self.turning.filter(|(p, ..)| *p == pointer) {
             self.turning = None;
+            // A finger held still before letting go leaves no fling.
+            let now = self.now();
+            if let Some(p) = &mut self.previews[slot]
+                && (now - p.dragged > 100. || crate::reduced_motion())
+            {
+                p.spin = 0.;
+            }
+            self.spun_at = now;
         }
         if self.menu.is_some() {
             let event = self
@@ -707,7 +919,7 @@ impl Front {
         {
             let key = format!("bg:track:{id}");
             backdrop = self.image(device, queue, &key, |art| {
-                let photo = art.photos.get(id)?;
+                let photo = art.photos.get(atv_game::launch::race_venue(id))?;
                 let (shrink, sigma) = Self::blur_plan(photo, box_w, box_h, 16.);
                 let mut image = photo.shrink(shrink);
                 image.filter(&[
@@ -744,10 +956,12 @@ impl Front {
         let px = ((logo_css * view.scale).round() as u32).clamp(64, 2048);
         let logo_key = format!("logo:{px}");
         let mut logo = None;
-        if matches!(
-            page.as_str(),
-            "title" | "main" | "single" | "multiplayer" | "create-lobby" | "join-lobby"
-        ) {
+        // Every page laid out with the stage shows the wordmark (Games,
+        // Split Screen and its Players page drew an empty stage).
+        if matches!(page.as_str(), "title" | "profile-view")
+            || front::stage_page(&page)
+            || atv_ui::front::controller::store_page(&page)
+        {
             let drawn = self.image(device, queue, &logo_key, |_| Some(logo::raster(px)));
             let shadow_alpha = if page == "title" { 0.6 } else { 0.4 };
             let shadow_key = format!("logo-shadow:{px}:{shadow_alpha}");
@@ -782,7 +996,7 @@ impl Front {
             };
             for id in &ids {
                 if let Some(img) = self.image(device, queue, &format!("thumb:{id}"), |art| {
-                    let photo = art.photos.get(id)?;
+                    let photo = art.photos.get(atv_game::launch::race_venue(id))?;
                     let shrink = ((photo.width as f32 / thumb_px).floor() as u32).max(1);
                     Some(photo.shrink(shrink))
                 }) {
@@ -792,7 +1006,7 @@ impl Front {
             if let Some(id) = &track_id {
                 let key = format!("hero:{id}");
                 let hero = self.image(device, queue, &key, |art| {
-                    let mut photo = art.photos.get(id)?.clone();
+                    let mut photo = art.photos.get(atv_game::launch::race_venue(id))?.clone();
                     photo.filter(&[Filter::Saturate(1.08), Filter::Contrast(1.04)]);
                     Some(photo)
                 });
@@ -861,7 +1075,7 @@ impl Front {
             } else if let Some(id) = &track_id {
                 // Training has no action shots: the course photo instead.
                 shot.0 = self.image(device, queue, &format!("hero:{id}"), |art| {
-                    art.photos.get(id).cloned()
+                    art.photos.get(atv_game::launch::race_venue(id)).cloned()
                 });
             }
         }
@@ -893,16 +1107,49 @@ impl Front {
         let now = self.now();
         // Each page shown, and the menu panel over the backdrop, slides in.
         let shown = self.menu.as_ref().map_or(self.state.shown, |m| m.shown);
-        self.transition
-            .observe(Some(shown), !self.slide || crate::reduced_motion());
+        if self.transition.changes(Some(shown)) {
+            // The menu page being left slides out (redrawn from its state).
+            self.exit_menu = self.last_menu.take();
+        }
+        let page = self
+            .menu
+            .as_ref()
+            .map_or(self.state.page.clone(), |m| m.page.clone());
+        let on_screen = self.list.items.get(self.content.clone()).unwrap_or(&[]);
+        self.transition.observe(
+            Some(shown),
+            &page,
+            !self.slide || crate::reduced_motion(),
+            on_screen,
+        );
         self.motion = self.transition.motion(now);
+        // Kinetic scrolling: flings, rubber bands and focus glides.
+        let scroll_now = atv_ui::scroll::now();
+        self.state.tick_scroll(scroll_now);
+        if let Some(menu) = &mut self.menu {
+            menu.scroller.tick(scroll_now);
+        }
         // ms-pulse: brightness 1 → 1.18 → 1 over 1.8 s, ease-in-out.
         let phase = (now / 1800.).fract() as f32;
         let wave = 0.5 - 0.5 * atv_core::math::Det::cos_d(phase * std::f32::consts::TAU);
-        let pulse = 1. + 0.18 * wave;
+        self.pulse = 1. + 0.18 * wave;
+        // Only the title pulses. It is laid out once at PULSE_LAYOUT and its
+        // overlay retinted per frame (render_page); every other page keeps a
+        // constant value, so an animating page (turntable, sway) reuses its
+        // laid-out display list instead of a full layout each frame.
+        let pulse = if self.menu.is_none() && self.state.page == "title" {
+            front::PULSE_LAYOUT
+        } else {
+            1.
+        };
         let photos = &art.photos;
         let photo = |id: &str| photos.get(id).map(|(thumb, _)| *thumb);
         self.update_previews(device, queue, now);
+        self.spin_previews(now);
+        self.tilt = self.sway(now);
+        if let Some(renderer) = &self.renderer {
+            renderer.set_tilt(queue, self.tilt[0], self.tilt[1]);
+        }
         let mut screen = self.state.screen(
             art.backdrop,
             art.backdrop_track,
@@ -918,8 +1165,28 @@ impl Front {
         screen.shot_fade = art.shot_fade;
         if self.menu.is_some() {
             screen.page = "backdrop".into();
+            // Options and the Jukebox fill the screen over the frontend; the
+            // bar's chips would be out of reach under them.
+            screen.status = None;
         } else {
             screen.motion = self.motion;
+        }
+        // The coin chip counts to a new Profile Points total, and glows when
+        // the unlocks change (Unlock Everything, a purchase).
+        if let Some(status) = &mut screen.status {
+            let reduced = crate::reduced_motion();
+            let (shown, counting) = self.coins.count(status.points, now, reduced);
+            let unlocks = &self.state.profile.store;
+            if self.coins.unlocks.as_ref() != Some(unlocks) {
+                if self.coins.unlocks.is_some() && !reduced {
+                    self.coins.glow = now;
+                }
+                self.coins.unlocks = Some(unlocks.clone());
+            }
+            status.shown_points = shown;
+            status.counting = counting || self.coins.glowing(now);
+            // Notices show as a toast under the bar for 3 s.
+            screen.toast = Some(self.toast.opacity(screen.notice.as_deref(), now));
         }
         // A slot shows its model once the wanted one is built (ModelView
         // clears to "Loading model..." on a change), else its status.
@@ -937,52 +1204,51 @@ impl Front {
         screen.model_status = self.model_status();
         screen.quad_model = image(0, &self.previews[0]);
         screen.rider_model = image(1, &self.previews[1]);
-        self.list.clear();
-        self.hits.clear();
-        layout::render(
-            &front::element(&view, &screen),
-            &mut self.fonts,
-            view.width,
-            view.height,
-            &mut self.list,
-            &mut self.hits,
-        );
+        self.render_page(&screen);
         // Both lists keep 8px of padding under their last item.
-        if self.state.laid_out(&self.hits, 8.) {
-            screen.list_scroll = self.state.list_scroll;
-            self.list.clear();
-            self.hits.clear();
-            layout::render(
-                &front::element(&view, &screen),
-                &mut self.fonts,
-                view.width,
-                view.height,
-                &mut self.list,
-                &mut self.hits,
-            );
+        if self
+            .state
+            .laid_out(&self.hits, 8., !crate::reduced_motion())
+        {
+            screen.list_scroll = self.state.list.offset();
+            screen.rows_scroll = self.state.rows.offset();
+            self.render_page(&screen);
         }
-        // Preview targets follow their slots (canvas size x min(DPR, 2)).
+        // Preview targets follow their slots at the surface's density.
         if self.fit_previews(device) {
             screen.quad_model = image(0, &self.previews[0]);
             screen.rider_model = image(1, &self.previews[1]);
-            self.list.clear();
-            self.hits.clear();
-            layout::render(
-                &front::element(&view, &screen),
-                &mut self.fonts,
-                view.width,
-                view.height,
-                &mut self.list,
-                &mut self.hits,
-            );
+            self.render_page(&screen);
         }
         for preview in self.previews.iter_mut().flatten() {
             if let (true, Some((_, w, h))) = (preview.dirty, preview.target) {
                 preview.model.prepare(device, queue, w, h);
             }
         }
+        // Scroll indicators over the list and the rows column.
+        let pane =
+            |hits: &[(Rect, u32)], id: u32| hits.iter().find(|(_, i)| *i == id).map(|(r, _)| *r);
+        if let Some(r) = pane(&self.hits, atv_ui::front::LIST) {
+            self.state.list.paint_edges(&mut self.list, r);
+            self.state
+                .list
+                .paint_indicator(&mut self.list, r, scroll_now);
+        }
+        if let Some(r) = pane(&self.hits, atv_ui::front::ROWS) {
+            self.state.rows.paint_edges(&mut self.list, r);
+            self.state
+                .rows
+                .paint_indicator(&mut self.list, r, scroll_now);
+        }
         if self.menu.is_some() {
             self.prepare_menu(device, queue);
+            if let (Some(r), Some(menu)) = (pane(&self.menu_hits, pause::PANEL), &self.menu) {
+                menu.scroller.paint_indicator(&mut self.list, r, scroll_now);
+            }
+        } else {
+            self.last_menu = None;
+        }
+        if self.menu.is_some() {
             // drawBars: the spectrum repaints over the panel each frame.
             if let Some((area, _)) = self.menu_hits.iter().find(|(_, id)| *id == pause::BARS) {
                 if let Some(m) = self.motion {
@@ -998,6 +1264,7 @@ impl Front {
                 }
             }
         }
+        self.paint_menu_exit();
         if !self.diagnostics.is_empty() {
             atv_ui::diagnostics::paint(
                 &mut self.list,
@@ -1028,6 +1295,100 @@ impl Front {
         self.split_ms = [art_ms, layout_ms, self.prepare_ms - art_ms - layout_ms];
     }
 
+    /// Lays out the page: the still backdrop, the page being left sliding
+    /// out, and the content (moving while a transition runs).
+    ///
+    /// While a page slides only its offset and opacity change, so the page
+    /// is laid out once at rest and then moved (a transform does not
+    /// reflow), as the browser's compositor would.
+    fn render_page(&mut self, screen: &front::Screen) {
+        let view = self.view;
+        let mut rest = screen.clone();
+        let motion = rest.motion.take();
+        let cached = self
+            .page_cache
+            .as_ref()
+            .is_some_and(|c| c.view == view && c.screen == rest);
+        if !cached {
+            let (back, content) = front::layers(&view, &rest);
+            let mut cache = PageCache {
+                view,
+                screen: rest,
+                back: DisplayList::default(),
+                content: DisplayList::default(),
+                hits: Vec::new(),
+            };
+            let mut ignored = Vec::new();
+            layout::render(
+                &back,
+                &mut self.fonts,
+                view.width,
+                view.height,
+                &mut cache.back,
+                &mut ignored,
+            );
+            layout::render(
+                &content,
+                &mut self.fonts,
+                view.width,
+                view.height,
+                &mut cache.content,
+                &mut cache.hits,
+            );
+            self.page_cache = Some(cache);
+        }
+        let Some(cache) = &self.page_cache else {
+            return;
+        };
+        self.list.clear();
+        self.list.items.extend_from_slice(&cache.back.items);
+        self.hits.clone_from(&cache.hits);
+        // The page left fades out under the new one.
+        self.transition.paint_exit(&mut self.list);
+        let start = self.list.items.len();
+        match motion {
+            Some(m) => {
+                let mut moved = cache.content.clone();
+                moved.translate(m.dx, 0.);
+                self.list.opacity(m.opacity);
+                self.list.items.extend(moved.items);
+                self.list.unopacity();
+                for (r, _) in &mut self.hits {
+                    r.x += m.dx;
+                }
+            }
+            None => self.list.items.extend_from_slice(&cache.content.items),
+        }
+        if screen.pulse > 1. {
+            front::retint_pulse(&mut self.list.items[start..], self.pulse);
+        }
+        self.content = start..self.list.items.len();
+    }
+
+    /// A menu page being left slides out over the new one, without its dim
+    /// backdrop (the new page's is already drawn).
+    fn paint_menu_exit(&mut self) {
+        let Some(motion) = self.transition.exit_motion() else {
+            self.exit_menu = None;
+            return;
+        };
+        let Some(old) = &self.exit_menu else {
+            return;
+        };
+        let view = self.view;
+        let mut old = old.clone();
+        old.motion = Some(motion);
+        let mut ignored = Vec::new();
+        layout::render(
+            &pause::stage(&view, &old, &self.glyphs),
+            &mut self.fonts,
+            view.width,
+            view.height,
+            &mut self.list,
+            &mut ignored,
+        );
+    }
+
     fn prepare_menu(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
         let view = self.view;
         let start = self.list.items.len();
@@ -1038,6 +1399,7 @@ impl Front {
             return;
         };
         state.motion = self.motion;
+        self.last_menu = Some(state.clone());
         if state.page == "jukebox" {
             // The original PAGE14 art, registered once the host read it.
             if self.jukebox_art.is_none()
@@ -1084,18 +1446,22 @@ impl Front {
             &mut hits,
         );
         let rect = |id| hits.iter().find(|(_, i)| *i == id).map(|(r, _)| *r);
+        let mut viewport = 400.;
         if let (Some(panel), Some(content)) = (rect(pause::PANEL), rect(pause::CONTENT)) {
             // Full-screen panel: clamp(12px, 3vh, 28px) above, 20px below.
             let padding = (view.height * 0.03).clamp(12., 28.) + 20.;
             self.menu_scroll_max = (content.h - (panel.h - padding)).max(0.);
+            viewport = panel.h;
         }
-        if std::mem::take(&mut self.menu_reveal)
-            && let Some(menu) = &mut self.menu
-        {
-            let before = menu.scroll;
-            menu.reveal(&hits);
-            menu.scroll = menu.scroll.min(self.menu_scroll_max);
-            if menu.scroll != before {
+        let reveal = std::mem::take(&mut self.menu_reveal);
+        let animate = !crate::reduced_motion();
+        if let Some(menu) = &mut self.menu {
+            let before = menu.scroller.offset();
+            menu.scroller.set_bounds(self.menu_scroll_max, viewport);
+            if reveal {
+                menu.reveal(&hits, self.menu_scroll_max, animate);
+            }
+            if menu.scroller.offset() != before {
                 self.list.items.truncate(start);
                 self.menu_hits = hits;
                 return self.prepare_menu(device, queue);
@@ -1171,17 +1537,10 @@ impl Front {
     fn update_previews(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, now: f64) {
         let page = self.state.page.clone();
         let shown = self.menu.is_none()
-            && matches!(
-                page.as_str(),
-                "main"
-                    | "single"
-                    | "garage"
-                    | "gear"
-                    | "multiplayer"
-                    | "create-lobby"
-                    | "join-lobby"
-            );
-        let quad = self.state.quad_id;
+            && (matches!(page.as_str(), "profile-view" | "garage" | "gear")
+                || front::stage_page(&page)
+                || atv_ui::front::controller::store_page(&page));
+        let quad = self.state.stage_quad();
         let garage = matches!(page.as_str(), "garage" | "gear");
         // The garage look: paint on ATVs (motorcycles keep their livery).
         let appearance = self.state.appearance;
@@ -1211,13 +1570,20 @@ impl Front {
         let key = format!("vehicle:{quad}:{paint:?}");
         self.wanted = [shown.then(|| key.clone()), None];
         if !shown {
-            self.previews = [None, None];
+            for preview in std::mem::take(&mut self.previews).into_iter().flatten() {
+                self.stash_preview(preview);
+            }
             self.preview_focus = None;
+        } else if self.previews[0].as_ref().is_none_or(|p| p.key != key)
+            && let Some((model, animated)) = self.unstash(&key)
+        {
+            self.set_preview(0, key.clone(), model, animated);
         } else if self.previews[0].as_ref().is_none_or(|p| p.key != key)
             && self.unbuilt[0].as_ref() != Some(&key)
             && let Some((_, model, _)) = self.art.vehicles.iter().find(|(q, ..)| *q == quad)
         {
             let lookup = texture(&model.textures);
+            self.preview_counts[0] += 1;
             match ModelPreview::new(
                 device,
                 queue,
@@ -1235,23 +1601,12 @@ impl Front {
         }
         // Slot 1: the garage rider's idle playlist (PAGE07, or the MX rider).
         if !garage || !shown {
-            if let Some(old) = self.previews[1].take()
-                && let (Some(renderer), Some((id, ..))) = (&mut self.renderer, old.target)
-            {
-                renderer.remove_image(id);
+            if let Some(old) = self.previews[1].take() {
+                self.stash_preview(old);
             }
             self.garage_since = now;
             return;
         }
-        let rider = if quad >= 27 {
-            self.art
-                .vehicles
-                .iter()
-                .find(|(q, ..)| *q == quad)
-                .and_then(|(_, _, r)| r.as_ref())
-        } else {
-            self.art.menu_riders.get(&self.state.rider_id)
-        };
         // gearPreview: the ATV rider wears the garage gear once its
         // materials are read.
         let dressed = quad < 27
@@ -1264,6 +1619,23 @@ impl Front {
             format!("rider:{}:{:?}", self.state.rider_id, appearance.gear)
         } else {
             format!("rider:{}", self.state.rider_id)
+        };
+        // Back in the garage: the rider built last time.
+        if self.previews[1].as_ref().is_none_or(|p| p.key != key)
+            && let Some((model, animated)) = self.unstash(&key)
+        {
+            self.wanted[1] = Some(key.clone());
+            self.set_preview(1, key, model, animated);
+            return;
+        }
+        let rider = if quad >= 27 {
+            self.art
+                .vehicles
+                .iter()
+                .find(|(q, ..)| *q == quad)
+                .and_then(|(_, _, r)| r.as_ref())
+        } else {
+            self.art.menu_riders.get(&self.state.rider_id)
         };
         let time = ((now - self.garage_since) / 1000.).max(0.) as f32;
         self.wanted[1] = Some(key.clone());
@@ -1287,6 +1659,7 @@ impl Front {
                 }
                 let lookup = texture(&textures);
                 let pose = rider.rider.pose(time).ok().map(|(_, p)| p.world_matrices);
+                self.preview_counts[0] += 1;
                 match ModelPreview::new(
                     device,
                     queue,
@@ -1317,9 +1690,40 @@ impl Front {
         }
     }
 
+    /// Keeps a preview leaving the screen for a quick return; its target
+    /// image goes (it is remade at the slot's size).
+    fn stash_preview(&mut self, preview: Preview) {
+        if let (Some(renderer), Some((id, ..))) = (&mut self.renderer, preview.target) {
+            renderer.remove_image(id);
+        }
+        const KEEP: usize = 3;
+        self.stash.retain(|(key, ..)| *key != preview.key);
+        self.stash
+            .push((preview.key, preview.model, preview.animated));
+        if self.stash.len() > KEEP {
+            self.stash.remove(0);
+        }
+    }
+
+    /// A stashed preview built for `key`, if any.
+    fn unstash(&mut self, key: &str) -> Option<(ModelPreview, bool)> {
+        let index = self.stash.iter().position(|(k, ..)| k == key)?;
+        self.preview_counts[1] += 1;
+        let (_, model, animated) = self.stash.remove(index);
+        Some((model, animated))
+    }
+
     fn set_preview(&mut self, slot: usize, key: String, model: ModelPreview, animated: bool) {
         // Keep the old image until the new one is sized and drawn.
         let target = self.previews[slot].take().and_then(|p| p.target);
+        // A new vehicle keeps the turntable's angle and pace.
+        let (yaw, spin) = self.previews[slot]
+            .as_ref()
+            .map_or((model.yaw, 0.), |p| (p.model.yaw, p.spin));
+        let mut model = model;
+        if slot == 0 {
+            model.yaw = yaw;
+        }
         self.previews[slot] = Some(Preview {
             key,
             model,
@@ -1327,6 +1731,8 @@ impl Front {
             dirty: true,
             animated,
             posed: 0.,
+            spin,
+            dragged: 0.,
         });
     }
 
@@ -1336,7 +1742,9 @@ impl Front {
         let Some(renderer) = &mut self.renderer else {
             return false;
         };
-        let scale = self.view.scale.min(2.);
+        // The browser's ModelView capped its canvas at 2x; the frontend now
+        // draws at the display's full density, so the previews do too.
+        let scale = self.view.scale;
         let mut changed = false;
         for (slot, id) in [(0, MODEL_QUAD), (1, MODEL_RIDER)] {
             let Some(preview) = &mut self.previews[slot] else {
@@ -1363,7 +1771,47 @@ impl Front {
     }
 
     pub fn diagnostics(&self) -> serde_json::Value {
-        serde_json::json!({
+        let profile_book = serde_json::json!({
+            "name": self.state.profile_name(),
+            "names": self.state.book.profiles.iter().map(|p| p.name.clone()).collect::<Vec<_>>(),
+            "details": self.state.profile_details(),
+            "heading": self.state.profile_heading(),
+        });
+        // Kinetic scrolling (crate::scroll): list, rows column, moving.
+        let kinetic = serde_json::json!({
+            "list": [self.state.list.offset(), self.state.list.max()],
+            "rows": [self.state.rows.offset(), self.state.rows.max()],
+            "active": self.state.scrolling(),
+            "menu": self.menu.as_ref().map(|m| [m.scroller.offset(), m.scroller.max()]),
+        });
+        let store = serde_json::json!({
+            "remaining": atv_core::store::remaining(&self.state.profile),
+            "spent": self.state.profile.store.spent,
+            "section": self.state.store.section,
+            "item": self.state.store.item,
+            "atvs": self.state.store.atvs.len(),
+            "courses": self.state.store.courses.len(),
+            "stageQuad": self.state.stage_quad(),
+        });
+        let menu = self.menu.as_ref().map(|m| {
+            serde_json::json!({
+                "page": m.page, "choices": m.rows.choices,
+                "music": self.music.as_ref().map(|v| serde_json::json!({
+                    "playing": v.playing_index, "enabled": v.enabled, "paused": v.paused,
+                    "songs": v.songs.len(), "position": v.position,
+                })),
+                "spectrum": self.spectrum.as_ref().map(|b| b.iter().copied().max().unwrap_or(0)),
+                "art": self.jukebox_art.is_some(),
+            })
+        });
+        let cloud = serde_json::json!({
+            "key": self.state.cloud.key, "status": self.state.cloud.status,
+            "short": self.state.cloud.short, "shareCode": self.state.cloud.share_code,
+            "previousKey": self.state.cloud.previous_key,
+            "pending": self.state.passkey.pending.is_some(),
+            "qr": self.state.passkey_qr(), "entry": self.state.passkey.entry,
+        });
+        let mut out = serde_json::json!({
             "page": self.state.page,
             // The page (or menu panel) slide: [opacity, translateX px].
             "motion": self.motion.map(|m| [m.opacity, m.dx]),
@@ -1380,7 +1828,7 @@ impl Front {
             "createCode": self.state.create_code,
             "tracks": self.state.tracks.len(),
             "photos": self.art.photos.len(),
-            "scroll": self.state.list_scroll,
+            "scroll": self.state.list.offset(),
             "prepareMs": self.prepare_ms,
             "splitMs": self.split_ms,
             "models": self.previews.iter().map(|p| p.as_ref().filter(|p| p.target.is_some()).map(|p| p.key.clone())).collect::<Vec<_>>(),
@@ -1390,6 +1838,10 @@ impl Front {
                 "code": l.code, "status": l.status,
             })),
             "notice": self.state.notice,
+            "store": store,
+            "profile": self.state.profile_text(),
+            "profileBook": profile_book,
+            "cloud": cloud,
             "labels": self.state.choices().iter().map(|(_, l)| l).collect::<Vec<_>>(),
             "race": {
                 "courses": self.state.race_courses.len(), "course": self.state.race.course,
@@ -1403,24 +1855,174 @@ impl Front {
             },
             "loading": self.state.loading.as_ref().map(|l| serde_json::json!({
                 "environment": l.environment, "status": l.status, "progress": l.progress,
+                "championship": l.championship, "fame": l.fame,
             })),
-            "menu": self.menu.as_ref().map(|m| serde_json::json!({
-                "page": m.page, "choices": m.rows.choices,
-                "music": self.music.as_ref().map(|v| serde_json::json!({
-                    "playing": v.playing_index, "enabled": v.enabled, "paused": v.paused,
-                    "songs": v.songs.len(), "position": v.position,
-                })),
-                "spectrum": self.spectrum.as_ref().map(|b| b.iter().copied().max().unwrap_or(0)),
-                "art": self.jukebox_art.is_some(),
-            })),
+            "menu": menu,
             "menuHits": self.menu_hits.iter().map(|(r, id)| serde_json::json!({
                 "id": id, "x": r.x, "y": r.y, "width": r.w, "height": r.h,
             })).collect::<Vec<_>>(),
             "hits": self.hits.iter().map(|(r, id)| serde_json::json!({
                 "id": id, "x": r.x, "y": r.y, "width": r.w, "height": r.h,
             })).collect::<Vec<_>>(),
-        })
+        });
+        out["kinetic"] = kinetic;
+        // Turntable rates and preview images' pixel sizes (they follow the
+        // surface density); the UI's backing [width, height, scale]; the
+        // wordmark's sway [yaw, pitch].
+        out["modelSpin"] = serde_json::json!(
+            self.previews
+                .iter()
+                .map(|p| p.as_ref().map(|p| p.spin))
+                .collect::<Vec<_>>()
+        );
+        out["modelTargets"] = serde_json::json!(
+            self.previews
+                .iter()
+                .map(|p| p.as_ref().and_then(|p| p.target).map(|(_, w, h)| [w, h]))
+                .collect::<Vec<_>>()
+        );
+        out["surface"] =
+            serde_json::json!([self.upload_size.0, self.upload_size.1, self.upload_size.2]);
+        out["tilt"] = serde_json::json!(self.tilt);
+        // Previews built, and reused from pages just left.
+        out["previewBuilds"] = serde_json::json!(self.preview_counts);
+        // Single Race's course picker is open.
+        out["courseSheet"] = self.state.course_sheet.into();
+        out["vehicleSheet"] = self.state.vehicle_sheet.into();
+        // The last frame drew its still parts from the UI layer cache.
+        out["layerCached"] = self
+            .renderer
+            .as_ref()
+            .is_some_and(|r| r.layer_cached())
+            .into();
+        out["layerPlan"] = serde_json::json!(self.renderer.as_ref().map(|r| r.layer_plan));
+        // Text/vector bitmaps rasterized and atlas rebuilds so far.
+        out["atlas"] = serde_json::json!(
+            self.renderer
+                .as_ref()
+                .map(|r| [r.rasterized_total, r.atlas_resets])
+        );
+        // The status bar (front/status_bar.rs): numbers, sync and popover.
+        out["status"] = match self.state.status_bar().filter(|_| self.menu.is_none()) {
+            Some(b) => serde_json::json!({
+                "profile": b.profile, "points": b.points, "trophies": [b.trophies.0, b.trophies.1],
+                "sync": b.sync.word(), "minimal": b.minimal, "store": b.store,
+                "open": b.open.as_ref().map(|p| p.title.clone()),
+                "lines": b.open.map(|p| p.lines).unwrap_or_default(),
+                "counting": self.coins.counting(self.now()),
+                "shown": self.coins.value(self.now()).0,
+                "toast": self.toast.at(self.now()),
+            }),
+            None => serde_json::Value::Null,
+        };
+        // The page being left while it slides out: [opacity, translateX px].
+        out["exit"] = serde_json::json!(self.transition.exit_motion().map(|m| [m.opacity, m.dx]));
+        // The pages Back returns through (research/MENU_FLOW.md).
+        out["history"] = self.state.history().collect::<Vec<_>>().into();
+        if let Some(m) = &self.menu {
+            out["menu"]["selection"] = m.selection.into();
+            out["menu"]["history"] = m.history().collect::<Vec<_>>().into();
+        }
+        out
     }
+}
+
+/// The status bar's coin count: a changed total counts from the shown value
+/// over 700 ms (ease-out), as mobile games tick their currency.
+#[derive(Default)]
+struct CoinCount {
+    target: Option<i64>,
+    from: i64,
+    start: f64,
+    /// The profile's unlocks last seen, and when they last changed.
+    unlocks: Option<atv_core::store::Unlocks>,
+    glow: f64,
+}
+
+/// A notice shown as a toast: fades in over 150 ms, holds, fades out by 3.3 s.
+#[derive(Default)]
+struct Toast {
+    shown: Option<(String, f64)>,
+}
+
+impl Toast {
+    const HOLD: f64 = 3000.;
+    const FADE: f64 = 300.;
+
+    fn opacity(&mut self, notice: Option<&str>, now: f64) -> f32 {
+        let Some(notice) = notice else {
+            self.shown = None;
+            return 0.;
+        };
+        if self.shown.as_ref().is_none_or(|(n, _)| n != notice) {
+            self.shown = Some((notice.to_string(), now));
+        }
+        self.at(now)
+    }
+
+    fn at(&self, now: f64) -> f32 {
+        let Some((_, start)) = &self.shown else {
+            return 0.;
+        };
+        let age = now - start;
+        let fade_in = (age / 150.).clamp(0., 1.);
+        let fade_out = (1. - (age - Self::HOLD) / Self::FADE).clamp(0., 1.);
+        fade_in.min(fade_out) as f32
+    }
+
+    fn showing(&self, now: f64) -> bool {
+        self.shown
+            .as_ref()
+            .is_some_and(|(_, start)| now - start < Self::HOLD + Self::FADE)
+    }
+}
+
+impl CoinCount {
+    const MS: f64 = 700.;
+
+    /// The value to show for `points` at `now`, and whether it is counting.
+    fn count(&mut self, points: i64, now: f64, reduced: bool) -> (i64, bool) {
+        match self.target {
+            None => self.target = Some(points),
+            Some(target) if target != points => {
+                self.from = if reduced { points } else { self.value(now).0 };
+                self.target = Some(points);
+                self.start = now;
+            }
+            _ => {}
+        }
+        self.value(now)
+    }
+
+    fn value(&self, now: f64) -> (i64, bool) {
+        let Some(target) = self.target else {
+            return (0, false);
+        };
+        let t = ((now - self.start) / Self::MS).clamp(0., 1.);
+        if t >= 1. || self.from == target {
+            return (target, false);
+        }
+        let eased = 1. - (1. - t).powi(3);
+        let shown = self.from as f64 + (target - self.from) as f64 * eased;
+        (shown.round() as i64, true)
+    }
+
+    fn counting(&self, now: f64) -> bool {
+        self.value(now).1 || self.glowing(now)
+    }
+
+    fn glowing(&self, now: f64) -> bool {
+        self.glow > 0. && now - self.glow < Self::MS
+    }
+}
+
+/// The frontend page laid out at rest (see `Front::render_page`).
+struct PageCache {
+    view: Viewport,
+    screen: front::Screen,
+    back: DisplayList,
+    content: DisplayList,
+    hits: Vec<(Rect, u32)>,
 }
 
 /// The page's artwork this frame.

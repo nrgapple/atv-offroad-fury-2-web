@@ -1,0 +1,14 @@
+{
+  "id": "training-course-six-original-lessons-and-the-talon-rew-8fece95978cd4334952e8a2a06a5e46a",
+  "timestamp": "2026-10-27T07:55:56.405829+00:00",
+  "recorded_at": "2026-10-27T08:28:13.560036+00:00",
+  "kind": "build",
+  "title": "Training Course: six original lessons and the Talon reward",
+  "summary": "Main Menu \u2192 Training Course now runs the original six lessons (Gas and Brake, Reverse, Steering, Jump and Land, Stunt, Preload) with their start positions, ground circles, goals and pass/fail rules recovered from the USA v2.00 executable. Each lesson shows its name and instructions, retries a failure from its start and moves on after a success; Pause offers Restart Training. Finishing the course grants the four coloured Ravage Talons and the ATV2 gear to the loaded profile, as the original does.",
+  "details": [
+    "Verified with unit tests and a local Chromium browser test that rides every lesson, passes and fails each, and checks the Talon reward in the Profile Store. Host-only, not phones."
+  ],
+  "limitation": "The original speaks every instruction; the port shows authored captions instead of the 46 voice lines, and has no jumbotron demonstration replays or 3D arrow model (screen and minimap markers stand in).",
+  "image": "/devlog-images/training-course-six-original-lessons-and-the-talon-rew-8fece95978cd4334952e8a2a06a5e46a.png",
+  "caption": "Lesson 1, Gas and Brake: banner, lesson panel and marker"
+}

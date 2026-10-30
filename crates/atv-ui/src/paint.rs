@@ -140,6 +140,17 @@ pub enum Item {
     /// Multiply following items' alpha until `PopOpacity`.
     PushOpacity(f32),
     PopOpacity,
+    /// Following images (and image shadows) sway in 3D until `PopTilt`:
+    /// rotated about `center` by the renderer's current tilt angles
+    /// ([`crate::Renderer::set_tilt`]) and seen through a CSS-style
+    /// `perspective` (CSS pixels). The angles live in a uniform, so an
+    /// animated sway does not change the display list. Boxes and text are
+    /// not tilted.
+    PushTilt {
+        center: [f32; 2],
+        perspective: f32,
+    },
+    PopTilt,
 }
 
 #[derive(Default, Clone, Debug, PartialEq)]
@@ -150,6 +161,38 @@ pub struct DisplayList {
 impl DisplayList {
     pub fn clear(&mut self) {
         self.items.clear();
+    }
+    /// Moves every item by (`dx`, `dy`) CSS pixels (a split-screen
+    /// player's HUD painted for its own view, placed in the frame).
+    pub fn translate(&mut self, dx: f32, dy: f32) {
+        let shift = |r: &mut Rect| {
+            r.x += dx;
+            r.y += dy;
+        };
+        for item in &mut self.items {
+            match item {
+                Item::Box(b) => {
+                    shift(&mut b.rect);
+                    b.pivot[0] += dx;
+                    b.pivot[1] += dy;
+                }
+                Item::Text { x, y, .. } | Item::Shape { x, y, .. } => {
+                    *x += dx;
+                    *y += dy;
+                }
+                Item::Image { dst, pivot, .. } => {
+                    shift(dst);
+                    pivot[0] += dx;
+                    pivot[1] += dy;
+                }
+                Item::ImageShadow { dst, .. } | Item::PushClip { rect: dst, .. } => shift(dst),
+                Item::PushTilt { center, .. } => {
+                    center[0] += dx;
+                    center[1] += dy;
+                }
+                Item::PopClip | Item::PushOpacity(_) | Item::PopOpacity | Item::PopTilt => {}
+            }
+        }
     }
     pub fn push(&mut self, item: Item) {
         self.items.push(item);

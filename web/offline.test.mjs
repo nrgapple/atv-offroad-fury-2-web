@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { persistStorage, registerOffline, releaseBuild, standalone, uncachedContent } from './offline.js';
+import { persistStorage, recoverFailedStart, registerOffline, releaseBuild, savedProgress, standalone, startSucceeded, uncachedContent } from './offline.js';
 
 const V = 'f'.repeat(40);
 const media = matches => query => ({ matches: matches.includes(query) });
@@ -37,10 +37,10 @@ test('content fetched without the worker is reported; worker-served, foreign and
   assert.deepEqual(uncachedContent(entries, origin), [origin + blob, origin + '/content/manifest.json', `${origin}/content/manifests/${V}.json`]);
 });
 
-test('persistent storage is requested only for an installed app, once, and refusal is harmless', async () => {
+test('persistent storage is requested for an installed app or saved progress, once, and refusal is harmless', async () => {
   let asked = 0;
   const storage = (persisted, result = true) => ({ persisted: async () => persisted, persist: async () => { asked++; if (result instanceof Error) throw result; return result; } });
-  const win = (standaloneModes, store, iosStandalone = false) => ({ navigator: { storage: store, standalone: iosStandalone }, matchMedia: media(standaloneModes) });
+  const win = (standaloneModes, store, iosStandalone = false, saved = {}) => ({ navigator: { storage: store, standalone: iosStandalone }, matchMedia: media(standaloneModes), localStorage: { getItem: key => saved[key] ?? null } });
   assert.equal(standalone(win(['(display-mode: standalone)'])), true);
   assert.equal(standalone(win(['(display-mode: fullscreen)'])), true);
   assert.equal(standalone(win([], undefined, true)), true);
@@ -53,4 +53,30 @@ test('persistent storage is requested only for an installed app, once, and refus
   assert.equal(await persistStorage(win([], storage(false, new Error('denied')), true)), false);
   assert.equal(asked, 2);
   assert.equal(await persistStorage(win(['(display-mode: standalone)'], undefined)), false);
+  // A browser tab with a saved profile or Pass Key asks too.
+  assert.equal(await persistStorage(win([], storage(false), false, { 'fury-profiles': '{}' })), true);
+  assert.equal(await persistStorage(win([], storage(false), false, { 'fury-pass-key': 'FURY-0000-0000-0000-0000' })), true);
+  assert.equal(asked, 4);
+  assert.equal(savedProgress({ get localStorage() { throw new Error('denied'); } }), false);
+});
+
+test('a failed start reloads once (without its service worker), then shows its error', async () => {
+  const store = new Map();
+  const sessionStorage = { getItem: key => store.get(key) ?? null, setItem: (key, value) => store.set(key, String(value)), removeItem: key => store.delete(key) };
+  let unregistered = 0, reloads = 0;
+  const registration = { unregister: async () => { unregistered++; return true; } };
+  const page = controller => ({
+    navigator: { serviceWorker: { controller, getRegistrations: async () => [registration] } },
+    sessionStorage, location: { reload: () => { reloads++; } }
+  });
+  assert.equal(await recoverFailedStart(page({})), true);
+  assert.deepEqual([unregistered, reloads], [1, 1], 'a controlled page drops its worker before reloading');
+  assert.equal(await recoverFailedStart(page({})), false, 'a second failure in the session does not loop');
+  assert.equal(reloads, 1);
+  startSucceeded(page({}));
+  assert.equal(await recoverFailedStart(page(null)), true, 'a successful start re-arms recovery');
+  assert.deepEqual([unregistered, reloads], [1, 2], 'an uncontrolled page just reloads');
+  const blocked = { ...page({}), sessionStorage: { getItem: () => { throw new Error('denied'); } } };
+  assert.equal(await recoverFailedStart(blocked), false, 'without session storage it never reloads');
+  assert.equal(await recoverFailedStart({ navigator: {} }), false);
 });

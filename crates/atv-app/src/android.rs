@@ -11,7 +11,9 @@
 //!   the screen. `Suspended` releases every GPU surface (the devices and their
 //!   resources stay); `Resumed` makes new surfaces on the new window.
 //! - Touch is the control scheme (the viewport reports a coarse, hover-less
-//!   pointer, like a phone browser); the Back key acts as Escape.
+//!   pointer, like a phone browser); the Back key acts as Escape. Controllers
+//!   (a handheld's built-in pad too) come through the patched winit's device
+//!   events (`gamepad/android.rs`).
 //!
 //! See research/ANDROID.md.
 use crate::content_sync::{self, Background, Progress};
@@ -481,6 +483,133 @@ impl crate::App {
             _ => {}
         }
     }
+}
+
+/// The soft keyboard for the Host/Join fields (the browser opens one for its
+/// `<input>`s; NativeActivity has none until asked). It shows while a field
+/// has focus and hides when none does; typed keys arrive as winit key events
+/// with text, which the form types like a desktop keyboard. Shown forced
+/// (not implicit): NativeActivity's view is not a text editor, so an
+/// implicit request is ignored.
+#[derive(Default)]
+pub struct SoftKeyboard {
+    shown: bool,
+    /// The keyboard was seen on screen since it was last asked for.
+    seen: bool,
+    checked: Option<Instant>,
+}
+
+impl SoftKeyboard {
+    /// `tapped`: a field was just tapped, which re-opens a keyboard the Back
+    /// key closed while the field kept its focus.
+    pub fn follow(&mut self, focused: bool, tapped: bool) {
+        let Some(app) = activity() else {
+            return;
+        };
+        if focused && (tapped || !self.shown) {
+            app.show_soft_input(false);
+            self.seen = false;
+            self.checked = None;
+        } else if !focused && self.shown {
+            app.hide_soft_input(false);
+        }
+        self.shown = focused;
+    }
+
+    /// The keyboard was asked for: the event loop checks it every 250 ms.
+    pub fn watching(&self) -> bool {
+        self.shown
+    }
+
+    /// The player closed the keyboard themselves (Back, or the keyboard's
+    /// hide key): the field should give up its focus.
+    pub fn closed(&mut self) -> bool {
+        if !self.shown || self.checked.is_some_and(|t| t.elapsed().as_millis() < 200) {
+            return false;
+        }
+        self.checked = Some(Instant::now());
+        match ime_visible() {
+            Some(true) => self.seen = true,
+            // Closed after it was up (not still opening).
+            Some(false) if self.seen => {
+                self.shown = false;
+                return true;
+            }
+            _ => {}
+        }
+        false
+    }
+}
+
+/// Whether the soft keyboard is on screen: the decor view's window insets
+/// (`WindowInsets.isVisible(Type.ime())`, Android 11+; None before, and the
+/// Back key then leaves the form waiting for a tap).
+fn ime_visible() -> Option<bool> {
+    use jni::refs::Reference as _;
+    let app = activity()?;
+    // SAFETY: the activity's Java VM lives as long as the process.
+    let vm = unsafe { jni::JavaVM::from_raw(app.vm_as_ptr().cast()) };
+    vm.attach_current_thread(|env| -> jni::errors::Result<Option<bool>> {
+        let sdk = env
+            .get_static_field(
+                jni::jni_str!("android/os/Build$VERSION"),
+                jni::jni_str!("SDK_INT"),
+                jni::jni_sig!("I"),
+            )?
+            .i()?;
+        if sdk < 30 {
+            return Ok(None);
+        }
+        // SAFETY: a global reference to the activity, held by android-activity.
+        let activity =
+            unsafe { jni::objects::JObject::from_raw(env, app.activity_as_ptr().cast()) };
+        let window = env
+            .call_method(
+                &activity,
+                jni::jni_str!("getWindow"),
+                jni::jni_sig!("()Landroid/view/Window;"),
+                &[],
+            )?
+            .l()?;
+        let decor = env
+            .call_method(
+                &window,
+                jni::jni_str!("getDecorView"),
+                jni::jni_sig!("()Landroid/view/View;"),
+                &[],
+            )?
+            .l()?;
+        let insets = env
+            .call_method(
+                &decor,
+                jni::jni_str!("getRootWindowInsets"),
+                jni::jni_sig!("()Landroid/view/WindowInsets;"),
+                &[],
+            )?
+            .l()?;
+        if insets.is_null() {
+            return Ok(None);
+        }
+        let ime = env
+            .call_static_method(
+                jni::jni_str!("android/view/WindowInsets$Type"),
+                jni::jni_str!("ime"),
+                jni::jni_sig!("()I"),
+                &[],
+            )?
+            .i()?;
+        let visible = env
+            .call_method(
+                &insets,
+                jni::jni_str!("isVisible"),
+                jni::jni_sig!("(I)Z"),
+                &[ime.into()],
+            )?
+            .z()?;
+        Ok(Some(visible))
+    })
+    .ok()
+    .flatten()
 }
 
 /// The Back key acts as Escape (pause menu, menu back), as the keyboard's

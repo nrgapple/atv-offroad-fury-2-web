@@ -120,12 +120,18 @@ fn fs(in: Varyings) -> @location(0) vec4<f32> {
     // GS source alpha uses 128 for unity, while decoded PST bytes use 255.
     source_alpha = select(1.0, clamp(sampled.a * (255.0 / 128.0), 0.0, 1.0), r.m.flags.z > 0.5);
   }
+  // A model colour (z: packed RGB, w: set; the King of the Hills flag).
+  if (r.d.flags.w > 0.5) {
+    let c = u32(r.d.flags.z + 0.5);
+    base = base * vec3<f32>(f32((c >> 16u) & 255u), f32((c >> 8u) & 255u), f32(c & 255u)) / 255.0;
+  }
   let n = normalize(in.normal);
   let sunlight = max(dot(n, normalize(g.sun_direction.xyz)), 0.0);
   let lit = select(base * (g.ambient.xyz + g.sun_color.xyz * sunlight), base, r.d.flags.x > 0.5)
     * vehicle_shadow(in.world);
   let coverage = select(1.0, clamp(in.fog.x / in.fog.y, 0.0, 1.0), in.fog.y != 0.0);
-  return vec4<f32>(mix(g.fog_color.rgb, lit, coverage), source_alpha);
+  // The model's colour alpha (Enduro gates fade, 00228ea0).
+  return vec4<f32>(mix(g.fog_color.rgb, lit, coverage), source_alpha * r.d.flags.y);
 }
 
 // High preset vehicle shadow map (shadowReceiverGlsl in web/shadow-map.js):

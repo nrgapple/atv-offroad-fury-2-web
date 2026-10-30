@@ -4,6 +4,8 @@
 
 struct Globals {
     viewport: vec4<f32>,
+    // Tilted images' sway: yaw, pitch (radians).
+    tilt: vec4<f32>,
 };
 
 @group(0) @binding(0) var<uniform> globals: Globals;
@@ -69,8 +71,26 @@ fn vs(@builtin(vertex_index) index: u32, i: Instance) -> Varyings {
         screen = pivot + vec2(d.x * c - d.y * s, d.x * s + d.y * c);
     }
     var out: Varyings;
+    // Tilted images (border = perspective, centre, on): rotate the quad in
+    // 3D about its centre and project it; w makes the texture coordinates
+    // perspective-correct.
+    var w = 1.;
+    if (i.params.x > 2.5 && i.border.w > .5) {
+        let d = screen - i.border.yz;
+        let cy = cos(globals.tilt.x);
+        let sy = sin(globals.tilt.x);
+        let cx = cos(globals.tilt.y);
+        let sx = sin(globals.tilt.y);
+        // Yaw about the vertical axis, then pitch about the horizontal.
+        let x1 = d.x * cy;
+        let z1 = d.x * sy;
+        let y2 = d.y * cx - z1 * sx;
+        let z2 = d.y * sx + z1 * cx;
+        w = max((i.border.x - z2) / i.border.x, .1);
+        screen = i.border.yz + vec2(x1, y2) / w;
+    }
     let ndc = screen / globals.viewport.xy * 2. - 1.;
-    out.position = vec4(ndc.x, -ndc.y, 0., 1.);
+    out.position = vec4(ndc.x * w, -ndc.y * w, 0., w);
     out.local = vec4(local, corner);
     out.screen = screen;
     out.shape = i.shape;
@@ -90,29 +110,49 @@ fn vs(@builtin(vertex_index) index: u32, i: Instance) -> Varyings {
 
 // Signed distance to a rounded box (radii tl, tr, br, bl; `ry` gives
 // elliptical corners their vertical radii, 0 for circular).
+//
+// Each corner owns the rectangle its radii span (CSS lets a corner be wider
+// than half the box, e.g. `border-radius: 75% / 56px`), not the quadrant it
+// sits in. Choosing corners by quadrant cut a wide elliptical corner off at
+// the centre line, where the straight edge took over a step lower: the
+// portrait stage's white rim broke in two halfway across the screen.
 fn rounded(p: vec2<f32>, b: vec4<f32>, r: vec4<f32>, ry: vec4<f32>) -> f32 {
-    let half = b.zw * .5;
-    let q0 = p - (b.xy + half);
-    var radius = r.x;
-    var vertical = ry.x;
-    if (q0.x > 0. && q0.y < 0.) { radius = r.y; vertical = ry.y; }
-    if (q0.x > 0. && q0.y > 0.) { radius = r.z; vertical = ry.z; }
-    if (q0.x < 0. && q0.y > 0.) { radius = r.w; vertical = ry.w; }
-    if (vertical > 0. && radius > 0. && abs(vertical - radius) > .01) {
-        let e = vec2(min(radius, b.z), min(vertical, b.w));
-        let q = abs(q0) - half + e;
-        if (q.x > 0. && q.y > 0.) {
-            // Ellipse distance estimate f / |grad f| (exact on the curve).
-            let k0 = length(q / e);
-            let k1 = length(q / (e * e));
-            return k0 * (k0 - 1.) / max(k1, 1e-6);
-        }
-        let edge = abs(q0) - half;
-        return max(edge.x, edge.y);
-    }
-    radius = min(radius, min(half.x, half.y));
-    let q = abs(q0) - half + radius;
-    return min(max(q.x, q.y), 0.) + length(max(q, vec2(0.))) - radius;
+    let lo = b.xy;
+    let hi = b.xy + b.zw;
+    // Vertical radii: 0 means a circular corner.
+    var vy = select(r, ry, ry > vec4(0.));
+    var rx = r;
+    // CSS overlapping-curves rule: every radius scales by one factor when
+    // two corners on a side need more than its length.
+    var f = 1.;
+    if (rx.x + rx.y > b.z) { f = min(f, b.z / (rx.x + rx.y)); }
+    if (rx.w + rx.z > b.z) { f = min(f, b.z / (rx.w + rx.z)); }
+    if (vy.x + vy.w > b.w) { f = min(f, b.w / (vy.x + vy.w)); }
+    if (vy.y + vy.z > b.w) { f = min(f, b.w / (vy.y + vy.z)); }
+    rx = rx * f;
+    vy = vy * f;
+    var q = vec2(lo.x + rx.x - p.x, lo.y + vy.x - p.y);
+    if (q.x > 0. && q.y > 0.) { return corner(q, rx.x, vy.x); }
+    q = vec2(p.x - (hi.x - rx.y), lo.y + vy.y - p.y);
+    if (q.x > 0. && q.y > 0.) { return corner(q, rx.y, vy.y); }
+    q = vec2(p.x - (hi.x - rx.z), p.y - (hi.y - vy.z));
+    if (q.x > 0. && q.y > 0.) { return corner(q, rx.z, vy.z); }
+    q = vec2(lo.x + rx.w - p.x, p.y - (hi.y - vy.w));
+    if (q.x > 0. && q.y > 0.) { return corner(q, rx.w, vy.w); }
+    let edge = max(lo - p, p - hi);
+    return max(edge.x, edge.y);
+}
+
+// Signed distance from a corner's curve; `q` is the offset outward from the
+// corner's centre (both components positive inside its rectangle).
+fn corner(q: vec2<f32>, rx: f32, ry: f32) -> f32 {
+    if (rx <= 0. || ry <= 0.) { return length(q); }
+    if (abs(rx - ry) <= .01) { return length(q) - rx; }
+    // Ellipse distance estimate f / |grad f| (exact on the curve).
+    let e = vec2(rx, ry);
+    let k0 = length(q / e);
+    let k1 = length(q / (e * e));
+    return k0 * (k0 - 1.) / max(k1, 1e-6);
 }
 
 fn coverage(d: f32) -> f32 {

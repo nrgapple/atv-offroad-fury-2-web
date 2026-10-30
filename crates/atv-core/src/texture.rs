@@ -76,6 +76,26 @@ pub fn decode_tga(data: &[u8]) -> Result<Texture> {
     })
 }
 
+/// One 2x2 box-filtered mip level of premultiplied-agnostic RGBA (the
+/// renderer's mip chain; also computed on the decode workers).
+pub fn downsample(pixels: &[u8], w: u32, h: u32) -> (Vec<u8>, u32, u32) {
+    let (nw, nh) = ((w / 2).max(1), (h / 2).max(1));
+    let mut out = vec![0u8; (nw * nh * 4) as usize];
+    for y in 0..nh {
+        for x in 0..nw {
+            for c in 0..4 {
+                let mut sum = 0u32;
+                for (dx, dy) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
+                    let (sx, sy) = ((x * 2 + dx).min(w - 1), (y * 2 + dy).min(h - 1));
+                    sum += pixels[((sy * w + sx) * 4 + c) as usize] as u32;
+                }
+                out[((y * nw + x) * 4 + c) as usize] = ((sum + 2) / 4) as u8;
+            }
+        }
+    }
+    (out, nw, nh)
+}
+
 #[cfg(test)]
 mod tga_tests {
     use super::*;

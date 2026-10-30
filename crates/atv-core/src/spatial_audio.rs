@@ -226,6 +226,10 @@ pub struct SceneInput {
     pub cars: Vec<[f32; 16]>,
     pub previous_cars: Vec<[f32; 16]>,
     pub definitions: Vec<Definition>,
+    /// Split screen's other views' listeners: each sound is placed for the
+    /// nearest of the camera's and these (`001742f0`). Empty with one view.
+    #[serde(skip)]
+    pub views: Vec<Listener>,
 }
 pub fn scene_commands(input: SceneInput) -> Result<Vec<Command>> {
     if !input.dt.is_finite()
@@ -238,6 +242,9 @@ pub fn scene_commands(input: SceneInput) -> Result<Vec<Command>> {
         return Err("invalid train audio frame history".into());
     }
     let listener = camera_listener(&input.camera, &input.previous_camera, input.dt)?;
+    let listeners: Vec<Listener> = std::iter::once(listener)
+        .chain(input.views.iter().copied())
+        .collect();
     input
         .definitions
         .iter()
@@ -249,7 +256,7 @@ pub fn scene_commands(input: SceneInput) -> Result<Vec<Command>> {
                     min_distance: definition.min_distance,
                     max_distance: definition.max_distance,
                 };
-                return command(source, &[listener]);
+                return command(source, &listeners);
             }
             let current = input
                 .cars
@@ -267,7 +274,7 @@ pub fn scene_commands(input: SceneInput) -> Result<Vec<Command>> {
                 min_distance: definition.min_distance,
                 max_distance: definition.max_distance,
             };
-            command(source, &[listener])
+            command(source, &listeners)
         })
         .collect()
 }
@@ -375,6 +382,21 @@ pub fn pitch(doppler: i32) -> i32 {
     }
     (4096. * (1. + change)) as i32
 }
+/// The listener `001742f0` places a sound at `position` for: the nearest,
+/// by the same strict comparison as [`command`] (the first wins a tie).
+pub fn nearest(position: Vec3, listeners: &[Listener]) -> usize {
+    let mut best = f32::MAX;
+    let mut chosen = 0;
+    for (i, listener) in listeners.iter().enumerate() {
+        let delta: Vec3 = std::array::from_fn(|k| position[k] - listener.position[k]);
+        let distance = ((delta[2] * delta[2] + delta[1] * delta[1]) + delta[0] * delta[0]).sqrt();
+        if distance < best {
+            best = distance;
+            chosen = i;
+        }
+    }
+    chosen
+}
 pub fn command(source: Source, listeners: &[Listener]) -> Result<Command> {
     if listeners.is_empty()
         || listeners.len() > 8
@@ -444,6 +466,22 @@ mod tests {
         assert_eq!(defs[0].position, Some([750., 92., 496.]));
         assert!(defs[0].looping);
         assert_eq!((defs[0].min_distance, defs[0].max_distance), (150., 300.));
+    }
+    #[test]
+    fn nearest_matches_the_command_choice() {
+        let at = |x: f32| Listener {
+            position: [x, 0., 0.],
+            forward: [0., 0., 1.],
+            velocity: [0.; 3],
+        };
+        let views = [at(0.), at(100.), at(100.)];
+        assert_eq!(
+            nearest([90., 0., 0.], &views),
+            1,
+            "strict: the first tie wins"
+        );
+        assert_eq!(nearest([10., 0., 0.], &views), 0);
+        assert_eq!(nearest([10., 0., 0.], &views[..1]), 0);
     }
     #[test]
     fn source_distance_boundaries_and_nearest_listener() {

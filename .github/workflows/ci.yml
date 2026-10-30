@@ -22,7 +22,9 @@ jobs:
     permissions:
       contents: read
       actions: read
-    runs-on: ubuntu-latest
+    # Pinned: ubuntu-latest became 26.04, which the pinned Playwright's
+    # install-deps does not list (tools/playwright_ci.py could not read it).
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -248,7 +250,7 @@ jobs:
       group: deploy-production
       cancel-in-progress: false
     if: vars.FURY_DEPLOYMENT_MODE != 'local' && needs.web.outputs.publish == 'true' && github.repository == 'nrgapple/atv-offroad-fury-2-web' && github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && github.actor == github.repository_owner
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
       contents: read
@@ -274,7 +276,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           FURY_DEPLOYMENT_MODE: ${{ vars.FURY_DEPLOYMENT_MODE }}
         run: python3 tools/deployment_gate.py --commit "$GITHUB_SHA"
-      - name: Deploy successful main build to Cloudflare
+      - name: Migrate D1 and deploy successful main build to Cloudflare
         if: steps.deployment-gate.outputs.publish == 'true'
         timeout-minutes: 6
         env:
@@ -285,6 +287,9 @@ jobs:
             exit 1
           fi
           python3 tools/stage_cloudflare.py --release work/release --commit "$GITHUB_SHA" --preserve-custom-domains
+          # Use the root config: its migrations_dir is relative to this file,
+          # not the generated config under work/cloudflare. Failure stops deploy.
+          npx --yes wrangler@4.149.0 d1 migrations apply SAVES --remote --config wrangler.jsonc
           npx --yes wrangler@4.149.0 deploy --config work/cloudflare/wrangler.jsonc
       - name: Verify public commit, application hashes and dev log
         if: steps.deployment-gate.outputs.publish == 'true'

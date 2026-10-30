@@ -6,6 +6,7 @@
 //!   cargo run --release -p atv-game --example determinism -- CONTENT_DIR \
 //!     env01 SCRIPT.json [--quad 29] [--race 1 3 12345] [--out TRACE.json] \
 //!     [--events EVENTS.json]   # race presentation per step (not fingerprinted)
+//!     [--autopilot]            # the race path driver rides for the player
 use atv_content::{Content, Store};
 use atv_game::ride::{
     Selection,
@@ -15,7 +16,7 @@ use atv_game::ride::{
 
 fn main() {
     let mut args = std::env::args().skip(1);
-    let usage = "determinism CONTENT_DIR VENUE SCRIPT.json [--quad N] [--race LAPS CPU SEED] [--out TRACE.json] [--events EVENTS.json]";
+    let usage = "determinism CONTENT_DIR VENUE SCRIPT.json [--quad N] [--race LAPS CPU SEED] [--out TRACE.json] [--events EVENTS.json] [--autopilot]";
     let content = args.next().expect(usage);
     let venue = args.next().expect(usage);
     let script =
@@ -23,6 +24,7 @@ fn main() {
             .expect("parse script");
     let (mut race, mut out, mut selection) = (None, None, Selection::default());
     let mut events = None;
+    let mut autopilot = false;
     while let Some(arg) = args.next() {
         let mut number = || {
             args.next()
@@ -41,13 +43,14 @@ fn main() {
             "--out" => out = args.next(),
             "--events" => events = args.next(),
             "--quad" => selection.quad = number() as u16,
+            "--autopilot" => autopilot = true,
             _ => panic!("{usage}"),
         }
     }
     let started = std::time::Instant::now();
     let traced = block_on(async {
         let content = Content::open(Store::Directory(content.into())).await?;
-        trace(&content, &venue, selection, race, &script, false).await
+        trace(&content, &venue, selection, race, &script, autopilot).await
     })
     .expect("trace");
     let steps = traced.records.len() - 1;
@@ -58,6 +61,10 @@ fn main() {
         fingerprint(&traced.records),
         started.elapsed().as_secs_f64() * 1000. / steps.max(1) as f64
     );
+    if traced.cpu_recovery.iter().any(|&(a, s)| a + s > 0) {
+        // Port adaptation counters (atv_core::cpu_recovery), per CPU.
+        println!("cpu recovery (assists, skips): {:?}", traced.cpu_recovery);
+    }
     if let Some(path) = events {
         std::fs::write(path, serde_json::to_vec(&traced.events).unwrap()).expect("write events");
     }

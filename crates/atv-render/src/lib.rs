@@ -2,6 +2,7 @@
 //! Windows, Vulkan on Linux and WebGL2 in browsers.
 // Presentation only: not part of the deterministic simulation (clippy.toml).
 #![allow(clippy::disallowed_methods)]
+mod actors;
 mod air_blur;
 mod ambient;
 mod blood;
@@ -86,6 +87,9 @@ pub struct Gpu {
     /// GPU timestamp queries are available (native Metal/DX12/Vulkan).
     pub timestamps: bool,
     samples: u32,
+    /// The 3D scene's depth and multisample targets are kept at the surface
+    /// size; without them (a UI-only frontend) they shrink to one texel.
+    scene_targets: bool,
     depth: wgpu::TextureView,
     msaa: Option<wgpu::TextureView>,
     /// Why the device was lost (driver reset, GPU removed), once it is.
@@ -150,7 +154,7 @@ impl Gpu {
         self.config.width = width.max(1);
         self.config.height = height.max(1);
         surface.configure(&self.device, &self.config);
-        (self.depth, self.msaa) = targets(&self.device, &self.config, self.samples);
+        (self.depth, self.msaa) = self.make_targets();
         self.surface = Some(surface);
         self.generation = surface_generation();
         Ok(())
@@ -335,6 +339,7 @@ impl Gpu {
             adapter_info: adapter.get_info(),
             timestamps,
             samples,
+            scene_targets: true,
             depth,
             msaa,
             lost,
@@ -350,7 +355,30 @@ impl Gpu {
         if let Some(surface) = self.live_surface() {
             surface.configure(&self.device, &self.config);
         }
-        (self.depth, self.msaa) = targets(&self.device, &self.config, self.samples);
+        (self.depth, self.msaa) = self.make_targets();
+    }
+
+    /// Keeps (true) or drops (false) the scene's depth and multisample
+    /// targets; UI-only frames draw straight to the surface and never use
+    /// them.
+    pub fn set_scene_targets(&mut self, on: bool) {
+        if self.scene_targets != on {
+            self.scene_targets = on;
+            (self.depth, self.msaa) = self.make_targets();
+        }
+    }
+
+    fn make_targets(&self) -> (wgpu::TextureView, Option<wgpu::TextureView>) {
+        if self.scene_targets {
+            targets(&self.device, &self.config, self.samples)
+        } else {
+            let tiny = wgpu::SurfaceConfiguration {
+                width: 1,
+                height: 1,
+                ..self.config.clone()
+            };
+            targets(&self.device, &tiny, self.samples)
+        }
     }
 
     pub fn aspect(&self) -> f32 {
@@ -394,6 +422,14 @@ pub struct View {
     pub focal_length: f32,
 }
 
+/// A split-screen view's rectangle of the frame (surface pixels), and
+/// whether it is the frame's first view (which clears the frame).
+#[derive(Clone, Copy, Debug)]
+struct Region {
+    rect: [u32; 4],
+    clear: bool,
+}
+
 #[derive(Default, Clone, Copy, Debug)]
 pub struct FrameStats {
     pub terrain_draws: u32,
@@ -402,12 +438,23 @@ pub struct FrameStats {
     pub scenery_draws: u32,
     pub scenery_triangles: u32,
     pub scenery_culled: u32,
+    /// Scenery chunks drawn per level of detail, later passes dropped by the
+    /// 130 ft multi-pass cull, and models drawn coarser than their finest
+    /// level (research/VISIBILITY.md).
+    pub scenery_levels: [u32; 4],
+    pub scenery_far_culled: u32,
+    pub scenery_coarse_models: u32,
     pub vegetation_draws: u32,
     pub vegetation_triangles: u32,
     pub vegetation_visible: u32,
     pub water_draws: u32,
     pub train_draws: u32,
     pub train_triangles: u32,
+    /// Keyframed TOY actors: draws, triangles, posed and culled actors.
+    pub actor_draws: u32,
+    pub actor_triangles: u32,
+    pub actors_visible: u32,
+    pub actors_culled: u32,
     pub ambient_draws: u32,
     pub ambient_triangles: u32,
     pub snow_draws: u32,
@@ -425,6 +472,35 @@ pub struct FrameStats {
 }
 
 impl FrameStats {
+    /// Adds another view's counts (split screen draws the scene twice).
+    pub fn add(&mut self, other: &Self) {
+        self.terrain_draws += other.terrain_draws;
+        self.terrain_triangles += other.terrain_triangles;
+        self.sky_tiles += other.sky_tiles;
+        self.scenery_draws += other.scenery_draws;
+        self.scenery_triangles += other.scenery_triangles;
+        self.scenery_culled += other.scenery_culled;
+        self.vegetation_draws += other.vegetation_draws;
+        self.vegetation_triangles += other.vegetation_triangles;
+        self.vegetation_visible += other.vegetation_visible;
+        self.water_draws += other.water_draws;
+        self.train_draws += other.train_draws;
+        self.train_triangles += other.train_triangles;
+        self.actor_draws += other.actor_draws;
+        self.actor_triangles += other.actor_triangles;
+        self.actors_visible += other.actors_visible;
+        self.actors_culled += other.actors_culled;
+        self.ambient_draws += other.ambient_draws;
+        self.ambient_triangles += other.ambient_triangles;
+        self.snow_draws += other.snow_draws;
+        self.snow_triangles += other.snow_triangles;
+        self.wheel_draws += other.wheel_draws;
+        self.wheel_triangles += other.wheel_triangles;
+        self.shadow_draws += other.shadow_draws;
+        self.shadow_casters += other.shadow_casters;
+        self.contact_casters += other.contact_casters;
+        self.vehicle_triangles += other.vehicle_triangles;
+    }
     pub fn draws(&self) -> u32 {
         self.terrain_draws
             + self.sky_tiles
@@ -432,6 +508,7 @@ impl FrameStats {
             + self.vegetation_draws
             + self.water_draws
             + self.train_draws
+            + self.actor_draws
             + self.ambient_draws
             + self.snow_draws
             + self.wheel_draws
@@ -443,6 +520,7 @@ impl FrameStats {
             + self.scenery_triangles
             + self.vegetation_triangles
             + self.train_triangles
+            + self.actor_triangles
             + self.ambient_triangles
             + self.snow_triangles
             + self.wheel_triangles
@@ -475,10 +553,65 @@ pub struct Graphics {
     /// Tire track ring segments and their life in seconds (Enhanced 600/15,
     /// High 3600/75; 0 off).
     pub tire_tracks: (u16, u16),
+    /// High: every scene model at its finest level with all material passes
+    /// (Original/Enhanced follow the recovered LOD and 130 ft multi-pass
+    /// cull, research/VISIBILITY.md).
+    pub finest_models: bool,
 }
 
 /// A multiplayer rider's look: quad, rider and appearance bytes.
 pub type PeerLook = atv_game::multiplayer::remote::Key;
+
+/// One rider's Enhanced/High tire tracks and lingering dust passes, built
+/// on first use at the effects' capacity.
+#[derive(Default)]
+struct Trails {
+    tracks: Option<tire_tracks::TireTracksPass>,
+    dust: Option<lingering_dust::LingeringDustPass>,
+}
+
+impl Trails {
+    fn accept(
+        &mut self,
+        gpu: &Gpu,
+        world: &world::World,
+        effects: &mut atv_game::wheel_effects::WheelEffects,
+    ) {
+        let now = effects.frame().time;
+        match &mut effects.tracks {
+            Some((tracks, ..)) => {
+                if self
+                    .tracks
+                    .as_ref()
+                    .is_none_or(|p| p.capacity() != tracks.capacity)
+                {
+                    self.tracks = Some(tire_tracks::TireTracksPass::new(
+                        gpu,
+                        world,
+                        tracks.capacity,
+                    ));
+                    tracks.dirty = Some((0, tracks.capacity));
+                }
+                if let Some(pass) = &mut self.tracks {
+                    pass.accept(gpu, tracks, now);
+                }
+            }
+            None => self.tracks = None,
+        }
+        match &effects.dust {
+            Some(dust) => {
+                let capacity = dust.emitter.capacity;
+                if self.dust.as_ref().is_none_or(|p| p.capacity() != capacity) {
+                    self.dust = Some(lingering_dust::LingeringDustPass::new(gpu, world, capacity));
+                }
+                if let Some(pass) = &mut self.dust {
+                    pass.accept(gpu, &dust.emitter, now);
+                }
+            }
+            None => self.dust = None,
+        }
+    }
+}
 
 pub struct SceneRenderer {
     terrain: terrain::TerrainPass,
@@ -489,6 +622,10 @@ pub struct SceneRenderer {
     train: Option<(
         train::TrainPass,
         std::rc::Rc<std::cell::RefCell<atv_game::train::Train>>,
+    )>,
+    actors: Option<(
+        actors::ActorPass,
+        std::rc::Rc<std::cell::RefCell<atv_game::actors::Actors>>,
     )>,
     ambient: Option<(
         ambient::AmbientPass,
@@ -516,6 +653,13 @@ pub struct SceneRenderer {
     clock: f32,
     /// The ride's wheel dust, chunks, spray and wet births.
     wheel_effects: Option<wheel_effects::WheelEffectsPass>,
+    /// Split screen: player 2's wheel dust, chunks and spray (no tire
+    /// tracks or lingering dust).
+    /// Split screen: players 2-4's wheel effects (by player - 2).
+    second_wheel_effects: Vec<Option<wheel_effects::WheelEffectsPass>>,
+    /// Split screen: players 2-4's own tire tracks and lingering dust
+    /// (drawn in every view, like their wheel effects).
+    second_trails: Vec<Trails>,
     /// Enhanced/High tire tracks.
     tire_tracks: Option<tire_tracks::TireTracksPass>,
     /// Enhanced/High lingering dust puffs.
@@ -533,6 +677,10 @@ pub struct SceneRenderer {
     ride_pose: Option<([f32; 16], Option<[f32; 16]>)>,
     /// The drop gate matrix last posed.
     gate: Option<[f32; 16]>,
+    /// Scene model colours set by `tint_model`.
+    tints: std::collections::HashMap<usize, Option<[f32; 3]>>,
+    /// The Enduro gate drawn opaque (the rest fade).
+    enduro_next: Option<usize>,
     /// Authored speed-rush screen pass, and the travel state it reads.
     speed_rush: Option<speed_rush::SpeedRushPass>,
     /// Alpha Air dark blur, created at the first blurred frame.
@@ -625,6 +773,12 @@ impl SceneRenderer {
                 }
             }
         });
+        let actors = venue.actors.as_ref().map(|shared| {
+            (
+                actors::ActorPass::new(gpu, &world, &shared.borrow()),
+                shared.clone(),
+            )
+        });
         let ambient = venue.ambient.as_ref().map(|shared| {
             (
                 ambient::AmbientPass::new(gpu, &world, &shared.borrow()),
@@ -645,6 +799,7 @@ impl SceneRenderer {
             scenery,
             vegetation,
             train,
+            actors,
             ambient,
             snow,
             weather_view: None,
@@ -678,6 +833,8 @@ impl SceneRenderer {
             profiler: profile::Profiler::default(),
             gpu_timer: None,
             wheel_effects: None,
+            second_wheel_effects: Vec::new(),
+            second_trails: Vec::new(),
             lingering_dust: None,
             burst: None,
             tire_tracks: None,
@@ -706,6 +863,8 @@ impl SceneRenderer {
             blood: None,
             ride_pose: None,
             gate: None,
+            tints: Default::default(),
+            enduro_next: None,
         };
         // startSimulation's first follow-camera request (op 46, dt 1/60)
         // already advances the pre-race shots once.
@@ -714,6 +873,17 @@ impl SceneRenderer {
     }
 
     /// Active Snow's latest frame: its clock and emitters (diagnostics).
+    /// Each scene model's level of detail and far flag in the last frame
+    /// (research/VISIBILITY.md).
+    pub fn scenery_levels(&self) -> &[(u8, bool)] {
+        self.scenery.selected()
+    }
+
+    /// Placed-emitter CPU sprites drawn last frame: [alpha, additive].
+    pub fn ambient_sprites(&self) -> Option<[u32; 2]> {
+        self.ambient.as_ref().map(|(pass, _)| pass.sprite_counts())
+    }
+
     pub fn snow_state(&self) -> Option<atv_core::weather::SnowFrame> {
         let (_, shared) = self.snow.as_ref()?;
         let weather = shared.borrow();
@@ -745,12 +915,23 @@ impl SceneRenderer {
         }
         let old = std::mem::replace(self, fresh);
         self.scenery.adopt(old.scenery);
+        if let (Some((pass, _)), Some((previous, _))) = (&mut self.actors, old.actors) {
+            pass.adopt(previous);
+        }
         if let (Some((pass, _)), Some((previous, _))) = (&mut self.snow, old.snow) {
             pass.adopt(previous);
         }
         if let Some(gate) = old.gate {
             self.gate = Some(gate);
             self.scenery.pose_gate(gpu, &gate);
+        }
+        for (model, rgb) in old.tints {
+            self.tints.insert(model, rgb);
+            self.scenery.tint_model(gpu, model, rgb);
+        }
+        if let Some(next) = old.enduro_next {
+            self.enduro_next = Some(next);
+            self.scenery.fade_enduro_gates(gpu, next);
         }
         self.weather_view = old.weather_view;
         self.weather_camera = old.weather_camera;
@@ -776,6 +957,10 @@ impl SceneRenderer {
     /// live water field (which physics will share).
     fn step_world(&mut self) {
         self.scenery.step();
+        if let Some((pass, shared)) = &mut self.actors {
+            shared.borrow_mut().step();
+            pass.step();
+        }
         if let Some((_, shared)) = &self.train {
             // A ride (ATV or bike) steps the shared clock with its physics (collision
             // heights, moving obstacles); otherwise the presentation does.
@@ -977,6 +1162,33 @@ impl SceneRenderer {
     /// One race step's world presentation, applied before that step's world
     /// clocks advance (atv-web steps the ambient emitters and flashes after
     /// the race): flash bursts, firework emitter commands, the drop gate.
+    /// Colours a scene model (`001b4280`): the King of the Hills flags.
+    pub fn tint_model(&mut self, gpu: &Gpu, model: usize, rgb: Option<[f32; 3]>) {
+        if self.tints.get(&model) != Some(&rgb) {
+            self.tints.insert(model, rgb);
+            self.scenery.tint_model(gpu, model, rgb);
+        }
+    }
+
+    /// Poses a scene model (a Freestyle target's cherry).
+    pub fn pose_model(&mut self, gpu: &Gpu, model: usize, matrix: &[f32; 16]) {
+        self.scenery.pose_model(gpu, model, matrix);
+    }
+
+    /// Hides or shows a scene model (a hit Freestyle target).
+    pub fn hide_model(&mut self, model: usize, hidden: bool) {
+        self.scenery.hide_model(model, hidden);
+    }
+
+    /// Poses the venue's posed model outside a race (the Hockey puck),
+    /// through the drop gate's path; unchanged matrices write nothing.
+    pub fn pose_prop(&mut self, gpu: &Gpu, matrix: &[f32; 16]) {
+        if self.gate != Some(*matrix) {
+            self.gate = Some(*matrix);
+            self.scenery.pose_gate(gpu, matrix);
+        }
+    }
+
     pub fn race_step(&mut self, gpu: &Gpu, events: &atv_game::ride::race::StepEvents) {
         use atv_game::ride::race::FlashBurst;
         if let Some(flashes) = &mut self.scenery.flashes {
@@ -1003,6 +1215,11 @@ impl SceneRenderer {
             self.gate = Some(*gate);
             self.scenery.pose_gate(gpu, gate);
         }
+        if events.enduro_next.is_some() && self.enduro_next != events.enduro_next {
+            self.enduro_next = events.enduro_next;
+            self.scenery
+                .fade_enduro_gates(gpu, events.enduro_next.unwrap_or(0));
+        }
     }
 
     /// Installs the ride's wheel effects (WheelEffectsRenderer).
@@ -1018,6 +1235,44 @@ impl SceneRenderer {
         ));
     }
 
+    /// Split screen: installs (or, with none, removes) the wheel effects
+    /// of player `index + 2`.
+    pub fn set_second_wheel_effects(
+        &mut self,
+        gpu: &Gpu,
+        index: usize,
+        effects: Option<&atv_game::wheel_effects::WheelEffects>,
+    ) {
+        if self.second_wheel_effects.len() <= index {
+            self.second_wheel_effects.resize_with(index + 1, || None);
+        }
+        self.second_wheel_effects[index] =
+            effects.map(|e| wheel_effects::WheelEffectsPass::new(gpu, &self.world, e));
+    }
+
+    /// Split screen: drops every other player's wheel effects.
+    pub fn clear_second_wheel_effects(&mut self) {
+        self.second_wheel_effects.clear();
+        self.second_trails.clear();
+    }
+
+    /// Player `index + 2`'s latest wheel-effect frame, tire tracks and
+    /// lingering dust (split screen).
+    pub fn accept_second_wheel_effects(
+        &mut self,
+        gpu: &Gpu,
+        index: usize,
+        effects: &mut atv_game::wheel_effects::WheelEffects,
+    ) {
+        if let Some(Some(pass)) = self.second_wheel_effects.get_mut(index) {
+            pass.accept(effects);
+        }
+        if self.second_trails.len() <= index {
+            self.second_trails.resize_with(index + 1, Trails::default);
+        }
+        self.second_trails[index].accept(gpu, &self.world, effects);
+    }
+
     /// The latest wheel-effect frame and every wet birth since the last call.
     pub fn accept_wheel_effects(
         &mut self,
@@ -1027,47 +1282,13 @@ impl SceneRenderer {
         if let Some(pass) = &mut self.wheel_effects {
             pass.accept(effects);
         }
-        let now = effects.frame().time;
-        match &mut effects.tracks {
-            Some((tracks, ..)) => {
-                if self
-                    .tire_tracks
-                    .as_ref()
-                    .is_none_or(|p| p.capacity() != tracks.capacity)
-                {
-                    self.tire_tracks = Some(tire_tracks::TireTracksPass::new(
-                        gpu,
-                        &self.world,
-                        tracks.capacity,
-                    ));
-                    tracks.dirty = Some((0, tracks.capacity));
-                }
-                if let Some(pass) = &mut self.tire_tracks {
-                    pass.accept(gpu, tracks, now);
-                }
-            }
-            None => self.tire_tracks = None,
-        }
-        match &effects.dust {
-            Some(dust) => {
-                let capacity = dust.emitter.capacity;
-                if self
-                    .lingering_dust
-                    .as_ref()
-                    .is_none_or(|p| p.capacity() != capacity)
-                {
-                    self.lingering_dust = Some(lingering_dust::LingeringDustPass::new(
-                        gpu,
-                        &self.world,
-                        capacity,
-                    ));
-                }
-                if let Some(pass) = &mut self.lingering_dust {
-                    pass.accept(gpu, &dust.emitter, effects.frame().time);
-                }
-            }
-            None => self.lingering_dust = None,
-        }
+        let mut trails = Trails {
+            tracks: self.tire_tracks.take(),
+            dust: self.lingering_dust.take(),
+        };
+        trails.accept(gpu, &self.world, effects);
+        self.tire_tracks = trails.tracks;
+        self.lingering_dust = trails.dust;
     }
 
     /// The Alpha landing-burst pool after this frame's steps (`now` its clock,
@@ -1179,6 +1400,12 @@ impl SceneRenderer {
     /// Drops riders that left or changed model.
     pub fn retain_peers(&mut self, mut keep: impl FnMut(u8, PeerLook) -> bool) {
         self.peers.retain(|peer, (key, ..)| keep(*peer, *key));
+    }
+
+    /// How many multiplayer rider slots are shown (split screen's other
+    /// players, or a room's riders).
+    pub fn peers_shown(&self) -> usize {
+        self.peers.values().filter(|(.., visible)| *visible).count()
     }
 
     /// Poses the presented multiplayer riders; others are hidden. Unlike race
@@ -1323,6 +1550,16 @@ impl SceneRenderer {
         self.terrain.recenter(gpu, venue, center);
     }
 
+    /// Fine terrain patches drawn (split screen: one per player apart).
+    pub fn terrain_patches(&self) -> usize {
+        self.terrain.patches()
+    }
+
+    /// Split screen: a fine terrain patch around each local player.
+    pub fn recenter_terrain_many(&mut self, gpu: &Gpu, venue: &Venue, centers: &[[f32; 2]]) {
+        self.terrain.recenter_many(gpu, venue, centers);
+    }
+
     /// Per-pass CPU timing (bench runs); resets the accumulated report.
     pub fn set_profiling(&mut self, enabled: bool) {
         self.profiler.set_enabled(enabled);
@@ -1376,6 +1613,7 @@ impl SceneRenderer {
             &target,
             gpu.msaa.as_ref(),
             &gpu.depth,
+            None,
         );
         self.profiler.mark("encode.speed_rush");
         overlay(&mut encoder, &target);
@@ -1391,6 +1629,63 @@ impl SceneRenderer {
         Ok(stats)
     }
 
+    /// Split screen: renders each view into its own rectangle of the frame
+    /// (x, y, width, height in surface pixels), then `overlay`, and presents.
+    /// Each view is prepared and submitted in turn, so the per-view uniforms
+    /// a pass writes reach only its own draws. The speed-rush and air-blur
+    /// screen passes are full-frame effects and are skipped.
+    pub fn render_views(
+        &mut self,
+        gpu: &Gpu,
+        views: &[(View, [u32; 4])],
+        overlay: &mut dyn FnMut(&mut wgpu::CommandEncoder, &wgpu::TextureView),
+    ) -> Result<FrameStats, String> {
+        let acquire = web_time::Instant::now();
+        let Some(surface) = gpu.live_surface() else {
+            return Ok(FrameStats::default());
+        };
+        let frame = match surface.get_current_texture() {
+            wgpu::CurrentSurfaceTexture::Success(frame)
+            | wgpu::CurrentSurfaceTexture::Suboptimal(frame) => frame,
+            wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
+                surface.configure(&gpu.device, &gpu.config);
+                return Ok(FrameStats::default());
+            }
+            wgpu::CurrentSurfaceTexture::Timeout | wgpu::CurrentSurfaceTexture::Occluded => {
+                return Ok(FrameStats::default());
+            }
+            other => return Err(format!("surface: {other:?}")),
+        };
+        let acquire_ms = acquire.elapsed().as_secs_f64() * 1000.;
+        self.profiler.start();
+        let target = frame.texture.create_view(&Default::default());
+        let mut total = FrameStats::default();
+        for (index, (view, rect)) in views.iter().enumerate() {
+            let (encoder, stats) = self.encode(
+                gpu,
+                view,
+                (rect[2].max(1), rect[3].max(1)),
+                &target,
+                gpu.msaa.as_ref(),
+                &gpu.depth,
+                Some(Region {
+                    rect: *rect,
+                    clear: index == 0,
+                }),
+            );
+            gpu.queue.submit([encoder.finish()]);
+            total.add(&stats);
+        }
+        let mut encoder = gpu.device.create_command_encoder(&Default::default());
+        overlay(&mut encoder, &target);
+        gpu.queue.submit([encoder.finish()]);
+        gpu.queue.present(frame);
+        self.profiler.end_frame();
+        total.acquire_ms = acquire_ms;
+        Ok(total)
+    }
+
+    #[allow(clippy::too_many_arguments)]
     fn encode(
         &mut self,
         gpu: &Gpu,
@@ -1399,6 +1694,7 @@ impl SceneRenderer {
         target: &wgpu::TextureView,
         msaa: Option<&wgpu::TextureView>,
         depth: &wgpu::TextureView,
+        region: Option<Region>,
     ) -> (wgpu::CommandEncoder, FrameStats) {
         let aspect = size.0 as f32 / size.1 as f32;
         // 0012b360 applies the active fog end to the far clipping plane.
@@ -1442,15 +1738,33 @@ impl SceneRenderer {
             .prepare(gpu, &view_projection, eye, view.camera.yaw);
         self.profiler.mark("prepare.world");
         stats.sky_tiles = self.sky.as_ref().map_or(0, |s| s.tiles());
-        let scenery = self.scenery.prepare(gpu, &cull);
+        let detail = if self.graphics.finest_models {
+            scenery::Detail::Finest
+        } else {
+            scenery::Detail::Original
+        };
+        let scenery = self
+            .scenery
+            .prepare(gpu, &cull, eye, view.focal_length, detail);
         stats.scenery_draws = scenery.draws;
         stats.scenery_triangles = scenery.triangles;
         stats.scenery_culled = scenery.culled;
+        stats.scenery_levels = scenery.levels;
+        stats.scenery_far_culled = scenery.far_culled;
+        stats.scenery_coarse_models = scenery.coarse_models;
         self.profiler.mark("prepare.scenery");
         if let Some((pass, shared)) = &mut self.train {
             (stats.train_draws, stats.train_triangles) = pass.prepare(gpu, &shared.borrow());
         }
         self.profiler.mark("prepare.train");
+        if let Some((pass, shared)) = &mut self.actors {
+            let a = pass.prepare(gpu, &shared.borrow(), &cull);
+            stats.actor_draws = a.draws;
+            stats.actor_triangles = a.triangles;
+            stats.actors_visible = a.visible;
+            stats.actors_culled = a.culled;
+        }
+        self.profiler.mark("prepare.actors");
         if let Some(vegetation) = &mut self.vegetation {
             let v = vegetation.prepare(gpu, eye, view.camera.yaw);
             stats.vegetation_draws = v.draws;
@@ -1489,6 +1803,11 @@ impl SceneRenderer {
         if let Some(pass) = &mut self.wheel_effects {
             (stats.wheel_draws, stats.wheel_triangles) = pass.prepare(gpu, &view.camera);
         }
+        for pass in self.second_wheel_effects.iter_mut().flatten() {
+            let (draws, triangles) = pass.prepare(gpu, &view.camera);
+            stats.wheel_draws += draws;
+            stats.wheel_triangles += triangles;
+        }
         if let Some(pass) = &mut self.tire_tracks {
             let (draws, triangles) = pass.prepare(gpu);
             stats.wheel_draws += draws;
@@ -1498,6 +1817,18 @@ impl SceneRenderer {
             let (draws, triangles) = pass.prepare(gpu, &view.camera, effects_far);
             stats.wheel_draws += draws;
             stats.wheel_triangles += triangles;
+        }
+        for trails in &mut self.second_trails {
+            if let Some(pass) = &mut trails.tracks {
+                let (draws, triangles) = pass.prepare(gpu);
+                stats.wheel_draws += draws;
+                stats.wheel_triangles += triangles;
+            }
+            if let Some(pass) = &mut trails.dust {
+                let (draws, triangles) = pass.prepare(gpu, &view.camera, effects_far);
+                stats.wheel_draws += draws;
+                stats.wheel_triangles += triangles;
+            }
         }
         if let Some(pass) = &mut self.burst {
             let (draws, triangles) = pass.prepare(gpu, &view.camera, effects_far);
@@ -1594,7 +1925,7 @@ impl SceneRenderer {
         stats.shadow_draws = u32::from(contact > 0) + u32::from(light.is_some());
         stats.contact_casters = contact;
         let rush_scene = match &mut self.speed_rush {
-            Some(rush) if rush.active() => {
+            Some(rush) if rush.active() && region.is_none() => {
                 let (origin, velocity) = self.rush_motion;
                 rush.prepare(
                     gpu,
@@ -1608,11 +1939,13 @@ impl SceneRenderer {
         };
         // Air blur: the frame (after speed rush) renders into its texture.
         let blur_scene = match &mut self.air_blur {
-            Some(blur) => {
+            // Split views skip the blur; otherwise the target is created as soon as
+            // the toggle is on so the first blurred frame does not hitch.
+            Some(blur) if region.is_none() => {
                 let scene = blur.scene_target(gpu, size);
                 blur.active().then_some(scene)
             }
-            None => None,
+            _ => None,
         };
         let output = blur_scene.as_ref().unwrap_or(target);
         self.profiler.mark("prepare.shadows_rush");
@@ -1623,6 +1956,7 @@ impl SceneRenderer {
             ("vegetation", stats.vegetation_draws),
             ("water", stats.water_draws),
             ("train", stats.train_draws),
+            ("actors", stats.actor_draws),
             ("ambient", stats.ambient_draws),
             ("snow", stats.snow_draws),
             ("wheel", stats.wheel_draws),
@@ -1665,15 +1999,24 @@ impl SceneRenderer {
                 Some(msaa) => (msaa, Some(scene_target)),
                 None => (scene_target, None),
             };
+            // A later split-screen view keeps the views drawn before it.
+            let color_load = match region {
+                Some(Region { clear: false, .. }) => wgpu::LoadOp::Load,
+                _ => wgpu::LoadOp::Clear(wgpu::Color { r, g, b, a: 1. }),
+            };
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("scene"),
-                timestamp_writes: self.gpu_timer.as_ref().and_then(|t| t.writes()),
+                timestamp_writes: self
+                    .gpu_timer
+                    .as_ref()
+                    .filter(|_| region.is_none_or(|r| r.clear))
+                    .and_then(|t| t.writes()),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view,
                     depth_slice: None,
                     resolve_target,
                     ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color { r, g, b, a: 1. }),
+                        load: color_load,
                         store: wgpu::StoreOp::Store,
                     },
                 })],
@@ -1694,6 +2037,13 @@ impl SceneRenderer {
                 }),
                 ..Default::default()
             });
+            if let Some(Region {
+                rect: [x, y, w, h], ..
+            }) = region
+            {
+                pass.set_viewport(x as f32, y as f32, w as f32, h as f32, 0., 1.);
+                pass.set_scissor_rect(x, y, w, h);
+            }
             self.profiler.mark("encode.begin");
             if let Some(sky) = &self.sky {
                 sky.draw(&mut pass, &self.world);
@@ -1706,10 +2056,16 @@ impl SceneRenderer {
             if let Some((train, _)) = &self.train {
                 train.draw(&mut pass, &self.world);
             }
+            if let Some((actors, _)) = &self.actors {
+                actors.draw(&mut pass, &self.world);
+            }
             if let Some(contact) = &self.contact_shadows {
                 contact.draw(&mut pass, &self.world);
             }
             if let Some(tracks) = &self.tire_tracks {
+                tracks.draw(&mut pass, &self.world);
+            }
+            for tracks in self.second_trails.iter().filter_map(|t| t.tracks.as_ref()) {
                 tracks.draw(&mut pass, &self.world);
             }
             self.profiler.mark("encode.train_shadows_tracks");
@@ -1746,7 +2102,13 @@ impl SceneRenderer {
             if let Some(effects) = &self.wheel_effects {
                 effects.draw(&mut pass, &self.world);
             }
+            for effects in self.second_wheel_effects.iter().flatten() {
+                effects.draw(&mut pass, &self.world);
+            }
             if let Some(dust) = &self.lingering_dust {
+                dust.draw(&mut pass, &self.world);
+            }
+            for dust in self.second_trails.iter().filter_map(|t| t.dust.as_ref()) {
                 dust.draw(&mut pass, &self.world);
             }
             if let Some(burst) = &self.burst {
@@ -1822,8 +2184,15 @@ impl SceneRenderer {
             if let Some(timer) = &mut self.gpu_timer {
                 timer.frame = frame.checked_sub(30);
             }
-            let (encoder, _) =
-                self.encode(gpu, view, (width, height), &target, msaa.as_ref(), &depth);
+            let (encoder, _) = self.encode(
+                gpu,
+                view,
+                (width, height),
+                &target,
+                msaa.as_ref(),
+                &depth,
+                None,
+            );
             gpu.queue.submit([encoder.finish()]);
         }
         let mut samples = self
@@ -1866,8 +2235,15 @@ impl SceneRenderer {
             view_formats: &[],
         });
         let target = texture.create_view(&Default::default());
-        let (mut encoder, _) =
-            self.encode(gpu, view, (width, height), &target, msaa.as_ref(), &depth);
+        let (mut encoder, _) = self.encode(
+            gpu,
+            view,
+            (width, height),
+            &target,
+            msaa.as_ref(),
+            &depth,
+            None,
+        );
         overlay(&mut encoder, &target);
         read_texture(gpu, encoder, &texture, width, height)
     }

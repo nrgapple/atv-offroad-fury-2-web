@@ -8,6 +8,7 @@ pub mod assets;
 pub mod controller;
 pub mod logo;
 pub mod pixels;
+pub mod status_bar;
 
 use crate::{
     color::{Color, Fill, Gradient},
@@ -41,9 +42,20 @@ pub const MODEL_RIDER: u32 = 2410;
 /// Single Race: Start Race under the preview, and Copy ride link by Back.
 pub const START: u32 = 2411;
 pub const SHARE: u32 = 2412;
+/// The Pass Key badge (title, main menu and Profile Editor pages).
+pub const PASSKEY: u32 = 2413;
+/// The stage panel and its text table (layout checks only; not targets).
+pub const STAGE: u32 = 2414;
+pub const DETAILS: u32 = 2415;
 /// Value rows' Previous/Next arrows, by choice index.
 pub const STEP_PREV: u32 = 2430;
 pub const STEP_NEXT: u32 = 2440;
+/// The rows column when it scrolls, and a marker after its last child (its
+/// content height).
+pub const ROWS: u32 = 2450;
+pub const ROWS_END: u32 = 2451;
+/// Space kept under the rows column's last child when it scrolls.
+pub const ROWS_PADDING: f32 = 12.;
 
 /// A registered image and its texel size.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -90,6 +102,8 @@ pub const GROUPS: [(&str, &str); 6] = [
 ];
 
 pub fn course_group(id: &str) -> &'static str {
+    // Enduro and Short Track races list with their Environment venue.
+    let id = atv_game::launch::race_venue(id);
     match id.trim_end_matches(|c: char| c.is_ascii_digit()) {
         "env" => "env",
         "free" => "free",
@@ -127,9 +141,24 @@ pub struct Stats {
     pub top_speed: Option<f32>,
 }
 
+/// The Pass Key badge's state.
+#[derive(Clone, Debug, PartialEq, Default)]
+pub struct Badge {
+    /// This device's key; none before the first saved progress.
+    pub key: Option<String>,
+    pub status: String,
+    pub synced: bool,
+    pub trouble: bool,
+}
+
 /// Everything a page draws.
 #[derive(Clone, Debug, PartialEq, Default)]
 pub struct Screen {
+    /// Single Race's course picker is open (the setup rows give way to the
+    /// event tabs and the full course list).
+    pub course_sheet: bool,
+    /// The garage's vehicle picker is open (the rows give way to the list).
+    pub vehicle_sheet: bool,
     pub page: String,
     /// (action, label) in keyboard order.
     pub choices: Vec<(String, String)>,
@@ -153,6 +182,8 @@ pub struct Screen {
     /// Single Race: `.ms-track-mode` ("National race").
     pub hero_mode: String,
     pub list_scroll: f32,
+    /// The rows column's scroll (pages whose rows can outgrow it).
+    pub rows_scroll: f32,
     /// Garage.
     pub vehicle_label: String,
     pub rider: u16,
@@ -162,6 +193,10 @@ pub struct Screen {
     /// Loader.
     pub loading_track: String,
     pub tip: Vec<String>,
+    /// Loader: a championship round's briefing lines (title first).
+    pub briefing: Vec<String>,
+    /// Loader: a race's Hall of Fame holders (`002585c0`).
+    pub fame: Vec<String>,
     pub progress: f32,
     pub shot: Option<Img>,
     pub previous_shot: Option<(Img, f32)>,
@@ -178,21 +213,78 @@ pub struct Screen {
     pub model_status: [Option<&'static str>; 2],
     /// Host/Join form fields: (label, value, focused).
     pub fields: Vec<(String, String, bool)>,
+    /// A soft keyboard covers the lower screen while a field has focus: the
+    /// form shows that field alone, where the first field sits.
+    pub typing: bool,
     /// A form error under the rows (`#menu-notice`).
     pub notice: Option<String>,
+    /// Single Player: the saved profile's points and race record.
+    pub profile: Option<String>,
+    /// Profile Editor pages: the panel's table (label, value; a line
+    /// without a value spans the panel).
+    pub details: Vec<(String, String)>,
+    /// A page title in place of the page's own (Load/Copy/Delete Profile).
+    pub heading: Option<String>,
     /// The Free Ride Lobby page's room code and status.
     pub lobby: Option<controller::Lobby>,
     /// The page's slide-in while it opens (crate::transition).
     pub motion: Option<crate::transition::Motion>,
+    /// The status bar across the top (menu pages; none in rides).
+    pub status: Option<status_bar::StatusBar>,
+    /// With the bar, the notice shows as a toast under it at this opacity
+    /// (0 once it has faded) instead of under the rows.
+    pub toast: Option<f32>,
+    /// The Pass Key badge, on the pages that show it.
+    pub badge: Option<Badge>,
+    /// The Pass Key page's QR code: the link it encodes.
+    pub qr: Option<String>,
 }
+
+/// The Press Start overlay's tint at a pulse brightness (ms-pulse 1 → 1.18).
+fn pulse_tint(pulse: f32) -> Color {
+    Color::rgba(255, 255, 255, ((pulse - 1.) * 0.6).min(0.2))
+}
+
+/// The pulse the title is laid out at. Only the Press Start overlay's alpha
+/// follows the pulse, so the page is laid out once and [`retint_pulse`]
+/// sets the overlay's current tint each frame instead of a new layout.
+pub const PULSE_LAYOUT: f32 = 1.18;
+
+/// Retints the Press Start overlay of a title laid out at [`PULSE_LAYOUT`]
+/// to `pulse`.
+pub fn retint_pulse(items: &mut [crate::paint::Item], pulse: f32) {
+    let laid_out = Some(Fill::Solid(pulse_tint(PULSE_LAYOUT)));
+    for item in items {
+        if let crate::paint::Item::Box(paint) = item
+            && paint.fill == laid_out
+        {
+            paint.fill = Some(Fill::Solid(pulse_tint(pulse.max(1.))));
+        }
+    }
+}
+
+/// The wordmark's 3D sway is seen through `perspective: 900px`.
+pub const LOGO_PERSPECTIVE: f32 = 900.;
 
 /// Pages laid out like the main menu: rows on the left, the ride stage
 /// (logo, vehicle and its plate) on the panel.
-fn stage_page(page: &str) -> bool {
+pub fn stage_page(page: &str) -> bool {
     matches!(
         page,
-        "main" | "single" | "multiplayer" | "create-lobby" | "join-lobby"
-    )
+        "main"
+            | "single"
+            | "multiplayer"
+            | "split"
+            | "splitseats"
+            | "championship"
+            | "objectives"
+            | "objective-courses"
+            | "games"
+            | "create-lobby"
+            | "join-lobby"
+            | "profile"
+            | "profile-view"
+    ) || controller::store_page(page)
 }
 
 fn display(size: f32, weight: u16, italic: bool) -> Font {
@@ -364,6 +456,16 @@ struct Metrics {
     gutter: f32,
     row: f32,
     row_font: f32,
+    /// `env(safe-area-inset-*)`: top, right, bottom, left (notches, the
+    /// status bar and the home indicator).
+    safe: [f32; 4],
+}
+
+impl Metrics {
+    /// Side padding clear of the notch: (left, right).
+    fn sides(&self) -> (f32, f32) {
+        (self.gutter + self.safe[3], self.gutter + self.safe[1])
+    }
 }
 
 impl Metrics {
@@ -389,50 +491,109 @@ impl Metrics {
             } else {
                 clamp(19., w * 0.023, 27.)
             },
+            safe: view.safe,
         }
     }
 }
 
-/// The full-viewport frontend page. While it slides in (frontend.js
-/// `animatePage`), the whole HD screen moves and fades in `#menu-stage`
-/// over `#frontend`'s own background.
+/// The full-viewport frontend page: [`layers`] in one tree.
 pub fn element(view: &Viewport, s: &Screen) -> El {
-    let page = page_element(view, s);
-    match s.motion {
-        Some(m) => El::new(Style {
-            size: Size {
-                width: length(view.width),
-                height: length(view.height),
-            },
-            ..Default::default()
-        })
-        .paint(Paint::fill(Color::hex("#080606")))
-        .child(page.opacity(m.opacity).translate(m.dx, 0.)),
-        None => page,
-    }
+    let (back, content) = layers(view, s);
+    back.child(content)
 }
 
-fn page_element(view: &Viewport, s: &Screen) -> El {
+/// The page's two layers. The backdrop (the scenic photo and, in
+/// landscape, the silver stage frame every page shares) stays put; the
+/// content (heading, rows, stage contents, hints) slides and fades while a
+/// page transition runs (crate::transition), and is drawn over it.
+pub fn layers(view: &Viewport, s: &Screen) -> (El, El) {
     let m = Metrics::new(view);
+    let mut back = El::new(Style {
+        position: Position::Relative,
+        size: Size {
+            width: length(m.w),
+            height: length(m.h),
+        },
+        ..Default::default()
+    })
+    .paint(Paint::fill(Color::hex("#2a0505")))
+    .children(backdrop(&m, s));
+    if !m.portrait && !matches!(s.page.as_str(), "title" | "backdrop") {
+        back = back.child(panel_shape(&m));
+    }
+    let Some(status) = &s.status else {
+        let content = page_element(&m, s);
+        let content = match s.motion {
+            Some(motion) => content.opacity(motion.opacity).translate(motion.dx, 0.),
+            None => content,
+        };
+        return (back, content);
+    };
+    // The bar takes the top (and the top safe area); the page lays out in
+    // the rest, so no row ever sits under it. It stays put while the page
+    // slides; an open popover covers both.
+    let top = status_bar::total_height(&m);
+    let below = Viewport {
+        height: (view.height - top).max(1.),
+        safe: [0., view.safe[1], view.safe[2], view.safe[3]],
+        ..*view
+    };
+    let mut page = page_element(&Metrics::new(&below), s);
+    page.style.inset.top = LengthPercentageAuto::length(top);
+    if let Some(motion) = s.motion {
+        page = page.opacity(motion.opacity).translate(motion.dx, 0.);
+    }
+    let mut content = El::new(Style {
+        position: Position::Absolute,
+        inset: taffy::Rect {
+            left: LengthPercentageAuto::length(0.),
+            top: LengthPercentageAuto::length(0.),
+            right: LengthPercentageAuto::auto(),
+            bottom: LengthPercentageAuto::auto(),
+        },
+        size: Size {
+            width: length(m.w),
+            height: length(m.h),
+        },
+        ..Default::default()
+    })
+    .child(page)
+    .child(status_bar::bar(&m, status, s.hovered));
+    if let (Some(notice), Some(opacity)) = (&s.notice, s.toast)
+        && opacity > 0.
+    {
+        content = content.child(status_bar::toast(&m, notice).opacity(opacity));
+    }
+    if let Some(pop) = &status.open {
+        content = content.child(status_bar::popover(&m, pop, status.anchor));
+    }
+    (back, content)
+}
+
+fn page_element(m: &Metrics, s: &Screen) -> El {
     let (w, h) = (m.w, m.h);
     let mut root = El::new(Style {
-        position: Position::Relative,
+        position: Position::Absolute,
+        inset: taffy::Rect {
+            left: LengthPercentageAuto::length(0.),
+            top: LengthPercentageAuto::length(0.),
+            right: LengthPercentageAuto::auto(),
+            bottom: LengthPercentageAuto::auto(),
+        },
         size: Size {
             width: length(w),
             height: length(h),
         },
         display: Display::Grid,
         ..Default::default()
-    })
-    .paint(Paint::fill(Color::hex("#2a0505")));
-    root = root.children(backdrop(&m, s));
+    });
     let page = s.page.as_str();
     // Settings opened from the main menu draw over the bare backdrop.
     if page == "backdrop" {
         return root;
     }
     if page == "title" {
-        return title(&m, s, root);
+        return title(m, s, root);
     }
     let loading = page == "loading";
     // Grid tracks and areas.
@@ -441,18 +602,41 @@ fn page_element(view: &Viewport, s: &Screen) -> El {
     if m.portrait {
         style.grid_template_columns = vec![minmax(length(0.), fr(1.))];
         let stage = match page {
+            // Seven main rows and the six Profile Editor rows with its
+            // status line need more of the height than the others.
+            "main" => {
+                if h <= 640. {
+                    0.26
+                } else {
+                    0.36
+                }
+            }
+            "profile" | "profile-view" => {
+                if h <= 640. {
+                    0.2
+                } else {
+                    0.36
+                }
+            }
+            // Phones give the rows the room (Safari's toolbars take ~150px
+            // more): Single Player's six modes stay on screen.
             page if stage_page(page) => {
                 if h <= 640. {
-                    0.4
+                    0.28
+                } else if h <= 820. {
+                    0.36
                 } else {
                     0.5
                 }
             }
+            // The vehicle and rider rows need little room; the picker, when
+            // open, takes the rest under a smaller stage.
+            "garage" if s.vehicle_sheet => 0.28,
             "garage" => {
                 if h <= 640. {
-                    0.3
+                    0.48
                 } else {
-                    0.4
+                    0.52
                 }
             }
             "gear" => {
@@ -520,32 +704,63 @@ fn page_element(view: &Viewport, s: &Screen) -> El {
                 area((4, 5), (1, 2)),
             )
         }
-    } else {
+    } else if loading {
         (
             area((1, 2), (1, 2)),
             area((1, 3), (2, 3)),
             area((2, 3), (1, 2)),
             area((3, 4), (1, 3)),
         )
+    } else {
+        // Landscape: the rows column runs to the bottom edge and Back sits
+        // under the stage (bottom right, under the thumb), so a phone under
+        // Safari's toolbar shows more rows.
+        (
+            area((1, 2), (1, 2)),
+            area((1, 3), (2, 3)),
+            area((2, 4), (1, 2)),
+            area((3, 4), (2, 3)),
+        )
     };
-    if !m.portrait {
-        root = root.child(panel_shape(&m));
-    }
-    let mut panel = panel(&m, s, loading);
+    let mut panel = panel(m, s, loading);
     (panel.style.grid_row, panel.style.grid_column) = panel_area;
-    let mut header = heading(&m, s);
+    let mut header = heading(m, s);
     (header.style.grid_row, header.style.grid_column) = header_area;
-    let mut left = left(&m, s);
+    let mut left = left(m, s);
     (left.style.grid_row, left.style.grid_column) = left_area;
     // Portrait: the panel paints its silver behind the heading.
     root = root.child(panel).child(header).child(left);
     if loading {
-        let mut bar = loading_bar(&m, s);
+        let mut bar = loading_bar(m, s);
         (bar.style.grid_row, bar.style.grid_column) = hints_area;
         root = root.child(bar);
-    } else if let Some(mut hints) = hints(&m, s) {
-        (hints.style.grid_row, hints.style.grid_column) = hints_area;
+    } else if let Some(mut hints) = hints(m, s) {
+        (hints.style.grid_row, hints.style.grid_column) = hints_area.clone();
         root = root.child(hints);
+        // The Pass Key badge in the bottom-left corner, level with Back.
+        // Portrait menus run their rows down to that corner: there it shows
+        // on the title and the Pass Key pages only.
+        if let Some(badge) = s
+            .badge
+            .as_ref()
+            .filter(|_| !m.portrait || s.page.starts_with("passkey"))
+        {
+            let mut el = badge_element(m, s, badge);
+            (el.style.grid_row, el.style.grid_column) = hints_area;
+            el.style.justify_self = Some(JustifySelf::START);
+            el.style.align_self = Some(AlignSelf::END);
+            el.style.margin = margins(
+                0.,
+                0.,
+                if m.portrait || m.short {
+                    6.
+                } else {
+                    clamp(6., m.h * 0.014, 14.)
+                } + m.safe[2],
+                m.sides().0,
+            );
+            root = root.child(el);
+        }
     }
     root
 }
@@ -624,15 +839,41 @@ fn page_title(page: &str) -> &'static str {
         "main" => "Main Menu",
         "single" => "Single Player",
         "multiplayer" => "Multiplayer",
+        "split" => "Split Screen",
+        "splitseats" => "Players",
         "create-lobby" => "Create Lobby",
         "join-lobby" => "Join Lobby",
         "lobby" => "Free Ride Lobby",
         "garage" => "Select ATV & Rider",
         "tracks" => "Select Track",
         "race" => "Single Race",
+        "championship" => "Championship",
+        "objectives" => "Select Objective",
+        "objective-courses" => "Freestyle Objectives",
+        "games" => "Games",
+        "store" => "Unlock Items",
+        "store-atv" => "ATVs",
+        "store-gear" => "Rider Equipment",
+        "store-games" => "Games",
+        "store-tracks" => "Tracks",
+        "store-cheats" => "Enter Cheats",
+        "profile" => "Profile Editor",
+        "hall-of-fame" => "Hall of Fame",
+        "profile-name" => "Profile Name Entry",
+        "profile-view" => "View Profile",
+        "profile-overview" => "Profile Overview",
+        "profile-trophies" => "Trophies",
+        "profile-records" => "Records",
+        "profile-slots" | "profile-confirm" => "Profile Editor",
+        "profile-unlock" => "Unlock Everything",
         "gear" => "Rider Gear",
+        "passkey" => "Pass Key",
+        "passkey-entry" => "Enter Pass Key",
+        "passkey-file" => "Save Files",
+        "passkey-history" => "Save History",
+        "passkey-confirm" => "Load Save",
         "loading" => "Now Loading...",
-        "settings" => "Settings",
+        "settings" => "Options",
         _ => "",
     }
 }
@@ -679,7 +920,7 @@ fn heading(m: &Metrics, s: &Screen) -> El {
     };
     let (pad_top, pad_bottom) = if m.short { (3., 4.) } else { (6., 8.) };
     let strip = El::new(Style {
-        padding: sides(pad_top, m.gutter, pad_bottom, m.gutter),
+        padding: sides(pad_top, m.sides().1, pad_bottom, m.sides().0),
         min_size: Size {
             width: length(0.),
             height: auto(),
@@ -692,7 +933,10 @@ fn heading(m: &Metrics, s: &Screen) -> El {
     })
     .paint(Paint::fill(fill))
     .content(Content::Text {
-        text: page_title(&s.page).into(),
+        text: s
+            .heading
+            .clone()
+            .unwrap_or_else(|| page_title(&s.page).into()),
         style,
         line_height: size * 1.05,
         wrap: false,
@@ -705,7 +949,7 @@ fn heading(m: &Metrics, s: &Screen) -> El {
         (clamp(12., m.h * 0.03, 28.), clamp(8., m.h * 0.016, 16.))
     };
     El::new(Style {
-        padding: sides(padding.0, 0., padding.1, 0.),
+        padding: sides(padding.0 + m.safe[0], 0., padding.1, 0.),
         ..column(0.)
     })
     .child(strip)
@@ -725,13 +969,17 @@ fn panel(m: &Metrics, s: &Screen, loading: bool) -> El {
     style.padding = if m.portrait {
         sides(
             if loading { 34. } else { 4. },
-            m.gutter,
-            if matches!(s.page.as_str(), "tracks" | "race") {
+            m.sides().1,
+            // Clear of the sweeping lower edge, which rises 56px at the left
+            // (about 40px over the gutter, where text lines start).
+            if matches!(s.page.as_str(), "tracks" | "race") || stage_page(&s.page) {
                 if m.h <= 640. { 16. } else { 22. }
+            } else if !s.details.is_empty() {
+                44.
             } else {
                 10.
             },
-            m.gutter,
+            m.sides().0,
         )
     } else {
         sides(
@@ -740,12 +988,12 @@ fn panel(m: &Metrics, s: &Screen, loading: bool) -> El {
             } else {
                 clamp(16., m.h * 0.04, 40.)
             },
-            m.gutter,
+            m.sides().1,
             if m.short { 6. } else { 12. },
             clamp(64., m.w * 0.04 + m.h * 0.12, 160.),
         )
     };
-    let mut panel = El::new(style);
+    let mut panel = El::new(style).id(STAGE);
     if m.portrait {
         // `.ms-panel::before`: silver reaching up behind the heading with a
         // sweeping elliptical lower-left corner.
@@ -801,6 +1049,8 @@ fn panel(m: &Metrics, s: &Screen, loading: bool) -> El {
             }
             panel = panel.child(slot).child(plate(m, s));
         }
+        // A portrait course picker gives the whole screen to the list.
+        "race" if s.course_sheet && m.portrait => {}
         "tracks" | "lobby" | "race" => panel = panel.child(hero(m, s)),
         "garage" | "gear" => {
             // `.ms-models`: the rider just behind the ATV's rear wheel.
@@ -842,9 +1092,124 @@ fn panel(m: &Metrics, s: &Screen, loading: bool) -> El {
             }
         }
         "loading" => panel = panel.child(loading_info(m, s)),
+        page if controller::profile_pages::DETAIL_PAGES.contains(&page)
+            || controller::passkey_page::PAGES.contains(&page) =>
+        {
+            panel = panel.child(details(m, s));
+            if let Some(link) = &s.qr {
+                panel = panel.child(qr_code(m, link));
+            }
+        }
         _ => {}
     }
     panel
+}
+
+/// The Profile Editor pages' table on the silver panel (the original
+/// ProfileView pages' label/value rows).
+fn details(m: &Metrics, s: &Screen) -> El {
+    let size = if m.short {
+        15.
+    } else if m.portrait {
+        clamp(15., m.w * 0.04, 18.)
+    } else {
+        clamp(15., m.h * 0.026, 21.)
+    };
+    let mut table = El::new(Style {
+        padding: if m.portrait {
+            sides(6., 0., 4., 0.)
+        } else {
+            sides(clamp(8., m.h * 0.05, 48.), 0., 8., 0.)
+        },
+        max_size: Size {
+            width: length(640.),
+            height: auto(),
+        },
+        ..column(if m.short { 2. } else { 5. })
+    });
+    for (i, (label, value)) in s.details.iter().enumerate() {
+        let lead = i == 0 && !value.is_empty();
+        // A status heading (the first line without a value) stands out; the
+        // sentences under it read as body copy, lighter and smaller, with
+        // room between lines, not as a block of bold.
+        let heading = i == 0 && value.is_empty();
+        let prose = value.is_empty() && !heading;
+        let label_style = TextStyle::new(
+            display(
+                if heading {
+                    size * 1.08
+                } else if prose {
+                    size * 0.94
+                } else {
+                    size
+                },
+                if heading || lead {
+                    800
+                } else if prose {
+                    600
+                } else {
+                    700
+                },
+                false,
+            ),
+            Color::hex(if heading || lead {
+                "#111"
+            } else if prose {
+                "#2b2b2b"
+            } else {
+                "#3a3a3a"
+            }),
+        );
+        let wrap_text = |text: &str, style: TextStyle, grow: f32| {
+            El::new(Style {
+                flex_grow: grow,
+                flex_shrink: 1.,
+                min_size: Size {
+                    width: length(0.),
+                    height: auto(),
+                },
+                ..Default::default()
+            })
+            .content(Content::Text {
+                text: text.to_string(),
+                style,
+                line_height: size * if prose { 1.3 } else { 1.2 },
+                wrap: true,
+            })
+        };
+        let mut line = El::new(Style {
+            align_items: AlignItems::FLEX_START,
+            padding: sides(2., 8., 2., 8.),
+            ..row(12.)
+        });
+        if !value.is_empty() {
+            line.paint.border = [0., 0., 1., 0.];
+            line.paint.border_color = Color::hex("#0000001f");
+            line.style.border = sides(0., 0., 1., 0.);
+        }
+        line = line.child(wrap_text(label, label_style, 1.));
+        if !value.is_empty() {
+            line = line.child(
+                El::new(Style {
+                    flex_shrink: 0.,
+                    // A Pass Key (24 characters) and the sync status read
+                    // whole on a phone; short labels give way.
+                    max_size: Size {
+                        width: percent(0.72),
+                        height: auto(),
+                    },
+                    ..Default::default()
+                })
+                .content(Content::Ellipsis {
+                    text: value.clone(),
+                    style: TextStyle::new(display(size, 800, false), Color::hex("#111")),
+                    line_height: size * 1.2,
+                }),
+            );
+        }
+        table = table.child(line);
+    }
+    table.id(DETAILS)
 }
 
 fn panel_logo(m: &Metrics, s: &Screen) -> Option<El> {
@@ -875,7 +1240,8 @@ fn panel_logo(m: &Metrics, s: &Screen) -> Option<El> {
         ..Default::default()
     };
     style.min_size.height = length(0.);
-    let mut el = El::new(style);
+    // The wordmark sways gently in 3D (Front sets the angles).
+    let mut el = El::new(style).tilt(LOGO_PERSPECTIVE);
     // filter: drop-shadow(0 3px 0 #0006).
     if let Some(shadow) = s.logo_shadow {
         el = el.child(
@@ -921,13 +1287,21 @@ fn plate(m: &Metrics, s: &Screen) -> El {
 fn hero(m: &Metrics, s: &Screen) -> El {
     let mut hero = column(if m.portrait { 8. } else { 16. });
     hero.justify_content = JustifyContent::CENTER;
-    // padding-bottom: 6vh applies in both orientations.
-    hero.padding = sides(0., 0., m.h * 0.06, 0.);
+    // padding-bottom: 6vh applies in both orientations; a portrait phone's
+    // Single Race keeps half of it for the setup rows.
+    let race_portrait = m.portrait && matches!(s.page.as_str(), "race" | "tracks");
+    hero.padding = sides(0., 0., m.h * if race_portrait { 0.03 } else { 0.06 }, 0.);
     if !m.portrait {
         hero.flex_grow = 1.;
     }
     let aspect = if m.portrait {
-        if m.h <= 640. { 2.4 } else { 16. / 9. }
+        // Short phones (and Single Race on every phone) take a wider,
+        // lower photo so the rows keep their room.
+        if m.h <= 640. || race_portrait {
+            2.4
+        } else {
+            16. / 9.
+        }
     } else {
         1.5
     };
@@ -1166,16 +1540,16 @@ fn left(m: &Metrics, s: &Screen) -> El {
     });
     style.position = Position::Relative;
     style.padding = if m.portrait {
-        sides(14., m.gutter, 10., m.gutter)
+        sides(14., m.sides().1, 10., m.sides().0)
     } else {
-        sides(0., 0., 12., m.gutter)
+        sides(0., 0., 12. + m.safe[2], m.sides().0)
     };
     if s.page == "loading" {
         style.justify_content = JustifyContent::CENTER;
         style.padding = if m.portrait {
-            sides(10., m.gutter, 10., m.gutter)
+            sides(10., m.sides().1, 10., m.sides().0)
         } else {
-            sides(0., 12., 12., m.gutter)
+            sides(0., 12., 12., m.sides().0)
         };
     }
     let mut left = El::new(style);
@@ -1190,7 +1564,7 @@ fn left(m: &Metrics, s: &Screen) -> El {
                 }
             }
             left = left.child(rows);
-            if let Some(notice) = &s.notice {
+            if let Some(notice) = s.notice.as_ref().filter(|_| s.toast.is_none()) {
                 left = left.child(text(
                     notice.clone(),
                     TextStyle::new(display(15., 700, false), Color::hex("#ffd166")),
@@ -1198,19 +1572,69 @@ fn left(m: &Metrics, s: &Screen) -> El {
                 ));
             }
         }
-        "main" | "single" | "multiplayer" => {
+        page if matches!(
+            page,
+            "main"
+                | "single"
+                | "multiplayer"
+                | "split"
+                | "splitseats"
+                | "championship"
+                | "objectives"
+                | "objective-courses"
+                | "games"
+                | "profile"
+                | "profile-name"
+                | "profile-slots"
+                | "profile-confirm"
+                | "profile-unlock"
+                | "profile-view"
+                | "profile-overview"
+                | "profile-trophies"
+                | "profile-records"
+                | "hall-of-fame"
+        ) || controller::store_page(page)
+            || controller::passkey_page::PAGES.contains(&page) =>
+        {
+            if matches!(page, "profile-name" | "store-cheats" | "passkey-entry") {
+                left = left.child(form(m, s));
+            }
             let mut rows = El::new(column(2.));
             rows.style.flex_shrink = 0.;
             rows.style.padding = sides(0., if m.portrait { 0. } else { 8. }, 0., 0.);
+            // A page with nothing but Back (the Overview and Trophies)
+            // keeps Back as its row.
+            let only_back = s.choices.iter().all(|(a, _)| a == "back");
             for (index, (action, label)) in s.choices.iter().enumerate() {
-                if action == "back" {
+                if action == "back" && !only_back {
                     continue;
                 }
-                rows = rows.child(menu_row(m, s, index, action, label));
+                rows = rows.child(if controller::stepper(action) {
+                    stepper_row(m, s, index, label)
+                } else {
+                    menu_row(m, s, index, action, label)
+                });
             }
             left = left.child(rows);
+            if let Some(profile) = &s.profile {
+                left = left.child(
+                    El::new(Style {
+                        flex_shrink: 0.,
+                        margin: margins(12., 0., 0., if m.portrait { 0. } else { 8. }),
+                        ..Default::default()
+                    })
+                    // Wraps on narrow phones rather than running under Back.
+                    .content(Content::Text {
+                        text: profile.clone(),
+                        style: TextStyle::new(display(16., 700, false), Color::hex("#f1d84e"))
+                            .shadow(1., 2., 0., Color::hex("#000a")),
+                        line_height: 20.,
+                        wrap: true,
+                    }),
+                );
+            }
             // `#menu-notice`, e.g. why a ride link could not open.
-            if let Some(notice) = &s.notice {
+            if let Some(notice) = s.notice.as_ref().filter(|_| s.toast.is_none()) {
                 left = left.child(
                     El::new(Style {
                         flex_shrink: 0.,
@@ -1232,25 +1656,36 @@ fn left(m: &Metrics, s: &Screen) -> El {
         }
         "tracks" => {
             left = left.child(tabs(m, s)).child(course_list(m, s));
+            // A locked Freestyle course (the profile's unlocks).
+            if let Some(notice) = s.notice.as_ref().filter(|_| s.toast.is_none()) {
+                left = left.child(text(
+                    notice.clone(),
+                    TextStyle::new(display(15., 700, false), Color::hex("#ffd166")),
+                    20.,
+                ));
+            }
+        }
+        "race" if s.course_sheet => {
+            // The course picker: event tabs over every course, full height.
+            left = left.child(tabs(m, s)).child(course_list(m, s));
         }
         "race" => {
-            // `.ms-race-settings`: the value rows under the course list.
+            // The setup rows: Course (its arrows step, a tap opens the
+            // picker), Laps, CPU riders and Difficulty. They scroll in the
+            // column like any rows, so none runs under Back.
             let mut settings = El::new(column(2.));
             settings.style.flex_shrink = 0.;
-            settings.style.padding = sides(4., if m.portrait { 0. } else { 8. }, 0., 0.);
-            settings.paint.border = [1., 0., 0., 0.];
-            settings.paint.border_color = Color::hex("#ffffff26");
-            settings.style.border = sides(1., 0., 0., 0.);
+            settings.style.padding = sides(0., if m.portrait { 0. } else { 8. }, 0., 0.);
             for (index, (action, label)) in s.choices.iter().enumerate() {
-                if matches!(action.as_str(), "racelaps" | "racecpu" | "racedifficulty") {
+                if matches!(
+                    action.as_str(),
+                    "racetrack" | "racelaps" | "racecpu" | "racedifficulty"
+                ) {
                     settings = settings.child(stepper_row(m, s, index, label));
                 }
             }
-            left = left
-                .child(tabs(m, s))
-                .child(course_list(m, s))
-                .child(settings);
-            if let Some(notice) = &s.notice {
+            left = left.child(settings);
+            if let Some(notice) = s.notice.as_ref().filter(|_| s.toast.is_none()) {
                 left = left.child(text(
                     notice.clone(),
                     TextStyle::new(display(15., 700, false), Color::hex("#ffd166")),
@@ -1311,7 +1746,7 @@ fn left(m: &Metrics, s: &Screen) -> El {
                 }
             }
             left = left.child(rows);
-            if let Some(notice) = &s.notice {
+            if let Some(notice) = s.notice.as_ref().filter(|_| s.toast.is_none()) {
                 left = left.child(text(
                     notice.clone(),
                     TextStyle::new(display(15., 700, false), Color::hex("#ffd166")),
@@ -1323,7 +1758,32 @@ fn left(m: &Metrics, s: &Screen) -> El {
         "loading" => left = left.child(shot(s)),
         _ => {}
     }
-    left
+    if matches!(s.page.as_str(), "tracks" | "garage" | "loading") || s.course_sheet {
+        // Their lists scroll instead.
+        return left;
+    }
+    // Rows that outgrow the column (a phone in landscape, the seven main
+    // rows on a short portrait screen) scroll inside it, clipped, instead
+    // of running under Back and off the screen.
+    left.style.overflow = taffy::Point {
+        x: taffy::Overflow::Visible,
+        y: taffy::Overflow::Scroll,
+    };
+    left.style.scrollbar_width = 0.;
+    left.style.min_size.height = length(0.);
+    left.child(
+        El::new(Style {
+            flex_shrink: 0.,
+            size: Size {
+                width: length(0.),
+                height: length(0.),
+            },
+            ..Default::default()
+        })
+        .id(ROWS_END),
+    )
+    .id(ROWS)
+    .scroll(s.rows_scroll)
 }
 
 fn bullet() -> El {
@@ -1485,6 +1945,9 @@ fn form(m: &Metrics, s: &Screen) -> El {
     fields.style.flex_shrink = 0.;
     fields.style.padding = sides(0., if m.portrait { 0. } else { 12. }, 0., 0.);
     for (index, (label, value, focused)) in s.fields.iter().enumerate() {
+        if s.typing && !focused {
+            continue;
+        }
         let mut field = El::new(column(6.));
         field = field.child(text(
             label.clone(),
@@ -1535,21 +1998,16 @@ fn form(m: &Metrics, s: &Screen) -> El {
 
 fn tabs(m: &Metrics, s: &Screen) -> El {
     let mut style = row(6.);
-    style.flex_wrap = if m.portrait {
-        FlexWrap::NoWrap
-    } else {
-        FlexWrap::Wrap
-    };
+    // Wrap everywhere: a portrait row ran its last tabs (Supercross, Arena)
+    // off the screen with no way to scroll to them.
+    style.flex_wrap = FlexWrap::Wrap;
     style.gap.height = px(6.);
     style.flex_shrink = 0.;
     style.padding = if m.portrait {
-        sides(0., m.gutter, 2., m.gutter)
+        sides(0., 0., 2., 0.)
     } else {
         sides(0., 12., 0., 0.)
     };
-    if m.portrait {
-        style.margin = margins(0., -m.gutter, 0., -m.gutter);
-    }
     let mut el = El::new(style);
     for (index, (key, label, count)) in s.tabs.iter().enumerate() {
         let selected = *key == s.filter;
@@ -1715,7 +2173,9 @@ fn garage_left(m: &Metrics, s: &Screen, mut left: El) -> El {
     // Vehicle row: arrows either side of the kind and name.
     let mut vehicle = row(14.);
     vehicle.position = Position::Relative;
-    vehicle.min_size.height = length(m.row);
+    // Tall enough for the kind over the name inside the pill (5px insets),
+    // so "ATV" does not poke out of its top.
+    vehicle.min_size.height = length(m.row.max(font * 1.69 + 14.));
     vehicle.padding = sides(0., 18., 0., 6.);
     let mut vehicle_row = El::new(vehicle).id(ROW + index_of(s, "quadprev"));
     if vehicle_selected {
@@ -1855,8 +2315,10 @@ fn garage_left(m: &Metrics, s: &Screen, mut left: El) -> El {
         ))
         .child(switch.id(RIDER));
     rows = rows.child(rider_row);
-    left = left.child(rows);
-    // The vehicle list: every ATV under one heading.
+    if !s.vehicle_sheet {
+        left = left.child(rows);
+    }
+    // The vehicle list (the picker): every ATV under one heading.
     let mut list_style = column(10.);
     list_style.flex_grow = 1.;
     list_style.flex_shrink = 1.;
@@ -1950,7 +2412,10 @@ fn garage_left(m: &Metrics, s: &Screen, mut left: El) -> El {
         }
         list = list.child(group);
     }
-    left = left.child(list);
+    // The picker has the list; otherwise the rows and actions sit together.
+    if s.vehicle_sheet {
+        left = left.child(list);
+    }
     // Done (the garage's Back), under the list.
     let done_size = if m.short { 18. } else { 22. };
     let mut actions = row(10.);
@@ -1976,7 +2441,12 @@ fn garage_left(m: &Metrics, s: &Screen, mut left: El) -> El {
     }
     let mut actions = El::new(actions);
     // `.ms-pill-secondary.ms-gear-link`: Rider gear opens its own page.
-    if let Some(index) = s.choices.iter().position(|(a, _)| a == "gear") {
+    if let Some(index) = s
+        .choices
+        .iter()
+        .position(|(a, _)| a == "gear")
+        .filter(|_| !s.vehicle_sheet)
+    {
         let id = ROW + index as u32;
         let selected = s.selection == index;
         let hovered = s.hovered == Some(id) && !selected;
@@ -2012,7 +2482,23 @@ fn garage_left(m: &Metrics, s: &Screen, mut left: El) -> El {
                 .child(arrow(false, 14., color, false)),
         );
     }
-    left.child(actions.child(done))
+    let mut left = left.child(actions.child(done));
+    // A locked vehicle or a locked selection replaced (the profile's unlocks).
+    if let Some(notice) = s.notice.as_ref().filter(|_| s.toast.is_none()) {
+        left = left.child(
+            El::new(Style {
+                flex_shrink: 0.,
+                ..Default::default()
+            })
+            .content(Content::Text {
+                text: notice.clone(),
+                style: TextStyle::new(display(14., 700, false), Color::hex("#ffd166")),
+                line_height: 18.,
+                wrap: true,
+            }),
+        );
+    }
+    left
 }
 
 fn bullet_slot(selected: bool) -> El {
@@ -2137,7 +2623,9 @@ fn stats_panel(m: &Metrics, stats: &Stats) -> El {
         padding: if m.portrait {
             sides(6., 10., 6., 10.)
         } else {
-            sides(0., 0., 0., 0.)
+            // At the bottom of the stage the 7deg skewed edge has moved
+            // h/2 x tan(7deg) right: keep "Top speed" off it.
+            sides(0., 0., 0., m.h * 0.5 * 7f32.to_radians().tan())
         },
         ..Default::default()
     });
@@ -2205,9 +2693,13 @@ fn hints(m: &Metrics, s: &Screen) -> Option<El> {
     .paint(Paint::fill(Color::hex("#0000008f")).radius(5.))
     .id(BACK)
     .child(arrow(true, 16., color, false))
-    .child(text("Back", style, size));
+    .child(text(
+        if s.course_sheet { "Done" } else { "Back" },
+        style,
+        size,
+    ));
     // Race setup keeps its share link beside Back (`.ms-hint-share`).
-    let share = (s.page == "race")
+    let share = (s.page == "race" && !s.course_sheet)
         .then(|| s.choices.iter().position(|(a, _)| a == "copyride"))
         .flatten()
         .map(|index| {
@@ -2246,7 +2738,7 @@ fn hints(m: &Metrics, s: &Screen) -> Option<El> {
     bar.min_size.height = length(if m.short { 44. } else { 50. });
     if m.portrait {
         bar.justify_content = JustifyContent::FLEX_END;
-        bar.margin = margins(0., m.gutter, 6., m.gutter);
+        bar.margin = margins(0., m.sides().1, 6. + m.safe[2], m.sides().0);
         bar.padding = sides(0., 0., 0., 4.);
     } else {
         bar.justify_self = Some(JustifySelf::END);
@@ -2257,10 +2749,10 @@ fn hints(m: &Metrics, s: &Screen) -> Option<El> {
                 6.
             } else {
                 clamp(6., m.h * 0.014, 14.)
-            },
+            } + m.safe[2],
             0.,
         );
-        bar.padding = sides(0., m.gutter, 0., 26.);
+        bar.padding = sides(0., m.sides().1, 0., 26.);
     }
     Some(El::new(bar).children(share).child(back))
 }
@@ -2296,15 +2788,32 @@ fn stepper_row(m: &Metrics, s: &Screen, index: usize, label: &str) -> El {
     };
     let mut label_style = row(14.);
     label_style.flex_grow = 1.;
-    label_style.flex_shrink = 1.;
+    // The value gives way first; the label ellipsizes only after it.
+    label_style.flex_shrink = 0.25;
     label_style.min_size = Size {
         width: length(0.),
         height: length(m.row),
     };
+    // A long label ("ATV 1/24 · Unlocked") ellipsizes rather than run
+    // under the value.
     let label_el = El::new(label_style)
         .id(ROW + index as u32)
         .child(bullet_slot(selected))
-        .child(text(name, text_style, m.row_font * 1.1));
+        .child(
+            El::new(Style {
+                flex_shrink: 1.,
+                min_size: Size {
+                    width: length(0.),
+                    height: auto(),
+                },
+                ..Default::default()
+            })
+            .content(Content::Ellipsis {
+                text: name.to_string(),
+                style: text_style,
+                line_height: m.row_font * 1.1,
+            }),
+        );
     let cycle = |left: bool, id: u32| {
         let hovered = s.hovered == Some(id);
         El::new(Style {
@@ -2384,7 +2893,11 @@ fn stepper_row(m: &Metrics, s: &Screen, index: usize, label: &str) -> El {
 fn title(m: &Metrics, s: &Screen, mut root: El) -> El {
     root.style.grid_template_columns = vec![fr(1.)];
     root.style.grid_template_rows = vec![fr(1.), auto()];
-    let width = (0.88 * m.w).min(760.);
+    // The wordmark yields height to Press Start and the links (about 150px
+    // with the save chip above it): a phone in landscape under Safari's
+    // toolbar has ~330px, where a 0.88w wordmark pushed Start off screen.
+    let room = (m.h - m.safe[0] - m.safe[2] - 200.).max(60.);
+    let width = (0.88 * m.w).min(760.).min(room * 3.);
     let mut lockup = El::new(Style {
         grid_row: taffy::Line {
             start: line(1),
@@ -2402,7 +2915,8 @@ fn title(m: &Metrics, s: &Screen, mut root: El) -> El {
             height: length(width / 3.),
         },
         ..Default::default()
-    });
+    })
+    .tilt(LOGO_PERSPECTIVE);
     if let Some(shadow) = s.logo_shadow {
         // drop-shadow(0 4px 0 #0009).
         lockup = lockup.child(
@@ -2435,7 +2949,12 @@ fn title(m: &Metrics, s: &Screen, mut root: El) -> El {
             width: px(0.),
             height: px(10.),
         },
-        padding: sides(0., 16., clamp(24., m.h * 0.07, 64.), 16.),
+        padding: sides(
+            m.safe[0],
+            16. + m.safe[1],
+            clamp(24., m.h * 0.07, 64.) + m.safe[2],
+            16. + m.safe[3],
+        ),
         ..Default::default()
     });
     if let Some(index) = start_index {
@@ -2451,12 +2970,11 @@ fn title(m: &Metrics, s: &Screen, mut root: El) -> El {
         );
         start.style.min_size.width = length(320f32.min(0.8 * m.w));
         if s.pulse > 1.001 {
-            // ms-pulse: brightness(1 → 1.18).
+            // ms-pulse: brightness(1 → 1.18). The app lays the title out at
+            // PULSE_LAYOUT and retints this overlay each frame (retint_pulse).
             start = start.child(
-                El::new(absolute(Some(0.), Some(0.), Some(0.), Some(0.))).paint(
-                    Paint::fill(Color::rgba(255, 255, 255, ((s.pulse - 1.) * 0.6).min(0.2)))
-                        .radius(5.),
-                ),
+                El::new(absolute(Some(0.), Some(0.), Some(0.), Some(0.)))
+                    .paint(Paint::fill(pulse_tint(s.pulse)).radius(5.)),
             );
         }
         actions = actions.child(start);
@@ -2483,7 +3001,158 @@ fn title(m: &Metrics, s: &Screen, mut root: El) -> El {
         }
         actions = actions.child(row);
     }
-    root.child(lockup).child(actions)
+    root = root.child(lockup).child(actions);
+    if let Some(badge) = &s.badge {
+        let mut el = badge_element(m, s, badge);
+        el.style.position = Position::Absolute;
+        el.style.inset = inset(Some(12.), Some(12.), None, None);
+        root = root.child(el);
+    }
+    root
+}
+
+/// The Pass Key badge: the key (or an invitation to enter one) over its sync
+/// state, a dark pill like Back; selecting it opens the Pass Key page.
+fn badge_element(m: &Metrics, s: &Screen, badge: &Badge) -> El {
+    let hovered = s.hovered == Some(PASSKEY);
+    let dot = if badge.trouble {
+        "#ff8a65"
+    } else if badge.synced {
+        "#7ee07e"
+    } else {
+        "#f1d84e"
+    };
+    let label = match &badge.key {
+        Some(_) if !badge.status.is_empty() => {
+            format!("PASS KEY · {}", badge.status.to_uppercase())
+        }
+        _ => "PASS KEY".to_string(),
+    };
+    let key = match &badge.key {
+        // Narrow phones: the first and last groups.
+        Some(key) if m.w < 380. && key.len() > 14 => {
+            format!("{}…{}", &key[..9], &key[key.len() - 4..])
+        }
+        Some(key) => key.clone(),
+        None => "Enter or create".into(),
+    };
+    let column = El::new(Style {
+        min_size: Size {
+            width: length(0.),
+            height: auto(),
+        },
+        ..column(1.)
+    })
+    .child(text(
+        label,
+        TextStyle::new(display(10., 700, false), Color::hex("#f1d84e"))
+            .spacing(1.)
+            .shadow(0., 1., 2., Color::BLACK),
+        12.,
+    ))
+    .child(text(
+        key,
+        TextStyle::new(
+            display(if m.short { 13. } else { 15. }, 700, false),
+            Color::hex(if hovered { "#fffaa1" } else { "#f2f2f2" }),
+        )
+        .spacing(1.)
+        .shadow(0., 1., 3., Color::BLACK),
+        17.,
+    ));
+    El::new(Style {
+        display: Display::Flex,
+        align_items: AlignItems::CENTER,
+        gap: Size {
+            width: px(9.),
+            height: px(0.),
+        },
+        min_size: Size {
+            width: auto(),
+            height: length(46.),
+        },
+        padding: sides(4., 12., 4., 11.),
+        flex_shrink: 0.,
+        ..Default::default()
+    })
+    .paint(Paint::fill(Color::hex("#0000008f")).radius(5.))
+    .id(PASSKEY)
+    .child(
+        El::new(Style {
+            size: Size {
+                width: length(9.),
+                height: length(9.),
+            },
+            flex_shrink: 0.,
+            ..Default::default()
+        })
+        .paint(
+            Paint::fill(Color::hex(dot))
+                .radius(4.5)
+                .shadow(BoxShadow::outer(0., 0., 6., Color::hex(dot))),
+        ),
+    )
+    .child(column)
+}
+
+/// A QR code of `link` on a white card with its quiet zone (dark modules as
+/// one vector path, so it stays sharp at any scale).
+fn qr_code(m: &Metrics, link: &str) -> El {
+    use qrcodegen::{QrCode, QrCodeEcc};
+    let Ok(code) = QrCode::encode_text(link, QrCodeEcc::Medium) else {
+        return El::new(Style::default());
+    };
+    let n = code.size();
+    let mut path = String::new();
+    for y in 0..n {
+        let mut x = 0;
+        while x < n {
+            if code.get_module(x, y) {
+                let start = x;
+                while x < n && code.get_module(x, y) {
+                    x += 1;
+                }
+                path += &format!("M{start} {y}h{}v1h-{}z", x - start, x - start);
+            } else {
+                x += 1;
+            }
+        }
+    }
+    let side = if m.portrait {
+        clamp(120., m.w * 0.42, 200.)
+    } else {
+        clamp(120., m.h * 0.34, 240.)
+    };
+    let quiet = side / n as f32 * 3.;
+    El::new(Style {
+        padding: sides(quiet, quiet, quiet, quiet),
+        margin: margins(8., 0., 0., 8.),
+        align_self: Some(AlignSelf::FLEX_START),
+        flex_shrink: 0.,
+        ..Default::default()
+    })
+    .paint(
+        Paint::fill(Color::hex("#ffffff"))
+            .radius(6.)
+            .shadow(BoxShadow::outer(0., 2., 0., Color::hex("#0006"))),
+    )
+    .child(
+        El::new(Style {
+            size: Size {
+                width: length(side),
+                height: length(side),
+            },
+            ..Default::default()
+        })
+        .content(Content::Shape(Shape {
+            path,
+            bounds: [0., 0., n as f32, n as f32],
+            unit: side / n as f32,
+            fill: Color::hex("#000000"),
+            stroke: None,
+            drop_shadow: None,
+        })),
+    )
 }
 
 /// A quiet text button under the title's Start (DEV LOG, DOWNLOADS).
@@ -2596,7 +3265,14 @@ fn loading_info(m: &Metrics, s: &Screen) -> El {
             .child(text("Track:", style.clone(), track_size * 1.2))
             .child(text(s.loading_track.clone(), style, track_size * 1.2)),
     );
-    if !s.tip.is_empty() {
+    for (label, lines) in [
+        ("Championship:", &s.briefing),
+        ("Hall of Fame:", &s.fame),
+        ("Tips:", &s.tip),
+    ] {
+        if lines.is_empty() {
+            continue;
+        }
         let label_size = clamp(17., m.w * 0.018, 21.);
         let tip_size = clamp(16., m.w * 0.017, 20.);
         let (pad_v, pad_h) = if m.short { (10., 14.) } else { (16., 20.) };
@@ -2613,14 +3289,14 @@ fn loading_info(m: &Metrics, s: &Screen) -> El {
         )
         .child(
             El::new(Style::default()).content(Content::Text {
-                text: "Tips:".into(),
+                text: label.into(),
                 style: TextStyle::new(display(label_size, 700, false), Color::hex("#e8c832"))
                     .spacing(label_size * 0.03),
                 line_height: label_size * 1.3,
                 wrap: false,
             }),
         );
-        for line in &s.tip {
+        for line in lines {
             tips = tips.child(
                 El::new(Style::default()).content(Content::Text {
                     text: line.clone(),
@@ -2684,7 +3360,12 @@ fn loading_bar(m: &Metrics, s: &Screen) -> El {
         display: Display::Flex,
         justify_content: JustifyContent::CENTER,
         align_items: AlignItems::CENTER,
-        padding: sides(8., m.gutter, clamp(14., m.h * 0.04, 36.), m.gutter),
+        padding: sides(
+            8.,
+            m.sides().1,
+            clamp(14., m.h * 0.04, 36.) + m.safe[2],
+            m.sides().0,
+        ),
         ..Default::default()
     })
     .child(meter)
@@ -2736,6 +3417,137 @@ mod tests {
     }
 
     #[test]
+    fn a_soft_keyboard_leaves_the_focused_field_alone_in_the_top_slot() {
+        let view = Viewport {
+            width: 1280.,
+            height: 720.,
+            scale: 1.,
+            ..Default::default()
+        };
+        let mut fonts = Fonts::new();
+        let fields = |s: &Screen, fonts: &mut Fonts| {
+            let (mut list, mut hits) = (DisplayList::default(), Vec::new());
+            layout::render(&element(&view, s), fonts, 1280., 720., &mut list, &mut hits);
+            let mut fields: Vec<_> = hits
+                .into_iter()
+                .filter(|(_, id)| (FIELD..FIELD + 4).contains(id))
+                .collect();
+            fields.sort_by_key(|(_, id)| *id);
+            fields
+        };
+        let mut join = screen("join-lobby");
+        join.fields = vec![
+            ("Rider name".into(), "Rider".into(), false),
+            ("Lobby code".into(), "AB".into(), true),
+        ];
+        let form = fields(&join, &mut fonts);
+        assert_eq!(form.len(), 2);
+        join.typing = true;
+        let typing = fields(&join, &mut fonts);
+        // The code field keeps its id (taps still focus it) and takes the
+        // name field's place.
+        assert_eq!(typing.len(), 1);
+        assert_eq!(typing[0].1, FIELD + 1);
+        assert!(
+            (typing[0].0.y - form[0].0.y).abs() < 0.5,
+            "{typing:?} {form:?}"
+        );
+    }
+
+    #[test]
+    fn the_status_bar_sits_above_every_page_target() {
+        use status_bar::{COINS, PROFILE, SAVE, StatusBar, TROPHIES};
+        let mut fonts = Fonts::new();
+        for (w, h, safe) in [
+            (390., 844., [47., 0., 34., 0.]),
+            (844., 390., [0., 47., 21., 47.]),
+            (820., 1180., [24., 0., 20., 0.]),
+            (1280., 800., [0.; 4]),
+        ] {
+            let view = Viewport {
+                width: w,
+                height: h,
+                scale: 2.,
+                safe,
+                ..Default::default()
+            };
+            for page in ["main", "single", "tracks", "garage"] {
+                let mut s = screen(page);
+                s.status = Some(StatusBar {
+                    profile: Some("PLAYER1".into()),
+                    trophies: (3, 14),
+                    ..Default::default()
+                });
+                let (mut list, mut hits) = (DisplayList::default(), Vec::new());
+                layout::render(&element(&view, &s), &mut fonts, w, h, &mut list, &mut hits);
+                let chips: Vec<_> = hits
+                    .iter()
+                    .filter(|(_, id)| [PROFILE, COINS, TROPHIES, SAVE].contains(id))
+                    .collect();
+                assert_eq!(chips.len(), 4, "{page} {w}");
+                for (c, _) in &chips {
+                    assert!(c.y >= safe[0] - 0.5 && c.w >= 44., "{page} {w}: {c:?}");
+                    assert!(c.x >= 0. && c.right() <= w + 0.5, "{page} {w}: {c:?}");
+                    for (r, id) in hits.iter().filter(|(_, id)| !(2460..=2466).contains(id)) {
+                        let apart = c.right() <= r.x
+                            || r.right() <= c.x
+                            || c.bottom() <= r.y
+                            || r.bottom() <= c.y;
+                        assert!(apart, "{page} {w}: chip {c:?} over {id} {r:?}");
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn pages_keep_clear_of_notches_and_the_home_indicator() {
+        let mut fonts = Fonts::new();
+        // iPhone landscape (notch left), then portrait (status bar, home bar).
+        for (w, h, safe) in [
+            (844., 390., [0., 47., 21., 47.]),
+            (390., 844., [47., 0., 34., 0.]),
+        ] {
+            let view = Viewport {
+                width: w,
+                height: h,
+                scale: 3.,
+                safe,
+                ..Default::default()
+            };
+            for page in ["main", "single", "tracks"] {
+                let (mut list, mut hits) = (DisplayList::default(), Vec::new());
+                layout::render(
+                    &element(&view, &screen(page)),
+                    &mut fonts,
+                    w,
+                    h,
+                    &mut list,
+                    &mut hits,
+                );
+                let back = hits.iter().find(|(_, id)| *id == BACK).expect("Back").0;
+                assert!(
+                    back.bottom() <= h - safe[2] + 0.5,
+                    "{page} {w}: Back {back:?}"
+                );
+                assert!(
+                    back.right() <= w - safe[1] + 0.5,
+                    "{page} {w}: Back {back:?}"
+                );
+                // Text starts right of the notch (pills may run under it).
+                let texts = list.items.iter().filter_map(|i| match i {
+                    crate::paint::Item::Text { x, y, .. } => Some((*x, *y)),
+                    _ => None,
+                });
+                for (x, y) in texts {
+                    assert!(x >= safe[3] - 0.5, "{page} {w}: text at x {x}");
+                    assert!(y >= safe[0], "{page} {w}: text at y {y}");
+                }
+            }
+        }
+    }
+
+    #[test]
     fn a_sliding_page_moves_and_fades_with_its_buttons() {
         let view = Viewport {
             width: 1280.,
@@ -2758,13 +3570,18 @@ mod tests {
         // Buttons follow the page (a transformed DOM button is hit there).
         assert!((row(&hits).x - row(&rest_hits).x - m.dx).abs() < 1e-3);
         assert_eq!(row(&hits).y, row(&rest_hits).y);
-        // `#frontend` stays behind at full strength; the stage fades.
-        let crate::paint::Item::Box(under) = &list.items[0] else {
-            panic!("{:?}", list.items[0]);
-        };
-        assert_eq!(under.rect, crate::Rect::new(0., 0., 1280., 720.));
-        assert_eq!(list.items[1], crate::paint::Item::PushOpacity(m.opacity));
+        // The backdrop and the landscape stage frame stay put at full
+        // strength; only the content fades (one opacity group, last).
+        let group = list
+            .items
+            .iter()
+            .position(|i| *i == crate::paint::Item::PushOpacity(m.opacity))
+            .expect("content group");
+        assert_eq!(list.items[..group], rest.items[..group]);
         assert_eq!(list.items.last(), Some(&crate::paint::Item::PopOpacity));
-        assert_eq!(list.items.len(), rest.items.len() + 3);
+        assert_eq!(list.items.len(), rest.items.len() + 2);
+        // The backdrop layer has no hit targets: input goes to the content.
+        let (back, _) = layers(&view, &moving);
+        assert!(back.id.is_none() && back.children.iter().all(|c| c.id.is_none()));
     }
 }

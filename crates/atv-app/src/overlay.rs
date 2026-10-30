@@ -33,6 +33,8 @@ pub enum Action {
     RaceRetry,
     /// Race over → Quit Event (Single Player).
     RaceQuit,
+    /// Race over → Continue Championship (the next round).
+    RaceNextRound,
 }
 
 /// Hit target of the minimap (tap toggles north-up / heading-up).
@@ -49,6 +51,42 @@ pub struct HudInput<'a> {
     /// Other riders in a multiplayer room, the player's origin and the
     /// scene's view-projection (name tags and map markers).
     pub peers: Option<(&'a [atv_ui::hud::peers::Peer], [f32; 3], [f32; 16])>,
+    /// The drawn camera's eye (King of the Hills pill line of sight).
+    pub eye: Option<[f32; 3]>,
+    /// A Freestyle objective's panel (time left, progress, score).
+    pub objective: Option<atv_ui::hud::objective::View>,
+    /// The Training Course's lesson panel.
+    pub training: Option<atv_ui::hud::training::View>,
+    /// A mini-game's panel (research/GAMES.md).
+    pub game: Option<atv_ui::hud::games::View>,
+    /// A target run's or mini-game's compass (Overlay Sets 5-7).
+    pub compass: Option<atv_ui::hud::race::CompassView>,
+    /// Split screen: players 2-4's instruments, each in its own view
+    /// (split.rs).
+    pub others: Vec<SecondHud<'a>>,
+    /// Split screen: the original layout (`2Player-Horiz`, `-Vertical`,
+    /// `3Player`, `4Player`) and the mode's overlay set (1 Race, 2 Stunt,
+    /// 6-9 games, 11 Enduro) whose positions place each player's HUD.
+    pub split_layout: Option<(&'static str, u32)>,
+}
+
+/// Player 2, 3 or 4's HUD: its speed and stunt text, its race overlays
+/// and, in a mini-game, its own game panel, compass and world tags.
+pub struct SecondHud<'a> {
+    /// The layout's columns and rows of views (split.rs `Layout::grid`).
+    pub grid: (u32, u32),
+    /// This player's view: its column and row.
+    pub cell: (u32, u32),
+    pub hud: atv_core::hud::Frame,
+    pub race: Option<(&'a atv_core::race::Frame, f32, [f32; 3])>,
+    pub game: Option<atv_ui::hud::games::View>,
+    /// Split Hockey or Tag: this player's panel.
+    pub training: Option<atv_ui::hud::training::View>,
+    pub compass: Option<atv_ui::hud::race::CompassView>,
+    /// World tags (hill pills, treasures) from this player's camera: the
+    /// tags, its origin and its view's view-projection.
+    pub peers: Option<(&'a [atv_ui::hud::peers::Peer], [f32; 3], [f32; 16])>,
+    pub eye: Option<[f32; 3]>,
 }
 
 /// A press on a toolbar button or the minimap (utility pointers in touch.js).
@@ -72,10 +110,21 @@ type ResultsCache = (Viewport, Results, String, DisplayList, Vec<(Rect, u32)>);
 type ToolbarCache = (Viewport, toolbar::State, DisplayList, Vec<(Rect, u32)>);
 
 pub struct Overlay {
+    /// Split screen: each player's drawn HUD objects and their anchors
+    /// (CSS px) on the latest frame, player order (`#ui-state` for tests).
+    pub split_hud: Vec<Vec<(u32, [f32; 2])>>,
+    /// The shared split race radar's top-left corner (CSS px) last frame.
+    pub split_radar: Option<[f32; 2]>,
+    /// Split screen: a race's results wait until both players finish.
+    pub hold_results: bool,
     /// The multiplayer room for the pause menu's online rows.
     pub lobby: Option<atv_ui::menu::controller::Lobby>,
     /// Name tags drawn on the latest frame (tests).
     pub tags: usize,
+    /// The same per view, player order (split screen; one entry alone).
+    pub view_tags: Vec<usize>,
+    /// The compass icons drawn on the latest frame, if a compass was (tests).
+    compass_icons: Option<Vec<String>>,
     pub fonts: Fonts,
     renderer: Renderer,
     pub settings: Settings,
@@ -147,10 +196,27 @@ pub struct Overlay {
     pub frontend: bool,
     /// The ride is a race (Pause → Restart Race).
     pub race: bool,
+    /// The ride is the Training Course (Pause → Restart Training).
+    pub training: bool,
+    /// The ride is a mini-game (Pause → Restart Game).
+    pub game: bool,
+    /// A room race whose host results have not arrived yet: hold the
+    /// race's own results panel (research/MULTIPLAYER.md "Room races").
+    pub room_race_pending: bool,
+    /// The race's course id, the player's vehicle and whether it runs the
+    /// default laps: what the profile's course record keeps (`001f1e30`).
+    pub race_entry: Option<(String, u16, bool)>,
+    /// The finished race's Hall of Fame records, until named.
+    /// (and the name they are stored under).
+    fame_watch: Option<(atv_core::hall_of_fame::Watch, String)>,
+    /// The last name entered for the Hall of Fame (the next default).
+    fame_name: String,
     /// Pause pages slide in as they open (frontend.js `animatePage`), and
     /// this frame's slide.
     transition: atv_ui::transition::PageTransition,
     menu_motion: Option<atv_ui::transition::Motion>,
+    /// The pause page being left, while it slides out.
+    exit_menu: Option<pause::State>,
 }
 
 impl Overlay {
@@ -187,10 +253,15 @@ impl Overlay {
             meter: None,
             race_overlays,
             race_fade: None,
+            hold_results: false,
+            split_hud: Vec::new(),
+            split_radar: None,
             results: Results::default(),
             results_cache: None,
             help_open: false,
             tags: 0,
+            view_tags: Vec::new(),
+            compass_icons: None,
             lobby: None,
             help_until: None,
             ride_started: false,
@@ -219,8 +290,15 @@ impl Overlay {
             backdrop: None,
             frontend: false,
             race: false,
+            training: false,
+            game: false,
+            room_race_pending: false,
+            race_entry: None,
+            fame_watch: None,
+            fame_name: String::new(),
             transition: Default::default(),
             menu_motion: None,
+            exit_menu: None,
         }
     }
 
@@ -266,13 +344,7 @@ impl Overlay {
         self.jukebox_art = None;
         self.jukebox_art_wanted = self.jukebox_open();
         if let Some(meter) = &mut self.meter {
-            meter.images.clear();
-            for (name, image) in &meter.assets.images {
-                let id =
-                    self.renderer
-                        .add_image(device, queue, image.width, image.height, &image.rgba);
-                meter.images.insert(name.clone(), id);
-            }
+            upload_meter(&mut self.renderer, device, queue, meter);
         }
         self.minimap.image = None;
         self.set_course(venue);
@@ -287,12 +359,7 @@ impl Overlay {
     /// Uploads the original speed meter and stunt text resources.
     pub fn set_meter(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, assets: OverlayAssets) {
         let mut meter = Meter::new(assets);
-        for (name, image) in &meter.assets.images {
-            let id = self
-                .renderer
-                .add_image(device, queue, image.width, image.height, &image.rgba);
-            meter.images.insert(name.clone(), id);
-        }
+        upload_meter(&mut self.renderer, device, queue, &mut meter);
         self.meter = Some(meter);
     }
 
@@ -303,6 +370,8 @@ impl Overlay {
                 let mut menu = PauseMenu::new();
                 menu.frontend = self.frontend;
                 menu.race_active = self.race;
+                menu.training_active = self.training;
+                menu.game_active = self.game;
                 self.menu = Some(menu);
                 self.press = None;
                 self.touch.clear();
@@ -503,12 +572,10 @@ impl Overlay {
                 self.minimap.settings.save(&mut self.settings);
                 None
             } else {
-                if (results::CONTINUE..=results::SHOW).contains(&p.button) {
+                if (results::CONTINUE..=results::FAME_SELECT).contains(&p.button) {
                     self.results.focus_visible = false;
-                    return Some(self.results.act(p.button).map(|command| match command {
-                        results::Command::Retry => Action::RaceRetry,
-                        results::Command::Quit => Action::RaceQuit,
-                    }));
+                    let command = self.results.act(p.button);
+                    return Some(command.and_then(|c| self.command_action(c)));
                 }
                 match toolbar::Button::from_id(p.button) {
                     Some(toolbar::Button::Pause) => Some(Action::Pause),
@@ -585,10 +652,19 @@ impl Overlay {
             );
         }
         let view = self.view;
-        // Each pause page shown slides in; closing the menu shows nothing.
+        // Each pause page shown slides in (the page left slides out, redrawn
+        // from its last state); closing the menu shows nothing.
+        let shown = self.menu.as_ref().map(|m| m.shown);
+        if self.transition.changes(shown) {
+            self.exit_menu = self.menu_cache.as_ref().map(|c| c.1.clone());
+        }
+        let page = self.menu.as_ref().map_or("", |m| m.page.as_str());
         self.transition
-            .observe(self.menu.as_ref().map(|m| m.shown), crate::reduced_motion());
+            .observe(shown, page, crate::reduced_motion(), &[]);
         self.menu_motion = self.transition.motion(now);
+        if let Some(menu) = &mut self.menu {
+            menu.scroller.tick(atv_ui::scroll::now());
+        }
         if self.menu.is_some() {
             self.prepare_menu(device, queue, bindings);
             // drawBars: the spectrum repaints every frame over the cached panel.
@@ -608,6 +684,31 @@ impl Overlay {
                 if self.menu_motion.is_some() {
                     self.list.unopacity();
                 }
+            }
+            if let (Some(menu), Some((panel, _))) = (
+                &self.menu,
+                self.menu_hits.iter().find(|(_, id)| *id == pause::PANEL),
+            ) {
+                menu.scroller
+                    .paint_indicator(&mut self.list, *panel, atv_ui::scroll::now());
+            }
+            // The page left slides out over the new one, without its dim.
+            match (self.transition.exit_motion(), &self.exit_menu) {
+                (Some(motion), Some(old)) => {
+                    let mut old = old.clone();
+                    old.motion = Some(motion);
+                    let mut ignored = Vec::new();
+                    layout::render(
+                        &pause::stage(&view, &old, &self.glyphs),
+                        &mut self.fonts,
+                        view.width,
+                        view.height,
+                        &mut self.list,
+                        &mut ignored,
+                    );
+                }
+                (None, Some(_)) => self.exit_menu = None,
+                _ => {}
             }
             self.upload(device, queue, width, height);
             self.prepare_ms = started.elapsed().as_secs_f64() * 1000.;
@@ -629,6 +730,45 @@ impl Overlay {
         let race = hud.as_ref().and_then(|h| h.race);
         let intro = race.is_some_and(|(frame, ..)| frame.phase == "intro");
         let shown = hud.as_ref().filter(|_| active && !intro);
+        // Split screen: each player's instruments fit its own view (player
+        // 1 on top or on the left; quarters left to right, top to bottom).
+        let others: &[SecondHud] = shown.map_or(&[], |h| h.others.as_slice());
+        let second = others.first();
+        let (columns, rows) = second.map_or((1, 1), |s| s.grid);
+        let (hw, hh) = (view.width / columns as f32, view.height / rows as f32);
+        // Each other player's view offset (CSS px).
+        let offset_of = |s: &SecondHud| {
+            (
+                if s.cell.0 > 0 { view.width - hw } else { 0. },
+                if s.cell.1 > 0 { view.height - hh } else { 0. },
+            )
+        };
+        // The lines between the views (split.rs DIVIDER, 2 CSS px).
+        if columns > 1 {
+            self.list.rect(
+                Rect::new(hw - 1., 0., 2., view.height),
+                atv_ui::Color::rgb(0, 0, 0),
+            );
+        }
+        if rows > 1 {
+            self.list.rect(
+                Rect::new(0., hh - 1., view.width, 2.),
+                atv_ui::Color::rgb(0, 0, 0),
+            );
+        }
+        // Three players leave the last quarter dark (an assumption: the
+        // original's empty quarter was not traced).
+        if columns * rows > 1 && others.len() + 1 < (columns * rows) as usize {
+            self.list.rect(
+                Rect::new(
+                    view.width - hw + 1.,
+                    view.height - hh + 1.,
+                    hw - 1.,
+                    hh - 1.,
+                ),
+                atv_ui::Color::rgb(0, 0, 0),
+            );
+        }
         let instrument = shown.map(|h| Instrument {
             speed: h.hud.speed_text.clone(),
             units: h.hud.units.into(),
@@ -651,7 +791,7 @@ impl Overlay {
         self.minimap.update(
             now,
             shown
-                .filter(|_| race.is_none())
+                .filter(|_| race.is_none() && second.is_none())
                 .map(|h| MapPose::from_matrix(&h.rider_world)),
             instrument,
         );
@@ -670,19 +810,24 @@ impl Overlay {
         }
         self.touch
             .paint(active, now, &mut self.fonts, &mut self.list);
-        if let (Some(meter), Some(h)) = (&self.meter, shown) {
+        if let Some(meter) = &mut self.meter {
+            meter.split = second.is_some();
+        }
+        // Split screen: the original layout's seats, when Overlays.pb has it.
+        let seated = shown
+            .and_then(|h| h.split_layout)
+            .filter(|_| second.is_some())
+            .filter(|(name, set)| {
+                self.meter
+                    .as_ref()
+                    .is_some_and(|m| m.split_layout(*set, name).is_some())
+            });
+        if let (Some(meter), Some(h)) = (&self.meter, shown.filter(|_| seated.is_none())) {
             let speed = match race {
                 Some(_) => self.race_overlays.shown("speed"),
-                None => !self.minimap.settings.enabled,
+                None => !self.minimap.settings.enabled || second.is_some(),
             };
-            meter.paint_speed(
-                &mut self.fonts,
-                &mut self.list,
-                &h.hud,
-                speed,
-                view.width,
-                view.height,
-            );
+            meter.paint_speed(&mut self.fonts, &mut self.list, &h.hud, speed, hw, hh);
         }
         // The race overlays sit below the toolbar: drawn once it is laid out.
         let hud_at = self.list.items.len();
@@ -753,7 +898,123 @@ impl Overlay {
             self.list.items.extend_from_slice(&list.items);
             self.hits.extend_from_slice(hits);
         }
-        if let (Some(meter), Some(h)) = (&self.meter, shown) {
+        self.split_hud.clear();
+        self.split_radar = None;
+        if let (Some(meter), Some(h), Some((name, set))) = (&self.meter, shown, seated)
+            && let Some(layout) = meter.split_layout(set, name)
+        {
+            use atv_ui::hud::split::{Seat, SeatFrame};
+            // The toolbar sits over the top-right view's upper right items.
+            let toolbar_bottom = self.toolbar_cache.as_ref().map_or(0., |(.., hits)| {
+                hits.iter().map(|(r, _)| r.bottom()).fold(0., f32::max)
+            });
+            let inset = |cell: (u32, u32)| {
+                if cell.0 + 1 == columns && cell.1 == 0 {
+                    toolbar_bottom
+                } else {
+                    0.
+                }
+            };
+            let mut items = DisplayList::default();
+            fn view_of<'r>(
+                race: Option<(&'r atv_core::race::Frame, f32, [f32; 3])>,
+                settings: &'r OverlaySettings,
+            ) -> Option<RaceView<'r>> {
+                race.map(|(frame, score, origin)| RaceView {
+                    frame,
+                    score,
+                    origin,
+                    top_inset: 0.,
+                    settings,
+                })
+            }
+            let first = view_of(race, &self.race_overlays);
+            let drawn = meter.paint_seat(
+                &mut self.fonts,
+                &mut items,
+                &Seat {
+                    layout,
+                    name,
+                    player: 0,
+                    top_inset: inset((0, 0)),
+                },
+                &SeatFrame {
+                    hud: &h.hud,
+                    race: first.as_ref(),
+                    compass: h.compass.as_ref(),
+                    speed_visible: true,
+                },
+                hw,
+                hh,
+            );
+            self.split_hud.push(drawn);
+            // The 321 lights are one overlay centred on the whole frame
+            // (object 10 at 256,208 in every split layout).
+            if let Some(lights) = race.and_then(|(frame, ..)| frame.lights) {
+                meter.paint_lamps(&mut items, lights, view.width, view.height);
+            }
+            // The race radar is one overlay the whole frame shares (object
+            // 13): every racer, each human in its player colour.
+            self.split_radar = None;
+            if let Some((frame, _, origin)) = race
+                && self.race_overlays.shown("radar")
+            {
+                use atv_ui::hud::split::RadarDot;
+                let players: Vec<&str> = (2..=4).map(crate::split::player_name).collect();
+                let dots: Vec<RadarDot> = std::iter::once(RadarDot {
+                    origin,
+                    player: Some(0),
+                })
+                .chain(frame.opponents.iter().map(|o| {
+                    RadarDot {
+                        origin: o.origin,
+                        player: players
+                            .iter()
+                            .position(|n| *n == o.name)
+                            .map(|i| i as u8 + 1),
+                    }
+                }))
+                .collect();
+                self.split_radar =
+                    meter.paint_split_radar(&mut items, layout, &dots, view.width, view.height);
+            }
+            self.compass_icons = h
+                .compass
+                .as_ref()
+                .filter(|_| race.is_none() && meter.has_compass())
+                .map(|c| c.icons.iter().map(|(_, i)| i.clone()).collect());
+            self.list.items.splice(hud_at..hud_at, items.items);
+            for second in others {
+                let mut items = DisplayList::default();
+                let race = view_of(second.race, &self.race_overlays);
+                let mut drawn = meter.paint_seat(
+                    &mut self.fonts,
+                    &mut items,
+                    &Seat {
+                        layout,
+                        name,
+                        player: (second.cell.1 * columns + second.cell.0) as usize,
+                        top_inset: inset(second.cell),
+                    },
+                    &SeatFrame {
+                        hud: &second.hud,
+                        race: race.as_ref(),
+                        compass: second.compass.as_ref(),
+                        speed_visible: true,
+                    },
+                    hw,
+                    hh,
+                );
+                let (dx, dy) = offset_of(second);
+                items.translate(dx, dy);
+                for (_, at) in &mut drawn {
+                    at[0] += dx;
+                    at[1] += dy;
+                }
+                self.split_hud.push(drawn);
+                self.list.items.extend(items.items);
+            }
+        } else if let (Some(meter), Some(h)) = (&self.meter, shown) {
             let mut items = DisplayList::default();
             if let Some((frame, score, origin)) = race {
                 // toolbarBottom(): the toolbar's bottom edge.
@@ -770,17 +1031,60 @@ impl Overlay {
                         top_inset,
                         settings: &self.race_overlays,
                     },
-                    view.width,
-                    view.height,
+                    hw,
+                    hh,
                 );
                 if let Some(lights) = frame.lights {
-                    meter.paint_lamps(&mut items, lights, view.width, view.height);
+                    meter.paint_lamps(&mut items, lights, hw, hh);
                 }
             }
+            self.compass_icons = None;
+            if race.is_none()
+                && let Some(compass) = h.compass.as_ref().filter(|_| meter.has_compass())
+            {
+                meter.paint_compass(&mut items, compass, hw, hh);
+                self.compass_icons = Some(compass.icons.iter().map(|(_, i)| i.clone()).collect());
+            }
             if race.is_none() || self.race_overlays.shown("info") {
-                meter.paint_stunt(&mut self.fonts, &mut items, &h.hud, view.width, view.height);
+                meter.paint_stunt(&mut self.fonts, &mut items, &h.hud, hw, hh);
             }
             self.list.items.splice(hud_at..hud_at, items.items);
+            // The other players' instruments, painted for their views and
+            // moved there.
+            for second in others {
+                let mut items = DisplayList::default();
+                let speed = second.race.is_none() || self.race_overlays.shown("speed");
+                meter.paint_speed(&mut self.fonts, &mut items, &second.hud, speed, hw, hh);
+                if let Some((frame, score, origin)) = second.race {
+                    meter.paint_race(
+                        &mut self.fonts,
+                        &mut items,
+                        &RaceView {
+                            frame,
+                            score,
+                            origin,
+                            top_inset: 0.,
+                            settings: &self.race_overlays,
+                        },
+                        hw,
+                        hh,
+                    );
+                    if let Some(lights) = frame.lights {
+                        meter.paint_lamps(&mut items, lights, hw, hh);
+                    }
+                }
+                if second.race.is_none() || self.race_overlays.shown("info") {
+                    meter.paint_stunt(&mut self.fonts, &mut items, &second.hud, hw, hh);
+                }
+                if second.race.is_none()
+                    && let Some(compass) = &second.compass
+                {
+                    meter.paint_compass(&mut items, compass, hw, hh);
+                }
+                let (dx, dy) = offset_of(second);
+                items.translate(dx, dy);
+                self.list.items.extend(items.items);
+            }
         }
         // Race load fades in from black over 500 ms as the pre-race camera
         // starts, over everything (#race-overlay is the topmost layer).
@@ -792,18 +1096,54 @@ impl Overlay {
             .filter(|_| active)
             .map(|start| ((now - start) / 500.) as f32)
             .filter(|t| *t < 1.);
-        // Name tags over other riders, under the map and menus.
-        if let Some((peers, origin, vp)) = shown.and_then(|h| h.peers) {
-            self.tags = atv_ui::hud::peers::paint_tags(
+        // Name tags over other riders, under the map and menus. Split
+        // screen: each player's tags project into its own view.
+        let sub = atv_ui::hud::Viewport {
+            width: hw,
+            height: hh,
+            ..view
+        };
+        self.tags = 0;
+        let views: Vec<_> =
+            std::iter::once(shown.and_then(|h| h.peers.map(|p| (p, h.eye, (0., 0.)))))
+                .chain(
+                    others
+                        .iter()
+                        .map(|s| s.peers.map(|p| (p, s.eye, offset_of(s)))),
+                )
+                .collect();
+        self.view_tags = vec![0; views.len()];
+        for (index, ((peers, origin, vp), eye, (dx, dy))) in views
+            .into_iter()
+            .enumerate()
+            .filter_map(|(i, v)| v.map(|v| (i, v)))
+        {
+            // `002207e0` hides a hill pill whose point the camera's ray to
+            // it does not reach (`00169b60` against the terrain).
+            let hidden = |p: &&atv_ui::hud::peers::Peer| {
+                p.pill.is_some()
+                    && shown
+                        .and_then(|h| eye.map(|eye| (h.terrain, eye)))
+                        .is_some_and(|(terrain, eye)| {
+                            let to = [p.position[0], p.position[1] + 7., p.position[2]];
+                            terrain_blocks(terrain, eye, to)
+                        })
+            };
+            let visible: Vec<_> = peers.iter().filter(|p| !hidden(p)).cloned().collect();
+            let mut list = DisplayList::default();
+            let drawn = atv_ui::hud::peers::paint_tags(
                 &mut self.fonts,
-                &mut self.list,
-                &view,
-                peers,
+                &mut list,
+                &sub,
+                &visible,
                 origin,
                 &vp,
+                self.meter.as_ref().and_then(|m| m.pills.as_ref()),
             );
-        } else {
-            self.tags = 0;
+            self.tags += drawn;
+            self.view_tags[index] = drawn;
+            list.translate(dx, dy);
+            self.list.items.extend(list.items);
         }
         if map_visible {
             self.minimap.paint(&view, &mut self.fonts, &mut self.list);
@@ -833,16 +1173,156 @@ impl Overlay {
                 self.list.items.extend_from_slice(&list.items);
             }
         }
+        // A Freestyle objective's panel, under the toolbar.
+        if let Some(objective) = shown.and_then(|h| h.objective.as_ref())
+            && !self.results.shown
+        {
+            let mut top = self.toolbar_cache.as_ref().map_or(0., |(.., hits)| {
+                hits.iter().map(|(r, _)| r.bottom()).fold(0., f32::max)
+            }) + 8.;
+            // Narrow views: below a top GPS map the panel would cover.
+            let half = 300f32.min(view.width - 24.) / 2.;
+            if map_visible
+                && map.y < top + 120.
+                && map.x < view.width / 2. + half
+                && map.right() > view.width / 2. - half
+            {
+                top = top.max(map.bottom() + 8.);
+            }
+            let mut list = DisplayList::default();
+            layout::render(
+                &atv_ui::hud::objective::element(&view, objective, top),
+                &mut self.fonts,
+                view.width,
+                view.height,
+                &mut list,
+                &mut Vec::new(),
+            );
+            self.list.items.extend_from_slice(&list.items);
+        }
+        // The Training Course's lesson panel, under the toolbar.
+        if let Some(training) = shown.and_then(|h| h.training.as_ref()) {
+            let mut top = self.toolbar_cache.as_ref().map_or(0., |(.., hits)| {
+                hits.iter().map(|(r, _)| r.bottom()).fold(0., f32::max)
+            }) + 8.;
+            // Narrow views centre the panel: below a top GPS map it would cover.
+            let half = 420f32.min(view.width - 24.) / 2.;
+            if view.width < 900.
+                && map_visible
+                && map.y < top + 120.
+                && map.x < view.width / 2. + half
+                && map.right() > view.width / 2. - half
+            {
+                top = top.max(map.bottom() + 8.);
+            }
+            let mut list = DisplayList::default();
+            // Split screen: the panel fits player 1's view.
+            layout::render(
+                &atv_ui::hud::training::element(&sub, training, top),
+                &mut self.fonts,
+                hw,
+                hh,
+                &mut list,
+                &mut Vec::new(),
+            );
+            self.list.items.extend_from_slice(&list.items);
+        }
+        // Split Hockey and Tag: each other player's panel in its own view
+        // (under the toolbar when the view is on the top row).
+        for second in others {
+            let Some(training) = second.training.as_ref() else {
+                continue;
+            };
+            let (dx, dy) = offset_of(second);
+            let top = if dy == 0. {
+                self.toolbar_cache.as_ref().map_or(0., |(.., hits)| {
+                    hits.iter().map(|(r, _)| r.bottom()).fold(0., f32::max)
+                }) + 8.
+            } else {
+                8.
+            };
+            let mut list = DisplayList::default();
+            layout::render(
+                &atv_ui::hud::training::element(&sub, training, top),
+                &mut self.fonts,
+                hw,
+                hh,
+                &mut list,
+                &mut Vec::new(),
+            );
+            list.translate(dx, dy);
+            self.list.items.extend_from_slice(&list.items);
+        }
+        // A mini-game's panel, under the toolbar.
+        // Split screen: each player's panel in its own view (player 2's
+        // at the top of its view, moved there).
+        let toolbar_bottom = self.toolbar_cache.as_ref().map_or(0., |(.., hits)| {
+            hits.iter().map(|(r, _)| r.bottom()).fold(0., f32::max)
+        });
+        let panels: Vec<_> = std::iter::once(
+            shown
+                .and_then(|h| h.game.as_ref())
+                .map(|g| (g, toolbar_bottom + 8., (0., 0.))),
+        )
+        .chain(others.iter().map(|s| {
+            let offset = offset_of(s);
+            // A view on the top row is also under the toolbar.
+            let top = if offset.1 == 0. {
+                toolbar_bottom + 8.
+            } else {
+                8.
+            };
+            s.game.as_ref().map(|g| (g, top, offset))
+        }))
+        .flatten()
+        .collect();
+        for (game, top, (dx, dy)) in panels {
+            let mut list = DisplayList::default();
+            // The original 321 lamps replace the countdown digits when the
+            // course archive has their art.
+            let lamps = self.meter.as_ref().filter(|m| m.has_lamps());
+            let mut game = game.clone();
+            if let (Some(meter), Some(lights)) = (lamps, game.lights) {
+                meter.paint_lamps(&mut list, lights, hw, hh);
+                game.start = None;
+            }
+            layout::render(
+                &atv_ui::hud::games::element(&sub, &game, top),
+                &mut self.fonts,
+                hw,
+                hh,
+                &mut list,
+                &mut Vec::new(),
+            );
+            list.translate(dx, dy);
+            self.list.items.extend_from_slice(&list.items);
+        }
         // Race over: the results panel or the Show Results button.
         match race {
-            Some((frame, ..)) if frame.phase == "finished" => {
+            // Split screen holds until both players finish; a room race
+            // until the host's results are final.
+            Some((frame, ..))
+                if frame.phase == "finished" && !self.hold_results && !self.room_race_pending =>
+            {
                 // race.js always offers Quit Event; a page without the
                 // engine's frontend leaves for its menus.
                 self.results.can_quit = self.frontend || cfg!(target_arch = "wasm32");
-                self.results.finish(frame);
+                // Online competition saves neither profile progress nor Hall
+                // of Fame records (USA manual pp. 36–37).
+                if self.results.finish(frame) {
+                    if self.lobby.is_none() {
+                        self.credit_profile(frame);
+                        self.record_fame(frame);
+                    } else {
+                        self.results.no_award();
+                    }
+                }
             }
+            Some(_) if self.room_race_pending && self.results.shown => {}
             // A race restarted in place starts without results.
-            _ if self.results.shown => self.results = Results::default(),
+            _ if self.results.shown && self.results.objective.is_none() => {
+                self.results = Results::default()
+            }
             _ => {}
         }
         if self.results.shown && active {
@@ -867,12 +1347,73 @@ impl Overlay {
         self.prepare_ms = started.elapsed().as_secs_f64() * 1000.;
     }
 
+    /// Credits the finished race to the loaded profile (`001f1e30` →
+    /// `00323440`/`00322080`) once per race. With no profile loaded the
+    /// race earns nothing (`001f1e30`: a rider without a profile earns 0).
+    fn credit_profile(&mut self, frame: &atv_core::race::Frame) {
+        use atv_ui::settings::{load_profile, profile_loaded, save_profile};
+        let Some((place, stunt, points)) = self.results.award else {
+            return;
+        };
+        if !profile_loaded(&self.settings) {
+            self.results.mark_no_profile();
+            return;
+        }
+        let mut profile = load_profile(&self.settings);
+        profile.record_race(place, points, stunt);
+        if let Some((course, quad, full_length)) = self.race_entry.clone()
+            && let Some(you) = frame.standings.iter().find(|s| s.player)
+        {
+            profile.record_course(&atv_core::profile::RaceResult {
+                course,
+                quad,
+                place,
+                best_lap: you.best,
+                total: you.time.filter(|_| !you.estimated),
+                full_length,
+                stunts: frame.player_stunts.records,
+                personal: frame.records.as_ref().and_then(|r| r.personal.clone()),
+            });
+        }
+        if let Some((round, places)) = self.results.championship.clone()
+            && let Some(series) = atv_core::championship::series(round.series)
+        {
+            let outcome = profile.record_championship(series, round.expert, &places);
+            if let Some((_, reward, _)) = &outcome.finished {
+                profile.credit(*reward);
+            }
+            self.results.championship_line =
+                Some(results::Results::describe_round(series, &outcome));
+            self.results.round = Some(if outcome.finished.is_some() {
+                results::Round::Over
+            } else if outcome.advanced {
+                results::Round::Next
+            } else {
+                results::Round::Replay
+            });
+        }
+        save_profile(&mut self.settings, &profile);
+        self.results.profile_total = Some(profile.points);
+    }
+
     /// Lays out the results (`translate(-50%, -50%)`: measured, then
     /// centred) and adds their paint and buttons.
     fn paint_results(&mut self, frame: Option<&atv_core::race::Frame>) {
         let view = self.view;
-        let summary = frame
-            .map(|f| results::summary(f, self.results.error.as_deref()))
+        let summary = self
+            .results
+            .objective
+            .clone()
+            .or_else(|| {
+                frame.map(|f| {
+                    let line = results::summary(f, self.results.error.as_deref());
+                    if self.results.error.is_some() {
+                        line
+                    } else {
+                        line + &self.results.points_line()
+                    }
+                })
+            })
             .unwrap_or_default();
         let fresh = self
             .results_cache
@@ -938,6 +1479,9 @@ impl Overlay {
     /// A pause page is sliding in (frames keep coming until it rests).
     pub fn sliding(&self) -> bool {
         self.transition.active()
+            || self.menu.as_ref().is_some_and(|m| {
+                m.scroller.active() || m.scroller.indicator_alpha(atv_ui::scroll::now()) > 0.
+            })
     }
 
     /// The Jukebox page is open (it animates every frame).
@@ -951,7 +1495,7 @@ impl Overlay {
             return (false, None);
         }
         let (taken, command) = self.results.key(code);
-        (taken, command.map(command_action))
+        (taken, command.and_then(|c| self.command_action(c)))
     }
 
     /// Controller A/B/X and the D-pad while the race results are up.
@@ -961,9 +1505,65 @@ impl Overlay {
         }
         let idle = atv_game::ride::bindings::Pad::default();
         let pad = pad.unwrap_or(&idle);
-        self.results
-            .pad(&pad.buttons, &pad.axes)
-            .map(command_action)
+        let command = self.results.pad(&pad.buttons, &pad.axes);
+        command.and_then(|c| self.command_action(c))
+    }
+
+    /// A results command's host action; the Hall of Fame name is kept here.
+    fn command_action(&mut self, command: results::Command) -> Option<Action> {
+        Some(match command {
+            results::Command::Retry => Action::RaceRetry,
+            results::Command::Quit => Action::RaceQuit,
+            results::Command::NextRound => Action::RaceNextRound,
+            results::Command::FameName => {
+                if let (Some((watch, stored)), Some(fame)) = (&self.fame_watch, &self.results.fame)
+                {
+                    self.fame_name = atv_core::hall_of_fame::clean_name(&fame.name);
+                    let mut hall = atv_ui::settings::load_hall_of_fame(&self.settings);
+                    hall.rename_run(watch, stored, &self.fame_name);
+                    atv_ui::settings::save_hall_of_fame(&mut self.settings, &hall);
+                    self.fame_watch = Some((watch.clone(), self.fame_name.clone()));
+                }
+                return None;
+            }
+        })
+    }
+
+    /// The race set Hall of Fame records (`00217e40`): keep them under a
+    /// default name at once (so leaving keeps them) and open the name
+    /// entry, which renames them. Online races keep none (+0x7d8).
+    fn record_fame(&mut self, frame: &atv_core::race::Frame) {
+        self.fame_watch = None;
+        if let Some(watch) = frame.records.clone() {
+            self.offer_fame(atv_core::hall_of_fame::Watch::Race(watch));
+        }
+    }
+
+    /// A finished race or Freestyle objective (`002fce00` → `00217e40`):
+    /// its Hall of Fame records are stored under a default name and the
+    /// name entry opens.
+    pub fn offer_fame(&mut self, watch: atv_core::hall_of_fame::Watch) {
+        self.fame_watch = None;
+        let broken = watch.broken();
+        if broken.is_empty() {
+            return;
+        }
+        // Authored default: the last Hall of Fame name, else the loaded
+        // profile's (the original's starting text is not recovered).
+        let name = if self.fame_name.is_empty() {
+            atv_ui::settings::load_book(&self.settings)
+                .current_profile()
+                .map(|p| p.name.clone())
+                .filter(|n| !n.is_empty())
+                .unwrap_or_else(|| atv_core::profile::DEFAULT_NAME.into())
+        } else {
+            self.fame_name.clone()
+        };
+        let mut hall = atv_ui::settings::load_hall_of_fame(&self.settings);
+        hall.commit_run(&watch, &name);
+        atv_ui::settings::save_hall_of_fame(&mut self.settings, &hall);
+        self.results.enter_fame(broken, &name);
+        self.fame_watch = Some((watch, atv_core::hall_of_fame::clean_name(&name)));
     }
 
     fn upload(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, width: u32, height: u32) {
@@ -1073,10 +1673,11 @@ impl Overlay {
             && let Some(row) = rect(pause::ROW + index as u32)
             && let Some(menu) = &mut self.menu
         {
-            let before = menu.scroll;
-            menu.scroll = (menu.scroll + row.y - panel.y - (panel.h - row.h) / 2.)
-                .clamp(0., self.menu_scroll_max);
-            if menu.scroll != before {
+            let before = menu.scroller.offset();
+            menu.scroller.set_bounds(self.menu_scroll_max, panel.h);
+            menu.scroller
+                .jump_to(before + row.y - panel.y - (panel.h - row.h) / 2.);
+            if menu.scroller.offset() != before {
                 self.list.items.truncate(start);
                 self.menu_cache = None;
                 self.prepare_menu(device, queue, bindings);
@@ -1093,13 +1694,20 @@ impl Overlay {
             self.menu_scroll_max,
         ));
         self.menu_hits = hits;
-        if std::mem::take(&mut self.menu_reveal) {
+        let reveal = std::mem::take(&mut self.menu_reveal);
+        {
             let hits = std::mem::take(&mut self.menu_hits);
             if let Some(menu) = &mut self.menu {
-                let before = menu.scroll;
-                menu.reveal(&hits);
-                menu.scroll = menu.scroll.min(self.menu_scroll_max);
-                if menu.scroll != before {
+                let before = menu.scroller.offset();
+                let viewport = hits
+                    .iter()
+                    .find(|(_, id)| *id == pause::PANEL)
+                    .map_or(400., |(r, _)| r.h);
+                menu.scroller.set_bounds(self.menu_scroll_max, viewport);
+                if reveal {
+                    menu.reveal(&hits, self.menu_scroll_max, !crate::reduced_motion());
+                }
+                if menu.scroller.offset() != before {
                     self.menu_hits = hits;
                     self.list.items.truncate(start);
                     self.prepare_menu(device, queue, bindings);
@@ -1125,9 +1733,11 @@ impl Overlay {
                 "page": m.page,
                 // The panel's slide: [opacity, translateX px].
                 "motion": self.menu_motion.map(|m| [m.opacity, m.dx]),
+                "exit": self.transition.exit_motion().map(|m| [m.opacity, m.dx]),
                 "selection": m.selection,
                 "choices": m.rows.choices,
-                "scroll": m.scroll,
+                "scroll": m.scroller.offset(),
+                "scrolling": m.scroller.active(),
                 "notice": m.notice,
                 "labels": m.rows.labels.iter().cloned().collect::<std::collections::BTreeMap<_, _>>(),
                 "musicPage": m.music_page(),
@@ -1145,6 +1755,20 @@ impl Overlay {
             })),
             "hud": {
                 "helpOpen": self.help_open,
+                // Tags and King of the Hills pills drawn last frame.
+                "tags": self.tags,
+                // Split screen: the tags each player's view drew.
+                "viewTags": self.view_tags,
+                // Split screen: each player's drawn objects (Overlays.pb
+                // object numbers) and anchors in CSS px.
+                "split": self.split_hud.iter().map(|seat| seat.iter().map(|(object, at)| {
+                    serde_json::json!({"object": object, "x": at[0], "y": at[1]})
+                }).collect::<Vec<_>>()).collect::<Vec<_>>(),
+                "splitRadar": self.split_radar,
+                // A target run's or mini-game's compass icons; whether the
+                // King of the Hills pills use the original art.
+                "compass": self.compass_icons,
+                "pillArt": self.meter.as_ref().is_some_and(|m| m.pills.is_some()),
                 "meter": self.meter.is_some() && !self.minimap.settings.enabled,
                 "compact": self.toolbar_cache.as_ref().is_some_and(|(_, s, ..)| s.compact),
                 "minimap": {
@@ -1262,13 +1886,6 @@ fn safe_area() -> [f32; 4] {
     ]
 }
 
-fn command_action(command: results::Command) -> Action {
-    match command {
-        results::Command::Retry => Action::RaceRetry,
-        results::Command::Quit => Action::RaceQuit,
-    }
-}
-
 /// Moves a laid-out item down by `dy` CSS pixels.
 fn offset_item(item: &mut atv_ui::paint::Item, dy: f32) {
     use atv_ui::paint::Item;
@@ -1284,7 +1901,8 @@ fn offset_item(item: &mut atv_ui::paint::Item, dy: f32) {
         }
         Item::ImageShadow { dst, .. } => dst.y += dy,
         Item::PushClip { rect, .. } => rect.y += dy,
-        Item::PopClip | Item::PushOpacity(_) | Item::PopOpacity => {}
+        Item::PushTilt { center, .. } => center[1] += dy,
+        Item::PopClip | Item::PushOpacity(_) | Item::PopOpacity | Item::PopTilt => {}
     }
 }
 
@@ -1308,4 +1926,105 @@ fn buzz(ms: u32) {
     }
     #[cfg(not(target_arch = "wasm32"))]
     let _ = ms;
+}
+
+/// Uploads the HUD's original icons, and King of the Hills' pill art in
+/// each pill colour (`peers::pill_tints`).
+fn upload_meter(
+    renderer: &mut Renderer,
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    meter: &mut Meter,
+) {
+    meter.images.clear();
+    for (name, image) in &meter.assets.images {
+        let id = renderer.add_image(device, queue, image.width, image.height, &image.rgba);
+        meter.images.insert(name.clone(), id);
+    }
+    meter.pills = meter
+        .assets
+        .images
+        .get(atv_ui::hud::assets::PILL)
+        .map(|image| {
+            let tints = atv_ui::hud::peers::pill_tints(&image.rgba)
+                .map(|rgba| renderer.add_image(device, queue, image.width, image.height, &rgba));
+            atv_ui::hud::peers::PillArt {
+                tints,
+                size: [image.width as f32, image.height as f32],
+            }
+        });
+}
+
+/// Whether the terrain rises above the segment from `from` to `to`
+/// (sampled every half cell, ends excluded): the hill pills' line of sight.
+pub(crate) fn terrain_blocks(
+    terrain: &atv_game::venue::Terrain,
+    from: [f32; 3],
+    to: [f32; 3],
+) -> bool {
+    if terrain.width < 2 || terrain.depth < 2 || terrain.spacing <= 0. {
+        return false;
+    }
+    let ground = |x: f32, z: f32| {
+        let gx = (x / terrain.spacing).clamp(0., (terrain.width - 1) as f32 - 1e-3);
+        let gz = (z / terrain.spacing).clamp(0., (terrain.depth - 1) as f32 - 1e-3);
+        let (ix, iz) = (gx as usize, gz as usize);
+        let (fx, fz) = (gx - ix as f32, gz - iz as f32);
+        let h = |x, z| terrain.height(x, z);
+        let top = h(ix, iz) * (1. - fx) + h(ix + 1, iz) * fx;
+        let bottom = h(ix, iz + 1) * (1. - fx) + h(ix + 1, iz + 1) * fx;
+        top * (1. - fz) + bottom * fz
+    };
+    let length = ((to[0] - from[0]).powi(2) + (to[2] - from[2]).powi(2)).sqrt();
+    let steps = ((length / (terrain.spacing * 0.5)).ceil() as usize).clamp(2, 512);
+    (1..steps).any(|i| {
+        let t = i as f32 / steps as f32;
+        let p: [f32; 3] = std::array::from_fn(|k| from[k] + (to[k] - from[k]) * t);
+        ground(p[0], p[2]) > p[1]
+    })
+}
+
+#[cfg(test)]
+mod pill_tests {
+    #[test]
+    fn a_ridge_between_camera_and_hill_blocks_the_pill() {
+        // 5 x 5 vertices, 10 ft apart; a 30 ft ridge along x = 20.
+        let heights = (0..25)
+            .map(|i| if i % 5 == 2 { 30. } else { 0. })
+            .collect::<Vec<f32>>();
+        let image = atv_game::venue::Image {
+            width: 0,
+            height: 0,
+            rgba: Vec::new(),
+        };
+        let terrain = atv_game::venue::Terrain {
+            width: 5,
+            depth: 5,
+            spacing: 10.,
+            heights,
+            min: 0.,
+            max: 30.,
+            layers: Vec::new(),
+            layer_mips: Vec::new(),
+            mapping: Vec::new(),
+            mapping_width: 0,
+            mapping_height: 0,
+            detail: image,
+        };
+        assert!(super::terrain_blocks(
+            &terrain,
+            [2., 5., 20.],
+            [38., 5., 20.]
+        ));
+        assert!(!super::terrain_blocks(
+            &terrain,
+            [2., 40., 20.],
+            [38., 40., 20.]
+        ));
+        assert!(!super::terrain_blocks(
+            &terrain,
+            [2., 5., 20.],
+            [12., 5., 20.]
+        ));
+    }
 }

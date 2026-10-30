@@ -1,0 +1,14 @@
+{
+  "id": "profile-editor-named-profiles-and-sx14-race-distance-f-ff4e3e1df9e04d04a99a6223bbaff0c6",
+  "timestamp": "2026-10-27T03:40:05.575073+00:00",
+  "recorded_at": "2026-10-27T04:05:03.086058+00:00",
+  "kind": "build",
+  "title": "Profile Editor, named profiles and sx14 race distance fix",
+  "summary": "Profile Editor (Create New Profile, Load, Copy, Delete, View Current Profile) with up to 4 named profiles, 8-character keyboard/soft-keyboard/controller entry, default PLAYER1, and migration of old single saves. Profile views: Overview (points earned/remaining, races, victories, win percentage), Trophies (per championship), Records (per course: races, victories, best lap, best time). Plus a fix for sx14 race distance: alternate track lines now apply the Track window correctly, recovering ~1,000 ft of lost race distance.",
+  "details": [
+    "Profile Editor implements original PAGE19/21\u201335/53 UI pages with named profiles (default PLAYER1), 8-character entry by keyboard/soft-keyboard or controller letter stepper, Create New, Load, Copy, Delete, and View Current Profile pages. Overview page shows points earned/remaining, total races/victories, win percentage, and most-winning ATV; Trophy page shows per-championship trophies in Normal/Expert; Records page shows per-course races, victories, best lap, and best full-length time; races credit per-course records. Old single saves migrate into PLAYER1. Without a profile loaded, the original 'Remember, your progress is not being saved!' alert appears. Evidence: original UI record 00322080 (race record update), 00324b40 (times), Rust unit tests, new browser test test_engine_profile_editor plus profile_menu, race_profile_points, front, menu_flows, menu_parity, and championship tests.\n\nThe sx14 race distance fix: an alternate line crosses the circuit ~1,000 ft later; riders passing it were mapped back near the fork and lost race distance. The Track window (125 ft ahead/75 ft behind, native 0017be80) now applies to alternate lines too. Verified with core unit test, all-32-courses private test, and new browser test test_engine_race_alternates."
+  ],
+  "limitation": "Limitations: jump/combo bests show '-' (not yet tracked). Freestyle/Short Tracks trophies not offered yet. One best time per course instead of original top three. Memory-card slots not reproduced. At the time of the race-distance fix, CPUs still stall past sx14 checkpoint 57 (being fixed separately).",
+  "image": "/devlog-images/profile-editor-named-profiles-and-sx14-race-distance-f-ff4e3e1df9e04d04a99a6223bbaff0c6.png",
+  "caption": "Profile Editor at 1920\u00d71080: Create New, Load, Copy, Delete, View Current Profile pages. Editor shows the PLAYER1 profile loaded."
+}

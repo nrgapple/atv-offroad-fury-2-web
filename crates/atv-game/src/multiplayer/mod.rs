@@ -15,6 +15,10 @@ pub mod spawn;
 
 use crate::Result;
 use crate::ride::Ride;
+pub use atv_net::{
+    GameClaim, GameMarks, GameState, MAX_GAME_POINTS, MAX_MARKS, NO_PEER, RACE_DNF, RACE_MAX_MS,
+    RACE_RIDERS, RaceInfo, RaceProgress, claim_kind, game_kind, game_phase, race_phase,
+};
 use atv_net::{Lobby, Packet, Participant, PoseBuffer, SampledPose, Snapshot};
 use std::collections::BTreeMap;
 
@@ -124,6 +128,13 @@ pub struct Session {
     clock_rtt_ms: u32,
     /// Peer contacts stay off until this local time after an arrival.
     ghost_until: u64,
+    /// The host's latest mini-game state (`Packet::Game`) and when it came.
+    pub game: Option<(atv_net::GameState, u64)>,
+    /// Other riders' latest room-race progress by peer (`Packet::Progress`).
+    pub progress: BTreeMap<u8, atv_net::RaceProgress>,
+    /// Riders' room-game reports the host has not taken yet (the relay
+    /// forwards them to the host only; bounded).
+    pub claims: Vec<atv_net::GameClaim>,
 }
 
 fn encode(packet: &Packet) -> Result<Vec<u8>> {
@@ -305,15 +316,19 @@ impl Session {
                         })
                 });
                 if allowed && Some(s.peer) != self.peer {
-                    self.buffers
-                        .entry(s.peer)
-                        .or_default()
-                        .push(*s, now_ms)
-                        .map_err(|e| e.to_string())?;
+                    let buffer = self.buffers.entry(s.peer).or_default();
+                    if buffer.push((*s).clone(), now_ms).is_err() {
+                        // One rider's pose history (not the wire packet, which
+                        // decoded and validated) disagrees with this pose:
+                        // restart that rider's timeline rather than the room.
+                        buffer.clear();
+                        buffer.push(*s, now_ms).map_err(|e| e.to_string())?;
+                    }
                 }
             }
             Packet::Leave { peer } => {
                 self.buffers.remove(&peer);
+                self.progress.remove(&peer);
             }
             Packet::Pong { nonce, server_ms } => {
                 let rtt = (now_ms as u32).wrapping_sub(nonce);
@@ -339,6 +354,19 @@ impl Session {
                             self.clock_rtt_ms = rtt;
                         }
                     }
+                }
+            }
+            // The relay forwards it only from the host.
+            Packet::Game(state) => self.game = Some((*state, now_ms)),
+            // The relay stamps the sender.
+            Packet::Progress(progress) => {
+                self.progress.insert(progress.peer, progress);
+            }
+            // Room King of the Hills / Treasure Hunt reports: kept for the
+            // host's game, which validates them (a bounded queue).
+            Packet::Claim(claim) => {
+                if self.claims.len() < 64 {
+                    self.claims.push(claim);
                 }
             }
             _ => return Err("unexpected relay packet".into()),
@@ -591,6 +619,37 @@ impl Session {
         }
         rebase(&mut pose.snapshot, cars);
         Some(pose.snapshot)
+    }
+
+    /// The rider's own room-race progress as a packet.
+    pub fn progress_packet(&self, progress: atv_net::RaceProgress) -> Result<Vec<u8>> {
+        let peer = self.peer.ok_or("join multiplayer first")?;
+        encode(&Packet::Progress(atv_net::RaceProgress {
+            peer,
+            ..progress
+        }))
+    }
+
+    /// The rider's own room-game report as a packet.
+    pub fn claim_packet(&self, claim: atv_net::GameClaim) -> Result<Vec<u8>> {
+        let peer = self.peer.ok_or("join multiplayer first")?;
+        encode(&Packet::Claim(atv_net::GameClaim { peer, ..claim }))
+    }
+
+    /// The host's mini-game state as a packet.
+    pub fn game_packet(&self, state: &atv_net::GameState) -> Result<Vec<u8>> {
+        encode(&Packet::Game(Box::new(state.clone())))
+    }
+
+    /// Roster order (peer ids, ascending): mini-game slots and teams.
+    pub fn roster(&self) -> Vec<u8> {
+        let mut ids: Vec<u8> = self
+            .lobby
+            .iter()
+            .flat_map(|l| l.players.iter().map(|p| p.id))
+            .collect();
+        ids.sort_unstable();
+        ids
     }
 
     /// Every other rider's current position (spawn clearance).

@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!-- Template for the LaunchAgent that builds and publishes desktop archives for new
-     desktop-v* tags and for origin/main when the apps changed (at most every 12 hours).
+     desktop-v* tags and for origin/main when the apps changed (at most every 168 hours).
      Replace @REPO@ (the shared checkout) and @HOME@, then install per
      research/DESKTOP_RELEASES.md. -->
 <plist version="1.0">
@@ -9,19 +9,23 @@
   <key>Label</key><string>com.furyremastered.desktop-release</string>
   <key>ProgramArguments</key>
   <array>
-    <string>/usr/bin/python3</string>
-    <string>@REPO@/tools/desktop_release_watcher.py</string>
+    <string>@PYTHON@</string>
+    <string>@HOME@/.local/share/project-service-data/fury-desktop-release/runtime/desktop_release_watcher.py</string>
     <string>--repo</string><string>@REPO@</string>
     <string>--auto-main</string>
-    <string>--log</string><string>@HOME@/LargeFiles/fury-desktop/watcher.log</string>
+    <string>--min-hours</string><string>168</string>
+    <string>--log</string><string>@HOME@/.local/share/project-service-data/fury-desktop-release/watcher.log</string>
   </array>
+  <key>ProcessType</key><string>Background</string>
+  <key>Nice</key><integer>10</integer>
   <key>StartInterval</key><integer>900</integer>
   <key>RunAtLoad</key><true/>
   <key>EnvironmentVariables</key>
   <dict>
     <key>PATH</key><string>@HOME@/.cargo/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
   </dict>
-  <!-- launchd cannot open files on the external SSD (EX_CONFIG), so the watcher writes its
+  <!-- The internal runtime and logs are accessible before SSD preflight.
+       Historical note: launchd cannot open files on the external SSD (EX_CONFIG), so the watcher writes its
        own log there with -\-log and launchd's output is discarded. If Python cannot start
        (for example without Full Disk Access) only `launchctl print` shows the exit code. -->
   <key>StandardOutPath</key><string>/dev/null</string>

@@ -19,6 +19,7 @@ not on origin/main. Local only, never CI.
 import argparse
 import fcntl
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -26,18 +27,23 @@ import shutil
 import subprocess
 import sys
 import time
+import tempfile
+import plistlib
+from host_build import lease
 
 ROOT = Path(__file__).resolve().parents[1]
 OUT_ROOT = Path.home() / 'LargeFiles/fury-desktop'
-STATE = OUT_ROOT / 'watcher-state.json'
+SERVICE = Path.home() / '.local/share/project-service-data/fury-desktop-release'
+STATE = SERVICE / 'watcher-state.json'
 WORKTREES = Path.home() / 'Projects/atv-worktrees'
 PATTERN = 'refs/tags/desktop-v*'
 # What the desktop archives are built from. Documentation, the web shell and tests do not
 # start a release on their own.
-RELEASE_PATHS = ('crates', 'Cargo.toml', 'Cargo.lock', 'tools/build_desktop.py', 'tools/desktop',
+RELEASE_PATHS = ('crates', 'third_party', 'Cargo.toml', 'Cargo.lock', 'tools/build_desktop.py', 'tools/desktop',
                  'tools/pack_content.py', 'tools/desktop_archive.py', 'tools/build_android.py',
                  'web/fury-app-icons.json')
 KEEP_BUILDS = 3
+AUTO_RELEASE_HOURS = 7 * 24
 
 
 def git(repo, *args):
@@ -70,6 +76,10 @@ def main_candidate(repo, tags, state, min_hours, now=None):
     Expects `origin/main` and the tagged commits to be fetched already.
     """
     now = time.time() if now is None else now
+    attempt = state.get('last_attempt', {}).get('at', 0)
+    attempt = max([attempt, *[e.get('at', 0) for e in state.get('failed', {}).values()]])
+    if attempt and now - attempt < min_hours * 3600:
+        return None, 'automatic attempt cooldown (includes failures and newer commits)'
     head = git(repo, 'rev-parse', 'origin/main')
     short = git(repo, 'rev-parse', '--short=7', head)
     version = next(line.split('"')[1] for line in git(repo, 'show', f'{head}:Cargo.toml').splitlines()
@@ -98,8 +108,41 @@ def load_state(path, tags):
         return json.loads(Path(path).read_text())
     except FileNotFoundError:
         return {'done': {tag: {'commit': sha, 'adopted': True} for tag, sha in tags.items()}, 'failed': {}}
-    except (OSError, ValueError):
-        return {'done': {}, 'failed': {}}
+    # Unreadable/corrupt state must stop the pass, never erase release history.
+
+
+
+def save_state(path, state):
+    """Atomic replacement; a failed write leaves the prior history intact."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(prefix='.watcher-', dir=path.parent)
+    try:
+        with os.fdopen(fd, 'w') as stream:
+            json.dump(state, stream, indent=2)
+            stream.write('\n')
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+    finally:
+        Path(temporary).unlink(missing_ok=True)
+
+
+def preflight(repo):
+    """Check source/SSD/output access in the actual service process before building."""
+    if sys.platform == 'darwin':
+        info = plistlib.loads(subprocess.check_output(['diskutil', 'info', '-plist', '/Volumes/External SSD']))
+        if info.get('MountPoint') != '/Volumes/External SSD' or info.get('VolumeUUID') != '4CC9A66C-3ECB-4EC5-A1AF-221A7A925267':
+            raise OSError('Required external SSD is unavailable or has the wrong identity')
+    for source in (Path(repo) / 'Cargo.toml', Path(repo) / 'private/reports/hosted-content/manifest.json'):
+        with open(source, 'rb') as stream:
+            stream.read(1)
+    for folder in (OUT_ROOT, WORKTREES):
+        folder.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryFile(dir=folder) as stream:
+            stream.write(b'preflight')
+            stream.flush()
+            os.fsync(stream.fileno())
 
 
 def notify(message):
@@ -157,7 +200,8 @@ def process(repo, tag, sha, log, fetch_tag=True):
             '--verification', tested)
         return android_error
     finally:
-        subprocess.run(['git', 'worktree', 'remove', '--force', str(worktree)], cwd=repo)
+        # Preserve unexpected modifications or untracked files; never force removal.
+        subprocess.run(['git', 'worktree', 'remove', str(worktree)], cwd=repo)
 
 
 def prune_builds(state, out_root=OUT_ROOT, keep=KEEP_BUILDS):
@@ -180,58 +224,86 @@ def main(argv=None):
     parser.add_argument('--repo', type=Path, default=ROOT, help='checkout used to talk to origin (never modified)')
     parser.add_argument('--state', type=Path, default=STATE)
     parser.add_argument('--auto-main', action='store_true', help='also release origin/main when the apps changed')
-    parser.add_argument('--min-hours', type=float, default=12, help='least time between automatic releases (default 12)')
+    parser.add_argument('--min-hours', type=float, default=AUTO_RELEASE_HOURS,
+                        help='least time between automatic releases/attempts (default 168: weekly)')
     parser.add_argument('--log', type=Path, help='append output here (launchd cannot open files on the SSD itself)')
     parser.add_argument('--dry-run', action='store_true')
+    parser.add_argument('--preflight-only', action='store_true', help='check actual service storage access without building')
     args = parser.parse_args(argv)
+    if not math.isfinite(args.min_hours) or args.min_hours <= 0:
+        parser.error('--min-hours must be a finite positive number')
     if os.environ.get('GITHUB_ACTIONS') or os.environ.get('CI'):
         sys.exit('desktop_release_watcher: local machine only, never CI')
     if args.log:
         args.log.parent.mkdir(parents=True, exist_ok=True)
         sys.stdout = sys.stderr = open(args.log, 'a', buffering=1)
         print(f'--- {time.strftime("%Y-%m-%d %H:%M:%S")}')
+    if args.preflight_only:
+        preflight(args.repo)
+        print('Storage preflight passed; no build started')
+        return 0
     args.state.parent.mkdir(parents=True, exist_ok=True)
-    lock = open(args.state.with_suffix('.lock'), 'w')
-    try:
-        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except BlockingIOError:
-        print('another watcher pass is running')
-        return 0
-    tags = remote_tags(args.repo)
-    state = load_state(args.state, tags)
-    todo = {tag: (sha, True) for tag, sha in pending(tags, state).items()}
-    if args.auto_main:
-        subprocess.run(['git', 'fetch', '--quiet', 'origin', 'main', *(f'refs/tags/{t}:refs/tags/{t}' for t in tags)],
-                       cwd=args.repo, check=True)
-        tag, detail = main_candidate(args.repo, tags, state, args.min_hours)
-        if tag:
-            todo[tag] = (detail, False)
-        else:
-            print(f'origin/main: {detail}')
-    if not todo:
-        print('nothing to build')
-        return 0
-    for tag, (sha, from_remote) in todo.items():
-        print(f'{"would build" if args.dry_run else "building"} {tag} ({sha})', flush=True)
-        if args.dry_run:
-            continue
-        log_path = args.state.parent / f'watcher-{tag}.log'
+    with open(args.state.with_suffix('.lock'), 'a') as lock:
         try:
-            with open(log_path, 'w') as log:
-                android_error = process(args.repo, tag, sha, log, fetch_tag=from_remote)
-            state.setdefault('done', {})[tag] = {'commit': sha, 'at': int(time.time())}
-            if android_error:
-                state['done'][tag]['android_error'] = android_error
-            notify(f'{tag} published' + (' without Android, see ' + log_path.name if android_error else ''))
-        except (subprocess.CalledProcessError, OSError, ValueError) as e:
-            # A failed tag is not retried automatically; fix it and delete its entry from the state file.
-            state.setdefault('failed', {})[tag] = {'commit': sha, 'at': int(time.time()), 'error': str(e), 'log': str(log_path)}
-            notify(f'{tag} failed, see {log_path.name}')
-        args.state.write_text(json.dumps(state, indent=2) + '\n')
-    if not args.dry_run:
-        prune_builds(state)
-    return 0
-
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            print('another watcher pass is running')
+            return 0
+        # Migration is safe only after the previous watcher has exited (installer enforces this).
+        legacy = OUT_ROOT / 'watcher-state.json'
+        if args.state == STATE and not STATE.exists() and legacy.exists():
+            save_state(STATE, load_state(legacy, {}))
+        tags = remote_tags(args.repo)
+        state = load_state(args.state, tags)
+        if state.get('retry_after', 0) > time.time():
+            print('release failure backoff is active')
+            return 0
+        todo = {tag: (sha, True) for tag, sha in pending(tags, state).items()}
+        if args.auto_main and not todo:
+            subprocess.run(['git', 'fetch', '--quiet', 'origin', 'main', *(f'refs/tags/{t}:refs/tags/{t}' for t in tags)],
+                           cwd=args.repo, check=True)
+            tag, detail = main_candidate(args.repo, tags, state, args.min_hours)
+            if tag:
+                todo[tag] = (detail, False)
+            else:
+                print(f'origin/main: {detail}')
+        if not todo:
+            print('nothing to build')
+            return 0
+        # One release per pass: don't drain a backlog or append an automatic release
+        # after explicit tags. Remaining tags stay pending for a later admission check.
+        for tag, (sha, from_remote) in list(todo.items())[:1]:
+            print(f'{"would build" if args.dry_run else "building"} {tag} ({sha})', flush=True)
+            if args.dry_run:
+                continue
+            log_path = args.state.parent / f'watcher-{tag}.log'
+            try:
+                with lease(wait=0):
+                    state['last_attempt'] = {'commit': sha, 'tag': tag, 'at': int(time.time())}
+                    save_state(args.state, state)  # durable before any expensive work
+                    try:
+                        preflight(args.repo)
+                        with open(log_path, 'w') as log:
+                            android_error = process(args.repo, tag, sha, log, fetch_tag=from_remote)
+                        state.setdefault('done', {})[tag] = {'commit': sha, 'at': int(time.time())}
+                        state.pop('retry_after', None)
+                        if android_error:
+                            state['done'][tag]['android_error'] = android_error
+                        notify(f'{tag} published' + (' without Android, see ' + log_path.name if android_error else ''))
+                    except (subprocess.CalledProcessError, OSError, ValueError) as e:
+                        state.setdefault('failed', {})[tag] = {'commit': sha, 'at': int(time.time()),
+                                                              'error': str(e), 'log': str(log_path)}
+                        state['retry_after'] = int(time.time()) + 3600
+                        save_state(args.state, state)
+                        notify(f'{tag} failed, see {log_path.name}')
+                        return 1
+                    save_state(args.state, state)
+            except BlockingIOError as exc:
+                print(f'release deferred without interrupting active work: {exc}')
+                return 0
+        if not args.dry_run:
+            prune_builds(state)
+        return 0
 
 if __name__ == '__main__':
     sys.exit(main())

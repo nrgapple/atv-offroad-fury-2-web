@@ -111,6 +111,9 @@ pub enum CameraMode {
 }
 
 /// Loaded original venue state the simulation reuses on every reset.
+/// 00319c10 -> 003007b0 supplies 70 MPH and the original ft/s conversion.
+pub(crate) const CAMERA_SPEED_REFERENCE: f32 = 70. * f32::from_bits(0x3fbbbb84);
+
 struct Simulation {
     terrain: terrain::Terrain,
     materials: [TerrainMaterial; 8],
@@ -122,9 +125,16 @@ struct Simulation {
     boundary: Option<atv_core::boundary_launch::Config>,
     extended_boundary: bool,
     camera: FollowCamera,
+    /// The course's `FollowCamPresets.pb`, for another viewport layout's
+    /// sections (split screen).
+    camera_presets: Vec<u8>,
     /// ENV08's train, shared with the renderer; an ATV ride steps it with
     /// its physics (collision heights, moving obstacles) as atv-web does.
     train: Option<Rc<std::cell::RefCell<crate::train::Train>>>,
+    /// The venue's keyframed actors when any has a loop sound or an
+    /// animation trigger (the renderer steps their clock; the sounds follow
+    /// the posed nodes and the ride's vehicle fires the triggers).
+    actors: Option<Rc<std::cell::RefCell<crate::actors::Actors>>>,
 }
 
 /// The train cars as moving scene obstacles (atv-web
@@ -149,6 +159,21 @@ fn train_obstacles(
             })
         })
         .collect()
+}
+
+/// Every moving-scene body of the ride: the train cars, then the
+/// `UseCollision` TOY actors' placement-fixed COL bodies
+/// (research/AMBIENT_ACTORS.md, Collision). The train keeps indices
+/// `0..cars` because its step republishes them by position.
+fn dynamic_obstacles(sim: &Simulation) -> Result<Vec<atv_core::scene_collision::DynamicObstacle>> {
+    let mut objects = match &sim.train {
+        Some(train) => train_obstacles(&train.borrow())?,
+        None => Vec::new(),
+    };
+    if let Some(actors) = &sim.actors {
+        objects.extend(actors.borrow().collision.iter().map(|c| c.obstacle()));
+    }
+    Ok(objects)
 }
 
 /// The ATV's original rig (ops 20-22, 44, 48, 51-53): physics, linkage,
@@ -214,6 +239,23 @@ pub struct Ride {
     /// `stunt_landed`/`stunt_result`, for flash bursts and crowd cues).
     stunt_landed: bool,
     stunt_result: Option<bool>,
+    /// Finished stunt chains (success, events, points sum) for the race's
+    /// stunt records (`001f22a0`).
+    race_chains: Vec<(bool, usize, f32)>,
+    /// Outside races: the jump measurement (`0024df70`), settled jumps and
+    /// finished chains for Freestyle objectives' records (`002fd7c0`,
+    /// `002fd350`), until the host takes them.
+    free_jump: atv_core::stunt_records::JumpTracker,
+    free_resets: u32,
+    /// Seconds grounded since the ride started or reset; jumps count once
+    /// the vehicle has settled (authored: the spawn drop is not a jump).
+    free_settle: f32,
+    free_jumps: Vec<f32>,
+    free_chains: Vec<(bool, usize, f32)>,
+    /// Stunt ids of the open chain, and finished chains (success, ids) for
+    /// Freestyle objectives (`002fc050` counts combos by their stunts).
+    chain_ids: Vec<usize>,
+    chains: Vec<(bool, Vec<usize>)>,
     /// Settings → Extras choices the simulation reads each step (game.js
     /// `input.flips`, `input.realistic_train`).
     pub options: RideOptions,
@@ -315,6 +357,11 @@ pub struct RideOptions {
     /// Alpha Arcade flips (authored analog air rotation; replaces the
     /// Unleashed gestures while on).
     pub arcade_flips: bool,
+    /// Game Settings → Measurement: Metric (Kph speedometer).
+    pub metric: bool,
+    /// Game Settings → Ecosystem Collision: Off (quads, riders and CPUs
+    /// pass through vegetation). Multiplayer rooms keep it on.
+    pub ecosystem_collision_off: bool,
 }
 
 /// World pose of the player's quad and rider for drawing.
@@ -406,6 +453,14 @@ impl Ride {
             race: None,
             stunt_landed: false,
             stunt_result: None,
+            race_chains: Vec::new(),
+            free_jump: Default::default(),
+            free_resets: 0,
+            free_settle: 0.,
+            free_jumps: Vec::new(),
+            free_chains: Vec::new(),
+            chain_ids: Vec::new(),
+            chains: Vec::new(),
             options: RideOptions::default(),
             selection,
             appearance: gear::Appearance::default(),
@@ -448,8 +503,9 @@ impl Ride {
         }
         if let Some(scene) = vehicle.scene_collision_mut() {
             scene.set_mud_obstacles(sim.mud_obstacles.clone())?;
-            if let Some(train) = &sim.train {
-                scene.install_dynamic(train_obstacles(&train.borrow())?)?;
+            let dynamic = dynamic_obstacles(sim)?;
+            if !dynamic.is_empty() {
+                scene.install_dynamic(dynamic)?;
             }
         }
         Ok(vehicle)
@@ -697,6 +753,57 @@ impl Ride {
         gear::PAINT_PALETTE[usize::from(self.appearance.paint)]
     }
 
+    /// The scene start Reset ATV returns to (origin, yaw): room Freestyle
+    /// places its riders beside it (research/MULTIPLAYER.md "Room
+    /// Freestyle").
+    pub fn start_pose(&self) -> ([f32; 3], f32) {
+        self.start
+    }
+
+    /// Finished stunt chains since the last call: success and the stunt ids
+    /// in order (Freestyle objectives).
+    pub fn take_chains(&mut self) -> Vec<(bool, Vec<usize>)> {
+        std::mem::take(&mut self.chains)
+    }
+
+    /// Tricks begun in the open chain (Tag's knock-loose rule watches for a
+    /// new one, `00244ef0`).
+    pub fn chain_len(&self) -> usize {
+        self.chain_ids.len()
+    }
+
+    /// Tag's carrier handicap (`00246310`): on, the ATV's engine takes
+    /// effect -0.34 of its top speed; off (`00246000`), none. Motorcycles
+    /// (a port extra) are not handicapped.
+    pub fn set_carrier_handicap(&mut self, on: bool) {
+        if let Mount::Quad { vehicle, .. } = &mut self.mount {
+            let base = atv_core::drivetrain::EngineModifiers {
+                effect: 0.,
+                effect_speed: 0.,
+                ..vehicle.engine_modifiers()
+            };
+            vehicle.set_engine_modifiers(if on {
+                atv_core::tag::carrier_engine(base, vehicle.top_speed())
+            } else {
+                base
+            });
+        }
+    }
+
+    /// The engine effect now applied (Tag's handicap; 0 without one).
+    pub fn engine_effect(&self) -> f32 {
+        match &self.mount {
+            Mount::Quad { vehicle, .. } => vehicle.engine_modifiers().effect,
+            Mount::Bike(_) => 0.,
+        }
+    }
+
+    /// A stunt chain is in progress (started, not yet finished): the
+    /// Training Stunt lesson's +0x30 +8 & 0x20 and +0x230.
+    pub fn stunting(&self) -> bool {
+        !self.chain_ids.is_empty()
+    }
+
     /// The player's committed stunt points (the race SCORE overlay; the
     /// motorcycle's frame carries none, as in atv-web).
     pub fn committed_points(&self) -> f32 {
@@ -771,6 +878,21 @@ impl Ride {
         self.step_camera(0.)
     }
 
+    /// Rides with the follow-camera presets of another viewport layout
+    /// (`atv_core::camera::presets`: 1 horizontal split, 2 vertical split),
+    /// before the first step.
+    pub fn set_camera_layout(&mut self, layout: u32) -> Result<()> {
+        let presets = atv_core::camera::presets(&self.sim.camera_presets, layout)?;
+        self.sim.camera = FollowCamera::new(presets, CAMERA_SPEED_REFERENCE)?;
+        Ok(())
+    }
+
+    /// The stunt text clock (`atv_core::hud::Config`): split layouts for
+    /// three and four players use Overlays.pb object 24's.
+    pub fn set_stunt_text(&mut self, config: atv_core::hud::Config) {
+        self.hud.set_config(config);
+    }
+
     /// Change camera (op 47 with cycle).
     pub fn cycle_camera(&mut self) {
         self.sim.camera.cycle();
@@ -779,6 +901,28 @@ impl Ride {
     /// One fixed step: vehicle and rider (op 24), then the camera (op 46).
     pub fn step(&mut self, controls: &Controls, orbit: f32) -> Result<()> {
         self.step_with(controls, orbit, &mut |_| {})
+    }
+
+    /// Game Settings: the speedometer factor (`0020f780` stores 0.68182 or
+    /// 1.08 at settings +0x564; the HUD multiplies ft/s by it, `002e2030`)
+    /// and Ecosystem Collision for the quad and every CPU racer.
+    fn apply_game_settings(&mut self) -> Result<()> {
+        let units = if self.options.metric {
+            atv_core::hall_of_fame::Units::Metric
+        } else {
+            atv_core::hall_of_fame::Units::Standard
+        };
+        self.hud.set_speed_factor(units.speed().0)?;
+        let ecosystem = !self.options.ecosystem_collision_off;
+        if let Mount::Quad { vehicle, .. } = &mut self.mount {
+            vehicle.set_ecosystem_collision(ecosystem);
+        }
+        if let Some(state) = &mut self.race {
+            for cpu in &mut state.cpus {
+                cpu.vehicle.set_ecosystem_collision(ecosystem);
+            }
+        }
+        Ok(())
     }
 
     /// [`Ride::step`] with a multiplayer hook: `contacts` applies the other
@@ -791,6 +935,7 @@ impl Ride {
         orbit: f32,
         contacts: &mut dyn FnMut(&mut Ride),
     ) -> Result<()> {
+        self.apply_game_settings()?;
         if self.is_motorcycle() {
             contacts(self);
             self.step_bike(controls)?;
@@ -802,6 +947,7 @@ impl Ride {
                 self.frame = bike::summary(bike.frame());
             }
             self.step_camera(orbit)?;
+            self.step_actor_triggers();
             self.steps += 1;
             self.sound = Some(self.capture_bike_sound(controls));
             return Ok(());
@@ -824,10 +970,56 @@ impl Ride {
             None => self.step_vehicle(controls, false)?,
         }
         self.step_race()?;
+        self.step_free_jump();
         self.step_camera(orbit)?;
+        self.step_actor_triggers();
         self.steps += 1;
         self.sound = Some(self.capture_sound()?);
         Ok(())
+    }
+
+    /// The player's vehicle touching a TOY animation trigger starts its
+    /// actors (SX10's stadium roofs open, research/AMBIENT_ACTORS.md).
+    fn step_actor_triggers(&mut self) {
+        if let Some(actors) = &self.sim.actors {
+            actors.borrow_mut().contact(self.frame.origin);
+        }
+    }
+
+    /// Outside races, measures the player's jumps as the race does
+    /// (`0024df70`); a reset drops a jump in progress.
+    fn step_free_jump(&mut self) {
+        if self.race.is_some() {
+            return;
+        }
+        let frame = &self.frame;
+        if std::mem::replace(&mut self.free_resets, frame.reset_count) != frame.reset_count {
+            self.free_jump = Default::default();
+            self.free_settle = 0.;
+        }
+        let grounded = frame.grounded.iter().any(|g| *g);
+        if self.free_settle < atv_core::stunt_records::SETTLE_SECONDS {
+            self.free_settle = if grounded {
+                self.free_settle + STEP
+            } else {
+                0.
+            };
+            return;
+        }
+        if let Some(feet) = self.free_jump.step(grounded, frame.origin, STEP)
+            && self.free_jumps.len() < 64
+        {
+            self.free_jumps.push(feet);
+        }
+    }
+
+    /// Settled jumps (feet) and finished chains (success, events, points
+    /// sum) since the last call, outside races.
+    pub fn take_free_records(&mut self) -> (Vec<f32>, Vec<(bool, usize, f32)>) {
+        (
+            std::mem::take(&mut self.free_jumps),
+            std::mem::take(&mut self.free_chains),
+        )
     }
 
     /// The step's sound inputs (simulation_frame's audio fields).
@@ -874,7 +1066,16 @@ impl Ride {
             placement: self.placement,
             bike: None,
             train_cars: self.train_cars(),
+            actor_emitters: self.actor_emitters(),
         })
+    }
+
+    /// Every keyframed actor loop sound's emitter now and one step before.
+    pub(super) fn actor_emitters(&self) -> Vec<([f32; 16], [f32; 16])> {
+        self.sim
+            .actors
+            .as_ref()
+            .map_or_else(Vec::new, |a| a.borrow().sound_emitters())
     }
 
     /// Every train car's matrix now and one step before (train sounds).
@@ -1202,11 +1403,23 @@ impl Ride {
                 stunt_score::Notification::DisplayUpdated { id, .. } => {
                     hud.name_event(stunt::NAMES[id]);
                 }
+                stunt_score::Notification::Started { id, .. } => self.chain_ids.push(id),
                 stunt_score::Notification::ChainFinished {
                     success,
+                    chain_count,
+                    sum_points,
                     display_count,
                     ..
                 } => {
+                    if self.race.is_some() {
+                        self.race_chains.push((success, chain_count, sum_points));
+                    } else if self.free_chains.len() < 64 {
+                        self.free_chains.push((success, chain_count, sum_points));
+                    }
+                    let ids = std::mem::take(&mut self.chain_ids);
+                    if self.chains.len() < 64 {
+                        self.chains.push((success, ids));
+                    }
                     self.stunt_landed |= success;
                     self.stunt_result = Some(success);
                     hud.finish_event(success, display_count)
@@ -1282,6 +1495,18 @@ impl Ride {
             },
             Mount::Bike(bike) if bike.frame().wreck.phase != Phase::Riding => bike.rider_world(),
             Mount::Bike(_) => quaternion_world(self.frame.origin, self.frame.orientation),
+        }
+    }
+
+    /// The bodies the objective triggers test (`002fae60`): the quad's
+    /// wheels, chassis hull and actor rays; a motorcycle's origin.
+    pub fn trigger_bodies(&self) -> Vec<atv_core::freestyle::TriggerBody> {
+        match &self.mount {
+            Mount::Quad { vehicle, .. } => vehicle.trigger_bodies(),
+            Mount::Bike(_) => vec![atv_core::freestyle::TriggerBody::Sphere {
+                center: self.frame.origin,
+                radius: 0.,
+            }],
         }
     }
 

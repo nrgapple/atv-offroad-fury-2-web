@@ -80,6 +80,8 @@ pub struct CpuRacer {
     wreck: wreck_animation::Animator,
     mode: Option<rider_pose::Mode>,
     stuck: f32,
+    /// Port adaptation: the authored repeat/stall recovery (CPU only).
+    pub recovery: atv_core::cpu_recovery::Recovery,
 }
 
 impl CpuRacer {
@@ -125,6 +127,7 @@ impl CpuRacer {
             wreck,
             mode: None,
             stuck: 0.,
+            recovery: Default::default(),
             driver: Driver::new(index, options),
         })
     }
@@ -135,7 +138,8 @@ impl CpuRacer {
         player_speed: f32,
         peers: &[Peer],
         gap: f32,
-        station: Station,
+        // The race station, RaceStatus +0x3c and the Enduro next gate.
+        (station, on_track, enduro): (Station, bool, Option<atv_core::race_ai::EnduroTarget>),
         world: &World<'_>,
     ) -> Result<(VehicleFrame, CpuPose, bool)> {
         const DT: f32 = 1. / 60.;
@@ -155,6 +159,7 @@ impl CpuRacer {
         )?;
         let mut pose: DriverPose = (&before).into();
         pose.preload_rates = self.vehicle.preload_rates();
+        self.driver.assist = self.recovery.assist();
         let (mut input, decisions) = self.driver.step(
             course,
             &pose,
@@ -167,6 +172,8 @@ impl CpuRacer {
                 clearance: contact.as_ref().map_or(0., |c| before.origin[1] - c.height),
                 terrain_normal: predicted.as_ref().map_or([0., 1., 0.], |c| c.normal),
                 station: Some(station),
+                on_track,
+                enduro,
             },
         )?;
         let stunt_input = stunt::Input {

@@ -24,6 +24,9 @@ pub fn encode(packet: &Packet) -> Result<Vec<u8>> {
         Packet::SetLobby { .. } => 8,
         Packet::Profile(_) => 11,
         Packet::Ready { .. } => 12,
+        Packet::Game(_) => 13,
+        Packet::Progress(_) => 14,
+        Packet::Claim(_) => 15,
     };
     w.0.extend_from_slice(MAGIC);
     w.byte(VERSION);
@@ -57,6 +60,57 @@ pub fn encode(packet: &Packet) -> Result<Vec<u8>> {
             w.u16(*map);
         }
         Packet::Lobby(lobby) => w.lobby(lobby)?,
+        Packet::Game(g) => {
+            g.validate()?;
+            w.byte(g.game);
+            w.u32(g.serial);
+            w.byte(g.phase);
+            w.f32(g.timer);
+            w.f32(g.clock);
+            for s in g.scores {
+                w.u32(s);
+            }
+            w.byte(g.banner);
+            w.f32(g.banner_time);
+            w.byte(g.holder);
+            w.floats(&g.ball);
+            w.floats(&g.ball_velocity);
+            w.f32(g.ball_yaw);
+            if g.game == 3 {
+                w.byte(g.race.variant);
+                w.byte(g.race.laps);
+                for slot in g.race.grid {
+                    w.byte(slot);
+                }
+            }
+            if g.game >= game_kind::KING_OF_THE_HILLS {
+                w.byte(g.marks.venue);
+                w.byte(g.marks.players);
+                w.floats(&g.marks.stunts);
+                w.u16(g.marks.marks.len() as u16);
+                for (owner, value) in &g.marks.marks {
+                    w.byte(*owner);
+                    w.f32(*value);
+                }
+            }
+        }
+        Packet::Claim(c) => {
+            c.validate()?;
+            w.byte(c.peer);
+            w.u32(c.serial);
+            w.byte(c.kind);
+            w.u16(c.index);
+            w.f32(c.points);
+            w.f32(c.stunt);
+        }
+        Packet::Progress(p) => {
+            p.validate()?;
+            w.byte(p.peer);
+            w.u32(p.serial);
+            w.byte(p.lap);
+            w.f32(p.distance);
+            w.u32(p.finish_ms);
+        }
         Packet::SetLobby {
             epoch,
             map,
@@ -211,6 +265,70 @@ pub fn decode(bytes: &[u8]) -> Result<Packet> {
             server_ms: u64::from_le_bytes(r.take(8)?.try_into().map_err(|_| Error::InvalidLength)?),
         },
         11 => Packet::Profile(r.participant()?),
+        15 => {
+            let c = GameClaim {
+                peer: r.peer()?,
+                serial: r.u32()?,
+                kind: r.byte()?,
+                index: r.u16()?,
+                points: r.f32()?,
+                stunt: r.f32()?,
+            };
+            c.validate()?;
+            Packet::Claim(c)
+        }
+        14 => {
+            let p = RaceProgress {
+                peer: r.peer()?,
+                serial: r.u32()?,
+                lap: r.byte()?,
+                distance: r.f32()?,
+                finish_ms: r.u32()?,
+            };
+            p.validate()?;
+            Packet::Progress(p)
+        }
+        13 => {
+            let mut g = GameState {
+                game: r.byte()?,
+                serial: r.u32()?,
+                phase: r.byte()?,
+                timer: r.f32()?,
+                clock: r.f32()?,
+                scores: [r.u32()?, r.u32()?, r.u32()?, r.u32()?],
+                banner: r.byte()?,
+                banner_time: r.f32()?,
+                holder: r.byte()?,
+                ball: r.floats()?,
+                ball_velocity: r.floats()?,
+                ball_yaw: r.f32()?,
+                race: Default::default(),
+                marks: Default::default(),
+            };
+            if g.game == 3 {
+                g.race.variant = r.byte()?;
+                g.race.laps = r.byte()?;
+                for slot in &mut g.race.grid {
+                    *slot = r.byte()?;
+                }
+            }
+            if g.game >= game_kind::KING_OF_THE_HILLS {
+                g.marks.venue = r.byte()?;
+                g.marks.players = r.byte()?;
+                g.marks.stunts = r.floats()?;
+                let count = r.u16()? as usize;
+                if count > MAX_MARKS {
+                    return Err(Error::InvalidValue);
+                }
+                let mut marks = Vec::with_capacity(count);
+                for _ in 0..count {
+                    marks.push((r.byte()?, r.f32()?));
+                }
+                g.marks.marks = marks;
+            }
+            g.validate()?;
+            Packet::Game(Box::new(g))
+        }
         12 => {
             let map = r.u16()?;
             map_id(map)?;

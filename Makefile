@@ -7,6 +7,7 @@ ifneq ($(shell command -v sccache 2>/dev/null),)
 export RUSTC_WRAPPER := $(CURDIR)/tools/sccache-rustc
 endif
 endif
+HEAVY = python3 tools/host_build.py --
 CARGO ?= $(HOME)/.cargo/bin/cargo
 NODE ?= node
 ISO ?= private/source/ATV Offroad Fury 2 (USA) (v2.00).iso
@@ -35,36 +36,38 @@ check:
 	python3 tools/verify_repository.py
 	python3 -m unittest discover -s tools -p 'test_security.py'
 	$(CARGO) fmt --all -- --check
-	$(CARGO) test --locked --workspace
-	$(CARGO) clippy --locked --workspace --all-targets -- -D warnings
-	$(NODE) --test --test-timeout=120000 web/install.test.mjs web/analytics.test.mjs web/offline.test.mjs web/sw.test.mjs tools/browser/manifest.test.mjs
+	$(HEAVY) $(CARGO) test --locked --workspace
+	$(HEAVY) $(CARGO) clippy --locked --workspace --all-targets -- -D warnings
+	$(NODE) --test --test-timeout=120000 web/install.test.mjs web/analytics.test.mjs web/offline.test.mjs web/sw.test.mjs tools/browser/manifest.test.mjs tools/browser/owned_process.test.mjs
 	python3 -m py_compile tools/*.py
 	python3 -m unittest discover -s tools -p 'test_worker_build_cache.py'
 	python3 -m unittest discover -s tools -p 'test_playwright_ci.py'
+	python3 -m unittest discover -s tools -p 'test_prune_build_dirs.py'
 	python3 -m unittest discover -s tools -p 'test_devlog.py'
 	python3 -m unittest discover -s tools -p 'test_ci_changes.py'
 	python3 -m unittest discover -s tools -p 'test_release_workflow.py'
 	python3 -m unittest discover -s tools -p 'test_desktop_release.py'
+	python3 -m unittest discover -s tools -p 'test_host_build*.py'
 	python3 -m unittest discover -s tools -p 'test_android_build.py'
 
 # Standalone desktop apps with the game content packed in. Local only (never CI);
 # see research/DESKTOP_RELEASES.md. Pass DESKTOP_ARGS='--platforms macos-universal --smoke'.
 DESKTOP_ARGS ?=
 desktop:
-	python3 tools/build_desktop.py $(DESKTOP_ARGS)
+	$(HEAVY) python3 tools/build_desktop.py $(DESKTOP_ARGS)
 
 # Signed Android APK (no game content; it downloads the hosted package on first launch).
 # Local only (never CI); see research/ANDROID.md. Pass ANDROID_ARGS='--install --launch'.
 ANDROID_ARGS ?=
 android:
-	python3 tools/build_android.py $(ANDROID_ARGS)
+	$(HEAVY) python3 tools/build_android.py $(ANDROID_ARGS)
 
 web:
 	python3 tools/build_web.py
-	python3 tools/build_engine.py
+	$(HEAVY) python3 tools/build_engine.py
 
 relay:
-	cd crates/atv-relay && PATH="$(dir $(CARGO)):$(PATH)" $(HOME)/.cargo/bin/worker-build --release
+	$(HEAVY) sh -c 'cd crates/atv-relay && PATH="$(dir $(CARGO)):$(PATH)" $(HOME)/.cargo/bin/worker-build --release'
 
 serve:
 	python3 tools/serve_web.py --bind $(BIND) --port $(PORT)
@@ -80,11 +83,11 @@ native-analyze:
 
 # Browser groups start their own local server on a free port; build web/dist first.
 browser-smoke:
-	$(NODE) tools/run_browser_tests.mjs --group content-free $(BROWSER_ARGS)
+	$(HEAVY) $(NODE) tools/run_browser_tests.mjs --group content-free $(BROWSER_ARGS)
 
 browser-tests:
-	$(NODE) tools/run_browser_tests.mjs --group content-free,content $(BROWSER_ARGS)
+	$(HEAVY) $(NODE) tools/run_browser_tests.mjs --group content-free,content $(BROWSER_ARGS)
 
 browser-native:
-	$(NODE) tools/run_browser_tests.mjs --group native $(BROWSER_ARGS)
+	$(HEAVY) $(NODE) tools/run_browser_tests.mjs --group native $(BROWSER_ARGS)
 

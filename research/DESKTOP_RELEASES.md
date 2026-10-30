@@ -102,13 +102,14 @@ requires a clean tree (the commit is the version) and uses `git archive HEAD` fo
 - macOS builds natively for both architectures (`MACOSX_DEPLOYMENT_TARGET=11.0`), runs
   `lipo`, assembles the bundle (icon from the authored `web/fury-app-icons.json` 512 px art via
   `iconutil`), signs ad hoc and zips with `ditto` (bundle structure and symlinks preserved).
-- Linux and Windows build in a dedicated Colima VM, profile `fury-builder` (6 CPUs, 8 GiB, vz with
+- Linux and Windows build in a dedicated Colima VM, profile `fury-builder` (2 CPUs, 8 GiB, vz with
   Rosetta for the x86_64 smoke run), kept on the SSD under `COLIMA_HOME=~/LargeFiles/colima`.
-  `build_desktop.py` starts it on demand, points `docker` at its socket (`DOCKER_HOST`) and stops
+  `build_desktop.py` finishes the Mac targets first, starts it only for the Docker phase,
+  points `docker` at its socket (`DOCKER_HOST`) and stops
   it afterwards to give the memory back (`FURY_KEEP_BUILDER_VM=1` keeps it running;
   `--builder-vm none` uses the current docker instead). Only `~/.cargo/registry` is mounted.
   Why: the owner's default 2 CPU / 4 GiB VM runs other services, and the fat-LTO link of `fury`
-  for aarch64 was OOM-killed there on bd347cc (2026-10-24). Cold builds in the new VM (fresh
+  for aarch64 was OOM-killed there on bd347cc (2026-10-24). Historical cold builds in the former 6-CPU VM (fresh
   target volumes): linux-x86_64 10m45s, linux-aarch64 10m57s, windows-x86_64 7m20s.
 - Windows: Rust hides a DLL's internal symbols with `-exclude-symbols` linker directives that
   Debian 11's MinGW ld (binutils 2.35) ignores, so the `atv-app` cdylib (built alongside the
@@ -181,10 +182,11 @@ releases, because the archives contain game content and must never be built in C
   a release of a specific commit).
 - **origin/main** is released as `desktop-v<workspace version>-<short commit>` when it changed
   anything the apps are built from since the newest desktop release (`RELEASE_PATHS`:
-  `crates/`, `Cargo.toml`/`Cargo.lock`, the desktop, Android and pack build tools, the app icon art),
-  and that release is at least 12 hours old (`--min-hours`). Documentation, dev-log, web-shell
-  and test-only merges never start a release. The 12 hour floor keeps a busy merge day to
-  one or two roughly 2 GB releases instead of one per merge.
+  `crates/`, `third_party/` (patched winit), `Cargo.toml`/`Cargo.lock`, the desktop, Android and pack build tools, the app icon art),
+  and that release is at least 168 hours old (`--min-hours`, seven days). Documentation, dev-log, web-shell
+  and test-only merges never start a release. The weekly floor coalesces busy merge days into
+  one roughly 2 GB release per week. Explicit tags remain a deliberate override;
+  each pass handles at most one release, leaving other tags pending.
 
 Each build adds a temporary worktree at the commit, links `private`, runs
 `build_desktop.py --smoke --output ~/LargeFiles/fury-desktop/<short>`, refuses to publish when
@@ -194,40 +196,59 @@ a Linux launch failed, builds the Android APK with `build_android.py --output <o
 same clean commit, match its checksum and pass the APK member allowlist) with release notes
 stating exactly what was launched. A failed Android build still publishes the desktop archives;
 the state entry records `android_error` and the notification says so. Results go
-to `~/LargeFiles/fury-desktop/watcher-state.json` and a macOS notification; per-release logs are
-`watcher-<tag>.log` beside it, the job log is `watcher.log` (written by the watcher via `--log`,
-because launchd cannot open files on the external SSD and fails the job with `EX_CONFIG`). The
-first pass, with no state file yet, adopts the `desktop-v*` tags already on origin as published. A failed release is not retried
-until its entry is removed from the state file's `failed` map. A lock file stops overlapping
-passes. After each pass, local archive folders of published releases beyond the newest three
-are deleted (they remain on GitHub Releases and can be rebuilt from their commit).
+to `~/.local/share/project-service-data/fury-desktop-release/watcher-state.json` and a macOS
+notification; job and per-release logs live beside that state. The small installed runtime
+also stays there, independent of the shared checkout's current revision. Archives, caches,
+content and temporary worktrees stay on the verified external SSD.
+
+State writes are atomic and errors fail closed. The seven-day automatic-attempt cooldown
+includes failures and newer main commits; any release failure additionally backs off the
+whole watcher for one hour. New explicit tags remain pending during that backoff. A busy
+host defers without recording a failed attempt. The watcher checks the SSD UUID, source
+and content readability, and output writability before starting a build. It shares the
+host heavy-work lease with local builds/tests and never interrupts an existing job.
+
+The first pass adopts existing remote tags. A failed tag is not retried until its failed
+entry is deliberately removed; removing it does not bypass the global cooldown. The
+legacy state is migrated only after its old writer exits. Published archive retention
+remains three releases; unmerged work and failed build evidence are preserved.
 
 Bump the workspace `version` in `Cargo.toml` for a notable release; the next automatic pass
 publishes it under the new number.
 
-Install or update (from the shared checkout, which the job only fetches in):
+Install or update from a tested task worktree (see [host budget](HOST_BUILD_BUDGET.md)):
 
 ```sh
-python3 tools/desktop_release_watcher.py --auto-main --dry-run   # what it would build now
-sed -e "s|@REPO@|$HOME/Projects/atv-offroad-fury-2-web|g" -e "s|@HOME@|$HOME|g" \
-  tools/desktop/com.furyremastered.desktop-release.plist.in \
-  > ~/Library/LaunchAgents/com.furyremastered.desktop-release.plist
-launchctl bootout gui/$(id -u)/com.furyremastered.desktop-release 2>/dev/null
-launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.furyremastered.desktop-release.plist
-# stop: launchctl bootout gui/$(id -u)/com.furyremastered.desktop-release
+python3 tools/install_host_build_budget.py --repo "$HOME/Projects/atv-offroad-fury-2-web" --apply
 ```
 
-macOS privacy protection blocks a launchd job from reading the external SSD until Python
-has Full Disk Access: in System Settings, Privacy & Security, Full Disk Access, add
-`/usr/bin/python3` and Xcode's
-`Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/Resources/Python.app`.
-Without it the job exits with code 2 (`launchctl print gui/$(id -u)/com.furyremastered.desktop-release`).
+The installer preserves the rustup Cargo proxy, installs a reversible guard for future
+Cargo invocations, disables new starts of the old watcher without stopping its active
+pass, and starts a one-shot handoff. That handoff waits for the active watcher and its
+state lock before migrating state and reloading launchd. Inspect
+`~/.local/share/project-service-data/fury-desktop-release/handoff.json` and `handoff.log`.
+The installed watcher uses Background priority and nice 10. Do not bootout or kickstart
+an active release to apply an update.
+
+macOS privacy protection requires approval for the application owning the actual interpreter.
+On this host, Python is embedded in **Xcode.app**. Grant Xcode access to Removable Volumes
+under Files and Folders, or add `/Applications/Xcode.app` to Full Disk Access if that
+narrower option is unavailable. Approving only the nested Python app was insufficient:
+TCC's authorization subject was `com.apple.dt.Xcode`. The installer now pins the running
+framework executable reported by `ps`; it does not use `/usr/bin/python3`, whose shared
+Apple launcher identity was being attributed to `/usr/bin/git` in background checks.
+No privacy database is modified by these tools. The user grants access in System Settings.
+
+A newly launched one-shot job using the framework executable passed source/content reads
+and SSD output writes after Xcode was approved. Existing releases were not restarted.
+After an Xcode upgrade or interpreter relocation, rerun the installer from the intended
+Python runtime. The `@PYTHON@` template placeholder is filled by the installer.
 
 The job needs the SSD, Docker (Colima running), `gh` signed in and the private content
 package (`private/reports/hosted-content` in the shared checkout) when it fires; a pass
-that finds one missing records a failure and notifies. The Mac must be awake, so releases
-follow merges by up to 15 minutes plus the build time (about 30 to 60 minutes for all four
-platforms) whenever the machine is on.
+that finds one missing records a failure and notifies. The Mac must be awake, so a due release
+starts on a subsequent 15-minute pass only when the host build budget admits it.
+Build duration depends on cache state and host load; historical timings are not an ETA.
 
 ## Signing and first-launch warnings
 
@@ -253,3 +274,25 @@ platforms) whenever the machine is on.
 - Windows has not been run at all and Linux was only run on software Vulkan under Docker;
   real GPU backends (DX12/Vulkan on PC, Metal on Intel Macs) are untested.
 - No Windows icon resource, no Developer ID or Authenticode signing, no notarization.
+
+## Performance-preserving build changes (2026-10-28)
+
+Desktop compilation no longer generates an unused `atv-app` cdylib for each native
+architecture. Its default crate type is `rlib`; the browser and Android builders use
+`cargo rustc --lib --crate-type cdylib`. The shared `[profile.release]` remains
+`opt-level = "s"`, `lto = true`. There are no changes to game code, quality levels,
+physics, rendering or audio. ThinLTO is a future benchmark candidate, not the default.
+
+The two Mac targets run before the Docker VM is opened. Linux/Windows share one VM
+session, and its `DOCKER_HOST` override is restored afterwards, including on failure.
+Only a VM started by this invocation is stopped. Already-running VMs are never resized
+or restarted; the two-CPU default applies on future starts, with 8 GiB retained to
+avoid repeating the previously observed 4 GiB linker failure. Default live-service
+VMs and the currently running old release are untouched.
+
+Cargo timing reports are enabled. Mac reports are copied to the local release folder's
+`timings/<target>.html`; Docker reports remain in each existing target cache volume at
+`/target/cargo-timings/`. These diagnostics are not uploaded as release assets. No
+full-release speedup measurement is claimed while the old build and memory pressure
+are still present. CI exercises actual native and Android linking plus the existing
+WebAssembly build; synthetic tests cover VM lifetime and release admission.

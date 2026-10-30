@@ -9,6 +9,10 @@ use crate::{
     vehicle::{VehicleFrame, VehicleInput},
 };
 
+/// Authored route window of `Course::project_near`.
+const PROJECTION_BEHIND: f32 = 60.;
+const PROJECTION_AHEAD: f32 = 150.;
+
 #[derive(Clone, Copy, Debug)]
 pub struct RoutePosition {
     pub segment: usize,
@@ -54,11 +58,13 @@ impl Course {
     /// race station. Native 0017be80 tracks the current node instead of
     /// searching the whole course, so a course that passes beside itself
     /// (e.g. nat01's lap beside its start straight) cannot capture the CPU.
+    /// This projection is authored; it keeps its own window (60ft behind,
+    /// 2 × 150ft ahead) rather than the recovered Track +0x34/+0x38 values.
     pub fn project_near(&self, origin: [f32; 3], station: crate::race::Station) -> RoutePosition {
         let in_cycle = station.segment >= self.loop_start;
         let mut first = station.segment;
         let mut behind = station.fraction * self.segment(first);
-        while behind < crate::race::TRACK_BEHIND {
+        while behind < PROJECTION_BEHIND {
             let Some(previous) = self.previous(first, in_cycle) else {
                 break;
             };
@@ -96,7 +102,7 @@ impl Course {
                 };
             }
             covered += length;
-            if covered > behind + crate::race::TRACK_AHEAD * 2. {
+            if covered > behind + PROJECTION_AHEAD * 2. {
                 break;
             }
             total = if self.next(segment) == self.loop_start {
@@ -288,6 +294,46 @@ pub struct Context<'a> {
     pub terrain_normal: [f32; 3],
     /// The racer's on-track race station; None searches the whole course.
     pub station: Option<crate::race::Station>,
+    /// RaceStatus +0x3c: the racer lay inside the track polygon within the
+    /// route window at the last race update (National rules). The Enduro
+    /// driver runs its own query instead.
+    pub on_track: bool,
+    /// Enduro: the racer's next gate (VehicleAI mode 4).
+    pub enduro: Option<EnduroTarget>,
+}
+/// Lookahead limit on the track (VehicleAI +0x244, set to 60ft by race
+/// creation `001f9690`), and its base and error gain (+0x240 = 25,
+/// +0x248 = 4).
+const LOOKAHEAD_CAP: f32 = 60.;
+const LOOKAHEAD_BASE: f32 = 25.;
+const LOOKAHEAD_GAIN: f32 = 4.;
+/// Off the track the lookahead is limited to half the Track's forward
+/// window (Track +0x34 × 0.5 in `0024f9d0` and `00250ae0`).
+const OFF_TRACK_CAP: f32 = crate::race::TRACK_AHEAD * 0.5;
+/// Leader speed floor (VehicleAI +0x414, `001f9690`): 60ft/s in Nationals,
+/// Supercross and Short Tracks, 45ft/s in Enduro.
+const LEADER_FLOOR: f32 = 60.;
+const ENDURO_LEADER_FLOOR: f32 = 45.;
+/// The Enduro racer's next gate (RaceStatus +0xb0) and rider flag 1.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct EnduroTarget {
+    pub gate: usize,
+    pub finished: bool,
+}
+/// The Enduro driver's own track stations (`00250ae0`): type 1 RaceStatus
+/// runs no track query, so mode 4 keeps the current (+0xb8) and committed
+/// (+0xc4) stations itself, with the rider position at the last commit
+/// (+0x310).
+#[derive(Clone, Copy, Debug)]
+struct EnduroStations {
+    station: crate::race::Station,
+    entered: bool,
+    committed: crate::race::Station,
+    committed_entered: bool,
+    commit_origin: [f32; 3],
+}
+fn horizontal_distance(a: [f32; 3], b: [f32; 3]) -> f32 {
+    ((a[0] - b[0]).powi(2) + (a[2] - b[2]).powi(2)).sqrt()
 }
 pub struct Driver {
     options: Options,
@@ -300,6 +346,14 @@ pub struct Driver {
     air_timer: f32,
     trick_attempted: bool,
     jump: JumpLatch,
+    enduro: Option<EnduroStations>,
+    /// Each Enduro gate's place on the route (the box track position
+    /// `0017da40`, gate +0x84).
+    gate_stations: Vec<crate::race::Station>,
+    /// Port adaptation ([`crate::cpu_recovery`]): set by the race for a CPU
+    /// working through a repeated failure; default (off) is the recovered
+    /// driver.
+    pub assist: crate::cpu_recovery::Assist,
 }
 impl Driver {
     pub fn new(index: usize, options: Options) -> Self {
@@ -316,6 +370,9 @@ impl Driver {
             air_timer: 0.,
             trick_attempted: false,
             jump: JumpLatch::default(),
+            enduro: None,
+            gate_stations: Vec::new(),
+            assist: Default::default(),
         }
     }
     pub fn repositioned(&mut self) {
@@ -323,6 +380,127 @@ impl Driver {
         self.lane = 0.;
         self.lean = 0.;
         self.air_timer = 0.;
+        // An Enduro reset leaves the stations null (+0xd0 is never set in
+        // type 1), so mode 4 searches the route again from the new place.
+        self.enduro = None;
+    }
+    /// VehicleAI mode 4 (`00250ae0`) with a Track: the National route
+    /// driver aimed by the next gate. Returns the racer's station as a
+    /// route position, the lookahead base, the lookahead and whether the
+    /// racer is on the track.
+    ///
+    /// - The committed station takes the current one only while the gate
+    ///   lies more than the 60ft lookahead limit ahead of it on the route,
+    ///   and nearer than from the committed station.
+    /// - The track query searches the route window around the committed
+    ///   station. Off the track, a point inside the track polygon anywhere
+    ///   on the course (`0017e420`) is driven to as usual; otherwise the
+    ///   committed station with the lookahead limited to 62.5ft.
+    /// - On the track, while the gate is still ahead of the rider (not
+    ///   between it and the place of the last commit), the ordinary
+    ///   lookahead is used beyond 60ft of the gate and 120ft less the
+    ///   remaining distance from the committed station within it, which
+    ///   carries the aim through the gate. A rider that has passed beside
+    ///   the gate aims back from the committed station by its distance past
+    ///   the gate, so it turns round to take the gate it missed.
+    fn enduro_guidance(
+        &mut self,
+        course: &Course,
+        origin: [f32; 3],
+        target: EnduroTarget,
+    ) -> (RoutePosition, RoutePosition, f32, bool) {
+        use crate::race::Station;
+        if self.gate_stations.len() != course.enduro.len() {
+            self.gate_stations = course
+                .enduro
+                .iter()
+                .map(|gate| match course.gate_distance(gate) {
+                    Some(d) => course.advance(
+                        Station {
+                            segment: 0,
+                            fraction: 0.,
+                        },
+                        d,
+                    ),
+                    None => {
+                        let p = course.project(gate.center);
+                        Station {
+                            segment: p.segment,
+                            fraction: p.fraction,
+                        }
+                    }
+                })
+                .collect();
+        }
+        let entered = course.loop_start == 0;
+        let s = self.enduro.get_or_insert_with(|| {
+            // 0017b290: the station nearest the rider; +0xc4 copies it.
+            let station = course.nearest_station(origin);
+            EnduroStations {
+                station,
+                entered,
+                committed: station,
+                committed_entered: entered,
+                commit_origin: origin,
+            }
+        });
+        let position = |station: Station| RoutePosition {
+            segment: station.segment,
+            fraction: station.fraction,
+            point: course.point_at(station),
+            error: horizontal_distance(course.point_at(station), origin),
+            distance: course.station_distance(station),
+        };
+        let ordinary = |error: f32| (LOOKAHEAD_BASE + LOOKAHEAD_GAIN * error).min(LOOKAHEAD_CAP);
+        let Some(&gate) = self.gate_stations.get(target.gate) else {
+            let p = position(s.station);
+            return (p, p, ordinary(p.error), true);
+        };
+        let center = course.enduro[target.gate].center;
+        // Entry +0x14 / +0x10: route distance to the gate from the current
+        // and the committed station.
+        let to_gate = course.forward_distance(s.station, gate);
+        if target.finished
+            || (LOOKAHEAD_CAP < to_gate && to_gate < course.forward_distance(s.committed, gate))
+        {
+            s.committed = s.station;
+            s.committed_entered = s.entered;
+            s.commit_origin = origin;
+        }
+        let located = course.locate(origin, s.committed, s.committed_entered);
+        let on_track = located.is_some();
+        (s.station, s.entered) = located.map_or((s.committed, s.committed_entered), |l| {
+            (l.station, l.entered)
+        });
+        let p = position(s.station);
+        if target.finished {
+            return (p, p, ordinary(p.error), on_track);
+        }
+        if !on_track {
+            let nearest = course.project(origin);
+            if course.within(origin, nearest.segment) {
+                return (p, nearest, ordinary(nearest.error), false);
+            }
+            let base = position(s.committed);
+            let lookahead = (LOOKAHEAD_BASE + LOOKAHEAD_GAIN * base.error).min(OFF_TRACK_CAP);
+            return (p, base, lookahead, false);
+        }
+        let c = s.commit_origin;
+        let ahead = (center[2] - c[2]) * (center[2] - origin[2])
+            + (center[0] - c[0]) * (center[0] - origin[0])
+            >= 0.;
+        if ahead && LOOKAHEAD_CAP < to_gate {
+            (p, p, ordinary(p.error), true)
+        } else if ahead {
+            (p, position(s.committed), LOOKAHEAD_CAP * 2. - to_gate, true)
+        } else {
+            (
+                p,
+                position(s.committed),
+                course.forward_distance(gate, s.station),
+                true,
+            )
+        }
     }
     /// Ordinary National gate: 10-second interval, flagged jump, 10% trial;
     /// choose only main clips that fit the remaining TDF airtime minus0.5s.
@@ -387,9 +565,29 @@ impl Driver {
         if !dt.is_finite() || dt <= 0. || dt > 0.1 || course.points.len() < 4 {
             return Err("invalid CPU driving step".into());
         }
-        let p = match context.station {
-            Some(station) => course.project_near(frame.origin, station),
-            None => course.project(frame.origin),
+        let enduro = context.enduro.filter(|_| course.is_enduro());
+        let (p, aim, on_track) = match enduro {
+            Some(target) => {
+                let (p, base, lookahead, on_track) =
+                    self.enduro_guidance(course, frame.origin, target);
+                (p, course.ahead(base, lookahead.max(0.)), on_track)
+            }
+            None => {
+                let p = match context.station {
+                    Some(station) => course.project_near(frame.origin, station),
+                    None => course.project(frame.origin),
+                };
+                // 0024f9d0: 25 + 4 × the distance to the station's point,
+                // limited to 60ft on the track (+0x3c) and to half the
+                // Track window off it.
+                let on_track = context.on_track;
+                let lookahead = (LOOKAHEAD_BASE + LOOKAHEAD_GAIN * p.error).min(if on_track {
+                    LOOKAHEAD_CAP
+                } else {
+                    OFF_TRACK_CAP
+                });
+                (p, course.ahead(p, lookahead), on_track)
+            }
         };
         if !frame.riding {
             return Ok((
@@ -413,53 +611,66 @@ impl Driver {
                 },
             ));
         }
-        let on_track = p.error <= course.widths[p.segment] * 0.5;
-        let lookahead = (25. + 4. * p.error).min(if on_track {
-            60.
-        } else {
-            course.cycle_length() * 0.5
-        });
-        let aim = course.ahead(p, lookahead);
         if aim.segment != self.last_target {
             self.goal = course.lane_limit * self.random.next_u31() as f32 * 4.656613e-10 * 2.
                 - course.lane_limit;
             self.last_target = aim.segment;
         }
+        if self.assist.centre_lane {
+            // Port adaptation: hold the racing line (the draw above still
+            // advances the random stream).
+            self.goal = 0.;
+        }
         let tangent = course.tangent(p.segment);
         let delta = sub(p.point, frame.origin);
         let measured = delta[2] * tangent[0] - delta[0] * tangent[2];
-        let lane = if course.flags.get(p.segment).copied().unwrap_or(0) & 0x10 == 0 {
-            lateral_offset(measured, self.goal, dt, course.lane_limit)
+        // A flag-0x10 node keeps the lane; mode 4 (Enduro) also mirrors it.
+        let (lane, side) = if course.flags.get(p.segment).copied().unwrap_or(0) & 0x10 == 0 {
+            (
+                lateral_offset(measured, self.goal, dt, course.lane_limit),
+                1.,
+            )
         } else {
-            self.lane
+            (self.lane, if enduro.is_some() { -1. } else { 1. })
         };
         self.lane = lane;
         let tangent = course.tangent(aim.segment);
         let target = [
-            aim.point[0] + lane * tangent[2],
+            aim.point[0] + side * lane * tangent[2],
             aim.point[1],
-            aim.point[2] - lane * tangent[0],
+            aim.point[2] - side * lane * tangent[0],
         ];
         let desired = normalize([target[0] - frame.origin[0], 0., target[2] - frame.origin[2]]);
         // 00252080 reads the 0x10 response scale from the aim node (+0x278).
+        // Its scene query (static rays and plants) runs only while the
+        // racer is off the track (`bne` on race entry +0x3c at 002524a4);
+        // on the track only the peers and the track-edge tail correct it.
         let mut avoidance = crate::cpu_avoidance::direction(
             frame.origin,
             desired.map(|v| v * frame.speed_magnitude),
             context.peers,
             course.flags.get(aim.segment).copied().unwrap_or(0),
-            context.scene,
+            if on_track { None } else { context.scene },
             self.options.aggressive,
         )?;
         // RaceStatus +0xbc: the race station's node, which stays on the last
         // on-track node while the rider is off the track polygon.
-        let node = context.station.map_or(p.segment, |s| s.segment);
+        // Enduro: the driver's own station.
+        let station = match enduro {
+            Some(_) => Some(crate::race::Station {
+                segment: p.segment,
+                fraction: p.fraction,
+            }),
+            None => context.station,
+        };
+        let node = station.map_or(p.segment, |s| s.segment);
         // AI flag 0x400000 tail: probe 20ft along the requested heading; the
         // nearest segment comes from the station window here instead of the
         // native whole-section search (`0017b6a0`).
         let probe = std::array::from_fn(|i| {
             frame.origin[i] + desired[i] * crate::cpu_avoidance::TRACK_EDGE_PROBE
         });
-        let near = match context.station {
+        let near = match station {
             Some(station) => course.project_near(probe, station),
             None => course.project(probe),
         };
@@ -549,12 +760,17 @@ impl Driver {
         // AI +0xf4 keeps this lean; the release below only changes the input.
         self.lean = lean;
         // Flag 0x400 is set for every difficulty except Expert.
-        if !self.options.expert {
+        // The recovery assist (port adaptation) lifts it.
+        if !self.options.expert && !self.assist.no_leader_limit {
             desired_speed = leader_speed(
                 desired_speed,
                 player_speed,
                 progress_difference,
-                60.,
+                if enduro.is_some() {
+                    ENDURO_LEADER_FLOOR
+                } else {
+                    LEADER_FLOOR
+                },
                 course.leader_policy,
             );
         }
@@ -753,6 +969,8 @@ mod tests {
                     clearance,
                     terrain_normal: [0., 1., 0.],
                     station: None,
+                    on_track: true,
+                    enduro: None,
                 },
             )
             .unwrap()
@@ -818,6 +1036,8 @@ mod tests {
                             segment,
                             fraction: 0.5,
                         }),
+                        on_track: true,
+                        enduro: None,
                     },
                 )
                 .unwrap();
@@ -1006,5 +1226,216 @@ mod tests {
         assert_eq!(a.segment, 0);
         assert!((a.point[2] - 30.).abs() < 0.00001);
         assert_eq!([a.point[0], a.point[1]], [0., 0.]);
+    }
+    /// 400ft square Enduro: gate 0 halfway up the first side, gate 1 on
+    /// the second, the finish gate on the third.
+    fn enduro_square() -> Course {
+        let w = |x: f32, z: f32, dx: f32, dz: f32| crate::enduro::Waypoint {
+            x,
+            z,
+            direction: [dx, dz],
+        };
+        let mut c = Course {
+            points: vec![
+                [0., 0., 0.],
+                [0., 0., 400.],
+                [400., 0., 400.],
+                [400., 0., 0.],
+            ],
+            widths: vec![30.; 4],
+            speeds: vec![-1.; 4],
+            ..Course::default()
+        };
+        let gates = crate::enduro::gates(
+            &[
+                w(0., 200., 0., 1.),
+                w(200., 400., 1., 0.),
+                w(400., 200., 0., -1.),
+            ],
+            15.,
+            |_, _| 0.,
+        )
+        .unwrap();
+        c.set_enduro(gates).unwrap();
+        c
+    }
+    fn enduro_step(
+        driver: &mut Driver,
+        course: &Course,
+        origin: [f32; 3],
+        ahead: f32,
+    ) -> Decisions {
+        let pose = DriverPose {
+            origin,
+            ..pose(30., false, false)
+        };
+        driver
+            .step(
+                course,
+                &pose,
+                20.,
+                ahead,
+                1. / 60.,
+                Context {
+                    peers: &[],
+                    scene: None,
+                    clearance: 1.,
+                    terrain_normal: [0., 1., 0.],
+                    station: None,
+                    on_track: false,
+                    enduro: Some(EnduroTarget {
+                        gate: 0,
+                        finished: false,
+                    }),
+                },
+            )
+            .unwrap()
+            .1
+    }
+    #[test]
+    fn enduro_driver_aims_through_its_next_gate() {
+        let course = enduro_square();
+        let mut driver = Driver::new(0, Options::default());
+        // 100ft before the gate: the ordinary lookahead, 25ft on the line.
+        // The track query is the driver's own (the race's +0x3c is unused).
+        let d = enduro_step(&mut driver, &course, [0., 0., 100.], 0.);
+        assert!((d.target[2] - 125.).abs() < 0.01, "{d:?}");
+        assert_eq!(d.desired_speed, 150.);
+        // Within 60ft the committed station (z = 100) stays and the aim is
+        // 120ft less the remaining 30ft beyond it, past the gate.
+        // (Entry +0x14 is measured from the previous station, so the first
+        // frame there still uses the ordinary lookahead.)
+        let d = enduro_step(&mut driver, &course, [0., 0., 170.], 0.);
+        assert!((d.target[2] - 195.).abs() < 0.01, "{d:?}");
+        let d = enduro_step(&mut driver, &course, [0., 0., 170.], 0.);
+        assert!((d.target[2] - 190.).abs() < 0.01, "{d:?}");
+        // Past the gate without crossing it, the aim turns back: from the
+        // committed station by the 30ft the rider is past the gate.
+        let d = enduro_step(&mut driver, &course, [0., 0., 230.], 0.);
+        assert!((d.target[2] - 130.).abs() < 0.01, "{d:?}");
+        // A reset searches the route again from the new place.
+        driver.repositioned();
+        let d = enduro_step(&mut driver, &course, [0., 0., 20.], 0.);
+        assert!((d.target[2] - 45.).abs() < 0.01, "{d:?}");
+    }
+    #[test]
+    fn enduro_leader_floor_is_45ft_per_second() {
+        let course = enduro_square();
+        let mut driver = Driver::new(0, Options::default());
+        // 100ft ahead of the player at 20ft/s: base max(45, 20) = 45.
+        let d = enduro_step(&mut driver, &course, [0., 0., 100.], 100.);
+        assert!((d.desired_speed - 46.666_67).abs() < 0.001, "{d:?}");
+        let national = square(0, -1.);
+        let mut driver = Driver::new(0, Options::default());
+        let (_, d) = drive(&mut driver, &national, &pose(30., false, false), 100., 1.);
+        assert!((d.desired_speed - 60.666_67).abs() < 0.001, "{d:?}");
+    }
+    #[test]
+    fn static_avoidance_rays_are_cast_only_off_the_track() {
+        // A wall 20ft ahead across the 400ft course's first side.
+        let scene = crate::scene_collision::SceneCollision::new(
+            crate::scene_partition::Config {
+                min_x: -128.,
+                max_x: 128.,
+                min_z: -128.,
+                max_z: 128.,
+                cell_size: 32.,
+            },
+            vec![crate::wreck::tests::surface([
+                [40., -10., 70.],
+                [-40., -10., 70.],
+                [0., 20., 70.],
+            ])],
+            None,
+            false,
+            |_| Ok(0.),
+        )
+        .unwrap();
+        let course = Course {
+            points: vec![
+                [0., 0., 0.],
+                [0., 0., 400.],
+                [400., 0., 400.],
+                [400., 0., 0.],
+            ],
+            widths: vec![30.; 4],
+            speeds: vec![-1.; 4],
+            ..Course::default()
+        };
+        let pose = pose(30., false, false);
+        let hits = |on_track| {
+            Driver::new(0, Options::default())
+                .step(
+                    &course,
+                    &pose,
+                    20.,
+                    0.,
+                    1. / 60.,
+                    Context {
+                        peers: &[],
+                        scene: Some(&scene),
+                        clearance: 1.,
+                        terrain_normal: [0., 1., 0.],
+                        station: None,
+                        on_track,
+                        enduro: None,
+                    },
+                )
+                .unwrap()
+                .1
+                .avoidance
+                .obstacle_hits
+        };
+        // 002524a4: race entry +0x3c set skips the scene query.
+        assert_eq!(hits(true), 0);
+        assert!(hits(false) > 0);
+    }
+    #[test]
+    fn off_track_lookahead_is_half_the_track_window() {
+        let course = Course {
+            points: vec![
+                [0., 0., 0.],
+                [0., 0., 400.],
+                [400., 0., 400.],
+                [400., 0., 0.],
+            ],
+            widths: vec![30.; 4],
+            speeds: vec![-1.; 4],
+            ..Course::default()
+        };
+        let mut driver = Driver::new(0, Options::default());
+        let pose = DriverPose {
+            origin: [-50., 0., 10.],
+            ..pose(30., false, false)
+        };
+        let step = |driver: &mut Driver, on_track| {
+            driver
+                .step(
+                    &course,
+                    &pose,
+                    20.,
+                    0.,
+                    1. / 60.,
+                    Context {
+                        peers: &[],
+                        scene: None,
+                        clearance: 1.,
+                        terrain_normal: [0., 1., 0.],
+                        station: None,
+                        on_track,
+                        enduro: None,
+                    },
+                )
+                .unwrap()
+                .1
+        };
+        // 25 + 4 × 50ft: limited to Track +0x34 × 0.5 = 62.5ft off the track
+        // (not half the lap), and to 60ft on it. Off the track the target
+        // speed is +0x410 = 50ft/s.
+        let d = step(&mut driver, false);
+        assert!((d.target[2] - 72.5).abs() < 0.01, "{d:?}");
+        assert_eq!(d.desired_speed, 50.);
+        let d = step(&mut driver, true);
+        assert!((d.target[2] - 70.).abs() < 0.01, "{d:?}");
     }
 }

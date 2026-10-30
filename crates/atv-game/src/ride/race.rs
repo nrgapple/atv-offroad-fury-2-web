@@ -8,6 +8,7 @@
 //! drop gate pose, the 321 lamp sounds and the race music events.
 use super::{Mount, Ride, STEP, cpu::CpuModel, cpu::CpuRacer, cpu::World};
 use crate::Result;
+use atv_core::cpu_recovery;
 use atv_core::math::Det;
 use atv_core::{
     camera::CameraFrame,
@@ -30,6 +31,8 @@ use atv_core::{
 const CPU_OFF_TRACK_RESET: f32 = 5.;
 /// Seconds a riding CPU may stay below 3 ft/s before recovering.
 const CPU_STUCK_RESET: f32 = 4.;
+/// Separates the start-slot draw from the roster draw on the same seed.
+const GRID_STREAM: u64 = 0x001f_6350;
 
 /// Race setup chosen in the Race menu (`normalizedRace` in web/frontend.js).
 #[derive(Clone, Copy, Debug)]
@@ -46,6 +49,15 @@ pub struct Settings {
     pub seed: u64,
     /// Play the pre-race camera (Restart Race reloads without it).
     pub intro: bool,
+    /// A championship round: the series (index into
+    /// `atv_core::championship::SERIES`) and Expert.
+    pub championship: Option<(usize, bool)>,
+    /// Which of the venue's races (National, Enduro long/short, Short Track).
+    pub course: crate::launch::RaceVariant,
+    /// A room race (research/MULTIPLAYER.md "Room races"): this rider's
+    /// start slot and the human grid size. The race holds on the grid until
+    /// the room host's GO ([`Ride::room_go`]).
+    pub room: Option<(u32, usize)>,
 }
 
 impl Default for Settings {
@@ -58,8 +70,37 @@ impl Default for Settings {
             all_out: false,
             seed: 1,
             intro: true,
+            championship: None,
+            course: Default::default(),
+            room: None,
         }
     }
+}
+
+/// Room standings in race order replace the solo race's (its only racer
+/// is the player).
+fn room_standings(frame: &mut Frame, rows: &[RoomRow]) {
+    let mine = frame.standings.iter().find(|s| s.player);
+    let (best, stunt) = mine.map_or((None, 0.), |s| (s.best, s.stunt));
+    frame.field = rows.len().max(1);
+    if let Some(at) = rows.iter().position(|r| r.player) {
+        frame.position = at + 1;
+    }
+    frame.standings = rows
+        .iter()
+        .enumerate()
+        .map(|(at, r)| atv_core::race::Standing {
+            name: r.name.clone(),
+            position: at + 1,
+            laps: r.laps,
+            time: r.time,
+            best: if r.player { best } else { None },
+            estimated: false,
+            progress: r.progress,
+            stunt: if r.player { stunt } else { 0. },
+            player: r.player,
+        })
+        .collect();
 }
 
 /// A stadium camera-flash burst (`0020ee10` targets of `[CameraFlash]`).
@@ -94,6 +135,8 @@ pub struct StepEvents {
     pub fireworks: Vec<(usize, usize, bool)>,
     /// The drop gate's world matrix this step.
     pub gate: Option<[f32; 16]>,
+    /// An Enduro race: the player's next gate (0-based), drawn opaque.
+    pub enduro_next: Option<usize>,
     /// One-shot samples: `beep01.vag`/`go.vag` with the lamps, `gate.vag`.
     pub sounds: Vec<&'static str>,
     pub music: Option<MusicEvent>,
@@ -121,6 +164,8 @@ pub struct Stage {
     pub crowd: Option<race_crowd::Sounds>,
     pub gate: Option<DropGate>,
     pub fireworks: Fireworks,
+    /// The race TOY `[ChampionshipInfo]` Profile Points tables.
+    pub awards: Option<atv_core::profile::CourseAwards>,
 }
 
 /// What a race load reads besides the ride itself.
@@ -141,7 +186,23 @@ pub struct Setup {
 /// Each CPU quad's rest node matrices and the seated rider's.
 type GridRest = (Vec<Vec<[f32; 16]>>, Vec<[f32; 16]>);
 
+/// Split screen: the other local humans as this race sees them
+/// (research/SPLIT_SCREEN.md). Player 1's race holds the CPU field.
+#[derive(Clone, Debug, Default)]
+pub struct SplitLink {
+    /// The other humans' (origin, velocity, orientation): the CPUs steer
+    /// around them (human peers, RaceStatus flag 4) and push against them.
+    pub humans: Vec<([f32; 3], [f32; 3], [f32; 4])>,
+    /// The combined place from the latest standings merge: the PLACE sign,
+    /// the finish sign and the race-over music read it.
+    pub place: Option<usize>,
+    /// Another human has not finished: the race is not over yet.
+    pub waiting: bool,
+}
+
 pub struct RaceState {
+    /// Split screen's other human (none in a one-player race).
+    pub split: SplitLink,
     pub race: Race,
     pub cpus: Vec<CpuRacer>,
     /// Original CPU quads and riders by slot (for drawing).
@@ -156,6 +217,8 @@ pub struct RaceState {
     director: Option<(f32, Director, usize)>,
     autopilot: Option<Driver>,
     autopilot_stuck: f32,
+    /// The player's vehicle reset count at the last race update.
+    player_resets: Option<u32>,
     pub(super) autopilot_reset: bool,
     hud: RaceHud,
     pub frame: Option<Frame>,
@@ -184,6 +247,31 @@ pub struct RaceState {
     rest: Option<GridRest>,
     /// The latest step's presentation, until the host takes it.
     pub events: StepEvents,
+    /// The Hall of Fame and personal records as the event started; a
+    /// restart keeps them for its fresh race.
+    records_start: Option<atv_core::hall_of_fame::RecordWatch>,
+    /// A room race's standings across every room rider, set by the room
+    /// each frame; they replace the frame's position, field and standings.
+    pub room: Option<Vec<RoomRow>>,
+}
+
+/// One room-race rider's standing (research/MULTIPLAYER.md "Room races").
+#[derive(Clone, Debug, PartialEq)]
+pub struct RoomRow {
+    pub name: String,
+    pub laps: u32,
+    /// Finish time (s).
+    pub time: Option<f32>,
+    pub progress: f32,
+    pub player: bool,
+}
+
+impl RaceState {
+    /// The player's Hall of Fame and personal records for this event.
+    pub fn set_records(&mut self, records: atv_core::hall_of_fame::RecordWatch) {
+        self.records_start = Some(records.clone());
+        self.race.set_records(records);
+    }
 }
 
 impl RaceState {
@@ -320,7 +408,15 @@ impl Ride {
             .take(settings.cpu)
             .map(|e| e.name.clone())
             .collect();
-        let mut race = Race::new(course, settings.laps, names, settings.difficulty)?;
+        // 001f6350 shuffles the start slots per race; the roster seed gives
+        // this race its own stream (the original draws from libc rand).
+        let mut race = Race::seeded(
+            course,
+            settings.laps,
+            names,
+            settings.difficulty,
+            settings.seed ^ GRID_STREAM,
+        )?;
         // Race creation 001f9690: difficulty plus the EATDIRT/BRINGIT flags.
         let options = Options {
             aggressive: settings.aggressive,
@@ -357,13 +453,21 @@ impl Ride {
                 None,
             );
         }
+        // A room race takes its own slot on the shared grid and holds there
+        // for the host's countdown (authored, research/MULTIPLAYER.md).
+        if let Some((slot, riders)) = settings.room {
+            race.set_player_grid(slot, riders)?;
+            race.begin_intro();
+        }
         // Race load plays the pre-race camera (00210980 SetCamera(5)).
         let mut intro_camera = None;
-        if intro && !setup.shots.is_empty() {
+        if intro && settings.room.is_none() && !setup.shots.is_empty() {
             intro_camera = Some(Intro::new(setup.shots.clone()));
             race.begin_intro();
         }
-        // 001dd440 grounds an ATV on the grid; the bike keeps its op 23 drop.
+        // The player takes its own start slot (001f8410); 001dd440 grounds an
+        // ATV on the grid, and the bike keeps its op 23 drop.
+        self.place_at(race.player_grid())?;
         if let Mount::Quad { vehicle, .. } = &mut self.mount {
             super::race::place_racer(vehicle, &self.sim.terrain)?;
             self.frame = vehicle.frame();
@@ -380,6 +484,7 @@ impl Ride {
             director: None,
             autopilot: None,
             autopilot_stuck: 0.,
+            player_resets: None,
             autopilot_reset: false,
             hud: RaceHud::default(),
             frame: None,
@@ -398,6 +503,7 @@ impl Ride {
             stage: setup.stage,
             crowd_wrecked: false,
             crowd_laps: 0,
+            split: SplitLink::default(),
             fireworks: None,
             firework_positions: Vec::new(),
             lights: None,
@@ -405,6 +511,8 @@ impl Ride {
             music_intro: false,
             rest: Some(rest),
             events: StepEvents::default(),
+            records_start: None,
+            room: None,
         });
         Ok(())
     }
@@ -436,6 +544,9 @@ impl Ride {
             stage: state.stage,
         };
         self.begin_race(setup, state.settings, false)?;
+        if let (Some(records), Some(race)) = (state.records_start, &mut self.race) {
+            race.set_records(records);
+        }
         self.step_camera(0.)
     }
 
@@ -537,13 +648,31 @@ impl Ride {
                 clearance: contact.as_ref().map_or(0., |c| pose.origin[1] - c.height),
                 terrain_normal: contact.as_ref().map_or([0., 1., 0.], |c| c.normal),
                 station: Some(race.station(None)),
+                on_track: race.on_track(None),
+                enduro: race.enduro_target(None),
             },
         )?;
         Ok(Some(input))
     }
 
     /// Race progress, CPU racers and rider contact after the player's step.
+    /// Split screen: each CPU's contact body (origin, velocity,
+    /// orientation) for the other human's ride.
+    pub fn race_cpu_bodies(&self) -> Vec<([f32; 3], [f32; 3], [f32; 4])> {
+        self.race.as_ref().map_or_else(Vec::new, |state| {
+            state
+                .cpus
+                .iter()
+                .map(|c| {
+                    let f = c.vehicle.frame();
+                    (f.origin, f.linear_velocity, f.orientation)
+                })
+                .collect()
+        })
+    }
+
     pub(super) fn step_race(&mut self) -> Result<()> {
+        let committed = self.committed_points();
         let Some(state) = &mut self.race else {
             return Ok(());
         };
@@ -562,7 +691,27 @@ impl Ride {
             .chain((0..race.opponents().len()).map(Some))
             .map(|r| race.laps_completed(r))
             .collect();
+        // A player reset (wreck recovery, deep water, Reset) returns the
+        // race stations to the accepted reset point first.
+        if state
+            .player_resets
+            .replace(player.reset_count)
+            .is_some_and(|count| count != player.reset_count)
+        {
+            race.restore_checkpoint(None, player.origin);
+        }
+        race.waiting = state.split.waiting;
         race.step(player.origin, STEP);
+        race.record_player_stunt(committed);
+        race.record_player_jump(
+            player.grounded.iter().any(|g| *g),
+            player.origin,
+            player.reset_count,
+            STEP,
+        );
+        for (success, count, sum) in self.race_chains.drain(..) {
+            race.record_player_chain(success, count, sum);
+        }
         let terrain = &self.sim.terrain;
         let hold = race.holding();
         let snapshots: Vec<_> = state
@@ -599,9 +748,51 @@ impl Ride {
                 .map_or(point[1], |c| c.height);
             Ok(([point[0], height, point[2]], heading))
         };
+        // Each on-track racer offers its reset point; the vehicle keeps it
+        // only where 001ea4d0 finds it clear (offer_race_checkpoint). A new
+        // race's first point (the grid, 001f80e0) is set as is.
+        let offer =
+            |v: &mut Vehicle, race: &mut atv_core::race::Race, cpu: Option<usize>| -> Result<()> {
+                let (point, heading) = on_line(race.checkpoint(cpu))?;
+                if !race.has_checkpoint(cpu) {
+                    v.set_race_checkpoint(Some((point, heading)));
+                    race.accept_checkpoint(cpu);
+                } else if race.on_track(cpu) && v.offer_race_checkpoint(terrain, point, heading)? {
+                    race.accept_checkpoint(cpu);
+                }
+                Ok(())
+            };
         let (point, heading) = on_line(race.checkpoint(None))?;
+        // Split screen's other humans: human peers the CPUs avoid.
+        let humans: Vec<Peer> = state
+            .split
+            .humans
+            .iter()
+            .map(|&(origin, velocity, _)| Peer {
+                origin,
+                velocity,
+                human: Some(
+                    race.course
+                        .tangent(race.course.nearest_station(origin).segment),
+                ),
+            })
+            .collect();
+        let positions: Vec<[f32; 3]> = std::iter::once(player.origin)
+            .chain(snapshots.iter().map(|p| p.origin))
+            .chain(humans.iter().map(|h| h.origin))
+            .collect();
+        let others = |own: usize| {
+            positions
+                .iter()
+                .enumerate()
+                .filter(move |(i, _)| *i != own)
+                .map(|(_, p)| *p)
+        };
         match &mut vehicle {
-            Player::Quad(v) => v.set_race_checkpoint(Some((point, heading))),
+            Player::Quad(v) => {
+                v.set_reset_peers(others(0));
+                offer(v, race, None)?;
+            }
             // The motorcycle reset keeps the authored 2.5ft course drop.
             Player::Bike(bike) => bike.set_race_checkpoint(Some((
                 [
@@ -615,8 +806,8 @@ impl Ride {
         // RaceStatus +0x150: the human's track direction (aggression branch).
         let player_track = race.course.tangent(race.station(None).segment);
         for (index, cpu) in state.cpus.iter_mut().enumerate() {
-            cpu.vehicle
-                .set_race_checkpoint(Some(on_line(race.checkpoint(Some(index)))?));
+            cpu.vehicle.set_reset_peers(others(index + 1));
+            offer(&mut cpu.vehicle, race, Some(index))?;
             let peers: Vec<_> = std::iter::once(Peer {
                 origin: player.origin,
                 velocity: player.linear_velocity,
@@ -629,19 +820,28 @@ impl Ride {
                     .filter(|(i, _)| *i != index)
                     .map(|(_, p)| *p),
             )
+            .chain(humans.iter().copied())
             .collect();
             let (frame, physical, repositioned) = cpu.step(
                 &race.course,
                 player.speed_magnitude,
                 &peers,
                 race.progress_difference(index),
-                race.station(Some(index)),
+                (
+                    race.station(Some(index)),
+                    race.on_track(Some(index)),
+                    race.enduro_target(Some(index)),
+                ),
                 &world,
             )?;
             let cpu_yaw = yaw(frame.orientation);
             // Settling on the grid earns no race distance.
             if repositioned || hold {
-                race.reposition_cpu(index, frame.origin, cpu_yaw, Some(physical));
+                race.reposition_cpu(index, frame.origin, cpu_yaw, Some(physical.clone()));
+                if repositioned && !hold {
+                    race.restore_checkpoint(Some(index), frame.origin);
+                    cpu.recovery.reset(race.race_distance(index));
+                }
             } else {
                 race.observe_cpu(index, frame.origin, cpu_yaw, Some(physical.clone()));
                 // Authored recovery: a CPU off the course or pinned in place
@@ -656,8 +856,59 @@ impl Ride {
                         index,
                         reset.origin,
                         yaw(reset.orientation),
+                        Some(physical.clone()),
+                    );
+                    race.restore_checkpoint(Some(index), reset.origin);
+                    cpu.recovery.reset(race.race_distance(index));
+                }
+            }
+            // Port adaptation (atv_core::cpu_recovery): a CPU that keeps
+            // returning to the same reset point, or makes no route progress
+            // while riding, is reset to a validated point further on.
+            if !hold
+                && !race.cpu_finished(index)
+                && cpu.recovery.observe(
+                    race.race_distance(index),
+                    cpu.vehicle.frame().wreck.phase == Phase::Riding,
+                    STEP,
+                ) == cpu_recovery::Action::SkipAhead
+            {
+                let candidates = race.recovery_stations(index, &cpu_recovery::SKIP_DISTANCES);
+                let mut chosen = None;
+                for candidate in &candidates {
+                    let (point, heading) = on_line((candidate.point, candidate.heading))?;
+                    if cpu
+                        .vehicle
+                        .offer_recovery_checkpoint(terrain, point, heading)?
+                    {
+                        chosen = Some((candidate.station, candidate.gained));
+                        break;
+                    }
+                }
+                // None clear: the furthest candidate, placed by the ring
+                // search of the off-track reset.
+                if chosen.is_none()
+                    && let Some(last) = candidates.last()
+                {
+                    cpu.vehicle
+                        .set_race_checkpoint(Some(on_line((last.point, last.heading))?));
+                    chosen = Some((last.station, last.gained));
+                }
+                if let Some((station, gained)) = chosen {
+                    race.accept_recovery_station(index, station, gained);
+                    cpu.respawn(nodes)?;
+                    let reset = cpu.vehicle.frame();
+                    race.reposition_cpu(
+                        index,
+                        reset.origin,
+                        yaw(reset.orientation),
                         Some(physical),
                     );
+                    race.restore_checkpoint(Some(index), reset.origin);
+                    cpu.recovery.skipped(race.race_distance(index));
+                } else {
+                    // Nowhere ahead to go (at the gate): count afresh.
+                    cpu.recovery.skipped(race.race_distance(index));
                 }
             }
         }
@@ -668,6 +919,18 @@ impl Ride {
         let bodies: Vec<_> = std::iter::once(body(&player))
             .chain(state.cpus.iter().map(|c| body(&c.vehicle.frame())))
             .collect();
+        // Split screen: each CPU applies its half against the other human
+        // (whose own ride applies the other half, split.rs).
+        for &(origin, velocity, orientation) in &state.split.humans {
+            for cpu in &mut state.cpus {
+                if cpu
+                    .vehicle
+                    .peer_contact(origin, velocity, orientation, STEP, 1.)
+                {
+                    race.contacts += 1;
+                }
+            }
+        }
         for a in 0..bodies.len() {
             for b in a + 1..bodies.len() {
                 for (own, other, tie) in [(a, b, 1.), (b, a, -1.)] {
@@ -758,6 +1021,7 @@ impl Ride {
             .collect();
         state.firework_positions = current;
         events.fireworks = controller.step(STEP, frame.phase == "countdown", &racers);
+        events.enduro_next = frame.enduro_gate.map(|[next, _]| next - 1);
         // National drop gate: standing until GO, then its linear swing.
         if let Some(gate) = &state.stage.gate {
             let live = matches!(frame.phase, "racing" | "finished");
@@ -784,7 +1048,7 @@ impl Ride {
                 "countdown" if previous != Some("intro") => Some(MusicEvent::Restart),
                 "racing" => Some(MusicEvent::Go),
                 "finished" => Some(MusicEvent::Over {
-                    won: frame.position == 1,
+                    won: state.split.place.unwrap_or(frame.position) == 1,
                 }),
                 _ => None,
             };
@@ -796,6 +1060,18 @@ impl Ride {
         }
         state.events = events;
         state.rest = None;
+        // Hall of Fame and personal record messages (`002e2cf0`, 1.5 s).
+        for message in state.race.take_record_messages() {
+            state
+                .hud
+                .say(message, atv_core::hall_of_fame::MESSAGE_SECONDS);
+        }
+        // Room standings first: the HUD's place and finish sign use them.
+        if let Some(rows) = &state.room
+            && state.settings.room.is_some()
+        {
+            room_standings(&mut frame, rows);
+        }
         frame.hud = Some(state.hud.step(
             STEP,
             &race_hud::Input {
@@ -804,13 +1080,25 @@ impl Ride {
                 laps: frame.laps,
                 lap_times: &frame.lap_times,
                 best_lap: frame.best_lap,
-                place: frame.position,
+                place: state.split.place.unwrap_or(frame.position),
                 ranks: &frame.ranks,
                 wrong_way: frame.wrong_way,
                 off_track: frame.off_track.then_some(frame.off_track_time),
                 too_deep,
             },
         ));
+        frame.championship = state.settings.championship.and_then(|(index, expert)| {
+            let series = atv_core::championship::SERIES.get(index)?;
+            Some(atv_core::championship::Round {
+                series: series.key,
+                expert,
+                awards: state
+                    .stage
+                    .awards
+                    .map(|a| *a.table(series.pro, expert))
+                    .unwrap_or_default(),
+            })
+        });
         state.frame = Some(frame);
         Ok(())
     }
@@ -907,6 +1195,18 @@ impl Ride {
     }
 
     /// Skip the pre-race camera on any button (00212d40).
+    /// A room race: start the countdown with `remaining` seconds to GO
+    /// (the host's clock less half the relay round trip). Idempotent.
+    pub fn room_go(&mut self, remaining: f32) {
+        if let Some(state) = &mut self.race
+            && state.settings.room.is_some()
+            && state.race.in_intro()
+        {
+            state.race.start_countdown();
+            state.race.countdown = remaining.clamp(0., atv_core::race::COUNTDOWN);
+        }
+    }
+
     pub fn skip_intro(&mut self) {
         if let Some(state) = &mut self.race
             && let Some(intro) = &mut state.intro

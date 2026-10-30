@@ -42,16 +42,27 @@ pub(crate) fn missing_member(what: &str, name: &str) -> String {
 /// lacks it ("Original ENV01 terrain archive is missing.").
 pub(crate) async fn course_archive(
     content: &Content,
-    path: &str,
+    course: &crate::launch::CourseResource,
     environment: &str,
 ) -> Result<Vec<u8>> {
-    if !content.has(path) {
-        return Err(format!(
+    let missing = || {
+        format!(
             "Original {} terrain archive is missing.",
             environment.to_ascii_uppercase()
-        ));
+        )
+    };
+    if !content.has(&course.archive) {
+        return Err(missing());
     }
-    content.file(path).await
+    let base = content.file(&course.archive).await?;
+    let Some(path) = &course.overlay else {
+        return Ok(base);
+    };
+    if !content.has(path) {
+        return Err("Original race course archive is missing.".into());
+    }
+    let overlay = content.file(path).await?;
+    Resource::overlay(&Resource::parse(&base)?, &Resource::parse(&overlay)?)
 }
 
 /// An original file the package must list, with game.js's message for it.
@@ -150,9 +161,12 @@ pub async fn load_with(
     mut progress: impl FnMut(&str),
 ) -> Result<Ride> {
     let environment = venue.environment.as_str();
-    let course = course_resource(environment, race.is_some())?;
+    let course = match race {
+        Some(_) => crate::launch::race_resource(environment, venue.race)?,
+        None => course_resource(environment, false)?,
+    };
     let models = player_models::selection(quad, rider)?;
-    let course_bytes = course_archive(content, &course.archive, environment).await?;
+    let course_bytes = course_archive(content, &course, environment).await?;
     let archive = Resource::parse(&course_bytes)?;
     let (seed, vehicle_model, rider_model) = if models.motorcycle {
         progress("Reading original motorcycle…");
@@ -259,12 +273,9 @@ pub async fn load_with(
         });
     }
     crate::yield_frame().await;
-    let presets = camera::presets(
-        &member(&archive, "followcampresets.pb", "camera presets")?,
-        0,
-    )?;
-    // 00319c10 -> 003007b0 supplies 70 MPH and the original ft/s conversion.
-    let follow = camera::FollowCamera::new(presets, 70. * f32::from_bits(0x3fbbbb84))?;
+    let camera_presets = member(&archive, "followcampresets.pb", "camera presets")?;
+    let presets = camera::presets(&camera_presets, 0)?;
+    let follow = camera::FollowCamera::new(presets, super::CAMERA_SPEED_REFERENCE)?;
 
     let race = match race {
         Some(settings) => {
@@ -318,12 +329,17 @@ pub async fn load_with(
         extended_boundary: scene.crowd_present || environment.eq_ignore_ascii_case("training"),
         water,
         camera: follow,
+        camera_presets,
         // Freeride only: race venues load no train.
         train: if race.is_some() {
             None
         } else {
             venue.train.clone()
         },
+        actors: venue.actors.clone().filter(|a| {
+            let a = a.borrow();
+            !a.sounds.is_empty() || !a.triggers.is_empty() || !a.collision.is_empty()
+        }),
     };
     Ride::start(
         simulation,
@@ -471,13 +487,38 @@ async fn race_setup(
     settings: super::race::Settings,
 ) -> Result<super::race::Setup> {
     let environment = venue.environment.as_str();
-    let course = atv_core::race::Course::parse(&member(
-        archive,
-        &format!("{environment}nate.tdf"),
-        "National course",
-    )?)?;
+    let stem = format!("{environment}{}", venue.race.stem());
+    let mut course =
+        atv_core::race::Course::parse(&member(archive, &format!("{stem}e.tdf"), "race course")?)?;
+    // An Enduro race counts its gates instead of the TDF boxes; the TDF
+    // still guides the CPU drivers.
+    if !venue.enduro_gates.is_empty() {
+        course.set_enduro(venue.enduro_gates.clone())?;
+    } else {
+        // 00215900: the finish box follows the scene's finish gate model
+        // (the last `natfgate`, or `stfgate` on a Short Track), as wide as
+        // the model's stored half extent across it (PSG node bounds,
+        // model +0x110).
+        let key = match venue.race {
+            crate::launch::RaceVariant::ShortTrack => "stfgate",
+            _ => "natfgate",
+        };
+        if let Some(model) = venue
+            .scene
+            .models
+            .iter()
+            .rev()
+            .find(|m| m.name.to_ascii_lowercase().contains(key))
+            && let Some(index) = basename_index(archive, &format!("{}.psg", model.name))
+        {
+            let mesh = mesh::decode_psg(&archive.extract(index)?)?;
+            if let Some(node) = mesh.nodes.first() {
+                course.set_finish_gate(&model.world_matrix, node.bounds[3]);
+            }
+        }
+    }
     // After the finish a director cuts between these trackside cameras.
-    let tv = basename_index(archive, &format!("{environment}nat.tv"))
+    let tv = basename_index(archive, &format!("{stem}.tv"))
         .map(|index| {
             let bytes = archive.extract(index)?;
             atv_core::race_director::parse_tv(
@@ -485,7 +526,7 @@ async fn race_setup(
             )
         })
         .transpose()?;
-    let mode = basename_index(archive, &format!("{environment}nat.toy"))
+    let mode = basename_index(archive, &format!("{stem}.toy"))
         .map(|index| archive.extract(index))
         .transpose()?
         .map(|bytes| String::from_utf8_lossy(&bytes).into_owned());
@@ -567,6 +608,9 @@ async fn race_setup(
         ));
         crate::yield_frame().await;
     }
+    let awards = mode
+        .as_deref()
+        .and_then(atv_core::profile::CourseAwards::parse);
     // Grid RiderSpacing from the race mode TOY or, for Supercross, the scene TOY.
     let spacing_sources = mode
         .into_iter()
@@ -612,6 +656,7 @@ async fn race_setup(
             crowd,
             gate: venue.drop_gate.clone(),
             fireworks,
+            awards,
         },
     })
 }

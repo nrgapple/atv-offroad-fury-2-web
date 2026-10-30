@@ -4,12 +4,15 @@
 mod android;
 #[cfg(not(target_arch = "wasm32"))]
 mod clipboard;
+mod cloud;
 #[cfg(any(target_os = "android", test))]
 mod content_sync;
 #[cfg(target_arch = "wasm32")]
 mod context;
 mod front;
 mod gamepad;
+mod games;
+mod hockey;
 mod multiplayer;
 mod net;
 mod overlay;
@@ -17,10 +20,16 @@ mod random;
 mod render_scale;
 pub mod replay;
 mod riding;
+mod room_freestyle;
+mod room_game;
+mod room_race;
 mod sound;
 mod soundtrack;
+mod split;
+mod tag;
 #[cfg(target_arch = "wasm32")]
 mod text_inputs;
+mod training;
 mod usage;
 mod wake;
 use atv_core::math::Det;
@@ -129,6 +138,8 @@ struct Ready {
     hud_assets: Option<atv_ui::hud::assets::OverlayAssets>,
     /// The multiplayer room this ride is in.
     net: Option<multiplayer::Net>,
+    /// Local split screen's players 2-4 (split.rs); empty riding alone.
+    split: Vec<split::Second>,
 }
 
 struct PendingSound {
@@ -150,6 +161,10 @@ enum Message {
     #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
     Notice(String),
     SoundFailed(String),
+    /// A mini-game's mode TOY loaded (or why not).
+    GameToy(Result<String, String>),
+    /// Tracks.dat course names by venue (room results).
+    CourseNames(Result<Vec<(String, String)>, String>),
     Failed(String),
     /// The frontend's GPU, content and venue list are ready.
     FrontReady(Box<Booted>),
@@ -199,6 +214,12 @@ enum Message {
     ContextLost,
     #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
     ContextRestored,
+    /// Web: a Pass Key save request's answer (cloud.rs).
+    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+    Cloud(u64, atv_ui::cloud::Response),
+    /// Web: Import Save read a file (name, text).
+    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+    CloudImport(String, String),
 }
 
 /// A connected room waiting on the lobby page: (room, course, quad, rider,
@@ -247,7 +268,499 @@ struct Defaults {
     relay: String,
 }
 
+/// A Freestyle objective attempt (`atv_core::freestyle`): the series,
+/// difficulty, course and objective, and the run once the ride is loaded.
+struct ObjectiveSession {
+    series: usize,
+    expert: bool,
+    course: String,
+    objective: usize,
+    run: Option<atv_core::freestyle::Run>,
+    /// The ride's step count last counted (the run's clock).
+    steps: u64,
+    recorded: bool,
+    /// The run's Hall of Fame and Freestyle records, and as it started
+    /// (a restart begins from it again).
+    fame: Option<atv_core::hall_of_fame::FreestyleWatch>,
+    fame_start: Option<atv_core::hall_of_fame::FreestyleWatch>,
+    /// A target run's targets (the OB archive's target TOY).
+    targets: Vec<atv_core::freestyle::Target>,
+    /// One-shot sounds for the ride's mixer (target hits).
+    sounds: Vec<&'static str>,
+    /// Targets hit since the presentation last ran their explosions.
+    triggered: Vec<usize>,
+    /// `objectiveTest=targets`: the ride step of the last placement.
+    visit_clock: u64,
+    /// A championship round (else Single Player → Freestyle Objectives):
+    /// its trophy can come mid-event (`003230f0`).
+    championship: bool,
+    /// Split screen: one objective for every seated player
+    /// (`atv_core::freestyle::split`); `run` stays empty.
+    split: Option<atv_core::freestyle::split::SplitRun>,
+}
+
+/// A target hit's sound.
+const TARGET_SOUND: &str = "iconhit.vag";
+
+impl ObjectiveSession {
+    /// Advances the run with the ride: simulated time, finished stunt
+    /// chains and committed points. Returns the results summary once, when
+    /// the run ends (its bits, Profile Points and Freestyle record saved in
+    /// the profile), with the run's Hall of Fame records.
+    fn update(
+        &mut self,
+        ride: &mut atv_game::ride::Ride,
+        venue: Option<&atv_game::venue::Objective>,
+        player: &str,
+    ) -> Option<(String, atv_core::hall_of_fame::FreestyleWatch)> {
+        use atv_core::freestyle::{Run, SERIES, course_objectives};
+        let series = SERIES.get(self.series)?;
+        if self.run.is_none() {
+            // The course's own `.obj` when its OB archive loaded (with the
+            // objective's start), else the built-in table.
+            let objective = venue
+                .and_then(|v| v.objectives.get(self.objective).cloned())
+                .or_else(|| {
+                    course_objectives(&self.course)?
+                        .into_iter()
+                        .nth(self.objective)
+                })?;
+            if matches!(objective.kind, atv_core::freestyle::Kind::CherryPick { .. })
+                && venue.is_none_or(|v| v.targets.is_empty())
+            {
+                return None;
+            }
+            self.targets = venue.map(|v| v.targets.clone()).unwrap_or_default();
+            self.run = Some(Run::new(objective, self.objective, ride.committed_points()));
+            let saved = atv_ui::settings::Settings::load();
+            let key = atv_core::hall_of_fame::HallOfFame::freestyle_key(series.key, &self.course);
+            let personal = atv_ui::settings::load_book(&saved)
+                .current_profile()
+                .map(|p| p.freestyle.get(&key).cloned().unwrap_or_default());
+            let mut fame = atv_core::hall_of_fame::FreestyleWatch::new(
+                series.key,
+                &self.course,
+                ride.selection().quad,
+                Some(&atv_ui::settings::load_hall_of_fame(&saved)),
+                personal,
+            );
+            fame.units = atv_ui::settings::units(&saved);
+            self.fame_start = Some(fame);
+            self.start(ride);
+        }
+        if !self.targets.is_empty() && url_flag("objectiveTest=targets") {
+            self.test_visit(ride);
+        }
+        let run = self.run.as_mut()?;
+        let steps = ride.steps();
+        let dt = steps.saturating_sub(self.steps) as f32 * atv_game::ride::STEP;
+        self.steps = steps;
+        for (success, ids) in ride.take_chains() {
+            run.chain(success, &ids);
+        }
+        // CherryPick: any body `002fae60` registers (the quad's wheels,
+        // chassis hull and actor rays; not the rider) touching an
+        // untouched target's sphere.
+        if !self.targets.is_empty() && !run.finished() {
+            for target in run.touch_bodies(&self.targets, &ride.trigger_bodies()) {
+                self.sounds.push(TARGET_SOUND);
+                self.triggered.push(target);
+            }
+        }
+        let (jumps, chains) = ride.take_free_records();
+        if let Some(fame) = self.fame.as_mut().filter(|_| !run.finished()) {
+            for feet in jumps {
+                fame.jump(feet);
+            }
+            for (success, count, sum) in chains {
+                fame.chain(success, count, sum);
+            }
+            run.messages.extend(fame.take_messages());
+        }
+        run.tick(dt, ride.committed_points());
+        if !run.finished() || self.recorded {
+            return None;
+        }
+        self.recorded = true;
+        let mut fame = self.fame.take()?;
+        // `002fce00`: score / 1000 plus the combo points.
+        let points = fame.finish(run.score);
+        run.messages.extend(fame.take_messages());
+        let mut settings = atv_ui::settings::Settings::load();
+        let loaded = atv_ui::settings::profile_loaded(&settings);
+        let mut profile = atv_ui::settings::load_profile(&settings);
+        if loaded {
+            profile.credit(points);
+            if let Some(record) = fame.personal.clone() {
+                profile.record_freestyle(&fame.key, record);
+            }
+        }
+        let champ = &mut profile.championships;
+        let (mask, trophy) = if self.championship {
+            champ.award_objective(series, self.expert, &self.course, run.earned_bits())
+        } else {
+            let mask = champ.record_objective(series, self.expert, &self.course, run.earned_bits());
+            (mask, None)
+        };
+        let total = champ.completed_objectives(series, self.expert);
+        if let Some(trophy) = &trophy
+            && loaded
+        {
+            profile.credit(trophy.reward);
+        }
+        atv_ui::settings::save_profile(&mut settings, &profile);
+        let completed = run.outcome == Some(atv_core::freestyle::Outcome::Completed);
+        let award = if loaded {
+            format!(" · +{points} Profile Points ({} total)", profile.points)
+        } else {
+            " · Remember, your progress is not being saved!".into()
+        };
+        // `002ddc50` / `002dde00` / `0025a100`.
+        let summary = format!(
+            "{}, {player}! {} Score {} · Completed Course Objectives: {} of 6 · Completed Total Objectives: {} of {}{award}",
+            if completed {
+                "Congratulations"
+            } else {
+                "Sorry"
+            },
+            run.result_line(),
+            atv_ui::hud::objective::grouped(run.score as i64),
+            mask.count_ones(),
+            total,
+            atv_core::freestyle::total_objectives(series)
+        );
+        // The Objective Championship Results line (`002ddee0`).
+        let summary = match trophy {
+            Some(trophy) => format!("{summary} · {}", trophy.line()),
+            None => summary,
+        };
+        Some((summary, fame))
+    }
+
+    /// Split screen: advances the shared objective with every player's
+    /// ride (player 1's clock). Returns the results summary once, when the
+    /// run ends. Nothing is saved (`002fce00` saves only one human's run).
+    fn update_split(
+        &mut self,
+        ride: &mut atv_game::ride::Ride,
+        others: &mut [&mut atv_game::ride::Ride],
+        venue: Option<&atv_game::venue::Objective>,
+    ) -> Option<String> {
+        use atv_core::freestyle::{course_objectives, split::SplitRun};
+        let players = others.len() + 1;
+        if self.split.is_none() {
+            let objective = venue
+                .and_then(|v| v.objectives.get(self.objective).cloned())
+                .or_else(|| {
+                    course_objectives(&self.course)?
+                        .into_iter()
+                        .nth(self.objective)
+                })?;
+            if matches!(objective.kind, atv_core::freestyle::Kind::CherryPick { .. })
+                && venue.is_none_or(|v| v.targets.is_empty())
+            {
+                return None;
+            }
+            self.targets = venue.map(|v| v.targets.clone()).unwrap_or_default();
+            // Everyone starts at the objective's start, players 2-4 beside
+            // player 1 as at a split Freeride start (a port choice).
+            if let Some(start) = objective.start {
+                let _ = ride.place_beside(start.position, start.yaw(), [0.; 3]);
+                for (i, other) in others.iter_mut().enumerate() {
+                    let (at, yaw) =
+                        split::freeride_start_for(start.position, start.yaw(), i as u8 + 2);
+                    let _ = other.place_beside(at, yaw, [0.; 3]);
+                }
+            }
+            let committed: Vec<f32> = std::iter::once(ride.committed_points())
+                .chain(others.iter().map(|r| r.committed_points()))
+                .collect();
+            let mut run = SplitRun::new(objective, self.objective, &committed);
+            if url_flag("objectiveTest=timeout") {
+                run.time_left = 5.;
+            }
+            self.split = Some(run);
+            self.visit_clock = ride.steps();
+            self.steps = ride.steps();
+            self.recorded = false;
+            for r in std::iter::once(&mut *ride).chain(others.iter_mut().map(|r| &mut **r)) {
+                r.take_chains();
+                r.take_free_records();
+            }
+        }
+        if !self.targets.is_empty() && url_flag("objectiveTest=targets") {
+            self.test_visit_split(ride, others);
+        }
+        let steps = ride.steps();
+        let dt = steps.saturating_sub(self.steps) as f32 * atv_game::ride::STEP;
+        self.steps = steps;
+        let run = self.split.as_mut()?;
+        let mut committed = Vec::with_capacity(players);
+        for p in 0..players {
+            let r: &mut atv_game::ride::Ride = if p == 0 { ride } else { others[p - 1] };
+            for (success, ids) in r.take_chains() {
+                run.chain(p, success, &ids);
+            }
+            // Players 2-4 keep no records (needs a product decision);
+            // split screen saves none of player 1's either (`002fce00`).
+            r.take_free_records();
+            if !self.targets.is_empty() && !run.finished() {
+                for target in run.touch_bodies(p, &self.targets, &r.trigger_bodies()) {
+                    self.sounds.push(TARGET_SOUND);
+                    self.triggered.push(target);
+                }
+            }
+            committed.push(r.committed_points());
+        }
+        run.tick(dt, &committed);
+        if !run.finished() || self.recorded {
+            return None;
+        }
+        self.recorded = true;
+        Some(split_objective_summary(run))
+    }
+
+    /// Test tooling (`objectiveTest=targets`) in split screen: the players
+    /// take turns rolling through the next untouched target.
+    fn test_visit_split(
+        &mut self,
+        ride: &mut atv_game::ride::Ride,
+        others: &mut [&mut atv_game::ride::Ride],
+    ) {
+        let Some(run) = &self.split else { return };
+        let steps = ride.steps();
+        if steps < self.visit_clock + 90 {
+            return;
+        }
+        self.visit_clock = steps;
+        let Some(next) = run.untouched().next() else {
+            return;
+        };
+        let Some(t) = self.targets.get(next) else {
+            return;
+        };
+        // Target i goes to player i % players.
+        let p = next % (others.len() + 1);
+        let r: &mut atv_game::ride::Ride = if p == 0 { ride } else { others[p - 1] };
+        let [x, y, z] = t.position;
+        let _ = r.place_beside([x, y, z - 8.], 0., [0., 0., 20.]);
+    }
+
+    /// The run (re)starts on the ride's current clock and points, the
+    /// rider at the objective's `DefaultStartPosition`.
+    fn start(&mut self, ride: &mut atv_game::ride::Ride) {
+        // Split screen: the shared run starts again on the next update,
+        // placing every player.
+        if self.split.take().is_some() {
+            self.recorded = false;
+            return;
+        }
+        let Some(run) = &mut self.run else { return };
+        if let Some(start) = run.objective.start
+            && let Err(error) = ride.place_beside(start.position, start.yaw(), [0.; 3])
+        {
+            status(&format!("Objective start failed: {error}"));
+        }
+        self.visit_clock = ride.steps();
+        run.restart(ride.committed_points());
+        // Test tooling: `objectiveTest=score` credits the last point level,
+        // `objectiveTest=timeout` leaves five seconds.
+        if url_flag("objectiveTest=score")
+            && let atv_core::freestyle::Kind::Stunt { levels } = &run.objective.kind
+        {
+            let top = levels.last().copied().unwrap_or(0.);
+            run.restart(ride.committed_points() - top);
+        }
+        if url_flag("objectiveTest=timeout") {
+            run.time_left = 5.;
+        }
+        ride.take_chains();
+        ride.take_free_records();
+        self.fame = self.fame_start.clone();
+        self.steps = ride.steps();
+        self.recorded = false;
+    }
+
+    /// Test tooling (`objectiveTest=targets`): every 1.5 s of ride time,
+    /// set the ATV down 8 ft short of the next untouched target and roll
+    /// it through at 20 ft/s, so the real trigger test takes the hit.
+    fn test_visit(&mut self, ride: &mut atv_game::ride::Ride) {
+        let Some(run) = &self.run else { return };
+        let steps = ride.steps();
+        if steps < self.visit_clock + 90 {
+            return;
+        }
+        self.visit_clock = steps;
+        let Some(t) = self
+            .targets
+            .iter()
+            .enumerate()
+            .find(|(i, _)| !run.hits.get(*i).copied().unwrap_or(true))
+            .map(|(_, t)| t)
+        else {
+            return;
+        };
+        let [x, y, z] = t.position;
+        let _ = ride.place_beside([x, y, z - 8.], 0., [0., 0., 20.]);
+    }
+
+    /// Each target's cherry model and whether it shows (hit ones hide).
+    fn cherries(&self) -> Vec<(usize, bool)> {
+        if let Some(run) = &self.split {
+            return (0..self.targets.len())
+                .map(|i| (i, run.taken.get(i).is_some_and(Option::is_none)))
+                .collect();
+        }
+        let Some(run) = &self.run else {
+            return Vec::new();
+        };
+        (0..self.targets.len())
+            .map(|i| (i, !run.hits.get(i).copied().unwrap_or(false)))
+            .collect()
+    }
+
+    /// A target run's untouched targets for its compass (`002e77f0`
+    /// lists the visible `cherry` models; a hit removes its icon,
+    /// `002fab40` → `002e78d0`). None outside a running target run.
+    fn compass_targets(&self) -> Option<Vec<[f32; 3]>> {
+        if let Some(run) = &self.split {
+            if run.finished() || self.targets.is_empty() {
+                return None;
+            }
+            return Some(
+                run.untouched()
+                    .filter_map(|i| self.targets.get(i).map(|t| t.position))
+                    .collect(),
+            );
+        }
+        let run = self.run.as_ref().filter(|r| !r.finished())?;
+        if self.targets.is_empty() {
+            return None;
+        }
+        Some(
+            self.targets
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| !run.hits.get(*i).copied().unwrap_or(true))
+                .map(|(_, t)| t.position)
+                .collect(),
+        )
+    }
+
+    /// The untouched targets' screen tags and map markers (green or red).
+    fn markers(&self) -> Vec<atv_ui::hud::peers::Peer> {
+        let untouched: Vec<bool> = match (&self.split, &self.run) {
+            (Some(split), _) if !split.finished() => {
+                split.taken.iter().map(Option::is_none).collect()
+            }
+            (None, Some(run)) if !run.finished() => run.hits.iter().map(|h| !h).collect(),
+            _ => return Vec::new(),
+        };
+        let description = match (&self.split, &self.run) {
+            (Some(split), _) => &split.objective().description,
+            (None, Some(run)) => &run.objective.description,
+            _ => return Vec::new(),
+        };
+        let red = description.to_ascii_lowercase().contains("red");
+        self.targets
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| untouched.get(*i).copied().unwrap_or(false))
+            .map(|(_, t)| atv_ui::hud::peers::Peer {
+                slot: if red { 0 } else { 2 },
+                name: "Target".into(),
+                position: [t.position[0], t.position[1] - 7., t.position[2]],
+                stale: false,
+                pill: None,
+                map_only: false,
+            })
+            .collect()
+    }
+
+    fn take_sounds(&mut self) -> Vec<&'static str> {
+        std::mem::take(&mut self.sounds)
+    }
+
+    /// The HUD panel.
+    fn view(&self) -> Option<atv_ui::hud::objective::View> {
+        if let Some(run) = &self.split {
+            // One panel for everyone (the original's split objective
+            // overlay was not traced): the shared progress, each player's
+            // figure in place order, the leader's score and the newest sign.
+            let standings: Vec<String> = run
+                .order()
+                .into_iter()
+                .map(|p| format!("P{} {}", p + 1, run.stat(p)))
+                .collect();
+            let lead = run.order()[0];
+            let message = run.runs.iter().enumerate().find_map(|(p, r)| {
+                r.notice()
+                    .map(|n| format!("{}: {n}", split::player_name(p as u8 + 1)))
+            });
+            return Some(atv_ui::hud::objective::View {
+                description: run.objective().description.clone(),
+                time_left: run.time_left,
+                progress: format!("{} · {}", run.progress(), standings.join(" · ")),
+                score: run.runs[lead].score as i64,
+                message,
+            });
+        }
+        let run = self.run.as_ref()?;
+        Some(atv_ui::hud::objective::View {
+            description: run.objective.description.clone(),
+            time_left: run.time_left,
+            progress: run.progress(),
+            score: run.score as i64,
+            message: run.notice().map(str::to_string),
+        })
+    }
+}
+
+/// The split objective's results (`002ddc50` "Congratulations, %s" for
+/// the winners; the standings in place order are the port's layout).
+fn split_objective_summary(run: &atv_core::freestyle::split::SplitRun) -> String {
+    let name = |p: usize| split::player_name(p as u8 + 1);
+    let winners = run.winners.clone().unwrap_or_default();
+    let headline = match winners.as_slice() {
+        [one] => format!("Congratulations, {}!", name(*one)),
+        many => format!(
+            "Tie: {}!",
+            many.iter()
+                .map(|p| name(*p))
+                .collect::<Vec<_>>()
+                .join(" and ")
+        ),
+    };
+    let places = run.places();
+    let standings: Vec<String> = run
+        .order()
+        .into_iter()
+        .map(|p| {
+            format!(
+                "{} {} {}, {} pts",
+                ["1st", "2nd", "3rd", "4th"][places[p].clamp(1, 4) - 1],
+                name(p),
+                run.stat(p),
+                atv_ui::hud::objective::grouped(run.runs[p].score as i64)
+            )
+        })
+        .collect();
+    format!(
+        "{headline} {} · {} · Split screen results are not saved.",
+        run.objective().description,
+        standings.join(" · ")
+    )
+}
+
 struct App {
+    /// Pass Key cloud saves (cloud.rs).
+    cloud: cloud::Cloud,
+    /// The frontend's Split Screen branch asked for two local players on
+    /// the next rides (kept for Restart Race).
+    split_request: Option<split::Request>,
+    /// `?split=`/`?split2=` on a ride link (the context-loss resume link):
+    /// the link's first ride is split; later rides follow the menus.
+    split_link: Option<split::Request>,
     /// Crash camera Tight, Chase camera Assisted (Options::camera_choice).
     camera_choice: (bool, bool),
     /// Adaptive render resolution (web): steps RENDER_RATIO while riding.
@@ -331,6 +844,48 @@ struct App {
     /// The held room's ride, riding on with neutral input behind the
     /// frontend: its presence keeps going out until the ride reloads.
     held_ride: Option<atv_game::ride::Ride>,
+    /// A Freestyle championship objective attempt on the current ride.
+    objective: Option<ObjectiveSession>,
+    /// The Training Course on the current ride.
+    training: Option<training::TrainingSession>,
+    /// A mini-game on the current ride (research/GAMES.md).
+    game: Option<games::GameSession>,
+    /// Hockey on Coonce Arena (`atv_core::hockey`).
+    hockey: Option<hockey::HockeySession>,
+    /// Tag in a multiplayer room (`atv_core::tag`).
+    tag: Option<tag::TagSession>,
+    /// A race in a multiplayer room (research/MULTIPLAYER.md "Room races").
+    room_race: Option<room_race::RoomRace>,
+    /// The last room race serial seen, so the host numbers the next one.
+    room_race_serial: u32,
+    /// The last room King of the Hills / Treasure Hunt serial seen
+    /// (research/MULTIPLAYER.md "Room games").
+    room_game_serial: u32,
+    /// Each venue's Tracks.dat course name for room results (loaded for a
+    /// room, since a page that joined by link skipped the frontend).
+    course_names: std::collections::HashMap<String, String>,
+    /// The next room reload rides this game's course scene.
+    room_game_scene: Option<atv_core::games::GameKind>,
+    /// Freestyle in a multiplayer room (research/MULTIPLAYER.md "Room
+    /// Freestyle").
+    room_freestyle: Option<room_freestyle::RoomFreestyle>,
+    /// The last room Freestyle serial seen, so the host numbers the next.
+    room_freestyle_serial: u32,
+    /// A room Freestyle hosted from the menus starts (holding its start for
+    /// an invitee) once the room is joined.
+    room_freestyle_start: bool,
+    /// Games → King of the Hills / Treasure Hunt → Riders: Online Room
+    /// hosted a room; the game (with these minutes) starts once the room
+    /// is joined.
+    room_game_start: Option<(atv_core::games::GameKind, u32)>,
+    /// The host's Play Tag reloads the room's venue from its TG archive;
+    /// the game starts with these minutes once that ride is ready.
+    tag_start: Option<u32>,
+    /// Split screen → Games → Tag: a local two-player game starts with
+    /// these minutes once both rides are ready (no room).
+    split_tag: Option<(u32, String)>,
+    /// A guest's pending move to the room's Tag course.
+    tag_reload: Option<String>,
     /// The held room the next frontend ride resumes.
     pending_room: Option<multiplayer::Net>,
     /// `pending_room` was just joined (it meets a rider; a held room
@@ -374,6 +929,9 @@ struct App {
     /// The Host/Join forms' browser inputs.
     #[cfg(target_arch = "wasm32")]
     text_inputs: text_inputs::TextInputs,
+    /// Android: the soft keyboard for the same forms.
+    #[cfg(target_os = "android")]
+    soft_keyboard: android::SoftKeyboard,
     /// Web: WebGL context loss, recovered in place (context.rs).
     #[cfg(target_arch = "wasm32")]
     context: context::Loss,
@@ -411,6 +969,10 @@ struct Meter {
     shadows: (u32, u32),
     /// Snow draw calls in the last frame (`?uiDiagnostics=1`).
     snow_draws: u32,
+    /// TOY actors drawn and culled, and their draw calls, in the last frame.
+    actors: (u32, u32, u32),
+    /// The last frame's statistics (scenery LOD/visibility, `?uiDiagnostics=1`).
+    scenery: Option<atv_render::FrameStats>,
     /// Room work (socket, poses, remote riders and loads) CPU, included in
     /// `cpu`, and the longest frame interval this second.
     net: f64,
@@ -434,6 +996,12 @@ struct World {
     script: Option<replay::Script>,
     sound: Option<(atv_game::audio::ride::SoundMode, bool)>,
     autodrive: Option<replay::Script>,
+    /// A mini-game's scene over the Freeride archive (King of the Hills).
+    game_scene: Option<(String, String)>,
+    /// A Freestyle objective's OB archive and target TOY stem.
+    objective: Option<(String, Option<String>)>,
+    /// Two local players in this layout (split.rs).
+    split: Option<split::Request>,
 }
 
 /// Ride prefetch (`?prefetch=off` turns it off for load-time measurement).
@@ -524,12 +1092,17 @@ async fn prepare(
         script,
         sound,
         autodrive,
+        game_scene,
+        objective,
+        split: split_layout,
     } = world;
+    // The decode workers start while the course downloads (offload.rs).
+    atv_game::offload::warm();
     // Every archive the ride reads downloads in parallel (game.js prefetchRide).
     if ride && PREFETCH.load(std::sync::atomic::Ordering::Relaxed) {
         let (paths, bank) = atv_game::launch::ride_prefetch(
             &environment,
-            race.is_some(),
+            race.map(|r| r.course),
             selection.quad,
             selection.rider,
         );
@@ -545,6 +1118,12 @@ async fn prepare(
         // Per-load sample, like game.js `Math.floor(Math.random() * 0x80000000)`.
         None => venue::WeatherChoice::Random(random::seed31()),
     };
+    // A mini-game's or objective's archive also carries its HUD art
+    // (`koh_pillbkg`, the compass and its radar icon).
+    let hud_game = game_scene
+        .as_ref()
+        .map(|(archive, _)| archive.clone())
+        .or_else(|| objective.as_ref().map(|(archive, _)| archive.clone()));
     let venue = venue::load_with(
         &content,
         &environment,
@@ -552,6 +1131,9 @@ async fn prepare(
         venue::LoadOptions {
             weather,
             sky_smooth: graphics.sky_smooth,
+            race: race.map(|r| r.course).unwrap_or_default(),
+            game_scene,
+            objective,
         },
     )
     .await?;
@@ -601,6 +1183,18 @@ async fn prepare(
             .is_some_and(|m| m.matches()),
     );
     let mut pending_sound = None;
+    // Split screen starts both players' countdowns together: no pre-race
+    // camera tour (it frames one rider). Three and four players exclude
+    // CPU riders (manual p. 16: two-player split screen can include them).
+    let race = race.map(|r| atv_game::ride::race::Settings {
+        intro: r.intro && split_layout.is_none(),
+        cpu: if split_layout.is_some_and(|s| s.players > 2) {
+            0
+        } else {
+            r.cpu
+        },
+        ..r
+    });
     let riding = if ride {
         let ride = atv_game::ride::load_with(
             &content,
@@ -653,6 +1247,7 @@ async fn prepare(
             crashes.reset(&riding.ride)?;
             riding.crashes = Some(crashes);
         }
+        attach_records(&mut riding.ride, &venue.environment);
         if let Some(script) = &script {
             // `?traceAll=1`: every step, for browser-vs-native parity.
             if trace_all() {
@@ -689,8 +1284,13 @@ async fn prepare(
                     mode,
                     music,
                     selection,
-                    race_samples: riding.ride.race().map(|r| r.samples()).unwrap_or_default(),
+                    race_samples: riding
+                        .ride
+                        .race()
+                        .map(|r| r.samples())
+                        .unwrap_or_else(|| hockey::samples(&venue.environment)),
                     train_sounds: venue.train_sounds.clone(),
+                    actor_sounds: venue.actor_sounds.clone(),
                     // loadWeather: active Rain weather loops rain.vag.
                     rain: venue.weather.as_ref().is_some_and(|w| {
                         w.active
@@ -702,6 +1302,33 @@ async fn prepare(
             });
         }
         riding.autodrive = autodrive.map(|script| (script.controls(), 0));
+        // `?actorPlace=windmill` (tools/test_engine_actor_collision.mjs): the
+        // quad 40 ft south of that UseCollision actor's body, heading at it.
+        if let Some(actors) = &venue.actors
+            && let Some(m) = ["windmill", "litehous", "bigwindmill", "waterwheel", "snake"]
+                .iter()
+                .find(|name| url_flag(&format!("actorPlace={name}")))
+                .and_then(|name| {
+                    let actors = actors.borrow();
+                    let mcf = format!("{name}.mcf");
+                    actors
+                        .collision
+                        .iter()
+                        .find(|b| {
+                            actors.actors[b.actor]
+                                .definition
+                                .mcf
+                                .eq_ignore_ascii_case(&mcf)
+                        })
+                        .map(|b| b.world_matrix)
+                })
+            && let Err(error) =
+                riding
+                    .ride
+                    .place_beside([m[12], m[13] + 6., m[14] - 40.], 0., [0., 0., 30.])
+        {
+            status(&format!("Unable to place beside the actor: {error}"));
+        }
         // `?presentTrace=1` (tools/test_engine_interpolation.mjs): log the
         // delivered states and sampled presentation of the autodrive run.
         if url_flag("presentTrace=1") {
@@ -711,8 +1338,35 @@ async fn prepare(
     } else {
         None
     };
+    let mut riding = riding;
+    let mut split = Vec::new();
+    if let (Some(request), Some(first)) = (split_layout, &mut riding) {
+        for (player, _) in request.others() {
+            progress(&gpu, &format!("Reading player {player}…"));
+            split.push(
+                split::Second::load(
+                    &gpu,
+                    &content,
+                    &venue,
+                    &mut scene,
+                    first,
+                    request,
+                    player,
+                    (selection, appearance, race, crash, graphics),
+                )
+                .await?,
+            );
+        }
+    }
     let hud_assets = if riding.is_some() {
-        match atv_ui::hud::assets::load(&content, &environment, race.is_some()).await {
+        match atv_ui::hud::assets::load(
+            &content,
+            &environment,
+            race.map(|r| r.course),
+            hud_game.as_deref(),
+        )
+        .await
+        {
             Ok(assets) => Some(assets),
             Err(error) => {
                 status(&format!("HUD resources unavailable: {error}"));
@@ -735,6 +1389,7 @@ async fn prepare(
         pending_sound,
         hud_assets,
         net: None,
+        split,
     })
 }
 
@@ -813,6 +1468,7 @@ impl App {
             return;
         }
         self.sync_wake();
+        self.sync_surface_density();
         let now = Instant::now();
         let dt = (now - self.last).as_secs_f32().min(0.1);
         self.last = now;
@@ -868,6 +1524,8 @@ impl App {
                 self.meter.draws = stats.draws();
                 self.meter.shadows = (stats.contact_casters, stats.shadow_casters);
                 self.meter.snow_draws = stats.snow_draws;
+                self.meter.actors = (stats.actors_visible, stats.actors_culled, stats.actor_draws);
+                self.meter.scenery = Some(stats);
                 acquire = stats.acquire_ms;
             }
             Err(error) => status(&error),
@@ -879,6 +1537,7 @@ impl App {
     /// One rendered frame of the ride: input, fixed steps, chase view.
     fn ride_frame(&mut self, dt: f32) {
         self.update_diagnostics();
+        self.want_course_names();
         // Other riders' models and engine banks load a slice per frame.
         let loads = Instant::now();
         self.poll_frame_tasks();
@@ -920,7 +1579,20 @@ impl App {
         let active = !riding.paused && !riding.held && focused;
         self.gamepad
             .set_pin(riding.bindings.tuning.selected.clone());
-        let pad = self.gamepad.sample();
+        // Split screen: player 1 plays the first connected controller (and
+        // the keyboard's left side), player 2 the second (and the right
+        // side), players 3 and 4 the third and fourth (split.rs).
+        let split_on = !ready.split.is_empty();
+        let pad = if split_on {
+            self.gamepad.sample_slot(0)
+        } else {
+            self.gamepad.sample()
+        };
+        let other_pads: Vec<_> = ready
+            .split
+            .iter()
+            .map(|s| self.gamepad.sample_slot(usize::from(s.player) - 1))
+            .collect();
         if let Some(overlay) = &mut self.overlay {
             overlay.pad_name = self.gamepad.name();
             overlay.pads = self.gamepad.connected();
@@ -951,10 +1623,20 @@ impl App {
             .is_some_and(|p| p.buttons.iter().any(|b| *b > 0.5));
         if pad_pressed && !self.intro_pad_held {
             riding.ride.skip_intro();
+            // The pad's Accept (South) skips a Training line (00225200).
+            if pad
+                .as_ref()
+                .is_some_and(|p| p.buttons.first().is_some_and(|b| *b > 0.5))
+                && let Some(session) = &mut self.training
+            {
+                session.course.skip();
+            }
         }
         self.intro_pad_held = pad_pressed;
         let names: HashSet<String> = self.keys.iter().map(|k| format!("{k:?}")).collect();
-        let keys = |code: &str| names.contains(code);
+        let keys = |code: &str| names.contains(code) && (!split_on || split::player_1_key(code));
+        let all_keys = |code: &str| names.contains(code);
+        let sample_now = (now - self.started).as_secs_f64();
         let sample = riding::Sample {
             keys: &keys,
             pad: pad.as_ref(),
@@ -971,16 +1653,86 @@ impl App {
         let sampler = |now: u64, ride: &atv_game::ride::Ride| {
             net.map_or_else(Vec::new, |n| n.contact_bodies_at(now, ride))
         };
-        let peers = net.map(|n| (n.session_now(), &sampler as riding::PeerSampler));
+        // Split screen: each player is the others' contact body.
+        let split_others = if ready.split.is_empty() {
+            Vec::new()
+        } else {
+            split::link(&mut riding.ride, &mut ready.split)
+        };
+        let split_bodies: Vec<_> = ready
+            .split
+            .iter()
+            .map(|s| split::body(&s.riding.ride, 1.))
+            .collect();
+        let split_sampler = |_: u64, _: &atv_game::ride::Ride| split_bodies.clone();
+        let peers = net
+            .map(|n| (n.session_now(), &sampler as riding::PeerSampler))
+            .or_else(|| {
+                (!split_bodies.is_empty()).then_some((0, &split_sampler as riding::PeerSampler))
+            });
         if let Err(error) = riding.frame(&sample, &mut touch, dt, peers) {
             status(&format!("Simulation stopped: {error}"));
             ready.riding = None;
             return;
         }
+        if split_on {
+            // The other players ride while player 1 does: any player's
+            // pause opens player 1's Pause menu over every view.
+            if !riding.paused && !riding.held && focused {
+                let first_body = split::body(&riding.ride, -1.);
+                for ((second, mut others), pad) in
+                    ready.split.iter_mut().zip(split_others).zip(&other_pads)
+                {
+                    // Player 1 as it stands after this frame's steps.
+                    if let Some(first) = others.first_mut() {
+                        *first = first_body;
+                    }
+                    if let Err(error) =
+                        second.frame(&all_keys, pad.as_ref(), sample_now, dt, others)
+                    {
+                        status(&format!("Player {} stopped: {error}", second.player));
+                    }
+                    if second.riding.paused {
+                        second.riding.paused = false;
+                        second.riding.clear_input();
+                        riding.paused = true;
+                        riding.clear_input();
+                        riding.sync_sound();
+                    }
+                }
+            }
+            let origins: Vec<[f32; 3]> = std::iter::once(riding.ride.frame().origin)
+                .chain(ready.split.iter().map(|s| s.riding.ride.frame().origin))
+                .collect();
+            if let Some(first) = riding.ride.race_mut().and_then(|r| r.frame.as_mut()) {
+                let mut others: Vec<&mut atv_core::race::Frame> = ready
+                    .split
+                    .iter_mut()
+                    .filter_map(|s| s.riding.ride.race_mut().and_then(|r| r.frame.as_mut()))
+                    .collect();
+                if others.len() + 1 == origins.len() {
+                    split::merge_race(first, &mut others, &origins);
+                }
+            }
+        }
         // Rumble.pulse: the frame's impacts on the active controller.
+        // Split screen: each player's impacts rumble its own pad.
         for pulse in std::mem::take(&mut riding.pulses) {
-            if self.gamepad.rumble(pulse) {
+            let sent = if split_on {
+                self.gamepad.rumble_slot(0, pulse)
+            } else {
+                self.gamepad.rumble(pulse)
+            };
+            if sent {
                 riding.rumble.sent(pulse);
+            }
+        }
+        for second in &mut ready.split {
+            let slot = usize::from(second.player) - 1;
+            for pulse in std::mem::take(&mut second.riding.pulses) {
+                if self.gamepad.rumble_slot(slot, pulse) {
+                    second.riding.rumble.sent(pulse);
+                }
             }
         }
         // A Pause binding this frame opens the menu in this same frame (the
@@ -1018,19 +1770,53 @@ impl App {
         if let Some(effects) = &mut riding.effects {
             ready.scene.accept_wheel_effects(&ready.gpu, effects);
         }
+        // Split screen: the other players' wheel effects, and their own
+        // fine terrain patches beside player 1's.
+        riding.split_origin = ready
+            .split
+            .iter_mut()
+            .map(|second| {
+                if let Some(effects) = &mut second.riding.effects {
+                    ready.scene.accept_second_wheel_effects(
+                        &ready.gpu,
+                        usize::from(second.player) - 2,
+                        effects,
+                    );
+                }
+                second.riding.ride.frame().origin
+            })
+            .collect();
+        // A split view presents at the preset's reference and scales the
+        // focal length to its layout (split.rs).
+        let (present_aspect, focal_scale) = match ready.split.first() {
+            Some(second) => (split::SPLIT_PRESENT_ASPECT, second.layout.focal_scale()),
+            None => (ready.gpu.aspect(), 1.),
+        };
         match riding.present(
             &ready.gpu,
             &mut ready.scene,
             &ready.venue,
-            ready.gpu.aspect(),
+            present_aspect,
             dt,
         ) {
             Ok((camera, focal)) if !ready.fixed => {
                 ready.camera = camera;
-                ready.focal_length = focal;
+                ready.focal_length = focal * focal_scale;
             }
             Ok(_) => {}
             Err(error) => status(&error),
+        }
+        // Every other player's rider in one call (pose_peers hides the
+        // slots it is not given).
+        if !ready.split.is_empty() {
+            let mut poses = Vec::with_capacity(ready.split.len());
+            for second in &mut ready.split {
+                match second.present(&ready.gpu, &ready.venue, dt) {
+                    Ok(pose) => poses.push(pose),
+                    Err(error) => status(&format!("Player {}: {error}", second.player)),
+                }
+            }
+            ready.scene.pose_peers(&ready.gpu, &poses);
         }
         // The speed-rush screen pass shares the FOV kick's amount.
         let motion = riding.ride.frame();
@@ -1049,6 +1835,10 @@ impl App {
         let mut loads = Vec::new();
         let mut engine_loads = Vec::new();
         let mut course = None;
+        let mut room_load = None;
+        let mut game_join = None;
+        let mut host_game = None;
+        let mut freestyle_reload = false;
         let mut ended = None;
         if let Some(net) = &mut ready.net {
             // Only actual suspension (hidden page, suspended app) sends the
@@ -1081,6 +1871,7 @@ impl App {
                     motion.origin,
                     &ready.camera,
                     motion.linear_velocity,
+                    &[],
                 ) {
                     engine_loads.push((quad, sound.load_remote_engine(quad)));
                 }
@@ -1088,12 +1879,172 @@ impl App {
             let content = net.content();
             loads.extend(tick.loads.into_iter().map(|key| (content.clone(), key)));
             course = tick.course;
+            // Room races: a guest follows the host's new race; the race
+            // runs per rider and the host settles the results.
+            let (me, _) = net.roster();
+            if !net.is_host()
+                && let (Some(me), Some(state)) = (me, net.game_state())
+                && state.game == 3
+                && state.serial != self.room_race_serial
+                && state.phase != atv_game::multiplayer::race_phase::RESULTS
+            {
+                self.room_race_serial = state.serial;
+                let (race, load) = room_race::RoomRace::guest(state, me, &net.environment);
+                self.room_race = Some(race);
+                self.room_freestyle = None;
+                if let Some(overlay) = &mut self.overlay {
+                    overlay.results = Default::default();
+                }
+                if let Some(room_race::Action::Load(settings)) = load {
+                    room_load = Some(settings);
+                }
+            }
+            // Room King of the Hills / Treasure Hunt: a guest follows the
+            // host's new game onto its course scene.
+            if net.is_host()
+                && net.roster().0.is_some()
+                && self.game.is_none()
+                && let Some((kind, minutes)) = self.room_game_start.take()
+            {
+                let serial = self.room_game_serial.wrapping_add(1).max(1);
+                self.room_game_serial = serial;
+                host_game = Some((kind, serial, minutes));
+            }
+            if !net.is_host()
+                && let Some(state) = net.game_state()
+                && let Some(kind) = room_game::kind(state.game)
+                && state.serial != self.room_game_serial
+                && state.phase != atv_game::multiplayer::game_phase::OVER
+            {
+                self.room_game_serial = state.serial;
+                let minutes = (state.clock / 60.).ceil() as u32;
+                game_join = Some((kind, state.serial, minutes));
+                self.room_freestyle = None;
+            }
+            if let Some(race) = &mut self.room_race {
+                match race.frame(&mut riding.ride, net) {
+                    Some(room_race::Action::Load(settings)) => room_load = Some(settings),
+                    Some(room_race::Action::Results(summary)) => {
+                        // A rider who did not cross the line still sees the
+                        // agreed order (the race panel shows it otherwise).
+                        if let Some(overlay) = &mut self.overlay
+                            && riding
+                                .ride
+                                .race()
+                                .and_then(|r| r.frame.as_ref())
+                                .is_none_or(|f| f.phase != "finished")
+                        {
+                            let course = course_label(&self.course_names, &net.environment);
+                            overlay
+                                .results
+                                .show_game("Race Results", format!("Race on {course}. {summary}"));
+                            overlay.results.game_continue = true;
+                        }
+                    }
+                    None => {}
+                }
+            }
+            // Room Freestyle: a guest follows the host's new session; the
+            // host starts one hosted from the menus once the room is joined.
+            if !net.is_host()
+                && let Some(state) = net.game_state()
+                && state.game == atv_game::multiplayer::game_kind::FREESTYLE
+                && state.serial != self.room_freestyle_serial
+                && state.phase != atv_game::multiplayer::game_phase::OVER
+            {
+                self.room_freestyle_serial = state.serial;
+                // A race or game scene goes back to the room's Free Ride.
+                freestyle_reload = riding.ride.race().is_some()
+                    || self.room_race.is_some()
+                    || self.game.as_ref().is_some_and(|g| g.room.is_some());
+                self.room_race = None;
+                if self.game.as_ref().is_some_and(|g| g.room.is_some()) {
+                    self.game = None;
+                }
+                self.room_freestyle = Some(room_freestyle::RoomFreestyle::new(
+                    false,
+                    state.serial,
+                    room_freestyle::limit_from_clock(state.clock),
+                    net.environment.clone(),
+                ));
+                if let Some(overlay) = &mut self.overlay {
+                    overlay.results = Default::default();
+                }
+            }
+            if net.is_host()
+                && net.roster().0.is_some()
+                && self.room_freestyle_start
+                && self.room_freestyle.is_none()
+            {
+                self.room_freestyle_start = false;
+                let serial = self.room_freestyle_serial.wrapping_add(1).max(1);
+                self.room_freestyle_serial = serial;
+                let mut session = room_freestyle::RoomFreestyle::new(
+                    true,
+                    serial,
+                    room_freestyle::session_seconds(freestyle_minutes(&self.front)),
+                    net.environment.clone(),
+                );
+                session.table.hold = true;
+                self.room_freestyle = Some(session);
+            }
+            if let Some(session) = &mut self.room_freestyle {
+                session.course = course_label(&self.course_names, &net.environment);
+            }
+            if let Some(session) = &mut self.room_freestyle
+                && !freestyle_reload
+                && let Some(summary) = session.frame(&mut riding.ride, net)
+                && let Some(overlay) = &mut self.overlay
+            {
+                // The original's `[ClassicFreeStyleOver Menu]` is titled "Race
+                // Results", like the games' and races' (Overlays.pb).
+                overlay.results.show_game("Race Results", summary);
+                overlay.results.game_continue = true;
+            }
+            if let Some(overlay) = &mut self.overlay {
+                overlay.room_race_pending = self.room_race.as_ref().is_some_and(|r| r.pending());
+            }
             let remote = riding
                 .sound
                 .as_ref()
                 .map(|s| (s.remote.voices(), s.remote.starts, s.remote.impact_starts));
             let tags = self.overlay.as_ref().map_or(0, |o| o.tags);
             publish_multiplayer(net, riding.contacts, &riding.ride, remote, tags);
+        }
+        // Split screen: players 2-4's engines and body impacts play through
+        // the room riders' voices on the one output, each heard from the
+        // nearest player's camera (`001742f0` picks the nearest of the
+        // views' listeners; research/SPLIT_SCREEN.md "Split audio"). Player
+        // 1's positional and venue sounds use the same listener list from
+        // the next step (`RideAudio::views`).
+        if ready.split.is_empty()
+            && let Some(sound) = &mut riding.sound
+            && !sound.ride.views.is_empty()
+        {
+            sound.ride.views.clear();
+        }
+        if let (false, Some(sound)) = (ready.split.is_empty(), &mut riding.sound) {
+            let motion = riding.ride.frame();
+            let riders: Vec<_> = ready.split.iter_mut().map(|s| s.audio_rider()).collect();
+            let views: Vec<_> = ready
+                .split
+                .iter()
+                .map(|s| atv_core::spatial_audio::Listener {
+                    position: s.camera.eye(),
+                    forward: s.camera.axes().forward,
+                    velocity: s.riding.ride.frame().linear_velocity,
+                })
+                .collect();
+            sound.ride.views.clone_from(&views);
+            for quad in sound.remote_frame(
+                &riders,
+                motion.origin,
+                &ready.camera,
+                motion.linear_velocity,
+                &views,
+            ) {
+                engine_loads.push((quad, sound.load_remote_engine(quad)));
+            }
         }
         for (quad, future) in engine_loads {
             self.spawn_frame(future, move |engine| {
@@ -1113,7 +2064,77 @@ impl App {
             return;
         }
         if let Some(environment) = course {
-            self.reload_room(environment);
+            self.room_race = None;
+            self.room_freestyle = None;
+            self.reload_room(environment, None);
+            return;
+        }
+        if freestyle_reload {
+            let environment = self
+                .ready
+                .as_ref()
+                .and_then(|r| r.net.as_ref())
+                .map(|n| n.environment.clone());
+            if let Some(environment) = environment {
+                self.reload_room(environment, None);
+                return;
+            }
+        }
+        if let Some(settings) = room_load {
+            let environment = self
+                .ready
+                .as_ref()
+                .and_then(|r| r.net.as_ref())
+                .map(|n| n.environment.clone());
+            if let Some(environment) = environment {
+                self.reload_room(environment, Some(settings));
+                return;
+            }
+        }
+        if let Some((kind, serial, minutes)) = host_game {
+            self.start_room_game(kind, true, serial, minutes);
+            if let Some(room) = self.game.as_mut().and_then(|g| g.room.as_mut()) {
+                room.hold = true;
+            }
+            return;
+        }
+        if let Some((kind, serial, minutes)) = game_join {
+            // Play Again on the same course restarts in place; another game
+            // moves to its course scene.
+            let ride = self.ready.as_mut().and_then(|r| r.riding.as_mut());
+            match (&mut self.game, ride) {
+                (Some(game), Some(riding))
+                    if game.kind == kind && game.room.is_some() && game.session.is_some() =>
+                {
+                    game.room_restart(&mut riding.ride, serial);
+                    if let Some(overlay) = &mut self.overlay {
+                        overlay.results = Default::default();
+                    }
+                }
+                _ => {
+                    self.start_room_game(kind, false, serial, minutes);
+                    return;
+                }
+            }
+        }
+        // A guest following the host's Tag onto its course.
+        if let Some(environment) = self.tag_reload.take() {
+            self.reload_room_with(environment, true, None);
+            return;
+        }
+        // The Training Course ended (`00225980` phase 3): back to the main
+        // menu with the reward on the notice line.
+        if let Some(session) = self.training.take_if(|t| t.finished) {
+            if self.quit_to(Some("main"))
+                && let Some(front) = &self.front
+            {
+                front.borrow_mut().state.notice =
+                    Some(if session.rewarded && !session.course.completed_before {
+                        "Training Course complete! Unlocked the Ravage Talons and ATV2 gear.".into()
+                    } else {
+                        "Training Course complete!".into()
+                    });
+            }
             return;
         }
         let Some(ready) = &mut self.ready else { return };
@@ -1128,7 +2149,374 @@ impl App {
         let Some(riding) = &mut ready.riding else {
             return;
         };
+        // A Freestyle objective runs on the ride's clock; its end opens the
+        // objective results.
+        let objective_view = match &mut self.objective {
+            Some(session) => {
+                let player = self
+                    .front
+                    .as_ref()
+                    .map(|f| f.borrow().state.player_name.trim().to_string())
+                    .filter(|n| !n.is_empty())
+                    .unwrap_or_else(|| "Rider".into());
+                if !ready.split.is_empty() {
+                    let mut others: Vec<_> =
+                        ready.split.iter_mut().map(|s| &mut s.riding.ride).collect();
+                    if let Some(summary) = session.update_split(
+                        &mut riding.ride,
+                        &mut others,
+                        ready.venue.objective.as_ref(),
+                    ) && let Some(overlay) = &mut self.overlay
+                    {
+                        overlay.results.show_objective(summary);
+                    }
+                } else if let Some((summary, fame)) =
+                    session.update(&mut riding.ride, ready.venue.objective.as_ref(), &player)
+                    && let Some(overlay) = &mut self.overlay
+                {
+                    overlay.results.show_objective(summary);
+                    overlay.offer_fame(atv_core::hall_of_fame::Watch::Freestyle(fame));
+                }
+                // The targets' cherries loop their motion; hit ones hide.
+                if let Some(objective) = &ready.venue.objective {
+                    let time = riding.ride.steps() as f32 * atv_game::ride::STEP;
+                    for (target, shown) in session.cherries() {
+                        let Some(Some(model)) = objective.models.get(target).copied() else {
+                            continue;
+                        };
+                        ready.scene.hide_model(model, !shown);
+                        if shown && let Some(matrix) = objective.cherry_matrix(target, time) {
+                            ready.scene.pose_model(&ready.gpu, model, &matrix);
+                        }
+                    }
+                }
+                // A hit target's `Particles` action starts its cherry
+                // explosion (the target TOY's emitter; `0023f460`).
+                if let (Some(objective), Some(ambient)) =
+                    (&ready.venue.objective, &ready.venue.ambient)
+                {
+                    for target in std::mem::take(&mut session.triggered) {
+                        if let Some(t) = objective.targets.get(target) {
+                            ambient.borrow_mut().trigger(
+                                atv_core::ambient_effects::Toy::Targets,
+                                &t.particles,
+                                None,
+                            );
+                        }
+                    }
+                }
+                let sounds = session.take_sounds();
+                if let Some(sound) = &mut riding.sound {
+                    for name in sounds {
+                        sound.one_shot(name);
+                    }
+                }
+                session.view()
+            }
+            None => None,
+        };
+        // The Training Course: its lessons run on the ride's clock and hold
+        // the ATV while a line plays; its end returns to the main menu.
+        // A room on Coonce Arena plays Hockey (research/GAMES.md "Online").
+        if ready.net.is_some() {
+            let arena = ready.venue.environment == "game01";
+            if arena && self.hockey.is_none() {
+                self.hockey = Some(hockey::HockeySession::new());
+            } else if !arena {
+                self.hockey = None;
+            }
+        }
+        // Tag: the host starts it from Pause; guests join when its state
+        // arrives. Leaving the room ends it.
+        if ready.net.is_none() && !ready.split.is_empty() && self.tag.is_none() {
+            // Split screen Tag: every ride is ready.
+            if let Some((minutes, _)) = self.split_tag.take() {
+                let mut session = tag::TagSession::new_local(minutes, ready.split.len() + 1);
+                session.model = ready.venue.tag_ball;
+                self.tag = Some(session);
+            }
+        } else if ready.net.is_none() && !self.tag.as_ref().is_some_and(|t| t.local) {
+            if self.tag.take().is_some() {
+                tag::TagSession::release(&mut riding.ride);
+            }
+            self.tag_start = None;
+        } else if ready.net.is_none() {
+        } else if self.tag.is_none()
+            && self.tag_start.is_some()
+            && !ready.venue.tag_ball
+            && ready.net.as_ref().is_some_and(|n| n.is_host())
+            && self.tag_reload.is_none()
+        {
+            // Games → Tag hosted the room on the venue's Freeride ride:
+            // move to the Tag course (or play here when it is not packaged).
+            if tag_scene(
+                ready.net.as_ref().map(|n| n.content()).as_ref(),
+                &ready.venue.environment,
+            )
+            .is_some()
+            {
+                self.tag_reload = Some(ready.venue.environment.clone());
+            } else if let Some(minutes) = self.tag_start.take() {
+                self.tag = Some(tag::TagSession::new(true, minutes));
+            }
+        } else if self.tag.is_none()
+            && let Some(minutes) = self
+                .tag_start
+                .filter(|_| ready.venue.tag_ball && ready.net.as_ref().is_some_and(|n| n.is_host()))
+        {
+            // The host's Play Tag, now riding the Tag course.
+            self.tag_start = None;
+            let mut session = tag::TagSession::new(true, minutes);
+            session.model = true;
+            self.tag = Some(session);
+        } else if self.tag.is_none()
+            && ready.venue.environment != "game01"
+            && ready
+                .net
+                .as_ref()
+                .and_then(|n| n.game_state())
+                .is_some_and(|g| g.game == 2 && g.phase == 0)
+        {
+            // A guest joins the host's game, first moving to the Tag course
+            // when the package has it.
+            if !ready.venue.tag_ball
+                && tag_scene(
+                    ready.net.as_ref().map(|n| n.content()).as_ref(),
+                    &ready.venue.environment,
+                )
+                .is_some()
+            {
+                self.tag_reload = Some(ready.venue.environment.clone());
+            } else {
+                let mut session = tag::TagSession::new(false, atv_core::games::DEFAULT_MINUTES);
+                session.model = ready.venue.tag_ball;
+                self.tag = Some(session);
+            }
+        }
+        let tag_view = match &mut self.tag {
+            Some(session) if session.local || ready.net.is_some() => {
+                if ready.venue.tag_ball {
+                    ready.scene.pose_prop(&ready.gpu, &session.ball_matrix());
+                }
+                session.start = ready.venue.scene.start_position;
+                session.crowd = ready.venue.scene.crowd_present;
+                let mut others: Vec<_> =
+                    ready.split.iter_mut().map(|s| &mut s.riding.ride).collect();
+                if session.update(&mut riding.ride, ready.net.as_mut(), &mut others)
+                    && let Some(overlay) = &mut self.overlay
+                {
+                    // `[TagOver Menu]` is titled "Race Results" on the disc
+                    // (Overlays.pb `Text1Text`), with a Continue row.
+                    overlay.results.show_game("Race Results", session.summary());
+                    // A room keeps riding (Continue); split screen offers
+                    // Restart Game and back to Games, like the other games.
+                    overlay.results.game_continue = !session.local;
+                }
+                let sounds = session.take_sounds();
+                if let Some(sound) = &mut riding.sound {
+                    for name in sounds {
+                        sound.one_shot(name);
+                    }
+                }
+                Some(session.view())
+            }
+            _ => None,
+        };
+        let training_view = match (&mut self.training, &mut self.hockey) {
+            (Some(session), _) => {
+                session.update(&mut riding.ride);
+                riding.locked = session.course.locked();
+                // The `arrow.slt` pointers bob and turn over the marked
+                // circles (`002ea500`); hidden when not placed.
+                if let Some(models) = ready.venue.training_arrows {
+                    let arrows = session.course.arrows();
+                    let time = riding.ride.steps() as f32 * atv_game::ride::STEP;
+                    for (i, model) in models.into_iter().enumerate() {
+                        let pose = arrows.get(i).and_then(|&(base, dir)| {
+                            atv_core::training::arrow_matrix(base, dir, time).ok()
+                        });
+                        ready.scene.hide_model(model, pose.is_none());
+                        if let Some(matrix) = pose {
+                            ready.scene.pose_model(&ready.gpu, model, &matrix);
+                        }
+                    }
+                }
+                Some(session.view(riding.ride.frame().origin))
+            }
+            // Hockey holds the rider at the face-off (`00336c90`).
+            (None, Some(session)) => {
+                // Game over: the HockeyOver page (Restart Game, Quit to
+                // Main Menu).
+                let mut others: Vec<_> =
+                    ready.split.iter_mut().map(|s| &mut s.riding.ride).collect();
+                if session.update(&mut riding.ride, ready.net.as_mut(), &mut others)
+                    && let Some(overlay) = &mut self.overlay
+                {
+                    overlay
+                        .results
+                        .show_game("Hockey Results", session.summary());
+                }
+                riding.locked = session.held();
+                for second in &mut ready.split {
+                    second.riding.locked = session.held();
+                }
+                ready.scene.pose_prop(&ready.gpu, &session.puck_matrix());
+                // The hat-trick group (`003368c0` starts it, the next
+                // face-off and Restart Game stop it).
+                if let Some(ambient) = &ready.venue.ambient {
+                    for on in session.take_hats() {
+                        ambient.borrow_mut().hat_trick(on);
+                    }
+                }
+                let sounds = session.take_sounds();
+                if let Some(sound) = &mut riding.sound {
+                    for name in sounds {
+                        sound.one_shot(name);
+                    }
+                }
+                Some(session.view(riding.ride.frame().origin))
+            }
+            (None, None) => {
+                riding.locked = false;
+                tag_view
+            }
+        };
+        // A mini-game: its rules run on the ride's clock; the ATV is held
+        // through the start countdown and after the end, whose standings
+        // open the results.
+        let game_view = match &mut self.game {
+            Some(game) => {
+                match (&game.room, ready.net.as_mut()) {
+                    (Some(_), Some(net)) => game.room_update(&mut riding.ride, net),
+                    _ => {
+                        let mut others: Vec<_> =
+                            ready.split.iter_mut().map(|s| &mut s.riding.ride).collect();
+                        game.update(&mut riding.ride, &mut others);
+                    }
+                }
+                riding.locked |= game.locked();
+                for second in &mut ready.split {
+                    second.riding.locked = game.locked();
+                }
+                for (model, rgb) in game.flag_colors(&ready.venue.scene.models) {
+                    ready.scene.tint_model(&ready.gpu, model, rgb);
+                }
+                // Treasure Hunt's bombs loop `bomb.MOT`; only the live
+                // group's uncollected treasures show (`002d11e0`, the
+                // collect's HideAnimation).
+                if let Some(treasures) = &ready.venue.treasures {
+                    let live = game.markers();
+                    let time = riding.ride.steps() as f32 * atv_game::ride::STEP;
+                    for (i, target) in treasures.targets.iter().enumerate() {
+                        let Some(Some(model)) = treasures.models.get(i).copied() else {
+                            continue;
+                        };
+                        let shown = live.iter().any(|m| {
+                            m.position
+                                .iter()
+                                .zip(target.position)
+                                .all(|(a, b)| (a - b).abs() < 0.5)
+                        });
+                        ready.scene.hide_model(model, !shown);
+                        if shown && let Some(matrix) = treasures.cherry_matrix(i, time) {
+                            ready.scene.pose_model(&ready.gpu, model, &matrix);
+                        }
+                    }
+                }
+                // A collected treasure's trigger: its `Particles` action
+                // starts the bomb's `bomb_explosion.emt` at the bomb.
+                if let (Some(treasures), Some(ambient)) =
+                    (&ready.venue.treasures, &ready.venue.ambient)
+                {
+                    let time = riding.ride.steps() as f32 * atv_game::ride::STEP;
+                    for name in game.take_triggered() {
+                        let Some(i) = treasures
+                            .targets
+                            .iter()
+                            .position(|t| t.name.eq_ignore_ascii_case(&name))
+                        else {
+                            continue;
+                        };
+                        let at = treasures
+                            .cherry_matrix(i, time)
+                            .map(|m| [m[12], m[13], m[14]]);
+                        ambient.borrow_mut().trigger(
+                            atv_core::ambient_effects::Toy::Mode,
+                            &treasures.targets[i].particles,
+                            at,
+                        );
+                    }
+                }
+                let sounds = game.take_sounds();
+                if let Some(sound) = &mut riding.sound {
+                    for name in sounds {
+                        sound.one_shot(name);
+                    }
+                }
+                // Split screen names the views' players (the race
+                // standings' Player 1 / Player 2); one player keeps the
+                // profile name.
+                let player = if game.players > 1 {
+                    split::PLAYER_1.to_string()
+                } else {
+                    self.front
+                        .as_ref()
+                        .map(|f| f.borrow().state.player_name.trim().to_string())
+                        .filter(|n| !n.is_empty())
+                        .unwrap_or_else(|| "You".into())
+                };
+                let names: Vec<&str> = std::iter::once(player.as_str())
+                    .chain(split::PLAYER_NAMES[1..].iter().copied())
+                    .collect();
+                let summary = if game.room.is_some() {
+                    game.course = course_label(&self.course_names, &game.venue);
+                    game.room_results()
+                } else {
+                    game.results(&names)
+                };
+                if let Some(summary) = summary
+                    && let Some(overlay) = &mut self.overlay
+                {
+                    overlay.results.show_game("Race Results", summary);
+                    // A room game: Play Again (host) or Continue to the
+                    // room's Free Ride.
+                    if game.room.is_some() {
+                        overlay.results.game_continue = true;
+                    }
+                }
+                game.view(game.room.as_ref().map_or(0, |r| r.me))
+            }
+            None => None,
+        };
+        // Room Freestyle: the games panel (clock, combos, place, score and
+        // the leader), the start lamps' sounds and the held start.
+        let game_view = match &mut self.room_freestyle {
+            Some(session) if game_view.is_none() => {
+                riding.locked |= session.locked();
+                let sounds = std::mem::take(&mut session.sounds);
+                if let Some(sound) = &mut riding.sound {
+                    for name in sounds {
+                        sound.one_shot(name);
+                    }
+                }
+                Some(session.view())
+            }
+            _ => game_view,
+        };
         if let Some(overlay) = &mut self.overlay {
+            // Split screen: the race is over once every player finishes.
+            overlay.hold_results = ready.split.iter().any(|s| {
+                s.riding
+                    .ride
+                    .race()
+                    .and_then(|r| r.frame.as_ref())
+                    .is_some_and(|f| f.phase != "finished")
+            });
+            overlay.training = self.training.is_some();
+            overlay.game = self.game.is_some()
+                || self.room_freestyle.is_some()
+                || self.hockey.is_some()
+                || self.tag.as_ref().is_some_and(|t| t.local);
             if riding.input_cleared {
                 overlay.clear_input();
             }
@@ -1150,11 +2538,239 @@ impl App {
             );
             let gpu = &ready.gpu;
             // Other riders' tags and map markers project with the scene camera.
-            let hud_peers = ready.net.as_ref().map(|net| net.hud_peers());
-            let view_projection =
-                ready
-                    .camera
-                    .view_projection(gpu.aspect(), ready.focal_length, 1., 10_000.);
+            // The Training arrows (`00224860`, 25 ft over the marked
+            // circles) as screen tags and map markers.
+            let training_markers = self.training.as_ref().map(|t| {
+                t.course
+                    .markers()
+                    .into_iter()
+                    .map(|[x, y, z]| atv_ui::hud::peers::Peer {
+                        slot: 3,
+                        name: "Marker".into(),
+                        // screen_marker lifts tags 7 ft.
+                        position: [x, y - 7., z],
+                        stale: false,
+                        pill: None,
+                        map_only: false,
+                    })
+                    .collect::<Vec<_>>()
+            });
+            // A game's hill flags (the owner's colour, white unowned,
+            // `00220d10`) and treasures.
+            let game_markers = self.game.as_ref().map(|g| {
+                g.markers()
+                    .into_iter()
+                    .map(|m| atv_ui::hud::peers::Peer {
+                        slot: m
+                            .owner
+                            .map_or(if m.label == "Treasure" { 19 } else { 9 }, |o| {
+                                o.min(3) as u8
+                            }),
+                        // King of the Hills draws its hills as score pills
+                        // (`002eac20`); treasures keep a tag.
+                        pill: m
+                            .label
+                            .starts_with("Hill")
+                            .then(|| format!("{}", m.score as i32)),
+                        name: m.label,
+                        position: [m.position[0], m.position[1] - 7., m.position[2]],
+                        stale: false,
+                        map_only: false,
+                    })
+                    .collect::<Vec<_>>()
+            });
+            // Player 2's view shows the same game tags (hill pills, treasures).
+            let local_tag = self.tag.as_ref().filter(|t| t.local).map(|t| t.markers());
+            let game_peers = game_markers
+                .clone()
+                .or_else(|| self.hockey.as_ref().map(|h| h.markers()))
+                .or_else(|| local_tag.clone())
+                // Split Freestyle Objectives: every view tags the untouched
+                // targets from its own camera (a port choice like player 1's
+                // tags: the original draws only the 3D targets).
+                .or_else(|| {
+                    self.objective
+                        .as_ref()
+                        .filter(|o| o.split.is_some())
+                        .map(|o| o.markers())
+                        .filter(|m| !m.is_empty())
+                })
+                .filter(|_| !ready.split.is_empty());
+            let hud_peers = ready
+                .net
+                .as_ref()
+                .map(|net| net.hud_peers())
+                .map(|mut peers| {
+                    if let Some(tag) = &self.tag {
+                        peers.extend(tag.markers());
+                    }
+                    peers
+                })
+                .or(training_markers)
+                .or(game_markers)
+                .or_else(|| {
+                    self.objective
+                        .as_ref()
+                        .map(|o| o.markers())
+                        .filter(|m| !m.is_empty())
+                })
+                .or_else(|| self.hockey.as_ref().map(|h| h.markers()))
+                .or(local_tag);
+            // Split screen: each view projects at its own rectangle's aspect.
+            let rects: Option<Vec<f32>> = ready.split.first().map(|s| {
+                s.layout
+                    .rects(gpu.config.width, gpu.config.height, 1.)
+                    .into_iter()
+                    .map(|[_, _, w, h]| w as f32 / h.max(1) as f32)
+                    .collect()
+            });
+            let view_projection = ready.camera.view_projection(
+                rects
+                    .as_ref()
+                    .and_then(|r| r.first().copied())
+                    .unwrap_or(gpu.aspect()),
+                ready.focal_length,
+                1.,
+                10_000.,
+            );
+            // The compass of a mini-game or a Freestyle target run
+            // (`002edf00` passes Hill, Flag or Target icons).
+            let compass_icons = match (&self.game, &self.objective) {
+                (Some(game), _) if game.view(0).is_some() => Some(
+                    game.markers()
+                        .into_iter()
+                        .map(|m| {
+                            let icon = if m.label.starts_with("Hill") {
+                                // `002e76e0`: each hill in its owner's
+                                // colour, white unowned.
+                                m.owner.filter(|o| *o < 4).map_or_else(
+                                    || atv_ui::hud::assets::RADAR_HILL.to_string(),
+                                    |o| {
+                                        atv_ui::hud::assets::tinted_name(
+                                            atv_ui::hud::assets::RADAR_HILL,
+                                            o as u8,
+                                        )
+                                    },
+                                )
+                            } else {
+                                atv_ui::hud::assets::RADAR_FLAG.to_string()
+                            };
+                            (m.position, icon)
+                        })
+                        .collect::<Vec<_>>(),
+                ),
+                (None, Some(objective)) => objective.compass_targets().map(|targets| {
+                    targets
+                        .into_iter()
+                        .map(|p| (p, atv_ui::hud::assets::RADAR_TARGET.to_string()))
+                        .collect()
+                }),
+                _ => None,
+            };
+            let compass_of = |frame: &atv_core::vehicle::VehicleFrame, icons: Vec<_>| {
+                let [w, x, y, z] = frame.orientation;
+                atv_ui::hud::race::CompassView {
+                    yaw: atv_core::math::Det::atan2_d(
+                        2. * (w * y + x * z),
+                        1. - 2. * (y * y + x * x),
+                    ),
+                    origin: frame.origin,
+                    racers: Vec::new(),
+                    icons,
+                }
+            };
+            // Split screen: the other players' mini-game panels, compasses
+            // and tags.
+            // A split target objective's compass is each player's too
+            // (Overlay Set 5 places object 31 once per view).
+            let compass_for = |s: &split::Second| {
+                compass_icons
+                    .clone()
+                    .filter(|_| match &self.game {
+                        Some(g) => g.view(usize::from(s.player) - 1).is_some(),
+                        None => self.objective.as_ref().is_some_and(|o| o.split.is_some()),
+                    })
+                    .map(|icons| compass_of(s.riding.ride.frame(), icons))
+            };
+            let others: Vec<overlay::SecondHud> = ready
+                .split
+                .iter()
+                .map(|s| {
+                    let ride = &s.riding.ride;
+                    let index = usize::from(s.player) - 1;
+                    let (columns, rows) = s.layout.grid();
+                    overlay::SecondHud {
+                        grid: (columns, rows),
+                        cell: (index as u32 % columns, index as u32 / columns),
+                        hud: ride.hud(),
+                        race: ride
+                            .race()
+                            .and_then(|r| r.frame.as_ref())
+                            .map(|f| (f, ride.committed_points(), ride.frame().origin)),
+                        game: self
+                            .game
+                            .as_ref()
+                            .filter(|g| g.players > index)
+                            .and_then(|g| g.view(index)),
+                        compass: compass_for(s),
+                        training: self
+                            .hockey
+                            .as_ref()
+                            .filter(|h| h.split)
+                            .map(|h| h.view_for(ride.frame().origin, index))
+                            .or_else(|| {
+                                self.tag
+                                    .as_ref()
+                                    .filter(|t| t.local)
+                                    .map(|t| t.view_for(index))
+                            }),
+                        peers: game_peers.as_deref().map(|peers| {
+                            (
+                                peers,
+                                ride.frame().origin,
+                                s.camera.view_projection(
+                                    rects
+                                        .as_ref()
+                                        .and_then(|r| r.get(index).copied())
+                                        .unwrap_or(1.),
+                                    s.focal_length,
+                                    1.,
+                                    10_000.,
+                                ),
+                            )
+                        }),
+                        eye: Some(s.camera.eye()),
+                    }
+                })
+                .collect();
+            let compass = compass_icons.map(|icons| compass_of(frame, icons));
+            // Split screen: the original layout and the mode's overlay set.
+            let split_layout = ready.split.first().map(|s| {
+                let name = atv_ui::hud::split::layout_name(
+                    ready.split.len() + 1,
+                    s.layout == split::Layout::Vertical,
+                );
+                let race = ride.race().and_then(|r| r.frame.as_ref());
+                let set = match (race, self.game.as_ref().map(|g| g.kind)) {
+                    (Some(f), _) if f.enduro_gate.is_some() => 11,
+                    (Some(_), _) => 1,
+                    (None, Some(atv_core::games::GameKind::TreasureHunt)) => 6,
+                    (None, Some(atv_core::games::GameKind::KingOfTheHills)) => 7,
+                    _ if self.hockey.as_ref().is_some_and(|h| h.split) => 9,
+                    _ if self.tag.as_ref().is_some_and(|t| t.local) => 8,
+                    // A target objective (`CherryPick`) uses its own set,
+                    // whose split layouts list the compass per player.
+                    _ if self
+                        .objective
+                        .as_ref()
+                        .is_some_and(|o| o.split.is_some() && !o.targets.is_empty()) =>
+                    {
+                        5
+                    }
+                    _ => 2,
+                };
+                (name, set)
+            });
             overlay.prepare(
                 &gpu.device,
                 &gpu.queue,
@@ -1169,6 +2785,7 @@ impl App {
                     hud: ride.hud(),
                     rider_world: ride.rider_world(),
                     terrain: &ready.venue.terrain,
+                    eye: Some(ready.camera.eye()),
                     race: ride
                         .race()
                         .and_then(|r| r.frame.as_ref())
@@ -1176,6 +2793,12 @@ impl App {
                     peers: hud_peers
                         .as_deref()
                         .map(|peers| (peers, frame.origin, view_projection)),
+                    objective: objective_view,
+                    training: training_view,
+                    game: game_view,
+                    compass,
+                    others,
+                    split_layout,
                 }),
                 Some(&mut riding.bindings),
             );
@@ -1185,6 +2808,102 @@ impl App {
             let mut state = replay::record(&riding.ride, riding.ride.steps());
             state["camera"]["preset"] = riding.ride.camera().0.preset.into();
             state["paused"] = riding.paused.into();
+            // Split screen (tools/test_engine_split_screen.mjs).
+            if let Some(second) = ready.split.first() {
+                let camera = |c: &atv_render::Camera, focal: f32| {
+                    serde_json::json!([c.x, c.y, c.z, c.yaw, c.pitch, focal])
+                };
+                let race = |ride: &atv_game::ride::Ride| {
+                    let state = ride.race()?;
+                    state.frame.as_ref().map(|f| {
+                        serde_json::json!({
+                            "phase": f.phase, "lap": f.lap, "laps": f.laps,
+                            "position": f.position, "field": f.field,
+                            "elapsed": f.elapsed,
+                            "sign": f.hud.as_ref().and_then(|h| h.sign.as_ref()).map(|s| s.id),
+                            "linkedHuman": !state.split.humans.is_empty(),
+                            "linkedHumans": state.split.humans.len(),
+                            "waiting": state.split.waiting,
+                            "standings": f.standings.iter().map(|s| serde_json::json!({
+                                "name": s.name, "position": s.position, "time": s.time,
+                                "estimated": s.estimated,
+                                "player": s.player})).collect::<Vec<_>>(),
+                        })
+                    })
+                };
+                let player = |s: &split::Second| {
+                    let ride = &s.riding.ride;
+                    let f = ride.frame();
+                    let applied = ride.applied();
+                    serde_json::json!({
+                        "player": s.player,
+                        "origin": f.origin,
+                        "speed": f.speed_magnitude,
+                        "steps": ride.steps(),
+                        "throttle": applied.throttle,
+                        "steer": applied.steer,
+                        "race": race(ride),
+                        "quad": ride.selection().quad,
+                        "rider": ride.selection().rider,
+                        "gear": ride.appearance().gear,
+                        "paint": ride.appearance().paint,
+                        "paintMode": ride.paint(),
+                        "locked": s.riding.locked,
+                        "effects": s.riding.effects.as_ref().map(|e| {
+                            let f = e.frame();
+                            serde_json::json!({
+                                "particles": f.particles.len(),
+                                "emitted": f.total_emitted.iter().sum::<u64>(),
+                                // Its own Enhanced/High tire tracks and
+                                // lingering dust.
+                                "tracks": e.tracks.as_ref().map(|(t, ..)| t.total),
+                                "dust": e.dust.as_ref().map(|d| d.emitter.emitted),
+                            })
+                        }),
+                        "rumbles": s.riding.rumble.pulses,
+                    })
+                };
+                let players: Vec<_> = ready.split.iter().map(player).collect();
+                let views: Vec<_> = second
+                    .layout
+                    .rects(
+                        ready.gpu.config.width,
+                        ready.gpu.config.height,
+                        self.window.as_ref().map_or(1., |w| w.scale_factor()) as f32,
+                    )
+                    .into_iter()
+                    .take(ready.split.len() + 1)
+                    .collect();
+                state["split"] = serde_json::json!({
+                    "layout": format!("{:?}", second.layout),
+                    "players": ready.split.len() + 1,
+                    // Players 2.. riders drawn in the shared scene.
+                    "ridersShown": ready.scene.peers_shown(),
+                    "views": views,
+                    "cameras": std::iter::once(camera(&ready.camera, ready.focal_length))
+                        .chain(ready.split.iter().map(|s| camera(&s.camera, s.focal_length)))
+                        .collect::<Vec<_>>(),
+                    "presets": std::iter::once(riding.ride.camera().0.preset)
+                        .chain(ready.split.iter().map(|s| s.riding.ride.camera().0.preset))
+                        .collect::<Vec<_>>(),
+                    "pads": std::iter::once(pad.is_some())
+                        .chain(ready.split.iter().map(|s| s.pad))
+                        .collect::<Vec<_>>(),
+                    "resultsHeld": self.overlay.as_ref().is_some_and(|o| o.hold_results),
+                    "resultsShown": self.overlay.as_ref().is_some_and(|o| o.results.shown),
+                    "resultsRows": self.overlay.as_ref().map(|o| o.results.rows.clone()),
+                    "player1": {
+                        "origin": riding.ride.frame().origin,
+                        "speed": riding.ride.frame().speed_magnitude,
+                        "throttle": riding.ride.applied().throttle,
+                        "race": race(&riding.ride),
+                        "quad": riding.ride.selection().quad,
+                    },
+                    "player2": players.first(),
+                    "others": players,
+                    "terrainPatches": ready.scene.terrain_patches(),
+                });
+            }
             state["wakeLock"] = self.wake_lock.held().into();
             state["diagnostics"] = serde_json::json!({
                 "mode": self.diagnostics.mode.name(), "lines": self.diagnostics.lines});
@@ -1232,6 +2951,46 @@ impl App {
                             .any(|x| x.name.eq_ignore_ascii_case(&m))),
                     })
                 });
+            // Placed TOY emitters: gameplay starts (bomb/cherry bursts, hat
+            // tricks) and the live CPU particles per pool (static, moving
+            // actor, CPU stream) (tools/test_engine_toy_explosions.mjs).
+            state["ambient"] = ready
+                .venue
+                .ambient
+                .as_ref()
+                .map_or(serde_json::Value::Null, |a| {
+                    let a = a.borrow();
+                    let frame = a.frame();
+                    serde_json::json!({
+                        "triggered": a.effects.triggered(), "live": a.effects.live(),
+                        "particles": frame.particles.len(), "emitted": frame.total_emitted,
+                        "dropped": frame.dropped, "capacity": a.metadata.capacity,
+                        "hatTrick": a.hat_trick.len(),
+                        "drawn": ready.scene.ambient_sprites(),
+                    })
+                });
+            // Scene model visibility (tools/test_engine_visibility.mjs,
+            // research/VISIBILITY.md): drawn chunks per level, frustum
+            // culls, far multi-pass culls and coarse models; the scene's
+            // zone/portal counts.
+            state["scenery"] = self.meter.scenery.map_or(serde_json::Value::Null, |f| {
+                serde_json::json!({
+                    "draws": f.scenery_draws, "triangles": f.scenery_triangles,
+                    "culled": f.scenery_culled, "levels": f.scenery_levels,
+                    "farCulled": f.scenery_far_culled, "coarseModels": f.scenery_coarse_models,
+                    "finest": ready.scene.graphics().finest_models,
+                    "zones": ready.venue.scene.zones, "portals": ready.venue.scene.portals,
+                    "zoneRecords": ready.venue.zones.records,
+                    "zonesOutside": ready.venue.zones.outside.len(),
+                    "nearest": nearest_levels(
+                        ready.camera.eye(), ready.focal_length, &ready.scene, &ready.venue, 6),
+                    "focal": atv_core::model_lod::focal_from_view(ready.focal_length),
+                    // One digit per scene model: its drawn level last frame.
+                    "modelLevels": ready.scene.scenery_levels().iter()
+                        .map(|(l, _)| char::from(b'0' + (*l).min(9))).collect::<String>(),
+                    "farCullModels": far_cull_models(ready.camera.eye(), &ready.scene, &ready.venue),
+                })
+            });
             state["snow"] = ready
                 .scene
                 .snow_state()
@@ -1239,17 +2998,146 @@ impl App {
                     serde_json::json!({"time": s.time, "activeEmitters": s.active_emitters,
                     "emitted": s.total_emitted, "draws": self.meter.snow_draws})
                 });
+            // Keyframed TOY actors (tools/test_engine_toy_actors.mjs): the
+            // scene clock, draw statistics and each actor's posed root.
+            state["actors"] =
+                ready
+                    .venue
+                    .actors
+                    .as_ref()
+                    .map_or(serde_json::Value::Null, |shared| {
+                        let actors = shared.borrow();
+                        let (visible, culled, draws) = self.meter.actors;
+                        let list: Vec<_> = (0..actors.actors.len())
+                            .map(|i| {
+                                let a = &actors.actors[i];
+                                let root = actors.pose(i).map(|p| {
+                                    let m = atv_game::actors::multiply(&p.placement, &p.nodes[0]);
+                                    [m[12], m[13], m[14]]
+                                });
+                                serde_json::json!({"mcf": a.definition.mcf,
+                                "model": actors.models[a.model].name,
+                                "offset": a.definition.offset, "root": root,
+                                "playing": a.playing, "time": actors.motion_time(i)})
+                            })
+                            .collect();
+                        // Loop sounds: sample, owning actor and the attached
+                        // node's world position this step.
+                        let sounds: Vec<_> = actors
+                            .sounds
+                            .iter()
+                            .zip(actors.sound_emitters())
+                            .map(|(sound, (m, _))| {
+                                serde_json::json!({"sample": sound.definition.sample,
+                                "actor": sound.actor, "attached": sound.node.is_some(),
+                                "emitter": [m[12], m[13], m[14]]})
+                            })
+                            .collect();
+                        // UseCollision bodies and the vehicle's moving-body
+                        // contacts this step (test_engine_actor_collision.mjs).
+                        let collision: Vec<_> = actors
+                            .collision
+                            .iter()
+                            .map(|b| {
+                                let m = b.world_matrix;
+                                serde_json::json!({"actor": b.actor,
+                                "mcf": actors.actors[b.actor].definition.mcf,
+                                "position": [m[12], m[13], m[14]]})
+                            })
+                            .collect();
+                        serde_json::json!({"count": actors.actors.len(),
+                        "collision": collision,
+                        "collisionUnresolved": actors.collision_unresolved.len(),
+                        "dynamicContacts": riding.ride.frame().dynamic_contact_count,
+                        "vehicle": riding.ride.frame().origin,
+                        "models": actors.models.len(), "clips": actors.clips.len(),
+                        "steps": actors.steps(), "visible": visible, "culled": culled,
+                        "draws": draws, "list": list, "sounds": sounds,
+                        "triggers": actors.triggers.iter().zip(&actors.fired)
+                            .map(|((t, targets), fired)| serde_json::json!({
+                                "name": t.name, "position": t.position, "box": t.extents,
+                                "enabled": t.enabled, "percent": t.percent,
+                                "targets": targets, "fired": fired}))
+                            .collect::<Vec<_>>()})
+                    });
             if let Some(overlay) = &self.overlay {
                 state["toolbar"] = overlay.diagnostics();
             }
+            // The ride's course and championship round, and the results
+            // buttons (tools/test_engine_championship.mjs).
+            state["ride"] = serde_json::json!({
+                "environment": ready.venue.environment,
+                "championship": riding.ride.race().and_then(|r| r.settings().championship),
+                "training": self.training.as_ref().map(|t| t.state(riding.ride.frame().origin)),
+                "trainingArrows": ready.venue.training_arrows.map(|m| m.len()),
+                "game": self.game.as_ref().map(games::GameSession::state),
+                "roomRace": self.room_race.as_ref().map(room_race::RoomRace::state),
+                "roomGame": self.game.as_ref().map(games::GameSession::room_state),
+                "roomFreestyle": self.room_freestyle.as_ref().map(room_freestyle::RoomFreestyle::state),
+                "hockey": self.hockey.as_ref().map(|h| h.state(riding.ride.frame().origin)),
+                "tag": self.tag.as_ref().map(|t| t.state()),
+                "tagBall": ready.venue.tag_ball,
+                "engineEffect": riding.ride.engine_effect(),
+                "start": ready.venue.scene.start_position,
+                "oneShots": riding.sound.as_ref().map(|s| s.ride.race.stats.one_shots.clone()),
+                // Players 2-4's (and room riders') engine voices and starts.
+                "remoteVoices": riding.sound.as_ref().map(|s| (s.remote.voices(), s.remote.starts)),
+                "objective": self.objective.as_ref().map(|o| serde_json::json!({
+                    "series": o.series, "expert": o.expert, "course": o.course,
+                    "objective": o.objective, "recorded": o.recorded,
+                    "timeLeft": o.run.as_ref().map(|r| r.time_left),
+                    "score": o.run.as_ref().map(|r| r.score),
+                    "progress": o.run.as_ref().map(|r| r.progress()),
+                    "outcome": o.run.as_ref().and_then(|r| r.outcome).map(|x| format!("{x:?}")),
+                    "message": o.run.as_ref().and_then(|r| r.notice().map(str::to_string)),
+                    "targets": o.targets,
+                    "hits": o.run.as_ref().map(|r| r.hits.clone()),
+                    "start": o.run.as_ref().and_then(|r| r.objective.start),
+                    "cherries": ready.venue.objective.as_ref()
+                        .map(|v| v.models.iter().filter(|m| m.is_some()).count()),
+                    // Split screen's shared run (`atv_core::freestyle::split`).
+                    "split": o.split.as_ref().map(|r| serde_json::json!({
+                        "players": r.runs.len(),
+                        "timeLeft": r.time_left,
+                        "taken": r.taken,
+                        "scores": r.runs.iter().map(|p| p.score).collect::<Vec<_>>(),
+                        "outcomes": r.runs.iter()
+                            .map(|p| p.outcome.map(|x| format!("{x:?}"))).collect::<Vec<_>>(),
+                        "places": r.places(),
+                        "winners": r.winners,
+                        "progress": r.progress(),
+                    })),
+                    "summary": self.overlay.as_ref().filter(|ov| ov.results.shown && o.split.is_some())
+                        .and_then(|ov| ov.results.objective.clone()),
+                })),
+                "results": self.overlay.as_ref().filter(|o| o.results.shown)
+                    .map(|o| o.results.buttons()),
+                // A game's results title (`show_game`).
+                "resultsTitle": self.overlay.as_ref().filter(|o| o.results.shown)
+                    .and_then(|o| o.results.game.clone()),
+                // The Hall of Fame name entry: records broken and the name.
+                "fame": self.overlay.as_ref().filter(|o| o.results.shown)
+                    .and_then(|o| o.results.fame.as_ref())
+                    .map(|f| serde_json::json!({"broken": f.broken, "name": f.name})),
+            });
+            // Player 1's positional sounds: listeners (one per view) and the
+            // one nearest player 1's rider (0 = player 1's camera).
+            state["ride"]["listeners"] = serde_json::json!(
+                riding
+                    .sound
+                    .as_ref()
+                    .map(|s| (s.ride.stats.listeners, s.ride.stats.nearest))
+            );
             // The saved settings the ride applies (tools/test_engine_settings.mjs).
             let graphics = ready.scene.graphics();
             let mixer = riding.sound.as_ref().and_then(|s| {
-                s.output
-                    .mixer
-                    .lock()
-                    .ok()
-                    .map(|m| (m.sfx_volume, m.music_volume))
+                s.output.mixer.lock().ok().map(|m| {
+                    (
+                        m.sfx_volume,
+                        m.music_volume,
+                        format!("{:?}", m.configuration),
+                    )
+                })
             });
             state["settings"] = serde_json::json!({
                 "speedRushPeak": riding.speed_rush_peak(),
@@ -1286,31 +3174,62 @@ impl App {
                 "wheelLift": riding.wheel_lift.get(),
                 "dirtLevel": riding.dirt.level(),
                 "dirtApplied": if riding.dirt_enabled { riding.dirt.amount() } else { 0. },
-                "sfx": mixer.map(|m| m.0), "music": mixer.map(|m| m.1),
+                "sfx": mixer.as_ref().map(|m| m.0), "music": mixer.as_ref().map(|m| m.1),
+
                 "soundMode": riding.sound.as_ref().map(|s| format!("{:?}", s.ride.mode)),
             });
+            // Game Settings (tools/test_engine_game_settings.mjs).
+            let game = &mut state["settings"];
+            game["soundConfiguration"] = mixer.as_ref().map(|m| m.2.clone()).into();
+            // The streamed soundtrack's routing (web: a graph once not Stereo).
+            game["musicRoute"] = riding.sound.as_ref().and_then(|s| s.music_route()).into();
+            game["speedUnits"] = riding.ride.hud().units.into();
+            game["vegetationQuery"] = (!riding.ride.frame().skip_vegetation_query).into();
+            game["ecosystemCollisionOff"] = riding.ride.options.ecosystem_collision_off.into();
             publish_ui_state(&state.to_string());
         }
         let overlay = self.overlay.as_ref().filter(|_| !self.hide_ui);
         let render_started = Instant::now();
         let mut acquire = 0.;
-        match ready.scene.render_with(
-            &ready.gpu,
-            &View {
-                camera: ready.camera,
-                focal_length: ready.focal_length,
-            },
-            &mut |encoder, target| {
-                if let Some(overlay) = overlay {
-                    overlay.draw(encoder, target);
-                }
-            },
-        ) {
+        let first_view = View {
+            camera: ready.camera,
+            focal_length: ready.focal_length,
+        };
+        let mut draw_overlay = |encoder: &mut wgpu::CommandEncoder, target: &wgpu::TextureView| {
+            if let Some(overlay) = overlay {
+                overlay.draw(encoder, target);
+            }
+        };
+        let rendered = match ready.split.first() {
+            Some(second) => {
+                let rects = second.layout.rects(
+                    ready.gpu.config.width,
+                    ready.gpu.config.height,
+                    device as f32,
+                );
+                let views: Vec<(View, [u32; 4])> = std::iter::once(first_view)
+                    .chain(ready.split.iter().map(|s| View {
+                        camera: s.camera,
+                        focal_length: s.focal_length,
+                    }))
+                    .zip(rects)
+                    .collect();
+                ready
+                    .scene
+                    .render_views(&ready.gpu, &views, &mut draw_overlay)
+            }
+            None => ready
+                .scene
+                .render_with(&ready.gpu, &first_view, &mut draw_overlay),
+        };
+        match rendered {
             Ok(stats) => {
                 self.meter.triangles = stats.triangles();
                 self.meter.draws = stats.draws();
                 self.meter.shadows = (stats.contact_casters, stats.shadow_casters);
                 self.meter.snow_draws = stats.snow_draws;
+                self.meter.actors = (stats.actors_visible, stats.actors_culled, stats.actor_draws);
+                self.meter.scenery = Some(stats);
                 acquire = stats.acquire_ms;
             }
             Err(error) => status(&error),
@@ -1487,6 +3406,8 @@ impl App {
                 triangles: self.meter.triangles,
                 draws: self.meter.draws,
                 snow_draws: self.meter.snow_draws,
+                actors: self.meter.actors,
+                scenery: self.meter.scenery,
                 last: self.meter.last,
                 ..Default::default()
             };
@@ -1623,6 +3544,7 @@ impl App {
         self.sync_menu_music();
         self.last = Instant::now();
         self.wake();
+        self.cloud_activity(focused);
     }
 
     fn blur(&mut self) {
@@ -1644,15 +3566,87 @@ impl App {
     /// Applies a pause-menu outcome to the ride.
     fn menu_event(&mut self, event: atv_ui::menu::controller::Event) {
         use atv_ui::menu::controller::Event;
-        let Some(riding) = self.ready.as_mut().and_then(|r| r.riding.as_mut()) else {
+        let Some(ready) = self.ready.as_mut() else {
             return;
         };
+        let Some(riding) = ready.riding.as_mut() else {
+            return;
+        };
+        // Split screen: the other players' rides restart a game with
+        // player 1's.
+        let mut second: Vec<_> = ready.split.iter_mut().map(|s| &mut s.riding.ride).collect();
         match event {
             // Restart Race (frontend.js reset({restart:true})): the whole
             // event reloads, also after the finish.
             Event::Reset if riding.ride.race().is_some() => {
                 self.menu_event(Event::Resume);
                 self.restart_race();
+            }
+            // Restart Training (`00226d60`): the introduction and lesson 1
+            // again; nothing earned is taken back.
+            // Restart Game (`00220d10`, `002d1450`): the game starts over
+            // at its start, in place.
+            Event::Reset if self.game.is_some() => {
+                // A room game restarts for everyone, from the host only.
+                let host = ready.net.as_ref().is_some_and(|n| n.is_host());
+                if let Some(game) = &mut self.game {
+                    if game.room.is_none() {
+                        game.restart(&mut riding.ride, &mut second);
+                    } else if host {
+                        let serial = self.room_game_serial.wrapping_add(1).max(1);
+                        self.room_game_serial = serial;
+                        game.room_restart(&mut riding.ride, serial);
+                    }
+                }
+                if let Some(overlay) = &mut self.overlay {
+                    overlay.results = Default::default();
+                }
+                self.menu_event(Event::Resume);
+            }
+            // Room Freestyle: Restart Game starts a new session for the
+            // room, from the host only (it also starts a held one now).
+            Event::Reset if self.room_freestyle.is_some() => {
+                let host = ready.net.as_ref().is_some_and(|n| n.is_host());
+                if host && let Some(session) = &mut self.room_freestyle {
+                    let serial = self.room_freestyle_serial.wrapping_add(1).max(1);
+                    self.room_freestyle_serial = serial;
+                    session.restart(serial);
+                }
+                if let Some(overlay) = &mut self.overlay {
+                    overlay.results = Default::default();
+                }
+                self.menu_event(Event::Resume);
+            }
+            // Restart (`003377f0`): scores and clock reset, a new face-off.
+            Event::Reset if self.tag.as_ref().is_some_and(|t| t.local) => {
+                self.restart_split_tag();
+                self.menu_event(Event::Resume);
+            }
+            Event::Reset if self.hockey.is_some() => {
+                if let Some(session) = &mut self.hockey {
+                    session.restart(&mut riding.ride, &mut second);
+                }
+                self.menu_event(Event::Resume);
+            }
+            Event::Reset if self.training.is_some() => {
+                if let Some(session) = &mut self.training {
+                    session.restart(&mut riding.ride);
+                }
+                self.menu_event(Event::Resume);
+            }
+            // Restart Objective: the ride resets and the run starts over
+            // (timer, score, combos and levels), its results closed.
+            Event::Reset if self.objective.is_some() => {
+                if let Err(error) = riding.reset() {
+                    status(&format!("Reset failed: {error}"));
+                }
+                if let Some(session) = &mut self.objective {
+                    session.start(&mut riding.ride);
+                }
+                if let Some(overlay) = &mut self.overlay {
+                    overlay.results = Default::default();
+                }
+                self.menu_event(Event::Resume);
             }
             Event::Resume | Event::Reset => {
                 // Leaving the menu ends a Jukebox pause (stopJukebox).
@@ -1706,6 +3700,69 @@ impl App {
                     }
                 }
             }
+            // Play Race (room host): every room rider races this course
+            // (research/MULTIPLAYER.md "Room races").
+            Event::PlayRace(variant) => {
+                self.start_room_race(variant);
+                self.menu_event(Event::Resume);
+            }
+            // Play King of the Hills / Treasure Hunt (room host): the game
+            // for every room rider on this course (research/MULTIPLAYER.md
+            // "Room games").
+            Event::PlayGame(event) => {
+                self.menu_event(Event::Resume);
+                let host = self
+                    .ready
+                    .as_ref()
+                    .and_then(|r| r.net.as_ref())
+                    .is_some_and(|n| n.is_host());
+                if let Some(kind) = atv_core::games::GameKind::from_event_type(event)
+                    .filter(|k| room_game::code(*k).is_some())
+                    && host
+                {
+                    let serial = self.room_game_serial.wrapping_add(1).max(1);
+                    self.room_game_serial = serial;
+                    let minutes = self.room_game_minutes();
+                    self.start_room_game(kind, true, serial, minutes);
+                }
+            }
+            // Play Freestyle (room host): a timed stunt session for every
+            // room rider on this course (research/MULTIPLAYER.md "Room
+            // Freestyle").
+            Event::PlayFreestyle => {
+                self.menu_event(Event::Resume);
+                self.start_room_freestyle();
+            }
+            // Play Tag (room host): a Tag game for the room on this course.
+            Event::PlayTag => {
+                let ok = self.ready.as_ref().is_some_and(|r| {
+                    r.venue.environment != "game01" && r.net.as_ref().is_some_and(|n| n.is_host())
+                });
+                let minutes = self.tag_minutes();
+                let venue = self
+                    .ready
+                    .as_ref()
+                    .filter(|r| !r.venue.tag_ball)
+                    .map(|r| r.venue.environment.clone())
+                    .filter(|v| self.tag_course(v).is_some());
+                if ok && let Some(environment) = venue {
+                    // The original rides the venue's Tag course: reload the
+                    // room's ride from its TG archive, then start.
+                    self.menu_event(Event::Resume);
+                    self.tag_start = Some(minutes);
+                    self.reload_room_with(environment, true, None);
+                    return;
+                }
+                if ok {
+                    let mut session = tag::TagSession::new(true, minutes);
+                    session.model = self.ready.as_ref().is_some_and(|r| r.venue.tag_ball);
+                    self.tag = Some(session);
+                    if let Some(overlay) = &mut self.overlay {
+                        overlay.results = Default::default();
+                    }
+                }
+                self.menu_event(Event::Resume);
+            }
             Event::ChangeRide | Event::SelectTrack => {
                 let garage = event == Event::ChangeRide;
                 let Some(ready) = &mut self.ready else { return };
@@ -1745,8 +3802,8 @@ impl App {
                     page = room_page(net.shared());
                     net.leave();
                 }
-                // multiplayer.js `leave`: a shared Free Ride room returns to
-                // the main menu, a private room to the Multiplayer page.
+                // Leaving a room returns to the Multiplayer page, where Free
+                // Ride, Host Game and Join Game start (MENU_FLOW.md).
                 if self.quit_to(Some(page)) {
                     return;
                 }
@@ -1767,6 +3824,7 @@ impl App {
                                 motion.origin,
                                 &ready.camera,
                                 motion.linear_velocity,
+                                &[],
                             );
                         }
                     }
@@ -1934,8 +3992,20 @@ impl App {
     fn remember_ride(&self) {
         #[cfg(target_arch = "wasm32")]
         if let Some(storage) = web_sys::window().and_then(|w| w.session_storage().ok().flatten()) {
+            // A split ride reopens split, with each player's own ATV and
+            // rider.
+            let split = self
+                .ready
+                .as_ref()
+                .and_then(|r| split::resume_query(&r.split));
             let _ = match self.ride_link() {
-                Some((url, _)) => storage.set_item("fury-resume", &url),
+                Some((url, _)) => storage.set_item(
+                    "fury-resume",
+                    &match split {
+                        Some(query) => split::with_query(&url, &query),
+                        None => url,
+                    },
+                ),
                 None => storage.remove_item("fury-resume"),
             };
         }
@@ -2009,7 +4079,17 @@ impl App {
             flips: prefs.flips,
             realistic_train: prefs.realistic_train,
             arcade_flips: prefs.alpha("arcade-flips"),
+            metric: prefs.metric,
+            // "In i.LINK, LAN, and online play, Ecosystem Collision is
+            // always on" (`0020f780` sets +0x674 for network play).
+            ecosystem_collision_off: !prefs.ecosystem_collision && !riding.online,
         };
+        // Split screen: player 2 rides the same settings.
+        for second in &mut ready.split {
+            second.riding.vibration = prefs.vibration;
+            second.riding.chase_assist = prefs.chase_assist;
+            second.riding.ride.options = riding.ride.options;
+        }
         // Settings → Alpha presentation (web/hype.js).
         riding.alpha_slowmo = prefs.alpha("air-slowmo");
         riding.alpha_big_air_camera = prefs.alpha("big-air-camera");
@@ -2023,6 +4103,13 @@ impl App {
         // Tire tracks read the (Heavy mud) zones game.js passes.
         if let Some(effects) = &mut riding.effects {
             effects.set_track_zones(*riding.dirt.zones());
+        }
+        for second in &mut ready.split {
+            let r = &mut second.riding;
+            r.dirt.set_heavy(prefs.alpha("heavy-mud"));
+            if let Some(effects) = &mut r.effects {
+                effects.set_track_zones(*r.dirt.zones());
+            }
         }
         let mode = atv_game::crash::CrashMode::parse(&prefs.crash_mode).unwrap_or_default();
         if riding
@@ -2046,6 +4133,7 @@ impl App {
         }
         if let Some(sound) = &mut riding.sound {
             sound.set_volumes(prefs.sfx_volume, prefs.music_volume, prefs.music_enabled);
+            sound.set_configuration(&prefs.sound_configuration);
         }
         // A preset changed in the menu applies at once where it can.
         if self.graphics_pref.as_deref() != Some(prefs.graphics.as_str()) {
@@ -2065,14 +4153,30 @@ impl App {
                 );
                 effects.set_track_zones(*riding.dirt.zones());
             }
+            // Split screen: players 2-4's own tracks and dust follow too.
+            for second in &mut ready.split {
+                if let Some(effects) = &mut second.riding.effects {
+                    effects.set_lingering_dust(usize::from(graphics.dust), &ready.venue);
+                    effects.set_tire_tracks(
+                        usize::from(graphics.tire_tracks.0),
+                        f32::from(graphics.tire_tracks.1),
+                        &ready.venue,
+                    );
+                    effects.set_track_zones(*second.riding.dirt.zones());
+                }
+            }
             ready.scene.set_graphics(&ready.gpu, &ready.venue, graphics);
         }
     }
 
     fn act(&mut self, action: overlay::Action) {
-        let Some(riding) = self.ready.as_mut().and_then(|r| r.riding.as_mut()) else {
+        let Some(ready) = self.ready.as_mut() else {
             return;
         };
+        let Some(riding) = ready.riding.as_mut() else {
+            return;
+        };
+        let mut second: Vec<_> = ready.split.iter_mut().map(|s| &mut s.riding.ride).collect();
         match action {
             overlay::Action::Pause => {
                 if !riding.held {
@@ -2085,11 +4189,171 @@ impl App {
                 }
             }
             overlay::Action::Camera => riding.cycle_requested = true,
+            overlay::Action::RaceRetry if self.tag.as_ref().is_some_and(|t| t.local) => {
+                self.restart_split_tag();
+            }
+            overlay::Action::RaceQuit if self.tag.as_ref().is_some_and(|t| t.local) => {
+                // Back to the Games page that started it.
+                self.quit_to(Some("games"));
+            }
+            // Room race results: the host starts the next race, a guest
+            // waits for it; Quit returns to the room's Free Ride.
+            overlay::Action::RaceRetry if self.room_race.is_some() => {
+                if let Some(overlay) = &mut self.overlay {
+                    overlay.results = Default::default();
+                }
+                if self
+                    .ready
+                    .as_ref()
+                    .and_then(|r| r.net.as_ref())
+                    .is_some_and(|n| n.is_host())
+                {
+                    let variant = self.room_race.as_ref().map_or(0, |r| r.field.info.variant);
+                    self.start_room_race(variant);
+                }
+            }
+            overlay::Action::RaceQuit if self.room_race.is_some() => {
+                self.room_race = None;
+                if let Some(overlay) = &mut self.overlay {
+                    overlay.results = Default::default();
+                }
+                let environment = self
+                    .ready
+                    .as_ref()
+                    .and_then(|r| r.net.as_ref())
+                    .map(|n| n.environment.clone());
+                if let Some(environment) = environment {
+                    self.reload_room(environment, None);
+                }
+            }
+            // Room Freestyle results: the host's Play Again starts the next
+            // session, a guest waits for it; Quit returns to the room's
+            // Free Ride on the same course (no reload: it is that ride).
+            overlay::Action::RaceRetry if self.room_freestyle.is_some() => {
+                if let Some(overlay) = &mut self.overlay {
+                    overlay.results = Default::default();
+                }
+                if ready.net.as_ref().is_some_and(|n| n.is_host())
+                    && let Some(session) = &mut self.room_freestyle
+                {
+                    let serial = self.room_freestyle_serial.wrapping_add(1).max(1);
+                    self.room_freestyle_serial = serial;
+                    session.restart(serial);
+                }
+            }
+            overlay::Action::RaceQuit if self.room_freestyle.is_some() => {
+                self.room_freestyle = None;
+                riding.locked = false;
+                if let Some(overlay) = &mut self.overlay {
+                    overlay.results = Default::default();
+                }
+            }
+            // Room King of the Hills / Treasure Hunt results: the host's
+            // Play Again starts the next game, a guest waits for it;
+            // Continue returns to the room's Free Ride.
+            overlay::Action::RaceRetry if self.game.as_ref().is_some_and(|g| g.room.is_some()) => {
+                if let Some(overlay) = &mut self.overlay {
+                    overlay.results = Default::default();
+                }
+                if ready.net.as_ref().is_some_and(|n| n.is_host())
+                    && let Some(game) = &mut self.game
+                {
+                    let serial = self.room_game_serial.wrapping_add(1).max(1);
+                    self.room_game_serial = serial;
+                    game.room_restart(&mut riding.ride, serial);
+                }
+            }
+            overlay::Action::RaceQuit if self.game.as_ref().is_some_and(|g| g.room.is_some()) => {
+                self.game = None;
+                if let Some(overlay) = &mut self.overlay {
+                    overlay.results = Default::default();
+                }
+                let environment = ready.net.as_ref().map(|n| n.environment.clone());
+                if let Some(environment) = environment {
+                    self.reload_room(environment, None);
+                }
+            }
+            overlay::Action::RaceRetry if self.tag.is_some() => {
+                if self
+                    .ready
+                    .as_ref()
+                    .and_then(|r| r.net.as_ref())
+                    .is_some_and(|n| n.is_host())
+                {
+                    let minutes = self.tag_minutes();
+                    let mut session = tag::TagSession::new(true, minutes);
+                    session.model = self.ready.as_ref().is_some_and(|r| r.venue.tag_ball);
+                    self.tag = Some(session);
+                }
+                if let Some(overlay) = &mut self.overlay {
+                    overlay.results = Default::default();
+                }
+            }
+            overlay::Action::RaceQuit if self.tag.is_some() => {
+                self.tag = None;
+                tag::TagSession::release(&mut riding.ride);
+                if let Some(overlay) = &mut self.overlay {
+                    overlay.results = Default::default();
+                }
+            }
+            overlay::Action::RaceRetry if self.game.is_some() => {
+                if let Some(game) = &mut self.game {
+                    game.restart(&mut riding.ride, &mut second);
+                }
+                if let Some(overlay) = &mut self.overlay {
+                    overlay.results = Default::default();
+                }
+            }
+            overlay::Action::RaceRetry if self.hockey.is_some() => {
+                if let Some(session) = &mut self.hockey {
+                    session.restart(&mut riding.ride, &mut second);
+                }
+                if let Some(overlay) = &mut self.overlay {
+                    overlay.results = Default::default();
+                }
+            }
+            overlay::Action::RaceQuit if self.game.is_some() => {
+                // Continue: back to the Games page (the original returns to
+                // its Games Prep).
+                self.game = None;
+                self.quit_to(Some("games"));
+            }
+            overlay::Action::RaceQuit if self.hockey.is_some() => {
+                // Continue: back to the Games page that started it (the
+                // original returns to the page that started the event,
+                // `0021ecb0`), with the score on its notice line.
+                let result = self.hockey.as_ref().map(|h| h.result());
+                if self.quit_to(Some("games"))
+                    && let (Some(front), Some(result)) = (&self.front, result)
+                {
+                    front.borrow_mut().state.notice = Some(result);
+                }
+            }
+            overlay::Action::RaceRetry if self.objective.is_some() => self.restart_objective(),
+            overlay::Action::RaceQuit if self.objective.is_some() => {
+                // Continue: back to Select Objective.
+                self.objective = None;
+                self.quit_to(Some("objectives"));
+            }
             overlay::Action::RaceRetry => self.restart_race(),
+            overlay::Action::RaceNextRound => self.next_round(),
             overlay::Action::RaceQuit => {
-                // race.js quit: Single Player; a page without the engine's
-                // frontend (a direct ride) opens its menus instead.
-                if !self.quit_to(Some("single")) {
+                // Continue returns to the page that started the race, on the
+                // row it was started from (`0021ecb0`): Single Race's setup,
+                // or a championship round's Championship page (the
+                // original's "Quit to Championship Menu"). A page without
+                // the engine's frontend (a direct ride) opens its menus
+                // instead.
+                let page = if riding
+                    .ride
+                    .race()
+                    .is_some_and(|r| r.settings().championship.is_some())
+                {
+                    "championship"
+                } else {
+                    "race"
+                };
+                if !self.quit_to(Some(page)) {
                     #[cfg(target_arch = "wasm32")]
                     if let Some(window) = web_sys::window() {
                         let location = window.location();
@@ -2106,6 +4370,60 @@ impl App {
     /// draw, no pre-race camera). With the engine's frontend the event
     /// reloads through the course loader; a direct ride restarts in place
     /// with the loaded roster.
+    /// Continue Championship: load the series' next round from the saved
+    /// profile, with the pre-race camera.
+    fn next_round(&mut self) {
+        let Some(riding) = self.ready.as_ref().and_then(|r| r.riding.as_ref()) else {
+            return;
+        };
+        let Some(settings) = riding.ride.race().map(|r| r.settings()) else {
+            return;
+        };
+        let Some((index, expert)) = settings.championship else {
+            return;
+        };
+        let Some(series) = atv_core::championship::SERIES.get(index) else {
+            return;
+        };
+        let profile = atv_ui::settings::load_profile(&atv_ui::settings::Settings::load());
+        let course = profile
+            .championships
+            .next_course(series, expert)
+            .to_string();
+        let selection = riding.ride.selection();
+        if self.front.is_some() && self.quit_to(None) {
+            self.start_ride(
+                course,
+                selection.quad,
+                selection.rider,
+                Some(atv_game::ride::race::Settings {
+                    seed: fresh_seed(),
+                    intro: true,
+                    ..settings
+                }),
+                None,
+            );
+        }
+    }
+
+    /// Restart Objective: ride the same objective again from its start.
+    fn restart_objective(&mut self) {
+        let Some(riding) = self.ready.as_ref().and_then(|r| r.riding.as_ref()) else {
+            return;
+        };
+        let selection = riding.ride.selection();
+        let Some(session) = &mut self.objective else {
+            return;
+        };
+        session.run = None;
+        session.split = None;
+        session.recorded = false;
+        let course = session.course.clone();
+        if self.front.is_some() && self.quit_to(None) {
+            self.start_ride(course, selection.quad, selection.rider, None, None);
+        }
+    }
+
     fn restart_race(&mut self) {
         let Some(riding) = self.ready.as_mut().and_then(|r| r.riding.as_mut()) else {
             return;
@@ -2163,6 +4481,16 @@ impl App {
         }
         let (x, y) = self.css((touch.location.x, touch.location.y));
         if self.front_pointer(touch.id, touch.phase, x, y) {
+            // A tap on a Host/Join field opens the soft keyboard.
+            #[cfg(target_os = "android")]
+            if touch.phase == TouchPhase::Ended
+                && let Some(front) = self.front_input()
+            {
+                let mut front = front.borrow_mut();
+                let focused = front.state.focus.is_some();
+                self.soft_keyboard.follow(focused, focused);
+                front.state.soft_keyboard = focused;
+            }
             return;
         }
         let now = (Instant::now() - self.started).as_secs_f64() * 1000.;
@@ -2202,9 +4530,13 @@ impl App {
             TouchPhase::Started => {
                 if !overlay.press(id, x, y) {
                     overlay.touch_down(id, x, y, now, active);
-                    // A tap off the toolbar skips the race intro (game.js).
+                    // A tap off the toolbar skips the race intro (game.js)
+                    // and a Training line.
                     if let Some(riding) = self.ready.as_mut().and_then(|r| r.riding.as_mut()) {
                         riding.ride.skip_intro();
+                        if let Some(session) = &mut self.training {
+                            session.course.skip();
+                        }
                     }
                 }
             }
@@ -2492,6 +4824,14 @@ impl App {
             riding.key_pressed(&format!("{code:?}"), now, &|c: &str| names.contains(c));
             // Any key skips the pre-race camera (00212d40).
             riding.ride.skip_intro();
+            // Accept skips a Training demonstration or Chase line (00225200).
+            if matches!(
+                format!("{code:?}").as_str(),
+                "Enter" | "NumpadEnter" | "Space"
+            ) && let Some(session) = &mut self.training
+            {
+                session.course.skip();
+            }
             // H stays a gameplay key when the player bound it (usesKey),
             // and Ctrl/Alt/Meta shortcuts leave the card alone.
             let free = !riding.bindings.uses_key("KeyH");
@@ -2668,7 +5008,15 @@ impl ApplicationHandler<Message> for App {
             script: options.script,
             sound: options.sound,
             autodrive: options.autodrive,
+            game_scene: None,
+            objective: None,
+            // `?split=h|v` (web) or FURY_SPLIT=h|v (desktop): a direct split
+            // ride (tests and host measurements).
+            split: split_link_param(),
         };
+        // A direct split ride restarts (and reopens after a device loss)
+        // split too.
+        self.split_request = world.split;
         let future = async move {
             let gpu = open_gpu(window, display).await?;
             let content = Rc::new(Content::open(store).await?);
@@ -2844,6 +5192,11 @@ impl ApplicationHandler<Message> for App {
                             prefs.music_enabled,
                         );
                     }
+                    // Game Settings → Sound Configuration, even for a held
+                    // or replayed ride (it is an output choice).
+                    if let Some(prefs) = self.overlay.as_ref().map(|o| &o.prefs) {
+                        sound.set_configuration(&prefs.sound_configuration);
+                    }
                     // A race already under way holds the soundtrack now.
                     if let Some(music) = riding.ride.race().and_then(|r| r.music_now()) {
                         sound.race(&atv_game::ride::race::StepEvents {
@@ -2863,6 +5216,15 @@ impl ApplicationHandler<Message> for App {
                 self.wake();
             }
             Message::SoundFailed(error) => status(&format!("Sound unavailable: {error}")),
+            Message::GameToy(toy) => {
+                if let Some(game) = &mut self.game {
+                    game.load(toy);
+                }
+            }
+            Message::CourseNames(names) => match names {
+                Ok(names) => self.course_names.extend(names),
+                Err(error) => status(&format!("Course names unavailable: {error}")),
+            },
             Message::SoundtrackReady(result) => {
                 match result {
                     Ok(music) if self.soundtrack.is_none() => {
@@ -2900,6 +5262,9 @@ impl ApplicationHandler<Message> for App {
                     Err(error) => status(&format!("Menu music: {error}")),
                 }
                 self.sync_menu_music();
+                // One frame reports it (an idle menu draws none; the main
+                // menu no longer polls the Free Ride count).
+                self.wake();
             }
             Message::JukeboxArt(art) => {
                 if let (Some(overlay), Some(ready)) = (&mut self.overlay, &self.ready) {
@@ -2942,9 +5307,12 @@ impl ApplicationHandler<Message> for App {
                 }
                 self.last = Instant::now();
                 if let Some(window) = &self.window {
+                    // The ride draws at its render ratio from its first frame.
+                    MENU_SURFACE.with(|m| m.set(false));
                     let size = render_size(window);
                     let ready = self.ready.as_mut().unwrap();
                     fit_surface(window, &mut ready.gpu, size, self.suspended);
+                    ready.gpu.set_scene_targets(true);
                     if ready.riding.is_some() {
                         let mut overlay = overlay::Overlay::new(
                             &ready.gpu.device,
@@ -2971,6 +5339,24 @@ impl ApplicationHandler<Message> for App {
                             .riding
                             .as_ref()
                             .is_some_and(|r| r.ride.race().is_some());
+                        // The profile's course record (`001f1e30` keeps lap
+                        // and race times only at the default 3 Enduro / 5
+                        // other laps).
+                        overlay.race_entry = ready.riding.as_ref().and_then(|r| {
+                            let laps = r.ride.race()?.settings().laps;
+                            let course = ready.venue.environment.clone();
+                            let enduro = atv_game::launch::split_race_course(&course).is_some_and(
+                                |(_, v)| {
+                                    matches!(
+                                        v,
+                                        atv_game::launch::RaceVariant::EnduroLong
+                                            | atv_game::launch::RaceVariant::EnduroShort
+                                    )
+                                },
+                            );
+                            let full = laps == if enduro { 3 } else { 5 };
+                            Some((course, r.ride.selection().quad, full))
+                        });
                         self.graphics_pref = Some(overlay.prefs.graphics.clone());
                         self.overlay = Some(overlay);
                     }
@@ -3020,7 +5406,12 @@ impl ApplicationHandler<Message> for App {
                     window.request_redraw();
                 }
             }
-            Message::PresenceTick => self.presence_tick(),
+            Message::PresenceTick => {
+                self.presence_tick();
+                self.cloud_tick();
+            }
+            Message::Cloud(id, response) => self.cloud_response(id, response),
+            Message::CloudImport(name, text) => self.cloud_import(name, text),
             Message::RoomJoined(result) => self.room_joined(*result),
             Message::LobbyNotice(text) => {
                 if let Some(front) = &self.front {
@@ -3095,7 +5486,12 @@ impl ApplicationHandler<Message> for App {
                     match *piece {
                         ArtPiece::Photos(photos) => front.art.photos.extend(photos),
                         ArtPiece::Tips(tips) => front.set_tips(tips),
-                        ArtPiece::Quads(quads) => front.art.quads = Some(quads),
+                        ArtPiece::Quads(quads) => {
+                            front.state.store.atvs = quads.atvs.clone();
+                            front.art.quads = Some(quads);
+                            let view = front.view;
+                            front.state.refresh(&view);
+                        }
                         ArtPiece::TopSpeed(quad, speed) => {
                             front.art.top_speed.insert(quad, speed);
                         }
@@ -3155,9 +5551,17 @@ impl ApplicationHandler<Message> for App {
                     .map_or(("tracks", None), |(page, error)| (page, Some(error)));
                 if let Some(front) = &self.front {
                     let mut f = front.borrow_mut();
+                    // A single-player ride returns to the page that started
+                    // it (a championship round, the Games page, Training's
+                    // main menu); a room to its lobby's menu.
+                    let launcher = f.state.launcher().map(String::from);
+                    let page = match launcher {
+                        Some(launcher) if matches!(page, "tracks" | "race") => launcher,
+                        _ => page.to_string(),
+                    };
                     // Its GPU objects belonged to the device the load took.
                     f.release_gpu();
-                    f.resume(page);
+                    f.resume(&page);
                     f.state.notice = notice;
                 }
                 self.requested.remove("jukebox-art");
@@ -3414,6 +5818,34 @@ impl ApplicationHandler<Message> for App {
         }
     }
 
+    /// Android controllers: the patched winit's gamepad button (key code)
+    /// and axis events. A change reaches a sleeping menu at once.
+    #[cfg(target_os = "android")]
+    fn device_event(
+        &mut self,
+        _: &ActiveEventLoop,
+        device_id: winit::event::DeviceId,
+        event: winit::event::DeviceEvent,
+    ) {
+        use winit::{event::DeviceEvent, platform::android::DeviceIdExtAndroid};
+        let id = device_id.android_device_id();
+        match event {
+            DeviceEvent::Button { button, state } => {
+                self.gamepad
+                    .button(id, button, state == ElementState::Pressed);
+            }
+            DeviceEvent::Motion { axis, value } => self.gamepad.axis(id, axis, value as f32),
+            _ => return,
+        }
+        if self.asleep && self.sync.is_none() {
+            let signature = self.pad_signature();
+            if signature != self.pad_buttons {
+                self.pad_buttons = signature;
+                self.wake();
+            }
+        }
+    }
+
     fn new_events(&mut self, _: &ActiveEventLoop, cause: StartCause) {
         if matches!(cause, StartCause::ResumeTimeReached { .. }) {
             if self.asleep {
@@ -3484,22 +5916,27 @@ impl App {
             }
         }
         self.poll_riders();
+        #[cfg(not(target_arch = "wasm32"))]
+        let cloud = self.cloud_poll();
         // The earliest of every reason to wake without an event.
         let now = Instant::now();
         let mut wake: Option<Instant> = None;
         let mut at = |when: Instant| wake = Some(wake.map_or(when, |w| w.min(when)));
+        // Pass Key sync: its answers and once-a-second tick (cloud.rs).
+        #[cfg(not(target_arch = "wasm32"))]
+        at(cloud);
         // A hidden or suspended room ride draws no frames: a 1 s timer keeps
         // its presence (the browser's throttled background timers).
         #[cfg(not(target_arch = "wasm32"))]
         if self.presence_due() {
             at(now + std::time::Duration::from_secs(1));
         }
-        // The main menu refreshes its Free Ride count every 15 s.
+        // Multiplayer refreshes its Free Ride count every 15 s.
         if self.ready.is_none()
             && self
                 .front
                 .as_ref()
-                .is_some_and(|f| f.borrow().state.page == "main")
+                .is_some_and(|f| f.borrow().state.page == "multiplayer")
             && let Some(polled) = self.riders_polled
         {
             at(polled + std::time::Duration::from_secs(15));
@@ -3510,6 +5947,24 @@ impl App {
         if self.asleep && self.effective_focused() {
             let poll = if self.pad_seen { 16 } else { 50 };
             at(now + std::time::Duration::from_millis(poll));
+        }
+        // Android: while the soft keyboard is up, check that it still is; the
+        // player closing it (Back) unfocuses the field and restores the form.
+        #[cfg(target_os = "android")]
+        if self.soft_keyboard.watching() {
+            if self.soft_keyboard.closed() {
+                if let Some(front) = &self.front {
+                    let mut front = front.borrow_mut();
+                    front.state.focus_field(None);
+                    front.state.soft_keyboard = false;
+                }
+                self.wake();
+                if let Some(window) = &self.window {
+                    window.request_redraw();
+                }
+            } else {
+                at(now + std::time::Duration::from_millis(250));
+            }
         }
         event_loop.set_control_flow(wake.map_or(ControlFlow::Wait, ControlFlow::WaitUntil));
     }
@@ -3781,6 +6236,21 @@ impl App {
             .as_ref()
             .filter(|_| front_shown)
             .map_or((false, 0.), |f| f.borrow().music());
+        // Game Settings → Sound Configuration also shapes the menus' tune
+        // and the Jukebox (the ride sets its own from the overlay prefs).
+        let configuration = self
+            .front
+            .as_ref()
+            .filter(|_| front_shown)
+            .map(|f| f.borrow().sound_configuration());
+        if let Some(configuration) = configuration {
+            if let Ok(mut mixer) = output.mixer.lock() {
+                mixer.configuration = configuration;
+            }
+            if let Some(music) = &self.soundtrack {
+                music.borrow_mut().set_configuration(configuration);
+            }
+        }
         // The Jukebox (or an Audio page song) plays the soundtrack instead of
         // the menu tune (setMusicPreview's `originalMenu`).
         let preview = front_shown
@@ -3942,6 +6412,7 @@ impl App {
         fit_surface(&window, &mut gpu, size, self.suspended);
         let view = overlay::viewport(size.width, size.height, surface_scale(&window));
         let tracks = boot.tracks.clone();
+        let courses = boot.courses.clone();
         let mut front = front::Front::new(
             &gpu.device,
             gpu.config.format,
@@ -3951,12 +6422,34 @@ impl App {
         );
         // Each course's race archive is offered once its record exists
         // (frontend.js `raceCourses`).
+        // Enduro and Short Track races follow their venue's National race
+        // once their own archive is published.
         let race_courses = atv_game::launch::environments()
             .into_iter()
-            .filter(|id| {
-                atv_game::launch::course_resource(id, true)
-                    .is_ok_and(|r| content.manifest.record(&r.archive).is_some())
+            .flat_map(|id| {
+                atv_game::launch::RaceVariant::ALL
+                    .into_iter()
+                    .filter(|variant| {
+                        atv_game::launch::race_resource(&id, *variant).is_ok_and(|r| {
+                            std::iter::once(&r.archive)
+                                .chain(&r.overlay)
+                                .all(|path| content.manifest.record(path).is_some())
+                        })
+                    })
+                    .map(|variant| atv_game::launch::race_course_id(&id, variant))
+                    .collect::<Vec<_>>()
             })
+            .collect();
+        front.state.store.courses = courses;
+        // The target runs ride each course's objective (OB) archive.
+        front.state.objective_courses = atv_core::freestyle::SERIES
+            .iter()
+            .flat_map(|s| s.courses.iter())
+            .filter(|c| {
+                atv_core::freestyle::objective_archive(c)
+                    .is_some_and(|path| content.manifest.record(&path).is_some())
+            })
+            .map(|c| c.to_string())
             .collect();
         front.state.set_race_courses(race_courses, &view);
         self.front = Some(Rc::new(RefCell::new(front)));
@@ -4013,6 +6506,7 @@ impl App {
             );
         }
         self.open_launch();
+        self.cloud_ready();
         #[cfg(not(target_arch = "wasm32"))]
         if let Some(seconds) = self.lose_gpu.0.take() {
             self.lose_gpu.1 = Some(Instant::now() + std::time::Duration::from_secs_f64(seconds));
@@ -4042,9 +6536,11 @@ impl App {
                 serde_json::json!({ "entry": if linked { "link" } else { "menu" } }),
             ],
         );
+        // A page opened from outside the menus climbs to the title through
+        // its canonical parents (research/MENU_FLOW.md).
         if let Some(page) = &start.page {
             let page = page.clone();
-            f.state.show(&page, &view);
+            f.state.open(&page, &view);
             return;
         }
         if let Some(page) = atv_game::launch::menu_shortcut(&start.search) {
@@ -4054,7 +6550,7 @@ impl App {
             } else {
                 page
             };
-            f.state.show(page, &view);
+            f.state.open(page, &view);
             return;
         }
         let tracks: Vec<(String, String)> = f
@@ -4077,7 +6573,7 @@ impl App {
         if !errors.is_empty() {
             // frontend.js openLaunch: the main menu's notice line says why.
             let message = format!("Cannot open ride link. {}", errors.join(" "));
-            f.state.show("main", &view);
+            f.state.open("main", &view);
             f.state.notice = Some(message.clone());
             status(&message);
             return;
@@ -4102,7 +6598,7 @@ impl App {
                 f.state.room_code = setup.room.clone();
             }
             f.state
-                .show(if create { "create-lobby" } else { "join-lobby" }, &view);
+                .open(if create { "create-lobby" } else { "join-lobby" }, &view);
             if !setup.play {
                 return;
             }
@@ -4134,10 +6630,12 @@ impl App {
         }
         let race = setup.activity == "race";
         if race && !f.state.race_courses.is_empty() {
+            // Back from the setup climbs through Single Player.
+            f.state.open("single", &view);
             // Only race links change the race setup (frontend.js).
             f.state.show_race(
                 atv_ui::front::controller::RaceSetup {
-                    course: setup.map.clone(),
+                    course: setup.race.course.clone(),
                     laps: setup.race.laps,
                     cpu: setup.race.cpu,
                     difficulty: setup.race.difficulty,
@@ -4147,7 +6645,7 @@ impl App {
                 &view,
             );
         } else {
-            f.state.show(if race { "single" } else { "tracks" }, &view);
+            f.state.open(if race { "single" } else { "tracks" }, &view);
         }
         if !setup.play {
             return;
@@ -4177,12 +6675,201 @@ impl App {
             }
         });
         drop(f);
-        self.start_ride(setup.map, setup.quad_id, setup.rider_id, settings, None);
+        // A race starts its course (an Enduro or Short Track id from `course=`).
+        let map = if race { setup.race.course } else { setup.map };
+        // `?split=` on the link (the context-loss resume link): this ride
+        // is split; later rides follow the menus.
+        if let Some(link) = self.split_link.take() {
+            self.split_request = Some(link);
+        }
+        self.start_ride(map, setup.quad_id, setup.rider_id, settings, None);
     }
 
     fn front_event(&mut self, event: atv_ui::front::controller::Event) {
         use atv_ui::front::controller::Event;
+        // Multiplayer → Split Screen rides Freestyle, races and the Games
+        // King of the Hills, Treasure Hunt and Hockey with two local
+        // players; every other ride is one player's.
+        if matches!(
+            event,
+            Event::Ride { .. }
+                | Event::Race { .. }
+                | Event::FreeRide { .. }
+                | Event::Host { .. }
+                | Event::Join { .. }
+                | Event::RoomRide { .. }
+                | Event::Training { .. }
+                | Event::Game { .. }
+                | Event::Hockey { .. }
+                | Event::TagHost { .. }
+                | Event::GameHost { .. }
+                | Event::FreestyleHost { .. }
+                | Event::Objective { .. }
+        ) {
+            let split = self.front.as_ref().and_then(|f| {
+                let f = f.borrow();
+                (f.state.split
+                    && matches!(
+                        event,
+                        Event::Ride { .. }
+                            | Event::Race { .. }
+                            | Event::Game { .. }
+                            | Event::Hockey { .. }
+                            | Event::TagHost { .. }
+                            | Event::Objective { .. }
+                    ))
+                .then(|| {
+                    // The players seated on the Players page (pad order).
+                    let (players, seconds, looks) = f.state.split_launch();
+                    split::Request {
+                        layout: split::Layout::from_vertical(f.state.split_vertical),
+                        players: players.clamp(2, split::MAX_PLAYERS),
+                        seconds: seconds
+                            .map(|(quad, rider)| Some(atv_game::ride::Selection { quad, rider })),
+                        looks: looks.map(Some),
+                    }
+                })
+            });
+            self.split_request = split;
+        }
+        if !matches!(event, Event::Objective { .. }) {
+            self.objective = None;
+        }
+        self.training = None;
+        self.game = None;
+        self.hockey = None;
+        self.tag = None;
+        self.tag_start = None;
+        self.room_game_start = None;
+        self.room_freestyle = None;
+        self.room_freestyle_start = false;
         match event {
+            Event::FreestyleHost {
+                environment,
+                code,
+                quad,
+                rider,
+                name,
+            } => {
+                self.front_event(Event::Host {
+                    environment,
+                    code,
+                    quad,
+                    rider,
+                    name,
+                });
+                // The room's Freestyle starts once the room is joined.
+                self.room_freestyle_start = true;
+            }
+            Event::GameHost {
+                kind,
+                environment,
+                minutes,
+                quad,
+                rider,
+                name,
+            } => {
+                self.front_event(Event::Host {
+                    environment,
+                    code: None,
+                    quad,
+                    rider,
+                    name,
+                });
+                // The room's ride moves to the game's course and starts it.
+                self.room_game_start = Some((kind, minutes));
+            }
+            Event::Game {
+                kind,
+                venue,
+                course,
+                minutes,
+                quad,
+                rider,
+            } => {
+                let Some(content) = self.content.clone() else {
+                    return;
+                };
+                let players = self
+                    .split_request
+                    .map_or(1, |r| usize::from(r.players.clamp(2, split::MAX_PLAYERS)));
+                self.game = Some(games::GameSession::new(
+                    kind,
+                    venue.clone(),
+                    course,
+                    minutes,
+                    players,
+                ));
+                match atv_core::games::game_archive(kind, &venue).filter(|p| content.has(p)) {
+                    Some(path) => {
+                        let at = venue.clone();
+                        self.spawn(
+                            async move {
+                                let bytes = content.file(&path).await.map_err(|e| e.to_string())?;
+                                games::mode_toy(&bytes, kind, &at)
+                            },
+                            Message::GameToy,
+                        );
+                    }
+                    None => {
+                        if let Some(game) = &mut self.game {
+                            game.load(Err(format!(
+                                "The original {} archive is missing.",
+                                kind.name()
+                            )));
+                        }
+                    }
+                }
+                self.start_ride(venue, quad, rider, None, None);
+            }
+            Event::Hockey { quad, rider } => {
+                self.hockey = Some(match self.split_request {
+                    Some(request) => hockey::HockeySession::new_split(usize::from(request.players)),
+                    None => hockey::HockeySession::new(),
+                });
+                self.start_ride("game01".into(), quad, rider, None, None);
+            }
+            Event::Training { quad, rider } => {
+                let catalog = self
+                    .front
+                    .as_ref()
+                    .map(|f| f.borrow().state.store.atvs.clone())
+                    .unwrap_or_default();
+                let completed = training::completed(&catalog);
+                self.training = Some(training::TrainingSession::new(completed, catalog));
+                self.start_ride("training".into(), quad, rider, None, None);
+            }
+            Event::Objective {
+                environment,
+                quad,
+                rider,
+                series,
+                expert,
+                objective,
+            } => {
+                let championship = self
+                    .front
+                    .as_ref()
+                    .is_some_and(|f| f.borrow().state.freestyle.is_some());
+                self.objective = Some(ObjectiveSession {
+                    series,
+                    expert,
+                    course: environment.clone(),
+                    objective,
+                    run: None,
+                    steps: 0,
+                    recorded: false,
+                    fame: None,
+                    fame_start: None,
+                    targets: Vec::new(),
+                    sounds: Vec::new(),
+                    triggered: Vec::new(),
+                    visit_clock: 0,
+                    championship,
+                    split: None,
+                });
+                self.start_ride(environment, quad, rider, None, None);
+            }
             Event::Ride {
                 environment,
                 quad,
@@ -4196,9 +6883,13 @@ impl App {
                 cpu,
                 difficulty,
                 cheats: (aggressive, all_out),
+                championship,
             } => {
                 let settings = atv_game::ride::race::Settings {
-                    laps,
+                    championship,
+                    // `?raceLaps=1` (test tooling): one-lap menu races, so a
+                    // browser test can race championship rounds in turn.
+                    laps: if url_flag("raceLaps=1") { 1 } else { laps },
                     cpu: cpu as usize,
                     difficulty,
                     aggressive,
@@ -4210,6 +6901,7 @@ impl App {
                 self.start_ride(environment, quad, rider, Some(settings), None);
             }
             Event::CopyRaceLink => self.copy_race_link(),
+            Event::Cloud(command) => self.cloud_command(command),
             Event::FreeRide { quad, rider, name } => {
                 let Some(relay) = self.defaults.as_ref().map(|d| d.relay.clone()) else {
                     return;
@@ -4292,6 +6984,35 @@ impl App {
                 }
                 self.pending_room = Some(net);
                 self.start_ride(environment, quad, rider, None, None);
+            }
+            // Split screen: Tag for both local players on the venue's Tag
+            // course, no room (research/SPLIT_SCREEN.md "Slice 4").
+            Event::TagHost {
+                environment,
+                minutes,
+                quad,
+                rider,
+                ..
+            } if self.split_request.is_some() => {
+                self.split_tag = Some((minutes, environment.clone()));
+                self.start_ride(environment, quad, rider, None, None);
+            }
+            Event::TagHost {
+                environment,
+                minutes,
+                quad,
+                rider,
+                name,
+            } => {
+                self.front_event(Event::Host {
+                    environment,
+                    code: None,
+                    quad,
+                    rider,
+                    name,
+                });
+                // The room's ride moves to the Tag course and starts Tag.
+                self.tag_start = Some(minutes);
             }
             Event::Host {
                 environment,
@@ -4615,6 +7336,50 @@ impl App {
             script: None,
             sound,
             autodrive: None,
+            // King of the Hills rides its own scene (the hill bases, flags
+            // and spotlights of `env05kh.scn`) over the Freeride archive;
+            // Treasure Hunt reads its mode TOY and bombs the same way.
+            game_scene: self
+                .game
+                .as_ref()
+                .and_then(|g| {
+                    let path = atv_core::games::game_archive(g.kind, &g.venue)?;
+                    let suffix = match g.kind {
+                        atv_core::games::GameKind::KingOfTheHills => "kh",
+                        // Treasure Hunt: its mode TOY and bomb models over the
+                        // Freeride scene (no `th.scn` ships).
+                        atv_core::games::GameKind::TreasureHunt => "th",
+                        _ => return None,
+                    };
+                    self.content
+                        .as_ref()
+                        .is_some_and(|c| c.has(&path))
+                        .then(|| (path, format!("{}{suffix}", g.venue)))
+                })
+                // Split screen Tag rides the venue's Tag course.
+                .or_else(|| {
+                    self.split_tag
+                        .as_ref()
+                        .and_then(|(_, venue)| tag_scene(self.content.as_ref(), venue))
+                }),
+            // A Freestyle objective reads the course's OB archive (its
+            // `.obj`, and a target run's TOY and cherries).
+            objective: self.objective.as_ref().and_then(|o| {
+                let path = atv_core::freestyle::objective_archive(&o.course)?;
+                self.content
+                    .as_ref()
+                    .is_some_and(|c| c.has(&path))
+                    .then(|| {
+                        let toy = atv_core::freestyle::course_objectives(&o.course)
+                            .and_then(|list| list.into_iter().nth(o.objective))
+                            .and_then(|obj| match obj.kind {
+                                atv_core::freestyle::Kind::CherryPick { toy, .. } => Some(toy),
+                                _ => None,
+                            });
+                        (path, toy)
+                    })
+            }),
+            split: self.split_request,
             selection: atv_game::ride::Selection { quad, rider },
             // The saved Garage appearance dresses the ride (game.js
             // rideAppearance = frontend.appearance).
@@ -4647,6 +7412,22 @@ impl App {
         let (Some(front), Some(content)) = (self.front.clone(), self.content.clone()) else {
             return;
         };
+        // A race course id names the venue and which of its races
+        // (`env05ends` is Prospect Springs' short Enduro).
+        let (environment, race) = match (race, atv_game::launch::split_race_course(&environment)) {
+            (Some(settings), Some((venue, variant)))
+                if variant != atv_game::launch::RaceVariant::National =>
+            {
+                (
+                    venue.to_string(),
+                    Some(atv_game::ride::race::Settings {
+                        course: variant,
+                        ..settings
+                    }),
+                )
+            }
+            (race, _) => (environment, race),
+        };
         // Every ride load starts a new song (game.js `loadGame` builds a new
         // GameAudio and MusicStream): Freestyle, races, Restart Race, a
         // room's course or vehicle change.
@@ -4661,7 +7442,7 @@ impl App {
                         .as_deref()
                         .is_some_and(atv_game::multiplayer::is_shared_room) =>
             {
-                "main"
+                "multiplayer"
             }
             (Some(_), _) => "multiplayer",
             (None, Some(net)) => room_page(net.shared()),
@@ -4697,11 +7478,27 @@ impl App {
         ));
         #[cfg(target_arch = "wasm32")]
         self.text_inputs.sync(&[], &[], &self.proxy);
+        #[cfg(target_os = "android")]
+        self.soft_keyboard.follow(false, false);
+        let championship = race.as_ref().and_then(|r| r.championship);
+        let fame = race.as_ref().map(|r| {
+            (
+                atv_game::launch::race_course_id(&environment, r.course),
+                r.difficulty == 2,
+            )
+        });
         let (world, ride) = self.ride_setup(&front, quad, rider, race);
         {
             let mut f = front.borrow_mut();
             f.begin_loading(&environment);
+            f.championship_briefing(championship);
+            f.fame_briefing(fame);
             paint_front(&gpu, &mut f);
+            // The loader paints between load stages only; publish its state
+            // now (tools/test_engine_championship_loading.mjs).
+            if self.ui_diagnostics {
+                publish_ui_state(&serde_json::json!({ "front": f.diagnostics() }).to_string());
+            }
         }
         // The original loader's action shots for this course.
         let key = format!("shots:{environment}");
@@ -4869,7 +7666,7 @@ impl App {
             }
             if let Some(closed) = net.closed.clone() {
                 // multiplayer.js onLeave: the menu over the held room goes to
-                // the main menu (Free Ride) or Multiplayer, with the reason.
+                // Multiplayer, with the reason.
                 let page = room_page(net.shared());
                 status(&format!("Multiplayer ended: {closed}"));
                 self.held_room = None;
@@ -4910,17 +7707,17 @@ impl App {
         }
         self.poll_frame_tasks();
         if let Some(environment) = course {
-            self.reload_room(environment);
+            self.reload_room(environment, None);
         }
     }
 
-    /// The main menu's Free Ride count, at most every 15 s while it shows
+    /// Multiplayer's Free Ride count, at most every 15 s while it shows
     /// (watchFreerideRiders in frontend.js).
     fn poll_riders(&mut self) {
         let Some(front) = &self.front else {
             return;
         };
-        if self.ready.is_some() || front.borrow().state.page != "main" {
+        if self.ready.is_some() || front.borrow().state.page != "multiplayer" {
             return;
         }
         if self
@@ -4989,6 +7786,24 @@ impl App {
         }
     }
 
+    /// The frontend draws at the display's full density and the ride at its
+    /// render ratio: switches the surface when one hands over to the other.
+    /// Only a ride draws the 3D scene, so only its device keeps the scene's
+    /// depth and multisample targets (at DPR 3 a portrait phone's would be
+    /// ~95 MB the menus never touch).
+    fn sync_surface_density(&mut self) {
+        let menu = self.ready.is_none();
+        if MENU_SURFACE.with(|m| m.replace(menu)) != menu {
+            self.resize_surface();
+        }
+        if let Some(gpu) = &mut self.gpu {
+            gpu.set_scene_targets(false);
+        }
+        if let Some(ready) = &mut self.ready {
+            ready.gpu.set_scene_targets(true);
+        }
+    }
+
     /// Reconfigures the surfaces and UI views for the window's size and the
     /// current render ratio (resize, rotation, adaptive resolution steps).
     fn resize_surface(&mut self) {
@@ -5049,6 +7864,22 @@ impl App {
             }
             return;
         }
+        // A room race ends with its room (its results never come).
+        self.room_race = None;
+        self.room_race_serial = 0;
+        // So does a room King of the Hills / Treasure Hunt.
+        if self.game.as_ref().is_some_and(|g| g.room.is_some()) {
+            self.game = None;
+        }
+        self.room_game_serial = 0;
+        self.room_game_start = None;
+        // And a room Freestyle.
+        self.room_freestyle = None;
+        self.room_freestyle_serial = 0;
+        self.room_freestyle_start = false;
+        if let Some(overlay) = &mut self.overlay {
+            overlay.room_race_pending = false;
+        }
         let Some(ready) = &mut self.ready else { return };
         ready.net = None;
         ready.scene.retain_peers(|_, _| false);
@@ -5057,7 +7888,13 @@ impl App {
             riding.server_clock = None;
             let motion = riding.ride.frame();
             if let Some(sound) = &mut riding.sound {
-                sound.remote_frame(&[], motion.origin, &ready.camera, motion.linear_velocity);
+                sound.remote_frame(
+                    &[],
+                    motion.origin,
+                    &ready.camera,
+                    motion.linear_velocity,
+                    &[],
+                );
             }
         }
         if let Some(overlay) = &mut self.overlay {
@@ -5071,6 +7908,18 @@ impl App {
         let Some(front) = self.front.clone() else {
             return false;
         };
+        self.split_tag = None;
+        // Leaving mid-course keeps nothing (the original saves only the
+        // ending's reward).
+        self.training = None;
+        self.game = None;
+        self.hockey = None;
+        self.tag = None;
+        // A room race ends with its room; the next room numbers from 1.
+        self.room_race = None;
+        self.room_race_serial = 0;
+        self.room_freestyle = None;
+        self.room_freestyle_serial = 0;
         let Some(ready) = self.ready.take() else {
             return false;
         };
@@ -5102,18 +7951,40 @@ impl App {
         self.front_frames += 1;
         let pin = front.borrow().pad_pin();
         self.gamepad.set_pin(pin);
-        let pad = self.gamepad.sample();
+        // Split Screen → Players: each controller claims its own seat, so
+        // only the first drives the menu (research/SPLIT_SCREEN.md).
+        let seats = front.borrow().state.page == "splitseats" && front.borrow().menu.is_none();
+        let pad = if seats {
+            self.gamepad.sample_slot(0)
+        } else {
+            self.gamepad.sample()
+        };
         let mut f = front.borrow_mut();
         f.pad_name = self.gamepad.name();
         f.pads = self.gamepad.connected();
         f.pad_standard = self.gamepad.standard();
-        let event = f.pad(pad.as_ref());
+        let mut event = f.pad(pad.as_ref());
+        if seats && event.is_none() {
+            for slot in 1..split::MAX_PLAYERS as usize {
+                let pad = self.gamepad.sample_slot(slot);
+                event = f.seat_pad(slot, pad.as_ref());
+                if event.is_some() {
+                    break;
+                }
+            }
+        }
         paint_front(gpu, &mut f);
         #[cfg(target_arch = "wasm32")]
         {
             let (fields, rects) = (f.state.fields(), f.field_rects());
             let fields = if f.menu.is_none() { fields } else { Vec::new() };
             self.text_inputs.sync(&fields, &rects, &self.proxy);
+        }
+        #[cfg(target_os = "android")]
+        {
+            let focused = f.menu.is_none() && f.state.focus.is_some();
+            self.soft_keyboard.follow(focused, false);
+            f.state.soft_keyboard = focused;
         }
         if self.ui_diagnostics {
             // The output's peak since the last frame (audible menu tune).
@@ -5295,6 +8166,24 @@ fn paint_front(gpu: &Gpu, front: &mut front::Front) {
     }
 }
 
+/// A venue's Tracks.dat course name (the venue code until it loads).
+/// Room Freestyle's Time Limit: Host Game's row, minutes (2:00 without a
+/// front end, the original's 120 s).
+fn freestyle_minutes(front: &Option<Rc<RefCell<front::Front>>>) -> u32 {
+    front
+        .as_ref()
+        .map_or((atv_core::freestyle::TIME_LIMIT / 60.) as u32, |f| {
+            f.borrow().state.host_freestyle_minutes
+        })
+}
+
+fn course_label(names: &std::collections::HashMap<String, String>, venue: &str) -> String {
+    names
+        .get(venue)
+        .cloned()
+        .unwrap_or_else(|| venue.to_string())
+}
+
 /// Native parity capture of one frontend page with all its artwork.
 #[cfg(not(target_arch = "wasm32"))]
 fn capture_front(booted: Booted, page: &str, path: &std::path::Path, width: u32, height: u32) {
@@ -5324,6 +8213,7 @@ fn capture_front(booted: Booted, page: &str, path: &std::path::Path, width: u32,
                 .unwrap_or_default(),
         );
         if let Ok(quads) = atv_ui::front::assets::quad_catalog(&content).await {
+            front.state.store.atvs = quads.atvs.clone();
             front.art.quads = Some(quads);
         }
         if let Ok(speed) = atv_ui::front::assets::top_speed(&content, 1).await {
@@ -5400,11 +8290,18 @@ fn capture(ready: &mut Ready, path: &std::path::Path, width: u32, height: u32, u
                     hud: ride.hud(),
                     rider_world: ride.rider_world(),
                     terrain: &ready.venue.terrain,
+                    eye: Some(ready.camera.eye()),
                     race: ride
                         .race()
                         .and_then(|r| r.frame.as_ref())
                         .map(|f| (f, ride.committed_points(), ride.frame().origin)),
                     peers: None,
+                    objective: None,
+                    training: None,
+                    game: None,
+                    compass: None,
+                    others: Vec::new(),
+                    split_layout: None,
                 }),
                 None,
             );
@@ -5562,6 +8459,83 @@ pub fn detect_graphics_tier() -> &'static str {
     }
 }
 
+/// Diagnostics: the multi-level scene models nearest the eye with their
+/// world bounds centre, distance, drawn level, far flag and the distances at
+/// which each coarser level starts for the current focal length
+/// (tools/test_engine_visibility.mjs).
+fn nearest_levels(
+    eye: [f32; 3],
+    focal_length: f32,
+    scene: &SceneRenderer,
+    venue: &atv_game::venue::Venue,
+    count: usize,
+) -> serde_json::Value {
+    use atv_core::model_lod;
+    let focal = model_lod::focal_from_view(focal_length);
+    let selected = scene.scenery_levels();
+    let mut models: Vec<(f32, usize)> = venue
+        .scenery
+        .lods
+        .iter()
+        .enumerate()
+        .filter_map(|(i, lod)| {
+            let lod = lod.as_ref().filter(|l| l.thresholds.len() > 1)?;
+            let m = &venue.scene.models.get(i)?.world_matrix;
+            Some((lod.distance([m[12], m[13], m[14]], eye), i))
+        })
+        .collect();
+    models.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let list: Vec<_> = models
+        .into_iter()
+        .take(count)
+        .map(|(distance, i)| {
+            let lod = venue.scenery.lods[i].as_ref().unwrap();
+            let m = &venue.scene.models[i].world_matrix;
+            let (level, far) = selected.get(i).copied().unwrap_or((0, false));
+            serde_json::json!({
+                "model": i, "name": venue.scene.models[i].name,
+                "center": [lod.center[0] + m[12], lod.center[1] + m[13], lod.center[2] + m[14]],
+                "radius": lod.radius, "distance": distance, "level": level, "far": far,
+                "switches": lod.switch_distances(focal),
+            })
+        })
+        .collect();
+    serde_json::Value::Array(list)
+}
+
+/// Diagnostics: scene models with a later pass under `EnableMultiPassCull`,
+/// their bounds centre, distance and last frame's far flag.
+fn far_cull_models(
+    eye: [f32; 3],
+    scene: &SceneRenderer,
+    venue: &atv_game::venue::Venue,
+) -> serde_json::Value {
+    let mut models: Vec<usize> = venue
+        .scenery
+        .draws
+        .iter()
+        .filter(|d| d.far_cull)
+        .map(|d| d.model)
+        .collect();
+    models.dedup();
+    let selected = scene.scenery_levels();
+    serde_json::Value::Array(
+        models
+            .into_iter()
+            .filter_map(|i| {
+                let lod = venue.scenery.lods.get(i)?.as_ref()?;
+                let m = &venue.scene.models.get(i)?.world_matrix;
+                Some(serde_json::json!({
+                    "model": i, "name": venue.scene.models[i].name,
+                    "center": [lod.center[0] + m[12], lod.center[1] + m[13], lod.center[2] + m[14]],
+                    "distance": lod.distance([m[12], m[13], m[14]], eye),
+                    "far": selected.get(i).is_some_and(|s| s.1),
+                }))
+            })
+            .collect(),
+    )
+}
+
 /// Display -> Graphics preset features (presetFeatures in web/graphics.js).
 pub fn graphics_preset(name: &str) -> Graphics {
     match name {
@@ -5576,6 +8550,7 @@ pub fn graphics_preset(name: &str) -> Graphics {
             tire_tracks: (3600, 75),
             wheel_reprojection: true,
             dirt: true,
+            finest_models: true,
         },
         "enhanced" => Graphics {
             interpolation: true,
@@ -5588,6 +8563,7 @@ pub fn graphics_preset(name: &str) -> Graphics {
             tire_tracks: (600, 15),
             wheel_reprojection: true,
             dirt: true,
+            finest_models: false,
         },
         _ => Graphics::default(),
     }
@@ -5616,7 +8592,7 @@ fn saved_setting(key: &str) -> Option<String> {
     }
 }
 
-fn url_flag(pair: &str) -> bool {
+pub(crate) fn url_flag(pair: &str) -> bool {
     #[cfg(target_arch = "wasm32")]
     {
         web_sys::window()
@@ -5628,6 +8604,46 @@ fn url_flag(pair: &str) -> bool {
         let _ = pair;
         false
     }
+}
+
+/// A race's record keeping (`atv_core::hall_of_fame`): the stored Hall of
+/// Fame and, with a profile loaded, the course record its "New …" messages
+/// compare against. Attached before the first step (scripted replays run
+/// the whole race during load).
+fn attach_records(ride: &mut atv_game::ride::Ride, course: &str) {
+    use atv_ui::settings::{Settings, load_book, load_hall_of_fame};
+    let quad = ride.selection().quad;
+    let Some(race) = ride.race_mut() else {
+        return;
+    };
+    let settings = race.settings();
+    let enduro = atv_game::launch::split_race_course(course).is_some_and(|(_, v)| v.is_enduro());
+    let full = settings.laps == if enduro { 3 } else { 5 };
+    let saved = Settings::load();
+    // "If Ecosystem Collision is turned off freestyle records will still be
+    // kept, but race records will not." Every race record hook tests
+    // settings +0x674 (`00324b40`..`00324f50`, `00332810`); Freestyle's
+    // (`00332e30`) does not.
+    if !atv_ui::settings::ecosystem_collision(&saved) {
+        return;
+    }
+    let hall = load_hall_of_fame(&saved);
+    let personal = load_book(&saved).current_profile().map(|p| {
+        p.courses
+            .get(course)
+            .map(|c| c.personal())
+            .unwrap_or_default()
+    });
+    let mut records = atv_core::hall_of_fame::RecordWatch::new(
+        course,
+        settings.difficulty == 2,
+        quad,
+        full,
+        Some(&hall),
+        personal,
+    );
+    records.units = atv_ui::settings::units(&saved);
+    race.set_records(records);
 }
 
 /// The replayed state, for the browser parity tool (`#trace`).
@@ -5650,8 +8666,10 @@ fn publish_trace(text: &str) {
 /// site on desktop.
 /// The frontend page a room's Leave Game or end returns to
 /// (multiplayer.js `shared ? 'main' : 'multiplayer'`).
-fn room_page(shared: bool) -> &'static str {
-    if shared { "main" } else { "multiplayer" }
+/// The menu a room's ride returns to: Multiplayer, where Free Ride, Host
+/// Game and Join Game live (research/MENU_FLOW.md).
+fn room_page(_shared: bool) -> &'static str {
+    "multiplayer"
 }
 
 fn default_relay() -> String {
@@ -5716,10 +8734,271 @@ fn publish_multiplayer(
     let _ = (net, contacts, ride, remote_sound, tags);
 }
 
+/// The room's Tag course (research/GAMES.md "Tag"): the venue's `*_TG.RES`
+/// read over its Freeride archive (the same scene, the Tag mode TOY's start
+/// and `tagball.psg`), when the package has it.
+fn tag_scene(content: Option<&Rc<Content>>, environment: &str) -> Option<(String, String)> {
+    let path = atv_core::games::game_archive(atv_core::games::GameKind::Tag, environment)?;
+    content
+        .is_some_and(|c| c.has(&path))
+        .then(|| (path, format!("{environment}tg")))
+}
+
 impl App {
+    /// The room's Tag course: its ride's package (a room booted from a link
+    /// has no frontend content), else the frontend's.
+    fn tag_course(&self, environment: &str) -> Option<(String, String)> {
+        let room = self
+            .ready
+            .as_ref()
+            .and_then(|r| r.net.as_ref())
+            .map(|n| n.content());
+        tag_scene(room.as_ref().or(self.content.as_ref()), environment)
+    }
+
+    /// Split screen Tag's Restart Game: a new game, both players back at
+    /// the Tag course start (player 2 beside player 1).
+    fn restart_split_tag(&mut self) {
+        let Some(ready) = self.ready.as_mut() else {
+            return;
+        };
+        let start = ready.venue.scene.start_position;
+        let d = ready.venue.scene.start_direction;
+        let yaw = atv_core::math::Det::atan2_d(d[0], d[2]);
+        if let Some(riding) = ready.riding.as_mut() {
+            tag::TagSession::release(&mut riding.ride);
+            if let Err(error) = riding.ride.place_beside(start, yaw, [0.; 3]) {
+                status(&format!("Tag restart placement failed: {error}"));
+            }
+        }
+        for second in &mut ready.split {
+            let player = second.player;
+            let ride = &mut second.riding.ride;
+            tag::TagSession::release(ride);
+            let (mut at, yaw) = split::freeride_start_for(start, yaw, player);
+            if let Some(ground) = ride.ground(at[0], at[2]) {
+                at[1] = ground + 2.5;
+            }
+            if let Err(error) = ride.place_beside(at, yaw, [0.; 3]) {
+                status(&format!(
+                    "Player {player} Tag restart placement failed: {error}"
+                ));
+            }
+        }
+        if let Some(session) = &mut self.tag {
+            session.restart_local();
+        }
+        if let Some(overlay) = &mut self.overlay {
+            overlay.results = Default::default();
+        }
+    }
+
+    /// Tag's time limit: Games Prep's minutes (the Games page's Time Limit
+    /// row, `0026b7a0`), `tagMinutes=N` for links and tests.
+    fn tag_minutes(&self) -> u32 {
+        (atv_core::games::MIN_MINUTES..=atv_core::games::MAX_MINUTES)
+            .find(|m| url_flag(&format!("tagMinutes={m}")))
+            .or_else(|| self.front.as_ref().map(|f| f.borrow().state.games.minutes))
+            .unwrap_or(atv_core::games::DEFAULT_MINUTES)
+    }
+
+    /// Room games' time limit: Games Prep's minutes (`gameMinutes=N` for
+    /// links and tests).
+    fn room_game_minutes(&self) -> u32 {
+        (atv_core::games::MIN_MINUTES..=atv_core::games::MAX_MINUTES)
+            .find(|m| url_flag(&format!("gameMinutes={m}")))
+            .or_else(|| self.front.as_ref().map(|f| f.borrow().state.games.minutes))
+            .unwrap_or(atv_core::games::DEFAULT_MINUTES)
+    }
+
+    /// Starts (host) or joins (guest) a room King of the Hills / Treasure
+    /// Hunt: the game session, its mode TOY from the room's package and
+    /// the reload onto the game's course scene.
+    fn start_room_game(
+        &mut self,
+        kind: atv_core::games::GameKind,
+        host: bool,
+        serial: u32,
+        minutes: u32,
+    ) {
+        let Some((environment, content)) = self
+            .ready
+            .as_ref()
+            .and_then(|r| r.net.as_ref())
+            .map(|n| (n.environment.clone(), n.content()))
+        else {
+            return;
+        };
+        let Some(path) = atv_core::games::game_archive(kind, &environment)
+            .filter(|p| content.has(p) && room_game::venue_code(&environment).is_some())
+        else {
+            if let Some(menu) = self.overlay.as_mut().and_then(|o| o.menu.as_mut()) {
+                menu.notice = Some(format!("{} is not on this course.", kind.name()));
+            }
+            return;
+        };
+        self.room_race = None;
+        self.room_freestyle = None;
+        self.tag = None;
+        // The results name the course from Tracks.dat on every page
+        // (`want_course_names`: a guest that joined by link loads them too).
+        self.game = Some(games::GameSession::for_room(
+            kind,
+            environment.clone(),
+            minutes,
+            host,
+            serial,
+        ));
+        if let Some(overlay) = &mut self.overlay {
+            overlay.results = Default::default();
+        }
+        let at = environment.clone();
+        self.spawn(
+            async move {
+                let bytes = content.file(&path).await.map_err(|e| e.to_string())?;
+                games::mode_toy(&bytes, kind, &at)
+            },
+            Message::GameToy,
+        );
+        self.room_game_scene = Some(kind);
+        self.reload_room_with(environment, false, None);
+    }
+
+    /// Loads the Tracks.dat course names once a room rides (room results
+    /// name the course; a page that joined by link skipped the frontend).
+    fn want_course_names(&mut self) {
+        if !self.course_names.is_empty() || self.requested.contains("course-names") {
+            return;
+        }
+        let Some(content) = self
+            .ready
+            .as_ref()
+            .and_then(|r| r.net.as_ref())
+            .map(|n| n.content())
+        else {
+            return;
+        };
+        self.requested.insert("course-names".into());
+        self.spawn(
+            async move { atv_ui::front::assets::course_names(&content).await },
+            Message::CourseNames,
+        );
+    }
+
+    /// The room host starts Freestyle on the room's course for every rider
+    /// in the room (research/MULTIPLAYER.md "Room Freestyle"). A race or
+    /// game scene goes back to the room's Free Ride first.
+    fn start_room_freestyle(&mut self) {
+        let Some(ready) = &mut self.ready else { return };
+        let Some(net) = ready.net.as_ref().filter(|n| n.is_host()) else {
+            return;
+        };
+        let environment = net.environment.clone();
+        let reload = ready
+            .riding
+            .as_ref()
+            .is_some_and(|r| r.ride.race().is_some())
+            || self.room_race.is_some()
+            || self.game.as_ref().is_some_and(|g| g.room.is_some())
+            || self.tag.is_some();
+        let serial = self.room_freestyle_serial.wrapping_add(1).max(1);
+        self.room_freestyle_serial = serial;
+        self.room_race = None;
+        self.tag = None;
+        if self.game.as_ref().is_some_and(|g| g.room.is_some()) {
+            self.game = None;
+        }
+        self.room_freestyle = Some(room_freestyle::RoomFreestyle::new(
+            true,
+            serial,
+            room_freestyle::session_seconds(freestyle_minutes(&self.front)),
+            environment.clone(),
+        ));
+        if let Some(overlay) = &mut self.overlay {
+            overlay.results = Default::default();
+        }
+        if reload {
+            self.reload_room(environment, None);
+        }
+    }
+
+    /// The room host starts a race on the room's course for every rider in
+    /// the room, with the Race menu's lap count (`raceLaps=N` for tests).
+    fn start_room_race(&mut self, variant: u8) {
+        let laps = (1..=5u8)
+            .find(|n| url_flag(&format!("raceLaps={n}")))
+            .or_else(|| {
+                self.front
+                    .as_ref()
+                    .map(|f| f.borrow().state.race.laps.clamp(1, 5) as u8)
+            })
+            .unwrap_or(3);
+        let Some(ready) = &mut self.ready else { return };
+        let Some(net) = ready.net.as_mut().filter(|n| n.is_host()) else {
+            return;
+        };
+        let exists = atv_game::launch::RaceVariant::ALL
+            .get(variant as usize)
+            .is_some_and(|v| v.exists(&net.environment));
+        if !exists {
+            if let Some(menu) = self.overlay.as_mut().and_then(|o| o.menu.as_mut()) {
+                menu.notice = Some("Select a race track first.".into());
+            }
+            return;
+        }
+        let Some((race, room_race::Action::Load(settings))) =
+            room_race::RoomRace::host(net, self.room_race_serial, variant, laps, fresh_seed())
+        else {
+            return;
+        };
+        self.room_race_serial = race.field.serial;
+        self.room_race = Some(race);
+        self.room_freestyle = None;
+        self.tag = None;
+        if let Some(overlay) = &mut self.overlay {
+            overlay.results = Default::default();
+        }
+        let environment = net.environment.clone();
+        self.reload_room(environment, Some(settings));
+    }
+
     /// The room moved to another course: reload the ride there, keeping the
     /// room (web/multiplayer.js `follow` -> `ride`).
-    fn reload_room(&mut self, environment: String) {
+    fn reload_room(&mut self, environment: String, race: Option<atv_game::ride::race::Settings>) {
+        self.tag_start = None;
+        self.reload_room_with(environment, false, race);
+    }
+
+    /// Reloads the room's ride; `tag` reads the venue's Tag course and
+    /// `race` starts a room race there.
+    fn reload_room_with(
+        &mut self,
+        environment: String,
+        tag: bool,
+        race: Option<atv_game::ride::race::Settings>,
+    ) {
+        let room_game = self.room_game_scene.take();
+        let game_scene = if tag {
+            self.tag_course(&environment)
+        } else if let Some(kind) = room_game {
+            // A room King of the Hills / Treasure Hunt rides the game's
+            // scene over the Freeride archive, as the single-player game.
+            let suffix = if kind == atv_core::games::GameKind::KingOfTheHills {
+                "kh"
+            } else {
+                "th"
+            };
+            let content = self
+                .ready
+                .as_ref()
+                .and_then(|r| r.net.as_ref())
+                .map(|n| n.content());
+            atv_core::games::game_archive(kind, &environment)
+                .filter(|p| content.as_ref().is_some_and(|c| c.has(p)))
+                .map(|p| (p, format!("{environment}{suffix}")))
+        } else {
+            None
+        };
         let Some(mut ready) = self.ready.take() else {
             return;
         };
@@ -5741,7 +9020,7 @@ impl App {
                 rider: p.rider,
             }),
             appearance: net.ride.appearance,
-            race: None,
+            race,
             weather: net.ride.weather,
             steps: None,
             graphics: net.ride.graphics,
@@ -5750,6 +9029,9 @@ impl App {
             script: None,
             sound: net.ride.sound,
             autodrive: None,
+            game_scene,
+            objective: None,
+            split: None,
         };
         let future = async move {
             let mut ready = match prepare(
@@ -5862,6 +9144,7 @@ pub fn run(options: Options) {
     }
     let event_loop = builder.build().expect("event loop");
     let app = App {
+        cloud: Default::default(),
         camera_choice: options.camera_choice,
         render_scale: Default::default(),
         usage: Default::default(),
@@ -5914,7 +9197,26 @@ pub fn run(options: Options) {
         requested: HashSet::new(),
         riders_polled: None,
         held_room: None,
+        split_request: None,
+        split_link: split_link_param(),
         held_ride: None,
+        objective: None,
+        training: None,
+        game: None,
+        hockey: None,
+        tag: None,
+        room_race: None,
+        room_race_serial: 0,
+        room_game_serial: 0,
+        course_names: Default::default(),
+        room_game_scene: None,
+        room_game_start: None,
+        room_freestyle: None,
+        room_freestyle_serial: 0,
+        room_freestyle_start: false,
+        tag_start: None,
+        split_tag: None,
+        tag_reload: None,
         pending_room: None,
         pending_fresh: false,
         joining: None,
@@ -5937,6 +9239,8 @@ pub fn run(options: Options) {
         ),
         #[cfg(target_arch = "wasm32")]
         text_inputs: Default::default(),
+        #[cfg(target_os = "android")]
+        soft_keyboard: Default::default(),
         #[cfg(target_arch = "wasm32")]
         context: Default::default(),
         #[cfg(not(target_arch = "wasm32"))]
@@ -5982,9 +9286,21 @@ pub fn run(options: Options) {
     }
 }
 
+/// One load-time decode job in a decode worker (web/decode-worker.js), which
+/// runs this module without a page: `atv_game::offload::run`.
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen::prelude::wasm_bindgen]
+pub fn offload_job(kind: u32, arg: u32, bytes: &[u8]) -> Result<Vec<u8>, String> {
+    atv_game::offload::run(kind, arg, bytes)
+}
+
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen::prelude::wasm_bindgen(start)]
 pub fn start() {
+    // A decode worker instantiates this module too: no page, no game.
+    if web_sys::window().is_none() {
+        return;
+    }
     // A panic stops the engine; without this the page shows a frozen frame
     // (the status line is hidden). Show the message, as a start-up failure
     // does, so a phone screenshot says what broke; the console keeps the trace.
@@ -6127,6 +9443,11 @@ pub fn start() {
                 cpu: number("cpu").map_or(defaults.cpu, |v| v as usize),
                 difficulty: number("difficulty").map_or(defaults.difficulty, |v| v as u32),
                 seed: number("seed").unwrap_or(defaults.seed),
+                // `course=enduro-long|enduro-short|short-track`: the venue's
+                // other races.
+                course: param("course")
+                    .and_then(|v| atv_game::launch::RaceVariant::from_key(&v))
+                    .unwrap_or_default(),
                 ..defaults
             }
         }),
@@ -6189,6 +9510,10 @@ thread_local! {
     /// The adaptive render ratio (backing pixels per CSS pixel, at most the
     /// display's): render_scale::RenderScale's current step.
     static RENDER_RATIO: std::cell::Cell<f64> = const { std::cell::Cell::new(1.5) };
+    /// The frontend is on screen (no ride): its UI-only frames draw at the
+    /// display's full density (at most MENU_RATIO), not the ride's render
+    /// ratio, so menu text, icons and previews stay sharp on phones.
+    static MENU_SURFACE: std::cell::Cell<bool> = const { std::cell::Cell::new(true) };
     /// Desktop: the GPU backend scales a surface smaller than the window up
     /// to it (Metal, DX12), so the render ratio applies.
     static SURFACE_SCALES: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
@@ -6202,12 +9527,27 @@ fn render_ratio_applies() -> bool {
     cfg!(target_arch = "wasm32") || SURFACE_SCALES.with(|s| s.get())
 }
 
+/// The frontend's backing pixels per CSS pixel: the display's own, up to
+/// a DPR 3 phone (the menus are a few textured quads; no 3D scene).
+const MENU_RATIO: f64 = 3.;
+
+/// The render ratio in force: the frontend's full density, else the ride's
+/// adaptive RENDER_RATIO; never above the display's.
+fn render_ratio(device: f64) -> f64 {
+    let cap = if MENU_SURFACE.with(|m| m.get()) {
+        MENU_RATIO
+    } else {
+        RENDER_RATIO.with(|r| r.get())
+    };
+    cap.min(device).max(0.1)
+}
+
 /// Backing pixels per logical (CSS) pixel of the surface: the display's,
-/// capped at RENDER_RATIO where the render ratio applies.
+/// capped at the render ratio where the render ratio applies.
 fn surface_scale(window: &Window) -> f64 {
     let device = window.scale_factor();
     if render_ratio_applies() {
-        RENDER_RATIO.with(|r| r.get()).min(device).max(0.1)
+        render_ratio(device)
     } else {
         device
     }
@@ -6244,8 +9584,7 @@ fn render_size(window: &Window) -> winit::dpi::PhysicalSize<u32> {
         if let Some(canvas) = window.canvas() {
             let rect = canvas.get_bounding_client_rect();
             if rect.width() > 0. && rect.height() > 0. {
-                let device = window.scale_factor();
-                let ratio = RENDER_RATIO.with(|r| r.get()).min(device).max(0.1);
+                let ratio = render_ratio(window.scale_factor());
                 return winit::dpi::PhysicalSize::new(
                     ((rect.width() * ratio).round() as u32).max(1),
                     ((rect.height() * ratio).round() as u32).max(1),
@@ -6373,6 +9712,57 @@ impl Diagnostics {
 }
 
 /// `?debug=` on the web; `ATV_DEBUG` natively.
+/// `?split2=quad.rider` (web) or `FURY_SPLIT2` (desktop): player 2's own
+/// ATV (1-26) and rider (0 male, 1 female) for a direct split ride.
+/// `?key=` (web) or the `env` variable (desktop).
+fn link_param(key: &str, env: &str) -> Option<String> {
+    #[cfg(target_arch = "wasm32")]
+    {
+        let _ = env;
+        let search = web_sys::window()?.location().search().ok()?;
+        search.trim_start_matches('?').split('&').find_map(|pair| {
+            let (k, value) = pair.split_once('=').unwrap_or((pair, ""));
+            (k == key).then(|| value.to_string())
+        })
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let _ = key;
+        std::env::var(env).ok()
+    }
+}
+
+/// `?splitN=quad.rider` (web) or `FURY_SPLITN` (desktop): player N's ATV
+/// and rider.
+fn split_player_param(n: u8) -> Option<atv_game::ride::Selection> {
+    let value = link_param(&format!("split{n}"), &format!("FURY_SPLIT{n}"));
+    let (quad, rider) = value?
+        .split_once('.')
+        .and_then(|(q, r)| Some((q.parse().ok()?, r.parse().ok()?)))?;
+    ((1..=26).contains(&quad) && rider <= 1).then_some(atv_game::ride::Selection { quad, rider })
+}
+
+/// `?split=h|v|q` with `?splitn=2-4` and `?split2=quad.rider` (to
+/// `split4`) (web), or FURY_SPLIT, FURY_SPLITN and FURY_SPLIT2-4 (desktop):
+/// a direct split ride (tests, host measurements and the context-loss
+/// resume link). `q` alone means four players.
+fn split_link_param() -> Option<split::Request> {
+    let layout = split::Layout::requested(link_param("split", "FURY_SPLIT").as_deref())?;
+    let players = link_param("splitn", "FURY_SPLITN")
+        .and_then(|n| n.parse::<u8>().ok())
+        .filter(|n| (2..=split::MAX_PLAYERS).contains(n))
+        .unwrap_or(if layout == split::Layout::Quad { 4 } else { 2 });
+    Some(split::Request {
+        layout,
+        players,
+        seconds: [2, 3, 4].map(split_player_param),
+        looks: [2, 3, 4].map(|n| {
+            link_param(&format!("look{n}"), &format!("FURY_LOOK{n}"))
+                .and_then(|v| atv_ui::front::controller::parse_split_look(&v))
+        }),
+    })
+}
+
 fn debug_param() -> Option<String> {
     #[cfg(target_arch = "wasm32")]
     {
@@ -6421,8 +9811,9 @@ mod tests {
     }
 
     #[test]
-    fn rooms_return_to_the_main_menu_or_multiplayer() {
-        assert_eq!(super::room_page(true), "main");
+    fn rooms_return_to_multiplayer() {
+        // Free Ride sits under Multiplayer with Host and Join Game.
+        assert_eq!(super::room_page(true), "multiplayer");
         assert_eq!(super::room_page(false), "multiplayer");
     }
 

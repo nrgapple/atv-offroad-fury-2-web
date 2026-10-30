@@ -79,8 +79,10 @@ impl Rows {
 /// Panel title per page (frontend.js `rebuildPausePanel`).
 pub fn title(page: &str) -> &'static str {
     match page {
-        "settings" => "Settings",
+        "settings" => "Options",
         "extras" => "Extras",
+        "game-settings" => "Game Settings",
+        "ecosystem-warning" => "Warning",
         "alpha" => "Alpha",
         "controls" => "Controls",
         "controller-settings" => "Controller Settings",
@@ -193,14 +195,20 @@ pub fn element(view: &Viewport, state: &State, images: &glyphs::GlyphImages) -> 
     } else {
         24.
     };
+    // The width left between notches (`env(safe-area-inset-*)`).
+    let aw = w - view.safe[1] - view.safe[3];
     let width = if pause {
-        if narrow { w - 24. } else { 520f32.min(w - 48.) }
+        if narrow {
+            aw - 24.
+        } else {
+            520f32.min(aw - 48.)
+        }
     } else if narrow {
-        w - 24.
+        aw - 24.
     } else if short {
-        820f32.min(w - 20.)
+        820f32.min(aw - 20.)
     } else {
-        700f32.min(w - 48.)
+        700f32.min(aw - 48.)
     };
     let padding = if narrow || short { 20. } else { 30. };
     let gutter = (w * 0.032).clamp(16., 44.);
@@ -581,8 +589,22 @@ pub fn element(view: &Viewport, state: &State, images: &glyphs::GlyphImages) -> 
             ..Default::default()
         });
         let big = state.page == "settings";
+        // Audio: Music, the two volume sliders and Sound lead the page, over
+        // the song list and its pager; Back alone closes it.
+        let mut audio = column(6.);
+        let audio_page = state.page == "music";
         for (i, action) in choices.iter().enumerate() {
-            if let Some(s) = state.rows.slider(action) {
+            if audio_page
+                && matches!(
+                    action.as_str(),
+                    "musictoggle" | "musicvolume" | "sfxvolume" | "soundmode"
+                )
+            {
+                audio = audio.child(match state.rows.slider(action) {
+                    Some(s) => slider(i, s),
+                    None => button(i, action, false, false),
+                });
+            } else if let Some(s) = state.rows.slider(action) {
                 settings = settings.child(slider(i, s));
             } else if PAGER.contains(&action.as_str()) {
                 pager = pager.child(button(i, action, true, false));
@@ -652,6 +674,22 @@ pub fn element(view: &Viewport, state: &State, images: &glyphs::GlyphImages) -> 
                 roster = roster.child(row);
             }
             body = body.child(roster);
+        }
+        if state.page == "ecosystem-warning" {
+            // Warning 0x90: the original's three two-line paragraphs.
+            let mut warning = column(10.);
+            for pair in atv_core::ui_menu::ECOSYSTEM_WARNING.chunks(2) {
+                warning = warning.child(El::new(Style::default()).content(Content::Text {
+                    text: pair.join(" "),
+                    style: TextStyle::new(display(16., 500, false), Color::hex("#e8e8e8")),
+                    line_height: 24.,
+                    wrap: true,
+                }));
+            }
+            body = body.child(warning);
+        }
+        if audio_page {
+            body = body.child(audio);
         }
         body = body.child(settings);
         if state.page == "controls" {
@@ -740,7 +778,12 @@ pub fn element(view: &Viewport, state: &State, images: &glyphs::GlyphImages) -> 
                 width: length(w),
                 height: length(h),
             },
-            padding: sides((h * 0.03).clamp(12., 28.), gutter, 20., gutter),
+            padding: sides(
+                (h * 0.03).clamp(12., 28.) + view.safe[0],
+                gutter + view.safe[1],
+                20. + view.safe[2],
+                gutter + view.safe[3],
+            ),
             display: Display::Flex,
             flex_direction: FlexDirection::Column,
             overflow: taffy::Point {
@@ -770,7 +813,7 @@ pub fn element(view: &Viewport, state: &State, images: &glyphs::GlyphImages) -> 
         },
         max_size: Size {
             width: auto(),
-            height: length(h - 2. * inset),
+            height: length(h - 2. * inset - view.safe[0] - view.safe[2]),
         },
         padding: sides(padding, padding, padding, padding),
         display: Display::Flex,
@@ -795,10 +838,10 @@ pub fn element(view: &Viewport, state: &State, images: &glyphs::GlyphImages) -> 
     let stage = El::new(Style {
         position: Position::Absolute,
         inset: taffy::Rect {
-            left: LengthPercentageAuto::length(inset),
-            top: LengthPercentageAuto::length(inset),
-            right: LengthPercentageAuto::length(inset),
-            bottom: LengthPercentageAuto::length(inset),
+            left: LengthPercentageAuto::length(inset + view.safe[3]),
+            top: LengthPercentageAuto::length(inset + view.safe[0]),
+            right: LengthPercentageAuto::length(inset + view.safe[1]),
+            bottom: LengthPercentageAuto::length(inset + view.safe[2]),
         },
         display: Display::Flex,
         align_items: AlignItems::CENTER,
@@ -821,8 +864,19 @@ pub fn element(view: &Viewport, state: &State, images: &glyphs::GlyphImages) -> 
     .children(notice(view, state))
 }
 
-/// `#menu-stage` while a page slides in (frontend.js `animatePage`): the
-/// panel moves and fades; the dim backdrop and `#menu-notice` stay.
+/// The moving part of a menu page alone: its panel, without the dim
+/// backdrop and `#menu-notice` that stay put. The page a transition leaves
+/// is drawn this way while it slides out (crate::transition), so the dim
+/// layer is not doubled.
+pub fn stage(view: &Viewport, state: &State, images: &glyphs::GlyphImages) -> El {
+    let mut el = element(view, state, images);
+    el.paint = Paint::default();
+    el.children.truncate(1);
+    el
+}
+
+/// `#menu-stage` while a page slides (crate::transition): the panel moves
+/// and fades; the dim backdrop and `#menu-notice` stay.
 pub fn slide(stage: El, state: &State) -> El {
     match state.motion {
         Some(m) => stage.opacity(m.opacity).translate(m.dx, 0.),

@@ -1,9 +1,19 @@
-//! Controllers through gilrs, in the W3C standard-gamepad order the browser
-//! bindings use. The pad with fresh input is the active one, like
-//! web/gamepads.js "Auto", unless Controller Settings pins a connected pad.
+//! Controllers through gilrs (Android: [`android`]), in the W3C
+//! standard-gamepad order the browser bindings use. The pad with fresh input
+//! is the active one, like web/gamepads.js "Auto", unless Controller Settings
+//! pins a connected pad.
+#[cfg(not(target_os = "android"))]
 use atv_game::ride::bindings::Pad;
+#[cfg(not(target_os = "android"))]
 use gilrs::{Axis, Button, GamepadId, Gilrs};
 use std::collections::HashMap;
+
+// Host tests cover the Android layout; only Android calls all of it.
+#[cfg(any(target_os = "android", test))]
+#[cfg_attr(not(target_os = "android"), allow(dead_code))]
+mod android;
+#[cfg(target_os = "android")]
+pub use android::Gamepads;
 
 /// gamepads.js: axes resting far from centre (idle triggers, hat switches,
 /// pedals) are measured from their first-seen value, so they never count as
@@ -11,6 +21,14 @@ use std::collections::HashMap;
 const RESTING: f32 = 0.5;
 const MOVED: f32 = 0.35;
 
+/// The controller a split-screen slot plays with: connected pads in order.
+/// (Android picks its pads in gamepad/android.rs; only tests use it there.)
+#[cfg_attr(target_os = "android", allow(dead_code))]
+pub fn split_slot<K>(connected: impl Iterator<Item = K>, slot: usize) -> Option<K> {
+    connected.into_iter().nth(slot)
+}
+
+#[cfg(not(target_os = "android"))]
 pub struct Gamepads {
     gilrs: Option<Gilrs>,
     /// The pad in use: the pin, else Auto's choice (`activeGamepad`).
@@ -113,6 +131,7 @@ fn pinned<'a, K: Copy>(
         .map(|(key, _)| *key)
 }
 
+#[cfg(not(target_os = "android"))]
 const BUTTONS: [Button; 17] = [
     Button::South,
     Button::East,
@@ -133,6 +152,7 @@ const BUTTONS: [Button; 17] = [
     Button::Mode,
 ];
 
+#[cfg(not(target_os = "android"))]
 impl Gamepads {
     pub fn new() -> Self {
         Self {
@@ -243,6 +263,84 @@ impl Gamepads {
         while gilrs.next_event().is_some() {}
         self.active = self.choose();
         let id = self.active?;
+        self.read(id)
+    }
+
+    /// Split screen: the `slot`-th connected controller in the platform's
+    /// order (player 1 takes slot 0, player 2 slot 1), so plugging a pad in
+    /// or pulling one out moves the players to the pads that remain.
+    pub fn sample_slot(&mut self, slot: usize) -> Option<Pad> {
+        let gilrs = self.gilrs.as_mut()?;
+        while gilrs.next_event().is_some() {}
+        let id = split_slot(gilrs.gamepads().map(|(id, _)| id), slot)?;
+        self.read(id)
+    }
+
+    /// The Gamepad API `dual-rumble` on one browser pad; whether it played.
+    #[cfg(target_arch = "wasm32")]
+    fn dual_rumble(
+        &self,
+        pad: &wasm_bindgen::JsValue,
+        pulse: atv_game::ride::impact::Pulse,
+    ) -> bool {
+        use wasm_bindgen::JsCast;
+        let Some(actuator) = browser_get(pad, "vibrationActuator").filter(|a| a.is_object()) else {
+            return false;
+        };
+        let Some(play) = browser_get(&actuator, "playEffect")
+            .and_then(|f| f.dyn_into::<js_sys::Function>().ok())
+        else {
+            return false;
+        };
+        let options = js_sys::Object::new();
+        for (key, value) in [
+            ("startDelay", 0.),
+            ("duration", f64::from(pulse.duration_ms)),
+            ("strongMagnitude", pulse.strength),
+            ("weakMagnitude", pulse.weak),
+        ] {
+            let _ = js_sys::Reflect::set(&options, &key.into(), &value.into());
+        }
+        match play.call2(&actuator, &"dual-rumble".into(), &options) {
+            Ok(promise) => {
+                // A rejected effect (unsupported) must not surface as an error.
+                if let Ok(promise) = promise.dyn_into::<js_sys::Promise>() {
+                    let _ = promise.catch(&self.ignore);
+                }
+                true
+            }
+            Err(_) => false,
+        }
+    }
+
+    /// Split screen on the web: rumbles the `slot`-th connected browser pad
+    /// (the order `sample_slot` reads), so two identical controllers each
+    /// rumble for their own player (matching by name cannot tell them
+    /// apart). No touch-vibration fallback: split screen plays on pads and
+    /// the keyboard.
+    #[cfg(target_arch = "wasm32")]
+    pub fn rumble_slot(&mut self, slot: usize, pulse: atv_game::ride::impact::Pulse) -> bool {
+        split_slot(browser_pads().into_iter(), slot).is_some_and(|p| self.dual_rumble(&p, pulse))
+    }
+
+    /// Split screen: rumbles the `slot`-th connected controller (each
+    /// player's own pad, as `sample_slot` reads it).
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn rumble_slot(&mut self, slot: usize, pulse: atv_game::ride::impact::Pulse) -> bool {
+        let Some(id) = self
+            .gilrs
+            .as_ref()
+            .and_then(|g| split_slot(g.gamepads().map(|(id, _)| id), slot))
+        else {
+            return false;
+        };
+        let saved = self.active.replace(id);
+        let sent = self.rumble(pulse);
+        self.active = saved;
+        sent
+    }
+
+    fn read(&self, id: GamepadId) -> Option<Pad> {
         let gilrs = self.gilrs.as_ref()?;
         let pad = gilrs.gamepad(id);
         let mut out = Pad {
@@ -318,7 +416,6 @@ impl Gamepads {
     /// for pulses from 0.3 (iOS has none). gilrs has no web force feedback.
     #[cfg(target_arch = "wasm32")]
     pub fn rumble(&mut self, pulse: atv_game::ride::impact::Pulse) -> bool {
-        use js_sys::Reflect;
         use wasm_bindgen::{JsCast, JsValue};
         let Some(window) = web_sys::window() else {
             return false;
@@ -335,28 +432,8 @@ impl Gamepads {
                 let t = |p: &JsValue| get(p, "timestamp").and_then(|v| v.as_f64()).unwrap_or(0.);
                 t(a).total_cmp(&t(b))
             });
-        if let Some(actuator) = pad
-            .and_then(|p| get(&p, "vibrationActuator"))
-            .filter(|a| a.is_object())
-            && let Some(play) =
-                get(&actuator, "playEffect").and_then(|f| f.dyn_into::<js_sys::Function>().ok())
-        {
-            let options = js_sys::Object::new();
-            for (key, value) in [
-                ("startDelay", 0.),
-                ("duration", f64::from(pulse.duration_ms)),
-                ("strongMagnitude", pulse.strength),
-                ("weakMagnitude", pulse.weak),
-            ] {
-                let _ = Reflect::set(&options, &key.into(), &value.into());
-            }
-            if let Ok(promise) = play.call2(&actuator, &"dual-rumble".into(), &options) {
-                // A rejected effect (unsupported) must not surface as an error.
-                if let Ok(promise) = promise.dyn_into::<js_sys::Promise>() {
-                    let _ = promise.catch(&self.ignore);
-                }
-                return true;
-            }
+        if pad.is_some_and(|p| self.dual_rumble(&p, pulse)) {
+            return true;
         }
         let coarse = window
             .match_media("(pointer: coarse)")
@@ -414,7 +491,7 @@ fn extra_inputs(pad: &gilrs::Gamepad, out: &mut Pad) {
 
 /// Inputs past the standard 17 buttons and 4 axes (gamepads.js reads every
 /// index): the pad's unmapped buttons and axes, in event-code order.
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(any(target_arch = "wasm32", target_os = "android")))]
 fn extra_inputs(pad: &gilrs::Gamepad, out: &mut Pad) {
     use gilrs::ev::AxisOrBtn;
     let unmapped = |code: gilrs::ev::Code| {

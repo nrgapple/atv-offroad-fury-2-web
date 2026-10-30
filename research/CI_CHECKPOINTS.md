@@ -1,10 +1,13 @@
 # Checkpoints without repeated release work
 
 Implementation chats own code, relevant tests and one independent dev-log entry.
-One named release owner handles a combined checkpoint's merge, public browser
-checks, R2 upload and gallery verification. Contributors provide their tested
-commit, required private resource package and inspected images to that owner.
-Do not start a second upload or repeat another owner's completed checks.
+R2 only serves content, so any chat may upload to it when its work needs it,
+without a release owner: runtime resources with
+`tools/upload_cloudflare_content.py --content-only` (additive and serialized by
+the shared publication lock), screenshots/gallery with the full upload pinned to
+the deployed commit. A named release owner (`tools/release_checkpoint.py`) is
+optional coordination for a combined checkpoint; when one exists, do not repeat
+its completed checks.
 The GitHub Actions application deployment remains automatic when healthy. The
 checked local fallback below is authorized when Actions stalls or fails. No
 Mistakes remains disabled. The experimental local release queue (`atv-release`)
@@ -49,6 +52,15 @@ and registry cache, keyed by toolchain, lockfiles and commit; PRs only restore i
 The separately validated `worker-build` executable cache remains exact-key only.
 No private content, credentials, screenshots or references enter either cache.
 
+The production deployment applies pending D1 cloud-save migrations before the
+Worker update, using the same pinned Wrangler and deploy token (which requires
+D1 Edit/Write). It runs after the stale-build gate under `deploy-production`
+serialization; migration failure stops the Worker update. The migration command
+uses root `wrangler.jsonc`, whose `migrations_dir` points at the checked-out SQL,
+while the Worker deploy uses the staged config. Applied files are skipped on
+retries. Migrations must remain compatible with the running Worker until the new
+version is deployed; see [cloud-save operations](CLOUD_SAVE.md#operations).
+
 ## One owner and four milestones
 
 All receipts are ignored under shared `private/reports/release-checkpoints/`.
@@ -80,8 +92,9 @@ The release owner then:
    deployed commit and evidence. Host success alone never earns this stage.
 3. If runtime resources or screenshot references changed, inspects new screenshots
    and uploads the pinned runtime/gallery package:
-   `python3 tools/upload_cloudflare_content.py --release <artifact> --commit <live-sha> --checkpoint menu-polish --owner menu-release`.
-   The uploader enforces ownership, takes one shared nonblocking publication lock,
+   `python3 tools/upload_cloudflare_content.py --release <artifact> --commit <live-sha>`
+   (add `--checkpoint menu-polish --owner menu-release` to enforce a claimed owner).
+   The uploader takes one shared nonblocking publication lock,
    and checks successful-main provenance and the deployed identity before pointer
    publication. It never requires unrelated newer docs to rebuild the game.
    For text-only metadata with unchanged runtime manifest and screenshot references,
@@ -91,7 +104,10 @@ The release owner then:
    Runtime packages need not wait for the application deploy. Blobs are
    content-addressed and inert until the manifest names them, so an additive
    package (one the live app can still load) can go first, in parallel with CI:
-   `python3 tools/upload_cloudflare_content.py --content-only --checkpoint <id> --owner <owner>`.
+   `python3 tools/upload_cloudflare_content.py --content-only`.
+   Build the package with `python3 tools/package_content.py` followed by
+   `python3 tools/package_motorcycles.py`; the second step appends the `/MX/`
+   motorcycle archives the live manifest already serves.
    It refuses a manifest that drops any runtime path the live site serves; when
    it refuses because the local package is behind live, rebuild from the live
    manifest instead of publishing the stale one. The gallery still follows the

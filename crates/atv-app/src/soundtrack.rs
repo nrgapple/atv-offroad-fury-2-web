@@ -195,6 +195,26 @@ impl Soundtrack {
         }
     }
 
+    /// Game Settings → Sound Configuration. Native songs play on the
+    /// mixer's music bus, which applies it; the web's streamed song
+    /// routes its Web Audio graph.
+    pub fn set_configuration(&mut self, configuration: atv_game::audio::mixer::Configuration) {
+        #[cfg(target_arch = "wasm32")]
+        if let Some(web) = &self.web {
+            web.borrow_mut().set_configuration(configuration);
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        let _ = configuration;
+    }
+
+    /// Diagnostics: the routed Sound Configuration once graphed (web).
+    pub fn music_route(&self) -> Option<String> {
+        #[cfg(target_arch = "wasm32")]
+        return self.web.as_ref().and_then(|w| w.borrow().route());
+        #[cfg(not(target_arch = "wasm32"))]
+        None
+    }
+
     /// Keep the soundtrack fed (every frame while it is wanted).
     pub fn maintain(&mut self) {
         if let Some((started, seconds)) = self.hold_fade {

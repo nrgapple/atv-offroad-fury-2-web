@@ -134,8 +134,11 @@ pub fn record(ride: &Ride, step: u64) -> Value {
         "race": ride.race().and_then(|r| r.frame.as_ref()).map(|f| json!({
             "phase": f.phase, "elapsed": f.elapsed, "lap": f.lap, "position": f.position,
             "countdown": f.countdown, "contacts": f.contacts, "off_track": f.off_track,
-            "opponents": f.opponents.iter().map(|o| json!({"origin": o.origin, "distance": o.distance, "finished": o.finished})).collect::<Vec<_>>(),
-            "standings": f.standings.iter().map(|s| json!({"name": s.name, "time": s.time, "position": s.position})).collect::<Vec<_>>(),
+            "grid_slots": f.grid_slots, "finish_at": f.finish_at, "track_flags": f.track_flags,
+            "enduro_gate": f.enduro_gate, "target": f.target, "player_stunts": f.player_stunts,
+            "opponents": f.opponents.iter().map(|o| json!({"name": o.name, "origin": o.origin, "distance": o.distance, "finished": o.finished})).collect::<Vec<_>>(),
+            "standings": f.standings.iter().map(|s| json!({"name": s.name, "time": s.time, "position": s.position,
+                "laps": s.laps, "progress": s.progress, "stunt": s.stunt, "player": s.player})).collect::<Vec<_>>(),
         })),
     })
 }
@@ -149,6 +152,9 @@ pub struct Trace {
     /// gate, firework commands, lamp sounds, music and the stadium flashes
     /// lit after the step (atv-web's op 50 `race` and `flashes`).
     pub events: Vec<Value>,
+    /// Port adaptation counters per CPU at the end (`cpu_recovery`): assists
+    /// switched on and skip-ahead resets made (not fingerprinted).
+    pub cpu_recovery: Vec<(u32, u32)>,
 }
 
 /// Loads the venue and ride headlessly and replays `script`. With
@@ -161,9 +167,16 @@ pub async fn trace(
     script: &Script,
     autopilot: bool,
 ) -> Result<Trace> {
+    // A race course id names the venue and its race (`env05ends`).
+    let (venue, variant) = match race {
+        Some(_) => crate::launch::split_race_course(venue)
+            .unwrap_or((venue, crate::launch::RaceVariant::National)),
+        None => (venue, crate::launch::RaceVariant::National),
+    };
     let options = crate::venue::LoadOptions {
         // Race traces hold weather off (the browser draws it per load).
         weather: crate::venue::WeatherChoice::Active(false),
+        race: variant,
         ..Default::default()
     };
     let venue = crate::venue::load_with(content, venue, race.is_some(), options).await?;
@@ -227,10 +240,17 @@ pub async fn trace(
             _ => recorded.push(json!({"frames": 1, "input": step})),
         }
     }
+    let cpu_recovery = ride.race().map_or(Vec::new(), |r| {
+        r.cpus
+            .iter()
+            .map(|c| (c.recovery.assists, c.recovery.skips))
+            .collect()
+    });
     Ok(Trace {
         records,
         autopilot: recorded,
         events,
+        cpu_recovery,
     })
 }
 

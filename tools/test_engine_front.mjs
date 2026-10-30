@@ -3,7 +3,7 @@
 // the ATV and rider under the browser game's key; ride links start a ride.
 // Host browser evidence; parity images come from work capture scripts.
 import assert from 'node:assert/strict';
-import { assertNoErrors, launch, newPage, nextFrames, url } from './browser/harness.mjs';
+import { assertNoErrors, launch, newPage, nextFrames, unlockStore, url } from './browser/harness.mjs';
 
 const read = page => page.evaluate(() => JSON.parse(document.querySelector('#ui-state')?.textContent || '{}'));
 const front = async page => (await read(page)).front;
@@ -16,6 +16,8 @@ const browser = await launch();
 try {
   const errors = [];
   const page = await newPage(browser, { viewport: { width: 1280, height: 720 } }, errors);
+  // Single Player picks follow the profile's unlocks (PROFILE_STORE.md).
+  await unlockStore(page);
   await page.addInitScript(() => { localStorage.setItem('atv2-keyboard-help-seen-v1', '1'); localStorage.removeItem('atv-player-selection'); });
   await page.goto(url('/play.html?uiDiagnostics=1'));
   await wait(page, () => JSON.parse(document.querySelector('#ui-state')?.textContent || '{}').front?.page === 'title', null, 120000);
@@ -38,17 +40,25 @@ try {
   await key(page, 'Enter'); await onPage(page, 'main');
   f = await front(page);
   assert.ok(f.choices.includes('single') && f.choices.includes('settings'), f.choices.join());
-  assert.ok(f.choices.includes('multiplayer'), 'Multiplayer is listed');
-  assert.ok(f.choices.includes('freeride'), 'Arlington Free Ride is listed');
+  // The original's order (MENU_FLOW.md); Arlington Free Ride is under Multiplayer.
+  assert.equal(f.choices[1], 'multiplayer', f.choices.join());
+  assert.ok(!f.choices.includes('freeride') && !f.choices.includes('jukebox'), f.choices.join());
   // Settings opens over the frontend and Back closes it.
-  await key(page, 'ArrowDown'); await key(page, 'ArrowDown'); await key(page, 'ArrowDown'); await key(page, 'Enter');
+  // Profile Editor sits between the ride modes and Settings (the original's fourth row).
+  // Profile Editor and Hall of Fame (the original's fourth and fifth rows) before Settings.
+  assert.equal(f.choices.indexOf('profile'), f.choices.indexOf('settings') - 2, f.choices.join());
+  assert.equal(f.choices.indexOf('halloffame'), f.choices.indexOf('settings') - 1, f.choices.join());
+  for (let i = 0; i < f.choices.indexOf('settings'); i++) await key(page, 'ArrowDown');
+  await key(page, 'Enter');
   await wait(page, () => JSON.parse(document.querySelector('#ui-state').textContent).front.menu?.page === 'settings');
   await key(page, 'Escape');
   await wait(page, () => !JSON.parse(document.querySelector('#ui-state').textContent).front.menu);
-  await key(page, 'ArrowUp'); await key(page, 'ArrowUp'); await key(page, 'ArrowUp'); await key(page, 'Enter'); await onPage(page, 'single');
-  assert.deepEqual((await front(page)).choices, ['tracks', 'race', 'garage']);
+  for (let i = 0; i < f.choices.indexOf('settings'); i++) await key(page, 'ArrowUp');
+  await key(page, 'Enter'); await onPage(page, 'single');
+  assert.deepEqual((await front(page)).choices, ['race', 'tracks', 'objective-courses', 'championship', 'games', 'garage']);
   // Garage: Right steps the ATV, the rider switch toggles; both persist.
-  await key(page, 'ArrowDown'); await key(page, 'ArrowDown'); await key(page, 'Enter'); await onPage(page, 'garage');
+  for (let i = 0; i < 5; i++) await key(page, 'ArrowDown');
+  await key(page, 'Enter'); await onPage(page, 'garage');
   // The 3D previews: the ATV and the original menu rider (animated idle).
   await wait(page, () => { const m = JSON.parse(document.querySelector('#ui-state').textContent).front.models; return m[0]?.startsWith('vehicle:1:') && m[1] === 'rider:0'; }, null, 120000);
   await key(page, 'ArrowRight');
@@ -57,10 +67,12 @@ try {
   assert.deepEqual([f.quad, f.rider], [2, 1]);
   const saved = JSON.parse(await page.evaluate(() => localStorage.getItem('atv-player-selection')));
   assert.deepEqual([saved.quadId, saved.riderId], [2, 1]);
-  // Back opens Single Player on its first row (frontend.js `show`).
+  // Back returns to Single Player on the Garage row it left (MENU_FLOW.md).
   await key(page, 'Escape'); await onPage(page, 'single');
-  assert.equal((await front(page)).selection, 0);
+  f = await front(page);
+  assert.equal(f.choices[f.selection], 'garage');
   // Course select: photos load, tabs filter, a click on a card selects it.
+  for (let i = f.selection; i > f.choices.indexOf('tracks'); i--) await key(page, 'ArrowUp');
   await key(page, 'Enter'); await onPage(page, 'tracks');
   await wait(page, () => JSON.parse(document.querySelector('#ui-state').textContent).front.photos >= 30, null, 120000);
   await key(page, 'PageDown');

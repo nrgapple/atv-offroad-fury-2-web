@@ -245,3 +245,4 @@ footer { width: var(--dl-width); margin: auto; padding: 28px 0 max(36px, env(saf
   #feature-count { grid-column: 1 / -1; margin: 0; padding: 0; }
 }
 @media (max-width: 380px) { .game-name { width: 110px; } h1 { font-size: 22px; } }
+footer p { margin: 0 0 8px; }

@@ -24,6 +24,7 @@ export const SELECTABLE = [...GROUPS, 'native'];
 
 export const TESTS = {
   'test_app_identity.mjs': { group: 'content-free' },
+  'test_engine_boot_stall.mjs': { group: 'content-free' },
   'test_engine_touch.mjs': { group: 'content' },
   'test_engine_hud.mjs': { group: 'content' },
   'test_engine_pause.mjs': { group: 'content' },
@@ -32,13 +33,16 @@ export const TESTS = {
   'test_engine_alpha_landing.mjs': { group: 'content' },
   'test_engine_air_blur.mjs': { group: 'content' },
   'test_engine_shell.mjs': { group: 'content' },
+  'test_engine_sw_update.mjs': { group: 'content' },
   'test_engine_shadows_prefetch.mjs': { group: 'content' },
+  'test_engine_visibility.mjs': { group: 'content' },
   'test_engine_arcade_touch.mjs': {
     group: 'manual',
     reason:
       'Compares with the JavaScript game: serve the pinned reference (python3 tools/js_reference.py serve) and set ATV_JS_URL'
   },
   'test_engine_settings.mjs': { group: 'content' },
+  'test_engine_game_settings.mjs': { group: 'content' },
   'test_engine_session_settings.mjs': { group: 'content' },
   'test_engine_links.mjs': { group: 'content' },
   'test_engine_wake_lock.mjs': { group: 'content' },
@@ -61,12 +65,46 @@ export const TESTS = {
   'test_engine_race_gear.mjs': { group: 'content' },
   'test_engine_menu_parity.mjs': { group: 'content' },
   'test_engine_menu_flows.mjs': { group: 'content' },
+  'test_engine_menu_navigation.mjs': { group: 'content' },
+  'test_engine_menu_divider.mjs': { group: 'content' },
+  'test_engine_menu_scroll.mjs': { group: 'content' },
+  'test_engine_status_bar.mjs': { group: 'content' },
   'test_engine_menu_transitions.mjs': { group: 'content' },
+  'test_engine_menu_motion.mjs': { group: 'content' },
+  'test_engine_menu_phone_layout.mjs': { group: 'content' },
   'test_engine_context_loss.mjs': { group: 'content' },
   'test_engine_menu_music.mjs': { group: 'content' },
   'test_engine_freeride_full.mjs': {
     group: 'manual',
     reason: 'load measurement: a full Free Ride room of synthetic riders on a local relay (never production)'
+  },
+  'test_engine_multiplayer_tag.mjs': {
+    group: 'relay',
+    reason: 'needs the multiplayer relay at the same origin (Rust host and guest Tag room); run with --url'
+  },
+  'test_engine_multiplayer_koth.mjs': {
+    group: 'relay',
+    reason: 'needs the multiplayer relay at the same origin (Rust host and guest King of the Hills room); run with --url'
+  },
+  'test_engine_multiplayer_treasure.mjs': {
+    group: 'relay',
+    reason: 'needs the multiplayer relay at the same origin (Rust host and guest Treasure Hunt room); run with --url'
+  },
+  'test_engine_multiplayer_freestyle.mjs': {
+    group: 'relay',
+    reason: 'needs the multiplayer relay at the same origin (Host Game → Room: Freestyle; Rust guest and late spectator, host handoff); run with --url'
+  },
+  'test_engine_multiplayer_race.mjs': {
+    group: 'relay',
+    reason: 'needs the multiplayer relay at the same origin (Rust host and guest race a Supercross room); run with --url'
+  },
+  'test_engine_games_tag.mjs': {
+    group: 'relay',
+    reason: 'needs the multiplayer relay at the same origin (Games → Tag hosts a room; a Rust guest joins); run with --url'
+  },
+  'test_engine_multiplayer_hockey.mjs': {
+    group: 'relay',
+    reason: 'needs the multiplayer relay at the same origin (Rust host and guest Hockey room); run with --url'
   },
   'test_engine_multiplayer_dropin.mjs': {
     group: 'relay',
@@ -120,6 +158,36 @@ export const TESTS = {
   },
   'test_engine_preview.mjs': { group: 'content-free' },
   'test_engine_race.mjs': { group: 'content' },
+  'test_engine_split_screen.mjs': { group: 'content', timeout: 900 },
+  'test_engine_split_games.mjs': { group: 'content', timeout: 900 },
+  'test_engine_split_tag.mjs': { group: 'content', timeout: 600 },
+  'test_engine_split_4p.mjs': { group: 'content', timeout: 1500 },
+  'test_engine_split_seats.mjs': { group: 'content', timeout: 900 },
+  'test_engine_split_objectives.mjs': { group: 'content', timeout: 900 },
+  'test_engine_race_grid.mjs': { group: 'content' },
+  'test_engine_race_finish_gate.mjs': { group: 'content' },
+  'test_engine_race_alternates.mjs': { group: 'content', timeout: 900 },
+  'test_engine_enduro_race.mjs': { group: 'content', timeout: 900 },
+  'test_engine_race_profile_points.mjs': { group: 'content' },
+  'test_engine_profile_menu.mjs': { group: 'content' },
+  'test_engine_profile_store.mjs': { group: 'content', timeout: 600 },
+  'test_engine_profile_editor.mjs': { group: 'content', timeout: 900 },
+  'test_engine_passkey.mjs': { group: 'content', timeout: 600 },
+  'test_engine_unlock_everything.mjs': { group: 'content', timeout: 600 },
+  'test_engine_profile_stunts.mjs': { group: 'content', timeout: 900 },
+  'test_engine_hall_of_fame.mjs': { group: 'content', timeout: 900 },
+  'test_engine_text_fields_touch.mjs': { group: 'content' },
+  'test_engine_championship.mjs': { group: 'content', timeout: 1500 },
+  'test_engine_championship_loading.mjs': { group: 'content' },
+  'test_engine_championship_enduro.mjs': { group: 'content', timeout: 900 },
+  'test_engine_freestyle_objectives.mjs': { group: 'content', timeout: 900 },
+  'test_engine_freestyle_targets.mjs': { group: 'content', timeout: 900 },
+  'test_engine_toy_actors.mjs': { group: 'content', timeout: 600 },
+  'test_engine_actor_collision.mjs': { group: 'content', timeout: 600 },
+  'test_engine_training.mjs': { group: 'content', timeout: 900 },
+  'test_engine_games.mjs': { group: 'content', timeout: 900 },
+  'test_engine_toy_explosions.mjs': { group: 'content', timeout: 900 },
+  'test_engine_hockey_tag.mjs': { group: 'content', timeout: 600 },
   'test_engine_sleep.mjs': { group: 'content' },
   'test_engine_motorcycle.mjs': { group: 'content' },
   'test_engine_interpolation.mjs': {

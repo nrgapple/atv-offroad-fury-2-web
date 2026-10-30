@@ -11,7 +11,6 @@
 use super::mixer::Pcm;
 use crate::{Result, archive::Archive};
 use atv_content::Content;
-use atv_core::audio::decode_vag;
 
 /// The UI tune names from UIMUSIC.AUD (`Track1`..`TrackN`).
 pub fn tracks(definition: &[u8]) -> Result<Vec<String>> {
@@ -56,7 +55,7 @@ pub async fn load_tune(content: &Content, rate: u32) -> Result<Pcm> {
         return Err("original UI expected four tunes".into());
     }
     let sounds = Archive::open(content, "/AUDIO/AUDIO.RES").await?;
-    let mut channels = Vec::with_capacity(2);
+    let mut vags = Vec::with_capacity(2);
     for channel in ["l", "r"] {
         let suffix = format!("{}{channel}.vag", names[0]).to_ascii_lowercase();
         let index = sounds
@@ -67,9 +66,16 @@ pub async fn load_tune(content: &Content, rate: u32) -> Result<Pcm> {
                 name == suffix || name.ends_with(&format!("/{suffix}"))
             })
             .ok_or_else(|| format!("original UI tune missing: {suffix}"))?;
-        let audio = decode_vag(&sounds.member(index).await?)?;
-        channels.push(Pcm::from_vag_spread(&audio, rate).await);
+        vags.push(sounds.member(index).await?);
     }
+    // Both channels decode on the decode workers (web): the tune starts on
+    // the first tap, when the menus are animating.
+    let inputs: Vec<&[u8]> = vags.iter().map(Vec::as_slice).collect();
+    let channels: Vec<Pcm> = crate::offload::pcms(&inputs, rate)
+        .await?
+        .into_iter()
+        .map(|(_, pcm)| pcm)
+        .collect();
     let (left, right) = (&channels[0], &channels[1]);
     if left.channels != 1 || right.channels != 1 || left.frames != right.frames {
         return Err("menu stereo channels differ".into());

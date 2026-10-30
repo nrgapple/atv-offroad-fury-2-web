@@ -64,11 +64,21 @@ struct Chunk {
 
 struct Draw {
     chunk: usize,
+    /// Scene model index (model colour, `001b4280`).
+    model: usize,
     /// Record slot (material + instance); the alpha-failure pass follows.
     record: u32,
     flash: Option<usize>,
     /// The race drop gate's chunk-local bounds (posed after GO).
     gate: Option<([f32; 3], [f32; 3])>,
+    /// Enduro gate index (its alpha follows the rider's next gate).
+    enduro_gate: Option<usize>,
+    /// Chunk-local bounds (a posed model's world bounds follow its matrix).
+    local: ([f32; 3], [f32; 3]),
+    /// The chunk's PSG level of detail.
+    lod: u8,
+    /// Skipped beyond 130 ft (`EnableMultiPassCull`, a later pass).
+    far_cull: bool,
     min: [f32; 3],
     max: [f32; 3],
 }
@@ -78,6 +88,21 @@ pub struct Stats {
     pub draws: u32,
     pub triangles: u32,
     pub culled: u32,
+    /// Drawn chunks by level of detail (3 counts levels 3 and coarser).
+    pub levels: [u32; 4],
+    /// Later passes skipped beyond 130 ft (`EnableMultiPassCull`).
+    pub far_culled: u32,
+    /// Scene models whose selected level is coarser than the finest.
+    pub coarse_models: u32,
+}
+
+/// Which levels of detail draw (research/VISIBILITY.md).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Detail {
+    /// `001b3a90` level selection and the 130 ft multi-pass cull.
+    Original,
+    /// Graphics enhancement: every model at its finest level, every pass.
+    Finest,
 }
 
 pub struct SceneryPass {
@@ -106,6 +131,16 @@ pub struct SceneryPass {
     pub flashes: Option<atv_core::race_crowd::Flashes>,
     /// Farthest world-bounds diagonal, for the depth range.
     pub reach: f32,
+    /// Scene models not drawn (hit Freestyle targets).
+    hidden: std::collections::HashSet<usize>,
+    /// Per scene model: LOD inputs, current translation and this frame's
+    /// selected level and far flag.
+    models: Vec<Option<atv_core::model_lod::ModelLod>>,
+    translations: Vec<[f32; 3]>,
+    selected: Vec<(u8, bool)>,
+    /// Scene models whose state can change: several levels, or a later pass
+    /// under the 130 ft cull (the rest stay at their finest level).
+    switching: Vec<usize>,
 }
 
 const STRIDE: u64 = 36;
@@ -273,9 +308,14 @@ impl SceneryPass {
             let local = &scenery.chunks[draw.chunk];
             draws.push(Draw {
                 chunk: draw.chunk,
+                model: draw.model,
                 record: 0,
                 flash: draw.flash,
                 gate: draw.gate.then_some((local.min, local.max)),
+                enduro_gate: draw.enduro_gate,
+                local: (local.min, local.max),
+                lod: draw.lod,
+                far_cull: draw.far_cull,
                 min: draw.min,
                 max: draw.max,
             });
@@ -298,7 +338,8 @@ impl SceneryPass {
             let source = &scenery.draws[index];
             let instance = DrawUniform {
                 model: source.matrix,
-                flags: [source.unlit as u8 as f32, 0., 0., 0.],
+                // y: the model's colour alpha (`001b42e0`, model +0x19c).
+                flags: [source.unlit as u8 as f32, 1., 0., 0.],
             };
             let mut push = |m: MaterialUniform| {
                 let at = record_bytes.len();
@@ -373,6 +414,31 @@ impl SceneryPass {
                 atv_core::race_crowd::Flashes::new(config, pool, 97211 + 8 * 47)
             }),
             reach,
+            hidden: Default::default(),
+            translations: {
+                let mut t = vec![[0.; 3]; scenery.lods.len()];
+                for draw in &scenery.draws {
+                    if let Some(slot) = t.get_mut(draw.model) {
+                        *slot = [draw.matrix[12], draw.matrix[13], draw.matrix[14]];
+                    }
+                }
+                t
+            },
+            switching: {
+                let mut switching: Vec<bool> = scenery
+                    .lods
+                    .iter()
+                    .map(|l| l.as_ref().is_some_and(|l| l.thresholds.len() > 1))
+                    .collect();
+                for draw in scenery.draws.iter().filter(|d| d.far_cull) {
+                    if let Some(slot) = switching.get_mut(draw.model) {
+                        *slot = true;
+                    }
+                }
+                (0..switching.len()).filter(|&m| switching[m]).collect()
+            },
+            models: scenery.lods.clone(),
+            selected: vec![(0, false); scenery.lods.len()],
         }
     }
 
@@ -396,6 +462,7 @@ impl SceneryPass {
         self.clocks = old.clocks;
         self.flashes = old.flashes;
         self.lit_flashes = old.lit_flashes;
+        self.hidden = old.hidden;
     }
 
     /// Poses the race's drop gate (poseGate in game.js): its draws' model
@@ -408,6 +475,9 @@ impl SceneryPass {
                 continue;
             };
             (draw.min, draw.max) = atv_game::scenery::world_bounds(min, max, matrix);
+            if let Some(t) = self.translations.get_mut(draw.model) {
+                *t = [matrix[12], matrix[13], matrix[14]];
+            }
             let passes = 1 + usize::from(self.chunks[draw.chunk].alpha_fail);
             for pass in 0..passes {
                 let at = (draw.record as usize + pass) * self.record_slot as usize + offset;
@@ -420,7 +490,124 @@ impl SceneryPass {
         }
     }
 
-    pub fn prepare(&mut self, gpu: &Gpu, cull_planes: &[[f32; 4]]) -> Stats {
+    /// Poses one scene model (a Freestyle target's cherry): its draws'
+    /// matrix and world bounds.
+    pub fn pose_model(&mut self, gpu: &Gpu, model: usize, matrix: &[f32; 16]) {
+        let offset = std::mem::offset_of!(Record, d) + std::mem::offset_of!(DrawUniform, model);
+        let bytes = bytemuck::bytes_of(matrix);
+        if let Some(t) = self.translations.get_mut(model) {
+            *t = [matrix[12], matrix[13], matrix[14]];
+        }
+        for draw in &mut self.draws {
+            if draw.model != model {
+                continue;
+            }
+            (draw.min, draw.max) =
+                atv_game::scenery::world_bounds(draw.local.0, draw.local.1, matrix);
+            let passes = 1 + usize::from(self.chunks[draw.chunk].alpha_fail);
+            for pass in 0..passes {
+                let at = (draw.record as usize + pass) * self.record_slot as usize + offset;
+                if let Some(copy) = self.animated_records.get_mut(at..at + bytes.len()) {
+                    copy.copy_from_slice(bytes);
+                }
+                gpu.queue.write_buffer(&self.records, at as u64, bytes);
+            }
+        }
+    }
+
+    /// Hides or shows a scene model (`HideAnimation`: a hit target).
+    pub fn hide_model(&mut self, model: usize, hidden: bool) {
+        if hidden {
+            self.hidden.insert(model);
+        } else {
+            self.hidden.remove(&model);
+        }
+    }
+
+    /// A scene model's colour (`001b4280`; the King of the Hills flag in
+    /// its owner's colour, `00220b50`): `None` restores the white default.
+    pub fn tint_model(&mut self, gpu: &Gpu, model: usize, rgb: Option<[f32; 3]>) {
+        let offset = std::mem::offset_of!(Record, d) + std::mem::offset_of!(DrawUniform, flags) + 8;
+        let packed = rgb.map_or(0., |c| {
+            let byte = |v: f32| (v.clamp(0., 1.) * 255.).round() as u32;
+            ((byte(c[0]) << 16) | (byte(c[1]) << 8) | byte(c[2])) as f32
+        });
+        let value: [f32; 2] = [packed, f32::from(u8::from(rgb.is_some()))];
+        let bytes = bytemuck::bytes_of(&value);
+        for draw in &self.draws {
+            if draw.model != model {
+                continue;
+            }
+            let passes = 1 + usize::from(self.chunks[draw.chunk].alpha_fail);
+            for pass in 0..passes {
+                let at = (draw.record as usize + pass) * self.record_slot as usize + offset;
+                if let Some(copy) = self.animated_records.get_mut(at..at + bytes.len()) {
+                    copy.copy_from_slice(bytes);
+                }
+                gpu.queue.write_buffer(&self.records, at as u64, bytes);
+            }
+        }
+    }
+
+    /// Enduro gate alpha (`00228ea0`): the rider's next gate draws opaque,
+    /// every other gate at 0.4.
+    pub fn fade_enduro_gates(&mut self, gpu: &Gpu, next: usize) {
+        let offset = std::mem::offset_of!(Record, d) + std::mem::offset_of!(DrawUniform, flags) + 4;
+        for draw in &self.draws {
+            let Some(gate) = draw.enduro_gate else {
+                continue;
+            };
+            let alpha: f32 = if gate == next {
+                1.
+            } else {
+                atv_core::enduro::FADED_GATE_ALPHA
+            };
+            let bytes = bytemuck::bytes_of(&alpha);
+            let passes = 1 + usize::from(self.chunks[draw.chunk].alpha_fail);
+            for pass in 0..passes {
+                let at = (draw.record as usize + pass) * self.record_slot as usize + offset;
+                if let Some(copy) = self.animated_records.get_mut(at..at + bytes.len()) {
+                    copy.copy_from_slice(bytes);
+                }
+                gpu.queue.write_buffer(&self.records, at as u64, bytes);
+            }
+        }
+    }
+
+    /// The last frame's level and far flag per scene model.
+    pub fn selected(&self) -> &[(u8, bool)] {
+        &self.selected
+    }
+
+    /// This frame's level and far flag per scene model (`001b3a90`,
+    /// `001b2390`) for an eye and the view's 4:3 reference focal length.
+    fn select_levels(&mut self, eye: [f32; 3], focal_length: f32, detail: Detail) -> u32 {
+        use atv_core::model_lod;
+        let focal = model_lod::focal_from_view(focal_length);
+        let mut coarse = 0;
+        for &model in &self.switching {
+            let state = match (detail, &self.models[model]) {
+                (Detail::Original, Some(lod)) => {
+                    let distance = lod.distance(self.translations[model], eye);
+                    let level = lod.select(distance, focal).min(u8::MAX as usize) as u8;
+                    (level, model_lod::multipass_far(distance))
+                }
+                _ => (0, false),
+            };
+            coarse += u32::from(state.0 > 0);
+            self.selected[model] = state;
+        }
+        coarse
+    }
+
+    pub fn prepare(
+        &mut self,
+        gpu: &Gpu,
+        cull_planes: &[[f32; 4]],
+        eye: [f32; 3],
+        focal_length: f32,
+        detail: Detail,
+    ) -> Stats {
         for &index in &self.animated {
             let [u, v] = self.clocks.uv_offset(index);
             self.chunks[index].uniform.uv_offset = [u, v, 0., 0.];
@@ -440,9 +627,22 @@ impl SceneryPass {
                 .write_buffer(&self.records, 0, &self.animated_records);
         }
         self.visible.clear();
-        let mut stats = Stats::default();
+        let mut stats = Stats {
+            coarse_models: self.select_levels(eye, focal_length, detail),
+            ..Default::default()
+        };
         for (index, draw) in self.draws.iter().enumerate() {
-            if draw.flash.is_some_and(|f| !self.lit_flashes.contains(&f)) {
+            if draw.flash.is_some_and(|f| !self.lit_flashes.contains(&f))
+                || (!self.hidden.is_empty() && self.hidden.contains(&draw.model))
+            {
+                continue;
+            }
+            let (level, far) = self.selected.get(draw.model).copied().unwrap_or((0, false));
+            if draw.lod != level {
+                continue;
+            }
+            if far && draw.far_cull {
+                stats.far_culled += 1;
                 continue;
             }
             if cull::outside(cull_planes, draw.min, draw.max) {
@@ -450,6 +650,7 @@ impl SceneryPass {
                 continue;
             }
             self.visible.push(index);
+            stats.levels[usize::from(draw.lod).min(3)] += 1;
             let chunk = &self.chunks[draw.chunk];
             let passes = 1 + chunk.alpha_fail as u32;
             stats.draws += passes;

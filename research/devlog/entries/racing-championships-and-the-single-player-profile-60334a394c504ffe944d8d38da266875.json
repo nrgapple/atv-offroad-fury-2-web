@@ -1,0 +1,18 @@
+{
+  "id": "racing-championships-and-the-single-player-profile-60334a394c504ffe944d8d38da266875",
+  "timestamp": "2026-10-26T21:47:58.933167+00:00",
+  "recorded_at": "2026-10-26T21:55:05.425273+00:00",
+  "kind": "build",
+  "title": "Racing championships and the Single Player profile",
+  "summary": "Single Player now has a Championship page with the original Amateur and Pro Nationals and Supercross series, and shows the saved profile's Profile Points and race record.",
+  "details": [
+    "Exact-build evidence: series are race event types whose course lists come from the front end's Tracks.dat in file order; round counts per Normal/Expert from a table read by 00322c20 (for example Amateur Supercross 6/7: sx08, sx12, sx01, sx13, sx02, sx06, sx05); 00289d50 sets five laps, four CPUs and Expert CPU difficulty.",
+    "Championship points 7/4/2/1/0 by place (001f1db0). After round r the player needs 4r+2 total points (00322c60/00322ed0); short of it the race's points are dropped and the round is replayed.",
+    "After the last round the player's rank gives gold/silver/bronze (00322440, ties go to the player); first-time trophy Profile Points (00322650: Amateur 500/250/125 Normal, 1500/750/375 Expert; Pro 1000/500/250 and 2000/1000/500); gold opens Expert and any Amateur trophy opens the Pro series (003238a0).",
+    "Race results add a championship line; Profile Points use the course TOY table for the series and difficulty; Quit Event returns to the Championship page. Single Player shows \"Profile Points N \u00b7 R races \u00b7 W wins\".",
+    "Verification: atv-core championship tests, atv-ui controller test, new browser tests test_engine_championship.mjs (menu -> final Amateur Supercross round on SX06 under the race path driver: 1st place, Gold, +500 reward, +60 course Profile Points, Pro Supercross and Amateur Supercross Expert unlocked, Championship page updated) and test_engine_profile_menu.mjs; existing menu and race tests pass."
+  ],
+  "limitation": "Round-to-course mapping is a strong code reading, not a runtime trace.",
+  "image": "/devlog-images/racing-championships-and-the-single-player-profile-60334a394c504ffe944d8d38da266875.png",
+  "caption": "Final Amateur Supercross round results on SX06: Gold trophy, reward and unlocks (host Chromium, race path driver)."
+}
