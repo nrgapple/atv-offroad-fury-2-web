@@ -1589,6 +1589,7 @@ mod tests {
             hierarchy_nodes: 1,
             width_cells: 16,
             depth_cells: 16,
+            leaf_index: Default::default(),
         };
         let mut placements = vec![plant(100, 100, 0), plant(200, 200, 0)];
         for placement in &mut placements {

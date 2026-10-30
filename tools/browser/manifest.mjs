@@ -24,6 +24,7 @@ export const SELECTABLE = [...GROUPS, 'native'];
 
 export const TESTS = {
   'test_app_identity.mjs': { group: 'content-free' },
+  'test_engine_boot_stall.mjs': { group: 'content-free' },
   'test_engine_touch.mjs': { group: 'content' },
   'test_engine_hud.mjs': { group: 'content' },
   'test_engine_pause.mjs': { group: 'content' },

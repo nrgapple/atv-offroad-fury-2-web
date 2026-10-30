@@ -108,6 +108,12 @@ pub struct Front {
     split_ms: [f64; 3],
     /// Vehicle (0) and garage rider (1) previews.
     previews: [Option<Preview>; 2],
+    /// Built previews of pages just left (key, model, animated), newest
+    /// last: going back to the garage or a stage page reuses its model's GPU
+    /// mesh and textures instead of building it again (a 3x phone frame).
+    stash: Vec<(String, ModelPreview, bool)>,
+    /// Previews built and reused from the stash (diagnostics).
+    preview_counts: [u32; 2],
     /// A pointer turning a preview: (pointer, slot, last x).
     turning: Option<(u64, usize, f32)>,
     /// The preview last pressed: Left/Right turn it (ModelView keydown).
@@ -163,6 +169,8 @@ pub struct Front {
     toast: Toast,
     /// The turntable's clock, and Left/Right's hold on it (ms).
     spun_at: f64,
+    /// The title's Press Start pulse this frame (1-1.18).
+    pulse: f32,
     spin_hold: f64,
     /// When the wordmark began swaying (None: still), and its angles.
     sway_since: Option<f64>,
@@ -225,6 +233,8 @@ impl Front {
             diagnostics: Vec::new(),
             split_ms: [0.; 3],
             previews: [None, None],
+            stash: Vec::new(),
+            preview_counts: [0; 2],
             turning: None,
             preview_focus: None,
             wanted: [None, None],
@@ -259,6 +269,7 @@ impl Front {
             coins: CoinCount::default(),
             toast: Toast::default(),
             spun_at: 0.,
+            pulse: 1.,
             spin_hold: 0.,
             sway_since: None,
             tilt: [0.; 2],
@@ -286,6 +297,7 @@ impl Front {
     /// Frees the GPU textures and renderer while a ride runs.
     pub fn release_gpu(&mut self) {
         self.previews = [None, None];
+        self.stash.clear();
         self.jukebox_art = None;
         self.renderer = None;
         self.images.clear();
@@ -1120,7 +1132,16 @@ impl Front {
         // ms-pulse: brightness 1 → 1.18 → 1 over 1.8 s, ease-in-out.
         let phase = (now / 1800.).fract() as f32;
         let wave = 0.5 - 0.5 * atv_core::math::Det::cos_d(phase * std::f32::consts::TAU);
-        let pulse = 1. + 0.18 * wave;
+        self.pulse = 1. + 0.18 * wave;
+        // Only the title pulses. It is laid out once at PULSE_LAYOUT and its
+        // overlay retinted per frame (render_page); every other page keeps a
+        // constant value, so an animating page (turntable, sway) reuses its
+        // laid-out display list instead of a full layout each frame.
+        let pulse = if self.menu.is_none() && self.state.page == "title" {
+            front::PULSE_LAYOUT
+        } else {
+            1.
+        };
         let photos = &art.photos;
         let photo = |id: &str| photos.get(id).map(|(thumb, _)| *thumb);
         self.update_previews(device, queue, now);
@@ -1338,6 +1359,9 @@ impl Front {
             }
             None => self.list.items.extend_from_slice(&cache.content.items),
         }
+        if screen.pulse > 1. {
+            front::retint_pulse(&mut self.list.items[start..], self.pulse);
+        }
         self.content = start..self.list.items.len();
     }
 
@@ -1546,13 +1570,20 @@ impl Front {
         let key = format!("vehicle:{quad}:{paint:?}");
         self.wanted = [shown.then(|| key.clone()), None];
         if !shown {
-            self.previews = [None, None];
+            for preview in std::mem::take(&mut self.previews).into_iter().flatten() {
+                self.stash_preview(preview);
+            }
             self.preview_focus = None;
+        } else if self.previews[0].as_ref().is_none_or(|p| p.key != key)
+            && let Some((model, animated)) = self.unstash(&key)
+        {
+            self.set_preview(0, key.clone(), model, animated);
         } else if self.previews[0].as_ref().is_none_or(|p| p.key != key)
             && self.unbuilt[0].as_ref() != Some(&key)
             && let Some((_, model, _)) = self.art.vehicles.iter().find(|(q, ..)| *q == quad)
         {
             let lookup = texture(&model.textures);
+            self.preview_counts[0] += 1;
             match ModelPreview::new(
                 device,
                 queue,
@@ -1570,23 +1601,12 @@ impl Front {
         }
         // Slot 1: the garage rider's idle playlist (PAGE07, or the MX rider).
         if !garage || !shown {
-            if let Some(old) = self.previews[1].take()
-                && let (Some(renderer), Some((id, ..))) = (&mut self.renderer, old.target)
-            {
-                renderer.remove_image(id);
+            if let Some(old) = self.previews[1].take() {
+                self.stash_preview(old);
             }
             self.garage_since = now;
             return;
         }
-        let rider = if quad >= 27 {
-            self.art
-                .vehicles
-                .iter()
-                .find(|(q, ..)| *q == quad)
-                .and_then(|(_, _, r)| r.as_ref())
-        } else {
-            self.art.menu_riders.get(&self.state.rider_id)
-        };
         // gearPreview: the ATV rider wears the garage gear once its
         // materials are read.
         let dressed = quad < 27
@@ -1599,6 +1619,23 @@ impl Front {
             format!("rider:{}:{:?}", self.state.rider_id, appearance.gear)
         } else {
             format!("rider:{}", self.state.rider_id)
+        };
+        // Back in the garage: the rider built last time.
+        if self.previews[1].as_ref().is_none_or(|p| p.key != key)
+            && let Some((model, animated)) = self.unstash(&key)
+        {
+            self.wanted[1] = Some(key.clone());
+            self.set_preview(1, key, model, animated);
+            return;
+        }
+        let rider = if quad >= 27 {
+            self.art
+                .vehicles
+                .iter()
+                .find(|(q, ..)| *q == quad)
+                .and_then(|(_, _, r)| r.as_ref())
+        } else {
+            self.art.menu_riders.get(&self.state.rider_id)
         };
         let time = ((now - self.garage_since) / 1000.).max(0.) as f32;
         self.wanted[1] = Some(key.clone());
@@ -1622,6 +1659,7 @@ impl Front {
                 }
                 let lookup = texture(&textures);
                 let pose = rider.rider.pose(time).ok().map(|(_, p)| p.world_matrices);
+                self.preview_counts[0] += 1;
                 match ModelPreview::new(
                     device,
                     queue,
@@ -1650,6 +1688,29 @@ impl Front {
                 preview.dirty = true;
             }
         }
+    }
+
+    /// Keeps a preview leaving the screen for a quick return; its target
+    /// image goes (it is remade at the slot's size).
+    fn stash_preview(&mut self, preview: Preview) {
+        if let (Some(renderer), Some((id, ..))) = (&mut self.renderer, preview.target) {
+            renderer.remove_image(id);
+        }
+        const KEEP: usize = 3;
+        self.stash.retain(|(key, ..)| *key != preview.key);
+        self.stash
+            .push((preview.key, preview.model, preview.animated));
+        if self.stash.len() > KEEP {
+            self.stash.remove(0);
+        }
+    }
+
+    /// A stashed preview built for `key`, if any.
+    fn unstash(&mut self, key: &str) -> Option<(ModelPreview, bool)> {
+        let index = self.stash.iter().position(|(k, ..)| k == key)?;
+        self.preview_counts[1] += 1;
+        let (_, model, animated) = self.stash.remove(index);
+        Some((model, animated))
     }
 
     fn set_preview(&mut self, slot: usize, key: String, model: ModelPreview, animated: bool) {
@@ -1823,6 +1884,8 @@ impl Front {
         out["surface"] =
             serde_json::json!([self.upload_size.0, self.upload_size.1, self.upload_size.2]);
         out["tilt"] = serde_json::json!(self.tilt);
+        // Previews built, and reused from pages just left.
+        out["previewBuilds"] = serde_json::json!(self.preview_counts);
         // Single Race's course picker is open.
         out["courseSheet"] = self.state.course_sheet.into();
         out["vehicleSheet"] = self.state.vehicle_sheet.into();
@@ -1833,6 +1896,12 @@ impl Front {
             .is_some_and(|r| r.layer_cached())
             .into();
         out["layerPlan"] = serde_json::json!(self.renderer.as_ref().map(|r| r.layer_plan));
+        // Text/vector bitmaps rasterized and atlas rebuilds so far.
+        out["atlas"] = serde_json::json!(
+            self.renderer
+                .as_ref()
+                .map(|r| [r.rasterized_total, r.atlas_resets])
+        );
         // The status bar (front/status_bar.rs): numbers, sync and popover.
         out["status"] = match self.state.status_bar().filter(|_| self.menu.is_none()) {
             Some(b) => serde_json::json!({

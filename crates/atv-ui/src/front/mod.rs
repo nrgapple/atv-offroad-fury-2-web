@@ -240,6 +240,29 @@ pub struct Screen {
     pub qr: Option<String>,
 }
 
+/// The Press Start overlay's tint at a pulse brightness (ms-pulse 1 → 1.18).
+fn pulse_tint(pulse: f32) -> Color {
+    Color::rgba(255, 255, 255, ((pulse - 1.) * 0.6).min(0.2))
+}
+
+/// The pulse the title is laid out at. Only the Press Start overlay's alpha
+/// follows the pulse, so the page is laid out once and [`retint_pulse`]
+/// sets the overlay's current tint each frame instead of a new layout.
+pub const PULSE_LAYOUT: f32 = 1.18;
+
+/// Retints the Press Start overlay of a title laid out at [`PULSE_LAYOUT`]
+/// to `pulse`.
+pub fn retint_pulse(items: &mut [crate::paint::Item], pulse: f32) {
+    let laid_out = Some(Fill::Solid(pulse_tint(PULSE_LAYOUT)));
+    for item in items {
+        if let crate::paint::Item::Box(paint) = item
+            && paint.fill == laid_out
+        {
+            paint.fill = Some(Fill::Solid(pulse_tint(pulse.max(1.))));
+        }
+    }
+}
+
 /// The wordmark's 3D sway is seen through `perspective: 900px`.
 pub const LOGO_PERSPECTIVE: f32 = 900.;
 
@@ -2947,12 +2970,11 @@ fn title(m: &Metrics, s: &Screen, mut root: El) -> El {
         );
         start.style.min_size.width = length(320f32.min(0.8 * m.w));
         if s.pulse > 1.001 {
-            // ms-pulse: brightness(1 → 1.18).
+            // ms-pulse: brightness(1 → 1.18). The app lays the title out at
+            // PULSE_LAYOUT and retints this overlay each frame (retint_pulse).
             start = start.child(
-                El::new(absolute(Some(0.), Some(0.), Some(0.), Some(0.))).paint(
-                    Paint::fill(Color::rgba(255, 255, 255, ((s.pulse - 1.) * 0.6).min(0.2)))
-                        .radius(5.),
-                ),
+                El::new(absolute(Some(0.), Some(0.), Some(0.), Some(0.)))
+                    .paint(Paint::fill(pulse_tint(s.pulse)).radius(5.)),
             );
         }
         actions = actions.child(start);

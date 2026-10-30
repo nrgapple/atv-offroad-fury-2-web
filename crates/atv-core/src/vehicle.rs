@@ -3450,6 +3450,7 @@ mod tests {
             hierarchy_nodes: 64,
             width_cells: 128,
             depth_cells: 128,
+            leaf_index: Default::default(),
         };
         (v, t)
     }

@@ -92,9 +92,10 @@ try {
   await wait(() => document.querySelector('#app-install-help').open, null, 5000);
   report.installSteps = await page.evaluate(() => document.querySelectorAll('#app-install-steps li').length);
   await page.tap('#app-install-close');
-  // 2x display: the frontend draws at the 1.5 render-ratio cap.
+  // 2x display: the frontend draws at the display's full density (menus up
+  // to 3x since the crisp-menu change; rides keep the 1.5 render ratio).
   report.titleBacking = await backing();
-  assert.ok(Math.abs(report.titleBacking - 1.5) < 0.02, `title backing ratio ${report.titleBacking}`);
+  assert.ok(Math.abs(report.titleBacking - 2) < 0.02, `title backing ratio ${report.titleBacking}`);
   assert.deepEqual(
     events.map(e => [e.name, e.entry]),
     [['session_start', 'menu']]
@@ -150,7 +151,7 @@ try {
     return out;
   });
   const shell = cached[`fury-shell-v1-${COMMIT}`] ?? [];
-  for (const name of ['engine.js', 'engine.css', 'atv_app.js', 'atv_app_bg.wasm', 'install.js', 'analytics.js', 'offline.js'])
+  for (const name of ['engine.js', 'engine.css', 'decode-worker.js', 'atv_app.js', 'atv_app_bg.wasm', 'install.js', 'analytics.js', 'offline.js'])
     assert.ok(shell.includes(`/${name}?v=${COMMIT}`), `shell precaches ${name}`);
   assert.ok((cached['fury-pages-v1'] ?? []).includes('/play.html'), 'play.html page cached');
   report.shellFiles = shell.length;
