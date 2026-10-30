@@ -19,7 +19,7 @@ try {
   await page.keyboard.down('KeyW');
   await page.waitForFunction(() => {
     const s = JSON.parse(document.documentElement.dataset.engineAudio);
-    return s.started && s.cpu && s.cpu.engines >= 1 && s.cpu.levels.some(l => l[2][0] + l[2][1] > 0);
+    return s.started && s.cpu && s.cpu.engines >= 2 && s.cpu.levels.some(l => l[2][0] + l[2][1] > 0);
   }, null, { timeout: 120000 }).catch(async error => {
     console.error(await state(), errors);
     throw error;
