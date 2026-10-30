@@ -52,6 +52,8 @@ pub struct Seats {
     /// Each pad's buttons last frame (edge detection), `u32::MAX` until
     /// released after the page opened.
     held: [u32; 4],
+    /// Each pad's held directions' next repeat (Up, Down, Left, Right).
+    repeat: [[Option<f64>; 4]; 4],
     /// The event the page holds until the players are seated.
     pub pending: Option<Event>,
     /// Let the next event through (the page released it).
@@ -62,6 +64,11 @@ pub struct Seats {
 }
 
 impl Seats {
+    /// A player's held direction will repeat.
+    pub fn repeating(&self) -> bool {
+        self.repeat.iter().flatten().any(Option::is_some)
+    }
+
     pub fn count(&self) -> usize {
         self.joined.iter().filter(|j| **j).count()
     }
@@ -335,7 +342,20 @@ impl Frontend {
         } else {
             held
         };
-        let fresh = if last == u32::MAX { 0 } else { held & !last };
+        let mut fresh = if last == u32::MAX { 0 } else { held & !last };
+        // A held direction repeats, as on the menus.
+        let now = crate::scroll::now();
+        for (i, bit) in (2..=5).enumerate() {
+            let next = &mut self.seats.repeat[slot][i];
+            if fresh & 1 << bit != 0 {
+                *next = Some(now + super::REPEAT_DELAY);
+            } else if held & 1 << bit == 0 || last == u32::MAX {
+                *next = None;
+            } else if next.is_some_and(|t| now >= t) {
+                fresh |= 1 << bit;
+                *next = Some(now + super::REPEAT_EVERY);
+            }
+        }
         if fresh == 0 {
             return None;
         }

@@ -2659,6 +2659,7 @@ impl Frontend {
     pub fn repeating(&self) -> bool {
         self.pressed.iter().any(|p| p.repeat_at.is_finite())
             || self.pad_repeat.iter().any(|t| t.is_finite())
+            || self.seats.repeating()
     }
 
     fn pane(&mut self, pane: Pane) -> &mut Scroller {
