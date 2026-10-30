@@ -162,6 +162,12 @@ pub struct Request {
     pub race_cpu: u32,
     #[serde(default)]
     pub race_difficulty: u32,
+    /// The race page's event type name ("Single Race", "Practice").
+    #[serde(default)]
+    pub race_event: String,
+    /// The event has no lap count (Practice: "Laps: N/A", `002f5e60`).
+    #[serde(default)]
+    pub race_practice: bool,
     #[serde(default)]
     pub race_available: bool,
     /// Selected original race course id (env/nat/sx); its name and preview
@@ -837,9 +843,22 @@ pub fn layout(request: Request) -> Result<Frame> {
             } else {
                 "Normal"
             };
+            let event = if request.race_event.is_empty() {
+                "Single Race"
+            } else {
+                request.race_event.as_str()
+            };
+            // TrackSelect's rows (`0026df60`): the course, Event Type, the
+            // difficulty and Laps ("N/A" for Practice).
+            let laps = if request.race_practice {
+                "N/A".to_string()
+            } else {
+                request.race_laps.max(1).to_string()
+            };
             let rows = [
                 (format!("Course: {name}"), "racetrack"),
-                (format!("Laps: {}", request.race_laps.max(1)), "racelaps"),
+                (format!("Event: {event}"), "raceevent"),
+                (format!("Laps: {laps}"), "racelaps"),
                 (format!("CPU riders: {}", request.race_cpu), "racecpu"),
                 (format!("Difficulty: {difficulty}"), "racedifficulty"),
                 ("Start Race".to_string(), "racestart"),
@@ -855,7 +874,7 @@ pub fn layout(request: Request) -> Result<Frame> {
                     (false, "racestart") => {
                         [preview[0], preview[1] + preview[3] + 8., preview[2], 54.]
                     }
-                    (false, _) => [24., 130. + i as f32 * 46., list_w.max(290.), 44.],
+                    (false, _) => [24., 124. + i as f32 * 44., list_w.max(290.), 42.],
                 };
                 f.choices.push((*action).into());
                 f.button(label, action, rect, request.selection % rows.len() == i);
@@ -2652,6 +2671,7 @@ mod tests {
             f.choices,
             [
                 "racetrack",
+                "raceevent",
                 "racelaps",
                 "racecpu",
                 "racedifficulty",

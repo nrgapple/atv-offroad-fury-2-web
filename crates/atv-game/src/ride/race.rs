@@ -62,6 +62,10 @@ pub struct Settings {
     /// their start slots on the room grid and the host's roster draw. The
     /// host races them; a guest's follow the host's relayed motion.
     pub room_cpus: Option<RoomCpus>,
+    /// The original Practice event type (research/RACING.md "Practice"):
+    /// unlimited timed laps with the CPU field, no finish, results or
+    /// records; Pause → Quit or Restart Race ends it.
+    pub practice: bool,
 }
 
 /// A room race's CPU field (see [`Settings::room_cpus`]).
@@ -89,6 +93,7 @@ impl Default for Settings {
             course: Default::default(),
             room: None,
             room_cpus: None,
+            practice: false,
         }
     }
 }
@@ -457,6 +462,9 @@ impl Ride {
             settings.difficulty,
             settings.seed ^ GRID_STREAM,
         )?;
+        if settings.practice {
+            race.set_practice();
+        }
         // Race creation 001f9690: difficulty plus the EATDIRT/BRINGIT flags.
         let options = Options {
             aggressive: settings.aggressive,

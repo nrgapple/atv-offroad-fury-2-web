@@ -233,7 +233,7 @@ try {
     f = await front(page);
     // The rows column: every setup row reachable (on screen or scrollable).
     const rows = hit(f, ROWS);
-    for (const action of ['racetrack', 'racelaps', 'racecpu', 'racedifficulty']) {
+    for (const action of ['racetrack', 'raceevent', 'racelaps', 'racecpu', 'racedifficulty']) {
       const r = hit(f, ROW + f.choices.indexOf(action));
       assert.ok(r, `${name}: ${action} row`);
       if (rows && !inside(r, viewport)) assert.ok(f.kinetic.rows[1] > 0, `${name}: ${action} scrolls into view`);

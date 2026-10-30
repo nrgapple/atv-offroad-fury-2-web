@@ -121,6 +121,7 @@ pub mod race;
 pub mod race_ai;
 pub mod race_crowd;
 pub mod race_director;
+pub mod race_event;
 pub mod race_fireworks;
 pub mod race_gate;
 pub mod race_hud;
