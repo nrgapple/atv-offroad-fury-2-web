@@ -73,6 +73,16 @@ impl Seats {
         self.joined.iter().filter(|j| **j).count()
     }
 
+    /// The most players the held event seats: a Duel two (USA manual pp.
+    /// 16-17, research/RACING.md "Duel event type"), the others four.
+    pub fn limit(&self) -> usize {
+        if matches!(self.pending, Some(Event::Race { duel: true, .. })) {
+            atv_core::race_event::EventType::Duel.max_players()
+        } else {
+            4
+        }
+    }
+
     /// `0027e230`: every joined player ready, player 1 among them, and at
     /// least two seated.
     pub fn all_ready(&self) -> bool {
@@ -103,13 +113,14 @@ impl Frontend {
         if std::mem::take(&mut self.seats.release) || !self.split || !split_event(&event) {
             return Some(event);
         }
-        let players = usize::from(self.split_players.clamp(2, 4));
-        self.seats = Seats {
-            joined: std::array::from_fn(|i| i < players),
+        let mut seats = Seats {
             held: [u32::MAX; 4],
             pending: Some(event),
             ..Seats::default()
         };
+        let players = usize::from(self.split_players.clamp(2, 4)).min(seats.limit());
+        seats.joined = std::array::from_fn(|i| i < players);
+        self.seats = seats;
         self.show("splitseats", view);
         None
     }
@@ -135,6 +146,10 @@ impl Frontend {
         for i in 0..4 {
             let n = i + 1;
             if !s.joined[i] {
+                // A full Duel takes no more players.
+                if s.count() >= s.limit() {
+                    continue;
+                }
                 rows.push((
                     format!("seat{n}join"),
                     format!("Player {n}: Press START to Join"),
@@ -227,6 +242,9 @@ impl Frontend {
     /// START on a seat: join it, or toggle ready (`0027e780` / `0027eb70`).
     fn seat_start(&mut self, seat: usize) {
         if !self.seats.joined[seat] {
+            if self.seats.count() >= self.seats.limit() {
+                return;
+            }
             self.seats.joined[seat] = true;
             self.seats.ready[seat] = false;
         } else {
@@ -410,5 +428,27 @@ mod tests {
             ..Seats::default()
         };
         assert!(!alone.all_ready());
+    }
+
+    #[test]
+    fn a_duel_seats_two_players() {
+        let duel = Event::Race {
+            environment: "sx01".into(),
+            quad: 1,
+            rider: 0,
+            laps: 3,
+            cpu: 0,
+            difficulty: 1,
+            cheats: (false, false),
+            championship: None,
+            practice: false,
+            duel: true,
+        };
+        let s = Seats {
+            pending: Some(duel),
+            ..Seats::default()
+        };
+        assert_eq!(s.limit(), 2);
+        assert_eq!(Seats::default().limit(), 4);
     }
 }

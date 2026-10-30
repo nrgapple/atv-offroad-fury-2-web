@@ -66,6 +66,12 @@ pub struct Settings {
     /// unlimited timed laps with the CPU field, no finish, results or
     /// records; Pause → Quit or Restart Race ends it.
     pub practice: bool,
+    /// The original Duel event type (research/RACING.md "Duel event
+    /// type"): two split-screen humans and no CPUs (`0021d9f0`; the
+    /// launcher passes `cpu: 0`), the Laps row's count, the Single Race
+    /// finish and results (`001f1990`), no Final Lap sign (`001e9a00`) and
+    /// no Profile Points.
+    pub duel: bool,
 }
 
 /// A room race's CPU field (see [`Settings::room_cpus`]).
@@ -94,6 +100,7 @@ impl Default for Settings {
             room: None,
             room_cpus: None,
             practice: false,
+            duel: false,
         }
     }
 }
@@ -1228,12 +1235,15 @@ impl Ride {
         {
             room_standings(&mut frame, rows);
         }
+        frame.duel = state.settings.duel;
         frame.hud = Some(state.hud.step(
             STEP,
             &race_hud::Input {
                 racing: frame.phase == "racing",
                 finished: frame.phase == "finished",
                 laps: frame.laps,
+                // "Final Lap" is Single Race's alone (`001e9a00`: mode 0).
+                final_lap_sign: !state.settings.duel,
                 lap_times: &frame.lap_times,
                 best_lap: frame.best_lap,
                 place: state.split.place.unwrap_or(frame.position),

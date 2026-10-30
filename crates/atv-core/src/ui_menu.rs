@@ -168,6 +168,9 @@ pub struct Request {
     /// The event has no lap count (Practice: "Laps: N/A", `002f5e60`).
     #[serde(default)]
     pub race_practice: bool,
+    /// The event races no CPUs (Duel: "CPU riders: N/A", `0021d9f0`).
+    #[serde(default)]
+    pub race_no_cpus: bool,
     #[serde(default)]
     pub race_available: bool,
     /// Selected original race course id (env/nat/sx); its name and preview
@@ -862,7 +865,14 @@ pub fn layout(request: Request) -> Result<Frame> {
                 (format!("Course: {name}"), "racetrack"),
                 (format!("Event: {event}"), "raceevent"),
                 (format!("Laps: {laps}"), "racelaps"),
-                (format!("CPU riders: {}", request.race_cpu), "racecpu"),
+                (
+                    if request.race_no_cpus {
+                        "CPU riders: N/A".to_string()
+                    } else {
+                        format!("CPU riders: {}", request.race_cpu)
+                    },
+                    "racecpu",
+                ),
                 (format!("Difficulty: {difficulty}"), "racedifficulty"),
                 ("Start Race".to_string(), "racestart"),
                 ("Copy ride link".to_string(), "copyride"),
@@ -2456,6 +2466,7 @@ mod tests {
             race_difficulty: 1,
             race_event: String::new(),
             race_practice: false,
+            race_no_cpus: false,
             race_available: false,
             race_course: "env01".into(),
             race_active: false,

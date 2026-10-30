@@ -1506,3 +1506,72 @@ Practice as for Single Race. The original's L1+R1 Practice reset is not
 separately gated (the port's reset works in every ride). Copy ride link
 does not carry the event type yet. The original's record writes outside
 race over (if any) were not traced; the port keeps none.
+
+## Duel event type — 2026-10-30
+
+Exact-build evidence (USA v2.00 `SCUS_972.11`, private exports; bounded
+reading, no runtime traces):
+
+- **Offer.** The cycler `0026d010` (and `0026a720` on page entry) skips
+  Duel (0x433c60) unless profile +0x1a08 is set; Multiplayer → Split
+  Screen sets it (`00264dc0` case 2: 1; Single Player and the other
+  branches clear it). Online (+0x7d8) loops past it. No player-count test
+  was found in the cycler or the MultiATVRiderSelect handlers
+  (`0027a0a0`, `0027d300`, `0027e780`); the manual (pp. 16-17) says Duel
+  is two players and excludes CPU riders.
+- **Start and laps.** `0026b7a0` writes mode 5 to profile +0 and the Laps
+  row's count (`002f5e60`: event type 5 keeps the row's value, unlike 1, 2
+  and 6) to +0x578, so a Duel uses the Laps row like Single Race. The
+  debug boot option string "duel" (0x42bed0, `0021add0`) also selects
+  mode 5.
+- **No CPUs.** `0021d9f0` gives modes 2 and 5 no CPUs: the field is the
+  humans alone.
+- **HUD.** The LAP overlay `002db860` prints "%d / %d" (lap clamped to the
+  count) for modes 0 and 5. The lap event `001e9a00` shows "Lap Time %s"
+  every lap but the Final Lap sign only in mode 0, so a Duel has none.
+  The other session-mode tests found in the race and HUD code
+  (`001e5260`, `001e4c90`, `001f6c60`, `002e18b0`, `002e85c0`) single out
+  mode 2 (Lap Attack) only; none singles out mode 5 (assumption: a Duel
+  shows PLACE like a race).
+- **Finish and winner.** The race-over handler `001f1990` runs for modes 0
+  and 5 alike: it picks the rider with the lowest place below 6 (the
+  winner), finishes the riders, and calls the session's results method
+  with that index. The rider-finish handler `001f1e30` (both modes) offers
+  the Hall of Fame (`003325d0`) at full length (3 laps for race kinds 0/1,
+  5 otherwise) for each finishing human, but personal records
+  (`00324b40`) and the profile stats and points (`00323440`,
+  `00322080`) only when the human count (+0x10) is 1, so a Duel
+  (two humans) earns no points and keeps no personal records.
+- **Pause.** `002de690` picks Restart Race by track kind, so a Duel's
+  Pause matches a race's.
+
+Not found: any Duel-specific results title or winner text (the executable
+has no "wins"/"winner" strings; "Duel" appears only as the type name and
+the debug option), so the port keeps the race results panel. The results
+method behind `001f1990`'s vtable call was not traced.
+
+What the port does (`atv_core::race_event`, `race::Settings::duel`):
+
+- Split Screen → Race shows **Event: Single Race / Practice / Duel**; Single
+  Player never offers Duel, and a saved Duel reads Single Race there
+  (`Frontend::race_event_type`). A Duel's row reads **CPU riders: N/A**
+  and does not step; Laps steps as in Single Race.
+- Start Race waits on Players, which seats at most two (port reading of
+  the manual: the Split Screen page's 3 or 4 players open two seats, and a
+  third pad cannot join).
+- The ride races the two players with no CPUs (`cpu: 0`, `?race=1&
+  event=duel&split=..` for direct links), the Laps row's count, PLACE and
+  LAP "n / N" overlays, the Lap Time infotext and no Final Lap sign. Both
+  players' finish ends the race (the split race rule); the results list
+  the two players. No Profile Points or personal records are credited
+  (the Points column reads "-"); a broken Hall of Fame record still opens
+  the name entry (player 1's, as in split races).
+- `#ui-state` `ride.duel` reports it; `tools/test_engine_race_duel.mjs`
+  picks Duel in split screen, seats two of three, races two Supercross
+  laps with the race path driver and checks the results.
+
+Assumptions and gaps: the two-player limit comes from the manual, not an
+executable check. Whether the original's results page differs for a Duel
+was not traced. Only player 1's Hall of Fame records are offered (the port
+has no per-player Hall of Fame name entry). The page heading stays the
+port's Race page title. Copy ride link does not carry the event type.

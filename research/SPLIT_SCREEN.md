@@ -256,8 +256,8 @@ Exact-build evidence (USA v2.00 `SCUS_972.11` and `pause/Overlays.pb`):
 
 - **Which modes.** The manual (pp. 16-17) offers two- to four-player
   split screen for Race, Freestyle and Games; three and four players
-  exclude CPU riders, and Duel is two players only (the port has no split
-  Duel). The executable's controller alerts name the Multitap ("Controller
+  exclude CPU riders, and Duel is two players only (the port's Duel seats
+  two: research/RACING.md "Duel event type"). The executable's controller alerts name the Multitap ("Controller
   %d or the Multitap (for PlayStation 2) ... has become unplugged") and the
   lobby strings count "(%d/4 players)".
 - **Cameras.** `003029a0`'s layout 3 loads the quarter-screen presets
@@ -595,11 +595,12 @@ What the port does (`atv_core::freestyle::split::SplitRun`):
   player took each target, scores, outcomes, places and winners;
   `.summary` the results text.
 
-Not built, with reasons: the original's split **Race event types** Duel
-(two players, no CPUs) and Lap Attack (ghost): the port has no
-single-player Duel/Lap Attack either, so they belong with that work.
-Practice is built for one player and split screen (research/RACING.md
-"Practice event type").
+Not built, with reasons: the original's split **Race event type** Lap
+Attack (ghost): the port has no single-player Lap Attack either, so it
+belongs with that work. Practice is built for one player and split screen
+(research/RACING.md "Practice event type"). **Duel** is built for split
+screen: two seats, no CPUs, no Final Lap sign, no Profile Points
+(research/RACING.md "Duel event type").
 Championships stay single-player, as in the original.
 
 ## Split audio (2026-10-29)
@@ -710,8 +711,9 @@ lighter presets.
   panel art; the Force Start trigger.
 - Hall of Fame and profile credit for players 2-4 (needs a product
   decision: whose profile).
-- The original's split Race event types Duel and Lap Attack (Practice
-  is built: research/RACING.md "Practice event type").
+- The original's split Race event type Lap Attack (Practice and Duel
+  are built: research/RACING.md "Practice event type", "Duel event
+  type").
   Championships are single-player in the original ("Split objectives
   and championships").
 - Online parity: every split-screen mode in relay rooms up to the room's

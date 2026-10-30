@@ -121,6 +121,9 @@ pub enum Event {
         championship: Option<(usize, bool)>,
         /// The Practice event type (research/RACING.md "Practice").
         practice: bool,
+        /// The Duel event type (research/RACING.md "Duel event type"): two
+        /// split-screen players, no CPUs.
+        duel: bool,
     },
     /// Single Race → Copy ride link: the race setup's link.
     CopyRaceLink,
@@ -800,8 +803,9 @@ impl Frontend {
             "race_laps": self.race.laps,
             "race_cpu": self.race.cpu,
             "race_difficulty": self.race.difficulty,
-            "race_event": self.race.event.name(),
-            "race_practice": !self.race.event.has_laps(),
+            "race_event": self.race_event_type().name(),
+            "race_practice": !self.race_event_type().has_laps(),
+            "race_no_cpus": !self.race_event_type().has_cpus(),
             "gear_rows": if page == "gear" { self.gear_rows() } else { Vec::new() },
             "menu_logo": true,
             "menu_atv": true,
@@ -1222,10 +1226,13 @@ impl Frontend {
             "raceevent" => {
                 // The Track Select type cycler (`0026d010`).
                 let offered = self.race_events();
-                self.race.event = atv_core::race_event::step(self.race.event, direction, &offered);
+                self.race.event =
+                    atv_core::race_event::step(self.race_event_type(), direction, &offered);
             }
             // Practice has no lap count ("N/A", `002f5e60`).
-            "racelaps" if !self.race.event.has_laps() => {}
+            "racelaps" if !self.race_event_type().has_laps() => {}
+            // A Duel races no CPUs (`0021d9f0`): the row reads N/A.
+            "racecpu" if !self.race_event_type().has_cpus() => {}
             "racelaps" => {
                 self.race.laps = ((self.race.laps as i32 - 1 + direction).rem_euclid(5) + 1) as u32
             }
@@ -1267,12 +1274,30 @@ impl Frontend {
             quad: self.quad_id,
             rider: self.rider_id,
             laps: self.race.laps,
-            cpu: self.race.cpu,
+            // Duel races no CPUs (`0021d9f0`).
+            cpu: if self.race_event_type().has_cpus() {
+                self.race.cpu
+            } else {
+                0
+            },
             difficulty: self.race.difficulty,
             cheats: self.race.cheats,
             championship: None,
-            practice: self.race.event == atv_core::race_event::EventType::Practice,
+            practice: self.race_event_type() == atv_core::race_event::EventType::Practice,
+            duel: self.race_event_type() == atv_core::race_event::EventType::Duel,
         })
+    }
+
+    /// The race setup's event type where this mode offers it, else Single
+    /// Race (`0026a720` steps past Duel on page entry when not in split
+    /// screen).
+    pub fn race_event_type(&self) -> atv_core::race_event::EventType {
+        let event = self.race.event;
+        if self.race_events().contains(&event) {
+            event
+        } else {
+            Default::default()
+        }
     }
 
     /// The race page's event types: every race course's Tracks.dat mask
@@ -1670,6 +1695,7 @@ impl Frontend {
             cheats: (false, false),
             championship: Some((index, expert)),
             practice: false,
+            duel: false,
         })
     }
 
@@ -4080,6 +4106,7 @@ mod tests {
                 cheats: (false, false),
                 championship: Some((0, false)),
                 practice: false,
+                duel: false,
             })
         );
         // Amateur Nationals: env05, five laps.
@@ -4124,12 +4151,13 @@ mod tests {
         let mut front = Frontend::new(tracks(), &settings, true);
         front.set_race_courses(vec!["env01".into()], &view);
         front.split = true;
-        // Duel is allowed in split screen but not built yet (#451).
+        // Split screen adds Duel (`0026d010`).
         assert_eq!(
             front.race_events(),
             [
                 atv_core::race_event::EventType::SingleRace,
-                atv_core::race_event::EventType::Practice
+                atv_core::race_event::EventType::Practice,
+                atv_core::race_event::EventType::Duel
             ]
         );
         front.show("race", &view);
@@ -4150,6 +4178,70 @@ mod tests {
             RaceSetup::from_value(&saved["race"]).event,
             atv_core::race_event::EventType::Practice
         );
+    }
+
+    #[test]
+    fn split_screen_duel_seats_two_players_without_cpus() {
+        use atv_core::race_event::EventType;
+        let view = view(1280., 720.);
+        let mut settings = Settings::memory();
+        let mut front = Frontend::new(tracks(), &settings, true);
+        front.set_race_courses(vec!["env01".into()], &view);
+        front.split = true;
+        front.split_players = 4;
+        front.show("race", &view);
+        let at = |front: &Frontend, action: &str| {
+            front
+                .choices()
+                .iter()
+                .position(|(a, _)| a == action)
+                .unwrap()
+        };
+        front.selection = at(&front, "raceevent");
+        front.key("ArrowLeft", &view, &mut settings);
+        assert_eq!(front.race.event, EventType::Duel);
+        assert!(front.choices()[front.selection].1.contains("Duel"));
+        // No CPUs: the row reads N/A and does not step; Laps still steps.
+        let cpu = at(&front, "racecpu");
+        assert!(front.choices()[cpu].1.ends_with("N/A"));
+        front.selection = cpu;
+        front.key("ArrowRight", &view, &mut settings);
+        assert_eq!(front.race.cpu, 3);
+        front.selection = at(&front, "racelaps");
+        front.key("ArrowRight", &view, &mut settings);
+        assert_eq!(front.race.laps, 4);
+        // Start Race waits on Players with two seats, however many the
+        // Split Screen page counts; a third pad cannot join.
+        front.selection = at(&front, "racestart");
+        assert_eq!(front.key("Enter", &view, &mut settings), None);
+        assert_eq!(front.page, "splitseats");
+        assert_eq!(front.seats.count(), 2);
+        assert!(!front.choices().iter().any(|(a, _)| a.ends_with("join")));
+        let idle = [0f32; 17];
+        let mut start = idle;
+        start[9] = 1.;
+        front.seat_pad(2, Some((&idle, &[0.; 4])), &view, &mut settings);
+        front.seat_pad(2, Some((&start, &[0.; 4])), &view, &mut settings);
+        assert!(!front.seats.joined[2]);
+        front.selection = 0;
+        let event = front.key("Enter", &view, &mut settings);
+        assert!(
+            matches!(
+                event,
+                Some(Event::Race {
+                    duel: true,
+                    practice: false,
+                    laps: 4,
+                    ..
+                })
+            ),
+            "{event:?}"
+        );
+        assert_eq!(front.split_launch().0, 2);
+        // Single player never offers Duel: the saved Duel reads Single Race.
+        front.split = false;
+        assert_eq!(front.race_event_type(), EventType::SingleRace);
+        assert!(!front.race_events().contains(&EventType::Duel));
     }
 
     #[test]
@@ -4489,6 +4581,7 @@ mod tests {
                 cheats: (false, false),
                 championship: None,
                 practice: false,
+                duel: false,
             })
         );
         let saved: Value = serde_json::from_str(&settings.get(SELECTION_KEY).unwrap()).unwrap();

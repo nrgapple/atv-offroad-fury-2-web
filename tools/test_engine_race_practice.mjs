@@ -50,7 +50,7 @@ try {
   await pick(page, 'race'); await key(page, 'Enter'); await onPage(page, 'race');
   let f = await front(page);
   assert.equal(label(f, 'raceevent'), 'Event: Single Race');
-  // The type cycler: Single Race ↔ Practice (Duel and Lap Attack are not built).
+  // The type cycler: Single Race ↔ Practice (Duel is split screen only; Lap Attack is not built).
   await pick(page, 'raceevent');
   await key(page, 'ArrowRight');
   f = await front(page);
