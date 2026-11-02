@@ -1,0 +1,14 @@
+{
+  "id": "lap-attack-the-original-solo-race-type-100edc657751439182476bdc44ef50ce",
+  "timestamp": "2026-11-02T12:22:53.515301+00:00",
+  "recorded_at": "2026-11-02T13:34:13.159860+00:00",
+  "kind": "build",
+  "title": "Lap Attack: the original solo race type",
+  "summary": "Lap Attack is now an Event row option on every race course, for one player and split screen. It has no CPUs, Laps and CPU riders read N/A, and there is no finish. Beating your best lap shows \"New Lap Attack Lap Set!\" (original 00216750). Ride links accept event=lapattack.",
+  "details": [
+    "Your best judged lap is recorded and replayed on later laps as a ghost, but the ghost is not drawn on track yet (#480). Evidence from the exact USA v2.00 build is in research/RACING.md under Lap Attack event type; for example the original ghost rider uses the same quad at opacity 0.4. PR #481 (part of #451), live at e59ee43. Verification: test_engine_race_lap_attack passes on the host and against furyremastered.com; the practice, duel, ride_link, race and menu_flows browser tests pass."
+  ],
+  "limitation": "Ghost is recorded but not drawn (#480). In split screen only player 1 records a ghost. The lap-time list is clipped at the right edge (#482).",
+  "image": "/devlog-images/lap-attack-the-original-solo-race-type-100edc657751439182476bdc44ef50ce.png",
+  "caption": "Lap 3 on Sausalito showing New Lap Attack Lap Set!; no ghost is drawn yet (#480)."
+}
