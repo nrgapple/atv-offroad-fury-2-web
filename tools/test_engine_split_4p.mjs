@@ -139,7 +139,8 @@ try {
       JSON.stringify(f.choices));
     await choose(page, 'splitplayers');
     f = (await read(page)).front;
-    assert.ok(f.choices.includes('split4quad') && f.choices.length === 16, JSON.stringify(f.choices));
+    // Race, Freestyle, Objectives, Games, Players, then four rows for each of P2-P4.
+    assert.ok(f.choices.includes('split4quad') && f.choices.includes('splitobjectives') && f.choices.length === 17, JSON.stringify(f.choices));
     assert.equal(await page.evaluate(() => localStorage.getItem('atv-split-players')), '4');
     // Player 4: the female rider.
     await choose(page, 'split4rider');
