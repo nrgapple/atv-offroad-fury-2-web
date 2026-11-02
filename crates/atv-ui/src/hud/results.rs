@@ -41,6 +41,9 @@ pub struct Fame {
     pub name: String,
     /// The menu the entry returns to (Race Results, or an objective's).
     pub then: Menu,
+    /// Split screen: the player (1-4) naming their records, after
+    /// "Congratulations" (Text4, the seat's name `002deb30`).
+    pub player: Option<u8>,
 }
 
 /// What the host runs for the player.
@@ -288,6 +291,12 @@ impl Results {
     /// The race set Hall of Fame records: the name entry comes first,
     /// starting on `name`.
     pub fn enter_fame(&mut self, broken: Vec<String>, name: &str) {
+        self.enter_player_fame(broken, name, None);
+    }
+
+    /// Split screen: player `player`'s (1-4) name entry; the players are
+    /// asked one after another (`00217e40`, `002c8630`).
+    pub fn enter_player_fame(&mut self, broken: Vec<String>, name: &str, player: Option<u8>) {
         if broken.is_empty() {
             return;
         }
@@ -299,6 +308,7 @@ impl Results {
             } else {
                 self.menu
             },
+            player,
         });
         self.menu = Menu::NameEntry;
         self.hidden = false;
@@ -663,6 +673,7 @@ pub fn element(view: &Viewport, state: &Results, summary: &str, fonts: &mut Font
         );
     }
     let width = 620f32.min(view.width - 32.);
+    let congratulations;
     let naming = state
         .fame
         .as_ref()
@@ -803,7 +814,10 @@ pub fn element(view: &Viewport, state: &Results, summary: &str, fonts: &mut Font
             ],
         )))
         .child(text(
-            if naming.is_some() {
+            if let Some(player) = naming.and_then(|f| f.player) {
+                congratulations = format!("Congratulations Player {player}");
+                congratulations.as_str()
+            } else if naming.is_some() {
                 "Congratulations"
             } else if let Some(title) = &state.game {
                 title.as_str()

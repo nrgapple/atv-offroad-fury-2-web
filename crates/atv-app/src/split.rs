@@ -392,6 +392,9 @@ impl Second {
         {
             state.autopilot_always = true;
         }
+        // The Hall of Fame hooks run for every human (`001f24b0`,
+        // `001f1e30`, `001f2610`, `001f22a0`); personal records need one.
+        crate::attach_records(&mut riding.ride, &venue.environment, usize::from(player) - 1);
         Ok(Self {
             player,
             layout,
@@ -715,6 +718,9 @@ pub fn merge_race(
         })
         .collect();
     let finished: Vec<bool> = others.iter().map(|o| o.phase == "finished").collect();
+    // Players 2-4's Hall of Fame runs, each under its own placeholder
+    // (`001f1e30`): player 1's results offer every human the name entry.
+    first.split_records = others.iter().filter_map(|o| o.records.clone()).collect();
     let mut merged = vec![false; others.len()];
     for (i, other) in others.iter().enumerate() {
         let Some(own) = other.standings.iter().find(|s| s.player) else {

@@ -1254,7 +1254,7 @@ async fn prepare(
             crashes.reset(&riding.ride)?;
             riding.crashes = Some(crashes);
         }
-        attach_records(&mut riding.ride, &venue.environment);
+        attach_records(&mut riding.ride, &venue.environment, 0);
         if let Some(script) = &script {
             // `?traceAll=1`: every step, for browser-vs-native parity.
             if trace_all() {
@@ -1612,8 +1612,19 @@ impl App {
                 self.menu_event(event);
                 return;
             }
+            // Split screen: the player naming their Hall of Fame records
+            // uses their own controller (`00217e40` gives the page that
+            // player's pad).
+            let fame_pad = overlay
+                .fame_seat()
+                .filter(|seat| split_on && *seat > 0)
+                .map(|seat| self.gamepad.sample_slot(seat));
+            let results_pad = match &fame_pad {
+                Some(own) => own.as_ref(),
+                None => pad.as_ref(),
+            };
             if !riding.menu_open
-                && let Some(action) = overlay.results_pad(pad.as_ref())
+                && let Some(action) = overlay.results_pad(results_pad)
             {
                 self.act(action);
                 return;
@@ -3185,7 +3196,7 @@ impl App {
                 // The Hall of Fame name entry: records broken and the name.
                 "fame": self.overlay.as_ref().filter(|o| o.results.shown)
                     .and_then(|o| o.results.fame.as_ref())
-                    .map(|f| serde_json::json!({"broken": f.broken, "name": f.name})),
+                    .map(|f| serde_json::json!({"broken": f.broken, "name": f.name, "player": f.player})),
             });
             state["ride"]["practice"] = practice.into();
             state["ride"]["duel"] = duel.into();
@@ -8781,7 +8792,10 @@ pub(crate) fn url_flag(pair: &str) -> bool {
 /// Fame and, with a profile loaded, the course record its "New …" messages
 /// compare against. Attached before the first step (scripted replays run
 /// the whole race during load).
-fn attach_records(ride: &mut atv_game::ride::Ride, course: &str) {
+/// `player` is the human's index (0-3): split players 2-4 keep their records
+/// under their own placeholder and get no personal records (`00324b40` and
+/// the other personal inserts need a lone human, +0x10 = 1).
+pub(crate) fn attach_records(ride: &mut atv_game::ride::Ride, course: &str, player: usize) {
     use atv_ui::settings::{Settings, load_book, load_hall_of_fame};
     let quad = ride.selection().quad;
     let Some(race) = ride.race_mut() else {
@@ -8799,12 +8813,15 @@ fn attach_records(ride: &mut atv_game::ride::Ride, course: &str) {
         return;
     }
     let hall = load_hall_of_fame(&saved);
-    let personal = load_book(&saved).current_profile().map(|p| {
-        p.courses
-            .get(course)
-            .map(|c| c.personal())
-            .unwrap_or_default()
-    });
+    let personal = load_book(&saved)
+        .current_profile()
+        .filter(|_| player == 0)
+        .map(|p| {
+            p.courses
+                .get(course)
+                .map(|c| c.personal())
+                .unwrap_or_default()
+        });
     let mut records = atv_core::hall_of_fame::RecordWatch::new(
         course,
         settings.difficulty == 2,
@@ -8812,7 +8829,8 @@ fn attach_records(ride: &mut atv_game::ride::Ride, course: &str) {
         full,
         Some(&hall),
         personal,
-    );
+    )
+    .for_player(player);
     records.units = atv_ui::settings::units(&saved);
     race.set_records(records);
 }
