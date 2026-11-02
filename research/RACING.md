@@ -1564,16 +1564,16 @@ What the port does (`atv_core::race_event`, `race::Settings::duel`):
   LAP "n / N" overlays, the Lap Time infotext and no Final Lap sign. Both
   players' finish ends the race (the split race rule); the results list
   the two players. No Profile Points or personal records are credited
-  (the Points column reads "-"); a broken Hall of Fame record still opens
-  the name entry (player 1's, as in split races).
+  (the Points column reads "-"); each player holding a broken Hall of Fame
+  record gets the name entry in turn (research/SPLIT_SCREEN.md "Hall of
+  Fame for every human").
 - `#ui-state` `ride.duel` reports it; `tools/test_engine_race_duel.mjs`
   picks Duel in split screen, seats two of three, races two Supercross
   laps with the race path driver and checks the results.
 
 Assumptions and gaps: the two-player limit comes from the manual, not an
 executable check. Whether the original's results page differs for a Duel
-was not traced. Only player 1's Hall of Fame records are offered (the port
-has no per-player Hall of Fame name entry). The page heading stays the
+was not traced. The page heading stays the
 port's Race page title. Copy ride link does not carry the event type.
 
 ## Lap Attack event type — 2026-11-02
