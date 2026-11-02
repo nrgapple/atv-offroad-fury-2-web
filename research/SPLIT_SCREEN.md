@@ -758,7 +758,7 @@ the functions named; bounded reading, no runtime traces):
   MultiATVRiderSelect seat's profile name, `0027e360`).
 - **Controller.** `00217e40` also stores the index at page +0x88 (0 for the
   online host's own index). `002c8630`'s accept maps the pressing pad
-  (`param_3` +8) to a seat through the active-seat flags (+0x554) and, when
+  (the input event's +8) to a seat through the active-seat flags (+0x554) and, when
   that seat's profile is still named "PLAYER%d" (`0x4386f0`), renames the
   profile to the entered name (`0036f6b0`, `00370160`).
 - **Which events.** `001f1e30` runs for session modes 0 (Single Race) and 5
