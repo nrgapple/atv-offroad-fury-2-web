@@ -7,7 +7,8 @@
 // (`autopilot=1`) rides both humans through one lap (`raceLaps=1`) and both
 // pages show the same Race Results with every CPU ranked among the riders.
 // The guest (`audioDiagnostics=1`) also hears the host's CPUs' engines from
-// their relayed motion (research/AUDIO.md "CPU riders").
+// their relayed motion (research/AUDIO.md "CPU riders"), and its race HUD's
+// PLACE field counts them (five riders) with its place its standings row.
 //   PLAYWRIGHT_MODULE=... ATV_TEST_URL=http://127.0.0.1:4187 node tools/test_engine_multiplayer_race_cpus.mjs
 // ATV_GAMES_SHOTS=<dir> saves captures.
 import assert from 'node:assert/strict';
@@ -104,8 +105,22 @@ try {
   g = await until(guest, r => r.progress.filter(p => p.peer >= 4).length === 3, 60000, 'guest has CPU progress');
   await shot(guest, 'mp-race-cpus-guest-racing');
   await shot(host, 'mp-race-cpus-host-racing');
-  const hud = (await ui(guest)).ride?.race;
-  console.log('guest race HUD', JSON.stringify({ position: hud?.position, field: hud?.field }));
+  // The guest's race HUD (the record's `race`, not `ride.race`): PLACE
+  // counts the CPUs in its field, and its own place is its row in the
+  // room standings it draws.
+  let hud;
+  for (const deadline = Date.now() + 60000; ;) {
+    hud = (await ui(guest)).race;
+    if (hud?.field === 5 && hud.standings?.length === 5) break;
+    if (Date.now() > deadline) throw new Error(`guest HUD field: ${JSON.stringify(hud)}`);
+    await guest.waitForTimeout(200);
+  }
+  const mine = hud.standings.filter(s => s.player);
+  assert.equal(mine.length, 1, `one player row: ${JSON.stringify(hud.standings)}`);
+  assert.equal(hud.position, mine[0].position, `HUD place is the player's standing: ${JSON.stringify(hud)}`);
+  assert.ok(hud.position >= 1 && hud.position <= 5, `place within the field: ${hud.position}`);
+  assert.deepEqual(hud.standings.map(s => s.position), [1, 2, 3, 4, 5], 'standings in place order');
+  console.log('guest race HUD', JSON.stringify({ position: hud.position, field: hud.field, standings: hud.standings.map(s => s.name) }));
   // Results: two humans and three CPUs in one agreed order.
   for (const p of [host, guest]) {
     await until(p, r => r.phase === 3 && r.results.length === 5, 600000, 'results');
@@ -123,6 +138,8 @@ try {
   // Finishers rank by time, then the rest.
   const times = h.results.map(r => r.time ?? Infinity);
   assert.deepEqual([...times].sort((a, b) => a - b), times, `ordered: ${h.summary}`);
+  // The HUD's riders are the room's: both humans and the three CPUs.
+  assert.deepEqual([...hud.standings.map(s => s.name)].sort(), g.results.map(r => r.name).sort(), 'HUD standings name the room riders and CPUs');
   await shot(guest, 'mp-race-cpus-guest-results');
   assertNoErrors(errors);
   console.log(`Multiplayer race with CPUs: five-rider grid, guest draws moving CPUs, agreed results (${h.summary}) verified`);
