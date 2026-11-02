@@ -301,6 +301,9 @@ struct ObjectiveSession {
     /// Split screen: one objective for every seated player
     /// (`atv_core::freestyle::split`); `run` stays empty.
     split: Option<atv_core::freestyle::split::SplitRun>,
+    /// Split screen: each player's Hall of Fame records (`002fce00`,
+    /// `002fd7c0`, `002fd350` insert every human's under "@%d").
+    split_fame: Vec<atv_core::hall_of_fame::FreestyleWatch>,
 }
 
 /// A target hit's sound.
@@ -443,13 +446,15 @@ impl ObjectiveSession {
 
     /// Split screen: advances the shared objective with every player's
     /// ride (player 1's clock). Returns the results summary once, when the
-    /// run ends. Nothing is saved (`002fce00` saves only one human's run).
+    /// run ends, with every player's Hall of Fame records. Completion bits,
+    /// Profile Points and personal records are not saved (`002fce00` keeps
+    /// them for one human); the Hall of Fame takes every human's.
     fn update_split(
         &mut self,
         ride: &mut atv_game::ride::Ride,
         others: &mut [&mut atv_game::ride::Ride],
         venue: Option<&atv_game::venue::Objective>,
-    ) -> Option<String> {
+    ) -> Option<(String, Vec<atv_core::hall_of_fame::FreestyleWatch>)> {
         use atv_core::freestyle::{course_objectives, split::SplitRun};
         let players = others.len() + 1;
         if self.split.is_none() {
@@ -480,6 +485,28 @@ impl ObjectiveSession {
                 .chain(others.iter().map(|r| r.committed_points()))
                 .collect();
             let mut run = SplitRun::new(objective, self.objective, &committed);
+            // Every human's records under its own placeholder; no personal
+            // records with more than one human (+0x10 = 1 gates them).
+            let saved = atv_ui::settings::Settings::load();
+            let hall = atv_ui::settings::load_hall_of_fame(&saved);
+            let units = atv_ui::settings::units(&saved);
+            let series = atv_core::freestyle::SERIES.get(self.series)?;
+            self.split_fame = std::iter::once(&*ride)
+                .chain(others.iter().map(|r| &**r))
+                .enumerate()
+                .map(|(p, r)| {
+                    let mut w = atv_core::hall_of_fame::FreestyleWatch::new(
+                        series.key,
+                        &self.course,
+                        r.selection().quad,
+                        Some(&hall),
+                        None,
+                    )
+                    .for_player(p);
+                    w.units = units;
+                    w
+                })
+                .collect();
             if url_flag("objectiveTest=timeout") {
                 run.time_left = 5.;
             }
@@ -505,9 +532,17 @@ impl ObjectiveSession {
             for (success, ids) in r.take_chains() {
                 run.chain(p, success, &ids);
             }
-            // Players 2-4 keep no records (needs a product decision);
-            // split screen saves none of player 1's either (`002fce00`).
-            r.take_free_records();
+            // `002fd7c0` / `002fd350`: each human's jumps and chains.
+            let (jumps, chains) = r.take_free_records();
+            if let Some(fame) = self.split_fame.get_mut(p).filter(|_| !run.finished()) {
+                for feet in jumps {
+                    fame.jump(feet);
+                }
+                for (success, count, sum) in chains {
+                    fame.chain(success, count, sum);
+                }
+                run.runs[p].messages.extend(fame.take_messages());
+            }
             if !self.targets.is_empty() && !run.finished() {
                 for target in run.touch_bodies(p, &self.targets, &r.trigger_bodies()) {
                     self.sounds.push(TARGET_SOUND);
@@ -521,7 +556,15 @@ impl ObjectiveSession {
             return None;
         }
         self.recorded = true;
-        Some(split_objective_summary(run))
+        // `002fce00`: each player's objective score, in player order.
+        let mut fame = std::mem::take(&mut self.split_fame);
+        for (p, watch) in fame.iter_mut().enumerate() {
+            if let Some(r) = run.runs.get_mut(p) {
+                watch.finish(r.score);
+                r.messages.extend(watch.take_messages());
+            }
+        }
+        Some((split_objective_summary(run), fame))
     }
 
     /// Test tooling (`objectiveTest=targets`) in split screen: the players
@@ -750,7 +793,7 @@ fn split_objective_summary(run: &atv_core::freestyle::split::SplitRun) -> String
         })
         .collect();
     format!(
-        "{headline} {} · {} · Split screen results are not saved.",
+        "{headline} {} · {} · Split screen saves no objectives or Profile Points.",
         run.objective().description,
         standings.join(" · ")
     )
@@ -2188,13 +2231,14 @@ impl App {
                 if !ready.split.is_empty() {
                     let mut others: Vec<_> =
                         ready.split.iter_mut().map(|s| &mut s.riding.ride).collect();
-                    if let Some(summary) = session.update_split(
+                    if let Some((summary, fame)) = session.update_split(
                         &mut riding.ride,
                         &mut others,
                         ready.venue.objective.as_ref(),
                     ) && let Some(overlay) = &mut self.overlay
                     {
                         overlay.results.show_objective(summary);
+                        overlay.offer_split_objective_fame(&fame);
                     }
                 } else if let Some((summary, fame)) =
                     session.update(&mut riding.ride, ready.venue.objective.as_ref(), &player)
@@ -7027,6 +7071,7 @@ impl App {
                     visit_clock: 0,
                     championship,
                     split: None,
+                    split_fame: Vec::new(),
                 });
                 self.start_ride(environment, quad, rider, None, None);
             }

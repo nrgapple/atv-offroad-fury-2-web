@@ -1386,7 +1386,7 @@ impl Frontend {
             "games" => self.games_line(),
             "objectives" => self.objectives_line(),
             "objective-courses" if self.split => Some(
-                "Ride an objective together: shared targets and clock; split screen results are not saved."
+                "Ride an objective together: shared targets and clock; only Hall of Fame records are saved."
                     .into(),
             ),
             "objective-courses" => {

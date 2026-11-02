@@ -1588,10 +1588,32 @@ impl Overlay {
             .chain(&frame.split_records)
             .cloned()
             .collect();
+        let hall = atv_ui::settings::load_hall_of_fame(&self.settings);
+        if let Some(fame) = atv_core::hall_of_fame::SplitFame::new(&hall, &watches) {
+            self.open_split_fame(fame);
+        }
+    }
+
+    /// A split Freestyle objective (`002fce00` → `002fdc00` → `00217e40`):
+    /// every human's objective score and Freestyle records enter the
+    /// course's record under their placeholders and each holder names
+    /// theirs in turn, as after a split race.
+    pub fn offer_split_objective_fame(
+        &mut self,
+        watches: &[atv_core::hall_of_fame::FreestyleWatch],
+    ) {
+        self.fame_watch = None;
+        self.fame_split = None;
+        let hall = atv_ui::settings::load_hall_of_fame(&self.settings);
+        if let Some(fame) = atv_core::hall_of_fame::SplitFame::freestyle(&hall, watches) {
+            self.open_split_fame(fame);
+        }
+    }
+
+    /// Stores a split table under default names and opens the first
+    /// holder's name entry.
+    fn open_split_fame(&mut self, mut fame: atv_core::hall_of_fame::SplitFame) {
         let mut hall = atv_ui::settings::load_hall_of_fame(&self.settings);
-        let Some(mut fame) = atv_core::hall_of_fame::SplitFame::new(&hall, &watches) else {
-            return;
-        };
         let queue: std::collections::VecDeque<_> = fame.players().into();
         if queue.is_empty() {
             return;

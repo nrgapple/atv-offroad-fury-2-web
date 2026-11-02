@@ -153,7 +153,7 @@ try {
     o = await objective(page);
     assert.match(o.summary, /^(Congratulations, Player [12]!|Tie: Player 1 and Player 2!) Hit Every Green Target/);
     assert.match(o.summary, /1st Player [12] \d+ targets?, [\d,]+ pts · 2nd Player [12]/);
-    assert.match(o.summary, /not saved/);
+    assert.match(o.summary, /saves no objectives or Profile Points/);
     assert.equal(await page.evaluate(() => localStorage.getItem('fury-profile')), before, 'split saves nothing');
     await shot(page, 'split-targets-results');
     console.log(`  target run: ${counts.join(' / ')} targets, winners ${o.split.winners}`);
