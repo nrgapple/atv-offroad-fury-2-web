@@ -21,8 +21,9 @@
 //! - At time out the leader wins, with every player tied with it on the
 //!   ranking (`002fb230`, `002fb960`, `002fc2e0`).
 //! - A completed player's whole seconds left x 100 join its score
-//!   (`002fd980`). Nothing is saved: completion bits, Profile Points and
-//!   records need one human (`002fce00`).
+//!   (`002fd980`). Completion bits, Profile Points and personal records
+//!   need one human (`002fce00`); every human's Hall of Fame records are
+//!   kept (`atv_core::hall_of_fame::SplitFame::freestyle`).
 use super::{
     Kind, Objective, Outcome, Run, TIME_BONUS_PER_SECOND, TIME_LIMIT, Target, TriggerBody,
 };
