@@ -1596,10 +1596,27 @@ reading, no runtime traces):
   with flag 0x10 (`00248460`), and binds the human (source) to that rider
   (target) in the session recorder (`001f6640`); otherwise `001f6640`
   binds each rider to itself (the replay recorder).
-- **Ghost draw.** `001e4c90` (rider draw setup) calls `001e9050` for a
-  vehicle with flag 4 in mode 2; `001e5260` also takes that path in mode 2.
-  `00209680` reads Environment "GhostOpacity" (default 0.4, 0x3ecccccd)
-  into the scene's +0x514 and a second value (default 0.2) into +0x510.
+- **Ghost draw.** `00209680` reads Environment "GhostOpacity" (0x42ac90,
+  default 0.4, 0x3ecccccd) into the world's +0x514 and "ResetOpacity"
+  (0x42aca0, default 0.2) into +0x510. `001b42e0(value, object)` stores a
+  draw object's opacity at +0x19c (`0011a3e0` initializes it to 1.0). The
+  rider draw setup `001e4c90` gives a flag-0x10 (ghost) vehicle only that
+  opacity: it sets the vehicle object (+0x884 → +4) to GhostOpacity and
+  skips the whole non-ghost branch, which pairs the rider's parts and the
+  four wheels with each other (`001200d0`) and sets their collision flags
+  (`001203b0`); a ghost therefore gets no collision setup.
+- **ResetOpacity is the reset fade, not the ghost.** `001e9050` sets a
+  2.0 s timer (+0x800), flags the rider's and wheels' collision objects
+  (`001203b0` with 0x462d50|0x462d58) and, when +0x804 is set, draws the
+  rider's objects (+0x93c, +0x884 and +0x4dc/+0x4e0) at ResetOpacity.
+  `001e5260` counts the timer down and over its last 0.75 s ramps the
+  opacity back to 1 (`ResetOpacity + (1 − ResetOpacity)(1 − t/0.75)`);
+  at 0 `001e92c0` restores opacity 1.0 and the flags. +0x804 is 1 from
+  the constructor (`001e1b10`); the scene setup `001e1fd0` clears it for
+  a human (flag 4) in mode 2 before calling `001e9050`, so a Lap Attack
+  human starts with the collision flags but stays opaque. `001e4c90` calls
+  `001e9050` for a mode-2 human; `001e5260` calls it when +0x7f0 is 2
+  (assumed: a reset), and in mode 2, split screen or online for humans every step.
 - **Best lap.** The session lap method `00216750` picks the rider with the
   lowest best lap (rider record +0x30 +0x4c, 0 read as none), stores it at
   +0x128, and when that is the rider who just lapped, shows "New Lap
@@ -1610,8 +1627,10 @@ reading, no runtime traces):
   mode 2.
 
 Not established: how the recorder replays the ghost (from each lap start,
-best lap only, or the previous lap), what `001e9050` and the 0.2 value do
-exactly, what +0x2c/+0x30 count, and whether Lap Attack keeps any
+best lap only, or the previous lap), whether the opacity on the vehicle
+object reaches the rider's own objects (the ghost path sets only
++0x884 → +4; the reset fade sets +0x93c and +0x884 separately), whether
+the ghost casts a shadow or writes depth, what +0x2c/+0x30 count, and whether Lap Attack keeps any
 persistent best-lap record (no record write outside `001f1990` /
 `001f1e30` was found for mode 2).
 
@@ -1632,6 +1651,26 @@ What the port does (`atv_core::race_event`, `atv_core::race_ghost`,
   it. `tools/test_engine_race_lap_attack.mjs` picks it in the menu, rides
   Supercross laps with the race path driver and checks the ghost plays.
 
-Gaps: the ghost is recorded and replayed but **not drawn** yet (no
-translucent rider/quad at GhostOpacity); split screen records a ghost for
-player 1 only, while the original gives each human one.
+- **Ghost draw (2026-11-02).** The ghost draws as the player's own quad
+  and rider (`atv_render::SceneRenderer::set_ghost`, uploaded at ride
+  load) at the venue's Environment GhostOpacity (`Scene::ghost_opacity`,
+  0.4 when absent: no shipped venue file was found to set it). The
+  recorder keeps the drawn quad and rider node matrices and the rider's
+  offset from the quad at least every 4 steps (15 Hz, blended between
+  keys; a port choice) beside each step's origin and orientation, so the
+  wheels, suspension, rider animation and a wreck replay as ridden. The
+  pass draws after every opaque rider and before water: a depth-only
+  pre-pass, then colour blended at the opacity over equal-or-nearer depth
+  (port choice: the translucent ghost shows only its nearest surface). It
+  casts no shadow map or contact shadow, writes no speed-rush stencil and
+  has no collision or physics. Split screen gives each human a ghost of
+  their own (each player's race records one; `001f6c60`), drawn in every
+  view. `#ui-state` `ride.ghost.drawn` counts the ghost passes drawn and
+  `ride.ghost.gap` the feet between ghost and player;
+  `tools/test_engine_race_lap_attack.mjs` checks one ghost is drawn.
+
+Gaps: the opacity covers the whole ghost (quad and rider; assumption, see
+above); ResetOpacity's post-reset fade is not ported; the ghost is not
+interpolated between steps under Enhanced/High presentation (at most one
+step ahead of the drawn player); split-screen ghosts are not covered by a
+browser test.

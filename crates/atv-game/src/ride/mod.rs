@@ -365,7 +365,7 @@ pub struct RideOptions {
 }
 
 /// World pose of the player's quad and rider for drawing.
-#[derive(Clone)]
+#[derive(Clone, Debug, Default)]
 pub struct Pose {
     pub quad_world: [f32; 16],
     pub quad_nodes: Vec<[f32; 16]>,

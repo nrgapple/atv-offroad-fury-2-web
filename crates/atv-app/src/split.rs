@@ -356,6 +356,9 @@ impl Second {
             ride.paint(),
         )?;
         let mut riding = crate::riding::Riding::new(ride, venue);
+        // Each human gets a Lap Attack ghost of their own (`001f6c60`).
+        riding.ghost_slot = usize::from(player) - 1;
+        riding.upload_ghost(gpu, scene, venue)?;
         // The player's own wheel dust, chunks and spray (startSimulation's
         // wheel effects for its ATV), and its own Enhanced/High tire
         // tracks and lingering dust.
@@ -453,7 +456,8 @@ impl Second {
             key,
             (&ride.quad, &ride.rider),
             ride.paint(),
-        )
+        )?;
+        self.riding.upload_ghost(gpu, scene, venue)
     }
 
     /// One rendered frame of this player's riding: its keys (player 2's

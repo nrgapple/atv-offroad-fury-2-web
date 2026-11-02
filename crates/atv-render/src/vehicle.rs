@@ -55,6 +55,8 @@ struct Chunk {
 
 pub struct VehiclePass {
     pipeline: wgpu::RenderPipeline,
+    /// The ghost's depth pre-pass pipeline ([`VehiclePass::ghost`]).
+    depth_pipeline: Option<wgpu::RenderPipeline>,
     vertices: wgpu::Buffer,
     indices: wgpu::Buffer,
     globals: wgpu::Buffer,
@@ -138,6 +140,11 @@ pub struct VehicleShared {
     /// outfit (or on the same ATV) reuse one GPU texture and its mips.
     uploads:
         std::rc::Rc<std::cell::RefCell<std::collections::HashMap<TextureKey, wgpu::TextureView>>>,
+    /// The ghost's pipelines (see [`VehicleShared::ghost`]).
+    ghost: std::rc::Rc<std::cell::OnceCell<(wgpu::RenderPipeline, wgpu::RenderPipeline)>>,
+    layout: wgpu::PipelineLayout,
+    shader: wgpu::ShaderModule,
+    samples: u32,
 }
 
 type TextureKey = (String, u32, u32, u64);
@@ -230,81 +237,145 @@ impl VehicleShared {
             ],
             immediate_size: 0,
         });
-        let pipeline = |mask: bool| {
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some(if mask { "vehicle" } else { "vehicle unmasked" }),
-                layout: Some(&layout),
-                vertex: wgpu::VertexState {
-                    module: &shader,
-                    entry_point: Some("vs"),
-                    compilation_options: Default::default(),
-                    buffers: &[Some(wgpu::VertexBufferLayout {
-                        array_stride: (FLOATS_PER_VERTEX * 4) as u64,
-                        step_mode: wgpu::VertexStepMode::Vertex,
-                        attributes: &wgpu::vertex_attr_array![
-                            0 => Float32x3, 1 => Float32x3, 2 => Float32x2, 3 => Float32
-                        ],
-                    })],
-                },
-                primitive: wgpu::PrimitiveState {
-                    cull_mode: None,
-                    ..Default::default()
-                },
-                depth_stencil: Some(wgpu::DepthStencilState {
-                    format: DEPTH_FORMAT,
-                    depth_write_enabled: Some(true),
-                    depth_compare: Some(wgpu::CompareFunction::Less),
-                    // Stencil ref 1 marks the player's own quad and rider so the
-                    // speed-rush pass leaves them crisp (game.js rushMask).
-                    // The unmasked pipeline leaves the stencil alone.
-                    stencil: if mask {
-                        let face = wgpu::StencilFaceState {
-                            compare: wgpu::CompareFunction::Always,
-                            fail_op: wgpu::StencilOperation::Keep,
-                            depth_fail_op: wgpu::StencilOperation::Keep,
-                            pass_op: wgpu::StencilOperation::Replace,
-                        };
-                        wgpu::StencilState {
-                            front: face,
-                            back: face,
-                            read_mask: 0xff,
-                            write_mask: 0xff,
-                        }
-                    } else {
-                        Default::default()
-                    },
-                    bias: Default::default(),
-                }),
-                multisample: wgpu::MultisampleState {
-                    count: samples,
-                    ..Default::default()
-                },
-                fragment: Some(wgpu::FragmentState {
-                    module: &shader,
-                    entry_point: Some("fs"),
-                    compilation_options: Default::default(),
-                    // GS (Cs-Cd)*As+Cd for blended materials; opaque ones write As 1.
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format: gpu.config.format,
-                        blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
-                }),
-                multiview_mask: None,
-                cache: None,
-            })
-        };
+        let format = gpu.config.format;
+        let build = |kind| pipeline(device, &layout, &shader, format, samples, kind);
         Self {
             globals_layout,
             bones_layout,
             material_layout,
-            pipeline: pipeline(true),
-            unmasked: pipeline(false),
+            pipeline: build(Kind::Player),
+            unmasked: build(Kind::Unmasked),
             sampler,
             fallback,
             uploads: Default::default(),
+            ghost: Default::default(),
+            layout,
+            shader,
+            samples,
         }
     }
+
+    /// The Lap Attack ghost's depth and colour pipelines, compiled on first
+    /// use (only a Lap Attack ride pays for them).
+    fn ghost(&self, gpu: &Gpu) -> (wgpu::RenderPipeline, wgpu::RenderPipeline) {
+        self.ghost
+            .get_or_init(|| {
+                let build = |kind| {
+                    pipeline(
+                        &gpu.device,
+                        &self.layout,
+                        &self.shader,
+                        gpu.config.format,
+                        self.samples,
+                        kind,
+                    )
+                };
+                (build(Kind::GhostDepth), build(Kind::GhostColor))
+            })
+            .clone()
+    }
+}
+
+/// Which vehicle pipeline [`pipeline`] builds.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Kind {
+    /// The player's: writes stencil 1 (game.js rushMask).
+    Player,
+    /// Race CPUs and other riders: no stencil writes.
+    Unmasked,
+    /// The ghost's depth pre-pass: depth only, no colour, so the colour
+    /// pass blends only its nearest surface (no inner faces, no order
+    /// dependence between the quad and rider groups).
+    GhostDepth,
+    /// The ghost's colour: blended at its opacity over its own pre-pass
+    /// depth (equal or nearer), writing no depth or stencil.
+    GhostColor,
+}
+
+fn pipeline(
+    device: &wgpu::Device,
+    layout: &wgpu::PipelineLayout,
+    shader: &wgpu::ShaderModule,
+    format: wgpu::TextureFormat,
+    samples: u32,
+    kind: Kind,
+) -> wgpu::RenderPipeline {
+    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some(match kind {
+            Kind::Player => "vehicle",
+            Kind::Unmasked => "vehicle unmasked",
+            Kind::GhostDepth => "vehicle ghost depth",
+            Kind::GhostColor => "vehicle ghost",
+        }),
+        layout: Some(layout),
+        vertex: wgpu::VertexState {
+            module: shader,
+            entry_point: Some("vs"),
+            compilation_options: Default::default(),
+            buffers: &[Some(wgpu::VertexBufferLayout {
+                array_stride: (FLOATS_PER_VERTEX * 4) as u64,
+                step_mode: wgpu::VertexStepMode::Vertex,
+                attributes: &wgpu::vertex_attr_array![
+                    0 => Float32x3, 1 => Float32x3, 2 => Float32x2, 3 => Float32
+                ],
+            })],
+        },
+        primitive: wgpu::PrimitiveState {
+            cull_mode: None,
+            ..Default::default()
+        },
+        depth_stencil: Some(wgpu::DepthStencilState {
+            format: DEPTH_FORMAT,
+            depth_write_enabled: Some(kind != Kind::GhostColor),
+            depth_compare: Some(if kind == Kind::GhostColor {
+                wgpu::CompareFunction::LessEqual
+            } else {
+                wgpu::CompareFunction::Less
+            }),
+            // Stencil ref 1 marks the player's own quad and rider so the
+            // speed-rush pass leaves them crisp (game.js rushMask). The
+            // other pipelines leave the stencil alone.
+            stencil: if kind == Kind::Player {
+                let face = wgpu::StencilFaceState {
+                    compare: wgpu::CompareFunction::Always,
+                    fail_op: wgpu::StencilOperation::Keep,
+                    depth_fail_op: wgpu::StencilOperation::Keep,
+                    pass_op: wgpu::StencilOperation::Replace,
+                };
+                wgpu::StencilState {
+                    front: face,
+                    back: face,
+                    read_mask: 0xff,
+                    write_mask: 0xff,
+                }
+            } else {
+                Default::default()
+            },
+            bias: Default::default(),
+        }),
+        multisample: wgpu::MultisampleState {
+            count: samples,
+            ..Default::default()
+        },
+        fragment: Some(wgpu::FragmentState {
+            module: shader,
+            entry_point: Some("fs"),
+            compilation_options: Default::default(),
+            // GS (Cs-Cd)*As+Cd for blended materials; opaque ones write As 1
+            // (times the pass opacity: 1 except for the ghost).
+            targets: &[Some(wgpu::ColorTargetState {
+                format,
+                blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                write_mask: if kind == Kind::GhostDepth {
+                    wgpu::ColorWrites::empty()
+                } else {
+                    wgpu::ColorWrites::ALL
+                },
+            })],
+        }),
+        multiview_mask: None,
+        cache: None,
+    })
 }
 
 impl VehiclePass {
@@ -330,6 +401,7 @@ impl VehiclePass {
             sampler,
             fallback,
             uploads,
+            ..
         } = shared.clone();
         let pipeline = if rush_mask { pipeline } else { unmasked };
         let cached = |name: &str, image: &Image| {
@@ -525,6 +597,7 @@ impl VehiclePass {
             .unwrap_or(0);
         Ok(Self {
             pipeline,
+            depth_pipeline: None,
             vertices: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("vehicle vertices"),
                 contents: bytemuck::cast_slice(&all_vertices),
@@ -549,6 +622,31 @@ impl VehiclePass {
             bones_layout,
             placed: std::cell::Cell::new(None),
         })
+    }
+
+    /// The Lap Attack ghost: the player's own quad and rider drawn at
+    /// `opacity` (GhostOpacity, `001e4c90`), after a depth pre-pass, with no
+    /// stencil mark. It casts no shadow (the scene keeps it out of the
+    /// casters).
+    pub fn ghost(
+        gpu: &Gpu,
+        venue: &Venue,
+        quad: &Model,
+        rider: &Model,
+        shared: &VehicleShared,
+        opacity: f32,
+    ) -> Result<Self, String> {
+        let mut pass = Self::with_shared(gpu, venue, quad, rider, shared, false)?;
+        let (depth, color) = shared.ghost(gpu);
+        pass.pipeline = color;
+        pass.depth_pipeline = Some(depth);
+        pass.set_opacity(opacity);
+        Ok(pass)
+    }
+
+    /// The pass's draw opacity (1 opaque).
+    pub fn set_opacity(&mut self, opacity: f32) {
+        self.globals_value.surface[3] = opacity.clamp(0., 1.);
     }
 
     /// The last pose's casters (see [`VehiclePass::pose`]).
@@ -669,8 +767,13 @@ impl VehiclePass {
     }
 
     pub fn draw(&self, pass: &mut wgpu::RenderPass<'_>) {
-        pass.set_pipeline(&self.pipeline);
         pass.set_bind_group(0, &self.globals_group, &[]);
+        if let Some(depth) = &self.depth_pipeline {
+            // Materials still bind: cut-out texels discard in the pre-pass.
+            pass.set_pipeline(depth);
+            self.draw_chunks(pass, true);
+        }
+        pass.set_pipeline(&self.pipeline);
         self.draw_chunks(pass, true);
     }
 

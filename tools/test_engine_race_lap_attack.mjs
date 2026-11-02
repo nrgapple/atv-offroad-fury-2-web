@@ -5,7 +5,9 @@
 // only for Single Race and Duel). Each completed lap is timed; the fastest
 // becomes the best lap and the ghost, recorded from the player's fixed-step
 // motion, replays it from the next lap's start (`001f6c60`, `001f6640`).
-// The race path driver (`autopilot=1`) rides two Supercross laps.
+// The race path driver (`autopilot=1`) rides two Supercross laps. The ghost
+// draws as the player's own quad and rider at GhostOpacity (`001e4c90`):
+// `ride.ghost.drawn` counts the scene's ghost passes drawn this frame.
 // ATV_SHOTS=<dir> saves the setup page and a lap with the ghost playing.
 import assert from 'node:assert/strict';
 import { assertNoErrors, launch, newPage, nextFrames, unlockStore, url } from './browser/harness.mjs';
@@ -81,13 +83,21 @@ try {
   assert.ok(Math.abs(ghost.best - s.ride.bestLap) < 1e-3, `ghost best ${ghost.best} vs best lap ${s.ride.bestLap}`);
   assert.ok(Math.abs(ghost.opacity - 0.4) < 1e-6, 'GhostOpacity 0.4');
   assert.equal(ghost.origin.length, 3);
+  assert.equal(ghost.drawn, 1, 'the scene draws one ghost while it plays');
   assert.equal(s.ride.raceLap.phase, 'racing', 'Lap Attack does not finish');
   assert.equal(s.ride.raceLap.lap, s.ride.raceLap.laps_done + 1);
   await nextFrames(page, 60);
   s = await read(page);
   assert.equal(s.ride.ghost.playing, true);
   assert.notDeepEqual(s.ride.ghost.origin, ghost.origin, 'the ghost moves along its lap');
-  if (shots) await page.screenshot({ path: `${shots}/race-lap-attack-ghost.png` });
+  assert.equal(s.ride.ghost.drawn, 1, 'the ghost stays drawn along its lap');
+  if (shots) {
+    await page.screenshot({ path: `${shots}/race-lap-attack-ghost.png` });
+    // The race path driver retraces its lap closely: wait for the ghost
+    // and the rider to drift a few feet apart.
+    await until(page, s => !s.ride?.ghost?.playing || s.ride.ghost.gap > 4, 60000, 'ghost apart').catch(() => {});
+    await page.screenshot({ path: `${shots}/race-lap-attack-ghost-drawn.png` });
+  }
   // Pause → Quit to Main Menu ends the run.
   await key(page, 'Escape');
   await page.waitForFunction(() => JSON.parse(document.querySelector('#ui-state')?.textContent || '{}').toolbar?.menu?.page === 'pause', null, { timeout: 30000 });
