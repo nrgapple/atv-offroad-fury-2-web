@@ -8,7 +8,9 @@
 //    test credits each hit to the player whose ATV touched it. The targets
 //    are shared, the run ends at the last one, the player with the most
 //    targets wins (002fab40) and the results list both players. Nothing is
-//    saved to the profile (002fce00).
+//    saved to the profile (002fce00), but the Hall of Fame keeps each
+//    player's objective score under its own placeholder: player 1 then
+//    player 2 name theirs (002fce00 -> 00332c50, 002fdc00 -> 00217e40).
 //    Each view draws its own compass and target tags; player 1's own
 //    sounds use the nearest of both views' listeners (`ride.listeners`).
 // 2. Score Stunt Points with `objectiveTest=timeout` (5 s): point levels
@@ -61,6 +63,7 @@ async function open(browser, query) {
     });
     const pads = [make(0), make(1)];
     navigator.getGamepads = () => pads;
+    localStorage.removeItem('fury-hall-of-fame');
   });
   await page.goto(url(`/play.html?uiDiagnostics=1&weather=off&${query}`));
   await onFront(page, 'title');
@@ -153,10 +156,39 @@ try {
     o = await objective(page);
     assert.match(o.summary, /^(Congratulations, Player [12]!|Tie: Player 1 and Player 2!) Hit Every Green Target/);
     assert.match(o.summary, /1st Player [12] \d+ targets?, [\d,]+ pts · 2nd Player [12]/);
-    assert.match(o.summary, /not saved/);
+    assert.match(o.summary, /saves no objectives or Profile Points/);
     assert.equal(await page.evaluate(() => localStorage.getItem('fury-profile')), before, 'split saves nothing');
     await shot(page, 'split-targets-results');
     console.log(`  target run: ${counts.join(' / ')} targets, winners ${o.split.winners}`);
+    // The Hall of Fame (empty before the run): each player holds an
+    // objective score; player 1 names theirs first, then player 2.
+    const fameOf = async () => (await read(page)).ride?.fame;
+    await wait(page, () => JSON.parse(document.querySelector('#ui-state')?.textContent || '{}').ride?.fame?.player === 1,
+      null, 30000);
+    const fame1 = await fameOf();
+    assert.ok(fame1.broken.some(b => /Highest Objective Score$/.test(b)), JSON.stringify(fame1));
+    for (let i = 0; i < 8; i++) await key(page, 'Backspace');
+    for (const c of ['KeyA', 'KeyN', 'KeyN']) await key(page, c);
+    await key(page, 'Enter');
+    await wait(page, () => JSON.parse(document.querySelector('#ui-state')?.textContent || '{}').ride?.fame?.player === 2,
+      null, 10000);
+    const fame2 = await fameOf();
+    assert.equal(fame2.name, 'Player 2', JSON.stringify(fame2));
+    assert.ok(fame2.broken.some(b => /Highest Objective Score$/.test(b)), JSON.stringify(fame2));
+    await shot(page, 'split-objectives-fame-player2');
+    for (let i = 0; i < 8; i++) await key(page, 'Backspace');
+    for (const c of ['KeyB', 'KeyO', 'KeyB']) await key(page, c);
+    await key(page, 'Enter');
+    await wait(page, () => (localStorage.getItem('fury-hall-of-fame') || '').includes('"BOB"'), null, 10000);
+    const stored = await page.evaluate(() => JSON.parse(localStorage.getItem('fury-hall-of-fame') || '{}').freestyle || {});
+    const course = Object.entries(stored).find(([k]) => k.endsWith(':env05'))?.[1];
+    const scores = (course?.objectives || []).map(e => [e.name, e.value]);
+    assert.deepEqual(new Set(scores.map(([n]) => n)), new Set(['ANN', 'BOB']), JSON.stringify(course));
+    assert.deepEqual(scores.map(([, v]) => v), o.split.scores.map(Math.floor).sort((a, b) => b - a), JSON.stringify({ scores, o: o.split.scores }));
+    const names = [...(course.stunts || []), course.longest_jump, course.most_combos].filter(Boolean).map(e => e.name);
+    assert.ok(names.every(n => n === 'ANN' || n === 'BOB'), JSON.stringify(course));
+    console.log(`  Hall of Fame: ${fame1.broken} / ${fame2.broken}; stored ${JSON.stringify(scores)}`);
+    await nextFrames(page, 10);
     // Restart Objective (the first results button) rides it again, both
     // players, every target back.
     const results = (await read(page)).ride.results;

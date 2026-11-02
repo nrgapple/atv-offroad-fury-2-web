@@ -557,9 +557,9 @@ the functions named; bounded reading, no runtime traces):
   score. `002fd980` adds the whole seconds left x 100 to each completed
   player's score.
 - **No saving.** `002fce00` saves completion bits and pays Profile Points
-  only with one human; with more it writes each player's Freestyle record
-  (`00332c50`), which the port leaves out (records for players 2-4 await
-  the product decision).
+  only with one human; with more it still inserts each player's objective
+  score into the Hall of Fame (`00332c50`; "Hall of Fame for split
+  objectives" below).
 
 What the port does (`atv_core::freestyle::split::SplitRun`):
 
@@ -591,7 +591,9 @@ What the port does (`atv_core::freestyle::split::SplitRun`):
   and Player 2!" for a shared win (the original's `002ddc50` line with the
   seat names), then the objective and each player's place, figure and
   score; Restart Objective and Continue as in one-player objectives.
-  Nothing is saved (no completion bits, Profile Points or records).
+  No completion bits, Profile Points or personal records are saved; the
+  Hall of Fame keeps every player's records ("Hall of Fame for split
+  objectives").
 - `#ui-state.ride.objective.split` reports the players, clock, which
   player took each target, scores, outcomes, places and winners;
   `.summary` the results text.
@@ -711,8 +713,7 @@ lighter presets.
 - The Players page's ATV stats row, Profile Name panels and original
   panel art; the Force Start trigger.
 - Profile credit and personal records for players 2-4 (needs a product
-  decision: whose profile, #462). Split Freestyle Objectives' Hall of
-  Fame (below).
+  decision: whose profile, #462).
 - The original's split Race event type Lap Attack (Practice and Duel
   are built: research/RACING.md "Practice event type", "Duel event
   type").
@@ -797,12 +798,75 @@ What the port does:
   pad does not edit it) and checks both names are stored.
 
 Gaps: the profile rename on accept (`002c8630`, "PLAYER%d") is not ported
-(per-seat profiles are #462). Split Freestyle Objectives keep no Hall of
-Fame records yet (`002fce00`'s per-player objective scores; whether the
-Freestyle jump and chain hooks `002fd7c0`/`002fd350` also run per player
-was not read). The original tracks the shared
+(per-seat profiles are #462). Split Freestyle Objectives are covered in
+the next section. The original tracks the shared
 table live, so a player's in-race "New …" message compares against the
 other humans' records too; the port's players each compare against the
 table as it stood at the start (the merged list at the results is
 correct). The split race time insert waits for the full-length lap count
 as for one player.
+
+## Hall of Fame for split objectives (2026-11-02)
+
+Exact-build evidence (USA v2.00 `SCUS_972.11`, private Ghidra exports of
+`002fce00`, `00332c50`, `002fd7c0`, `002fd350`, `003321f0`, `002fdc00`;
+bounded reading, no runtime traces):
+
+- **Objective score.** At the objective's end `002fce00` first adds the
+  seconds bonus (`002fd980`), then loops the players 0 to the human count
+  (event +0x84). For each player whose per-player event entry (+0x8c +
+  4 × index) is set, and only when the event time setting (game state
+  +0x57c) is 120 s, it reads that player's score (the player's rider
+  +0x30, then +0x104, truncated to an integer), formats `"@%d"`
+  (`0x43cb50`) with the loop index and calls `00332c50` with the Freestyle
+  course record (game state +0x560), that player's vehicle (game state
+  +0x514 + 4 × index) and the player index for the message. The profile
+  inserts (`00325030`, `00322080`) run only for player 0 with one human
+  (+0x10 = 1). Players are inserted in index order.
+- **The table.** `00332c50` inserts into the record's three objective
+  scores (+0x14, names +0x20, vehicles +0x3c) when the score is strictly
+  higher than a kept one, shifting the lower ones down; it skips vehicles
+  1 and 0x15 and online play (+0x7d8). Its "New %sHighest Objective
+  Score!" infotext (`0x445f90`) goes to that player's view.
+- **Jumps and chains too.** The Freestyle jump hook `002fd7c0` and chain
+  hook `002fd350` run for any rider with the human flag (rider +8 & 4)
+  and format `"@%d"` with the rider's player index (rider +0, left in the
+  third argument register); they map that index to a seat through the
+  active-seat flags (+0x554) for the vehicle and the per-player entry.
+  `002fd7c0` inserts the longest jump (`00332e30`); `002fd350` the stunt
+  score (`00333130`, (int)(sum × count)) and the combo count
+  (`00333000`). As in races, only the personal inserts (`003251b0`,
+  `00325410`, `00325330`) and the combo Profile Points test +0x10 = 1.
+- **Entry.** `003321f0` (Freestyle, type 2) finds a player's placeholder
+  in the three objective scores (+0x20) and three stunt scores (+0x68),
+  then most combos (+0x4c) and longest jump (+0x4); `00333360` lists
+  objective scores, stunt scores, most combos, longest jump. After the
+  run `002fdc00` calls `00217e40`, which asks the record holders in player
+  order as after a split race ("Hall of Fame for every human").
+
+Assumptions: that the per-player entry at event +0x8c is set for every
+seated human (only its tests were read), and that the port's 120 s
+objectives satisfy the +0x57c test (the port has no other objective time
+setting).
+
+What the port does:
+
+- Each player of a split objective keeps a `FreestyleWatch` under its
+  own placeholder (`FreestyleWatch::for_player`, no personal records),
+  fed by that player's jumps and landed chains while the run lasts; at
+  the end each player's score (with the seconds bonus) enters it in player
+  order. Record messages join that player's objective messages.
+- `SplitFame::freestyle` merges every player's entries into the stored
+  Freestyle course record (players in index order, so an exact tie goes
+  to the lower player) and the #488 flow opens each holder's name entry
+  in turn under default names ("Player N" for players 2-4).
+- The results line now reads "Split screen saves no objectives or
+  Profile Points."
+- `tools/test_engine_split_objectives.mjs` rides the target run on an empty
+  Hall of Fame, names player 1 "ANN" and player 2 "BOB" and checks both
+  objective scores are stored under those names.
+
+Gaps: the vehicle exclusions (1, 0x15) are not ported, as for one player.
+The in-run "New …" messages compare against the table as it stood at the
+start, not the other players' live records (the merged list at the
+results is correct).

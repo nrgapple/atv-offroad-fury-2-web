@@ -260,6 +260,21 @@ fn insert_plain_score(list: &mut Vec<i64>, score: i64) -> Option<usize> {
 }
 
 impl FreestyleFame {
+    /// `00331f50`: the placeholder becomes the entered name.
+    pub fn rename(&mut self, from: &str, to: &str) {
+        let objectives = self.objectives.iter_mut().map(|e| &mut e.name);
+        let stunts = self.stunts.iter_mut().map(|e| &mut e.name);
+        for name in objectives
+            .chain(stunts)
+            .chain(self.longest_jump.iter_mut().map(|e| &mut e.name))
+            .chain(self.most_combos.iter_mut().map(|e| &mut e.name))
+        {
+            if name == from {
+                *name = to.into();
+            }
+        }
+    }
+
     /// `00333360` (type 2): the records `name` holds.
     pub fn held_by(&self, name: &str) -> Vec<String> {
         let mut out = Vec::new();
@@ -276,6 +291,23 @@ impl FreestyleFame {
             out.push("Longest Jump".into());
         }
         out
+    }
+}
+
+/// Inserts the entries `run` holds under `tag` into `fame` by the insert
+/// rules (larger values win; ties keep the stored holder), named `name`.
+fn merge_freestyle(fame: &mut FreestyleFame, run: &FreestyleFame, tag: &str, name: &str) {
+    for e in run.objectives.iter().filter(|e| e.name == tag) {
+        insert_score(&mut fame.objectives, e.value, name, e.vehicle);
+    }
+    for e in run.stunts.iter().filter(|e| e.name == tag) {
+        insert_score(&mut fame.stunts, e.value, name, e.vehicle);
+    }
+    if let Some(e) = run.longest_jump.as_ref().filter(|e| e.name == tag) {
+        beat(&mut fame.longest_jump, e.value, name, e.vehicle);
+    }
+    if let Some(e) = run.most_combos.as_ref().filter(|e| e.name == tag) {
+        beat(&mut fame.most_combos, e.value, name, e.vehicle);
     }
 }
 
@@ -321,33 +353,7 @@ impl HallOfFame {
     pub fn commit_freestyle(&mut self, watch: &FreestyleWatch, name: &str) {
         let name = clean_name(name);
         let fame = self.freestyle.entry(watch.key.clone()).or_default();
-        for e in watch
-            .fame
-            .objectives
-            .iter()
-            .filter(|e| e.name == PLACEHOLDER)
-        {
-            insert_score(&mut fame.objectives, e.value, &name, e.vehicle);
-        }
-        for e in watch.fame.stunts.iter().filter(|e| e.name == PLACEHOLDER) {
-            insert_score(&mut fame.stunts, e.value, &name, e.vehicle);
-        }
-        if let Some(e) = watch
-            .fame
-            .longest_jump
-            .as_ref()
-            .filter(|e| e.name == PLACEHOLDER)
-        {
-            beat(&mut fame.longest_jump, e.value, &name, e.vehicle);
-        }
-        if let Some(e) = watch
-            .fame
-            .most_combos
-            .as_ref()
-            .filter(|e| e.name == PLACEHOLDER)
-        {
-            beat(&mut fame.most_combos, e.value, &name, e.vehicle);
-        }
+        merge_freestyle(fame, &watch.fame, &watch.tag(), &name);
     }
 
     /// The name entry renames what [`HallOfFame::commit_freestyle`] stored.
@@ -357,9 +363,11 @@ impl HallOfFame {
             return;
         };
         let run = &watch.fame;
+        let tag = watch.tag();
+        let tag = tag.as_str();
         let placed = |list: &[Entry<i64>], e: &Entry<i64>| {
             list.iter()
-                .any(|r| r.name == PLACEHOLDER && r.value == e.value && r.vehicle == e.vehicle)
+                .any(|r| r.name == tag && r.value == e.value && r.vehicle == e.vehicle)
         };
         for e in fame.objectives.iter_mut().filter(|e| e.name == from) {
             if placed(&run.objectives, e) {
@@ -373,14 +381,14 @@ impl HallOfFame {
         }
         if let (Some(e), Some(r)) = (&mut fame.longest_jump, &run.longest_jump)
             && e.name == from
-            && r.name == PLACEHOLDER
+            && r.name == tag
             && e.value == r.value
         {
             e.name = to.clone();
         }
         if let (Some(e), Some(r)) = (&mut fame.most_combos, &run.most_combos)
             && e.name == from
-            && r.name == PLACEHOLDER
+            && r.name == tag
             && e.value == r.value
         {
             e.name = to;
@@ -483,14 +491,19 @@ impl HallOfFame {
 /// holds "@0".."@3" (`001f1e30`, `001f24b0`, `001f2610`, `001f22a0`). After
 /// the race each human holding a record names it in turn, lowest player
 /// first (`00217e40`, then `002c8630` after each name), and `00331f50`
-/// replaces only that player's placeholder.
+/// replaces only that player's placeholder. Split Freestyle Objectives
+/// work the same way on the Freestyle course's record ([`SplitFame::freestyle`]).
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct SplitFame {
-    /// The [`HallOfFame::key`] of the course and difficulty.
+    /// The [`HallOfFame::key`] of the course and difficulty (or the
+    /// [`HallOfFame::freestyle_key`] for a Freestyle table).
     pub key: String,
     pub enduro: bool,
     /// The course's records with each human's placeholder entries merged in.
     pub course: CourseFame,
+    /// A split Freestyle objective's course record with every human's
+    /// entries merged in (then `course` is unused).
+    pub freestyle: Option<FreestyleFame>,
     /// The name each player's records are stored under (by player index).
     pub names: Vec<String>,
 }
@@ -527,9 +540,30 @@ impl SplitFame {
             key: first.key.clone(),
             enduro: first.enduro,
             course,
-            names: (0..4)
-                .map(|_| crate::profile::DEFAULT_NAME.into())
-                .collect(),
+            names: default_names(),
+            ..Default::default()
+        })
+    }
+
+    /// A split Freestyle objective (`002fce00`, `002fd7c0`, `002fd350`):
+    /// every human's objective score, stunt scores, combos and jump
+    /// (`watches`, one per player, any order) merge into the stored
+    /// Freestyle course record by the insert rules, players in index order.
+    pub fn freestyle(hall: &HallOfFame, watches: &[FreestyleWatch]) -> Option<Self> {
+        let first = watches.first()?;
+        let mut fame = hall.freestyle.get(&first.key).cloned().unwrap_or_default();
+        let mut sorted: Vec<&FreestyleWatch> =
+            watches.iter().filter(|w| w.key == first.key).collect();
+        sorted.sort_by_key(|w| w.player);
+        for watch in sorted {
+            let tag = watch.tag();
+            merge_freestyle(&mut fame, &watch.fame, &tag, &tag);
+        }
+        Some(Self {
+            key: first.key.clone(),
+            freestyle: Some(fame),
+            names: default_names(),
+            ..Default::default()
         })
     }
 
@@ -537,7 +571,14 @@ impl SplitFame {
     /// table and the records listed, in entry order (player 1 first).
     pub fn players(&self) -> Vec<(usize, Vec<String>)> {
         (0..4)
-            .map(|p| (p, self.course.held_by(&placeholder(p), self.enduro)))
+            .map(|p| {
+                let tag = placeholder(p);
+                let held = match &self.freestyle {
+                    Some(fame) => fame.held_by(&tag),
+                    None => self.course.held_by(&tag, self.enduro),
+                };
+                (p, held)
+            })
             .filter(|(_, broken)| !broken.is_empty())
             .collect()
     }
@@ -559,10 +600,32 @@ impl SplitFame {
         course
     }
 
-    /// Writes the course table (with the current names) into `hall`.
-    pub fn store(&self, hall: &mut HallOfFame) {
-        hall.courses.insert(self.key.clone(), self.stored());
+    /// The Freestyle course record as stored (every placeholder named).
+    pub fn stored_freestyle(&self) -> Option<FreestyleFame> {
+        let mut fame = self.freestyle.clone()?;
+        for (p, name) in self.names.iter().enumerate() {
+            fame.rename(&placeholder(p), name);
+        }
+        Some(fame)
     }
+
+    /// Writes the table (with the current names) into `hall`.
+    pub fn store(&self, hall: &mut HallOfFame) {
+        match self.stored_freestyle() {
+            Some(fame) => {
+                hall.freestyle.insert(self.key.clone(), fame);
+            }
+            None => {
+                hall.courses.insert(self.key.clone(), self.stored());
+            }
+        }
+    }
+}
+
+fn default_names() -> Vec<String> {
+    (0..4)
+        .map(|_| crate::profile::DEFAULT_NAME.into())
+        .collect()
 }
 
 /// Game Settings → Measurement. The original keeps one speed factor
@@ -670,7 +733,7 @@ impl Watch {
     pub fn broken(&self) -> Vec<String> {
         match self {
             Self::Race(w) => w.broken(),
-            Self::Freestyle(w) => w.fame.held_by(PLACEHOLDER),
+            Self::Freestyle(w) => w.fame.held_by(&w.tag()),
         }
     }
 }
@@ -710,6 +773,8 @@ pub struct FreestyleWatch {
     pub combo_points: i32,
     /// Measurement for the record messages.
     pub units: Units,
+    /// The human whose records these are (0-3): the placeholder's digit.
+    pub player: usize,
     run_best: f32,
     #[serde(skip)]
     messages: Vec<String>,
@@ -735,6 +800,19 @@ impl FreestyleWatch {
         }
     }
 
+    /// The watch for human `player` (0-3): the Freestyle hooks format
+    /// "@%d" with the rider's player index (`002fd7c0`, `002fd350`) and the
+    /// objective's end with each player's (`002fce00`).
+    pub fn for_player(mut self, player: usize) -> Self {
+        self.player = player;
+        self
+    }
+
+    /// This watch's placeholder name ("@0" for player 1).
+    pub fn tag(&self) -> String {
+        placeholder(self.player)
+    }
+
     pub fn take_messages(&mut self) -> Vec<String> {
         std::mem::take(&mut self.messages)
     }
@@ -745,7 +823,8 @@ impl FreestyleWatch {
             return;
         }
         self.run_best = feet;
-        let fame = beat(&mut self.fame.longest_jump, feet, PLACEHOLDER, self.vehicle);
+        let tag = self.tag();
+        let fame = beat(&mut self.fame.longest_jump, feet, &tag, self.vehicle);
         if fame {
             self.messages
                 .push(format!("New Longest Jump {}!", self.units.jump(feet)));
@@ -770,7 +849,8 @@ impl FreestyleWatch {
         }
         let points = (sum * count as f32) as i64;
         let count = count.min(u32::MAX as usize) as u32;
-        let stunt = insert_score(&mut self.fame.stunts, points, PLACEHOLDER, self.vehicle);
+        let tag = self.tag();
+        let stunt = insert_score(&mut self.fame.stunts, points, &tag, self.vehicle);
         if let Some(rank) = stunt {
             self.messages
                 .push(format!("New {}Highest Stunt Score!", ordinal(rank)));
@@ -788,7 +868,7 @@ impl FreestyleWatch {
             return;
         }
         self.combo_points = self.combo_points.saturating_add(count as i32 - 1);
-        let combos = beat(&mut self.fame.most_combos, count, PLACEHOLDER, self.vehicle);
+        let combos = beat(&mut self.fame.most_combos, count, &tag, self.vehicle);
         if combos {
             self.messages.push("New Most Combos!".into());
         }
@@ -806,7 +886,8 @@ impl FreestyleWatch {
     /// Points it earns (score / 1000 plus the combo points).
     pub fn finish(&mut self, score: f32) -> i64 {
         let score = score.max(0.) as i64;
-        let fame = insert_score(&mut self.fame.objectives, score, PLACEHOLDER, self.vehicle);
+        let tag = self.tag();
+        let fame = insert_score(&mut self.fame.objectives, score, &tag, self.vehicle);
         if let Some(rank) = fame {
             self.messages
                 .push(format!("New {}Highest Objective Score!", ordinal(rank)));
@@ -1118,6 +1199,70 @@ mod tests {
         assert_eq!(course.longest_jump.as_ref().unwrap().name, "DEE");
         assert_eq!(course.laps[0].name, "BOB");
         assert!(SplitFame::new(&hall, &[]).is_none());
+    }
+
+    #[test]
+    fn split_objectives_name_every_human_in_player_order() {
+        let mut hall = HallOfFame::default();
+        let mut old = FreestyleWatch::new("unspstunt", "env05", 9, None, None);
+        old.finish(30_000.);
+        hall.commit_freestyle(&old, "OLD");
+        // `002fce00` inserts each player's objective score; the Freestyle
+        // hooks each player's stunt scores, combos and jump.
+        let new = |player| {
+            FreestyleWatch::new("unspstunt", "env05", player as u16 + 2, Some(&hall), None)
+                .for_player(player)
+        };
+        let (mut p1, mut p2, mut p3) = (new(0), new(1), new(2));
+        p2.chain(true, 3, 100.);
+        assert_eq!(
+            p2.take_messages(),
+            ["New Highest Stunt Score!", "New Most Combos!"]
+        );
+        assert_eq!(p2.fame.stunts[0].name, "@1");
+        p1.finish(20_000.);
+        p2.finish(40_000.);
+        p3.finish(20_000.);
+        assert_eq!(
+            p2.take_messages(),
+            ["New Highest Objective Score!"],
+            "player 2's own copy"
+        );
+        let mut split = SplitFame::freestyle(&hall, &[p3, p2, p1]).unwrap();
+        // Player 1's 20 000 beats player 3's tie (lower player first).
+        assert_eq!(
+            split.players(),
+            [
+                (0, vec!["3rd Highest Objective Score".to_string()]),
+                (
+                    1,
+                    vec![
+                        "Highest Objective Score".to_string(),
+                        "Highest Stunt Score".to_string(),
+                        "Most Combos".to_string(),
+                    ]
+                ),
+            ]
+        );
+        split.name(0, "ANN");
+        split.name(1, "BOB");
+        split.store(&mut hall);
+        let fame = hall.freestyle_course("unspstunt", "env05").unwrap();
+        let scores: Vec<(&str, i64, u16)> = fame
+            .objectives
+            .iter()
+            .map(|e| (e.name.as_str(), e.value, e.vehicle))
+            .collect();
+        assert_eq!(
+            scores,
+            [("BOB", 40_000, 3), ("OLD", 30_000, 9), ("ANN", 20_000, 2)]
+        );
+        assert_eq!(fame.most_combos.as_ref().unwrap().name, "BOB");
+        assert!(hall.courses.is_empty());
+        // A single-player watch still names "@0".
+        let mut solo = FreestyleWatch::new("unspstunt", "env05", 1, None, None);
+        solo.finish(1.);
+        assert_eq!(Watch::Freestyle(solo).broken(), ["Highest Objective Score"]);
     }
 
     #[test]
