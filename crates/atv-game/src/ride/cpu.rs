@@ -92,6 +92,17 @@ pub struct CpuSoundStep {
     pub riding: bool,
     /// The vehicle reset count (a reset clears the emitters' latches).
     pub reset_count: u32,
+    /// The two side drive-on emitters' terrain bytes and mph (`001e5260`
+    /// +994/+99c; the chassis emitter's `001c3330` pair from `002cd6c0`).
+    pub drive: atv_core::quad_sounds::DriveInput,
+    /// Front-left and front-right wheel world translations (the side
+    /// emitters' positions).
+    pub wheels: [[f32; 3]; 2],
+    /// Body origin minus the water surface (None without a water object):
+    /// the `001d7280` water entry splash.
+    pub water_depth: Option<f32>,
+    /// The detached rider body touches water (`001f0860` splash).
+    pub rider_water: bool,
 }
 
 /// A CPU racer as the audio layer hears it this frame.
@@ -124,6 +135,8 @@ pub struct CpuRacer {
     /// The throttle the driver applied on the latest step.
     throttle: f32,
     rider_audio_position: [f32; 3],
+    /// The quad's linkage (front wheel positions for the drive-on emitters).
+    quad_pose: Rc<QuadPose>,
     driver: Driver,
     rider: rider_pose::Animator,
     wreck: wreck_animation::Animator,
@@ -176,6 +189,7 @@ impl CpuRacer {
             sound: Vec::new(),
             throttle: 0.,
             rider_audio_position,
+            quad_pose: model.quad_pose.clone(),
             rider,
             wreck,
             mode: None,
@@ -377,16 +391,24 @@ impl CpuRacer {
             .terrain
             .contact(frame.origin[0], frame.origin[2])?
             .map(|hit| hit.height);
+        let surfaces = self.vehicle.wheel_effect_state().surfaces;
+        let water = world.water.map(|_| frame.water_height);
+        // The player's wheel centers: linkage wheel translations in world.
+        let centers = match self.vehicle.linkage_matrices() {
+            Some(matrices) => {
+                let body = vehicle_world(frame);
+                self.quad_pose
+                    .wheel_positions(matrices)?
+                    .map(|point| atv_core::obstacle::transform_point(&body, point))
+            }
+            None => [frame.origin; 4],
+        };
+        let quad = super::sound::quad_frame(events, frame, surfaces, ground, water, &centers);
         if self.sound.len() >= SOUND_STEPS {
             self.sound.remove(0);
         }
         self.sound.push(CpuSoundStep {
-            chassis: atv_core::quad_sounds::ChassisInput {
-                impact: events.impact,
-                wrecked: frame.wreck.phase != Phase::Riding,
-                airborne: ground.is_some_and(|g| frame.origin[1] - g > 2.),
-                chassis_contact: frame.chassis_contact_count + frame.obstacle_contact_count > 0,
-            },
+            chassis: quad.chassis,
             events,
             origin: frame.origin,
             velocity: frame.linear_velocity,
@@ -394,6 +416,10 @@ impl CpuRacer {
             rider_impact: rider.map_or([0.; 3], |r| r.sampled_impact_delta),
             riding: frame.wreck.phase == Phase::Riding,
             reset_count: frame.reset_count,
+            drive: quad.drive,
+            wheels: quad.wheels,
+            water_depth: quad.water_depth,
+            rider_water: rider.is_some_and(|r| r.water_touching),
         });
         Ok(())
     }
