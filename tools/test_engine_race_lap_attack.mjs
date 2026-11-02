@@ -151,6 +151,15 @@ try {
     await until(page, s => !s.ride?.ghost?.playing || s.ride.ghost.gap > 4, 60000, 'ghost apart').catch(() => {});
     await page.screenshot({ path: `${shots}/race-lap-attack-ghost-drawn.png` });
   }
+  // Post-reset fade (#485): `001e1fd0` clears the fade flag for a Lap
+  // Attack human, so a reset leaves the player opaque (the reset timer
+  // holds at 2 s in session mode 2).
+  await key(page, 'KeyR');
+  for (let i = 0; i < 20; i++) {
+    await nextFrames(page, 3);
+    const r = (await read(page)).ride;
+    assert.equal(r.resetFade, 1, `Lap Attack player stays opaque after a reset: ${JSON.stringify([r.resetFade, r.resetTimer])}`);
+  }
   // Pause → Quit to Main Menu ends the run.
   await key(page, 'Escape');
   await page.waitForFunction(() => JSON.parse(document.querySelector('#ui-state')?.textContent || '{}').toolbar?.menu?.page === 'pause', null, { timeout: 30000 });

@@ -1389,6 +1389,33 @@ impl SceneRenderer {
         }
     }
 
+    /// The post-reset fade opacities (`atv_core::reset_fade`; 1 opaque) of
+    /// the player and of each race CPU in [`Self::pose_race_cpus`]'s order
+    /// (CPUs past the slice draw opaque).
+    pub fn set_reset_fades(&mut self, gpu: &Gpu, player: f32, cpus: &[f32]) {
+        let shared = &*self
+            .shared_vehicle
+            .get_or_insert_with(|| vehicle::VehicleShared::new(gpu, gpu.samples));
+        if let Some(vehicle) = &mut self.vehicle {
+            vehicle.set_fade(gpu, shared, player);
+        }
+        for (index, (pass, _)) in self.cpus.iter_mut().enumerate() {
+            pass.set_fade(gpu, shared, cpus.get(index).copied().unwrap_or(1.));
+        }
+    }
+
+    /// A multiplayer slot's post-reset fade opacity (split screen's other
+    /// players; 1 opaque).
+    pub fn set_peer_fade(&mut self, gpu: &Gpu, peer: u8, opacity: f32) {
+        let Some((_, pass, _)) = self.peers.get_mut(&peer) else {
+            return;
+        };
+        let shared = &*self
+            .shared_vehicle
+            .get_or_insert_with(|| vehicle::VehicleShared::new(gpu, gpu.samples));
+        pass.set_fade(gpu, shared, opacity);
+    }
+
     /// Uploads a multiplayer rider's quad and rider, painted (one pass per slot, like
     /// the JavaScript game's per-rider remote model cache).
     pub fn set_peer(
@@ -2147,17 +2174,35 @@ impl SceneRenderer {
             self.profiler.mark("encode.vegetation");
             // The browser draws vehicles here, then water. Only the player's
             // pass writes the speed-rush stencil.
-            if let Some(vehicle) = &self.vehicle {
+            if let Some(vehicle) = self.vehicle.as_ref().filter(|v| !v.translucent()) {
                 pass.set_stencil_reference(1);
                 vehicle.draw(&mut pass);
             }
-            for (cpu, _) in self.cpus.iter().filter(|(_, visible)| *visible) {
-                cpu.draw(&mut pass);
+            let others = || {
+                self.cpus
+                    .iter()
+                    .filter(|(_, visible)| *visible)
+                    .map(|(pass, _)| pass)
+                    .chain(
+                        self.peers
+                            .values()
+                            .filter(|(.., visible)| *visible)
+                            .map(|(_, pass, _)| pass),
+                    )
+            };
+            for rider in others().filter(|p| !p.translucent()) {
+                rider.draw(&mut pass);
             }
-            for (_, peer, _) in self.peers.values().filter(|(.., visible)| *visible) {
-                peer.draw(&mut pass);
+            // Translucent riders (post-reset fades, then the ghosts) after
+            // every opaque rider, before water.
+            for rider in self
+                .vehicle
+                .iter()
+                .chain(others())
+                .filter(|p| p.translucent())
+            {
+                rider.draw(&mut pass);
             }
-            // Translucent ghosts after every opaque rider, before water.
             for (ghost, _) in self.ghosts.iter().flatten().filter(|(_, shown)| *shown) {
                 ghost.draw(&mut pass);
             }

@@ -57,6 +57,11 @@ pub struct VehiclePass {
     pipeline: wgpu::RenderPipeline,
     /// The ghost's depth pre-pass pipeline ([`VehiclePass::ghost`]).
     depth_pipeline: Option<wgpu::RenderPipeline>,
+    /// The post-reset fade's translucent (depth, colour) pipelines, shared
+    /// with the ghost and fetched on the first fade, and whether this frame
+    /// draws through them ([`VehiclePass::set_fade`]).
+    fade: Option<(wgpu::RenderPipeline, wgpu::RenderPipeline)>,
+    fading: bool,
     vertices: wgpu::Buffer,
     indices: wgpu::Buffer,
     globals: wgpu::Buffer,
@@ -598,6 +603,8 @@ impl VehiclePass {
         Ok(Self {
             pipeline,
             depth_pipeline: None,
+            fade: None,
+            fading: false,
             vertices: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("vehicle vertices"),
                 contents: bytemuck::cast_slice(&all_vertices),
@@ -647,6 +654,24 @@ impl VehiclePass {
     /// The pass's draw opacity (1 opaque).
     pub fn set_opacity(&mut self, opacity: f32) {
         self.globals_value.surface[3] = opacity.clamp(0., 1.);
+    }
+
+    /// The post-reset fade (`atv_core::reset_fade`): below 1 the rider
+    /// draws like the ghost (depth pre-pass, then colour blended at
+    /// `opacity`, no stencil mark) after every opaque rider; 1 draws it
+    /// opaque again. Not for the ghost, which is always translucent.
+    pub fn set_fade(&mut self, gpu: &Gpu, shared: &VehicleShared, opacity: f32) {
+        let fading = opacity < 1.;
+        if fading && self.fade.is_none() {
+            self.fade = Some(shared.ghost(gpu));
+        }
+        self.fading = fading;
+        self.set_opacity(if fading { opacity } else { 1. });
+    }
+
+    /// This frame draws translucent (the ghost, or a post-reset fade).
+    pub fn translucent(&self) -> bool {
+        self.fading || self.depth_pipeline.is_some()
     }
 
     /// The last pose's casters (see [`VehiclePass::pose`]).
@@ -768,6 +793,13 @@ impl VehiclePass {
 
     pub fn draw(&self, pass: &mut wgpu::RenderPass<'_>) {
         pass.set_bind_group(0, &self.globals_group, &[]);
+        if let Some((depth, color)) = self.fade.as_ref().filter(|_| self.fading) {
+            pass.set_pipeline(depth);
+            self.draw_chunks(pass, true);
+            pass.set_pipeline(color);
+            self.draw_chunks(pass, true);
+            return;
+        }
         if let Some(depth) = &self.depth_pipeline {
             // Materials still bind: cut-out texels discard in the pre-pass.
             pass.set_pipeline(depth);
