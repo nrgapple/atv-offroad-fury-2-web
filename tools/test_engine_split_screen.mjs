@@ -59,7 +59,7 @@ async function shot(page, name) {
 async function resetFade(page, press, fade, who) {
   const ride = async () => (await read(page)).ride;
   assert.equal(fade(await ride()), 1, `${who} opaque before the reset`);
-  const steps = () => page.evaluate(() => window.atvTerrainStatus.simulationSteps);
+  const steps = async () => (await read(page)).split.player1.steps;
   await press();
   const start = await steps();
   let r = await ride();
