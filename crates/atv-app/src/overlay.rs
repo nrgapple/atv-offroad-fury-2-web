@@ -9,7 +9,7 @@ use atv_ui::{
         help,
         meter::Meter,
         minimap::{Instrument, MapPose, Minimap, MinimapSettings},
-        race::{OverlaySettings, RaceView},
+        race::{LapHistoryBounds, OverlaySettings, RaceView},
         results::{self, Results},
         toolbar,
     },
@@ -125,6 +125,8 @@ pub struct Overlay {
     pub view_tags: Vec<usize>,
     /// The compass icons drawn on the latest frame, if a compass was (tests).
     compass_icons: Option<Vec<String>>,
+    /// The single-view lap history as drawn on the latest frame (tests).
+    lap_history: Option<LapHistoryBounds>,
     pub fonts: Fonts,
     renderer: Renderer,
     pub settings: Settings,
@@ -276,6 +278,7 @@ impl Overlay {
             tags: 0,
             view_tags: Vec::new(),
             compass_icons: None,
+            lap_history: None,
             lobby: None,
             help_until: None,
             ride_started: false,
@@ -921,6 +924,7 @@ impl Overlay {
         }
         self.split_hud.clear();
         self.split_radar = None;
+        self.lap_history = None;
         if let (Some(meter), Some(h), Some((name, set))) = (&self.meter, shown, seated)
             && let Some(layout) = meter.split_layout(set, name)
         {
@@ -1042,7 +1046,7 @@ impl Overlay {
                 let top_inset = self.toolbar_cache.as_ref().map_or(0., |(.., hits)| {
                     hits.iter().map(|(r, _)| r.bottom()).fold(0., f32::max)
                 });
-                meter.paint_race(
+                self.lap_history = meter.paint_race(
                     &mut self.fonts,
                     &mut items,
                     &RaceView {
@@ -1912,6 +1916,12 @@ impl Overlay {
                 // A target run's or mini-game's compass icons; whether the
                 // King of the Hills pills use the original art.
                 "compass": self.compass_icons,
+                // The lap history's drawn text box (CSS px), its slide offset
+                // (overlay units) and rows, while it shows (one view).
+                "lapHistory": self.lap_history.map(|b| serde_json::json!({
+                    "x": b.rect.x, "y": b.rect.y, "width": b.rect.w, "height": b.rect.h,
+                    "offset": b.offset, "rows": b.rows,
+                })),
                 "pillArt": self.meter.as_ref().is_some_and(|m| m.pills.is_some()),
                 "meter": self.meter.is_some() && !self.minimap.settings.enabled,
                 "compact": self.toolbar_cache.as_ref().is_some_and(|(_, s, ..)| s.compact),
