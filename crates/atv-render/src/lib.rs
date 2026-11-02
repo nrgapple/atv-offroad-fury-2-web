@@ -710,6 +710,9 @@ pub struct SceneRenderer {
     /// Multiplayer riders by slot: their (quad, rider) model, pass and
     /// whether this frame presents them.
     peers: std::collections::BTreeMap<u8, (PeerLook, vehicle::VehiclePass, bool)>,
+    /// Lap Attack ghosts by local player (0 player 1): the player's own
+    /// quad and rider at GhostOpacity, and whether this frame shows them.
+    ghosts: Vec<Option<(vehicle::VehiclePass, bool)>>,
     /// One vehicle pipeline for every other rider and race CPU.
     shared_vehicle: Option<vehicle::VehicleShared>,
     profiler: profile::Profiler,
@@ -843,6 +846,7 @@ impl SceneRenderer {
             vehicle: None,
             cpus: Vec::new(),
             peers: Default::default(),
+            ghosts: Vec::new(),
             shared_vehicle: None,
             profiler: profile::Profiler::default(),
             gpu_timer: None,
@@ -1438,6 +1442,59 @@ impl SceneRenderer {
         drawn
     }
 
+    /// Uploads local player `player`'s Lap Attack ghost (0 player 1): its
+    /// own quad and rider, painted, drawn at `opacity` (`001f6c60` gives
+    /// each human a ghost rider on the same quad; `001e4c90` draws it at
+    /// GhostOpacity).
+    #[allow(clippy::too_many_arguments)]
+    pub fn set_ghost(
+        &mut self,
+        gpu: &Gpu,
+        venue: &Venue,
+        player: usize,
+        (quad, rider): (&atv_game::ride::Model, &atv_game::ride::Model),
+        paint: [f32; 2],
+        opacity: f32,
+    ) -> Result<(), String> {
+        let shared = self
+            .shared_vehicle
+            .get_or_insert_with(|| vehicle::VehicleShared::new(gpu, gpu.samples))
+            .clone();
+        let mut pass = vehicle::VehiclePass::ghost(gpu, venue, quad, rider, &shared, opacity)?;
+        pass.set_paint(paint);
+        if self.ghosts.len() <= player {
+            self.ghosts.resize_with(player + 1, || None);
+        }
+        self.ghosts[player] = Some((pass, false));
+        Ok(())
+    }
+
+    /// Whether local player `player` has a ghost uploaded.
+    pub fn has_ghost(&self, player: usize) -> bool {
+        self.ghosts.get(player).is_some_and(Option::is_some)
+    }
+
+    /// Poses player `player`'s ghost, or hides it (None: no best lap yet,
+    /// or its lap has played out). Like other riders it draws at any
+    /// distance; it never casts a shadow.
+    pub fn pose_ghost(&mut self, gpu: &Gpu, player: usize, pose: Option<&atv_game::ride::Pose>) {
+        if let Some(Some((pass, shown))) = self.ghosts.get_mut(player) {
+            *shown = pose.is_some();
+            if let Some(pose) = pose {
+                pass.pose(gpu, pose);
+            }
+        }
+    }
+
+    /// Ghosts drawn this frame (`#ui-state` `ride.ghost.drawn`).
+    pub fn ghosts_shown(&self) -> usize {
+        self.ghosts
+            .iter()
+            .flatten()
+            .filter(|(_, shown)| *shown)
+            .count()
+    }
+
     /// One simulation step's body origin while Riding with every wheel down,
     /// for the contact shadows' resting lift (acceptFrame in game.js).
     pub fn observe_rest(&mut self, origin: [f32; 3]) {
@@ -1863,6 +1920,7 @@ impl SceneRenderer {
             .iter_mut()
             .map(|(p, v)| (p, *v))
             .chain(self.peers.values_mut().map(|(_, p, v)| (p, *v)))
+            .chain(self.ghosts.iter_mut().flatten().map(|(p, v)| (p, *v)))
         {
             if visible {
                 cpu.prepare(gpu, &view_projection, view.camera.eye());
@@ -2098,6 +2156,10 @@ impl SceneRenderer {
             }
             for (_, peer, _) in self.peers.values().filter(|(.., visible)| *visible) {
                 peer.draw(&mut pass);
+            }
+            // Translucent ghosts after every opaque rider, before water.
+            for (ghost, _) in self.ghosts.iter().flatten().filter(|(_, shown)| *shown) {
+                ghost.draw(&mut pass);
             }
             self.profiler.mark("encode.vehicles");
             if let Some((water, _)) = &self.water {

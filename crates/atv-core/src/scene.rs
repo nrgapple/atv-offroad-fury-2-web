@@ -47,9 +47,24 @@ pub struct Scene {
     pub collision_partition: Option<crate::scene_partition::Config>,
     pub boundary_launch: Option<crate::boundary_launch::Config>,
     pub crowd_present: bool,
+    /// Environment "GhostOpacity" (`00209680`, default 0.4): the Lap Attack
+    /// ghost's draw opacity.
+    pub ghost_opacity: f32,
     /// `[SceneInfo]` NumZones/NumPortals (001fc850 defaults 1 and 0).
     pub zones: i64,
     pub portals: i64,
+}
+/// `00209680` reads Environment "GhostOpacity" (default 0.4, into world
+/// +0x514) and "ResetOpacity" (default 0.2, +0x510; the post-reset fade,
+/// not the ghost).
+fn ghost_opacity(data: &PhysicsData) -> Result<f32> {
+    value(data, "Environment", "GhostOpacity").map_or(Ok(crate::race_ghost::OPACITY), |v| {
+        v.trim()
+            .parse::<f32>()
+            .ok()
+            .filter(|v| v.is_finite())
+            .ok_or_else(|| "invalid GhostOpacity".into())
+    })
 }
 fn value<'a>(data: &'a PhysicsData, section: &str, key: &str) -> Option<&'a str> {
     data.entries
@@ -572,6 +587,7 @@ pub fn parse_with_start(data: &[u8], mode: Option<&[u8]>) -> Result<Scene> {
         collision_partition: collision_partition(&data)?,
         boundary_launch: boundary_launch(&data)?,
         crowd_present: crowd_present(&data),
+        ghost_opacity: ghost_opacity(&data)?,
         zones: zone_count(&data, "NumZones", 1)?,
         portals: zone_count(&data, "NumPortals", 0)?,
     })

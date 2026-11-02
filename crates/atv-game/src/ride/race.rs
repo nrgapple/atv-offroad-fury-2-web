@@ -203,6 +203,8 @@ pub struct Stage {
     pub fireworks: Fireworks,
     /// The race TOY `[ChampionshipInfo]` Profile Points tables.
     pub awards: Option<atv_core::profile::CourseAwards>,
+    /// The venue's Environment "GhostOpacity" (`00209680`).
+    pub ghost_opacity: f32,
 }
 
 /// What a race load reads besides the ride itself.
@@ -299,6 +301,9 @@ pub struct RaceState {
     pub puppets_retired: bool,
     /// Lap Attack's best-lap ghost (none in other event types).
     pub ghost: Option<atv_core::race_ghost::Ghost>,
+    /// The ghost's drawn pose this step (its buffers reused step to step)
+    /// and whether it is shown.
+    ghost_pose: (super::Pose, bool),
 }
 
 /// A room race host's CPU for the room ([`Ride::room_cpu_frames`]).
@@ -593,6 +598,7 @@ impl Ride {
             super::race::place_racer(vehicle, &self.sim.terrain)?;
             self.frame = vehicle.frame();
         }
+        let ghost_opacity = setup.stage.ghost_opacity;
         self.race = Some(RaceState {
             race,
             cpus,
@@ -639,7 +645,8 @@ impl Ride {
             puppets_retired: false,
             ghost: settings
                 .lap_attack
-                .then(atv_core::race_ghost::Ghost::default),
+                .then(|| atv_core::race_ghost::Ghost::new(ghost_opacity)),
+            ghost_pose: Default::default(),
         });
         Ok(())
     }
@@ -841,6 +848,16 @@ impl Ride {
 
     pub(super) fn step_race(&mut self) -> Result<()> {
         let committed = self.committed_points();
+        // Lap Attack key steps keep the drawn quad and rider node matrices.
+        let ghost_nodes = match &self.race {
+            Some(state)
+                if !state.race.holding()
+                    && state.ghost.as_ref().is_some_and(|g| g.wants_nodes()) =>
+            {
+                self.pose().ok()
+            }
+            _ => None,
+        };
         let Some(state) = &mut self.race else {
             return Ok(());
         };
@@ -883,10 +900,38 @@ impl Ride {
             {
                 state.hud.say(GHOST_BEST.into(), 1.5);
             }
-            ghost.record(atv_core::race_ghost::Sample {
-                origin: player.origin,
-                orientation: player.orientation,
-            });
+            ghost.record(
+                atv_core::race_ghost::Sample {
+                    origin: player.origin,
+                    orientation: player.orientation,
+                },
+                ghost_nodes
+                    .as_ref()
+                    .map(|pose| atv_core::race_ghost::Nodes {
+                        quad: &pose.quad_nodes,
+                        rider: &pose.rider_nodes,
+                        rider_offset: atv_core::race_ghost::rider_offset(
+                            &pose.quad_world,
+                            &pose.rider_world,
+                        ),
+                    }),
+            );
+            // The drawn ghost: its quad and rider at the replayed pose.
+            let (pose, shown) = &mut state.ghost_pose;
+            let mut nodes = atv_core::race_ghost::PoseNodes {
+                quad: std::mem::take(&mut pose.quad_nodes),
+                rider: std::mem::take(&mut pose.rider_nodes),
+                rider_offset: [0.; 16],
+            };
+            let sample = ghost.pose_nodes(&mut nodes);
+            pose.quad_nodes = nodes.quad;
+            pose.rider_nodes = nodes.rider;
+            *shown = sample.is_some();
+            if let Some(sample) = sample {
+                pose.quad_world = super::quaternion_world(sample.origin, sample.orientation);
+                pose.rider_world =
+                    atv_core::race_ghost::multiply(&pose.quad_world, &nodes.rider_offset);
+            }
         }
         race.record_player_stunt(committed);
         race.record_player_jump(
@@ -1489,6 +1534,15 @@ impl Ride {
                 p.body = None;
             }
         }
+    }
+
+    /// Lap Attack: the ghost's quad and rider pose and its opacity, while
+    /// it replays a drawable lap (`001f6c60`'s second rider per human).
+    pub fn ghost_pose(&self) -> Option<(&super::Pose, f32)> {
+        let state = self.race.as_ref()?;
+        let ghost = state.ghost.as_ref()?;
+        let (pose, shown) = &state.ghost_pose;
+        shown.then_some((pose, ghost.opacity()))
     }
 
     /// World pose of each CPU's quad and rider for drawing.

@@ -670,6 +670,7 @@ async fn race_setup(
             gate: venue.drop_gate.clone(),
             fireworks,
             awards,
+            ghost_opacity: venue.scene.ghost_opacity,
         },
     })
 }

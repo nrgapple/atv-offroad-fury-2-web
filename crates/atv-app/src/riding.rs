@@ -14,6 +14,9 @@ use atv_render::{Camera, Gpu, SceneRenderer};
 
 pub struct Riding {
     pub ride: Ride,
+    /// The local player index (0 player 1): the scene's Lap Attack ghost
+    /// slot.
+    pub ghost_slot: usize,
     pub bindings: Bindings,
     /// Follow-camera orbit offset (Z/X keys, right stick, mouse drag).
     pub orbit: f32,
@@ -174,6 +177,7 @@ impl Riding {
         let origin = ride.frame().origin;
         Self {
             ride,
+            ghost_slot: 0,
             bindings: Bindings::default(),
             orbit: 0.,
             accumulator: 0.,
@@ -626,7 +630,33 @@ impl Riding {
         if let Some(effects) = &self.effects {
             scene.set_wheel_effects(gpu, effects);
         }
-        Ok(())
+        self.upload_ghost(gpu, scene, venue)
+    }
+
+    /// Lap Attack: uploads this player's ghost (its own quad and rider) at
+    /// ride load, so the first best lap draws without a mid-race upload.
+    pub fn upload_ghost(
+        &self,
+        gpu: &Gpu,
+        scene: &mut SceneRenderer,
+        venue: &Venue,
+    ) -> Result<(), String> {
+        let Some(ghost) = self.ride.race().and_then(|r| r.ghost.as_ref()) else {
+            return Ok(());
+        };
+        scene.set_ghost(
+            gpu,
+            venue,
+            self.ghost_slot,
+            (&self.ride.quad, &self.ride.rider),
+            self.ride.paint(),
+            ghost.opacity(),
+        )
+    }
+
+    /// Poses this player's ghost at its replayed step (hidden without one).
+    pub fn pose_ghost(&self, gpu: &Gpu, scene: &mut SceneRenderer) {
+        scene.pose_ghost(gpu, self.ghost_slot, self.ride.ghost_pose().map(|(p, _)| p));
     }
 
     pub fn set_focused(&mut self, focused: bool) {
@@ -854,6 +884,7 @@ impl Riding {
             scene.set_ride_mud(mud, !self.ride.is_motorcycle());
             scene.pose_ride(gpu, &pose);
             scene.pose_race_cpus(gpu, &cpu_poses, position);
+            self.pose_ghost(gpu, scene);
         }
         Ok((
             Camera {

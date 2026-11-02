@@ -1220,6 +1220,7 @@ async fn prepare(
             scene.set_race_cpus(&gpu, &venue, &race.draw)?;
         }
         let mut riding = riding::Riding::new(ride, &venue);
+        riding.upload_ghost(&gpu, &mut scene, &venue)?;
         riding.interpolation = graphics.interpolation;
         riding.wheel_reprojection = graphics.wheel_reprojection;
         riding.dirt_enabled = graphics.dirt;
@@ -1821,6 +1822,7 @@ impl App {
                     Ok(pose) => poses.push(pose),
                     Err(error) => status(&format!("Player {}: {error}", second.player)),
                 }
+                second.riding.pose_ghost(&ready.gpu, &mut ready.scene);
             }
             ready.scene.pose_peers(&ready.gpu, &poses);
         }
@@ -3114,6 +3116,10 @@ impl App {
                         "best": g.best, "samples": g.samples, "opacity": g.opacity,
                         "playing": g.pose.is_some(),
                         "origin": g.pose.map(|p| p.origin),
+                        // Ghost passes the scene drew this frame (one per
+                        // local player replaying a best lap).
+                        "drawn": ready.scene.ghosts_shown(),
+                        "split": ready.split.iter().map(|second| second.riding.ride.ghost_pose().is_some()).collect::<Vec<_>>(),
                     })
                 });
             let best_lap = riding

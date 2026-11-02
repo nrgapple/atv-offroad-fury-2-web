@@ -9,6 +9,8 @@ struct Globals {
   ambient: vec4<f32>,
   sun_color: vec4<f32>,
   sun_direction: vec4<f32>,
+  // untextured colour; w: the pass opacity (the Lap Attack ghost's
+  // GhostOpacity, else 1)
   surface: vec4<f32>,
   // amount, reveal
   mud: vec4<f32>,
@@ -113,5 +115,5 @@ fn fs(in: Varyings) -> @location(0) vec4<f32> {
   let sunlight = max(dot(n, normalize(g.sun_direction.xyz)), 0.0);
   let lit = base * (g.ambient.rgb + g.sun_color.rgb * sunlight);
   let coverage = select(1.0, clamp(in.fog.x / in.fog.y, 0.0, 1.0), in.fog.y != 0.0);
-  return vec4<f32>(mix(g.fog_color.rgb, lit, coverage), source_alpha);
+  return vec4<f32>(mix(g.fog_color.rgb, lit, coverage), source_alpha * g.surface.w);
 }
