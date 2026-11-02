@@ -8,7 +8,8 @@
 // The race path driver (`autopilot=1`) rides two Supercross laps. The ghost
 // draws as the player's own quad and rider at GhostOpacity (`001e4c90`):
 // `ride.ghost.drawn` counts the scene's ghost passes drawn this frame.
-// ATV_SHOTS=<dir> saves the setup page and a lap with the ghost playing.
+// ATV_SHOTS=<dir> saves the setup page, the lap history sliding in and
+// settled, and a lap with the ghost playing.
 import assert from 'node:assert/strict';
 import { assertNoErrors, launch, newPage, nextFrames, unlockStore, url } from './browser/harness.mjs';
 
@@ -33,6 +34,37 @@ async function until(page, predicate, timeout, what) {
   }
 }
 const shots = process.env.ATV_SHOTS;
+// The lap history (Overlays.pb object 14, right-justified under LAP TIME at
+// 609,23) as drawn on each frame for `ms`: its text box in CSS px, its slide
+// offset in overlay units and its rows.
+const sampleHistory = (page, ms) => page.evaluate(ms => new Promise(done => {
+  const out = [];
+  const end = performance.now() + ms;
+  const tick = () => {
+    const s = JSON.parse(document.querySelector('#ui-state')?.textContent || '{}');
+    const h = s.toolbar?.hud?.lapHistory;
+    if (h) out.push({ ...h, laps: s.ride?.raceLap?.laps_done ?? 0 });
+    if (performance.now() < end && !(out.length && !h)) requestAnimationFrame(tick);
+    else done(out);
+  };
+  requestAnimationFrame(tick);
+}), ms);
+// Settled, the list lies inside the viewport; it is partly off the right
+// edge only while it slides in or out by up to 200 units (`002e8a10`).
+function checkHistory(samples, laps, viewport) {
+  const settled = samples.filter(h => h.offset === 0);
+  assert.ok(settled.length > 0, `lap history settles: ${JSON.stringify(samples.slice(0, 3))}`);
+  for (const h of settled) {
+    assert.equal(h.rows, Math.min(laps, 5), `lap history rows ${h.rows} after ${laps} laps`);
+    assert.ok(h.x >= 0 && h.y >= 0, `lap history origin ${h.x},${h.y}`);
+    assert.ok(h.x + h.width <= viewport.width, `lap history right ${h.x + h.width} inside ${viewport.width}`);
+    assert.ok(h.y + h.height <= viewport.height, `lap history bottom ${h.y + h.height} inside ${viewport.height}`);
+  }
+  for (const h of samples) assert.ok(h.offset >= 0 && h.offset <= 200 && Number.isInteger(h.offset), `slide offset ${h.offset}`);
+  const right = Math.max(...settled.map(h => h.x + h.width));
+  for (const h of samples.filter(h => h.offset > 0)) assert.ok(h.x + h.width > right, 'a sliding list sits right of the settled one');
+  return settled[0];
+}
 
 const browser = await launch();
 try {
@@ -75,8 +107,24 @@ try {
   // Supercross's first lap from the grid is not judged for the best lap
   // (Track flag 8, `00248b20`), so lap 2 sets the best lap and the ghost,
   // which replays it from lap 3's start.
-  s = await until(page, s => (s.ride?.raceLap?.laps_done ?? 0) >= 1, 300000, 'first lap');
-  s = await until(page, s => (s.ride?.raceLap?.laps_done ?? 0) >= 2, 300000, 'second lap');
+  const viewport = page.viewportSize();
+  const histories = [];
+  for (const laps of [1, 2]) {
+    // The history shows for 5s from the lap's end: sample every frame of it.
+    await until(page, s => (s.ride?.raceLap?.laps_done ?? 0) >= laps, 300000, `lap ${laps}`);
+    const sampling = sampleHistory(page, 6000);
+    if (shots && laps === 2) {
+      // The list entering from +200 (partly past the right edge, as on the
+      // PS2), then settled.
+      await page.screenshot({ path: `${shots}/race-lap-history-sliding.png` });
+      await page.waitForFunction(() => JSON.parse(document.querySelector('#ui-state')?.textContent || '{}').toolbar?.hud?.lapHistory?.offset === 0, null, { timeout: 5000, polling: 'raf' });
+      await page.screenshot({ path: `${shots}/race-lap-history-settled.png` });
+    }
+    histories.push(checkHistory(await sampling, laps, viewport));
+  }
+  // A second row lists below the first at the same right edge.
+  assert.ok(Math.abs(histories[1].x + histories[1].width - (histories[0].x + histories[0].width)) < 2, 'rows share the right edge');
+  assert.ok(histories[1].height > histories[0].height, 'the second lap adds a row');
   s = await until(page, s => s.ride?.ghost?.playing === true, 30000, 'ghost playing');
   const ghost = s.ride.ghost;
   assert.ok(ghost.samples > 60, `ghost samples ${ghost.samples}`);
@@ -92,6 +140,11 @@ try {
   assert.notDeepEqual(s.ride.ghost.origin, ghost.origin, 'the ghost moves along its lap');
   assert.equal(s.ride.ghost.drawn, 1, 'the ghost stays drawn along its lap');
   if (shots) {
+    // Not mid-slide: wait for the lap history to settle or leave.
+    await page.waitForFunction(() => {
+      const h = JSON.parse(document.querySelector('#ui-state')?.textContent || '{}').toolbar?.hud?.lapHistory;
+      return !h || h.offset === 0;
+    }, null, { timeout: 10000, polling: 'raf' });
     await page.screenshot({ path: `${shots}/race-lap-attack-ghost.png` });
     // The race path driver retraces its lap closely: wait for the ghost
     // and the rider to drift a few feet apart.

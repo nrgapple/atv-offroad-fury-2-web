@@ -220,10 +220,11 @@ impl RaceHud {
                         best: input.best_lap == Some(i),
                     })
                     .collect();
+                // Whole overlay units, as `002e8a10` truncates its slide.
                 let offset = if t > 4. {
-                    (t - 4.) * 200.
+                    ((t - 4.) * 200.).trunc()
                 } else if t < 1. {
-                    (1. - t) * 200.
+                    ((1. - t) * 200.).trunc()
                 } else {
                     0.
                 };
@@ -352,7 +353,9 @@ mod tests {
         let history = f.history.clone().unwrap();
         assert_eq!(history.rows.len(), 2);
         assert!(history.rows[1].best && !history.rows[0].best);
-        assert!((history.offset - 180.).abs() < 0.01, "slides in from +200");
+        // Slides in from +200 in whole units (`002e8a10` truncates).
+        assert_eq!(history.offset, history.offset.trunc());
+        assert!((history.offset - 180.).abs() <= 1., "slides in from +200");
         for _ in 0..20 {
             f = hud.step(0.1, &i);
         }

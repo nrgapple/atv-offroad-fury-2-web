@@ -368,6 +368,19 @@ pass draws them in races from the race frame (`atv_core::race`, `race_hud`):
   Off Track / Too Deep digits, and the north-up radar with CPU dots and the player's
   red dot. Pause → Race Overlays choices (`atv-race-overlays-off`,
   `atv-race-position`) apply when the menu closes.
+- Lap history (object 14, issue #482): Overlays.pb places it at 609,23 with the
+  LAP TIME column, each row's time right-justified at +0 (y 44, 66, 88, 110, 132)
+  and its `Lap N` label left-justified at -121 (scale 0.8), five rows at most. It
+  keeps the 31-unit right margin at every width, so once settled it lies inside
+  the screen on desktop, tablet and phone layouts (unit test
+  `the_lap_history_stays_on_screen_once_settled`). The original shows it for 5s
+  (`002e85c0`) and slides it from +200 units over the first second and back to
+  +200 over the last, in whole units (`002e8a10`; `002e88c0` parks it at +200).
+  A frame captured within a second of a lap's end therefore shows the list partly
+  past the right edge, as on the PS2; that was the clipped Lap Attack capture.
+  The port keeps the slide, truncates its offset like the original, and reports
+  the drawn box as `toolbar.hud.lapHistory` (`x`, `y`, `width`, `height` in CSS px,
+  `offset`, `rows`) for tools/test_engine_race_lap_attack.mjs.
 - Races hide the GPS map; the speed meter follows the overlays' Speed group; stunt
   text follows the Info group; the HUD hides during the pre-race shots; the lamps
   draw while the race frame carries them. The race load fades in from black over

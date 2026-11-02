@@ -72,7 +72,14 @@ try {
   assert.ok(s.ride.raceLap.field > 1, `CPU field: ${s.ride.raceLap.field}`);
   // A lap completes and the run goes on: no finish, no results.
   s = await until(page, s => (s.ride?.raceLap?.laps_done ?? 0) >= 1, 240000, 'first practice lap');
-  await nextFrames(page, 30);
+  // The lap history (object 14) settles inside the viewport (issue #482).
+  const history = await page.waitForFunction(() => {
+    const h = JSON.parse(document.querySelector('#ui-state')?.textContent || '{}').toolbar?.hud?.lapHistory;
+    return h && h.offset === 0 ? h : null;
+  }, null, { timeout: 10000, polling: 'raf' }).then(h => h.jsonValue());
+  assert.equal(history.rows, 1);
+  assert.ok(history.x >= 0 && history.x + history.width <= 1280, `lap history x ${history.x}+${history.width}`);
+  assert.ok(history.y >= 0 && history.y + history.height <= 720, `lap history y ${history.y}+${history.height}`);
   s = await read(page);
   assert.equal(s.ride.raceLap.phase, 'racing', 'Practice does not finish');
   assert.equal(s.ride.raceLap.lap, s.ride.raceLap.laps_done + 1);

@@ -56,15 +56,13 @@ impl Meter {
         color: Option<Color>,
         alpha: Option<f32>,
         offset: [f32; 2],
-    ) {
+    ) -> Option<Rect> {
         let prefix = format!("text{index}");
         let name = layout
             .text(&format!("{prefix}font"))
             .unwrap_or_else(|| FONT_DEFAULT.into())
             .to_ascii_lowercase();
-        let Some(font) = self.assets.fonts.get(&name) else {
-            return;
-        };
+        let font = self.assets.fonts.get(&name)?;
         let color = color
             .or_else(|| {
                 layout
@@ -84,7 +82,7 @@ impl Meter {
             .unwrap_or_else(|| layout.number(&format!("{prefix}alpha")).unwrap_or(255.))
             / 255.;
         if alpha <= 0. || value.is_empty() {
-            return;
+            return None;
         }
         let x = match alignment.as_str() {
             "R" => -width,
@@ -105,6 +103,8 @@ impl Meter {
         style.max_width = Some(width * k);
         let baseline = fonts.top_offset(&style.font);
         list.text(value, &style, left, top + baseline);
+        // The drawn box in CSS px (the measured, squeezed width).
+        Some(Rect::new(left, top, width * k, height * k))
     }
 
     #[allow(clippy::too_many_arguments)]

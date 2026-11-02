@@ -81,6 +81,15 @@ impl OverlaySettings {
     }
 }
 
+/// The lap history (object 14) as drawn: the union of its text boxes in
+/// CSS px, its slide offset in overlay units and its row count.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct LapHistoryBounds {
+    pub rect: Rect,
+    pub offset: f32,
+    pub rows: usize,
+}
+
 /// What one frame's race overlays show.
 pub struct RaceView<'a> {
     pub frame: &'a Frame,
@@ -223,10 +232,8 @@ impl Meter {
         race: &RaceView,
         width: f32,
         height: f32,
-    ) {
-        let Some(assets) = &self.assets.race else {
-            return;
-        };
+    ) -> Option<LapHistoryBounds> {
+        let assets = self.assets.race.as_ref()?;
         let shown = |group: &str| race.settings.shown(group);
         let position = race.settings.position.as_str();
         // Phones keep a 480-unit minimum width and drop the right column
@@ -286,7 +293,7 @@ impl Meter {
             });
             self.text(
                 fonts, list, &f, value, where_, layout, i, scale, color, alpha, offset,
-            );
+            )
         };
         // LAP TIME, LAP, SCORE.
         if let Some(l) = layout(1).filter(|_| shown("timing")) {
@@ -466,10 +473,28 @@ impl Meter {
                 [0.; 2],
             );
         }
+        // Lap history: right-justified under LAP TIME at 609,23 (times at
+        // +0, labels at -121), slid `offset` units right while it enters and
+        // leaves (`002e8a10`), so it is partly off screen only then.
+        let mut drawn: Option<LapHistoryBounds> = None;
         if let (Some(history), Some(rows)) = (layout(14), hud.history.as_ref())
             && shown("lap")
         {
             let where_ = [ax(609.) + rows.offset, ay(23., 609.)];
+            let mut grow = |r: Option<Rect>| {
+                let Some(r) = r else { return };
+                let b = drawn.get_or_insert(LapHistoryBounds {
+                    rect: r,
+                    offset: rows.offset,
+                    rows: rows.rows.len(),
+                });
+                let (x, y) = (b.rect.x.min(r.x), b.rect.y.min(r.y));
+                let (right, bottom) = (
+                    b.rect.right().max(r.right()),
+                    b.rect.bottom().max(r.bottom()),
+                );
+                b.rect = Rect::new(x, y, right - x, bottom - y);
+            };
             let best_color = history
                 .get("bestlapcolor")
                 .map(|c| c.replace(char::is_whitespace, ""))
@@ -478,7 +503,7 @@ impl Meter {
             for (i, row) in rows.rows.iter().enumerate() {
                 let color = Some(if row.best { best_color } else { RACE_TEXT });
                 let lap = format!("Lap {}", row.lap);
-                text(
+                grow(text(
                     list,
                     &lap,
                     where_,
@@ -488,9 +513,9 @@ impl Meter {
                     1.,
                     None,
                     [0.; 2],
-                );
+                ));
                 let time = overlay_time(row.time);
-                text(
+                grow(text(
                     list,
                     &time,
                     where_,
@@ -500,7 +525,7 @@ impl Meter {
                     1.,
                     None,
                     [0.; 2],
-                );
+                ));
             }
         }
         // Infotext and signage.
@@ -539,18 +564,18 @@ impl Meter {
         }
         // Radar: north-up course map at native size, racer dots drawn last-first.
         if !shown("radar") {
-            return;
+            return drawn;
         }
         if frame.enduro_gate.is_some() {
             self.compass(list, frame, race.origin, at(70., 375.), unit);
-            return;
+            return drawn;
         }
         let Some((map, [left, north, right, _])) = &assets.radar else {
-            return;
+            return drawn;
         };
         let (Some(&map_id), Some(map_image)) = (self.images.get(map), self.assets.images.get(map))
         else {
-            return;
+            return drawn;
         };
         let (mw, mh) = (map_image.width as f32, map_image.height as f32);
         let scale = (right - left) / mw;
@@ -587,6 +612,7 @@ impl Meter {
             dot(list, cpu.origin, RACER);
         }
         dot(list, race.origin, RACER_PLAYER);
+        drawn
     }
 
     /// The course archive carries the 321 lamp art.
@@ -647,6 +673,104 @@ mod tests {
         assert_eq!(overlay_time(59.996), "01:00.00");
         assert_eq!(overlay_time(-3.5), "-00:03.50");
         assert_eq!(overlay_time(6000.), "99:99.99");
+    }
+
+    /// A race meter with Overlays.pb's lap history (object 14) and a CEL
+    /// font whose glyphs advance 12 units (25 tall).
+    fn history_meter() -> Meter {
+        use super::super::assets::{CelFont, OverlayAssets, RaceAssets, sections};
+        let doc = b"[OverlayObject-14]\nType=LapHistory\nBestLapColor = 76,181,255\nNumText = 10\n\
+Text1Offset = -121,46\nText1Justification = L\nText1Scale=0.8\nText2Offset = 0,44\nText2Justification = R\n\
+Text3Offset = -121,68\nText3Justification = L\nText3Scale=0.8\nText4Offset = 0,66\nText4Justification = R\n\
+Text5Offset = -121,90\nText5Justification = L\nText5Scale=0.8\nText6Offset = 0,88\nText6Justification = R\n\
+Text7Offset = -121,112\nText7Justification = L\nText7Scale=0.8\nText8Offset = 0,110\nText8Justification = R\n\
+Text9Offset = -121,134\nText9Justification = L\nText9Scale=0.8\nText10Offset = 0,132\nText10Justification = R\n";
+        let all = sections(doc);
+        let mut font = CelFont::default();
+        for c in " 0123456789:.-Lap".chars() {
+            font.advances.insert(c as u32, 12.);
+            font.heights.insert(c as u32, 25.);
+        }
+        let mut fonts = std::collections::HashMap::new();
+        fonts.insert(super::super::assets::FONT_DEFAULT.to_string(), font);
+        Meter::new(OverlayAssets {
+            speed: Section::default(),
+            stunt: Section::default(),
+            fonts,
+            images: Default::default(),
+            lamps: false,
+            race: Some(RaceAssets {
+                layout: [(14, all["overlayobject-14"].clone())].into(),
+                signs: Default::default(),
+                multi_signs: Default::default(),
+                radar: None,
+            }),
+            split: Default::default(),
+        })
+    }
+
+    #[test]
+    fn the_lap_history_stays_on_screen_once_settled() {
+        use atv_core::race_hud::{Frame as Hud, History, HistoryRow};
+        let meter = history_meter();
+        let mut fonts = Fonts::new();
+        let settings = OverlaySettings {
+            off: Vec::new(),
+            position: "name".into(),
+        };
+        let mut bounds = |rows: usize, offset: f32, width: f32, height: f32| {
+            let frame = Frame {
+                hud: Some(Hud {
+                    sign: None,
+                    infotext: None,
+                    history: Some(History {
+                        rows: (0..rows)
+                            .map(|i| HistoryRow {
+                                lap: i + 1,
+                                time: 77.45 + i as f32 * 4.29,
+                                best: i == 1,
+                            })
+                            .collect(),
+                        offset,
+                    }),
+                    listing_alpha: 0.,
+                    tree: Vec::new(),
+                    place_scale: 1.,
+                }),
+                ..Default::default()
+            };
+            let view = RaceView {
+                frame: &frame,
+                score: 0.,
+                origin: [0.; 3],
+                top_inset: 44.,
+                settings: &settings,
+            };
+            let mut list = DisplayList::default();
+            meter
+                .paint_race(&mut fonts, &mut list, &view, width, height)
+                .expect("the lap history draws")
+        };
+        // Desktop, tablet, phone landscape and portrait; one to five rows.
+        for (width, height) in [(1280., 720.), (1024., 768.), (844., 390.), (390., 844.)] {
+            let unit = (height / 448f32).min(width / 480.);
+            for rows in 1..=5 {
+                let b = bounds(rows, 0., width, height);
+                assert_eq!(b.rows, rows);
+                assert!(b.rect.x >= 0. && b.rect.y >= 0., "{width}x{height}: {b:?}");
+                assert!(b.rect.right() <= width, "{width}x{height}: {b:?}");
+                assert!(b.rect.bottom() <= height, "{width}x{height}: {b:?}");
+                // Right-justified at 609 of 640: a 31-unit right margin.
+                assert!(
+                    (b.rect.right() - (width - 31. * unit)).abs() < 0.5,
+                    "{width}x{height}: {b:?}"
+                );
+            }
+            // Sliding in or out, the list is the same box moved right.
+            let settled = bounds(2, 0., width, height);
+            let sliding = bounds(2, 100., width, height);
+            assert!((sliding.rect.x - settled.rect.x - 100. * unit).abs() < 0.5);
+        }
     }
 
     #[test]
