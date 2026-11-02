@@ -512,19 +512,22 @@ impl Results {
             }
             self.pad_steer = dir;
         }
-        let steer = if pressed(14) || pressed(12) || axis(0) < -0.55 || axis(1) < -0.55 {
-            -1
-        } else if pressed(15) || pressed(13) || axis(0) > 0.55 || axis(1) > 0.55 {
-            1
-        } else {
-            0
-        };
-        if self.menu == Menu::NameEntry {
-        } else if steer != 0 && steer != self.pad_steer && !self.hidden {
-            self.focus_visible = true;
-            self.move_focus(steer);
+        if self.menu != Menu::NameEntry {
+            let steer = if pressed(14) || pressed(12) || axis(0) < -0.55 || axis(1) < -0.55 {
+                -1
+            } else if pressed(15) || pressed(13) || axis(0) > 0.55 || axis(1) > 0.55 {
+                1
+            } else {
+                0
+            };
+            if steer != 0 && steer != self.pad_steer && !self.hidden {
+                self.focus_visible = true;
+                self.move_focus(steer);
+            }
+            // (The letter picker keeps its own held direction: a held
+            // D-pad steps one letter, not one every other frame.)
+            self.pad_steer = steer;
         }
-        self.pad_steer = steer;
         let held = pressed(0) || pressed(1) || pressed(2);
         if !held {
             self.pad_armed = true;
@@ -953,12 +956,40 @@ mod tests {
         assert_eq!(r.fame.as_ref().unwrap().name, "AC ");
         tap(&mut r, 14);
         assert_eq!(r.fame.as_ref().unwrap().name, "AC");
+        // A held D-pad direction steps once.
+        let mut held = [0f32; 16];
+        held[14] = 1.;
+        for _ in 0..4 {
+            r.pad(&held, &[]);
+        }
+        assert_eq!(r.fame.as_ref().unwrap().name, "A");
+        r.pad(&[0f32; 16], &[]);
         assert_eq!(r.menu, Menu::NameEntry);
         // The controller's A accepts too.
         r.enter_fame(vec!["Longest Jump".into()], "ACE");
         assert_eq!(r.pad(&[0.], &[]), None);
         assert_eq!(r.pad(&[1.], &[]), Some(Command::FameName));
     }
+    #[test]
+    fn split_name_entries_follow_one_another_with_the_player() {
+        let mut r = Results {
+            shown: true,
+            ..Default::default()
+        };
+        r.enter_player_fame(vec!["Fastest Lap Time".into()], "ANN", Some(1));
+        assert_eq!(r.fame.as_ref().unwrap().player, Some(1));
+        assert_eq!(r.key("Enter"), (true, Some(Command::FameName)));
+        assert_eq!(r.menu, Menu::Results);
+        // The host opens player 2's entry next; it still returns to the
+        // results, not to player 1's entry.
+        r.enter_player_fame(vec!["Longest Jump".into()], "Player 2", Some(2));
+        let fame = r.fame.as_ref().unwrap();
+        assert_eq!((fame.player, fame.then), (Some(2), Menu::Results));
+        assert_eq!(r.menu, Menu::NameEntry);
+        assert_eq!(r.key("Enter"), (true, Some(Command::FameName)));
+        assert_eq!(r.menu, Menu::Results);
+    }
+
     #[test]
     fn race_time_matches_race_js() {
         assert_eq!(race_time(None), "--:--.--");
