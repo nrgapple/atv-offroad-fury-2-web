@@ -124,6 +124,9 @@ pub enum Event {
         /// The Duel event type (research/RACING.md "Duel event type"): two
         /// split-screen players, no CPUs.
         duel: bool,
+        /// The Lap Attack event type (research/RACING.md "Lap Attack event
+        /// type"): no CPUs, unlimited timed laps and the best-lap ghost.
+        lap_attack: bool,
     },
     /// Single Race → Copy ride link: the race setup's link.
     CopyRaceLink,
@@ -1285,6 +1288,7 @@ impl Frontend {
             championship: None,
             practice: self.race_event_type() == atv_core::race_event::EventType::Practice,
             duel: self.race_event_type() == atv_core::race_event::EventType::Duel,
+            lap_attack: self.race_event_type() == atv_core::race_event::EventType::LapAttack,
         })
     }
 
@@ -1696,6 +1700,7 @@ impl Frontend {
             championship: Some((index, expert)),
             practice: false,
             duel: false,
+            lap_attack: false,
         })
     }
 
@@ -4107,6 +4112,7 @@ mod tests {
                 championship: Some((0, false)),
                 practice: false,
                 duel: false,
+                lap_attack: false,
             })
         );
         // Amateur Nationals: env05, five laps.
@@ -4157,6 +4163,7 @@ mod tests {
             [
                 atv_core::race_event::EventType::SingleRace,
                 atv_core::race_event::EventType::Practice,
+                atv_core::race_event::EventType::LapAttack,
                 atv_core::race_event::EventType::Duel
             ]
         );
@@ -4178,6 +4185,48 @@ mod tests {
             RaceSetup::from_value(&saved["race"]).event,
             atv_core::race_event::EventType::Practice
         );
+    }
+
+    #[test]
+    fn lap_attack_races_no_cpus_and_no_lap_count() {
+        use atv_core::race_event::EventType;
+        let view = view(1280., 720.);
+        let mut settings = Settings::memory();
+        let mut front = Frontend::new(tracks(), &settings, true);
+        front.set_race_courses(vec!["env01".into()], &view);
+        front.show("race", &view);
+        let at = |front: &Frontend, action: &str| {
+            front
+                .choices()
+                .iter()
+                .position(|(a, _)| a == action)
+                .unwrap()
+        };
+        front.selection = at(&front, "raceevent");
+        // Single player: Single Race, Practice, Lap Attack (no Duel).
+        front.key("ArrowLeft", &view, &mut settings);
+        assert_eq!(front.race.event, EventType::LapAttack);
+        assert!(front.choices()[front.selection].1.contains("Lap Attack"));
+        // Laps and CPU riders read N/A and do not step (`002f5e60`, `0021d9f0`).
+        for row in ["racelaps", "racecpu"] {
+            let index = at(&front, row);
+            assert!(front.choices()[index].1.ends_with("N/A"), "{row}");
+            front.selection = index;
+            front.key("ArrowRight", &view, &mut settings);
+        }
+        assert_eq!((front.race.laps, front.race.cpu), (3, 3));
+        assert!(matches!(
+            front.race_event(&mut settings),
+            Some(Event::Race {
+                lap_attack: true,
+                practice: false,
+                duel: false,
+                cpu: 0,
+                ..
+            })
+        ));
+        let saved: Value = serde_json::from_str(&settings.get(SELECTION_KEY).unwrap()).unwrap();
+        assert_eq!(saved["race"]["event"], "lapattack");
     }
 
     #[test]
@@ -4582,6 +4631,7 @@ mod tests {
                 championship: None,
                 practice: false,
                 duel: false,
+                lap_attack: false,
             })
         );
         let saved: Value = serde_json::from_str(&settings.get(SELECTION_KEY).unwrap()).unwrap();

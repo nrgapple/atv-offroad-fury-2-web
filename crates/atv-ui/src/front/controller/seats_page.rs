@@ -443,6 +443,7 @@ mod tests {
             championship: None,
             practice: false,
             duel: true,
+            lap_attack: false,
         };
         let s = Seats {
             pending: Some(duel),

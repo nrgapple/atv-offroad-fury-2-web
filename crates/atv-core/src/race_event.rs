@@ -14,8 +14,9 @@
 //!   (profile +0x1a08) is set, and online (+0x7d8) also skips Objectives
 //!   and Lap Attack.
 //!
-//! The port builds only some types; [`EventType::built`] lists them, so Lap
-//! Attack slots in by adding it there. Duel (research/RACING.md "Duel event
+//! The port builds only some types; [`EventType::built`] lists them. Lap
+//! Attack (research/RACING.md "Lap Attack event type") races the player's
+//! best-lap ghost with no CPUs, offline only. Duel (research/RACING.md "Duel event
 //! type") is two humans with no CPUs (`0021d9f0`), so the cycler offers it
 //! only in split screen.
 use serde::Serialize;
@@ -79,10 +80,18 @@ impl EventType {
     pub fn from_key(key: &str) -> Option<Self> {
         ALL.into_iter().find(|t| t.key() == key)
     }
-    /// The race page's types the port has built (Lap Attack comes later;
-    /// Freeride on a race course is not offered there).
+    /// The race page's types the port has built (Freeride on a race course
+    /// is not offered there).
     pub fn built(self) -> bool {
-        matches!(self, Self::SingleRace | Self::Practice | Self::Duel)
+        matches!(
+            self,
+            Self::SingleRace | Self::Practice | Self::LapAttack | Self::Duel
+        )
+    }
+    /// Lap Attack's ghost of the best lap (`001f6c60` mode 2 gives each
+    /// human a ghost rider, `001f6640` records into it).
+    pub fn has_ghost(self) -> bool {
+        self == Self::LapAttack
     }
     /// The rider count's CPU share (`0021d9f0`): Lap Attack and Duel race
     /// no CPUs.
@@ -157,14 +166,23 @@ mod tests {
     fn race_tracks_offer_single_race_and_practice() {
         assert_eq!(
             offered(RACE_TRACK_MASK, false, false),
-            vec![EventType::SingleRace, EventType::Practice]
+            vec![
+                EventType::SingleRace,
+                EventType::Practice,
+                EventType::LapAttack
+            ]
         );
         // Split screen adds Duel (`0026d010` skips it otherwise).
         assert_eq!(
             offered(RACE_TRACK_MASK, true, false),
-            vec![EventType::SingleRace, EventType::Practice, EventType::Duel]
+            vec![
+                EventType::SingleRace,
+                EventType::Practice,
+                EventType::LapAttack,
+                EventType::Duel
+            ]
         );
-        // Online skips Duel even with the multiplayer flag.
+        // Online skips Lap Attack and Duel even with the multiplayer flag.
         assert_eq!(
             offered(RACE_TRACK_MASK, true, true),
             vec![EventType::SingleRace, EventType::Practice]
@@ -187,8 +205,9 @@ mod tests {
     fn step_wraps_both_ways() {
         let o = offered(RACE_TRACK_MASK, false, false);
         assert_eq!(step(EventType::SingleRace, 1, &o), EventType::Practice);
-        assert_eq!(step(EventType::Practice, 1, &o), EventType::SingleRace);
-        assert_eq!(step(EventType::SingleRace, -1, &o), EventType::Practice);
+        assert_eq!(step(EventType::Practice, 1, &o), EventType::LapAttack);
+        assert_eq!(step(EventType::LapAttack, 1, &o), EventType::SingleRace);
+        assert_eq!(step(EventType::SingleRace, -1, &o), EventType::LapAttack);
         assert_eq!(step(EventType::Duel, 1, &o), EventType::SingleRace);
     }
 
@@ -202,8 +221,19 @@ mod tests {
         assert_eq!(EventType::from_key("duel"), Some(d));
         assert!(EventType::SingleRace.has_cpus() && EventType::SingleRace.final_lap_sign());
         let split = offered(RACE_TRACK_MASK, true, false);
-        assert_eq!(step(EventType::Practice, 1, &split), d);
+        assert_eq!(step(EventType::LapAttack, 1, &split), d);
         assert_eq!(step(d, 1, &split), EventType::SingleRace);
+    }
+
+    #[test]
+    fn lap_attack_has_a_ghost_and_no_laps_cpus_or_finish() {
+        let l = EventType::LapAttack;
+        assert_eq!(l.index(), 2);
+        assert!(l.has_ghost() && !l.has_laps() && !l.has_cpus() && !l.has_finish());
+        assert!(!l.final_lap_sign());
+        assert!(!EventType::Practice.has_ghost() && !EventType::Duel.has_ghost());
+        assert_eq!(EventType::from_key("lapattack"), Some(l));
+        assert!(!offered(RACE_TRACK_MASK, false, true).contains(&l));
     }
 
     #[test]

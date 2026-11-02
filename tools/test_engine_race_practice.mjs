@@ -1,5 +1,5 @@
 // The original Practice event type (research/RACING.md "Practice"): Single
-// Player → Race → Event cycles Single Race and Practice (`0026d010`); Practice
+// Player → Race → Event cycles Single Race, Practice and Lap Attack (`0026d010`); Practice
 // shows Laps "N/A" (`002f5e60`) and its ride laps on with the CPU field and
 // no finish (race over `001f1990` runs only for Single Race and Duel): a
 // completed lap leaves the race running with the lap counter past it. Pause
@@ -50,7 +50,7 @@ try {
   await pick(page, 'race'); await key(page, 'Enter'); await onPage(page, 'race');
   let f = await front(page);
   assert.equal(label(f, 'raceevent'), 'Event: Single Race');
-  // The type cycler: Single Race ↔ Practice (Duel is split screen only; Lap Attack is not built).
+  // The type cycler: Single Race → Practice → Lap Attack (Duel is split screen only).
   await pick(page, 'raceevent');
   await key(page, 'ArrowRight');
   f = await front(page);
@@ -58,7 +58,7 @@ try {
   assert.equal(label(f, 'raceevent'), 'Event: Practice');
   assert.equal(label(f, 'racelaps'), 'Laps: N/A');
   await key(page, 'ArrowRight');
-  assert.equal((await front(page)).race.event, 'race');
+  assert.equal((await front(page)).race.event, 'lapattack');
   await key(page, 'ArrowLeft');
   // Supercross: the shortest laps.
   await key(page, 'PageUp');

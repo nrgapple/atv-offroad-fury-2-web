@@ -124,6 +124,7 @@ pub mod race_director;
 pub mod race_event;
 pub mod race_fireworks;
 pub mod race_gate;
+pub mod race_ghost;
 pub mod race_hud;
 pub mod race_intro;
 pub mod race_roster;
