@@ -1074,6 +1074,10 @@ impl Sound {
                     "vocals": self.cpu_riders.stats.vocals,
                     "impacts": self.cpu_riders.stats.impacts,
                     "chassis": self.cpu_riders.stats.chassis,
+                    "drive": self.cpu_riders.stats.drive,
+                    "splashes": self.cpu_riders.stats.splashes,
+                    "driveVoices": mixer.snapshot().iter()
+                        .filter(|v| v.0 == "cpu drive").count(),
                     "voices": mixer.snapshot().iter()
                         .filter(|v| v.0.starts_with("cpu ")).count(),
                     "levels": self.remote.levels.iter().filter(|l| l.1)

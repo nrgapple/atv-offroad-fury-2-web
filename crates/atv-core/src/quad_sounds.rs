@@ -549,8 +549,25 @@ impl DriveEmitter {
         random: &mut OriginalRandom,
     ) -> Vec<DriveCommand> {
         let mut out = Vec::new();
+        self.play_into(sounds, native, id, mph, scale, playing, random, &mut out);
+        out
+    }
+    /// [`Self::play`] appending to a reused buffer (no per-step allocation
+    /// beyond a started clip's name).
+    #[allow(clippy::too_many_arguments)]
+    pub fn play_into(
+        &mut self,
+        sounds: &[DriveOnSound],
+        native: &dyn Fn(&str) -> Option<i32>,
+        id: usize,
+        mph: i32,
+        scale: i32,
+        playing: bool,
+        random: &mut OriginalRandom,
+        out: &mut Vec<DriveCommand>,
+    ) {
         if id == 0 || id > sounds.len() {
-            return out;
+            return;
         }
         if self.steps.len() < sounds.len() {
             self.steps.resize(sounds.len(), None);
@@ -572,13 +589,13 @@ impl DriveEmitter {
                         volume: volume * scale / 100,
                     });
                 }
-                return out;
+                return;
             }
         } else {
             out.extend(self.stop());
         }
         let Some(base) = native(&sounds[id - 1].sample) else {
-            return out;
+            return;
         };
         self.current = Some(id);
         let (pitch, volume) = drive_on_pitch_volume(
@@ -594,7 +611,6 @@ impl DriveEmitter {
             pitch,
             volume: volume * scale / 100,
         });
-        out
     }
     pub fn current(&self) -> Option<usize> {
         self.current
@@ -619,6 +635,22 @@ pub fn drive_on(
     random: &mut OriginalRandom,
 ) -> [Vec<DriveCommand>; 2] {
     let mut out: [Vec<DriveCommand>; 2] = Default::default();
+    drive_on_into(emitters, sounds, native, input, playing, random, &mut out);
+    out
+}
+/// [`drive_on`] into reused per-side buffers (cleared first).
+pub fn drive_on_into(
+    emitters: &mut [DriveEmitter; 2],
+    sounds: &[DriveOnSound],
+    native: &dyn Fn(&str) -> Option<i32>,
+    input: DriveInput,
+    playing: [bool; 2],
+    random: &mut OriginalRandom,
+    out: &mut [Vec<DriveCommand>; 2],
+) {
+    for side in out.iter_mut() {
+        side.clear();
+    }
     let id = |terrain: i32| terrain + 1;
     if input.terrain[0] != input.terrain[1] {
         for side in 0..2 {
@@ -626,7 +658,7 @@ pub fn drive_on(
             if i < 2 {
                 out[side].extend(emitters[side].stop());
             } else {
-                out[side] = emitters[side].play(
+                emitters[side].play_into(
                     sounds,
                     native,
                     i as usize,
@@ -634,6 +666,7 @@ pub fn drive_on(
                     50,
                     playing[side],
                     random,
+                    &mut out[side],
                 );
             }
         }
@@ -642,13 +675,19 @@ pub fn drive_on(
         if i < 2 {
             out[0].extend(emitters[0].stop());
         } else {
-            out[0] = emitters[0].play(
-                sounds, native, i as usize, input.mph, 100, playing[0], random,
+            emitters[0].play_into(
+                sounds,
+                native,
+                i as usize,
+                input.mph,
+                100,
+                playing[0],
+                random,
+                &mut out[0],
             );
         }
         out[1].extend(emitters[1].stop());
     }
-    out
 }
 
 /// Venue `<venue>.aud` parsing shared by drive-on, ambient and Soultree.

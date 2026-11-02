@@ -364,18 +364,38 @@ bounded native comparisons):
   out of range (`001c12e0`: a looping sample while not closer than 1.2 ×
   MaxDistance, a one-shot beyond MaxDistance; loop/one-shot flags from
   `002cb8e0`) and restarts its current sample on return.
+- Terrain drive-on and splash are per quad too (2026-11-02): the chassis
+  constructor `002cd6c0` (called from `001e33c0` for every quad) builds
+  the two side drive-on emitters at its +30/+34 through `00173e70`
+  (`001c3330` material emitters with 20/100ft defaults) and, when the scene
+  has water (+404), loads h2ohit02. The chassis update `002cdb80` feeds
+  them each quad's own +990..+99c terrain bytes and body speed, with no
+  player-only test. The quad water update `001d7280` (from `001d71b0`,
+  guarded by the water object at +674) and the rider's `001f0860` call the
+  splash `002cdad0` on that quad's own chassis emitter (+9d4). `00173e70`
+  does not register the drive-on emitters with the sound manager
+  (`00173f60`), unlike the chassis voices; whether the quad's +16c/+174
+  calls that follow register them elsewhere was not traced.
 
 What the port does: `Ride::take_cpu_sounds` hands the audio layer each
 CPU's fixed steps since the last rendered frame (bounded at 64 steps):
 audio events (wreck entry, hard landing, quad contact, sampled impact),
-chassis inputs, the actor sound position cache (`001e7600`) and the rider
-body's sampled contact. Engines join the other riders' voices
+chassis inputs, the actor sound position cache (`001e7600`), the rider
+body's sampled contact, the two front-wheel terrain bytes and mph
+(`quad_frame`, as the player's), the front wheel positions, the body depth
+below the water surface and the rider's water contact. Engines join the other riders' voices
 (`audio::remote`, `cpu: true`, set from `assign_sets`, the set's
 attenuation, the range stop/restart above). Vocals (gender from the race
 roster), body impacts and chassis landing/wreck/quad-to-quad clips run
 through `audio::cpu`, which applies the same atv-core decisions as the
 player (one voice per emitter, vocal cull 100ft, chassis 70ft, impact
-config distances) with its own random streams per CPU. Every position is
+config distances) with its own random streams per CPU. Each CPU's two
+drive-on emitters play the player's `TerrainDriveOnSound` records with the
+same pitch/volume rules (`drive_on`), one voice per side, placed at its
+front wheels with each record's distances and, as the player's, only
+attenuated (not range-stopped); the splash plays through the CPU's chassis
+voice when its body enters water moving downward or its rider starts
+touching water. Every position is
 heard from the nearest listener, so split screen's views apply, and split
 races share player 1's CPUs. `?audioDiagnostics=1` reports them under
 `data-engine-audio` `cpu`.
@@ -389,14 +409,13 @@ rider for `assign_sets` (the guest is player 1, then the room's humans,
 then the CPUs) and the range rules. Stale or not yet heard CPUs are
 silent, and retired CPUs (host handoff) stop. Assumption: an older host
 leaves that field at 0, so its CPUs play by speed with no throttle. Guests
-get no CPU vocals, body impacts or chassis sounds: the motion carries no
-audio events.
+get no CPU vocals, body impacts, chassis, drive-on or splash sounds: the
+motion carries no audio events or terrain bytes.
 
 Authored bounds and limitations: engines keep the room riders' six
 nearest voices (`ENGINE_VOICES`; the original has 48 SPU2 voices and its
 emitter priorities, the 3/10 constructor arguments, were not traced).
-CPUs get no terrain drive-on or water splash sounds yet, their random
-seeds are authored, assignment applies only when CPUs race (split screen
+CPU random seeds (including the drive-on pitch jitter) are authored, assignment applies only when CPUs race (split screen
 without CPUs and online rooms keep each quad's own set), and a player on a
 motorcycle (no `vehicle.aud` table in its bank) leaves CPUs on their
 quads' own sets with engine sound only. Not compared by listening.
