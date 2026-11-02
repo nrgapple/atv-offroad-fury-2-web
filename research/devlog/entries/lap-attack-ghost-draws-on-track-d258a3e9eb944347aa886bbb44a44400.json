@@ -1,0 +1,15 @@
+{
+  "id": "lap-attack-ghost-draws-on-track-d258a3e9eb944347aa886bbb44a44400",
+  "timestamp": "2026-11-02T14:04:32.296851+00:00",
+  "recorded_at": "2026-11-02T15:23:10.834475+00:00",
+  "kind": "build",
+  "title": "Lap Attack ghost draws on track",
+  "summary": "The Lap Attack ghost now appears on track: the player's own quad and rider, translucent at the original Environment GhostOpacity (default 0.4), replaying the best lap with wheels, suspension, rider animation and wrecks. This completes the original race types Practice, Duel and Lap Attack.",
+  "details": [
+    "Like the original, the ghost has no shadow and no collision (routine 001e4c90 skips the non-ghost setup for a flag-0x10 ghost vehicle). Every split-screen player gets their own ghost (original 001f6c60). PR #484 closes #480 and #451, merged and live at 6e432ae.",
+    "Verification: test_engine_race_lap_attack asserts the ghost is drawn, on the host and against furyremastered.com; the race and split_screen browser tests pass."
+  ],
+  "limitation": "Split-screen ghosts have no browser test. Under Enhanced/High presentation the ghost is not interpolated (up to one step ahead). The original's post-reset fade (ResetOpacity) is not ported (#485). Frame time not measured: one extra vehicle model and two passes, only while a ghost plays.",
+  "image": "/devlog-images/lap-attack-ghost-draws-on-track-d258a3e9eb944347aa886bbb44a44400.png",
+  "caption": "Lap 3 of a Lap Attack run on a stadium track; the translucent ghost quad and rider overlap the player quad."
+}
