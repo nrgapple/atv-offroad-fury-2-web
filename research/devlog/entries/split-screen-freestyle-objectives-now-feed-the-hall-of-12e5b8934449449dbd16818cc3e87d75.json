@@ -1,0 +1,14 @@
+{
+  "id": "split-screen-freestyle-objectives-now-feed-the-hall-of-12e5b8934449449dbd16818cc3e87d75",
+  "timestamp": "2026-11-02T17:35:34.695090+00:00",
+  "recorded_at": "2026-11-02T18:10:28.936903+00:00",
+  "kind": "build",
+  "title": "Split-screen Freestyle Objectives now feed the Hall of Fame",
+  "summary": "At the end of a split-screen Freestyle Objectives run, each player's objective score, longest jump, stunt score and combos go into the course's Hall of Fame. Each player who set a record gets their own name entry, in player order, as after split races. PR #492, closes #489, live in production at 4ebad71.",
+  "details": [
+    "Follows the original USA v2.00 build: 002fce00 stores each player's 120 s objective score, 00332c50 inserts it into the table, the Freestyle jump and chain hooks 002fd7c0/002fd350 record per player, and 002fdc00 opens the entries (research/SPLIT_SCREEN.md, 'Hall of Fame for split objectives'). Personal records and Profile Points stay single-player. Verified: test_engine_split_objectives names two players (ANN, BOB) and checks both scores are stored, on the host and against furyremastered.com; test_engine_race_duel passes. Screenshot: Player 2's 'Congratulations Player 2' panel showing '2nd Highest Objective Score' with the name field, over split views on an outdoor course."
+  ],
+  "limitation": "Stunt, combo and jump record values are only checked for the names they are stored under. During the run, 'New ...' messages compare against the table as it was at the start. No profile rename on accept (waits on owner decision #462).",
+  "image": "/devlog-images/split-screen-freestyle-objectives-now-feed-the-hall-of-12e5b8934449449dbd16818cc3e87d75.png",
+  "caption": "Split Freestyle Objectives: Player 2's Hall of Fame name entry after setting the 2nd highest objective score."
+}
