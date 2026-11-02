@@ -838,6 +838,26 @@ mod tests {
         let parsed = parse_launch(&practice[practice.find('?').unwrap()..], &[]);
         assert!(parsed.errors.is_empty(), "{:?}", parsed.errors);
         assert_eq!(parsed.race.event, atv_core::race_event::EventType::Practice);
+        // A Lap Attack link round-trips too (`event=lapattack`).
+        let lap_attack = ride_url(
+            "/play.html",
+            &RideLink {
+                map: "sx01",
+                quad: 1,
+                rider: 0,
+                player: "Rider",
+                race: Some((3, 0, 1, false, false)),
+                room: None,
+                event: atv_core::race_event::EventType::LapAttack,
+            },
+        );
+        assert!(lap_attack.contains("event=lapattack"), "{lap_attack}");
+        let parsed = parse_launch(&lap_attack[lap_attack.find('?').unwrap()..], &[]);
+        assert!(parsed.errors.is_empty(), "{:?}", parsed.errors);
+        assert_eq!(
+            parsed.race.event,
+            atv_core::race_event::EventType::LapAttack
+        );
         // Unknown or unbuilt event types and non-race links are refused.
         let bad = parse_launch("?activity=race&map=sx01&event=bogus&play=1", &[]);
         assert!(

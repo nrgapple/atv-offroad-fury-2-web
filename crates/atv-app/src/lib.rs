@@ -4035,6 +4035,8 @@ impl App {
                 atv_core::race_event::EventType::Practice
             } else if s.duel {
                 atv_core::race_event::EventType::Duel
+            } else if s.lap_attack {
+                atv_core::race_event::EventType::LapAttack
             } else {
                 atv_core::race_event::EventType::SingleRace
             }
@@ -6800,6 +6802,7 @@ impl App {
                 },
                 practice: event == atv_core::race_event::EventType::Practice,
                 duel: event == atv_core::race_event::EventType::Duel,
+                lap_attack: event == atv_core::race_event::EventType::LapAttack,
                 difficulty: setup.race.difficulty,
                 // The original EATDIRT and BRINGIT cheats (cheats=).
                 aggressive: setup.race.aggressive,

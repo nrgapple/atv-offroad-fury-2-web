@@ -1575,3 +1575,63 @@ executable check. Whether the original's results page differs for a Duel
 was not traced. Only player 1's Hall of Fame records are offered (the port
 has no per-player Hall of Fame name entry). The page heading stays the
 port's Race page title. Copy ride link does not carry the event type.
+
+## Lap Attack event type — 2026-11-02
+
+Exact-build evidence (USA v2.00 `SCUS_972.11`, private exports; bounded
+reading, no runtime traces):
+
+- **Offer.** Event type 2 in `0021add0`; every race list's
+  `RaceTypeMask=103` includes it. The cycler `0026d010` (and `0026a720`)
+  offers it in Single Player and Split Screen alike (only Duel needs
+  +0x1a08); online (+0x7d8) loops past it.
+- **Start, laps and CPUs.** `0026b7a0` writes session mode 2 to profile +0
+  and `002f5e60`'s 0 laps to +0x578 (the Laps row reads "N/A"); `0021d9f0`
+  gives mode 2 no CPUs. With 0 laps the lap-gate hook `00215f00` never
+  ends the run, and the race-over handler `001f1990` (results, records,
+  stats) runs only for modes 0 and 5.
+- **Ghost riders.** The scene setup `001f6c60` reads `mode != 2` into a
+  flag. In mode 2 it creates, for each human (`+0x84` of them), a second
+  rider (`001f9170`, loading the same quad's assets) whose vehicle is made
+  with flag 0x10 (`00248460`), and binds the human (source) to that rider
+  (target) in the session recorder (`001f6640`); otherwise `001f6640`
+  binds each rider to itself (the replay recorder).
+- **Ghost draw.** `001e4c90` (rider draw setup) calls `001e9050` for a
+  vehicle with flag 4 in mode 2; `001e5260` also takes that path in mode 2.
+  `00209680` reads Environment "GhostOpacity" (default 0.4, 0x3ecccccd)
+  into the scene's +0x514 and a second value (default 0.2) into +0x510.
+- **Best lap.** The session lap method `00216750` picks the rider with the
+  lowest best lap (rider record +0x30 +0x4c, 0 read as none), stores it at
+  +0x128, and when that is the rider who just lapped, shows "New Lap
+  Attack Lap Set!" (0x42bb70) for 1.5 s (`002e2cf0`).
+- **HUD.** The lap list `002e85c0` takes its row count from +0x30 in
+  mode 2 and +0x2c otherwise ("Lap %d", 0x43b1d0). The overlay builder
+  `002e18b0` swaps two pairs of text rows' positions for element kind 6 in
+  mode 2.
+
+Not established: how the recorder replays the ghost (from each lap start,
+best lap only, or the previous lap), what `001e9050` and the 0.2 value do
+exactly, what +0x2c/+0x30 count, and whether Lap Attack keeps any
+persistent best-lap record (no record write outside `001f1990` /
+`001f1e30` was found for mode 2).
+
+What the port does (`atv_core::race_event`, `atv_core::race_ghost`,
+`race::Settings::lap_attack`):
+
+- Single Player → Race and Split Screen → Race offer **Event: Lap Attack**
+  (not online); Laps and CPU riders read **N/A**. The ride races no CPUs,
+  counts and times laps as Practice (no finish, results, records or
+  Profile Points) and shows "New Lap Attack Lap Set!" for 1.5 s on a new
+  best lap.
+- The ghost records player 1's fixed-step motion each lap (unquantized, a
+  port choice); a judged lap (`00248b20`: Supercross's first lap from the
+  grid is not) faster than the best replaces it, and it replays from each
+  new lap's start (assumption). `#ui-state` `ride.lapAttack`, `ride.bestLap`
+  and `ride.ghost` (best, samples, opacity, playing, origin) report it.
+- `?race=1&event=lapattack` and Copy ride link (`event=lapattack`) start
+  it. `tools/test_engine_race_lap_attack.mjs` picks it in the menu, rides
+  Supercross laps with the race path driver and checks the ghost plays.
+
+Gaps: the ghost is recorded and replayed but **not drawn** yet (no
+translucent rider/quad at GhostOpacity); split screen records a ghost for
+player 1 only, while the original gives each human one.
