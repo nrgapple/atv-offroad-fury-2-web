@@ -1,0 +1,14 @@
+{
+  "id": "post-reset-fade-and-cpu-terrain-sounds-b39bef34ce6c45c2b428cd01f6eb797d",
+  "timestamp": "2026-11-02T21:42:45.333162+00:00",
+  "recorded_at": "2026-11-02T22:55:40.385345+00:00",
+  "kind": "build",
+  "title": "Post-reset fade and CPU terrain sounds",
+  "summary": "After an off-track, wreck or manual reset, riders and quads now fade to see-through and back, as in the original, and CPU riders now play the same terrain drive-on sounds and water splashes as the player.",
+  "details": [
+    "Reset fade (#498/#501, closes #485): the rider and quad are drawn at Environment ResetOpacity (default 0.2) for 2 s, ramping back to solid over the last 0.75 s, with no rider-to-rider contact meanwhile. It applies to the player, CPU riders and split-screen players. Lap Attack keeps the player solid and the deep-water reset does not fade. This follows the original USA v2.00 build (001e9050, 001e5260, 001e92c0; research/RACING.md Post-reset fade). Verified by browser tests: in split screen both players fade from 0.2 back to solid; in Lap Attack the player stays solid, also against furyremastered.com. CPU terrain audio (#499, closes #464): CPU riders play the player's drive-on terrain sounds and water splashes, as every quad does in the original (001e33c0 to 002cd6c0). test_engine_cpu_audio requires CPU drive-on voices, on the host and against furyremastered.com. Both changes are live in production at 40b9ce5."
+  ],
+  "limitation": "Training still fades after a wreck (the original skips it); motorcycles and online room riders do not fade; the whole quad fades, including wheels; there is a one-time small hitch on the first fade of a ride while its pipelines compile. CPU water splash is covered by unit tests only; online room guests still hear only CPU engines (#500).",
+  "image": "/devlog-images/post-reset-fade-and-cpu-terrain-sounds-b39bef34ce6c45c2b428cd01f6eb797d.png",
+  "caption": "A quad and rider drawn see-through on a snowy course just after a reset."
+}
