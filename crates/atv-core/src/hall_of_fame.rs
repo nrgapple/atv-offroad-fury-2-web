@@ -66,6 +66,11 @@ use std::collections::BTreeMap;
 /// `0x4289f8` "@%d" for player 0: the name a record holds until the name
 /// entry replaces it.
 pub const PLACEHOLDER: &str = "@0";
+
+/// `0x4289f8` "@%d" for human `player` (0-3).
+pub fn placeholder(player: usize) -> String {
+    format!("@{player}")
+}
 /// Longest name the Hall of Fame keeps (9-byte fields).
 pub const NAME_MAX: usize = 8;
 /// `002e2cf0`'s duration for a record message.
@@ -404,8 +409,10 @@ impl HallOfFame {
     /// are kept.
     pub fn commit(&mut self, watch: &RecordWatch, name: &str) {
         let name = clean_name(name);
+        let tag = watch.tag();
+        let tag = tag.as_str();
         let fame = self.courses.entry(watch.key.clone()).or_default();
-        let mine = |e: &&Entry<f32>| e.name == PLACEHOLDER;
+        let mine = |e: &&Entry<f32>| e.name == tag;
         for e in watch.fame.laps.iter().filter(mine) {
             insert_time(&mut fame.laps, e.value, &name, e.vehicle);
         }
@@ -415,20 +422,10 @@ impl HallOfFame {
         if let Some(e) = watch.fame.longest_jump.as_ref().filter(mine) {
             beat(&mut fame.longest_jump, e.value, &name, e.vehicle);
         }
-        if let Some(e) = watch
-            .fame
-            .most_combos
-            .as_ref()
-            .filter(|e| e.name == PLACEHOLDER)
-        {
+        if let Some(e) = watch.fame.most_combos.as_ref().filter(|e| e.name == tag) {
             beat(&mut fame.most_combos, e.value, &name, e.vehicle);
         }
-        if let Some(e) = watch
-            .fame
-            .highest_stunt
-            .as_ref()
-            .filter(|e| e.name == PLACEHOLDER)
-        {
+        if let Some(e) = watch.fame.highest_stunt.as_ref().filter(|e| e.name == tag) {
             beat(&mut fame.highest_stunt, e.value, &name, e.vehicle);
         }
     }
@@ -441,11 +438,12 @@ impl HallOfFame {
             return;
         };
         let from = clean_name(from);
+        let tag = watch.tag();
+        let tag = tag.as_str();
         let race = &watch.fame;
         let same = |a: &Entry<f32>, b: &Entry<f32>| a.value == b.value && a.vehicle == b.vehicle;
-        let placed = |list: &[Entry<f32>], e: &Entry<f32>| {
-            list.iter().any(|r| r.name == PLACEHOLDER && same(r, e))
-        };
+        let placed =
+            |list: &[Entry<f32>], e: &Entry<f32>| list.iter().any(|r| r.name == tag && same(r, e));
         for e in fame.laps.iter_mut().filter(|e| e.name == from) {
             if placed(&race.laps, e) {
                 e.name = to.clone();
@@ -458,25 +456,112 @@ impl HallOfFame {
         }
         if let (Some(e), Some(r)) = (&mut fame.longest_jump, &race.longest_jump)
             && e.name == from
-            && r.name == PLACEHOLDER
+            && r.name == tag
             && same(e, r)
         {
             e.name = to.clone();
         }
         if let (Some(e), Some(r)) = (&mut fame.most_combos, &race.most_combos)
             && e.name == from
-            && r.name == PLACEHOLDER
+            && r.name == tag
             && e.value == r.value
         {
             e.name = to.clone();
         }
         if let (Some(e), Some(r)) = (&mut fame.highest_stunt, &race.highest_stunt)
             && e.name == from
-            && r.name == PLACEHOLDER
+            && r.name == tag
             && e.value == r.value
         {
             e.name = to;
         }
+    }
+}
+
+/// A split-screen race's (or Duel's) records: every human's run in one
+/// course table under its own placeholder, as the original's shared table
+/// holds "@0".."@3" (`001f1e30`, `001f24b0`, `001f2610`, `001f22a0`). After
+/// the race each human holding a record names it in turn, lowest player
+/// first (`00217e40`, then `002c8630` after each name), and `00331f50`
+/// replaces only that player's placeholder.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct SplitFame {
+    /// The [`HallOfFame::key`] of the course and difficulty.
+    pub key: String,
+    pub enduro: bool,
+    /// The course's records with each human's placeholder entries merged in.
+    pub course: CourseFame,
+    /// The name each player's records are stored under (by player index).
+    pub names: Vec<String>,
+}
+
+impl SplitFame {
+    /// Merges every human's run (`watches`, one per player, any order) into
+    /// the stored course table by the insert rules. Players are inserted in
+    /// index order, so an exact tie goes to the lower player.
+    pub fn new(hall: &HallOfFame, watches: &[RecordWatch]) -> Option<Self> {
+        let first = watches.first()?;
+        let mut course = hall.courses.get(&first.key).cloned().unwrap_or_default();
+        let mut sorted: Vec<&RecordWatch> = watches.iter().filter(|w| w.key == first.key).collect();
+        sorted.sort_by_key(|w| w.player);
+        for watch in sorted {
+            let tag = watch.tag();
+            let run = &watch.fame;
+            for e in run.laps.iter().filter(|e| e.name == tag) {
+                insert_time(&mut course.laps, e.value, &tag, e.vehicle);
+            }
+            for e in run.races.iter().filter(|e| e.name == tag) {
+                insert_time(&mut course.races, e.value, &tag, e.vehicle);
+            }
+            if let Some(e) = run.longest_jump.as_ref().filter(|e| e.name == tag) {
+                beat(&mut course.longest_jump, e.value, &tag, e.vehicle);
+            }
+            if let Some(e) = run.most_combos.as_ref().filter(|e| e.name == tag) {
+                beat(&mut course.most_combos, e.value, &tag, e.vehicle);
+            }
+            if let Some(e) = run.highest_stunt.as_ref().filter(|e| e.name == tag) {
+                beat(&mut course.highest_stunt, e.value, &tag, e.vehicle);
+            }
+        }
+        Some(Self {
+            key: first.key.clone(),
+            enduro: first.enduro,
+            course,
+            names: (0..4)
+                .map(|_| crate::profile::DEFAULT_NAME.into())
+                .collect(),
+        })
+    }
+
+    /// `003321f0`/`00333360`: each player holding a record in the merged
+    /// table and the records listed, in entry order (player 1 first).
+    pub fn players(&self) -> Vec<(usize, Vec<String>)> {
+        (0..4)
+            .map(|p| (p, self.course.held_by(&placeholder(p), self.enduro)))
+            .filter(|(_, broken)| !broken.is_empty())
+            .collect()
+    }
+
+    /// Names `player`'s records.
+    pub fn name(&mut self, player: usize, name: &str) {
+        if let Some(slot) = self.names.get_mut(player) {
+            *slot = clean_name(name);
+        }
+    }
+
+    /// The course table as stored: every placeholder replaced by its
+    /// player's name.
+    pub fn stored(&self) -> CourseFame {
+        let mut course = self.course.clone();
+        for (p, name) in self.names.iter().enumerate() {
+            course.rename(&placeholder(p), name);
+        }
+        course
+    }
+
+    /// Writes the course table (with the current names) into `hall`.
+    pub fn store(&self, hall: &mut HallOfFame) {
+        hall.courses.insert(self.key.clone(), self.stored());
     }
 }
 
@@ -781,6 +866,8 @@ pub struct RecordWatch {
     /// The loaded profile's record; `None` without a profile or with more
     /// than one human (+0x10 = 1 gates the personal records).
     pub personal: Option<Personal>,
+    /// The human whose records these are (0-3): the placeholder's digit.
+    pub player: usize,
     /// The race's best jump so far (racer +0x118): the jump hook runs only
     /// when it grows.
     race_best: f32,
@@ -814,6 +901,19 @@ impl RecordWatch {
         }
     }
 
+    /// The watch for human `player` (0-3): its records hold that player's
+    /// placeholder (`001f1e30` and the other hooks format "@%d" with the
+    /// player index).
+    pub fn for_player(mut self, player: usize) -> Self {
+        self.player = player;
+        self
+    }
+
+    /// This watch's placeholder name ("@0" for player 1).
+    pub fn tag(&self) -> String {
+        placeholder(self.player)
+    }
+
     /// Messages raised since the last call, oldest first.
     pub fn take_messages(&mut self) -> Vec<String> {
         std::mem::take(&mut self.messages)
@@ -821,12 +921,13 @@ impl RecordWatch {
 
     /// The records the placeholder holds: what the name entry lists.
     pub fn broken(&self) -> Vec<String> {
-        self.fame.held_by(PLACEHOLDER, self.enduro)
+        self.fame.held_by(&self.tag(), self.enduro)
     }
 
     /// `001f24b0`: a counted lap.
     pub fn lap(&mut self, time: f32) {
-        let fame = insert_time(&mut self.fame.laps, time, PLACEHOLDER, self.vehicle);
+        let tag = self.tag();
+        let fame = insert_time(&mut self.fame.laps, time, &tag, self.vehicle);
         if let Some(rank) = fame {
             self.messages
                 .push(format!("New {}Fastest Lap Time!", ordinal(rank)));
@@ -842,11 +943,12 @@ impl RecordWatch {
 
     /// `001f1e30`: the player finished in `total` seconds.
     pub fn finish(&mut self, total: f32) {
+        let tag = self.tag();
         if !self.full_length {
             return;
         }
         let laps = if self.enduro { 3 } else { 5 };
-        let fame = insert_time(&mut self.fame.races, total, PLACEHOLDER, self.vehicle);
+        let fame = insert_time(&mut self.fame.races, total, &tag, self.vehicle);
         if let Some(rank) = fame {
             self.messages.push(format!(
                 "New {}Fastest {laps} Lap Race Time!",
@@ -867,11 +969,12 @@ impl RecordWatch {
 
     /// `0024df70` → `001f2610`: a settled jump of `feet`.
     pub fn jump(&mut self, feet: f32) {
+        let tag = self.tag();
         if !feet.is_finite() || feet <= self.race_best {
             return;
         }
         self.race_best = feet;
-        let fame = beat(&mut self.fame.longest_jump, feet, PLACEHOLDER, self.vehicle);
+        let fame = beat(&mut self.fame.longest_jump, feet, &tag, self.vehicle);
         if fame {
             self.messages
                 .push(format!("New Longest Jump {}!", self.units.jump(feet)));
@@ -893,17 +996,13 @@ impl RecordWatch {
     /// `001f22a0`: a finished chain of `count` events whose points sum to
     /// `sum`; only a landed chain counts.
     pub fn chain(&mut self, success: bool, count: usize, sum: f32) {
+        let tag = self.tag();
         if !success || count == 0 {
             return;
         }
         let points = (sum * count as f32) as i64;
         let count = count.min(u32::MAX as usize) as u32;
-        let stunt = beat(
-            &mut self.fame.highest_stunt,
-            points,
-            PLACEHOLDER,
-            self.vehicle,
-        );
+        let stunt = beat(&mut self.fame.highest_stunt, points, &tag, self.vehicle);
         if stunt {
             self.messages.push("New Highest Stunt Score!".into());
         }
@@ -919,7 +1018,7 @@ impl RecordWatch {
         if count == 1 {
             return;
         }
-        let combos = beat(&mut self.fame.most_combos, count, PLACEHOLDER, self.vehicle);
+        let combos = beat(&mut self.fame.most_combos, count, &tag, self.vehicle);
         if combos {
             self.messages.push("New Most Combos!".into());
         }
@@ -964,6 +1063,61 @@ mod tests {
         assert!(w.take_messages().is_empty());
         assert_eq!(w.fame.laps[0].vehicle, 7);
         assert_eq!(w.fame.laps[0].name, PLACEHOLDER);
+    }
+
+    #[test]
+    fn split_races_name_every_human_in_player_order() {
+        let mut hall = HallOfFame::default();
+        let mut old = watch(None);
+        old.lap(50.);
+        hall.commit(&old, "OLD");
+        // Player 2 (index 1) laps faster than player 1; player 3 sets
+        // nothing; player 4 takes the longest jump.
+        let mut p1 = RecordWatch::new("sx01", false, 2, true, Some(&hall), None);
+        let mut p2 = RecordWatch::new("sx01", false, 5, true, Some(&hall), None).for_player(1);
+        let p3 = RecordWatch::new("sx01", false, 6, true, Some(&hall), None).for_player(2);
+        let mut p4 = RecordWatch::new("sx01", false, 7, true, Some(&hall), None).for_player(3);
+        p1.lap(49.);
+        p2.lap(48.);
+        p4.jump(90.);
+        assert_eq!(p2.fame.laps[0].name, "@1");
+        assert_eq!(p2.broken(), ["Fastest Lap Time"]);
+        // Each human's own copy: player 1 also thinks it set the fastest lap.
+        assert_eq!(p1.broken(), ["Fastest Lap Time"]);
+        let mut split = SplitFame::new(&hall, &[p4, p3, p2, p1]).unwrap();
+        // The shared table: player 2 first, player 1 second, the old third.
+        assert_eq!(
+            split.players(),
+            [
+                (0, vec!["2nd Fastest Lap Time".to_string()]),
+                (1, vec!["Fastest Lap Time".to_string()]),
+                (3, vec!["Longest Jump".to_string()]),
+            ]
+        );
+        split.name(0, "ANN");
+        split.name(1, "BOB");
+        split.name(3, "@3");
+        split.store(&mut hall);
+        let course = hall.course("sx01", false).unwrap();
+        let laps: Vec<(&str, f32, u16)> = course
+            .laps
+            .iter()
+            .map(|e| (e.name.as_str(), e.value, e.vehicle))
+            .collect();
+        assert_eq!(laps, [("BOB", 48., 5), ("ANN", 49., 2), ("OLD", 50., 7)]);
+        // A placeholder is never stored as a name.
+        let jump = course.longest_jump.as_ref().unwrap();
+        assert_eq!(
+            (jump.name.as_str(), jump.vehicle),
+            (crate::profile::DEFAULT_NAME, 7)
+        );
+        // Renaming one player leaves the others' names.
+        split.name(3, "DEE");
+        split.store(&mut hall);
+        let course = hall.course("sx01", false).unwrap();
+        assert_eq!(course.longest_jump.as_ref().unwrap().name, "DEE");
+        assert_eq!(course.laps[0].name, "BOB");
+        assert!(SplitFame::new(&hall, &[]).is_none());
     }
 
     #[test]

@@ -212,6 +212,9 @@ pub struct Overlay {
     /// The finished race's Hall of Fame records, until named.
     /// (and the name they are stored under).
     fame_watch: Option<(atv_core::hall_of_fame::Watch, String)>,
+    /// A split race's records, the players still to name theirs (player
+    /// index and records, in entry order) and the player naming now.
+    fame_split: Option<SplitNaming>,
     /// The last name entered for the Hall of Fame (the next default).
     fame_name: String,
     /// Pause pages slide in as they open (frontend.js `animatePage`), and
@@ -220,6 +223,14 @@ pub struct Overlay {
     menu_motion: Option<atv_ui::transition::Motion>,
     /// The pause page being left, while it slides out.
     exit_menu: Option<pause::State>,
+}
+
+/// Split screen's Hall of Fame naming, one player after another
+/// (`00217e40`, `002c8630`).
+struct SplitNaming {
+    fame: atv_core::hall_of_fame::SplitFame,
+    queue: std::collections::VecDeque<(usize, Vec<String>)>,
+    current: usize,
 }
 
 impl Overlay {
@@ -300,6 +311,7 @@ impl Overlay {
             race_entry: None,
             fame_watch: None,
             fame_name: String::new(),
+            fame_split: None,
             transition: Default::default(),
             menu_motion: None,
             exit_menu: None,
@@ -1530,6 +1542,10 @@ impl Overlay {
             results::Command::Retry => Action::RaceRetry,
             results::Command::Quit => Action::RaceQuit,
             results::Command::NextRound => Action::RaceNextRound,
+            results::Command::FameName if self.fame_split.is_some() => {
+                self.name_split_fame();
+                return None;
+            }
             results::Command::FameName => {
                 if let (Some((watch, stored)), Some(fame)) = (&self.fame_watch, &self.results.fame)
                 {
@@ -1549,8 +1565,108 @@ impl Overlay {
     /// entry, which renames them. Online races keep none (+0x7d8).
     fn record_fame(&mut self, frame: &atv_core::race::Frame) {
         self.fame_watch = None;
+        self.fame_split = None;
+        if !frame.split_records.is_empty() {
+            self.offer_split_fame(frame);
+            return;
+        }
         if let Some(watch) = frame.records.clone() {
             self.offer_fame(atv_core::hall_of_fame::Watch::Race(watch));
+        }
+    }
+
+    /// A split race or Duel (`001f1740` → `00217e40`): every human's
+    /// records enter one table under their own placeholders and each human
+    /// holding one names it in turn, player 1 first. The records are stored
+    /// at once under default names (so leaving keeps them): player 1's is
+    /// the single-player default, players 2-4 their seat names (the
+    /// original starts from the seat name at +0x67b, `002deb30`).
+    fn offer_split_fame(&mut self, frame: &atv_core::race::Frame) {
+        let watches: Vec<_> = frame
+            .records
+            .iter()
+            .chain(&frame.split_records)
+            .cloned()
+            .collect();
+        let mut hall = atv_ui::settings::load_hall_of_fame(&self.settings);
+        let Some(mut fame) = atv_core::hall_of_fame::SplitFame::new(&hall, &watches) else {
+            return;
+        };
+        let queue: std::collections::VecDeque<_> = fame.players().into();
+        if queue.is_empty() {
+            return;
+        }
+        let first = self.default_fame_name();
+        for p in 0..4 {
+            let name = if p == 0 {
+                first.clone()
+            } else {
+                crate::split::player_name(p as u8 + 1).to_string()
+            };
+            fame.name(p, &name);
+        }
+        fame.store(&mut hall);
+        atv_ui::settings::save_hall_of_fame(&mut self.settings, &hall);
+        self.fame_split = Some(SplitNaming {
+            fame,
+            queue,
+            current: 0,
+        });
+        self.next_split_fame();
+    }
+
+    /// Opens the next player's name entry; false when none is left.
+    fn next_split_fame(&mut self) -> bool {
+        let Some(naming) = &mut self.fame_split else {
+            return false;
+        };
+        let Some((player, broken)) = naming.queue.pop_front() else {
+            return false;
+        };
+        naming.current = player;
+        let name = naming.fame.names[player].clone();
+        self.results
+            .enter_player_fame(broken, &name, Some(player as u8 + 1));
+        true
+    }
+
+    /// `002c8630`: the entered name replaces this player's placeholder and
+    /// the next player holding a record is asked.
+    fn name_split_fame(&mut self) {
+        let Some(naming) = &mut self.fame_split else {
+            return;
+        };
+        let entered = self.results.fame.as_ref().map_or("", |f| f.name.as_str());
+        naming.fame.name(naming.current, entered);
+        if naming.current == 0 {
+            self.fame_name = naming.fame.names[0].clone();
+        }
+        let mut hall = atv_ui::settings::load_hall_of_fame(&self.settings);
+        naming.fame.store(&mut hall);
+        atv_ui::settings::save_hall_of_fame(&mut self.settings, &hall);
+        self.next_split_fame();
+    }
+
+    /// The player (0-3) whose controller drives the open split-screen name
+    /// entry (`00217e40` gives the page that player, +0x88).
+    pub fn fame_seat(&self) -> Option<usize> {
+        self.fame_split
+            .as_ref()
+            .filter(|_| self.results.shown && self.results.menu == results::Menu::NameEntry)
+            .map(|n| n.current)
+    }
+
+    /// Authored default: the last Hall of Fame name, else the loaded
+    /// profile's (the original's starting text is not recovered).
+    fn default_fame_name(&self) -> String {
+        if self.fame_name.is_empty() {
+            atv_ui::settings::load_book(&self.settings)
+                .current_profile()
+                .map(|p| p.name.clone())
+                .filter(|n| !n.is_empty())
+                .unwrap_or_else(|| atv_core::profile::DEFAULT_NAME.into())
+        } else {
+            self.fame_name.clone()
         }
     }
 
@@ -1559,21 +1675,12 @@ impl Overlay {
     /// name entry opens.
     pub fn offer_fame(&mut self, watch: atv_core::hall_of_fame::Watch) {
         self.fame_watch = None;
+        self.fame_split = None;
         let broken = watch.broken();
         if broken.is_empty() {
             return;
         }
-        // Authored default: the last Hall of Fame name, else the loaded
-        // profile's (the original's starting text is not recovered).
-        let name = if self.fame_name.is_empty() {
-            atv_ui::settings::load_book(&self.settings)
-                .current_profile()
-                .map(|p| p.name.clone())
-                .filter(|n| !n.is_empty())
-                .unwrap_or_else(|| atv_core::profile::DEFAULT_NAME.into())
-        } else {
-            self.fame_name.clone()
-        };
+        let name = self.default_fame_name();
         let mut hall = atv_ui::settings::load_hall_of_fame(&self.settings);
         hall.commit_run(&watch, &name);
         atv_ui::settings::save_hall_of_fame(&mut self.settings, &hall);

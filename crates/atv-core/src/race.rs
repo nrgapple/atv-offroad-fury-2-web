@@ -1594,6 +1594,10 @@ pub struct Frame {
     /// The player's Hall of Fame and personal records, once finished.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub records: Option<crate::hall_of_fame::RecordWatch>,
+    /// Split screen (player 1's frame): players 2-4's finished records,
+    /// filled by the host when it merges the races (`split::merge_race`).
+    #[serde(skip)]
+    pub split_records: Vec<crate::hall_of_fame::RecordWatch>,
     /// The player's completed lap times and the best one's index.
     pub lap_times: Vec<f32>,
     pub best_lap: Option<usize>,
@@ -2496,6 +2500,7 @@ impl Race {
                 .records
                 .clone()
                 .filter(|_| self.player.finish.is_some()),
+            split_records: Vec::new(),
             standings: order
                 .into_iter()
                 .enumerate()

@@ -64,7 +64,12 @@ try {
       return { id, index, connected: true, mapping: 'standard', timestamp: 1, axes: [0, 0, 0, 0], buttons };
     };
     const pads = [make(0, 'Stand-in pad (STANDARD GAMEPAD)'), make(1, 'Stand-in pad (STANDARD GAMEPAD)')];
+    window.padButton = (pad, index, value) => {
+      pads[pad].buttons[index] = { pressed: value > 0.5, touched: value > 0, value };
+      pads[pad].timestamp++;
+    };
     navigator.getGamepads = () => pads;
+    localStorage.removeItem('fury-hall-of-fame');
   });
   await page.goto(url('/play.html?uiDiagnostics=1&weather=off&autopilot=1'));
   await onFront(page, 'title');
@@ -127,10 +132,45 @@ try {
   assert.ok(rows.every(r => r[4] === '-'), `no Profile Points: ${JSON.stringify(rows)}`);
   const standings = s.split.player1.race.standings;
   assert.ok(standings.every(r => r.player || r.name === 'Player 2'), JSON.stringify(standings));
+  // The Hall of Fame: player 1's name entry first.
+  const fameOf = async () => (await read(page)).ride?.fame;
+  await page.waitForFunction(() => JSON.parse(document.querySelector('#ui-state')?.textContent || '{}').ride?.fame?.player === 1, null, { timeout: 30000 });
+  const fame1 = await fameOf();
+  assert.ok(fame1.broken.length > 0, JSON.stringify(fame1));
+  const hall = () => page.evaluate(() => JSON.parse(localStorage.getItem('fury-hall-of-fame') || '{"courses":{}}').courses);
+  for (let i = 0; i < 8; i++) await key(page, 'Backspace');
+  for (const c of ['KeyA', 'KeyN', 'KeyN']) await key(page, c);
+  await key(page, 'Enter');
+  await page.waitForFunction(() => JSON.parse(document.querySelector('#ui-state')?.textContent || '{}').ride?.fame?.player === 2, null, { timeout: 10000 });
+  const fame2 = await fameOf();
+  assert.equal(fame2.name, 'Player 2', JSON.stringify(fame2));
+  assert.ok(fame2.broken.length > 0, JSON.stringify(fame2));
+  await nextFrames(page, 10);
+  await shot(page, 'race-duel-fame-player2');
+  const tap = async (pad, index) => {
+    await page.evaluate(([pad, index]) => window.padButton(pad, index, 1), [pad, index]);
+    await nextFrames(page, 3);
+    await page.evaluate(([pad, index]) => window.padButton(pad, index, 0), [pad, index]);
+    await nextFrames(page, 3);
+  };
+  // Player 1's pad does not edit player 2's name.
+  await tap(0, 14);
+  assert.equal((await fameOf()).name, 'Player 2');
+  // Player 2's pad: Left deletes, Right adds A, Up steps it to B, A accepts.
+  for (let i = 0; i < 8; i++) await tap(1, 14);
+  await tap(1, 15); await tap(1, 12); await tap(1, 15); await tap(1, 15);
+  assert.equal((await fameOf()).name, 'BAA');
+  await tap(1, 0);
+  await page.waitForFunction(() => (localStorage.getItem('fury-hall-of-fame') || '').includes('"BAA"'), null, { timeout: 10000 });
+  const course = (await hall())[f.race.course];
+  const names = new Set([...(course?.laps || []), ...(course?.races || []), course?.longest_jump, course?.most_combos, course?.highest_stunt]
+    .filter(Boolean).map(e => e.name));
+  assert.ok(names.has('ANN') && names.has('BAA'), `both names stored: ${JSON.stringify(course)}`);
+  assert.ok(![...names].some(n => n.startsWith('@') || n === 'Player 2'), JSON.stringify(course));
   await nextFrames(page, 20);
   await shot(page, 'race-duel-results');
   assertNoErrors(errors);
-  console.log(`PASS: Duel on ${f.race.course}: CPU riders N/A, two seats of three, ${rows.map(r => `${r[0]} ${r[1]}`).join(' | ')}, signs ${[...signs]}, no Profile Points`);
+  console.log(`PASS: Duel on ${f.race.course}: CPU riders N/A, two seats of three, ${rows.map(r => `${r[0]} ${r[1]}`).join(' | ')}, signs ${[...signs]}, no Profile Points, Hall of Fame ${fame1.broken} / ${fame2.broken} named ANN and BAA`);
 } finally {
   await browser.close();
 }

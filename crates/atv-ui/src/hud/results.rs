@@ -41,6 +41,9 @@ pub struct Fame {
     pub name: String,
     /// The menu the entry returns to (Race Results, or an objective's).
     pub then: Menu,
+    /// Split screen: the player (1-4) naming their records, after
+    /// "Congratulations" (Text4, the seat's name `002deb30`).
+    pub player: Option<u8>,
 }
 
 /// What the host runs for the player.
@@ -288,6 +291,12 @@ impl Results {
     /// The race set Hall of Fame records: the name entry comes first,
     /// starting on `name`.
     pub fn enter_fame(&mut self, broken: Vec<String>, name: &str) {
+        self.enter_player_fame(broken, name, None);
+    }
+
+    /// Split screen: player `player`'s (1-4) name entry; the players are
+    /// asked one after another (`00217e40`, `002c8630`).
+    pub fn enter_player_fame(&mut self, broken: Vec<String>, name: &str, player: Option<u8>) {
         if broken.is_empty() {
             return;
         }
@@ -299,6 +308,7 @@ impl Results {
             } else {
                 self.menu
             },
+            player,
         });
         self.menu = Menu::NameEntry;
         self.hidden = false;
@@ -502,19 +512,22 @@ impl Results {
             }
             self.pad_steer = dir;
         }
-        let steer = if pressed(14) || pressed(12) || axis(0) < -0.55 || axis(1) < -0.55 {
-            -1
-        } else if pressed(15) || pressed(13) || axis(0) > 0.55 || axis(1) > 0.55 {
-            1
-        } else {
-            0
-        };
-        if self.menu == Menu::NameEntry {
-        } else if steer != 0 && steer != self.pad_steer && !self.hidden {
-            self.focus_visible = true;
-            self.move_focus(steer);
+        if self.menu != Menu::NameEntry {
+            let steer = if pressed(14) || pressed(12) || axis(0) < -0.55 || axis(1) < -0.55 {
+                -1
+            } else if pressed(15) || pressed(13) || axis(0) > 0.55 || axis(1) > 0.55 {
+                1
+            } else {
+                0
+            };
+            if steer != 0 && steer != self.pad_steer && !self.hidden {
+                self.focus_visible = true;
+                self.move_focus(steer);
+            }
+            // (The letter picker keeps its own held direction: a held
+            // D-pad steps one letter, not one every other frame.)
+            self.pad_steer = steer;
         }
-        self.pad_steer = steer;
         let held = pressed(0) || pressed(1) || pressed(2);
         if !held {
             self.pad_armed = true;
@@ -663,6 +676,7 @@ pub fn element(view: &Viewport, state: &Results, summary: &str, fonts: &mut Font
         );
     }
     let width = 620f32.min(view.width - 32.);
+    let congratulations;
     let naming = state
         .fame
         .as_ref()
@@ -803,7 +817,10 @@ pub fn element(view: &Viewport, state: &Results, summary: &str, fonts: &mut Font
             ],
         )))
         .child(text(
-            if naming.is_some() {
+            if let Some(player) = naming.and_then(|f| f.player) {
+                congratulations = format!("Congratulations Player {player}");
+                congratulations.as_str()
+            } else if naming.is_some() {
                 "Congratulations"
             } else if let Some(title) = &state.game {
                 title.as_str()
@@ -939,12 +956,40 @@ mod tests {
         assert_eq!(r.fame.as_ref().unwrap().name, "AC ");
         tap(&mut r, 14);
         assert_eq!(r.fame.as_ref().unwrap().name, "AC");
+        // A held D-pad direction steps once.
+        let mut held = [0f32; 16];
+        held[14] = 1.;
+        for _ in 0..4 {
+            r.pad(&held, &[]);
+        }
+        assert_eq!(r.fame.as_ref().unwrap().name, "A");
+        r.pad(&[0f32; 16], &[]);
         assert_eq!(r.menu, Menu::NameEntry);
         // The controller's A accepts too.
         r.enter_fame(vec!["Longest Jump".into()], "ACE");
         assert_eq!(r.pad(&[0.], &[]), None);
         assert_eq!(r.pad(&[1.], &[]), Some(Command::FameName));
     }
+    #[test]
+    fn split_name_entries_follow_one_another_with_the_player() {
+        let mut r = Results {
+            shown: true,
+            ..Default::default()
+        };
+        r.enter_player_fame(vec!["Fastest Lap Time".into()], "ANN", Some(1));
+        assert_eq!(r.fame.as_ref().unwrap().player, Some(1));
+        assert_eq!(r.key("Enter"), (true, Some(Command::FameName)));
+        assert_eq!(r.menu, Menu::Results);
+        // The host opens player 2's entry next; it still returns to the
+        // results, not to player 1's entry.
+        r.enter_player_fame(vec!["Longest Jump".into()], "Player 2", Some(2));
+        let fame = r.fame.as_ref().unwrap();
+        assert_eq!((fame.player, fame.then), (Some(2), Menu::Results));
+        assert_eq!(r.menu, Menu::NameEntry);
+        assert_eq!(r.key("Enter"), (true, Some(Command::FameName)));
+        assert_eq!(r.menu, Menu::Results);
+    }
+
     #[test]
     fn race_time_matches_race_js() {
         assert_eq!(race_time(None), "--:--.--");

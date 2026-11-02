@@ -403,8 +403,9 @@ What the port does:
   drawn in every view after player 1's. `?splitTrails=0` keeps them player
   1's (host measurements).
 
-Not built: records/Hall of Fame and profile credit for players 2-4 need a
-product decision (whose profile they credit). The Multi-Sign animation uses
+Not built: personal records and profile credit for players 2-4 need a
+product decision (whose profile they credit; #462). Their Hall of Fame
+records followed in "Hall of Fame for every human". The Multi-Sign animation uses
 the single-player sign timing. (The split radar and object 24's stunt-text
 clock followed in "Players page, radar and stunt text".)
 
@@ -709,8 +710,9 @@ lighter presets.
 
 - The Players page's ATV stats row, Profile Name panels and original
   panel art; the Force Start trigger.
-- Hall of Fame and profile credit for players 2-4 (needs a product
-  decision: whose profile).
+- Profile credit and personal records for players 2-4 (needs a product
+  decision: whose profile, #462). Split Freestyle Objectives' Hall of
+  Fame (below).
 - The original's split Race event type Lap Attack (Practice and Duel
   are built: research/RACING.md "Practice event type", "Duel event
   type").
@@ -718,3 +720,89 @@ lighter presets.
   and championships").
 - Online parity: every split-screen mode in relay rooms up to the room's
   player cap.
+
+## Hall of Fame for every human (2026-11-02)
+
+Exact-build evidence (USA v2.00 `SCUS_972.11`, private Ghidra exports of
+the functions named; bounded reading, no runtime traces):
+
+- **Every human's records, one shared table.** The race hooks run for any
+  rider with the human flag (rider +8 & 4) and insert into the course's one
+  Hall of Fame record under `"@%d"` (`0x4289f8`, `001039d0` with the
+  rider's player index, a3 = rider +0): the lap hook `001f24b0` →
+  `003323d0` (skipped after rider flag 0x20000), the finish `001f1e30` →
+  `003325d0` (race time only at 3 laps for race kinds 0/1, else 5), the
+  jump hook `001f2610` → `00332810`, and a landed chain `001f22a0` →
+  `00332b20` / `003329e0`. None of these tests the human count; only the
+  personal inserts (`00324b40`, `003249c0`, `00324cc0`, `00324e60`,
+  `00324f50`) and the profile stats/points (`00323440`, `00322080`) need
+  +0x10 = 1. `003325d0` skips online (+0x7d8) and needs +0x674; its "New
+  %sFastest 3/5 Lap Race Time!" infotext goes to that player's view
+  (`002e2cf0`'s last argument is the player index).
+- **Order.** After the race `001f1740` (and `001f2870`) calls `00217e40`,
+  which loops the player index 0-3 and opens the `[NameEntry Menu]` for the
+  first whose placeholder `003321f0` finds (lap slots +0xc, race slots
+  +0x40, jump +0x6c, combos +0x80, stunt +0x94; digit = index + '0'). On
+  accept, the page handler `002c8630` (action 4) writes the name over that
+  player's placeholder (`00331f50`, format `0x4386e8` "@%d" with page
+  +0x58) and searches the next indices (+0x58 + 1 .. 3) with `003321f0`;
+  when none is left it closes the page. So humans are asked in player
+  order, each only if they hold a record, and each sees only their own.
+- **What each sees.** `00333360` lists the player's records in the order
+  lap ("Fastest Lap Time", "2nd …", "3rd …"), race ("Fastest 3/5 Lap Race
+  Time" by race kind), "Most Combos", "Longest Jump", "Highest Stunt Score"
+  (Freestyle type 2: objective scores, stunt scores, combos, jump).
+  `00217e40` sets the page's +0x58 (the player index), points the page's
+  value binding (+0x140 +8) at it, and starts the text field from
+  `002deb30`: the 9-byte seat name at game state +0x67b + index × 9 (the
+  MultiATVRiderSelect seat's profile name, `0027e360`).
+- **Controller.** `00217e40` also stores the index at page +0x88 (0 for the
+  online host's own index). `002c8630`'s accept maps the pressing pad
+  (the input event's +8) to a seat through the active-seat flags (+0x554) and, when
+  that seat's profile is still named "PLAYER%d" (`0x4386f0`), renames the
+  profile to the entered name (`0036f6b0`, `00370160`).
+- **Which events.** `001f1e30` runs for session modes 0 (Single Race) and 5
+  (Duel) alike (research/RACING.md "Duel event type"); Practice and Lap
+  Attack never reach race over. Split Freestyle Objectives qualify too:
+  `002fce00` inserts each player's 120 s objective score under `"@%d"`
+  (`0x43cb50`) through `00332c50` with no human-count test, and `002fdc00`
+  calls `00217e40`.
+
+Assumptions: that Text4 (Value 14, beside "Congratulations") shows
+`002deb30`'s seat name, and that page +0x88 is the page's controlling pad
+(only its writes were read). The seat-name fallback for a seat without a
+profile (+0x6f8) was not traced.
+
+What the port does:
+
+- Every split player's race keeps a `RecordWatch` under its own placeholder
+  (`RecordWatch::for_player`; players 2-4 with no personal records), so
+  each player's "New …" record messages show in their own view.
+  `split::merge_race` hands players 2-4's finished watches to player 1's
+  frame (`Frame::split_records`).
+- At the results of a split race or Duel, `hall_of_fame::SplitFame` merges
+  every human's runs into the stored course table by the insert rules
+  (players in index order, so an exact tie goes to the lower player) and
+  lists each record holder in player order with what they hold in the
+  merged table. The records are stored at once under default names (player
+  1: the last Hall of Fame name or the profile's; players 2-4: "Player N",
+  the port's seat names), then each player's name entry opens in turn:
+  "Congratulations Player N", their records, the name field. Accepting
+  stores that player's name and opens the next.
+- That player's controller drives their entry (the port's split pad
+  slots); the keyboard types for whoever is asked.
+- `#ui-state.ride.fame.player` reports the player being asked.
+  `tools/test_engine_race_duel.mjs` races a Duel on an empty Hall of Fame,
+  names player 1 on the keyboard and player 2 on its own pad (player 1's
+  pad does not edit it) and checks both names are stored.
+
+Gaps: the profile rename on accept (`002c8630`, "PLAYER%d") is not ported
+(per-seat profiles are #462). Split Freestyle Objectives keep no Hall of
+Fame records yet (`002fce00`'s per-player objective scores; whether the
+Freestyle jump and chain hooks `002fd7c0`/`002fd350` also run per player
+was not read). The original tracks the shared
+table live, so a player's in-race "New …" message compares against the
+other humans' records too; the port's players each compare against the
+table as it stood at the start (the merged list at the results is
+correct). The split race time insert waits for the full-length lap count
+as for one player.
