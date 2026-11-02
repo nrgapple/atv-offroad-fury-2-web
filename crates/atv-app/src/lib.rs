@@ -3271,6 +3271,9 @@ impl App {
             state["ride"]["ghost"] = ghost.into();
             state["ride"]["bestLap"] = best_lap.into();
             state["ride"]["raceLap"] = race_lap.into();
+            // CPU riders drawn this frame (a room race guest stops drawing
+            // them once they retire).
+            state["ride"]["cpuDrawn"] = riding.ride.cpu_poses().len().into();
             // Player 1's positional sounds: listeners (one per view) and the
             // one nearest player 1's rider (0 = player 1's camera).
             state["ride"]["listeners"] = serde_json::json!(
