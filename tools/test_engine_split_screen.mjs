@@ -10,7 +10,9 @@
 // - Split Screen → Screen: Side by Side → Race → Start Race races both
 //   players against the CPUs (one lap, the race path driver steering both:
 //   ?raceLaps=1&autopilot=1 test tooling) to combined results that list
-//   Player 2, held until both have finished.
+//   Player 2, held until both have finished. Player 2's race progress is
+//   sampled while it races: no new race distance for ATV_SPLIT_STALL (45) s
+//   of race time fails at once with the history (issue #491).
 // Host Chromium evidence with two stand-in standard gamepads.
 import assert from 'node:assert/strict';
 import { mkdir } from 'node:fs/promises';
@@ -49,6 +51,63 @@ async function shot(page, name) {
   if (!SHOTS) return;
   await mkdir(SHOTS, { recursive: true });
   await page.screenshot({ path: `${SHOTS}/${name}.png` });
+}
+
+// A split race rider's progress over time (issue #491: a stuck rider versus
+// a slow host). Polls until `done`, keeping one sample every few seconds; it
+// fails at once with the history when the rider's furthest race distance
+// has not grown for STALL seconds of race time while racing, and dumps the
+// history on a timeout.
+const STALL = Number(process.env.ATV_SPLIT_STALL || 45);
+function sample(s, wall) {
+  const p = s.player2;
+  const r = p?.race ?? {};
+  const one = s.player1?.race ?? {};
+  return {
+    wall: Math.round(wall), steps: p?.steps, elapsed: r.elapsed && +r.elapsed.toFixed(1), phase: r.phase,
+    lap: r.lap, position: r.position, station: r.station, distance: r.distance?.map(d => Math.round(d)),
+    offTrack: r.offTrack && +r.offTrack.toFixed(1), autopilot: r.autopilot, stuck: r.autopilotStuck && +r.autopilotStuck.toFixed(1),
+    wreck: p?.wreck, resets: p?.resets, speed: p && +p.speed.toFixed(1), origin: p?.origin?.map(v => Math.round(v)),
+    throttle: p && +p.throttle.toFixed(2), steer: p && +p.steer.toFixed(2),
+    p1: { phase: one.phase, elapsed: one.elapsed && +one.elapsed.toFixed(1), distance: one.distance?.map(d => Math.round(d)) },
+  };
+}
+async function watchRace(page, done, timeout, label) {
+  const started = Date.now();
+  const history = [];
+  let best = -Infinity;
+  let bestAt = null;
+  let longest = 0;
+  const dump = () => history.map(h => JSON.stringify(h)).join('\n');
+  for (;;) {
+    const s = await split(page);
+    const wall = (Date.now() - started) / 1000;
+    const h = sample(s, wall);
+    if (!history.length || wall - history.at(-1).wall >= 5) history.push(h);
+    if (done(s)) {
+      console.log(`  ${label}: done after ${Math.round(wall)} s wall, race ${h.elapsed} s; ` +
+        `${h.resets} resets, longest no-progress ${longest.toFixed(1)} s of race time`);
+      if (process.env.ATV_SPLIT_TRACE) console.log(dump());
+      return { s, history };
+    }
+    const furthest = s.player2?.race?.distance?.[1];
+    const elapsed = s.player2?.race?.elapsed ?? 0;
+    if (furthest > best + 1) {
+      best = furthest;
+      bestAt = elapsed;
+    }
+    if (bestAt !== null) longest = Math.max(longest, elapsed - bestAt);
+    if (s.player2?.race?.phase === 'racing' && bestAt !== null && elapsed - bestAt > STALL) {
+      history.push(h);
+      throw new Error(`${label}: player 2 made no race progress for ${STALL} s of race time ` +
+        `(furthest ${Math.round(best)} ft since ${bestAt.toFixed(1)} s) after ${Math.round(wall)} s wall:\n${dump()}`);
+    }
+    if (wall * 1000 > timeout) {
+      history.push(h);
+      throw new Error(`${label}: timed out after ${Math.round(wall)} s wall (race ${h.elapsed} s):\n${dump()}`);
+    }
+    await page.waitForTimeout(500);
+  }
 }
 
 async function open(browser, search) {
@@ -199,9 +258,7 @@ try {
       `split radar ${JSON.stringify(radar)}`);
     await shot(page, 'split-race-vertical');
     // Player 2's finish sign shows its combined place (not its own race's).
-    await wait(page, () => JSON.parse(document.querySelector('#ui-state').textContent).split.player2.race.phase === 'finished',
-      null, 420000);
-    s = await split(page);
+    ({ s } = await watchRace(page, s => s.player2?.race?.phase === 'finished', 420000, 'player 2 finish'));
     const p2 = s.player2.race;
     const p2Row = s.player1.race.standings.find(r => r.name === 'Player 2');
     assert.equal(p2.position, p2Row.position, JSON.stringify([p2, s.player1.race.standings]));

@@ -870,3 +870,34 @@ Gaps: the vehicle exclusions (1, 0x15) are not ported, as for one player.
 The in-run "New …" messages compare against the table as it stood at the
 start, not the other players' live records (the merged list at the
 results is correct).
+
+## Split race test progress guard (2026-11-02, issue #491)
+
+`tools/test_engine_split_screen.mjs` once timed out (420 s) waiting for
+player 2 to finish its one-lap race, while a rerun of the same build passed.
+The race's `ui-state` split diagnostics now also report, per human, the
+wreck phase and reset count, and in `race` the last on-track station, the
+race distances (current, furthest and committed; `Race::progress_distances`),
+the off-track seconds and whether the race path driver (`?autopilot=1`)
+rides the seat with its slow-riding counter (`RaceState::autopilot_status`).
+The test polls these while player 2 races: it fails at once with the sampled
+history when player 2's furthest race distance has not grown for 45 s of
+race time (`ATV_SPLIT_STALL`), and dumps the same history on the wall-clock
+timeout, so a stuck rider (race time advancing, no progress) and a starved
+host (race time barely advancing against the wall clock) read differently.
+`ATV_SPLIT_TRACE=1` prints the history of a passing run.
+
+Facts (host Chromium, shared 16 GB Mac, load 2.0-3.5): six consecutive
+runs passed in 140-152 s; player 2 finished after 114-127 s of wall time
+and 117-129 s of race time (race time keeps pace with the wall clock), with
+1-3 resets and at most 5.7 s of race time without new furthest distance.
+The failure did not reproduce. A wreck reset returns the rider behind its
+furthest distance (for example 554 ft to 447 ft), so a rider that wrecks
+repeatedly in one place makes no furthest progress, which the guard reports.
+
+Hypothesis, not established: the race path driver on a human seat has the
+off-track and slow-riding resets but not the CPUs' authored skip-ahead
+recovery (`atv_core::cpu_recovery`), so a repeated wreck at one spot could
+hold player 2 indefinitely. A starved host would need under about 4
+rendered frames per second (each frame runs at most four 1/60 s ride steps)
+to stretch a 120 s race past 420 s. The next failure's history decides.

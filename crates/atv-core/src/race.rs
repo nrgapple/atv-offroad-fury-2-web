@@ -2171,6 +2171,12 @@ impl Race {
     pub fn off_track_time(&self, cpu: Option<usize>) -> f32 {
         self.rider(cpu).off_track
     }
+    /// Race distance along the racing line and its furthest value, and the
+    /// committed station's distance (diagnostics).
+    pub fn progress_distances(&self, cpu: Option<usize>) -> [f32; 3] {
+        let p = self.rider(cpu);
+        [p.distance, p.furthest, p.committed_distance]
+    }
     /// Race reset pose on the racing line, facing the race direction: the
     /// rider's committed station, moved past nodes flagged as no-reset
     /// ([`Course::reset_station`]).
