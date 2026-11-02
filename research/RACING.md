@@ -1615,8 +1615,8 @@ reading, no runtime traces):
   the constructor (`001e1b10`); the scene setup `001e1fd0` clears it for
   a human (flag 4) in mode 2 before calling `001e9050`, so a Lap Attack
   human starts with the collision flags but stays opaque. `001e4c90` calls
-  `001e9050` for a mode-2 human; `001e5260` calls it after a reset (+0x7f0
-  = 2), and in mode 2, split screen or online for humans every step.
+  `001e9050` for a mode-2 human; `001e5260` calls it when +0x7f0 is 2
+  (assumed: a reset), and in mode 2, split screen or online for humans every step.
 - **Best lap.** The session lap method `00216750` picks the rider with the
   lowest best lap (rider record +0x30 +0x4c, 0 read as none), stores it at
   +0x128, and when that is the rider who just lapped, shows "New Lap
