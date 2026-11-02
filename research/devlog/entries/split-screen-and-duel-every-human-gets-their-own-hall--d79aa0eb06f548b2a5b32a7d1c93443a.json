@@ -1,0 +1,14 @@
+{
+  "id": "split-screen-and-duel-every-human-gets-their-own-hall--d79aa0eb06f548b2a5b32a7d1c93443a",
+  "timestamp": "2026-11-02T16:14:22.747619+00:00",
+  "recorded_at": "2026-11-02T17:18:57.848099+00:00",
+  "kind": "build",
+  "title": "Split-screen and Duel: every human gets their own Hall of Fame name entry",
+  "summary": "After a split-screen race or a Duel, every human who set a Hall of Fame record now gets their own name entry, one after another in player order. Each is titled 'Congratulations Player N', lists only that player's records and is driven by that player's own controller.",
+  "details": [
+    "All records share the course's single Hall of Fame table, as in the original USA v2.00 build (00217e40 loops players 0-3, 002c8630 accepts and moves to the next, 001f1e30 race records); see research/SPLIT_SCREEN.md 'Hall of Fame for every human'. Personal records and profile points stay single-player, as in the original. Also fixed: holding a D-pad direction in the name-entry letter picker repeated every other frame; it now steps one letter. Verified: the extended test_engine_race_duel names and stores both players, on the host and against furyremastered.com; split_screen and split_4p pass. Live in production at 43d7772 (PR #488, closes #477). Also PR #487 (closes #471): test-only fix so test_engine_split_4p expects the 17 Split Screen rows."
+  ],
+  "limitation": "Split Freestyle Objectives Hall of Fame records are still missing (tracked in a new issue). Renaming a 'PLAYER%d' profile waits on the owner's decision #462.",
+  "image": "/devlog-images/split-screen-and-duel-every-human-gets-their-own-hall--d79aa0eb06f548b2a5b32a7d1c93443a.png",
+  "caption": "A 2P Duel on a stadium track: the 'Congratulations Player 2' panel lists '2nd Fastest Lap Time' and 'Longest Jump' with the name field 'Player 2'."
+}
