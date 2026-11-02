@@ -1670,7 +1670,90 @@ What the port does (`atv_core::race_event`, `atv_core::race_ghost`,
   `tools/test_engine_race_lap_attack.mjs` checks one ghost is drawn.
 
 Gaps: the opacity covers the whole ghost (quad and rider; assumption, see
-above); ResetOpacity's post-reset fade is not ported; the ghost is not
+above); the ghost is not
 interpolated between steps under Enhanced/High presentation (at most one
 step ahead of the drawn player); split-screen ghosts are not covered by a
 browser test.
+
+## Post-reset fade — 2026-11-02
+
+Exact-build evidence (USA v2.00 `SCUS_972.11`, bounded reading of the
+private exports; issue #485):
+
+- **What starts it.** `001e9050` sets the vehicle's reset timer (+0x800) to
+  2.0 s, adds the combined collision category 0x462d50|0x462d58 to the
+  quad's, rider's and chassis collision objects (+0x980, +0x97c, +0x18c,
+  +0x984) and a wheel category set to the four wheels (+0x168 … +0x174),
+  and, when the fade flag +0x804 is set, sets the draw opacity
+  (`001b42e0`, object +0x19c) of +0x93c, +0x884 and, when present,
+  +0x884's +0x4dc/+0x4e0 objects to the world's ResetOpacity (+0x510).
+- **Callers.** The reset entry `001e8f90` always ends in `001e9050`; it is
+  reached by RaceStatus's off-track reset (interface +0x50 → `001eb9d0` →
+  `001eb0a0`, skipped for a flag-0x10 ghost) and places either through
+  `001e35d0` or, for a downed rider, wreck recovery `001e8d10`. Wreck
+  recovery `001e8d10` calls `001e9050` when its second argument is set and
+  the session type (settings +4) is not 6 (Training, whose recovery calls
+  `00226f30`); the wreck clock in `001e5260` calls it with 1. Online, a
+  remote racer's state change (`00211490`) and its wrecked state 2 in the
+  remote branch of `001e5260` call it too. The race grid `001f80e0` calls
+  `001e8f90` and then `001e92c0` at once, so the start shows no fade, and
+  the deep-water reset in `001e5260` calls `001e35d0` directly with no
+  `001e9050`.
+- **Who.** The code is per vehicle with no human test on these paths, so
+  CPUs, the player and split-screen players fade alike. `001e1fd0`
+  (scene setup) clears +0x804 for a human (racer flag 4) in session mode 2
+  and starts the timer; `001e4c90` starts it again for a mode-2 human.
+- **Countdown.** On the ordinary branch `001e5260` subtracts the step from
+  the timer unless it is already ≤ 0, racer flag bit 0 is set, or the
+  session mode is 2; while held, a human (flag 4) with bit 0 set restarts
+  it every step when there is more than one human or the game is online.
+  Once the timer is ≤ 0.75 s the opacity of the same objects becomes
+  `ResetOpacity + (1 − ResetOpacity)(1 − t/0.75)`; at ≤ 0 `001e92c0` sets
+  opacity 1.0, clears and rebuilds the collision categories, runs the
+  broad phase for the chassis object (`0011f2c0`) and, when that leaves
+  the object's +0xbf bit 5 set, calls `001e9050` again instead of ending.
+- **Draw objects.** Whether +0x93c is the quad and +0x884 the rider (or
+  the reverse) was not traced; between them they are the vehicle and the
+  rider, so both fade. The wheels' draw objects get no opacity call.
+
+Assumptions, kept separate:
+
+- The added categories keep the resetting rider out of rider-to-rider
+  contact, and the restart in `001e92c0` holds the fade while it still
+  overlaps something. Not proven: the category masks' readers were not
+  traced. It is the natural reading of a "pass through others" reset.
+- L1+R1 (Practice reset) reaches `001e8f90` like the off-track reset; its
+  caller was not found.
+- Racer flag bit 0's meaning (the countdown hold) is unknown.
+
+What the port does (`atv_core::reset_fade`, `Vehicle::start_reset_timer`):
+
+- The vehicle's existing rider-height cooldown is the +0x800 timer. Wreck
+  recovery (`advance_wreck`), the off-track reset (`reset_now`, player and
+  CPUs) and the manual reset (Reset ATV / R, any ride) start it; the
+  deep-water reset no longer does (it did before, contrary to the code
+  above), and the race grid never did.
+- While the timer runs the rider draws through the ghost's translucent
+  vehicle pass (depth pre-pass, colour blended at the opacity, no stencil
+  mark) at the venue's Environment ResetOpacity (`Scene::reset_opacity`,
+  0.2 when absent), ramping back to opaque over the last 0.75 s: the
+  player, every drawn race CPU and split screen's other players (drawn in
+  every view). The whole quad, wheels and rider fade (the original's
+  wheels may stay opaque; see above). Fading riders draw after every
+  opaque rider; they still cast shadows (unknown in the original).
+- While the timer runs the rider takes no rider-to-rider contact (the
+  authored contact proxy): its own half is skipped and the others leave it
+  out (race pairs, split-screen bodies). The port does not extend the
+  timer while overlapping (no broad-phase restart).
+- Lap Attack: the human's fade flag is clear and the timer holds at 2 s
+  (`001e1fd0`, `001e5260` in mode 2), so the player stays opaque, takes no
+  rider contact and has no rider-height wreck, as in the original.
+- `#ui-state` `ride.resetFade` (player 1's opacity), `ride.resetTimer` and
+  `ride.splitResetFades`. `tools/test_engine_split_screen.mjs` resets each
+  player and checks 0.2 back to 1 within the timer;
+  `tools/test_engine_race_lap_attack.mjs` checks the player stays opaque.
+
+Gaps: Training still fades after a wreck (the original skips it); the
+motorcycle and room riders (network puppets) do not fade; the held
+countdown for racer bit 0 and the overlap restart are not ported; fading
+riders draw no speed-rush stencil mark.

@@ -69,7 +69,7 @@ fn environment_opacity(data: &PhysicsData, key: &str, default: f32) -> Result<f3
             .parse::<f32>()
             .ok()
             .filter(|v| v.is_finite())
-            .ok_or_else(|| format!("invalid {key}").into())
+            .ok_or_else(|| format!("invalid {key}"))
     })
 }
 fn value<'a>(data: &'a PhysicsData, section: &str, key: &str) -> Option<&'a str> {

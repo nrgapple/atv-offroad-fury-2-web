@@ -33,7 +33,7 @@ pub const OPACITY: f32 = 0.2;
 /// reset opacity until the ramp, then
 /// `reset + (1 − reset)(1 − timer / 0.75)`; 1 once the timer has run out.
 pub fn opacity(timer: f32, reset_opacity: f32) -> f32 {
-    if !(timer > 0.) {
+    if timer.is_nan() || timer <= 0. {
         return 1.;
     }
     let reset = reset_opacity.clamp(0., 1.);

@@ -53,6 +53,31 @@ async function shot(page, name) {
   await page.screenshot({ path: `${SHOTS}/${name}.png` });
 }
 
+// Starts a reset with `press` and checks the rider's drawn opacity
+// (`fade(state.ride)`): ResetOpacity at once, then a monotonic return to 1
+// within the 2 s reset timer (120 steps; a few more for frame pacing).
+async function resetFade(page, press, fade, who) {
+  const ride = async () => (await read(page)).ride;
+  assert.equal(fade(await ride()), 1, `${who} opaque before the reset`);
+  const steps = () => page.evaluate(() => window.atvTerrainStatus.simulationSteps);
+  await press();
+  const start = await steps();
+  let r = await ride();
+  for (let i = 0; i < 30 && fade(r) === 1; i++) { await nextFrames(page, 1); r = await ride(); }
+  assert.ok(Math.abs(fade(r) - 0.2) < 1e-6, `${who} at ResetOpacity: ${fade(r)} (timer ${r.resetTimer})`);
+  let last = fade(r);
+  while (fade(r) < 1) {
+    assert.ok(fade(r) >= last - 1e-6, `${who} fade only returns: ${last} then ${fade(r)}`);
+    assert.ok(await steps() - start < 200, `${who} opaque again within the reset timer`);
+    last = fade(r);
+    await nextFrames(page, 2);
+    r = await ride();
+  }
+  const took = await steps() - start;
+  assert.ok(took >= 100, `${who} faded for ${took} steps`);
+  console.log(`  reset fade: ${who} at 0.2, opaque after ${took} steps`);
+}
+
 // A split race rider's progress over time (issue #491: a stuck rider versus
 // a slow host). Polls until `done`, keeping one sample every few seconds; it
 // fails at once with the history when the rider's furthest race distance
@@ -204,6 +229,15 @@ try {
     // The original horizontal presets (FOV 80) at the half-height reference.
     assert.ok(c1[5] > 2 && c2[5] > 2, `split focal lengths ${c1[5]} ${c2[5]}`);
     await shot(page, 'split-freestyle-horizontal');
+    // Post-reset fade (#485, `001e9050`): Reset draws player 1 at
+    // ResetOpacity (0.2) and back to opaque within the 2 s timer; L1+R1 on
+    // pad 2 fades player 2 (drawn in both views) the same way.
+    await resetFade(page, () => key(page, 'KeyR'), r => r.resetFade, 'player 1');
+    await resetFade(page, async () => {
+      await page.evaluate(() => { window.padButton(1, 4, 1); window.padButton(1, 5, 1); });
+      await nextFrames(page, 3);
+      await page.evaluate(() => { window.padButton(1, 4, 0); window.padButton(1, 5, 0); });
+    }, r => r.splitResetFades[0], 'player 2');
     await page.evaluate(() => { window.padButton(1, 7, 0); window.padAxis(1, 0, 0); });
     // Player 2's keyboard half: the arrows (player 1 does not see them).
     const before = (await split(page)).player2.origin;
