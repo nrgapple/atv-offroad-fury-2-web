@@ -853,12 +853,36 @@ impl Ride {
                 true,
                 None,
             )?;
-            return self.place_at((
+            self.place_at((
                 [origin[0] as f32, origin[1] as f32, origin[2] as f32],
                 frame.track_heading,
-            ));
+            ))?;
+        } else {
+            self.place_at(self.start)?;
         }
-        self.place_at(self.start)
+        // The post-reset fade (`001e9050`; the manual reset is assumed to
+        // share the off-track reset's `001e8f90`).
+        if let Mount::Quad { vehicle, .. } = &mut self.mount {
+            vehicle.start_reset_timer();
+        }
+        Ok(())
+    }
+
+    /// Seconds of the player's post-reset fade left to draw (0: opaque;
+    /// `atv_core::reset_fade`). The motorcycle has none.
+    pub fn reset_fade_timer(&self) -> f32 {
+        match &self.mount {
+            Mount::Quad { vehicle, .. } => vehicle.reset_fade_timer(),
+            Mount::Bike(_) => 0.,
+        }
+    }
+
+    /// The player's reset timer is running: no rider-to-rider contact.
+    pub fn reset_ghosted(&self) -> bool {
+        match &self.mount {
+            Mount::Quad { vehicle, .. } => vehicle.reset_ghosted(),
+            Mount::Bike(_) => false,
+        }
     }
 
     /// Ops 23, 47 and one op 46 step at `start` (a race places on the ground).
@@ -915,8 +939,13 @@ impl Ride {
         };
         self.hud.set_speed_factor(units.speed().0)?;
         let ecosystem = !self.options.ecosystem_collision_off;
+        let lap_attack = self.race.as_ref().is_some_and(|r| r.settings().lap_attack);
         if let Mount::Quad { vehicle, .. } = &mut self.mount {
             vehicle.set_ecosystem_collision(ecosystem);
+            vehicle.set_reset_mode(
+                atv_core::reset_fade::draws(lap_attack, true),
+                atv_core::reset_fade::holds(lap_attack),
+            );
         }
         if let Some(state) = &mut self.race {
             for cpu in &mut state.cpus {

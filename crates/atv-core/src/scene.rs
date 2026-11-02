@@ -50,6 +50,9 @@ pub struct Scene {
     /// Environment "GhostOpacity" (`00209680`, default 0.4): the Lap Attack
     /// ghost's draw opacity.
     pub ghost_opacity: f32,
+    /// Environment "ResetOpacity" (`00209680`, default 0.2): the post-reset
+    /// fade's draw opacity (`atv_core::reset_fade`).
+    pub reset_opacity: f32,
     /// `[SceneInfo]` NumZones/NumPortals (001fc850 defaults 1 and 0).
     pub zones: i64,
     pub portals: i64,
@@ -58,12 +61,15 @@ pub struct Scene {
 /// +0x514) and "ResetOpacity" (default 0.2, +0x510; the post-reset fade,
 /// not the ghost).
 fn ghost_opacity(data: &PhysicsData) -> Result<f32> {
-    value(data, "Environment", "GhostOpacity").map_or(Ok(crate::race_ghost::OPACITY), |v| {
+    environment_opacity(data, "GhostOpacity", crate::race_ghost::OPACITY)
+}
+fn environment_opacity(data: &PhysicsData, key: &str, default: f32) -> Result<f32> {
+    value(data, "Environment", key).map_or(Ok(default), |v| {
         v.trim()
             .parse::<f32>()
             .ok()
             .filter(|v| v.is_finite())
-            .ok_or_else(|| "invalid GhostOpacity".into())
+            .ok_or_else(|| format!("invalid {key}").into())
     })
 }
 fn value<'a>(data: &'a PhysicsData, section: &str, key: &str) -> Option<&'a str> {
@@ -588,6 +594,7 @@ pub fn parse_with_start(data: &[u8], mode: Option<&[u8]>) -> Result<Scene> {
         boundary_launch: boundary_launch(&data)?,
         crowd_present: crowd_present(&data),
         ghost_opacity: ghost_opacity(&data)?,
+        reset_opacity: environment_opacity(&data, "ResetOpacity", crate::reset_fade::OPACITY)?,
         zones: zone_count(&data, "NumZones", 1)?,
         portals: zone_count(&data, "NumPortals", 0)?,
     })
@@ -595,6 +602,21 @@ pub fn parse_with_start(data: &[u8], mode: Option<&[u8]>) -> Result<Scene> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn environment_opacities_default_and_parse() {
+        let scene = parse(SOURCE.as_bytes()).unwrap();
+        assert_eq!(scene.ghost_opacity, crate::race_ghost::OPACITY);
+        assert_eq!(scene.reset_opacity, crate::reset_fade::OPACITY);
+        let source = SOURCE.replace(
+            "CubeFile=sample.cub",
+            "CubeFile=sample.cub\nGhostOpacity=0.5\nResetOpacity=0.35",
+        );
+        let scene = parse(source.as_bytes()).unwrap();
+        assert_eq!(scene.ghost_opacity, 0.5);
+        assert_eq!(scene.reset_opacity, 0.35);
+        let bad = SOURCE.replace("CubeFile=sample.cub", "CubeFile=sample.cub\nResetOpacity=x");
+        assert!(parse(bad.as_bytes()).is_err());
+    }
     #[test]
     fn scene_templates_ignore_bare_notes_without_relaxing_physics_assignments() {
         let mode = b"[SceneInfo]\nBare authoring note\nDefaultStartPosition=5,6,7\nDefaultStartDirection=1,0,0\n";

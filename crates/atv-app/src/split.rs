@@ -590,8 +590,11 @@ pub fn link(
     let first_done = finished(first);
     let done: Vec<bool> = others.iter().map(|s| finished(&s.riding.ride)).collect();
     let first_place = placed(first);
+    // A rider whose reset timer runs (`001e9050`) touches no one; its own
+    // ride skips its half (`Vehicle::peer_contact`).
     let humans: Vec<_> = others
         .iter()
+        .filter(|s| !s.riding.ride.reset_ghosted())
         .map(|s| {
             let f = s.riding.ride.frame();
             (f.origin, f.linear_velocity, f.orientation)
@@ -618,8 +621,10 @@ pub fn link(
         .collect();
     let local: Vec<(u8, atv_game::multiplayer::PeerBody)> = others
         .iter()
+        .filter(|s| !s.riding.ride.reset_ghosted())
         .map(|s| (s.player, body(&s.riding.ride, 1.)))
         .collect();
+    let first_body = (!first.reset_ghosted()).then(|| body(first, -1.));
     let mut bodies = Vec::with_capacity(others.len());
     for (index, second) in others.iter_mut().enumerate() {
         let place = placed(&second.riding.ride);
@@ -637,7 +642,8 @@ pub fn link(
         }
         let own = second.player;
         bodies.push(
-            std::iter::once(body(first, -1.))
+            first_body
+                .into_iter()
                 .chain(cpus.iter().copied())
                 .chain(local.iter().filter(|(p, _)| *p != own).map(|(p, b)| {
                     // The lower player number takes the -1 side of a tie.

@@ -285,7 +285,15 @@ pub struct Vehicle {
     stunt_landing_safe: bool,
     stunt_state_four: bool,
     forced_landing: bool,
+    /// The reset timer (+0x800): `001e9050` starts it at 2 s; it gates the
+    /// rider-height wreck, the post-reset fade and rider-to-rider contact.
     rider_contact_cooldown: f32,
+    /// Fade flag (+0x804): the rider draws the post-reset fade (cleared for
+    /// a Lap Attack human, `001e1fd0`).
+    reset_fade: bool,
+    /// Lap Attack: the reset timer never counts down (`001e5260`, session
+    /// mode 2).
+    reset_hold: bool,
     rear_contact_speed: f32,
     applied_drive_controls: (f32, f32, bool),
     reset_origin: Vec3,
@@ -508,6 +516,8 @@ impl Vehicle {
             stunt_state_four: false,
             forced_landing: false,
             rider_contact_cooldown: 0.,
+            reset_fade: true,
+            reset_hold: false,
             rear_contact_speed: 0.,
             applied_drive_controls: (0., 0., false),
             reset_origin: origin,
@@ -761,8 +771,10 @@ impl Vehicle {
         if !self.wreck.step(dt, rider_grounded) {
             return Ok(false);
         }
-        // 001e5260 → 001e8d10: wreck recovery places with flags 1.
+        // 001e5260 → 001e8d10: wreck recovery places with flags 1, then
+        // starts the reset timer (001e9050).
         self.reset_to_checkpoint_with(RESET_SIDESTEP)?;
+        self.start_reset_timer();
         Ok(true)
     }
     ///001e35d0 is shared by wreck recovery and the expired deep-water clock.
@@ -859,7 +871,46 @@ impl Vehicle {
     /// Immediate recovery at the current (race) checkpoint: the off-track
     /// reset (001eb0a0 → 001e8f90 flags 3).
     pub fn reset_now(&mut self) -> Result<()> {
-        self.reset_to_checkpoint_with(RESET_SIDESTEP | RESET_CLEAR_SPOT)
+        self.reset_to_checkpoint_with(RESET_SIDESTEP | RESET_CLEAR_SPOT)?;
+        self.start_reset_timer();
+        Ok(())
+    }
+    /// `001e9050`: the two-second reset timer (rider-height wreck cooldown,
+    /// post-reset fade and no rider-to-rider contact while it runs). Wreck
+    /// recovery and the off-track reset start it; the port's manual reset
+    /// does too (assumed to share `001e8f90`).
+    pub fn start_reset_timer(&mut self) {
+        self.rider_contact_cooldown = crate::reset_fade::SECONDS;
+    }
+    /// The fade flag (+0x804) and the Lap Attack countdown hold
+    /// (`atv_core::reset_fade::draws` / `holds`).
+    pub fn set_reset_mode(&mut self, fade: bool, hold: bool) {
+        if hold && !self.reset_hold {
+            // 001e1fd0 starts the timer for a Lap Attack human.
+            self.start_reset_timer();
+        }
+        self.reset_fade = fade;
+        self.reset_hold = hold;
+    }
+    /// Seconds left on the reset timer (0 when it has run out).
+    pub fn reset_timer(&self) -> f32 {
+        self.rider_contact_cooldown.max(0.)
+    }
+    /// Seconds of the post-reset fade left to draw: the reset timer, or 0
+    /// when the fade flag is clear.
+    pub fn reset_fade_timer(&self) -> f32 {
+        if self.reset_fade {
+            self.reset_timer()
+        } else {
+            0.
+        }
+    }
+    /// While the reset timer runs the rider takes no rider-to-rider
+    /// contact (`001e9050` adds collision categories that `001e92c0`
+    /// removes; assumption: they exclude other racers, see
+    /// research/RACING.md "Post-reset fade").
+    pub fn reset_ghosted(&self) -> bool {
+        self.rider_contact_cooldown > 0.
     }
     /// 001ea050 clearance of a checkpoint candidate: vegetation within 20ft
     /// or a horizontal ray hit rejects it; a down-ray hit raises it.
@@ -1026,7 +1077,8 @@ impl Vehicle {
         self.supports = [crate::wheel_support::Support::default(); 4];
         self.suspension_stop_contacts = 0;
         self.forced_landing = false;
-        self.rider_contact_cooldown = 2.;
+        // The reset timer is started by the callers that run 001e9050
+        // (wreck recovery, off-track reset), not by the deep-water reset.
         self.water_failure = crate::water_failure::Clock::default();
         // The native reset also preserves the grip controller's cached rear
         // velocity until the next grounded substep overwrites it.
@@ -1163,6 +1215,9 @@ impl Vehicle {
         dt: f32,
         tie: f32,
     ) -> bool {
+        if self.reset_ghosted() {
+            return false;
+        }
         let own = crate::peer_contact::Body {
             origin: self.body.origin(&self.body_config),
             velocity: self.body.linear_velocity,
@@ -1405,9 +1460,11 @@ impl Vehicle {
         self.flip_events.clear();
         self.crash_impact_speed = 0.;
         let crashed = self.wreck.phase != crate::wreck::Phase::Riding;
-        // 001e5260 decrements this riding cooldown before physics. The current
-        // Freestyle route has no native countdown/session-state-2 override.
-        if !crashed && self.rider_contact_cooldown > 0. {
+        // 001e5260 decrements this riding cooldown before physics; in Lap
+        // Attack (session state 2) it holds.
+        if self.reset_hold {
+            self.rider_contact_cooldown = crate::reset_fade::SECONDS;
+        } else if !crashed && self.rider_contact_cooldown > 0. {
             self.rider_contact_cooldown -= dt;
         }
         let input = if crashed {
@@ -3096,6 +3153,39 @@ mod tests {
         );
         assert_eq!(vehicle.wreck.phase, crate::wreck::Phase::Riding);
         assert!(!vehicle.stunt_state_four);
+    }
+    #[test]
+    fn reset_timer_fades_ghosts_contact_and_holds_in_lap_attack() {
+        let (mut vehicle, terrain) = fixture();
+        assert_eq!(vehicle.reset_fade_timer(), 0.);
+        assert!(!vehicle.reset_ghosted());
+        // 001e8f90 (the off-track reset) runs 001e9050.
+        vehicle.reset_now().unwrap();
+        assert_eq!(vehicle.reset_fade_timer(), crate::reset_fade::SECONDS);
+        assert!(vehicle.reset_ghosted());
+        // No rider-to-rider contact while the timer runs.
+        let other = vehicle.body.origin(&vehicle.body_config);
+        assert!(!vehicle.peer_contact(other, [0.; 3], [1., 0., 0., 0.], 1. / 60., 1.));
+        vehicle
+            .step(&terrain, VehicleInput::default(), 1. / 60.)
+            .unwrap();
+        assert!(vehicle.reset_fade_timer() < crate::reset_fade::SECONDS);
+        // A Lap Attack human: opaque, the timer held at 2 s.
+        vehicle.set_reset_mode(false, true);
+        vehicle
+            .step(&terrain, VehicleInput::default(), 1. / 60.)
+            .unwrap();
+        assert_eq!(vehicle.reset_fade_timer(), 0.);
+        assert_eq!(vehicle.reset_timer(), crate::reset_fade::SECONDS);
+        assert!(vehicle.reset_ghosted());
+        vehicle.set_reset_mode(true, false);
+        for _ in 0..121 {
+            vehicle
+                .step(&terrain, VehicleInput::default(), 1. / 60.)
+                .unwrap();
+        }
+        assert_eq!(vehicle.reset_fade_timer(), 0.);
+        assert!(!vehicle.reset_ghosted());
     }
     #[test]
     fn visual_steering_is_unscaled_and_decays_without_changing_tire_steering() {

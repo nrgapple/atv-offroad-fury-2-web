@@ -17,6 +17,8 @@ pub struct Riding {
     /// The local player index (0 player 1): the scene's Lap Attack ghost
     /// slot.
     pub ghost_slot: usize,
+    /// Each drawn race CPU's post-reset fade seconds (reused each frame).
+    cpu_fades: Vec<f32>,
     pub bindings: Bindings,
     /// Follow-camera orbit offset (Z/X keys, right stick, mouse drag).
     pub orbit: f32,
@@ -178,6 +180,7 @@ impl Riding {
         Self {
             ride,
             ghost_slot: 0,
+            cpu_fades: Vec::new(),
             bindings: Bindings::default(),
             orbit: 0.,
             accumulator: 0.,
@@ -654,6 +657,12 @@ impl Riding {
         )
     }
 
+    /// This player's post-reset fade opacity (1 opaque; `#ui-state`
+    /// `ride.resetFade`).
+    pub fn reset_fade(&self, venue: &Venue) -> f32 {
+        atv_core::reset_fade::opacity(self.ride.reset_fade_timer(), venue.scene.reset_opacity)
+    }
+
     /// Poses this player's ghost at its replayed step (hidden without one).
     pub fn pose_ghost(&self, gpu: &Gpu, scene: &mut SceneRenderer) {
         scene.pose_ghost(gpu, self.ghost_slot, self.ride.ghost_pose().map(|(p, _)| p));
@@ -884,6 +893,13 @@ impl Riding {
             scene.set_ride_mud(mud, !self.ride.is_motorcycle());
             scene.pose_ride(gpu, &pose);
             scene.pose_race_cpus(gpu, &cpu_poses, position);
+            // Post-reset fades at the venue's ResetOpacity (001e9050).
+            let reset_opacity = venue.scene.reset_opacity;
+            self.ride.cpu_reset_fade_timers(&mut self.cpu_fades);
+            for timer in &mut self.cpu_fades {
+                *timer = atv_core::reset_fade::opacity(*timer, reset_opacity);
+            }
+            scene.set_reset_fades(gpu, self.reset_fade(venue), &self.cpu_fades);
             self.pose_ghost(gpu, scene);
         }
         Ok((

@@ -128,6 +128,7 @@ pub mod race_ghost;
 pub mod race_hud;
 pub mod race_intro;
 pub mod race_roster;
+pub mod reset_fade;
 pub mod rider_gear;
 
 pub mod peer_contact;

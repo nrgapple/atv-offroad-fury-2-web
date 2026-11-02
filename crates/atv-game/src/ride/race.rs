@@ -436,6 +436,12 @@ impl Player<'_> {
             Player::Bike(bike) => bike.peer_contact(origin, velocity, orientation, STEP, tie),
         }
     }
+    fn reset_ghosted(&self) -> bool {
+        match self {
+            Player::Quad(vehicle) => vehicle.reset_ghosted(),
+            Player::Bike(_) => false,
+        }
+    }
 }
 
 /// Body yaw from an orientation quaternion, as the browser computes it.
@@ -797,11 +803,14 @@ impl Ride {
     /// Race progress, CPU racers and rider contact after the player's step.
     /// Split screen: each CPU's contact body (origin, velocity,
     /// orientation) for the other human's ride.
+    /// A CPU whose reset timer runs (`001e9050`) is left out: it touches no
+    /// one.
     pub fn race_cpu_bodies(&self) -> Vec<([f32; 3], [f32; 3], [f32; 4])> {
         self.race.as_ref().map_or_else(Vec::new, |state| {
             state
                 .cpus
                 .iter()
+                .filter(|c| !c.vehicle.reset_ghosted())
                 .map(|c| {
                     let f = c.vehicle.frame();
                     (f.origin, f.linear_velocity, f.orientation)
@@ -1151,10 +1160,18 @@ impl Ride {
         }
         // Rider-to-rider contact with the authored equal-mass proxy: every
         // pair resolves from pre-contact poses; each racer applies its half.
-        let body =
-            |f: &atv_core::vehicle::VehicleFrame| (f.origin, f.linear_velocity, f.orientation);
-        let bodies: Vec<_> = std::iter::once(body(&player))
-            .chain(state.cpus.iter().map(|c| body(&c.vehicle.frame())))
+        // A rider whose reset timer runs (`001e9050`) touches no one.
+        let body = |f: &atv_core::vehicle::VehicleFrame, ghosted: bool| {
+            (f.origin, f.linear_velocity, f.orientation, ghosted)
+        };
+        let player_ghosted = vehicle.reset_ghosted();
+        let bodies: Vec<_> = std::iter::once(body(&player, player_ghosted))
+            .chain(
+                state
+                    .cpus
+                    .iter()
+                    .map(|c| body(&c.vehicle.frame(), c.vehicle.reset_ghosted())),
+            )
             .collect();
         // Split screen: each CPU applies its half against the other human
         // (whose own ride applies the other half, split.rs).
@@ -1170,8 +1187,11 @@ impl Ride {
         }
         for a in 0..bodies.len() {
             for b in a + 1..bodies.len() {
+                if bodies[a].3 || bodies[b].3 {
+                    continue;
+                }
                 for (own, other, tie) in [(a, b, 1.), (b, a, -1.)] {
-                    let (origin, velocity, orientation) = bodies[other];
+                    let (origin, velocity, orientation, _) = bodies[other];
                     let contact = if own == 0 {
                         vehicle.peer_contact(origin, velocity, orientation, tie)
                     } else {
@@ -1548,6 +1568,27 @@ impl Ride {
         let ghost = state.ghost.as_ref()?;
         let (pose, shown) = &state.ghost_pose;
         shown.then_some((pose, ghost.opacity()))
+    }
+
+    /// Each drawn CPU's post-reset fade seconds, in [`Self::cpu_poses`]'s
+    /// order, into `out` (cleared; empty when the CPUs are puppets or on
+    /// the grid: those draw opaque).
+    pub fn cpu_reset_fade_timers(&self, out: &mut Vec<f32>) {
+        out.clear();
+        let Some(state) = &self.race else {
+            return;
+        };
+        if !state.puppets.is_empty() {
+            return;
+        }
+        out.extend(
+            state
+                .cpus
+                .iter()
+                .zip(state.frame.iter().flat_map(|f| f.opponents.iter()))
+                .filter(|(_, opponent)| opponent.physical.is_some())
+                .map(|(cpu, _)| cpu.vehicle.reset_fade_timer()),
+        );
     }
 
     /// World pose of each CPU's quad and rider for drawing.

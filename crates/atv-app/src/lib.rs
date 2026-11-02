@@ -1877,6 +1877,8 @@ impl App {
                     Err(error) => status(&format!("Player {}: {error}", second.player)),
                 }
                 second.riding.pose_ghost(&ready.gpu, &mut ready.scene);
+                let fade = second.riding.reset_fade(&ready.venue);
+                ready.scene.set_peer_fade(&ready.gpu, second.player, fade);
             }
             ready.scene.pose_peers(&ready.gpu, &poses);
         }
@@ -3256,6 +3258,16 @@ impl App {
             state["ride"]["practice"] = practice.into();
             state["ride"]["duel"] = duel.into();
             state["ride"]["lapAttack"] = lap_attack.into();
+            // Post-reset fade (atv_core::reset_fade): player 1's drawn
+            // opacity and reset timer, and split screen's other players'.
+            state["ride"]["resetFade"] = riding.reset_fade(&ready.venue).into();
+            state["ride"]["resetTimer"] = riding.ride.reset_fade_timer().into();
+            state["ride"]["splitResetFades"] = ready
+                .split
+                .iter()
+                .map(|s| s.riding.reset_fade(&ready.venue))
+                .collect::<Vec<_>>()
+                .into();
             state["ride"]["ghost"] = ghost.into();
             state["ride"]["bestLap"] = best_lap.into();
             state["ride"]["raceLap"] = race_lap.into();
