@@ -394,7 +394,11 @@ impl Second {
         }
         // The Hall of Fame hooks run for every human (`001f24b0`,
         // `001f1e30`, `001f2610`, `001f22a0`); personal records need one.
-        crate::attach_records(&mut riding.ride, &venue.environment, usize::from(player) - 1);
+        crate::attach_records(
+            &mut riding.ride,
+            &venue.environment,
+            usize::from(player) - 1,
+        );
         Ok(Self {
             player,
             layout,

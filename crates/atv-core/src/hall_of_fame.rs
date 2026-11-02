@@ -422,20 +422,10 @@ impl HallOfFame {
         if let Some(e) = watch.fame.longest_jump.as_ref().filter(mine) {
             beat(&mut fame.longest_jump, e.value, &name, e.vehicle);
         }
-        if let Some(e) = watch
-            .fame
-            .most_combos
-            .as_ref()
-            .filter(|e| e.name == tag)
-        {
+        if let Some(e) = watch.fame.most_combos.as_ref().filter(|e| e.name == tag) {
             beat(&mut fame.most_combos, e.value, &name, e.vehicle);
         }
-        if let Some(e) = watch
-            .fame
-            .highest_stunt
-            .as_ref()
-            .filter(|e| e.name == tag)
-        {
+        if let Some(e) = watch.fame.highest_stunt.as_ref().filter(|e| e.name == tag) {
             beat(&mut fame.highest_stunt, e.value, &name, e.vehicle);
         }
     }
@@ -452,9 +442,8 @@ impl HallOfFame {
         let tag = tag.as_str();
         let race = &watch.fame;
         let same = |a: &Entry<f32>, b: &Entry<f32>| a.value == b.value && a.vehicle == b.vehicle;
-        let placed = |list: &[Entry<f32>], e: &Entry<f32>| {
-            list.iter().any(|r| r.name == tag && same(r, e))
-        };
+        let placed =
+            |list: &[Entry<f32>], e: &Entry<f32>| list.iter().any(|r| r.name == tag && same(r, e));
         for e in fame.laps.iter_mut().filter(|e| e.name == from) {
             if placed(&race.laps, e) {
                 e.name = to.clone();
@@ -538,7 +527,9 @@ impl SplitFame {
             key: first.key.clone(),
             enduro: first.enduro,
             course,
-            names: (0..4).map(|_| crate::profile::DEFAULT_NAME.into()).collect(),
+            names: (0..4)
+                .map(|_| crate::profile::DEFAULT_NAME.into())
+                .collect(),
         })
     }
 
@@ -1011,12 +1002,7 @@ impl RecordWatch {
         }
         let points = (sum * count as f32) as i64;
         let count = count.min(u32::MAX as usize) as u32;
-        let stunt = beat(
-            &mut self.fame.highest_stunt,
-            points,
-            &tag,
-            self.vehicle,
-        );
+        let stunt = beat(&mut self.fame.highest_stunt, points, &tag, self.vehicle);
         if stunt {
             self.messages.push("New Highest Stunt Score!".into());
         }
@@ -1121,7 +1107,10 @@ mod tests {
         assert_eq!(laps, [("BOB", 48., 5), ("ANN", 49., 2), ("OLD", 50., 7)]);
         // A placeholder is never stored as a name.
         let jump = course.longest_jump.as_ref().unwrap();
-        assert_eq!((jump.name.as_str(), jump.vehicle), (crate::profile::DEFAULT_NAME, 7));
+        assert_eq!(
+            (jump.name.as_str(), jump.vehicle),
+            (crate::profile::DEFAULT_NAME, 7)
+        );
         // Renaming one player leaves the others' names.
         split.name(3, "DEE");
         split.store(&mut hall);
