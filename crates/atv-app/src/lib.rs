@@ -2907,6 +2907,15 @@ impl App {
                             "linkedHuman": !state.split.humans.is_empty(),
                             "linkedHumans": state.split.humans.len(),
                             "waiting": state.split.waiting,
+                            // Progress diagnostics (a stuck rider versus a
+                            // slow host): station, distances, off-track
+                            // seconds, autopilot and its stuck counter.
+                            "station": [state.race.station(None).segment, state.race.station(None).fraction],
+                            "distance": state.race.progress_distances(None),
+                            "offTrack": state.race.off_track_time(None),
+                            "onTrack": state.race.on_track(None),
+                            "autopilot": state.autopilot_status().0,
+                            "autopilotStuck": state.autopilot_status().1,
                             "standings": f.standings.iter().map(|s| serde_json::json!({
                                 "name": s.name, "position": s.position, "time": s.time,
                                 "estimated": s.estimated,
@@ -2923,6 +2932,8 @@ impl App {
                         "origin": f.origin,
                         "speed": f.speed_magnitude,
                         "steps": ride.steps(),
+                        "wreck": format!("{:?}", f.wreck.phase),
+                        "resets": f.reset_count,
                         "throttle": applied.throttle,
                         "steer": applied.steer,
                         "race": race(ride),

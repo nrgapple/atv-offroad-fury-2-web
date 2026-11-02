@@ -343,6 +343,11 @@ impl RaceState {
 }
 
 impl RaceState {
+    /// Whether the race path driver rides the player, and its seconds
+    /// slow while riding (the stuck reset counter; diagnostics).
+    pub fn autopilot_status(&self) -> (bool, f32) {
+        (self.autopilot.is_some(), self.autopilot_stuck)
+    }
     /// The race setup this race loaded with.
     pub fn settings(&self) -> Settings {
         self.settings
