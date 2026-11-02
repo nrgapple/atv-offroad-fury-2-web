@@ -25,9 +25,9 @@ use serde::Serialize;
 /// a vehicle with flag 0x10 through `001b42e0`, the object's +0x19c).
 pub const OPACITY: f32 = 0.4;
 
-/// One step in this many keeps the quad and rider node matrices (15 Hz at
-/// the 60 Hz step); playback blends between keys. A port choice that keeps
-/// a minute's lap near 1.7 MB (the original quantizes its channels).
+/// Node matrix keys are at least this many steps apart (15 Hz at the 60 Hz
+/// step); playback blends between keys. A port choice that keeps a
+/// minute's lap near 1.7 MB (the original quantizes its channels).
 pub const KEY_STEPS: usize = 4;
 
 /// A column-major 4x4 matrix.
@@ -75,23 +75,25 @@ pub struct Frame {
     pub opacity: f32,
 }
 
-/// One lap's recording: every step's motion and every KEY_STEPS-th step's
-/// node matrices, flat (`quad_width` and `rider_width` per key).
+/// One lap's recording: every step's motion and keyed node matrices,
+/// flat (`widths` per key) with each key's step.
 #[derive(Clone, Debug, Default)]
 struct Lap {
     samples: Vec<Sample>,
+    key_steps: Vec<usize>,
     quad: Vec<Matrix>,
     rider: Vec<Matrix>,
     offsets: Vec<Matrix>,
     widths: Option<(usize, usize)>,
-    /// A key step went without nodes, or their counts changed: the lap
-    /// replays its motion but cannot be drawn.
+    /// The node counts changed mid-lap: the lap replays its motion but
+    /// cannot be drawn.
     broken: bool,
 }
 
 impl Lap {
     fn clear(&mut self) {
         self.samples.clear();
+        self.key_steps.clear();
         self.quad.clear();
         self.rider.clear();
         self.offsets.clear();
@@ -143,31 +145,33 @@ impl Ghost {
         self.opacity
     }
 
-    /// Whether this step's [`Self::record`] keeps node matrices.
+    /// Whether the next [`Self::record`] keeps node matrices: the lap has
+    /// no key yet or the last is [`KEY_STEPS`] old.
     pub fn wants_nodes(&self) -> bool {
-        self.current.samples.len().is_multiple_of(KEY_STEPS)
+        let lap = &self.current;
+        lap.key_steps
+            .last()
+            .is_none_or(|key| lap.samples.len() >= key + KEY_STEPS)
     }
 
     /// Records the player's motion for this step and advances playback.
-    /// Key steps ([`Self::wants_nodes`]) also take the drawn node matrices.
+    /// Nodes given while [`Self::wants_nodes`] become a key (a step without
+    /// them simply leaves the key to a later step).
     pub fn record(&mut self, sample: Sample, nodes: Option<Nodes<'_>>) {
-        let lap = &mut self.current;
-        if lap.samples.len().is_multiple_of(KEY_STEPS) {
-            match nodes {
-                Some(nodes)
-                    if lap
-                        .widths
-                        .is_none_or(|w| w == (nodes.quad.len(), nodes.rider.len())) =>
-                {
-                    lap.widths = Some((nodes.quad.len(), nodes.rider.len()));
-                    lap.quad.extend_from_slice(nodes.quad);
-                    lap.rider.extend_from_slice(nodes.rider);
-                    lap.offsets.push(nodes.rider_offset);
-                }
-                _ => lap.broken = true,
+        if let Some(nodes) = nodes.filter(|_| self.wants_nodes()) {
+            let lap = &mut self.current;
+            let widths = (nodes.quad.len(), nodes.rider.len());
+            if lap.widths.is_none_or(|w| w == widths) {
+                lap.widths = Some(widths);
+                lap.key_steps.push(lap.samples.len());
+                lap.quad.extend_from_slice(nodes.quad);
+                lap.rider.extend_from_slice(nodes.rider);
+                lap.offsets.push(nodes.rider_offset);
+            } else {
+                lap.broken = true;
             }
         }
-        lap.samples.push(sample);
+        self.current.samples.push(sample);
         self.step += 1;
     }
 
@@ -214,13 +218,13 @@ impl Ghost {
             return None;
         }
         let (quad_width, rider_width) = lap.widths?;
-        let last = lap.keys() - 1;
-        let key = (index / KEY_STEPS).min(last);
-        let next = (key + 1).min(last);
-        let t = if next == key {
-            0.
-        } else {
-            (index - key * KEY_STEPS) as f32 / KEY_STEPS as f32
+        // The keys around this step (the first and last hold).
+        let after = lap.key_steps.partition_point(|&k| k <= index);
+        let key = after.saturating_sub(1);
+        let next = after.min(lap.keys() - 1);
+        let t = match (lap.key_steps[key], lap.key_steps[next]) {
+            (a, b) if b > a && index > a => (index - a) as f32 / (b - a) as f32,
+            _ => 0.,
         };
         let blend = |out: &mut Vec<Matrix>, all: &[Matrix], width: usize| {
             out.clear();
@@ -418,7 +422,7 @@ mod tests {
     }
 
     #[test]
-    fn a_lap_missing_key_nodes_replays_but_does_not_draw() {
+    fn a_lap_without_nodes_replays_but_does_not_draw() {
         let mut ghost = Ghost::default();
         for i in 0..20 {
             ghost.record(sample(i), None);
@@ -427,16 +431,37 @@ mod tests {
         ghost.record(sample(0), None);
         assert_eq!(ghost.pose(), Some(sample(0)));
         assert!(ghost.pose_nodes(&mut PoseNodes::default()).is_none());
-        // That step started a lap without nodes: drop it.
-        assert!(!ghost.lap(9., true));
-        // A drawable faster lap replaces it, in the reused buffers.
+        // A step without nodes leaves the key to the next: this lap's
+        // first step had none, so its first key is step 1 and step 0 holds
+        // it.
         record_lap(&mut ghost, 12, 100);
         assert!(ghost.lap(1., true));
         ghost.record(sample(0), None);
-        assert_eq!(
-            ghost.pose_nodes(&mut PoseNodes::default()),
-            Some(sample(100))
+        let mut out = PoseNodes::default();
+        assert_eq!(ghost.pose_nodes(&mut out), Some(sample(0)));
+        assert!((out.quad[1][12] - 100.).abs() < 1e-4);
+        ghost.record(sample(0), None);
+        assert_eq!(ghost.pose_nodes(&mut out), Some(sample(100)));
+        assert!((out.quad[1][12] - 100.).abs() < 1e-4);
+    }
+
+    #[test]
+    fn changed_node_counts_break_the_lap() {
+        let mut ghost = Ghost::default();
+        record_lap(&mut ghost, 8, 0);
+        let (quad, rider, offset) = nodes(9);
+        ghost.record(
+            sample(9),
+            Some(Nodes {
+                quad: &quad[..2],
+                rider: &rider,
+                rider_offset: offset,
+            }),
         );
+        assert!(ghost.lap(1., true));
+        ghost.record(sample(0), None);
+        assert!(ghost.pose().is_some());
+        assert!(ghost.pose_nodes(&mut PoseNodes::default()).is_none());
     }
 
     #[test]

@@ -3119,6 +3119,11 @@ impl App {
                         // Ghost passes the scene drew this frame (one per
                         // local player replaying a best lap).
                         "drawn": ready.scene.ghosts_shown(),
+                        // Feet between the ghost and the player.
+                        "gap": g.pose.map(|p| {
+                            let o = riding.ride.frame().origin;
+                            (0..3).map(|i| (p.origin[i] - o[i]).powi(2)).sum::<f32>().sqrt()
+                        }),
                         "split": ready.split.iter().map(|second| second.riding.ride.ghost_pose().is_some()).collect::<Vec<_>>(),
                     })
                 });
