@@ -59,7 +59,8 @@ async function shot(page, name) {
 async function resetFade(page, press, fade, who) {
   const ride = async () => (await read(page)).ride;
   assert.equal(fade(await ride()), 1, `${who} opaque before the reset`);
-  const steps = async () => (await read(page)).split.player1.steps;
+  // Player 2's ride steps in lockstep with player 1's.
+  const steps = async () => (await read(page)).split.player2.steps;
   await press();
   const start = await steps();
   let r = await ride();
@@ -68,7 +69,7 @@ async function resetFade(page, press, fade, who) {
   let last = fade(r);
   while (fade(r) < 1) {
     assert.ok(fade(r) >= last - 1e-6, `${who} fade only returns: ${last} then ${fade(r)}`);
-    assert.ok(await steps() - start < 200, `${who} opaque again within the reset timer`);
+    assert.ok(await steps() - start < 200, `${who} opaque again within the reset timer: ${JSON.stringify([fade(r), r.resetTimer, start, await steps()])}`);
     last = fade(r);
     await nextFrames(page, 2);
     r = await ride();
@@ -229,15 +230,6 @@ try {
     // The original horizontal presets (FOV 80) at the half-height reference.
     assert.ok(c1[5] > 2 && c2[5] > 2, `split focal lengths ${c1[5]} ${c2[5]}`);
     await shot(page, 'split-freestyle-horizontal');
-    // Post-reset fade (#485, `001e9050`): Reset draws player 1 at
-    // ResetOpacity (0.2) and back to opaque within the 2 s timer; L1+R1 on
-    // pad 2 fades player 2 (drawn in both views) the same way.
-    await resetFade(page, () => key(page, 'KeyR'), r => r.resetFade, 'player 1');
-    await resetFade(page, async () => {
-      await page.evaluate(() => { window.padButton(1, 4, 1); window.padButton(1, 5, 1); });
-      await nextFrames(page, 3);
-      await page.evaluate(() => { window.padButton(1, 4, 0); window.padButton(1, 5, 0); });
-    }, r => r.splitResetFades[0], 'player 2');
     await page.evaluate(() => { window.padButton(1, 7, 0); window.padAxis(1, 0, 0); });
     // Player 2's keyboard half: the arrows (player 1 does not see them).
     const before = (await split(page)).player2.origin;
@@ -247,6 +239,15 @@ try {
     await page.keyboard.up('ArrowUp');
     assert.ok(s.player2.throttle > 0.9 && s.player1.throttle === 0, JSON.stringify([s.player1, s.player2]));
     assert.ok(distance(before, s.player2.origin) > 3, 'player 2 drives on the arrow keys');
+    // Post-reset fade (#485, `001e9050`): Reset draws player 1 at
+    // ResetOpacity (0.2) and back to opaque within the 2 s timer; L1+R1 on
+    // pad 2 fades player 2 (drawn in both views) the same way.
+    await resetFade(page, () => key(page, 'KeyR'), r => r.resetFade, 'player 1');
+    await resetFade(page, async () => {
+      await page.evaluate(() => { window.padButton(1, 4, 1); window.padButton(1, 5, 1); });
+      await nextFrames(page, 3);
+      await page.evaluate(() => { window.padButton(1, 4, 0); window.padButton(1, 5, 0); });
+    }, r => r.splitResetFades[0], 'player 2');
     // Pull player 1's pad: player 2's pad now plays slot 0 (player 1).
     await page.evaluate(() => {
       const pads = navigator.getGamepads();
