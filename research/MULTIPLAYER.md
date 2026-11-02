@@ -800,6 +800,15 @@ above.
   the room's host change. The race runs on for the humans as before.
 - **Late joiners** spectate as before; the CPUs are visible once their
   motion arrives.
+- **Browser tests.** `tools/test_engine_multiplayer_race_cpus.mjs` also reads
+  the guest's race HUD (`#ui-state` top-level `race`, which now carries
+  `field`): PLACE counts five riders, its place is its own standings row and
+  the standings name both humans and the three CPUs.
+  `tools/test_engine_multiplayer_race_cpus_handoff.mjs` (host plus two
+  guests, two CPUs) closes the host mid-race: one guest takes the room, both
+  report `cpusRetired`, draw no CPUs (`ride.cpuDrawn` 0), drop the CPUs'
+  engine voices and race on to agreed results with the leaver and the CPUs
+  DNF.
 
 Code: `crates/atv-net` (`RaceInfo` CPU fields, `CpuMotion`, kind 16),
 `crates/atv-relay` (forwarding), `atv_game::multiplayer::cpu_motion`,
