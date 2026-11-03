@@ -586,6 +586,10 @@ impl Renderer {
             let (clip, clip_radius) = *clips.last().unwrap();
             let alpha = *opacity.last().unwrap();
             let tilt = *tilts.last().unwrap();
+            // Rows scrolled out of view cost no instance or rasterized label.
+            if item.outside(clip[1] / s, clip[3] / s, tilt[3] > 0.5) {
+                continue;
+            }
             let base = Instance {
                 clip,
                 extra: [clip_radius, 0., 0., 0.],

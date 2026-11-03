@@ -153,6 +153,50 @@ pub enum Item {
     PopTilt,
 }
 
+impl Item {
+    /// The top and bottom (CSS pixels) of everything the item paints,
+    /// generously for text. `None`: not known without drawing it, or it moves
+    /// between prepares (rotated or tilted), or it paints nothing itself.
+    fn vertical_reach(&self, tilted: bool) -> Option<(f32, f32)> {
+        match self {
+            Item::Box(b) if b.rotation == 0. => {
+                let reach = b
+                    .shadows
+                    .iter()
+                    .filter(|s| !s.inset)
+                    .map(|s| s.dy.abs() + s.spread.max(0.) + s.blur * 1.5 + 1.)
+                    .fold(0., f32::max);
+                Some((b.rect.y - reach, b.rect.bottom() + reach))
+            }
+            Item::Text { style, y, .. } => {
+                let reach = style
+                    .shadows
+                    .iter()
+                    .map(|s| s.dy.abs() + s.blur * 1.5 + 1.)
+                    .fold(0., f32::max)
+                    + style.stroke.as_ref().map_or(0., |s| s.width)
+                    + style.font.size * 2.;
+                Some((y - reach, y + reach))
+            }
+            Item::Image { dst, rotation, .. } if *rotation == 0. && !tilted => {
+                Some((dst.y, dst.bottom()))
+            }
+            Item::ImageShadow { dst, dy, blur, .. } if !tilted => {
+                let reach = dy.abs() + blur * 1.5 + 1.;
+                Some((dst.y - reach, dst.bottom() + reach))
+            }
+            _ => None,
+        }
+    }
+
+    /// The item paints nothing between `top` and `bottom` (a clip's edges, in
+    /// CSS pixels): a long scrolled list's rows out of view.
+    pub fn outside(&self, top: f32, bottom: f32, tilted: bool) -> bool {
+        self.vertical_reach(tilted)
+            .is_some_and(|(t, b)| b < top || t > bottom)
+    }
+}
+
 #[derive(Default, Clone, Debug, PartialEq)]
 pub struct DisplayList {
     pub items: Vec<Item>,
@@ -165,11 +209,15 @@ impl DisplayList {
     /// Moves every item by (`dx`, `dy`) CSS pixels (a split-screen
     /// player's HUD painted for its own view, placed in the frame).
     pub fn translate(&mut self, dx: f32, dy: f32) {
+        self.translate_range(0..self.items.len(), dx, dy);
+    }
+    /// [`Self::translate`] for the items in `range`.
+    pub fn translate_range(&mut self, range: std::ops::Range<usize>, dx: f32, dy: f32) {
         let shift = |r: &mut Rect| {
             r.x += dx;
             r.y += dy;
         };
-        for item in &mut self.items {
+        for item in &mut self.items[range] {
             match item {
                 Item::Box(b) => {
                     shift(&mut b.rect);
@@ -223,5 +271,49 @@ impl DisplayList {
     }
     pub fn unopacity(&mut self) {
         self.items.push(Item::PopOpacity);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn card(y: f32) -> BoxPaint {
+        BoxPaint {
+            rect: Rect::new(0., y, 100., 50.),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn only_items_that_paint_nothing_inside_a_clip_are_outside_it() {
+        let outside = |item: &Item| item.outside(100., 200., false);
+        assert!(outside(&Item::Box(card(0.))));
+        assert!(outside(&Item::Box(card(201.))));
+        assert!(!outside(&Item::Box(card(60.))));
+        // A shadow reaches into the clip.
+        let shadow = BoxShadow::outer(0., 20., 8., crate::color::Color::WHITE);
+        let shaded = BoxPaint {
+            shadows: vec![shadow],
+            ..card(40.)
+        };
+        assert!(!outside(&Item::Box(shaded)));
+        // Rotated boxes and tilted images are not judged by their rectangle.
+        let turned = BoxPaint {
+            rotation: 1.,
+            ..card(0.)
+        };
+        assert!(!outside(&Item::Box(turned)));
+        let image = Item::Image {
+            image: ImageId(1),
+            src: Rect::new(0., 0., 1., 1.),
+            dst: Rect::new(0., 0., 100., 50.),
+            rotation: 0.,
+            pivot: [0., 0.],
+        };
+        assert!(outside(&image));
+        assert!(!image.outside(100., 200., true));
+        // Clip and state items always stay.
+        assert!(!outside(&Item::PopClip));
     }
 }

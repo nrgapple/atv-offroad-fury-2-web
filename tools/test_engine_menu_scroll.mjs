@@ -129,8 +129,12 @@ for (const engine of ['chromium', 'webkit']) {
     for (let i = 1; i < held.length; i++) assert.ok(held[i] >= held[i - 1], `tracks monotonically ${held}`);
     const released = held.at(-1);
     // 2. Momentum: it keeps moving after release, decelerates, then rests.
+    const layouts = (await read(page)).pageLayouts;
     const path = await follow(page, ['kinetic', 'list', 0]);
     const rest = path.at(-1).value;
+    // Moving the list moves its laid-out items; the page is not laid out again.
+    const laidOut = (await read(page)).pageLayouts - layouts;
+    assert.ok(laidOut < path.length / 2, `${engine}: ${laidOut} page layouts over ${path.length} frames of a fling`);
     assert.ok(
       rest > released + 60,
       `${engine}: momentum after release: ${released} -> ${rest} held ${held} path ${JSON.stringify(path.slice(0, 5))}`
