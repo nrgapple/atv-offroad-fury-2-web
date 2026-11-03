@@ -458,8 +458,9 @@ pub async fn load_with(
     let tr2 = extract(&format!("{environment}.tr2"), "terrain")?;
     let decoded = terrain::decode_tr2(&tr2)?;
     crate::yield_frame().await;
-    let heights = decoded.heightfield()?;
+    // One dense grid serves both (render_heights builds the same one).
     let ground = decoded.render_heights()?;
+    let heights = ground.heights.clone();
     crate::yield_frame().await;
     let (width, depth) = (
         decoded.width_cells as usize + 1,

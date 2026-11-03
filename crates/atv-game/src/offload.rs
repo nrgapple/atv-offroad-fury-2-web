@@ -26,6 +26,22 @@ pub const MIPS: u32 = 2;
 pub const VAG_PCM: u32 = 3;
 /// An original PST texture's top level as RGBA (menu photos and art).
 pub const PST: u32 = 4;
+/// A block-compressed archive stored uncompressed
+/// (`atv_core::resource::Resource::expand`).
+pub const EXPAND: u32 = 5;
+
+/// Version of every job's output: bump it whenever a job's result for the
+/// same input changes (decoder, smoothing, mip filter, resampler, layout),
+/// so no cached result of an older engine is used (`atv_content::decoded`).
+pub const FORMAT: u32 = 1;
+
+/// The persistent-cache key of one job (web; atv_content::decoded).
+fn job_key(kind: u32, arg: u32, input: &[u8]) -> String {
+    format!(
+        "job/{FORMAT}/{kind}/{arg}/{}",
+        atv_content::decoded::fingerprint(input)
+    )
+}
 
 /// One decoded IPUM image: its RGBA and, when asked, the smoothed RGBA.
 #[derive(Clone, Debug, PartialEq)]
@@ -85,6 +101,7 @@ pub fn run(kind: u32, arg: u32, bytes: &[u8]) -> Result<Vec<u8>> {
             out.extend_from_slice(&texture.rgba);
             Ok(out)
         }
+        EXPAND => atv_core::resource::Resource::parse(bytes)?.expand(),
         _ => atv_content::run_job(kind, arg, bytes)
             .unwrap_or_else(|| Err(format!("unknown decode job {kind}"))),
     }
@@ -229,6 +246,15 @@ async fn many_each(kind: u32, arg: u32, inputs: &[&[u8]]) -> Result<Vec<Result<V
     }
 }
 
+/// [`compute`] of one job, uncached (background work that stores its own
+/// result).
+pub async fn uncached(kind: u32, arg: u32, input: &[u8]) -> Result<Vec<u8>> {
+    compute(kind, arg, &[input])
+        .await?
+        .pop()
+        .ok_or_else(|| "missing decode result".into())
+}
+
 /// Starts the web pool ahead of the first job (a ride load), so its workers
 /// instantiate while the course downloads. No-op elsewhere.
 pub fn warm() {
@@ -236,8 +262,30 @@ pub fn warm() {
     atv_content::pool::warm();
 }
 
-/// Runs `inputs` as `kind` jobs and returns their outputs in order.
+/// Runs `inputs` as `kind` jobs and returns their outputs in order. On the
+/// web a result decoded on an earlier visit is read from the persistent
+/// cache instead, and new results are stored there.
 pub async fn many(kind: u32, arg: u32, inputs: &[&[u8]]) -> Result<Vec<Vec<u8>>> {
+    if inputs.is_empty() || !atv_content::decoded::enabled() {
+        return compute(kind, arg, inputs).await;
+    }
+    let keys: Vec<String> = inputs.iter().map(|i| job_key(kind, arg, i)).collect();
+    let mut outputs = atv_content::decoded::get_many(&keys).await;
+    let missing: Vec<usize> = (0..inputs.len())
+        .filter(|&i| outputs[i].is_none())
+        .collect();
+    if !missing.is_empty() {
+        let sources: Vec<&[u8]> = missing.iter().map(|&i| inputs[i]).collect();
+        for (i, out) in missing.into_iter().zip(compute(kind, arg, &sources).await?) {
+            atv_content::decoded::put(&keys[i], &out);
+            outputs[i] = Some(out);
+        }
+    }
+    Ok(outputs.into_iter().map(Option::unwrap_or_default).collect())
+}
+
+/// [`many`] without the persistent cache.
+async fn compute(kind: u32, arg: u32, inputs: &[&[u8]]) -> Result<Vec<Vec<u8>>> {
     if inputs.is_empty() {
         return Ok(Vec::new());
     }

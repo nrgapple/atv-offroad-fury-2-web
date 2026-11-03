@@ -36,6 +36,10 @@ or iOS `navigator.standalone`), it calls `navigator.storage.persist()` once
 
 Other `fury-*` cache names (older schemas) are deleted on activation.
 
+The engine itself (not the worker) keeps decoded results in `atv-decoded-v1`
+(`crates/atv-content/src/decoded.rs`, research/PERFORMANCE.md "Decoded course
+cache"); the worker never reads or deletes it.
+
 ## Strategies
 
 | Request | Strategy |

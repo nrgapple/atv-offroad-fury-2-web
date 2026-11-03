@@ -222,6 +222,40 @@ impl<'a> Resource<'a> {
         Ok(out)
     }
 
+    /// The same archive stored uncompressed (flags 0x100): every block
+    /// inflated once, so reading a member is a copy. Members keep their
+    /// names, order and offsets.
+    pub fn expand(&self) -> Result<Vec<u8>> {
+        let mut directory = Vec::new();
+        for member in &self.members {
+            let to_u32 = |v: usize| u32::try_from(v).map_err(|_| "resource too large");
+            directory.extend(to_u32(member.name.len())?.to_le_bytes());
+            directory.extend(member.name.as_bytes());
+            directory.extend(to_u32(member.offset)?.to_le_bytes());
+            directory.extend(to_u32(member.bytes)?.to_le_bytes());
+        }
+        let plain = if self.compressed {
+            self.blocks.len() * BLOCK_SIZE
+        } else {
+            self.data.len() - self.payload
+        };
+        let mut out = Vec::with_capacity(28 + directory.len() + plain);
+        for word in [3u32, 12, 0x100, 0, 0] {
+            out.extend(word.to_le_bytes());
+        }
+        out.extend((self.members.len() as u32).to_le_bytes());
+        out.extend((directory.len() as u32).to_le_bytes());
+        out.extend(directory);
+        if self.compressed {
+            for block in 0..self.blocks.len() {
+                out.extend(self.decode_block(block)?);
+            }
+        } else {
+            out.extend_from_slice(&self.data[self.payload..]);
+        }
+        Ok(out)
+    }
+
     pub fn validate_blocks(&self) -> Result<usize> {
         for i in 0..self.blocks.len() {
             self.decode_block(i)?;
@@ -281,6 +315,20 @@ mod tests {
             assert_eq!(r.extract(0).unwrap(), b"hello");
         }
     }
+    #[test]
+    fn expanded_archives_read_the_same_members() {
+        for compressed in [true, false] {
+            let bytes = fixture(compressed, "folder\\test.txt");
+            let expanded = Resource::parse(&bytes).unwrap().expand().unwrap();
+            let r = Resource::parse(&expanded).unwrap();
+            assert!(!r.compressed);
+            assert_eq!(r.members[0].name, "folder/test.txt");
+            assert_eq!(r.extract(0).unwrap(), b"hello");
+            // Expanding again is the identity.
+            assert_eq!(r.expand().unwrap(), expanded);
+        }
+    }
+
     #[test]
     fn overlay_appends_blocks_and_replaces_same_paths() {
         let base = fixture(true, "a/Shared.txt");

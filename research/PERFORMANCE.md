@@ -785,3 +785,82 @@ as each layer, so the main thread only uploads them. Host Chromium x4: the
 "Building the scenery textures" stage 1.82 -> 0.80 s (env01) and 0.99 s (env08);
 longest load task 1.82 -> 0.83 s; longest frozen loader gap 1.8 -> 1.3 s.
 
+
+## Decoded course cache (Rust engine, web, host, 2026-11-03)
+
+Issue #452: a course the player has loaded before should open without
+repeating its decode work. All numbers are **host** measurements (Apple M4,
+headless Playwright Chromium, 1280x720, `/play.html?venue=env01`, local
+`tools/serve_web.py` with the private package unless noted); none is a
+physical-phone result. "Load" is the engine's own ride-load time
+(`prepare`, `?uiDiagnostics=1` `decodedCache.loadMs`).
+
+### Measured first
+
+- **Network is already gone on a second load.** Production
+  (`furyremastered.com`, main `d5ac468`, x4 CPU throttle): first load 3.3 s
+  link-to-ride, later loads 1.1-1.15 s; the offline worker's content cache
+  and the HTTP cache serve every chunk. The local server (`no-store`, on
+  loopback) shows the same second-load time, so what remains is CPU work.
+- **Second-load main-thread profile (x4):** inflating archive members was
+  the largest single item (about 20%: the course archive read by the venue
+  and again by the ride, the rider motions archive whose 78 motions re-inflate
+  shared blocks, the rider materials); then sky-tile mip chains built at
+  upload, the dense terrain heightfield (built twice), scene text parsing,
+  model-texture decodes and mesh conversion. The decode jobs (terrain layers
+  with mips, sky tiles, the ride's sound bank) run on the workers, which CDP
+  throttling does not slow, so the host understates their phone cost.
+
+### Strategy
+
+Cache Storage, not IndexedDB or OPFS: it is reachable from the page thread
+through `web-sys` without a wrapper crate, stores large binary bodies
+efficiently, and is cleared with the site's other data. OPFS synchronous
+handles exist only in workers, and IndexedDB would add a transaction layer
+for plain key-to-bytes entries. `atv_content::decoded`:
+
+- one cache, `atv-decoded-v1` (not a `fury-` name, which the offline worker
+  deletes when unknown); entries named by the content package (a hash of
+  `manifest.json`), the container format and a caller key; a new package
+  or container format clears the cache;
+- job results (`atv_game::offload::many`: IPUM terrain layers and sky tiles,
+  VAG sound-bank PCM, PST menu photos) keyed by `offload::FORMAT`, the job
+  kind/argument and a 128-bit fingerprint of the exact input;
+- expanded archives (`Resource::expand`, the same archive stored
+  uncompressed, so a member read is a copy) for the course archive (with its
+  race overlay), the rider, `/ANIMSRDR.RES` and `/RIDER/RIDER_MT.RES`,
+  keyed by the package's chunk digests; produced on a decode worker after the
+  load finishes, never on the page's thread;
+- every entry carries magic, format, its own key, length and a checksum,
+  checked on each read; a damaged entry is deleted and decoded again;
+- a least-recently-used index in `localStorage` bounds the total to 192 MiB
+  or a quarter of the origin's free quota; writes wait until no load is
+  running; quota and storage errors only count, and a missing `caches`
+  (insecure page, some private windows) or `?decodedCache=0` turns it off;
+- desktop builds read local files and keep the uncached path (no-op).
+
+Independently of the cache, the venue now builds the dense terrain grid once
+and shares it between the height lookups and the renderer (identical data).
+
+### Before and after (ENV01, same browser context, warm HTTP cache)
+
+| | warm, `decodedCache=0` | warm, cached |
+| --- | --- | --- |
+| Load, unthrottled | 1.34-1.38 s | 0.79-0.83 s (-40%) |
+| Load, x4 CPU throttle | 4.0 s | 2.95-2.99 s (-26%) |
+
+The x4 figures were taken while the shared host ran about four times slower
+than in the morning's x4 run (the uncached main build also measured 4.7 s
+then instead of 1.0 s), so only same-session pairs are compared. One ENV01
+visit stores 165 entries, 63 MB. A cold first load costs about 0.2 s more
+engine load time at x4 (fingerprints, checksums and copying results out),
+within the noise of the whole link-to-ride time. The browser test
+`tools/test_engine_decoded_cache.mjs` repeats the comparison (it requires a
+cached load at least 10% faster than the uncached warm load, every decode a
+hit, and a damaged entry rejected) and runs against production with
+`--url https://furyremastered.com`.
+
+Remaining second-load work is conversion the cache does not yet cover:
+sky-tile mip chains at upload (`atv_render::sky`), scene text parsing,
+model-texture decodes in `materials`/`ride::textures` (main thread) and mesh
+packets, plus shader compiles and uploads. Those are the next candidates.

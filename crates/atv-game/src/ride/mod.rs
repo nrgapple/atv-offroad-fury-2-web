@@ -737,7 +737,7 @@ impl Ride {
         let Some(catalog) = gear::catalog(content).await? else {
             return Ok(());
         };
-        let bytes = content.file("/RIDER/RIDER_MT.RES").await?;
+        let bytes = load::archive(content, "/RIDER/RIDER_MT.RES").await?;
         let materials = atv_core::resource::Resource::parse(&bytes)?;
         self.rider.textures =
             gear::rider_textures(&self.rider.mesh, &appearance, &catalog, &materials)?;
