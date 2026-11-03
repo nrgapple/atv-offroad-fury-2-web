@@ -354,6 +354,31 @@ pub fn render(
     list: &mut DisplayList,
     hits: &mut Vec<(Rect, u32)>,
 ) {
+    render_scrollable(root, fonts, width, height, list, hits, &mut Vec::new());
+}
+
+/// Where a scrolled element's children landed in a [`render`]: a new scroll
+/// offset moves only these items and hit boxes, and changes no layout, so the
+/// page need not be laid out again ([`DisplayList::translate_range`]).
+#[derive(Clone, Debug, PartialEq)]
+pub struct ScrollSpan {
+    /// The scrolled element's [`El::id`].
+    pub id: u32,
+    pub items: std::ops::Range<usize>,
+    pub hits: std::ops::Range<usize>,
+}
+
+/// [`render`], also recording the identified scrolled elements. Items and hit
+/// boxes are indexed from where `list` and `hits` stood on entry.
+pub fn render_scrollable(
+    root: &El,
+    fonts: &mut Fonts,
+    width: f32,
+    height: f32,
+    list: &mut DisplayList,
+    hits: &mut Vec<(Rect, u32)>,
+    spans: &mut Vec<ScrollSpan>,
+) {
     let mut tree: TaffyTree<usize> = TaffyTree::new();
     // Fractional boxes like browser layout; rounding would wrap measured text.
     tree.disable_rounding();
@@ -429,7 +454,8 @@ pub fn render(
         },
     )
     .unwrap();
-    paint(&tree, node, root, 0., 0., fonts, list, hits);
+    let base = (list.items.len(), hits.len());
+    paint(&tree, node, root, 0., 0., fonts, list, hits, base, spans);
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -442,6 +468,8 @@ fn paint(
     fonts: &mut Fonts,
     list: &mut DisplayList,
     hits: &mut Vec<(Rect, u32)>,
+    base: (usize, usize),
+    spans: &mut Vec<ScrollSpan>,
 ) {
     let layout = tree.layout(node).unwrap();
     let rect = Rect::new(
@@ -587,15 +615,36 @@ fn paint(
     }
     if let Some(offset) = el.scroll {
         list.clip(rect, el.paint.radii[0]);
+        let start = (list.items.len(), hits.len());
         for (i, child) in el.children.iter().enumerate() {
             let id = tree.child_at_index(node, i).unwrap();
-            paint(tree, id, child, rect.x, rect.y - offset, fonts, list, hits);
+            paint(
+                tree,
+                id,
+                child,
+                rect.x,
+                rect.y - offset,
+                fonts,
+                list,
+                hits,
+                base,
+                spans,
+            );
+        }
+        if let Some(id) = el.id {
+            spans.push(ScrollSpan {
+                id,
+                items: start.0 - base.0..list.items.len() - base.0,
+                hits: start.1 - base.1..hits.len() - base.1,
+            });
         }
         list.unclip();
     } else {
         for (i, child) in el.children.iter().enumerate() {
             let id = tree.child_at_index(node, i).unwrap();
-            paint(tree, id, child, rect.x, rect.y, fonts, list, hits);
+            paint(
+                tree, id, child, rect.x, rect.y, fonts, list, hits, base, spans,
+            );
         }
     }
     if el.tilt.is_some() {
@@ -697,6 +746,68 @@ mod tests {
         let get = |id| hits.iter().find(|(_, i)| *i == id).unwrap().0;
         assert_eq!(get(1).w, 596.);
         assert_eq!(get(2).w, 596., "{:?}", get(2));
+    }
+
+    /// A column of boxes scrolled at `offset` (a list inside scrolled rows).
+    fn scrolled_rows(offset: f32, inner: f32) -> (DisplayList, Vec<(Rect, u32)>, Vec<ScrollSpan>) {
+        let bar = |height: f32, id: u32| {
+            El::new(Style {
+                flex_shrink: 0.,
+                size: Size {
+                    width: Dimension::length(100.),
+                    height: Dimension::length(height),
+                },
+                ..Default::default()
+            })
+            .id(id)
+            .paint(Paint::fill(Color::WHITE))
+        };
+        let pane = |id: u32| {
+            let mut style = Style {
+                display: Display::Flex,
+                flex_direction: FlexDirection::Column,
+                ..Default::default()
+            };
+            style.size.height = Dimension::length(200.);
+            El::new(style).id(id)
+        };
+        let root = pane(1)
+            .scroll(offset)
+            .child(bar(150., 10))
+            .child(
+                pane(2)
+                    .scroll(inner)
+                    .child(bar(150., 20))
+                    .child(bar(150., 21)),
+            )
+            .child(bar(150., 11));
+        let (mut list, mut hits, mut spans) = Default::default();
+        render_scrollable(
+            &root,
+            &mut Fonts::new(),
+            300.,
+            300.,
+            &mut list,
+            &mut hits,
+            &mut spans,
+        );
+        (list, hits, spans)
+    }
+
+    #[test]
+    fn moving_scroll_spans_matches_laying_out_at_the_new_offsets() {
+        let (mut list, mut hits, spans) = scrolled_rows(30., 5.);
+        assert_eq!(spans.iter().map(|s| s.id).collect::<Vec<_>>(), [2, 1]);
+        for span in &spans {
+            let dy = if span.id == 1 { 30. - 90. } else { 5. - 40. };
+            list.translate_range(span.items.clone(), 0., dy);
+            for (rect, _) in &mut hits[span.hits.clone()] {
+                rect.y += dy;
+            }
+        }
+        let (fresh, fresh_hits, _) = scrolled_rows(90., 40.);
+        assert_eq!(list, fresh);
+        assert_eq!(hits, fresh_hits);
     }
 
     #[test]

@@ -111,6 +111,8 @@ pub struct Front {
     pub diagnostics: Vec<String>,
     /// `prepare_ms` split into artwork, layout and upload.
     split_ms: [f64; 3],
+    /// Full page layouts so far (`?uiDiagnostics=1`).
+    page_layouts: u32,
     /// Vehicle (0) and garage rider (1) previews.
     previews: [Option<Preview>; 2],
     /// Built previews of pages just left (key, model, animated), newest
@@ -257,6 +259,7 @@ impl Front {
             prepare_ms: 0.,
             diagnostics: Vec::new(),
             split_ms: [0.; 3],
+            page_layouts: 0,
             previews: [None, None],
             stash: Vec::new(),
             preview_counts: [0; 2],
@@ -1545,18 +1548,25 @@ impl Front {
         let view = self.view;
         let mut rest = screen.clone();
         let motion = rest.motion.take();
-        let cached = self
-            .page_cache
-            .as_ref()
-            .is_some_and(|c| c.view == view && c.screen == rest);
+        // A scroll offset moves laid-out items and reflows nothing (a list
+        // glides a page laid out once), so it does not invalidate the cache.
+        let cached = self.page_cache.as_ref().is_some_and(|c| {
+            rest.list_scroll = c.screen.list_scroll;
+            rest.rows_scroll = c.screen.rows_scroll;
+            c.view == view && c.screen == rest
+        });
         if !cached {
+            rest.list_scroll = screen.list_scroll;
+            rest.rows_scroll = screen.rows_scroll;
             let (back, content) = front::layers(&view, &rest);
+            self.page_layouts += 1;
             let mut cache = PageCache {
                 view,
                 screen: rest,
                 back: DisplayList::default(),
                 content: DisplayList::default(),
                 hits: Vec::new(),
+                spans: Vec::new(),
             };
             let mut ignored = Vec::new();
             layout::render(
@@ -1567,13 +1577,14 @@ impl Front {
                 &mut cache.back,
                 &mut ignored,
             );
-            layout::render(
+            layout::render_scrollable(
                 &content,
                 &mut self.fonts,
                 view.width,
                 view.height,
                 &mut cache.content,
                 &mut cache.hits,
+                &mut cache.spans,
             );
             self.page_cache = Some(cache);
         }
@@ -1583,6 +1594,18 @@ impl Front {
         self.list.clear();
         self.list.items.extend_from_slice(&cache.back.items);
         self.hits.clone_from(&cache.hits);
+        // How far each scrolled element moved since it was laid out.
+        let moved_since_layout = |span: &layout::ScrollSpan| match span.id {
+            atv_ui::front::LIST => cache.screen.list_scroll - screen.list_scroll,
+            atv_ui::front::ROWS => cache.screen.rows_scroll - screen.rows_scroll,
+            _ => 0.,
+        };
+        for span in &cache.spans {
+            let dy = moved_since_layout(span);
+            for (r, _) in &mut self.hits[span.hits.clone()] {
+                r.y += dy;
+            }
+        }
         // The page left fades out under the new one.
         self.transition.paint_exit(&mut self.list);
         let start = self.list.items.len();
@@ -1601,6 +1624,13 @@ impl Front {
         }
         if screen.pulse > 1. {
             front::retint_pulse(&mut self.list.items[start..], self.pulse);
+        }
+        // A sliding page's content follows its opacity item.
+        let first = start + usize::from(motion.is_some());
+        for span in &cache.spans {
+            let range = first + span.items.start..first + span.items.end;
+            self.list
+                .translate_range(range, 0., moved_since_layout(span));
         }
         self.content = start..self.list.items.len();
     }
@@ -2085,6 +2115,7 @@ impl Front {
             "scroll": self.state.list.offset(),
             "prepareMs": self.prepare_ms,
             "splitMs": self.split_ms,
+            "pageLayouts": self.page_layouts,
             "models": self.previews.iter().map(|p| p.as_ref().filter(|p| p.target.is_some()).map(|p| p.key.clone())).collect::<Vec<_>>(),
             "modelStatus": self.model_status(),
             "modelYaw": self.previews.iter().map(|p| p.as_ref().map(|p| p.model.yaw)).collect::<Vec<_>>(),
@@ -2283,6 +2314,9 @@ struct PageCache {
     back: DisplayList,
     content: DisplayList,
     hits: Vec<(Rect, u32)>,
+    /// The scrolled lists in `content` and `hits`, laid out at `screen`'s
+    /// offsets.
+    spans: Vec<layout::ScrollSpan>,
 }
 
 /// The page's artwork this frame.
