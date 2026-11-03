@@ -13,7 +13,7 @@ and point `PLAYWRIGHT_MODULE` at it. The CI pin is `playwright@1.58.2`:
 ```sh
 npm install --prefix ~/LargeFiles/atv-browser-tests playwright@1.58.2
 ~/LargeFiles/atv-browser-tests/node_modules/.bin/playwright install chromium
-export PLAYWRIGHT_MODULE=~/LargeFiles/atv-browser-tests/node_modules/playwright
+export PLAYWRIGHT_MODULE=~/LargeFiles/atv-browser-tests/node_modules/playwright  # optional: the runner and harness default to this path when it exists
 make web
 make browser-smoke     # content-free group (also runs in CI)
 make browser-tests     # content-free + content groups (needs private hosted content)

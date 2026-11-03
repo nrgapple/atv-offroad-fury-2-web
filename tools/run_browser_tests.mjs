@@ -13,7 +13,7 @@ import { spawnOwned, stopOwned } from './browser/owned_process.mjs';
 import { existsSync, rmSync } from 'node:fs';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
 import { parseArgs } from 'node:util';
@@ -82,6 +82,9 @@ if (!process.env.CI && spawnSync('python3', [path.join(ROOT, 'tools/host_build.p
   await new Promise(() => {});
 }
 
+// Default to the documented local install so agents need not export it every run.
+const LOCAL_PLAYWRIGHT = path.join(homedir(), 'LargeFiles/atv-browser-tests/node_modules/playwright');
+if (!process.env.PLAYWRIGHT_MODULE && existsSync(LOCAL_PLAYWRIGHT)) process.env.PLAYWRIGHT_MODULE = LOCAL_PLAYWRIGHT;
 if (!process.env.PLAYWRIGHT_MODULE) {
   try { (await import('node:module')).createRequire(import.meta.url).resolve('playwright'); }
   catch { console.error('Set PLAYWRIGHT_MODULE to an installed Playwright package (see research/BROWSER_TESTS.md).'); process.exit(2); }

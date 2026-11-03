@@ -16,8 +16,10 @@ OWNER = 'FURY_BUILD_OWNER'
 
 
 def processes():
-    rows = subprocess.check_output(['ps', '-axo', 'pid=,ppid=,comm=,args='], text=True)
-    # comm can contain spaces: use a separate unambiguous parent map.
+    # args only: macOS truncates comm to 16 characters (Homebrew Python shows as
+    # /opt/homebrew/Ce), which hid waiting guards and deadlocked runners (#497).
+    rows = subprocess.check_output(['ps', '-axo', 'pid=,ppid=,args='], text=True)
+    # Executable paths can contain spaces: use a separate unambiguous parent map.
     parents = {}
     for row in subprocess.check_output(['ps', '-axo', 'pid=,ppid='], text=True).splitlines():
         pid, parent = row.split()
@@ -42,10 +44,21 @@ def owns_lease():
         return False
 
 
+def _executable(command):
+    """Interpreter/compiler name from a process's args (never the truncated comm)."""
+    words = command.split()
+    return Path(words[0]).name if words else ''
+
+
+def _python(command):
+    name = _executable(command)
+    return name.startswith('python') or name == 'Python' or 'Python' in command.split()[0]
+
+
 def busy_reason():
     """Adopt safely alongside older entry points without signalling any process."""
     if sys.platform == 'darwin':
-        value = subprocess.check_output(['sysctl', '-n', 'kern.memorystatus_vm_pressure_level'], text=True)
+        value = subprocess.check_output(['/usr/sbin/sysctl', '-n', 'kern.memorystatus_vm_pressure_level'], text=True)
         if int(value.strip()) != 1:
             return 'macOS memory pressure is elevated'
     parents, rows = processes()
@@ -53,7 +66,7 @@ def busy_reason():
     guarded_parents = set()
     for row in rows.splitlines():
         parts = row.split(None, 2)
-        if len(parts) == 3 and 'host_build.py' in parts[2] and ('Python' in parts[2].split()[0] or Path(parts[2].split()[0]).name.startswith('python')):
+        if len(parts) == 3 and 'host_build.py' in parts[2] and _python(parts[2]):
             guarded_parents.update(ancestors(int(parts[0]), parents))
     for row in rows.splitlines():
         parts = row.split(None, 2)
@@ -64,9 +77,8 @@ def busy_reason():
             continue
         # Match executable/script signatures, not incidental shell/agent prompt text.
         command = parts[2]
-        first = command.split()[0]
-        compiler = Path(first).name in ('rustc', 'clippy-driver', 'rust-lld', 'xcodebuild')
-        script = (('Python' in first or Path(first).name.startswith(('python', 'node')))
+        compiler = _executable(command) in ('rustc', 'clippy-driver', 'rust-lld', 'xcodebuild')
+        script = ((_python(command) or _executable(command).startswith('node'))
                   and 'host_build.py' not in command
                   and any(name in command for name in
                           ('/build_desktop.py', '/run_browser_tests.mjs')))

@@ -1,7 +1,9 @@
 // Shared Playwright setup for the tools/test_*.mjs browser checks.
 //
 // Environment:
-//   PLAYWRIGHT_MODULE  path or name of the Playwright package (default 'playwright')
+//   PLAYWRIGHT_MODULE  path or name of the Playwright package (default
+//                      ~/LargeFiles/atv-browser-tests/node_modules/playwright if present,
+//                      else 'playwright')
 //   ATV_TEST_URL       site under test (default http://127.0.0.1:4173, `make serve`)
 //   ATV_BROWSER_GPU    WebGL backend for Chromium: 'metal' (macOS default), 'swiftshader'
 //                      (default elsewhere, e.g. CI) or 'none' for no flags. Headless Chromium
@@ -12,15 +14,20 @@
 // tools/run_browser_tests.mjs starts a local server and sets these for each group.
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
+import { existsSync } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { homedir } from 'node:os';
 import path from 'node:path';
 
 const require = createRequire(import.meta.url);
 let module;
 
-/** The Playwright package, resolved once from PLAYWRIGHT_MODULE. */
+const LOCAL_PLAYWRIGHT = path.join(homedir(), 'LargeFiles/atv-browser-tests/node_modules/playwright');
+
+/** The Playwright package, resolved once from PLAYWRIGHT_MODULE (or the local install). */
 export function playwright() {
-  return module ??= require(process.env.PLAYWRIGHT_MODULE || 'playwright');
+  return module ??= require(process.env.PLAYWRIGHT_MODULE
+    || (existsSync(LOCAL_PLAYWRIGHT) ? LOCAL_PLAYWRIGHT : 'playwright'));
 }
 
 /** False when the runner serves no private content (ATV_CONTENT=none, content-free group). */

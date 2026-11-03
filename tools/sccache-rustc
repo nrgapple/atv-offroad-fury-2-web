@@ -3,6 +3,12 @@
 # sccache hashes every CARGO_* variable it sees, so the per-worktree CARGO_TARGET_DIR
 # exported by the Makefile would make every worktree miss. rustc never reads it.
 unset CARGO_TARGET_DIR
+# Outside a login shell ~/.cargo/bin may be missing, and sccache must resolve a bare
+# `rustc` from PATH ("sccache: cannot find binary path").
+if ! command -v rustc >/dev/null 2>&1 && [ -d "$HOME/.cargo/bin" ]; then
+  PATH="$HOME/.cargo/bin:$PATH"
+  export PATH
+fi
 # macOS drops DYLD_* variables when it starts /bin/sh, including the library path the
 # rustup proxy sets so the toolchain's rust-lld (wasm linking) finds libLLVM.dylib.
 # Restore it from the compiler path ($1 is .../toolchains/<name>/bin/rustc or
