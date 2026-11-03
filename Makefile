@@ -1,4 +1,11 @@
 export CARGO_TARGET_DIR ?= $(CURDIR)/target
+# Non-login shells (agents, launchd) often lack ~/.cargo/bin, so cargo's bare `rustc`
+# was not found by sccache ("cannot find binary path"). Add it when cargo or rustc is
+# missing from PATH; an existing toolchain on PATH is left alone.
+ifneq ($(and $(shell command -v cargo 2>/dev/null),$(shell command -v rustc 2>/dev/null)),)
+else ifneq ($(wildcard $(HOME)/.cargo/bin/cargo),)
+export PATH := $(HOME)/.cargo/bin:$(PATH)
+endif
 # Local builds in every worktree share one sccache compiler cache when sccache is on
 # PATH; each worktree keeps its own target directory. Never in CI. Opt out with
 # FURY_SCCACHE=0, or set RUSTC_WRAPPER yourself. See research/CI_TOOL_CACHE.md.
@@ -17,7 +24,7 @@ PORT ?= 4173
 # Extra runner flags, e.g. BROWSER_ARGS='--only test_race.mjs --verbose'. See research/BROWSER_TESTS.md.
 BROWSER_ARGS ?=
 
-.PHONY: desktop android verify verify-full inventory import check web relay serve audit code-map native-analyze browser-smoke browser-tests browser-native
+.PHONY: precheck desktop android verify verify-full inventory import check web relay serve audit code-map native-analyze browser-smoke browser-tests browser-native
 
 verify:
 	python3 tools/verify_setup.py
@@ -30,6 +37,15 @@ inventory:
 
 import:
 	python3 tools/import_disc.py "private/source/ATV Offroad Fury 2 (USA) (v2.00).zip"
+
+# Fast pre-push gate: the cheap, content-free checks CI's web job fails on first
+# (repository hygiene, secrets, formatting, clippy), without the slow test suites.
+precheck:
+	python3 tools/verify_repository.py
+	python3 tools/ci_changes.py --validate
+	python3 tools/check_secrets.py
+	$(CARGO) fmt --all -- --check
+	$(HEAVY) $(CARGO) clippy --locked --workspace --all-targets -- -D warnings
 
 check:
 	python3 tools/check_secrets.py

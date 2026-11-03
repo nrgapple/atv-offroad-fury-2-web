@@ -64,18 +64,43 @@ class GuardTests(unittest.TestCase):
             self.assertFalse(guard.owns_lease())
 
     def test_legacy_build_detection_ignores_waiting_guard(self):
-        rows = '444 1 /usr/bin/python3 /usr/bin/python3 tools/host_build.py -- tools/build_desktop.py\n'
+        rows = '444 1 /usr/bin/python3 tools/host_build.py -- tools/build_desktop.py\n'
         with patch.object(guard.sys, 'platform', 'linux'), patch.object(guard, 'processes', return_value=({}, rows)):
             self.assertIsNone(guard.busy_reason())
-        rows = '445 1 /usr/bin/python3 /usr/bin/python3 tools/build_desktop.py\n'
+        rows = '445 1 /usr/bin/python3 tools/build_desktop.py\n'
         with patch.object(guard.sys, 'platform', 'linux'), patch.object(guard, 'processes', return_value=({}, rows)):
             self.assertIn('445', guard.busy_reason())
 
     def test_waiting_browser_parents_do_not_deadlock_each_other(self):
-        rows = ('444 1 /usr/bin/node /usr/bin/node tools/run_browser_tests.mjs\n'
-                '445 444 /usr/bin/python3 /usr/bin/python3 tools/host_build.py -- node tools/run_browser_tests.mjs\n')
+        rows = ('444 1 /usr/bin/node tools/run_browser_tests.mjs\n'
+                '445 444 /usr/bin/python3 tools/host_build.py -- node tools/run_browser_tests.mjs\n')
         with patch.object(guard.sys, 'platform', 'linux'), patch.object(guard, 'processes', return_value=({445: 444, 444: 1}, rows)):
             self.assertIsNone(guard.busy_reason())
+
+    def test_truncated_comm_python_guards_do_not_deadlock_runners(self):
+        # #497: macOS ps truncates comm to 16 characters (/opt/homebrew/Ce). The
+        # guard must be recognised from args, so two waiting runners in different
+        # worktrees do not count each other as unguarded heavy work.
+        python = '/opt/homebrew/Cellar/python@3.15/3.15.0/Frameworks/Python.framework/Versions/3.15/Resources/Python.app/Contents/MacOS/Python'
+        rows = (f'500 1 node tools/run_browser_tests.mjs --only test_engine_boot.mjs\n'
+                f'501 500 {python} /Volumes/External SSD/wt-a/tools/host_build.py -- node tools/run_browser_tests.mjs\n'
+                f'600 1 node tools/run_browser_tests.mjs --only test_engine_boot.mjs\n'
+                f'601 600 {python} /Volumes/External SSD/wt-b/tools/host_build.py -- node tools/run_browser_tests.mjs\n')
+        parents = {500: 1, 501: 500, 600: 1, 601: 600}
+        with patch.object(guard.sys, 'platform', 'linux'), patch.object(guard, 'processes', return_value=(parents, rows)):
+            self.assertIsNone(guard.busy_reason())
+        # A runner without its guard is still heavy work.
+        with patch.object(guard.sys, 'platform', 'linux'), patch.object(guard, 'processes', return_value=(parents, rows.split('601 ')[0])):
+            self.assertIn('600', guard.busy_reason())
+
+    def test_process_rows_never_use_the_truncated_comm_column(self):
+        calls = []
+        def fake(command, text):
+            calls.append(command)
+            return '1 0 /sbin/launchd\n' if command[-1].endswith('args=') else '1 0\n'
+        with patch.object(guard.subprocess, 'check_output', side_effect=fake):
+            guard.processes()
+        self.assertTrue(all('comm' not in command[-1] for command in calls))
 
     def test_grandfather_identity_cannot_match_a_reused_pid(self):
         import json
