@@ -248,6 +248,24 @@ try {
       await nextFrames(page, 3);
       await page.evaluate(() => { window.padButton(1, 4, 0); window.padButton(1, 5, 0); });
     }, r => r.splitResetFades[0], 'player 2');
+    // Issue #502: L1+R1 with pad 2's trigger still held, then release it: the
+    // reset latches nothing, and the arrow keys drive player 2 within a few
+    // frames. Sampled at once, not after a long hold: a rider that climbs the
+    // hillside here wrecks, and a wrecked ride applies no throttle.
+    await page.evaluate(() => window.padButton(1, 7, 1));
+    await nextFrames(page, 30);
+    await resetFade(page, async () => {
+      await page.evaluate(() => { window.padButton(1, 4, 1); window.padButton(1, 5, 1); });
+      await nextFrames(page, 3);
+      await page.evaluate(() => { window.padButton(1, 4, 0); window.padButton(1, 5, 0); });
+    }, r => r.splitResetFades[0], 'player 2 (trigger held)');
+    assert.ok((await split(page)).player2.throttle > 0.9, 'the held trigger still drives after the reset');
+    await page.evaluate(() => window.padButton(1, 7, 0));
+    await wait(page, () => JSON.parse(document.querySelector('#ui-state').textContent).split.player2.throttle === 0, null, 10000);
+    await page.keyboard.down('ArrowUp');
+    await wait(page, () => JSON.parse(document.querySelector('#ui-state').textContent).split.player2.throttle > 0.9, null, 10000);
+    await page.keyboard.up('ArrowUp');
+    console.log('  player 2 drives on the arrow keys after a reset with the trigger held');
     // Pull player 1's pad: player 2's pad now plays slot 0 (player 1).
     await page.evaluate(() => {
       const pads = navigator.getGamepads();
