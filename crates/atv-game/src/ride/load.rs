@@ -54,15 +54,99 @@ pub(crate) async fn course_archive(
     if !content.has(&course.archive) {
         return Err(missing());
     }
-    let base = content.file(&course.archive).await?;
-    let Some(path) = &course.overlay else {
-        return Ok(base);
-    };
-    if !content.has(path) {
+    if let Some(path) = &course.overlay
+        && !content.has(path)
+    {
         return Err("Original race course archive is missing.".into());
     }
-    let overlay = content.file(path).await?;
-    Resource::overlay(&Resource::parse(&base)?, &Resource::parse(&overlay)?)
+    // A course loaded before: its archive already expanded (web cache).
+    let paths: Vec<&str> = std::iter::once(course.archive.as_str())
+        .chain(course.overlay.as_deref())
+        .collect();
+    let key = expanded_key(content, &paths);
+    if let Some(bytes) = cached_expanded(key.as_deref()).await {
+        return Ok(bytes);
+    }
+    let base = content.file(&course.archive).await?;
+    let bytes = match &course.overlay {
+        None => base,
+        Some(path) => {
+            let overlay = content.file(path).await?;
+            Resource::overlay(&Resource::parse(&base)?, &Resource::parse(&overlay)?)?
+        }
+    };
+    if let Some(key) = key {
+        store_expanded(key, &bytes);
+    }
+    Ok(bytes)
+}
+
+/// A block-compressed archive read whole for its members (the rider, its
+/// materials and motions): on the web, its expanded copy when a previous
+/// load stored one (members read without inflating), else the original
+/// file, expanded and stored in the background.
+pub(crate) async fn archive(content: &Content, path: &str) -> Result<Vec<u8>> {
+    let key = expanded_key(content, &[path]);
+    if let Some(bytes) = cached_expanded(key.as_deref()).await {
+        return Ok(bytes);
+    }
+    let bytes = content.file(path).await?;
+    if let Some(key) = key {
+        store_expanded(key, &bytes);
+    }
+    Ok(bytes)
+}
+
+/// The expanded archive stored under `key`, when it parses as one.
+async fn cached_expanded(key: Option<&str>) -> Option<Vec<u8>> {
+    let bytes = atv_content::decoded::get(key?).await?;
+    Resource::parse(&bytes)
+        .is_ok_and(|r| !r.compressed)
+        .then_some(bytes)
+}
+
+/// Version of the expanded archives (`Resource::expand`).
+const EXPANDED_FORMAT: u32 = 1;
+
+/// The cache key of the expanded archive made of `paths` (an archive and
+/// its overlay), named by the package's chunk digests. None without a cache.
+fn expanded_key(content: &Content, paths: &[&str]) -> Option<String> {
+    if !atv_content::decoded::enabled() {
+        return None;
+    }
+    let mut names = String::new();
+    for path in paths {
+        for chunk in content.manifest.record(path)?.chunks() {
+            names.push_str(&chunk.sha256);
+        }
+    }
+    Some(format!(
+        "archive/{EXPANDED_FORMAT}/{}",
+        atv_content::decoded::fingerprint(names.as_bytes())
+    ))
+}
+
+/// Expands `bytes` on a decode worker once this load has finished and
+/// stores the result, so the next load skips every inflate of it. Waiting
+/// keeps the workers for the load's own decodes.
+fn store_expanded(key: String, bytes: &[u8]) {
+    // Only worth it for a compressed archive, and only off the page's
+    // thread (inflating a whole course inline would stall a ride).
+    #[cfg(target_arch = "wasm32")]
+    if !atv_content::pool::available() {
+        return;
+    }
+    if !Resource::parse(bytes).is_ok_and(|r| r.compressed) || !atv_content::decoded::claim(&key) {
+        return;
+    }
+    let bytes = bytes.to_vec();
+    atv_content::decoded::spawn(async move {
+        atv_content::decoded::quiet().await;
+        match crate::offload::uncached(crate::offload::EXPAND, 0, &bytes).await {
+            Ok(expanded) => atv_content::decoded::put(&key, &expanded),
+            Err(_) => atv_content::decoded::release(&key),
+        }
+    });
 }
 
 /// An original file the package must list, with game.js's message for it.
@@ -434,7 +518,7 @@ async fn load_atv_rider(
     wreck_animation::Animator,
 )> {
     progress("Reading original rider…");
-    let rider_bytes = content.file(&models.rider).await?;
+    let rider_bytes = self::archive(content, &models.rider).await?;
     let rider_archive = Resource::parse(&rider_bytes)?;
     let rider_mesh = mesh::decode_psg(&member_suffix(
         &rider_archive,
@@ -445,7 +529,8 @@ async fn load_atv_rider(
         &format!("/{}", models.rider_catalog),
     )?)?;
     let selected = riding_motions(&catalog)?;
-    let motion_bytes = content.file("/ANIMSRDR.RES").await?;
+    // 78 motions share its blocks: expanded once, read as copies.
+    let motion_bytes = self::archive(content, "/ANIMSRDR.RES").await?;
     let motion_archive = Resource::parse(&motion_bytes)?;
     let mut motions = Vec::with_capacity(selected.len());
     for definition in &selected {
@@ -465,7 +550,7 @@ async fn load_atv_rider(
             },
         });
     }
-    let rider_material_bytes = content.file("/RIDER/RIDER_MT.RES").await?;
+    let rider_material_bytes = archive(content, "/RIDER/RIDER_MT.RES").await?;
     let rider_textures = textures::load(&rider_mesh, &Resource::parse(&rider_material_bytes)?)?;
 
     // Op 53: normal, stunt (14..62), wreck (62..76) and landing (76..78) clips.
@@ -584,7 +669,7 @@ async fn race_setup(
     }
     let mut models = Vec::with_capacity(roster.len());
     let mut draw = Vec::with_capacity(roster.len());
-    let rider_materials = content.file("/RIDER/RIDER_MT.RES").await?;
+    let rider_materials = self::archive(content, "/RIDER/RIDER_MT.RES").await?;
     let rider_materials = Resource::parse(&rider_materials)?;
     for entry in &roster {
         let selection = player_models::selection(entry.quad as u16, rider)?;

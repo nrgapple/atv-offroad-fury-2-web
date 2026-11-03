@@ -1056,6 +1056,24 @@ struct World {
 /// Ride prefetch (`?prefetch=off` turns it off for load-time measurement).
 static PREFETCH: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
 
+/// Milliseconds the last ride load (`prepare`) took, as f64 bits
+/// (`?uiDiagnostics=1` `decodedCache.loadMs`).
+static LAST_LOAD_MS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// The persistent decoded-content cache's counters and the last ride load's
+/// duration (tools/test_engine_decoded_cache.mjs).
+fn decoded_cache_state() -> serde_json::Value {
+    let s = atv_content::decoded::stats();
+    serde_json::json!({
+        "enabled": s.enabled, "hits": s.hits, "misses": s.misses, "stores": s.stores,
+        "rejected": s.rejected, "failed": s.failed, "hitBytes": s.hit_bytes,
+        "readMs": (s.read_ms * 10.).round() / 10., "pending": s.pending,
+        "background": s.background,
+        "entries": s.entries, "bytes": s.bytes, "limit": s.limit,
+        "loadMs": (f64::from_bits(LAST_LOAD_MS.load(std::sync::atomic::Ordering::Relaxed)) * 10.).round() / 10.,
+    })
+}
+
 /// A loading progress line (status bar, and the frontend's loader).
 type Progress = Box<dyn FnMut(&Gpu, &str)>;
 
@@ -1122,6 +1140,25 @@ fn desktop_tier(device: wgpu::DeviceType, apple_silicon: bool, cores: usize) -> 
 }
 
 async fn prepare(
+    gpu: Gpu,
+    content: std::rc::Rc<Content>,
+    environment: String,
+    fixed: Option<[f32; 6]>,
+    world: World,
+    progress: Progress,
+) -> Result<Ready, String> {
+    let started = Instant::now();
+    // Background cache writes wait for this load (atv_content::decoded).
+    let _loading = atv_content::decoded::loading();
+    let ready = prepare_inner(gpu, content, environment, fixed, world, progress).await;
+    LAST_LOAD_MS.store(
+        (started.elapsed().as_secs_f64() * 1000.).to_bits(),
+        std::sync::atomic::Ordering::Relaxed,
+    );
+    ready
+}
+
+async fn prepare_inner(
     gpu: Gpu,
     content: std::rc::Rc<Content>,
     environment: String,
@@ -3001,6 +3038,7 @@ impl App {
                 });
             }
             state["wakeLock"] = self.wake_lock.held().into();
+            state["decodedCache"] = decoded_cache_state();
             state["diagnostics"] = serde_json::json!({
                 "mode": self.diagnostics.mode.name(), "lines": self.diagnostics.lines});
             state["active"] = active.into();

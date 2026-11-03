@@ -182,6 +182,11 @@ pub fn running() -> bool {
     })
 }
 
+/// Whether jobs can run on workers (no worker has failed to start or crashed).
+pub fn available() -> bool {
+    POOL.with(|pool| !pool.borrow().broken) && script().is_some()
+}
+
 pub fn warm() {
     POOL.with(|pool| {
         let mut pool = pool.borrow_mut();

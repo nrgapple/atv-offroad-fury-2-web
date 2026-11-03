@@ -58,6 +58,7 @@ export const TESTS = {
   'test_engine_soundtrack.mjs': { group: 'content' },
   'test_engine_weather.mjs': { group: 'content' },
   'test_engine_ride_link.mjs': { group: 'content' },
+  'test_engine_decoded_cache.mjs': { group: 'content' },
   'test_engine_freeride.mjs': {
     group: 'relay',
     reason: 'needs the multiplayer relay at the same origin (shared Free Ride rooms, room WebSocket); run with --url'

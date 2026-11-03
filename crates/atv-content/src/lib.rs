@@ -6,6 +6,7 @@
 //! directory or a single content pack (see [`pack`]). Release builds may
 //! embed a pack through the opt-in `embedded` feature; no content is
 //! compiled into this crate by default or stored in Git.
+pub mod decoded;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod pack;
 #[cfg(target_arch = "wasm32")]
@@ -258,7 +259,10 @@ const CACHE_BYTES: usize = 40 * 1024 * 1024;
 
 impl Content {
     pub async fn open(store: Store) -> Result<Self> {
-        let manifest = Manifest::parse(&store.read("manifest.json").await?)?;
+        let bytes = store.read("manifest.json").await?;
+        let manifest = Manifest::parse(&bytes)?;
+        // Decoded results are stored per package (web; decoded.rs).
+        decoded::configure(&bytes);
         Ok(Self {
             manifest,
             store,
