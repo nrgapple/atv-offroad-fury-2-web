@@ -13,7 +13,7 @@ pub mod cpu;
 pub mod gear;
 pub mod hype;
 pub mod impact;
-pub(crate) mod load;
+pub mod load;
 pub mod present;
 pub mod race;
 pub mod script;

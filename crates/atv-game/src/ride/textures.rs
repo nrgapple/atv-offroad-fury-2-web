@@ -73,6 +73,75 @@ pub async fn load_spread(
     Ok(textures)
 }
 
+/// [`load`] with the PST decodes run as jobs (`crate::offload`): the same
+/// textures, with the pixels decoded off the page's thread (garage models).
+pub async fn load_jobs(
+    mesh: &Mesh,
+    archive: &Resource<'_>,
+) -> Result<HashMap<String, MaterialTexture>> {
+    let lod = mesh.lods.first().ok_or("original mesh has no LOD")?;
+    let mut plans = Vec::new();
+    for group in &lod.groups {
+        let material = mesh
+            .materials
+            .get(group.material as usize)
+            .ok_or("mesh material index out of range")?;
+        if plans.iter().any(|(name, _)| name == material) {
+            continue;
+        }
+        plans.push((material.clone(), material_plan(material, archive)?));
+    }
+    // Each PST member once (materials share maps), failing on its own.
+    let mut members: Vec<usize> = Vec::new();
+    for plan in plans.iter().filter_map(|(_, plan)| plan.as_ref()) {
+        let source = match plan.source {
+            Source::Pst(index) => Some(index),
+            _ => None,
+        };
+        for index in source.into_iter().chain(plan.mud) {
+            if !members.contains(&index) {
+                members.push(index);
+            }
+        }
+    }
+    let inputs = members
+        .iter()
+        .map(|&index| archive.extract(index))
+        .collect::<Vec<_>>();
+    let readable: Vec<&[u8]> = inputs
+        .iter()
+        .filter_map(|input| input.as_deref().ok())
+        .collect();
+    let mut decoded = crate::offload::psts(&readable).await?.into_iter();
+    let images: Vec<Result<Image>> = inputs
+        .into_iter()
+        .map(|input| {
+            input?;
+            let (width, height, rgba) = decoded.next().ok_or("missing decode result")??;
+            Ok(Image {
+                width,
+                height,
+                rgba,
+            })
+        })
+        .collect();
+    let mut pst = |index: usize| {
+        let at = members.iter().position(|&m| m == index);
+        match at.map(|at| &images[at]) {
+            Some(Ok(image)) => Ok(image.clone()),
+            Some(Err(error)) => Err(error.clone()),
+            None => Err("texture was not decoded".to_string()),
+        }
+    };
+    let mut textures = HashMap::new();
+    for (name, plan) in plans {
+        if let Some(plan) = plan {
+            textures.insert(name, material_finish(plan, archive, &mut pst)?);
+        }
+    }
+    Ok(textures)
+}
+
 /// Textures for material names outside a mesh (race CPU outfits).
 pub fn load_named(
     names: &[String],
@@ -170,7 +239,25 @@ pub fn outfit_textures(
     textures
 }
 
-fn material_texture(material: &str, archive: &Resource) -> Result<Option<MaterialTexture>> {
+/// Where one material's texture comes from, read from its PSM: everything
+/// about it but the pixels.
+struct MaterialPlan {
+    fog: bool,
+    blend: bool,
+    source: Source,
+    /// The mud map's PST member.
+    mud: Option<usize>,
+}
+
+enum Source {
+    /// A reflection pass the port draws untextured.
+    Unsupported,
+    Atm(usize),
+    Tga(usize),
+    Pst(usize),
+}
+
+fn material_plan(material: &str, archive: &Resource) -> Result<Option<MaterialPlan>> {
     let psm = basename_index(archive, &format!("{material}.psm"));
     let text = match psm {
         Some(index) => String::from_utf8_lossy(&archive.extract(index)?).into_owned(),
@@ -186,11 +273,11 @@ fn material_texture(material: &str, archive: &Resource) -> Result<Option<Materia
         return Ok(None);
     };
     if described.unsupported_reflection {
-        return Ok(Some(MaterialTexture {
-            image: None,
+        return Ok(Some(MaterialPlan {
             fog,
-            mud: None,
             blend: false,
+            source: Source::Unsupported,
+            mud: None,
         }));
     }
     let animated = described
@@ -204,52 +291,84 @@ fn material_texture(material: &str, archive: &Resource) -> Result<Option<Materia
     let tga = (pst.is_none() && atm.is_none())
         .then(|| basename_index(archive, &format!("{binding}.tga")))
         .flatten();
-    let decoded = if let Some(index) = atm {
-        archive
-            .extract(index)
-            .and_then(|bytes| texture::decode_atm(&bytes, 0).map(|(_, t)| t))
+    let source = if let Some(index) = atm {
+        Source::Atm(index)
     } else if let Some(index) = tga {
-        archive
-            .extract(index)
-            .and_then(|bytes| texture::decode_tga(&bytes))
+        Source::Tga(index)
     } else if let Some(index) = pst {
-        archive
-            .extract(index)
-            .and_then(|bytes| texture::decode_pst(&bytes))
+        Source::Pst(index)
     } else {
         if psm.is_none() {
             return Ok(None);
         }
         return Err(format!("original material texture is missing: {binding}"));
     };
-    // The browser draws a material whose image fails to decode untextured.
-    let image = decoded.ok().map(|texture| Image {
-        width: texture.info.width,
-        height: texture.info.height,
-        rgba: texture.rgba,
-    });
     // MX MudAnimator maps (the second), or the ATV2 PixelAnimation dirt pass.
     let mud_name = if described.mud_maps.len() > 1 {
         Some(described.mud_maps[1].clone())
     } else {
         described.dirt_map.clone()
     };
-    let mud = match mud_name.and_then(|name| basename_index(archive, &format!("{name}.pst"))) {
-        Some(index) => {
-            let decoded = texture::decode_pst(&archive.extract(index)?)?;
-            Some(Image {
-                width: decoded.info.width,
-                height: decoded.info.height,
-                rgba: decoded.rgba,
-            })
-        }
-        None => None,
-    };
+    let mud = mud_name.and_then(|name| basename_index(archive, &format!("{name}.pst")));
     let blend = described.pass.as_ref().is_some_and(|pass| pass.blend);
-    Ok(Some(MaterialTexture {
-        image,
+    Ok(Some(MaterialPlan {
         fog,
-        mud,
         blend,
+        source,
+        mud,
     }))
+}
+
+/// Finishes a plan; `pst` gives the image of a PST member.
+fn material_finish(
+    plan: MaterialPlan,
+    archive: &Resource,
+    pst: &mut dyn FnMut(usize) -> Result<Image>,
+) -> Result<MaterialTexture> {
+    let decoded = |texture: Result<texture::Texture>| {
+        texture.map(|t| Image {
+            width: t.info.width,
+            height: t.info.height,
+            rgba: t.rgba,
+        })
+    };
+    let image = match plan.source {
+        Source::Unsupported => None,
+        Source::Atm(index) => decoded(
+            archive
+                .extract(index)
+                .and_then(|bytes| texture::decode_atm(&bytes, 0).map(|(_, t)| t)),
+        )
+        .ok(),
+        Source::Tga(index) => decoded(
+            archive
+                .extract(index)
+                .and_then(|bytes| texture::decode_tga(&bytes)),
+        )
+        .ok(),
+        // The browser draws a material whose image fails to decode untextured.
+        Source::Pst(index) => pst(index).ok(),
+    };
+    let mud = plan.mud.map(&mut *pst).transpose()?;
+    Ok(MaterialTexture {
+        image,
+        fog: plan.fog,
+        mud,
+        blend: plan.blend,
+    })
+}
+
+fn material_texture(material: &str, archive: &Resource) -> Result<Option<MaterialTexture>> {
+    let Some(plan) = material_plan(material, archive)? else {
+        return Ok(None);
+    };
+    let mut pst = |index: usize| {
+        let texture = texture::decode_pst(&archive.extract(index)?)?;
+        Ok(Image {
+            width: texture.info.width,
+            height: texture.info.height,
+            rgba: texture.rgba,
+        })
+    };
+    material_finish(plan, archive, &mut pst).map(Some)
 }

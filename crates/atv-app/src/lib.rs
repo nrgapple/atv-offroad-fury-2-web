@@ -8535,8 +8535,9 @@ fn capture_front(booted: Booted, page: &str, path: &std::path::Path, width: u32,
     } else {
         front.state.show(page, &view);
     }
-    // Two passes: the first lays out lists and scrolls the current card in.
-    for _ in 0..2 {
+    // The first pass lays out lists and scrolls the current card in; a stage
+    // builds one preview a pass.
+    for _ in 0..3 {
         front.prepare(&gpu.device, &gpu.queue, width, height);
     }
     match gpu.capture_ui(width, height, &mut |encoder, target| {

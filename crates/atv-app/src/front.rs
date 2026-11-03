@@ -1798,8 +1798,9 @@ impl Front {
         } else {
             [0., 0.]
         };
-        let texture = |textures: &HashMap<String, front::assets::ModelTexture>| {
-            let textures = textures.clone();
+        fn lookup(
+            textures: &HashMap<String, front::assets::ModelTexture>,
+        ) -> impl Fn(&str) -> Option<PreviewTexture> + '_ {
             move |name: &str| {
                 textures
                     .get(name)
@@ -1811,7 +1812,10 @@ impl Front {
                         cutout: t.cutout,
                     })
             }
-        };
+        }
+        // Each preview costs 10+ ms of GPU setup on a phone: at most one a
+        // frame, so a motorcycle's bike and rider do not share a long frame.
+        let mut built = false;
         // Slot 0: the vehicle in its bind (or MX resting) pose.
         let key = format!("vehicle:{quad}:{paint:?}");
         self.wanted = [shown.then(|| key.clone()), None];
@@ -1831,16 +1835,17 @@ impl Front {
             && self.look_settled(0, &key, &format!("vehicle:{quad}:"), now)
             && let Some((_, model, _)) = self.art.vehicles.iter().find(|(q, ..)| *q == quad)
         {
-            let lookup = texture(&model.textures);
             self.preview_counts[0] += 1;
-            match ModelPreview::new(
+            built = true;
+            let preview = ModelPreview::new(
                 device,
                 queue,
                 &model.mesh,
-                &lookup,
+                &lookup(&model.textures),
                 model.pose.as_deref(),
                 paint,
-            ) {
+            );
+            match preview {
                 Ok(preview) => self.set_preview(0, key, preview, false),
                 Err(error) => {
                     crate::status(&format!("Model preview: {error}"));
@@ -1892,16 +1897,20 @@ impl Front {
             self.art.menu_riders.get(&self.state.rider_id)
         };
         if let Some(rider) = rider {
-            // Unsettled, the last look idles on (posed below).
-            if settled
+            let build = settled
                 && self.previews[1].as_ref().is_none_or(|p| p.key != key)
-                && self.unbuilt[1].as_ref() != Some(&key)
-            {
-                let mut textures = rider.textures.clone();
+                && self.unbuilt[1].as_ref() != Some(&key);
+            // Unsettled, the last look idles on (posed below).
+            if build && built {
+                // The next frame builds it.
+                self.look_waiting = true;
+            } else if build {
+                let mut dressed_textures = None;
                 if dressed
                     && let Some(bytes) = &self.art.rider_materials
                     && let Ok(materials) = atv_core::resource::Resource::parse(bytes)
                 {
+                    let mut textures = rider.textures.clone();
                     textures.extend(front::assets::ride_textures(
                         atv_game::ride::gear::gear_textures(
                             &rider.rider.mesh,
@@ -1910,20 +1919,23 @@ impl Front {
                             &materials,
                         ),
                     ));
+                    dressed_textures = Some(textures);
                 }
-                let lookup = texture(&textures);
+                let textures = dressed_textures.as_ref().unwrap_or(&rider.textures);
                 let pose = rider.rider.pose(time).ok().map(|(_, p)| p.world_matrices);
                 self.preview_counts[0] += 1;
-                match ModelPreview::new(
+                let preview = ModelPreview::new(
                     device,
                     queue,
                     &rider.rider.mesh,
-                    &lookup,
+                    &lookup(textures),
                     pose.as_deref(),
                     [0., 0.],
-                ) {
+                );
+                let yaw = rider.yaw;
+                match preview {
                     Ok(mut preview) => {
-                        preview.yaw = rider.yaw;
+                        preview.yaw = yaw;
                         self.set_preview(1, key, preview, true);
                     }
                     Err(error) => {

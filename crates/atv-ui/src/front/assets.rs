@@ -380,19 +380,19 @@ pub async fn vehicle_models(
     quad: u16,
 ) -> Result<(PreviewModel, Option<MenuRider>), String> {
     use atv_core::resource::Resource;
+    use atv_game::ride::{load::expanded_archive, textures::load_jobs};
     let models = atv_core::player_models::selection(quad, 0)?;
-    let bytes = content.file(&models.quad).await?;
+    // Inflating the archive and decoding the textures run as jobs; this
+    // thread keeps only the mesh parse, between frames (input stays live).
+    let bytes = expanded_archive(content, &models.quad).await?;
+    atv_content::yield_frame().await;
     if models.motorcycle {
-        let model = atv_core::motorcycle::Model::load(&bytes, quad)?;
+        let mut model = atv_core::motorcycle::Selection::load(&bytes, quad)?;
         atv_content::yield_frame().await;
         let archive = Resource::parse(&bytes)?;
-        let vehicle = PreviewModel {
-            textures: ride_textures(atv_game::ride::textures::load(&model.mesh, &archive)?),
-            mesh: model.mesh.clone(),
-            pose: Some(model.pose(0., [0., 0.], [0., 0.]).to_vec()),
-        };
+        let vehicle_textures = ride_textures(load_jobs(&model.mesh, &archive).await?);
+        let textures = ride_textures(load_jobs(&model.rider, &archive).await?);
         atv_content::yield_frame().await;
-        let textures = ride_textures(atv_game::ride::textures::load(&model.rider, &archive)?);
         // atv-web `motorcycles::menu`: breathing between each selection idle.
         let mut clips = Vec::new();
         for idle in 0..=3 {
@@ -409,19 +409,19 @@ pub async fn vehicle_models(
                 let name = format!("ui_rider_select_idle{idle}");
                 clips.push((
                     format!("{name}.mot"),
-                    model
-                        .motions
-                        .get(&name)
-                        .ok_or("missing MX menu idle")?
-                        .clone(),
+                    model.motions.remove(&name).ok_or("missing MX menu idle")?,
                 ));
             }
         }
-        let rider = atv_core::menu_preview::Rider::from_clips(model.rider.clone(), clips)?;
+        let rider = atv_core::menu_preview::Rider::from_clips(model.rider, clips)?;
         // MX selection clips face the opposite way to the ATV menu rig.
         let yaw = -(std::f32::consts::PI - 0.6);
         return Ok((
-            vehicle,
+            PreviewModel {
+                textures: vehicle_textures,
+                mesh: model.mesh,
+                pose: Some(model.pose),
+            },
             Some(MenuRider {
                 rider,
                 textures,
@@ -441,12 +441,10 @@ pub async fn vehicle_models(
         })
         .ok_or("ATV mesh is missing")?;
     let mesh = atv_core::mesh::decode_psg(&archive.extract(index)?)?;
-    // Hand the thread back between phases (input stays live during a load).
     atv_content::yield_frame().await;
-    let materials = content.file(&models.quad_materials).await?;
+    let materials = expanded_archive(content, &models.quad_materials).await?;
     let materials = Resource::parse(&materials)?;
-    atv_content::yield_frame().await;
-    let textures = ride_textures(atv_game::ride::textures::load(&mesh, &materials)?);
+    let textures = ride_textures(load_jobs(&mesh, &materials).await?);
     Ok((
         PreviewModel {
             mesh,

@@ -140,6 +140,150 @@ fn remap(mesh: &mut Mesh, config: &PhysicsData) {
         }
     }
 }
+/// A member's motion name when it is a `.mot` file (lower case, no folder).
+fn motion_name(member: &str) -> Option<String> {
+    member.to_ascii_lowercase().ends_with(".mot").then(|| {
+        member
+            .rsplit('/')
+            .next()
+            .unwrap()
+            .trim_end_matches(".MOT")
+            .trim_end_matches(".mot")
+            .to_ascii_lowercase()
+    })
+}
+/// The assembled bike and rider meshes and the bike's rig nodes.
+struct Rig {
+    mesh: Mesh,
+    rider: Mesh,
+    wheels: [usize; 2],
+    wheel_rest: [V; 2],
+    steering_axis: V,
+    grips: [usize; 2],
+}
+impl Rig {
+    fn load(archive: &Resource<'_>, definition: &str, size: u16) -> Result<Self> {
+        let mesh = assembly(
+            archive,
+            definition,
+            if size == 50 { "bike50.psg" } else { "bike.psg" },
+        )?;
+        let rider = assembly(archive, "THQ1.sub", "mrider.psg")?;
+        if mesh.nodes.len() > 32 || rider.nodes.len() > 32 {
+            return Err("motorcycle exceeds pose capacity".into());
+        }
+        let wheels = ["TireFront", "TireRear"].map(|name| {
+            mesh.nodes
+                .iter()
+                .position(|n| n.name.eq_ignore_ascii_case(name))
+                .ok_or("missing motorcycle wheel")
+        });
+        let wheels = [wheels[0]?, wheels[1]?];
+        let wheel_rest = wheels.map(|i| mesh.nodes[i].world_matrix[12..15].try_into().unwrap());
+        let bar = mesh
+            .nodes
+            .iter()
+            .find(|n| n.name == "Handlebars")
+            .ok_or("missing handlebars")?;
+        let axis = sub(bar.world_matrix[12..15].try_into().unwrap(), wheel_rest[0]);
+        let length = dot(axis, axis).sqrt();
+        if length <= 0. {
+            return Err("invalid motorcycle fork axis".into());
+        }
+        let steering_axis = scale(axis, 1. / length);
+        let grips = ["Dummy_Hand_L", "Dummy_Hand_R"].map(|name| {
+            mesh.nodes
+                .iter()
+                .position(|n| n.name.eq_ignore_ascii_case(name))
+                .ok_or("missing motorcycle grip")
+        });
+        let grips = [grips[0]?, grips[1]?];
+        Ok(Self {
+            mesh,
+            rider,
+            wheels,
+            wheel_rest,
+            steering_axis,
+            grips,
+        })
+    }
+}
+/// Node world matrices for a steering angle, wheel spins and suspension
+/// travel ([`Model::pose`]).
+fn posed(
+    mesh: &Mesh,
+    steering_axis: V,
+    wheels: [usize; 2],
+    steering: f32,
+    angles: [f32; 2],
+    compression: [f32; 2],
+) -> Vec<M> {
+    let mut world = Vec::with_capacity(mesh.nodes.len());
+    for (i, n) in mesh.nodes.iter().enumerate() {
+        let mut local = n.local_matrix;
+        if n.name.eq_ignore_ascii_case("Handlebars") {
+            local = mul(&local, &pose::axis_rotation(steering_axis, steering));
+        }
+        if n.name.eq_ignore_ascii_case("Shocks") {
+            for j in 0..3 {
+                local[12 + j] += steering_axis[j] * compression[0] / steering_axis[1];
+            }
+        }
+        if n.name.eq_ignore_ascii_case("SwingArm") {
+            local = mul(&local, &rotation(0, compression[1] / 2.));
+        }
+        for (wheel, &index) in wheels.iter().enumerate() {
+            if i == index {
+                local = mul(&local, &rotation(0, angles[wheel]));
+            }
+        }
+        world.push(if n.parent >= 0 {
+            mul(&world[n.parent as usize], &local)
+        } else {
+            local
+        });
+    }
+    world
+}
+/// What the garage shows of a motorcycle: the meshes and rest pose of
+/// [`Model`] and only the rider's selection clips. A [`Model`] also decodes
+/// every riding and stunt motion and its configs, which the menu never uses
+/// (selectionAssets).
+pub struct Selection {
+    pub mesh: Mesh,
+    pub rider: Mesh,
+    /// The bike's node world matrices at rest (`Model::pose(0, 0, 0)`).
+    pub pose: Vec<M>,
+    /// The `ui_rider_select_*` clips by name.
+    pub motions: BTreeMap<String, animation::Animation>,
+}
+impl Selection {
+    pub fn load(bytes: &[u8], id: u16) -> Result<Self> {
+        let (size, _, definition, _) = definition(id)?;
+        let archive = Resource::parse(bytes)?;
+        let rig = Rig::load(&archive, definition, size)?;
+        let mut motions = BTreeMap::new();
+        for (i, m) in archive.members.iter().enumerate() {
+            if let Some(name) = motion_name(&m.name).filter(|n| n.starts_with("ui_rider_select")) {
+                motions.insert(name, animation::decode_mot(&archive.extract(i)?)?);
+            }
+        }
+        let pose = posed(
+            &rig.mesh,
+            rig.steering_axis,
+            rig.wheels,
+            0.,
+            [0., 0.],
+            [0., 0.],
+        );
+        Ok(Self {
+            mesh: rig.mesh,
+            rider: rig.rider,
+            pose,
+            motions,
+        })
+    }
+}
 /// Preserve source part nodes beneath each SUB placement bone.
 fn assembly(resource: &Resource<'_>, subfile: &str, base: &str) -> Result<Mesh> {
     let config = cleaned(&member(resource, subfile)?)?;
@@ -230,56 +374,21 @@ impl Model {
     pub fn load(bytes: &[u8], id: u16) -> Result<Self> {
         let (size, pro, definition, _) = definition(id)?;
         let archive = Resource::parse(bytes)?;
-        let mesh = assembly(
-            &archive,
-            definition,
-            if size == 50 { "bike50.psg" } else { "bike.psg" },
-        )?;
-        let rider = assembly(&archive, "THQ1.sub", "mrider.psg")?;
-        if mesh.nodes.len() > 32 || rider.nodes.len() > 32 {
-            return Err("motorcycle exceeds pose capacity".into());
-        }
-        let wheels = ["TireFront", "TireRear"].map(|name| {
-            mesh.nodes
-                .iter()
-                .position(|n| n.name.eq_ignore_ascii_case(name))
-                .ok_or("missing motorcycle wheel")
-        });
-        let wheels = [wheels[0]?, wheels[1]?];
-        let wheel_rest = wheels.map(|i| mesh.nodes[i].world_matrix[12..15].try_into().unwrap());
-        let bar = mesh
-            .nodes
-            .iter()
-            .find(|n| n.name == "Handlebars")
-            .ok_or("missing handlebars")?;
-        let axis = sub(bar.world_matrix[12..15].try_into().unwrap(), wheel_rest[0]);
-        let length = dot(axis, axis).sqrt();
-        if length <= 0. {
-            return Err("invalid motorcycle fork axis".into());
-        }
-        let steering_axis = scale(axis, 1. / length);
-        let grips = ["Dummy_Hand_L", "Dummy_Hand_R"].map(|name| {
-            mesh.nodes
-                .iter()
-                .position(|n| n.name.eq_ignore_ascii_case(name))
-                .ok_or("missing motorcycle grip")
-        });
-        let grips = [grips[0]?, grips[1]?];
+        let Rig {
+            mesh,
+            rider,
+            wheels,
+            wheel_rest,
+            steering_axis,
+            grips,
+        } = Rig::load(&archive, definition, size)?;
         let tuning = cleaned(&member(
             &archive,
             &format!("mx_{}{size}P.phy", if pro { "Pro" } else { "Race" }),
         )?)?;
         let mut motions = BTreeMap::new();
         for (i, m) in archive.members.iter().enumerate() {
-            if m.name.to_ascii_lowercase().ends_with(".mot") {
-                let name = m
-                    .name
-                    .rsplit('/')
-                    .next()
-                    .unwrap()
-                    .trim_end_matches(".MOT")
-                    .trim_end_matches(".mot")
-                    .to_ascii_lowercase();
+            if let Some(name) = motion_name(&m.name) {
                 motions.insert(name, animation::decode_mot(&archive.extract(i)?)?);
             }
         }
@@ -358,32 +467,14 @@ impl Model {
         Ok(model)
     }
     pub fn pose(&self, steering: f32, angles: [f32; 2], compression: [f32; 2]) -> Vec<M> {
-        let mut world = Vec::with_capacity(self.mesh.nodes.len());
-        for (i, n) in self.mesh.nodes.iter().enumerate() {
-            let mut local = n.local_matrix;
-            if n.name.eq_ignore_ascii_case("Handlebars") {
-                local = mul(&local, &pose::axis_rotation(self.steering_axis, steering));
-            }
-            if n.name.eq_ignore_ascii_case("Shocks") {
-                for j in 0..3 {
-                    local[12 + j] += self.steering_axis[j] * compression[0] / self.steering_axis[1];
-                }
-            }
-            if n.name.eq_ignore_ascii_case("SwingArm") {
-                local = mul(&local, &rotation(0, compression[1] / 2.));
-            }
-            for (wheel, &index) in self.wheels.iter().enumerate() {
-                if i == index {
-                    local = mul(&local, &rotation(0, angles[wheel]));
-                }
-            }
-            world.push(if n.parent >= 0 {
-                mul(&world[n.parent as usize], &local)
-            } else {
-                local
-            });
-        }
-        world
+        posed(
+            &self.mesh,
+            self.steering_axis,
+            self.wheels,
+            steering,
+            angles,
+            compression,
+        )
     }
     pub fn rider_pose(&self, name: &str, time: f32) -> Result<Vec<M>> {
         let motion = self
