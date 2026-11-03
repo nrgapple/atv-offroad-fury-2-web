@@ -775,7 +775,39 @@ overflows it; within the device's texture limit) instead of being rebuilt.
 Host Chromium x4, Select Track: labels rasterized per open about 1,000 -> 7;
 Back/open transition 12 -> 63 fps, engine callback p95 273 -> 18 ms, longest
 task 308 -> 231 ms (busy 0.96 -> 0.49). List scrolling (callback p50 7 ms,
-p95 30 ms at x4) and the garage slide-in (150 ms) remain.
+p95 30 ms at x4; see "List glides without relayout") and the garage slide-in
+(150 ms) remain.
+
+### List glides without relayout (follow-up, #468)
+
+Measured before changing anything: on Select Track each frame of a list glide
+laid out the whole page again (about 18 ms at x4) only because the scroll offset
+is part of the page's cache key, and uploaded all 268 instances, most of them
+cards scrolled out of view. A new offset now moves the laid-out items and hit
+boxes of the scrolled element (`layout::ScrollSpan`), and `Renderer::prepare`
+skips items outside the current clip, so rows out of view cost no instance or
+rasterized label. Off-clip items were never visible, so nothing drawn changes.
+`pageLayouts` in `?uiDiagnostics=1` counts full layouts.
+
+Host Chromium x4 emulation (Apple M4, 390x844 DPR 3 touch, `?uiDiagnostics=1`,
+3 runs each, same day, not vsync-locked; physical phones not measured). The long
+tasks count over a burst of 10 steps (6 at 2 steps/s, 10 keys on Championships):
+
+| Select Track | Before | After |
+| --- | --- | --- |
+| Glide frame prepare p50, 2 steps/s | 20-22 ms | 7-8 ms |
+| Long tasks, 2 steps/s | 2, 1, 0 | 0, 0, 0 |
+| Long tasks, 10 taps/s | 6, 10, 6 | 0, 0, 1 |
+| Long tasks, first 10 keys/s after opening | 8, 9, 10 | 10, 7, 10 |
+| Instances drawn | 268 | 94 |
+| Labels rasterized by the end of that key burst | ~725 | ~285 |
+
+Championships, 10 keys: long tasks 3, 2 -> 1, 1. The first key burst is not
+reliably better: it varies widely on this shared host (a later single run gave 2
+long tasks, then 0 on a second burst), and the atlas can now grow during it
+(62 ms upload, once) rather than on opening. A selection step itself still
+costs a real layout (about 19 ms at x4) and upload (about 11 ms), plus the course
+artwork's two upload frames (13-23 ms each); those are what remain.
 
 ### Terrain mip chains on the decode workers (follow-up)
 
