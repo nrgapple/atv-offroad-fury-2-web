@@ -97,6 +97,28 @@ pub(crate) async fn archive(content: &Content, path: &str) -> Result<Vec<u8>> {
     Ok(bytes)
 }
 
+/// A block-compressed archive with every block already inflated, on a decode
+/// worker (or read from the cache `archive` shares) so that reading its
+/// members costs the page's thread no inflating: the garage's vehicle
+/// archives. Falls back to the original file, which reads the same members.
+pub async fn expanded_archive(content: &Content, path: &str) -> Result<Vec<u8>> {
+    let key = expanded_key(content, &[path]);
+    if let Some(bytes) = cached_expanded(key.as_deref()).await {
+        return Ok(bytes);
+    }
+    let bytes = content.file(path).await?;
+    if !Resource::parse(&bytes)?.compressed {
+        return Ok(bytes);
+    }
+    let Ok(expanded) = crate::offload::uncached(crate::offload::EXPAND, 0, &bytes).await else {
+        return Ok(bytes);
+    };
+    if let Some(key) = key.filter(|key| atv_content::decoded::claim(key)) {
+        atv_content::decoded::put(&key, &expanded);
+    }
+    Ok(expanded)
+}
+
 /// The expanded archive stored under `key`, when it parses as one.
 async fn cached_expanded(key: Option<&str>) -> Option<Vec<u8>> {
     let bytes = atv_content::decoded::get(key?).await?;

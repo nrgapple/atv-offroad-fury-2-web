@@ -896,3 +896,32 @@ Remaining second-load work is conversion the cache does not yet cover:
 sky-tile mip chains at upload (`atv_render::sky`), scene text parsing,
 model-texture decodes in `materials`/`ride::textures` (main thread) and mesh
 packets, plus shader compiles and uploads. Those are the next candidates.
+
+## Garage vehicle load (Rust engine, web, host x4 emulation, 2026-11-03)
+
+Issue #469. Host Chromium with x4 CPU throttle, 390x844 DPR 3, touch; a settled
+step to a new vehicle in a fresh browser context, three or four steps each.
+Emulation only: these are not physical-phone results.
+
+| Per settled step | Motorcycle before | Motorcycle after | ATV before | ATV after |
+| --- | --- | --- | --- | --- |
+| Slowest long task | 506-546 ms | 130-164 ms | 55-126 ms | 63-65 ms |
+| All long tasks | 724-812 ms | 164-193 ms | 55-126 ms | 63-115 ms |
+| Tap to rider or vehicle built | 944-1199 ms | 563-704 ms | 356-548 ms | 375-424 ms |
+
+Phase timing of the motorcycle before: about 130 ms for the riding `.mot` members,
+130 ms for the catalog motions and 38 ms for configs the menu never uses; 70-120 ms
+for each of the bike's and rider's textures; about 45 ms for each preview build.
+
+- `motorcycle::Selection` loads the meshes, rest pose and four selection clips only.
+- `ride::load::expanded_archive` inflates the archive as a job and shares the ride's
+  cache of expanded archives; `ride::textures::load_jobs` decodes the PSTs as jobs.
+  Both give the same result as the full loaders
+  (`crates/atv-game/tests/garage_vehicle_load.rs`).
+- At most one preview builds a frame, and a build no longer copies its texture set.
+
+Still open: the vehicle's preview build takes about 110 ms in the frame right after a
+load and about 47 ms when the same model is rebuilt later; the extra time is not
+explained yet. An ATV's slowest task is still its preview build. A separate 500-600 ms
+task follows the first tap in a fresh browser process, before any vehicle load, and
+this change does not touch it.
