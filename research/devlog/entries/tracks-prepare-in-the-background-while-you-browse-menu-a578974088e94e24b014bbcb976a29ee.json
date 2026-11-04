@@ -1,0 +1,14 @@
+{
+  "id": "tracks-prepare-in-the-background-while-you-browse-menu-a578974088e94e24b014bbcb976a29ee",
+  "timestamp": "2026-11-04T17:34:13.247674+00:00",
+  "recorded_at": "2026-11-04T17:57:18.907344+00:00",
+  "kind": "build",
+  "title": "Tracks prepare in the background while you browse menus",
+  "summary": "When Select Track, the race setup, a Single Player row leading to either, or a Championship row rests on a course for 800 ms, the game now prepares that course in the background (PR #513, issue #453). It downloads the course at low priority and decodes it on workers into the decoded-course cache. A selection change or Start supersedes the preparation, only one course is prepared at a time, and this is web only.",
+  "details": [
+    "Limits: preloading is refused with data saver on, on 3g or slower connections, and on devices reporting 2 GB of memory or less. At most 6 courses are prepared from scratch per page, and 1 on cellular. Host measurements (M4, headless Chromium, local server, ENV01; not phone measurements): load takes 1.81-1.88 s cold with no preload and 1.01-1.05 s after preload. Key press to ride takes 1.97-2.48 s without preload versus 1.18-1.22 s with it. With a x4 CPU throttle, load takes 5.50-5.62 s versus 3.91-4.01 s. Tested locally; production verification follows the deploy."
+  ],
+  "limitation": "The sound bank, race CPU vehicles, Freestyle objective and mini-game overlays are not preloaded. Safari and Firefox do not report memory or connection type, so only the cache budget applies there. No phone measurement yet.",
+  "image": "/devlog-images/tracks-prepare-in-the-background-while-you-browse-menu-a578974088e94e24b014bbcb976a29ee.png",
+  "caption": "The Select Track menu; the preload has no visible UI."
+}
