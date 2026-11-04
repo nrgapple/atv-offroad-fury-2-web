@@ -890,6 +890,8 @@ struct App {
     /// A room kept live while the frontend's garage or course picker is open
     /// over it (Change ATV and Rider, Select Track).
     held_room: Option<multiplayer::Net>,
+    /// Prepares the course the menus have settled on (issue #453).
+    preload: atv_game::preload::Preloader,
     /// The held room's ride, riding on with neutral input behind the
     /// frontend: its presence keeps going out until the ride reloads.
     held_ride: Option<atv_game::ride::Ride>,
@@ -7572,6 +7574,49 @@ impl App {
 
     /// The ride's world setup and the room's view of it, from the saved
     /// settings (Display → Graphics, crash mode, Garage appearance).
+    /// Tells the preload which course the menus show (a frame's check is a
+    /// comparison; it acts only when the selection changed). A room or a
+    /// ride in the background owns the machine: nothing prepares then.
+    fn follow_menu_course(&mut self, front: &Rc<RefCell<front::Front>>) {
+        let Some(content) = self.content.clone() else {
+            return;
+        };
+        let idle = self.ready.is_none()
+            && self.held_room.is_none()
+            && self.pending_room.is_none()
+            && self.joined.is_none();
+        let f = front.borrow();
+        let wanted = idle.then(|| f.state.next_course()).flatten();
+        let (quad, rider) = (f.state.quad_id, f.state.rider_id);
+        if self.preload.follows(wanted, quad, rider) {
+            return;
+        }
+        let target = wanted.map(|(course, racing)| atv_game::preload::Target {
+            course: course.to_string(),
+            racing,
+            quad,
+            rider,
+            sky_smooth: false,
+        });
+        drop(f);
+        let target = target.map(|mut target| {
+            target.sky_smooth = self.ride_graphics(front).sky_smooth;
+            target
+        });
+        self.preload.follow(target, preload_device(), &content);
+    }
+
+    fn ride_graphics(&self, front: &Rc<RefCell<front::Front>>) -> Graphics {
+        if self.defaults.as_ref().is_some_and(|d| d.graphics_set) {
+            self.defaults
+                .as_ref()
+                .map_or_else(Graphics::default, |d| d.graphics)
+        } else {
+            let saved = front.borrow().settings.get("atv-graphics");
+            graphics_preset(&resolve_graphics(saved.as_deref()))
+        }
+    }
+
     fn ride_setup(
         &self,
         front: &Rc<RefCell<front::Front>>,
@@ -7579,19 +7624,14 @@ impl App {
         rider: u16,
         race: Option<atv_game::ride::race::Settings>,
     ) -> (World, multiplayer::RoomRide) {
-        let (graphics, weather, sound, default_crash) = self
+        let (weather, sound, default_crash) = self
             .defaults
             .as_ref()
-            .map_or((Graphics::default(), None, None, Default::default()), |d| {
-                (d.graphics, d.weather, d.sound, d.crash)
+            .map_or((None, None, Default::default()), |d| {
+                (d.weather, d.sound, d.crash)
             });
         // Display → Graphics as saved (Auto: graphics.js detectGraphicsTier).
-        let graphics = if self.defaults.as_ref().is_some_and(|d| d.graphics_set) {
-            graphics
-        } else {
-            let saved = front.borrow().settings.get("atv-graphics");
-            graphics_preset(&resolve_graphics(saved.as_deref()))
-        };
+        let graphics = self.ride_graphics(front);
         // Audio → Sound as saved (audio.js loadAudioSettings: Enhanced unless
         // Original was chosen); music on or off keeps the launch choice.
         let sound = sound.map(|(_, music)| {
@@ -7691,6 +7731,8 @@ impl App {
         let (Some(front), Some(content)) = (self.front.clone(), self.content.clone()) else {
             return;
         };
+        // The load takes over from here (its own results fill the cache).
+        self.preload.stop();
         // A race course id names the venue and which of its races
         // (`env05ends` is Prospect Springs' short Enduro).
         let (environment, race) = match (race, atv_game::launch::split_race_course(&environment)) {
@@ -8311,6 +8353,7 @@ impl App {
         let wants = f.wants();
         let page = f.state.page.clone();
         drop(f);
+        self.follow_menu_course(&front);
         self.sync_shell(Some(&page));
         self.sync_menu_music();
         // The filled lobby page has been drawn: load the room's course.
@@ -8693,6 +8736,42 @@ pub fn resolve_graphics(saved: Option<&str>) -> String {
         Some(p @ ("original" | "enhanced" | "high")) => p.into(),
         _ => detect_graphics_tier().into(),
     }
+}
+
+/// What the browser reports about memory and the connection (the preload's
+/// limits); nothing on desktop, where the preload is off.
+fn preload_device() -> atv_game::preload::Device {
+    #[cfg(target_arch = "wasm32")]
+    {
+        let get = |value: &wasm_bindgen::JsValue, key: &str| {
+            js_sys::Reflect::get(value, &key.into())
+                .ok()
+                .filter(|v| !v.is_undefined() && !v.is_null())
+        };
+        let Some(nav) = web_sys::window().map(|w| w.navigator()) else {
+            return Default::default();
+        };
+        let connection = get(&nav, "connection");
+        let text = |key: &str| {
+            connection
+                .as_ref()
+                .and_then(|c| get(c, key))
+                .and_then(|v| v.as_string())
+        };
+        atv_game::preload::Device {
+            save_data: connection
+                .as_ref()
+                .and_then(|c| get(c, "saveData"))
+                .and_then(|v| v.as_bool())
+                == Some(true),
+            slow: text("effectiveType")
+                .is_some_and(|t| matches!(t.as_str(), "slow-2g" | "2g" | "3g")),
+            metered: text("type").as_deref() == Some("cellular"),
+            memory: get(&nav, "deviceMemory").and_then(|v| v.as_f64()),
+        }
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    atv_game::preload::Device::default()
 }
 
 /// graphics.js `detectGraphicsTier`: phones, tablets, touch-primary and
@@ -9518,6 +9597,10 @@ pub fn run(options: Options) {
         requested: HashSet::new(),
         riders_polled: None,
         held_room: None,
+        preload: atv_game::preload::Preloader::new(
+            url_flag("preload=0"),
+            url_flag("uiDiagnostics=1"),
+        ),
         split_request: None,
         split_link: split_link_param(),
         held_ride: None,

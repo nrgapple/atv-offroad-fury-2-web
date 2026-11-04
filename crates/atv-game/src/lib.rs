@@ -16,6 +16,7 @@ pub mod lingering_dust;
 pub mod materials;
 pub mod multiplayer;
 pub mod offload;
+pub mod preload;
 pub mod ride;
 pub mod scenery;
 pub mod sky;

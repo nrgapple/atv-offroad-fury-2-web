@@ -29,6 +29,12 @@ pub const PST: u32 = 4;
 /// A block-compressed archive stored uncompressed
 /// (`atv_core::resource::Resource::expand`).
 pub const EXPAND: u32 = 5;
+/// A base archive and its overlay (`atv_core::resource::Resource::overlay`),
+/// given as one buffer whose first `arg` bytes are the base, expanded.
+pub const EXPAND_OVERLAY: u32 = 6;
+/// The sky cube file a scene names: its text and mode TOY as one buffer whose
+/// first `arg` bytes are the text (menu preload; scene parsing is slow).
+pub const SCENE_SKY: u32 = 7;
 
 /// Version of every job's output: bump it whenever a job's result for the
 /// same input changes (decoder, smoothing, mip filter, resampler, layout),
@@ -102,6 +108,22 @@ pub fn run(kind: u32, arg: u32, bytes: &[u8]) -> Result<Vec<u8>> {
             Ok(out)
         }
         EXPAND => atv_core::resource::Resource::parse(bytes)?.expand(),
+        EXPAND_OVERLAY => {
+            use atv_core::resource::Resource;
+            let (base, overlay) = bytes
+                .split_at_checked(arg as usize)
+                .ok_or("overlay job: short input")?;
+            let merged = Resource::overlay(&Resource::parse(base)?, &Resource::parse(overlay)?)?;
+            Resource::parse(&merged)?.expand()
+        }
+        SCENE_SKY => {
+            let (text, mode) = bytes
+                .split_at_checked(arg as usize)
+                .ok_or("sky job: short input")?;
+            let scene =
+                atv_core::scene::parse_with_start(text, (!mode.is_empty()).then_some(mode))?;
+            Ok(scene.cube_file.into_bytes())
+        }
         _ => atv_content::run_job(kind, arg, bytes)
             .unwrap_or_else(|| Err(format!("unknown decode job {kind}"))),
     }
@@ -255,6 +277,43 @@ pub async fn uncached(kind: u32, arg: u32, input: &[u8]) -> Result<Vec<u8>> {
         .ok_or_else(|| "missing decode result".into())
 }
 
+/// Whether jobs run off this thread (web: a pool that can start). Background
+/// work that must never run inline asks first.
+pub fn off_thread() -> bool {
+    #[cfg(target_arch = "wasm32")]
+    return atv_content::pool::available();
+    #[cfg(not(target_arch = "wasm32"))]
+    true
+}
+
+/// Produces and stores whichever of `inputs`' results the persistent cache
+/// lacks, without reading those it has, and returns all their keys (menu
+/// preload; [`many`] then reads them). Stops early when `live` turns false.
+pub async fn ensure(
+    kind: u32,
+    arg: u32,
+    inputs: &[&[u8]],
+    live: &dyn Fn() -> bool,
+) -> Result<Vec<String>> {
+    let keys: Vec<String> = inputs.iter().map(|i| job_key(kind, arg, i)).collect();
+    let missing: Vec<usize> = (0..inputs.len())
+        .filter(|&i| !atv_content::decoded::contains(&keys[i]))
+        .collect();
+    // A few at a time: a selection change waits for one batch at most.
+    for batch in missing.chunks(ENSURE_BATCH) {
+        if !live() {
+            break;
+        }
+        let sources: Vec<&[u8]> = batch.iter().map(|&i| inputs[i]).collect();
+        for (&i, out) in batch.iter().zip(compute(kind, arg, &sources).await?) {
+            atv_content::decoded::put_now(&keys[i], &out);
+        }
+    }
+    Ok(keys)
+}
+
+const ENSURE_BATCH: usize = 2;
+
 /// Starts the web pool ahead of the first job (a ride load), so its workers
 /// instantiate while the course downloads. No-op elsewhere.
 pub fn warm() {
@@ -372,6 +431,12 @@ mod tests {
             ),
             (2, 2, &pcm.data, pcm.loop_markers, 48000)
         );
+    }
+
+    #[test]
+    fn scene_sky_splits_its_input() {
+        assert!(run(SCENE_SKY, 100, b"short").is_err());
+        assert!(run(EXPAND_OVERLAY, 100, b"short").is_err());
     }
 
     #[test]

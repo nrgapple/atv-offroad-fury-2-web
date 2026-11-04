@@ -229,6 +229,35 @@ mod tests {
     }
 
     #[test]
+    fn next_course_names_what_start_would_load() {
+        let (mut front, view, mut settings) = front();
+        assert_eq!(front.next_course(), None, "the title knows no course");
+        open(&mut front, "main", &view, &mut settings);
+        open(&mut front, "single", &view, &mut settings);
+        front.race_courses = vec![front.race.course.clone()];
+        let course = front.race.course.clone();
+        select(&mut front, "race");
+        assert_eq!(front.next_course(), Some((course.as_str(), true)));
+        let track = front.tracks[front.track].id.clone();
+        select(&mut front, "tracks");
+        assert_eq!(front.next_course(), Some((track.as_str(), false)));
+        // A row that leads elsewhere names none.
+        select(&mut front, "garage");
+        assert_eq!(front.next_course(), None);
+        // Over a room the host's picker moves everyone: nothing prepares.
+        open(&mut front, "tracks", &view, &mut settings);
+        assert_eq!(front.next_course(), Some((track.as_str(), false)));
+        front.room = Some("tracks");
+        assert_eq!(front.next_course(), None);
+        front.room = None;
+        // A race course no longer offered cannot start.
+        front.show("race", &view);
+        assert_eq!(front.next_course(), Some((course.as_str(), true)));
+        front.race_courses.clear();
+        assert_eq!(front.next_course(), None);
+    }
+
+    #[test]
     fn back_returns_to_the_page_and_row_it_came_from() {
         let (mut front, view, mut settings) = front();
         open(&mut front, "main", &view, &mut settings);
