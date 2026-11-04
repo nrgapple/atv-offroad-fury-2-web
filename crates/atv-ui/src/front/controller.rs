@@ -1912,6 +1912,45 @@ impl Frontend {
         self.reveal = true;
     }
 
+    /// The course the next Start on this page would load, with whether it
+    /// is a race, when this page knows it and may start it (preload). A
+    /// locked course cannot start, so nothing prepares it.
+    pub fn next_course(&self) -> Option<(&str, bool)> {
+        let track = || {
+            let id = self.tracks.get(self.track)?.id.as_str();
+            self.freestyle_cost(id).is_none().then_some((id, false))
+        };
+        let race = || {
+            let id = self.race.course.as_str();
+            (self.race_courses.iter().any(|c| c == id) && self.race_course_cost(id).is_none())
+                .then_some((id, true))
+        };
+        match self.page.as_str() {
+            "tracks" if self.room.is_none() => track(),
+            "race" => race(),
+            // The row under the cursor leads straight to one of those.
+            "single" => match self.current()? {
+                "race" => race(),
+                "tracks" => track(),
+                _ => None,
+            },
+            "championship" => {
+                let key = self.current()?.strip_prefix("champ:")?;
+                let series = atv_core::championship::series(key)?;
+                let champ = &self.profile.championships;
+                if !champ.is_open(series, self.champ_expert) {
+                    return None;
+                }
+                let course = champ.next_course(series, self.champ_expert);
+                self.race_courses
+                    .iter()
+                    .any(|c| c == course)
+                    .then_some((course, true))
+            }
+            _ => None,
+        }
+    }
+
     /// Multiplayer garages (from its menus, or Change ATV and Rider over a
     /// room) list ATVs only (frontend.js `onlineGarage`).
     pub fn online_garage(&self) -> bool {

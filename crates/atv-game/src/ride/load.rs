@@ -60,10 +60,7 @@ pub(crate) async fn course_archive(
         return Err("Original race course archive is missing.".into());
     }
     // A course loaded before: its archive already expanded (web cache).
-    let paths: Vec<&str> = std::iter::once(course.archive.as_str())
-        .chain(course.overlay.as_deref())
-        .collect();
-    let key = expanded_key(content, &paths);
+    let key = course_key(content, course);
     if let Some(bytes) = cached_expanded(key.as_deref()).await {
         return Ok(bytes);
     }
@@ -119,8 +116,24 @@ pub async fn expanded_archive(content: &Content, path: &str) -> Result<Vec<u8>> 
     Ok(expanded)
 }
 
+/// The cache key of a course's expanded archive (its overlay included).
+pub(crate) fn course_key(
+    content: &Content,
+    course: &crate::launch::CourseResource,
+) -> Option<String> {
+    let paths: Vec<&str> = std::iter::once(course.archive.as_str())
+        .chain(course.overlay.as_deref())
+        .collect();
+    expanded_key(content, &paths)
+}
+
+/// The cache key of one archive's expanded copy.
+pub(crate) fn archive_key(content: &Content, path: &str) -> Option<String> {
+    expanded_key(content, &[path])
+}
+
 /// The expanded archive stored under `key`, when it parses as one.
-async fn cached_expanded(key: Option<&str>) -> Option<Vec<u8>> {
+pub(crate) async fn cached_expanded(key: Option<&str>) -> Option<Vec<u8>> {
     let bytes = atv_content::decoded::get(key?).await?;
     Resource::parse(&bytes)
         .is_ok_and(|r| !r.compressed)

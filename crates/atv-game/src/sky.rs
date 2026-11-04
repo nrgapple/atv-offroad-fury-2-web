@@ -16,8 +16,8 @@ pub struct Sky {
     pub tiles: Vec<Tile>,
 }
 
-pub async fn load(bytes: &[u8], smooth: bool) -> Result<Sky> {
-    let layout = sky::layout(bytes)?;
+/// The encoded tile images of a cube file, in its layout's order.
+pub(crate) fn tile_sources<'a>(bytes: &'a [u8], layout: &sky::Sky) -> Result<Vec<&'a [u8]>> {
     let mut sources = Vec::with_capacity(layout.tiles.len());
     for tile in &layout.tiles {
         sources.push(
@@ -26,6 +26,12 @@ pub async fn load(bytes: &[u8], smooth: bool) -> Result<Sky> {
                 .ok_or("sky tile exceeds cube")?,
         );
     }
+    Ok(sources)
+}
+
+pub async fn load(bytes: &[u8], smooth: bool) -> Result<Sky> {
+    let layout = sky::layout(bytes)?;
+    let sources = tile_sources(bytes, &layout)?;
     // The tiles (and their smoothing) decode in parallel off the page's
     // thread (offload.rs).
     let decoded = crate::offload::ipums(&sources, smooth).await?;

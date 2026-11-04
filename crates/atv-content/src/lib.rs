@@ -360,6 +360,25 @@ impl Content {
         let _ = (paths, low, head);
     }
 
+    /// Reads `path`'s chunks (only its first when `head`) into the recent
+    /// chunks at low fetch priority: a menu preload, which must not compete
+    /// with anything the player is doing. Stops early and returns false once
+    /// `live` does; a chunk already held is not requested again, and on the
+    /// web the browser's caches answer one it has kept.
+    pub async fn warm(&self, path: &str, head: bool, live: &dyn Fn() -> bool) -> Result<bool> {
+        let record = self.record_for(path)?;
+        let chunks = record.chunks();
+        let take = if head || record.lazy { 1 } else { chunks.len() };
+        self.prefetch(std::slice::from_ref(&path.to_string()), true, head);
+        for chunk in chunks.iter().take(take) {
+            if !live() {
+                return Ok(false);
+            }
+            self.chunk(chunk).await?;
+        }
+        Ok(live())
+    }
+
     /// Prefetched downloads not yet read (tests and diagnostics).
     pub fn prefetching(&self) -> usize {
         #[cfg(target_arch = "wasm32")]

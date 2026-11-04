@@ -184,6 +184,18 @@ impl Index {
         evicted
     }
 
+    /// Whether `incoming` more bytes fit under `limit` counting only entries
+    /// last used before `since` as replaceable.
+    fn room_for(&self, incoming: u64, limit: u64, since: f64) -> bool {
+        let recent: u64 = self
+            .entries
+            .iter()
+            .filter(|e| e.2 >= since)
+            .map(|e| e.1)
+            .sum();
+        recent + incoming <= limit
+    }
+
     fn to_json(&self) -> String {
         serde_json::json!({
             "namespace": self.namespace,
@@ -272,6 +284,18 @@ mod imp {
         vec![None; keys.len()]
     }
     pub fn put(_key: &str, _payload: &[u8]) {}
+    pub fn put_now(_key: &str, _payload: &[u8]) {}
+    pub fn contains(_key: &str) -> bool {
+        false
+    }
+    pub fn room_for(_bytes: u64) -> bool {
+        false
+    }
+    pub async fn sleep(_ms: i32) {}
+    pub fn hidden() -> bool {
+        false
+    }
+    pub fn publish(_name: &str, _json: &str) {}
     /// Whether a background job for `key` should start (never on desktop).
     pub fn claim(_key: &str) -> bool {
         false
@@ -337,6 +361,8 @@ mod imp {
         stats: Stats,
         /// Keys being written or produced in the background.
         claimed: HashSet<String>,
+        /// When this page opened the cache ([`room_for`]).
+        opened: f64,
         /// The last large hit, so a second read in the same load (the
         /// venue and the ride both open the course archive) is a copy.
         recent: Option<(String, std::rc::Rc<Vec<u8>>)>,
@@ -440,6 +466,7 @@ mod imp {
             let mut s = s.borrow_mut();
             s.index = index;
             s.on = true;
+            s.opened = now();
             s.limit = MAX_BYTES as u64;
             s.stats.enabled = true;
         });
@@ -634,6 +661,17 @@ mod imp {
     /// Stores `payload` under `key` in the background (the bytes are copied
     /// at once); the oldest entries make room. Errors only count.
     pub fn put(key: &str, payload: &[u8]) {
+        store(key, payload, false);
+    }
+
+    /// [`put`] for work done outside a load (a menu preload): the write
+    /// starts at once, so a Start moments later can already read it. It
+    /// still waits for a load that is running.
+    pub fn put_now(key: &str, payload: &[u8]) {
+        store(key, payload, true);
+    }
+
+    fn store(key: &str, payload: &[u8], immediate: bool) {
         if !enabled() || payload.len() > MAX_ENTRY {
             return;
         }
@@ -662,7 +700,9 @@ mod imp {
         wasm_bindgen_futures::spawn_local(async move {
             // Written once the load that produced it has finished, so the
             // transfer to storage does not compete with it.
-            quiet().await;
+            if !immediate || LOADS.with(|l| l.get()) > 0 {
+                quiet().await;
+            }
             let stored = async {
                 let cache = open().await?;
                 for old in &evicted {
@@ -705,6 +745,36 @@ mod imp {
         });
     }
 
+    /// Whether `key` is in the index (stored or being written).
+    pub fn contains(key: &str) -> bool {
+        STATE.with(|s| s.borrow().index.entries.iter().any(|e| e.0 == key))
+    }
+
+    /// Whether `bytes` more fit without evicting anything this page used:
+    /// a preload may replace an earlier visit's entries, never the course
+    /// the player just rode or looked at.
+    pub fn room_for(bytes: u64) -> bool {
+        STATE.with(|s| {
+            let s = s.borrow();
+            s.on && s.index.room_for(bytes, s.limit, s.opened)
+        })
+    }
+
+    /// Publishes a JSON diagnostic as `window.<name>` (browser tests).
+    pub fn publish(name: &str, json: &str) {
+        if let Some(window) = web_sys::window() {
+            let _ = js_sys::Reflect::set(&window, &name.into(), &json.into());
+        }
+    }
+
+    /// Whether the page is in the background.
+    pub fn hidden() -> bool {
+        web_sys::window()
+            .and_then(|w| js_sys::Reflect::get(&w, &"document".into()).ok())
+            .and_then(|d| js_sys::Reflect::get(&d, &"hidden".into()).ok())
+            .is_some_and(|v| v.as_bool() == Some(true))
+    }
+
     /// Claims a background production of `key` (an entry not stored and
     /// not already being produced); release by [`put`] or [`release`].
     pub fn claim(key: &str) -> bool {
@@ -726,7 +796,7 @@ mod imp {
     }
 
     /// Waits about `ms` milliseconds (background work after a load).
-    async fn sleep(ms: i32) {
+    pub async fn sleep(ms: i32) {
         let promise = js_sys::Promise::new(&mut |resolve, _| {
             if let Some(window) = web_sys::window() {
                 let _ = window.set_timeout_with_callback_and_timeout_and_arguments_0(&resolve, ms);
@@ -752,6 +822,20 @@ mod imp {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn preloads_replace_only_older_visits() {
+        let index = Index {
+            namespace: "n".into(),
+            entries: vec![("old".into(), 60, 1.), ("today".into(), 30, 10.)],
+        };
+        // The old visit's bytes may go, this page's may not.
+        assert!(index.room_for(70, 100, 5.));
+        assert!(!index.room_for(71, 100, 5.));
+        // With no older visit nothing is replaceable.
+        assert!(index.room_for(10, 100, 0.));
+        assert!(!index.room_for(11, 100, 0.));
+    }
 
     #[test]
     fn entries_round_trip_and_reject_damage() {

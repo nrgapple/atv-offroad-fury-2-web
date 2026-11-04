@@ -224,6 +224,22 @@ impl Default for WeatherChoice {
     }
 }
 
+/// The encoded terrain layer images of a TR2, in its layout's order.
+pub(crate) fn terrain_sources<'a>(
+    tr2: &'a [u8],
+    layout: &terrain::TerrainTextures,
+) -> Result<Vec<&'a [u8]>> {
+    let mut sources = Vec::with_capacity(layout.records.len());
+    for record in &layout.records {
+        let mip = record.mips.last().ok_or("terrain texture has no mip")?;
+        sources.push(
+            tr2.get(mip.offset..mip.offset + mip.bytes)
+                .ok_or("terrain texture exceeds archive")?,
+        );
+    }
+    Ok(sources)
+}
+
 pub async fn load(content: &Content, environment: &str, racing: bool) -> Result<Venue> {
     load_with(content, environment, racing, LoadOptions::default()).await
 }
@@ -484,14 +500,7 @@ pub async fn load_with(
 
     let layout = terrain::texture_layout(&tr2)?;
     // The layers decode in parallel off the page's thread (offload.rs).
-    let mut sources = Vec::with_capacity(layout.records.len());
-    for record in &layout.records {
-        let mip = record.mips.last().ok_or("terrain texture has no mip")?;
-        sources.push(
-            tr2.get(mip.offset..mip.offset + mip.bytes)
-                .ok_or("terrain texture exceeds archive")?,
-        );
-    }
+    let sources = terrain_sources(&tr2, &layout)?;
     let mut layers = Vec::with_capacity(layout.records.len());
     let mut layer_mips = Vec::with_capacity(layout.records.len());
     for (record, image) in layout

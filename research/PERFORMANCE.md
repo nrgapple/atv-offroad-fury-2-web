@@ -897,6 +897,59 @@ sky-tile mip chains at upload (`atv_render::sky`), scene text parsing,
 model-texture decodes in `materials`/`ride::textures` (main thread) and mesh
 packets, plus shader compiles and uploads. Those are the next candidates.
 
+## Menu course preload (Rust engine, web, host, 2026-11-04)
+
+Issue #453: while the menus rest on a course, prepare it so Start is faster.
+All numbers are **host** measurements (Apple M4, headless Playwright Chromium,
+1280x720, local `tools/serve_web.py`, ENV01, a fresh browser context each run);
+none is a physical-phone result. x4 is CDP CPU throttling, which does not slow
+the decode workers, so it understates a phone's worker cost.
+
+`atv_game::preload` follows `Frontend::next_course`: Select Track, the race
+setup, the Single Player row leading to either, and the Championship row's next
+round. After the selection has rested for 800 ms it downloads the archives at
+low fetch priority and fills the decoded cache of #452 (expanded course and
+rider archives, terrain layers with mips, sky tiles). Limits:
+
+- a selection change, leaving the page or Start abandons the run at its next
+  step; a new run waits for the last job of the abandoned one, so one course
+  runs at a time. Job batches are two images, so an abandoned run ends quickly.
+- inflating, decoding and scene parsing run on the workers; with no worker pool
+  it does not run. A hidden page waits.
+- it refuses `saveData`, an `effectiveType` of 3g or slower and `deviceMemory`
+  of 2 GB or less. A page prepares at most 6 courses from scratch, 1 on a
+  cellular `connection.type`. These report nothing on Safari and Firefox, where
+  no limit but the cache budget applies.
+- it evicts only entries from earlier visits, never ones this page used, so
+  browsing cannot push out the course just ridden. A course that does not fit
+  is skipped.
+- a finished course leaves a marker listing its entries; if they are all still
+  stored, returning to it reads and downloads nothing but the small player files.
+- desktop has no decoded cache, so the preload is a no-op there and its load
+  path is unchanged. `?preload=0` turns it off.
+
+Start, ENV01, local server (so little network time is included):
+
+| | no preload, cold | after a preload |
+| --- | --- | --- |
+| Load, unthrottled | 1.81-1.88 s | 1.01-1.05 s (-44%) |
+| Key press to ride, unthrottled | 1.97-2.48 s | 1.18-1.22 s |
+| Load, x4 CPU throttle | 5.50-5.62 s | 3.91-4.01 s (-29%) |
+
+The preload itself took about 1.5 s (2.5-3.1 s at x4). The page's long tasks in
+that window are the menu's own start-up art except for two it adds, 50-74 ms at
+x4; unthrottled it adds none over 50 ms. `tools/test_engine_menu_preload.mjs`
+repeats the comparison and fails on a long task of 100 ms or more during a run.
+
+Not preloaded: the ride's sound bank (79 decode jobs, which load while the ride
+draws and are cached by the first ride), race CPU vehicles (their roster is drawn
+at Start), and Freestyle objective or mini-game overlays. What remains of a load
+after a preload is the conversion and GPU work listed above, which needs the
+window. The load after a preload is about 0.2 s slower than the same course's
+later visit through `?venue=` (0.80 s); the cause was not investigated.
+Production's cold first load also spends time downloading, which the preload
+removes; that gain is not in this table.
+
 ## Garage vehicle load (Rust engine, web, host x4 emulation, 2026-11-03)
 
 Issue #469. Host Chromium with x4 CPU throttle, 390x844 DPR 3, touch; a settled
