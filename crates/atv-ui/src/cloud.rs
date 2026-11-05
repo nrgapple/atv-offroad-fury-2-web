@@ -105,7 +105,9 @@ pub fn link(origin: &str, code: &str) -> String {
 pub fn link_code(fragment: &str) -> Option<(bool, String)> {
     let fragment = fragment.trim_start_matches('#');
     for part in fragment.split('&') {
-        let (name, value) = part.split_once('=')?;
+        let Some((name, value)) = part.split_once('=') else {
+            continue;
+        };
         match name {
             "key" => return cloud_save::normalize_key(value).map(|k| (false, k)),
             "share" => return cloud_save::normalize_share(value).map(|c| (true, c)),
@@ -1409,6 +1411,19 @@ mod tests {
         a.settle(&mut server);
         assert_eq!(server.saves[&key].0, 2);
         assert_eq!(a.sync.status, Status::Saved);
+    }
+
+    #[test]
+    fn save_links_ignore_unrelated_fragment_flags() {
+        let key = "FURY-28T5-CY4T-QKFF-03ZD";
+        assert_eq!(
+            link_code(&format!("#debug&key={key}")),
+            Some((false, key.into()))
+        );
+        assert_eq!(
+            link_code("#&debug&share=SHARE-AAAA-BBBB-CCCC-0000"),
+            Some((true, "SHARE-AAAA-BBBB-CCCC-0000".into()))
+        );
     }
 
     #[test]

@@ -139,7 +139,7 @@ pub fn normalize(text: &str, prefix: &str) -> Option<String> {
             'I' | 'L' => '1',
             c => c,
         };
-        if !ALPHABET.contains(&(c as u8)) {
+        if !c.is_ascii() || !ALPHABET.contains(&(c as u8)) {
             return None;
         }
         out.push(c);
@@ -696,6 +696,14 @@ mod tests {
             let s = symbols(bytes);
             assert_eq!(s.chars().filter(|c| *c != '0').count(), 1, "bit {bit}");
         }
+    }
+
+    #[test]
+    fn key_normalization_rejects_unicode_byte_aliases() {
+        // U+0130 is two UTF-8 bytes but truncates to ASCII '0' as u8.
+        let invalid = "İ".repeat(8);
+        assert_eq!(normalize_key(&invalid), None);
+        assert_eq!(normalize_share(&invalid), None);
     }
 
     #[test]
