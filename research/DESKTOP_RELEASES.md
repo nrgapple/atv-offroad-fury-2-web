@@ -244,6 +244,18 @@ and SSD output writes after Xcode was approved. Existing releases were not resta
 After an Xcode upgrade or interpreter relocation, rerun the installer from the intended
 Python runtime. The `@PYTHON@` template placeholder is filled by the installer.
 
+### Privacy approval does not reach ad-hoc-signed tools (#519)
+
+Reproduced on 2026-11-04. Under this LaunchAgent, Python, `git`, `pwd` and `rustc` work on the
+SSD, but ad-hoc-signed tools (`cargo`, `tmux`, `node`) never return from `getcwd`; `cargo` works
+from the home folder. Launching through `/bin/sh` or `tmux` instead of Python hangs the same way.
+The same `cargo` works from the Remote Control bridge, whose process is the signed Claude Code
+binary. The cause is probably macOS privacy attribution; the logs are redacted, so this is not
+proven. Granting each binary would not scale, because build scripts are new ad-hoc binaries.
+
+The watcher now fails its preflight when Cargo does not start within a minute, so a blocked
+release records a failure and frees the host lease. It does not make those builds succeed.
+
 The job needs the SSD, Docker (Colima running), `gh` signed in and the private content
 package (`private/reports/hosted-content` in the shared checkout) when it fires; a pass
 that finds one missing records a failure and notifies. The Mac must be awake, so a due release

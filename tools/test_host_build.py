@@ -199,13 +199,22 @@ class ReleaseTests(unittest.TestCase):
             content = root / 'private/reports/hosted-content'
             content.mkdir(parents=True)
             (content / 'manifest.json').write_text('{}')
-            with patch.object(watcher.sys, 'platform', 'darwin'), patch.object(watcher.subprocess, 'check_output', return_value=data), \
+            with patch.object(watcher.sys, 'platform', 'darwin'), patch.object(watcher, 'probe_tools'), \
+                 patch.object(watcher.subprocess, 'check_output', return_value=data), \
                  patch.object(watcher, 'OUT_ROOT', root / 'out'), patch.object(watcher, 'WORKTREES', root / 'trees'):
                 watcher.preflight(root)
             bad = plistlib.dumps({'MountPoint': '/Volumes/External SSD', 'VolumeUUID': 'wrong'})
             with patch.object(watcher.sys, 'platform', 'darwin'), patch.object(watcher.subprocess, 'check_output', return_value=bad):
                 with self.assertRaises(OSError):
                     watcher.preflight(root)
+
+    def test_storage_preflight_reports_a_tool_blocked_on_the_ssd(self):
+        hung = watcher.subprocess.TimeoutExpired(['cargo', '--version'], 60)
+        with patch.object(watcher.subprocess, 'run', side_effect=hung) as run, \
+                self.assertRaisesRegex(OSError, 'Cargo did not start'):
+            watcher.probe_tools()
+        self.assertEqual(run.call_args.kwargs['timeout'], watcher.TOOL_PROBE_SECONDS)
+        self.assertEqual(run.call_args.kwargs['cwd'], watcher.WORKTREES)
 
     def test_corrupt_state_fails_closed(self):
         with tempfile.TemporaryDirectory() as tmp:
