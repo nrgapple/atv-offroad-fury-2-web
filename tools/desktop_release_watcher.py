@@ -44,6 +44,7 @@ RELEASE_PATHS = ('crates', 'third_party', 'Cargo.toml', 'Cargo.lock', 'tools/bui
                  'web/fury-app-icons.json')
 KEEP_BUILDS = 3
 AUTO_RELEASE_HOURS = 7 * 24
+TOOL_PROBE_SECONDS = 60
 
 
 def git(repo, *args):
@@ -143,6 +144,23 @@ def preflight(repo):
             stream.write(b'preflight')
             stream.flush()
             os.fsync(stream.fileno())
+    if sys.platform == 'darwin':
+        probe_tools()
+
+
+def probe_tools():
+    """Start Cargo on the SSD with a time limit, while the host lease can still be given back.
+
+    Python reaching the SSD does not prove its tools can: under launchd macOS can leave
+    ad-hoc-signed binaries such as Cargo blocked forever in getcwd there, holding the lease
+    and stopping every other local build (#519).
+    """
+    try:
+        subprocess.run(['cargo', '--version'], cwd=WORKTREES, check=True, capture_output=True,
+                       timeout=TOOL_PROBE_SECONDS)
+    except subprocess.TimeoutExpired as e:
+        raise OSError(f'Cargo did not start on the SSD within {TOOL_PROBE_SECONDS} s; '
+                      'see "Privacy approval" in research/DESKTOP_RELEASES.md') from e
 
 
 def notify(message):

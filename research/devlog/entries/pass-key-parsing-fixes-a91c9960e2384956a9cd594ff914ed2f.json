@@ -1,0 +1,12 @@
+{
+  "id": "pass-key-parsing-fixes-a91c9960e2384956a9cd594ff914ed2f",
+  "timestamp": "2026-11-05T06:14:22.553785+00:00",
+  "recorded_at": "2026-11-05T06:14:22.553785+00:00",
+  "kind": "issue",
+  "title": "Pass Key parsing fixes",
+  "summary": "Fixes two Pass Key parsing failures: unrelated bare fragment components no longer abort lookup of a later valid key, and Unicode characters are no longer truncated to bytes during key normalization.",
+  "details": [
+    "The cloud link parser previously stopped at an unrelated bare fragment component, so a valid later #...&key= value could not load. Key normalization previously cast Unicode chars to u8, allowing eight U+0130 characters (16 UTF-8 bytes) to pass a 16-byte length check as an invalid key. Local formatting, repository hygiene, checkpoint metadata validation, and secret scan passed. Local Cargo tests and Clippy are deferred because the shared build slot remains held; Rust test execution is pending required GitHub PR CI, which will validate tests and Clippy before auto-merge and automatic deployment."
+  ],
+  "limitation": "No physical-device verification. Rust test execution and Clippy validation are pending required GitHub PR CI; automatic deployment follows merge and has not been confirmed for this checkpoint. No gameplay visual changes or screenshots; this checkpoint covers Pass Key parsing only."
+}
