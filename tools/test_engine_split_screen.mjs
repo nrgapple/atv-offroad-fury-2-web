@@ -248,6 +248,11 @@ try {
       await nextFrames(page, 3);
       await page.evaluate(() => { window.padButton(1, 4, 0); window.padButton(1, 5, 0); });
     }, r => r.splitResetFades[0], 'player 2');
+    // Issue #508: player 2's Freestyle Reset returns to its own slot, ten feet
+    // beside player 1's, not to the scene start player 1 uses.
+    s = await split(page);
+    assert.ok(distance(start2, s.player2.origin) < 4 && distance(start1, s.player2.origin) > 5,
+      `player 2 resets to its own slot: ${JSON.stringify([start1, start2, s.player2.origin])}`);
     // Issue #502: L1+R1 with pad 2's trigger still held, then release it: the
     // reset latches nothing, and the arrow keys drive player 2 within a few
     // frames. Sampled at once, not after a long hold: a rider that climbs the
