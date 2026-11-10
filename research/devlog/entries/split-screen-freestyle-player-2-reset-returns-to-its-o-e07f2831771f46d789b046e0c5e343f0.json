@@ -1,0 +1,14 @@
+{
+  "id": "split-screen-freestyle-player-2-reset-returns-to-its-o-e07f2831771f46d789b046e0c5e343f0",
+  "timestamp": "2026-11-10T00:02:42.193453+00:00",
+  "recorded_at": "2026-11-10T00:09:39.034997+00:00",
+  "kind": "build",
+  "title": "Split-screen Freestyle: player 2 Reset returns to its own start",
+  "summary": "In split-screen Freestyle, player 2's Reset used to send player 2 back to player 1's start point. It now returns player 2 to its own start slot, ten feet beside player 1. Races are unchanged.",
+  "details": [
+    "Confirmed in the browser before the fix: after Reset, player 2 sat about 0.1 ft from player 1's start. Second::load now records player 2's own slot as its reset start through a new Ride::set_start_pose. PR #524, closes #508. Verification: test_engine_split_screen.mjs failed before the change and passes after (one known #491 flake on the first run); make precheck passes."
+  ],
+  "limitation": "The original game's split-screen start slots were not traced, so the ten-foot slot is a port choice. No unit test, because the check needs game content. Host-only; not checked on a phone. The screenshot shows both riders in split Freestyle, not the reset moment.",
+  "image": "/devlog-images/split-screen-freestyle-player-2-reset-returns-to-its-o-e07f2831771f46d789b046e0c5e343f0.png",
+  "caption": "Split-screen Freestyle with both riders on the course (not the reset moment)"
+}
