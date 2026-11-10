@@ -1,0 +1,16 @@
+{
+  "id": "kid-mode-hold-go-and-the-race-driver-rides-your-quad-3c990682dfb74da8818ce2069d816026",
+  "timestamp": "2026-11-10T00:46:49.547812+00:00",
+  "recorded_at": "2026-11-10T01:02:03.650325+00:00",
+  "kind": "build",
+  "title": "Kid Mode: hold GO and the race driver rides your quad",
+  "summary": "Single Race Difficulty now cycles Normal, Expert, Kid. Kid is a one-player Single Race choice; race links and hosted rooms turn it into Normal. In a Kid race, holding GO lets the race path driver ride the player's quad (steering, lean, throttle, brake and now the CPUs' tricks); releasing GO turns the driver off and brakes fully. GO is any touch except the toolbar, Space/Up/W/Enter, or a gamepad's A button or right trigger. On touch the normal controls are hidden and a single GO disc appears only under a finger.",
+  "details": [
+    "The CPUs race at Normal: the exact build has no easier CPU setting, because Easy and Normal share AI options and only Expert drops AI flag 0x400.",
+    "Kid races record no Hall of Fame or personal records and give no Profile Points.",
+    "Verification: unit tests plus the browser test tools/test_engine_race_kid.mjs on a phone-size touch screen (issue #526, PR #528). Host-verified; no physical phone or controller run."
+  ],
+  "limitation": "Kid is a non-original enhancement. A motorcycle ride does no tricks. There is no Kid in Freestyle or other courseless rides.",
+  "image": "/devlog-images/kid-mode-hold-go-and-the-race-driver-rides-your-quad-3c990682dfb74da8818ce2069d816026.png",
+  "caption": "Kid race with GO held on a phone-size touch screen: the single GO disc under the finger, normal controls hidden"
+}
