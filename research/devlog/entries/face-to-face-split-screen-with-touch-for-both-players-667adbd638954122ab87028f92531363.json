@@ -1,0 +1,22 @@
+{
+  "id": "face-to-face-split-screen-with-touch-for-both-players-667adbd638954122ab87028f92531363",
+  "timestamp": "2026-11-10T03:11:59.130008+00:00",
+  "recorded_at": "2026-11-10T03:12:38.819929+00:00",
+  "kind": "build",
+  "title": "Face to Face split screen with touch for both players",
+  "summary": "Two players can now share a phone or tablet lying flat between them. Split Screen's Screen row adds Face to Face (top half turned upside down for the player across the table) and Face to Face, Ends (each half turned a quarter toward its end). The 3D view, speedometer, race radar, start lamps, name tags and touch controls of each half face their own player. Every split player now has their own touch controls in their own half, so both can drive at once (one finger each one-handed, two each with the two-finger layout). Links: ?split=fh and ?split=fv. Issue #533, PR #534.",
+  "details": [
+    "Verification: unit tests cover the view-frame mapping, the clip-space turn, the seats and the menu row. New browser test tools/test_engine_split_facing.mjs loads both seatings on an 844x390 touch viewport in host Chromium, holds one finger in each half, and checks both riders throttle, move about 50 ft and steer toward their own right. Existing split-screen, split games, split tag and four-player browser tests pass; the four-player test timed out once and passed on rerun after players 2-4 were limited to touch input from their first touch."
+  ],
+  "limitation": "Host Chromium with synthetic touches only; not tested on a physical phone or tablet. Whether the device keeps its orientation while lying flat depends on its rotation lock. The Pause/Camera toolbar and menus stay upright for the screen, not for either player.",
+  "images": [
+    {
+      "path": "/devlog-images/face-to-face-split-screen-with-touch-for-both-players-667adbd638954122ab87028f92531363.png",
+      "caption": "Face to Face: player 1 upright on the bottom half, player 2 upside down on the top half, both holding a touch compass."
+    },
+    {
+      "path": "/devlog-images/face-to-face-split-screen-with-touch-for-both-players-667adbd638954122ab87028f92531363-2.png",
+      "caption": "Face to Face, Ends: left half turned toward the left edge, right half toward the right edge, each with its own touch compass."
+    }
+  ]
+}
