@@ -21,7 +21,7 @@ pub mod touch;
 pub mod transition;
 
 pub use color::{Color, Fill, Gradient};
-pub use paint::{BoxPaint, BoxShadow, DisplayList, ImageId, Item, Rect};
+pub use paint::{BoxPaint, BoxShadow, DisplayList, Frame, ImageId, Item, Rect};
 pub use render::Renderer;
 pub use text::{Font, Fonts, Shape, TextStyle};
 

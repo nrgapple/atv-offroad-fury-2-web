@@ -434,6 +434,10 @@ fn targets(
 pub struct View {
     pub camera: Camera,
     pub focal_length: f32,
+    /// Clockwise quarter turns of the image in its rectangle (split
+    /// screen's Face to Face seating, `atv_ui::paint::Frame`): odd turns
+    /// project at the rectangle's transposed aspect.
+    pub turns: u8,
 }
 
 /// A split-screen view's rectangle of the frame (surface pixels), and
@@ -1794,12 +1798,19 @@ impl SceneRenderer {
         depth: &wgpu::TextureView,
         region: Option<Region>,
     ) -> (wgpu::CommandEncoder, FrameStats) {
-        let aspect = size.0 as f32 / size.1 as f32;
+        let aspect = if view.turns % 2 == 1 {
+            size.1 as f32 / size.0 as f32
+        } else {
+            size.0 as f32 / size.1 as f32
+        };
         // 0012b360 applies the active fog end to the far clipping plane.
         // Whole objects are culled there; depth extends by the largest object.
-        let view_projection =
+        // A turned view turns clip space; its frustum culls the same.
+        let view_projection = camera::turn_clip(
             view.camera
-                .view_projection(aspect, view.focal_length, 1., self.depth_far);
+                .view_projection(aspect, view.focal_length, 1., self.depth_far),
+            view.turns,
+        );
         let cull = cull::planes(&view.camera.view_projection(
             aspect,
             view.focal_length,

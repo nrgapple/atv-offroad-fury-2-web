@@ -106,6 +106,25 @@ pub fn default_focal_length() -> f32 {
     1. / (std::f32::consts::PI / 6.).tan()
 }
 
+/// `matrix` with its clip space turned `turns` quarter turns clockwise on
+/// screen (column-major; NDC y up): the image of a view drawn for a player
+/// at another edge of the screen.
+pub fn turn_clip(matrix: [f32; 16], turns: u8) -> [f32; 16] {
+    let mut out = matrix;
+    for column in 0..4 {
+        let (x, y) = (matrix[column * 4], matrix[column * 4 + 1]);
+        let (tx, ty) = match turns % 4 {
+            1 => (y, -x),
+            2 => (-x, -y),
+            3 => (-y, x),
+            _ => (x, y),
+        };
+        out[column * 4] = tx;
+        out[column * 4 + 1] = ty;
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -144,6 +163,41 @@ mod tests {
                 p[2] / p[3]
             );
             assert!(p[0].abs() < 1e-3 && p[1].abs() < 1e-3);
+        }
+    }
+
+    #[test]
+    fn a_turned_view_draws_its_top_toward_its_player() {
+        let camera = Camera {
+            x: 0.,
+            y: 0.,
+            z: 0.,
+            yaw: 0.,
+            pitch: 0.,
+        };
+        let m = camera.view_projection(1., default_focal_length(), 1., 500.);
+        let a = camera.axes();
+        // A point above the view's centre: NDC straight up.
+        let p = |m: &[f32; 16]| {
+            let p = apply(
+                m,
+                [
+                    a.forward[0] * 50. + a.up[0] * 10.,
+                    a.forward[1] * 50. + a.up[1] * 10.,
+                    a.forward[2] * 50. + a.up[2] * 10.,
+                ],
+            );
+            [p[0] / p[3], p[1] / p[3]]
+        };
+        let up = p(&m)[1];
+        assert!(up > 0.1 && p(&m)[0].abs() < 1e-4);
+        // Clockwise: up goes right, down, then left on screen.
+        for (turns, expected) in [(0, [0., up]), (1, [up, 0.]), (2, [0., -up]), (3, [-up, 0.])] {
+            let [x, y] = p(&turn_clip(m, turns));
+            assert!(
+                (x - expected[0]).abs() < 1e-4 && (y - expected[1]).abs() < 1e-4,
+                "{turns}: {x} {y}"
+            );
         }
     }
 }

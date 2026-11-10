@@ -140,6 +140,99 @@ impl Layout {
     pub fn for_players(self, players: u8) -> Self {
         if players > 2 { Self::Quad } else { self }
     }
+
+    /// Each view in player order: its rectangle (surface pixels, as
+    /// [`Self::rects`]) and its clockwise quarter turns. Face to Face
+    /// seating (a port addition for a phone or tablet lying flat between
+    /// two players) turns each half toward its own edge: Top and Bottom
+    /// puts player 1 upright on the bottom half and player 2 upside down
+    /// on the top; Side by Side puts player 1 on the left half facing the
+    /// left edge and player 2 on the right facing the right edge.
+    pub fn views(self, facing: bool, width: u32, height: u32, scale: f32) -> Vec<([u32; 4], u8)> {
+        let rects = self.rects(width, height, scale);
+        match (self, facing) {
+            (Self::Horizontal, true) => vec![(rects[1], 0), (rects[0], 2)],
+            (Self::Vertical, true) => vec![(rects[0], 1), (rects[1], 3)],
+            _ => rects.into_iter().map(|r| (r, 0)).collect(),
+        }
+    }
+}
+
+impl Layout {
+    /// Each player's view in CSS pixels for its HUD and touch controls
+    /// (the views of [`Self::views`] without the divider: whole halves or
+    /// quarters), turned toward its player when they sit face to face.
+    pub fn css_frames(
+        self,
+        facing: bool,
+        players: usize,
+        width: f32,
+        height: f32,
+    ) -> Vec<atv_ui::Frame> {
+        let (columns, rows) = self.grid();
+        let (w, h) = (width / columns as f32, height / rows as f32);
+        let cell = |i: u32| {
+            atv_ui::Rect::new(
+                if i.is_multiple_of(columns) {
+                    0.
+                } else {
+                    width - w
+                },
+                if i / columns > 0 { height - h } else { 0. },
+                w,
+                h,
+            )
+        };
+        let mut frames: Vec<_> = (0..players.clamp(1, 4) as u32)
+            .map(|i| atv_ui::Frame::new(cell(i), 0))
+            .collect();
+        if facing && frames.len() == 2 {
+            match self {
+                Self::Horizontal => {
+                    frames = vec![
+                        atv_ui::Frame::new(cell(1), 0),
+                        atv_ui::Frame::new(cell(0), 2),
+                    ]
+                }
+                Self::Vertical => {
+                    frames = vec![
+                        atv_ui::Frame::new(cell(0), 1),
+                        atv_ui::Frame::new(cell(1), 3),
+                    ]
+                }
+                Self::Quad => {}
+            }
+        }
+        frames
+    }
+}
+
+/// A view's projection aspect: its rectangle's, transposed by a quarter
+/// turn.
+pub fn view_aspect([_, _, w, h]: [u32; 4], turns: u8) -> f32 {
+    let (w, h) = (w.max(1) as f32, h.max(1) as f32);
+    if turns % 2 == 1 { h / w } else { w / h }
+}
+
+/// `?split=` value of a two-player Face to Face layout (`fh`, `fv`), or
+/// the layout's own.
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+pub fn seating_param(layout: Layout, facing: bool) -> &'static str {
+    match (layout, facing) {
+        (Layout::Horizontal, true) => "fh",
+        (Layout::Vertical, true) => "fv",
+        _ => layout.param(),
+    }
+}
+
+/// `?split=` / `FURY_SPLIT`: the layout and whether its players sit face
+/// to face (`fh` Top and Bottom, `fv` Side by Side).
+pub fn requested_seating(value: Option<&str>) -> Option<(Layout, bool)> {
+    match value? {
+        "fh" | "facing" => Some((Layout::Horizontal, true)),
+        "fv" => Some((Layout::Vertical, true)),
+        other => Layout::requested(Some(other)).map(|l| (l, false)),
+    }
 }
 
 /// Player 2's keyboard keys (the right-hand side of the keyboard) and the
@@ -225,6 +318,8 @@ pub fn with_query(url: &str, query: &str) -> String {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Request {
     pub layout: Layout,
+    /// Two players sit face to face ([`Layout::views`]).
+    pub facing: bool,
     pub players: u8,
     pub seconds: [Option<atv_game::ride::Selection>; 3],
     /// Players 2-4's own gear and paint (none dresses player 1's).
@@ -249,6 +344,8 @@ pub struct Second {
     /// The player number (2-4).
     pub player: u8,
     pub layout: Layout,
+    /// Face to Face seating ([`Layout::views`]).
+    pub facing: bool,
     pub riding: crate::riding::Riding,
     pub camera: atv_render::Camera,
     pub focal_length: f32,
@@ -404,6 +501,7 @@ impl Second {
         Ok(Self {
             player,
             layout,
+            facing: request.facing && layout != Layout::Quad,
             riding,
             camera: atv_render::Camera {
                 x: origin[0],
@@ -416,6 +514,11 @@ impl Second {
             pad: false,
             crash: (0, false),
         })
+    }
+
+    /// Every player's view in player order ([`Layout::views`]).
+    pub fn views(&self, width: u32, height: u32, scale: f32) -> Vec<([u32; 4], u8)> {
+        self.layout.views(self.facing, width, height, scale)
     }
 
     /// `splitN=quad.rider`: this player's part of a link's query.
@@ -470,9 +573,9 @@ impl Second {
     }
 
     /// One rendered frame of this player's riding: its keys (player 2's
-    /// keyboard half; players 3 and 4 play controllers only) and
-    /// controller, with the other players and player 1's CPUs as its
-    /// contact bodies (`others`).
+    /// keyboard half; players 3 and 4 play controllers only), controller
+    /// and touch controls in its own view, with the other players and
+    /// player 1's CPUs as its contact bodies (`others`).
     pub fn frame(
         &mut self,
         keys: &dyn Fn(&str) -> bool,
@@ -480,6 +583,7 @@ impl Second {
         now: f64,
         dt: f32,
         others: Vec<atv_game::multiplayer::PeerBody>,
+        touch: crate::riding::TouchSampler,
     ) -> Result<(), String> {
         self.pad = pad.is_some();
         let player_2 = self.player == 2;
@@ -491,9 +595,7 @@ impl Second {
             drag: 0.,
         };
         let sampler = move |_: u64, _: &atv_game::ride::Ride| others.clone();
-        let mut touch = || None;
-        self.riding
-            .frame(&sample, &mut touch, dt, Some((0, &sampler)))
+        self.riding.frame(&sample, touch, dt, Some((0, &sampler)))
     }
 
     /// Player 2 as the room riders' engine and impact voices hear it.
@@ -558,7 +660,7 @@ pub fn resume_query(players: &[Second]) -> Option<String> {
     let first = players.first()?;
     let mut query = format!(
         "split={}&splitn={}",
-        first.layout.param(),
+        seating_param(first.layout, first.facing),
         players.len() + 1
     );
     for player in players {
@@ -936,6 +1038,57 @@ mod tests {
         assert_eq!(peer(2), PEER);
         assert_eq!(peer(4), PEER + 2);
         assert_eq!(player_name(3), "Player 3");
+    }
+
+    #[test]
+    fn face_to_face_turns_each_half_toward_its_player() {
+        let rects = Layout::Horizontal.rects(1280, 720, 1.);
+        assert_eq!(
+            Layout::Horizontal.views(true, 1280, 720, 1.),
+            [(rects[1], 0), (rects[0], 2)]
+        );
+        let rects = Layout::Vertical.rects(1280, 720, 1.);
+        assert_eq!(
+            Layout::Vertical.views(true, 1280, 720, 1.),
+            [(rects[0], 1), (rects[1], 3)]
+        );
+        // Same-side seating and quarters stay upright, in player order.
+        let rects = Layout::Horizontal.rects(1280, 720, 1.);
+        assert_eq!(
+            Layout::Horizontal.views(false, 1280, 720, 1.),
+            [(rects[0], 0), (rects[1], 0)]
+        );
+        assert!(
+            Layout::Quad
+                .views(true, 1280, 720, 1.)
+                .iter()
+                .all(|v| v.1 == 0)
+        );
+        // The HUD and touch frames follow the same seats.
+        let frames = Layout::Horizontal.css_frames(true, 2, 800., 400.);
+        assert_eq!(frames[0].rect, atv_ui::Rect::new(0., 200., 800., 200.));
+        assert_eq!((frames[1].rect.y, frames[1].turns), (0., 2));
+        let frames = Layout::Vertical.css_frames(true, 2, 800., 400.);
+        assert_eq!((frames[0].rect.x, frames[0].turns), (0., 1));
+        assert_eq!((frames[1].rect.x, frames[1].turns), (400., 3));
+        assert_eq!(frames[1].size(), [400., 400.]);
+        let quarters = Layout::Quad.css_frames(true, 3, 800., 400.);
+        assert_eq!(quarters.len(), 3);
+        assert_eq!(quarters[2].rect, atv_ui::Rect::new(0., 200., 400., 200.));
+        // A quarter-turned half projects at its transposed aspect.
+        assert!((view_aspect([0, 0, 640, 720], 1) - 720. / 640.).abs() < 1e-6);
+        assert!((view_aspect([0, 0, 1280, 359], 2) - 1280. / 359.).abs() < 1e-6);
+        for (layout, facing) in [
+            (Layout::Horizontal, true),
+            (Layout::Vertical, true),
+            (Layout::Vertical, false),
+            (Layout::Quad, false),
+        ] {
+            assert_eq!(
+                requested_seating(Some(seating_param(layout, facing))),
+                Some((layout, facing))
+            );
+        }
     }
 
     #[test]

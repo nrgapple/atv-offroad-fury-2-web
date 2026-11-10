@@ -507,6 +507,9 @@ pub struct Frontend {
     /// Split Screen layout for two players: side by side, else top and
     /// bottom (saved). Three and four players share quarters.
     pub split_vertical: bool,
+    /// Two players sit face to face around a phone or tablet lying flat,
+    /// each half turned toward its player (saved with the layout).
+    pub split_facing: bool,
     /// Split Screen: how many local players (2-4, saved).
     pub split_players: u8,
     /// Split Screen: players 2-4's own ATV and rider (0 male, 1 female),
@@ -653,7 +656,13 @@ impl Frontend {
             status_anchor: 0.,
             passkey: Default::default(),
             split: false,
-            split_vertical: settings.get(SPLIT_LAYOUT_KEY).as_deref() == Some("vertical"),
+            split_vertical: matches!(
+                settings.get(SPLIT_LAYOUT_KEY).as_deref(),
+                Some("vertical" | "facing-vertical")
+            ),
+            split_facing: settings
+                .get(SPLIT_LAYOUT_KEY)
+                .is_some_and(|v| v.starts_with("facing")),
             split_players: settings
                 .get(SPLIT_PLAYERS_KEY)
                 .and_then(|v| v.parse().ok())
@@ -775,6 +784,7 @@ impl Frontend {
         let request = json!({
             "page": page,
             "split_vertical": self.split_vertical,
+            "split_facing": self.split_facing,
             "host_freestyle": self.host_freestyle,
             "host_freestyle_minutes": self.host_freestyle_minutes,
             "host_cpu_field": self.host_cpu_field,
@@ -2233,14 +2243,23 @@ impl Frontend {
                 settings.set(&split_look_key(n), &split_look_value(&look));
                 self.refresh(view);
             }
+            // Top and Bottom, Side by Side, then the two Face to Face
+            // seatings of a phone or tablet lying flat between the players.
             "splitlayout" => {
-                self.split_vertical = !self.split_vertical;
+                (self.split_vertical, self.split_facing) =
+                    match (self.split_vertical, self.split_facing) {
+                        (false, false) => (true, false),
+                        (true, false) => (false, true),
+                        (false, true) => (true, true),
+                        (true, true) => (false, false),
+                    };
                 settings.set(
                     SPLIT_LAYOUT_KEY,
-                    if self.split_vertical {
-                        "vertical"
-                    } else {
-                        "horizontal"
+                    match (self.split_vertical, self.split_facing) {
+                        (false, false) => "horizontal",
+                        (true, false) => "vertical",
+                        (false, true) => "facing",
+                        (true, true) => "facing-vertical",
                     },
                 );
                 self.refresh(view);
@@ -4456,6 +4475,19 @@ mod tests {
         assert!(front.split_vertical);
         assert_eq!(settings.get(SPLIT_LAYOUT_KEY).as_deref(), Some("vertical"));
         assert!(front.choices()[4].1.contains("Side by Side"));
+        // Then the two Face to Face seatings, and back.
+        front.key("Enter", &view, &mut settings);
+        assert!(front.split_facing && !front.split_vertical);
+        assert!(front.choices()[4].1.ends_with("Face to Face"));
+        front.key("Enter", &view, &mut settings);
+        assert!(front.split_facing && front.split_vertical);
+        assert!(front.choices()[4].1.contains("Face to Face, Ends"));
+        let saved = Frontend::new(tracks(), &settings, true);
+        assert!(saved.split_facing && saved.split_vertical);
+        front.key("Enter", &view, &mut settings);
+        assert!(!front.split_facing && !front.split_vertical);
+        front.key("Enter", &view, &mut settings);
+        assert!(front.split_vertical && !front.split_facing);
         // Games opens the Games page for two players.
         front.selection = 2;
         front.key("Enter", &view, &mut settings);
