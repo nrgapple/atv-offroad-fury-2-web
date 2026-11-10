@@ -3,7 +3,7 @@ use std::{cell::RefCell, rc::Rc};
 
 use atv_net::{
     Lobby, PRIVATE_CAPACITY, PUBLIC_CAPACITY, PUBLIC_MAP, PUBLIC_ROOMS, Packet, Participant,
-    ROOM_CODE_BYTES, RoomCode,
+    ROOM_CODE_BYTES, RoomCode, Signal, signal,
 };
 use serde::{Deserialize, Serialize};
 use worker::{wasm_bindgen::JsCast, *};
@@ -109,6 +109,17 @@ struct Connection {
     /// receives Freestyle reports.
     #[serde(default)]
     freestyle: bool,
+    /// The client announced direct links (a `Signal` hello); only such
+    /// clients receive `Signal` packets (research/MULTIPLAYER.md "Direct
+    /// links").
+    #[serde(default)]
+    signals: bool,
+    /// The client's browser can open direct links.
+    #[serde(default)]
+    direct: bool,
+    /// Riders this client reports an open direct link to, one bit per peer.
+    #[serde(default)]
+    links: u32,
     last_seen_ms: f64,
     window_ms: f64,
     messages: u16,
@@ -134,6 +145,13 @@ impl Connection {
         self.last_seen_ms = now;
         self.messages <= RATE_MESSAGES && self.bytes <= RATE_BYTES
     }
+}
+
+/// Two riders who each report an open direct link to the other exchange
+/// poses without the relay. One report alone is not enough: a reused slot or
+/// a link only one side still believes in keeps the relayed copy.
+fn linked(from: u8, from_links: u32, to: u8, to_links: u32) -> bool {
+    from_links >> to & 1 == 1 && to_links >> from & 1 == 1
 }
 
 fn recoverable_close(code: usize, reason: &str) -> bool {
@@ -359,7 +377,7 @@ pub async fn main(mut req: Request, env: Env, _ctx: Context) -> Result<Response>
                 .await?;
             if response.status_code() == 201 {
                 return Ok(Response::from_json(&serde_json::json!({
-                    "code": text, "hostToken": token
+                    "code": text, "hostToken": token, "links": true
                 }))?
                 .with_status(201));
             }
@@ -368,7 +386,7 @@ pub async fn main(mut req: Request, env: Env, _ctx: Context) -> Result<Response>
                     let mut response = response;
                     let live: serde_json::Value = response.json().await.unwrap_or_default();
                     return Response::from_json(&serde_json::json!({
-                        "code": text, "open": true,
+                        "code": text, "open": true, "links": true,
                         "players": live.get("players"), "max": PRIVATE_CAPACITY,
                     }));
                 }
@@ -400,7 +418,7 @@ pub async fn main(mut req: Request, env: Env, _ctx: Context) -> Result<Response>
                 200 | 201 => {
                     let claim: serde_json::Value = response.json().await?;
                     return Response::from_json(&serde_json::json!({
-                        "code": text, "key": claim.get("key"),
+                        "code": text, "key": claim.get("key"), "links": true,
                     }));
                 }
                 409 => continue,
@@ -430,7 +448,8 @@ pub struct LobbyRoom {
     /// Joined, active sockets, kept in memory so a full room's ~400 poses a
     /// second do not each deserialize every rider's attachment. Cleared
     /// whenever a rider joins or leaves; a woken (hibernated) object rebuilds it.
-    recipients: RefCell<Option<Vec<WebSocket>>>,
+    /// Each entry carries the rider's slot and reported direct links.
+    recipients: RefCell<Option<Vec<(WebSocket, u8, u32)>>>,
 }
 
 impl LobbyRoom {
@@ -590,28 +609,78 @@ impl LobbyRoom {
         *self.recipients.borrow_mut() = None;
     }
 
-    fn broadcast(&self, packet: &Packet, except: Option<&WebSocket>) -> Result<()> {
-        let bytes = atv_net::encode(packet).map_err(|e| Error::RustError(e.to_string()))?;
+    fn recipients(&self) -> Result<Vec<(WebSocket, u8, u32)>> {
         let cached = self.recipients.borrow().clone();
-        let recipients = match cached {
+        Ok(match cached {
             Some(recipients) => recipients,
             None => {
                 let recipients = self
                     .connections()?
                     .into_iter()
                     .filter(|(_, connection)| connection.player.is_some())
-                    .map(|(ws, _)| ws)
+                    .map(|(ws, connection)| (ws, connection.peer, connection.links))
                     .collect::<Vec<_>>();
                 *self.recipients.borrow_mut() = Some(recipients.clone());
                 recipients
             }
-        };
-        for ws in recipients {
-            if except != Some(&ws) {
+        })
+    }
+
+    fn broadcast(&self, packet: &Packet, except: Option<&WebSocket>) -> Result<()> {
+        self.broadcast_unlinked(packet, except, 0, 0)
+    }
+
+    /// `broadcast`, skipping riders who exchange poses with the sender (slot
+    /// `from`, reporting `links`) over a direct link.
+    fn broadcast_unlinked(
+        &self,
+        packet: &Packet,
+        except: Option<&WebSocket>,
+        from: u8,
+        links: u32,
+    ) -> Result<()> {
+        let bytes = atv_net::encode(packet).map_err(|e| Error::RustError(e.to_string()))?;
+        for (ws, peer, theirs) in self.recipients()? {
+            if except != Some(&ws) && !linked(from, links, peer, theirs) {
                 // A failed peer send must not turn another rider's valid message into an error.
                 if ws.send_with_bytes(&bytes).is_err() {
                     let _ = self.close_socket(&ws, 1011, "Send failed");
                 }
+            }
+        }
+        Ok(())
+    }
+
+    /// Direct-link notices for a rider who is riding the room's course:
+    /// the rider learns who else is riding it, and they learn of the rider.
+    /// Riders on builds without direct links are announced too, so the
+    /// others keep relaying poses for them. Only builds that announced
+    /// signalling receive these packets.
+    fn introduce(&self, ws: &WebSocket, connection: &Connection, map: u16) -> Result<()> {
+        let flags = |c: &Connection| vec![u8::from(c.direct) * signal::DIRECT];
+        for (other, c) in self.connections()? {
+            if &other == ws || c.player.is_none() || c.ready_map != map {
+                continue;
+            }
+            if connection.signals {
+                send(
+                    ws,
+                    &Packet::Signal(Signal {
+                        peer: c.peer,
+                        kind: signal::PRESENT,
+                        data: flags(&c),
+                    }),
+                )?;
+            }
+            if c.signals {
+                let _ = send(
+                    &other,
+                    &Packet::Signal(Signal {
+                        peer: connection.peer,
+                        kind: signal::ARRIVED,
+                        data: flags(connection),
+                    }),
+                );
             }
         }
         Ok(())
@@ -742,6 +811,20 @@ impl LobbyRoom {
                 None,
             );
             self.state.storage().set_alarm(5_000_i64).await?;
+            // The roster keeps a held rider, so riders with direct links
+            // learn here that it stopped riding.
+            for (other, c) in self.connections()? {
+                if &other != ws && c.signals {
+                    let _ = send(
+                        &other,
+                        &Packet::Signal(Signal {
+                            peer: connection.peer,
+                            kind: signal::GONE,
+                            data: vec![0],
+                        }),
+                    );
+                }
+            }
         } else {
             self.broadcast(
                 &Packet::Leave {
@@ -957,6 +1040,9 @@ impl DurableObject for LobbyRoom {
             races: false,
             games: false,
             freestyle: false,
+            signals: false,
+            direct: false,
+            links: 0,
             last_seen_ms: instant,
             window_ms: instant,
             messages: 0,
@@ -1085,13 +1171,25 @@ impl DurableObject for LobbyRoom {
                     connection.snapshot = Some(snapshot.as_ref().clone());
                     // Poses from a previous map or vehicle are never relayed.
                     if room.started && connection.ready_map == room.map && current {
-                        self.broadcast(&Packet::Snapshot(snapshot), Some(&ws))?;
+                        self.broadcast_unlinked(
+                            &Packet::Snapshot(snapshot),
+                            Some(&ws),
+                            connection.peer,
+                            connection.links,
+                        )?;
                     }
                 }
             }
             Packet::Ready { map } if connection.player.is_some() => {
                 if map == room.map {
                     connection.ready_map = map;
+                    // A rider who (re)loads a course starts without direct
+                    // links and reports the ones it opens.
+                    if connection.links != 0 {
+                        connection.links = 0;
+                        self.invalidate_recipients();
+                        ws.serialize_attachment(&connection)?;
+                    }
                     // Give an arriving rider everyone's current state, even if
                     // all peers are momentarily idle or suspended.
                     for (peer, other) in self.connections()? {
@@ -1103,6 +1201,68 @@ impl DurableObject for LobbyRoom {
                         {
                             send(&ws, &Packet::Snapshot(s.into()))?;
                         }
+                    }
+                    self.introduce(&ws, &connection, map)?;
+                }
+            }
+            // Direct links (research/MULTIPLAYER.md "Direct links").
+            Packet::Signal(message) if connection.player.is_some() => match message.kind {
+                signal::HELLO => {
+                    let known = connection.signals;
+                    connection.signals = true;
+                    connection.direct = message.data[0] & signal::DIRECT != 0;
+                    // A hello after Ready still gets the introductions.
+                    if !known && connection.ready_map == room.map {
+                        self.introduce(&ws, &connection, room.map)?;
+                    }
+                }
+                // Session descriptions pass only between two riders on the
+                // course who both can open direct links; the relay stamps
+                // the sender.
+                signal::OFFER | signal::ANSWER => {
+                    if connection.direct && connection.ready_map == room.map {
+                        for (other, c) in self.connections()? {
+                            if other != ws
+                                && c.peer == message.peer
+                                && c.player.is_some()
+                                && c.direct
+                                && c.ready_map == room.map
+                            {
+                                let _ = send(
+                                    &other,
+                                    &Packet::Signal(Signal {
+                                        peer: connection.peer,
+                                        kind: message.kind,
+                                        data: message.data.clone(),
+                                    }),
+                                );
+                            }
+                        }
+                    }
+                }
+                _ => return self.close_socket(&ws, 1008, "Message not permitted"),
+            },
+            Packet::Links { mask } if connection.player.is_some() => {
+                let dropped = connection.links & !mask;
+                connection.links = mask & !(1 << connection.peer);
+                if let Some(recipients) = self.recipients.borrow_mut().as_mut() {
+                    for entry in recipients.iter_mut().filter(|entry| entry.0 == ws) {
+                        entry.2 = connection.links;
+                    }
+                }
+                // A rider still counting on a link this one gave up sends
+                // the relay presence poses only: tell it to fall back now
+                // rather than after its own silence timeout.
+                for (other, peer, theirs) in self.recipients()? {
+                    if dropped >> peer & 1 == 1 && theirs >> connection.peer & 1 == 1 {
+                        let _ = send(
+                            &other,
+                            &Packet::Signal(Signal {
+                                peer: connection.peer,
+                                kind: signal::DROPPED,
+                                data: vec![0],
+                            }),
+                        );
                     }
                 }
             }
@@ -1119,7 +1279,9 @@ impl DurableObject for LobbyRoom {
                 // The rider reloads with its new vehicle and reports Ready again.
                 connection.ready_map = 0;
                 connection.snapshot = None;
+                connection.links = 0;
                 ws.serialize_attachment(&connection)?;
+                self.invalidate_recipients();
                 let mut room = room;
                 room.epoch = room.epoch.wrapping_add(1);
                 self.save(room).await?;
@@ -1554,6 +1716,9 @@ mod tests {
             races: false,
             games: false,
             freestyle: false,
+            signals: false,
+            direct: false,
+            links: 0,
             last_seen_ms: 0.,
             window_ms: 0.,
             messages: 0,
@@ -1605,6 +1770,9 @@ mod tests {
             races: false,
             games: false,
             freestyle: false,
+            signals: false,
+            direct: false,
+            links: 0,
             sequence: Some(u32::MAX),
             last_seen_ms: 555.,
             window_ms: 500.,
@@ -1623,5 +1791,25 @@ mod tests {
         assert!(resumed.account(556., 500));
         assert!(!resumed.account(557., 500));
         assert!(atv_net::sequence_newer(0, resumed.sequence.unwrap()));
+    }
+
+    #[test]
+    fn poses_skip_the_relay_only_when_both_riders_report_the_link() {
+        // Riders 2 and 5 each report the other.
+        assert!(linked(2, 1 << 5, 5, 1 << 2));
+        assert!(linked(5, 1 << 2 | 1 << 7, 2, 1 << 5));
+        // One-sided, stale or unrelated reports keep the relayed copy.
+        assert!(!linked(2, 1 << 5, 5, 0));
+        assert!(!linked(2, 0, 5, 1 << 2));
+        assert!(!linked(2, 1 << 5, 6, 1 << 2));
+        // Builds without direct links report nothing.
+        assert!(!linked(0, 0, 19, 0));
+        // An attachment written before direct links existed loads as plain.
+        let old = serde_json::json!({
+            "active": true, "peer": 1, "player": null, "sequence": null,
+            "last_seen_ms": 0.0, "window_ms": 0.0, "messages": 0, "bytes": 0
+        });
+        let loaded: Connection = serde_json::from_value(old).unwrap();
+        assert!(!loaded.signals && !loaded.direct && loaded.links == 0);
     }
 }

@@ -557,6 +557,64 @@ impl GameState {
     }
 }
 
+/// Direct-link signalling (research/MULTIPLAYER.md "Direct links").
+/// `Signal::kind` values; riders exchange session descriptions through the
+/// relay and then send poses to each other without it.
+pub mod signal {
+    /// Client to relay: this build understands signalling. `data` is one
+    /// flags byte ([`DIRECT`] when the browser can open direct links).
+    pub const HELLO: u8 = 0;
+    /// A session description offer for `peer`.
+    pub const OFFER: u8 = 1;
+    /// The answer to `peer`'s offer.
+    pub const ANSWER: u8 = 2;
+    /// Relay to an arriving rider: `peer` is already riding this course.
+    /// `data` is that rider's flags byte.
+    pub const PRESENT: u8 = 3;
+    /// Relay to riders on a course: `peer` just arrived. `data` is the
+    /// arrival's flags byte.
+    pub const ARRIVED: u8 = 4;
+    /// Relay to riders: `peer` lost its connection and stopped riding while
+    /// its roster slot is held. `data` is a zero flags byte.
+    pub const GONE: u8 = 5;
+    /// Relay to a rider: `peer` no longer reports its link to you, so the
+    /// relay carries your poses to it again. `data` is a zero flags byte.
+    pub const DROPPED: u8 = 6;
+    /// Flags bit: the rider can open direct links.
+    pub const DIRECT: u8 = 1;
+}
+/// Largest relayed session description.
+pub const MAX_SIGNAL_BYTES: usize = 6000;
+/// One direct-link signalling message. From a client `peer` is the rider it
+/// is for; from the relay it is the rider it came from or describes.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Signal {
+    pub peer: PeerId,
+    pub kind: u8,
+    pub data: Vec<u8>,
+}
+impl Signal {
+    pub fn validate(&self) -> Result<()> {
+        let valid = valid_peer(self.peer)
+            && match self.kind {
+                signal::HELLO
+                | signal::PRESENT
+                | signal::ARRIVED
+                | signal::GONE
+                | signal::DROPPED => self.data.len() == 1 && self.data[0] <= signal::DIRECT,
+                signal::OFFER | signal::ANSWER => {
+                    !self.data.is_empty() && self.data.len() <= MAX_SIGNAL_BYTES
+                }
+                _ => false,
+            };
+        if valid {
+            Ok(())
+        } else {
+            Err(Error::InvalidValue)
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Packet {
     Join {
@@ -603,6 +661,14 @@ pub enum Packet {
     /// The room-race host's CPU riders (research/MULTIPLAYER.md "Room race
     /// CPUs").
     Cpus(Box<CpuMotion>),
+    /// Direct-link signalling; only sent to builds that announced it.
+    Signal(Signal),
+    /// The riders this client currently reaches over an open direct link (one
+    /// bit per peer id). The relay stops forwarding poses between two riders
+    /// once each reports the other.
+    Links {
+        mask: u32,
+    },
 }
 
 pub(crate) fn bounded(values: &[f32], limit: f32) -> bool {

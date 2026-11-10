@@ -54,13 +54,23 @@ export function gpuArgs() {
 }
 
 /**
+ * Lets two headless Chromium pages on one machine open a direct multiplayer
+ * link (research/MULTIPLAYER.md "Direct links"): without it each hides its
+ * local address behind an mDNS name the other cannot resolve, and every
+ * room stays on the relay.
+ */
+export const LINK_ARGS = ['--disable-features=WebRtcHideLocalIpsWithMdns'];
+
+/**
  * Launch a headless browser. `engine` is 'chromium' (default), 'webkit' or 'firefox'.
- * Chromium receives gpuArgs() unless `args` already chooses an ANGLE backend.
+ * Chromium receives gpuArgs() unless `args` already chooses an ANGLE backend, and
+ * LINK_ARGS when ATV_LINKS=1 (any relay test, with its riders linked directly).
  */
 export async function launch({ engine = 'chromium', args = [], ...options } = {}) {
   const type = playwright()[engine];
   assert.ok(type, `Unknown Playwright engine ${engine}`);
   const chosen = args.some(arg => arg.startsWith('--use-angle') || arg.includes('swiftshader'));
+  if (engine === 'chromium' && process.env.ATV_LINKS === '1') args = [...args, ...LINK_ARGS];
   const flags = engine === 'chromium' && !chosen ? [...gpuArgs(), ...args] : args;
   return type.launch({ headless: true, ...options, args: flags });
 }

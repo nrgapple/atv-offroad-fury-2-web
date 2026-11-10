@@ -28,6 +28,8 @@ pub fn encode(packet: &Packet) -> Result<Vec<u8>> {
         Packet::Progress(_) => 14,
         Packet::Claim(_) => 15,
         Packet::Cpus(_) => 16,
+        Packet::Signal(_) => 17,
+        Packet::Links { .. } => 18,
     };
     w.0.extend_from_slice(MAGIC);
     w.byte(VERSION);
@@ -184,6 +186,16 @@ pub fn encode(packet: &Packet) -> Result<Vec<u8>> {
         Packet::Leave { peer } => {
             peer_id(*peer)?;
             w.byte(*peer);
+        }
+        Packet::Signal(s) => {
+            s.validate()?;
+            w.byte(s.peer);
+            w.byte(s.kind);
+            w.0.extend_from_slice(&s.data);
+        }
+        Packet::Links { mask } => {
+            links(*mask)?;
+            w.u32(*mask);
         }
         Packet::Ping { nonce } => w.u32(*nonce),
         Packet::Pong { nonce, server_ms } => {
@@ -406,6 +418,20 @@ pub fn decode(bytes: &[u8]) -> Result<Packet> {
             map_id(map)?;
             Packet::Ready { map }
         }
+        17 => {
+            let s = Signal {
+                peer: r.peer()?,
+                kind: r.byte()?,
+                data: r.take(bytes.len() - r.offset)?.to_vec(),
+            };
+            s.validate()?;
+            Packet::Signal(s)
+        }
+        18 => {
+            let mask = r.u32()?;
+            links(mask)?;
+            Packet::Links { mask }
+        }
         8 => {
             let epoch = r.u32()?;
             let map = r.u16()?;
@@ -425,6 +451,13 @@ pub fn decode(bytes: &[u8]) -> Result<Packet> {
 }
 fn map_id(id: u16) -> Result<()> {
     if valid_map(id) {
+        Ok(())
+    } else {
+        Err(Error::InvalidValue)
+    }
+}
+fn links(mask: u32) -> Result<()> {
+    if mask >> MAX_PLAYERS == 0 {
         Ok(())
     } else {
         Err(Error::InvalidValue)

@@ -159,6 +159,17 @@ timing values are from one Mac, not a geographically distributed latency result.
 Physical-phone behavior, original-PS2 animation/physics parity, server-authoritative
 contacts, racing rules, and host migration remain unverified.
 
+## Direct links (2026-11-09)
+
+Since 2026-11-09 browsers send poses to each other over WebRTC data channels
+and the relay gets a presence pose every 3-5 s for a fully linked rider; see
+[Direct links](MULTIPLAYER.md#direct-links-2026-11-09). The cadences above
+still describe a rider that someone needs relayed poses from (desktop builds,
+`?p2p=0`, pairs that cannot link), with one change: distance is now checked
+before activity, so a fast or airborne rider more than 300 feet from everyone
+sends at 5 Hz rather than 20 Hz, and beyond 1,000 feet at about 3 Hz. Links
+carry full compact snapshots only; deltas remain a relay-path saving.
+
 ## Limits and next gates
 
 The measurement is host-only and used a synthetic browser focus/visibility setup.

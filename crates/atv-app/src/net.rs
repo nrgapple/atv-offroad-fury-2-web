@@ -1,6 +1,7 @@
 //! Relay transport: a binary WebSocket and the room-creation POST, over
 //! web-sys in the browser and a native client (tungstenite/ureq, rustls) on
-//! desktop. Bytes only; [`atv_game::multiplayer::Session`] owns the protocol.
+//! desktop, plus the browser's direct links between riders ([`Mesh`]).
+//! Bytes only; [`atv_game::multiplayer::Session`] owns the protocol.
 
 /// What the socket reported since the last poll.
 #[derive(Debug)]
@@ -13,6 +14,25 @@ pub enum Event {
         code: u16,
         reason: String,
     },
+}
+
+/// What the direct links reported since the last poll (research/
+/// MULTIPLAYER.md "Direct links"). Desktop builds have no links: every
+/// rider's poses come through the relay.
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+#[derive(Debug)]
+pub enum MeshEvent {
+    /// This end's session description for `peer`, to send through the relay.
+    Local {
+        peer: u8,
+        answer: bool,
+        description: Vec<u8>,
+    },
+    Open(u8),
+    /// The link failed, closed or could not be made.
+    Closed(u8),
+    /// A message from `peer`'s link and when it arrived.
+    Message(u8, Vec<u8>, web_time::Instant),
 }
 
 /// Outgoing bytes held beyond this are not queued (the browser checks
@@ -337,6 +357,24 @@ mod native {
         })
     }
 
+    /// Desktop builds open no direct links.
+    #[derive(Default)]
+    pub struct Mesh;
+
+    impl Mesh {
+        pub fn offer(&mut self, _peer: u8) {}
+        pub fn accept(&mut self, _peer: u8, _description: &[u8]) {}
+        pub fn answer(&mut self, _peer: u8, _description: &[u8]) {}
+        pub fn close(&mut self, _peer: u8) {}
+        pub fn clear(&mut self) {}
+        pub fn send(&self, _peer: u8, _bytes: &[u8]) -> bool {
+            false
+        }
+        pub fn poll(&mut self) -> Vec<super::MeshEvent> {
+            Vec::new()
+        }
+    }
+
     /// The Free Ride rider count (blocking; call off the UI thread).
     pub fn riders_blocking(relay: &str) -> Option<u32> {
         let agent: ureq::Agent = ureq::Agent::config_builder()
@@ -363,7 +401,7 @@ mod web {
     use super::{Admit, BACKLOG, BACKLOG_REASON, Event, MESSAGE_LIMIT, admit};
     use std::{
         cell::{Cell, RefCell},
-        collections::VecDeque,
+        collections::{HashMap, VecDeque},
         rc::Rc,
     };
     use wasm_bindgen::{JsCast, closure::Closure};
@@ -503,6 +541,310 @@ mod web {
         }
     }
 
+    /// Public STUN servers: each browser learns its own public address from
+    /// them; no rider traffic passes through them.
+    const STUN: [&str; 2] = [
+        "stun:stun.cloudflare.com:3478",
+        "stun:stun.l.google.com:19302",
+    ];
+    /// The longest a description waits for its network candidates (ms): one
+    /// description each way carries all of them.
+    const GATHER_MS: f64 = 2000.;
+    /// A link holding this much unsent data skips poses (newer ones follow).
+    const LINK_BACKLOG: u32 = 16_384;
+
+    enum Happened {
+        Local(bool, Vec<u8>),
+        Open,
+        Closed,
+        Message(Vec<u8>, web_time::Instant),
+    }
+
+    /// Link events by rider slot and link generation: events of a link that
+    /// has since been replaced or closed are discarded at the next poll.
+    type MeshQueue = Rc<RefCell<VecDeque<(u8, u32, Happened)>>>;
+
+    struct Handlers {
+        open: Closure<dyn FnMut()>,
+        message: Closure<dyn FnMut(web_sys::MessageEvent)>,
+        close: Closure<dyn FnMut()>,
+    }
+
+    impl Handlers {
+        fn attach(&self, channel: &web_sys::RtcDataChannel) {
+            channel.set_binary_type(web_sys::RtcDataChannelType::Arraybuffer);
+            channel.set_onopen(Some(self.open.as_ref().unchecked_ref()));
+            channel.set_onmessage(Some(self.message.as_ref().unchecked_ref()));
+            channel.set_onclose(Some(self.close.as_ref().unchecked_ref()));
+        }
+    }
+
+    struct Link {
+        generation: u32,
+        connection: web_sys::RtcPeerConnection,
+        channel: Rc<RefCell<Option<web_sys::RtcDataChannel>>>,
+        _handlers: Rc<Handlers>,
+        _incoming: Closure<dyn FnMut(web_sys::RtcDataChannelEvent)>,
+        _state: Closure<dyn FnMut()>,
+    }
+
+    impl Drop for Link {
+        fn drop(&mut self) {
+            if let Some(channel) = self.channel.borrow_mut().take() {
+                channel.set_onopen(None);
+                channel.set_onmessage(None);
+                channel.set_onclose(None);
+                channel.close();
+            }
+            self.connection.set_ondatachannel(None);
+            self.connection.set_oniceconnectionstatechange(None);
+            self.connection.close();
+        }
+    }
+
+    /// One WebRTC connection per other rider, each with a single unordered,
+    /// unreliable data channel for poses (a late pose is worthless; the next
+    /// one follows). Callbacks queue events for the frame loop.
+    #[derive(Default)]
+    pub struct Mesh {
+        links: HashMap<u8, Link>,
+        events: MeshQueue,
+        generation: u32,
+    }
+
+    impl Mesh {
+        /// A fresh connection to `peer`, replacing any earlier one.
+        fn open(&mut self, peer: u8) -> Option<&Link> {
+            self.links.remove(&peer);
+            self.generation += 1;
+            let generation = self.generation;
+            let servers = js_sys::Array::new();
+            for url in STUN {
+                let server = web_sys::RtcIceServer::new();
+                server.set_urls(&wasm_bindgen::JsValue::from_str(url));
+                servers.push(&server);
+            }
+            let configuration = web_sys::RtcConfiguration::new();
+            configuration.set_ice_servers(&servers);
+            let Ok(connection) = web_sys::RtcPeerConnection::new_with_configuration(&configuration)
+            else {
+                self.events
+                    .borrow_mut()
+                    .push_back((peer, generation, Happened::Closed));
+                return None;
+            };
+            let push = {
+                let events = self.events.clone();
+                move |happened| events.borrow_mut().push_back((peer, generation, happened))
+            };
+            let handlers = Rc::new(Handlers {
+                open: {
+                    let push = push.clone();
+                    Closure::<dyn FnMut()>::new(move || push(Happened::Open))
+                },
+                message: {
+                    let push = push.clone();
+                    Closure::<dyn FnMut(_)>::new(move |event: web_sys::MessageEvent| {
+                        if let Ok(buffer) = event.data().dyn_into::<js_sys::ArrayBuffer>()
+                            && buffer.byte_length() as usize <= MESSAGE_LIMIT
+                        {
+                            let bytes = js_sys::Uint8Array::new(&buffer).to_vec();
+                            push(Happened::Message(bytes, web_time::Instant::now()));
+                        }
+                    })
+                },
+                close: {
+                    let push = push.clone();
+                    Closure::<dyn FnMut()>::new(move || push(Happened::Closed))
+                },
+            });
+            let channel: Rc<RefCell<Option<web_sys::RtcDataChannel>>> = Rc::default();
+            // The answering end receives the offerer's channel.
+            let incoming = {
+                let (handlers, channel) = (handlers.clone(), channel.clone());
+                Closure::<dyn FnMut(_)>::new(move |event: web_sys::RtcDataChannelEvent| {
+                    let arrived = event.channel();
+                    handlers.attach(&arrived);
+                    *channel.borrow_mut() = Some(arrived);
+                })
+            };
+            connection.set_ondatachannel(Some(incoming.as_ref().unchecked_ref()));
+            // "disconnected" may recover; the session's silence timeout
+            // decides about a link that stays quiet.
+            let state = {
+                let connection = connection.clone();
+                Closure::<dyn FnMut()>::new(move || {
+                    use web_sys::RtcIceConnectionState as State;
+                    if matches!(
+                        connection.ice_connection_state(),
+                        State::Failed | State::Closed
+                    ) {
+                        push(Happened::Closed);
+                    }
+                })
+            };
+            connection.set_oniceconnectionstatechange(Some(state.as_ref().unchecked_ref()));
+            self.links.insert(
+                peer,
+                Link {
+                    generation,
+                    connection,
+                    channel,
+                    _handlers: handlers,
+                    _incoming: incoming,
+                    _state: state,
+                },
+            );
+            self.links.get(&peer)
+        }
+
+        /// Creates the description for `link` (an answer to `remote`, or an
+        /// offer) and queues it once its candidates are gathered.
+        fn describe(&self, peer: u8, link: &Link, remote: Option<String>) {
+            let (connection, events, generation) = (
+                link.connection.clone(),
+                self.events.clone(),
+                link.generation,
+            );
+            wasm_bindgen_futures::spawn_local(async move {
+                let answer = remote.is_some();
+                let happened = match description(&connection, remote).await {
+                    Some(text) => Happened::Local(answer, text.into_bytes()),
+                    None => Happened::Closed,
+                };
+                events.borrow_mut().push_back((peer, generation, happened));
+            });
+        }
+
+        /// Opens a connection to `peer` and offers it.
+        pub fn offer(&mut self, peer: u8) {
+            let Some(link) = self.open(peer) else {
+                return;
+            };
+            let init = web_sys::RtcDataChannelInit::new();
+            init.set_ordered(false);
+            init.set_max_retransmits(0);
+            let channel = link
+                .connection
+                .create_data_channel_with_data_channel_dict("pose", &init);
+            link._handlers.attach(&channel);
+            *link.channel.borrow_mut() = Some(channel);
+            let link = &self.links[&peer];
+            self.describe(peer, link, None);
+        }
+
+        /// Opens a connection from `peer`'s offer and answers it.
+        pub fn accept(&mut self, peer: u8, description: &[u8]) {
+            let offer = String::from_utf8_lossy(description).into_owned();
+            if self.open(peer).is_some() {
+                let link = &self.links[&peer];
+                self.describe(peer, link, Some(offer));
+            }
+        }
+
+        /// Completes the connection offered to `peer` with its answer.
+        pub fn answer(&mut self, peer: u8, description: &[u8]) {
+            let Some(link) = self.links.get(&peer) else {
+                return;
+            };
+            let remote = web_sys::RtcSessionDescriptionInit::new(web_sys::RtcSdpType::Answer);
+            remote.set_sdp(&String::from_utf8_lossy(description));
+            let (connection, events, generation) = (
+                link.connection.clone(),
+                self.events.clone(),
+                link.generation,
+            );
+            wasm_bindgen_futures::spawn_local(async move {
+                let applied = wasm_bindgen_futures::JsFuture::from(
+                    connection.set_remote_description(&remote),
+                )
+                .await;
+                if applied.is_err() {
+                    events
+                        .borrow_mut()
+                        .push_back((peer, generation, Happened::Closed));
+                }
+            });
+        }
+
+        pub fn close(&mut self, peer: u8) {
+            self.links.remove(&peer);
+        }
+
+        /// Closes every link (the room socket closed or the ride ended).
+        pub fn clear(&mut self) {
+            self.links.clear();
+            self.events.borrow_mut().clear();
+        }
+
+        /// Sends `bytes` to `peer`; false when its link is not open or is
+        /// backlogged.
+        pub fn send(&self, peer: u8, bytes: &[u8]) -> bool {
+            let Some(link) = self.links.get(&peer) else {
+                return false;
+            };
+            let channel = link.channel.borrow();
+            channel.as_ref().is_some_and(|channel| {
+                channel.ready_state() == web_sys::RtcDataChannelState::Open
+                    && channel.buffered_amount() < LINK_BACKLOG
+                    && channel.send_with_u8_array(bytes).is_ok()
+            })
+        }
+
+        pub fn poll(&mut self) -> Vec<super::MeshEvent> {
+            use super::MeshEvent;
+            let events: Vec<_> = self.events.borrow_mut().drain(..).collect();
+            events
+                .into_iter()
+                .filter(|(peer, generation, _)| {
+                    self.links
+                        .get(peer)
+                        .is_some_and(|link| link.generation == *generation)
+                })
+                .map(|(peer, _, happened)| match happened {
+                    Happened::Local(answer, description) => MeshEvent::Local {
+                        peer,
+                        answer,
+                        description,
+                    },
+                    Happened::Open => MeshEvent::Open(peer),
+                    Happened::Closed => MeshEvent::Closed(peer),
+                    Happened::Message(bytes, at) => MeshEvent::Message(peer, bytes, at),
+                })
+                .collect()
+        }
+    }
+
+    /// Applies `remote` (an offer) if given, sets the local answer or offer
+    /// and returns it once candidate gathering finishes or `GATHER_MS` pass.
+    async fn description(
+        connection: &web_sys::RtcPeerConnection,
+        remote: Option<String>,
+    ) -> Option<String> {
+        use wasm_bindgen_futures::JsFuture;
+        let local = match remote {
+            Some(sdp) => {
+                let offer = web_sys::RtcSessionDescriptionInit::new(web_sys::RtcSdpType::Offer);
+                offer.set_sdp(&sdp);
+                JsFuture::from(connection.set_remote_description(&offer))
+                    .await
+                    .ok()?;
+                JsFuture::from(connection.create_answer()).await.ok()?
+            }
+            None => JsFuture::from(connection.create_offer()).await.ok()?,
+        };
+        JsFuture::from(connection.set_local_description(local.unchecked_ref()))
+            .await
+            .ok()?;
+        let started = web_time::Instant::now();
+        while connection.ice_gathering_state() != web_sys::RtcIceGatheringState::Complete
+            && started.elapsed().as_secs_f64() * 1000. < GATHER_MS
+        {
+            sleep(50).await;
+        }
+        Some(connection.local_description()?.sdp())
+    }
+
     pub async fn post(url: &str, _origin: &str, body: &str) -> Result<(u16, String), String> {
         let init = web_sys::RequestInit::new();
         init.set_method("POST");
@@ -565,9 +907,9 @@ mod web {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-pub use native::{Socket, post, riders_blocking, sleep};
+pub use native::{Mesh, Socket, post, riders_blocking, sleep};
 #[cfg(target_arch = "wasm32")]
-pub use web::{Socket, post, riders, sleep};
+pub use web::{Mesh, Socket, post, riders, sleep};
 
 /// `{"riders": N}` from `/multiplayer/freeride/riders`.
 fn riders_from(text: &str) -> Option<u32> {
