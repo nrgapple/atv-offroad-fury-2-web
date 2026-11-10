@@ -17,7 +17,5 @@
     "#245 Enhanced/High wheel re-projection: a wheel sinking into visible terrain is drawn on top of it, capped at 0.5 ft. This is drawing only; the simulation is unchanged, and Original keeps the simulated pose. ENV01, 600 steps: trajectories identical; 548 of 559 lift samples match within 1e-3 ft (the other 11 are late samples, worst 0.017 ft); vehicle-area colour difference 0.57 at 1280x720 and 1.17 at 390x844.",
     "The race determinism fingerprint is unchanged (53fda056a945608e)."
   ],
-  "limitation": "Still missing in the Rust engine: ATV dirt, the tight crash camera, chase assist, rumble, the diagnostics overlay and the main-menu jukebox. Anisotropy and shadow-map size apply from the next load only. The Alpha options are not live until #237 merges. All figures are host Chromium on a Mac; nothing was measured on a phone.",
-  "image": "/devlog-images/rust-engine-settings-controller-icons-jukebox-wheel-re-8bcf3ec7122844a497af0e6842275236.png",
-  "caption": "Rust engine Pause -> Jukebox at 1280x720: original disc art, track list, transport and volume controls (host Chromium; spectrum bars not yet ported)."
+  "limitation": "Still missing in the Rust engine: ATV dirt, the tight crash camera, chase assist, rumble, the diagnostics overlay and the main-menu jukebox. Anisotropy and shadow-map size apply from the next load only. The Alpha options are not live until #237 merges. All figures are host Chromium on a Mac; nothing was measured on a phone."
 }

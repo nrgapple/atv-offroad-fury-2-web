@@ -8,7 +8,5 @@
   "details": [
     "Unit tests pass. Android 15 emulator with simulated gamepad: Start, A, B, Y, d-pad and left stick navigated menus, A started Free Ride, Start paused it, touch unaffected."
   ],
-  "limitation": "Not yet tested on physical handheld devices; analog trigger and stick hold during riding not exercised on emulator; no controller rumble on Android; touch HUD hints still show while using gamepad.",
-  "image": "/devlog-images/android-handheld-and-bluetooth-controllers-8741cc4acc4b494d8c283c87cb742d65.png",
-  "caption": "Arlington Free Ride paused with gamepad Start button"
+  "limitation": "Not yet tested on physical handheld devices; analog trigger and stick hold during riding not exercised on emulator; no controller rumble on Android; touch HUD hints still show while using gamepad."
 }
