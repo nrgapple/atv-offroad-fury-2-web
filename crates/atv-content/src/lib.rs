@@ -65,6 +65,72 @@ impl Fetch {
     }
 }
 
+/// Why one HTTP read attempt failed, for the retry policy.
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Attempt {
+    /// The request or its body read was refused or cut off.
+    Network,
+    /// The response arrived with a non-OK HTTP status.
+    Status(u16),
+    /// The body arrived shorter or longer than the manifest records.
+    Truncated,
+}
+
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+impl Attempt {
+    /// Transient failures are read again; a 4xx answer (a missing blob) is
+    /// final. Integrity mismatches of a complete body are never retried.
+    fn retryable(self) -> bool {
+        match self {
+            Attempt::Network | Attempt::Truncated => true,
+            Attempt::Status(status) => status >= 500,
+        }
+    }
+}
+
+/// Pauses before the second and third attempt of a transient failure (phones
+/// on flaky networks: a race reads its CPU roster files one after another).
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+const RETRY_DELAYS_MS: [u32; 2] = [400, 1500];
+
+/// One failed attempt: its kind, the message players see, and the body when
+/// one arrived at the wrong length.
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+type Failed = (Attempt, String, Option<Vec<u8>>);
+
+/// Runs `attempt` until it succeeds, fails for good or uses up the retries,
+/// sleeping [`RETRY_DELAYS_MS`] between transient failures. A body that is
+/// still the wrong length after the last attempt is returned as read, so the
+/// caller's integrity check reports it.
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+async fn with_retries<A, F, S, W>(
+    mut attempt: A,
+    mut sleep: S,
+) -> std::result::Result<Vec<u8>, (Attempt, String)>
+where
+    A: FnMut() -> F,
+    F: std::future::Future<Output = std::result::Result<Vec<u8>, Failed>>,
+    S: FnMut(u32) -> W,
+    W: std::future::Future<Output = ()>,
+{
+    let mut delays = RETRY_DELAYS_MS.iter();
+    loop {
+        match attempt().await {
+            Ok(bytes) => return Ok(bytes),
+            Err((kind, message, body)) => match delays.next() {
+                Some(delay) if kind.retryable() => sleep(*delay).await,
+                _ => {
+                    return match body {
+                        Some(bytes) => Ok(bytes),
+                        None => Err((kind, message)),
+                    };
+                }
+            },
+        }
+    }
+}
+
 /// SHA-256 of the USA v2.00 boot executable the package was extracted from.
 pub const SOURCE_BUILD: &str = "11b80faea827c5550df607d24c8c4f38a9e44cf55e3ecac9e1daeb3aca9d7c49";
 const MAX_FILES: usize = 512;
@@ -229,7 +295,11 @@ pub enum Store {
 }
 
 impl Store {
-    async fn read(&self, name: &str) -> Result<Vec<u8>> {
+    /// The blob `name`; `expected` is its manifest length when known (a web
+    /// read of the wrong length is read again).
+    async fn read(&self, name: &str, expected: Option<usize>) -> Result<Vec<u8>> {
+        #[cfg(not(target_arch = "wasm32"))]
+        let _ = expected;
         match self {
             #[cfg(not(target_arch = "wasm32"))]
             Store::Directory(dir) => std::fs::read(dir.join(name))
@@ -237,7 +307,9 @@ impl Store {
             #[cfg(not(target_arch = "wasm32"))]
             Store::Pack(pack) => pack.read(name),
             #[cfg(target_arch = "wasm32")]
-            Store::Http(base) => web::fetch(&format!("{base}{name}"), Fetch::of(name)).await,
+            Store::Http(base) => {
+                web::fetch(&format!("{base}{name}"), Fetch::of(name), expected).await
+            }
         }
     }
 }
@@ -259,7 +331,7 @@ const CACHE_BYTES: usize = 40 * 1024 * 1024;
 
 impl Content {
     pub async fn open(store: Store) -> Result<Self> {
-        let bytes = store.read("manifest.json").await?;
+        let bytes = store.read("manifest.json", None).await?;
         let manifest = Manifest::parse(&bytes)?;
         // Decoded results are stored per package (web; decoded.rs).
         decoded::configure(&bytes);
@@ -303,15 +375,15 @@ impl Content {
         let bytes = match (pending, &self.store) {
             (Some(response), Store::Http(_)) => {
                 match web::finish(response, Fetch::Content).await {
-                    Ok(bytes) => bytes,
-                    // A failed prefetch is retried by the real read.
-                    Err(_) => self.store.read(&name).await?,
+                    Ok(bytes) if bytes.len() == chunk.bytes => bytes,
+                    // A failed or cut-off prefetch is retried by the real read.
+                    Ok(_) | Err(_) => self.store.read(&name, Some(chunk.bytes)).await?,
                 }
             }
-            _ => self.store.read(&name).await?,
+            _ => self.store.read(&name, Some(chunk.bytes)).await?,
         };
         #[cfg(not(target_arch = "wasm32"))]
-        let bytes = self.store.read(&name).await?;
+        let bytes = self.store.read(&name, Some(chunk.bytes)).await?;
         if bytes.len() != chunk.bytes || digest(&bytes).await != chunk.sha256 {
             return Err(INTEGRITY.into());
         }
@@ -411,7 +483,10 @@ impl Content {
             .as_deref()
             .ok_or_else(|| format!("invalid stream record for {path}"))?;
         // Read past the chunk cache: a song is several megabytes, read once.
-        let bytes = self.store.read(&format!("{digest}.m4a")).await?;
+        let bytes = self
+            .store
+            .read(&format!("{digest}.m4a"), Some(stream.bytes))
+            .await?;
         if bytes.len() != stream.bytes || self::digest(&bytes).await != digest {
             return Err(INTEGRITY.into());
         }
@@ -527,7 +602,7 @@ fn hex(bytes: &[u8]) -> String {
 
 #[cfg(target_arch = "wasm32")]
 mod web {
-    use super::Fetch;
+    use super::{Attempt, Fetch};
     use std::cell::{Cell, RefCell};
     use std::collections::VecDeque;
     use wasm_bindgen::JsCast;
@@ -653,25 +728,64 @@ mod web {
         Some(window.fetch_with_str_and_init(url, &init))
     }
 
-    /// The bytes of a fetch started by [`start`].
-    pub async fn finish(request: js_sys::Promise, kind: Fetch) -> super::Result<Vec<u8>> {
+    /// One attempt at the bytes of a fetch started by [`start`].
+    async fn attempt(request: js_sys::Promise, kind: Fetch) -> Result<Vec<u8>, (Attempt, String)> {
+        let network = |error| (Attempt::Network, js(error));
         let response: web_sys::Response = JsFuture::from(request)
             .await
-            .map_err(js)?
+            .map_err(network)?
             .dyn_into()
-            .map_err(js)?;
+            .map_err(network)?;
         if !response.ok() {
-            return Err(kind.status(response.status()));
+            let status = response.status();
+            return Err((Attempt::Status(status), kind.status(status)));
         }
-        let buffer = JsFuture::from(response.array_buffer().map_err(js)?)
+        let buffer = JsFuture::from(response.array_buffer().map_err(network)?)
             .await
-            .map_err(js)?;
+            .map_err(network)?;
         Ok(js_sys::Uint8Array::new(&buffer).to_vec())
     }
 
-    pub async fn fetch(url: &str, kind: Fetch) -> super::Result<Vec<u8>> {
+    /// The bytes of a fetch started by [`start`] (a prefetch: its failure is
+    /// read again by [`fetch`]).
+    pub async fn finish(request: js_sys::Promise, kind: Fetch) -> super::Result<Vec<u8>> {
+        attempt(request, kind).await.map_err(|(_, message)| message)
+    }
+
+    /// Resolves after `ms` milliseconds.
+    async fn sleep(ms: u32) {
+        let promise = js_sys::Promise::new(&mut |resolve, _| {
+            if let Some(window) = web_sys::window() {
+                let _ = window
+                    .set_timeout_with_callback_and_timeout_and_arguments_0(&resolve, ms as i32);
+            }
+        });
+        let _ = JsFuture::from(promise).await;
+    }
+
+    /// `url`'s bytes, reading a transient failure (network, 5xx, a body of
+    /// the wrong `expected` length) again after a short pause.
+    pub async fn fetch(url: &str, kind: Fetch, expected: Option<usize>) -> super::Result<Vec<u8>> {
         let window = web_sys::window().ok_or("no window")?;
-        finish(window.fetch_with_str(url), kind).await
+        super::with_retries(
+            || {
+                let request = window.fetch_with_str(url);
+                async move {
+                    let bytes = attempt(request, kind)
+                        .await
+                        .map_err(|(attempt, message)| (attempt, message, None))?;
+                    match expected {
+                        Some(length) if length != bytes.len() => {
+                            Err((Attempt::Truncated, super::INTEGRITY.to_owned(), Some(bytes)))
+                        }
+                        _ => Ok(bytes),
+                    }
+                }
+            },
+            sleep,
+        )
+        .await
+        .map_err(|(_, message)| message)
     }
 }
 
@@ -762,6 +876,82 @@ mod tests {
         assert_eq!(
             missing_archive("/ANIMSRDR.RES"),
             "Original archive is missing: /ANIMSRDR.RES"
+        );
+    }
+
+    /// Polls a future that never waits on anything external.
+    fn block_on<F: std::future::Future>(future: F) -> F::Output {
+        let mut future = std::pin::pin!(future);
+        let mut cx = std::task::Context::from_waker(std::task::Waker::noop());
+        loop {
+            if let std::task::Poll::Ready(value) = future.as_mut().poll(&mut cx) {
+                return value;
+            }
+        }
+    }
+
+    type Outcome = std::result::Result<Vec<u8>, Failed>;
+    type Retried = (std::result::Result<Vec<u8>, Attempt>, usize, Vec<u32>);
+
+    /// Runs [`with_retries`] over scripted attempt outcomes; returns the
+    /// result, the attempts made and the pauses taken.
+    fn retried(outcomes: Vec<Outcome>) -> Retried {
+        let outcomes = std::cell::RefCell::new(outcomes.into_iter());
+        let (attempts, pauses) = (std::cell::Cell::new(0), std::cell::RefCell::new(Vec::new()));
+        let result = block_on(with_retries(
+            || {
+                attempts.set(attempts.get() + 1);
+                let next = outcomes
+                    .borrow_mut()
+                    .next()
+                    .expect("no more attempts scripted");
+                async move { next }
+            },
+            |ms| {
+                pauses.borrow_mut().push(ms);
+                async {}
+            },
+        ));
+        (
+            result.map_err(|(kind, _)| kind),
+            attempts.get(),
+            pauses.into_inner(),
+        )
+    }
+
+    #[test]
+    fn transient_reads_are_retried_and_final_ones_are_not() {
+        assert!(Attempt::Network.retryable());
+        assert!(Attempt::Truncated.retryable());
+        assert!(Attempt::Status(500).retryable());
+        assert!(Attempt::Status(503).retryable());
+        assert!(!Attempt::Status(404).retryable());
+        assert!(!Attempt::Status(403).retryable());
+        let fail = |kind| Err((kind, String::new(), None));
+        // A dropped transfer recovers on the next attempt after a pause.
+        assert_eq!(
+            retried(vec![fail(Attempt::Network), Ok(vec![1, 2])]),
+            (Ok(vec![1, 2]), 2, vec![RETRY_DELAYS_MS[0]])
+        );
+        // Two retries at most, then the last failure stands.
+        assert_eq!(
+            retried(vec![fail(Attempt::Status(502)); 3]),
+            (Err(Attempt::Status(502)), 3, RETRY_DELAYS_MS.to_vec())
+        );
+        // A missing blob is final at once.
+        assert_eq!(
+            retried(vec![fail(Attempt::Status(404))]),
+            (Err(Attempt::Status(404)), 1, vec![])
+        );
+        // A short body is read again; still short, it goes to the integrity check.
+        let short = |bytes: Vec<u8>| Err((Attempt::Truncated, INTEGRITY.to_owned(), Some(bytes)));
+        assert_eq!(
+            retried(vec![short(vec![1]), Ok(vec![1, 2])]),
+            (Ok(vec![1, 2]), 2, vec![RETRY_DELAYS_MS[0]])
+        );
+        assert_eq!(
+            retried(vec![short(vec![1]), short(vec![1]), short(vec![1])]),
+            (Ok(vec![1]), 3, RETRY_DELAYS_MS.to_vec())
         );
     }
 

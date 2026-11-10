@@ -59,6 +59,7 @@ export const TESTS = {
   'test_engine_weather.mjs': { group: 'content' },
   'test_engine_ride_link.mjs': { group: 'content' },
   'test_engine_menu_preload.mjs': { group: 'content' },
+  'test_engine_content_retry.mjs': { group: 'content' },
   'test_engine_decoded_cache.mjs': { group: 'content' },
   'test_engine_freeride.mjs': {
     group: 'relay',
