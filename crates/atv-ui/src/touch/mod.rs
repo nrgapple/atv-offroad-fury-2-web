@@ -94,7 +94,14 @@ pub struct Controls {
     pub flip: Option<(&'static str, bool, f32)>,
     pub sample: Sample,
     pub generation: u64,
+    /// Kid Mode: a finger is down anywhere off the toolbar (GO).
+    pub go: bool,
 }
+
+/// Kid Mode fingers tracked at once (more still count while one is down).
+const KID_FINGERS: usize = 5;
+/// Kid Mode's GO feedback under a finger: its radius (CSS px).
+const KID_RADIUS: f32 = 52.;
 
 pub struct TouchControls {
     pub input: TouchInput,
@@ -119,6 +126,11 @@ pub struct TouchControls {
     throttle: (f32, f32, f64),
     label: String,
     viewport: [f32; 2],
+    /// Controls → Kid Mode in a race (research/KID_MODE.md): every touch is
+    /// GO, with no directions; nothing shows until a finger is down.
+    kid: bool,
+    /// Kid Mode's fingers down: id, position and press time.
+    kid_fingers: [Option<(u64, [f32; 2], f64)>; KID_FINGERS],
 }
 
 thread_local! {
@@ -162,7 +174,27 @@ impl TouchControls {
             throttle: (0., 0., 0.),
             label: "PRELOAD".into(),
             viewport: [0., 0.],
+            kid: false,
+            kid_fingers: [None; KID_FINGERS],
         }
+    }
+
+    /// Kid Mode replaces the riding layout with GO touches (a change
+    /// drops the fingers down).
+    pub fn set_kid(&mut self, kid: bool) {
+        if self.kid != kid {
+            self.clear();
+            self.kid = kid;
+        }
+    }
+
+    pub fn kid(&self) -> bool {
+        self.kid
+    }
+
+    /// Kid Mode: a finger is down (GO).
+    pub fn kid_go(&self) -> bool {
+        self.kid && self.kid_fingers.iter().any(Option::is_some)
     }
 
     /// Controls → One-handed mobile (saved like `toggleOneHanded`).
@@ -191,6 +223,7 @@ impl TouchControls {
     }
 
     pub fn clear(&mut self) {
+        self.kid_fingers = [None; KID_FINGERS];
         self.input.clear();
         self.lean.clear();
         self.last = None;
@@ -253,6 +286,14 @@ impl TouchControls {
         if !active {
             return false;
         }
+        if self.kid {
+            // Any touch is GO: no lean, steering, preload or tricks.
+            self.touched = true;
+            if let Some(slot) = self.kid_fingers.iter_mut().find(|f| f.is_none()) {
+                *slot = Some((id, [x, y], now));
+            }
+            return true;
+        }
         let [width, height] = self.viewport;
         if !self.input.one_handed && x < width / 2. {
             // game.js: the left half steers and leans (TouchLeanIntent).
@@ -299,6 +340,10 @@ impl TouchControls {
     }
 
     pub fn moved(&mut self, id: u64, x: f32, y: f32, now: f64) -> bool {
+        if let Some(finger) = self.kid_fingers.iter_mut().flatten().find(|f| f.0 == id) {
+            finger.1 = [x, y];
+            return true;
+        }
         if self.lean.owns(id) {
             self.lean
                 .move_to(id, x, y, now, self.input.steering_sensitivity);
@@ -312,6 +357,14 @@ impl TouchControls {
     }
 
     pub fn up(&mut self, id: u64, x: f32, y: f32, cancelled: bool, now: f64) -> bool {
+        if let Some(slot) = self
+            .kid_fingers
+            .iter_mut()
+            .find(|f| f.is_some_and(|f| f.0 == id))
+        {
+            *slot = None;
+            return true;
+        }
         if self.lean.owns(id) {
             self.lean.end(id);
             return true;
@@ -380,6 +433,17 @@ impl TouchControls {
             self.clear();
         }
         let sample = self.input.sample(now);
+        if self.kid {
+            return Controls {
+                steer: 0.,
+                lean: 0.,
+                spin: 0.,
+                flip: None,
+                sample,
+                generation: self.input.generation,
+                go: self.kid_go(),
+            };
+        }
         let wheel = self.wheel_open();
         if wheel && !self.wheel_visible {
             self.wheel_opens += 1;
@@ -407,6 +471,7 @@ impl TouchControls {
             flip,
             sample,
             generation: self.input.generation,
+            go: false,
         }
     }
 
@@ -524,6 +589,12 @@ impl TouchControls {
 
     pub fn paint(&mut self, active: bool, now: f64, fonts: &mut Fonts, list: &mut DisplayList) {
         if !active {
+            return;
+        }
+        if self.kid {
+            for (_, at, since) in self.kid_fingers.iter().flatten() {
+                paint_kid_go(fonts, list, *at, now - since);
+            }
             return;
         }
         let coach = self.rides <= COACH_RIDES;
@@ -1074,6 +1145,31 @@ impl TouchControls {
     }
 }
 
+/// Kid Mode's GO feedback under a finger (no directions): a gold disc
+/// that pops in over .14 s like the riding marker's ring, with GO on it.
+fn paint_kid_go(fonts: &mut Fonts, list: &mut DisplayList, [cx, cy]: [f32; 2], held: f64) {
+    let t = ((held / 140.) as f32).clamp(0., 1.);
+    let r = KID_RADIUS * (0.82 + 0.18 * (1. - (1. - t).powi(2)));
+    list.push(Item::Box(BoxPaint {
+        rect: Rect::new(cx - r, cy - r, r * 2., r * 2.),
+        radii: [r; 4],
+        fill: Some(Fill::radial(&[
+            (0., GOLD_LIGHT.fade(0.55)),
+            (0.6, GOLD.fade(0.45)),
+            (1., Color::hex("#5a4a0466")),
+        ])),
+        border: [4.; 4],
+        border_color: GOLD_LIGHT,
+        shadows: vec![BoxShadow::outer(0., 0., 18., Color::hex("#e5d360aa"))],
+        ..Default::default()
+    }));
+    let style = TextStyle::new(Font::display(30., 900, true), Color::WHITE)
+        .spacing(1.2)
+        .stroke(3., INK, Join::Miter)
+        .shadow(0., 2., 4., Color::BLACK);
+    centered(fonts, list, "GO", &style, cx, cy - 18., 36., 0.);
+}
+
 /// Lines centred on `x` from `top` (CSS `text-align: center`), wrapped to `width`.
 #[allow(clippy::too_many_arguments)]
 fn centered(
@@ -1281,6 +1377,40 @@ mod tests {
         assert!(!touch.flip_buzz(350.));
         touch.moved(1, 195., 530., 360.);
         assert!(touch.flip_buzz(700.));
+    }
+
+    #[test]
+    fn kid_mode_touches_are_go_without_directions() {
+        let mut settings = Settings::memory();
+        let mut touch = TouchControls::new(&settings, true);
+        touch.set_viewport(390., 844.);
+        touch.set_kid(true);
+        // Nothing shows until a finger is down.
+        assert!(painted(&mut touch, 0.).items.is_empty());
+        assert!(!touch.sample(0., true, &mut settings).go);
+        // Either half of the screen is GO; dragging steers nothing.
+        assert!(touch.down(1, 40., 700., 0., true, &mut settings));
+        assert!(touch.moved(1, 300., 200., 50.));
+        let controls = touch.sample(60., true, &mut settings);
+        assert!(controls.go);
+        assert_eq!((controls.steer, controls.lean), (0., 0.));
+        assert!(controls.flip.is_none());
+        assert!(!controls.sample.drive.held);
+        assert!(!painted(&mut touch, 60.).items.is_empty());
+        // A second finger keeps GO while the first lifts.
+        assert!(touch.down(2, 300., 700., 70., true, &mut settings));
+        assert!(touch.up(1, 300., 200., false, 80.));
+        assert!(touch.sample(90., true, &mut settings).go);
+        assert!(touch.up(2, 300., 700., false, 100.));
+        assert!(!touch.sample(110., true, &mut settings).go);
+        assert!(painted(&mut touch, 110.).items.is_empty());
+        // Pausing (inactive) drops the fingers.
+        assert!(touch.down(3, 200., 400., 120., true, &mut settings));
+        assert!(!touch.sample(130., false, &mut settings).go);
+        // Off again, touches ride the normal layout.
+        touch.set_kid(false);
+        assert!(touch.down(4, 300., 600., 140., true, &mut settings));
+        assert!(!touch.sample(150., true, &mut settings).go);
     }
 
     /// One-handed controls held at (195, 400) with a lift able to flip.

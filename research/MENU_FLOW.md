@@ -154,6 +154,8 @@ row shown (its canonical parent).
   one. Controller Settings is the port's Controls page (keyboard, controller
   and touch); there is no Credits page; Display, Audio, Extras and Alpha are
   the port's own pages.
+- **Single Race → Difficulty** adds the port's Kid after Normal and Expert
+  (one-player Single Race only; research/KID_MODE.md).
 - **Quit to Main Menu** from Pause unwinds to the main menu as its label
   says; the original's Quit returns to the page that started the event
   (the results' Continue does that in the port).

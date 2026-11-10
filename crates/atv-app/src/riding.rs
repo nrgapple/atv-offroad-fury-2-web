@@ -136,6 +136,21 @@ pub struct Riding {
     pub server_clock: Option<(web_time::Instant, f64)>,
 }
 
+/// Kid Mode's GO keys besides the remappable Gas binding.
+const KID_GO_KEYS: [&str; 5] = ["Space", "ArrowUp", "KeyW", "Enter", "NumpadEnter"];
+
+/// Kid Mode's GO: a touch, Space/Up/W/Enter, the Gas binding, or a pad's
+/// A (South, standard button 0) or right trigger (button 7).
+pub fn kid_go(keys: &dyn Fn(&str) -> bool, pad: Option<&Pad>, gas: f32, touch: bool) -> bool {
+    touch
+        || gas > 0.1
+        || KID_GO_KEYS.iter().any(|k| keys(k))
+        || pad.is_some_and(|p| {
+            p.buttons.first().is_some_and(|b| *b > 0.5)
+                || p.buttons.get(7).is_some_and(|b| *b > 0.2)
+        })
+}
+
 /// What a frame sampled from the keyboard/controller.
 pub struct Sample<'a> {
     pub keys: &'a dyn Fn(&str) -> bool,
@@ -454,8 +469,14 @@ impl Riding {
             return Ok(());
         }
         let mut read = self.bindings.read(input.keys, input.pad, input.now);
+        let mut touch_go = false;
         if let Some(t) = touch() {
+            touch_go = t.go;
             merge_touch(&mut read.controls, &t);
+        }
+        // Kid difficulty: GO lets the race path driver ride.
+        if let Some(state) = self.ride.race_mut().filter(|s| s.kid) {
+            state.kid_go = kid_go(input.keys, input.pad, read.controls.throttle, touch_go);
         }
         if read.pause {
             self.paused = true;
@@ -1157,6 +1178,34 @@ pub fn merge_touch(controls: &mut atv_game::ride::Controls, t: &atv_ui::touch::C
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn kid_go_reads_touch_keys_and_pad() {
+        use super::{Pad, kid_go};
+        let none = |_: &str| false;
+        assert!(!kid_go(&none, None, 0., false));
+        assert!(kid_go(&none, None, 0., true));
+        assert!(kid_go(&none, None, 1., false));
+        for key in ["Space", "ArrowUp", "KeyW", "Enter", "NumpadEnter"] {
+            assert!(kid_go(&|k: &str| k == key, None, 0., false), "{key}");
+        }
+        assert!(!kid_go(&|k: &str| k == "KeyA", None, 0., false));
+        let mut pad = Pad {
+            id: 1,
+            buttons: Default::default(),
+            axes: Default::default(),
+        };
+        assert!(!kid_go(&none, Some(&pad), 0., false));
+        pad.buttons[0] = 1.;
+        assert!(kid_go(&none, Some(&pad), 0., false));
+        pad.buttons[0] = 0.;
+        pad.buttons[7] = 0.6;
+        assert!(kid_go(&none, Some(&pad), 0., false));
+        // A or X on the PlayStation layout is button 0; B (1) is not GO.
+        pad.buttons[7] = 0.;
+        pad.buttons[1] = 1.;
+        assert!(!kid_go(&none, Some(&pad), 0., false));
+    }
+
     #[test]
     fn air_slowmo_is_freestyle_only() {
         assert!(super::slowmo_allowed(true, false, false));
