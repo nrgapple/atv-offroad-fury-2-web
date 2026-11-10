@@ -3203,12 +3203,21 @@ impl App {
             // buttons (tools/test_engine_championship.mjs).
             // The Practice event type and the player's race frame
             // (tools/test_engine_race_practice.mjs).
-            let race_lap = riding.ride.race().and_then(|r| r.frame.as_ref()).map(|f| {
-                serde_json::json!({
-                    "phase": f.phase, "lap": f.lap, "laps": f.laps,
-                    "laps_done": f.lap_times.len(), "field": f.field, "elapsed": f.elapsed,
-                })
-            });
+            let race_lap = riding
+                .ride
+                .race()
+                .and_then(|r| Some((r, r.frame.as_ref()?)))
+                .map(|(r, f)| {
+                    serde_json::json!({
+                        "phase": f.phase, "lap": f.lap, "laps": f.laps,
+                        "laps_done": f.lap_times.len(), "field": f.field, "elapsed": f.elapsed,
+                        // Kid difficulty: GO, the path driver and the imposed
+                        // throttle, brake and steer (research/KID_MODE.md).
+                        "kid": r.kid, "kidGo": r.kid_go, "autopilot": r.autopilot_status().0,
+                        "imposed": r.imposed.map(|i| [i.throttle, i.brake, i.steer]),
+                        "distance": r.race.progress_distances(None),
+                    })
+                });
             let practice = riding.ride.race().map(|r| r.settings().practice);
             let duel = riding.ride.race().map(|r| r.settings().duel);
             // Lap Attack and its best-lap ghost
@@ -5550,6 +5559,13 @@ impl ApplicationHandler<Message> for App {
                             .riding
                             .as_ref()
                             .is_some_and(|r| r.ride.race().is_some());
+                        // Single Race's Kid difficulty: every touch is GO.
+                        overlay.kid = ready
+                            .riding
+                            .as_ref()
+                            .and_then(|r| r.ride.race())
+                            .is_some_and(|r| r.kid);
+                        overlay.touch.set_kid(overlay.kid);
                         // The profile's course record (`001f1e30` keeps lap
                         // and race times only at the default 3 Enduro / 5
                         // other laps).
@@ -7159,11 +7175,18 @@ impl App {
                 duel,
                 lap_attack,
             } => {
+                let (difficulty, kid) = race_difficulty(
+                    difficulty,
+                    championship.is_none()
+                        && !(practice || duel || lap_attack)
+                        && self.split_request.is_none(),
+                );
                 let settings = atv_game::ride::race::Settings {
                     championship,
                     practice,
                     duel,
                     lap_attack,
+                    kid,
                     // `?raceLaps=1` (test tooling): one-lap menu races, so a
                     // browser test can race championship rounds in turn.
                     laps: if url_flag("raceLaps=1") { 1 } else { laps },
@@ -8977,6 +9000,14 @@ pub(crate) fn url_flag(pair: &str) -> bool {
     }
 }
 
+/// A menu race's CPU difficulty and Kid controls: Single Race's Kid (3,
+/// where `kid_allowed`) races Normal CPUs, as the exact build has no easier
+/// CPU options (research/KID_MODE.md); anything else but Expert is Normal.
+fn race_difficulty(difficulty: u32, kid_allowed: bool) -> (u32, bool) {
+    let kid = kid_allowed && difficulty == atv_ui::front::controller::KID_DIFFICULTY;
+    (if difficulty == 2 { 2 } else { 1 }, kid)
+}
+
 /// A race's record keeping (`atv_core::hall_of_fame`): the stored Hall of
 /// Fame and, with a profile loaded, the course record its "New …" messages
 /// compare against. Attached before the first step (scripted replays run
@@ -8991,6 +9022,11 @@ pub(crate) fn attach_records(ride: &mut atv_game::ride::Ride, course: &str, play
         return;
     };
     let settings = race.settings();
+    // Kid races are ridden by the race path driver: they keep no records
+    // (research/KID_MODE.md).
+    if settings.kid {
+        return;
+    }
     let enduro = atv_game::launch::split_race_course(course).is_some_and(|(_, v)| v.is_enduro());
     let full = settings.laps == if enduro { 3 } else { 5 };
     let saved = Settings::load();
@@ -9338,7 +9374,14 @@ impl App {
             difficulty: self
                 .front
                 .as_ref()
-                .map_or(1, |f| f.borrow().state.race.difficulty.clamp(1, 2) as u8),
+                // A Kid setup hosts Normal CPUs (Kid is one player's).
+                .map_or(1, |f| {
+                    if f.borrow().state.race.difficulty == 2 {
+                        2
+                    } else {
+                        1
+                    }
+                }),
         };
         let Some((race, room_race::Action::Load(settings))) = room_race::RoomRace::host(
             net,
@@ -10221,6 +10264,20 @@ struct MenuMusic {
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
+    #[test]
+    fn kid_races_normal_cpus_with_the_kid_controls() {
+        use atv_core::race_ai::Options;
+        let (difficulty, kid) = super::race_difficulty(3, true);
+        assert_eq!((difficulty, kid), (1, true));
+        assert_eq!(Options::difficulty(difficulty), Options::difficulty(1));
+        assert!(!Options::difficulty(difficulty).expert);
+        // Where Kid is not allowed (split screen, championships, Practice,
+        // Duel, Lap Attack) it races Normal with the ordinary controls.
+        assert_eq!(super::race_difficulty(3, false), (1, false));
+        assert_eq!(super::race_difficulty(2, true), (2, false));
+        assert_eq!(super::race_difficulty(1, true), (1, false));
+    }
+
     #[test]
     fn idle_menus_wake_on_any_pad_change_including_sticks() {
         use atv_game::ride::bindings::Pad;

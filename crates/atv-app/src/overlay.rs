@@ -201,6 +201,9 @@ pub struct Overlay {
     pub frontend: bool,
     /// The ride is a race (Pause → Restart Race).
     pub race: bool,
+    /// The race is Single Race's Kid difficulty (research/KID_MODE.md):
+    /// touches are GO and the race path driver's finish earns nothing.
+    pub kid: bool,
     /// The ride is the Training Course (Pause → Restart Training).
     pub training: bool,
     /// The ride is a mini-game (Pause → Restart Game).
@@ -308,6 +311,7 @@ impl Overlay {
             fps_clear: (0., None),
             frontend: false,
             race: false,
+            kid: false,
             training: false,
             game: false,
             room_race_pending: false,
@@ -1335,7 +1339,10 @@ impl Overlay {
                 // Online competition saves neither profile progress nor Hall
                 // of Fame records (USA manual pp. 36–37).
                 if self.results.finish(frame) {
-                    if self.lobby.is_none() && frame.duel {
+                    if self.kid {
+                        // The path driver rode: no Profile Points or records.
+                        self.results.no_award();
+                    } else if self.lobby.is_none() && frame.duel {
                         // A Duel seats two humans: `001f1e30` credits Profile
                         // Points and personal records only to a lone human,
                         // but still offers the Hall of Fame (`003325d0`).
@@ -1872,6 +1879,8 @@ impl Overlay {
                 "id": id, "x": r.x, "y": r.y, "width": r.w, "height": r.h,
             })).collect::<Vec<_>>(),
             "touchOwned": self.touch.input.pointer.is_some(),
+            "kidTouch": self.touch.kid(),
+            "kidGo": self.touch.kid_go(),
             "flipBuzzes": self.flip_buzzes,
             "secondaryOwned": self.touch.input.secondary.as_ref().is_some_and(|s| s.pointer.is_some()),
             "scale": self.view.scale,

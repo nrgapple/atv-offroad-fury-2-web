@@ -165,6 +165,10 @@ pub enum Event {
 /// Normal (1) or Expert (2) difficulty (frontend.js RACE_CPU).
 pub const RACE_CPU: [u32; 3] = [0, 3, 4];
 
+/// Single Race's port-only Kid difficulty (research/KID_MODE.md): the race
+/// path driver rides the player while GO is held, against Normal CPUs.
+pub const KID_DIFFICULTY: u32 = 3;
+
 /// The Single Race setup (frontend.js `raceSettings`).
 #[derive(Clone, Debug, PartialEq)]
 pub struct RaceSetup {
@@ -198,10 +202,10 @@ impl RaceSetup {
                 .as_u64()
                 .and_then(|c| RACE_CPU.iter().copied().find(|r| u64::from(*r) == c))
                 .unwrap_or(3),
-            difficulty: if value["difficulty"].as_u64() == Some(2) {
-                2
-            } else {
-                1
+            difficulty: match value["difficulty"].as_u64() {
+                Some(2) => 2,
+                Some(3) => KID_DIFFICULTY,
+                _ => 1,
             },
             cheats: (false, false),
             event: value["event"]
@@ -805,7 +809,7 @@ impl Frontend {
             "race_course": self.race.course,
             "race_laps": self.race.laps,
             "race_cpu": self.race.cpu,
-            "race_difficulty": self.race.difficulty,
+            "race_difficulty": self.race_difficulty(),
             "race_event": self.race_event_type().name(),
             "race_practice": !self.race_event_type().has_laps(),
             "race_no_cpus": !self.race_event_type().has_cpus(),
@@ -1247,7 +1251,18 @@ impl Frontend {
                 self.race.cpu = RACE_CPU[(at + direction).rem_euclid(3) as usize];
             }
             "racedifficulty" => {
-                self.race.difficulty = if self.race.difficulty == 2 { 1 } else { 2 }
+                // Normal → Expert → Kid (Kid only where it is offered).
+                let offered: &[u32] = if self.kid_offered() {
+                    &[1, 2, KID_DIFFICULTY]
+                } else {
+                    &[1, 2]
+                };
+                let at = offered
+                    .iter()
+                    .position(|d| *d == self.race_difficulty())
+                    .unwrap_or(0) as i32;
+                self.race.difficulty =
+                    offered[(at + direction.signum()).rem_euclid(offered.len() as i32) as usize];
             }
             _ => {
                 let Some((_, row)) = GEAR_ROWS.iter().find(|(a, _)| *a == action) else {
@@ -1283,7 +1298,7 @@ impl Frontend {
             } else {
                 0
             },
-            difficulty: self.race.difficulty,
+            difficulty: self.race_difficulty(),
             cheats: self.race.cheats,
             championship: None,
             practice: self.race_event_type() == atv_core::race_event::EventType::Practice,
@@ -1301,6 +1316,22 @@ impl Frontend {
             event
         } else {
             Default::default()
+        }
+    }
+
+    /// Kid is a one-player Single Race choice: not in split screen, Practice,
+    /// Lap Attack or Duel (research/KID_MODE.md).
+    pub fn kid_offered(&self) -> bool {
+        !self.split && self.race_event_type() == atv_core::race_event::EventType::SingleRace
+    }
+
+    /// The setup's difficulty where this mode offers it: a saved Kid reads
+    /// Normal where Kid is not offered.
+    pub fn race_difficulty(&self) -> u32 {
+        if self.race.difficulty == KID_DIFFICULTY && !self.kid_offered() {
+            1
+        } else {
+            self.race.difficulty
         }
     }
 
@@ -4680,6 +4711,71 @@ mod tests {
         assert_eq!(again.race, front.race);
         front.key("Escape", &view, &mut settings);
         assert_eq!(front.page, "single");
+    }
+
+    #[test]
+    fn kid_is_a_single_race_difficulty() {
+        let view = view(1280., 720.);
+        let mut settings = Settings::memory();
+        let mut front = Frontend::new(tracks(), &settings, true);
+        front.set_race_courses(vec!["env01".into(), "nat01".into()], &view);
+        front.show("race", &view);
+        front.selection = front
+            .choices()
+            .iter()
+            .position(|(a, _)| a == "racedifficulty")
+            .unwrap();
+        // Normal → Expert → Kid → Normal, and back the other way.
+        assert_eq!(front.race.difficulty, 1);
+        for (expected, label) in [(2, "Expert"), (KID_DIFFICULTY, "Kid"), (1, "Normal")] {
+            front.key("ArrowRight", &view, &mut settings);
+            assert_eq!(front.race.difficulty, expected);
+            assert!(front.choices()[front.selection].1.ends_with(label));
+        }
+        front.key("ArrowLeft", &view, &mut settings);
+        assert_eq!(front.race.difficulty, KID_DIFFICULTY);
+        // Start Race carries Kid to the ride; the save keeps it.
+        front.selection = front
+            .choices()
+            .iter()
+            .position(|(a, _)| a == "racestart")
+            .unwrap();
+        assert!(matches!(
+            front.key("Enter", &view, &mut settings),
+            Some(Event::Race {
+                difficulty: KID_DIFFICULTY,
+                championship: None,
+                ..
+            })
+        ));
+        let saved: Value = serde_json::from_str(&settings.get(SELECTION_KEY).unwrap()).unwrap();
+        assert_eq!(saved["race"]["difficulty"], 3);
+        let again = Frontend::new(tracks(), &settings, true);
+        assert_eq!(again.race.difficulty, KID_DIFFICULTY);
+        assert_eq!(RaceSetup::from_value(&again.race.value()), again.race);
+        // Old and unknown saves read Normal.
+        for value in [
+            json!({}),
+            json!({"difficulty": 0}),
+            json!({"difficulty": 9}),
+        ] {
+            assert_eq!(RaceSetup::from_value(&value).difficulty, 1);
+        }
+        // Practice and split screen offer no Kid: a saved Kid reads Normal.
+        front.race.event = atv_core::race_event::EventType::Practice;
+        assert!(!front.kid_offered());
+        assert_eq!(front.race_difficulty(), 1);
+        front.race.event = atv_core::race_event::EventType::SingleRace;
+        front.split = true;
+        assert_eq!(front.race_difficulty(), 1);
+        front.race.difficulty = 2;
+        front.selection = front
+            .choices()
+            .iter()
+            .position(|(a, _)| a == "racedifficulty")
+            .unwrap();
+        front.key("ArrowRight", &view, &mut settings);
+        assert_eq!(front.race.difficulty, 1);
     }
 
     #[test]

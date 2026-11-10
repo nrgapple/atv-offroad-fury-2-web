@@ -77,7 +77,45 @@ pub struct Settings {
     /// lap count, finish or results (as Practice), and a ghost of the
     /// player's best lap (`001f6c60` mode 2).
     pub lap_attack: bool,
+    /// Single Race's port-only Kid difficulty (research/KID_MODE.md): the
+    /// race path driver rides the player while GO is held, released the
+    /// quad brakes. `difficulty` stays Normal for the CPUs (the exact build
+    /// has no easier CPU options).
+    pub kid: bool,
 }
+
+/// Who drives the player this step in Kid Mode (research/KID_MODE.md).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum KidDrive {
+    /// Not Kid Mode, or the race is not running, or the player finished:
+    /// the race's ordinary rules apply.
+    Off,
+    /// GO released: no driver, full brake.
+    Brake,
+    /// GO held: the race path driver's controls pass through unchanged.
+    Autopilot,
+}
+
+/// Kid Mode applies while the race runs and the player has not finished.
+pub fn kid_drive(kid: bool, go: bool, running: bool, finished: bool) -> KidDrive {
+    match (kid && running && !finished, go) {
+        (false, _) => KidDrive::Off,
+        (true, false) => KidDrive::Brake,
+        (true, true) => KidDrive::Autopilot,
+    }
+}
+
+/// Kid Mode with GO released: full brake, no throttle or steering.
+pub const KID_RELEASED: VehicleInput = VehicleInput {
+    throttle: 0.,
+    brake: 1.,
+    steer: 0.,
+    lean: 0.,
+    preload_axis: None,
+    reverse: false,
+    reverse_chord_brake: None,
+    lean_flick_rate: None,
+};
 
 /// Lap Attack's new best lap infotext (`00216750`: 0x42bb70).
 const GHOST_BEST: &str = "New Lap Attack Lap Set!";
@@ -103,6 +141,7 @@ impl Default for Settings {
             all_out: false,
             seed: 1,
             intro: true,
+            kid: false,
             championship: None,
             course: Default::default(),
             room: None,
@@ -264,6 +303,14 @@ pub struct RaceState {
     /// Parity tooling: the path driver also rides the player before the
     /// finish, so its controls can be recorded as a script.
     pub autopilot_always: bool,
+    /// Kid Mode ([`Settings::kid`]): while GO is held the race path driver
+    /// rides the player for the whole race, its throttle, brake, steering,
+    /// lean and stunts unchanged; released, the driver is off and the quad
+    /// brakes.
+    pub kid: bool,
+    /// Kid Mode's GO (any touch, Space/Up/W/Enter, a pad's A or right
+    /// trigger), set by the host before each batch.
+    pub kid_go: bool,
     /// Controls the race imposed on the latest step.
     pub imposed: Option<VehicleInput>,
     settings: Settings,
@@ -627,6 +674,8 @@ impl Ride {
             hud: RaceHud::default(),
             frame: None,
             autopilot_always: false,
+            kid: settings.kid,
+            kid_go: false,
             imposed: None,
             settings,
             spacing_sources: setup.spacing_sources,
@@ -717,7 +766,22 @@ impl Ride {
                 ..Default::default()
             }));
         }
-        if !race.player_finished() && !(state.autopilot_always && race.running()) {
+        let kid = kid_drive(
+            state.kid,
+            state.kid_go,
+            race.running(),
+            race.player_finished(),
+        );
+        if kid == KidDrive::Brake {
+            // GO released: the driver is off and the quad brakes. The
+            // player's own Off Track rule still returns it to the course.
+            state.autopilot_stuck = 0.;
+            state.autopilot_reset = race.off_track_time(None) > race_hud::RESET_SECONDS;
+            return Ok(Some(KID_RELEASED));
+        }
+        if !race.player_finished()
+            && !((state.autopilot_always || kid == KidDrive::Autopilot) && race.running())
+        {
             state.autopilot = None;
             state.autopilot_stuck = 0.;
             // The Off Track sign counts down 5s, then the rider returns to
@@ -797,6 +861,33 @@ impl Ride {
                 enduro: race.enduro_target(None),
             },
         )?;
+        // Kid Mode: the player's rider takes the CPUs' authored stunt
+        // choices (CpuRacer::step), so the driver jumps and tricks as they do.
+        if kid == KidDrive::Autopilot
+            && let Mount::Quad { rig, vehicle } = &mut self.mount
+        {
+            let before = vehicle.frame();
+            let animator = &mut rig.animator;
+            let durations = std::array::from_fn(|i| animator.stunt_duration(i).unwrap_or(f32::MAX));
+            if let Some(id) = driver.stunt_choice(
+                &race.course,
+                &before,
+                animator.stunt_frame().is_some(),
+                &durations,
+                STEP,
+            ) {
+                animator.request_cpu_stunt(
+                    id,
+                    atv_core::stunt::Input {
+                        grounded: before.grounded.iter().any(|g| *g),
+                        horizontal_speed_squared: before.linear_velocity[0].powi(2)
+                            + before.linear_velocity[2].powi(2),
+                        crashed: before.wreck.phase != Phase::Riding,
+                        ..Default::default()
+                    },
+                );
+            }
+        }
         Ok(Some(input))
     }
 
@@ -1660,8 +1751,28 @@ impl Ride {
 
 #[cfg(test)]
 mod tests {
-    use super::{Entry, puppet_sounds};
+    use super::{Entry, KID_RELEASED, KidDrive, kid_drive, puppet_sounds};
     use crate::ride::cpu::PuppetSound;
+
+    #[test]
+    fn kid_mode_gates_the_driver_on_go() {
+        // Held GO in a running race: the driver's controls pass through.
+        assert_eq!(kid_drive(true, true, true, false), KidDrive::Autopilot);
+        // Released: the driver is off and the quad brakes fully.
+        assert_eq!(kid_drive(true, false, true, false), KidDrive::Brake);
+        assert_eq!(KID_RELEASED.brake, 1.);
+        assert_eq!(KID_RELEASED.throttle, 0.);
+        assert_eq!(KID_RELEASED.steer, 0.);
+        assert_eq!(KID_RELEASED.lean, 0.);
+        assert!(!KID_RELEASED.reverse);
+        // Off, the countdown (not running) and after the finish follow the
+        // race's ordinary rules whatever GO does.
+        for go in [false, true] {
+            assert_eq!(kid_drive(false, go, true, false), KidDrive::Off);
+            assert_eq!(kid_drive(true, go, false, false), KidDrive::Off);
+            assert_eq!(kid_drive(true, go, true, true), KidDrive::Off);
+        }
+    }
 
     fn entry(quad: u32, female: bool) -> Entry {
         Entry {

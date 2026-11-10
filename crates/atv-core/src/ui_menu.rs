@@ -843,11 +843,12 @@ pub fn layout(request: Request) -> Result<Frame> {
             );
             // The browser lays these rows out; landscape keeps the share
             // link beside Back. Difficulty uses the original race-prep names
-            // (`0021add0`): 1 Normal, 2 Expert.
-            let difficulty = if request.race_difficulty == 2 {
-                "Expert"
-            } else {
-                "Normal"
+            // (`0021add0`): 1 Normal, 2 Expert; 3 is the port's Kid
+            // (research/KID_MODE.md).
+            let difficulty = match request.race_difficulty {
+                2 => "Expert",
+                3 => "Kid",
+                _ => "Normal",
             };
             let event = if request.race_event.is_empty() {
                 "Single Race"
@@ -2728,6 +2729,7 @@ mod tests {
         };
         assert_eq!(label(1), "Difficulty: Normal");
         assert_eq!(label(2), "Difficulty: Expert");
+        assert_eq!(label(3), "Difficulty: Kid");
         for (i, a) in f.hits.iter().enumerate() {
             for b in &f.hits[i + 1..] {
                 let [ax, ay, aw, ah] = a.rect;
