@@ -73,6 +73,14 @@ Relay tests need the game and a multiplayer relay on one origin. Locally:
 (`ATV_ALLOW_HOST_WIP=1` lets `test_multiplayer_four` accept a host without
 `/deployment.json`; `ATV_MP_REOPEN=0` skips the 100 s room-expiry step).
 
+Two headless Chromium pages on one machine do not open a direct multiplayer
+link by themselves (each hides its local address behind an mDNS name the other
+cannot resolve), so relay tests exercise the relayed path, as desktop builds and
+blocked networks use it. `ATV_LINKS=1` adds the harness's `LINK_ARGS` to every
+launch and runs the same test with its riders linked directly;
+`test_engine_multiplayer_links.mjs` always does (research/MULTIPLAYER.md
+"Direct links").
+
 `broken` entries record why they currently fail; every one also failed on unmodified
 `main` when the harness was introduced. Fix the test (or the game) and move it back
 to `content`. `defaults` lists user-facing defaults a test relies on (crash mode,

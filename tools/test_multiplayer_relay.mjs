@@ -235,6 +235,66 @@ try {
   await sleep(150);
   assert.equal(host.packets.filter(p => p.Snapshot).length, count);
   check('Validated pose/wreck/audio relayed with sender stamp; stale sequence dropped');
+  // Direct links (research/MULTIPLAYER.md "Direct links"): riders that said
+  // HELLO are introduced once both are ready on a course, exchange session
+  // descriptions through the relay, and stop getting each other's relayed
+  // poses while both report the link. Riders that said nothing see none of it.
+  {
+    const [HELLO, OFFER, ANSWER, PRESENT, ARRIVED, DROPPED] = [0, 1, 2, 3, 4, 6];
+    const signal = (peer, kind, data = [1]) => encode({ Signal: { peer, kind, data } });
+    const own = { ...snapshot, atv_model: 1, rider_model: 0 };
+    host.send(signal(0, HELLO));
+    guest2.send(signal(0, HELLO));
+    host.send(encode({ Ready: { map: 9 } }));
+    guest3.send(encode({ Ready: { map: 9 } }));
+    await sleep(100);
+    let hostAt = host.packets.length;
+    let guest2At = guest2.packets.length;
+    guest2.send(encode({ Ready: { map: 9 } }));
+    // The arrival hears of every rider on the course: who links (1) and who
+    // needs relayed poses (0).
+    assert.deepEqual((await wait(guest2, p => p.Signal?.peer === 0, guest2At)).Signal, {
+      peer: 0,
+      kind: PRESENT,
+      data: [1]
+    });
+    assert.deepEqual((await wait(guest2, p => p.Signal?.peer === 3, guest2At)).Signal, {
+      peer: 3,
+      kind: PRESENT,
+      data: [0]
+    });
+    assert.deepEqual((await wait(host, p => p.Signal, hostAt)).Signal, { peer: 2, kind: ARRIVED, data: [1] });
+    hostAt = host.packets.length;
+    guest2At = guest2.packets.length;
+    guest2.send(signal(0, OFFER, [118, 61, 48]));
+    assert.deepEqual((await wait(host, p => p.Signal, hostAt)).Signal, { peer: 2, kind: OFFER, data: [118, 61, 48] });
+    host.send(signal(2, ANSWER, [118, 61, 49]));
+    assert.deepEqual((await wait(guest2, p => p.Signal, guest2At)).Signal, {
+      peer: 0,
+      kind: ANSWER,
+      data: [118, 61, 49]
+    });
+    host.send(encode({ Links: { mask: 1 << 2 } }));
+    guest2.send(encode({ Links: { mask: 1 << 0 } }));
+    await sleep(100);
+    hostAt = host.packets.length;
+    const guest3At = guest3.packets.length;
+    guest2.send(encode({ Snapshot: { ...own, sequence: 20 } }));
+    assert.equal((await wait(guest3, p => p.Snapshot, guest3At)).Snapshot.peer, 2);
+    await sleep(100);
+    assert.equal(host.packets.slice(hostAt).filter(p => p.Snapshot).length, 0);
+    // One end giving the link up tells the other; relayed poses resume.
+    guest2At = guest2.packets.length;
+    host.send(encode({ Links: { mask: 0 } }));
+    assert.deepEqual((await wait(guest2, p => p.Signal, guest2At)).Signal, { peer: 0, kind: DROPPED, data: [0] });
+    guest2.send(encode({ Snapshot: { ...own, sequence: 21 } }));
+    assert.equal((await wait(host, p => p.Snapshot, hostAt)).Snapshot.peer, 2);
+    assert.deepEqual(
+      [guest, guest3].flatMap(ws => ws.packets.filter(p => p.Signal)),
+      []
+    );
+    check('Direct-link introductions, description exchange, linked pose filter and drop notice');
+  }
   // Room races (research/MULTIPLAYER.md "Room races"): race state goes from
   // the host only to riders that announced race support (serial-0 Progress);
   // Progress is stamped with the sender's peer and reaches only such riders.

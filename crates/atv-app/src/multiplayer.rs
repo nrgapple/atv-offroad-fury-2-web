@@ -1,15 +1,15 @@
 //! A multiplayer ride in the Rust engine: joins or hosts a relay room, sends
 //! the player's pose at the adaptive cadence and draws the other riders with
 //! their own quads and riders (web/multiplayer.js `connect`/`send`/`sample`).
-use crate::net::{self, Event};
+use crate::net::{self, Event, MeshEvent};
 use atv_content::Content;
 use atv_game::multiplayer::{
-    Profile, Session,
+    LinkCommand, Profile, Session,
     remote::{self, Key, Local, RemoteModel},
 };
 use atv_game::ride::{Pose, Ride};
 use atv_render::{Gpu, SceneRenderer};
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::{
     collections::{BTreeMap, HashMap},
     rc::Rc,
@@ -19,6 +19,10 @@ use web_time::Instant;
 /// Keep-alive ping interval (ms): 15 s like web/multiplayer.js; the
 /// `?pingMs=` test hook samples the round trip more often.
 pub static PING_MS: AtomicU32 = AtomicU32::new(15_000);
+
+/// Direct links between browsers (research/MULTIPLAYER.md "Direct links");
+/// `?p2p=0` keeps every pose on the relay.
+pub static P2P: AtomicBool = AtomicBool::new(true);
 
 /// How a ride starts in a room (`--host`/`--join`, `?host=1`/`?room=`).
 #[derive(Clone, Debug)]
@@ -49,6 +53,12 @@ enum Loaded {
 pub struct Net {
     pub session: Session,
     socket: net::Socket,
+    /// Direct links to the other riders' browsers.
+    mesh: net::Mesh,
+    /// The relay introduces riders to each other (its room claim said so).
+    signalling: bool,
+    /// This socket's session announced its direct-link support.
+    greeted: bool,
     content: Rc<Content>,
     clock: Instant,
     relay: String,
@@ -201,8 +211,9 @@ fn arrival(clock: Instant, at: Instant, now: u64) -> u64 {
 }
 
 /// Creates (`host`) or opens (`join`, `open`) the room on the relay and
-/// returns its code and, when this rider becomes its creator, the slot key.
-async fn claim(start: &RoomStart) -> Result<(String, Option<String>), String> {
+/// returns its code, the slot key when this rider becomes its creator, and
+/// whether the relay introduces riders for direct links.
+async fn claim(start: &RoomStart) -> Result<(String, Option<String>, bool), String> {
     let origin = net::origin(&start.relay);
     // Shared Free Ride codes (FREERDnn) are the relay's: hosting one is
     // refused, and opening one (an invite from a shared room) is Free Ride,
@@ -240,7 +251,8 @@ async fn claim(start: &RoomStart) -> Result<(String, Option<String>), String> {
         if !shared || key.len() != 32 || !key.bytes().all(|b| b.is_ascii_hexdigit()) {
             return Err("Unable to join Free Ride.".into());
         }
-        return Ok((code, Some(key)));
+        let links = room["links"].as_bool() == Some(true);
+        return Ok((code, Some(key), links));
     }
     let url = format!("{}/multiplayer/rooms", start.relay.trim_end_matches('/'));
     let code = start
@@ -275,15 +287,16 @@ async fn claim(start: &RoomStart) -> Result<(String, Option<String>), String> {
         .as_str()
         .ok_or("relay returned no room code")?
         .to_string();
+    let links = room["links"].as_bool() == Some(true);
     if room["open"].as_bool() == Some(true) {
         let players = room["players"].as_u64().unwrap_or(0);
         if players >= room["max"].as_u64().unwrap_or(4) {
             return Err("Game is full!".into());
         }
         // This tab's kept slot key reclaims its rider after a reload.
-        return Ok((code.clone(), saved_key(&code)));
+        return Ok((code.clone(), saved_key(&code), links));
     }
-    Ok((code, room["hostToken"].as_str().map(String::from)))
+    Ok((code, room["hostToken"].as_str().map(String::from), links))
 }
 
 /// The kept slot key record `{code, key}`: this browser tab's
@@ -346,7 +359,7 @@ impl Net {
         content: Rc<Content>,
         ride: RoomRide,
     ) -> Result<(Net, String), String> {
-        let (code, key) = claim(start).await?;
+        let (code, key, signalling) = claim(start).await?;
         let socket = net::Socket::connect(
             &net::room_url(&start.relay, &code, key.as_deref()),
             &net::origin(&start.relay),
@@ -354,6 +367,9 @@ impl Net {
         let mut net = Net {
             session: Session::new(profile),
             socket,
+            mesh: net::Mesh::default(),
+            signalling,
+            greeted: false,
             content,
             clock: Instant::now(),
             relay: start.relay.clone(),
@@ -417,6 +433,7 @@ impl Net {
                     }
                 }
             }
+            net.greet();
             if let Some(environment) = net.session.environment() {
                 save_key(&net.session.code, &net.session.key);
                 net.saved_key.clone_from(&net.session.key);
@@ -461,6 +478,7 @@ impl Net {
     pub fn tick(&mut self, ride: Option<&Ride>, paused: bool) -> Tick {
         let mut tick = Tick::default();
         if self.closed.is_some() {
+            self.mesh.clear();
             return tick;
         }
         let now = now_ms(self.clock);
@@ -491,6 +509,8 @@ impl Net {
                 self.session.restart();
                 self.session.code = code.clone();
                 self.session.key = key.clone();
+                self.mesh.clear();
+                self.greeted = false;
                 self.socket = net::Socket::connect(
                     &net::room_url(&self.relay, &code, Some(&key)),
                     &net::origin(&self.relay),
@@ -551,6 +571,8 @@ impl Net {
                 }
             }
         }
+        self.greet();
+        self.link(now);
         if let Some(ride) = ride {
             // The host moved the room to another course: reload there.
             if let Some(environment) = self.session.environment()
@@ -577,6 +599,14 @@ impl Net {
                 // A fresh arrival starts apart from nobody: contacts wait.
                 self.session.ghost(now);
                 self.announce_races();
+                // Linked riders only send the relay a presence pose every
+                // few seconds; the relay's introduction makes each send a
+                // current one, which the first meet attempt waits for.
+                if self.session.signalling()
+                    && let Some((at, _)) = &mut self.meet
+                {
+                    *at = at.max(now_f + 400.);
+                }
             }
             if let Some((at, tries)) = self.meet
                 && self.ready_sent
@@ -619,16 +649,7 @@ impl Net {
             }
             if now_f - self.last_send >= 50. && self.ready_sent && tick.place.is_none() {
                 self.last_send = now_f;
-                match self.session.snapshot(ride, now, paused) {
-                    Ok(Some(bytes)) => {
-                        if self.socket.send(bytes.clone()) {
-                            let _ = self.session.sent(&bytes);
-                            self.last_traffic = now_f;
-                        }
-                    }
-                    Ok(None) => {}
-                    Err(error) => crate::status(&format!("Multiplayer pose: {error}")),
-                }
+                self.send_poses(ride, now, paused);
             }
         }
         // Pings keep the socket warm and refine the shared world clock.
@@ -685,15 +706,88 @@ impl Net {
             return;
         }
         self.last_send = now_f;
-        match self.session.snapshot(ride, now, paused) {
-            Ok(Some(bytes)) => {
-                if self.socket.send(bytes.clone()) {
-                    let _ = self.session.sent(&bytes);
-                    self.last_traffic = now_f;
+        self.send_poses(ride, now, paused);
+    }
+
+    /// This tick's poses: the relay's (if due) on the socket and the linked
+    /// riders' on their links.
+    fn send_poses(&mut self, ride: &Ride, now: u64, paused: bool) {
+        let poses = match self.session.poses(ride, now, paused) {
+            Ok(poses) => poses,
+            Err(error) => return crate::status(&format!("Multiplayer pose: {error}")),
+        };
+        if let Some(bytes) = poses.relay
+            && self.socket.send(bytes.clone())
+        {
+            let _ = self.session.sent(&bytes);
+            self.last_traffic = now as f64;
+        }
+        if let Some((bytes, peers)) = poses.direct {
+            for peer in peers {
+                if self.mesh.send(peer, &bytes) {
+                    self.session.counters.direct_sent += 1;
+                    self.session.counters.direct_sent_bytes += bytes.len() as u64;
                 }
             }
-            Ok(None) => {}
-            Err(error) => crate::status(&format!("Multiplayer pose: {error}")),
+        }
+    }
+
+    /// Once admitted, tells a relay that introduces riders that this browser
+    /// opens direct links. Desktop builds and `?p2p=0` say nothing and keep
+    /// every pose on the relay.
+    fn greet(&mut self) {
+        let direct = cfg!(target_arch = "wasm32") && P2P.load(Ordering::Relaxed);
+        if self.greeted || !self.signalling || !direct || self.session.peer.is_none() {
+            return;
+        }
+        if let Ok(bytes) = self.session.hello(direct) {
+            self.greeted = self.socket.send(bytes);
+        }
+    }
+
+    /// Direct links (research/MULTIPLAYER.md "Direct links"): what the
+    /// connections reported, then what the session wants done with them.
+    fn link(&mut self, now: u64) {
+        for event in self.mesh.poll() {
+            let (peer, ok) = match event {
+                MeshEvent::Local {
+                    peer,
+                    answer,
+                    description,
+                } => {
+                    let sent = self
+                        .session
+                        .signal(peer, answer, &description)
+                        .is_ok_and(|bytes| self.socket.send(bytes));
+                    (peer, sent)
+                }
+                MeshEvent::Open(peer) => {
+                    self.session.link_opened(peer, now);
+                    (peer, true)
+                }
+                MeshEvent::Closed(peer) => (peer, false),
+                // A link that sends anything but its rider's poses closes;
+                // the rider's poses then come through the relay again.
+                MeshEvent::Message(peer, bytes, at) => {
+                    let at = arrival(self.clock, at, now);
+                    (peer, self.session.receive_direct(peer, &bytes, at).is_ok())
+                }
+            };
+            if !ok {
+                self.mesh.close(peer);
+                self.session.link_closed(peer, now);
+            }
+        }
+        for command in self.session.link_commands(now) {
+            match command {
+                LinkCommand::Offer(peer) => self.mesh.offer(peer),
+                LinkCommand::Accept(peer, offer) => self.mesh.accept(peer, &offer),
+                LinkCommand::Answer(peer, answer) => self.mesh.answer(peer, &answer),
+                LinkCommand::Close(peer) => self.mesh.close(peer),
+            }
+        }
+        if let Some(bytes) = self.session.links_packet(now) {
+            self.socket.send(bytes);
         }
     }
 
@@ -948,6 +1042,8 @@ impl Net {
         self.session.restart();
         self.session.code = code;
         self.session.key = key;
+        self.mesh.clear();
+        self.greeted = false;
         self.locals.clear();
         self.presented.clear();
         self.riders.clear();
@@ -1180,6 +1276,7 @@ impl Net {
     pub fn leave(&mut self) {
         forget_key();
         self.socket.close();
+        self.mesh.clear();
         self.closed = Some("Left lobby".into());
     }
 
@@ -1231,7 +1328,13 @@ impl Net {
                 "suppressed": c.suppressed, "sentBytes": c.sent_bytes,
                 "receivedBytes": c.received_bytes, "lastPacketBytes": c.last_packet_bytes,
                 "protocol": atv_net_version(),
+                "directSent": c.direct_sent, "directSentBytes": c.direct_sent_bytes,
+                "directReceived": c.direct_received,
+                "directReceivedBytes": c.direct_received_bytes,
             },
+            "links": self.session.link_states().into_iter().map(|(peer, state)| {
+                serde_json::json!({"peer": peer, "state": state})
+            }).collect::<Vec<_>>(),
         })
     }
 }

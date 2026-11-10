@@ -1035,3 +1035,72 @@ fn race_cpu_fill_and_cpu_motion_round_trip_and_reject_bad_values() {
     long[6..8].copy_from_slice(&len.to_le_bytes());
     assert!(atv_net::decode(&long).is_err());
 }
+#[test]
+fn direct_link_signalling_roundtrips_and_is_bounded() {
+    let packets = [
+        Packet::Signal(Signal {
+            peer: 3,
+            kind: signal::HELLO,
+            data: vec![signal::DIRECT],
+        }),
+        Packet::Signal(Signal {
+            peer: 19,
+            kind: signal::OFFER,
+            data: b"v=0\r\n".repeat(900),
+        }),
+        Packet::Signal(Signal {
+            peer: 0,
+            kind: signal::ANSWER,
+            data: vec![1],
+        }),
+        Packet::Signal(Signal {
+            peer: 2,
+            kind: signal::PRESENT,
+            data: vec![0],
+        }),
+        Packet::Signal(Signal {
+            peer: 2,
+            kind: signal::ARRIVED,
+            data: vec![signal::DIRECT],
+        }),
+        Packet::Signal(Signal {
+            peer: 7,
+            kind: signal::GONE,
+            data: vec![0],
+        }),
+        Packet::Signal(Signal {
+            peer: 7,
+            kind: signal::DROPPED,
+            data: vec![0],
+        }),
+        Packet::Links { mask: 0 },
+        Packet::Links {
+            mask: (1 << MAX_PLAYERS) - 1,
+        },
+    ];
+    for packet in packets {
+        assert_eq!(decode(&encode(&packet).unwrap()).unwrap(), packet);
+    }
+    let signal = |peer, kind, data: Vec<u8>| Packet::Signal(Signal { peer, kind, data });
+    for bad in [
+        signal(20, signal::OFFER, vec![1]),
+        signal(1, 7, vec![1]),
+        signal(1, signal::OFFER, vec![]),
+        signal(1, signal::OFFER, vec![0; MAX_SIGNAL_BYTES + 1]),
+        signal(1, signal::HELLO, vec![]),
+        signal(1, signal::HELLO, vec![2]),
+        signal(1, signal::PRESENT, vec![1, 1]),
+        Packet::Links {
+            mask: 1 << MAX_PLAYERS,
+        },
+    ] {
+        assert_eq!(encode(&bad), Err(Error::InvalidValue));
+    }
+    // The same bounds hold for bytes that never passed through `encode`.
+    let mut bytes = encode(&signal(1, signal::HELLO, vec![1])).unwrap();
+    bytes[10] = 2;
+    assert_eq!(decode(&bytes), Err(Error::InvalidValue));
+    let mut bytes = encode(&Packet::Links { mask: 1 }).unwrap();
+    bytes[11] = 0xff;
+    assert_eq!(decode(&bytes), Err(Error::InvalidValue));
+}

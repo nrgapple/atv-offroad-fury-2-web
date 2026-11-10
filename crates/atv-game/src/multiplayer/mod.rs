@@ -1,16 +1,20 @@
 //! Multiplayer rooms for the Rust engine: the relay session (join, roster,
-//! clock, adaptive pose cadence with compact deltas) and remote riders drawn
-//! with their own quad and rider models.
+//! clock, adaptive pose cadence with compact deltas), direct links between
+//! riders ([`links`]) and remote riders drawn with their own quad and rider
+//! models.
 //!
 //! Transport-independent: the host moves bytes over a WebSocket (web-sys in
-//! the browser, a native client on desktop) and calls [`Session`] with them.
+//! the browser, a native client on desktop) and, in the browser, over one
+//! WebRTC data channel per linked rider, and calls [`Session`] with them.
 //! This ports the protocol half of atv-web's networking adapter
 //! (crates/atv-web/src/multiplayer.rs ops 80-85, 109-111, 118) and the remote
 //! presentation of multiplayer_animation.rs; web/multiplayer.js stays the
 //! JavaScript game's socket glue. The wire format, codec, deltas and
 //! smoothing are atv-net's, shared with the JavaScript game and the relay.
+pub mod links;
 pub mod remote;
 pub use atv_net::{RiderState, Snapshot};
+pub use links::Command as LinkCommand;
 pub mod spawn;
 
 use crate::Result;
@@ -100,6 +104,20 @@ pub struct Counters {
     pub delta: u64,
     pub suppressed: u64,
     pub last_packet_bytes: usize,
+    /// Poses sent and received over direct links (the host counts sends).
+    pub direct_sent: u64,
+    pub direct_sent_bytes: u64,
+    pub direct_received: u64,
+    pub direct_received_bytes: u64,
+}
+
+/// One 50 ms tick's poses ([`Session::poses`]).
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct Poses {
+    /// For the relay; confirm an actual send with [`Session::sent`].
+    pub relay: Option<Vec<u8>>,
+    /// A full pose and the linked riders it is due for.
+    pub direct: Option<(Vec<u8>, Vec<u8>)>,
 }
 
 /// One relay session (atv-web's `Client`, without the browser audio).
@@ -141,6 +159,12 @@ pub struct Session {
     pub cpu_serial: u32,
     pub cpu_buffers: BTreeMap<u8, PoseBuffer>,
     pub cpu_progress: BTreeMap<u8, atv_net::RaceProgress>,
+    /// Direct links to the other riders on this course.
+    links: links::Links,
+    /// Riders (bits) who got this rider's last pose through the relay.
+    relayed: u32,
+    /// A rider newly depends on the relay: its next pose goes at once.
+    relay_due: bool,
 }
 
 fn encode(packet: &Packet) -> Result<Vec<u8>> {
@@ -217,10 +241,72 @@ impl Session {
     }
 
     /// Reports the room's map loaded; the relay relays poses only from
-    /// riders whose Ready matches the current map.
-    pub fn ready(&self) -> Result<Vec<u8>> {
+    /// riders whose Ready matches the current map. Direct links start over:
+    /// the relay answers with who rides the course now.
+    pub fn ready(&mut self) -> Result<Vec<u8>> {
         let map = self.lobby.as_ref().ok_or("no lobby")?.map;
+        self.links.reset();
         encode(&Packet::Ready { map })
+    }
+
+    /// Tells a relay that supports them (its room claim says so) that this
+    /// build understands direct-link signalling, and with `direct` that it
+    /// can open links itself. Send once per socket, after Welcome.
+    pub fn hello(&mut self, direct: bool) -> Result<Vec<u8>> {
+        let peer = self.peer.ok_or("join multiplayer first")?;
+        self.links.announce(direct);
+        encode(&Packet::Signal(atv_net::Signal {
+            peer,
+            kind: atv_net::signal::HELLO,
+            data: vec![if direct { atv_net::signal::DIRECT } else { 0 }],
+        }))
+    }
+
+    /// This client's session description for `peer`'s link (an offer, or
+    /// the answer to theirs), for the relay to pass on.
+    pub fn signal(&self, peer: u8, answer: bool, description: &[u8]) -> Result<Vec<u8>> {
+        encode(&Packet::Signal(atv_net::Signal {
+            peer,
+            kind: if answer {
+                atv_net::signal::ANSWER
+            } else {
+                atv_net::signal::OFFER
+            },
+            data: description.to_vec(),
+        }))
+    }
+
+    /// What the host does with its direct connections now. Call every tick,
+    /// after the tick's messages.
+    pub fn link_commands(&mut self, now_ms: u64) -> Vec<LinkCommand> {
+        self.links.commands(now_ms)
+    }
+
+    /// The host's connection to `peer` opened.
+    pub fn link_opened(&mut self, peer: u8, now_ms: u64) {
+        self.links.opened(peer, now_ms);
+    }
+
+    /// The host's connection to `peer` closed or could not be made.
+    pub fn link_closed(&mut self, peer: u8, now_ms: u64) {
+        self.links.closed(peer, now_ms);
+    }
+
+    /// The open links for the relay, when they changed: it stops relaying
+    /// poses between two riders who both report their link.
+    pub fn links_packet(&mut self, now_ms: u64) -> Option<Vec<u8>> {
+        let mask = self.links.report(now_ms)?;
+        encode(&Packet::Links { mask }).ok()
+    }
+
+    /// Each rider on this course and how its poses travel (status, tests).
+    pub fn link_states(&self) -> Vec<(u8, &'static str)> {
+        self.links.states()
+    }
+
+    /// Whether the relay reports the riders on this course.
+    pub fn signalling(&self) -> bool {
+        self.links.announced()
     }
 
     /// Change ATV and Rider in place: a Profile packet for the room; the next
@@ -277,7 +363,10 @@ impl Session {
             .is_some_and(|old| old.map != value.map || old.started != value.started)
         {
             self.buffers.clear();
+            self.links.reset();
         }
+        self.links
+            .retain(|peer| value.players.iter().any(|p| p.id == peer));
         // A rider who changed vehicle restarts its pose history.
         let old = self.lobby.take();
         self.buffers.retain(|peer, _| {
@@ -312,30 +401,14 @@ impl Session {
                 self.set_lobby(lobby);
             }
             Packet::Lobby(lobby) => self.set_lobby(lobby),
-            Packet::Snapshot(s) => {
-                let allowed = self.lobby.as_ref().is_some_and(|l| {
-                    l.started
-                        && l.players.iter().any(|p| {
-                            p.id == s.peer
-                                && p.atv_model == s.atv_model
-                                && p.rider_model == s.rider_model
-                        })
-                });
-                if allowed && Some(s.peer) != self.peer {
-                    let buffer = self.buffers.entry(s.peer).or_default();
-                    if buffer.push((*s).clone(), now_ms).is_err() {
-                        // One rider's pose history (not the wire packet, which
-                        // decoded and validated) disagrees with this pose:
-                        // restart that rider's timeline rather than the room.
-                        buffer.clear();
-                        buffer.push(*s, now_ms).map_err(|e| e.to_string())?;
-                    }
-                }
-            }
+            Packet::Snapshot(s) => self.pose(*s, now_ms)?,
             Packet::Leave { peer } => {
                 self.buffers.remove(&peer);
                 self.progress.remove(&peer);
+                self.links.forget(peer);
             }
+            // Only sent to a client that said [`Session::hello`].
+            Packet::Signal(message) => self.links.signal(message, now_ms),
             Packet::Pong { nonce, server_ms } => {
                 let rtt = (now_ms as u32).wrapping_sub(nonce);
                 self.rtt_ms = Some(rtt);
@@ -407,20 +480,63 @@ impl Session {
         Ok(())
     }
 
-    /// The player's pose for the room, or None when the adaptive cadence
-    /// suppresses it (atv-web op 81). Call every 50 ms; after the bytes are
-    /// actually sent, confirm them with [`Session::sent`] so deltas only
-    /// reference delivered baselines.
-    pub fn snapshot(&mut self, ride: &Ride, now_ms: u64, paused: bool) -> Result<Option<Vec<u8>>> {
+    /// A pose from another rider, by the relay or their link.
+    fn pose(&mut self, s: Snapshot, now_ms: u64) -> Result<()> {
+        let allowed = self.lobby.as_ref().is_some_and(|l| {
+            l.started
+                && l.players.iter().any(|p| {
+                    p.id == s.peer && p.atv_model == s.atv_model && p.rider_model == s.rider_model
+                })
+        });
+        if allowed && Some(s.peer) != self.peer {
+            let buffer = self.buffers.entry(s.peer).or_default();
+            // A link's pose can be handled before an older relay message
+            // that was stamped later; arrival times only move forward.
+            let now_ms = buffer.latest().map_or(now_ms, |(_, at)| now_ms.max(at));
+            if buffer.push(s.clone(), now_ms).is_err() {
+                // One rider's pose history (not the wire packet, which
+                // decoded and validated) disagrees with this pose:
+                // restart that rider's timeline rather than the room.
+                buffer.clear();
+                buffer.push(s, now_ms).map_err(|e| e.to_string())?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Applies one message from `peer`'s direct link: only that rider's own
+    /// full pose is accepted. An error means the link (not the room) is
+    /// misbehaving and should be closed.
+    pub fn receive_direct(&mut self, peer: u8, bytes: &[u8], now_ms: u64) -> Result<()> {
+        let Packet::Snapshot(s) = atv_net::decode(bytes).map_err(|e| e.to_string())? else {
+            return Err("unexpected direct packet".into());
+        };
+        if s.peer != peer {
+            return Err("direct pose for another rider".into());
+        }
+        // A link this client already gave up on.
+        if !self.links.heard(peer, now_ms) {
+            return Ok(());
+        }
+        self.counters.direct_received += 1;
+        self.counters.direct_received_bytes += bytes.len() as u64;
+        self.pose(*s, now_ms)
+    }
+
+    /// The player's poses for this tick: one for the relay and one for the
+    /// linked riders it is due for, either absent when the adaptive cadence
+    /// suppresses it (atv-web op 81). Call every 50 ms; after the relay
+    /// bytes are actually sent, confirm them with [`Session::sent`] so
+    /// deltas only reference delivered baselines.
+    pub fn poses(&mut self, ride: &Ride, now_ms: u64, paused: bool) -> Result<Poses> {
+        let s = self.build(ride, now_ms, paused)?;
+        self.emit(s, paused)
+    }
+
+    fn build(&mut self, ride: &Ride, now_ms: u64, paused: bool) -> Result<Snapshot> {
         let now = now_ms as u32;
         let peer = self.peer.ok_or("join multiplayer first")?;
         let profile = self.profile.as_ref().ok_or("no multiplayer profile")?;
-        // Alone in the room (atv-web sends nothing): a presence pose at most
-        // once a second (paused: every 5 s) keeps the relay's copy current,
-        // which it hands the next arrival on Ready. Without it a host whose
-        // tab is in the background (throttled timers) has no pose to meet
-        // until long after a guest has loaded, who then starts on top of it.
-        let solo = self.lobby.as_ref().is_some_and(|l| l.players.len() < 2);
         let frame = ride.frame();
         let recipe = ride
             .rider_recipe()
@@ -454,7 +570,7 @@ impl Session {
                 .sum()
         });
         let zero = |v: [f32; 3]| if paused { [0.; 3] } else { v };
-        let s = Snapshot {
+        Ok(Snapshot {
             peer,
             sequence: self.sequence.wrapping_add(1),
             time_ms: now,
@@ -492,21 +608,13 @@ impl Session {
                     transform: atv_net::Transform::from_column_major(m).ok()?,
                 }))
             }),
-        };
-        let nearest = self
-            .buffers
-            .values()
-            .filter_map(|b| b.latest())
-            .map(|(p, _)| distance(p.atv.position, s.atv.position))
-            .fold(f32::INFINITY, f32::min);
-        let transition = self.baseline.as_ref().is_none_or(|b| {
-            b.rider_state != s.rider_state
-                || b.crash_serial != s.crash_serial
-                || b.animation.as_ref().is_some_and(|a| a.paused != paused)
-                || b.platform.as_ref().map(|p| p.car) != s.platform.as_ref().map(|p| p.car)
-                || distance(b.atv.position, s.atv.position) > 16.
-        });
-        let elapsed = now.wrapping_sub(self.last_sent_ms);
+        })
+    }
+
+    /// Decides who needs pose `s` now and encodes it for them.
+    fn emit(&mut self, s: Snapshot, paused: bool) -> Result<Poses> {
+        let now = s.time_ms;
+        let state = s.rider_state;
         let moving = s
             .velocity
             .iter()
@@ -514,50 +622,123 @@ impl Session {
             .map(|v| v * v)
             .sum::<f32>()
             > 0.25;
-        // Up to 20 Hz near, fast, airborne or wrecked; 10 Hz moving; 5 Hz
-        // beyond 300 ft; 1 Hz stationary; 0.2 Hz paused.
-        let interval = if paused {
-            5000
-        } else if !moving && state == RiderState::Riding {
-            1000
-        } else if state == RiderState::Wreck
-            || state == RiderState::Airborne
-            || s.speed > 35.
-            || nearest < 40.
-        {
-            50
-        } else if nearest > 300. {
-            200
-        } else {
-            100
+        let buffers = &self.buffers;
+        let feet = |peer: u8| {
+            buffers
+                .get(&peer)
+                .and_then(|b| b.latest())
+                .map(|(p, _)| distance(p.atv.position, s.atv.position))
         };
-        let interval = if solo { interval.max(1000) } else { interval };
-        if !self.force_full && (solo || !transition) && elapsed < interval {
+        let every =
+            |feet: f32, direct: bool| links::interval(paused, moving, state, s.speed, feet, direct);
+        // Linked riders: each at the rate its distance needs, and a change
+        // of state at once.
+        let car = s.platform.as_ref().map(|p| p.car);
+        let direct = self
+            .links
+            .due(now, (state, s.crash_serial, paused, car), |peer| {
+                every(feet(peer).unwrap_or(links::UNKNOWN_FT), true)
+            });
+        // The relay: at the rate the nearest rider who depends on it needs.
+        // With none (alone, or every rider on the course linked) a presence
+        // pose keeps the relay's copy current, which it hands the next
+        // arrival on Ready. Without it a host whose tab is in the background
+        // (throttled timers) has no pose to meet until long after a guest
+        // has loaded, who then starts on top of it.
+        let (interval, presence) = if self.links.announced() {
+            let mut riders = 0;
+            let mut nearest = f32::INFINITY;
+            for peer in self.links.relayed() {
+                riders |= 1 << peer;
+                nearest = nearest.min(feet(peer).unwrap_or(links::UNKNOWN_FT));
+            }
+            // An arrival, or a rider whose link just failed, sees this
+            // rider where it is now.
+            self.relay_due |= riders & !self.relayed != 0;
+            self.relayed = riders;
+            if riders == 0 {
+                let idle = paused || !moving;
+                (
+                    if idle {
+                        links::PRESENCE_IDLE_MS
+                    } else {
+                        links::PRESENCE_MS
+                    },
+                    true,
+                )
+            } else {
+                (every(nearest, false), false)
+            }
+        } else {
+            // A relay or build without signalling: every rider in the room
+            // may be on the course (atv-web sends nothing when alone).
+            let solo = self.lobby.as_ref().is_some_and(|l| l.players.len() < 2);
+            let nearest = buffers
+                .values()
+                .filter_map(|b| b.latest())
+                .map(|(p, _)| distance(p.atv.position, s.atv.position))
+                .fold(f32::INFINITY, f32::min);
+            let interval = every(nearest, false);
+            (if solo { interval.max(1000) } else { interval }, solo)
+        };
+        // Slower tiers allow proportionally more travel between poses.
+        let reach = 16. * (interval as f32 / 100.).max(1.);
+        let transition = self.baseline.as_ref().is_none_or(|b| {
+            b.rider_state != state
+                || b.crash_serial != s.crash_serial
+                || b.animation.as_ref().is_some_and(|a| a.paused != paused)
+                || b.platform.as_ref().map(|p| p.car) != car
+                || distance(b.atv.position, s.atv.position) > reach
+        });
+        let elapsed = now.wrapping_sub(self.last_sent_ms);
+        let relay =
+            self.force_full || self.relay_due || (!presence && transition) || elapsed >= interval;
+        if !relay {
             self.counters.suppressed += 1;
-            return Ok(None);
+            if direct.is_empty() {
+                return Ok(Poses::default());
+            }
         }
         self.sequence = s.sequence;
-        let full = self.force_full
-            || transition
-            || now.wrapping_sub(self.last_full_ms) >= 2000
-            || self.baseline.is_none();
-        let packet = match (&self.baseline, full) {
-            (Some(baseline), false) => {
-                let patch = atv_net::delta(&s, baseline).map_err(|e| e.to_string())?;
-                // An all-block patch is no smaller than independent full
-                // state; spare the relay the baseline reconstruction.
-                if patch.mask == 15 {
-                    Packet::Snapshot(Box::new(s.clone()))
-                } else {
-                    Packet::Delta(Box::new(patch))
+        let mut poses = Poses::default();
+        let mut whole = None;
+        if relay {
+            let full = self.force_full
+                || transition
+                || now.wrapping_sub(self.last_full_ms) >= 2000
+                || self.baseline.is_none();
+            let patch = match (&self.baseline, full) {
+                (Some(baseline), false) => {
+                    // An all-block patch is no smaller than independent
+                    // full state; spare the relay the baseline
+                    // reconstruction.
+                    Some(atv_net::delta(&s, baseline).map_err(|e| e.to_string())?)
+                        .filter(|patch| patch.mask != 15)
                 }
-            }
-            _ => Packet::Snapshot(Box::new(s.clone())),
-        };
-        let output = encode(&packet)?;
-        self.pending = Some(s);
-        self.counters.last_packet_bytes = output.len();
-        Ok(Some(output))
+                _ => None,
+            };
+            let output = match patch {
+                Some(patch) => encode(&Packet::Delta(Box::new(patch)))?,
+                None => {
+                    let output = encode(&Packet::Snapshot(Box::new(s.clone())))?;
+                    whole = Some(output.clone());
+                    output
+                }
+            };
+            self.counters.last_packet_bytes = output.len();
+            poses.relay = Some(output);
+        }
+        if !direct.is_empty() {
+            let output = match whole {
+                Some(output) => output,
+                None => encode(&Packet::Snapshot(Box::new(s.clone())))?,
+            };
+            poses.direct = Some((output, direct));
+        }
+        if relay {
+            self.pending = Some(s);
+        }
+        Ok(poses)
     }
 
     /// Send receipt for [`Session::snapshot`] bytes: the baseline advances
@@ -578,6 +759,7 @@ impl Session {
             self.counters.delta += 1;
         }
         self.force_full = false;
+        self.relay_due = false;
         self.baseline = Some(s);
         self.counters.sent_bytes += bytes.len() as u64;
         self.counters.messages += 1;
@@ -981,6 +1163,207 @@ mod tests {
         let leave = atv_net::encode(&Packet::Leave { peer: 0 }).unwrap();
         s.receive(&leave, 20).unwrap();
         assert!(s.present(100, None, &no_cars).is_empty());
+    }
+
+    fn signal(session: &mut Session, peer: u8, kind: u8, data: &[u8], now_ms: u64) {
+        let bytes = atv_net::encode(&Packet::Signal(atv_net::Signal {
+            peer,
+            kind,
+            data: data.to_vec(),
+        }))
+        .unwrap();
+        session.receive(&bytes, now_ms).unwrap();
+    }
+
+    /// This rider's pose at `x` ft along the course, moving at `speed`.
+    fn riding(session: &Session, time_ms: u32, x: f32, speed: f32) -> Snapshot {
+        let mut s = Snapshot {
+            peer: session.peer.unwrap(),
+            sequence: session.sequence.wrapping_add(1),
+            time_ms,
+            atv_model: 1,
+            rider_model: 0,
+            velocity: [speed, 0., 0.],
+            speed,
+            animation: Some(Default::default()),
+            ..Default::default()
+        };
+        s.atv.position[0] = x;
+        s.rider.position[0] = x;
+        s
+    }
+
+    /// Rides from `from` to `until` (ms) at 20 ft/s in 50 ms ticks and
+    /// counts the poses for the relay and for linked riders.
+    fn ride(session: &mut Session, from: u32, until: u32) -> (usize, usize) {
+        let (mut relay, mut direct) = (0, 0);
+        for time in (from..until).step_by(50) {
+            let pose = riding(session, time, time as f32 * 0.02, 20.);
+            let poses = session.emit(pose, false).unwrap();
+            if let Some(bytes) = poses.relay {
+                session.sent(&bytes).unwrap();
+                relay += 1;
+            }
+            direct += poses.direct.map_or(0, |(_, peers)| peers.len());
+        }
+        (relay, direct)
+    }
+
+    fn pose_from(peer: u8, sequence: u32, time_ms: u32, x: f32) -> Vec<u8> {
+        let mut s = Snapshot {
+            peer,
+            sequence,
+            time_ms,
+            atv_model: 1,
+            rider_model: 0,
+            ..Default::default()
+        };
+        s.atv.position[0] = x;
+        atv_net::encode(&Packet::Snapshot(Box::new(s))).unwrap()
+    }
+
+    #[test]
+    fn linked_riders_get_poses_directly_and_the_relay_only_presence() {
+        use atv_net::signal::{ANSWER, ARRIVED, DIRECT, DROPPED, PRESENT};
+        let mut s = Session::new(Profile::new("Ann", 1, 0, Default::default()));
+        welcome(&mut s, 1, lobby(&[(0, 1), (1, 1), (2, 1)], true));
+        assert!(!s.signalling());
+        s.hello(true).unwrap();
+        s.ready().unwrap();
+        // Rider 0 can link; rider 2 is on a build that cannot.
+        signal(&mut s, 0, PRESENT, &[DIRECT], 0);
+        signal(&mut s, 2, PRESENT, &[0], 0);
+        assert_eq!(s.link_commands(0), [LinkCommand::Offer(0)]);
+        // Both still depend on the relay: the ordinary 10 Hz, nothing direct.
+        assert_eq!(ride(&mut s, 1000, 2000), (10, 0));
+        signal(&mut s, 0, ANSWER, b"v=0", 2000);
+        assert_eq!(
+            s.link_commands(2000),
+            [LinkCommand::Answer(0, b"v=0".to_vec())]
+        );
+        s.link_opened(0, 2000);
+        let links = atv_net::decode(&s.links_packet(2600).unwrap()).unwrap();
+        assert_eq!(links, Packet::Links { mask: 1 });
+        assert!(s.links_packet(4000).is_none());
+        // The linked rider gets every pose directly; rider 2 keeps the relay
+        // at its rate.
+        assert_eq!(ride(&mut s, 2000, 3000), (10, 10));
+        // Rider 2 leaves: nobody needs the relay, which gets one presence
+        // pose every three seconds.
+        let leave = atv_net::encode(&Packet::Leave { peer: 2 }).unwrap();
+        s.receive(&leave, 3000).unwrap();
+        let roster = atv_net::encode(&Packet::Lobby(Lobby {
+            epoch: 2,
+            ..lobby(&[(0, 1), (1, 1)], true)
+        }))
+        .unwrap();
+        s.receive(&roster, 3000).unwrap();
+        // (The roster change itself sends one full pose.)
+        assert_eq!(ride(&mut s, 3000, 3050), (1, 1));
+        // The linked rider is far away: about 3 Hz is enough for it.
+        s.receive_direct(0, &pose_from(0, 1, 500, 5000.), 3050)
+            .unwrap();
+        assert_eq!(ride(&mut s, 3050, 9050), (2, 20));
+        assert_eq!(s.present(9050, None, &no_cars).len(), 1);
+        assert_eq!(s.counters.direct_received, 1);
+        // A stationary rider idles on both paths; the link still proves
+        // itself alive once a second.
+        let (mut relay, mut direct) = (0, 0);
+        for time in (9050..19_050).step_by(50) {
+            let pose = riding(&s, time, 180., 0.);
+            let poses = s.emit(pose, false).unwrap();
+            if let Some(bytes) = poses.relay {
+                s.sent(&bytes).unwrap();
+                relay += 1;
+            }
+            direct += usize::from(poses.direct.is_some());
+        }
+        assert_eq!((relay, direct), (2, 10));
+        // An arrival sees this rider where it is now, not where the last
+        // presence pose left it, and rides on the relay until its link opens.
+        signal(&mut s, 3, ARRIVED, &[DIRECT], 19_050);
+        assert_eq!(ride(&mut s, 19_050, 19_100).0, 1);
+        assert_eq!(ride(&mut s, 19_100, 20_100).0, 10);
+        assert_eq!(s.link_states(), [(0, "direct"), (3, "waiting")]);
+        // The linked rider gives up its end: the relay carries poses again
+        // at once.
+        signal(&mut s, 3, atv_net::signal::GONE, &[0], 20_100);
+        ride(&mut s, 20_100, 20_200);
+        signal(&mut s, 0, DROPPED, &[0], 20_200);
+        assert_eq!(s.link_commands(20_200), [LinkCommand::Close(0)]);
+        assert_eq!(ride(&mut s, 20_200, 20_250), (1, 0));
+        assert_eq!(
+            atv_net::decode(&s.links_packet(21_000).unwrap()).unwrap(),
+            Packet::Links { mask: 0 }
+        );
+    }
+
+    #[test]
+    fn a_link_carries_only_its_own_riders_poses() {
+        use atv_net::signal::{ARRIVED, DIRECT, OFFER};
+        let mut s = Session::new(Profile::new("Ann", 1, 0, Default::default()));
+        welcome(&mut s, 1, lobby(&[(0, 1), (1, 1), (2, 1)], true));
+        s.hello(true).unwrap();
+        signal(&mut s, 0, ARRIVED, &[DIRECT], 0);
+        signal(&mut s, 0, OFFER, b"v=0", 0);
+        assert_eq!(
+            s.link_commands(0),
+            [LinkCommand::Accept(0, b"v=0".to_vec())]
+        );
+        // Nothing is taken from a link that is not open.
+        s.receive_direct(0, &pose_from(0, 1, 0, 10.), 10).unwrap();
+        assert!(s.present(100, None, &no_cars).is_empty());
+        s.link_opened(0, 20);
+        s.receive_direct(0, &pose_from(0, 2, 50, 10.), 30).unwrap();
+        assert_eq!(s.present(300, None, &no_cars).len(), 1);
+        // Another rider's pose, or anything but a pose, is the link's fault.
+        assert!(s.receive_direct(0, &pose_from(2, 1, 0, 10.), 40).is_err());
+        let leave = atv_net::encode(&Packet::Leave { peer: 2 }).unwrap();
+        assert!(s.receive_direct(0, &leave, 40).is_err());
+        assert!(s.receive_direct(0, b"junk", 40).is_err());
+        assert_eq!(s.present(310, None, &no_cars).len(), 1);
+        // The relay's copy of an older pose arriving late is not an error,
+        // and a relay message stamped before the link's is still ordered.
+        s.receive(&pose_from(0, 1, 0, 10.), 25).unwrap();
+        s.receive(&pose_from(0, 3, 100, 12.), 25).unwrap();
+        s.receive_direct(0, &pose_from(0, 4, 150, 14.), 90).unwrap();
+        assert_eq!(s.counters.direct_received, 2);
+        // Reloading the course drops every link.
+        s.ready().unwrap();
+        assert_eq!(s.link_commands(400), [LinkCommand::Close(0)]);
+        assert!(s.link_states().is_empty());
+    }
+
+    #[test]
+    fn without_signalling_the_relay_pose_rate_follows_the_nearest_rider() {
+        let mut s = Session::new(Profile::new("Ann", 1, 0, Default::default()));
+        welcome(&mut s, 1, lobby(&[(0, 1), (1, 1)], true));
+        // Nobody heard yet: the far rate.
+        assert_eq!(ride(&mut s, 1000, 3100).0, 6);
+        // A rider 60-80 ft away: 10 Hz. (This rider moves 20 ft a second.)
+        s.receive(&pose_from(0, 1, 0, 142.), 3100).unwrap();
+        assert_eq!(ride(&mut s, 3100, 4100), (10, 0));
+        // 2000 ft away: about 3 Hz, however fast this rider goes.
+        s.receive(&pose_from(0, 2, 50, 2100.), 4100).unwrap();
+        let mut relay = 0;
+        for time in (4100..6200).step_by(50) {
+            let mut pose = riding(&s, time, time as f32 * 0.02, 90.);
+            pose.rider_state = RiderState::Airborne;
+            if let Some(bytes) = s.emit(pose, false).unwrap().relay {
+                s.sent(&bytes).unwrap();
+                relay += 1;
+            }
+        }
+        assert_eq!(relay, 6);
+        // Alone in the room: a presence pose once a second.
+        let roster = atv_net::encode(&Packet::Lobby(Lobby {
+            host: 1,
+            epoch: 2,
+            ..lobby(&[(1, 1)], true)
+        }))
+        .unwrap();
+        s.receive(&roster, 6200).unwrap();
+        assert_eq!(ride(&mut s, 6200, 9200), (3, 0));
     }
 
     #[test]

@@ -9739,6 +9739,9 @@ pub fn start() {
     if let Some(ms) = param("pingMs").and_then(|v| v.parse::<u32>().ok()) {
         multiplayer::PING_MS.store(ms.clamp(250, 15_000), std::sync::atomic::Ordering::Relaxed);
     }
+    if param("p2p").as_deref() == Some("0") {
+        multiplayer::P2P.store(false, std::sync::atomic::Ordering::Relaxed);
+    }
     if let Some(ms) = param("joinDelayMs").and_then(|v| v.parse::<u32>().ok()) {
         multiplayer::JOIN_DELAY_MS.store(ms.min(10_000), std::sync::atomic::Ordering::Relaxed);
     }

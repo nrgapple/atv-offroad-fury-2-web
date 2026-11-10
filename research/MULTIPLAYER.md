@@ -1097,3 +1097,103 @@ capability), the Host Game Room row and the Pause row.
   the tracker); the ride's own stunt scoring is the single-player one.
   Three- and four-rider sessions are covered by the unit tests, not a
   browser test.
+
+## Direct links (2026-11-09)
+
+Port infrastructure, not original behavior: the PS2 game's online play used
+its own servers and has no counterpart to this. It exists to keep the room
+relay inside Cloudflare's free plan (100,000 Durable Object requests a day,
+incoming WebSocket messages counted 20:1). On 2026-11-09 the relay took
+2,080,374 messages (about 104,000 billed requests), 98% of them pose packets
+from Free Ride, at roughly 12 messages a second per rider.
+
+Riders in a room now send their poses straight to each other over WebRTC
+data channels. The relay still owns everything else: room claims, slots,
+the roster, the clock, room games (`Game`, `Cpus`, `Progress`, `Claim`),
+late-join state and the fallback path. Nothing about a room depends on a
+link opening.
+
+- **Capability.** A room claim's JSON answer carries `"links": true` when
+  the relay signals. A browser client then sends `Signal { kind: HELLO,
+  data: [DIRECT] }` once per socket. Desktop builds and `?p2p=0` send no
+  HELLO and are treated exactly as before; the protocol version stays 6,
+  and the two new packets (`Signal`, kind 17; `Links`, kind 18) are only
+  ever sent to a client that said HELLO, because an unknown kind closes an
+  older client's room.
+- **Introductions.** When a rider that said HELLO reports `Ready` on a map,
+  the relay sends it `PRESENT(peer, flags)` for every rider already riding
+  that map and sends each of those that signals `ARRIVED(peer, flags)`.
+  `GONE(peer)` follows a departure. The arrival offers, the resident
+  answers, so two riders never offer to each other at once. Either notice
+  discards an existing link to that slot first (a reload or a reclaimed
+  slot starts clean).
+- **Handshake.** One data channel per pair, labelled `pose`, unordered with
+  no retransmits (a late pose is worthless). Each side waits for ICE
+  gathering to finish (at most 2 s) and sends one complete description, so
+  the relay forwards exactly one `OFFER` and one `ANSWER` per link (up to
+  6,000 bytes each) and no trickled candidates. Servers:
+  `stun:stun.cloudflare.com:3478` and `stun:stun.l.google.com:19302`. There
+  is no TURN server, so nothing is relayed on anyone's bill.
+- **Failure.** A handshake that has not opened in 12 s, a link silent for
+  4 s, or a failed/closed ICE state drops the link and the pair goes back
+  to the relay at once. The offerer retries after 3 s if the link had been
+  up for 30 s, otherwise after 30 s, then 120 s, then every 300 s. Offers
+  start 150 ms apart.
+- **Who gets what.** Each client tells the relay which riders it is linked
+  to (`Links { mask }`, at most every 500 ms). The relay forwards a pose
+  from X to Y unless both X and Y report the link. When one side withdraws
+  a link the other still reports, the relay tells it `DROPPED(peer)`, so a
+  one-sided failure heals in one round trip instead of waiting out the
+  silence timer.
+- **Cadence.** Over a link a rider sends a full compact snapshot (no deltas:
+  packets may be lost) to all linked riders at the cadence of the nearest
+  one. To the relay it sends at the cadence of the nearest rider that still
+  depends on the relay; when none does, a presence pose every 3 s moving or
+  5 s idle keeps the relay's copy current for the next arrival. A rider
+  that becomes relay-dependent gets a pose immediately.
+- **Distance first.** Cadence is now chosen by distance before activity
+  (this is the useful half of issue #517, and it also applies to rooms with
+  no links): beyond 1,000 ft 350 ms (300 ms on a link), beyond 300 ft
+  200 ms, and only inside that 50 ms when wrecked, airborne, faster than
+  35 ft/s or within 40 ft, else 100 ms. Stationary stays 1 s; a paused
+  rider 5 s on the relay, 1 s on a link (the silence timer needs it).
+- **Trust.** A link accepts only compact snapshots stamped with the slot
+  the relay introduced; anything else closes that link only. Poses were
+  already player-owned, so a link gives a rider no authority it lacked.
+
+Limits, stated plainly:
+
+- A link shows each rider's public IP address to the other, as any
+  peer-to-peer game does. `?p2p=0` keeps a browser on the relay; there is
+  no settings row for it yet.
+- Pairs behind symmetric NAT or blocked UDP never link and stay on the
+  relay; so do desktop builds and tabs loaded before this release. Rooms
+  with such riders cost what they did before, less the distance cadence.
+- A room is a full mesh: up to 19 connections and 19 copies of each pose
+  per rider. There is no cap or relay election for large rooms.
+- The relay does not see linked poses, so its late-join copy of a rider can
+  be up to 3 s old (5 s idle); the arrival's link normally opens within a
+  second or two and replaces it.
+
+Host verification (2026-11-09, one Mac, local relay; not a measurement of
+production traffic or of real networks):
+
+- `tools/test_engine_multiplayer_links.mjs` (relay group): two Rust pages
+  link within about 3 s of the second rider's `Ready`. While the host
+  drives for 4 s it sends 56-57 poses over the link and 1-3 messages to the
+  relay; with a third `?p2p=0` rider in the room the same 4 s cost 57 relay
+  messages, and the third rider draws both others. After that rider leaves
+  the relay count falls back to 1, and after the guest's room socket is
+  dropped (`?dropAfter=4`) the slot is reclaimed and the link reopens.
+  Per rider that is about 0.3 relay messages a second against about 14.
+- `tools/test_multiplayer_relay.mjs`, direct-link section on a fresh room:
+  introductions (linking and relay-only riders), offer/answer forwarding
+  with the sender stamped, the linked-pose filter, `DROPPED`, and no
+  signalling packets to riders that never said HELLO.
+- With `ATV_LINKS=1` (riders linked) `test_engine_multiplayer_tag.mjs`,
+  `test_engine_multiplayer_race.mjs` and `test_engine_multiplayer_end.mjs`
+  pass; without it (links cannot open in headless Chromium, so the 12 s
+  timeout and relay fallback run) `test_engine_multiplayer_tag.mjs` passes.
+- Not verified: two real networks, phones, strict NATs, rooms larger than
+  three, Safari and Firefox, and the production request count, which needs a
+  day of real traffic after release.
