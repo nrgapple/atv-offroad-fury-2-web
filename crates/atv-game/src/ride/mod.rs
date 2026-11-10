@@ -761,6 +761,12 @@ impl Ride {
         self.start
     }
 
+    /// Moves the slot Reset ATV returns to outside a race (a split-screen
+    /// second player's Freestyle slot beside the scene start).
+    pub fn set_start_pose(&mut self, start: ([f32; 3], f32)) {
+        self.start = start;
+    }
+
     /// Finished stunt chains since the last call: success and the stunt ids
     /// in order (Freestyle objectives).
     pub fn take_chains(&mut self) -> Vec<(bool, Vec<usize>)> {
