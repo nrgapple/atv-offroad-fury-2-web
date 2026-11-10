@@ -338,6 +338,8 @@ impl Second {
                 if let Some(ground) = ride.ground(origin[0], origin[2]) {
                     origin[1] = ground + 2.5;
                 }
+                // Reset returns player 2 to its own slot (issue #508).
+                ride.set_start_pose((origin, yaw));
                 (origin, yaw)
             }
         };
