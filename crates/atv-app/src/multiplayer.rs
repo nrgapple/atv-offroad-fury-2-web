@@ -367,7 +367,7 @@ impl Net {
         let mut net = Net {
             session: Session::new(profile),
             socket,
-            mesh: net::Mesh::default(),
+            mesh: Default::default(),
             signalling,
             greeted: false,
             content,

@@ -1,0 +1,16 @@
+{
+  "id": "multiplayer-riders-now-talk-to-each-other-directly-00af4a86831b4875b190b76e0129e7c7",
+  "timestamp": "2026-11-10T01:32:02.289401+00:00",
+  "recorded_at": "2026-11-10T01:32:02.289401+00:00",
+  "kind": "build",
+  "title": "Multiplayer riders now talk to each other directly",
+  "summary": "Browsers in a room now send their positions straight to each other over WebRTC links instead of through the relay, so the free relay only has to handle joining, the rider list, room games and a slow presence update. Host checkpoint: tested on one Mac with a local relay; not yet measured on the public site.",
+  "details": [
+    "Why: on 2026-11-09 the relay took about 2.08 million messages, about 104,000 billed requests against a free allowance of 100,000 a day; 98% were position updates from Free Ride.",
+    "How: the relay introduces riders on the same course, passes one offer and one answer between each pair, and stops forwarding positions between two riders once both report a working link. Links use free STUN servers only; there is no paid relay server.",
+    "Host test (tools/test_engine_multiplayer_links.mjs): two linked browser riders; the driving host sent 56-57 positions over the link in 4 seconds and 1-3 messages to the relay. With a third rider that cannot link in the room, the same 4 seconds cost 57 relay messages, and that rider still saw both others.",
+    "Fallback: if a link does not open in 12 seconds or goes quiet for 4 seconds, that pair goes back to the relay and retries later. A dropped room connection reclaims its slot and links again.",
+    "Also checked with riders linked: the Tag room, room race and room end browser tests pass; the Tag test also passes on the relay-only path. The position send rate now depends on distance first, on both paths."
+  ],
+  "limitation": "Host checkpoint only: not verified on two real networks, phones, Safari or Firefox, rooms larger than three, or strict home routers; the real saving needs a day of public traffic to measure. Desktop builds, tabs opened before this release and pairs whose networks block direct connections stay on the relay. A direct link shows each rider's public IP address to the other; adding ?p2p=0 to the address keeps a browser on the relay, and there is no settings row for that yet. A room is a full mesh: each rider keeps a connection to every other rider, up to 19, with no cap for large rooms."
+}
