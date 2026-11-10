@@ -1145,8 +1145,6 @@ impl TouchControls {
     }
 }
 
-/// Lines centred on `x` from `top` (CSS `text-align: center`), wrapped to `width`.
-#[allow(clippy::too_many_arguments)]
 /// Kid Mode's GO feedback under a finger (no directions): a gold disc
 /// that pops in over .14 s like the riding marker's ring, with GO on it.
 fn paint_kid_go(fonts: &mut Fonts, list: &mut DisplayList, [cx, cy]: [f32; 2], held: f64) {
@@ -1172,6 +1170,8 @@ fn paint_kid_go(fonts: &mut Fonts, list: &mut DisplayList, [cx, cy]: [f32; 2], h
     centered(fonts, list, "GO", &style, cx, cy - 18., 36., 0.);
 }
 
+/// Lines centred on `x` from `top` (CSS `text-align: center`), wrapped to `width`.
+#[allow(clippy::too_many_arguments)]
 fn centered(
     fonts: &mut Fonts,
     list: &mut DisplayList,

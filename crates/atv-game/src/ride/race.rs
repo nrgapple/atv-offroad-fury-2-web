@@ -1760,11 +1760,11 @@ mod tests {
         assert_eq!(kid_drive(true, true, true, false), KidDrive::Autopilot);
         // Released: the driver is off and the quad brakes fully.
         assert_eq!(kid_drive(true, false, true, false), KidDrive::Brake);
-        assert_eq!(KID_RELEASED.brake, 1.);
-        assert_eq!(KID_RELEASED.throttle, 0.);
-        assert_eq!(KID_RELEASED.steer, 0.);
-        assert_eq!(KID_RELEASED.lean, 0.);
-        assert!(!KID_RELEASED.reverse);
+        let r = KID_RELEASED;
+        assert_eq!(
+            (r.throttle, r.brake, r.steer, r.lean, r.reverse),
+            (0., 1., 0., 0., false)
+        );
         // Off, the countdown (not running) and after the finish follow the
         // race's ordinary rules whatever GO does.
         for go in [false, true] {
