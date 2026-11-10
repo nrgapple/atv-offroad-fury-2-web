@@ -67,6 +67,7 @@ export const TESTS = {
   'test_engine_front.mjs': { group: 'content' },
   'test_engine_race_gear.mjs': { group: 'content' },
   'test_engine_race_practice.mjs': { group: 'content', timeout: 600 },
+  'test_engine_race_kid.mjs': { group: 'content', timeout: 600 },
   'test_engine_race_duel.mjs': { group: 'content', timeout: 900 },
   'test_engine_race_lap_attack.mjs': { group: 'content', timeout: 900 },
   'test_engine_menu_parity.mjs': { group: 'content' },
