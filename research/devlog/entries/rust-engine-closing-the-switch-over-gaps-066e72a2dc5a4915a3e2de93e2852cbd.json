@@ -12,7 +12,5 @@
     "Next: a draft switch-over pull request (play.html to the Rust engine, JavaScript game deleted) is being prepared. The owner decides when to switch after phone testing."
   ],
   "limitation": "All measurements and screenshots are from host Chromium and WebKit on a Mac; none are physical-phone results, and the load-time, throttle and render-scale numbers do not predict phone performance. iPhone silent switch behaviour, install and offline flows, and haptic buzz still need a real device. #279 and #282 are open and unmerged. The Rust engine is not yet the default play.html; the JavaScript game remains until the owner switches after phone testing.",
-  "image": "/devlog-images/rust-engine-closing-the-switch-over-gaps-066e72a2dc5a4915a3e2de93e2852cbd.png",
-  "caption": "Rider Gear page in the Rust engine: per-piece gear and quad colour pickers with a dressed rider and orange quad preview (host Chromium capture).",
   "working_on": "Rust engine switch-over: draft play.html switch PR; #279 and #282 open"
 }
