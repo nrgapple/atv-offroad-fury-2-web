@@ -69,10 +69,11 @@ def git_idle(tree, idle_seconds, now=None):
 
 
 def removable_worktrees(root, deployed, idle_hours=12):
-    shared = root.resolve()
+    # Never the shared checkout, even when this runs from another worktree.
+    keep = {root.resolve(), shared_checkout(root).resolve()}
     for tree, head, branch in worktrees(root):
         resolved = tree.resolve()
-        if resolved == shared or '.claude' in resolved.parts or not branch:
+        if resolved in keep or '.claude' in resolved.parts or not branch:
             continue
         # Check idleness before git status, which may refresh the index.
         if not git_idle(tree, idle_hours * 3600) or not merged(root, head, deployed):

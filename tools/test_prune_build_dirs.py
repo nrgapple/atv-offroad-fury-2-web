@@ -65,6 +65,12 @@ class PruneBuildDirsTests(unittest.TestCase):
                                   capture_output=True, text=True).stdout
         self.assertEqual(branches.strip(), '')
 
+    def test_never_removes_shared_checkout_when_run_from_another_worktree(self):
+        git_dir = self.root / '.git'
+        age([git_dir / 'index', git_dir / 'HEAD', git_dir / 'logs/HEAD'])
+        found = list(prune_build_dirs.removable_worktrees(self.trees['dirty'], 'origin/main'))
+        self.assertEqual([tree.name for tree, _ in found], ['merged-idle'])
+
 
 if __name__ == '__main__':
     unittest.main()
