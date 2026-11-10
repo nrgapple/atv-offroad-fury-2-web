@@ -29,6 +29,9 @@ struct Instance {
     extra: [f32; 4],
     /// Vertical corner radii for elliptical corners (0: circular).
     radii_y: [f32; 4],
+    /// A turned view ([`crate::paint::Frame`], physical pixels): the
+    /// screen direction of local +x and the local origin. Zero: none.
+    frame: [f32; 4],
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -235,7 +238,7 @@ impl Renderer {
             0 => Float32x4, 1 => Float32x4, 2 => Float32x4, 3 => Float32x4,
             4 => Float32x4, 5 => Float32x4, 6 => Float32x4, 7 => Float32x4,
             8 => Float32x4, 9 => Float32x4, 10 => Float32x4, 11 => Float32x4,
-            12 => Float32x4
+            12 => Float32x4, 13 => Float32x4
         ];
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("ui"),
@@ -581,6 +584,8 @@ impl Renderer {
         let mut opacity = vec![1f32];
         // Image tilt: perspective, centre x/y (physical pixels), on.
         let mut tilts = vec![[0f32; 4]];
+        // The open turned view and the clip depth it started at.
+        let mut frame: Option<([f32; 4], usize)> = None;
         let s = scale;
         for item in &list.items {
             let (clip, clip_radius) = *clips.last().unwrap();
@@ -593,9 +598,23 @@ impl Renderer {
             let base = Instance {
                 clip,
                 extra: [clip_radius, 0., 0., 0.],
+                frame: frame.map_or([0.; 4], |(f, _)| f),
                 ..Default::default()
             };
             match item {
+                // Its items clip to its local rectangle, in local space.
+                Item::PushFrame(f) if frame.is_none() => {
+                    let ([ax, ay], [ox, oy]) = f.axes();
+                    let [w, h] = f.size();
+                    frame = Some(([ax, ay, ox * s, oy * s], clips.len()));
+                    clips.push(([0., 0., w * s, h * s], 0.));
+                }
+                Item::PushFrame(_) => {}
+                Item::PopFrame => {
+                    if let Some((_, depth)) = frame.take() {
+                        clips.truncate(depth.max(1));
+                    }
+                }
                 Item::PushClip { rect, radius } => {
                     let r = [
                         (rect.x * s).max(clip[0]),

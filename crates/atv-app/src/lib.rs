@@ -1606,6 +1606,7 @@ impl App {
             &View {
                 camera: ready.camera,
                 focal_length: ready.focal_length,
+                turns: 0,
             },
         ) {
             Ok(stats) => {
@@ -1787,8 +1788,15 @@ impl App {
                     if let Some(first) = others.first_mut() {
                         *first = first_body;
                     }
+                    // Each player's own touch controls, in its view.
+                    let player = second.player;
+                    let mut touch = || {
+                        overlay
+                            .as_mut()
+                            .and_then(|o| o.sample_player(player, ms, active))
+                    };
                     if let Err(error) =
-                        second.frame(&all_keys, pad.as_ref(), sample_now, dt, others)
+                        second.frame(&all_keys, pad.as_ref(), sample_now, dt, others, &mut touch)
                     {
                         status(&format!("Player {} stopped: {error}", second.player));
                     }
@@ -2647,6 +2655,24 @@ impl App {
                 },
                 ms,
             );
+            for second in &ready.split {
+                let frame = second.riding.ride.frame();
+                let applied = second.riding.ride.applied();
+                overlay.feedback_player(
+                    second.player,
+                    atv_ui::touch::Feedback {
+                        grounded: frame.grounded,
+                        preload_available: frame.preload_available,
+                        preload_armed: frame.preload_armed,
+                        preload_active: frame.preload_active,
+                        applied_touch: applied.touch_drive.map(|d| (d.generation, d.held)),
+                        applied_brake: applied.brake,
+                        flip_launch_window: false,
+                        stunt_name: None,
+                    },
+                    ms,
+                );
+            }
             let gpu = &ready.gpu;
             // Other riders' tags and map markers project with the scene camera.
             // The Training arrows (`00224860`, 25 ft over the marked
@@ -2727,12 +2753,12 @@ impl App {
                 })
                 .or_else(|| self.hockey.as_ref().map(|h| h.markers()))
                 .or(local_tag);
-            // Split screen: each view projects at its own rectangle's aspect.
+            // Split screen: each view projects at its own rectangle's aspect
+            // (transposed when turned toward a player at a side edge).
             let rects: Option<Vec<f32>> = ready.split.first().map(|s| {
-                s.layout
-                    .rects(gpu.config.width, gpu.config.height, 1.)
+                s.views(gpu.config.width, gpu.config.height, 1.)
                     .into_iter()
-                    .map(|[_, _, w, h]| w as f32 / h.max(1) as f32)
+                    .map(|(rect, turns)| split::view_aspect(rect, turns))
                     .collect()
             });
             let view_projection = ready.camera.view_projection(
@@ -2809,10 +2835,7 @@ impl App {
                 .map(|s| {
                     let ride = &s.riding.ride;
                     let index = usize::from(s.player) - 1;
-                    let (columns, rows) = s.layout.grid();
                     overlay::SecondHud {
-                        grid: (columns, rows),
-                        cell: (index as u32 % columns, index as u32 / columns),
                         hud: ride.hud(),
                         race: ride
                             .race()
@@ -2882,6 +2905,15 @@ impl App {
                 };
                 (name, set)
             });
+            // Each player's view for its HUD and touch controls.
+            overlay.set_frames(ready.split.first().map_or_else(Vec::new, |s| {
+                s.layout.css_frames(
+                    s.facing,
+                    ready.split.len() + 1,
+                    overlay.view.width,
+                    overlay.view.height,
+                )
+            }));
             overlay.prepare(
                 &gpu.device,
                 &gpu.queue,
@@ -2999,18 +3031,19 @@ impl App {
                     })
                 };
                 let players: Vec<_> = ready.split.iter().map(player).collect();
-                let views: Vec<_> = second
-                    .layout
-                    .rects(
+                let (views, turns): (Vec<_>, Vec<_>) = second
+                    .views(
                         ready.gpu.config.width,
                         ready.gpu.config.height,
                         self.window.as_ref().map_or(1., |w| w.scale_factor()) as f32,
                     )
                     .into_iter()
                     .take(ready.split.len() + 1)
-                    .collect();
+                    .unzip();
                 state["split"] = serde_json::json!({
                     "layout": format!("{:?}", second.layout),
+                    "facing": second.facing,
+                    "turns": turns,
                     "players": ready.split.len() + 1,
                     // Players 2.. riders drawn in the shared scene.
                     "ridersShown": ready.scene.peers_shown(),
@@ -3031,11 +3064,13 @@ impl App {
                         "origin": riding.ride.frame().origin,
                         "speed": riding.ride.frame().speed_magnitude,
                         "throttle": riding.ride.applied().throttle,
+                        "steer": riding.ride.applied().steer,
                         "race": race(&riding.ride),
                         "quad": riding.ride.selection().quad,
                     },
                     "player2": players.first(),
                     "others": players,
+                    "touch": self.overlay.as_ref().map(|o| o.split_touch_state()),
                     "terrainPatches": ready.scene.terrain_patches(),
                 });
             }
@@ -3399,6 +3434,7 @@ impl App {
         let first_view = View {
             camera: ready.camera,
             focal_length: ready.focal_length,
+            turns: 0,
         };
         let mut draw_overlay = |encoder: &mut wgpu::CommandEncoder, target: &wgpu::TextureView| {
             // The FPS readout joins the HUD's pass; drawn alone without one.
@@ -3409,7 +3445,7 @@ impl App {
         };
         let rendered = match ready.split.first() {
             Some(second) => {
-                let rects = second.layout.rects(
+                let rects = second.views(
                     ready.gpu.config.width,
                     ready.gpu.config.height,
                     device as f32,
@@ -3418,8 +3454,10 @@ impl App {
                     .chain(ready.split.iter().map(|s| View {
                         camera: s.camera,
                         focal_length: s.focal_length,
+                        turns: 0,
                     }))
                     .zip(rects)
+                    .map(|(view, (rect, turns))| (View { turns, ..view }, rect))
                     .collect();
                 ready
                     .scene
@@ -4762,7 +4800,7 @@ impl App {
             }
             TouchPhase::Moved => {
                 if !overlay.drag(id, x, y) {
-                    overlay.touch.moved(id, x, y, now);
+                    overlay.touch_moved(id, x, y, now);
                 }
             }
             TouchPhase::Ended | TouchPhase::Cancelled => {
@@ -4771,7 +4809,7 @@ impl App {
                     Some(Some(action)) => self.act(action),
                     Some(None) => {}
                     None => {
-                        overlay.touch.up(id, x, y, cancelled, now);
+                        overlay.touch_up(id, x, y, cancelled, now);
                     }
                 }
             }
@@ -5336,6 +5374,7 @@ impl ApplicationHandler<Message> for App {
                     let view = View {
                         camera: ready.camera,
                         focal_length: ready.focal_length,
+                        turns: 0,
                     };
                     match ready
                         .scene
@@ -5565,7 +5604,7 @@ impl ApplicationHandler<Message> for App {
                             .as_ref()
                             .and_then(|r| r.ride.race())
                             .is_some_and(|r| r.kid);
-                        overlay.touch.set_kid(overlay.kid);
+                        overlay.set_kid_touch(overlay.kid);
                         // The profile's course record (`001f1e30` keeps lap
                         // and race times only at the default 3 Enduro / 5
                         // other laps).
@@ -7009,6 +7048,7 @@ impl App {
                     let (players, seconds, looks) = f.state.split_launch();
                     split::Request {
                         layout: split::Layout::from_vertical(f.state.split_vertical),
+                        facing: f.state.split_facing,
                         players: players.clamp(2, split::MAX_PLAYERS),
                         seconds: seconds
                             .map(|(quad, rider)| Some(atv_game::ride::Selection { quad, rider })),
@@ -8619,6 +8659,7 @@ fn capture(ready: &mut Ready, path: &std::path::Path, width: u32, height: u32, u
     let view = View {
         camera: ready.camera,
         focal_length: ready.focal_length,
+        turns: 0,
     };
     let mut overlay = ready.riding.as_ref().filter(|_| ui).map(|riding| {
         let gpu = &ready.gpu;
@@ -10223,18 +10264,20 @@ fn split_player_param(n: u8) -> Option<atv_game::ride::Selection> {
     ((1..=26).contains(&quad) && rider <= 1).then_some(atv_game::ride::Selection { quad, rider })
 }
 
-/// `?split=h|v|q` with `?splitn=2-4` and `?split2=quad.rider` (to
+/// `?split=h|v|q` (`fh`, `fv`: Face to Face) with `?splitn=2-4` and
+/// `?split2=quad.rider` (to
 /// `split4`) (web), or FURY_SPLIT, FURY_SPLITN and FURY_SPLIT2-4 (desktop):
 /// a direct split ride (tests, host measurements and the context-loss
 /// resume link). `q` alone means four players.
 fn split_link_param() -> Option<split::Request> {
-    let layout = split::Layout::requested(link_param("split", "FURY_SPLIT").as_deref())?;
+    let (layout, facing) = split::requested_seating(link_param("split", "FURY_SPLIT").as_deref())?;
     let players = link_param("splitn", "FURY_SPLITN")
         .and_then(|n| n.parse::<u8>().ok())
         .filter(|n| (2..=split::MAX_PLAYERS).contains(n))
         .unwrap_or(if layout == split::Layout::Quad { 4 } else { 2 });
     Some(split::Request {
         layout,
+        facing,
         players,
         seconds: [2, 3, 4].map(split_player_param),
         looks: [2, 3, 4].map(|n| {

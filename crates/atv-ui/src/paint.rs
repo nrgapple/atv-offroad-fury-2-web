@@ -67,6 +67,62 @@ impl BoxShadow {
     }
 }
 
+/// A view of the frame turned toward a player around a table (split
+/// screen's Face to Face seating): `rect` on the screen (CSS pixels),
+/// turned clockwise by `turns` quarter turns. Items inside a frame paint
+/// in its own local space, `(0, 0)` to [`Frame::size`], upright for the
+/// player it faces.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Frame {
+    pub rect: Rect,
+    /// Clockwise quarter turns: 0 upright, 1 for a player at the screen's
+    /// left edge, 2 upside down (the top edge), 3 for the right edge.
+    pub turns: u8,
+}
+
+impl Frame {
+    pub const fn new(rect: Rect, turns: u8) -> Self {
+        Self {
+            rect,
+            turns: turns % 4,
+        }
+    }
+
+    /// The local width and height (swapped by a quarter turn).
+    pub fn size(&self) -> [f32; 2] {
+        if self.turns % 2 == 1 {
+            [self.rect.h, self.rect.w]
+        } else {
+            [self.rect.w, self.rect.h]
+        }
+    }
+
+    /// The screen direction of local +x, and the screen point of the local
+    /// origin; local +y is local +x turned a quarter clockwise.
+    pub fn axes(&self) -> ([f32; 2], [f32; 2]) {
+        let r = self.rect;
+        match self.turns % 4 {
+            1 => ([0., 1.], [r.right(), r.y]),
+            2 => ([-1., 0.], [r.right(), r.bottom()]),
+            3 => ([0., -1.], [r.x, r.bottom()]),
+            _ => ([1., 0.], [r.x, r.y]),
+        }
+    }
+
+    /// A local point on the screen.
+    pub fn to_screen(&self, x: f32, y: f32) -> [f32; 2] {
+        let ([ax, ay], [ox, oy]) = self.axes();
+        [ox + x * ax - y * ay, oy + x * ay + y * ax]
+    }
+
+    /// A screen point in local space.
+    pub fn to_local(&self, x: f32, y: f32) -> [f32; 2] {
+        let ([ax, ay], [ox, oy]) = self.axes();
+        let (dx, dy) = (x - ox, y - oy);
+        [dx * ax + dy * ay, dy * ax - dx * ay]
+    }
+}
+
 /// A CSS box: background, border, radii and shadows.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct BoxPaint {
@@ -151,6 +207,10 @@ pub enum Item {
         perspective: f32,
     },
     PopTilt,
+    /// Following items paint in `Frame`'s local space, clipped to it and
+    /// turned onto the screen, until `PopFrame`. Frames do not nest.
+    PushFrame(Frame),
+    PopFrame,
 }
 
 impl Item {
@@ -238,7 +298,12 @@ impl DisplayList {
                     center[0] += dx;
                     center[1] += dy;
                 }
-                Item::PopClip | Item::PushOpacity(_) | Item::PopOpacity | Item::PopTilt => {}
+                Item::PushFrame(frame) => shift(&mut frame.rect),
+                Item::PopClip
+                | Item::PushOpacity(_)
+                | Item::PopOpacity
+                | Item::PopTilt
+                | Item::PopFrame => {}
             }
         }
     }
@@ -272,6 +337,12 @@ impl DisplayList {
     pub fn unopacity(&mut self) {
         self.items.push(Item::PopOpacity);
     }
+    pub fn frame(&mut self, frame: Frame) {
+        self.items.push(Item::PushFrame(frame));
+    }
+    pub fn unframe(&mut self) {
+        self.items.push(Item::PopFrame);
+    }
 }
 
 #[cfg(test)]
@@ -283,6 +354,36 @@ mod tests {
             rect: Rect::new(0., y, 100., 50.),
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn frames_map_local_points_onto_their_turned_rectangle() {
+        let rect = Rect::new(100., 50., 200., 400.);
+        // Local top-left corner, and local +x, for each seat.
+        let cases = [
+            (0, [100., 50.], [1., 0.]),
+            (1, [300., 50.], [0., 1.]),
+            (2, [300., 450.], [-1., 0.]),
+            (3, [100., 450.], [0., -1.]),
+        ];
+        for (turns, origin, ax) in cases {
+            let frame = Frame::new(rect, turns);
+            assert_eq!(frame.to_screen(0., 0.), origin, "turns {turns}");
+            let [x, y] = frame.to_screen(1., 0.);
+            assert_eq!([x - origin[0], y - origin[1]], ax, "turns {turns}");
+            let [w, h] = frame.size();
+            // The local far corner is the rectangle's opposite corner.
+            let opposite = [400. - origin[0], 500. - origin[1]];
+            assert_eq!(frame.to_screen(w, h), opposite, "turns {turns}");
+            for p in [[10., 20.], [w - 1., 3.], [5., h - 7.]] {
+                let s = frame.to_screen(p[0], p[1]);
+                assert!(rect.contains(s[0], s[1]), "turns {turns} {p:?}");
+                assert_eq!(frame.to_local(s[0], s[1]), p, "turns {turns}");
+            }
+        }
+        // A player at the left edge reads local +y toward the left edge.
+        let left = Frame::new(rect, 1);
+        assert_eq!(left.to_screen(0., 10.), [290., 50.]);
     }
 
     #[test]

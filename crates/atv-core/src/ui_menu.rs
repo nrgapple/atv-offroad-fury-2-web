@@ -53,6 +53,10 @@ pub struct Request {
     /// Game Settings "Split Screen Vertical"), else one above the other.
     #[serde(default)]
     pub split_vertical: bool,
+    /// Split Screen: the two players sit face to face (each half turned
+    /// toward its own edge; a port addition).
+    #[serde(default)]
+    pub split_facing: bool,
     /// Host Game: the room starts Freestyle for its riders (research/
     /// MULTIPLAYER.md "Room Freestyle"), else a Free Ride.
     #[serde(default)]
@@ -1099,10 +1103,11 @@ pub fn layout(request: Request) -> Result<Frame> {
             // Two players choose top/bottom or side by side; three and four
             // share quarters (the camera loader's `Preset<n>q`).
             let players = request.split_players.clamp(2, 4);
-            let layout = if request.split_vertical {
-                "Screen: Side by Side"
-            } else {
-                "Screen: Top and Bottom"
+            let layout = match (request.split_vertical, request.split_facing) {
+                (true, false) => "Screen: Side by Side",
+                (false, false) => "Screen: Top and Bottom",
+                (false, true) => "Screen: Face to Face",
+                (true, true) => "Screen: Face to Face, Ends",
             };
             let count = format!("Players: {players}");
             let seats = [
@@ -2389,6 +2394,7 @@ mod tests {
         Request {
             page: page.into(),
             split_vertical: false,
+            split_facing: false,
             host_freestyle: false,
             host_freestyle_minutes: 2,
             host_cpu_field: 0,

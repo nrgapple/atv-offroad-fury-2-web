@@ -708,6 +708,60 @@ Enhanced (600 segments, 24 puffs) and Original (no trails) cost less or
 nothing. Host only; phones were not measured, and phones default to the
 lighter presets.
 
+## Face to Face seating and touch for every player (2026-11-09, #533)
+
+A port addition, not original behavior: the PS2 had no tabletop mode. Two
+players can share a phone or tablet lying flat between them, each half of
+the screen turned toward its own player, and every split player now rides
+its own touch controls.
+
+- **Choice.** Split Screen's Screen row cycles Top and Bottom, Side by
+  Side, **Face to Face** and **Face to Face, Ends** (two players; saved in
+  `atv-split-screen` as `facing` / `facing-vertical`). Links:
+  `?split=fh` and `?split=fv` (`FURY_SPLIT` on desktop); the context-loss
+  resume link keeps the seating.
+- **Seats** (`split::Layout::views`, `css_frames`). Face to Face: player 1
+  upright on the bottom half, player 2 upside down on the top (two turns).
+  Face to Face, Ends: player 1 on the left half turned a quarter toward
+  the left edge, player 2 on the right half toward the right edge (one and
+  three clockwise quarter turns). Quarters (three or four players) stay
+  upright.
+- **3D view.** `atv_render::View::turns` turns the view's clip space
+  (`camera::turn_clip`) and projects at the rectangle's transposed aspect
+  for a quarter turn; frustum culling is unchanged (a quarter turn about
+  the clip-space centre keeps the frustum's planes). The Ends seating
+  keeps the vertical split's camera presets and HUD layout
+  (`2Player-Vertical`); its turned halves are wider than the 2:3 the
+  presets were authored for, so they keep the vertical framing and show
+  more to the sides.
+- **HUD.** `atv_ui::paint::Frame` and the display list's
+  `PushFrame`/`PopFrame` paint a view's items in its own space; the UI
+  shader turns only the drawn position, so clips, rotations and tilts stay
+  local. Each player's seat instruments, name tags, Hockey/Tag and game
+  panels and touch controls paint in their frame. Face to Face draws the
+  321 lamps and the race radar once per view, at the layout's place in
+  each (one shared copy would face only one player). The toolbar (Pause,
+  Camera), menus and results stay upright for the screen.
+- **Touch.** `Overlay::set_frames` gives players 2-4 their own
+  `TouchControls` sized to their view; a finger belongs to the view it
+  starts in and its coordinates are mapped into that view's space, so a
+  drag toward a player's own right steers that rider right however the
+  half is turned. One-handed mode is one finger per player (two fingers
+  for two players); the two-finger layout is two per player (four).
+  Every player shares player 1's Controls settings (One-handed, steering
+  sensitivity, Extras flips, Arcade flips). This applies to every split
+  layout, not only Face to Face. Players 2-4 join touch input from their
+  first touch; until then their rides see no touch sample, as before.
+
+Verification: unit tests cover the frame mapping (`paint.rs`), the clip
+turn (`camera.rs`), the seats and link values (`split.rs`) and the Screen
+row's cycle (`front::controller`). `tools/test_engine_split_facing.mjs`
+loads both seatings on an 844×390 touch viewport in host Chromium, checks
+each view's turns, puts one CDP finger in each half, and requires both
+riders to throttle, move and steer right toward their own right. Physical
+phones and tablets were not tested; whether an iPad's or iPhone's browser
+keeps its orientation while lying flat is up to the device's rotation lock.
+
 ## Left for later slices
 
 - The Players page's ATV stats row, Profile Name panels and original

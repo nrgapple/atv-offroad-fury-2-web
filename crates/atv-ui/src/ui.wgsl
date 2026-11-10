@@ -29,6 +29,8 @@ struct Instance {
     @location(11) extra: vec4<f32>,
     // vertical radii of elliptical corners (0: circular)
     @location(12) radii_y: vec4<f32>,
+    // turned view: screen direction of local +x, local origin (0: none)
+    @location(13) frame: vec4<f32>,
 };
 
 struct Varyings {
@@ -89,7 +91,14 @@ fn vs(@builtin(vertex_index) index: u32, i: Instance) -> Varyings {
         w = max((i.border.x - z2) / i.border.x, .1);
         screen = i.border.yz + vec2(x1, y2) / w;
     }
-    let ndc = screen / globals.viewport.xy * 2. - 1.;
+    // A turned view: everything above (and the fragment clip) is in its
+    // local space; only the drawn position turns onto the screen.
+    var drawn = screen;
+    if (i.frame.x != 0. || i.frame.y != 0.) {
+        let ax = i.frame.xy;
+        drawn = i.frame.zw + screen.x * ax + screen.y * vec2(-ax.y, ax.x);
+    }
+    let ndc = drawn / globals.viewport.xy * 2. - 1.;
     out.position = vec4(ndc.x * w, -ndc.y * w, 0., w);
     out.local = vec4(local, corner);
     out.screen = screen;
