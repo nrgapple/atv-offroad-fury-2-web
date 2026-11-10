@@ -1,0 +1,14 @@
+{
+  "id": "content-reads-retry-flaky-connections-34546052bca442d191a8c7234fd6434e",
+  "timestamp": "2026-11-10T17:27:45.946378+00:00",
+  "recorded_at": "2026-11-10T17:29:35.908693+00:00",
+  "kind": "build",
+  "title": "Content reads retry flaky connections",
+  "summary": "On the web, game content reads now retry transient failures (network errors, 5xx, cut-off bodies) after 400 ms, then 1500 ms. A 4xx is final. Before, one dropped read on a flaky phone connection failed the whole race load, because CPU rosters load one after another. PR #537, issue #520.",
+  "details": [
+    "Verification: atv-content unit tests including the retry policy. A new browser test, test_engine_content_retry.mjs, loaded a race after 12 content files each failed once (503, aborted, cut-off body), and a 404 still failed after 2 requests."
+  ],
+  "limitation": "Tested on a Mac only, not a phone. A permanently refused read (offline) now reports its error about 1.9 s later. One preloaded end-of-race file is not reread during the load.",
+  "image": "/devlog-images/content-reads-retry-flaky-connections-34546052bca442d191a8c7234fd6434e.png",
+  "caption": "Race loaded after every content file failed once"
+}
