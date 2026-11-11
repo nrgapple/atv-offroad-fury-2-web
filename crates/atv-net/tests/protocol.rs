@@ -1073,6 +1073,17 @@ fn direct_link_signalling_roundtrips_and_is_bounded() {
             kind: signal::DROPPED,
             data: vec![0],
         }),
+        Packet::Signal(Signal {
+            peer: 5,
+            kind: signal::REPORT,
+            data: atv_net::LinkReport {
+                attempts: 3,
+                opened: 1,
+                public: 65_535,
+                ..Default::default()
+            }
+            .to_bytes(),
+        }),
         Packet::Links { mask: 0 },
         Packet::Links {
             mask: (1 << MAX_PLAYERS) - 1,
@@ -1084,7 +1095,8 @@ fn direct_link_signalling_roundtrips_and_is_bounded() {
     let signal = |peer, kind, data: Vec<u8>| Packet::Signal(Signal { peer, kind, data });
     for bad in [
         signal(20, signal::OFFER, vec![1]),
-        signal(1, 7, vec![1]),
+        signal(1, 8, vec![1]),
+        signal(1, signal::REPORT, vec![0; atv_net::LINK_REPORT_BYTES - 1]),
         signal(1, signal::OFFER, vec![]),
         signal(1, signal::OFFER, vec![0; MAX_SIGNAL_BYTES + 1]),
         signal(1, signal::HELLO, vec![]),
@@ -1100,6 +1112,15 @@ fn direct_link_signalling_roundtrips_and_is_bounded() {
     let mut bytes = encode(&signal(1, signal::HELLO, vec![1])).unwrap();
     bytes[10] = 2;
     assert_eq!(decode(&bytes), Err(Error::InvalidValue));
+    let report = atv_net::LinkReport {
+        timeouts: 2,
+        hidden: 4,
+        ..Default::default()
+    };
+    assert_eq!(
+        atv_net::LinkReport::from_bytes(&report.to_bytes()),
+        Some(report)
+    );
     let mut bytes = encode(&Packet::Links { mask: 1 }).unwrap();
     bytes[11] = 0xff;
     assert_eq!(decode(&bytes), Err(Error::InvalidValue));

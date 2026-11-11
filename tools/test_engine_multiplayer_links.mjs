@@ -102,7 +102,9 @@ try {
   assert.ok(h2.directSent >= 25, `the guest still hears the host directly: ${JSON.stringify(report)}`);
   let t = await engine(third);
   assert.ok(fresh(t, hostPeer) && fresh(t, guestPeer), JSON.stringify(t));
-  assert.deepEqual([t.links, t.network.directSent, t.network.directReceived], [[], 0, 0]);
+  // It hears who rides the course but links with nobody.
+  assert.ok(t.links.length === 2 && t.links.every(l => l.state === 'relay'), JSON.stringify(t.links));
+  assert.deepEqual([t.network.directSent, t.network.directReceived], [0, 0]);
   g = await engine(guest);
   let h = await engine(host);
   assert.ok(fresh(g, thirdPeer) && fresh(h, thirdPeer) && fresh(h, guestPeer), JSON.stringify({ g, h }));
@@ -117,7 +119,9 @@ try {
   await host.waitForTimeout(1000);
   const [h3] = await drive(host, [host], 4000);
   report.afterLeave = h3;
-  assert.ok(h3.messages <= 3 && h3.directSent >= 25, JSON.stringify(report));
+  // By now the host has driven far from the guest, so its link cadence may
+  // have dropped to the 5 Hz distance tier.
+  assert.ok(h3.messages <= 3 && h3.directSent >= 15, JSON.stringify(report));
 
   // 4. A dropped room socket: the slot is reclaimed and the link reopens.
   await guest.goto(`${base}/play.html?room=${code}&dropAfter=4&name=LinkGuest&weather=off`);

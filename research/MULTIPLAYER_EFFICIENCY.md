@@ -170,6 +170,14 @@ before activity, so a fast or airborne rider more than 300 feet from everyone
 sends at 5 Hz rather than 20 Hz, and beyond 1,000 feet at about 3 Hz. Links
 carry full compact snapshots only; deltas remain a relay-path saving.
 
+## Relay accounting (2026-11-10)
+
+Direct links cut production only from 2,080,374 to 1,916,982 room requests
+a day. The relay now counts, per day, why it carried each pose and what
+each client's links did, readable at `/multiplayer/freeride/riders`, so the
+next change can target the actual cause. Details:
+[MULTIPLAYER.md](MULTIPLAYER.md#relay-accounting-2026-11-10).
+
 ## Limits and next gates
 
 The measurement is host-only and used a synthetic browser focus/visibility setup.

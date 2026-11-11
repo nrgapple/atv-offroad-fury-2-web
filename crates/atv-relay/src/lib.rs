@@ -19,6 +19,13 @@ const STATS_KEY: &str = "riders";
 /// 30 seconds from their alarm, so a vanished room drops out on its own.
 const STATS_FRESH_MS: f64 = 90_000.;
 const ROOM_KEY: &str = "room";
+/// This room's message counts for the day (research/MULTIPLAYER.md "Relay
+/// accounting").
+const BUDGET_KEY: &str = "budget";
+/// The rider counter's per-room counts for the day. The counter is a room
+/// object too, so this must differ from [`BUDGET_KEY`].
+const STATS_BUDGET_KEY: &str = "rooms-today";
+const DAY_MS: f64 = 86_400_000.;
 const ALPHABET: &[u8] = b"ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 const MAX_AGE_MS: f64 = 12. * 60. * 60. * 1000.;
 const IDLE_MS: f64 = 60_000.;
@@ -120,6 +127,9 @@ struct Connection {
     /// Riders this client reports an open direct link to, one bit per peer.
     #[serde(default)]
     links: u32,
+    /// What the client's links did, as it last reported.
+    #[serde(default)]
+    report: Option<atv_net::LinkReport>,
     last_seen_ms: f64,
     window_ms: f64,
     messages: u16,
@@ -152,6 +162,113 @@ impl Connection {
 /// a link only one side still believes in keeps the relayed copy.
 fn linked(from: u8, from_links: u32, to: u8, to_links: u32) -> bool {
     from_links >> to & 1 == 1 && to_links >> from & 1 == 1
+}
+
+/// A joined rider as pose forwarding sees it.
+#[derive(Clone)]
+struct Recipient {
+    ws: WebSocket,
+    peer: u8,
+    links: u32,
+    /// Said HELLO (a build with direct links).
+    signals: bool,
+    /// Can open links.
+    direct: bool,
+    /// Riding the room's course.
+    riding: bool,
+}
+
+/// Why the relay carried a pose ([`POSE_KINDS`] index): the sender rode
+/// alone; it was linked with everyone (a presence pose); the sender's build
+/// has no links or it opens none (desktop, `?p2p=0`); or it went to a rider
+/// on the course without a link to the sender because that rider's build has
+/// none, opens none, or the two could link and have not.
+const POSE_KINDS: [&str; 7] = [
+    "alone",
+    "presence",
+    "senderOld",
+    "senderNoLinks",
+    "forOld",
+    "forNoLinks",
+    "forUnlinked",
+];
+fn pose_kind<'a>(from: &Recipient, others: impl Iterator<Item = &'a Recipient>) -> usize {
+    pose_reason(
+        (from.peer, from.links, from.signals, from.direct),
+        others
+            .filter(|to| to.riding)
+            .map(|to| (to.peer, to.links, to.signals, to.direct)),
+    )
+}
+/// [`pose_kind`] over (peer, links, signals, direct) of the sender and of the
+/// riders on the course.
+fn pose_reason(
+    from: (u8, u32, bool, bool),
+    riding: impl Iterator<Item = (u8, u32, bool, bool)>,
+) -> usize {
+    let (peer, links, signals, direct) = from;
+    if !signals {
+        return 2;
+    }
+    if !direct {
+        return 3;
+    }
+    let (mut linked_any, mut old, mut no_links, mut unlinked) = (false, false, false, false);
+    for (to, to_links, to_signals, to_direct) in riding.filter(|to| to.0 != peer) {
+        if linked(peer, links, to, to_links) {
+            linked_any = true;
+        } else if !to_signals {
+            old = true;
+        } else if !to_direct {
+            no_links = true;
+        } else {
+            unlinked = true;
+        }
+    }
+    // A rider who can never link is the reason before one who has not yet.
+    if old {
+        4
+    } else if no_links {
+        5
+    } else if unlinked {
+        6
+    } else if linked_any {
+        1
+    } else {
+        0
+    }
+}
+
+/// Incoming messages a room has seen today (UTC, as Cloudflare's daily
+/// limit), counted in memory per message and saved from the alarm.
+#[derive(Clone, Copy, Default, Serialize, Deserialize, PartialEq, Debug)]
+struct Budget {
+    day: u32,
+    /// This room's messages today.
+    messages: u64,
+    /// Messages not yet added to the rider counter's totals.
+    #[serde(default)]
+    unreported: u64,
+    /// Relayed poses by [`POSE_KINDS`], not yet reported.
+    #[serde(default)]
+    poses: [u64; 7],
+}
+
+impl Budget {
+    fn roll(&mut self, instant: f64) {
+        let day = (instant / DAY_MS) as u32;
+        if day != self.day {
+            *self = Budget {
+                day,
+                ..Budget::default()
+            };
+        }
+    }
+    fn count(&mut self, instant: f64) {
+        self.roll(instant);
+        self.messages += 1;
+        self.unreported += 1;
+    }
 }
 
 fn recoverable_close(code: usize, reason: &str) -> bool {
@@ -273,6 +390,35 @@ fn new_room(
 struct RoomRiders {
     riders: usize,
     at_ms: f64,
+}
+
+/// A shared room's day at the rider counter: messages and relayed poses by
+/// kind, added up from its reports, and its riders as of the last report.
+#[derive(Clone, Default, Serialize, Deserialize, PartialEq, Debug)]
+struct RoomDay {
+    day: u32,
+    messages: u64,
+    #[serde(default)]
+    poses: [u64; 7],
+    #[serde(default)]
+    now: std::collections::BTreeMap<String, u64>,
+    #[serde(default)]
+    at_ms: f64,
+}
+
+/// Adds a room's report to the day's totals; earlier days drop out.
+fn add_report(days: &mut std::collections::BTreeMap<String, RoomDay>, room: &str, report: RoomDay) {
+    let day = report.day;
+    days.retain(|_, d| d.day >= day);
+    let previous = days.get(room).filter(|d| d.day == day).cloned();
+    let mut total = report;
+    if let Some(previous) = previous {
+        total.messages += previous.messages;
+        for (sum, earlier) in total.poses.iter_mut().zip(previous.poses) {
+            *sum += earlier;
+        }
+    }
+    days.insert(room.to_string(), total);
 }
 /// Riders in rooms that reported recently.
 fn fresh_riders(rooms: &std::collections::BTreeMap<String, RoomRiders>, instant: f64) -> usize {
@@ -449,7 +595,8 @@ pub struct LobbyRoom {
     /// second do not each deserialize every rider's attachment. Cleared
     /// whenever a rider joins or leaves; a woken (hibernated) object rebuilds it.
     /// Each entry carries the rider's slot and reported direct links.
-    recipients: RefCell<Option<Vec<(WebSocket, u8, u32)>>>,
+    recipients: RefCell<Option<Vec<Recipient>>>,
+    budget: Rc<RefCell<Budget>>,
 }
 
 impl LobbyRoom {
@@ -609,16 +756,24 @@ impl LobbyRoom {
         *self.recipients.borrow_mut() = None;
     }
 
-    fn recipients(&self) -> Result<Vec<(WebSocket, u8, u32)>> {
+    fn recipients(&self) -> Result<Vec<Recipient>> {
         let cached = self.recipients.borrow().clone();
         Ok(match cached {
             Some(recipients) => recipients,
             None => {
+                let map = self.room.borrow().as_ref().map(|room| room.map);
                 let recipients = self
                     .connections()?
                     .into_iter()
                     .filter(|(_, connection)| connection.player.is_some())
-                    .map(|(ws, connection)| (ws, connection.peer, connection.links))
+                    .map(|(ws, c)| Recipient {
+                        ws,
+                        peer: c.peer,
+                        links: c.links,
+                        signals: c.signals,
+                        direct: c.direct,
+                        riding: Some(c.ready_map) == map,
+                    })
                     .collect::<Vec<_>>();
                 *self.recipients.borrow_mut() = Some(recipients.clone());
                 recipients
@@ -640,11 +795,11 @@ impl LobbyRoom {
         links: u32,
     ) -> Result<()> {
         let bytes = atv_net::encode(packet).map_err(|e| Error::RustError(e.to_string()))?;
-        for (ws, peer, theirs) in self.recipients()? {
-            if except != Some(&ws) && !linked(from, links, peer, theirs) {
+        for to in self.recipients()? {
+            if except != Some(&to.ws) && !linked(from, links, to.peer, to.links) {
                 // A failed peer send must not turn another rider's valid message into an error.
-                if ws.send_with_bytes(&bytes).is_err() {
-                    let _ = self.close_socket(&ws, 1011, "Send failed");
+                if to.ws.send_with_bytes(&bytes).is_err() {
+                    let _ = self.close_socket(&to.ws, 1011, "Send failed");
                 }
             }
         }
@@ -756,15 +911,25 @@ impl LobbyRoom {
             return;
         };
         let riders = riders.unwrap_or_else(|| self.lobby(None).map_or(0, |l| l.players.len()));
+        let budget = {
+            let mut budget = self.budget.borrow_mut();
+            budget.roll(now());
+            *budget
+        };
         let report = async {
             let mut init = RequestInit::new();
             init.method = Method::Post;
             init.body = Some(
-                serde_json::json!({"room": String::from_utf8_lossy(&room.code), "riders": riders})
-                    .to_string()
-                    .into(),
+                serde_json::json!({
+                    "room": String::from_utf8_lossy(&room.code), "riders": riders,
+                    "day": budget.day, "messages": budget.unreported, "poses": budget.poses,
+                    "now": self.rider_counts(),
+                })
+                .to_string()
+                .into(),
             );
-            self.env
+            let response = self
+                .env
                 .durable_object("LOBBIES")?
                 .id_from_name(STATS)?
                 .get_stub()?
@@ -772,9 +937,55 @@ impl LobbyRoom {
                     "https://counter/stats/report",
                     &init,
                 )?)
-                .await
+                .await?;
+            Ok::<_, Error>(response.status_code() == 204)
         };
-        let _ = report.await;
+        // Counted messages are cleared only once the counter has them.
+        if let Ok(true) = report.await {
+            let mut current = self.budget.borrow_mut();
+            if current.day == budget.day {
+                current.unreported -= budget.unreported.min(current.unreported);
+                for (left, sent) in current.poses.iter_mut().zip(budget.poses) {
+                    *left -= sent.min(*left);
+                }
+            }
+        }
+    }
+
+    /// The room's riders right now: which builds they run, how many links
+    /// are up, pairs that could link and have not, and what their links did.
+    /// Counts only.
+    fn rider_counts(&self) -> std::collections::BTreeMap<String, u64> {
+        let all = self.connections().unwrap_or_default();
+        let riders: Vec<&Connection> = all
+            .iter()
+            .map(|(_, c)| c)
+            .filter(|c| c.player.is_some())
+            .collect();
+        let mut counts = std::collections::BTreeMap::new();
+        let mut add = |key: &str, n: u64| *counts.entry(key.to_string()).or_insert(0) += n;
+        add("riders", riders.len() as u64);
+        for c in &riders {
+            add("oldBuild", u64::from(!c.signals));
+            add("noLinks", u64::from(c.signals && !c.direct));
+            add("canLink", u64::from(c.direct));
+            for (name, value) in atv_net::LinkReport::NAMES
+                .iter()
+                .zip(c.report.unwrap_or_default().values())
+            {
+                add(name, u64::from(value));
+            }
+        }
+        let map = self.room.borrow().as_ref().map(|r| r.map);
+        for (i, a) in riders.iter().enumerate() {
+            for b in &riders[i + 1..] {
+                if a.direct && b.direct && Some(a.ready_map) == map && a.ready_map == b.ready_map {
+                    let up = linked(a.peer, a.links, b.peer, b.links);
+                    add(if up { "linkedPairs" } else { "unlinkedPairs" }, 1);
+                }
+            }
+        }
+        counts
     }
 
     async fn departed(&self, ws: &WebSocket, recoverable: bool) -> Result<()> {
@@ -848,10 +1059,15 @@ impl LobbyRoom {
 impl DurableObject for LobbyRoom {
     fn new(state: State, env: Env) -> Self {
         let room = Rc::new(RefCell::new(None));
-        let cached = room.clone();
+        let budget = Rc::new(RefCell::new(Budget::default()));
+        let (cached, counted) = (room.clone(), budget.clone());
         let storage = state.storage();
         let _initialization = state.block_concurrency_while(async move {
             *cached.borrow_mut() = storage.get::<Room>(ROOM_KEY).await?;
+            // Counting is best effort: an unreadable count never stops a room.
+            if let Ok(Some(saved)) = storage.get::<Budget>(BUDGET_KEY).await {
+                *counted.borrow_mut() = saved;
+            }
             Ok(())
         });
         Self {
@@ -859,6 +1075,7 @@ impl DurableObject for LobbyRoom {
             env,
             room,
             recipients: RefCell::new(None),
+            budget,
         }
     }
 
@@ -891,6 +1108,45 @@ impl DurableObject for LobbyRoom {
                 },
             );
             storage.put(STATS_KEY, &rooms).await?;
+            if let Some(day) = value["day"].as_u64().and_then(|d| u32::try_from(d).ok()) {
+                let bounded = |v: &serde_json::Value| v.as_u64().unwrap_or(0).min(10_000_000);
+                let mut poses = [0; 7];
+                for (kind, v) in poses.iter_mut().zip(
+                    value["poses"]
+                        .as_array()
+                        .map(Vec::as_slice)
+                        .unwrap_or_default(),
+                ) {
+                    *kind = bounded(v);
+                }
+                let now_counts = value["now"]
+                    .as_object()
+                    .map(|counts| {
+                        counts
+                            .iter()
+                            .take(32)
+                            .filter(|(k, _)| k.len() <= 32)
+                            .map(|(k, v)| (k.clone(), bounded(v)))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                let mut days = storage
+                    .get::<std::collections::BTreeMap<String, RoomDay>>(STATS_BUDGET_KEY)
+                    .await?
+                    .unwrap_or_default();
+                add_report(
+                    &mut days,
+                    room,
+                    RoomDay {
+                        day,
+                        messages: bounded(&value["messages"]),
+                        poses,
+                        now: now_counts,
+                        at_ms: instant,
+                    },
+                );
+                storage.put(STATS_BUDGET_KEY, &days).await?;
+            }
             return Ok(Response::empty()?.with_status(204));
         }
         if req.path() == "/stats/total" && req.method() == Method::Get {
@@ -900,9 +1156,37 @@ impl DurableObject for LobbyRoom {
                 .get::<std::collections::BTreeMap<String, RoomRiders>>(STATS_KEY)
                 .await?
                 .unwrap_or_default();
-            return Response::from_json(
-                &serde_json::json!({"riders": fresh_riders(&rooms, now())}),
-            );
+            let days = self
+                .state
+                .storage()
+                .get::<std::collections::BTreeMap<String, RoomDay>>(STATS_BUDGET_KEY)
+                .await?
+                .unwrap_or_default();
+            let instant = now();
+            let today = (instant / DAY_MS) as u32;
+            // Counts only (research/MULTIPLAYER.md "Relay accounting"): the
+            // shared rooms' messages and relayed poses by reason today, and
+            // their riders and links right now.
+            let mut poses = std::collections::BTreeMap::<&str, u64>::new();
+            let mut riding = std::collections::BTreeMap::<String, u64>::new();
+            for d in days.values().filter(|d| d.day == today) {
+                for (name, n) in POSE_KINDS.iter().zip(d.poses) {
+                    *poses.entry(*name).or_insert(0) += n;
+                }
+                if instant - d.at_ms < STATS_FRESH_MS {
+                    for (k, v) in &d.now {
+                        *riding.entry(k.clone()).or_insert(0) += v;
+                    }
+                }
+            }
+            return Response::from_json(&serde_json::json!({
+                "riders": fresh_riders(&rooms, instant),
+                "today": {
+                    "messages": days.values().filter(|d| d.day == today).map(|d| d.messages).sum::<u64>(),
+                    "poses": poses,
+                    "now": riding,
+                },
+            }));
         }
         if req.path() == "/claim" && req.method() == Method::Post {
             let fresh: Room = req.json().await?;
@@ -1043,6 +1327,7 @@ impl DurableObject for LobbyRoom {
             signals: false,
             direct: false,
             links: 0,
+            report: None,
             last_seen_ms: instant,
             window_ms: instant,
             messages: 0,
@@ -1057,6 +1342,8 @@ impl DurableObject for LobbyRoom {
         ws: WebSocket,
         message: WebSocketIncomingMessage,
     ) -> Result<()> {
+        // Billed whatever happens to it.
+        self.budget.borrow_mut().count(now());
         let Some(room) = self.room.borrow().clone().filter(|r| !r.closed) else {
             return self.close_socket(&ws, 1000, "Room ended");
         };
@@ -1171,6 +1458,16 @@ impl DurableObject for LobbyRoom {
                     connection.snapshot = Some(snapshot.as_ref().clone());
                     // Poses from a previous map or vehicle are never relayed.
                     if room.started && connection.ready_map == room.map && current {
+                        let recipients = self.recipients()?;
+                        let from = Recipient {
+                            ws: ws.clone(),
+                            peer: connection.peer,
+                            links: connection.links,
+                            signals: connection.signals,
+                            direct: connection.direct,
+                            riding: true,
+                        };
+                        self.budget.borrow_mut().poses[pose_kind(&from, recipients.iter())] += 1;
                         self.broadcast_unlinked(
                             &Packet::Snapshot(snapshot),
                             Some(&ws),
@@ -1185,11 +1482,9 @@ impl DurableObject for LobbyRoom {
                     connection.ready_map = map;
                     // A rider who (re)loads a course starts without direct
                     // links and reports the ones it opens.
-                    if connection.links != 0 {
-                        connection.links = 0;
-                        self.invalidate_recipients();
-                        ws.serialize_attachment(&connection)?;
-                    }
+                    connection.links = 0;
+                    self.invalidate_recipients();
+                    ws.serialize_attachment(&connection)?;
                     // Give an arriving rider everyone's current state, even if
                     // all peers are momentarily idle or suspended.
                     for (peer, other) in self.connections()? {
@@ -1211,6 +1506,8 @@ impl DurableObject for LobbyRoom {
                     let known = connection.signals;
                     connection.signals = true;
                     connection.direct = message.data[0] & signal::DIRECT != 0;
+                    ws.serialize_attachment(&connection)?;
+                    self.invalidate_recipients();
                     // A hello after Ready still gets the introductions.
                     if !known && connection.ready_map == room.map {
                         self.introduce(&ws, &connection, room.map)?;
@@ -1240,23 +1537,26 @@ impl DurableObject for LobbyRoom {
                         }
                     }
                 }
+                signal::REPORT if connection.signals => {
+                    connection.report = atv_net::LinkReport::from_bytes(&message.data);
+                }
                 _ => return self.close_socket(&ws, 1008, "Message not permitted"),
             },
             Packet::Links { mask } if connection.player.is_some() => {
                 let dropped = connection.links & !mask;
                 connection.links = mask & !(1 << connection.peer);
                 if let Some(recipients) = self.recipients.borrow_mut().as_mut() {
-                    for entry in recipients.iter_mut().filter(|entry| entry.0 == ws) {
-                        entry.2 = connection.links;
+                    for entry in recipients.iter_mut().filter(|entry| entry.ws == ws) {
+                        entry.links = connection.links;
                     }
                 }
                 // A rider still counting on a link this one gave up sends
                 // the relay presence poses only: tell it to fall back now
                 // rather than after its own silence timeout.
-                for (other, peer, theirs) in self.recipients()? {
-                    if dropped >> peer & 1 == 1 && theirs >> connection.peer & 1 == 1 {
+                for to in self.recipients()? {
+                    if dropped >> to.peer & 1 == 1 && to.links >> connection.peer & 1 == 1 {
                         let _ = send(
-                            &other,
+                            &to.ws,
                             &Packet::Signal(Signal {
                                 peer: connection.peer,
                                 kind: signal::DROPPED,
@@ -1532,6 +1832,8 @@ impl DurableObject for LobbyRoom {
             self.finish("Empty room expired").await?;
         } else {
             self.report_riders(None).await;
+            let budget = *self.budget.borrow();
+            self.state.storage().put(BUDGET_KEY, budget).await?;
             self.state
                 .storage()
                 .set_alarm(if holding { 5_000_i64 } else { 30_000_i64 })
@@ -1719,6 +2021,7 @@ mod tests {
             signals: false,
             direct: false,
             links: 0,
+            report: None,
             last_seen_ms: 0.,
             window_ms: 0.,
             messages: 0,
@@ -1773,6 +2076,7 @@ mod tests {
             signals: false,
             direct: false,
             links: 0,
+            report: None,
             sequence: Some(u32::MAX),
             last_seen_ms: 555.,
             window_ms: 500.,
@@ -1811,5 +2115,62 @@ mod tests {
         });
         let loaded: Connection = serde_json::from_value(old).unwrap();
         assert!(!loaded.signals && !loaded.direct && loaded.links == 0);
+    }
+
+    #[test]
+    fn relayed_poses_are_counted_by_why_the_relay_carried_them() {
+        let kind = |from, riding: &[(u8, u32, bool, bool)]| {
+            POSE_KINDS[pose_reason(from, riding.iter().copied())]
+        };
+        // Rider 0 can link; rider 1 is linked with it both ways.
+        let linked_one = (1, 1, true, true);
+        assert_eq!(kind((0, 0, true, true), &[]), "alone");
+        assert_eq!(kind((0, 2, true, true), &[linked_one]), "presence");
+        assert_eq!(kind((0, 0, false, false), &[linked_one]), "senderOld");
+        assert_eq!(kind((0, 0, true, false), &[linked_one]), "senderNoLinks");
+        // A rider that could link but has not.
+        assert_eq!(
+            kind((0, 2, true, true), &[linked_one, (2, 0, true, true)]),
+            "forUnlinked"
+        );
+        // One that never can is the reason first.
+        let all = [
+            linked_one,
+            (2, 0, true, true),
+            (3, 0, true, false),
+            (4, 0, false, false),
+        ];
+        assert_eq!(kind((0, 2, true, true), &all), "forOld");
+        assert_eq!(kind((0, 2, true, true), &all[..3]), "forNoLinks");
+    }
+
+    #[test]
+    fn the_counter_adds_up_todays_reports() {
+        let mut days = std::collections::BTreeMap::new();
+        let report = |day, messages, presence| RoomDay {
+            day,
+            messages,
+            poses: [0, presence, 0, 0, 0, 0, 0],
+            ..RoomDay::default()
+        };
+        add_report(&mut days, "FREERD01", report(7, 100, 10));
+        add_report(&mut days, "FREERD02", report(7, 5, 0));
+        // A restarted room keeps today's earlier counts.
+        add_report(&mut days, "FREERD01", report(7, 50, 1));
+        assert_eq!(
+            (days["FREERD01"].messages, days["FREERD01"].poses[1]),
+            (150, 11)
+        );
+        // A new day drops yesterday's.
+        add_report(&mut days, "FREERD02", report(8, 1, 0));
+        assert_eq!(days.len(), 1);
+        let mut budget = Budget::default();
+        budget.count(20_402. * DAY_MS + 5.);
+        budget.poses[6] = 3;
+        budget.count(20_403. * DAY_MS);
+        assert_eq!(
+            (budget.day, budget.messages, budget.poses),
+            (20_403, 1, [0; 7])
+        );
     }
 }

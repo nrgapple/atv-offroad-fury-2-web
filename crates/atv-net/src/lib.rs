@@ -580,8 +580,96 @@ pub mod signal {
     /// Relay to a rider: `peer` no longer reports its link to you, so the
     /// relay carries your poses to it again. `data` is a zero flags byte.
     pub const DROPPED: u8 = 6;
+    /// Client to relay, at most once a minute: what this client's links did
+    /// ([`super::LinkReport`] bytes), so the relay can count why riders stay
+    /// on it. `peer` is the sender.
+    pub const REPORT: u8 = 7;
     /// Flags bit: the rider can open direct links.
     pub const DIRECT: u8 = 1;
+}
+
+/// What one client's direct links did since it joined the room: counts only,
+/// for the relay's accounting (research/MULTIPLAYER.md "Relay accounting").
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LinkReport {
+    /// Handshakes started (offers made or accepted).
+    pub attempts: u16,
+    /// Links that opened.
+    pub opened: u16,
+    /// Handshakes that had not opened by the connect timeout.
+    pub timeouts: u16,
+    /// Handshakes the browser reported failed.
+    pub failed: u16,
+    /// Open links that went silent.
+    pub silent: u16,
+    /// Open links the browser closed.
+    pub lost: u16,
+    /// Links the other end gave up.
+    pub dropped: u16,
+    /// Session descriptions this client sent.
+    pub described: u16,
+    /// Of those, ones carrying a public address from STUN (none: the
+    /// network blocks STUN).
+    pub public: u16,
+    /// Ones carrying a local address hidden behind an mDNS name.
+    pub hidden: u16,
+    /// Ones carrying a plain local address.
+    pub local: u16,
+}
+pub const LINK_REPORT_BYTES: usize = 22;
+impl LinkReport {
+    /// Counts, in [`Self::NAMES`] and byte order.
+    pub fn values(&self) -> [u16; 11] {
+        [
+            self.attempts,
+            self.opened,
+            self.timeouts,
+            self.failed,
+            self.silent,
+            self.lost,
+            self.dropped,
+            self.described,
+            self.public,
+            self.hidden,
+            self.local,
+        ]
+    }
+    /// Field names, in byte order.
+    pub const NAMES: [&'static str; 11] = [
+        "attempts",
+        "opened",
+        "timeouts",
+        "failed",
+        "silent",
+        "lost",
+        "dropped",
+        "described",
+        "public",
+        "hidden",
+        "local",
+    ];
+    pub fn to_bytes(&self) -> Vec<u8> {
+        self.values().iter().flat_map(|v| v.to_le_bytes()).collect()
+    }
+    pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
+        if bytes.len() != LINK_REPORT_BYTES {
+            return None;
+        }
+        let v = |i: usize| u16::from_le_bytes([bytes[2 * i], bytes[2 * i + 1]]);
+        Some(LinkReport {
+            attempts: v(0),
+            opened: v(1),
+            timeouts: v(2),
+            failed: v(3),
+            silent: v(4),
+            lost: v(5),
+            dropped: v(6),
+            described: v(7),
+            public: v(8),
+            hidden: v(9),
+            local: v(10),
+        })
+    }
 }
 /// Largest relayed session description.
 pub const MAX_SIGNAL_BYTES: usize = 6000;
@@ -605,6 +693,7 @@ impl Signal {
                 signal::OFFER | signal::ANSWER => {
                     !self.data.is_empty() && self.data.len() <= MAX_SIGNAL_BYTES
                 }
+                signal::REPORT => self.data.len() == LINK_REPORT_BYTES,
                 _ => false,
             };
         if valid {
