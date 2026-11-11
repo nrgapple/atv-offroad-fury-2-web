@@ -732,12 +732,12 @@ impl Net {
         }
     }
 
-    /// Once admitted, tells a relay that introduces riders that this browser
-    /// opens direct links. Desktop builds and `?p2p=0` say nothing and keep
-    /// every pose on the relay.
+    /// Once admitted, tells a relay that introduces riders whether this
+    /// browser opens direct links. Desktop builds and `?p2p=0` open none and
+    /// keep every pose on the relay; saying so lets the relay count them.
     fn greet(&mut self) {
         let direct = cfg!(target_arch = "wasm32") && P2P.load(Ordering::Relaxed);
-        if self.greeted || !self.signalling || !direct || self.session.peer.is_none() {
+        if self.greeted || !self.signalling || self.session.peer.is_none() {
             return;
         }
         if let Ok(bytes) = self.session.hello(direct) {
@@ -787,6 +787,9 @@ impl Net {
             }
         }
         if let Some(bytes) = self.session.links_packet(now) {
+            self.socket.send(bytes);
+        }
+        if let Some(bytes) = self.session.link_report_packet(now) {
             self.socket.send(bytes);
         }
     }
@@ -1332,6 +1335,7 @@ impl Net {
                 "directReceived": c.direct_received,
                 "directReceivedBytes": c.direct_received_bytes,
             },
+            "linkCounts": self.session.link_counts(),
             "links": self.session.link_states().into_iter().map(|(peer, state)| {
                 serde_json::json!({"peer": peer, "state": state})
             }).collect::<Vec<_>>(),

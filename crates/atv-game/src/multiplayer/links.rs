@@ -7,7 +7,7 @@
 //! riding the course, which side offers, timeouts, retries and how often each
 //! path needs a pose. The host owns the actual connections and follows the
 //! [`Command`]s.
-use atv_net::{RiderState, Signal, signal};
+use atv_net::{LinkReport, RiderState, Signal, signal};
 use std::collections::BTreeMap;
 
 /// A handshake that has not opened by now has failed (blocked UDP or a
@@ -28,6 +28,8 @@ const STABLE_MS: u64 = 30_000;
 pub const PRESENCE_MS: u32 = 3000;
 /// The same, stationary or paused.
 pub const PRESENCE_IDLE_MS: u32 = 5000;
+/// The relay hears this client's [`LinkReport`] at most this often.
+const LINK_REPORT_MS: u64 = 60_000;
 /// Assumed distance (ft) to a rider whose pose has not arrived yet.
 pub const UNKNOWN_FT: f32 = 100.;
 
@@ -82,6 +84,14 @@ pub struct Links {
     reported: u32,
     report_ms: u64,
     key: Option<Key>,
+    /// What the links did, for the relay's accounting.
+    pub counts: LinkReport,
+    counts_sent: LinkReport,
+    counts_ms: Option<u64>,
+}
+
+fn bump(count: &mut u16) {
+    *count = count.saturating_add(1);
 }
 
 fn backoff(failures: u8, stable: bool) -> u64 {
@@ -159,7 +169,16 @@ impl Links {
             signal::GONE => self.forget(peer),
             // The other end gave the link up (it heard nothing, or its
             // connection failed): fall back to the relay with it.
-            signal::DROPPED => self.fail(peer, now_ms, true),
+            signal::DROPPED => {
+                if self
+                    .riders
+                    .get(&peer)
+                    .is_some_and(|r| r.state != State::Idle)
+                {
+                    bump(&mut self.counts.dropped);
+                }
+                self.fail(peer, now_ms, true);
+            }
             signal::OFFER => {
                 // Only the later arrival offers; an offer from the other
                 // side predates the relay's introduction and is stale.
@@ -169,6 +188,7 @@ impl Links {
                 {
                     rider.state = State::Connecting { since_ms: now_ms };
                     rider.sent_ms = None;
+                    bump(&mut self.counts.attempts);
                     self.commands.push(Command::Accept(peer, message.data));
                 }
             }
@@ -215,12 +235,52 @@ impl Links {
                 heard_ms: now_ms,
             };
             rider.sent_ms = None;
+            bump(&mut self.counts.opened);
         }
     }
 
     /// The host's connection to this rider closed or could not be made.
     pub fn closed(&mut self, peer: u8, now_ms: u64) {
+        match self.riders.get(&peer).map(|r| r.state) {
+            Some(State::Connecting { .. }) => bump(&mut self.counts.failed),
+            Some(State::Open { .. }) => bump(&mut self.counts.lost),
+            _ => {}
+        }
         self.fail(peer, now_ms, false);
+    }
+
+    /// This client sent a session description: which kinds of address it
+    /// offered say what the network allows (no public one: STUN is blocked).
+    pub fn described(&mut self, description: &[u8]) {
+        let text = String::from_utf8_lossy(description);
+        let candidates = || text.lines().filter(|l| l.contains("candidate:"));
+        bump(&mut self.counts.described);
+        if candidates().any(|l| l.contains(" typ srflx")) {
+            bump(&mut self.counts.public);
+        }
+        let host = || candidates().filter(|l| l.contains(" typ host"));
+        if host().any(|l| l.contains(".local ")) {
+            bump(&mut self.counts.hidden);
+        }
+        if host().any(|l| !l.contains(".local ")) {
+            bump(&mut self.counts.local);
+        }
+    }
+
+    /// The counts for the relay, when they changed and the last report is a
+    /// minute old.
+    pub fn link_report(&mut self, now_ms: u64) -> Option<LinkReport> {
+        if !self.announced
+            || self.counts == self.counts_sent
+            || self
+                .counts_ms
+                .is_some_and(|at| now_ms.saturating_sub(at) < LINK_REPORT_MS)
+        {
+            return None;
+        }
+        self.counts_sent = self.counts;
+        self.counts_ms = Some(now_ms);
+        Some(self.counts)
     }
 
     /// A pose arrived over this rider's link. False when no link to the
@@ -248,6 +308,13 @@ impl Links {
             .map(|(peer, _)| *peer)
             .collect();
         for peer in expired {
+            if let Some(rider) = self.riders.get(&peer) {
+                if matches!(rider.state, State::Connecting { .. }) {
+                    bump(&mut self.counts.timeouts);
+                } else {
+                    bump(&mut self.counts.silent);
+                }
+            }
             self.fail(peer, now_ms, true);
         }
         if now_ms >= self.next_offer_ms
@@ -257,6 +324,7 @@ impl Links {
         {
             rider.state = State::Connecting { since_ms: now_ms };
             self.next_offer_ms = now_ms + STAGGER_MS;
+            bump(&mut self.counts.attempts);
             self.commands.push(Command::Offer(peer));
         }
         std::mem::take(&mut self.commands)
@@ -548,6 +616,51 @@ mod tests {
         let crashed = (RiderState::Wreck, 1, false, None);
         assert_eq!(links.due(1310, crashed, every), [1, 2]);
         assert!(links.due(1320, crashed, every).is_empty());
+    }
+
+    #[test]
+    fn links_count_what_happened_for_the_relay() {
+        let mut links = linked();
+        assert_eq!(links.link_report(0), None);
+        for peer in [1, 2, 3] {
+            links.signal(notice(peer, signal::PRESENT, signal::DIRECT), 0);
+        }
+        links.commands(0);
+        links.commands(150);
+        links.commands(300);
+        links.described(
+            b"a=candidate:1 1 udp 1 4f2c.local 5000 typ host\r\n\
+              a=candidate:2 1 udp 1 203.0.113.9 6000 typ srflx raddr 0.0.0.0\r\n",
+        );
+        links.described(b"a=candidate:1 1 udp 1 192.168.1.4 5000 typ host\r\n");
+        links.opened(1, 400);
+        links.closed(2, 500);
+        assert!(links.heard(1, 300 + CONNECT_MS));
+        links.commands(300 + CONNECT_MS + 1);
+        links.signal(notice(1, signal::DROPPED, 0), 20_000);
+        let counts = links.link_report(20_000).unwrap();
+        assert_eq!(
+            counts,
+            LinkReport {
+                attempts: 3,
+                opened: 1,
+                timeouts: 1,
+                failed: 1,
+                dropped: 1,
+                described: 2,
+                public: 1,
+                hidden: 1,
+                local: 1,
+                ..LinkReport::default()
+            }
+        );
+        // At most once a minute, and only when something changed.
+        assert_eq!(links.link_report(20_001), None);
+        links.signal(notice(4, signal::ARRIVED, signal::DIRECT), 30_000);
+        links.signal(sdp(4, signal::OFFER), 30_000);
+        assert_eq!(links.link_report(79_999), None);
+        assert_eq!(links.link_report(80_000).map(|c| c.attempts), Some(4));
+        assert_eq!(links.link_report(200_000), None);
     }
 
     #[test]

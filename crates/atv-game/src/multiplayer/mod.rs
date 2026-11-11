@@ -264,7 +264,8 @@ impl Session {
 
     /// This client's session description for `peer`'s link (an offer, or
     /// the answer to theirs), for the relay to pass on.
-    pub fn signal(&self, peer: u8, answer: bool, description: &[u8]) -> Result<Vec<u8>> {
+    pub fn signal(&mut self, peer: u8, answer: bool, description: &[u8]) -> Result<Vec<u8>> {
+        self.links.described(description);
         encode(&Packet::Signal(atv_net::Signal {
             peer,
             kind: if answer {
@@ -274,6 +275,23 @@ impl Session {
             },
             data: description.to_vec(),
         }))
+    }
+
+    /// What this client's links did, for the relay's accounting, at most
+    /// once a minute and only when it changed.
+    pub fn link_report_packet(&mut self, now_ms: u64) -> Option<Vec<u8>> {
+        let report = self.links.link_report(now_ms)?;
+        encode(&Packet::Signal(atv_net::Signal {
+            peer: self.peer?,
+            kind: atv_net::signal::REPORT,
+            data: report.to_bytes(),
+        }))
+        .ok()
+    }
+
+    /// What this client's links did so far.
+    pub fn link_counts(&self) -> atv_net::LinkReport {
+        self.links.counts
     }
 
     /// What the host does with its direct connections now. Call every tick,

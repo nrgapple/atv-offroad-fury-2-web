@@ -1116,7 +1116,9 @@ link opening.
 - **Capability.** A room claim's JSON answer carries `"links": true` when
   the relay signals. A browser client then sends `Signal { kind: HELLO,
   data: [DIRECT] }` once per socket. Desktop builds and `?p2p=0` send no
-  HELLO and are treated exactly as before; the protocol version stays 6,
+  HELLO and are treated exactly as before (since relay accounting they send
+  HELLO without `DIRECT` so the relay can count them; they still open no
+  links); the protocol version stays 6,
   and the two new packets (`Signal`, kind 17; `Links`, kind 18) are only
   ever sent to a client that said HELLO, because an unknown kind closes an
   older client's room.
@@ -1197,3 +1199,46 @@ production traffic or of real networks):
 - Not verified: two real networks, phones, strict NATs, rooms larger than
   three, Safari and Firefox, and the production request count, which needs a
   day of real traffic after release.
+
+## Relay accounting (2026-11-10)
+
+Measurement only; gameplay and send rates are unchanged.
+
+Production on 2026-11-10, the first full day after direct links deployed
+(01:57 UTC): 1,916,982 Durable Object requests against 2,080,374 the day
+before; Free Ride room `FREERD01` alone 1,628,904 against 2,041,428.
+Riders were on 14:00–21:00 UTC, up to 71 sockets at once. So most poses
+still went through the relay, and nothing recorded why.
+
+Known from the design: a rider sends the relay full-rate poses while any
+rider on its course lacks a link to it, so in a busy room one rider without
+links keeps everyone on the relay. Not known: how many riders are on
+builds without links, how many handshakes fail, and whether their networks
+block STUN or hide local addresses. The relay now counts these:
+
+- **Per message.** Every room counts its incoming messages per UTC day
+  (in memory, saved from its 30 s alarm), and every pose it forwards by
+  why it carried it: `alone`, `presence` (the sender is linked with
+  everyone on the course), `senderOld` (a build without links),
+  `senderNoLinks` (desktop or `?p2p=0`), or for a rider on the course
+  without a link to the sender: `forOld`, `forNoLinks`, `forUnlinked`
+  (both could link and have not). A rider who can never link is counted
+  as the reason before one who has not yet.
+- **Per client.** A client that said HELLO sends `Signal { kind: REPORT
+  (7) }` at most once a minute when something changed: handshakes started,
+  opened, timed out, failed, links that went silent, closed or were given
+  up by the other end, and of the session descriptions it sent, how many
+  carried a public STUN address (`public`; none means STUN is blocked), an
+  mDNS-hidden local address (`hidden`) or a plain local address (`local`).
+  Counts only, never addresses.
+- **Where to read it.** Shared rooms add their counts to the rider counter
+  with the existing 30 s rider report. `/multiplayer/freeride/riders` now
+  returns `today.messages`, `today.poses` (by reason) and `today.now`: for
+  live shared rooms the riders on old builds (`oldBuild`), without links
+  (`noLinks`), able to link (`canLink`), `linkedPairs`, `unlinkedPairs`
+  (both able, same course, not linked) and the sum of the clients' link
+  reports. Private rooms count messages but do not report.
+
+Limits: the counter sums only shared rooms; clients loaded before this
+release send no reports and count as `oldBuild`; a client's report covers
+its current socket only.
