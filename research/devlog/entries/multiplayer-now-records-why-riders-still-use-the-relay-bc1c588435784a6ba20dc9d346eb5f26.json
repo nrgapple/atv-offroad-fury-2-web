@@ -1,0 +1,15 @@
+{
+  "id": "multiplayer-now-records-why-riders-still-use-the-relay-bc1c588435784a6ba20dc9d346eb5f26",
+  "timestamp": "2026-11-11T03:11:57.843256+00:00",
+  "recorded_at": "2026-11-11T03:11:57.843256+00:00",
+  "kind": "build",
+  "title": "Multiplayer now records why riders still use the relay",
+  "summary": "Direct links cut the relay only from 2,080,374 to 1,916,982 requests a day. Before changing anything else, the relay now counts why it carried each position update and what each browser's direct connections did, so the next fix can target the real cause. Gameplay and send rates are unchanged.",
+  "details": [
+    "Each room counts its incoming messages per day, and every position update it forwards by reason: the rider was alone, linked with everyone, on an old or no-link build (desktop, ?p2p=0), or sending to a rider on the course without a link to it.",
+    "Browsers report once a minute how many direct connections they tried, opened, timed out, failed or lost, and whether their network gave them a public address (counts only, never addresses).",
+    "The public Free Ride rider count now includes today's totals and the live link counts."
+  ],
+  "limitation": "Not yet measured on production traffic. Only shared rooms report counts. Tabs and apps from before this release send no reports and count as old builds.",
+  "verification": "Host only, one Mac with a local relay: the direct-link test passes. In Free Ride with three linked riders and one ?p2p=0 rider, 602 of 698 relay messages were caused by the one rider without links (426 sent to it, 176 from it), showing how a single unlinked rider keeps everyone on the relay."
+}
