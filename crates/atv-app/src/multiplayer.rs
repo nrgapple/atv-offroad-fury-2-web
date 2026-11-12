@@ -1369,6 +1369,8 @@ pub fn room_races(environment: &str) -> Vec<(u8, &'static str)> {
                 atv_game::launch::RaceVariant::EnduroLong => "Play Enduro Long",
                 atv_game::launch::RaceVariant::EnduroShort => "Play Enduro Short",
                 atv_game::launch::RaceVariant::ShortTrack => "Play Short Track",
+                // Not in `ALL`: rooms never race a User Created Enduro.
+                atv_game::launch::RaceVariant::UserEnduro => "Play Enduro Long",
             };
             (at as u8, label)
         })

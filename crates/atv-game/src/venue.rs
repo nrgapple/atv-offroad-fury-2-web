@@ -210,6 +210,9 @@ pub struct LoadOptions {
     /// A Freestyle objective: the course's OB archive (read over the
     /// Freeride archive) and the objective's target TOY stem, if any.
     pub objective: Option<(String, Option<String>)>,
+    /// A User Created Enduro's course (with `race` UserEnduro): its gates
+    /// replace the long Enduro's `.wpt`.
+    pub user_course: Option<std::rc::Rc<atv_core::user_course::UserCourse>>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -570,8 +573,27 @@ pub async fn load_with(
     // the last, which holds the `<venue>endfgate` finish gate; both collide.
     let enduro_gates = if racing && options.race.is_enduro() {
         let stem = &course.mode_stem;
-        let waypoints =
-            atv_core::enduro::parse_wpt(&extract(&format!("{stem}e.wpt"), "Enduro gates")?)?;
+        let waypoints = match (&options.user_course, options.race) {
+            (Some(user), crate::launch::RaceVariant::UserEnduro) => {
+                // Course codes are untrusted: every gate must stand on this
+                // venue's terrain.
+                if user.environment != environment {
+                    return Err("The course belongs to another venue.".into());
+                }
+                let (size_x, size_z) = (
+                    (ground.width - 1) as f64 * ground.spacing,
+                    (ground.depth - 1) as f64 * ground.spacing,
+                );
+                user.validate(size_x as f32, size_z as f32, |x, z| {
+                    ground.height(x as f64, z as f64) as f32
+                })?;
+                user.gates.clone()
+            }
+            (None, crate::launch::RaceVariant::UserEnduro) => {
+                return Err("A User Created Enduro needs its course.".into());
+            }
+            _ => atv_core::enduro::parse_wpt(&extract(&format!("{stem}e.wpt"), "Enduro gates")?)?,
+        };
         let model = |kind: &str| format!("{environment}end{kind}gate");
         // The race box spans the gate model's stored half extent across it
         // (PSG node bounds, model +0x110).

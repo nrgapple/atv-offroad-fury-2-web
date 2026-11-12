@@ -50,6 +50,8 @@ pub enum Event {
     /// score table for every room rider (research/MULTIPLAYER.md "Room
     /// Freestyle").
     PlayFreestyle,
+    /// Pause → Photo mode: a free camera around the paused moment.
+    Photo,
 }
 
 /// The multiplayer room as the pause menu shows it (the browser's
@@ -304,12 +306,12 @@ impl PauseMenu {
                     self.binding_page + 1,
                     ACTIONS.len().div_ceil(4)
                 )),
-                // frontend.js: Page n of the song list's four-row pages.
-                "music" => Some(format!(
-                    "Page {} of {}",
-                    self.music_page + 1,
-                    ctx.music.map_or(0, |m| m.songs.len()).div_ceil(4).max(1)
-                )),
+                // frontend.js: Page n of the song list's four-row pages;
+                // none when the list fits one page (or is empty).
+                "music" => {
+                    let pages = ctx.music.map_or(0, |m| m.songs.len()).div_ceil(4);
+                    (pages > 1).then(|| format!("Page {} of {}", self.music_page + 1, pages))
+                }
                 _ => None,
             },
             // `.pause-header .pause-status`: Audio's soundtrack line.
@@ -588,6 +590,7 @@ impl PauseMenu {
             "devlog" => return Some(Event::Leave("devlog.html")),
             "fullscreen" => return Some(Event::Fullscreen),
             "copyride" => return Some(Event::CopyRide),
+            "photo" => return Some(Event::Photo),
             "leave" => return Some(Event::LeaveGame),
             "changeride" => return Some(Event::ChangeRide),
             "hosttrack" => return Some(Event::SelectTrack),
@@ -1605,6 +1608,24 @@ mod parity_tests {
             pad.buttons[*b] = 1.;
         }
         pad
+    }
+
+    #[test]
+    fn audio_pager_shows_only_when_the_songs_need_a_second_page() {
+        let mut fx = Fixture::new();
+        let mut audio = PauseMenu::new();
+        let pager = |m: &PauseMenu| m.rows.choices.iter().any(|c| c == "musicnext");
+        fx.with(&mut audio, |m, _| m.show("music"));
+        assert!(pager(&audio));
+        let count = fx.with(&mut audio, |m, ctx| m.state(ctx).page_count);
+        assert_eq!(count.as_deref(), Some("Page 1 of 3"));
+        for songs in [0, 4] {
+            fx.music.songs.truncate(songs);
+            fx.with(&mut audio, |m, _| m.show("music"));
+            assert!(!pager(&audio), "{songs} songs");
+            let count = fx.with(&mut audio, |m, ctx| m.state(ctx).page_count);
+            assert_eq!(count, None, "{songs} songs");
+        }
     }
 
     #[test]

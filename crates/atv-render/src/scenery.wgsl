@@ -16,10 +16,17 @@ struct Globals {
   shadow_matrix: mat4x4<f32>,
   // receive, texel size
   shadow: vec4<f32>,
+  // Remastered preset (1), seconds
+  remaster: vec4<f32>,
+  // Remastered world shadows: world to shadow texture; receive, the texel in
+  // texture space and in feet
+  far_matrix: mat4x4<f32>,
+  far: vec4<f32>,
 };
 @group(0) @binding(0) var<uniform> g: Globals;
 @group(0) @binding(1) var vehicle_shadow_map: texture_depth_2d;
 @group(0) @binding(2) var vehicle_shadow_sampler: sampler_comparison;
+@group(0) @binding(3) var world_shadow_map: texture_depth_2d;
 @group(1) @binding(0) var tile: texture_2d<f32>;
 // Static scene models: web/game.js's scene shader for sceneDraws (useTexture,
 // useVertexColor, sceneryBlend, alphaFailPass, sceneryReflectionPlane,
@@ -127,8 +134,20 @@ fn fs(in: Varyings) -> @location(0) vec4<f32> {
   }
   let n = normalize(in.normal);
   let sunlight = max(dot(n, normalize(g.sun_direction.xyz)), 0.0);
-  let lit = select(base * (g.ambient.xyz + g.sun_color.xyz * sunlight), base, r.d.flags.x > 0.5)
+  var lit = select(base * (g.ambient.xyz + g.sun_color.xyz * sunlight), base, r.d.flags.x > 0.5)
     * vehicle_shadow(in.world);
+  if (g.far.x > 0.5) {
+    // Remastered: the world shadow map takes the sun away. Unlit models
+    // carry painted light, so only their sun-facing sides darken, and
+    // translucent passes (glows, glass) are left alone.
+    let shade = 1.0 - world_shadow(in.world, n);
+    if (r.d.flags.x > 0.5) {
+      lit = lit * (1.0 - 0.4 * shade * smoothstep(0.0, 0.3, dot(n, normalize(g.sun_direction.xyz)))
+        * select(1.0, 0.0, r.m.flags.z > 0.5));
+    } else {
+      lit = lit * ((g.ambient.xyz + g.sun_color.xyz * sunlight * (1.0 - shade)) / (g.ambient.xyz + g.sun_color.xyz * sunlight));
+    }
+  }
   let coverage = select(1.0, clamp(in.fog.x / in.fog.y, 0.0, 1.0), in.fog.y != 0.0);
   // The model's colour alpha (Enduro gates fade, 00228ea0).
   return vec4<f32>(mix(g.fog_color.rgb, lit, coverage), source_alpha * r.d.flags.y);
@@ -150,4 +169,20 @@ fn vehicle_shadow(p: vec3<f32>) -> f32 {
   }
   let factor = mix(1.0, mix(0.55, 1.0, lit * 0.25), smoothstep(0.0, 0.08, edge));
   return select(factor, 1.0, edge <= 0.0 || s.z >= 1.0);
+}
+
+// Remastered world shadow map (crate::world_shadows): the lit share of the
+// sun at `p`, 1 outside the map and fading in over its last few percent.
+// Four bilinear compare taps, stepped off the surface along its normal.
+fn world_shadow(p: vec3<f32>, normal: vec3<f32>) -> f32 {
+  let c = g.far_matrix * vec4<f32>(p + normal * (g.far.z * 2.0), 1.0);
+  let s = c.xyz / c.w;
+  let edge = min(min(s.x, s.y), min(1.0 - s.x, 1.0 - s.y));
+  if (edge <= 0.0 || s.z >= 1.0) { return 1.0; }
+  var lit = 0.0;
+  for (var i = 0; i < 4; i++) {
+    let o = vec2<f32>(select(-0.5, 0.5, i == 1 || i == 3), select(-0.5, 0.5, i >= 2)) * g.far.y;
+    lit += textureSampleCompareLevel(world_shadow_map, vehicle_shadow_sampler, s.xy + o, s.z - 0.0004);
+  }
+  return mix(1.0, lit * 0.25, smoothstep(0.0, 0.06, edge));
 }
