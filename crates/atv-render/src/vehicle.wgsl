@@ -16,12 +16,18 @@ struct Globals {
   mud: vec4<f32>,
   // quad paint mode, hue (render-support.js PAINT_PALETTE)
   paint: vec4<f32>,
+  // Remastered world shadows: world to shadow texture; receive, the texel in
+  // texture space and in feet
+  far_matrix: mat4x4<f32>,
+  far: vec4<f32>,
 };
 struct Bones {
   world: mat4x4<f32>,
   nodes: array<mat4x4<f32>, 32>,
 };
 @group(0) @binding(0) var<uniform> g: Globals;
+@group(0) @binding(1) var world_shadow_map: texture_depth_2d;
+@group(0) @binding(2) var world_shadow_sampler: sampler_comparison;
 @group(1) @binding(0) var<uniform> bones: Bones;
 // textured, fog, has mud map, paintable quad body
 @group(2) @binding(0) var<uniform> material: vec4<f32>;
@@ -35,6 +41,7 @@ struct Varyings {
   @location(1) uv: vec2<f32>,
   // Coverage and clip W, so the ratio interpolates screen-linearly (web/fog.js).
   @location(2) fog: vec2<f32>,
+  @location(3) world: vec3<f32>,
 };
 
 // render-support.js paintGlsl: saturated body-atlas pixels take the hue
@@ -79,6 +86,7 @@ fn vs(@location(0) position: vec3<f32>, @location(1) normal: vec3<f32>,
   let w = bones.world;
   out.normal = mat3x3<f32>(w[0].xyz, w[1].xyz, w[2].xyz) * mat3x3<f32>(pose[0].xyz, pose[1].xyz, pose[2].xyz) * normal;
   out.uv = uv;
+  out.world = world.xyz;
   out.clip = g.view_projection * world;
   let fogged = g.fog.z > 0.5 && material.y > 0.5;
   let coverage = select(1.0, native_fog_coverage(length(world.xyz - g.eye.xyz)), fogged);
@@ -112,8 +120,26 @@ fn fs(in: Varyings) -> @location(0) vec4<f32> {
       strength * smoothstep(1.0 - amount, 1.12 - amount, mud.a), g.mud.y > 0.5);
     base = mix(base, mud.rgb, weight);
   }
-  let sunlight = max(dot(n, normalize(g.sun_direction.xyz)), 0.0);
+  var sunlight = max(dot(n, normalize(g.sun_direction.xyz)), 0.0);
+  // Remastered: the world's shadows take the sun off the rider too.
+  if (g.far.x > 0.5) { sunlight = sunlight * world_shadow(in.world, n); }
   let lit = base * (g.ambient.rgb + g.sun_color.rgb * sunlight);
   let coverage = select(1.0, clamp(in.fog.x / in.fog.y, 0.0, 1.0), in.fog.y != 0.0);
   return vec4<f32>(mix(g.fog_color.rgb, lit, coverage), source_alpha * g.surface.w);
+}
+
+// Remastered world shadow map (crate::world_shadows): the lit share of the
+// sun at `p`, 1 outside the map and fading in over its last few percent.
+// Four bilinear compare taps, stepped off the surface along its normal.
+fn world_shadow(p: vec3<f32>, normal: vec3<f32>) -> f32 {
+  let c = g.far_matrix * vec4<f32>(p + normal * g.far.z, 1.0);
+  let s = c.xyz / c.w;
+  let edge = min(min(s.x, s.y), min(1.0 - s.x, 1.0 - s.y));
+  if (edge <= 0.0 || s.z >= 1.0) { return 1.0; }
+  var lit = 0.0;
+  for (var i = 0; i < 4; i++) {
+    let o = vec2<f32>(select(-0.5, 0.5, i == 1 || i == 3), select(-0.5, 0.5, i >= 2)) * g.far.y;
+    lit += textureSampleCompareLevel(world_shadow_map, world_shadow_sampler, s.xy + o, s.z - 0.0004);
+  }
+  return mix(1.0, lit * 0.25, smoothstep(0.0, 0.06, edge));
 }
