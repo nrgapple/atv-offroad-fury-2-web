@@ -60,6 +60,11 @@ pub struct VegetationPass {
     group_counts: Vec<u32>,
     group_offsets: Vec<usize>,
     selection: std::rc::Rc<std::cell::RefCell<atv_core::vegetation_render::Vegetation>>,
+    /// World shadow casters: their instances, each group's count, and the
+    /// buffer that holds them (grown as needed).
+    caster_floats: Vec<f32>,
+    caster_counts: Vec<u32>,
+    caster_instances: Option<wgpu::Buffer>,
 }
 
 impl VegetationPass {
@@ -248,7 +253,64 @@ impl VegetationPass {
             warmed: false,
             counts: Default::default(),
             selection: vegetation.selection.clone(),
+            caster_floats: Vec::new(),
+            caster_counts: Vec::new(),
+            caster_instances: None,
         }
+    }
+
+    /// Uploads every plant within `reach` of `center` as a world shadow
+    /// caster, for [`VegetationPass::draw_casters`].
+    pub(crate) fn prepare_casters(&mut self, gpu: &Gpu, center: [f32; 3], reach: f32) {
+        self.selection.borrow().casters(
+            [f64::from(center[0]), f64::from(center[2])],
+            f64::from(reach),
+            &mut self.caster_floats,
+            &mut self.caster_counts,
+        );
+        let bytes: &[u8] = bytemuck::cast_slice(&self.caster_floats);
+        if bytes.is_empty() {
+            return;
+        }
+        if self
+            .caster_instances
+            .as_ref()
+            .is_none_or(|b| b.size() < bytes.len() as u64)
+        {
+            self.caster_instances = Some(gpu.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("vegetation shadow casters"),
+                size: (bytes.len() as u64).next_power_of_two(),
+                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            }));
+        }
+        gpu.queue
+            .write_buffer(self.caster_instances.as_ref().unwrap(), 0, bytes);
+    }
+
+    /// Depth-only instanced draws of the prepared casters (the world shadow
+    /// map's pipeline and light are already set). Returns the draws.
+    pub(crate) fn draw_casters(&self, pass: &mut wgpu::RenderPass<'_>) -> u32 {
+        let Some(instances) = &self.caster_instances else {
+            return 0;
+        };
+        let mut draws = 0;
+        let mut offset = 0;
+        for (chunks, &count) in self.groups.iter().zip(&self.caster_counts) {
+            let bytes = u64::from(count) * (MESH_FLOATS * 4) as u64;
+            if count > 0 {
+                for chunk in chunks.iter().filter(|c| c.depth_write) {
+                    pass.set_bind_group(1, &self.textures[chunk.texture], &[]);
+                    pass.set_vertex_buffer(0, chunk.vertices.slice(..));
+                    pass.set_vertex_buffer(1, instances.slice(offset..offset + bytes));
+                    pass.set_index_buffer(chunk.indices.slice(..), wgpu::IndexFormat::Uint32);
+                    pass.draw_indexed(0..chunk.count, 0, 0..count);
+                    draws += 1;
+                }
+            }
+            offset += bytes;
+        }
+        draws
     }
 
     /// Selects this frame's plants and uploads their instances.

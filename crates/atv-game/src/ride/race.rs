@@ -191,14 +191,30 @@ pub enum FlashBurst {
 /// 00217bb0, 00217590, 00216260).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MusicEvent {
-    /// Race load: hold the soundtrack, a random INT001-INT004 stinger.
-    Intro,
+    /// Race load: hold the soundtrack and play a stinger: the fixed IntOut
+    /// cue when `Some` (a championship round, [`intro_cue`]), otherwise a
+    /// random INT001-INT004.
+    Intro { cue: Option<u8> },
     /// Countdown without the pre-race camera (Restart Race): hold only.
     Restart,
     /// GO: cut the stinger, release the soundtrack.
     Go,
     /// Race over: 1.5 s fade, OUT004 then the OUT001 loop after a win.
     Over { won: bool },
+}
+
+/// `00217bb0`: the race-load IntOut cue. A championship round (race
+/// settings +0x36d) of a Supercross series (session type 5 from
+/// `002f65e0`) plays INT005, of an Enduro, Nationals or Short Tracks series
+/// INT006; a Freestyle series (type 2) and every single race a random
+/// INT001-INT004 (`None`).
+pub fn intro_cue(championship: Option<(usize, bool)>) -> Option<u8> {
+    let (index, _) = championship?;
+    match atv_core::championship::SERIES.get(index)?.kind {
+        2 | 3 => None,
+        6 | 7 => Some(5),
+        _ => Some(6),
+    }
 }
 
 /// One race step's presentation: the extras atv-web attaches to its op 50
@@ -220,7 +236,7 @@ pub struct StepEvents {
 
 /// Samples a race plays besides the ride's bank: the lamps, the gate and
 /// the IntOut stingers (GameAudio.loadBank, game.js prefetch).
-pub const RACE_SAMPLES: [&str; 9] = [
+pub const RACE_SAMPLES: [&str; 11] = [
     "beep01.vag",
     "go.vag",
     "gate.vag",
@@ -228,6 +244,8 @@ pub const RACE_SAMPLES: [&str; 9] = [
     "intout/int002.vag",
     "intout/int003.vag",
     "intout/int004.vag",
+    "intout/int005.vag",
+    "intout/int006.vag",
     "intout/out001.vag",
     "intout/out004.vag",
 ];
@@ -418,14 +436,20 @@ impl RaceState {
         // Before the first step the race holds on the grid.
         let Some(frame) = self.frame.as_ref() else {
             return Some(if self.intro.is_some() {
-                MusicEvent::Intro
+                MusicEvent::Intro {
+                    cue: intro_cue(self.settings.championship),
+                }
             } else {
                 MusicEvent::Restart
             });
         };
         match frame.phase {
-            "intro" => Some(MusicEvent::Intro),
-            "countdown" if self.music_intro => Some(MusicEvent::Intro),
+            "intro" => Some(MusicEvent::Intro {
+                cue: intro_cue(self.settings.championship),
+            }),
+            "countdown" if self.music_intro => Some(MusicEvent::Intro {
+                cue: intro_cue(self.settings.championship),
+            }),
             "countdown" => Some(MusicEvent::Restart),
             "finished" => Some(MusicEvent::Over {
                 won: frame.position == 1,
@@ -1404,7 +1428,9 @@ impl Ride {
         if state.music_phase != Some(frame.phase) {
             let previous = state.music_phase.replace(frame.phase);
             events.music = match frame.phase {
-                "intro" => Some(MusicEvent::Intro),
+                "intro" => Some(MusicEvent::Intro {
+                    cue: intro_cue(state.settings.championship),
+                }),
                 "countdown" if previous != Some("intro") => Some(MusicEvent::Restart),
                 "racing" => Some(MusicEvent::Go),
                 "finished" => Some(MusicEvent::Over {
@@ -1413,7 +1439,7 @@ impl Ride {
                 _ => None,
             };
             match events.music {
-                Some(MusicEvent::Intro) => state.music_intro = true,
+                Some(MusicEvent::Intro { .. }) => state.music_intro = true,
                 Some(_) => state.music_intro = false,
                 None => {}
             }
@@ -1752,8 +1778,32 @@ impl Ride {
 
 #[cfg(test)]
 mod tests {
-    use super::{Entry, KID_RELEASED, KidDrive, kid_drive, puppet_sounds};
+    use super::{Entry, KID_RELEASED, KidDrive, intro_cue, kid_drive, puppet_sounds};
     use crate::ride::cpu::PuppetSound;
+
+    #[test]
+    fn championship_rounds_play_their_fixed_intro_cue() {
+        // 00217bb0: single races roll INT001-INT004.
+        assert_eq!(intro_cue(None), None);
+        let cues: Vec<_> = (0..atv_core::championship::SERIES.len())
+            .map(|i| intro_cue(Some((i, false))))
+            .collect();
+        // Am/Pro Enduro, Am/Pro Nationals: INT006; Am/Pro Supercross:
+        // INT005; Short Tracks: INT006.
+        assert_eq!(
+            cues,
+            [
+                Some(6),
+                Some(6),
+                Some(6),
+                Some(6),
+                Some(5),
+                Some(5),
+                Some(6)
+            ]
+        );
+        assert_eq!(intro_cue(Some((99, true))), None);
+    }
 
     #[test]
     fn kid_mode_gates_the_driver_on_go() {

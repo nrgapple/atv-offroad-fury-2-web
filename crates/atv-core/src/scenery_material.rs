@@ -33,15 +33,19 @@ pub struct TextureAnimation {
     pub initial: f32,
     pub looping: bool,
     pub loop_start: i32,
+    /// animatedMapReverseLoopOnEnd: ping-pong instead of wrapping.
+    pub reverse: bool,
 }
 
-/// Forward ATM frame clock from 001bd8e0/001bdb60. Original elapsed time is
+/// ATM frame clock from 001bd8e0/001bdb60. Original elapsed time is
 /// unsigned milliseconds; the first preparation has zero elapsed time.
 pub struct TextureClock {
     config: TextureAnimation,
     frames: usize,
     phase: f32,
     previous_ms: Option<u32>,
+    backward: bool,
+    stopped: bool,
 }
 impl TextureClock {
     pub fn phase(&self) -> f32 {
@@ -65,6 +69,8 @@ impl TextureClock {
             config,
             frames,
             previous_ms: None,
+            backward: false,
+            stopped: false,
         })
     }
     pub fn tick(&mut self, milliseconds: u32) -> usize {
@@ -74,17 +80,35 @@ impl TextureClock {
             .map(|previous| milliseconds.wrapping_sub(previous) as f32 * 0.001)
             .unwrap_or(0.);
         self.previous_ms = Some(milliseconds);
-        self.phase += elapsed * self.config.fps;
-        if self.phase >= self.frames as f32 {
-            let remainder = self.phase % self.frames as f32;
-            self.phase = if !self.config.looping {
-                (self.frames - 1) as f32
+        let frames = self.frames as f32;
+        if self.backward {
+            self.phase -= elapsed * self.config.fps;
+        } else {
+            self.phase += elapsed * self.config.fps;
+        }
+        if self.phase >= frames {
+            let remainder = self.phase % frames;
+            if self.config.reverse {
+                // Reflect off the last frame and play backward.
+                self.phase = (frames - 1. - remainder).max(0.);
+                self.backward = true;
             } else if self.config.loop_start < 0 {
-                remainder
+                self.phase = remainder;
             } else {
-                self.config.loop_start as f32
-                    + remainder % (self.frames as f32 - self.config.loop_start as f32)
-            };
+                self.phase = self.config.loop_start as f32
+                    + remainder % (frames - self.config.loop_start as f32);
+            }
+            self.stopped |= !self.config.looping;
+        } else if self.phase < 0. {
+            if self.config.reverse {
+                self.phase = (self.phase % frames).abs();
+                self.backward = false;
+            } else {
+                self.stopped |= self.backward;
+            }
+        }
+        if self.stopped {
+            self.phase = if self.backward { 0. } else { frames - 1. };
         }
         self.phase as usize
     }
@@ -182,21 +206,17 @@ pub fn parse(data: &[u8]) -> Result<Pass> {
         .is_some_and(|v| v.eq_ignore_ascii_case("unique") || v.eq_ignore_ascii_case("shared"))
     {
         let field = |key: &str, default: f32| number(&format!("{key}_1"), number(key, default)?);
-        if field("animatedMapReverseLoopOnEnd", 0.)? != 0. {
-            unsupported_animation = Some("reverse ATM playback".into());
-            None
-        } else {
-            let fps = field("animatedMapFramesPerSecond", 1.)?;
-            if !(0.0..=1000.0).contains(&fps) {
-                return Err("invalid scenery ATM rate".into());
-            }
-            Some(TextureAnimation {
-                fps,
-                initial: field("animatedMapInitialFrame", 0.)?,
-                looping: field("animatedMapLooping", 1.)? != 0.,
-                loop_start: field("animatedMapLoopOnEndToFrame", -1.)? as i32,
-            })
+        let fps = field("animatedMapFramesPerSecond", 1.)?;
+        if !(0.0..=1000.0).contains(&fps) {
+            return Err("invalid scenery ATM rate".into());
         }
+        Some(TextureAnimation {
+            fps,
+            initial: field("animatedMapInitialFrame", 0.)?,
+            looping: field("animatedMapLooping", 1.)? != 0.,
+            loop_start: field("animatedMapLoopOnEndToFrame", -1.)? as i32,
+            reverse: field("animatedMapReverseLoopOnEnd", 0.)? != 0.,
+        })
     } else {
         None
     };
@@ -784,6 +804,7 @@ mod tests {
             initial: 0.,
             looping: true,
             loop_start: 0,
+            reverse: false,
         };
         let mut clock = TextureClock::new(config.clone(), 4).unwrap();
         assert_eq!(clock.tick(u32::MAX - 249), 0);
@@ -799,5 +820,43 @@ mod tests {
         .unwrap();
         assert_eq!(clock.tick(0), 0);
         assert_eq!(clock.tick(3000), 3);
+    }
+    #[test]
+    fn atm_clock_reverse_loop_ping_pongs_like_001bdb60() {
+        let config = TextureAnimation {
+            fps: 2.,
+            initial: 0.,
+            looping: true,
+            loop_start: -1,
+            reverse: true,
+        };
+        let mut clock = TextureClock::new(config.clone(), 4).unwrap();
+        // 4 frames at 2 fps: 0,1,2,3 forward, reflect at 4.0 -> 3 - 0 = 3.
+        let frames: Vec<usize> = (0..12).map(|i| clock.tick(i * 500)).collect();
+        assert_eq!(frames, [0, 1, 2, 3, 3, 2, 1, 0, 1, 2, 3, 3]);
+        // A 0.25-frame overshoot reflects to 2.75; below zero mirrors by |fmod|.
+        let mut clock = TextureClock::new(config.clone(), 4).unwrap();
+        clock.tick(0);
+        clock.tick(2125);
+        assert!((clock.phase() - 2.75).abs() < 1e-4);
+        clock.tick(2125 + 1500);
+        assert!((clock.phase() - 0.25).abs() < 1e-4);
+        // Not looping: the sticky stop pins whichever end the direction
+        // flag names, so it alternates ends (no shipped material does this).
+        let mut clock = TextureClock::new(
+            TextureAnimation {
+                looping: false,
+                ..config
+            },
+            4,
+        )
+        .unwrap();
+        clock.tick(0);
+        assert_eq!(clock.tick(2100), 0);
+        assert_eq!(clock.tick(2600), 3);
+        assert_eq!(clock.tick(3100), 0);
+        let parsed = parse(b"[ShaderPass_1]\nTextureAnimation=unique\nanimatedMapReverseLoopOnEnd=1\nanimatedMapFramesPerSecond=8\n").unwrap();
+        assert!(parsed.unsupported_animation.is_none());
+        assert!(parsed.texture_animation.unwrap().reverse);
     }
 }

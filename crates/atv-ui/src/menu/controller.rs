@@ -152,6 +152,8 @@ pub struct PauseMenu {
     held: Vec<String>,
     /// Generation of the page last shown (each `show` slides a page in).
     pub shown: u64,
+    /// When the Credits page opened (`crate::scroll::now`, ms).
+    credits_since: f64,
     /// The pages Back returns through with the row each was left by
     /// (the original's page history, research/MENU_FLOW.md).
     history: Vec<(String, usize, Option<String>)>,
@@ -210,6 +212,7 @@ impl PauseMenu {
             game_active: false,
             held: Vec::new(),
             shown: crate::transition::next_show(),
+            credits_since: 0.,
             history: Vec::new(),
             restore: None,
         }
@@ -265,6 +268,12 @@ impl PauseMenu {
             music: ctx.music.filter(|_| self.page == "jukebox").cloned(),
             jukebox_art: None,
             frame: 0,
+            credits: None,
+            credits_seconds: if self.page == "credits" {
+                ((crate::scroll::now() - self.credits_since) / 1000.) as f32
+            } else {
+                0.
+            },
             motion: None,
             // Controller bindings show glyphs (standard-mapping pads).
             pad: (self.page == "bindings" && !self.keyboard)
@@ -528,6 +537,9 @@ impl PauseMenu {
 
     fn present(&mut self, page: &str) {
         self.shown = crate::transition::next_show();
+        if page == "credits" {
+            self.credits_since = crate::scroll::now();
+        }
         self.capture = None;
         self.notice = None;
         self.page = page.into();
@@ -644,7 +656,8 @@ impl PauseMenu {
             }
             "main" => return Some(Event::Leave("play.html")),
             "settings" | "extras" | "alpha" | "accessibility" | "hud-settings"
-            | "minimap-config" | "race-overlays" | "controls" | "music" | "game-settings" => {
+            | "minimap-config" | "race-overlays" | "controls" | "music" | "game-settings"
+            | "credits" => {
                 self.show(action);
                 return None;
             }
@@ -1846,8 +1859,8 @@ mod parity_tests {
         let mut options = PauseMenu::settings();
         fx.with(&mut options, |_, _| ());
         assert_eq!(
-            options.rows.choices[..3],
-            ["jukebox", "game-settings", "controls"]
+            options.rows.choices[..4],
+            ["jukebox", "game-settings", "controls", "credits"]
         );
         fx.with(&mut options, |m, ctx| m.key("Enter", ctx));
         assert_eq!(options.page, "jukebox");
@@ -1862,9 +1875,26 @@ mod parity_tests {
             fx.with(&mut options, |m, ctx| m.key("Escape", ctx)),
             Some(Event::Resume)
         );
+        // Options → Credits (page 18): Back is its only row and returns
+        // to Options on the Credits row.
+        let mut options = PauseMenu::settings();
+        fx.with(&mut options, |_, _| ());
+        options.selection = 3;
+        fx.with(&mut options, |m, ctx| m.key("Enter", ctx));
+        assert_eq!(
+            (options.page.as_str(), &options.rows.choices[..]),
+            ("credits", &["back".to_string()][..])
+        );
+        fx.with(&mut options, |m, ctx| m.key("Escape", ctx));
+        assert_eq!((options.page.as_str(), options.selection), ("settings", 3));
         let mut ride = PauseMenu::new();
         fx.with(&mut ride, |m, ctx| m.run("settings", 1, false, ctx));
-        assert!(ride.rows.choices.iter().all(|c| c != "jukebox"));
+        assert!(
+            ride.rows
+                .choices
+                .iter()
+                .all(|c| c != "jukebox" && c != "credits")
+        );
     }
 
     #[test]

@@ -149,6 +149,9 @@ pub struct Front {
     pub spectrum: Option<Vec<u8>>,
     pub jukebox_source: Option<atv_game::jukebox::JukeboxArt>,
     jukebox_art: Option<atv_ui::menu::jukebox::Art>,
+    /// The Credits page script (PAGE18 `credits.txt` and the port's
+    /// section) once read, and whether the original text was found.
+    pub credits: Option<(std::rc::Rc<atv_core::credits::Credits>, bool)>,
     /// Settings → Audio chose a song: it previews until the page changes
     /// (frontend.js `songPreview`).
     song_preview: bool,
@@ -282,6 +285,7 @@ impl Front {
             spectrum: None,
             jukebox_source: None,
             jukebox_art: None,
+            credits: None,
             song_preview: false,
             pads: Vec::new(),
             pad_standard: true,
@@ -464,6 +468,11 @@ impl Front {
         }
     }
 
+    /// The Credits page is open (it scrolls; its script loads on demand).
+    pub fn credits_open(&self) -> bool {
+        self.menu.as_ref().is_some_and(|m| m.page == "credits")
+    }
+
     /// The Jukebox page is open (it animates; the spectrum and art apply).
     pub fn jukebox_open(&self) -> bool {
         self.menu.as_ref().is_some_and(|m| m.page == "jukebox")
@@ -474,6 +483,7 @@ impl Front {
     pub fn animating(&self) -> bool {
         self.transition.active()
             || self.jukebox_open()
+            || self.credits_open()
             || self.state.scrolling()
             || self.menu.as_ref().is_some_and(|m| m.scroller.active())
             || self.indicating()
@@ -1670,6 +1680,9 @@ impl Front {
         };
         state.motion = self.motion;
         self.last_menu = Some(state.clone());
+        if state.page == "credits" {
+            state.credits = self.credits.as_ref().map(|(c, _)| c.clone());
+        }
         if state.page == "jukebox" {
             // The original PAGE14 art, registered once the host read it.
             if self.jukebox_art.is_none()
@@ -2098,6 +2111,13 @@ impl Front {
                 })),
                 "spectrum": self.spectrum.as_ref().map(|b| b.iter().copied().max().unwrap_or(0)),
                 "art": self.jukebox_art.is_some(),
+                "credits": self.credits.as_ref().map(|(c, original)| serde_json::json!({
+                    "entries": c.entries.len(), "original": original,
+                    "first": c.entries.iter().find_map(|e| match e {
+                        atv_core::credits::Entry::Heading(h) => Some(h.as_str()),
+                        _ => None,
+                    }),
+                })),
             })
         });
         let cloud = serde_json::json!({

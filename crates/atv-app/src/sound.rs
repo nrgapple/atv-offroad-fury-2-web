@@ -617,6 +617,8 @@ pub struct Sound {
     mix_mark: (f64, u32, web_time::Instant),
     /// The last Crazy/Gorn crash boom (0.3 s apart) and how many played.
     boom: (Option<web_time::Instant>, u32),
+    /// The Training Course's spoken lines (empty elsewhere).
+    pub speech: atv_game::audio::speech::Speech,
 }
 
 pub struct Settings {
@@ -685,6 +687,18 @@ impl Sound {
         {
             crate::status(&format!("Actor sound: {error}"));
         }
+        // Training's instructor lines; an older package has none and the
+        // captions keep their own timing.
+        let speech = if environment == "training" {
+            atv_game::audio::speech::Speech::load(&content)
+                .await
+                .unwrap_or_else(|error| {
+                    crate::status(&format!("Training speech: {error}"));
+                    Default::default()
+                })
+        } else {
+            Default::default()
+        };
         let mut ride = RideAudio::new(bank, settings.mode);
         ride.train_sounds = settings.train_sounds.clone();
         ride.actor_sounds = settings.actor_sounds.clone();
@@ -720,6 +734,7 @@ impl Sound {
             mix: 0.,
             mix_mark: (0., 0, web_time::Instant::now()),
             boom: (None, 0),
+            speech,
         })
     }
 
@@ -966,6 +981,15 @@ impl Sound {
         self.boom = (Some(web_time::Instant::now()), self.boom.1 + 1);
     }
 
+    /// Follows the Training Course's current line (`(serial, line)`).
+    pub fn training_line(&mut self, line: Option<(u32, u16)>) {
+        if self.output.started.get()
+            && let Ok(mut mixer) = self.output.mixer.lock()
+        {
+            self.speech.follow(&mut mixer, self.output.rate, line);
+        }
+    }
+
     /// Crash booms played (diagnostics).
     pub fn crash_booms(&self) -> u32 {
         self.boom.1
@@ -1014,11 +1038,11 @@ impl Sound {
                 self.music.borrow_mut().release();
                 return;
             }
-            MusicEvent::Intro => {
+            MusicEvent::Intro { cue } => {
                 self.music.borrow_mut().hold(0.);
-                // A random INT001-INT004 (Math.random in the browser).
-                let pick = crate::random::below(4);
-                vec![(format!("intout/int00{}.vag", pick + 1), false)]
+                // A championship's fixed cue, else a random INT001-INT004.
+                let cue = cue.unwrap_or_else(|| crate::random::below(4) as u8 + 1);
+                vec![(format!("intout/int00{cue}.vag"), false)]
             }
             MusicEvent::Restart => {
                 self.music.borrow_mut().hold(0.);
@@ -1193,6 +1217,7 @@ impl Drop for Sound {
     fn drop(&mut self) {
         if let Ok(mut mixer) = self.output.mixer.lock() {
             self.ride.race.stop(&mut mixer);
+            self.speech.stop(&mut mixer);
             self.remote.stop_all(&mut mixer);
             self.cpu_riders.stop_all(&mut mixer);
         }

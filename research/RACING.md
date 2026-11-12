@@ -87,8 +87,8 @@ for the scalar branches, not whole-race replay):
 - Whole-race PS2 replay parity (firework triggers and their CPU spark
   streams are connected; see "Supercross fireworks"). Championship points
   and series are in `CHAMPIONSHIPS.md` (Nationals and Supercross only).
-- The Supercross start gate rotation and the race-load announcer cue. See
-  "Race start and race over" and "Pre-race camera and 321 lights" below.
+- The Supercross start gate rotation. See "Race start and race over" and
+  "Pre-race camera and 321 lights" below.
 - Results show Stunt Score and Profile Points (`001f1e30`, see `PROFILE.md`);
   CPU stunt scores read 0 because the port does not score CPU tricks.
 
@@ -586,8 +586,9 @@ Port:
   content package (`AUDIO.RES` gains the three samples). Without the lamp
   art, the countdown digits remain. (An earlier build played `gate.vag` on
   Supercross; the original plays it only with a National drop gate.)
-- Not reproduced: the fly-by/orbit fallbacks (every course has shots), the
-  race-load announcer cue `00217bb0`, and the Supercross gate rotation.
+- Not reproduced: the fly-by/orbit fallbacks (every course has shots) and
+  the Supercross gate rotation. The race-load cue `00217bb0` is under "Race
+  intro and race-over music".
 
 ## After-finish camera director — 2026-10-16
 
@@ -763,6 +764,17 @@ Port: the eight cues join the repacked `AUDIO.RES` (the files use the music
 VAG layout and decode with the existing stereo VAG path) and play on their own
 voice at the music volume; `MusicStream.hold`/`release` give the silent
 intro and the race-over fade. The IntOut base volume is not recovered.
+
+Championship cue (2026-11-11, `00217bb0`, `002f65e0`, `00289d50`): with the
+championship flag (race settings +0x36d) set, the cue depends on the session
+type at settings +4, which `002f65e0` derives from the event type (Freestyle
+types 2/3 → 2, Supercross 6/7 → 5, the rest → 0, 1, 3 or 4). Type 2 rolls
+INT001–INT004 like a single race, type 5 plays INT005 and every other type
+INT006. The port's championship rounds now follow this
+(`ride::race::intro_cue`): Amateur/Pro Supercross INT005; Amateur/Pro Enduro,
+Amateur/Pro Nationals and Short Tracks INT006. The same function first skips
+the cue entirely when the event's +0xb4 value is zero (starting the song
+instead, except in Training); what +0xb4 holds is not established.
 
 ## National drop gate — 2026-10-16
 
