@@ -35,6 +35,8 @@ pub enum Action {
     RaceQuit,
     /// Race over → Continue Championship (the next round).
     RaceNextRound,
+    /// A photo mode or replay control (#542).
+    Viewer(atv_ui::hud::viewer::Button),
 }
 
 /// Hit target of the minimap (tap toggles north-up / heading-up).
@@ -233,6 +235,15 @@ pub struct Overlay {
     menu_motion: Option<atv_ui::transition::Motion>,
     /// The pause page being left, while it slides out.
     exit_menu: Option<pause::State>,
+    /// Photo mode or a replay (#542): only its controls draw (none on
+    /// the frame a photo saves).
+    pub viewer: Option<atv_ui::hud::viewer::State>,
+    viewer_cache: Option<(
+        Viewport,
+        atv_ui::hud::viewer::State,
+        DisplayList,
+        Vec<(Rect, u32)>,
+    )>,
 }
 
 /// Split screen's Hall of Fame naming, one player after another
@@ -294,6 +305,8 @@ impl Overlay {
             help_until: None,
             ride_started: false,
             toolbar_cache: None,
+            viewer: None,
+            viewer_cache: None,
             help_cache: None,
             help_keys: Vec::new(),
             pad_name: None,
@@ -700,6 +713,9 @@ impl Overlay {
                     let command = self.results.act(p.button);
                     return Some(command.and_then(|c| self.command_action(c)));
                 }
+                if let Some(button) = atv_ui::hud::viewer::Button::from_id(p.button) {
+                    return Some(Some(Action::Viewer(button)));
+                }
                 match toolbar::Button::from_id(p.button) {
                     Some(toolbar::Button::Pause) => Some(Action::Pause),
                     Some(toolbar::Button::Camera) => Some(Action::Camera),
@@ -903,6 +919,12 @@ impl Overlay {
                 (None, Some(_)) => self.exit_menu = None,
                 _ => {}
             }
+            self.upload(device, queue, width, height);
+            self.prepare_ms = started.elapsed().as_secs_f64() * 1000.;
+            return;
+        }
+        if self.viewer.is_some() {
+            self.prepare_viewer();
             self.upload(device, queue, width, height);
             self.prepare_ms = started.elapsed().as_secs_f64() * 1000.;
             return;
@@ -1976,6 +1998,42 @@ impl Overlay {
             self.upload_size = upload_size;
         } else {
             self.renderer.rasterized = 0;
+        }
+    }
+
+    /// Photo mode and replay controls (`viewer`), laid out again only when
+    /// they change.
+    fn prepare_viewer(&mut self) {
+        let Some(mut state) = self.viewer.clone() else {
+            return;
+        };
+        let view = self.view;
+        state.hovered = self.hovered.and_then(atv_ui::hud::viewer::Button::from_id);
+        state.pressed = self
+            .press
+            .as_ref()
+            .and_then(|p| atv_ui::hud::viewer::Button::from_id(p.button));
+        if !self
+            .viewer_cache
+            .as_ref()
+            .is_some_and(|(v, s, ..)| *v == view && *s == state)
+        {
+            let (mut list, mut hits) = (DisplayList::default(), Vec::new());
+            if !state.buttons.is_empty() {
+                layout::render(
+                    &atv_ui::hud::viewer::element(&view, &state),
+                    &mut self.fonts,
+                    view.width,
+                    view.height,
+                    &mut list,
+                    &mut hits,
+                );
+            }
+            self.viewer_cache = Some((view, state, list, hits));
+        }
+        if let Some((_, _, list, hits)) = &self.viewer_cache {
+            self.list.items.extend_from_slice(&list.items);
+            self.hits.extend_from_slice(hits);
         }
     }
 

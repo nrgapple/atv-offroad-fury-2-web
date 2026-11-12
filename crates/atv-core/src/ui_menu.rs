@@ -1470,6 +1470,11 @@ pub fn layout(request: Request) -> Result<Frame> {
                 ("Jukebox", "jukebox"),
             ];
             let online = !request.lobby_status.is_empty();
+            // Photo mode (#542, a port addition): solo and split screen
+            // only; an online ride keeps riding under its pause menu.
+            if !online {
+                choices.insert(2, ("Photo mode", "photo"));
+            }
             if online {
                 // Original pause rows: change ride in place; the host picks
                 // the next track for everyone.

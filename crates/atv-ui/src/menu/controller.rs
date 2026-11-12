@@ -50,6 +50,8 @@ pub enum Event {
     /// score table for every room rider (research/MULTIPLAYER.md "Room
     /// Freestyle").
     PlayFreestyle,
+    /// Pause → Photo mode: a free camera around the paused moment.
+    Photo,
 }
 
 /// The multiplayer room as the pause menu shows it (the browser's
@@ -576,6 +578,7 @@ impl PauseMenu {
             "devlog" => return Some(Event::Leave("devlog.html")),
             "fullscreen" => return Some(Event::Fullscreen),
             "copyride" => return Some(Event::CopyRide),
+            "photo" => return Some(Event::Photo),
             "leave" => return Some(Event::LeaveGame),
             "changeride" => return Some(Event::ChangeRide),
             "hosttrack" => return Some(Event::SelectTrack),

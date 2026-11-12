@@ -162,7 +162,14 @@ const FOOTER: [&str; 9] = [
 ];
 const PAGER: [&str; 4] = ["bindprev", "bindnext", "musicprev", "musicnext"];
 const PAUSE_GROUPS: [&[&str]; 3] = [
-    &["resume", "reset", "players", "changeride", "hosttrack"],
+    &[
+        "resume",
+        "reset",
+        "photo",
+        "players",
+        "changeride",
+        "hosttrack",
+    ],
     &["settings", "jukebox"],
     &["copyride", "devlog", "main", "leave"],
 ];

@@ -18,6 +18,7 @@ mod hockey;
 mod multiplayer;
 mod net;
 mod overlay;
+mod photo;
 mod random;
 mod render_scale;
 pub mod replay;
@@ -938,6 +939,8 @@ struct App {
     /// The host's Play Tag reloads the room's venue from its TG archive;
     /// the game starts with these minutes once that ride is ready.
     tag_start: Option<u32>,
+    /// Pause → Photo mode's free camera (#542).
+    photo: Option<photo::Photo>,
     /// Split screen → Games → Tag: a local two-player game starts with
     /// these minutes once both rides are ready (no room).
     split_tag: Option<(u32, String)>,
@@ -1721,9 +1724,9 @@ impl App {
             overlay.pad_name = self.gamepad.name();
             overlay.pads = self.gamepad.connected();
             overlay.pad_standard = self.gamepad.standard();
-            overlay.sync_menu(riding.paused && !riding.held);
-            riding.menu_open = overlay.menu.is_some();
-            if riding.menu_open
+            overlay.sync_menu(riding.paused && !riding.held && self.photo.is_none());
+            riding.menu_open = overlay.menu.is_some() || self.photo.is_some();
+            if overlay.menu.is_some()
                 && let Some(event) = overlay.menu_pad(pad.as_ref(), Some(&mut riding.bindings))
             {
                 self.menu_event(event);
@@ -1741,6 +1744,7 @@ impl App {
                 None => pad.as_ref(),
             };
             if !riding.menu_open
+                && self.photo.is_none()
                 && let Some(action) = overlay.results_pad(results_pad)
             {
                 self.act(action);
@@ -1906,8 +1910,8 @@ impl App {
         // A Pause binding this frame opens the menu in this same frame (the
         // ride then sleeps until input).
         if let Some(overlay) = &mut self.overlay {
-            overlay.sync_menu(riding.paused && !riding.held);
-            riding.menu_open = overlay.menu.is_some();
+            overlay.sync_menu(riding.paused && !riding.held && self.photo.is_none());
+            riding.menu_open = overlay.menu.is_some() || self.photo.is_some();
             // Audio → Sound shows the mode the ride is actually playing.
             if let Some(sound) = &riding.sound {
                 let playing = match sound.ride.mode {
@@ -2330,6 +2334,10 @@ impl App {
         let ui_started = Instant::now();
         self.update_jukebox();
         self.save_soundtrack();
+        // Photo mode: the free camera replaces the ride's (#542).
+        if self.photo.is_some() {
+            self.photo_frame(dt, pad.as_ref());
+        }
         let Some(ready) = &mut self.ready else { return };
         let Some(riding) = &mut ready.riding else {
             return;
@@ -3800,7 +3808,10 @@ impl App {
             .overlay
             .as_ref()
             .is_some_and(|o| o.jukebox_open() || o.sliding());
-        self.effective_focused() && (animating || ready.riding.as_ref().is_none_or(|r| !r.paused))
+        self.effective_focused()
+            && (animating
+                || self.photo.is_some()
+                || ready.riding.as_ref().is_none_or(|r| !r.paused))
     }
 
     /// Schedule one frame: it applies the event, then `awake` decides.
@@ -4019,6 +4030,7 @@ impl App {
                 self.toggle_fullscreen();
             }
             Event::CopyRide => self.copy_ride_link(),
+            Event::Photo => self.open_photo(),
             Event::Spawn(peer) => {
                 let Some(ready) = &mut self.ready else { return };
                 let (Some(net), Some(riding)) = (&mut ready.net, &mut ready.riding) else {
@@ -4538,6 +4550,10 @@ impl App {
     }
 
     fn act(&mut self, action: overlay::Action) {
+        if let overlay::Action::Viewer(button) = action {
+            self.viewer_button(button);
+            return;
+        }
         let Some(ready) = self.ready.as_mut() else {
             return;
         };
@@ -4557,6 +4573,8 @@ impl App {
                 }
             }
             overlay::Action::Camera => riding.cycle_requested = true,
+            // Handled above.
+            overlay::Action::Viewer(_) => {}
             overlay::Action::RaceRetry if self.tag.as_ref().is_some_and(|t| t.local) => {
                 self.restart_split_tag();
             }
@@ -4868,6 +4886,10 @@ impl App {
             .and_then(|r| r.riding.as_ref())
             .is_some_and(|r| !r.paused && !r.held)
             && self.effective_focused();
+        if self.photo.is_some() {
+            self.photo_pointer(touch.id, touch.phase, x, y);
+            return;
+        }
         let Some(overlay) = &mut self.overlay else {
             return;
         };
@@ -5155,6 +5177,10 @@ impl App {
             if let Some(event) = event {
                 self.front_event(event);
             }
+            return;
+        }
+        if self.photo.is_some() {
+            self.photo_key(&format!("{code:?}"));
             return;
         }
         let bindings = self
@@ -6010,6 +6036,8 @@ impl ApplicationHandler<Message> for App {
                 };
                 if let Some(front) = self.front_input() {
                     front.borrow_mut().wheel(dy);
+                } else if let Some(photo) = &mut self.photo {
+                    photo.wheel(dy);
                 } else if let Some(overlay) = &mut self.overlay {
                     overlay.menu_wheel(dy);
                 }
@@ -6103,6 +6131,20 @@ impl ApplicationHandler<Message> for App {
                 self.visible = !occluded;
                 self.sync_activity();
             }
+            // Photo mode: the right button pans.
+            WindowEvent::MouseInput {
+                state,
+                button: MouseButton::Right,
+                ..
+            } if self.photo.is_some() => {
+                let (x, y) = self.css(self.cursor.unwrap_or_default());
+                let phase = if state == ElementState::Pressed {
+                    winit::event::TouchPhase::Started
+                } else {
+                    winit::event::TouchPhase::Ended
+                };
+                self.photo_pointer(photo::RIGHT_MOUSE, phase, x, y);
+            }
             WindowEvent::MouseInput {
                 state,
                 button: MouseButton::Left,
@@ -6115,6 +6157,10 @@ impl ApplicationHandler<Message> for App {
                     winit::event::TouchPhase::Ended
                 };
                 if self.front_pointer(MOUSE, phase, x, y) {
+                    return;
+                }
+                if self.photo.is_some() {
+                    self.photo_pointer(overlay::MOUSE, phase, x, y);
                     return;
                 }
                 if let Some(overlay) = self.overlay.as_mut().filter(|o| o.menu.is_some()) {
@@ -6163,6 +6209,17 @@ impl ApplicationHandler<Message> for App {
                     self.front_pointer(MOUSE, winit::event::TouchPhase::Moved, x, y);
                     return;
                 }
+                if self.photo.is_some() {
+                    self.cursor = Some((position.x, position.y));
+                    let (x, y) = self.css((position.x, position.y));
+                    let moved = winit::event::TouchPhase::Moved;
+                    self.photo_pointer(overlay::MOUSE, moved, x, y);
+                    self.photo_pointer(photo::RIGHT_MOUSE, moved, x, y);
+                    if let Some(overlay) = &mut self.overlay {
+                        overlay.hover(x, y);
+                    }
+                    return;
+                }
                 if let (true, Some((x, _)), Some(Some(_))) = (
                     self.dragging,
                     self.cursor,
@@ -6193,6 +6250,7 @@ impl ApplicationHandler<Message> for App {
             }
             WindowEvent::RedrawRequested => {
                 self.step();
+                self.finish_photo();
                 // Show FPS counts the frames the surface presented.
                 let gpu = self.gpu.as_ref().or(self.ready.as_ref().map(|r| &r.gpu));
                 if let Some(at) = gpu.and_then(|g| g.take_presented()) {
@@ -9866,6 +9924,7 @@ pub fn run(options: Options) {
         room_freestyle_serial: 0,
         room_freestyle_start: false,
         tag_start: None,
+        photo: None,
         split_tag: None,
         tag_reload: None,
         pending_room: None,
