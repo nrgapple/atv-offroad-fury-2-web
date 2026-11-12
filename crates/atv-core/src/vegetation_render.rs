@@ -208,6 +208,46 @@ impl Vegetation {
             .get(index)
             .map(|p| (self.groups[p.group], p.position, p.radius))
     }
+    /// Near-mesh instances ([`MESH_FLOATS`] each: position, scale, rotation,
+    /// phase) of every plant within `reach` of `center` on the ground plane,
+    /// whether or not the camera selected it, in group order: written to
+    /// `out`, with each group's count in `counts`. For shadow casting; a
+    /// plant never yet seen near keeps its resting rotation.
+    pub fn casters(&self, center: [f64; 2], reach: f64, out: &mut Vec<f32>, counts: &mut Vec<u32>) {
+        let inside = |p: &Placement| {
+            (p.position[0] - center[0]).abs() <= reach && (p.position[2] - center[1]).abs() <= reach
+        };
+        counts.clear();
+        counts.resize(self.groups.len(), 0);
+        for p in self.placements.iter().filter(|p| inside(p)) {
+            counts[p.group] += 1;
+        }
+        let mut next: Vec<usize> = counts
+            .iter()
+            .scan(0, |at, &count| {
+                let start = *at;
+                *at += count as usize * MESH_FLOATS;
+                Some(start)
+            })
+            .collect();
+        out.clear();
+        out.resize(counts.iter().sum::<u32>() as usize * MESH_FLOATS, 0.);
+        for p in self.placements.iter().filter(|p| inside(p)) {
+            let at = next[p.group];
+            next[p.group] += MESH_FLOATS;
+            out[at..at + MESH_FLOATS].copy_from_slice(&[
+                p.position[0] as f32,
+                p.position[1] as f32,
+                p.position[2] as f32,
+                p.scale[0] as f32,
+                p.scale[1] as f32,
+                p.rotation[0] as f32,
+                p.rotation[1] as f32,
+                0.,
+            ]);
+        }
+    }
+
     /// Source placement indices and projected depths of the last selection,
     /// in submission (descending depth) order.
     pub fn selection(&self) -> Vec<(u32, f64)> {

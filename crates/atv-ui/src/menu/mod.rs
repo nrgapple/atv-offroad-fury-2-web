@@ -4,6 +4,7 @@
 //! module owns the responsive panel, selection and pointer handling.
 pub mod access;
 pub mod controller;
+pub mod credits;
 pub mod glyphs;
 pub mod jukebox;
 pub mod prefs;
@@ -145,6 +146,10 @@ pub struct State {
     pub music: Option<jukebox::MusicView>,
     pub jukebox_art: Option<jukebox::Art>,
     pub frame: usize,
+    /// The Credits page: the script (set by the host once read) and the
+    /// seconds since the page opened (its scroll).
+    pub credits: Option<std::rc::Rc<atv_core::credits::Credits>>,
+    pub credits_seconds: f32,
     /// The panel's slide-in while a page opens (crate::transition).
     pub motion: Option<crate::transition::Motion>,
 }
@@ -162,8 +167,15 @@ const FOOTER: [&str; 9] = [
 ];
 const PAGER: [&str; 4] = ["bindprev", "bindnext", "musicprev", "musicnext"];
 const PAUSE_GROUPS: [&[&str]; 3] = [
-    &["resume", "reset", "players", "changeride", "hosttrack"],
-    &["settings", "jukebox"],
+    &[
+        "resume",
+        "reset",
+        "photo",
+        "players",
+        "changeride",
+        "hosttrack",
+    ],
+    &["settings", "jukebox", "photo"],
     &["copyride", "devlog", "main", "leave"],
 ];
 
@@ -173,6 +185,9 @@ fn display(size: f32, weight: u16, italic: bool) -> Font {
 
 /// The full-viewport layer: dim backdrop and the centred panel.
 pub fn element(view: &Viewport, state: &State, images: &glyphs::GlyphImages) -> El {
+    if state.page == "credits" {
+        return credits::element(view, state).children(notice(view, state));
+    }
     if state.page == "jukebox" {
         // Before the ride's soundtrack catalog arrives the page still opens
         // (jukebox.js: "Loading the soundtrack…").

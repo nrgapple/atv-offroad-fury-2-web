@@ -87,8 +87,8 @@ for the scalar branches, not whole-race replay):
 - Whole-race PS2 replay parity (firework triggers and their CPU spark
   streams are connected; see "Supercross fireworks"). Championship points
   and series are in `CHAMPIONSHIPS.md` (Nationals and Supercross only).
-- The Supercross start gate rotation and the race-load announcer cue. See
-  "Race start and race over" and "Pre-race camera and 321 lights" below.
+- The Supercross start gate rotation. See "Race start and race over" and
+  "Pre-race camera and 321 lights" below.
 - Results show Stunt Score and Profile Points (`001f1e30`, see `PROFILE.md`);
   CPU stunt scores read 0 because the port does not score CPU tricks.
 
@@ -586,8 +586,9 @@ Port:
   content package (`AUDIO.RES` gains the three samples). Without the lamp
   art, the countdown digits remain. (An earlier build played `gate.vag` on
   Supercross; the original plays it only with a National drop gate.)
-- Not reproduced: the fly-by/orbit fallbacks (every course has shots), the
-  race-load announcer cue `00217bb0`, and the Supercross gate rotation.
+- Not reproduced: the fly-by/orbit fallbacks (every course has shots) and
+  the Supercross gate rotation. The race-load cue `00217bb0` is under "Race
+  intro and race-over music".
 
 ## After-finish camera director — 2026-10-16
 
@@ -763,6 +764,17 @@ Port: the eight cues join the repacked `AUDIO.RES` (the files use the music
 VAG layout and decode with the existing stereo VAG path) and play on their own
 voice at the music volume; `MusicStream.hold`/`release` give the silent
 intro and the race-over fade. The IntOut base volume is not recovered.
+
+Championship cue (2026-11-11, `00217bb0`, `002f65e0`, `00289d50`): with the
+championship flag (race settings +0x36d) set, the cue depends on the session
+type at settings +4, which `002f65e0` derives from the event type (Freestyle
+types 2/3 → 2, Supercross 6/7 → 5, the rest → 0, 1, 3 or 4). Type 2 rolls
+INT001–INT004 like a single race, type 5 plays INT005 and every other type
+INT006. The port's championship rounds now follow this
+(`ride::race::intro_cue`): Amateur/Pro Supercross INT005; Amateur/Pro Enduro,
+Amateur/Pro Nationals and Short Tracks INT006. The same function first skips
+the cue entirely when the event's +0xb4 value is zero (starting the song
+instead, except in Training); what +0xb4 holds is not established.
 
 ## National drop gate — 2026-10-16
 
@@ -1161,6 +1173,64 @@ Checks: `atv-core` `enduro` and `race::tests::enduro_gates_count_in_order_and_la
 `tools/test_release_content.py`; `tools/test_engine_enduro_race.mjs` races
 env05's short Enduro (13 gates, a one-lap finish) and loads env06's Short
 Track (it skips when the content package predates the variant archives).
+
+## User Created Enduro and the Waypoint Editor — 2026-11-12
+
+Exact-build evidence (strings, page labels and Overlays.pb; not traced):
+
+- **Event types.** "Waypoint Editor" and "User Created Enduro" are event
+  names (`0x32c0e0`, `0x32c0c0`); the event setup reads
+  `NumWaypointEditorTracks`, `WPEditorRaceTypeMask` and
+  `WPEditorPictureResName` (`0x42c6f0`..`0x42c730`) for event types 14 and
+  15. Both read the long Enduro archive (`0021d8b0`, above).
+- **Editor page.** PAGE09 (`QuadzillaUIPageWPEditor`) lists an Environment
+  value and "Race 1 (New)", "Race 2 (New)", "Race 3 (New)": three saved races
+  per venue. Track Select offers User Created Enduro with the same race
+  rows and a "Number of Laps" row.
+- **Saving.** Waypoints are a per-profile memory card file ("Waypoints save
+  file for Profile %s", "Waypoints load for Profile %s failed!",
+  `0x333e70`, `0x3312c0`); both the editor and user-created races need a
+  loaded profile with autosave on (`0x331100`..`0x331280`). A course holds
+  at most 50 records (`0022a240`, the `.wpt` padding).
+- **Editing.** Overlay Set 4 (Type Waypoint) is the editor HUD: object 36's
+  help lists "Place/Edit Gate", "Delete Gate", "Reset Gate", "Move
+  Cursor/Gate" (left stick and d-pad), "Rotate Gate Left/Right (if
+  selected)", "Snap to Previous/Next Gate", "Rotate Camera" (right stick)
+  and Select "Toggle Test/Edit Modes"; object 37 hides it behind Square. The
+  "Waypoint Pause Menu" has Resume Editing, Save Race (item type 25,
+  `QuadzillaMenuItem_SaveWaypointRace`) and Quit. The editor places
+  `waygate.slt` markers and plays `Music\waytune1.vag`.
+- **CPUs.** With the editor open `0020f780` loads no Track, and mode 4 then
+  aims straight at the next gate (CPU driver section below). Whether the
+  User Created Enduro race seats CPUs was not recovered.
+
+Not recovered: the minimum gate count, gate spacing rules, how the cursor
+moves and rotates, the course name (the page shows only "Race n"), and
+whether a user race awards Profile Points or records.
+
+Port (`atv_core::user_course`, `RaceVariant::UserEnduro`):
+
+- A course is a venue (`env01`..`env08`), a name, laps (1-5, default 3) and
+  3-50 gates (authored minimum) each a ground position and race direction,
+  consecutive gates at least 20 ft apart (authored). Positions snap to a
+  half-foot grid and headings to 1/65536 turn so every platform decodes the
+  same `f32`s; the compact code (URL-safe base64, about 6 bytes a gate) is
+  both what a course link carries (`wp=`) and what is saved.
+- A User Created Enduro race reads the long Enduro archive like the
+  original and replaces its `.wpt` with the course's gates, so gate models,
+  banners, fading, "GATE n of m", laps, the 30 s race over and the grid past
+  the last gate are the ordinary Enduro's. Codes are untrusted: the decoder
+  checks version, venue, laps, count, name and spacing, and the venue load
+  rejects gates off its terrain.
+- It races alone (port choice): the port's CPU Enduro driver follows the long
+  Enduro TDF route aimed by its next gate, which arbitrary gates leave; the
+  original's trackless straight-at-the-gate aim is not ported. It earns no
+  Profile Points and keeps no Hall of Fame or profile course records, and
+  it is not offered in online rooms (`RaceVariant::ALL` excludes it).
+
+Checks: `atv-core` `user_course` tests, `atv-game` launch tests,
+`tools/test_engine_user_course.mjs` (a link races three gates alone; a
+tampered code is refused).
 
 ## CPU reset points and the committed station — 2026-10-27
 

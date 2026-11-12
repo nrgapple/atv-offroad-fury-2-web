@@ -332,8 +332,10 @@ the amateur `crowdf1` / pro `sx` Soultree loops (previously only CrowdPresent
 venues played them), and GAME01 (Coonce Arena) plays the indoor/hockey-arena
 `icrowd01`/`icrowd02` ambient loops. `Crowd\hockey.aud` (HCHEER/HOCKYEND/
 HOCKYWIN) belongs to the hockey event mode (`00335590`); the port's Hockey
-([GAMES.md](GAMES.md)) raises its crowd events but does not play these
-sounds yet. The amateur/pro crowd reactions are described in `RACING.md`.
+([GAMES.md](GAMES.md)) plays them at the original triggers: HCHEER01/04 on a
+goal (`003368c0`), HOCKYWIN on a hat trick and HOCKYEND at Game over
+(`00336200`), with the goal siren and `gameover.vag`. The amateur/pro crowd
+reactions are described in `RACING.md`.
 
 ## CPU riders (2026-10-29)
 
@@ -429,6 +431,11 @@ race stingers and menu music keep the music volume. The original game had
 separate Music and SFX volumes; the browser control is an adaptation.
 
 ## Content and validation
+
+Training speech (2026-11-11, research/TRAINING.md): the packed `AUDIO.RES`
+gains the 46 `DIALOGUE.AUD` lines unchanged (665 → 711 members, 19,373,248 →
+25,170,818 packed bytes; 7.3 MB of VAG). Only a Training ride reads them;
+other rides read no more of the archive than before.
 
 The R2-only compact `AUDIO.RES` gains 172 members (480 → 652, 14,564,439 →
 18,739,084 packed bytes): the 93 loose rider vocal VAGs both genders reference,

@@ -50,6 +50,8 @@ pub enum Event {
     /// score table for every room rider (research/MULTIPLAYER.md "Room
     /// Freestyle").
     PlayFreestyle,
+    /// Pause → Photo mode: a free camera around the paused moment.
+    Photo,
 }
 
 /// The multiplayer room as the pause menu shows it (the browser's
@@ -150,6 +152,8 @@ pub struct PauseMenu {
     held: Vec<String>,
     /// Generation of the page last shown (each `show` slides a page in).
     pub shown: u64,
+    /// When the Credits page opened (`crate::scroll::now`, ms).
+    credits_since: f64,
     /// The pages Back returns through with the row each was left by
     /// (the original's page history, research/MENU_FLOW.md).
     history: Vec<(String, usize, Option<String>)>,
@@ -208,6 +212,7 @@ impl PauseMenu {
             game_active: false,
             held: Vec::new(),
             shown: crate::transition::next_show(),
+            credits_since: 0.,
             history: Vec::new(),
             restore: None,
         }
@@ -263,6 +268,12 @@ impl PauseMenu {
             music: ctx.music.filter(|_| self.page == "jukebox").cloned(),
             jukebox_art: None,
             frame: 0,
+            credits: None,
+            credits_seconds: if self.page == "credits" {
+                ((crate::scroll::now() - self.credits_since) / 1000.) as f32
+            } else {
+                0.
+            },
             motion: None,
             // Controller bindings show glyphs (standard-mapping pads).
             pad: (self.page == "bindings" && !self.keyboard)
@@ -295,12 +306,12 @@ impl PauseMenu {
                     self.binding_page + 1,
                     ACTIONS.len().div_ceil(4)
                 )),
-                // frontend.js: Page n of the song list's four-row pages.
-                "music" => Some(format!(
-                    "Page {} of {}",
-                    self.music_page + 1,
-                    ctx.music.map_or(0, |m| m.songs.len()).div_ceil(4).max(1)
-                )),
+                // frontend.js: Page n of the song list's four-row pages;
+                // none when the list fits one page (or is empty).
+                "music" => {
+                    let pages = ctx.music.map_or(0, |m| m.songs.len()).div_ceil(4);
+                    (pages > 1).then(|| format!("Page {} of {}", self.music_page + 1, pages))
+                }
                 _ => None,
             },
             // `.pause-header .pause-status`: Audio's soundtrack line.
@@ -526,6 +537,9 @@ impl PauseMenu {
 
     fn present(&mut self, page: &str) {
         self.shown = crate::transition::next_show();
+        if page == "credits" {
+            self.credits_since = crate::scroll::now();
+        }
         self.capture = None;
         self.notice = None;
         self.page = page.into();
@@ -576,6 +590,7 @@ impl PauseMenu {
             "devlog" => return Some(Event::Leave("devlog.html")),
             "fullscreen" => return Some(Event::Fullscreen),
             "copyride" => return Some(Event::CopyRide),
+            "photo" => return Some(Event::Photo),
             "leave" => return Some(Event::LeaveGame),
             "changeride" => return Some(Event::ChangeRide),
             "hosttrack" => return Some(Event::SelectTrack),
@@ -641,7 +656,8 @@ impl PauseMenu {
             }
             "main" => return Some(Event::Leave("play.html")),
             "settings" | "extras" | "alpha" | "accessibility" | "hud-settings"
-            | "minimap-config" | "race-overlays" | "controls" | "music" | "game-settings" => {
+            | "minimap-config" | "race-overlays" | "controls" | "music" | "game-settings"
+            | "credits" => {
                 self.show(action);
                 return None;
             }
@@ -1595,6 +1611,24 @@ mod parity_tests {
     }
 
     #[test]
+    fn audio_pager_shows_only_when_the_songs_need_a_second_page() {
+        let mut fx = Fixture::new();
+        let mut audio = PauseMenu::new();
+        let pager = |m: &PauseMenu| m.rows.choices.iter().any(|c| c == "musicnext");
+        fx.with(&mut audio, |m, _| m.show("music"));
+        assert!(pager(&audio));
+        let count = fx.with(&mut audio, |m, ctx| m.state(ctx).page_count);
+        assert_eq!(count.as_deref(), Some("Page 1 of 3"));
+        for songs in [0, 4] {
+            fx.music.songs.truncate(songs);
+            fx.with(&mut audio, |m, _| m.show("music"));
+            assert!(!pager(&audio), "{songs} songs");
+            let count = fx.with(&mut audio, |m, ctx| m.state(ctx).page_count);
+            assert_eq!(count, None, "{songs} songs");
+        }
+    }
+
+    #[test]
     fn only_the_pause_binding_or_escape_resumes_and_shift_tab_goes_back() {
         let mut fx = Fixture::new();
         let mut menu = PauseMenu::new();
@@ -1843,8 +1877,8 @@ mod parity_tests {
         let mut options = PauseMenu::settings();
         fx.with(&mut options, |_, _| ());
         assert_eq!(
-            options.rows.choices[..3],
-            ["jukebox", "game-settings", "controls"]
+            options.rows.choices[..4],
+            ["jukebox", "game-settings", "controls", "credits"]
         );
         fx.with(&mut options, |m, ctx| m.key("Enter", ctx));
         assert_eq!(options.page, "jukebox");
@@ -1859,9 +1893,26 @@ mod parity_tests {
             fx.with(&mut options, |m, ctx| m.key("Escape", ctx)),
             Some(Event::Resume)
         );
+        // Options → Credits (page 18): Back is its only row and returns
+        // to Options on the Credits row.
+        let mut options = PauseMenu::settings();
+        fx.with(&mut options, |_, _| ());
+        options.selection = 3;
+        fx.with(&mut options, |m, ctx| m.key("Enter", ctx));
+        assert_eq!(
+            (options.page.as_str(), &options.rows.choices[..]),
+            ("credits", &["back".to_string()][..])
+        );
+        fx.with(&mut options, |m, ctx| m.key("Escape", ctx));
+        assert_eq!((options.page.as_str(), options.selection), ("settings", 3));
         let mut ride = PauseMenu::new();
         fx.with(&mut ride, |m, ctx| m.run("settings", 1, false, ctx));
-        assert!(ride.rows.choices.iter().all(|c| c != "jukebox"));
+        assert!(
+            ride.rows
+                .choices
+                .iter()
+                .all(|c| c != "jukebox" && c != "credits")
+        );
     }
 
     #[test]

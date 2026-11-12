@@ -11,6 +11,7 @@ pub mod race;
 pub mod remote;
 pub mod ride;
 pub mod spectrum;
+pub mod speech;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod stream;
 pub mod synth;

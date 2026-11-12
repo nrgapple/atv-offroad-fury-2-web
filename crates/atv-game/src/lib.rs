@@ -8,6 +8,7 @@ pub mod archive;
 pub mod audio;
 pub mod burst;
 pub mod crash;
+pub mod credits;
 pub mod dirt;
 pub mod intro;
 pub mod jukebox;

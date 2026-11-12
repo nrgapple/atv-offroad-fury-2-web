@@ -595,6 +595,7 @@ pub fn layout(request: Request) -> Result<Frame> {
             | "bindings"
             | "music"
             | "jukebox"
+            | "credits"
     );
     let mut f = Frame {
         width: w,
@@ -683,6 +684,7 @@ pub fn layout(request: Request) -> Result<Frame> {
         }
         "music" => "Audio",
         "jukebox" => "Jukebox",
+        "credits" => "Credits",
         _ => return Err("unknown menu page".into()),
     };
     if request.page != "title" {
@@ -1486,6 +1488,11 @@ pub fn layout(request: Request) -> Result<Frame> {
                     }
                 }
             }
+            // Photo mode (#542, a port addition): solo and split screen
+            // only; an online ride keeps riding under its pause menu.
+            if !online {
+                choices.push(("Photo mode", "photo"));
+            }
             // Shared Free Ride rooms have no invite: everyone just drops in.
             if !request.lobby_public {
                 choices.push((
@@ -1571,12 +1578,13 @@ pub fn layout(request: Request) -> Result<Frame> {
             let graphics_label = graphics_label(&request);
             let mut choices = match request.page.as_str() {
                 // The original Options page (PAGE13): Jukebox, Game
-                // Settings, Controller Settings (here Controls), then the
-                // port's own pages.
+                // Settings, Controller Settings (here Controls), Credits,
+                // then the port's own pages.
                 "settings" if request.options_jukebox => vec![
                     ("Jukebox", "jukebox"),
                     ("Game Settings", "game-settings"),
                     ("Controls", "controls"),
+                    ("Credits", "credits"),
                     ("Display", "hud-settings"),
                     ("Audio", "music"),
                     ("Accessibility", "accessibility"),
@@ -1703,6 +1711,11 @@ pub fn layout(request: Request) -> Result<Frame> {
                     request.selection % choices.len() == i,
                 );
             }
+        }
+        "credits" => {
+            // The scroll is drawn by the host (atv-ui menu::credits).
+            f.button("Back", "back", [24., h - 68., 132., 56.], true);
+            f.choices.push("back".into());
         }
         "alpha" => {
             // Experimental authored toggles. The browser owns the list so new
@@ -2235,7 +2248,9 @@ pub fn layout(request: Request) -> Result<Frame> {
                     f.choices.push(action);
                 }
                 let prefix = if music { "music" } else { "bind" };
-                for (i, label) in ["Previous", "Next"].iter().enumerate() {
+                // A song list on one page (or none) has nothing to turn to.
+                let paged = !music || pages > 1;
+                for (i, label) in ["Previous", "Next"].iter().enumerate().filter(|_| paged) {
                     let action = format!("{prefix}{}", if i == 0 { "prev" } else { "next" });
                     f.button(
                         label,
@@ -2250,14 +2265,16 @@ pub fn layout(request: Request) -> Result<Frame> {
                     );
                     f.choices.push(action);
                 }
-                f.text(
-                    format!("{} / {}", page + 1, pages),
-                    [w - 90., 30.],
-                    0.8,
-                    FONT,
-                    "230,230,230",
-                    66.,
-                );
+                if paged {
+                    f.text(
+                        format!("{} / {}", page + 1, pages),
+                        [w - 90., 30.],
+                        0.8,
+                        FONT,
+                        "230,230,230",
+                        66.,
+                    );
+                }
                 let actions = if music {
                     vec![
                         ("Back".to_string(), "back"),

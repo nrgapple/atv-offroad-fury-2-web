@@ -32,6 +32,18 @@ fn unit(v: V) -> V {
 /// the centre snaps to whole texels. Returns (clip for a 0..1 depth target,
 /// world to [0,1] shadow texture with V down as wgpu samples it).
 pub fn light_matrices(center: V, to_sun: V, size: u32) -> ([f32; 16], [f32; 16]) {
+    light_box(center, to_sun, size, SHADOW_RADIUS, SHADOW_DEPTH)
+}
+
+/// [`light_matrices`] for a box of half-width `radius` and length `depth`
+/// along the light, centred on `center`.
+pub fn light_box(
+    center: V,
+    to_sun: V,
+    size: u32,
+    radius: f32,
+    depth: f32,
+) -> ([f32; 16], [f32; 16]) {
     let mut sun = unit(to_sun);
     if sun[1].is_nan() || sun[1] <= 0.2 {
         sun = unit([sun[0], 0.2, sun[2]]);
@@ -46,7 +58,7 @@ pub fn light_matrices(center: V, to_sun: V, size: u32) -> ([f32; 16], [f32; 16])
         },
     ));
     let up = cross(right, forward);
-    let texel = 2. * SHADOW_RADIUS / size as f32;
+    let texel = 2. * radius / size as f32;
     let snap = |v: f32| (v / texel).round() * texel;
     let (cr, cu, cf) = (
         snap(dot(center, right)),
@@ -54,7 +66,7 @@ pub fn light_matrices(center: V, to_sun: V, size: u32) -> ([f32; 16], [f32; 16])
         dot(center, forward),
     );
     let at: V = std::array::from_fn(|i| right[i] * cr + up[i] * cu + forward[i] * cf);
-    let eye: V = std::array::from_fn(|i| at[i] - forward[i] * SHADOW_DEPTH / 2.);
+    let eye: V = std::array::from_fn(|i| at[i] - forward[i] * depth / 2.);
     let view = [
         right[0],
         up[0],
@@ -73,9 +85,9 @@ pub fn light_matrices(center: V, to_sun: V, size: u32) -> ([f32; 16], [f32; 16])
         dot(forward, eye),
         1.,
     ];
-    let s = 1. / SHADOW_RADIUS;
+    let s = 1. / radius;
     // GL ortho z = -2/(far-near) z - (far+near)/(far-near), then (z + 1) / 2.
-    let (near, far) = (0., SHADOW_DEPTH);
+    let (near, far) = (0., depth);
     let gl = [
         s,
         0.,
