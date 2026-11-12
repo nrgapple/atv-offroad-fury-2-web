@@ -608,8 +608,8 @@ impl crate::App {
             return;
         }
         photo.capture = false;
-        let seconds = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
+        let seconds = web_time::SystemTime::now()
+            .duration_since(web_time::UNIX_EPOCH)
             .map_or(0, |d| d.as_secs());
         let name = file_name(seconds);
         let now = (web_time::Instant::now() - self.started).as_secs_f64();
