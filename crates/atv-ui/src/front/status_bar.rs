@@ -28,6 +28,8 @@ pub const POPOVER_LINK: u32 = 2464;
 pub const POPOVER_CLOSE: u32 = 2465;
 /// The popover's panel (a tap inside it outside the link keeps it open).
 pub const POPOVER_PANEL: u32 = 2466;
+/// The gear: Options from any menu page.
+pub const OPTIONS: u32 = 2467;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Chip {
@@ -314,6 +316,39 @@ fn cloud(size: f32, sync: Sync) -> El {
     icon(size, layers)
 }
 
+/// A gear: eight teeth around a ring.
+fn gear(size: f32) -> El {
+    let color = Color::hex("#e4e4e4");
+    icon(
+        size,
+        vec![
+            // Teeth: four bars through the centre.
+            shape(
+                "M10 1.6v16.8M1.6 10h16.8M4.06 4.06l11.88 11.88M15.94 4.06 4.06 15.94",
+                size,
+                Color::TRANSPARENT,
+                Some(Stroke {
+                    width: 3.2,
+                    color,
+                    join: Join::Round,
+                }),
+            ),
+            shape(
+                "M10 3.6a6.4 6.4 0 1 1 0 12.8a6.4 6.4 0 1 1 0-12.8z",
+                size,
+                color,
+                None,
+            ),
+            shape(
+                "M10 7.2a2.8 2.8 0 1 1 0 5.6a2.8 2.8 0 1 1 0-5.6z",
+                size,
+                Color::hex("#111111"),
+                None,
+            ),
+        ],
+    )
+}
+
 /// The profile's avatar: a gold disc with the name's initial.
 fn avatar(size: f32, name: Option<&str>) -> El {
     let initial = name
@@ -489,7 +524,15 @@ pub(super) fn bar(m: &Metrics, bar: &StatusBar, hovered: Option<u32>) -> El {
     if labels || bar.minimal {
         save.push(label(bar.sync.word()));
     }
-    row.child(chip(m, SAVE, hot(SAVE), false, save))
+    row = row.child(chip(m, SAVE, hot(SAVE), false, save));
+    if !bar.minimal {
+        let mut options = vec![gear(icon_size)];
+        if labels {
+            options.push(label("Options"));
+        }
+        row = row.child(chip(m, OPTIONS, hot(OPTIONS), false, options));
+    }
+    row
 }
 
 /// The popover under its chip: a scrim catching taps outside, and the

@@ -1024,3 +1024,44 @@ Test: `tools/test_engine_fps.mjs` (Display row, saved choice, readout
 within 10% of an independent rAF count in the page, refreshes, `?fps=1`
 idle menu reading "idle" without drawing more frames). Host headless
 Chromium only; physical phones not measured.
+
+## Pause and Options layout (2026-11-12)
+
+An authored redesign of the pause panel's look and of how Options is
+reached; the rows, labels, values and saved keys still come from
+`atv_core::ui_menu` unchanged. The original game's pause and options screens
+are not the model for this layout.
+
+- **Pause.** One panel with its rows in groups separated by a rule: the
+  ride's own actions (Resume, Reset, restart and multiplayer rows), then
+  Options, Jukebox and Photo mode, then Copy ride link and Dev log, then
+  Main menu or Leave. Each action is drawn once. A short landscape phone
+  splits the groups into two columns so nothing scrolls.
+- **Row kinds.** A row shows what it does: a switch for On/Off, the value
+  between two arrows for a cycled choice, a chevron for a row that opens a
+  page, a slider with its number. Back and the list pagers are outlined
+  buttons in a footer that does not scroll.
+- **Options on wide screens** (at least 640 px between the side safe
+  areas): the categories are a rail on the left and the open category's
+  rows are on the right, in one panel that does not slide between them.
+  With the selection in the rail, the highlighted category's rows already
+  show and a press on one acts on it. Right or Enter steps into the
+  category; Left, Escape or B steps back to the rail; Q/E and the pad's
+  shoulder buttons turn the category from inside one. The rail's Back
+  leaves Options. Sub-pages (Minimap, Race overlays, key and controller
+  bindings) keep the rail and get their own Back.
+- **Options on a portrait phone:** a list of categories with a line saying
+  what each holds, each opening a page of its own, as before.
+- **From the menus.** Options over a menu page uses the same panel as over
+  a ride. The menu status bar has a gear that opens it from any menu page
+  with the bar (not the title).
+
+Diagnostics: `toolbar.menu.wide`, `tabs` (rail tabs on a category page),
+`preview` and `previewPage` (the rows shown beside the rail). Native
+captures: `fury --venue ENV --menu PAGE[:ROW[:SCALE]] --capture OUT WxH`,
+or with `--front main` for Options over the main menu.
+
+Tests: controller unit tests for the wide and narrow paths;
+`tools/test_engine_options_layout.mjs` (desktop, landscape and portrait
+phone viewports, and the gear). Host headless Chromium and native captures
+only; not checked on a physical phone or with a controller in hand.

@@ -2933,6 +2933,10 @@ impl Frontend {
             .rev()
             .find(|(r, i)| *i == id && r.contains(x, y))
             .map(|(r, _)| *r);
+        if id == super::status_bar::OPTIONS {
+            self.close_status();
+            return Some(Event::Settings);
+        }
         if self.status_click(id, rect, view) {
             return None;
         }

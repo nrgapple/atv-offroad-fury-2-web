@@ -374,7 +374,7 @@ impl PauseMenu {
             }
             // Options shows the category under the selection beside its
             // rail, ready to use.
-            self.preview = (self.page == "settings")
+            self.preview = (self.wide && self.page == "settings")
                 .then(|| rows.choices.get(self.selection).cloned())
                 .flatten()
                 .filter(|action| super::category(action) == Some(action.as_str()))
@@ -387,13 +387,25 @@ impl PauseMenu {
         self.key = key;
     }
 
+    /// Options is laid out as a rail of categories beside their rows.
+    pub fn wide(&self) -> bool {
+        self.wide
+    }
+
+    /// The category shown beside the rail on the Options page, and its rows.
+    pub fn preview(&self) -> Option<(&str, &Rows)> {
+        self.preview
+            .as_ref()
+            .map(|(page, rows)| (page.as_str(), rows))
+    }
+
     /// Whether the page is Options or one under it.
     fn in_options(&self) -> bool {
         self.page == "settings" || super::category(&self.page).is_some()
     }
 
     /// Options' categories in rail order.
-    fn categories(&self) -> impl Iterator<Item = &str> {
+    pub fn categories(&self) -> impl Iterator<Item = &str> {
         self.hub
             .choices
             .iter()
@@ -1736,12 +1748,18 @@ mod parity_tests {
         touch: TouchControls,
         bindings: Bindings,
         music: MusicView,
+        view: Viewport,
     }
 
     impl Fixture {
         fn new() -> Self {
             let mut settings = Settings::memory();
             Self {
+                view: Viewport {
+                    width: 1280.,
+                    height: 720.,
+                    ..Default::default()
+                },
                 prefs: Preferences::load(&settings, false),
                 minimap: MinimapSettings::load(&settings),
                 touch: TouchControls::new(&settings, false),
@@ -1774,11 +1792,7 @@ mod parity_tests {
                 pad_name: None,
                 pads: Vec::new(),
                 pad_standard: true,
-                view: Viewport {
-                    width: 1280.,
-                    height: 720.,
-                    ..Default::default()
-                },
+                view: self.view,
                 lobby: None,
                 music: Some(&self.music),
             };
@@ -1973,6 +1987,135 @@ mod parity_tests {
         // The dim backdrop stays; the stage starts transparent.
         assert_eq!(list.items[0], rest.items[0]);
         assert_eq!(list.items[1], crate::paint::Item::PushOpacity(0.));
+    }
+
+    #[test]
+    fn options_keeps_its_categories_beside_their_rows_on_a_wide_screen() {
+        let mut fx = Fixture::new();
+        let mut menu = PauseMenu::new();
+        fx.with(&mut menu, |m, ctx| m.run("settings", 1, false, ctx));
+        assert!(menu.wide());
+        let categories: Vec<String> = menu.categories().map(String::from).collect();
+        // The rail has the selection and the highlighted category shows.
+        assert_eq!((menu.page.as_str(), menu.selection), ("settings", 0));
+        let shown = |menu: &PauseMenu| menu.preview().map(|(page, _)| page.to_string());
+        assert_eq!(shown(&menu).as_ref(), Some(&categories[0]));
+        fx.with(&mut menu, |m, ctx| m.key("ArrowDown", ctx));
+        assert_eq!(shown(&menu).as_ref(), Some(&categories[1]));
+        assert!(menu.preview().is_some_and(|(_, rows)| !rows.choices.is_empty()));
+        fx.with(&mut menu, |m, ctx| m.key("ArrowUp", ctx));
+        let hub = menu.shown;
+        // Right steps into it; the panel does not slide.
+        fx.with(&mut menu, |m, ctx| m.key("ArrowRight", ctx));
+        assert_eq!(menu.page, categories[0]);
+        assert_eq!(menu.shown, hub);
+        // Q and E turn the category from inside one.
+        fx.with(&mut menu, |m, ctx| m.key("KeyE", ctx));
+        assert_eq!(menu.page, categories[1]);
+        fx.with(&mut menu, |m, ctx| m.key("KeyQ", ctx));
+        fx.with(&mut menu, |m, ctx| m.key("KeyQ", ctx));
+        assert_eq!(Some(&menu.page), categories.last());
+        assert_eq!(menu.shown, hub);
+        // Escape steps back to the rail on that category.
+        fx.with(&mut menu, |m, ctx| m.key("Escape", ctx));
+        assert_eq!(
+            (menu.page.as_str(), menu.selection),
+            ("settings", categories.len() - 1)
+        );
+        // The rail's Back, drawn beside a category, leaves Options.
+        fx.with(&mut menu, |m, ctx| m.key("ArrowRight", ctx));
+        fx.with(&mut menu, |m, ctx| m.run("back", 1, false, ctx));
+        assert_eq!(menu.page, "pause");
+        assert!(menu.shown > hub);
+
+        // The rail is a tab per category beside the open one's rows.
+        fx.with(&mut menu, |m, ctx| m.run("settings", 1, false, ctx));
+        fx.with(&mut menu, |m, ctx| m.run("controls", 1, false, ctx));
+        for (width, height, safe) in [(1280., 720., [0.; 4]), (844., 390., [0., 47., 21., 47.])] {
+            fx.view = Viewport {
+                width,
+                height,
+                safe,
+                ..Default::default()
+            };
+            let state = fx.with(&mut menu, |m, ctx| m.state(ctx));
+            let (mut list, mut hits) = (crate::DisplayList::default(), Vec::new());
+            crate::layout::render(
+                &crate::menu::element(&fx.view, &state, &Default::default()),
+                &mut crate::Fonts::new(),
+                width,
+                height,
+                &mut list,
+                &mut hits,
+            );
+            let tabs: Vec<Rect> = hits
+                .iter()
+                .filter(|(_, id)| (crate::menu::TAB..crate::menu::PANEL).contains(id))
+                .map(|(r, _)| *r)
+                .collect();
+            assert_eq!(tabs.len(), categories.len(), "{width}");
+            // The category's rows; its Back is the rail's button.
+            let back = state.rows.choices.iter().position(|c| c == "back");
+            let rows: Vec<Rect> = hits
+                .iter()
+                .filter(|(_, id)| *id >= ROW && Some((*id - ROW) as usize) != back)
+                .map(|(r, _)| *r)
+                .collect();
+            assert!(!rows.is_empty(), "{width}");
+            let button = hits
+                .iter()
+                .find(|(_, id)| Some(id.wrapping_sub(ROW) as usize) == back)
+                .map(|(r, _)| *r)
+                .expect("the rail's Back");
+            for tab in &tabs {
+                assert!(tab.h >= 26. && tab.y >= 0., "{width}: {tab:?}");
+                assert!(tab.bottom() <= height - safe[2] + 0.5, "{width}: {tab:?}");
+                assert!(tab.x >= safe[3], "{width}: {tab:?}");
+                assert!(tab.bottom() <= button.y, "{width}: {tab:?} {button:?}");
+                for row in &rows {
+                    assert!(tab.right() <= row.x, "{width}: {tab:?} {row:?}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn options_is_a_list_of_pages_on_a_narrow_screen() {
+        let mut fx = Fixture::new();
+        fx.view = Viewport {
+            width: 390.,
+            height: 844.,
+            safe: [47., 0., 34., 0.],
+            ..Default::default()
+        };
+        let mut menu = PauseMenu::new();
+        fx.with(&mut menu, |m, ctx| m.run("settings", 1, false, ctx));
+        assert!(!menu.wide());
+        assert!(menu.preview().is_none());
+        let hub = menu.shown;
+        // Right does not step into a category here; Enter opens its page.
+        fx.with(&mut menu, |m, ctx| m.key("ArrowRight", ctx));
+        assert_eq!(menu.page, "settings");
+        fx.with(&mut menu, |m, ctx| m.run("controls", 1, false, ctx));
+        assert_eq!(menu.page, "controls");
+        assert!(menu.shown > hub, "a page of its own slides in");
+        fx.with(&mut menu, |m, ctx| m.run("back", 1, false, ctx));
+        assert_eq!(menu.page, "settings");
+        let state = fx.with(&mut menu, |m, ctx| m.state(ctx));
+        let (mut list, mut hits) = (crate::DisplayList::default(), Vec::new());
+        crate::layout::render(
+            &crate::menu::element(&fx.view, &state, &Default::default()),
+            &mut crate::Fonts::new(),
+            390.,
+            844.,
+            &mut list,
+            &mut hits,
+        );
+        assert!(
+            !hits
+                .iter()
+                .any(|(_, id)| (crate::menu::PREVIEW..crate::menu::PANEL).contains(id))
+        );
     }
 
     #[test]

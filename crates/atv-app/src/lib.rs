@@ -9070,6 +9070,12 @@ fn capture(
             overlay.set_meter(&gpu.device, &gpu.queue, assets);
         }
         let ride = &riding.ride;
+        // The bindings pages list the ride's own.
+        let mut bindings = menu.map(|_| {
+            let mut bindings = atv_game::ride::bindings::Bindings::load(None, None).0;
+            bindings.profile = riding.bindings.profile.clone();
+            bindings
+        });
         // A menu page slides in over frames of at most
         // `transition::MAX_STEP`: enough of them leave it at rest.
         for pass in 0..if menu.is_some() { 40 } else { 2 } {
@@ -9099,7 +9105,7 @@ fn capture(
                     others: Vec::new(),
                     split_layout: None,
                 }),
-                None,
+                bindings.as_mut(),
             );
         }
         overlay
