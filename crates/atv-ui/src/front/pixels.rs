@@ -111,6 +111,23 @@ impl Rgba {
         )
     }
 
+    /// Cuts the fully transparent rows and columns around the drawn art
+    /// (textures padded to a power-of-two size); None when nothing is drawn.
+    pub fn trim_clear(&self) -> Option<Rgba> {
+        let (mut left, mut top, mut right, mut bottom) = (self.width, self.height, 0, 0);
+        for y in 0..self.height {
+            for x in 0..self.width {
+                if self.data[self.at(x, y) + 3] > 0 {
+                    left = left.min(x);
+                    right = right.max(x + 1);
+                    top = top.min(y);
+                    bottom = bottom.max(y + 1);
+                }
+            }
+        }
+        (right > left && bottom > top).then(|| self.crop(left, top, right - left, bottom - top))
+    }
+
     /// CSS filter functions applied in order, each clamped (Filter Effects 1).
     pub fn filter(&mut self, ops: &[Filter]) {
         let matrices: Vec<[f32; 12]> = ops.iter().map(|op| op.matrix()).collect();
@@ -274,6 +291,19 @@ fn box_pass(src: &[u8], dst: &mut [u8], w: usize, h: usize, r: usize, horizontal
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn trim_clear_keeps_only_the_drawn_box() {
+        let mut image = Rgba::new(8, 16, vec![0; 8 * 16 * 4]);
+        for (x, y) in [(2, 3), (5, 9)] {
+            let at = image.at(x, y);
+            image.data[at..at + 4].copy_from_slice(&[200, 160, 20, 255]);
+        }
+        let trimmed = image.trim_clear().unwrap();
+        assert_eq!((trimmed.width, trimmed.height), (4, 7));
+        assert_eq!(&trimmed.data[..4], &[200, 160, 20, 255]);
+        assert_eq!(Rgba::new(2, 2, vec![0; 16]).trim_clear(), None);
+    }
 
     #[test]
     fn trims_dark_borders_and_keeps_lit_pixels() {

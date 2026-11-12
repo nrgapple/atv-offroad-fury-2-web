@@ -386,6 +386,67 @@ pub struct CpuRider {
     pub finish_ms: u32,
     /// Compact pose (`peer` = [`CPU_PEER`] + index, with animation).
     pub pose: Snapshot,
+    /// The CPU's sound cues since the host's previous [`CpuMotion`]; None
+    /// from an older host, and stripped by the relay for riders that did not
+    /// say [`signal::CPU_SOUNDS`].
+    #[serde(default)]
+    pub sound: Option<CpuSoundCues>,
+}
+/// A room-race CPU's sound events over one [`CpuMotion`] interval
+/// (research/AUDIO.md "CPU riders"): what a guest cannot infer from the
+/// pose. Magnitudes are ft/s and travel in sixteenths (0 … 4095.9).
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
+pub struct CpuSoundCues {
+    /// [`cpu_cue`] bits.
+    pub flags: u8,
+    /// Strongest quad-to-quad contact (0 = none).
+    pub quad_contact: f32,
+    /// The wreck entry's local impact (with [`cpu_cue::WRECK`]).
+    pub wreck_impact: f32,
+    /// Strongest sampled world impact of the quad (+d0).
+    pub impact: f32,
+    /// Strongest detached rider body contact delta magnitude.
+    pub rider_impact: f32,
+    /// The two side drive-on emitters' terrain bytes at the interval's end
+    /// (-1 airborne, 8 under water).
+    pub terrain: [i8; 2],
+}
+/// [`CpuSoundCues::flags`] bits.
+pub mod cpu_cue {
+    /// A hard landing (the rider's Jostle vocal).
+    pub const HARD_LANDING: u8 = 1;
+    /// The quad wrecked (entry impact in `wreck_impact`).
+    pub const WRECK: u8 = 2;
+    /// That wreck was a fall (30 ft drop or boundary launch).
+    pub const FALL: u8 = 4;
+    /// More than 2 ft above the ground at the interval's end.
+    pub const AIRBORNE: u8 = 8;
+    /// The chassis collider touched something.
+    pub const CHASSIS_CONTACT: u8 = 16;
+    /// The detached rider body touches water at the interval's end.
+    pub const RIDER_WATER: u8 = 32;
+    pub const ALL: u8 = 63;
+}
+/// Largest cue magnitude the wire carries (u16 sixteenths).
+pub const CUE_MAX: f32 = 65_535. / 16.;
+impl CpuSoundCues {
+    pub fn validate(&self) -> Result<()> {
+        let magnitudes = [
+            self.quad_contact,
+            self.wreck_impact,
+            self.impact,
+            self.rider_impact,
+        ];
+        if self.flags & !cpu_cue::ALL != 0
+            || magnitudes
+                .iter()
+                .any(|m| !m.is_finite() || !(0. ..=CUE_MAX).contains(m))
+            || self.terrain.iter().any(|t| *t < -1)
+        {
+            return Err(Error::InvalidValue);
+        }
+        Ok(())
+    }
 }
 /// The room-race host's CPU riders (kind 16; relayed only from the host of
 /// a started private room to race-aware riders).
@@ -415,6 +476,9 @@ impl CpuMotion {
             }
             seen |= 1 << r.index;
             r.pose.validate()?;
+            if let Some(cues) = &r.sound {
+                cues.validate()?;
+            }
         }
         Ok(())
     }
@@ -595,6 +659,10 @@ pub mod signal {
     /// [`COURIER`]. Never forwarded in other riders' flags, which older
     /// builds accept only as [`DIRECT`].
     pub const CARRIES: u8 = 2;
+    /// Hello flags bit: the build decodes [`super::CpuSoundCues`] in
+    /// [`super::CpuMotion`]; the relay strips them for riders without it.
+    /// Never forwarded in other riders' flags.
+    pub const CPU_SOUNDS: u8 = 4;
 }
 /// Most poses in one [`Packet::Bundle`]: every rider in a full room.
 pub const MAX_BUNDLE: usize = MAX_PLAYERS;
@@ -697,7 +765,8 @@ impl Signal {
         let valid = valid_peer(self.peer)
             && match self.kind {
                 signal::HELLO => {
-                    self.data.len() == 1 && self.data[0] <= signal::DIRECT | signal::CARRIES
+                    self.data.len() == 1
+                        && self.data[0] <= signal::DIRECT | signal::CARRIES | signal::CPU_SOUNDS
                 }
                 signal::PRESENT | signal::ARRIVED | signal::GONE | signal::DROPPED => {
                     self.data.len() == 1 && self.data[0] <= signal::DIRECT

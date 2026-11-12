@@ -133,6 +133,21 @@ pub fn encode(packet: &Packet) -> Result<Vec<u8>> {
                 w.u16(u16::try_from(pose.len()).map_err(|_| Error::InvalidLength)?);
                 w.0.extend_from_slice(&pose);
             }
+            // Sound cues (research/AUDIO.md "CPU riders"): absent unless a
+            // rider carries them (the pre-cue size), else one block per
+            // rider in order.
+            if m.riders.iter().any(|r| r.sound.is_some()) {
+                for r in &m.riders {
+                    let c = r.sound.unwrap_or_default();
+                    w.byte(c.flags);
+                    for t in c.terrain {
+                        w.byte(t as u8);
+                    }
+                    for v in [c.quad_contact, c.wreck_impact, c.impact, c.rider_impact] {
+                        w.u16((v * 16.).round().clamp(0., 65_535.) as u16);
+                    }
+                }
+            }
         }
         Packet::Progress(p) => {
             p.validate()?;
@@ -352,7 +367,23 @@ pub fn decode(bytes: &[u8]) -> Result<Packet> {
                     distance,
                     finish_ms,
                     pose,
+                    sound: None,
                 });
+            }
+            if r.offset < bytes.len() {
+                for rider in &mut riders {
+                    let flags = r.byte()?;
+                    let terrain = [r.byte()? as i8, r.byte()? as i8];
+                    let mut magnitude = || r.u16().map(|v| f32::from(v) / 16.);
+                    rider.sound = Some(CpuSoundCues {
+                        flags,
+                        terrain,
+                        quad_contact: magnitude()?,
+                        wreck_impact: magnitude()?,
+                        impact: magnitude()?,
+                        rider_impact: magnitude()?,
+                    });
+                }
             }
             let m = CpuMotion { serial, riders };
             m.validate()?;

@@ -722,7 +722,7 @@ impl RoomRace {
                         0.
                     };
                     self.last_cpus = now;
-                    self.cpu_origins = poses.iter().map(|(_, s, _)| s.atv.position).collect();
+                    self.cpu_origins = poses.iter().map(|(_, s, _, _)| s.atv.position).collect();
                     if let Err(error) = ride.present_room_cpus(&poses, dt) {
                         crate::status(&format!("Room race CPUs: {error}"));
                     }
@@ -842,7 +842,10 @@ impl RoomRace {
             &frames,
         );
         match motion {
-            Ok(m) => net.send_cpus(m),
+            Ok(m) => {
+                net.send_cpus(m);
+                ride.sent_room_cpu_cues();
+            }
             Err(error) => crate::status(&format!("Room race CPUs: {error}")),
         }
     }
