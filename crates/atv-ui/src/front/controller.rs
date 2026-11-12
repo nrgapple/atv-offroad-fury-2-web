@@ -377,6 +377,8 @@ struct Pressed {
 enum Pane {
     List,
     Rows,
+    /// The event tabs (scrolls sideways: its coordinate is x).
+    Tabs,
 }
 
 /// The course loader's state.
@@ -406,6 +408,8 @@ pub struct Frontend {
     pub list: Scroller,
     /// The rows column's scroll, where a page's rows outgrow it.
     pub rows: Scroller,
+    /// The event tabs' sideways scroll, where the strip outgrows its column.
+    pub tab_strip: Scroller,
     /// Bring the selected row into view after the next layout (keys/pad).
     reveal_row: bool,
     /// The page just opened: its list shows the current card without a glide.
@@ -608,6 +612,7 @@ impl Frontend {
             rider_id,
             list: Scroller::default(),
             rows: Scroller::default(),
+            tab_strip: Scroller::default(),
             reveal_row: false,
             fresh: false,
             hovered: None,
@@ -2702,7 +2707,7 @@ impl Frontend {
 
     fn hit(hits: &[(Rect, u32)], x: f32, y: f32) -> Option<u32> {
         let pane = |pane: u32| hits.iter().find(|(_, id)| *id == pane).map(|(r, _)| *r);
-        let (list, rows) = (pane(LIST), pane(ROWS));
+        let (list, rows, tabs) = (pane(LIST), pane(ROWS), pane(super::TABS));
         hits.iter()
             .rev()
             // Items scrolled outside their pane are clipped.
@@ -2710,9 +2715,15 @@ impl Frontend {
                 r.contains(x, y)
                     && !(Self::listed(*id) && list.is_some_and(|l| !l.contains(x, y)))
                     && !(Self::in_rows(*id) && rows.is_some_and(|l| !l.contains(x, y)))
+                    && !((TAB..TAB + 100).contains(id) && tabs.is_some_and(|l| !l.contains(x, y)))
             })
             .map(|(_, id)| *id)
-            .find(|id| !matches!(*id, LIST | ROWS | super::STAGE | super::DETAILS))
+            .find(|id| {
+                !matches!(
+                    *id,
+                    LIST | ROWS | super::TABS | super::STAGE | super::DETAILS
+                )
+            })
     }
 
     /// Mouse movement: hover, and a row under a moving mouse takes the
@@ -2742,6 +2753,8 @@ impl Frontend {
             .any(|p| p.pointer != pointer && p.scroll.is_some() && (p.moved || p.caught));
         let scroll = if self.status_open() || other {
             None
+        } else if inside(super::TABS) && self.tab_strip.max() > 0. {
+            Some(Pane::Tabs)
         } else if inside(LIST) {
             Some(Pane::List)
         } else if inside(ROWS) && self.rows.max() > 0. {
@@ -2751,6 +2764,7 @@ impl Frontend {
         };
         let now = crate::scroll::now();
         let caught = match scroll {
+            Some(Pane::Tabs) => self.tab_strip.press(x, now),
             Some(pane) => self.pane(pane).press(y, now),
             None => false,
         };
@@ -2815,6 +2829,7 @@ impl Frontend {
         match pane {
             Pane::List => &mut self.list,
             Pane::Rows => &mut self.rows,
+            Pane::Tabs => &mut self.tab_strip,
         }
     }
 
@@ -2828,8 +2843,9 @@ impl Frontend {
         if (x - p.x).hypot(y - p.y) > 8. {
             p.moved = true;
         }
+        let along = if scroll == Some(Pane::Tabs) { x } else { y };
         if let Some(pane) = scroll
-            && self.pane(pane).drag(y, crate::scroll::now())
+            && self.pane(pane).drag(along, crate::scroll::now())
             && let Some(p) = self.pressed.iter_mut().find(|p| p.pointer == pointer)
         {
             // The content follows the finger: this press is a scroll.
@@ -2840,12 +2856,13 @@ impl Frontend {
     /// Advances list and rows momentum; true while either moves.
     pub fn tick_scroll(&mut self, now: f64) -> bool {
         let list = self.list.tick(now);
-        self.rows.tick(now) || list
+        let tabs = self.tab_strip.tick(now);
+        self.rows.tick(now) || list || tabs
     }
 
     /// Scrolling content is moving (frames must keep coming).
     pub fn scrolling(&self) -> bool {
-        self.list.active() || self.rows.active()
+        self.list.active() || self.rows.active() || self.tab_strip.active()
     }
 
     pub fn cancel_pointer(&mut self) {
@@ -2854,6 +2871,7 @@ impl Frontend {
         self.hovered = None;
         self.list.cancel();
         self.rows.cancel();
+        self.tab_strip.cancel();
     }
 
     /// A menu over the page takes the pad: a button still held when it
@@ -3086,6 +3104,44 @@ impl Frontend {
         } else {
             self.rows.set_bounds(0., 1.);
         }
+        // The event tabs' strip: its sideways range, and the selected tab
+        // brought into view when the filter changed (or the page opened).
+        if let Some(strip) = rect(super::TABS) {
+            let before = self.tab_strip.offset();
+            let tabs: Vec<Rect> = hits
+                .iter()
+                .filter(|(_, id)| (TAB..TAB + 100).contains(id))
+                .map(|(r, _)| *r)
+                .collect();
+            let right = tabs.iter().map(|r| r.right()).fold(strip.x, f32::max) + before;
+            self.tab_strip
+                .set_bounds((right - strip.right()).max(0.), strip.w);
+            let selected = if self.page == "race" {
+                self.race_tabs()
+                    .iter()
+                    .position(|t| t.0 == self.race_filter)
+            } else {
+                self.tabs().iter().position(|t| t.0 == self.filter)
+            };
+            let animate_tabs = animate && !self.fresh;
+            if self.reveal
+                && let Some(tab) = selected.and_then(|i| tabs.get(i))
+            {
+                let target = self.tab_strip.target();
+                let (left, right) = (tab.x + before, tab.right() + before);
+                let margin = 24.;
+                if left - margin < target + strip.x {
+                    self.tab_strip
+                        .glide_to(left - margin - strip.x, animate_tabs);
+                } else if right + margin > target + strip.right() {
+                    self.tab_strip
+                        .glide_to(right + margin - strip.right(), animate_tabs);
+                }
+            }
+            moved |= self.tab_strip.offset() != before;
+        } else {
+            self.tab_strip.set_bounds(0., 1.);
+        }
         let Some(list) = rect(LIST) else {
             self.list.set_bounds(0., 1.);
             return moved;
@@ -3231,6 +3287,7 @@ impl Frontend {
                 String::new()
             },
             list_scroll: self.list.offset(),
+            tabs_scroll: self.tab_strip.offset(),
             rows_scroll: self.rows.offset(),
             vehicle_label: self.quad_label(self.stage_quad()),
             rider: self.rider_id,
