@@ -212,6 +212,7 @@ impl Meter {
             return;
         }
         let unit = (height / 448.).min(width / 480.);
+        let unit = super::meter::scaled_unit(unit, self.scale, width, 400.);
         let h = height / unit;
         self.draw_compass(list, view, None, [70., h - (448. - 375.)], unit);
     }
@@ -239,9 +240,12 @@ impl Meter {
         // Phones keep a 480-unit minimum width and drop the right column
         // below the compact speed meter.
         let compact = width < 560.;
-        let unit = (height / 448.).min(width / 480.);
+        let base = (height / 448.).min(width / 480.);
+        let unit = super::meter::scaled_unit(base, self.scale, width, 400.);
         let (w, h, top) = (width / unit, height / unit, race.top_inset / unit);
-        let meter = if compact { 118. / unit } else { 0. };
+        // The compact speed meter above the right column grows with the
+        // HUD size too.
+        let meter = if compact { 118. / base } else { 0. };
         let ax = |x: f32| {
             if x <= 213. {
                 x
@@ -456,11 +460,7 @@ impl Meter {
                 [0.; 2],
             );
             let lead = overlay_time(frame.lead);
-            let color = if frame.lead >= 0. {
-                Color::rgb(30, 215, 30)
-            } else {
-                Color::rgb(200, 60, 60)
-            };
+            let color = super::palette::lead(frame.lead >= 0.);
             text(
                 list,
                 &lead,
@@ -632,6 +632,7 @@ impl Meter {
         } else {
             height / 448.
         };
+        let unit = super::meter::scaled_unit(unit, self.scale, width, 340.);
         let (w, h) = (width / unit, height / unit);
         let (left, top) = (w / 2. - 64., h * 208. / 448.);
         for lamp in 0..4u8 {
@@ -712,13 +713,14 @@ Text9Offset = -121,134\nText9Justification = L\nText9Scale=0.8\nText10Offset = 0
     #[test]
     fn the_lap_history_stays_on_screen_once_settled() {
         use atv_core::race_hud::{Frame as Hud, History, HistoryRow};
-        let meter = history_meter();
+        let mut meter = history_meter();
         let mut fonts = Fonts::new();
         let settings = OverlaySettings {
             off: Vec::new(),
             position: "name".into(),
         };
-        let mut bounds = |rows: usize, offset: f32, width: f32, height: f32| {
+        let mut sized = |scale: f32, rows: usize, offset: f32, width: f32, height: f32| {
+            meter.scale = scale;
             let frame = Frame {
                 hud: Some(Hud {
                     sign: None,
@@ -751,6 +753,30 @@ Text9Offset = -121,134\nText9Justification = L\nText9Scale=0.8\nText10Offset = 0
                 .paint_race(&mut fonts, &mut list, &view, width, height)
                 .expect("the lap history draws")
         };
+        // Options → Accessibility → HUD size: every size keeps the list on
+        // screen, and wide views scale its margin with the size.
+        for (width, height) in [(1280., 720.), (844., 390.), (390., 844.)] {
+            let original = (height / 448f32).min(width / 480.);
+            for scale in [0.85, 1.25] {
+                let b = sized(scale, 5, 0., width, height);
+                assert!(
+                    b.rect.x >= 0. && b.rect.y >= 0.,
+                    "{scale} {width}x{height}: {b:?}"
+                );
+                assert!(
+                    b.rect.right() <= width && b.rect.bottom() <= height,
+                    "{scale}: {b:?}"
+                );
+                let unit = (width - b.rect.right()) / 31.;
+                if width > 800. {
+                    assert!((unit - original * scale).abs() < 0.02, "{scale}: {unit}");
+                } else {
+                    // A portrait phone keeps 400 units across at Large.
+                    assert!(unit <= width / 400. + 0.02 && width / unit >= 399.);
+                }
+            }
+        }
+        let mut bounds = |rows, offset, width, height| sized(1., rows, offset, width, height);
         // Desktop, tablet, phone landscape and portrait; one to five rows.
         for (width, height) in [(1280., 720.), (1024., 768.), (844., 390.), (390., 844.)] {
             let unit = (height / 448f32).min(width / 480.);

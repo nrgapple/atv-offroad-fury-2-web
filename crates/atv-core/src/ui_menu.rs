@@ -130,6 +130,13 @@ pub struct Request {
     /// Settings → Alpha: experimental authored toggles (id, name, On/Off).
     #[serde(default)]
     pub alpha_rows: Vec<ControlRow>,
+    /// Options → Accessibility (authored): the cycling rows (id, name,
+    /// value) under the field of view slider, and that slider's percent
+    /// (0 from callers that predate the page reads as 100).
+    #[serde(default)]
+    pub access_rows: Vec<ControlRow>,
+    #[serde(default)]
+    pub access_fov: f32,
     #[serde(default)]
     pub music_page: usize,
     #[serde(default)]
@@ -539,7 +546,9 @@ pub fn layout(request: Request) -> Result<Frame> {
         )
         || request.gear_rows.len() > 8
         || request.alpha_rows.len() > 12
-        || request.alpha_rows.iter().any(|row| {
+        || request.access_rows.len() > 8
+        || !(request.access_fov == 0. || (85.0..=125.0).contains(&request.access_fov))
+        || request.alpha_rows.iter().chain(&request.access_rows).any(|row| {
             row.id.is_empty()
                 || row.id.len() > 40
                 || !row
@@ -574,6 +583,7 @@ pub fn layout(request: Request) -> Result<Frame> {
             | "game-settings"
             | "ecosystem-warning"
             | "alpha"
+            | "accessibility"
             | "pause"
             | "players"
             | "hud-settings"
@@ -656,6 +666,7 @@ pub fn layout(request: Request) -> Result<Frame> {
         "game-settings" => "Game Settings",
         "ecosystem-warning" => "Warning",
         "alpha" => "Alpha",
+        "accessibility" => "Accessibility",
         "players" => "Lobby Players",
         "hud-settings" => "Display",
         "minimap-config" => "Minimap Configuration",
@@ -1567,6 +1578,7 @@ pub fn layout(request: Request) -> Result<Frame> {
                     ("Controls", "controls"),
                     ("Display", "hud-settings"),
                     ("Audio", "music"),
+                    ("Accessibility", "accessibility"),
                     ("Extras", "extras"),
                     ("Alpha (experimental)", "alpha"),
                 ],
@@ -1575,6 +1587,7 @@ pub fn layout(request: Request) -> Result<Frame> {
                     ("Controls", "controls"),
                     ("Display", "hud-settings"),
                     ("Audio", "music"),
+                    ("Accessibility", "accessibility"),
                     ("Extras", "extras"),
                     ("Alpha (experimental)", "alpha"),
                 ],
@@ -1712,6 +1725,58 @@ pub fn layout(request: Request) -> Result<Frame> {
                     action,
                     [24., 92. + i as f32 * row, w - 48., row],
                     request.selection % rows.len() == i,
+                );
+            }
+        }
+        "accessibility" => {
+            // Authored page: the field of view slider, then rows the
+            // caller owns (each cycles its values), two columns where one
+            // would run off a landscape phone.
+            f.sliders.push(Slider {
+                action: "access-fov",
+                label: "Field of view",
+                rect: [30., 100., w - 60., 44.],
+                value: if request.access_fov == 0. {
+                    100.
+                } else {
+                    request.access_fov
+                },
+                min: 85.,
+                max: 125.,
+                step: 5.,
+                selected: request.selection == 0,
+            });
+            f.choices.push("access-fov".into());
+            let mut rows: Vec<(String, String)> = request
+                .access_rows
+                .iter()
+                .map(|row| {
+                    (
+                        format!("{}: {}", row.label, row.value),
+                        format!("access:{}", row.id),
+                    )
+                })
+                .collect();
+            rows.push(("Back".into(), "back".into()));
+            let row = 52_f32.max(44. / scale);
+            let columns = if 166. + rows.len() as f32 * (row + 2.) > h - 12. {
+                2
+            } else {
+                1
+            };
+            let column_width = (w - 48.) / columns as f32;
+            for (i, (label, action)) in rows.iter().enumerate() {
+                f.choices.push(action.clone());
+                f.button(
+                    label,
+                    action,
+                    [
+                        24. + (i % columns) as f32 * column_width,
+                        166. + (i / columns) as f32 * (row + 2.),
+                        column_width,
+                        row,
+                    ],
+                    request.selection == i + 1,
                 );
             }
         }
@@ -2425,6 +2490,8 @@ mod tests {
             music_rows: vec![],
             gear_rows: vec![],
             alpha_rows: vec![],
+            access_rows: vec![],
+            access_fov: 0.,
             music_page: 0,
             music_status: String::new(),
             music_enabled: true,
@@ -2945,6 +3012,73 @@ mod tests {
         assert_eq!(enhanced[2], "Chase camera: Assisted");
         assert_eq!(enhanced[3], "Flips: Unleashed backflip & 360");
         assert_eq!(enhanced[4], "Train riding: Realistic");
+    }
+    #[test]
+    fn accessibility_page_fits_phones_both_ways() {
+        let settings = layout(request("settings", 844., 390.)).unwrap();
+        assert!(settings.choices.iter().any(|c| c == "accessibility"));
+        for hit in &settings.hits {
+            let [_, y, _, height] = hit.rect;
+            assert!(
+                y + height <= settings.height + 0.5,
+                "{} runs off",
+                hit.label
+            );
+        }
+        let rows = |r: &mut Request| {
+            r.access_fov = 110.;
+            r.access_rows = ["hud", "colour", "steering", "stability", "tilt"]
+                .iter()
+                .map(|id| ControlRow {
+                    id: (*id).into(),
+                    label: "HUD size".into(),
+                    value: "Normal".into(),
+                })
+                .collect();
+        };
+        for (width, height) in [(390., 844.), (844., 390.), (1280., 720.)] {
+            let mut r = request("accessibility", width, height);
+            rows(&mut r);
+            let frame = layout(r).unwrap();
+            assert_eq!(
+                frame.choices,
+                [
+                    "access-fov",
+                    "access:hud",
+                    "access:colour",
+                    "access:steering",
+                    "access:stability",
+                    "access:tilt",
+                    "back"
+                ]
+            );
+            assert_eq!(frame.hits[0].label, "HUD size: Normal");
+            let slider = &frame.sliders[0];
+            assert_eq!((slider.value, slider.min, slider.max), (110., 85., 125.));
+            for hit in &frame.hits {
+                let [x, y, w, h] = hit.rect;
+                assert!(
+                    x >= 0. && x + w <= frame.width + 0.5 && y + h <= frame.height + 0.5,
+                    "{} runs off {width}x{height}",
+                    hit.label
+                );
+                let [sx, sy, sw, sh] = slider.rect;
+                assert!(x >= sx + sw || sx >= x + w || y >= sy + sh || sy >= y + h);
+            }
+        }
+        // A caller that predates the page sends no value: the original.
+        let old = layout(request("accessibility", 390., 844.)).unwrap();
+        assert_eq!(old.sliders[0].value, 100.);
+        let mut invalid = request("accessibility", 390., 844.);
+        invalid.access_fov = 300.;
+        assert!(layout(invalid).is_err());
+        let mut invalid = request("accessibility", 390., 844.);
+        invalid.access_rows = vec![ControlRow {
+            id: "Bad Id".into(),
+            label: "x".into(),
+            value: "On".into(),
+        }];
+        assert!(layout(invalid).is_err());
     }
     #[test]
     fn alpha_page_lists_browser_toggles_and_validates_ids() {

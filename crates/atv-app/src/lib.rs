@@ -1448,6 +1448,10 @@ async fn prepare_inner(
         }
     }
     let hud_assets = if riding.is_some() {
+        // The radar's tinted racers take the rider's colour assistance.
+        atv_ui::hud::palette::set(
+            atv_ui::menu::access::Access::load(&atv_ui::settings::Settings::load()).colour(),
+        );
         match atv_ui::hud::assets::load(
             &content,
             &environment,
@@ -3416,6 +3420,12 @@ impl App {
 
                 "soundMode": riding.sound.as_ref().map(|s| format!("{:?}", s.ride.mode)),
             });
+            // Options → Accessibility (tools/test_engine_accessibility.mjs).
+            state["settings"]["access"] = serde_json::json!({
+                "fov": riding.fov_percent,
+                "hudScale": self.overlay.as_ref().and_then(|o| o.hud_scale()),
+                "colour": atv_ui::hud::palette::mode().label(),
+            });
             // Game Settings (tools/test_engine_game_settings.mjs).
             let game = &mut state["settings"];
             game["soundConfiguration"] = mixer.as_ref().map(|m| m.2.clone()).into();
@@ -4332,6 +4342,7 @@ impl App {
         riding.set_speed_rush(&prefs.speed_rush);
         riding.crash_camera_tight = !prefs.crash_camera_original;
         riding.chase_assist = prefs.chase_assist;
+        riding.fov_percent = prefs.access.fov;
         riding.vibration = prefs.vibration;
         riding.ride.options = atv_game::ride::RideOptions {
             flips: prefs.flips,
@@ -4346,6 +4357,7 @@ impl App {
         for second in &mut ready.split {
             second.riding.vibration = prefs.vibration;
             second.riding.chase_assist = prefs.chase_assist;
+            second.riding.fov_percent = prefs.access.fov;
             second.riding.ride.options = riding.ride.options;
         }
         // Settings → Alpha presentation (web/hype.js).
