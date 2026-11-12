@@ -145,8 +145,7 @@ subtracts them. Freeport's static `rain` cards use authored V velocity 2; Arling
 waterduct `waterflow` uses .983. These are texture animation on existing original
 geometry, not the random weather/lens-drop system. Scene loading initializes the
 phase; ATV reset and graphics restoration preserve it. Fixed simulation batches
-advance it once per step and pause stops it. Unsupported rotation/shear and reverse crowd frame
-sequencing are reported rather than silently passed off as recovered animation.
+advance it once per step and pause stops it. Unsupported rotation/shear is reported rather than silently passed off as recovered animation.
 
 Verification at the first host gate:
 
@@ -174,7 +173,8 @@ source lamp/facade pixels and pause/placement-reset/context clock retention,
 including motorcycle selection27. All40 venues load and drive without scenery
 texture decode errors. Independent WebKit checks used a private three-file
 candidate override over public source assets; they do not establish a published
-release. Full draw-queue/GS/VU equivalence and reverse crowd playback remain open.
+release. Full draw-queue/GS/VU equivalence remains open; reverse crowd playback
+follows `001bdb60` (STADIUM_MATERIALS.md).
 See [STADIUM_MATERIALS.md](STADIUM_MATERIALS.md) for evidence and scope.
 
 ## Public Vancouver and nine-map checkpoint
