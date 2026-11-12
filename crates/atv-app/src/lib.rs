@@ -3370,14 +3370,18 @@ impl App {
                 .race()
                 .and_then(|r| r.frame.as_ref())
                 .and_then(|f| f.best);
+            // Kept outside the large literal below (macro recursion limit).
+            let training_speech = riding.sound.as_ref().map(|s| {
+                serde_json::json!({
+                    "lines": s.speech.lines(), "started": s.speech.started, "last": s.speech.last,
+                })
+            });
             state["ride"] = serde_json::json!({
                 "environment": ready.venue.environment,
                 "championship": riding.ride.race().and_then(|r| r.settings().championship),
                 "training": self.training.as_ref().map(|t| t.state(riding.ride.frame().origin)),
                 "trainingArrows": ready.venue.training_arrows.map(|m| m.len()),
-                "trainingSpeech": riding.sound.as_ref().map(|s| serde_json::json!({
-                    "lines": s.speech.lines(), "started": s.speech.started, "last": s.speech.last,
-                })),
+                "trainingSpeech": training_speech,
                 "game": self.game.as_ref().map(games::GameSession::state),
                 "roomRace": self.room_race.as_ref().map(room_race::RoomRace::state),
                 "roomGame": self.game.as_ref().map(games::GameSession::room_state),
