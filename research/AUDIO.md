@@ -332,8 +332,10 @@ the amateur `crowdf1` / pro `sx` Soultree loops (previously only CrowdPresent
 venues played them), and GAME01 (Coonce Arena) plays the indoor/hockey-arena
 `icrowd01`/`icrowd02` ambient loops. `Crowd\hockey.aud` (HCHEER/HOCKYEND/
 HOCKYWIN) belongs to the hockey event mode (`00335590`); the port's Hockey
-([GAMES.md](GAMES.md)) raises its crowd events but does not play these
-sounds yet. The amateur/pro crowd reactions are described in `RACING.md`.
+([GAMES.md](GAMES.md)) plays them at the original triggers: HCHEER01/04 on a
+goal (`003368c0`), HOCKYWIN on a hat trick and HOCKYEND at Game over
+(`00336200`), with the goal siren and `gameover.vag`. The amateur/pro crowd
+reactions are described in `RACING.md`.
 
 ## CPU riders (2026-10-29)
 
