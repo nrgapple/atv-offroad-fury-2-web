@@ -12,6 +12,7 @@ mod cull;
 mod lingering_dust;
 pub mod preview;
 mod profile;
+mod rain;
 mod remaster;
 mod scenery;
 mod shadows;
@@ -476,6 +477,7 @@ pub struct FrameStats {
     pub actors_culled: u32,
     pub ambient_draws: u32,
     pub ambient_triangles: u32,
+    /// Weather: Snow, plus Remastered rain.
     pub snow_draws: u32,
     pub snow_triangles: u32,
     pub wheel_draws: u32,
@@ -657,6 +659,9 @@ pub struct SceneRenderer {
         snow::SnowPass,
         std::rc::Rc<std::cell::RefCell<atv_game::snow::Weather>>,
     )>,
+    /// Remastered rain on a venue whose Weather selected rain (authored).
+    rain: Option<rain::RainPass>,
+    raining: bool,
     /// This step's simulation camera (position, target): the Snow rings
     /// follow it. Without one, the latest rendered view stands in.
     weather_view: Option<([f32; 3], [f32; 3])>,
@@ -834,6 +839,13 @@ impl SceneRenderer {
             actors,
             ambient,
             snow,
+            rain: None,
+            raining: venue.weather.as_ref().is_some_and(|w| {
+                w.active
+                    && w.definition
+                        .as_ref()
+                        .is_some_and(|d| d.kind.eq_ignore_ascii_case("rain"))
+            }),
             weather_view: None,
             weather_camera: Camera::default(),
             intro: atv_game::intro::IntroCamera::new(
@@ -902,6 +914,8 @@ impl SceneRenderer {
             enduro_next: None,
         };
         scene.apply_remaster();
+        scene.rain =
+            (scene.raining && graphics.remaster).then(|| rain::RainPass::new(gpu, &scene.world));
         // startSimulation's first follow-camera request (op 46, dt 1/60)
         // already advances the pre-race shots once.
         scene.step_intro();
@@ -1169,6 +1183,8 @@ impl SceneRenderer {
         }
         if graphics.remaster != self.graphics.remaster {
             self.remaster = graphics.remaster.then(|| remaster::RemasterPass::new(gpu));
+            self.rain =
+                (self.raining && graphics.remaster).then(|| rain::RainPass::new(gpu, &self.world));
             if let Some(vegetation) = &mut self.vegetation {
                 vegetation.set_wind(gpu, &self.world, graphics.remaster);
             }
@@ -1948,6 +1964,21 @@ impl SceneRenderer {
         if let Some((pass, _)) = &mut self.snow {
             (stats.snow_draws, stats.snow_triangles) = pass.prepare(gpu, &view.camera);
         }
+        if let Some(pass) = &mut self.rain {
+            let g = &self.world.globals;
+            let light = std::array::from_fn(|i| g.ambient[i] + g.sun_color[i]);
+            let ground = &self.ground;
+            let (draws, triangles) = pass.prepare(
+                gpu,
+                &view.camera,
+                aspect,
+                self.wind_seconds,
+                light,
+                |x, z| ground.height(f64::from(x), f64::from(z)) as f32,
+            );
+            stats.snow_draws += draws;
+            stats.snow_triangles += triangles;
+        }
         if let Some(pass) = &mut self.wheel_effects {
             (stats.wheel_draws, stats.wheel_triangles) = pass.prepare(gpu, &view.camera);
         }
@@ -2291,6 +2322,10 @@ impl SceneRenderer {
             }
             if let Some(burst) = &self.burst {
                 burst.draw(&mut pass, &self.world);
+            }
+            // Last in the scene pass: its lens beads sit on top.
+            if let Some(rain) = &self.rain {
+                rain.draw(&mut pass, &self.world);
             }
             self.profiler.mark("encode.effects");
         }

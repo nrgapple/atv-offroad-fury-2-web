@@ -200,9 +200,27 @@ so nothing is drawn. Rust recovers the activation rule only:
 selection (false on every shipped map). The Rust test covers the exact name, the
 emitter-list exclusion, multiplayer chance zero and the unread legacy `[Rain]`
 block. `tools/test_weather_lifecycle.mjs` asserts `screen_rain` is false for every
-real rain case. A lens-drop overlay would be an authored enhancement for a
-non-Original preset and needs an explicit product decision. Cost is zero: no
+real rain case. A lens-drop overlay is an authored enhancement; the owner asked
+for one under Remastered only (2026-11-11, below). Cost is zero: no
 shader, texture, buffer or per-frame work exists for it. Freeport rain at
 390×844/DPR3 with ×4 CPU throttling measured the same before and after
 (render CPU 0.8–1.2 ms vs 1.2–1.7 ms, worker batch 0.46–0.49 ms vs 0.44–0.53 ms,
 96 draws both; host-emulation noise, not a physical-phone result).
+
+## Remastered rain (authored) — 2026-11-11
+
+Not from the original game. With the Remastered preset (`Graphics::remaster`)
+and a Weather selection whose type is Rain (Freeport, NAT06, SX13), the
+renderer adds `rain::RainPass`: 3,200 thin streaks falling at about 32 ft/s
+with a light wind, wrapped in a 90 × 40 ft world-anchored box around the
+camera and depth tested against the scene; 64 splash rings that land on the
+visible terrain heights 2–30 ft ahead of the camera and widen over 0.4 s; and
+20 lens beads (ScreenRain's `MaxLensDrops` default; the lens arrives wet) that form at random,
+fade, and run down the glass when large. Drop colour follows the venue's
+ambient plus sun light. All of it pauses with the world clock. Original,
+Enhanced and High never create the pass, so they draw exactly what they did.
+Placed rain cards, the type 8 emitter and `rain.vag` are unchanged.
+
+Limits: the beads are drawn shapes, not the framebuffer copy ScreenRain
+uses, and they ignore Face to Face view turns; splashes use terrain heights
+only (no scenery roofs or water), and streaks fall through roofs.

@@ -224,7 +224,7 @@ It is independent of the Graphics preset.
 ## Remastered (2026-11-11)
 
 Authored, not from the original game. `Graphics::remaster` (Rust engine only)
-adds four things on top of High. Original, Enhanced and High do not run any of
+adds five things on top of High. Original, Enhanced and High do not run any of
 it: every shader branch is gated by a uniform that stays 0, and the finish
 pass is not created.
 
@@ -248,6 +248,10 @@ pass is not created.
   highlights off above 0.8, then applies a mild contrast curve, 12 % more
   saturation, warm highlights, a 10 % vignette and one-step dither. The
   frame stays 8-bit: no float targets, so it fits WebGL2.
+
+- **Rain** (`rain.rs`, `rain.wgsl`). On venues whose Weather selected rain:
+  falling streaks, splash rings and lens beads (see
+  [WEATHER.md](WEATHER.md#remastered-rain-authored--2026-11-11)).
 
 Limits: split screen skips the finish pass (the relief, wind and glint still
 apply). Nothing casts shadows yet beyond High's vehicle map; world shadows
