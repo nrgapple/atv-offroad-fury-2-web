@@ -1502,9 +1502,8 @@ impl PauseMenu {
         }
         // The frame after a press beside the rail may still hold the
         // preview's hit boxes: the same rows, numbered from PREVIEW.
-        let (index, _) = Self::hit(hits, x, y).or_else(|| {
-            Self::preview_at(hits, x, y).filter(|_| self.page != "settings")
-        })?;
+        let (index, _) = Self::hit(hits, x, y)
+            .or_else(|| Self::preview_at(hits, x, y).filter(|_| self.page != "settings"))?;
         if index != p.index {
             return None;
         }
@@ -2012,7 +2011,10 @@ mod parity_tests {
         assert_eq!(shown(&menu).as_ref(), Some(&categories[0]));
         fx.with(&mut menu, |m, ctx| m.key("ArrowDown", ctx));
         assert_eq!(shown(&menu).as_ref(), Some(&categories[1]));
-        assert!(menu.preview().is_some_and(|(_, rows)| !rows.choices.is_empty()));
+        assert!(
+            menu.preview()
+                .is_some_and(|(_, rows)| !rows.choices.is_empty())
+        );
         fx.with(&mut menu, |m, ctx| m.key("ArrowUp", ctx));
         let hub = menu.shown;
         // Right steps into it; the panel does not slide.

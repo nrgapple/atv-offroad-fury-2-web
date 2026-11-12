@@ -882,13 +882,7 @@ fn body(look: &Look, page: &str, rows: &Rows, base: u32, railed: bool) -> (El, O
                 footer = footer.child(button(look, rows, id, action, selected(i), hovered(i)));
             }
         } else if page == "settings" {
-            list = list.child(category_row(
-                rows,
-                id,
-                action,
-                selected(i),
-                hovered(i),
-            ));
+            list = list.child(category_row(rows, id, action, selected(i), hovered(i)));
         } else {
             list = list.child(row(look, rows, id, action, selected(i), hovered(i)));
         }
@@ -996,7 +990,11 @@ fn body(look: &Look, page: &str, rows: &Rows, base: u32, railed: bool) -> (El, O
         }
         content = content.child(pager);
     }
-    if let Some(pad) = state.pad.as_ref().filter(|_| live && state.capture.is_none()) {
+    if let Some(pad) = state
+        .pad
+        .as_ref()
+        .filter(|_| live && state.capture.is_none())
+    {
         content = content.child(summary_panel(pad, look.images, 1100., false));
     }
     (content, (!footer.children.is_empty()).then_some(footer))
@@ -1121,19 +1119,21 @@ fn tab(id: u32, label: &str, height: f32, selected: bool, hovered: bool, current
     };
     el.style.padding = sides(0., 10., 0., 8.);
     el.style.flex_shrink = 0.;
-    el.paint(paint).id(id).child(mark).child(El::new(Style {
-        min_size: Size {
-            width: length(0.),
-            height: auto(),
-        },
-        flex_shrink: 1.,
-        ..Default::default()
-    })
-    .content(Content::Ellipsis {
-        text: label.into(),
-        style: TextStyle::new(display(size, 700, false), color).spacing(0.3),
-        line_height: size * 1.15,
-    }))
+    el.paint(paint).id(id).child(mark).child(
+        El::new(Style {
+            min_size: Size {
+                width: length(0.),
+                height: auto(),
+            },
+            flex_shrink: 1.,
+            ..Default::default()
+        })
+        .content(Content::Ellipsis {
+            text: label.into(),
+            style: TextStyle::new(display(size, 700, false), color).spacing(0.3),
+            line_height: size * 1.15,
+        }),
+    )
 }
 
 /// Options where it fits: the categories in a rail and the open one beside
