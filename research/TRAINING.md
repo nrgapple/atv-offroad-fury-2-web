@@ -94,10 +94,22 @@ disc's `AUDIO/TRAINING/DIALOGUE.AUD`. Observed facts:
 
 ## Adaptations and open items
 
-- **Captions instead of speech.** The 46 VAG lines are not packaged or played;
-  each line is a port-authored caption (not a transcription) shown for a
-  length-based time. Hosting the lines through the R2 package and playing
-  them would restore the original timing.
+- **Speech with captions (2026-11-11).** The 46 lines are mono 44.1 kHz
+  VAGs on the disc, `AUDIO/TRAINING/LINES1/LINE001-019.VAG` and
+  `LINES20/LINE020-046.VAG`; the executable holds the strings `lines1`,
+  `lines20` and `%s%s\line%03d.vag` beside its dialogue tables. The R2
+  `AUDIO.RES` carries them unchanged (`training/lines*/line%03d.vag`), read
+  only when a Training ride's sound loads, and `atv_game::audio::speech`
+  plays the current line on the effects bus (SFX volume, paused with the
+  game), stopping it when the course hushes or skips. Each line now holds
+  the course for its sample's length, as the original waits for the line to
+  end; the port's captions stay on screen as subtitles (the original has
+  none). The introduction waits up to 8 s for the sound to load (an
+  authored allowance); without the lines (older package, no sound) the
+  captions keep their length-based timing. Assumptions: the original's
+  dialogue volume and bus are not recovered (the port uses full volume on
+  the SFX bus), and the 15 `[Markers]` cues (jumbotron and preload-sound
+  timing) are not played, as there is no jumbotron replay.
 - **No demonstration replay.** The jumbotron VCR replays are not drawn.
 - **Arrows (2026-10-27).** `00224a80` builds two pointer objects
   (`002ea3d0`, vtable 0x45ea90) from `arrow.slt` through `002ea490` with
