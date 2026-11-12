@@ -1,0 +1,17 @@
+{
+  "id": "menus-fit-folding-phones-open-and-closed-93cfab5722814d2db6ebecbc50968953",
+  "timestamp": "2026-11-12T03:00:48.416954+00:00",
+  "recorded_at": "2026-11-12T03:03:40.481283+00:00",
+  "kind": "build",
+  "title": "Menus fit folding phones, open and closed",
+  "summary": "On a folding phone held open, Single Race's Start Race button covered the course's mode line and the CPU riders label was cut short. The menus now adapt to those in-between screen shapes instead of only phone and tablet sizes.",
+  "details": [
+    "Single Race: when the course name and mode do not fit beside Start Race, the button moves under them and fills the line. A phone on its side keeps one line and shortens the name instead, since the Course row shows it in full.",
+    "Setting rows: the value box gives up its spare width before a label is shortened, so CPU riders shows in full.",
+    "Portrait menus: the vehicle stage gives up height, down to a fifth of the page, before any row has to scroll. A closed folding phone now shows all seven Main Menu rows, and an open one all six Single Player modes."
+  ],
+  "limitation": "The folding-phone sizes are taken from one screenshot (about 1000 by 704 points with an 88-point status column) and typical narrow-phone sizes for the closed screen, drawn in desktop Chromium with injected safe areas. Not checked on the device itself. On the closed screen the Main Menu's logo is very small.",
+  "verification": "Host only: two new layout tests (the name and mode clear of Start Race at eight screen sizes; every row visible in portrait at three) fail without the change and pass with it; all 178 atv-ui tests pass. tools/test_engine_fold_layout.mjs draws five menu pages and the ride HUD at four folding-phone cases in Chromium; the screenshots were inspected.",
+  "image": "/devlog-images/menus-fit-folding-phones-open-and-closed-93cfab5722814d2db6ebecbc50968953.png",
+  "caption": "Single Race on a near-square screen with a status column on the right: Start Race sits under the course name instead of over it."
+}

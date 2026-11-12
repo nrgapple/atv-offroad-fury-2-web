@@ -607,13 +607,7 @@ fn page_element(m: &Metrics, s: &Screen) -> El {
         let stage = match page {
             // Seven main rows and the six Profile Editor rows with its
             // status line need more of the height than the others.
-            "main" => {
-                if h <= 640. {
-                    0.26
-                } else {
-                    0.36
-                }
-            }
+            "main" => stage_share(m, s, if h <= 640. { 0.26 } else { 0.36 }),
             "profile" | "profile-view" => {
                 if h <= 640. {
                     0.2
@@ -623,15 +617,17 @@ fn page_element(m: &Metrics, s: &Screen) -> El {
             }
             // Phones give the rows the room (Safari's toolbars take ~150px
             // more): Single Player's six modes stay on screen.
-            page if stage_page(page) => {
+            page if stage_page(page) => stage_share(
+                m,
+                s,
                 if h <= 640. {
                     0.28
                 } else if h <= 820. {
                     0.36
                 } else {
                     0.5
-                }
-            }
+                },
+            ),
             // The vehicle and rider rows need little room; the picker, when
             // open, takes the rest under a smaller stage.
             "garage" if s.vehicle_sheet => 0.28,
@@ -766,6 +762,19 @@ fn page_element(m: &Metrics, s: &Screen) -> El {
         }
     }
     root
+}
+
+/// Portrait: the stage's share of the page height. `most` is the page's
+/// usual share; a list of rows that would not fit under it takes some of it
+/// (down to a fifth of the page) rather than scroll while the stage has
+/// room to give: a folding phone, closed or open, falls between the phone
+/// and tablet sizes those shares were chosen on.
+fn stage_share(m: &Metrics, s: &Screen, most: f32) -> f32 {
+    let rows = s.choices.iter().filter(|(a, _)| a != "back").count().max(1) as f32;
+    let heading = clamp(24., m.w * 0.07, 32.) * 1.2 + 14.;
+    let list = 34. + rows * m.row + (rows - 1.) * 2. + ROWS_PADDING;
+    let hints = 56. + m.safe[2];
+    ((m.h - heading - list - hints) / m.h).clamp(most.min(0.2), most)
 }
 
 trait Pipe: Sized {
@@ -1413,13 +1422,23 @@ fn hero(m: &Metrics, s: &Screen) -> El {
     let share = ride_height / (empty_rows + 1.);
     let name_height = (name_size * 1.05).max(share);
     let badge = if m.portrait { 0. } else { share };
+    // A name too long to sit beside the button (a narrow stage: a folding
+    // phone open, a notch beside it) keeps its line; the button wraps under
+    // it instead of covering it, and fills that line.
+    // A phone on its side has no height for that second line: there the
+    // name ellipsizes (Single Race's Course row carries it in full).
     let caption = El::new(Style {
         display: Display::Flex,
+        flex_wrap: if m.short {
+            FlexWrap::NoWrap
+        } else {
+            FlexWrap::Wrap
+        },
         align_items: AlignItems::FLEX_START,
         justify_content: JustifyContent::SPACE_BETWEEN,
         gap: Size {
             width: px(16.),
-            height: px(0.),
+            height: px(8.),
         },
         min_size: Size {
             width: auto(),
@@ -1440,29 +1459,61 @@ fn hero(m: &Metrics, s: &Screen) -> El {
             },
             ..Default::default()
         })
-        .content(Content::Text {
-            text: s.hero_name.clone(),
-            style: TextStyle::new(display(name_size, 800, true), Color::hex("#111")),
-            line_height: name_size * 1.05,
-            wrap: false,
+        .content({
+            let style = TextStyle::new(display(name_size, 800, true), Color::hex("#111"));
+            let line_height = name_size * 1.05;
+            if m.short {
+                Content::Ellipsis {
+                    text: s.hero_name.clone(),
+                    style,
+                    line_height,
+                }
+            } else {
+                Content::Text {
+                    text: s.hero_name.clone(),
+                    style,
+                    line_height,
+                    wrap: false,
+                }
+            }
         });
         if race {
             name = name.id(COURSES);
         }
         let mut copy = El::new(Style {
-            flex_grow: 1.,
+            // Beside the button the name takes all the spare width (the
+            // button's share rounds to nothing); alone on its line after a
+            // wrap, the button takes it.
+            flex_grow: 9999.,
             flex_shrink: 1.,
+            min_size: Size {
+                width: if m.short { length(0.) } else { auto() },
+                height: auto(),
+            },
             margin: margins(badge, 0., 0., 0.),
             ..column(2.)
         })
         .child(name);
         if race && !s.hero_mode.is_empty() {
             // `.ms-track-mode`: 700 14px/1.3, .1em, upper case.
-            copy = copy.child(text(
-                s.hero_mode.to_uppercase(),
-                TextStyle::new(display(14., 700, false), Color::hex("#3a3a3a")).spacing(1.4),
-                18.2,
-            ));
+            let style =
+                TextStyle::new(display(14., 700, false), Color::hex("#3a3a3a")).spacing(1.4);
+            copy = copy.child(if m.short {
+                El::new(Style {
+                    min_size: Size {
+                        width: length(0.),
+                        height: auto(),
+                    },
+                    ..Default::default()
+                })
+                .content(Content::Ellipsis {
+                    text: s.hero_mode.to_uppercase(),
+                    style,
+                    line_height: 18.2,
+                })
+            } else {
+                text(s.hero_mode.to_uppercase(), style, 18.2)
+            });
         }
         copy
     })
@@ -1477,11 +1528,19 @@ fn hero(m: &Metrics, s: &Screen) -> El {
             id,
             ride_size,
             ride_height,
-            if m.portrait { 24. } else { 34. },
+            // On its side a phone's "Start Race" keeps the name its room.
+            if m.portrait {
+                24.
+            } else if m.short && race {
+                18.
+            } else {
+                34.
+            },
             s.hovered == Some(id),
             race && current_action(s) == Some("racestart"),
         );
         ride.style.align_self = Some(AlignSelf::CENTER);
+        ride.style.flex_grow = 1.;
         ride
     }));
     hero.flex_shrink = 1.;
@@ -2841,8 +2900,9 @@ fn stepper_row(m: &Metrics, s: &Screen, index: usize, label: &str) -> El {
     };
     let mut label_style = row(14.);
     label_style.flex_grow = 1.;
-    // The value gives way first; the label ellipsizes only after it.
-    label_style.flex_shrink = 0.25;
+    // The value gives way first (its box is mostly slack); the label
+    // ellipsizes only once the value is at its minimum.
+    label_style.flex_shrink = 0.01;
     label_style.min_size = Size {
         width: length(0.),
         height: length(m.row),
@@ -3595,6 +3655,122 @@ mod tests {
                 for (x, y) in texts {
                     assert!(x >= safe[3] - 0.5, "{page} {w}: text at x {x}");
                     assert!(y >= safe[0], "{page} {w}: text at y {y}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn portrait_menus_show_every_row_before_the_stage_takes_its_share() {
+        let mut fonts = Fonts::new();
+        // A folding phone closed and open, and a large phone installed
+        // (no browser toolbars): between the phone and tablet sizes.
+        for (w, h, safe) in [
+            (360., 780., [47., 0., 34., 0.]),
+            (704., 1000., [47., 0., 34., 0.]),
+            (430., 932., [59., 0., 34., 0.]),
+        ] {
+            let view = Viewport {
+                width: w,
+                height: h,
+                scale: 3.,
+                safe,
+                ..Default::default()
+            };
+            for (page, rows) in [("main", 7), ("single", 6)] {
+                let mut s = screen(page);
+                s.choices = (0..rows)
+                    .map(|i| (format!("row{i}"), format!("Row {i}")))
+                    .chain([("back".into(), "Back".into())])
+                    .collect();
+                s.status = Some(status_bar::StatusBar {
+                    profile: Some("PLAYER1".into()),
+                    ..Default::default()
+                });
+                let (mut list, mut hits) = (DisplayList::default(), Vec::new());
+                layout::render(&element(&view, &s), &mut fonts, w, h, &mut list, &mut hits);
+                let back = hits.iter().find(|(_, id)| *id == BACK).expect("Back").0;
+                let last = hits
+                    .iter()
+                    .find(|(_, id)| *id == ROW + rows - 1)
+                    .expect("last row")
+                    .0;
+                assert!(
+                    last.bottom() <= back.y + 0.5,
+                    "{page} {w}x{h}: row {last:?} runs under Back {back:?}"
+                );
+                // The stage keeps at least a fifth of the page.
+                let stage = hits.iter().find(|(_, id)| *id == STAGE).expect("stage").0;
+                assert!(stage.h >= 0.19 * (h - 110.), "{page} {w}x{h}: {stage:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn single_race_names_stay_clear_of_start_race() {
+        let mut fonts = Fonts::new();
+        // A folding phone open (landscape with a status column on the right,
+        // then portrait) and closed, a phone both ways, a tablet, a desktop.
+        for (w, h, safe) in [
+            (1000., 704., [0., 88., 0., 0.]),
+            (704., 1000., [47., 0., 34., 0.]),
+            (780., 360., [0., 47., 21., 47.]),
+            (360., 780., [47., 0., 34., 0.]),
+            (844., 390., [0., 47., 21., 47.]),
+            (390., 844., [47., 0., 34., 0.]),
+            (1180., 820., [24., 0., 20., 0.]),
+            (1280., 720., [0.; 4]),
+        ] {
+            let view = Viewport {
+                width: w,
+                height: h,
+                scale: 2.,
+                safe,
+                ..Default::default()
+            };
+            for (name, mode) in [
+                ("Amherst", "Supercross Race"),
+                ("Caribou Peak Enduro", "Freestyle Competition"),
+            ] {
+                let mut s = screen("race");
+                s.choices = ["Course: Amherst", "Event: Single Race", "CPU riders: 4"]
+                    .iter()
+                    .map(|c| ("course".to_string(), c.to_string()))
+                    .chain([("racestart".into(), "Start Race".into())])
+                    .collect();
+                s.hero_name = name.into();
+                s.hero_mode = mode.into();
+                let (mut list, mut hits) = (DisplayList::default(), Vec::new());
+                layout::render(&element(&view, &s), &mut fonts, w, h, &mut list, &mut hits);
+                let start = hits.iter().find(|(_, id)| *id == START).expect("Start").0;
+                assert!(
+                    start.x >= safe[3] - 0.5 && start.right() <= w - safe[1] + 0.5,
+                    "{name} {w}x{h}: Start Race {start:?}"
+                );
+                for item in &list.items {
+                    let crate::paint::Item::Text { text, style, x, y } = item else {
+                        continue;
+                    };
+                    // The whole name or mode, or its ellipsized start.
+                    let start_of = |whole: &str| {
+                        whole.starts_with(text.trim_end_matches('…')) && text.chars().count() > 3
+                    };
+                    if !(start_of(name) || start_of(&mode.to_uppercase())) {
+                        continue;
+                    }
+                    let right = x + fonts.measure(text, &style.font, style.letter_spacing).width;
+                    let apart = right <= start.x + 0.5
+                        || *x >= start.right()
+                        || *y <= start.y
+                        || y - style.font.size * 1.2 >= start.bottom() + 4.;
+                    assert!(
+                        apart,
+                        "{name} {w}x{h}: \"{text}\" {x}..{right} at {y} under Start Race {start:?}"
+                    );
+                    assert!(
+                        right <= w - safe[1] + 0.5,
+                        "{name} {w}x{h}: \"{text}\" runs to {right}"
+                    );
                 }
             }
         }
