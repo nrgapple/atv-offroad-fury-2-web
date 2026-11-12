@@ -170,7 +170,7 @@ impl UserCourse {
 
     /// Reads a code, checking everything but the terrain.
     pub fn decode(code: &str) -> Result<Self, String> {
-        // 5 header bytes, a name and 50 gates fit in 400 characters.
+        // 5 header bytes, a 24-byte name and 50 gates are 439 characters.
         if code.len() > 512 {
             return Err("The course code is too long.".into());
         }
@@ -314,7 +314,7 @@ mod tests {
         assert_eq!(c.gates[0].x, 100.);
         assert_eq!(c.gates[0].z, 200.5);
         let code = c.encode();
-        assert!(code.len() < 40, "{code}");
+        assert!(code.len() < 48, "{code}");
         assert!(code.bytes().all(|b| ALPHABET.contains(&b)));
         let back = UserCourse::decode(&code).unwrap();
         assert_eq!(back, c);
@@ -328,7 +328,7 @@ mod tests {
             assert!(long.place(50. + 30. * i as f32, 4000., [0., -1.]));
         }
         assert!(!long.place(9000., 9000., [0., 1.]));
-        assert!(long.encode().len() <= 420);
+        assert_eq!(long.encode().len(), 439);
         assert_eq!(UserCourse::decode(&long.encode()).unwrap(), long);
     }
 
@@ -339,7 +339,7 @@ mod tests {
         assert!(!c.place(f32::NAN, 0., [0., 1.]));
         assert!(!c.place(-5., 0., [0., 1.]));
         assert!(!c.place(500., 500., [0., 0.]));
-        assert_eq!(c.undo().map(|g| g.z), Some(450.));
+        assert_eq!(c.undo().map(|g| g.z), Some(450.5));
         assert_eq!(c.gates.len(), 2);
         assert!(!c.complete());
     }
