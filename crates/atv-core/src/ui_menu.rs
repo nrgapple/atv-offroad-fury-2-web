@@ -1470,11 +1470,6 @@ pub fn layout(request: Request) -> Result<Frame> {
                 ("Jukebox", "jukebox"),
             ];
             let online = !request.lobby_status.is_empty();
-            // Photo mode (#542, a port addition): solo and split screen
-            // only; an online ride keeps riding under its pause menu.
-            if !online {
-                choices.insert(2, ("Photo mode", "photo"));
-            }
             if online {
                 // Original pause rows: change ride in place; the host picks
                 // the next track for everyone.
@@ -1490,6 +1485,11 @@ pub fn layout(request: Request) -> Result<Frame> {
                         choices.insert(6 + at, (race.label.as_str(), race_actions(&race.id)));
                     }
                 }
+            }
+            // Photo mode (#542, a port addition): solo and split screen
+            // only; an online ride keeps riding under its pause menu.
+            if !online {
+                choices.push(("Photo mode", "photo"));
             }
             // Shared Free Ride rooms have no invite: everyone just drops in.
             if !request.lobby_public {

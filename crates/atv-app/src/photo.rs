@@ -208,6 +208,16 @@ impl Photo {
         }
     }
 
+    /// `#ui-state` `photo`.
+    pub fn state(&self) -> serde_json::Value {
+        let o = &self.orbit;
+        serde_json::json!({
+            "target": o.target, "yaw": o.yaw, "pitch": o.pitch,
+            "distance": o.distance, "fov": o.fov,
+            "notice": self.notice.as_ref().map(|n| &n.0),
+        })
+    }
+
     /// The hint line: a notice, else the controls for this device.
     pub fn hint(&self, touch: bool, now: f64) -> String {
         match &self.notice {

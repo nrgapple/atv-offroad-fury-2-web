@@ -3325,6 +3325,10 @@ impl App {
             if let Some(overlay) = &self.overlay {
                 state["toolbar"] = overlay.diagnostics();
             }
+            // Photo mode (tools/test_engine_photo.mjs).
+            state["photo"] = self.photo.as_ref().map(photo::Photo::state).into();
+            state["view"] = serde_json::json!({"eye": ready.camera.eye(),
+                "yaw": ready.camera.yaw, "pitch": ready.camera.pitch, "focal": ready.focal_length});
             // The ride's course and championship round, and the results
             // buttons (tools/test_engine_championship.mjs).
             // The Practice event type and the player's race frame
