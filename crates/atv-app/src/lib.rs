@@ -3049,6 +3049,10 @@ impl App {
             let mut state = replay::record(&riding.ride, riding.ride.steps());
             state["camera"]["preset"] = riding.ride.camera().0.preset.into();
             state["paused"] = riding.paused.into();
+            // The full-density surface and the scene drawn inside it
+            // (tools/test_engine_shell.mjs, test_engine_crisp_hud.mjs).
+            state["surface"] = serde_json::json!([ready.gpu.config.width, ready.gpu.config.height]);
+            state["sceneSize"] = serde_json::json!(ready.gpu.scene_size());
             // Split screen (tools/test_engine_split_screen.mjs).
             if let Some(second) = ready.split.first() {
                 let camera = |c: &atv_render::Camera, focal: f32| {
@@ -5686,12 +5690,13 @@ impl ApplicationHandler<Message> for App {
                 }
                 self.last = Instant::now();
                 if let Some(window) = &self.window {
-                    // The ride draws at its render ratio from its first frame.
-                    MENU_SURFACE.with(|m| m.set(false));
+                    // The ride's scene draws at its render ratio from its
+                    // first frame; the surface and UI keep full density.
                     let size = render_size(window);
                     let ready = self.ready.as_mut().unwrap();
                     fit_surface(window, &mut ready.gpu, size, self.suspended);
                     ready.gpu.set_scene_targets(true);
+                    ready.gpu.set_scene_scale(scene_scale(window));
                     if ready.riding.is_some() {
                         let mut overlay = overlay::Overlay::new(
                             &ready.gpu.device,
@@ -8352,16 +8357,10 @@ impl App {
         }
     }
 
-    /// The frontend draws at the display's full density and the ride at its
-    /// render ratio: switches the surface when one hands over to the other.
     /// Only a ride draws the 3D scene, so only its device keeps the scene's
     /// depth and multisample targets (at DPR 3 a portrait phone's would be
     /// ~95 MB the menus never touch).
     fn sync_surface_density(&mut self) {
-        let menu = self.ready.is_none();
-        if MENU_SURFACE.with(|m| m.replace(menu)) != menu {
-            self.resize_surface();
-        }
         if let Some(gpu) = &mut self.gpu {
             gpu.set_scene_targets(false);
         }
@@ -8380,6 +8379,7 @@ impl App {
         let view = overlay::viewport(size.width, size.height, surface_scale(&window));
         if let Some(ready) = &mut self.ready {
             fit_surface(&window, &mut ready.gpu, size, self.suspended);
+            ready.gpu.set_scene_scale(scene_scale(&window));
         }
         if let Some(gpu) = &mut self.gpu {
             fit_surface(&window, gpu, size, self.suspended);
@@ -10229,10 +10229,6 @@ thread_local! {
     /// The adaptive render ratio (backing pixels per CSS pixel, at most the
     /// display's): render_scale::RenderScale's current step.
     static RENDER_RATIO: std::cell::Cell<f64> = const { std::cell::Cell::new(1.5) };
-    /// The frontend is on screen (no ride): its UI-only frames draw at the
-    /// display's full density (at most MENU_RATIO), not the ride's render
-    /// ratio, so menu text, icons and previews stay sharp on phones.
-    static MENU_SURFACE: std::cell::Cell<bool> = const { std::cell::Cell::new(true) };
     /// Desktop: the GPU backend scales a surface smaller than the window up
     /// to it (Metal, DX12), so the render ratio applies.
     static SURFACE_SCALES: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
@@ -10246,23 +10242,35 @@ fn render_ratio_applies() -> bool {
     cfg!(target_arch = "wasm32") || SURFACE_SCALES.with(|s| s.get())
 }
 
-/// The frontend's backing pixels per CSS pixel: the display's own, up to
-/// a DPR 3 phone (the menus are a few textured quads; no 3D scene).
+/// The surface's backing pixels per CSS pixel: the display's own, up to a
+/// DPR 3 phone. Menus, the HUD and the Pause menu draw at it; only the
+/// ride's 3D scene draws at the adaptive RENDER_RATIO (`scene_scale`).
 const MENU_RATIO: f64 = 3.;
 
-/// The render ratio in force: the frontend's full density, else the ride's
-/// adaptive RENDER_RATIO; never above the display's.
+/// The surface's density: the display's, at most MENU_RATIO.
 fn render_ratio(device: f64) -> f64 {
-    let cap = if MENU_SURFACE.with(|m| m.get()) {
-        MENU_RATIO
-    } else {
-        RENDER_RATIO.with(|r| r.get())
-    };
-    cap.min(device).max(0.1)
+    MENU_RATIO.min(device).max(0.1)
+}
+
+/// The ride's 3D scene in scene pixels per surface pixel: the adaptive
+/// RENDER_RATIO's share of the surface's density, where the render ratio
+/// applies (the scene is then stretched over the surface under the UI).
+fn scene_scale(window: &Window) -> f64 {
+    if !render_ratio_applies() {
+        return 1.;
+    }
+    let device = window.scale_factor();
+    scene_share(RENDER_RATIO.with(|r| r.get()), device)
+}
+
+/// `ratio` (scene backing pixels per CSS pixel) over the surface's density
+/// on a `device` pixel ratio display; never above 1.
+fn scene_share(ratio: f64, device: f64) -> f64 {
+    (ratio.min(device).max(0.1) / render_ratio(device)).min(1.)
 }
 
 /// Backing pixels per logical (CSS) pixel of the surface: the display's,
-/// capped at the render ratio where the render ratio applies.
+/// capped at the surface's density where the render ratio applies.
 fn surface_scale(window: &Window) -> f64 {
     let device = window.scale_factor();
     if render_ratio_applies() {
@@ -10291,7 +10299,8 @@ fn fit_surface(
 }
 
 /// The surface size: the window's physical size, scaled to at most
-/// RENDER_RATIO backing pixels per CSS pixel (game.js renderScale) on the
+/// MENU_RATIO backing pixels per CSS pixel (the ride's scene draws at
+/// RENDER_RATIO inside it, game.js renderScale) on the
 /// web and on desktops whose backend scales the surface. Layout stays in CSS
 /// pixels (overlay::viewport derives its scale from this size).
 fn render_size(window: &Window) -> winit::dpi::PhysicalSize<u32> {
@@ -10507,6 +10516,22 @@ struct MenuMusic {
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
+    #[test]
+    fn ride_scene_takes_the_render_ratios_share_of_a_full_density_surface() {
+        // DPR 3 phone: the surface draws at 3x, the ride's scene at 1.5x.
+        assert_eq!(super::render_ratio(3.), 3.);
+        assert_eq!(super::scene_share(1.5, 3.), 0.5);
+        assert_eq!(super::scene_share(1., 3.), 1. / 3.);
+        // A DPR 2 folding phone: 2x surface, 1.5x scene.
+        assert_eq!(super::scene_share(1.5, 2.), 0.75);
+        // At or below the render ratio the scene draws straight to it.
+        assert_eq!(super::scene_share(1.5, 1.5), 1.);
+        assert_eq!(super::scene_share(1.5, 1.), 1.);
+        // Past a DPR 3 display the surface stays at 3x.
+        assert_eq!(super::render_ratio(4.), 3.);
+        assert_eq!(super::scene_share(1.5, 4.), 0.5);
+    }
+
     #[test]
     fn kid_races_normal_cpus_with_the_kid_controls() {
         use atv_core::race_ai::Options;
