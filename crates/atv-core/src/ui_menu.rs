@@ -2243,7 +2243,9 @@ pub fn layout(request: Request) -> Result<Frame> {
                     f.choices.push(action);
                 }
                 let prefix = if music { "music" } else { "bind" };
-                for (i, label) in ["Previous", "Next"].iter().enumerate() {
+                // A song list on one page (or none) has nothing to turn to.
+                let paged = !music || pages > 1;
+                for (i, label) in ["Previous", "Next"].iter().enumerate().filter(|_| paged) {
                     let action = format!("{prefix}{}", if i == 0 { "prev" } else { "next" });
                     f.button(
                         label,
@@ -2258,14 +2260,16 @@ pub fn layout(request: Request) -> Result<Frame> {
                     );
                     f.choices.push(action);
                 }
-                f.text(
-                    format!("{} / {}", page + 1, pages),
-                    [w - 90., 30.],
-                    0.8,
-                    FONT,
-                    "230,230,230",
-                    66.,
-                );
+                if paged {
+                    f.text(
+                        format!("{} / {}", page + 1, pages),
+                        [w - 90., 30.],
+                        0.8,
+                        FONT,
+                        "230,230,230",
+                        66.,
+                    );
+                }
                 let actions = if music {
                     vec![
                         ("Back".to_string(), "back"),
