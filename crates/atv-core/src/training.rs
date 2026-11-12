@@ -33,9 +33,11 @@
 //!   ([`crate::store::training_reward`]). No other completion flag exists.
 //!
 //! The original speaks every instruction (46 VAG lines, no subtitles).
-//! The port does not play them yet: each line is a port-authored caption
-//! shown for a length-based time (see [`Line::seconds`]). The lesson
-//! rules, circles, timers and order are the original's.
+//! The port plays them when the content package has them and shows each
+//! line's port-authored caption as a subtitle for the spoken length
+//! ([`Course::set_spoken`]); without them a caption lasts a length-based
+//! time ([`Line::seconds`]). The lesson rules, circles, timers and order
+//! are the original's.
 
 /// `00408590`: the four ground circles (x, y, z).
 pub const CIRCLES: [[f32; 3]; 4] = [
@@ -65,6 +67,17 @@ pub const RESULT_SECONDS: f32 = 1.0;
 pub const BANNER_SECONDS: f32 = 2.0;
 /// `00225200`: Accept skips only after this much of a line.
 pub const SKIP_AFTER: f32 = 0.5;
+
+/// `DIALOGUE.AUD` numbers its lines 1 to 46.
+pub const LINE_COUNT: u16 = 46;
+
+/// A line's sample in the sound bank: the disc keeps lines 1-19 in
+/// `AUDIO/TRAINING/LINES1` and 20-46 in `LINES20` (strings `lines1`,
+/// `lines20` and `%s%s\line%03d.vag` beside the dialogue loader's).
+pub fn line_sample(id: u16) -> String {
+    let folder = if id < 20 { "lines1" } else { "lines20" };
+    format!("training/{folder}/line{id:03}.vag")
+}
 
 /// One spoken line: its `DIALOGUE.AUD` number and the port's caption.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -330,6 +343,10 @@ pub struct Course {
     pub completed_before: bool,
     /// The current caption and its time left.
     pub caption: Option<(Line, f32)>,
+    /// Counts the lines started, so a repeated line is a new one.
+    pub serial: u32,
+    /// Each line's spoken length (index = line number), 0 when unknown.
+    spoken: [f32; LINE_COUNT as usize + 1],
     /// The banner ("Gas and Brake", "Lesson Success") and its time left.
     pub banner: Option<(&'static str, f32)>,
     /// Lessons passed and failed this visit (diagnostics).
@@ -368,6 +385,8 @@ impl Course {
             state: State::Demonstration,
             completed_before,
             caption: None,
+            serial: 0,
+            spoken: [0.; LINE_COUNT as usize + 1],
             banner: None,
             passed: 0,
             failed: 0,
@@ -459,8 +478,27 @@ impl Course {
             None
         } else {
             let line = self.queue.remove(0);
-            Some((line, line.seconds()))
+            self.serial = self.serial.wrapping_add(1);
+            Some((line, self.seconds(line)))
         };
+    }
+
+    /// The original waits for the line's sample to end; the caption
+    /// timing stands in for a line without one.
+    fn seconds(&self, line: Line) -> f32 {
+        match self.spoken.get(usize::from(line.id)) {
+            Some(&spoken) if spoken > 0. => spoken,
+            _ => line.seconds(),
+        }
+    }
+
+    /// A line's spoken length in seconds (from its sample).
+    pub fn set_spoken(&mut self, id: u16, seconds: f32) {
+        if let Some(slot) = self.spoken.get_mut(usize::from(id))
+            && seconds.is_finite()
+        {
+            *slot = seconds.max(0.);
+        }
     }
 
     /// Stops the spoken lines (`00150bd0`).
@@ -1047,6 +1085,27 @@ mod tests {
             .collect();
         ids.sort_unstable();
         assert_eq!(ids, (1..=46).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn spoken_lengths_time_the_lines() {
+        assert_eq!(line_sample(1), "training/lines1/line001.vag");
+        assert_eq!(line_sample(19), "training/lines1/line019.vag");
+        assert_eq!(line_sample(20), "training/lines20/line020.vag");
+        let mut c = Course::new(false);
+        c.set_spoken(INTRO.id, 7.5);
+        c.set_spoken(99, 1.);
+        c.tick(0.01, &Input::default());
+        let (line, left) = c.caption.unwrap();
+        assert_eq!((line, left, c.serial), (INTRO, 7.5, 1));
+        // The line holds the course until its sample ends, then the next
+        // (unknown length) falls back to the caption timing.
+        c.tick(7.4, &Input::default());
+        assert_eq!(c.caption.unwrap().0, INTRO);
+        c.tick(0.2, &Input::default());
+        let (line, left) = c.caption.unwrap();
+        assert_eq!((line, c.serial), (INTRO_PRIZE, 2));
+        assert_eq!(left, INTRO_PRIZE.seconds());
     }
 
     #[test]

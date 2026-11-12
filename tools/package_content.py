@@ -823,6 +823,12 @@ def main():
         if len(vocals) != 93 or any(path not in by_path for path in vocals):
             raise ValueError('exact-build rider vocals expected 93 loose clips')
         samples += [(path.removeprefix('/'), source(by_path[path]['path'])) for path in vocals]
+        # Training\dialogue.aud's 46 instructor lines (002275a0; lines 1-19
+        # in LINES1, 20-46 in LINES20), read only by the Training Course.
+        training = sorted(path for path in by_path if re.fullmatch(r'/audio/training/lines(1|20)/line0[0-9]{2}\.vag', path))
+        if len(training) != 46:
+            raise ValueError('exact-build Training dialogue expected 46 lines')
+        samples += [(path.removeprefix('/'), source(by_path[path]['path'])) for path in training]
         packed = pack_resource(samples)
         chunks = [{'offset': offset, **blob(packed[offset:offset + AUDIO_CHUNK])} for offset in range(0, len(packed), AUDIO_CHUNK)]
         records.append({'path': '/AUDIO/AUDIO.RES', 'lba': by_path['/audio/audio.res']['lba'], 'bytes': len(packed), 'sha256': hashlib.sha256(packed).hexdigest(), 'directory': False, 'lazy': False, 'repacked': True, 'member_count': len(samples), 'chunks': chunks})

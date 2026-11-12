@@ -2518,6 +2518,9 @@ impl App {
             (Some(session), _) => {
                 session.update(&mut riding.ride);
                 riding.locked = session.course.locked();
+                if let Some(sound) = &mut riding.sound {
+                    sound.training_line(session.line());
+                }
                 // The `arrow.slt` pointers bob and turn over the marked
                 // circles (`002ea500`); hidden when not placed.
                 if let Some(models) = ready.venue.training_arrows {
@@ -3372,6 +3375,9 @@ impl App {
                 "championship": riding.ride.race().and_then(|r| r.settings().championship),
                 "training": self.training.as_ref().map(|t| t.state(riding.ride.frame().origin)),
                 "trainingArrows": ready.venue.training_arrows.map(|m| m.len()),
+                "trainingSpeech": riding.sound.as_ref().map(|s| serde_json::json!({
+                    "lines": s.speech.lines(), "started": s.speech.started, "last": s.speech.last,
+                })),
                 "game": self.game.as_ref().map(games::GameSession::state),
                 "roomRace": self.room_race.as_ref().map(room_race::RoomRace::state),
                 "roomGame": self.game.as_ref().map(games::GameSession::room_state),
@@ -5574,6 +5580,9 @@ impl ApplicationHandler<Message> for App {
                             ..Default::default()
                         });
                     }
+                    if let Some(session) = &mut self.training {
+                        session.set_voices(sound.speech.lengths());
+                    }
                     riding.sound = Some(*sound);
                     // A delayed bank can finish after blur/hide. Apply the
                     // live lifecycle before starting the already-unlocked sink.
@@ -5585,7 +5594,12 @@ impl ApplicationHandler<Message> for App {
                 // One frame publishes the new sound state even while asleep.
                 self.wake();
             }
-            Message::SoundFailed(error) => status(&format!("Sound unavailable: {error}")),
+            Message::SoundFailed(error) => {
+                if let Some(session) = &mut self.training {
+                    session.no_voices();
+                }
+                status(&format!("Sound unavailable: {error}"))
+            }
             Message::GameToy(toy) => {
                 if let Some(game) = &mut self.game {
                     game.load(toy);
@@ -7297,7 +7311,11 @@ impl App {
                     .map(|f| f.borrow().state.store.atvs.clone())
                     .unwrap_or_default();
                 let completed = training::completed(&catalog);
-                self.training = Some(training::TrainingSession::new(completed, catalog));
+                let mut session = training::TrainingSession::new(completed, catalog);
+                if self.defaults.as_ref().is_none_or(|d| d.sound.is_none()) {
+                    session.no_voices();
+                }
+                self.training = Some(session);
                 self.start_ride("training".into(), quad, rider, None, None);
             }
             Event::Objective {

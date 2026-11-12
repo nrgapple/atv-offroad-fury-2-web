@@ -12,6 +12,9 @@
 // lesson is ridden from its start (`trainingStart=N`) with keyboard input:
 // Steering, Reverse, Jump and Land, Stunt and Preload pass, and the plain
 // jumps fail the last three with their own lines.
+// The original-pace visit also follows the spoken lines (DIALOGUE.AUD in the
+// sound bank): once the ride's sound has them, each caption lasts its line's
+// sample and the line plays; ATV_TRAINING_SPEECH=1 requires all 46.
 // ATV_TRAINING_SHOTS=<dir> saves HUD captures.
 import assert from 'node:assert/strict';
 import { mkdir } from 'node:fs/promises';
@@ -164,6 +167,16 @@ try {
   t = await training(page);
   assert.ok(!t.lines.includes(2), `no prize line: ${t.lines}`);
   assert.ok(t.locked);
+  const speech = (await state(page)).ride?.trainingSpeech;
+  if (process.env.ATV_TRAINING_SPEECH === '1') {
+    assert.equal(t.voices, 46, `spoken lengths ${t.voices}`);
+    assert.equal(speech?.lines, 46, `speech ${JSON.stringify(speech)}`);
+  }
+  if (speech?.lines) {
+    // The introduction and the Jumbo line have started their samples.
+    assert.equal(t.voices, speech.lines);
+    assert.ok(speech.started >= 2 && speech.last === t.line, `speech ${JSON.stringify(speech)} line ${t.line}`);
+  }
   await shot(page, 'lesson1-demonstration');
   await page.waitForTimeout(700);
   await key(page, 'Enter');
