@@ -338,108 +338,6 @@ impl Photo {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn behind() -> Orbit {
-        // The eye 10 ft behind (-z) and level with the focus point.
-        let camera = Camera {
-            x: 0.,
-            y: 2.,
-            z: -10.,
-            yaw: 0.,
-            pitch: 0.,
-        };
-        Orbit::around(&camera, 1. / 30f32.to_radians().tan_d(), [0., 0., 0.])
-    }
-
-    fn close(a: f32, b: f32) -> bool {
-        (a - b).abs() < 1e-3
-    }
-
-    #[test]
-    fn starts_on_the_rider_from_the_ride_camera() {
-        let orbit = behind();
-        assert_eq!(orbit.target, [0., 2., 0.]);
-        assert!(close(orbit.distance, 10.));
-        assert!(close(orbit.yaw, 0.) && close(orbit.pitch, 0.));
-        assert!(close(orbit.fov, 60.));
-        let (camera, focal) = orbit.camera(|_, _| -100.);
-        assert!(close(camera.x, 0.) && close(camera.y, 2.) && close(camera.z, -10.));
-        assert!(close(focal, 1. / 30f32.to_radians().tan_d()));
-    }
-
-    #[test]
-    fn orbit_keeps_distance_and_the_eye_stays_above_ground() {
-        let mut orbit = behind();
-        orbit.orbit(200., 0.);
-        let (camera, _) = orbit.camera(|_, _| -100.);
-        let d = (camera.x.powi(2) + (camera.y - 2.).powi(2) + camera.z.powi(2)).sqrt();
-        assert!(close(d, 10.));
-        // Looking up from below the ground: the eye is lifted clear.
-        orbit.orbit(0., 400.);
-        let (camera, _) = orbit.camera(|_, _| 1.);
-        assert!(camera.y >= 1. + CLEARANCE - 1e-4);
-    }
-
-    #[test]
-    fn zoom_fov_and_pan_are_limited() {
-        let mut orbit = behind();
-        orbit.zoom(1e-6);
-        assert_eq!(orbit.distance, DISTANCE.0);
-        orbit.zoom(1e9);
-        assert_eq!(orbit.distance, DISTANCE.1);
-        orbit.widen(1e3);
-        assert_eq!(orbit.fov, FOV.1);
-        for _ in 0..100 {
-            orbit.walk(50., 0., 0.);
-        }
-        let t = orbit.target;
-        assert!((t[0].powi(2) + t[1].powi(2) + t[2].powi(2)).sqrt() <= PAN_LIMIT + 1e-3);
-    }
-
-    #[test]
-    fn one_finger_orbits_and_a_pinch_zooms() {
-        let mut photo = Photo::new(behind());
-        photo.pointer_down(1, 100., 100.);
-        photo.pointer_move(1, 150., 100., 800.);
-        assert!(photo.orbit.yaw < 0.);
-        photo.pointer_down(2, 200., 100.);
-        photo.pointer_move(2, 200., 100., 800.);
-        let before = photo.orbit.distance;
-        photo.pointer_move(2, 250., 100., 800.);
-        assert!(photo.orbit.distance < before);
-        photo.pointer_up(1);
-        photo.pointer_up(2);
-        assert!(photo.pointers.is_empty());
-    }
-
-    #[test]
-    fn controller_buttons_held_on_entry_are_not_presses() {
-        let mut photo = Photo::new(behind());
-        let mut pad = Pad {
-            id: 1,
-            buttons: Default::default(),
-            axes: Default::default(),
-        };
-        pad.buttons[0] = 1.;
-        assert_eq!(photo.frame(0.016, &|_| false, Some(&pad)), None);
-        pad.buttons[0] = 0.;
-        assert_eq!(photo.frame(0.016, &|_| false, Some(&pad)), None);
-        pad.buttons[0] = 1.;
-        assert_eq!(
-            photo.frame(0.016, &|_| false, Some(&pad)),
-            Some(Command::Save)
-        );
-        pad.buttons[1] = 1.;
-        assert_eq!(
-            photo.frame(0.016, &|_| false, Some(&pad)),
-            Some(Command::Back)
-        );
-    }
-}
-
 /// The overlay's controls for photo mode at `now` (s): none on the frame
 /// that saves.
 pub fn controls(photo: &Photo, touch: bool, now: f64) -> atv_ui::hud::viewer::State {
@@ -741,5 +639,107 @@ impl crate::App {
             photo.notice = Some((text, now + 3.));
         }
         self.wake();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn behind() -> Orbit {
+        // The eye 10 ft behind (-z) and level with the focus point.
+        let camera = Camera {
+            x: 0.,
+            y: 2.,
+            z: -10.,
+            yaw: 0.,
+            pitch: 0.,
+        };
+        Orbit::around(&camera, 1. / 30f32.to_radians().tan_d(), [0., 0., 0.])
+    }
+
+    fn close(a: f32, b: f32) -> bool {
+        (a - b).abs() < 1e-3
+    }
+
+    #[test]
+    fn starts_on_the_rider_from_the_ride_camera() {
+        let orbit = behind();
+        assert_eq!(orbit.target, [0., 2., 0.]);
+        assert!(close(orbit.distance, 10.));
+        assert!(close(orbit.yaw, 0.) && close(orbit.pitch, 0.));
+        assert!(close(orbit.fov, 60.));
+        let (camera, focal) = orbit.camera(|_, _| -100.);
+        assert!(close(camera.x, 0.) && close(camera.y, 2.) && close(camera.z, -10.));
+        assert!(close(focal, 1. / 30f32.to_radians().tan_d()));
+    }
+
+    #[test]
+    fn orbit_keeps_distance_and_the_eye_stays_above_ground() {
+        let mut orbit = behind();
+        orbit.orbit(200., 0.);
+        let (camera, _) = orbit.camera(|_, _| -100.);
+        let d = (camera.x.powi(2) + (camera.y - 2.).powi(2) + camera.z.powi(2)).sqrt();
+        assert!(close(d, 10.));
+        // Looking up from below the ground: the eye is lifted clear.
+        orbit.orbit(0., 400.);
+        let (camera, _) = orbit.camera(|_, _| 1.);
+        assert!(camera.y >= 1. + CLEARANCE - 1e-4);
+    }
+
+    #[test]
+    fn zoom_fov_and_pan_are_limited() {
+        let mut orbit = behind();
+        orbit.zoom(1e-6);
+        assert_eq!(orbit.distance, DISTANCE.0);
+        orbit.zoom(1e9);
+        assert_eq!(orbit.distance, DISTANCE.1);
+        orbit.widen(1e3);
+        assert_eq!(orbit.fov, FOV.1);
+        for _ in 0..100 {
+            orbit.walk(50., 0., 0.);
+        }
+        let t = orbit.target;
+        assert!((t[0].powi(2) + t[1].powi(2) + t[2].powi(2)).sqrt() <= PAN_LIMIT + 1e-3);
+    }
+
+    #[test]
+    fn one_finger_orbits_and_a_pinch_zooms() {
+        let mut photo = Photo::new(behind());
+        photo.pointer_down(1, 100., 100.);
+        photo.pointer_move(1, 150., 100., 800.);
+        assert!(photo.orbit.yaw < 0.);
+        photo.pointer_down(2, 200., 100.);
+        photo.pointer_move(2, 200., 100., 800.);
+        let before = photo.orbit.distance;
+        photo.pointer_move(2, 250., 100., 800.);
+        assert!(photo.orbit.distance < before);
+        photo.pointer_up(1);
+        photo.pointer_up(2);
+        assert!(photo.pointers.is_empty());
+    }
+
+    #[test]
+    fn controller_buttons_held_on_entry_are_not_presses() {
+        let mut photo = Photo::new(behind());
+        let mut pad = Pad {
+            id: 1,
+            buttons: Default::default(),
+            axes: Default::default(),
+        };
+        pad.buttons[0] = 1.;
+        assert_eq!(photo.frame(0.016, &|_| false, Some(&pad)), None);
+        pad.buttons[0] = 0.;
+        assert_eq!(photo.frame(0.016, &|_| false, Some(&pad)), None);
+        pad.buttons[0] = 1.;
+        assert_eq!(
+            photo.frame(0.016, &|_| false, Some(&pad)),
+            Some(Command::Save)
+        );
+        pad.buttons[1] = 1.;
+        assert_eq!(
+            photo.frame(0.016, &|_| false, Some(&pad)),
+            Some(Command::Back)
+        );
     }
 }

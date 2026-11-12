@@ -28,6 +28,7 @@ export const TESTS = {
   'test_engine_touch.mjs': { group: 'content' },
   'test_engine_hud.mjs': { group: 'content' },
   'test_engine_pause.mjs': { group: 'content' },
+  'test_engine_photo.mjs': { group: 'content' },
   'test_engine_alpha.mjs': { group: 'content' },
   'test_engine_alpha_muffle.mjs': { group: 'content' },
   'test_engine_alpha_landing.mjs': { group: 'content' },

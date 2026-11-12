@@ -106,6 +106,14 @@ type MenuCache = (Viewport, pause::State, DisplayList, Vec<(Rect, u32)>, f32);
 /// Laid-out race results: inputs (view, state, summary), paint and hits.
 type ResultsCache = (Viewport, Results, String, DisplayList, Vec<(Rect, u32)>);
 
+/// Laid-out photo/replay controls: their inputs, paint and hit targets.
+type ViewerCache = (
+    Viewport,
+    atv_ui::hud::viewer::State,
+    DisplayList,
+    Vec<(Rect, u32)>,
+);
+
 /// A laid-out toolbar: its inputs, paint and hit targets.
 type ToolbarCache = (Viewport, toolbar::State, DisplayList, Vec<(Rect, u32)>);
 
@@ -238,12 +246,7 @@ pub struct Overlay {
     /// Photo mode or a replay (#542): only its controls draw (none on
     /// the frame a photo saves).
     pub viewer: Option<atv_ui::hud::viewer::State>,
-    viewer_cache: Option<(
-        Viewport,
-        atv_ui::hud::viewer::State,
-        DisplayList,
-        Vec<(Rect, u32)>,
-    )>,
+    viewer_cache: Option<ViewerCache>,
 }
 
 /// Split screen's Hall of Fame naming, one player after another
