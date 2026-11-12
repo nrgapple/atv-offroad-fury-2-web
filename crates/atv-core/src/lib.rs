@@ -71,6 +71,7 @@ pub mod texture;
 pub mod toy_actors;
 pub mod train;
 pub mod training;
+pub mod user_course;
 pub mod water;
 pub mod water_animation;
 pub mod water_failure;
