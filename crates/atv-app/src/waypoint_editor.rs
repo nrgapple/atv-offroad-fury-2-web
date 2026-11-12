@@ -60,12 +60,19 @@ impl Session {
         Self {
             course,
             slot,
-            shown: 0,
+            // The first sync hides every unused model.
+            shown: MAX_GATES,
             heights: Vec::with_capacity(MAX_GATES),
             dirty: true,
             notice: None,
             pad: [false; 2],
         }
+    }
+
+    /// A new ride of the editor (or its reload): pose every model again.
+    pub fn restart(&mut self) {
+        self.dirty = true;
+        self.shown = MAX_GATES;
     }
 
     /// R3 / L3 press edges.
@@ -139,7 +146,9 @@ impl Session {
         atv_ui::hud::training::View {
             title: format!("Waypoint Editor   Gate {count} of {MAX_GATES}"),
             caption: Some(if count < MIN_GATES {
-                format!("Drop at least {MIN_GATES} gates: GATE, G or R3. UNDO, U or L3 takes one back.")
+                format!(
+                    "Drop at least {MIN_GATES} gates: GATE, G or R3. UNDO, U or L3 takes one back."
+                )
             } else {
                 "Pause → Save Course to keep it. The last gate is the finish.".into()
             }),
@@ -219,7 +228,8 @@ mod tests {
         s.apply(Command::Drop, [150., 5., 100.], east, 0.);
         let mut posed = Vec::new();
         s.sync(|_, _| 10., |i, m| posed.push((i, m)));
-        assert_eq!(posed.len(), 2);
+        assert_eq!(posed.len(), MAX_GATES, "the unused models hide");
+        assert_eq!(posed.iter().filter(|(_, m)| m.is_some()).count(), 2);
         let m = posed[1].1.unwrap();
         assert_eq!([m[12], m[13], m[14]], [150., 12., 100.]);
         assert!((m[8] - 1.).abs() < 1e-4, "forward along +x");

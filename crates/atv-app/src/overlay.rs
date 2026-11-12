@@ -37,6 +37,8 @@ pub enum Action {
     RaceNextRound,
     /// A photo mode or replay control (#542).
     Viewer(atv_ui::hud::viewer::Button),
+    /// The Waypoint Editor's GATE and UNDO.
+    Gate(crate::waypoint_editor::Command),
 }
 
 /// Hit target of the minimap (tap toggles north-up / heading-up).
@@ -221,6 +223,8 @@ pub struct Overlay {
     pub kid: bool,
     /// A User Created Enduro: no Profile Points or records.
     pub user_course: bool,
+    /// The Waypoint Editor ride (toolbar GATE / UNDO, Pause → Save Course).
+    pub editor: bool,
     /// The ride is the Training Course (Pause → Restart Training).
     pub training: bool,
     /// The ride is a mini-game (Pause → Restart Game).
@@ -344,6 +348,7 @@ impl Overlay {
             race: false,
             kid: false,
             user_course: false,
+            editor: false,
             training: false,
             game: false,
             room_race_pending: false,
@@ -521,6 +526,7 @@ impl Overlay {
                 menu.race_active = self.race;
                 menu.training_active = self.training;
                 menu.game_active = self.game;
+                menu.editor_active = self.editor;
                 self.menu = Some(menu);
                 self.press = None;
                 self.clear_touch();
@@ -735,6 +741,12 @@ impl Overlay {
                     Some(toolbar::Button::Keys) => {
                         self.toggle_help();
                         None
+                    }
+                    Some(toolbar::Button::Gate) => {
+                        Some(Action::Gate(crate::waypoint_editor::Command::Drop))
+                    }
+                    Some(toolbar::Button::Undo) => {
+                        Some(Action::Gate(crate::waypoint_editor::Command::Undo))
                     }
                     None => None,
                 }
@@ -1141,6 +1153,7 @@ impl Overlay {
             keys_enabled: active,
             keys_visible,
             compact,
+            editor: self.editor,
         };
         let full = |child: layout::El| {
             layout::El::new(taffy::Style {

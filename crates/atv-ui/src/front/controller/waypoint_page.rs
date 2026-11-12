@@ -46,7 +46,12 @@ pub fn load_slots(settings: &Settings, venue: &str) -> [Option<UserCourse>; SLOT
 
 /// Stores (or with `None` clears) a slot; false when it lasts only for this
 /// session.
-pub fn save_slot(settings: &mut Settings, slot: usize, course: Option<&UserCourse>, venue: &str) -> bool {
+pub fn save_slot(
+    settings: &mut Settings,
+    slot: usize,
+    course: Option<&UserCourse>,
+    venue: &str,
+) -> bool {
     if slot >= SLOTS_PER_VENUE {
         return false;
     }
@@ -73,10 +78,11 @@ impl Frontend {
         (1..=user_course::VENUES)
             .filter_map(user_course::environment)
             .filter(|v| {
-                self.race_courses.contains(&atv_game::launch::race_course_id(
-                    v,
-                    atv_game::launch::RaceVariant::EnduroLong,
-                ))
+                self.race_courses
+                    .contains(&atv_game::launch::race_course_id(
+                        v,
+                        atv_game::launch::RaceVariant::EnduroLong,
+                    ))
             })
             .collect()
     }
@@ -99,7 +105,11 @@ impl Frontend {
 
     /// The course the course page shows.
     fn waypoint_course(&self) -> Option<UserCourse> {
-        self.waypoint.slots.get(self.waypoint.slot).cloned().flatten()
+        self.waypoint
+            .slots
+            .get(self.waypoint.slot)
+            .cloned()
+            .flatten()
     }
 
     /// Re-reads the venue's saved courses.
@@ -121,7 +131,9 @@ impl Frontend {
         let venue = self.waypoint_venue();
         if self.page == "waypoint-course" {
             let course = self.waypoint_course();
-            let laps = course.as_ref().map_or(user_course::DEFAULT_LAPS, |c| c.laps);
+            let laps = course
+                .as_ref()
+                .map_or(user_course::DEFAULT_LAPS, |c| c.laps);
             return vec![
                 ("wprace".into(), "Race This Course".into()),
                 ("wpedit".into(), "Edit Gates".into()),
@@ -192,6 +204,15 @@ impl Frontend {
             }
             _ => {}
         }
+    }
+
+    /// The editor saved `course` into `slot`: its venue's slots re-read and
+    /// its course page shown next.
+    pub fn saved_waypoint(&mut self, course: &UserCourse, slot: usize, settings: &mut Settings) {
+        self.waypoint.venue = course.environment.clone();
+        self.waypoint.slot = slot.min(SLOTS_PER_VENUE - 1);
+        self.waypoint.name = course.name.clone();
+        self.store_waypoint(Some(course), settings);
     }
 
     /// The course page's name field (Save Name stores it).

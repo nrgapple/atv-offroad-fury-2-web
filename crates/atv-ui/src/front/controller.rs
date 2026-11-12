@@ -20,6 +20,7 @@ pub mod passkey_page;
 pub mod profile_pages;
 pub mod seats_page;
 pub mod status_page;
+pub mod waypoint_page;
 pub mod world_page;
 pub use passkey_page::{CloudCommand, CloudView};
 use profile_pages::NO_PROFILE;
@@ -131,6 +132,19 @@ pub enum Event {
     },
     /// Single Race → Copy ride link: the race setup's link.
     CopyRaceLink,
+    /// Waypoint Editor → a slot or Edit Gates: ride the course's venue and
+    /// drop gates (`atv_core::user_course` code; the slot Save Course
+    /// writes).
+    WaypointEdit {
+        code: String,
+        slot: usize,
+        quad: u16,
+        rider: u16,
+    },
+    /// Waypoint Editor → Race This Course: a User Created Enduro.
+    UserCourse { code: String, quad: u16, rider: u16 },
+    /// Waypoint Editor → Copy course link.
+    CopyCourseLink { code: String },
     /// Main Menu → Training Course: the original's six lessons on the
     /// Training venue (`atv_core::training`) with the garage selection.
     Training { quad: u16, rider: u16 },
@@ -255,6 +269,7 @@ pub fn stepper(action: &str) -> bool {
             | "hostfstime"
             | "hostcpus"
     ) || games_page::game_row(action)
+        || waypoint_page::waypoint_row(action)
         || GEAR_ROWS.iter().any(|(a, _)| *a == action)
         || action.strip_prefix("seat").is_some_and(|rest| {
             rest.len() > 1
@@ -509,6 +524,8 @@ pub struct Frontend {
     status_anchor: f32,
     /// The Pass Key pages' working state.
     pub passkey: passkey_page::PassKeyUi,
+    /// The Waypoint Editor pages' working state.
+    pub waypoint: waypoint_page::WaypointUi,
     /// Multiplayer → Split Screen: the next Freestyle or Race rides
     /// `split_players` local players (research/SPLIT_SCREEN.md).
     pub split: bool,
@@ -665,6 +682,7 @@ impl Frontend {
             status_open: None,
             status_anchor: 0.,
             passkey: Default::default(),
+            waypoint: Default::default(),
             split: false,
             split_vertical: matches!(
                 settings.get(SPLIT_LAYOUT_KEY).as_deref(),
@@ -752,6 +770,11 @@ impl Frontend {
         }
         if self.page == "games" {
             self.choices = self.game_choices();
+            self.selection = self.selection.min(self.choices.len().saturating_sub(1));
+            return;
+        }
+        if waypoint_page::PAGES.contains(&self.page.as_str()) {
+            self.choices = self.waypoint_choices();
             self.selection = self.selection.min(self.choices.len().saturating_sub(1));
             return;
         }
@@ -906,6 +929,11 @@ impl Frontend {
             }
             if !self.race_courses.is_empty() {
                 rows.push(("championship", "Championships"));
+            }
+            // PAGE02's fourth row: the Waypoint Editor (on venues that ship
+            // a long Enduro).
+            if self.race_courses.iter().any(|c| c.ends_with("endl")) {
+                rows.push(("waypoint", "Waypoint Editor"));
             }
             if self.store.courses.iter().any(|l| l.kind == 12) {
                 rows.push(("games", "Games"));
@@ -1231,6 +1259,9 @@ impl Frontend {
         }
         match action {
             "codeletter" => return self.step_passkey(direction, view),
+            _ if waypoint_page::waypoint_row(action) => {
+                self.step_waypoint(action, direction, settings)
+            }
             _ if games_page::game_row(action) => self.step_game(action, direction),
             "hostfstime" => {
                 self.host_freestyle_minutes =
@@ -1439,6 +1470,7 @@ impl Frontend {
             },
             "championship" => self.series_line(),
             "games" => self.games_line(),
+            "waypoint" | "waypoint-course" => self.waypoint_line(),
             "objectives" => self.objectives_line(),
             "objective-courses" if self.split => Some(
                 "Ride an objective together: shared targets and clock; only Hall of Fame records are saved."
@@ -1812,6 +1844,12 @@ impl Frontend {
                 value: self.passkey.entry.clone(),
                 max_length: 40,
             }],
+            "waypoint-course" => vec![Field {
+                action: "wpname",
+                label: "Course name:",
+                value: self.waypoint.name.clone(),
+                max_length: atv_core::user_course::MAX_NAME,
+            }],
             "store-cheats" => vec![Field {
                 action: "cheat",
                 label: "Enter Cheat:",
@@ -1849,6 +1887,7 @@ impl Frontend {
                 self.set_passkey_entry(text);
                 return;
             }
+            "wpname" => self.set_waypoint_name(text),
             "create-code" => self.create_code = code(text),
             "room-code" => self.room_code = code(text),
             "cheat" => self.store.cheat = code(text),
@@ -2185,6 +2224,9 @@ impl Frontend {
             return None;
         }
         if let Some(event) = self.passkey_action(action, view, settings) {
+            return event;
+        }
+        if let Some(event) = self.waypoint_action(action, view, settings) {
             return event;
         }
         if let Some(event) = self.profile_action(action, view, settings) {
