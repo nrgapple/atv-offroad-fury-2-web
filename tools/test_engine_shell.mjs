@@ -70,6 +70,12 @@ const backing = () =>
     const canvas = document.querySelector('#game');
     return canvas.width / canvas.getBoundingClientRect().width;
   });
+// The ride's 3D scene inside the full-density surface (#457).
+const sceneRatio = () =>
+  page.evaluate(() => {
+    const scene = JSON.parse(document.querySelector('#ui-state')?.textContent || '{}').sceneSize;
+    return scene[0] / document.querySelector('#game').getBoundingClientRect().width;
+  });
 
 try {
   // 1. Title: manifest, icons, the banner and the shell's page mirror.
@@ -92,8 +98,8 @@ try {
   await wait(() => document.querySelector('#app-install-help').open, null, 5000);
   report.installSteps = await page.evaluate(() => document.querySelectorAll('#app-install-steps li').length);
   await page.tap('#app-install-close');
-  // 2x display: the frontend draws at the display's full density (menus up
-  // to 3x since the crisp-menu change; rides keep the 1.5 render ratio).
+  // 2x display: the surface draws at the display's full density (up to 3x;
+  // only a ride's 3D scene draws at the 1.5 render ratio inside it).
   report.titleBacking = await backing();
   assert.ok(Math.abs(report.titleBacking - 2) < 0.02, `title backing ratio ${report.titleBacking}`);
   assert.deepEqual(
@@ -117,14 +123,18 @@ try {
   assert.equal(events.find(e => e.name === 'session_start')?.entry, 'link');
   report.rideStart = start;
 
-  // 3. Slow frames step the render ratio 1.5 → 1.25 → 1.0 (CPU throttled).
+  // 3. Slow frames step the scene's render ratio 1.5 → 1.25 → 1.0 (CPU
+  // throttled); the surface, HUD and Pause menu keep the display's 2x.
+  report.rideBacking = await backing();
+  assert.ok(Math.abs(report.rideBacking - 2) < 0.02, `ride surface backing ratio ${report.rideBacking}`);
   const cdp = await context.newCDPSession(page);
   await cdp.send('Emulation.setCPUThrottlingRate', { rate: 20 });
-  const ratios = [await backing()];
+  const ratios = [await sceneRatio()];
   for (let i = 0; i < 40 && ratios.at(-1) > 1.01; i++) {
     await page.waitForTimeout(500); // Time-based on purpose: the scale reacts to seconds of slow frames.
-    ratios.push(await backing());
+    ratios.push(await sceneRatio());
   }
+  assert.ok(Math.abs((await backing()) - 2) < 0.02, 'the surface keeps full density while the scene steps down');
   await cdp.send('Emulation.setCPUThrottlingRate', { rate: 1 });
   report.renderRatios = [...new Set(ratios.map(r => Math.round(r * 100) / 100))];
   assert.ok(Math.abs(ratios[0] - 1.5) < 0.02, `riding starts at 1.5: ${report.renderRatios}`);

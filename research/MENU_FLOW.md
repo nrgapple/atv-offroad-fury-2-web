@@ -152,13 +152,34 @@ row shown (its canonical parent).
 - **Options** is also the ride's Pause → Options (the original Pause has only
   volumes and camera); from Pause it has no Jukebox row because Pause lists
   one. Controller Settings is the port's Controls page (keyboard, controller
-  and touch); there is no Credits page; Display, Audio, Extras and Alpha are
-  the port's own pages.
+  and touch); Credits is on the main menu's Options only, as in the
+  original (see "Credits" below); Display, Audio, Extras and Alpha are the
+  port's own pages.
 - **Single Race → Difficulty** adds the port's Kid after Normal and Expert
   (one-player Single Race only; research/KID_MODE.md).
 - **Quit to Main Menu** from Pause unwinds to the main menu as its label
   says; the original's Quit returns to the page that started the event
   (the results' Continue does that in the port).
+
+## Credits
+
+Options → Credits opens page 18 (`PAGE18.RES`, `Credits.Dat`: background
+`bk_credits.tga`, one control). Its `ui/frontend/credits.txt` is a scroll
+script: `Key=Value` options up to `--credits start--` (text area x 359–640
+of the 640 × 448 page, heading colour 218,192,31, name colour 200,200,200,
+22-pixel Trade Gothic, `BlankLinePixels=30`, `ScrollSpeed=40`), then one
+entry per line: `%` an icon (`rainbowlogo`, `sonylogo`), `@` a heading,
+`;` a comment, a blank line a gap, otherwise a name (994 lines, 134
+headings). `uiCreditsAnim.txt` holds three camera sets for the page's 3D
+backdrop.
+
+Port: the package carries PAGE18 (lazy, read on the first visit) and the
+page scrolls the script from the bottom at its speed with its colours,
+restarting after the last line, then a separate "Fury Remastered" section
+that names the port an unofficial fan port; Back is its only row. A package
+without PAGE18 shows only the port's section. Not reproduced: the icons
+(space is kept), the backdrop art and 3D camera sets, the right-hand text
+column (the port centres the text on every screen) and the font.
 
 ## Verification
 

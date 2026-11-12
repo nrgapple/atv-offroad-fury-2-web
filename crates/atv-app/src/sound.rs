@@ -1038,11 +1038,11 @@ impl Sound {
                 self.music.borrow_mut().release();
                 return;
             }
-            MusicEvent::Intro => {
+            MusicEvent::Intro { cue } => {
                 self.music.borrow_mut().hold(0.);
-                // A random INT001-INT004 (Math.random in the browser).
-                let pick = crate::random::below(4);
-                vec![(format!("intout/int00{}.vag", pick + 1), false)]
+                // A championship's fixed cue, else a random INT001-INT004.
+                let cue = cue.unwrap_or_else(|| crate::random::below(4) as u8 + 1);
+                vec![(format!("intout/int00{cue}.vag"), false)]
             }
             MusicEvent::Restart => {
                 self.music.borrow_mut().hold(0.);
