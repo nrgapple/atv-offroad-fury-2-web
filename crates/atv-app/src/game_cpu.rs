@@ -290,11 +290,18 @@ impl Cpu {
         } = self;
         let seed = *seed;
         let skill = *skill;
+        // A held rider (countdown, face-off, game over) wants nothing, so
+        // it is never stuck.
+        let held = riding.locked;
         let mut recover = Recover::None;
         let sampler = move |_: u64, _: &Ride| bodies.clone();
         riding.drive(dt, Some((0, &sampler)), |ride| {
             let sense = sense(ride);
-            let goal = goal(me, &sense, world, seed, &skill, hill, rng, landed);
+            let goal = if held {
+                None
+            } else {
+                goal(me, &sense, world, seed, &skill, hill, rng, landed)
+            };
             *target = goal.map(|g| g.target).or(*target);
             let drive = driver.step(&sense, goal.as_ref(), atv_game::ride::STEP);
             if drive.recover != Recover::None {
@@ -542,6 +549,60 @@ mod tests {
     fn names_keep_the_solo_name_and_follow_with_cpus() {
         assert_eq!(names(1, 2, "Ace"), ["Ace", "CPU 1", "CPU 2"]);
         assert_eq!(names(2, 1, "Ace"), ["Player 1", "Player 2", "CPU 1"]);
+    }
+
+    #[test]
+    fn a_teams_later_rider_defends_and_tag_reads_its_own_slot() {
+        let arena = atv_core::hockey::Arena::COONCE;
+        let rider = |x: f32, z: f32| Other {
+            position: [x, 90., z],
+            velocity: [0.; 3],
+        };
+        let world = World {
+            mode: Mode::Hockey {
+                teams: vec![0, 1, 0],
+                arena,
+                puck: [384., 90., 420.],
+                puck_velocity: [0.; 3],
+            },
+            riders: vec![rider(384., 354.), rider(384., 414.), rider(384., 350.)],
+        };
+        let skill = Skill::for_difficulty(1);
+        let mut hill = HillRun::default();
+        let mut rng = Rng::new(1);
+        let mut landed = None;
+        let mut at = |me: usize| {
+            let s = Sense {
+                position: world.riders[me].position,
+                forward: [0., 1.],
+                speed: 0.,
+                grounded: true,
+                riding: true,
+            };
+            goal(me, &s, &world, 1, &skill, &mut hill, &mut rng, &mut landed).unwrap()
+        };
+        // Red's CPU behind the human waits goal side; Blue's lone CPU attacks.
+        assert!(at(2).stop);
+        assert!(!at(1).stop);
+        let tag = World {
+            mode: Mode::Tag {
+                carrier: Some(0),
+                ball: [0.; 3],
+                ball_velocity: [0.; 3],
+                min: [0., 0.],
+                max: [1000., 1000.],
+            },
+            riders: vec![rider(500., 500.), rider(400., 500.)],
+        };
+        let s = Sense {
+            position: [400., 90., 500.],
+            forward: [1., 0.],
+            speed: 0.,
+            grounded: true,
+            riding: true,
+        };
+        let g = goal(1, &s, &tag, 1, &skill, &mut hill, &mut rng, &mut landed).unwrap();
+        assert_eq!(g.target, [500., 500.]);
     }
 
     #[test]

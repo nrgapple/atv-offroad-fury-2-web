@@ -3373,7 +3373,6 @@ impl App {
                 "roomFreestyle": self.room_freestyle.as_ref().map(room_freestyle::RoomFreestyle::state),
                 "hockey": self.hockey.as_ref().map(|h| h.state(riding.ride.frame().origin)),
                 "tag": self.tag.as_ref().map(|t| t.state()),
-                "cpus": ready.cpus.iter().map(game_cpu::Cpu::state).collect::<Vec<_>>(),
                 "tagBall": ready.venue.tag_ball,
                 "engineEffect": riding.ride.engine_effect(),
                 "start": ready.venue.scene.start_position,
@@ -3418,6 +3417,7 @@ impl App {
                     .and_then(|o| o.results.fame.as_ref())
                     .map(|f| serde_json::json!({"broken": f.broken, "name": f.name, "player": f.player})),
             });
+            state["ride"]["cpus"] = ready.cpus.iter().map(game_cpu::Cpu::state).collect();
             state["ride"]["practice"] = practice.into();
             state["ride"]["duel"] = duel.into();
             state["ride"]["lapAttack"] = lap_attack.into();
@@ -7866,7 +7866,15 @@ impl App {
                     })
             }),
             split: self.split_request,
-            cpus: self.cpu_request,
+            // Only a local game takes CPU riders (never a room).
+            cpus: if (self.split_tag.is_some()
+                || self.hockey.is_some()
+                || self.game.as_ref().is_some_and(|g| g.room.is_none()))
+            {
+                self.cpu_request
+            } else {
+                game_cpu::Request::default()
+            },
             selection: atv_game::ride::Selection { quad, rider },
             // The saved Garage appearance dresses the ride (game.js
             // rideAppearance = frontend.appearance).
@@ -7896,6 +7904,10 @@ impl App {
         race: Option<atv_game::ride::race::Settings>,
         room: Option<RoomStart>,
     ) {
+        if room.is_some() {
+            // A room ride has no CPU riders (game_cpu.rs).
+            self.cpu_request = game_cpu::Request::default();
+        }
         let (Some(front), Some(content)) = (self.front.clone(), self.content.clone()) else {
             return;
         };

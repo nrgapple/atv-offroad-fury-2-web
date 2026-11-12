@@ -602,10 +602,19 @@ leaves the box in the air, and a landing after 0.35 s of air reports a
 stunt score drawn from its skill's range through the same chain path the
 rules read (a real airborne exit is still needed, so captures depend on
 the hill's shape); Hockey gets behind the puck on the line to the goal
-it attacks, and a team's later rider hangs back as defender. The race
-difficulty sets the skill (pace, lead, stunt points). Stuck riders (under
-3 ft/s, the race CPUs' rule) back out twice, then turn in place, then
-reset. `tools/test_engine_game_cpus.mjs` covers the row and each mode.
+it attacks, and a team's later rider hangs back as defender.
+
+Evidence versus authored choices: no CPU logic for any mini-game exists
+in the original (above), so every goal is authored. The driving layer
+reuses the recovered race driver: its steering law (sine of 5 x the
+bearing, clamped) and speed deadband (`race_ai::pedals`), and its 50 ft/s
+target when off its line, which Normal and Expert CPUs ride at. The
+original difficulty changes only the race leader limit (AI flag 0x400,
+`002536b0`), so the per-difficulty lead, aim wander and stunt points, and
+Kid's slower pace, are authored. A near target off to the side slows the
+rider so it turns onto it instead of circling it. Stuck riders (under
+3 ft/s, the port's race CPU rule, never while held) back out twice, then
+turn in place, then reset. `tools/test_engine_game_cpus.mjs` covers the row and each mode.
 
 ## Uncertainty
 

@@ -64,7 +64,10 @@ pub fn taste(seed: u32, index: usize) -> f32 {
 }
 
 /// How well a CPU rides, from the race difficulty setting (1 Normal,
-/// 2 Expert, 3 Kid; 0 also reads as Kid).
+/// 2 Expert, 3 Kid; 0 also reads as Kid). Normal and Expert ride at the
+/// race driver's 50 ft/s target off its line; the original difficulty
+/// changes only the race leader limit, so the lead, aim and stunt spread
+/// per difficulty (and Kid's slower pace) are authored.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Skill {
     /// The speed it rides at (ft/s).
@@ -87,13 +90,13 @@ impl Skill {
                 stunt: (150., 700.),
             },
             1 => Self {
-                cruise: 48.,
+                cruise: 50.,
                 lead: 0.5,
                 wander: 5.,
                 stunt: (300., 1600.),
             },
             _ => Self {
-                cruise: 60.,
+                cruise: 50.,
                 lead: 0.9,
                 wander: 2.,
                 stunt: (600., 3200.),
@@ -212,7 +215,8 @@ impl Driver {
         };
         let distance = flat(sense.position, goal.target);
         let angle = bearing(sense.forward, sense.position, goal.target);
-        let steer = (3. * angle)
+        // The race driver's steering law (`race_ai`: 5 x the bearing).
+        let steer = (5. * angle)
             .clamp(-std::f32::consts::FRAC_PI_2, std::f32::consts::FRAC_PI_2)
             .sin_d();
         let arrived = goal.stop && distance < 10.;
@@ -264,18 +268,20 @@ impl Driver {
         } else if turn > 0.9 {
             wanted = wanted.min(24.);
         }
+        // A near target off to the side: slow enough to turn onto it
+        // instead of circling it.
+        if turn > 0.35 && distance < 45. {
+            wanted = wanted.min(4. + distance * 0.3);
+        }
         if goal.stop {
             // Keep rolling (above the stuck speed) until inside the stop.
             wanted = wanted.min((distance - 8.).max(0.) * 0.9 + 5.);
         }
+        // The race driver's speed deadband (`race_ai::pedals`).
         let (axis, brake) = if arrived {
             (0., 1.)
-        } else if sense.speed < wanted - 1. {
-            (1., 0.)
-        } else if sense.speed < wanted + 6. {
-            (0.25, 0.)
         } else {
-            (0., ((sense.speed - wanted) / 20.).clamp(0.2, 1.))
+            crate::race_ai::pedals(sense.speed, wanted)
         };
         let preload = if goal.crouch && sense.grounded {
             self.crouched = true;
@@ -687,6 +693,19 @@ mod tests {
         }
         assert!(nearest < 6., "{nearest}");
         assert_eq!(driver.resets, 0);
+    }
+
+    #[test]
+    fn a_near_target_beside_the_rider_is_reached_not_circled() {
+        let mut driver = Driver::default();
+        let mut s = sense([0.; 3], [0., 1.], 40.);
+        let goal = Goal::ride([12., 6.], 60.);
+        let mut nearest = f32::MAX;
+        for _ in 0..(60 * 6) {
+            ride(&mut driver, &mut s, &goal, 1);
+            nearest = nearest.min(flat(s.position, goal.target));
+        }
+        assert!(nearest < 4., "{nearest}");
     }
 
     #[test]
