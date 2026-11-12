@@ -432,6 +432,11 @@ separate Music and SFX volumes; the browser control is an adaptation.
 
 ## Content and validation
 
+Training speech (2026-11-11, research/TRAINING.md): the packed `AUDIO.RES`
+gains the 46 `DIALOGUE.AUD` lines unchanged (665 → 711 members, 19,373,248 →
+25,170,818 packed bytes; 7.3 MB of VAG). Only a Training ride reads them;
+other rides read no more of the archive than before.
+
 The R2-only compact `AUDIO.RES` gains 172 members (480 → 652, 14,564,439 →
 18,739,084 packed bytes): the 93 loose rider vocal VAGs both genders reference,
 12 chassis samples and 71 distinct venue drive-on/ambient/Soultree samples (4
