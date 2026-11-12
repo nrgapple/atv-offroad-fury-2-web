@@ -1259,10 +1259,11 @@ impl PauseMenu {
     ) -> Option<Event> {
         let at = self.pressed.iter().position(|p| p.pointer == pointer)?;
         let p = self.pressed.remove(at);
-        // The Jukebox ranges apply on release (`onchange`).
+        // The Jukebox ranges apply on release (`onchange`), as does the
+        // ride camera's field of view.
         if p.slider.is_some() {
             return match self.rows.choices.get(p.index).map(String::as_str) {
-                Some("jukevolume") => Some(Event::Changed),
+                Some("jukevolume" | "access-fov") => Some(Event::Changed),
                 Some("jukeseek") => {
                     let t = self.seek_to.take()?;
                     let duration = ctx.music.map_or(0., |m| m.duration);

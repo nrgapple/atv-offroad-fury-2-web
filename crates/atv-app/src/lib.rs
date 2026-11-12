@@ -3422,7 +3422,7 @@ impl App {
             });
             // Options → Accessibility (tools/test_engine_accessibility.mjs).
             state["settings"]["access"] = serde_json::json!({
-                "fov": riding.fov_percent,
+                "fov": riding.fov_percent, "focal": ready.focal_length,
                 "hudScale": self.overlay.as_ref().and_then(|o| o.hud_scale()),
                 "colour": atv_ui::hud::palette::mode().label(),
             });
