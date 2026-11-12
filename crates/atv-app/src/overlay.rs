@@ -2164,15 +2164,8 @@ impl Overlay {
         );
         let rect = |id| hits.iter().find(|(_, i)| *i == id).map(|(r, _)| *r);
         if let (Some(panel), Some(content)) = (rect(pause::PANEL), rect(pause::CONTENT)) {
-            // The Jukebox scrolls only its track list (no panel padding).
-            let padding = if state.page == "jukebox" {
-                0.
-            } else if view.width <= 580. || view.height <= 450. {
-                20.
-            } else {
-                30.
-            };
-            self.menu_scroll_max = (content.h - (panel.h - 2. * padding)).max(0.);
+            // Only the rows scroll: the scrolled part has no padding of its own.
+            self.menu_scroll_max = (content.h - panel.h).max(0.);
         }
         // jukebox.js: open with the playing song centred in the list.
         let centre = state.page == "jukebox" && !self.jukebox_centred;
@@ -2274,6 +2267,18 @@ impl Overlay {
                 })),
                 "hits": self.menu_hits.iter().filter(|(_, id)| *id >= pause::ROW).map(|(r, id)| serde_json::json!({
                     "action": m.rows.choices.get((*id - pause::ROW) as usize),
+                    "x": r.x, "y": r.y, "width": r.w, "height": r.h,
+                })).collect::<Vec<_>>(),
+                // Options beside its rail: the rail's tabs on a category
+                // page, and the rows shown for the highlighted category.
+                "wide": m.wide(),
+                "previewPage": m.preview().map(|(page, _)| page),
+                "tabs": self.menu_hits.iter().filter(|(_, id)| (pause::TAB..pause::PANEL).contains(id)).map(|(r, id)| serde_json::json!({
+                    "action": m.categories().nth((*id - pause::TAB) as usize),
+                    "x": r.x, "y": r.y, "width": r.w, "height": r.h,
+                })).collect::<Vec<_>>(),
+                "preview": self.menu_hits.iter().filter(|(_, id)| (pause::PREVIEW..pause::TAB).contains(id)).map(|(r, id)| serde_json::json!({
+                    "action": m.preview().and_then(|(_, rows)| rows.choices.get((*id - pause::PREVIEW) as usize)),
                     "x": r.x, "y": r.y, "width": r.w, "height": r.h,
                 })).collect::<Vec<_>>(),
             })),

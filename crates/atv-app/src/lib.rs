@@ -84,6 +84,11 @@ pub struct Options {
     /// with default in-memory settings.
     #[cfg(not(target_arch = "wasm32"))]
     pub capture_ui: bool,
+    /// Captures with the UI: open the pause menu (or, with `front`, Options
+    /// over the main menu) on this page and row, laid out at this many
+    /// pixels per point.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub capture_menu: Option<(String, usize, f64)>,
     /// Before the capture, time the scene pass on the GPU over this many
     /// offscreen frames (timestamp queries) and print the median.
     #[cfg(not(target_arch = "wasm32"))]
@@ -5523,7 +5528,14 @@ impl ApplicationHandler<Message> for App {
                     .and_then(|f| f.page)
                     .unwrap_or_else(|| "title".into());
                 match pollster::block_on(future) {
-                    Ok(booted) => capture_front(booted, &page, &path, width, height),
+                    Ok(booted) => capture_front(
+                        booted,
+                        &page,
+                        &path,
+                        width,
+                        height,
+                        options.capture_menu.as_ref(),
+                    ),
                     Err(error) => status(&error),
                 }
                 event_loop.exit();
@@ -5695,7 +5707,14 @@ impl ApplicationHandler<Message> for App {
                         None => println!("gpu timing unavailable (no timestamp queries)"),
                     }
                 }
-                capture(ready, &path, width, height, options.capture_ui);
+                capture(
+                    ready,
+                    &path,
+                    width,
+                    height,
+                    options.capture_ui,
+                    options.capture_menu.as_ref(),
+                );
                 event_loop.exit();
                 return;
             }
@@ -9157,12 +9176,20 @@ fn course_label(names: &std::collections::HashMap<String, String>, venue: &str) 
 
 /// Native parity capture of one frontend page with all its artwork.
 #[cfg(not(target_arch = "wasm32"))]
-fn capture_front(booted: Booted, page: &str, path: &std::path::Path, width: u32, height: u32) {
+fn capture_front(
+    booted: Booted,
+    page: &str,
+    path: &std::path::Path,
+    width: u32,
+    height: u32,
+    menu: Option<&(String, usize, f64)>,
+) {
     let Booted { gpu, content, boot } = booted;
+    let scale = menu.map_or(1., |m| m.2 as f32);
     let view = atv_ui::hud::Viewport {
-        width: width as f32,
-        height: height as f32,
-        scale: 1.,
+        width: width as f32 / scale,
+        height: height as f32 / scale,
+        scale,
         hover: true,
         ..Default::default()
     };
@@ -9177,6 +9204,9 @@ fn capture_front(booted: Booted, page: &str, path: &std::path::Path, width: u32,
     );
     // Captures show the page at rest.
     front.slide = false;
+    if let Some((page, row, _)) = menu {
+        front.open_options(page, *row);
+    }
     pollster::block_on(async {
         front.art.photos.extend(
             atv_ui::front::assets::photos(&content, &tracks)
@@ -9229,7 +9259,14 @@ fn capture_front(booted: Booted, page: &str, path: &std::path::Path, width: u32,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn capture(ready: &mut Ready, path: &std::path::Path, width: u32, height: u32, ui: bool) {
+fn capture(
+    ready: &mut Ready,
+    path: &std::path::Path,
+    width: u32,
+    height: u32,
+    ui: bool,
+    menu: Option<&(String, usize, f64)>,
+) {
     let view = View {
         camera: ready.camera,
         focal_length: ready.focal_length,
@@ -9240,25 +9277,39 @@ fn capture(ready: &mut Ready, path: &std::path::Path, width: u32, height: u32, u
         let mut overlay = overlay::Overlay::with_settings(
             &gpu.device,
             gpu.config.format,
-            overlay::viewport(width, height, 1.),
+            overlay::viewport(width, height, menu.map_or(1., |m| m.2)),
             atv_ui::settings::Settings::memory(),
         );
+        if let Some((page, row, _)) = menu {
+            overlay.sync_menu(true);
+            if let Some(menu) = &mut overlay.menu {
+                menu.open_at(page, *row);
+            }
+        }
         overlay.set_course(&ready.venue);
         overlay.finish_course(&ready.venue.terrain);
         if let Some(assets) = ready.hud_assets.take() {
             overlay.set_meter(&gpu.device, &gpu.queue, assets);
         }
         let ride = &riding.ride;
-        for _ in 0..2 {
+        // The bindings pages list the ride's own.
+        let mut bindings = menu.map(|_| {
+            let mut bindings = atv_game::ride::bindings::Bindings::load(None, None).0;
+            bindings.profile = riding.bindings.profile.clone();
+            bindings
+        });
+        // A menu page slides in over frames of at most
+        // `transition::MAX_STEP`: enough of them leave it at rest.
+        for pass in 0..if menu.is_some() { 40 } else { 2 } {
             overlay.prepare(
                 &gpu.device,
                 &gpu.queue,
                 width,
                 height,
-                0.,
+                pass as f64 * atv_ui::transition::MAX_STEP,
                 true,
                 true,
-                false,
+                menu.is_some(),
                 Some(overlay::HudInput {
                     hud: ride.hud(),
                     rider_world: ride.rider_world(),
@@ -9276,7 +9327,7 @@ fn capture(ready: &mut Ready, path: &std::path::Path, width: u32, height: u32, u
                     others: Vec::new(),
                     split_layout: None,
                 }),
-                None,
+                bindings.as_mut(),
             );
         }
         overlay

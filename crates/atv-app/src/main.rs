@@ -11,7 +11,7 @@ use std::path::PathBuf;
 const USAGE: &str = "usage: fury [--content DIR | --pack FILE] [--front PAGE] [--venue ID] [--quad 1-46] [--rider 0|1] [--gear H,G,B,S,SL,P,GO] [--paint 0-10] [--free] [--race [--laps N] [--cpu 0|3|4] [--difficulty 1|2] [--seed N]] \
 [--camera x,y,z,yaw,pitch,focal] [--weather on|off] [--steps N] [--graphics original|enhanced|high|remastered] \
 [--crash original|crazy|gorn] \
-[--script IN.json] [--trace OUT.json] [--present-trace OUT.json [--present-hz 144]] [--capture OUT.png WxH [--ui] [--gpu-frames N]] [--verify-content] [--version] \
+[--script IN.json] [--trace OUT.json] [--present-trace OUT.json [--present-hz 144]] [--capture OUT.png WxH [--ui] [--menu PAGE[:ROW[:SCALE]]] [--gpu-frames N]] [--verify-content] [--version] \
 [--host [--room CODE] | --room CODE] [--relay URL] [--name NAME] \
 [--mute] [--no-music] [--sound original|enhanced] [--audio OUT.wav] \
 [--autodrive IN.json [--bench OUT.json [--profile]]]";
@@ -58,6 +58,7 @@ fn main() {
     let mut front_page: Option<String> = None;
     let mut capture = None;
     let mut capture_ui = false;
+    let mut capture_menu = None;
     let mut room_code: Option<String> = None;
     let mut host = false;
     let mut relay = "https://furyremastered.com".to_string();
@@ -148,6 +149,15 @@ fn main() {
                 }
             }
             "--ui" => capture_ui = true,
+            "--menu" => {
+                let spec = args.next().expect("--menu needs PAGE[:ROW[:SCALE]]");
+                let mut parts = spec.split(':');
+                let page = parts.next().unwrap_or("pause").to_string();
+                let row = parts.next().and_then(|v| v.parse().ok()).unwrap_or(0);
+                let scale = parts.next().and_then(|v| v.parse().ok()).unwrap_or(1.);
+                capture_ui = true;
+                capture_menu = Some((page, row, scale));
+            }
             "--host" => host = true,
             "--room" => room_code = Some(args.next().expect("--room needs a code")),
             "--relay" => relay = args.next().expect("--relay needs a URL"),
@@ -340,6 +350,7 @@ fn main() {
         camera_choice,
         capture,
         capture_ui,
+        capture_menu,
         gpu_frames,
         ride,
         selection,

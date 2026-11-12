@@ -165,11 +165,20 @@ pub struct PauseMenu {
     history: Vec<(String, usize, Option<String>)>,
     /// The row to select once the returned-to page's rows are built.
     restore: Option<String>,
+    /// Options' own rows: the rail beside its pages.
+    hub: Rows,
+    /// On Options: the category under the selection and its rows.
+    preview: Option<(String, Rows)>,
+    hovered_tab: Option<usize>,
+    /// Options shows as a rail beside its pages (`super::two_pane`).
+    wide: bool,
 }
 
 struct Pressed {
     pointer: u64,
     index: usize,
+    /// The rail tab it went down on.
+    tab: Option<usize>,
     x: f32,
     y: f32,
     moved: bool,
@@ -222,6 +231,10 @@ impl PauseMenu {
             credits_since: 0.,
             history: Vec::new(),
             restore: None,
+            hub: Rows::default(),
+            preview: None,
+            hovered_tab: None,
+            wide: false,
         }
     }
 
@@ -242,6 +255,12 @@ impl PauseMenu {
             from_menu: true,
             ..Self::new()
         }
+    }
+
+    /// Captures: the menu already on `page` with row `selection` selected.
+    pub fn open_at(&mut self, page: &str, selection: usize) {
+        self.present(page);
+        self.selection = selection;
     }
 
     /// Opened over the frontend rather than a ride.
@@ -282,6 +301,15 @@ impl PauseMenu {
                 0.
             },
             motion: None,
+            hub: if self.in_options() {
+                self.categories()
+                    .map(|a| (a.to_string(), self.hub.label(a).unwrap_or(a).to_string()))
+                    .collect()
+            } else {
+                Vec::new()
+            },
+            preview: self.preview.clone().filter(|_| self.page == "settings"),
+            hovered_tab: self.hovered_tab,
             // Controller bindings show glyphs (standard-mapping pads).
             pad: (self.page == "bindings" && !self.keyboard)
                 .then_some(ctx.bindings.as_deref())
@@ -330,10 +358,99 @@ impl PauseMenu {
 
     /// Rebuilds the rows when any input of the request changed.
     pub fn refresh(&mut self, ctx: &Context) {
+        self.wide = super::two_pane(&ctx.view, "settings");
+        let request = self.request(ctx, &self.page);
+        let key = request.to_string();
+        if key == self.key {
+            return;
+        }
+        if let Some(rows) = self.rows_for(request) {
+            if let Some(action) = self.restore.take()
+                && let Some(at) = rows.choices.iter().position(|c| *c == action)
+            {
+                self.selection = at;
+            }
+            self.selection = self.selection.min(rows.choices.len().saturating_sub(1));
+            if self.page == "settings" {
+                self.hub = rows.clone();
+            } else if self.in_options() && self.hub.choices.is_empty() {
+                // A page opened without passing Options still gets its rail.
+                self.hub = self
+                    .rows_for(self.request(ctx, "settings"))
+                    .unwrap_or_default();
+            }
+            // Options shows the category under the selection beside its
+            // rail, ready to use.
+            self.preview = (self.wide && self.page == "settings")
+                .then(|| rows.choices.get(self.selection).cloned())
+                .flatten()
+                .filter(|action| super::category(action) == Some(action.as_str()))
+                .and_then(|action| {
+                    let rows = self.rows_for(self.request(ctx, &action))?;
+                    Some((action, rows))
+                });
+            self.rows = rows;
+        }
+        self.key = key;
+    }
+
+    /// Options is laid out as a rail of categories beside their rows.
+    pub fn wide(&self) -> bool {
+        self.wide
+    }
+
+    /// The category shown beside the rail on the Options page, and its rows.
+    pub fn preview(&self) -> Option<(&str, &Rows)> {
+        self.preview
+            .as_ref()
+            .map(|(page, rows)| (page.as_str(), rows))
+    }
+
+    /// Whether the page is Options or one under it.
+    fn in_options(&self) -> bool {
+        self.page == "settings" || super::category(&self.page).is_some()
+    }
+
+    /// Options' categories in rail order.
+    pub fn categories(&self) -> impl Iterator<Item = &str> {
+        self.hub
+            .choices
+            .iter()
+            .map(String::as_str)
+            .filter(|a| *a != "back")
+    }
+
+    /// The rows ui_menu lays out for `request`, less what this build lacks.
+    fn rows_for(&self, request: serde_json::Value) -> Option<Rows> {
+        let mut rows = serde_json::from_value::<atv_core::ui_menu::Request>(request)
+            .map_err(|e| e.to_string())
+            .and_then(atv_core::ui_menu::layout)
+            .map(|frame| Rows::from_frame(&frame))
+            .ok()?;
+        rows.choices.retain(|c| !UNSUPPORTED.contains(&c.as_str()));
+        if !cfg!(target_arch = "wasm32") {
+            // Desktop has no dev log page to open. Copy ride link stays:
+            // it copies the site's play.html link for this ride.
+            rows.choices.retain(|c| c != "devlog");
+        }
+        // Change ATV and Rider and Select Track open the engine's own
+        // frontend; a direct room link has none.
+        if !self.frontend {
+            rows.choices
+                .retain(|c| c != "changeride" && c != "hosttrack");
+        }
+        if !cfg!(target_arch = "wasm32") && !self.frontend {
+            rows.choices.retain(|c| c != "main");
+        }
+        Some(rows)
+    }
+
+    /// The ui_menu request for `page` from the current settings.
+    fn request(&self, ctx: &Context, page: &str) -> serde_json::Value {
         let p = &*ctx.prefs;
         let m = &*ctx.minimap;
         let request = json!({
-            "page": self.page,
+            "page": page,
             "width": ctx.view.width.clamp(240., 16384.),
             "height": ctx.view.height.clamp(240., 16384.),
             "selection": self.selection,
@@ -360,20 +477,20 @@ impl PauseMenu {
             // frontend.js: the row only where the audio session exists.
             "silent_mode": if p.audio_session { p.silent.as_str() } else { "" },
             "sfx_volume": (p.sfx_volume * 100.).round() as usize,
-            "alpha_rows": if self.page == "alpha" {
+            "alpha_rows": if page == "alpha" {
                 super::prefs::ALPHA_FEATURES.iter().map(|(id, label)| json!({
                     "id": id, "label": label, "value": if p.alpha(id) { "On" } else { "Off" },
                 })).collect::<Vec<_>>()
             } else {
                 Vec::new()
             },
-            "music_enabled": p.music_enabled && !(self.page == "jukebox" && ctx.music.is_some_and(|m| m.paused)),
+            "music_enabled": p.music_enabled && !(page == "jukebox" && ctx.music.is_some_and(|m| m.paused)),
             "music_volume": (p.music_volume * 100.).round() as usize,
-            "music_rows": if self.page == "jukebox" {
+            "music_rows": if page == "jukebox" {
                 ctx.music.map_or_else(Vec::new, |m| m.songs.iter().enumerate().map(|(i, (title, artist, _))| {
                     json!({"id": i.to_string(), "label": title, "value": artist})
                 }).collect())
-            } else if self.page == "music" {
+            } else if page == "music" {
                 // frontend.js: the playing song is marked on Audio's rows.
                 ctx.music.map_or_else(Vec::new, |m| m.songs.iter().enumerate().map(|(i, (title, artist, _))| {
                     let mark = match (Some(i) == m.playing_index, m.enabled) {
@@ -404,7 +521,7 @@ impl PauseMenu {
         request["new_profiles_unlocked"] = p.new_profiles_unlocked.into();
         request["show_fps"] = p.show_fps.into();
         request["editor_active"] = self.editor_active.into();
-        if self.page == "accessibility" {
+        if page == "accessibility" {
             request["access_fov"] = p.access.fov.into();
             request["access_rows"] = p
                 .access
@@ -438,7 +555,7 @@ impl PauseMenu {
             }
             .into();
             request["binding_page"] = self.binding_page.into();
-            if self.page == "bindings" {
+            if page == "bindings" {
                 request["control_rows"] = ACTIONS
                     .iter()
                     .map(|(action, id, label)| {
@@ -482,39 +599,7 @@ impl PauseMenu {
                 .map(|(id, label, value)| json!({"id": id.to_string(), "label": label, "value": value}))
                 .collect();
         }
-        let key = request.to_string();
-        if key == self.key {
-            return;
-        }
-        let rows = serde_json::from_value::<atv_core::ui_menu::Request>(request)
-            .map_err(|e| e.to_string())
-            .and_then(atv_core::ui_menu::layout)
-            .map(|frame| Rows::from_frame(&frame));
-        if let Ok(mut rows) = rows {
-            rows.choices.retain(|c| !UNSUPPORTED.contains(&c.as_str()));
-            if !cfg!(target_arch = "wasm32") {
-                // Desktop has no dev log page to open. Copy ride link stays:
-                // it copies the site's play.html link for this ride.
-                rows.choices.retain(|c| c != "devlog");
-            }
-            // Change ATV and Rider and Select Track open the engine's own
-            // frontend; a direct room link has none.
-            if !self.frontend {
-                rows.choices
-                    .retain(|c| c != "changeride" && c != "hosttrack");
-            }
-            if !cfg!(target_arch = "wasm32") && !self.frontend {
-                rows.choices.retain(|c| c != "main");
-            }
-            if let Some(action) = self.restore.take()
-                && let Some(at) = rows.choices.iter().position(|c| *c == action)
-            {
-                self.selection = at;
-            }
-            self.selection = self.selection.min(rows.choices.len().saturating_sub(1));
-            self.rows = rows;
-        }
-        self.key = key;
+        request
     }
 
     /// Opens `page` over the current one; a page already in the history is
@@ -544,7 +629,11 @@ impl PauseMenu {
     }
 
     fn present(&mut self, page: &str) {
-        self.shown = crate::transition::next_show();
+        // Beside the rail a category changes in place: the panel stays.
+        let within = |page: &str| page == "settings" || super::category(page).is_some();
+        if !(self.wide && within(&self.page) && within(page)) {
+            self.shown = crate::transition::next_show();
+        }
         if page == "credits" {
             self.credits_since = crate::scroll::now();
         }
@@ -554,7 +643,48 @@ impl PauseMenu {
         self.selection = 0;
         self.scroller = Scroller::default();
         self.hovered = None;
+        self.hovered_tab = None;
         self.key.clear();
+    }
+
+    /// Opens the rail's category `tab` from any page under Options: back to
+    /// Options on that row, then in.
+    fn open_category(&mut self, tab: usize, ctx: &mut Context) -> Option<Event> {
+        let action = self.categories().nth(tab)?.to_string();
+        if self.page == action {
+            return None;
+        }
+        if self.history.iter().any(|(p, ..)| p == "settings") {
+            self.show("settings");
+        } else {
+            self.present("settings");
+        }
+        self.restore = None;
+        self.rows = self.hub.clone();
+        self.selection = self.rows.choices.iter().position(|c| *c == action)?;
+        self.run(&action, 1, false, ctx)
+    }
+
+    /// Q/E and the shoulder buttons: the next category beside the rail (on
+    /// Options itself, the next row).
+    fn turn_category(&mut self, delta: i32, ctx: &mut Context) -> Option<Event> {
+        if self.page == "settings" {
+            self.step(delta);
+            return None;
+        }
+        let current = super::category(&self.page)?;
+        // Jukebox and Credits are pages of their own, not categories.
+        let tabs: Vec<usize> = self
+            .categories()
+            .enumerate()
+            .filter(|(_, a)| super::category(a) == Some(*a))
+            .map(|(i, _)| i)
+            .collect();
+        let at = tabs
+            .iter()
+            .position(|i| self.categories().nth(*i) == Some(current))?;
+        let next = tabs[(at as i32 + delta).rem_euclid(tabs.len() as i32) as usize];
+        self.open_category(next, ctx)
     }
 
     fn back(&mut self) -> Option<Event> {
@@ -594,6 +724,12 @@ impl PauseMenu {
         let event = match action {
             "resume" => return Some(Event::Resume),
             "reset" => return Some(Event::Reset),
+            // Beside the rail every category is one press away, so a
+            // category's Back leaves Options; Escape steps out to the rail.
+            "back" if self.wide && super::category(&self.page) == Some(self.page.as_str()) => {
+                self.back();
+                return self.back();
+            }
             "back" | "pause" => return self.back(),
             "devlog" => return Some(Event::Leave("devlog.html")),
             "fullscreen" => return Some(Event::Fullscreen),
@@ -968,6 +1104,14 @@ impl PauseMenu {
                     1
                 };
                 let action = self.selected()?.to_string();
+                // From the rail, Right steps into the category beside it.
+                if self.page == "settings" && self.wide {
+                    return if direction > 0 && action != "back" {
+                        self.run(&action, 1, false, ctx)
+                    } else {
+                        None
+                    };
+                }
                 // Left/Right step sliders and cycle valued rows; never
                 // navigate. Binding and song rows are lists, not values.
                 let list = action.starts_with("bind:") || action.starts_with("song:");
@@ -990,6 +1134,9 @@ impl PauseMenu {
                     _ => return None,
                 };
                 return self.run(turn, direction, false, ctx);
+            }
+            "KeyQ" | "KeyE" if self.wide => {
+                return self.turn_category(if code == "KeyQ" { -1 } else { 1 }, ctx);
             }
             "Enter" | "Space" | "NumpadEnter" => {
                 let action = self.selected()?.to_string();
@@ -1110,6 +1257,8 @@ impl PauseMenu {
         set(4, buttons[13] > 0.5 || axes[1] > 0.55);
         set(5, buttons[14] > 0.5 || axes[0] < -0.55);
         set(6, buttons[15] > 0.5 || axes[0] > 0.55);
+        set(7, buttons[4] > 0.5);
+        set(8, buttons[5] > 0.5);
         // The press that opened the menu does not also act in it.
         let mut fresh = held & !self.pad;
         self.pad = held;
@@ -1134,6 +1283,8 @@ impl PauseMenu {
             (6, "ArrowRight"),
             (0, "Enter"),
             (1, "Escape"),
+            (7, "KeyQ"),
+            (8, "KeyE"),
         ] {
             if fresh & 1 << bit != 0 {
                 event = event.or(self.navigate(code, ctx));
@@ -1149,6 +1300,27 @@ impl PauseMenu {
             });
         }
         event
+    }
+
+    /// The rail tab at a point (a category page's rail).
+    fn tab_at(hits: &[(Rect, u32)], x: f32, y: f32) -> Option<usize> {
+        hits.iter()
+            .rev()
+            .find(|(r, id)| (super::TAB..PANEL).contains(id) && r.contains(x, y))
+            .map(|(_, id)| (id - super::TAB) as usize)
+    }
+
+    /// The row at a point of the category Options shows beside its rail.
+    fn preview_at(hits: &[(Rect, u32)], x: f32, y: f32) -> Option<(usize, Rect)> {
+        let panel = hits.iter().find(|(_, id)| *id == PANEL).map(|(r, _)| *r);
+        hits.iter()
+            .rev()
+            .find(|(r, id)| {
+                (super::PREVIEW..super::TAB).contains(id)
+                    && r.contains(x, y)
+                    && panel.is_none_or(|p| p.contains(x, y))
+            })
+            .map(|(r, id)| ((id - super::PREVIEW) as usize, *r))
     }
 
     fn hit(hits: &[(Rect, u32)], x: f32, y: f32) -> Option<(usize, Rect)> {
@@ -1176,10 +1348,25 @@ impl PauseMenu {
         if hovered != self.hovered {
             self.hovered = hovered;
         }
+        self.hovered_tab = Self::tab_at(hits, x, y);
     }
 
     pub fn press(&mut self, hits: &[(Rect, u32)], pointer: u64, x: f32, y: f32, ctx: &mut Context) {
-        let target = Self::hit(hits, x, y);
+        let mut target = Self::hit(hits, x, y);
+        // A press on the category beside Options' rail opens it on that
+        // row, where it was scrolled to, and carries on as a press there.
+        if target.is_none()
+            && self.page == "settings"
+            && let Some((index, rect)) = Self::preview_at(hits, x, y)
+            && let Some((category, rows)) = self.preview.clone()
+        {
+            let scroller = std::mem::take(&mut self.scroller);
+            self.run(&category, 1, false, ctx);
+            self.scroller = scroller;
+            self.rows = rows;
+            self.selection = index;
+            target = Some((index, rect));
+        }
         let slider = target.and_then(|(i, r)| {
             let action = self.rows.choices.get(i)?;
             let juke = action == "jukevolume"
@@ -1211,6 +1398,7 @@ impl PauseMenu {
             } else {
                 target.map_or(usize::MAX, |(i, _)| i)
             },
+            tab: Self::tab_at(hits, x, y).filter(|_| !dragging),
             x,
             y,
             moved: caught,
@@ -1307,7 +1495,15 @@ impl PauseMenu {
         if p.moved || p.caught {
             return None;
         }
-        let (index, _) = Self::hit(hits, x, y)?;
+        if let Some(tab) = p.tab {
+            return (Self::tab_at(hits, x, y) == Some(tab))
+                .then(|| self.open_category(tab, ctx))
+                .flatten();
+        }
+        // The frame after a press beside the rail may still hold the
+        // preview's hit boxes: the same rows, numbered from PREVIEW.
+        let (index, _) = Self::hit(hits, x, y)
+            .or_else(|| Self::preview_at(hits, x, y).filter(|_| self.page != "settings"))?;
         if index != p.index {
             return None;
         }
@@ -1344,6 +1540,8 @@ impl PauseMenu {
             .iter()
             .find(|(_, id)| *id == ROW + self.selection as u32)
             .map(|(r, _)| *r);
+        // The rail's rows sit outside the scrolled part.
+        let row = row.filter(|r| panel.is_some_and(|p| r.x >= p.x - 0.5));
         if let (Some(panel), Some(row)) = (panel, row) {
             self.scroller.set_bounds(max_scroll, panel.h);
             let before = self.scroller.offset();
@@ -1559,12 +1757,18 @@ mod parity_tests {
         touch: TouchControls,
         bindings: Bindings,
         music: MusicView,
+        view: Viewport,
     }
 
     impl Fixture {
         fn new() -> Self {
             let mut settings = Settings::memory();
             Self {
+                view: Viewport {
+                    width: 1280.,
+                    height: 720.,
+                    ..Default::default()
+                },
                 prefs: Preferences::load(&settings, false),
                 minimap: MinimapSettings::load(&settings),
                 touch: TouchControls::new(&settings, false),
@@ -1597,11 +1801,7 @@ mod parity_tests {
                 pad_name: None,
                 pads: Vec::new(),
                 pad_standard: true,
-                view: Viewport {
-                    width: 1280.,
-                    height: 720.,
-                    ..Default::default()
-                },
+                view: self.view,
                 lobby: None,
                 music: Some(&self.music),
             };
@@ -1796,6 +1996,138 @@ mod parity_tests {
         // The dim backdrop stays; the stage starts transparent.
         assert_eq!(list.items[0], rest.items[0]);
         assert_eq!(list.items[1], crate::paint::Item::PushOpacity(0.));
+    }
+
+    #[test]
+    fn options_keeps_its_categories_beside_their_rows_on_a_wide_screen() {
+        let mut fx = Fixture::new();
+        let mut menu = PauseMenu::new();
+        fx.with(&mut menu, |m, ctx| m.run("settings", 1, false, ctx));
+        assert!(menu.wide());
+        let categories: Vec<String> = menu.categories().map(String::from).collect();
+        // The rail has the selection and the highlighted category shows.
+        assert_eq!((menu.page.as_str(), menu.selection), ("settings", 0));
+        let shown = |menu: &PauseMenu| menu.preview().map(|(page, _)| page.to_string());
+        assert_eq!(shown(&menu).as_ref(), Some(&categories[0]));
+        fx.with(&mut menu, |m, ctx| m.key("ArrowDown", ctx));
+        assert_eq!(shown(&menu).as_ref(), Some(&categories[1]));
+        assert!(
+            menu.preview()
+                .is_some_and(|(_, rows)| !rows.choices.is_empty())
+        );
+        fx.with(&mut menu, |m, ctx| m.key("ArrowUp", ctx));
+        let hub = menu.shown;
+        // Right steps into it; the panel does not slide.
+        fx.with(&mut menu, |m, ctx| m.key("ArrowRight", ctx));
+        assert_eq!(menu.page, categories[0]);
+        assert_eq!(menu.shown, hub);
+        // Q and E turn the category from inside one.
+        fx.with(&mut menu, |m, ctx| m.key("KeyE", ctx));
+        assert_eq!(menu.page, categories[1]);
+        fx.with(&mut menu, |m, ctx| m.key("KeyQ", ctx));
+        fx.with(&mut menu, |m, ctx| m.key("KeyQ", ctx));
+        assert_eq!(Some(&menu.page), categories.last());
+        assert_eq!(menu.shown, hub);
+        // Escape steps back to the rail on that category.
+        fx.with(&mut menu, |m, ctx| m.key("Escape", ctx));
+        assert_eq!(
+            (menu.page.as_str(), menu.selection),
+            ("settings", categories.len() - 1)
+        );
+        // The rail's Back, drawn beside a category, leaves Options.
+        fx.with(&mut menu, |m, ctx| m.key("ArrowRight", ctx));
+        fx.with(&mut menu, |m, ctx| m.run("back", 1, false, ctx));
+        assert_eq!(menu.page, "pause");
+        assert!(menu.shown > hub);
+
+        // The rail is a tab per category beside the open one's rows.
+        fx.with(&mut menu, |m, ctx| m.run("settings", 1, false, ctx));
+        fx.with(&mut menu, |m, ctx| m.run("controls", 1, false, ctx));
+        for (width, height, safe) in [(1280., 720., [0.; 4]), (844., 390., [0., 47., 21., 47.])] {
+            fx.view = Viewport {
+                width,
+                height,
+                safe,
+                ..Default::default()
+            };
+            let state = fx.with(&mut menu, |m, ctx| m.state(ctx));
+            let (mut list, mut hits) = (crate::DisplayList::default(), Vec::new());
+            crate::layout::render(
+                &crate::menu::element(&fx.view, &state, &Default::default()),
+                &mut crate::Fonts::new(),
+                width,
+                height,
+                &mut list,
+                &mut hits,
+            );
+            let tabs: Vec<Rect> = hits
+                .iter()
+                .filter(|(_, id)| (crate::menu::TAB..crate::menu::PANEL).contains(id))
+                .map(|(r, _)| *r)
+                .collect();
+            assert_eq!(tabs.len(), categories.len(), "{width}");
+            // The category's rows; its Back is the rail's button.
+            let back = state.rows.choices.iter().position(|c| c == "back");
+            let rows: Vec<Rect> = hits
+                .iter()
+                .filter(|(_, id)| *id >= ROW && Some((*id - ROW) as usize) != back)
+                .map(|(r, _)| *r)
+                .collect();
+            assert!(!rows.is_empty(), "{width}");
+            let button = hits
+                .iter()
+                .find(|(_, id)| Some(id.wrapping_sub(ROW) as usize) == back)
+                .map(|(r, _)| *r)
+                .expect("the rail's Back");
+            for tab in &tabs {
+                assert!(tab.h >= 26. && tab.y >= 0., "{width}: {tab:?}");
+                assert!(tab.bottom() <= height - safe[2] + 0.5, "{width}: {tab:?}");
+                assert!(tab.x >= safe[3], "{width}: {tab:?}");
+                assert!(tab.bottom() <= button.y, "{width}: {tab:?} {button:?}");
+                for row in &rows {
+                    assert!(tab.right() <= row.x, "{width}: {tab:?} {row:?}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn options_is_a_list_of_pages_on_a_narrow_screen() {
+        let mut fx = Fixture::new();
+        fx.view = Viewport {
+            width: 390.,
+            height: 844.,
+            safe: [47., 0., 34., 0.],
+            ..Default::default()
+        };
+        let mut menu = PauseMenu::new();
+        fx.with(&mut menu, |m, ctx| m.run("settings", 1, false, ctx));
+        assert!(!menu.wide());
+        assert!(menu.preview().is_none());
+        let hub = menu.shown;
+        // Right does not step into a category here; Enter opens its page.
+        fx.with(&mut menu, |m, ctx| m.key("ArrowRight", ctx));
+        assert_eq!(menu.page, "settings");
+        fx.with(&mut menu, |m, ctx| m.run("controls", 1, false, ctx));
+        assert_eq!(menu.page, "controls");
+        assert!(menu.shown > hub, "a page of its own slides in");
+        fx.with(&mut menu, |m, ctx| m.run("back", 1, false, ctx));
+        assert_eq!(menu.page, "settings");
+        let state = fx.with(&mut menu, |m, ctx| m.state(ctx));
+        let (mut list, mut hits) = (crate::DisplayList::default(), Vec::new());
+        crate::layout::render(
+            &crate::menu::element(&fx.view, &state, &Default::default()),
+            &mut crate::Fonts::new(),
+            390.,
+            844.,
+            &mut list,
+            &mut hits,
+        );
+        assert!(
+            !hits
+                .iter()
+                .any(|(_, id)| (crate::menu::PREVIEW..crate::menu::PANEL).contains(id))
+        );
     }
 
     #[test]
