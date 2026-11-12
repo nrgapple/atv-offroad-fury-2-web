@@ -23,6 +23,7 @@ const NAV = new Set([
   'halloffame',
   'settings',
   'jukebox',
+  'credits',
   'split',
   'splitfree',
   'splitrace',

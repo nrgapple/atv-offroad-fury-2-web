@@ -162,6 +162,8 @@ enum Message {
     SoundReady(Box<sound::Sound>),
     /// The original Jukebox art decoded.
     JukeboxArt(Box<atv_game::jukebox::JukeboxArt>),
+    /// The Credits page script and whether the original text was found.
+    Credits(Box<(atv_core::credits::Credits, bool)>),
     /// A line for the open menu's notice (e.g. the copied ride link).
     #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
     Notice(String),
@@ -5636,6 +5638,13 @@ impl ApplicationHandler<Message> for App {
                 // menu no longer polls the Free Ride count).
                 self.wake();
             }
+            Message::Credits(credits) => {
+                if let Some(front) = &self.front {
+                    let (credits, original) = *credits;
+                    front.borrow_mut().credits = Some((Rc::new(credits), original));
+                }
+                self.wake();
+            }
             Message::JukeboxArt(art) => {
                 if let (Some(overlay), Some(ready)) = (&mut self.overlay, &self.ready) {
                     overlay.set_jukebox_art(&ready.gpu.device, &ready.gpu.queue, *art);
@@ -6676,6 +6685,7 @@ impl App {
         let focused = self.effective_focused();
         if front_shown {
             self.sync_soundtrack(preview, focused, (enabled, volume));
+            self.load_credits();
         }
         let wanted = front_shown && enabled && focused && !preview;
         if wanted
@@ -6784,6 +6794,30 @@ impl App {
             );
         }
         self.save_soundtrack();
+    }
+
+    /// The Credits page's script, read on its first visit (PAGE18).
+    fn load_credits(&mut self) {
+        if self
+            .front
+            .as_ref()
+            .is_some_and(|f| f.borrow().credits_open())
+            && let Some(content) = self.content.clone()
+            && self.requested.insert("front-credits".into())
+        {
+            self.spawn(
+                async move { atv_game::credits::load(&content).await },
+                |result| {
+                    // Unreadable original text: the port's section alone.
+                    Message::Credits(Box::new(result.unwrap_or_else(|error| {
+                        status(&format!("Credits: {error}"));
+                        let mut credits = atv_core::credits::Credits::default();
+                        credits.entries = atv_core::credits::port_section();
+                        (credits, false)
+                    })))
+                },
+            );
+        }
     }
 
     /// Reads the soundtrack catalog for the frontend (once per page).
