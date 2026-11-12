@@ -10,8 +10,9 @@ use atv_core::profile::{BookError, NAME_CHARS, NAME_MAX, Profile, ProfileBook, c
 
 /// Profile pages laid out as the editor's: rows on the left and the
 /// details table on the panel.
-pub const DETAIL_PAGES: [&str; 8] = [
+pub const DETAIL_PAGES: [&str; 9] = [
     "hall-of-fame",
+    super::world_page::DAILY_PAGE,
     "profile-name",
     "profile-slots",
     "profile-confirm",
@@ -62,6 +63,8 @@ pub struct ProfileUi {
     pub fame_group: usize,
     pub fame_course: usize,
     pub fame_expert: bool,
+    /// The World boards (`world_page`) instead of this device's.
+    pub fame_world: bool,
 }
 
 /// Records' event groups (the ProfileView_* event pages the port has
@@ -289,8 +292,20 @@ impl Frontend {
                             }
                         ),
                     ),
+                    (
+                        "fameworld".into(),
+                        format!(
+                            "View: {}",
+                            if self.profile_ui.fame_world {
+                                "World"
+                            } else {
+                                "This Device"
+                            }
+                        ),
+                    ),
                 ]
             }
+            super::world_page::DAILY_PAGE => self.daily_choices(),
             "profile-records" => {
                 let groups = self.fame_groups();
                 let group = groups.get(self.profile_ui.group);
@@ -428,7 +443,9 @@ impl Frontend {
             "profile-overview" => current.map_or_else(Vec::new, |p| self.overview(p)),
             "profile-trophies" => current.map_or_else(Vec::new, trophies),
             "profile-records" => current.map_or_else(Vec::new, |p| self.records(p)),
+            "hall-of-fame" if self.profile_ui.fame_world => self.world_fame_details(),
             "hall-of-fame" => self.hall_of_fame(),
+            super::world_page::DAILY_PAGE => self.daily_details(),
             _ => Vec::new(),
         }
     }
@@ -652,6 +669,9 @@ impl Frontend {
         settings: &mut Settings,
     ) -> Option<Option<Event>> {
         let missing = "No ATV Offroad Fury 2 profiles present.";
+        if let Some(event) = self.world_action(action, view, settings) {
+            return Some(event);
+        }
         match action {
             "profile" => self.show("profile", view),
             "halloffame" => {
@@ -846,6 +866,7 @@ impl Frontend {
                 self.profile_ui.fame_course = wrap(self.profile_ui.fame_course, n);
             }
             "famedifficulty" => self.profile_ui.fame_expert = !self.profile_ui.fame_expert,
+            "fameworld" => self.profile_ui.fame_world = !self.profile_ui.fame_world,
             _ => return,
         }
         self.refresh(view);
@@ -940,6 +961,7 @@ impl Frontend {
     pub(super) fn profile_back(&self) -> Option<&'static str> {
         Some(match self.page.as_str() {
             "profile" | "hall-of-fame" => "main",
+            super::world_page::DAILY_PAGE => "single",
             "profile-name" => match self.profile_ui.name_for {
                 NameFor::Create => "profile",
                 NameFor::Copy(_) => "profile-slots",
@@ -1229,7 +1251,16 @@ mod tests {
         front.run("halloffame", &view, &mut settings);
         assert_eq!(front.page, "hall-of-fame");
         let rows: Vec<&str> = front.choices().iter().map(|(a, _)| a.as_str()).collect();
-        assert_eq!(rows, ["fameevent", "famecourse", "famedifficulty", "back"]);
+        assert_eq!(
+            rows,
+            [
+                "fameevent",
+                "famecourse",
+                "famedifficulty",
+                "fameworld",
+                "back"
+            ]
+        );
         // Amateur Nationals first: env01 has no holders.
         let details = front.profile_details();
         assert_eq!(details[2], ("1. <Nobody>".into(), "--:--.--".into()));

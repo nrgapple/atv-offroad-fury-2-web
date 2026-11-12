@@ -21,6 +21,7 @@ pub mod profile_pages;
 pub mod seats_page;
 pub mod status_page;
 pub mod waypoint_page;
+pub mod world_page;
 pub use passkey_page::{CloudCommand, CloudView};
 use profile_pages::NO_PROFILE;
 
@@ -262,6 +263,7 @@ pub fn stepper(action: &str) -> bool {
             | "fameevent"
             | "famecourse"
             | "famedifficulty"
+            | "fameworld"
             | "storeitem"
             | "codeletter"
             | "hostfstime"
@@ -515,6 +517,8 @@ pub struct Frontend {
     pub store: StoreView,
     /// The Pass Key sync as the host last reported it.
     pub cloud: CloudView,
+    /// The world boards and the daily event's clock, from the host.
+    pub world: world_page::WorldView,
     /// The status bar's open popover and its chip's centre x.
     status_open: Option<super::status_bar::Chip>,
     status_anchor: f32,
@@ -674,6 +678,7 @@ impl Frontend {
             shift: false,
             store: StoreView::default(),
             cloud: CloudView::default(),
+            world: Default::default(),
             status_open: None,
             status_anchor: 0.,
             passkey: Default::default(),
@@ -916,6 +921,9 @@ impl Frontend {
         // Championships.
         if page == "single" {
             let mut rows = Vec::new();
+            if self.daily_offered() {
+                rows.push((world_page::DAILY_PAGE, "Daily Event"));
+            }
             if !self.objective_courses.is_empty() {
                 rows.push(("objective-courses", "Freestyle Objectives"));
             }
@@ -1242,6 +1250,7 @@ impl Frontend {
                 | "fameevent"
                 | "famecourse"
                 | "famedifficulty"
+                | "fameworld"
         ) {
             // Arrows step; a tap or Enter on the letter row adds its letter
             // (`run`).
