@@ -23,6 +23,8 @@ struct Uniforms {
     channels: [[f32; 4]; 8],
     waves: [[f32; 4]; 4],
     second: [[f32; 4]; 4],
+    sun: [f32; 4],
+    sun_color: [f32; 4],
 }
 
 pub struct WaterPass {
@@ -143,6 +145,17 @@ impl WaterPass {
     /// Display → Graphics: the authored Schlick Fresnel on or off.
     pub fn set_fresnel(&mut self, fresnel: bool) {
         self.uniforms.fog[3] = fresnel as u8 as f32;
+    }
+
+    /// Remastered sun glint from the venue's sun, or none.
+    pub fn set_glint(&mut self, sun: Option<([f32; 4], [f32; 4])>) {
+        match sun {
+            Some((direction, color)) => {
+                self.uniforms.sun = [direction[0], direction[1], direction[2], 1.];
+                self.uniforms.sun_color = color;
+            }
+            None => self.uniforms.sun = [0.; 4],
+        }
     }
 
     pub fn new(gpu: &Gpu, world: &World, water: &Water, fresnel: bool) -> Result<Self, String> {

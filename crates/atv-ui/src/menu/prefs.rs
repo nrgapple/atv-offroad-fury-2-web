@@ -4,7 +4,7 @@
 use crate::settings::Settings;
 use serde_json::{Value, json};
 
-pub const GRAPHICS_PRESETS: [&str; 4] = ["auto", "original", "enhanced", "high"];
+pub const GRAPHICS_PRESETS: [&str; 5] = ["auto", "original", "enhanced", "high", "remastered"];
 pub const SPEED_RUSH: [&str; 4] = ["off", "low", "normal", "high"];
 pub const CRASH_MODES: [&str; 3] = ["original", "crazy", "gorn"];
 pub const DIAGNOSTICS: [&str; 3] = ["off", "performance", "debug"];

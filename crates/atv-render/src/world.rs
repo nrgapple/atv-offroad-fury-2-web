@@ -28,6 +28,8 @@ pub struct Globals {
     pub shadow_matrix: [f32; 16],
     /// Receive (1), shadow texel size.
     pub shadow: [f32; 4],
+    /// Remastered preset (1), seconds for the vegetation wind.
+    pub remaster: [f32; 4],
 }
 
 pub struct World {
@@ -144,6 +146,7 @@ impl World {
             sky: v4(sky, 0.),
             shadow_matrix: [0.; 16],
             shadow: [0.; 4],
+            remaster: [0.; 4],
         };
         let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("world globals"),

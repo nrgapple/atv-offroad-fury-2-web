@@ -25,6 +25,9 @@ struct Water {
   waves: array<vec4<f32>, 4>,
   // second layer, GS FIX / 128
   second: array<vec4<f32>, 4>,
+  // Remastered sun glint: direction to the sun, enabled
+  sun: vec4<f32>,
+  sun_color: vec4<f32>,
 };
 @group(0) @binding(0) var<uniform> w: Water;
 @group(0) @binding(1) var height_maps: texture_2d_array<u32>;
@@ -116,6 +119,12 @@ fn fs(in: Varyings) -> @location(0) vec4<f32> {
     let f = 0.02 + 0.98 * pow(1.0 - facing, 5.0);
     alpha = clamp(alpha * 0.55 + f * 0.75, 0.0, 1.0);
     surface = surface * (0.85 + 0.35 * f);
+  }
+  if (w.sun.w > 0.5) {
+    // Remastered preset: the sun glints off the wave normals.
+    let glint = pow(max(dot(reflected, normalize(w.sun.xyz)), 0.0), 220.0) * 1.6;
+    surface = surface + w.sun_color.rgb * glint;
+    alpha = clamp(alpha + glint, 0.0, 1.0);
   }
   return vec4<f32>(mix(w.fog_color.rgb, surface, coverage), alpha);
 }

@@ -59,7 +59,10 @@ try {
   await click(page, 'graphics'); // enhanced → high
   s = await settings(page);
   assert.deepEqual([s.anisotropy, s.shadowMap], [16, 2048]);
-  for (let i = 0; i < 3; i++) await click(page, 'graphics'); // high → auto → original → enhanced
+  await click(page, 'graphics'); // high → remastered
+  s = await settings(page);
+  assert.deepEqual([s.anisotropy, s.shadowMap, s.remaster], [16, 2048, true]);
+  for (let i = 0; i < 3; i++) await click(page, 'graphics'); // remastered → auto → original → enhanced
   s = await settings(page);
   assert.deepEqual([s.anisotropy, s.shadowMap], [4, 0]);
   await key(page, 'Escape'); await key(page, 'Escape');

@@ -474,10 +474,11 @@ fn graphics_label(request: &Request) -> String {
         "original" => "Original",
         "enhanced" => "Enhanced",
         "high" => "High",
+        "remastered" => "Remastered",
         _ => "",
     };
     match request.graphics_preset.as_str() {
-        "original" | "enhanced" | "high" => {
+        "original" | "enhanced" | "high" | "remastered" => {
             format!("Graphics: {}", name(&request.graphics_preset))
         }
         _ if !request.graphics_resolved.is_empty() => {
@@ -538,11 +539,11 @@ pub fn layout(request: Request) -> Result<Frame> {
         || request.music_rows.len() > 64
         || !matches!(
             request.graphics_preset.as_str(),
-            "" | "auto" | "original" | "enhanced" | "high"
+            "" | "auto" | "original" | "enhanced" | "high" | "remastered"
         )
         || !matches!(
             request.graphics_resolved.as_str(),
-            "" | "original" | "enhanced" | "high"
+            "" | "original" | "enhanced" | "high" | "remastered"
         )
         || request.gear_rows.len() > 8
         || request.alpha_rows.len() > 12
@@ -3246,6 +3247,7 @@ mod tests {
         assert_eq!(label("original", "high"), "Graphics: Original");
         assert_eq!(label("enhanced", ""), "Graphics: Enhanced");
         assert_eq!(label("high", "enhanced"), "Graphics: High");
+        assert_eq!(label("remastered", "high"), "Graphics: Remastered");
         for (preset, resolved) in [("ultra", ""), ("auto", "auto"), ("auto", "ultra")] {
             let mut r = request("hud-settings", 390., 844.);
             r.graphics_preset = preset.into();
