@@ -161,6 +161,9 @@ pub struct Session {
     pub cpu_serial: u32,
     pub cpu_buffers: BTreeMap<u8, PoseBuffer>,
     pub cpu_progress: BTreeMap<u8, atv_net::RaceProgress>,
+    /// Each CPU's sound cues not yet reached by its presented pose, with the
+    /// motion's sequence (research/AUDIO.md "CPU riders").
+    cpu_cues: BTreeMap<u8, Vec<(u32, atv_net::CpuSoundCues)>>,
     /// Direct links to the other riders on this course.
     links: links::Links,
     /// Riders (bits) who got this rider's last pose through the relay.
@@ -267,10 +270,13 @@ impl Session {
         self.courier = None;
         self.carry.clear();
         let flags = atv_net::signal::DIRECT | atv_net::signal::CARRIES;
+        // Every build hears the host's CPU sound cues (research/AUDIO.md
+        // "CPU riders"), links or not.
+        let cues = atv_net::signal::CPU_SOUNDS;
         encode(&Packet::Signal(atv_net::Signal {
             peer,
             kind: atv_net::signal::HELLO,
-            data: vec![if direct { flags } else { 0 }],
+            data: vec![if direct { flags | cues } else { cues }],
         }))
     }
 
@@ -488,6 +494,7 @@ impl Session {
                     self.cpu_serial = motion.serial;
                     self.cpu_buffers.clear();
                     self.cpu_progress.clear();
+                    self.cpu_cues.clear();
                 }
                 for r in motion.riders {
                     let id = atv_net::CPU_PEER + r.index;
@@ -501,6 +508,15 @@ impl Session {
                             finish_ms: r.finish_ms,
                         },
                     );
+                    if let Some(cues) = r.sound {
+                        let queue = self.cpu_cues.entry(r.index).or_default();
+                        // A pose that stops presenting (stale) keeps no
+                        // backlog: the oldest cues go.
+                        if queue.len() >= CPU_CUE_BACKLOG {
+                            queue.remove(0);
+                        }
+                        queue.push((r.pose.sequence, cues));
+                    }
                     let buffer = self.cpu_buffers.entry(r.index).or_default();
                     if buffer.push(r.pose.clone(), now_ms).is_err() {
                         buffer.clear();
@@ -962,6 +978,25 @@ impl Session {
             .collect()
     }
 
+    /// CPU `index`'s sound cues that its presented pose (`sequence`) has
+    /// reached, merged; the cues of motion `n` play while the pose is
+    /// presented between motions `n - 1` and `n`, the interval they cover.
+    pub fn take_cpu_cues(&mut self, index: u8, sequence: u32) -> Option<atv_net::CpuSoundCues> {
+        let queue = self.cpu_cues.get_mut(&index)?;
+        let due = queue
+            .iter()
+            .take_while(|(s, _)| s.wrapping_sub(sequence) as i32 <= 1)
+            .count();
+        let mut merged: Option<atv_net::CpuSoundCues> = None;
+        for (_, cues) in queue.drain(..due) {
+            merged = Some(match merged {
+                Some(old) => merge_cues(old, cues),
+                None => cues,
+            });
+        }
+        merged
+    }
+
     /// The rider's own room-game report as a packet.
     pub fn claim_packet(&self, claim: atv_net::GameClaim) -> Result<Vec<u8>> {
         let peer = self.peer.ok_or("join multiplayer first")?;
@@ -1019,6 +1054,24 @@ impl Session {
             .collect()
     }
 }
+
+/// Sound cues of a CPU's motions presented together: every event and the
+/// strongest impacts, the later motion's levels.
+fn merge_cues(old: atv_net::CpuSoundCues, new: atv_net::CpuSoundCues) -> atv_net::CpuSoundCues {
+    use atv_net::cpu_cue::{AIRBORNE, RIDER_WATER};
+    let levels = AIRBORNE | RIDER_WATER;
+    atv_net::CpuSoundCues {
+        flags: (old.flags & !levels) | new.flags,
+        quad_contact: old.quad_contact.max(new.quad_contact),
+        wreck_impact: old.wreck_impact.max(new.wreck_impact),
+        impact: old.impact.max(new.impact),
+        rider_impact: old.rider_impact.max(new.rider_impact),
+        terrain: new.terrain,
+    }
+}
+
+/// Unplayed sound cues kept per CPU (two seconds of motion at 10 Hz).
+const CPU_CUE_BACKLOG: usize = 20;
 
 /// A room race host's CPU riders as one relay message (research/
 /// MULTIPLAYER.md "Room race CPUs"): each CPU's progress and a compact pose
@@ -1099,6 +1152,7 @@ pub fn cpu_motion(
                     crash_serial: frame.reset_count,
                     ..Default::default()
                 },
+                sound: Some(f.sound),
             })
         })
         .collect::<Result<Vec<_>>>()?;
@@ -1199,6 +1253,52 @@ mod tests {
         })
         .unwrap();
         session.receive(&bytes, 0).unwrap();
+    }
+
+    #[test]
+    fn cpu_sound_cues_play_when_the_presented_pose_reaches_them() {
+        use atv_net::cpu_cue::{AIRBORNE, HARD_LANDING, WRECK};
+        let mut s = Session::new(Profile::new("Ann", 1, 0, Default::default()));
+        welcome(&mut s, 1, lobby(&[(0, 1), (1, 1)], true));
+        let send = |s: &mut Session, sequence: u32, cues: atv_net::CpuSoundCues| {
+            let motion = atv_net::CpuMotion {
+                serial: 3,
+                riders: vec![atv_net::CpuRider {
+                    index: 0,
+                    lap: 0,
+                    distance: 0.,
+                    finish_ms: 0,
+                    pose: Snapshot {
+                        peer: atv_net::CPU_PEER,
+                        sequence,
+                        time_ms: sequence * 100,
+                        animation: Some(Box::default()),
+                        ..Default::default()
+                    },
+                    sound: Some(cues),
+                }],
+            };
+            let bytes = encode(&Packet::Cpus(Box::new(motion))).unwrap();
+            s.receive(&bytes, u64::from(sequence) * 100).unwrap();
+        };
+        let cue = |flags, impact, terrain| atv_net::CpuSoundCues {
+            flags,
+            impact,
+            terrain,
+            ..Default::default()
+        };
+        send(&mut s, 5, cue(AIRBORNE, 0., [-1, -1]));
+        send(&mut s, 6, cue(HARD_LANDING, 20., [3, 3]));
+        // Motion 5's cues cover the interval presented from motion 4 on.
+        assert_eq!(s.take_cpu_cues(0, 3), None);
+        assert_eq!(s.take_cpu_cues(0, 4).map(|c| c.flags), Some(AIRBORNE));
+        assert_eq!(s.take_cpu_cues(0, 4), None);
+        send(&mut s, 7, cue(WRECK, 5., [4, 4]));
+        // Presented late: both play at once, the later levels win.
+        let both = s.take_cpu_cues(0, 9).unwrap();
+        assert_eq!(both.flags, HARD_LANDING | WRECK);
+        assert_eq!((both.impact, both.terrain), (20., [4, 4]));
+        assert_eq!(s.take_cpu_cues(1, 9), None);
     }
 
     #[test]
@@ -1328,11 +1428,11 @@ mod tests {
 
     #[test]
     fn the_courier_carries_linked_riders_poses_to_riders_without_links() {
-        use atv_net::signal::{ANSWER, CARRIES, COURIER, DIRECT, PRESENT};
+        use atv_net::signal::{ANSWER, CARRIES, COURIER, CPU_SOUNDS, DIRECT, PRESENT};
         let mut s = Session::new(Profile::new("Ann", 1, 0, Default::default()));
         welcome(&mut s, 1, lobby(&[(0, 1), (1, 1), (2, 1)], true));
         let hello = atv_net::decode(&s.hello(true).unwrap()).unwrap();
-        assert!(matches!(hello, Packet::Signal(m) if m.data == [DIRECT | CARRIES]));
+        assert!(matches!(hello, Packet::Signal(m) if m.data == [DIRECT | CARRIES | CPU_SOUNDS]));
         s.ready().unwrap();
         // Rider 0 links with this one; rider 2 (a desktop build) cannot.
         signal(&mut s, 0, PRESENT, &[DIRECT], 0);
