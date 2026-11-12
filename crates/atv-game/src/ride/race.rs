@@ -371,6 +371,10 @@ pub struct RaceState {
     ghost_pose: (super::Pose, bool),
 }
 
+/// A room race guest's presented CPU: index, snapshot, stale, and the
+/// host's sound cues the pose reached.
+pub type PresentedCpu = (u8, atv_net::Snapshot, bool, Option<atv_net::CpuSoundCues>);
+
 /// A room race host's CPU for the room ([`Ride::room_cpu_frames`]).
 pub struct RoomCpuFrame {
     pub index: usize,
@@ -386,6 +390,8 @@ pub struct RoomCpuFrame {
     pub recipe: atv_core::rider_pose::Recipe,
     /// The detached rider's world matrix and velocity during a wreck.
     pub wreck: Option<([f32; 16], [f32; 3])>,
+    /// Its sound cues since the last CPU motion (the guests' CPU sounds).
+    pub sound: atv_net::CpuSoundCues,
 }
 
 /// One room-race rider's standing (research/MULTIPLAYER.md "Room races").
@@ -518,14 +524,19 @@ impl Player<'_> {
 /// Body yaw from an orientation quaternion, as the browser computes it.
 /// A room race guest's CPUs as the audio layer hears them: each heard
 /// puppet's host motion (quad and gender from the roster every peer draws
-/// alike) with no fixed steps, so only their engines play.
+/// alike) with its emitter steps from the host's sound cues.
 fn puppet_sounds(
-    puppets: impl Iterator<Item = Option<super::cpu::PuppetSound>>,
+    puppets: impl Iterator<
+        Item = (
+            Option<super::cpu::PuppetSound>,
+            Vec<super::cpu::CpuSoundStep>,
+        ),
+    >,
     roster: &[Entry],
 ) -> Vec<super::cpu::CpuSound> {
     puppets
         .enumerate()
-        .filter_map(|(index, sound)| {
+        .filter_map(|(index, (sound, steps))| {
             let sound = sound?;
             let entry = roster.get(index);
             Some(super::cpu::CpuSound {
@@ -537,7 +548,7 @@ fn puppet_sounds(
                 throttle: sound.throttle,
                 speed: sound.speed,
                 riding: sound.riding,
-                steps: Vec::new(),
+                steps,
             })
         })
         .collect()
@@ -946,13 +957,16 @@ impl Ride {
         }
         let roster = &state.roster;
         // A room race guest hears the host's CPUs from their relayed motion
-        // (engine only: the motion carries no audio events), none once
-        // retired (research/AUDIO.md "CPU riders").
+        // and sound cues, none once retired (research/AUDIO.md "CPU
+        // riders").
         if !state.puppets.is_empty() {
             if state.puppets_retired {
                 return Vec::new();
             }
-            return puppet_sounds(state.puppets.iter().map(|p| p.sound), roster);
+            return puppet_sounds(
+                state.puppets.iter_mut().map(|p| (p.sound, p.take_sound())),
+                roster,
+            );
         }
         state
             .cpus
@@ -1636,17 +1650,24 @@ impl Ride {
                 throttle: cpu.throttle(),
                 recipe: cpu.recipe(),
                 wreck: cpu.rider_wreck(),
+                sound: cpu.cues(),
             })
             .collect()
     }
 
+    /// A room race host sent its CPUs' motion: their sound cues start over.
+    pub fn sent_room_cpu_cues(&mut self) {
+        if let Some(state) = self.race.as_mut() {
+            for cpu in &mut state.cpus {
+                cpu.sent_cues();
+            }
+        }
+    }
+
     /// A room race guest's CPUs from the host's presented motion
-    /// (index, snapshot, stale), `dt` seconds after the last call.
-    pub fn present_room_cpus(
-        &mut self,
-        poses: &[(u8, atv_net::Snapshot, bool)],
-        dt: f32,
-    ) -> Result<()> {
+    /// (index, snapshot, stale, sound cues), `dt` seconds after the last call.
+    pub fn present_room_cpus(&mut self, poses: &[PresentedCpu], dt: f32) -> Result<()> {
+        let water = self.sim.water.as_ref();
         let Some(state) = self.race.as_mut().filter(|s| !s.puppets_retired) else {
             return Ok(());
         };
@@ -1654,12 +1675,18 @@ impl Ride {
             Some(cpu) => &cpu.mesh.nodes,
             None => &self.rider.mesh.nodes,
         };
-        for (index, snapshot, stale) in poses {
+        for (index, snapshot, stale, cues) in poses {
             let index = usize::from(*index);
             let Some(puppet) = state.puppets.get_mut(index) else {
                 continue;
             };
-            puppet.present(nodes, snapshot, dt, *stale)?;
+            // The host's quad caches the water height at its origin (the
+            // splash's 001d7280 input); the guest reads its own surface.
+            let water = match water {
+                Some(field) => Some(field.height(snapshot.atv.position, false)?),
+                None => None,
+            };
+            puppet.present(nodes, snapshot, dt, *stale, *cues, water)?;
             let origin = snapshot.atv.position;
             state
                 .race
@@ -1847,7 +1874,16 @@ mod tests {
             riding: true,
         };
         // The second CPU is stale (or not heard yet): it stays silent.
-        let sounds = puppet_sounds([Some(heard), None, Some(heard)].into_iter(), &roster);
+        let step = crate::ride::cpu::CpuSoundStep::default();
+        let sounds = puppet_sounds(
+            [
+                (Some(heard), vec![step.clone()]),
+                (None, Vec::new()),
+                (Some(heard), Vec::new()),
+            ]
+            .into_iter(),
+            &roster,
+        );
         assert_eq!(sounds.len(), 2);
         assert_eq!(
             (sounds[0].index, sounds[0].quad, sounds[0].female),
@@ -1858,7 +1894,7 @@ mod tests {
         assert_eq!(sounds[0].speed, 40.);
         assert!(sounds[0].riding);
         assert_eq!(sounds[0].origin, [1., 2., 3.]);
-        // Engine only: the host's motion carries no audio events.
-        assert!(sounds.iter().all(|s| s.steps.is_empty()));
+        // Each puppet's emitter steps (from the host's sound cues) follow.
+        assert_eq!((sounds[0].steps.len(), sounds[1].steps.len()), (1, 0));
     }
 }

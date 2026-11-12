@@ -7,7 +7,9 @@
 // (`autopilot=1`) rides both humans through one lap (`raceLaps=1`) and both
 // pages show the same Race Results with every CPU ranked among the riders.
 // The guest (`audioDiagnostics=1`) also hears the host's CPUs' engines from
-// their relayed motion (research/AUDIO.md "CPU riders"), and its race HUD's
+// their relayed motion and their terrain drive-on sounds from the host's
+// sound cues (research/AUDIO.md "CPU riders"; vocals, impacts, chassis and
+// splashes are logged, not required: a lap need not wreck), and its race HUD's
 // PLACE field counts them (five riders) with its place its standings row.
 //   PLAYWRIGHT_MODULE=... ATV_TEST_URL=http://127.0.0.1:4187 node tools/test_engine_multiplayer_race_cpus.mjs
 // ATV_GAMES_SHOTS=<dir> saves captures.
@@ -92,14 +94,17 @@ try {
   let heard;
   for (const deadline = Date.now() + 60000; ;) {
     heard = await engineAudio(guest);
-    if (heard.started && heard.cpu?.engines >= 1 && heard.cpu.levels.some(l => l[2][0] + l[2][1] > 0)) break;
+    if (heard.started && heard.cpu?.engines >= 1 && heard.cpu.levels.some(l => l[2][0] + l[2][1] > 0)
+      && heard.cpu.drive >= 1) break;
     if (Date.now() > deadline) throw new Error(`guest CPU engines: ${JSON.stringify(heard.cpu)} errors ${errors.slice(0, 5).join(' | ')}`);
     await guest.waitForTimeout(250);
   }
   assert.ok(heard.cpu.engines <= 3, `guest CPU engine voices: ${heard.cpu.engines}`);
   assert.ok(heard.cpu.engineStarts >= heard.cpu.engines, `guest CPU engine starts: ${heard.cpu.engineStarts}`);
   assert.ok(heard.cpu.voices >= heard.cpu.engines, `guest CPU-labelled mixer voices: ${heard.cpu.voices}`);
-  console.log(`guest CPU audio: ${heard.cpu.engines} engine voices, ${heard.cpu.engineStarts} starts, levels ${JSON.stringify(heard.cpu.levels)}`);
+  // Terrain drive-on from the host's cues: at most two side voices per CPU.
+  assert.ok(heard.cpu.driveVoices <= 6, `guest CPU drive-on voices: ${heard.cpu.driveVoices}`);
+  console.log(`guest CPU audio: ${heard.cpu.engines} engine voices, ${heard.cpu.engineStarts} starts, levels ${JSON.stringify(heard.cpu.levels)}; drive-on ${heard.cpu.drive} (${heard.cpu.driveVoices} voices)`);
   await host.bringToFront();
   h = await until(host, r => r.progress.filter(p => p.peer >= 4).length === 3 && r.progress.some(p => p.peer >= 4 && p.distance > 50), 120000, 'CPU progress');
   g = await until(guest, r => r.progress.filter(p => p.peer >= 4).length === 3, 60000, 'guest has CPU progress');
@@ -140,6 +145,8 @@ try {
   assert.deepEqual([...times].sort((a, b) => a - b), times, `ordered: ${h.summary}`);
   // The HUD's riders are the room's: both humans and the three CPUs.
   assert.deepEqual([...hud.standings.map(s => s.name)].sort(), g.results.map(r => r.name).sort(), 'HUD standings name the room riders and CPUs');
+  heard = await engineAudio(guest);
+  console.log(`guest CPU cues by the results: vocals ${heard.cpu?.vocals}, impacts ${heard.cpu?.impacts}, chassis ${heard.cpu?.chassis}, drive-on ${heard.cpu?.drive}, splashes ${heard.cpu?.splashes}`);
   await shot(guest, 'mp-race-cpus-guest-results');
   assertNoErrors(errors);
   console.log(`Multiplayer race with CPUs: five-rider grid, guest draws moving CPUs, agreed results (${h.summary}) verified`);
