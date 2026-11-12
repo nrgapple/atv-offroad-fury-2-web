@@ -3526,6 +3526,7 @@ impl App {
             });
             // Game Settings (tools/test_engine_game_settings.mjs).
             let game = &mut state["settings"];
+            game["worldShadows"] = graphics.world_shadows.into();
             game["soundConfiguration"] = mixer.as_ref().map(|m| m.2.clone()).into();
             // The streamed soundtrack's routing (web: a graph once not Stereo).
             game["musicRoute"] = riding.sound.as_ref().and_then(|s| s.music_route()).into();
@@ -9181,6 +9182,12 @@ pub fn graphics_preset(name: &str) -> Graphics {
         // Authored, above High and never picked by Auto.
         "remastered" => Graphics {
             remaster: true,
+            // The browser's WebGL2 and phones take the smaller map.
+            world_shadows: if cfg!(target_arch = "wasm32") {
+                2048
+            } else {
+                4096
+            },
             ..graphics_preset("high")
         },
         "high" => Graphics {
@@ -9196,6 +9203,7 @@ pub fn graphics_preset(name: &str) -> Graphics {
             dirt: true,
             finest_models: true,
             remaster: false,
+            world_shadows: 0,
         },
         "enhanced" => Graphics {
             interpolation: true,
@@ -9210,6 +9218,7 @@ pub fn graphics_preset(name: &str) -> Graphics {
             dirt: true,
             finest_models: false,
             remaster: false,
+            world_shadows: 0,
         },
         _ => Graphics::default(),
     }

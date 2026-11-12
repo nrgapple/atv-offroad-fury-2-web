@@ -30,6 +30,10 @@ pub struct Globals {
     pub shadow: [f32; 4],
     /// Remastered preset (1), seconds for the vegetation wind.
     pub remaster: [f32; 4],
+    /// Remastered world shadows: world to [0,1] shadow texture space.
+    pub far_matrix: [f32; 16],
+    /// Receive (1), the shadow texel in texture space and in feet.
+    pub far: [f32; 4],
 }
 
 pub struct World {
@@ -37,6 +41,10 @@ pub struct World {
     pub shadow_view: wgpu::TextureView,
     pub shadow_size: u32,
     pub shadow_sampler: wgpu::Sampler,
+    /// Remastered world shadow map (crate::world_shadows; 1x1 and never
+    /// sampled otherwise).
+    pub far_view: wgpu::TextureView,
+    pub far_size: u32,
     pub globals: Globals,
     pub buffer: wgpu::Buffer,
     pub globals_layout: wgpu::BindGroupLayout,
@@ -49,6 +57,14 @@ pub struct World {
 }
 
 pub const SHADOW_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth24Plus;
+
+/// The vehicle shadow map, the comparison sampler both maps share, and the
+/// world shadow map.
+pub type ShadowMaps<'a> = (
+    &'a wgpu::TextureView,
+    &'a wgpu::Sampler,
+    &'a wgpu::TextureView,
+);
 
 /// The uniform entry plus a depth texture and comparison sampler at
 /// `first` and `first + 1` (vehicle shadow receiving).
@@ -81,6 +97,58 @@ pub fn shadow_sampler(gpu: &Gpu) -> wgpu::Sampler {
         min_filter: wgpu::FilterMode::Linear,
         compare: Some(wgpu::CompareFunction::LessEqual),
         ..Default::default()
+    })
+}
+
+/// A square depth texture that is rendered to, then sampled with compare.
+fn shadow_map(gpu: &Gpu, label: &str, size: u32) -> wgpu::TextureView {
+    gpu.device
+        .create_texture(&wgpu::TextureDescriptor {
+            label: Some(label),
+            size: wgpu::Extent3d {
+                width: size,
+                height: size,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: SHADOW_FORMAT,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        })
+        .create_view(&Default::default())
+}
+
+/// The globals, the vehicle and world shadow maps and their sampler.
+fn globals_group(
+    gpu: &Gpu,
+    layout: &wgpu::BindGroupLayout,
+    buffer: &wgpu::Buffer,
+    maps: [&wgpu::TextureView; 2],
+    sampler: &wgpu::Sampler,
+) -> wgpu::BindGroup {
+    gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("world globals"),
+        layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: buffer.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: wgpu::BindingResource::TextureView(maps[0]),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: wgpu::BindingResource::Sampler(sampler),
+            },
+            wgpu::BindGroupEntry {
+                binding: 3,
+                resource: wgpu::BindingResource::TextureView(maps[1]),
+            },
+        ],
     })
 }
 
@@ -147,6 +215,8 @@ impl World {
             shadow_matrix: [0.; 16],
             shadow: [0.; 4],
             remaster: [0.; 4],
+            far_matrix: [0.; 16],
+            far: [0.; 4],
         };
         let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("world globals"),
@@ -155,45 +225,28 @@ impl World {
         });
         let globals_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("world globals"),
-            entries: &shadow_entries(entry(0, uniform(false)), 1),
+            entries: &{
+                let [uniform, map, sampler] = shadow_entries(entry(0, uniform(false)), 1);
+                // The world shadow map shares the comparison sampler.
+                [
+                    uniform,
+                    map,
+                    sampler,
+                    wgpu::BindGroupLayoutEntry { binding: 3, ..map },
+                ]
+            },
         });
         let shadow_size = shadow_size.max(1);
-        let shadow_view = device
-            .create_texture(&wgpu::TextureDescriptor {
-                label: Some("vehicle shadow map"),
-                size: wgpu::Extent3d {
-                    width: shadow_size,
-                    height: shadow_size,
-                    depth_or_array_layers: 1,
-                },
-                mip_level_count: 1,
-                sample_count: 1,
-                dimension: wgpu::TextureDimension::D2,
-                format: SHADOW_FORMAT,
-                usage: wgpu::TextureUsages::RENDER_ATTACHMENT
-                    | wgpu::TextureUsages::TEXTURE_BINDING,
-                view_formats: &[],
-            })
-            .create_view(&Default::default());
+        let shadow_view = shadow_map(gpu, "vehicle shadow map", shadow_size);
+        let far_view = shadow_map(gpu, "world shadow map", 1);
         let shadow_sampler = shadow_sampler(gpu);
-        let globals_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("world globals"),
-            layout: &globals_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::TextureView(&shadow_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: wgpu::BindingResource::Sampler(&shadow_sampler),
-                },
-            ],
-        });
+        let globals_group = globals_group(
+            gpu,
+            &globals_layout,
+            &buffer,
+            [&shadow_view, &far_view],
+            &shadow_sampler,
+        );
         let texture_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("world texture"),
             entries: &[
@@ -219,6 +272,8 @@ impl World {
             shadow_view,
             shadow_size,
             shadow_sampler,
+            far_view,
+            far_size: 1,
             globals,
             buffer,
             globals_layout,
@@ -270,43 +325,34 @@ impl World {
         if size == self.shadow_size {
             return;
         }
-        self.shadow_view = gpu
-            .device
-            .create_texture(&wgpu::TextureDescriptor {
-                label: Some("vehicle shadow map"),
-                size: wgpu::Extent3d {
-                    width: size,
-                    height: size,
-                    depth_or_array_layers: 1,
-                },
-                mip_level_count: 1,
-                sample_count: 1,
-                dimension: wgpu::TextureDimension::D2,
-                format: SHADOW_FORMAT,
-                usage: wgpu::TextureUsages::RENDER_ATTACHMENT
-                    | wgpu::TextureUsages::TEXTURE_BINDING,
-                view_formats: &[],
-            })
-            .create_view(&Default::default());
+        self.shadow_view = shadow_map(gpu, "vehicle shadow map", size);
         self.shadow_size = size;
-        self.globals_group = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("world globals"),
-            layout: &self.globals_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: self.buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::TextureView(&self.shadow_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: wgpu::BindingResource::Sampler(&self.shadow_sampler),
-                },
-            ],
-        });
+        self.rebind(gpu);
+    }
+
+    /// The Remastered world shadow map's size (0 for none).
+    pub fn set_far_size(&mut self, gpu: &Gpu, size: u32) {
+        let size = size.max(1);
+        if size == self.far_size {
+            return;
+        }
+        self.far_view = shadow_map(gpu, "world shadow map", size);
+        self.far_size = size;
+        self.rebind(gpu);
+    }
+
+    pub fn shadow_maps(&self) -> ShadowMaps<'_> {
+        (&self.shadow_view, &self.shadow_sampler, &self.far_view)
+    }
+
+    fn rebind(&mut self, gpu: &Gpu) {
+        self.globals_group = globals_group(
+            gpu,
+            &self.globals_layout,
+            &self.buffer,
+            [&self.shadow_view, &self.far_view],
+            &self.shadow_sampler,
+        );
     }
 
     /// Slot size for dynamic-offset uniform arrays.

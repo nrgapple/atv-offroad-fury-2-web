@@ -143,7 +143,7 @@ pub struct SceneryPass {
     switching: Vec<usize>,
 }
 
-const STRIDE: u64 = 36;
+pub(crate) const STRIDE: u64 = 36;
 const REFLECTION_STRIDE: u64 = 72;
 
 impl SceneryPass {
@@ -657,6 +657,62 @@ impl SceneryPass {
             stats.triangles += chunk.count / 3 * passes;
         }
         stats
+    }
+
+    /// Depth-only draws for the world shadow map (its pipeline and light
+    /// are already set): each model's finest solid chunks within `reach` of
+    /// `center` on the ground plane. Skips flashes, gates (they move),
+    /// hidden models, glows, and anything wider than `largest` (backdrops
+    /// and stadium shells would put the whole course in shade). Returns the
+    /// draws.
+    pub(crate) fn draw_casters(
+        &self,
+        pass: &mut wgpu::RenderPass<'_>,
+        center: [f32; 3],
+        reach: f32,
+        largest: f32,
+    ) -> u32 {
+        let mut bound_set = usize::MAX;
+        let mut bound_texture = usize::MAX;
+        let mut draws = 0;
+        for draw in &self.draws {
+            let chunk = &self.chunks[draw.chunk];
+            if draw.lod != 0
+                || !chunk.key.depth_write
+                || chunk.key.blend == Blend::Additive
+                || draw.flash.is_some()
+                || draw.gate.is_some()
+                || draw.enduro_gate.is_some()
+                || self.hidden.contains(&draw.model)
+            {
+                continue;
+            }
+            let (min, max) = (draw.min, draw.max);
+            if min[0] > center[0] + reach
+                || max[0] < center[0] - reach
+                || min[2] > center[2] + reach
+                || max[2] < center[2] - reach
+                || (max[0] - min[0]).max(max[2] - min[2]) > largest
+            {
+                continue;
+            }
+            let texture = chunk.textures[0];
+            if texture != bound_texture {
+                pass.set_bind_group(1, &self.groups[texture], &[]);
+                bound_texture = texture;
+            }
+            if bound_set != chunk.set {
+                let set = &self.sets[chunk.set];
+                pass.set_vertex_buffer(0, set.vertices.slice(..));
+                pass.set_index_buffer(set.indices.slice(..), wgpu::IndexFormat::Uint32);
+                bound_set = chunk.set;
+            }
+            let record = (u64::from(draw.record) * self.record_slot) as u32;
+            pass.set_bind_group(2, &self.record_group, &[record]);
+            pass.draw_indexed(chunk.first..chunk.first + chunk.count, 0, 0..1);
+            draws += 1;
+        }
+        draws
     }
 
     pub fn draw(&self, pass: &mut wgpu::RenderPass<'_>, world: &World) {
