@@ -38,6 +38,7 @@ mod tilt;
 mod training;
 mod usage;
 mod wake;
+mod waypoint_editor;
 use atv_core::math::Det;
 pub use multiplayer::RoomStart;
 use replay::RunScript;
@@ -914,6 +915,8 @@ struct App {
     game: Option<games::GameSession>,
     /// The User Created Enduro a UserEnduro race rides (user_course.rs).
     user_course: Option<Rc<atv_core::user_course::UserCourse>>,
+    /// The Waypoint Editor on the current ride (waypoint_editor.rs).
+    editor: Option<waypoint_editor::Session>,
     /// Hockey on Coonce Arena (`atv_core::hockey`).
     hockey: Option<hockey::HockeySession>,
     /// Tag in a multiplayer room (`atv_core::tag`).
@@ -1074,6 +1077,9 @@ struct World {
     cpus: game_cpu::Request,
     /// A User Created Enduro's course (with a UserEnduro race).
     user_course: Option<Rc<atv_core::user_course::UserCourse>>,
+    /// A Waypoint Editor ride (no race): the long Enduro scene with the
+    /// editor's gate models.
+    editor: bool,
 }
 
 /// Ride prefetch (`?prefetch=off` turns it off for load-time measurement).
@@ -1206,6 +1212,7 @@ async fn prepare_inner(
         split: split_layout,
         cpus: cpu_request,
         user_course,
+        editor,
     } = world;
     // The decode workers start while the course downloads (offload.rs).
     atv_game::offload::warm();
@@ -1213,7 +1220,8 @@ async fn prepare_inner(
     if ride && PREFETCH.load(std::sync::atomic::Ordering::Relaxed) {
         let (paths, bank) = atv_game::launch::ride_prefetch(
             &environment,
-            race.map(|r| r.course),
+            race.map(|r| r.course)
+                .or(editor.then_some(atv_game::launch::RaceVariant::UserEnduro)),
             selection.quad,
             selection.rider,
         );
@@ -1238,14 +1246,19 @@ async fn prepare_inner(
     let venue = venue::load_with(
         &content,
         &environment,
-        race.is_some(),
+        race.is_some() || editor,
         venue::LoadOptions {
             weather,
             sky_smooth: graphics.sky_smooth,
-            race: race.map(|r| r.course).unwrap_or_default(),
+            race: if editor {
+                atv_game::launch::RaceVariant::UserEnduro
+            } else {
+                race.map(|r| r.course).unwrap_or_default()
+            },
             game_scene,
             objective,
             user_course,
+            waypoint_editor: editor,
         },
     )
     .await?;
@@ -1792,6 +1805,18 @@ impl App {
             }
         }
         self.intro_pad_held = pad_pressed;
+        if let Some(editor) = &mut self.editor
+            && let Some(command) = editor.pad(pad.as_ref())
+            && active
+        {
+            let f = riding.ride.frame();
+            editor.apply(
+                command,
+                f.origin,
+                f.orientation,
+                (now - self.started).as_secs_f64(),
+            );
+        }
         let names: HashSet<String> = self.keys.iter().map(|k| format!("{k:?}")).collect();
         let keys = |code: &str| names.contains(code) && (!split_on || split::player_1_key(code));
         let all_keys = |code: &str| names.contains(code);
@@ -2612,7 +2637,26 @@ impl App {
             }
             (None, None) => {
                 riding.locked = false;
-                tag_view
+                match &mut self.editor {
+                    // The Waypoint Editor poses its gate models as gates
+                    // come and go.
+                    Some(editor) => {
+                        if let Some(first) = ready.venue.editor_gates {
+                            let (venue, scene, gpu) = (&ready.venue, &mut ready.scene, &ready.gpu);
+                            editor.sync(
+                                |x, z| ground(venue, x, z),
+                                |i, matrix| {
+                                    scene.hide_model(first + i, matrix.is_none());
+                                    if let Some(matrix) = matrix {
+                                        scene.pose_model(gpu, first + i, &matrix);
+                                    }
+                                },
+                            );
+                        }
+                        Some(editor.view((Instant::now() - self.started).as_secs_f64()))
+                    }
+                    None => tag_view,
+                }
             }
         };
         // A mini-game: its rules run on the ride's clock; the ATV is held
@@ -2869,7 +2913,8 @@ impl App {
                         .filter(|m| !m.is_empty())
                 })
                 .or_else(|| self.hockey.as_ref().map(|h| h.markers()))
-                .or(local_tag);
+                .or(local_tag)
+                .or_else(|| self.editor.as_ref().map(|e| e.markers()));
             // CPU riders' name tags beside the game's markers.
             let hud_peers = if ready.cpus.is_empty() {
                 hud_peers
@@ -3495,6 +3540,10 @@ impl App {
                 .filter(|r| r.settings().course == atv_game::launch::RaceVariant::UserEnduro)
                 .map(|_| ready.venue.enduro_gates.len())
                 .into();
+            // The Waypoint Editor's placed gates and shown gate models.
+            state["ride"]["editorGates"] =
+                self.editor.as_ref().map(|e| e.course.gates.len()).into();
+            state["ride"]["editorModels"] = ready.venue.editor_gates.is_some().into();
             // Post-reset fade (atv_core::reset_fade): player 1's drawn
             // opacity and reset timer, and split screen's other players'.
             state["ride"]["resetFade"] = riding.reset_fade(&ready.venue).into();
@@ -4093,6 +4142,7 @@ impl App {
                 self.toggle_fullscreen();
             }
             Event::CopyRide => self.copy_ride_link(),
+            Event::SaveCourse => self.save_editor_course(),
             Event::Photo => self.open_photo(),
             Event::Replay => self.open_replay(false),
             Event::Spawn(peer) => {
@@ -4659,6 +4709,17 @@ impl App {
                 }
             }
             overlay::Action::Camera => riding.cycle_requested = true,
+            overlay::Action::Gate(command) => {
+                if let Some(editor) = &mut self.editor {
+                    let f = riding.ride.frame();
+                    editor.apply(
+                        command,
+                        f.origin,
+                        f.orientation,
+                        (Instant::now() - self.started).as_secs_f64(),
+                    );
+                }
+            }
             // Handled above.
             overlay::Action::Viewer(_) | overlay::Action::Replay => {}
             overlay::Action::RaceRetry if self.tag.as_ref().is_some_and(|t| t.local) => {
@@ -5310,6 +5371,15 @@ impl App {
         let names: HashSet<String> = self.keys.iter().map(|k| format!("{k:?}")).collect();
         if let Some(riding) = self.ready.as_mut().and_then(|r| r.riding.as_mut()) {
             riding.key_pressed(&format!("{code:?}"), now, &|c: &str| names.contains(c));
+            // The Waypoint Editor's G and U (unless the player bound them).
+            let name = format!("{code:?}");
+            if let Some(editor) = &mut self.editor
+                && let Some(command) = waypoint_editor::key_command(&name)
+                && !riding.bindings.uses_key(&name)
+            {
+                let f = riding.ride.frame();
+                editor.apply(command, f.origin, f.orientation, now);
+            }
             // Any key skips the pre-race camera (00212d40).
             riding.ride.skip_intro();
             // Accept skips a Training demonstration or Chase line (00225200).
@@ -5503,6 +5573,7 @@ impl ApplicationHandler<Message> for App {
             split: split_link_param(),
             cpus: game_cpu::Request::default(),
             user_course: None,
+            editor: false,
         };
         // A direct split ride restarts (and reopens after a device loss)
         // split too.
@@ -5853,6 +5924,14 @@ impl ApplicationHandler<Message> for App {
                             .and_then(|r| r.ride.race())
                             .is_some_and(|r| r.kid);
                         overlay.set_kid_touch(overlay.kid);
+                        overlay.editor = self.editor.is_some()
+                            && ready
+                                .riding
+                                .as_ref()
+                                .is_some_and(|r| r.ride.race().is_none());
+                        if let Some(editor) = &mut self.editor {
+                            editor.restart();
+                        }
                         overlay.user_course = ready
                             .riding
                             .as_ref()
@@ -7351,6 +7430,7 @@ impl App {
         quad: u16,
         rider: u16,
     ) {
+        self.editor = None;
         let settings = atv_game::ride::race::Settings {
             laps: course.laps,
             cpu: 0,
@@ -7387,6 +7467,8 @@ impl App {
                 | Event::FreestyleHost { .. }
                 | Event::Objective { .. }
         ) {
+            // Any other ride ends the Waypoint Editor.
+            self.editor = None;
             let split = self.front.as_ref().and_then(|f| {
                 let f = f.borrow();
                 (f.state.split
@@ -7626,6 +7708,24 @@ impl App {
                 self.start_ride(environment, quad, rider, Some(settings), None);
             }
             Event::CopyRaceLink => self.copy_race_link(),
+            Event::WaypointEdit {
+                code,
+                slot,
+                quad,
+                rider,
+            } => {
+                if let Ok(course) = atv_core::user_course::UserCourse::decode_draft(&code) {
+                    let environment = course.environment.clone();
+                    self.editor = Some(waypoint_editor::Session::new(course, slot));
+                    self.start_ride(environment, quad, rider, None, None);
+                }
+            }
+            Event::UserCourse { code, quad, rider } => {
+                if let Ok(course) = atv_core::user_course::UserCourse::decode(&code) {
+                    self.start_user_course(Rc::new(course), quad, rider);
+                }
+            }
+            Event::CopyCourseLink { code } => self.copy_course_link(&code),
             Event::Cloud(command) => self.cloud_command(command),
             Event::FreeRide { quad, rider, name } => {
                 let Some(relay) = self.defaults.as_ref().map(|d| d.relay.clone()) else {
@@ -7971,6 +8071,72 @@ impl App {
         self.wake();
     }
 
+    /// Waypoint Editor → Copy course link: the course's link with the
+    /// garage choice, on the clipboard or the notice line.
+    fn copy_course_link(&mut self, code: &str) {
+        let Some(front) = self.front.clone() else {
+            return;
+        };
+        let Ok(course) = atv_core::user_course::UserCourse::decode(code) else {
+            return;
+        };
+        let mut f = front.borrow_mut();
+        let url = atv_game::launch::user_course_url(
+            &multiplayer::share_page(&default_relay()),
+            code,
+            &course.environment,
+            f.state.quad_id,
+            f.state.rider_id,
+        );
+        f.state.notice = Some(url.clone());
+        #[cfg(target_arch = "wasm32")]
+        if let Some(clipboard) = web_sys::window().map(|w| w.navigator().clipboard()) {
+            let promise = clipboard.write_text(&url);
+            let proxy = self.proxy.clone();
+            wasm_bindgen_futures::spawn_local(async move {
+                let copied = wasm_bindgen_futures::JsFuture::from(promise).await.is_ok();
+                let _ = proxy.send_event(Message::LobbyNotice(if copied {
+                    "Course link copied.".into()
+                } else {
+                    url
+                }));
+            });
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        if clipboard::copy(&url) {
+            f.state.notice = Some("Course link copied.".into());
+        }
+        drop(f);
+        self.wake();
+    }
+
+    /// Waypoint Editor Pause → Save Course: into the editor's slot, then
+    /// the course's page.
+    fn save_editor_course(&mut self) {
+        let Some(editor) = &self.editor else {
+            return;
+        };
+        if !editor.course.complete() {
+            if let Some(menu) = self.overlay.as_mut().and_then(|o| o.menu.as_mut()) {
+                menu.notice = Some(format!(
+                    "Drop at least {} gates first.",
+                    atv_core::user_course::MIN_GATES
+                ));
+            }
+            return;
+        }
+        let (course, slot) = (editor.course.clone(), editor.slot);
+        if let Some(front) = &self.front {
+            let mut settings = atv_ui::settings::Settings::load();
+            front
+                .borrow_mut()
+                .state
+                .saved_waypoint(&course, slot, &mut settings);
+        }
+        self.editor = None;
+        self.quit_to(Some("waypoint-course"));
+    }
+
     fn copy_lobby_invite(&mut self) {
         let Some(front) = self.front.clone() else {
             return;
@@ -8149,6 +8315,7 @@ impl App {
             user_course: race
                 .filter(|r| r.course == atv_game::launch::RaceVariant::UserEnduro)
                 .and(self.user_course.clone()),
+            editor: race.is_none() && self.editor.is_some(),
             // Only a local game takes CPU riders (never a room).
             cpus: if self.split_tag.is_some()
                 || self.hockey.is_some()
@@ -9937,6 +10104,7 @@ impl App {
             split: None,
             cpus: game_cpu::Request::default(),
             user_course: None,
+            editor: false,
         };
         let future = async move {
             let mut ready = match prepare(
@@ -10115,6 +10283,7 @@ pub fn run(options: Options) {
         training: None,
         game: None,
         user_course: None,
+        editor: None,
         hockey: None,
         tag: None,
         room_race: None,

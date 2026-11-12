@@ -13,6 +13,9 @@ pub const PAUSE_ICON: &str = "M5 3h4v14H5zM12 3h4v14h-4z";
 /// zeno's parser needs; browsers draw both forms identically.
 pub const CAMERA_ICON: &str =
     "M6 3h8l2 3h2v11H2V6h2zm4 4a4 4 0 1 0 0 8a4 4 0 0 0 0-8zm0 2a2 2 0 1 1 0 4a2 2 0 0 1 0-4z";
+/// A gate post pair and a plus (GATE), a counter-clockwise arrow (UNDO).
+pub const GATE_ICON: &str = "M3 3h3v14H3zM14 3h3v14h-3zM9 9h2V7h1v2h2v1h-2v2h-1v-2H9z";
+pub const UNDO_ICON: &str = "M8 4v3h5a5 5 0 0 1 0 10H7v-2h6a3 3 0 0 0 0-6H8v3L3 8z";
 pub const KEYS_ICON: &str = "M2 5h16v10H2zm2 2v2h2V7zm3 0v2h2V7zm3 0v2h2V7zm3 0v2h3V7zM4 10v2h2v-2zm3 0v2h6v-2zm7 0v2h2v-2z";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -20,13 +23,22 @@ pub enum Button {
     Pause = 1,
     Camera = 2,
     Keys = 3,
+    /// The Waypoint Editor's drop and take-back.
+    Gate = 4,
+    Undo = 5,
 }
 
 impl Button {
     pub fn from_id(id: u32) -> Option<Self> {
-        [Self::Pause, Self::Camera, Self::Keys]
-            .into_iter()
-            .find(|b| *b as u32 == id)
+        [
+            Self::Pause,
+            Self::Camera,
+            Self::Keys,
+            Self::Gate,
+            Self::Undo,
+        ]
+        .into_iter()
+        .find(|b| *b as u32 == id)
     }
 }
 
@@ -40,6 +52,8 @@ pub struct State {
     pub keys_visible: bool,
     /// Icon-only buttons (a top-right minimap meets the toolbar, or <=360px).
     pub compact: bool,
+    /// The Waypoint Editor ride: GATE and UNDO follow.
+    pub editor: bool,
 }
 
 /// `#toolbar .atv-control` label: italic 800 14px/1, .05em tracking.
@@ -81,6 +95,10 @@ pub fn element(view: &Viewport, state: &State) -> El {
     buttons.push((Button::Camera, CAMERA_ICON, "CAMERA", state.camera_enabled));
     if state.keys_visible {
         buttons.push((Button::Keys, KEYS_ICON, "KEYS", state.keys_enabled));
+    }
+    if state.editor {
+        buttons.push((Button::Gate, GATE_ICON, "GATE", !state.paused));
+        buttons.push((Button::Undo, UNDO_ICON, "UNDO", !state.paused));
     }
     let compact = state.compact || view.width <= 360.;
     let row = El::new(Style {

@@ -143,8 +143,10 @@ row shown (its canonical parent).
 - **Single Player** adds Freestyle Objectives after Freestyle (the original's
   Freestyle Prep Objectives event is an event type inside Track Select) and
   Games after Championships (the original's Games are split-screen only,
-  under Multiplayer → Split Screen; the port plays them alone). There is no
-  Waypoint Editor.
+  under Multiplayer → Split Screen; the port plays them alone). Waypoint Editor
+  follows Championships (PAGE02's order) and needs no profile: its courses
+  are kept on the device (research/RACING.md "User Created Enduro and the
+  Waypoint Editor").
 - **Multiplayer** has no i.LINK or LAN; Host Game and Join Game stand for the
   network games and Arlington Free Ride for Online, last as Online was. Its
   live rider count shows there, and leaving a Free Ride or room returns to
