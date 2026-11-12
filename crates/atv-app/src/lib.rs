@@ -2520,6 +2520,9 @@ impl App {
             (Some(session), _) => {
                 session.update(&mut riding.ride);
                 riding.locked = session.course.locked();
+                if let Some(sound) = &mut riding.sound {
+                    sound.training_line(session.line());
+                }
                 // The `arrow.slt` pointers bob and turn over the marked
                 // circles (`002ea500`); hidden when not placed.
                 if let Some(models) = ready.venue.training_arrows {
@@ -3373,6 +3376,12 @@ impl App {
                 .race()
                 .and_then(|r| r.frame.as_ref())
                 .and_then(|f| f.best);
+            // Added after the large literal below (macro recursion limit).
+            let training_speech = riding.sound.as_ref().map(|s| {
+                serde_json::json!({
+                    "lines": s.speech.lines(), "started": s.speech.started, "last": s.speech.last,
+                })
+            });
             state["ride"] = serde_json::json!({
                 "environment": ready.venue.environment,
                 "championship": riding.ride.race().and_then(|r| r.settings().championship),
@@ -3428,6 +3437,7 @@ impl App {
                     .and_then(|o| o.results.fame.as_ref())
                     .map(|f| serde_json::json!({"broken": f.broken, "name": f.name, "player": f.player})),
             });
+            state["ride"]["trainingSpeech"] = training_speech.into();
             state["ride"]["cpus"] = ready.cpus.iter().map(game_cpu::Cpu::state).collect();
             state["ride"]["practice"] = practice.into();
             state["ride"]["duel"] = duel.into();
@@ -5580,6 +5590,9 @@ impl ApplicationHandler<Message> for App {
                             ..Default::default()
                         });
                     }
+                    if let Some(session) = &mut self.training {
+                        session.set_voices(sound.speech.lengths());
+                    }
                     riding.sound = Some(*sound);
                     // A delayed bank can finish after blur/hide. Apply the
                     // live lifecycle before starting the already-unlocked sink.
@@ -5591,7 +5604,12 @@ impl ApplicationHandler<Message> for App {
                 // One frame publishes the new sound state even while asleep.
                 self.wake();
             }
-            Message::SoundFailed(error) => status(&format!("Sound unavailable: {error}")),
+            Message::SoundFailed(error) => {
+                if let Some(session) = &mut self.training {
+                    session.no_voices();
+                }
+                status(&format!("Sound unavailable: {error}"))
+            }
             Message::GameToy(toy) => {
                 if let Some(game) = &mut self.game {
                     game.load(toy);
@@ -7336,7 +7354,11 @@ impl App {
                     .map(|f| f.borrow().state.store.atvs.clone())
                     .unwrap_or_default();
                 let completed = training::completed(&catalog);
-                self.training = Some(training::TrainingSession::new(completed, catalog));
+                let mut session = training::TrainingSession::new(completed, catalog);
+                if self.defaults.as_ref().is_none_or(|d| d.sound.is_none()) {
+                    session.no_voices();
+                }
+                self.training = Some(session);
                 self.start_ride("training".into(), quad, rider, None, None);
             }
             Event::Objective {
