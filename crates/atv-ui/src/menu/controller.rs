@@ -338,7 +338,6 @@ impl PauseMenu {
             "race_active": self.race_active,
             "training_active": self.training_active,
             "game_active": self.game_active,
-            "editor_active": self.editor_active,
             "race_overlays_off": p.overlays_off,
             "race_position": p.race_position,
             "funny_crashes": p.crash_mode != "original",
@@ -402,6 +401,7 @@ impl PauseMenu {
         // Past json!'s recursion limit.
         request["new_profiles_unlocked"] = p.new_profiles_unlocked.into();
         request["show_fps"] = p.show_fps.into();
+        request["editor_active"] = self.editor_active.into();
         if self.page == "accessibility" {
             request["access_fov"] = p.access.fov.into();
             request["access_rows"] = p
