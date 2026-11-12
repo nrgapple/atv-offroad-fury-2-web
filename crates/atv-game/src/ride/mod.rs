@@ -259,6 +259,10 @@ pub struct Ride {
     /// Settings → Extras choices the simulation reads each step (game.js
     /// `input.flips`, `input.realistic_train`).
     pub options: RideOptions,
+    assist: atv_core::rider_assist::State,
+    /// An assist acted this event: like Kid Mode it keeps no records
+    /// (research/KID_MODE.md); a race restart clears it.
+    pub(crate) assisted: bool,
     selection: Selection,
     appearance: gear::Appearance,
     pub quad: Model,
@@ -362,6 +366,10 @@ pub struct RideOptions {
     /// Game Settings → Ecosystem Collision: Off (quads, riders and CPUs
     /// pass through vegetation). Multiplayer rooms keep it on.
     pub ecosystem_collision_off: bool,
+    /// Options → Accessibility → Steering and Stability assists, 0 off,
+    /// 1 Low, 2 High (`atv_core::rider_assist`; quads only).
+    pub steering_assist: u8,
+    pub stability_assist: u8,
 }
 
 /// World pose of the player's quad and rider for drawing.
@@ -463,6 +471,8 @@ impl Ride {
             chain_ids: Vec::new(),
             chains: Vec::new(),
             options: RideOptions::default(),
+            assist: Default::default(),
+            assisted: false,
             selection,
             appearance: gear::Appearance::default(),
             train_server_ms: None,
@@ -1051,11 +1061,20 @@ impl Ride {
 
     /// Settled jumps (feet) and finished chains (success, events, points
     /// sum) since the last call, outside races.
+    /// An assist acted this event, so it keeps no records.
+    pub fn assisted(&self) -> bool {
+        self.assisted
+    }
+
     pub fn take_free_records(&mut self) -> (Vec<f32>, Vec<(bool, usize, f32)>) {
-        (
+        let taken = (
             std::mem::take(&mut self.free_jumps),
             std::mem::take(&mut self.free_chains),
-        )
+        );
+        if self.assisted {
+            return Default::default();
+        }
+        taken
     }
 
     /// The step's sound inputs (simulation_frame's audio fields).
@@ -1135,6 +1154,19 @@ impl Ride {
     /// input generation, so a pending preload gesture is not cancelled.
     fn step_vehicle(&mut self, controls: &Controls, race_input: bool) -> Result<()> {
         let dt = STEP;
+        let assist = if race_input {
+            (0, 0)
+        } else {
+            (self.options.steering_assist, self.options.stability_assist)
+        };
+        if assist != (0, 0) {
+            self.assisted = true;
+        }
+        if self.assisted
+            && let Some(race) = &mut self.race
+        {
+            race.race.drop_records();
+        }
         let input = VehicleInput {
             throttle: controls.throttle,
             brake: controls.brake,
@@ -1149,7 +1181,7 @@ impl Ride {
             return Err("not an ATV".into());
         };
         let current = vehicle.frame();
-        let input = self.browser_drive.resolve(
+        let mut input = self.browser_drive.resolve(
             input,
             controls.keyboard_drive,
             controls.touch_drive,
@@ -1168,6 +1200,7 @@ impl Ride {
         // the drive axes and crash settings, so atv-web op 24 reads flips,
         // Arcade flips and realistic train as off for those steps.
         let options = |on: bool| on && !race_input;
+        input.steer = atv_core::rider_assist::ease_steer(input.steer, current.speed, assist.0);
         vehicle.set_realistic_train(options(self.options.realistic_train));
         let arcade = options(self.options.arcade_flips);
         // Alpha Arcade flips imply flips regardless of the Extras row (atv-web
@@ -1207,6 +1240,13 @@ impl Ride {
         let frame = vehicle.step_with_scene(&sim.terrain, input, dt, sim.water.as_ref(), || {
             wreck.boundary_random_words()
         })?;
+        vehicle.assist(
+            &mut self.assist,
+            &frame,
+            assist,
+            controls.stunt_modifiers != 0,
+            dt,
+        );
         let nodes = &self.rider.mesh.nodes;
         // Deep water can invoke 001e35d0 before physics independently of
         // advance_wreck. Reset attached presentation/camera state too.

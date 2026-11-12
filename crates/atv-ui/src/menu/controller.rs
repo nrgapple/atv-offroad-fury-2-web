@@ -389,7 +389,8 @@ impl PauseMenu {
             request["access_fov"] = p.access.fov.into();
             request["access_rows"] = p
                 .access
-                .rows()
+                // Tilt steering: phones in the browser (DeviceOrientation).
+                .rows(cfg!(target_arch = "wasm32") && ctx.view.touch_first)
                 .into_iter()
                 .map(|(id, label, value)| json!({"id": id, "label": label, "value": value}))
                 .collect();

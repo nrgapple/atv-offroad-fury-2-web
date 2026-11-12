@@ -738,6 +738,7 @@ impl Ride {
             stage: state.stage,
         };
         self.begin_race(setup, state.settings, false)?;
+        self.assisted = false;
         if let (Some(records), Some(race)) = (state.records_start, &mut self.race) {
             race.set_records(records);
         }

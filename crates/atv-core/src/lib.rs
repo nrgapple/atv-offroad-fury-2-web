@@ -46,6 +46,7 @@ pub mod quad_pose;
 pub mod quad_sounds;
 pub mod ragdoll;
 pub mod resource;
+pub mod rider_assist;
 pub mod rider_control;
 pub mod rider_ik;
 pub mod rider_pose;
