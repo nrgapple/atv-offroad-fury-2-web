@@ -372,6 +372,20 @@ impl Cpu {
         }
     }
 
+    /// Diagnostics for tools/test_engine_game_cpus.mjs.
+    pub fn state(&self) -> serde_json::Value {
+        let f = self.riding.ride.frame();
+        serde_json::json!({
+            "player": self.player,
+            "origin": f.origin,
+            "speed": f.speed_magnitude,
+            "target": self.target,
+            "escapes": self.driver.escapes,
+            "resets": self.driver.resets,
+            "locked": self.riding.locked,
+        })
+    }
+
     /// The HUD's name tag and map marker.
     pub fn tag(&self, index: usize) -> atv_ui::hud::peers::Peer {
         atv_ui::hud::peers::Peer {

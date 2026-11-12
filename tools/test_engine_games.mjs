@@ -137,7 +137,7 @@ try {
   // A new profile: both games are locked (0021add0).
   await toGames(page, 'gameTest=visit');
   let front = (await state(page)).front;
-  assert.deepEqual(front.choices, ['gametype', 'gamecourse', 'gametime', 'gameriders', 'gamestart', 'back']);
+  assert.deepEqual(front.choices, ['gametype', 'gamecourse', 'gametime', 'gameriders', 'gamecpus', 'gamestart', 'back']);
   assert.equal(front.labels[0], 'Game: Treasure Hunt (Locked)');
   assert.equal(front.labels[1], 'Course: Prospect Springs');
   assert.equal(front.labels[2], 'Time Limit: 5:00');

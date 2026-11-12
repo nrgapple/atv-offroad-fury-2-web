@@ -3373,6 +3373,7 @@ impl App {
                 "roomFreestyle": self.room_freestyle.as_ref().map(room_freestyle::RoomFreestyle::state),
                 "hockey": self.hockey.as_ref().map(|h| h.state(riding.ride.frame().origin)),
                 "tag": self.tag.as_ref().map(|t| t.state()),
+                "cpus": ready.cpus.iter().map(game_cpu::Cpu::state).collect::<Vec<_>>(),
                 "tagBall": ready.venue.tag_ball,
                 "engineEffect": riding.ride.engine_effect(),
                 "start": ready.venue.scene.start_position,
