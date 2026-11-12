@@ -1,0 +1,18 @@
+{
+  "id": "remastered-preset-the-world-casts-shadows-00fa2efcd16c4f678eb4e54375b4f2f5",
+  "timestamp": "2026-11-12T05:50:54.522572+00:00",
+  "recorded_at": "2026-11-12T05:51:14.495139+00:00",
+  "kind": "build",
+  "title": "Remastered preset: the world casts shadows",
+  "summary": "With Graphics set to Remastered, hills, buildings and trees now cast sun shadows onto the ground and onto scenery. The original game draws no shadows at all, so this is new, and the other presets are unchanged.",
+  "details": [
+    "One sun shadow map covers 360 ft either side of the rider. The terrain, static scene models and every plant within reach cast into it; the terrain and scenery receive it.",
+    "A shadow keeps the sky's light, so it never goes black. Models whose light is painted on darken only on their sun-facing sides.",
+    "Nothing that casts moves, so the map is drawn again only when the rider has travelled about 108 ft from its centre, a new patch of fine terrain arrives or a model is hidden.",
+    "Backdrops and stadium shells are left out, so an arena floor is not put in shade."
+  ],
+  "limitation": "Vehicles and riders do not receive these shadows yet, plants cast without their wind sway, and split screen goes without. The cost of redrawing the map has not been measured on a phone, which is one reason Remastered stays opt-in.",
+  "verification": "Host only, one Mac (Metal natively, WebGL2 in Chromium): Original, Enhanced and High captures at 960×540 on env01 and env05 are byte-identical to a build from before the Remastered work. tools/test_engine_remastered.mjs passes and checks the 2048 map in the browser. Captures of four venues were inspected.",
+  "image": "/devlog-images/remastered-preset-the-world-casts-shadows-00fa2efcd16c4f678eb4e54375b4f2f5.png",
+  "caption": "High (left) and Remastered (right): the hill on the right now shades the ground beside it."
+}

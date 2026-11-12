@@ -1,9 +1,15 @@
 //! The Training Course session on the Training venue (research/TRAINING.md):
 //! samples the ride for `atv_core::training::Course`, places the ATV at
 //! each lesson's start, holds it while a line plays and grants the reward
-//! to the loaded profile.
+//! to the loaded profile. The spoken lines play through `Sound`
+//! (`training_line`); the introduction waits for them to load.
 use atv_core::training::{Command, Course, Input, Phase};
 use atv_game::ride::Ride;
+
+/// How long the introduction waits for the ride's sound to bring the
+/// spoken lines (an authored allowance for the download; the original
+/// loads them with the event).
+const VOICE_WAIT: f32 = 8.;
 
 pub struct TrainingSession {
     pub course: Course,
@@ -29,6 +35,10 @@ pub struct TrainingSession {
     last_line: Option<u16>,
     /// The lines shown, newest last (at most 32).
     lines: Vec<u16>,
+    /// The spoken lengths the sound reported, and the introduction's wait
+    /// left until it does (0 once known or without sound).
+    voices: Vec<(u16, f32)>,
+    voice_wait: f32,
 }
 
 /// Whether the loaded profile owns store ATV 8, the blue Ravage Talon
@@ -80,14 +90,41 @@ impl TrainingSession {
             resets: 0,
             rewarded: false,
             finished: false,
+            voices: Vec::new(),
+            voice_wait: VOICE_WAIT,
         }
+    }
+
+    /// The ride's sound loaded: each line lasts as long as it is spoken.
+    pub fn set_voices(&mut self, lengths: Vec<(u16, f32)>) {
+        for &(id, seconds) in &lengths {
+            self.course.set_spoken(id, seconds);
+        }
+        self.voices = lengths;
+        self.voice_wait = 0.;
+    }
+
+    /// No sound for this ride: the captions keep their own timing.
+    pub fn no_voices(&mut self) {
+        self.voice_wait = 0.;
+    }
+
+    /// The current line for the speech player: (serial, line number).
+    pub fn line(&self) -> Option<(u32, u16)> {
+        let c = &self.course;
+        c.caption.map(|(line, _)| (c.serial, line.id))
     }
 
     /// Restart Training (`00226d60`): the introduction and lesson 1 again.
     pub fn restart(&mut self, ride: &mut Ride) {
         let completed = self.course.completed_before || self.rewarded;
         let catalog = std::mem::take(&mut self.catalog);
+        let (voices, wait) = (std::mem::take(&mut self.voices), self.voice_wait);
         *self = Self::new(completed, catalog);
+        self.voice_wait = wait;
+        if !voices.is_empty() {
+            self.set_voices(voices);
+        }
         self.update(ride);
     }
 
@@ -116,6 +153,11 @@ impl TrainingSession {
         let dt = steps.saturating_sub(self.steps) as f32 * atv_game::ride::STEP;
         self.steps = steps;
         if dt <= 0. {
+            return false;
+        }
+        // The ATV stays held at the introduction meanwhile.
+        if self.voice_wait > 0. && !self.fast {
+            self.voice_wait -= dt;
             return false;
         }
         let landed = ride.take_chains().iter().any(|(success, _)| *success);
@@ -228,6 +270,9 @@ impl TrainingSession {
         serde_json::json!({
             "origin": origin,
             "lastLine": self.last_line,
+            "serial": c.serial,
+            "voices": self.voices.len(),
+            "voiceWait": self.voice_wait,
             "lines": self.lines,
             "drive": self.last.drive,
             "grounded": self.last.grounded,

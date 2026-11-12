@@ -13,6 +13,10 @@ struct Globals {
   sun: vec4<f32>,
   sun_color: vec4<f32>,
   ambient: vec4<f32>,
+  // Remastered world shadows: world to shadow texture; receive, the texel in
+  // texture space and in feet
+  far_matrix: mat4x4<f32>,
+  far: vec4<f32>,
 };
 @group(0) @binding(0) var<uniform> g: Globals;
 @group(0) @binding(1) var terrain_colors: texture_2d_array<f32>;
@@ -22,6 +26,7 @@ struct Globals {
 @group(0) @binding(5) var repeat_sampler: sampler;
 @group(0) @binding(6) var vehicle_shadow_map: texture_depth_2d;
 @group(0) @binding(7) var vehicle_shadow_sampler: sampler_comparison;
+@group(0) @binding(8) var world_shadow_map: texture_depth_2d;
 
 struct Varyings {
   @builtin(position) clip: vec4<f32>,
@@ -66,7 +71,7 @@ fn fs(in: Varyings) -> @location(0) vec4<f32> {
   let detail = textureSample(terrain_detail, repeat_sampler, in.world_xz / spacing * g.detail_scale.xy);
   // Near terrain VU RGB=127, A=64; GS MODULATE divides by 128.
   base = mix(base, detail.rgb, detail.a * (255.0 / 256.0)) * (127.0 / 128.0);
-  if (g.sun.w > 0.0) { base = base * relief(in.normal); }
+  if (g.sun.w > 0.0) { base = base * relief(in.normal) * sun_shade(in.normal, world_shadow(in.world, in.normal)); }
   base = base * vehicle_shadow(in.world);
   let coverage = select(1.0, clamp(in.fog.x / in.fog.y, 0.0, 1.0), in.fog.y != 0.0);
   return vec4<f32>(mix(g.fog_color.rgb, base, coverage), 1.0);
@@ -102,4 +107,33 @@ fn relief(normal: vec3<f32>) -> vec3<f32> {
   let level = sky + sun * max(l.y, 0.25);
   let lit = mix(ground, sky, n.y * 0.5 + 0.5) + sun * max(dot(n, l), 0.0);
   return clamp(mix(vec3<f32>(1.0), lit / level, g.sun.w), vec3<f32>(0.55), vec3<f32>(1.5));
+}
+
+// Remastered world shadow map (crate::world_shadows): the lit share of the
+// sun at `p`, 1 outside the map and fading in over its last few percent.
+// Nine bilinear compare taps; the lookup steps off the surface along its
+// normal so slopes do not shade themselves.
+fn world_shadow(p: vec3<f32>, normal: vec3<f32>) -> f32 {
+  if (g.far.x < 0.5) { return 1.0; }
+  let c = g.far_matrix * vec4<f32>(p + normalize(normal) * (g.far.z * 2.0), 1.0);
+  let s = c.xyz / c.w;
+  let edge = min(min(s.x, s.y), min(1.0 - s.x, 1.0 - s.y));
+  if (edge <= 0.0 || s.z >= 1.0) { return 1.0; }
+  var lit = 0.0;
+  for (var y = -1; y <= 1; y++) {
+    for (var x = -1; x <= 1; x++) {
+      lit += textureSampleCompareLevel(world_shadow_map, vehicle_shadow_sampler,
+        s.xy + vec2<f32>(f32(x), f32(y)) * g.far.y, s.z - 0.0004);
+    }
+  }
+  return mix(1.0, lit / 9.0, smoothstep(0.0, 0.06, edge));
+}
+
+// What is left of the ground's light where `lit` of the sun reaches it: the
+// sky keeps lighting a shadow, so it never goes black.
+fn sun_shade(normal: vec3<f32>, lit: f32) -> vec3<f32> {
+  let n = normalize(normal);
+  let direct = g.sun_color.rgb * vec3<f32>(1.08, 1.0, 0.9) * max(dot(n, normalize(g.sun.xyz)), 0.0);
+  let sky = mix(g.ambient.rgb * vec3<f32>(0.62, 0.56, 0.5), g.ambient.rgb * vec3<f32>(0.9, 0.97, 1.1), n.y * 0.5 + 0.5);
+  return (sky + direct * lit) / (sky + direct);
 }
