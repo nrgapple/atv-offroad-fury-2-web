@@ -15,6 +15,10 @@ enum Purpose {
     Submit,
 }
 
+/// A request's id and answer.
+#[cfg(not(target_arch = "wasm32"))]
+type Answer = (u64, Response);
+
 #[derive(Default)]
 pub struct World {
     next_id: u64,
@@ -22,8 +26,8 @@ pub struct World {
     /// Desktop and Android: answers from the request threads.
     #[cfg(not(target_arch = "wasm32"))]
     answers: Option<(
-        std::sync::mpsc::Sender<(u64, Response)>,
-        std::sync::mpsc::Receiver<(u64, Response)>,
+        std::sync::mpsc::Sender<Answer>,
+        std::sync::mpsc::Receiver<Answer>,
     )>,
 }
 
@@ -75,7 +79,7 @@ impl Run {
             && pick.course == course
             && pick.class.admits(watch.vehicle))
         .then_some(pick.date);
-        (lap_ms.is_some() || race_ms.is_some()).then(|| Self {
+        (lap_ms.is_some() || race_ms.is_some()).then_some(Self {
             course,
             expert,
             vehicle: watch.vehicle,

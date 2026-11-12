@@ -360,10 +360,9 @@ mod tests {
     #[test]
     fn the_trace_keeps_one_point_a_second_laps_and_resets() {
         let mut trace = Trace::default();
-        let step = 1. / 60.;
-        let mut t = 0.;
         let mut laps = 0;
         for i in 0..(60 * 125) {
+            let t = i as f32 / 60.;
             if i == 60 * 61 {
                 laps = 1;
             }
@@ -371,7 +370,6 @@ mod tests {
                 trace.reset();
             }
             trace.step(t, [t * 50., 3., -t], laps);
-            t += step;
         }
         assert!((125..=126).contains(&trace.points.len()));
         assert_eq!(trace.points[2], [100, -2]);

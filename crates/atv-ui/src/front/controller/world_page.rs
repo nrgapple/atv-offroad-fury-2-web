@@ -300,16 +300,20 @@ mod tests {
     use atv_core::world_board::BoardEntry;
 
     fn front() -> (Frontend, Viewport, Settings) {
-        let view = Viewport::default();
-        let mut front = Frontend::default();
-        front.set_race_courses(
-            atv_core::world_board::DAILY_POOL
-                .iter()
-                .map(|c| c.to_string())
-                .collect(),
-            &view,
-        );
-        (front, view, Settings::default())
+        let view = Viewport {
+            width: 1280.,
+            height: 720.,
+            scale: 1.,
+            ..Default::default()
+        };
+        let settings = Settings::memory();
+        let mut front = Frontend::new(Vec::new(), &settings, true);
+        front.race_courses = atv_core::world_board::DAILY_POOL
+            .iter()
+            .map(|c| c.to_string())
+            .collect();
+        front.show("main", &view);
+        (front, view, settings)
     }
 
     #[test]
