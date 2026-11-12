@@ -77,6 +77,7 @@ export const TESTS = {
   'test_engine_menu_parity.mjs': { group: 'content' },
   'test_engine_menu_flows.mjs': { group: 'content' },
   'test_engine_menu_navigation.mjs': { group: 'content' },
+  'test_engine_credits.mjs': { group: 'content' },
   'test_engine_menu_divider.mjs': { group: 'content' },
   'test_engine_menu_scroll.mjs': { group: 'content' },
   'test_engine_status_bar.mjs': { group: 'content' },
