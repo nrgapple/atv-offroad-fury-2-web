@@ -330,6 +330,13 @@ impl Links {
         std::mem::take(&mut self.commands)
     }
 
+    /// Whether the link to this rider is open.
+    pub fn is_open(&self, peer: u8) -> bool {
+        self.riders
+            .get(&peer)
+            .is_some_and(|r| matches!(r.state, State::Open { .. }))
+    }
+
     /// One bit per rider with an open link.
     pub fn mask(&self) -> u32 {
         self.riders

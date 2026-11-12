@@ -130,6 +130,9 @@ struct Connection {
     /// What the client's links did, as it last reported.
     #[serde(default)]
     report: Option<atv_net::LinkReport>,
+    /// The client can be the room's courier ([`signal::CARRIES`]).
+    #[serde(default)]
+    carries: bool,
     last_seen_ms: f64,
     window_ms: f64,
     messages: u16,
@@ -176,6 +179,44 @@ struct Recipient {
     direct: bool,
     /// Riding the room's course.
     riding: bool,
+    /// Can be the room's courier.
+    carries: bool,
+    /// The rider's vehicle and character models.
+    models: (u16, u16),
+}
+
+/// The room's courier (research/MULTIPLAYER.md "Courier"): of the riders on
+/// the course that can carry, the one linked with the most others (the
+/// current courier keeps the job unless another has two more links), and
+/// whether it is needed: some rider it covers (itself or one linked with it)
+/// has a rider on the course without a link to it. Riders are (peer, links,
+/// carries); all are on the course.
+fn choose_courier(riders: &[(u8, u32, bool)], current: Option<u8>) -> Option<(u8, bool)> {
+    let score = |c: &(u8, u32, bool)| {
+        riders
+            .iter()
+            .filter(|r| r.0 != c.0 && linked(c.0, c.1, r.0, r.1))
+            .count()
+    };
+    let best = riders
+        .iter()
+        .filter(|r| r.2)
+        .map(|r| (score(r), std::cmp::Reverse(r.0), *r))
+        .max()?;
+    let chosen = match riders.iter().find(|r| Some(r.0) == current && r.2) {
+        Some(kept) if score(kept) + 2 > best.0 => *kept,
+        _ => best.2,
+    };
+    if score(&chosen) == 0 {
+        return None;
+    }
+    let covered = |x: &(u8, u32, bool)| x.0 == chosen.0 || linked(x.0, x.1, chosen.0, chosen.1);
+    let needed = riders.iter().filter(|x| covered(x)).any(|x| {
+        riders
+            .iter()
+            .any(|y| y.0 != x.0 && !linked(x.0, x.1, y.0, y.1))
+    });
+    Some((chosen.0, needed))
 }
 
 /// Why the relay carried a pose ([`POSE_KINDS`] index): the sender rode
@@ -252,6 +293,9 @@ struct Budget {
     /// Relayed poses by [`POSE_KINDS`], not yet reported.
     #[serde(default)]
     poses: [u64; 7],
+    /// Courier bundles, not yet reported.
+    #[serde(default)]
+    bundles: u64,
 }
 
 impl Budget {
@@ -401,6 +445,8 @@ struct RoomDay {
     #[serde(default)]
     poses: [u64; 7],
     #[serde(default)]
+    bundles: u64,
+    #[serde(default)]
     now: std::collections::BTreeMap<String, u64>,
     #[serde(default)]
     at_ms: f64,
@@ -414,6 +460,7 @@ fn add_report(days: &mut std::collections::BTreeMap<String, RoomDay>, room: &str
     let mut total = report;
     if let Some(previous) = previous {
         total.messages += previous.messages;
+        total.bundles += previous.bundles;
         for (sum, earlier) in total.poses.iter_mut().zip(previous.poses) {
             *sum += earlier;
         }
@@ -597,6 +644,8 @@ pub struct LobbyRoom {
     /// Each entry carries the rider's slot and reported direct links.
     recipients: RefCell<Option<Vec<Recipient>>>,
     budget: Rc<RefCell<Budget>>,
+    /// The courier last announced, and whether it carries.
+    courier: RefCell<Option<(u8, bool)>>,
 }
 
 impl LobbyRoom {
@@ -756,6 +805,48 @@ impl LobbyRoom {
         *self.recipients.borrow_mut() = None;
     }
 
+    /// Chooses the courier again after riders, links or courses changed and
+    /// tells the riders that follow couriers when it did. True on a change.
+    fn update_courier(&self) -> Result<bool> {
+        let recipients = self.recipients()?;
+        let riding: Vec<(u8, u32, bool)> = recipients
+            .iter()
+            .filter(|r| r.riding)
+            .map(|r| (r.peer, r.links, r.carries && r.direct))
+            .collect();
+        let old = *self.courier.borrow();
+        let new = choose_courier(&riding, old.map(|c| c.0));
+        if new == old {
+            return Ok(false);
+        }
+        *self.courier.borrow_mut() = new;
+        let notice = |peer, carrying: bool| {
+            atv_net::encode(&Packet::Signal(Signal {
+                peer,
+                kind: signal::COURIER,
+                data: vec![u8::from(carrying)],
+            }))
+            .map_err(|e| Error::RustError(e.to_string()))
+        };
+        let mut notices = Vec::new();
+        if let Some((peer, true)) = old
+            && new.is_none_or(|n| n.0 != peer)
+        {
+            notices.push(notice(peer, false)?);
+        }
+        if let Some((peer, carrying)) = new
+            && (carrying || old.is_some_and(|o| o == (peer, true)))
+        {
+            notices.push(notice(peer, carrying)?);
+        }
+        for to in recipients.iter().filter(|r| r.carries) {
+            for bytes in &notices {
+                let _ = to.ws.send_with_bytes(bytes);
+            }
+        }
+        Ok(true)
+    }
+
     fn recipients(&self) -> Result<Vec<Recipient>> {
         let cached = self.recipients.borrow().clone();
         Ok(match cached {
@@ -773,6 +864,11 @@ impl LobbyRoom {
                         signals: c.signals,
                         direct: c.direct,
                         riding: Some(c.ready_map) == map,
+                        carries: c.carries,
+                        models: c
+                            .player
+                            .as_ref()
+                            .map_or((0, 0), |p| (p.atv_model, p.rider_model)),
                     })
                     .collect::<Vec<_>>();
                 *self.recipients.borrow_mut() = Some(recipients.clone());
@@ -923,6 +1019,7 @@ impl LobbyRoom {
                 serde_json::json!({
                     "room": String::from_utf8_lossy(&room.code), "riders": riders,
                     "day": budget.day, "messages": budget.unreported, "poses": budget.poses,
+                    "bundles": budget.bundles,
                     "now": self.rider_counts(),
                 })
                 .to_string()
@@ -948,6 +1045,7 @@ impl LobbyRoom {
                 for (left, sent) in current.poses.iter_mut().zip(budget.poses) {
                     *left -= sent.min(*left);
                 }
+                current.bundles -= budget.bundles.min(current.bundles);
             }
         }
     }
@@ -976,6 +1074,10 @@ impl LobbyRoom {
                 add(name, u64::from(value));
             }
         }
+        add(
+            "courier",
+            u64::from(self.courier.borrow().is_some_and(|c| c.1)),
+        );
         let map = self.room.borrow().as_ref().map(|r| r.map);
         for (i, a) in riders.iter().enumerate() {
             for b in &riders[i + 1..] {
@@ -1050,6 +1152,7 @@ impl LobbyRoom {
         if self.connections()?.iter().all(|(other, _)| other == ws) {
             room.empty_since_ms.get_or_insert(now());
         }
+        self.update_courier()?;
         room.epoch = room.epoch.wrapping_add(1);
         self.save(room).await?;
         self.broadcast_lobby(Some(ws))
@@ -1076,6 +1179,7 @@ impl DurableObject for LobbyRoom {
             room,
             recipients: RefCell::new(None),
             budget,
+            courier: RefCell::new(None),
         }
     }
 
@@ -1141,6 +1245,7 @@ impl DurableObject for LobbyRoom {
                         day,
                         messages: bounded(&value["messages"]),
                         poses,
+                        bundles: bounded(&value["bundles"]),
                         now: now_counts,
                         at_ms: instant,
                     },
@@ -1184,6 +1289,7 @@ impl DurableObject for LobbyRoom {
                 "today": {
                     "messages": days.values().filter(|d| d.day == today).map(|d| d.messages).sum::<u64>(),
                     "poses": poses,
+                    "bundles": days.values().filter(|d| d.day == today).map(|d| d.bundles).sum::<u64>(),
                     "now": riding,
                 },
             }));
@@ -1328,6 +1434,7 @@ impl DurableObject for LobbyRoom {
             direct: false,
             links: 0,
             report: None,
+            carries: false,
             last_seen_ms: instant,
             window_ms: instant,
             messages: 0,
@@ -1466,6 +1573,8 @@ impl DurableObject for LobbyRoom {
                             signals: connection.signals,
                             direct: connection.direct,
                             riding: true,
+                            carries: connection.carries,
+                            models: (0, 0),
                         };
                         self.budget.borrow_mut().poses[pose_kind(&from, recipients.iter())] += 1;
                         self.broadcast_unlinked(
@@ -1474,6 +1583,62 @@ impl DurableObject for LobbyRoom {
                             connection.peer,
                             connection.links,
                         )?;
+                    }
+                }
+            }
+            // The courier's bundle (research/MULTIPLAYER.md "Courier"): each
+            // pose, from the courier or a rider linked with it both ways,
+            // goes to the riders on the course without a link to that rider.
+            Packet::Bundle { poses }
+                if connection.player.is_some()
+                    && room.started
+                    && connection.ready_map == room.map =>
+            {
+                self.budget.borrow_mut().bundles += 1;
+                // A woken (hibernated) room forgot its courier: choose again.
+                let carrying = || *self.courier.borrow() == Some((connection.peer, true));
+                if !carrying() {
+                    self.update_courier()?;
+                }
+                if !carrying() {
+                    ws.serialize_attachment(connection)?;
+                    return Ok(());
+                }
+                let recipients = self.recipients()?;
+                for bytes in poses {
+                    let Ok(Packet::Snapshot(pose)) = atv_net::decode(&bytes) else {
+                        continue;
+                    };
+                    let Some(from) = recipients.iter().find(|r| r.peer == pose.peer && r.riding)
+                    else {
+                        continue;
+                    };
+                    let own = from.peer == connection.peer;
+                    if from.models != (pose.atv_model, pose.rider_model)
+                        || !(own
+                            || linked(from.peer, from.links, connection.peer, connection.links))
+                    {
+                        continue;
+                    }
+                    if own {
+                        if connection
+                            .sequence
+                            .is_some_and(|old| !atv_net::sequence_newer(pose.sequence, old))
+                        {
+                            continue;
+                        }
+                        connection.sequence = Some(pose.sequence);
+                        connection.snapshot = Some(pose.as_ref().clone());
+                    }
+                    for to in &recipients {
+                        if to.riding
+                            && to.peer != from.peer
+                            && to.ws != ws
+                            && !linked(from.peer, from.links, to.peer, to.links)
+                            && to.ws.send_with_bytes(&bytes).is_err()
+                        {
+                            let _ = self.close_socket(&to.ws, 1011, "Send failed");
+                        }
                     }
                 }
             }
@@ -1498,6 +1663,7 @@ impl DurableObject for LobbyRoom {
                         }
                     }
                     self.introduce(&ws, &connection, map)?;
+                    self.update_courier()?;
                 }
             }
             // Direct links (research/MULTIPLAYER.md "Direct links").
@@ -1506,8 +1672,24 @@ impl DurableObject for LobbyRoom {
                     let known = connection.signals;
                     connection.signals = true;
                     connection.direct = message.data[0] & signal::DIRECT != 0;
+                    connection.carries =
+                        connection.direct && message.data[0] & signal::CARRIES != 0;
                     ws.serialize_attachment(&connection)?;
                     self.invalidate_recipients();
+                    // A rider that follows couriers hears of the current one.
+                    if !self.update_courier()?
+                        && connection.carries
+                        && let Some((peer, true)) = *self.courier.borrow()
+                    {
+                        send(
+                            &ws,
+                            &Packet::Signal(Signal {
+                                peer,
+                                kind: signal::COURIER,
+                                data: vec![1],
+                            }),
+                        )?;
+                    }
                     // A hello after Ready still gets the introductions.
                     if !known && connection.ready_map == room.map {
                         self.introduce(&ws, &connection, room.map)?;
@@ -1565,6 +1747,7 @@ impl DurableObject for LobbyRoom {
                         );
                     }
                 }
+                self.update_courier()?;
             }
             Packet::Profile(mut player) if connection.player.is_some() => {
                 if !(1..=26).contains(&player.atv_model) || player.rider_model > 1 {
@@ -2022,6 +2205,7 @@ mod tests {
             direct: false,
             links: 0,
             report: None,
+            carries: false,
             last_seen_ms: 0.,
             window_ms: 0.,
             messages: 0,
@@ -2077,6 +2261,7 @@ mod tests {
             direct: false,
             links: 0,
             report: None,
+            carries: false,
             sequence: Some(u32::MAX),
             last_seen_ms: 555.,
             window_ms: 500.,
@@ -2172,5 +2357,40 @@ mod tests {
             (budget.day, budget.messages, budget.poses),
             (20_403, 1, [0; 7])
         );
+    }
+
+    #[test]
+    fn the_courier_is_the_best_linked_carrier_and_works_only_when_needed() {
+        // 0, 1 and 2 are linked with each other; 3 (a desktop build) with nobody.
+        let mesh = |peer: u8| (0..3).filter(|p| *p != peer).fold(0, |m, p| m | 1 << p);
+        let room = [
+            (0, mesh(0), true),
+            (1, mesh(1), true),
+            (2, mesh(2), true),
+            (3, 0, false),
+        ];
+        assert_eq!(choose_courier(&room, None), Some((0, true)));
+        // The current courier keeps the job on a tie.
+        assert_eq!(choose_courier(&room, Some(2)), Some((2, true)));
+        // Without the desktop rider everyone is linked: nothing to carry.
+        assert_eq!(choose_courier(&room[..3], Some(2)), Some((2, false)));
+        // Builds that cannot carry are never chosen; with no links, no courier.
+        let old = [
+            (0, mesh(0), false),
+            (1, mesh(1), true),
+            (2, mesh(2), true),
+            (3, 0, false),
+        ];
+        assert_eq!(choose_courier(&old, Some(0)), Some((1, true)));
+        assert_eq!(choose_courier(&[(0, 0, true), (3, 0, false)], None), None);
+        // A courier with two fewer links than another hands over.
+        let star = [
+            (0, 0b1110, true),
+            (1, 1, true),
+            (2, 1, true),
+            (3, 1, true),
+            (4, 0, true),
+        ];
+        assert_eq!(choose_courier(&star, Some(1)), Some((0, true)));
     }
 }
