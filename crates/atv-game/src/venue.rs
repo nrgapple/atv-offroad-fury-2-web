@@ -336,11 +336,22 @@ pub async fn load_with(
             .models
             .retain(|model| !model.name.eq_ignore_ascii_case(removed));
     }
-    // National drop gate: its own model from the race TOY, not a scene
-    // model (00222cd0, op 116); the race poses it after GO.
-    let drop_gate = match (&mode, racing) {
-        (Some(mode), true) => atv_core::race_gate::parse(&String::from_utf8_lossy(mode))?,
-        _ => None,
+    // Drop gate: its own model, not a scene model (00222cd0, op 116); the
+    // race poses it after GO. 00222170 reads both TOYs: Nationals declare it
+    // in the race TOY, Supercross venues in the common one (sxNN.toy).
+    let drop_gate = match racing {
+        true => match mode
+            .as_deref()
+            .map(|m| atv_core::race_gate::parse(&String::from_utf8_lossy(m)))
+        {
+            Some(Ok(Some(gate))) => Some(gate),
+            Some(Err(error)) => return Err(error),
+            _ => match &toy {
+                Some(common) => atv_core::race_gate::parse(&String::from_utf8_lossy(common))?,
+                None => None,
+            },
+        },
+        false => None,
     };
     let gate_model = drop_gate.as_ref().map(|gate| {
         let matrix = gate.matrix(0.);

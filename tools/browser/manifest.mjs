@@ -199,6 +199,7 @@ export const TESTS = {
   'test_engine_split_seats.mjs': { group: 'content', timeout: 900 },
   'test_engine_split_objectives.mjs': { group: 'content', timeout: 900 },
   'test_engine_race_grid.mjs': { group: 'content' },
+  'test_engine_race_drop_gate.mjs': { group: 'content' },
   'test_engine_race_finish_gate.mjs': { group: 'content' },
   'test_engine_race_alternates.mjs': { group: 'content', timeout: 900 },
   'test_engine_enduro_race.mjs': { group: 'content', timeout: 900 },
