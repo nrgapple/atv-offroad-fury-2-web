@@ -35,6 +35,8 @@ pub enum Action {
     RaceQuit,
     /// Race over → Continue Championship (the next round).
     RaceNextRound,
+    /// Race over → Replay (#542).
+    Replay,
     /// A photo mode or replay control (#542).
     Viewer(atv_ui::hud::viewer::Button),
 }
@@ -1600,6 +1602,7 @@ impl Overlay {
                 // race.js always offers Quit Event; a page without the
                 // engine's frontend leaves for its menus.
                 self.results.can_quit = self.frontend || cfg!(target_arch = "wasm32");
+                self.results.replay = self.lobby.is_none();
                 // Online competition saves neither profile progress nor Hall
                 // of Fame records (USA manual pp. 36–37).
                 if self.results.finish(frame) {
@@ -1817,6 +1820,7 @@ impl Overlay {
             results::Command::Retry => Action::RaceRetry,
             results::Command::Quit => Action::RaceQuit,
             results::Command::NextRound => Action::RaceNextRound,
+            results::Command::Replay => Action::Replay,
             results::Command::FameName if self.fame_split.is_some() => {
                 self.name_split_fame();
                 return None;
@@ -2002,6 +2006,14 @@ impl Overlay {
         } else {
             self.renderer.rasterized = 0;
         }
+    }
+
+    /// A photo/replay control's rectangle as last laid out (CSS px).
+    pub fn viewer_rect(&self, button: atv_ui::hud::viewer::Button) -> Option<Rect> {
+        let (.., hits) = self.viewer_cache.as_ref()?;
+        hits.iter()
+            .find(|(_, id)| *id == button as u32)
+            .map(|(r, _)| *r)
     }
 
     /// Photo mode and replay controls (`viewer`), laid out again only when

@@ -15,6 +15,7 @@ mod game_cpu;
 mod gamepad;
 mod games;
 mod hockey;
+mod instant_replay;
 mod multiplayer;
 mod net;
 mod overlay;
@@ -22,6 +23,7 @@ mod photo;
 mod random;
 mod render_scale;
 pub mod replay;
+mod replay_view;
 mod riding;
 mod room_freestyle;
 mod room_game;
@@ -943,6 +945,8 @@ struct App {
     tag_start: Option<u32>,
     /// Pause → Photo mode's free camera (#542).
     photo: Option<photo::Photo>,
+    /// Pause → Replay or the results' Replay: instant replay (#542).
+    replay: Option<replay_view::Replay>,
     /// Split screen → Games → Tag: a local two-player game starts with
     /// these minutes once both rides are ready (no room).
     split_tag: Option<(u32, String)>,
@@ -1726,8 +1730,11 @@ impl App {
             overlay.pad_name = self.gamepad.name();
             overlay.pads = self.gamepad.connected();
             overlay.pad_standard = self.gamepad.standard();
-            overlay.sync_menu(riding.paused && !riding.held && self.photo.is_none());
-            riding.menu_open = overlay.menu.is_some() || self.photo.is_some();
+            overlay.sync_menu(
+                riding.paused && !riding.held && self.photo.is_none() && self.replay.is_none(),
+            );
+            riding.menu_open =
+                overlay.menu.is_some() || self.photo.is_some() || self.replay.is_some();
             if overlay.menu.is_some()
                 && let Some(event) = overlay.menu_pad(pad.as_ref(), Some(&mut riding.bindings))
             {
@@ -1747,6 +1754,7 @@ impl App {
             };
             if !riding.menu_open
                 && self.photo.is_none()
+                && self.replay.is_none()
                 && let Some(action) = overlay.results_pad(results_pad)
             {
                 self.act(action);
@@ -1912,8 +1920,11 @@ impl App {
         // A Pause binding this frame opens the menu in this same frame (the
         // ride then sleeps until input).
         if let Some(overlay) = &mut self.overlay {
-            overlay.sync_menu(riding.paused && !riding.held && self.photo.is_none());
-            riding.menu_open = overlay.menu.is_some() || self.photo.is_some();
+            overlay.sync_menu(
+                riding.paused && !riding.held && self.photo.is_none() && self.replay.is_none(),
+            );
+            riding.menu_open =
+                overlay.menu.is_some() || self.photo.is_some() || self.replay.is_some();
             // Audio → Sound shows the mode the ride is actually playing.
             if let Some(sound) = &riding.sound {
                 let playing = match sound.ride.mode {
@@ -2000,7 +2011,11 @@ impl App {
                 }
             }
             ready.scene.pose_peers(&ready.gpu, &poses);
+            for (id, pose) in &poses {
+                riding.recorder.add(instant_replay::Kind::Peer(*id), pose);
+            }
         }
+        riding.recorder.end();
         // The speed-rush screen pass shares the FOV kick's amount.
         let motion = riding.ride.frame();
         ready.scene.set_speed_rush(
@@ -2336,6 +2351,10 @@ impl App {
         let ui_started = Instant::now();
         self.update_jukebox();
         self.save_soundtrack();
+        // Instant replay: the recorded riders and the replay camera (#542).
+        if self.replay.is_some() {
+            self.replay_frame(dt, pad.as_ref());
+        }
         // Photo mode: the free camera replaces the ride's (#542).
         if self.photo.is_some() {
             self.photo_frame(dt, pad.as_ref());
@@ -3336,6 +3355,11 @@ impl App {
             }
             // Photo mode (tools/test_engine_photo.mjs).
             state["photo"] = self.photo.as_ref().map(photo::Photo::state).into();
+            state["replay"] = self
+                .replay
+                .as_ref()
+                .map(|r| r.state(riding.recorder.span()))
+                .into();
             state["view"] = serde_json::json!({"eye": ready.camera.eye(),
                 "yaw": ready.camera.yaw, "pitch": ready.camera.pitch, "focal": ready.focal_length});
             // The ride's course and championship round, and the results
@@ -3832,6 +3856,7 @@ impl App {
         self.effective_focused()
             && (animating
                 || self.photo.is_some()
+                || self.replay.is_some()
                 || ready.riding.as_ref().is_none_or(|r| !r.paused))
     }
 
@@ -4052,6 +4077,7 @@ impl App {
             }
             Event::CopyRide => self.copy_ride_link(),
             Event::Photo => self.open_photo(),
+            Event::Replay => self.open_replay(false),
             Event::Spawn(peer) => {
                 let Some(ready) = &mut self.ready else { return };
                 let (Some(net), Some(riding)) = (&mut ready.net, &mut ready.riding) else {
@@ -4575,6 +4601,10 @@ impl App {
             self.viewer_button(button);
             return;
         }
+        if action == overlay::Action::Replay {
+            self.open_replay(true);
+            return;
+        }
         let Some(ready) = self.ready.as_mut() else {
             return;
         };
@@ -4595,7 +4625,7 @@ impl App {
             }
             overlay::Action::Camera => riding.cycle_requested = true,
             // Handled above.
-            overlay::Action::Viewer(_) => {}
+            overlay::Action::Viewer(_) | overlay::Action::Replay => {}
             overlay::Action::RaceRetry if self.tag.as_ref().is_some_and(|t| t.local) => {
                 self.restart_split_tag();
             }
@@ -4911,6 +4941,10 @@ impl App {
             self.photo_pointer(touch.id, touch.phase, x, y);
             return;
         }
+        if self.replay.is_some() {
+            self.replay_pointer(touch.id, touch.phase, x, y);
+            return;
+        }
         let Some(overlay) = &mut self.overlay else {
             return;
         };
@@ -5202,6 +5236,10 @@ impl App {
         }
         if self.photo.is_some() {
             self.photo_key(&format!("{code:?}"));
+            return;
+        }
+        if self.replay.is_some() {
+            self.replay_key(&format!("{code:?}"));
             return;
         }
         let bindings = self
@@ -6200,6 +6238,10 @@ impl ApplicationHandler<Message> for App {
                     self.photo_pointer(overlay::MOUSE, phase, x, y);
                     return;
                 }
+                if self.replay.is_some() {
+                    self.replay_pointer(overlay::MOUSE, phase, x, y);
+                    return;
+                }
                 if let Some(overlay) = self.overlay.as_mut().filter(|o| o.menu.is_some()) {
                     self.dragging = false;
                     let bindings = self
@@ -6246,12 +6288,16 @@ impl ApplicationHandler<Message> for App {
                     self.front_pointer(MOUSE, winit::event::TouchPhase::Moved, x, y);
                     return;
                 }
-                if self.photo.is_some() {
+                if self.photo.is_some() || self.replay.is_some() {
                     self.cursor = Some((position.x, position.y));
                     let (x, y) = self.css((position.x, position.y));
                     let moved = winit::event::TouchPhase::Moved;
-                    self.photo_pointer(overlay::MOUSE, moved, x, y);
-                    self.photo_pointer(photo::RIGHT_MOUSE, moved, x, y);
+                    if self.photo.is_some() {
+                        self.photo_pointer(overlay::MOUSE, moved, x, y);
+                        self.photo_pointer(photo::RIGHT_MOUSE, moved, x, y);
+                    } else {
+                        self.replay_pointer(overlay::MOUSE, moved, x, y);
+                    }
                     if let Some(overlay) = &mut self.overlay {
                         overlay.hover(x, y);
                     }
@@ -9994,6 +10040,7 @@ pub fn run(options: Options) {
         room_freestyle_start: false,
         tag_start: None,
         photo: None,
+        replay: None,
         split_tag: None,
         tag_reload: None,
         pending_room: None,
