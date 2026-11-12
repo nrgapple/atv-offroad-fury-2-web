@@ -5,7 +5,8 @@
 //   1. Host and guest link up; the driving host's poses reach the guest
 //      directly while the relay sees almost none.
 //   2. A third rider with `?p2p=0` (no links, as desktop builds) joins: the
-//      linked riders send the relay their poses again for it, and it draws
+//      host becomes the room's courier and bundles the driving guest's poses
+//      with its own, the guest stays off the relay, and the third rider draws
 //      both of them.
 //   3. It leaves: the relay falls back to presence poses.
 //   4. The guest's room socket drops (`?dropAfter`): it reclaims its slot and
@@ -96,10 +97,21 @@ try {
   const thirdPeer = (await engine(third)).peer;
   await linked(host, thirdPeer, 'relay');
   await linked(guest, thirdPeer, 'relay');
-  const [h2, , t2] = await drive(host, [host, guest, third], 4000);
-  report.mixed = { host: h2, third: t2 };
-  assert.ok(h2.messages >= 15, `the host sends the relay its poses for the third rider: ${JSON.stringify(report)}`);
-  assert.ok(h2.directSent >= 25, `the guest still hears the host directly: ${JSON.stringify(report)}`);
+  await host.waitForFunction(
+    peer => JSON.parse(window.furyMultiplayer ?? 'null')?.courier === peer,
+    hostPeer,
+    { timeout: 30000 },
+  );
+  await guest.waitForFunction(
+    peer => JSON.parse(window.furyMultiplayer ?? 'null')?.courier === peer,
+    hostPeer,
+    { timeout: 30000 },
+  );
+  const [h2, g2, t2] = await drive(guest, [host, guest, third], 4000);
+  report.mixed = { host: h2, guest: g2, third: t2 };
+  assert.ok(g2.messages <= 3, `the driving guest stays off the relay: ${JSON.stringify(report)}`);
+  assert.ok(g2.directSent >= 25, `the guest gives the courier its poses: ${JSON.stringify(report)}`);
+  assert.ok(h2.messages >= 15, `the courier bundles them for the third rider: ${JSON.stringify(report)}`);
   let t = await engine(third);
   assert.ok(fresh(t, hostPeer) && fresh(t, guestPeer), JSON.stringify(t));
   // It hears who rides the course but links with nobody.

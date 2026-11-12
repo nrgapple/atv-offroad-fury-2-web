@@ -1095,12 +1095,17 @@ fn direct_link_signalling_roundtrips_and_is_bounded() {
     let signal = |peer, kind, data: Vec<u8>| Packet::Signal(Signal { peer, kind, data });
     for bad in [
         signal(20, signal::OFFER, vec![1]),
-        signal(1, 8, vec![1]),
+        signal(1, 9, vec![1]),
+        signal(1, signal::COURIER, vec![2]),
+        signal(1, signal::HELLO, vec![4]),
+        // Couriers stay between a client and the relay: older builds accept
+        // only the DIRECT bit in another rider's flags.
+        signal(1, signal::PRESENT, vec![signal::CARRIES]),
         signal(1, signal::REPORT, vec![0; atv_net::LINK_REPORT_BYTES - 1]),
         signal(1, signal::OFFER, vec![]),
         signal(1, signal::OFFER, vec![0; MAX_SIGNAL_BYTES + 1]),
         signal(1, signal::HELLO, vec![]),
-        signal(1, signal::HELLO, vec![2]),
+        signal(1, signal::HELLO, vec![8]),
         signal(1, signal::PRESENT, vec![1, 1]),
         Packet::Links {
             mask: 1 << MAX_PLAYERS,
@@ -1110,7 +1115,7 @@ fn direct_link_signalling_roundtrips_and_is_bounded() {
     }
     // The same bounds hold for bytes that never passed through `encode`.
     let mut bytes = encode(&signal(1, signal::HELLO, vec![1])).unwrap();
-    bytes[10] = 2;
+    bytes[10] = 4;
     assert_eq!(decode(&bytes), Err(Error::InvalidValue));
     let report = atv_net::LinkReport {
         timeouts: 2,
@@ -1124,4 +1129,41 @@ fn direct_link_signalling_roundtrips_and_is_bounded() {
     let mut bytes = encode(&Packet::Links { mask: 1 }).unwrap();
     bytes[11] = 0xff;
     assert_eq!(decode(&bytes), Err(Error::InvalidValue));
+}
+#[test]
+fn courier_bundles_carry_whole_compact_poses_only() {
+    let compact = |peer: u8, x: f32| {
+        let mut s = snapshot(1, 100, x);
+        s.peer = peer;
+        s.atv_nodes.clear();
+        s.rider_nodes.clear();
+        s.animation = Some(Box::default());
+        encode(&Packet::Snapshot(Box::new(s))).unwrap()
+    };
+    let bundle = Packet::Bundle {
+        poses: (0..MAX_PLAYERS as u8)
+            .map(|p| compact(p, p as f32))
+            .collect(),
+    };
+    let bytes = encode(&bundle).unwrap();
+    assert!(bytes.len() <= atv_net::MAX_PACKET_BYTES);
+    assert_eq!(decode(&bytes).unwrap(), bundle);
+    for bad in [
+        Packet::Bundle { poses: vec![] },
+        Packet::Bundle {
+            poses: vec![compact(0, 0.); MAX_PLAYERS + 1],
+        },
+        // Only compact snapshots, never other packets or node poses.
+        Packet::Bundle {
+            poses: vec![encode(&Packet::Links { mask: 1 }).unwrap()],
+        },
+        Packet::Bundle {
+            poses: vec![encode(&Packet::Snapshot(Box::new(snapshot(1, 1, 0.)))).unwrap()],
+        },
+        Packet::Bundle {
+            poses: vec![compact(0, 0.)[..20].to_vec()],
+        },
+    ] {
+        assert!(encode(&bad).is_err());
+    }
 }

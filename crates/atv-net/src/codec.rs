@@ -30,6 +30,7 @@ pub fn encode(packet: &Packet) -> Result<Vec<u8>> {
         Packet::Cpus(_) => 16,
         Packet::Signal(_) => 17,
         Packet::Links { .. } => 18,
+        Packet::Bundle { .. } => 19,
     };
     w.0.extend_from_slice(MAGIC);
     w.byte(VERSION);
@@ -196,6 +197,17 @@ pub fn encode(packet: &Packet) -> Result<Vec<u8>> {
         Packet::Links { mask } => {
             links(*mask)?;
             w.u32(*mask);
+        }
+        Packet::Bundle { poses } => {
+            if poses.is_empty() || poses.len() > MAX_BUNDLE {
+                return Err(Error::InvalidValue);
+            }
+            w.byte(poses.len() as u8);
+            for pose in poses {
+                bundled(pose)?;
+                w.u16(pose.len() as u16);
+                w.0.extend_from_slice(pose);
+            }
         }
         Packet::Ping { nonce } => w.u32(*nonce),
         Packet::Pong { nonce, server_ms } => {
@@ -432,6 +444,20 @@ pub fn decode(bytes: &[u8]) -> Result<Packet> {
             links(mask)?;
             Packet::Links { mask }
         }
+        19 => {
+            let count = r.byte()? as usize;
+            if count == 0 || count > MAX_BUNDLE {
+                return Err(Error::InvalidValue);
+            }
+            let mut poses = Vec::with_capacity(count);
+            for _ in 0..count {
+                let len = r.u16()? as usize;
+                let pose = r.take(len)?;
+                bundled(pose)?;
+                poses.push(pose.to_vec());
+            }
+            Packet::Bundle { poses }
+        }
         8 => {
             let epoch = r.u32()?;
             let map = r.u16()?;
@@ -456,6 +482,14 @@ fn map_id(id: u16) -> Result<()> {
         Err(Error::InvalidValue)
     }
 }
+/// A bundled pose is one whole compact snapshot packet.
+fn bundled(pose: &[u8]) -> Result<()> {
+    match decode(pose)? {
+        Packet::Snapshot(s) if s.animation.is_some() => Ok(()),
+        _ => Err(Error::InvalidValue),
+    }
+}
+
 fn links(mask: u32) -> Result<()> {
     if mask >> MAX_PLAYERS == 0 {
         Ok(())
