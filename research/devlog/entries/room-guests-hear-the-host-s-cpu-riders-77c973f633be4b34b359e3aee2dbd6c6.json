@@ -1,0 +1,15 @@
+{
+  "id": "room-guests-hear-the-host-s-cpu-riders-77c973f633be4b34b359e3aee2dbd6c6",
+  "timestamp": "2026-11-12T18:00:33.487272+00:00",
+  "recorded_at": "2026-11-12T18:05:16.042633+00:00",
+  "kind": "build",
+  "title": "Room guests hear the host's CPU riders",
+  "summary": "Online room guests now hear the host's CPU riders' yells, impacts, crashes, hard landings, terrain drive-on and splash sounds, like local CPUs (PR #567, issue #500).",
+  "details": [
+    "The host adds a small 11-byte sound block per CPU to its existing 10 Hz CPU motion message; no new messages. Guests derive position, speed, wreck state and splashes from the CPU's drawn motion and play sounds through the same CPU audio path. The relay strips the block for older cached clients.",
+    "Verification: unit tests; a new relay browser test on ENV01 (guest heard 5 terrain starts, 5 yells, 2 impacts, 8 crash/landing sounds); the extended Supercross room test; make precheck."
+  ],
+  "limitation": "Not verified on real networks or phones; host-only measurements.",
+  "image": "/devlog-images/room-guests-hear-the-host-s-cpu-riders-77c973f633be4b34b359e3aee2dbd6c6.png",
+  "caption": "Room guest racing alongside the host's CPU riders, with their sounds audible."
+}
