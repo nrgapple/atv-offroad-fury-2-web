@@ -1,7 +1,8 @@
-//! National start gate (exact-build `[DropGate]` loader `00222170`, setup
+//! Nationals and Supercross start gate (exact-build `[DropGate]` loader `00222170`, setup
 //! `00222cd0`, DropGateAction `002212d0`/`002212f0`, reset `00221370`).
 //!
-//! Only the eight National race TOYs declare a drop gate: its own soultree
+//! The eight National race TOYs and the sixteen Supercross common TOYs
+//! (`sxNN.toy`) declare a drop gate: its own soultree
 //! (`SLTName`, not a scene model) placed at `Position` with orientation rows
 //! X = Up × Look, Y = Up, Z = Look made perpendicular to Up (`00164dd0`). At
 //! GO it turns about `RotationAxisLocal` through `RotationAngleDegrees`,
@@ -155,5 +156,13 @@ mod tests {
         // The panel's width axis is unchanged by its own X rotation.
         assert_eq!(&dropped[0..3], &gate.matrix(0.)[0..3]);
         assert!(parse("[ParticleEmitters]\r\n").unwrap().is_none());
+    }
+    #[test]
+    fn supercross_common_toy_gate() {
+        let toy = "[TripleLightZone2]\r\nSLTName=TripleLight2.slt\r\n\r\n[DropGate]\r\nSLTName=SX03DropGate.slt\r\nPosition=269.069000,89.933411,437.329590\r\nLookVector=0.385118,0.707107,-0.593030\r\nUpVector=-0.385118,0.707107,0.593030\r\nRotationAxisLocal=-1.0,0.0,0.0\r\nRotationAngleDegrees=35.0\r\nRotationRateInSeconds=0.1\r\n\r\n;---\r\n[Animations]\r\nNumberOfAnimations=2\r\n";
+        let gate = parse(toy).unwrap().unwrap();
+        assert_eq!(gate.model, "sx03dropgate");
+        assert!((gate.angle - 35f32.to_radians()).abs() < 1e-6);
+        assert_eq!(gate.angle_at(Some(0.05)), gate.angle / 2.);
     }
 }
