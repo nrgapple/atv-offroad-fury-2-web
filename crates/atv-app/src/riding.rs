@@ -141,6 +141,9 @@ pub struct Riding {
     /// The room's relay clock: local origin and offset (ms). Each step's
     /// shared train phase follows it (multiplayer_world.rs).
     pub server_clock: Option<(web_time::Instant, f64)>,
+    /// Instant replay (#542): the drawn riders of the last 30 seconds
+    /// (presentation only; nothing reads it back into the ride).
+    pub recorder: crate::instant_replay::Recorder,
 }
 
 /// Kid Mode's GO keys besides the remappable Gas binding.
@@ -263,6 +266,7 @@ impl Riding {
             online: false,
             contacts: 0,
             server_clock: None,
+            recorder: Default::default(),
         }
     }
 
@@ -938,6 +942,7 @@ impl Riding {
                 ];
             }
         }
+        let drawing = scene.is_some();
         if let Some(scene) = scene {
             let crash = self.crashes.as_ref().and_then(|c| c.frame());
             scene.set_crash(
@@ -975,17 +980,46 @@ impl Riding {
             scene.set_reset_fades(gpu, self.reset_fade(venue), &self.cpu_fades);
             self.pose_ghost(gpu, scene);
         }
-        Ok((
-            Camera {
-                x: position[0],
-                y: position[1],
-                z: position[2],
-                yaw,
-                pitch,
-            },
-            atv_game::ride::view::fov_focal(focal_length * self.rush.focal_scale(), fov_percent),
-            pose,
-        ))
+        let camera = Camera {
+            x: position[0],
+            y: position[1],
+            z: position[2],
+            yaw,
+            pitch,
+        };
+        let focal =
+            atv_game::ride::view::fov_focal(focal_length * self.rush.focal_scale(), fov_percent);
+        // Instant replay (#542): player 1's drawn riders, every other step
+        // (the host adds split players and game CPUs, then ends it).
+        if drawing && !self.online && self.recorder.begin(self.ride.steps(), camera, focal) {
+            use crate::instant_replay::Kind;
+            self.recorder.add(Kind::Player, &pose);
+            for (i, cpu) in cpu_poses.iter().enumerate() {
+                self.recorder.add(Kind::Cpu(i as u8), cpu);
+            }
+            if let Some((ghost, _)) = self.ride.ghost_pose() {
+                self.recorder.add(Kind::Ghost, ghost);
+            }
+        }
+        Ok((camera, focal, pose))
+    }
+
+    /// Instant replay: the fine terrain patch follows a replayed rider
+    /// (the live ride's moves it back once the replay ends).
+    pub fn recenter_on(
+        &mut self,
+        gpu: &Gpu,
+        scene: &mut SceneRenderer,
+        venue: &Venue,
+        origin: [f32; 3],
+    ) {
+        let at = cells(venue, origin);
+        if (at[0] - self.center[0]).abs() > 48. || (at[1] - self.center[1]).abs() > 48. {
+            self.center = at;
+            // Split screen's patches are rebuilt once the replay ends.
+            self.split_center.clear();
+            scene.recenter_terrain(gpu, venue, [origin[0], origin[2]]);
+        }
     }
 }
 

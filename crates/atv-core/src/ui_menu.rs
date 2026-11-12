@@ -1499,6 +1499,7 @@ pub fn layout(request: Request) -> Result<Frame> {
             // Photo mode (#542, a port addition): solo and split screen
             // only; an online ride keeps riding under its pause menu.
             if !online {
+                choices.push(("Replay", "replay"));
                 choices.push(("Photo mode", "photo"));
             }
             // Shared Free Ride rooms have no invite: everyone just drops in.

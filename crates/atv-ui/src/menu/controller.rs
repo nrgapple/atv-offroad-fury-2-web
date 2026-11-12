@@ -54,6 +54,8 @@ pub enum Event {
     PlayFreestyle,
     /// Pause → Photo mode: a free camera around the paused moment.
     Photo,
+    /// Pause → Replay: the last stretch of the ride again.
+    Replay,
 }
 
 /// The multiplayer room as the pause menu shows it (the browser's
@@ -598,6 +600,7 @@ impl PauseMenu {
             "copyride" => return Some(Event::CopyRide),
             "wpsave" => return Some(Event::SaveCourse),
             "photo" => return Some(Event::Photo),
+            "replay" => return Some(Event::Replay),
             "leave" => return Some(Event::LeaveGame),
             "changeride" => return Some(Event::ChangeRide),
             "hosttrack" => return Some(Event::SelectTrack),

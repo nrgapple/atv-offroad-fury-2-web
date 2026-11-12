@@ -175,7 +175,7 @@ const PAUSE_GROUPS: [&[&str]; 3] = [
         "changeride",
         "hosttrack",
     ],
-    &["settings", "jukebox", "photo"],
+    &["settings", "jukebox", "replay", "photo"],
     &["copyride", "devlog", "main", "leave"],
 ];
 
