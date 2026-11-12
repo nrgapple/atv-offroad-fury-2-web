@@ -89,6 +89,10 @@ STARTUP += (JUKEBOX,)
 # The original Credits page (Options -> Credits): its credits.txt script.
 CREDITS = '/UI/RESOURCE/PAGEA/PAGE18.RES'
 STARTUP += (CREDITS,)
+# Original Championship page, reduced to its gold trophy (the menus' status
+# bar draws it in the trophy chip; compact_trophy).
+TROPHY = '/UI/RESOURCE/PAGEA/PAGE05.RES'
+STARTUP += (TROPHY,)
 
 # Original loading-screen action shots for every Freestyle venue except Training,
 # which ships only progress-bar art. Each course's file is fetched lazily.
@@ -693,6 +697,16 @@ def compact_menu_riders(data, materials, audio_definition):
     return pack_resource(selected)
 
 
+def compact_trophy(data):
+    """Only the Championship page's lit gold trophy texture."""
+    archive = Resource(data)
+    name = 'ui/frontend/textures/trophy_goldon.pst'
+    selected = [(n, archive.extract(i)) for i, (n, _, _) in enumerate(archive.members) if n.lower() == name]
+    if len(selected) != 1:
+        raise ValueError('trophy texture missing or duplicated')
+    return pack_resource(selected)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--iso', type=Path, default=ROOT / 'private/source/ATV Offroad Fury 2 (USA) (v2.00).iso')
@@ -747,6 +761,8 @@ def main():
                 data = compact_rider_motions(data, catalogs)
             elif path == '/UI/RESOURCE/RIDEINFO.RES':
                 data = compact_gear_catalog(data)
+            elif path == TROPHY:
+                data = compact_trophy(data)
             elif path.endswith('_ENDL.RES'):
                 data = compact_map_placements(data, path.split('/')[-2], national(path))
             elif path in VARIANTS:

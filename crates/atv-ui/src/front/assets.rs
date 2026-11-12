@@ -119,7 +119,14 @@ pub struct Boot {
     pub backdrop: Option<Rgba>,
     /// Tracks.dat's course lists with their store access and prices.
     pub courses: Vec<atv_core::store::CourseList>,
+    /// The Championship page's lit gold trophy (PAGE05 `trophy_goldon`),
+    /// trimmed to the cup, for the status bar; None without PAGE05.
+    pub trophy: Option<Rgba>,
 }
+
+/// The status bar's trophy: PAGE05's `trophy_goldon`, when the content
+/// package carries it (packages before it keep the drawn cup).
+pub const TROPHY_ARCHIVE: &str = "/UI/RESOURCE/PAGEA/PAGE05.RES";
 
 pub async fn boot(content: &Content) -> Result<Boot, String> {
     let startapp = Archive::open(content, "/STARTAPP.RES").await?;
@@ -141,10 +148,20 @@ pub async fn boot(content: &Content) -> Result<Boot, String> {
             backdrop = pst(&page.member(index).await?).ok();
         }
     }
+    let mut trophy = None;
+    if content.manifest.record(TROPHY_ARCHIVE).is_some() {
+        let page = Archive::open(content, TROPHY_ARCHIVE).await?;
+        if let Some(index) = page.named("trophy_goldon.pst") {
+            trophy = pst(&page.member(index).await?)
+                .ok()
+                .and_then(|art| art.trim_clear());
+        }
+    }
     Ok(Boot {
         tracks,
         backdrop,
         courses,
+        trophy,
     })
 }
 

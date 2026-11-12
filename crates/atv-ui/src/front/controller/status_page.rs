@@ -75,6 +75,8 @@ impl Frontend {
             store: super::store_page(&self.page),
             open: self.status_open.and_then(|chip| self.popover(chip)),
             anchor: self.status_anchor,
+            // The host registers the original art (Front::prepare).
+            trophy_art: None,
         })
     }
 
