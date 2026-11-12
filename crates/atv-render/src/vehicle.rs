@@ -28,6 +28,10 @@ struct Globals {
     mud: [f32; 4],
     // quad paint mode and hue
     paint: [f32; 4],
+    /// Remastered world shadows: world to shadow texture, then receive (1),
+    /// the texel in texture space and in feet.
+    far_matrix: [f32; 16],
+    far: [f32; 4],
 }
 
 #[repr(C)]
@@ -150,6 +154,9 @@ pub struct VehicleShared {
     layout: wgpu::PipelineLayout,
     shader: wgpu::ShaderModule,
     samples: u32,
+    /// The world shadow map and its comparison sampler
+    /// ([`VehicleShared::set_far`]).
+    far: (wgpu::TextureView, wgpu::Sampler),
 }
 
 type TextureKey = (String, u32, u32, u64);
@@ -165,7 +172,9 @@ fn fingerprint(image: &Image) -> u64 {
 }
 
 impl VehicleShared {
-    pub fn new(gpu: &Gpu, samples: u32) -> Self {
+    /// `far` is the world shadow map riders receive and its comparison
+    /// sampler ([`crate::world::World::far_view`]).
+    pub fn new(gpu: &Gpu, samples: u32, far: (&wgpu::TextureView, &wgpu::Sampler)) -> Self {
         let device = &gpu.device;
         let uniform = |binding, visibility| wgpu::BindGroupLayoutEntry {
             binding,
@@ -179,7 +188,25 @@ impl VehicleShared {
         };
         let globals_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("vehicle globals"),
-            entries: &[uniform(0, wgpu::ShaderStages::VERTEX_FRAGMENT)],
+            entries: &[
+                uniform(0, wgpu::ShaderStages::VERTEX_FRAGMENT),
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Depth,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Comparison),
+                    count: None,
+                },
+            ],
         });
         let bones_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("vehicle bones"),
@@ -257,7 +284,35 @@ impl VehicleShared {
             layout,
             shader,
             samples,
+            far: (far.0.clone(), far.1.clone()),
         }
+    }
+
+    /// A new world shadow map (the preset changed): passes made from now on
+    /// bind it, and existing ones after [`VehiclePass::rebind`].
+    pub fn set_far(&mut self, view: &wgpu::TextureView) {
+        self.far.0 = view.clone();
+    }
+
+    fn globals_group(&self, gpu: &Gpu, globals: &wgpu::Buffer) -> wgpu::BindGroup {
+        gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("vehicle globals"),
+            layout: &self.globals_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: globals.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&self.far.0),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::Sampler(&self.far.1),
+                },
+            ],
+        })
     }
 
     /// The Lap Attack ghost's depth and colour pipelines, compiled on first
@@ -398,7 +453,6 @@ impl VehiclePass {
     ) -> Result<Self, String> {
         let device = &gpu.device;
         let VehicleShared {
-            globals_layout,
             bones_layout,
             material_layout,
             pipeline,
@@ -442,20 +496,15 @@ impl VehiclePass {
             surface: [0.68, 0.70, 0.73, 1.],
             mud: [0.; 4],
             paint: [0.; 4],
+            far_matrix: [0.; 16],
+            far: [0.; 4],
         };
         let globals = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("vehicle globals"),
             contents: bytemuck::bytes_of(&globals_value),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
-        let globals_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("vehicle globals"),
-            layout: &globals_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: globals.as_entire_binding(),
-            }],
-        });
+        let globals_group = shared.globals_group(gpu, &globals);
         let bones = |label| {
             let buffer = device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some(label),
@@ -713,6 +762,23 @@ impl VehiclePass {
     /// The player's quad paint (mode, hue; `[0, 0]` keeps the livery).
     pub fn set_paint(&mut self, paint: [f32; 2]) {
         self.globals_value.paint = [paint[0], paint[1], 0., 0.];
+    }
+
+    /// Binds the shared world shadow map again after it was replaced.
+    pub fn rebind(&mut self, gpu: &Gpu, shared: &VehicleShared) {
+        self.globals_group = shared.globals_group(gpu, &self.globals);
+    }
+
+    /// The Remastered world shadow map this frame (its texture matrix and
+    /// texels, [`crate::world_shadows`]), or none.
+    pub fn set_far(&mut self, far: Option<&([f32; 16], [f32; 2])>) {
+        match far {
+            Some((matrix, texels)) => {
+                self.globals_value.far_matrix = *matrix;
+                self.globals_value.far = [1., texels[0], texels[1], 0.];
+            }
+            None => self.globals_value.far = [0.; 4],
+        }
     }
 
     pub fn prepare(&mut self, gpu: &Gpu, view_projection: &[f32; 16], eye: [f32; 3]) {

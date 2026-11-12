@@ -819,11 +819,19 @@ Code: `crates/atv-net` (`RaceInfo` CPU fields, `CpuMotion`, kind 16),
 (`atv_core::ui_menu`, `atv-ui` `hostcpus`).
 
 - **Guest audio.** Guests hear the CPUs' engines from the relayed motion
-  (the snapshot's speed and the host driver's throttle; research/AUDIO.md
-  "CPU riders"); they stop when the CPUs retire.
+  (the snapshot's speed and the host driver's throttle), and their vocals,
+  impacts, chassis, drive-on and splash sounds from compact host sound cues
+  appended to the same motion messages (research/AUDIO.md "CPU riders");
+  they stop when the CPUs retire.
+- **Sound cues on the wire (protocol 6, compatible).** Kind 16 may end
+  with one 11-byte block per rider, in rider order (flags, two terrain
+  bytes, four u16 magnitudes in sixteenths of ft/s); a packet without it
+  is the earlier size. A client's HELLO sets `signal::CPU_SOUNDS` (4) when
+  it decodes the block (every current build, links or not); the relay
+  strips the block for riders that did not, since an older client closes
+  the room on bytes it cannot decode.
 
-Limits: guests hear only the CPUs' engines (no vocals, body impacts or
-chassis sounds: the motion carries no audio events); guests see CPUs about the smoothing delay plus half the relay round
+Limits: guests see CPUs about the smoothing delay plus half the relay round
 trip behind the host's simulation, so close contacts with a CPU are judged
 on slightly different positions on each machine; CPU stunts are drawn from
 the replicated animation recipe only.

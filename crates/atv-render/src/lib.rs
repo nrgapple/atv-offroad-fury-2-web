@@ -1216,6 +1216,19 @@ impl SceneRenderer {
             self.world.set_far_size(gpu, size);
             self.world_shadows =
                 (size > 0).then(|| world_shadows::WorldShadows::new(gpu, &self.world, size));
+            // Every rider's pass binds the new map.
+            if let Some(shared) = &mut self.shared_vehicle {
+                shared.set_far(&self.world.far_view);
+                let riders = self
+                    .vehicle
+                    .iter_mut()
+                    .chain(self.cpus.iter_mut().map(|(p, _)| p))
+                    .chain(self.peers.values_mut().map(|(_, p, _)| p))
+                    .chain(self.ghosts.iter_mut().flatten().map(|(p, _)| p));
+                for pass in riders {
+                    pass.rebind(gpu, shared);
+                }
+            }
         }
         if graphics.anisotropy != self.graphics.anisotropy || shadow_changed || far_changed {
             self.terrain
@@ -1444,7 +1457,13 @@ impl SceneRenderer {
         // rider joining later costs no shader compile.
         let shared = self
             .shared_vehicle
-            .get_or_insert_with(|| vehicle::VehicleShared::new(gpu, gpu.samples))
+            .get_or_insert_with(|| {
+                vehicle::VehicleShared::new(
+                    gpu,
+                    gpu.samples,
+                    (&self.world.far_view, &self.world.shadow_sampler),
+                )
+            })
             .clone();
         let vehicle = vehicle::VehiclePass::with_shared(gpu, venue, quad, rider, &shared, true)?;
         if self.graphics.shadow_map > 0 {
@@ -1466,7 +1485,13 @@ impl SceneRenderer {
     ) -> Result<(), String> {
         let shared = self
             .shared_vehicle
-            .get_or_insert_with(|| vehicle::VehicleShared::new(gpu, gpu.samples))
+            .get_or_insert_with(|| {
+                vehicle::VehicleShared::new(
+                    gpu,
+                    gpu.samples,
+                    (&self.world.far_view, &self.world.shadow_sampler),
+                )
+            })
             .clone();
         self.cpus = models
             .iter()
@@ -1499,9 +1524,13 @@ impl SceneRenderer {
     /// the player and of each race CPU in [`Self::pose_race_cpus`]'s order
     /// (CPUs past the slice draw opaque).
     pub fn set_reset_fades(&mut self, gpu: &Gpu, player: f32, cpus: &[f32]) {
-        let shared = &*self
-            .shared_vehicle
-            .get_or_insert_with(|| vehicle::VehicleShared::new(gpu, gpu.samples));
+        let shared = &*self.shared_vehicle.get_or_insert_with(|| {
+            vehicle::VehicleShared::new(
+                gpu,
+                gpu.samples,
+                (&self.world.far_view, &self.world.shadow_sampler),
+            )
+        });
         if let Some(vehicle) = &mut self.vehicle {
             vehicle.set_fade(gpu, shared, player);
         }
@@ -1516,9 +1545,13 @@ impl SceneRenderer {
         let Some((_, pass, _)) = self.peers.get_mut(&peer) else {
             return;
         };
-        let shared = &*self
-            .shared_vehicle
-            .get_or_insert_with(|| vehicle::VehicleShared::new(gpu, gpu.samples));
+        let shared = &*self.shared_vehicle.get_or_insert_with(|| {
+            vehicle::VehicleShared::new(
+                gpu,
+                gpu.samples,
+                (&self.world.far_view, &self.world.shadow_sampler),
+            )
+        });
         pass.set_fade(gpu, shared, opacity);
     }
 
@@ -1535,7 +1568,13 @@ impl SceneRenderer {
     ) -> Result<(), String> {
         let shared = self
             .shared_vehicle
-            .get_or_insert_with(|| vehicle::VehicleShared::new(gpu, gpu.samples))
+            .get_or_insert_with(|| {
+                vehicle::VehicleShared::new(
+                    gpu,
+                    gpu.samples,
+                    (&self.world.far_view, &self.world.shadow_sampler),
+                )
+            })
             .clone();
         let mut pass = vehicle::VehiclePass::with_shared(gpu, venue, quad, rider, &shared, false)?;
         pass.set_paint(paint);
@@ -1591,7 +1630,13 @@ impl SceneRenderer {
     ) -> Result<(), String> {
         let shared = self
             .shared_vehicle
-            .get_or_insert_with(|| vehicle::VehicleShared::new(gpu, gpu.samples))
+            .get_or_insert_with(|| {
+                vehicle::VehicleShared::new(
+                    gpu,
+                    gpu.samples,
+                    (&self.world.far_view, &self.world.shadow_sampler),
+                )
+            })
             .clone();
         let mut pass = vehicle::VehiclePass::ghost(gpu, venue, quad, rider, &shared, opacity)?;
         pass.set_paint(paint);
@@ -2086,6 +2131,7 @@ impl SceneRenderer {
         }
         self.profiler.mark("prepare.effects");
         if let Some(vehicle) = &mut self.vehicle {
+            vehicle.set_far(far.as_ref());
             vehicle.prepare(gpu, &view_projection, view.camera.eye());
             stats.vehicle_triangles = vehicle.triangles;
         }
@@ -2097,6 +2143,7 @@ impl SceneRenderer {
             .chain(self.ghosts.iter_mut().flatten().map(|(p, v)| (p, *v)))
         {
             if visible {
+                cpu.set_far(far.as_ref());
                 cpu.prepare(gpu, &view_projection, view.camera.eye());
                 stats.vehicle_triangles += cpu.triangles;
             }
