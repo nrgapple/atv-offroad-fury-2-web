@@ -875,6 +875,32 @@ impl Vehicle {
         self.start_reset_timer();
         Ok(())
     }
+    /// Options → Accessibility assists after a step ([`crate::rider_assist`]):
+    /// `frame` is the step's result, `lean`/`stunt` the rider's air input.
+    /// Off returns at once, so the original body is untouched.
+    pub fn assist(
+        &mut self,
+        state: &mut crate::rider_assist::State,
+        frame: &VehicleFrame,
+        levels: (u8, u8),
+        stunt: bool,
+        dt: f32,
+    ) {
+        if levels == (0, 0) {
+            return;
+        }
+        let body = crate::rider_assist::Body {
+            basis: self.body.basis(),
+            local_angular_velocity: self.body.local_angular_velocity,
+            speed: frame.speed,
+            grounded: frame.grounded.iter().any(|g| *g),
+            free: frame.wreck.phase == crate::wreck::Phase::Riding
+                && frame.flip.is_none()
+                && !stunt,
+        };
+        let delta = state.step(body, levels.0, levels.1, dt);
+        self.body.local_angular_velocity = add(self.body.local_angular_velocity, delta);
+    }
     /// `001e9050`: the two-second reset timer (rider-height wreck cooldown,
     /// post-reset fade and no rider-to-rider contact while it runs). Wreck
     /// recovery and the off-track reset start it; the port's manual reset
@@ -3466,6 +3492,33 @@ mod tests {
         mesh::Node,
         terrain::{TerrainLeaf, TerrainTile},
     };
+    #[test]
+    fn stability_assist_rolls_an_airborne_quad_toward_level() {
+        // A quad tipped 0.5 rad about its forward axis, high in the air: the
+        // sideways tilt summed over 1.5 s. The fixture's own unroll levels
+        // it too, but swings through; the assist levels sooner and settles.
+        let tilt = |assist: u8| {
+            let (mut vehicle, terrain) = fixture();
+            let (s, c) = (0.25f32.sin_d(), 0.25f32.cos_d());
+            vehicle.body =
+                BodyState::new([500., 400., 500.], [c, 0., 0., s], &vehicle.body_config).unwrap();
+            let mut state = crate::rider_assist::State::default();
+            let mut sum = 0.;
+            for _ in 0..90 {
+                let frame = vehicle
+                    .step(&terrain, VehicleInput::default(), 1. / 60.)
+                    .unwrap();
+                vehicle.assist(&mut state, &frame, (0, assist), false, 1. / 60.);
+                sum += vehicle.body.basis()[1][0].abs();
+            }
+            sum
+        };
+        let (off, low, high) = (tilt(0), tilt(1), tilt(2));
+        assert!(low < off * 0.9, "low {low} off {off}");
+        assert!(high < low, "high {high} low {low}");
+        // Off is the original body, bit for bit.
+        assert_eq!(tilt(0), off);
+    }
     fn fixture() -> (Vehicle, Terrain) {
         let text=b"[Physical Properties]\nWeight=600\nCofGX=0\nCofGY=0.2\nCofGZ=0\nCofGRangeX=0.8\nCofGRangeY=0\nCofGRangeZ=1\nPitchInertiaScale=1\nYawInertiaScale=1\nRollInertiaScale=1\nAirborneGravity=1\n[Suspension]\nCompression=1\nDecompressionRate=4\nSpring=0.7\nShock=0.2\n[Tires]\nBrakeFriction=0.2\nBearingFriction=0.05\nBrakeConfiguration=3\nTireFriction=1.5\nStictionSpeed=5\n[Steering]\nSteerSpeed1=1\nSteerSpeed2=80\nSteerScale1=1\nSteerScale2=0.3\nSteeringReduction=0.1\n[Engine]\nNumberOfRPMPoints=3\nRPM1=1000\nHP1=10\nRPM2=5000\nHP2=40\nRPM3=8000\nHP3=20\nNumberOfGears=3\nGearRatio1=2\nGearRatio2=1.5\nGearRatio3=1\nFinalGearRatio=6\nTransmissionLoss=0.8\nRampUpFilter=0.1\nRampDownFilter=0.2\nRampDownSpeed=45\nTopSpeed=60\n[Aerodynamics]\nAeroForce=10\nAeroMoment=40\nAeroDamping=-80\nAeroMomentScaleX=-1\nAeroMomentScaleY=1\nAeroMomentScaleZ=-1\nUnrollGain=2\nMaxWheelieAngle=45\nWheelieGain=2\nTopWheelieSpeed=100\nMaxPreload=100\nPreloadMinAxisRate=1\nPreloadMaxAxisRate=80\n[Joystick]\nXAxisRateLimit=4\nYAxisRateLimit=4\nStuntXAxisRateLimit=2.5\nStuntYAxisRateLimit=2.5\nXAxisDeadZone=0\n[Collisions]\nObstacleReflection=0.002\nDefaultAngularImpulseScale=0\nDefaultFriction=0.3\nDefaultFrictionTorqueScale=0.1\n";
         let mut nodes = Vec::new();

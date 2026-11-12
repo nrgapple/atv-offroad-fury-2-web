@@ -400,6 +400,11 @@ impl Overlay {
         self.frames.get(index).map_or([x, y], |f| f.to_local(x, y))
     }
 
+    /// The race HUD's size against the original (`#ui-state`).
+    pub fn hud_scale(&self) -> Option<f32> {
+        self.meter.as_ref().map(|m| m.scale)
+    }
+
     /// Split screen tests: each view's frame (CSS px: x, y, w, h, turns)
     /// and whether its player's riding finger is down.
     pub fn split_touch_state(&self) -> serde_json::Value {
@@ -1029,8 +1034,16 @@ impl Overlay {
             self.touch
                 .paint(active, now, &mut self.fonts, &mut self.list);
         }
+        // Options → Accessibility: the HUD size (split views keep the
+        // original, their quarters have no room) and colour assistance.
+        atv_ui::hud::palette::set(self.prefs.access.colour());
         if let Some(meter) = &mut self.meter {
             meter.split = second.is_some();
+            meter.scale = if meter.split {
+                1.
+            } else {
+                self.prefs.access.hud_scale()
+            };
         }
         // Split screen: the original layout's seats, when Overlays.pb has it.
         let seated = shown

@@ -24,6 +24,21 @@ pub struct Meter {
     /// the stunt and record text into it (a port layout choice; the split
     /// HUD rectangles were not traced).
     pub split: bool,
+    /// Options → Accessibility → HUD size (authored): 0.85, 1 or 1.25
+    /// times the original layout unit. 1 is the original size.
+    pub scale: f32,
+}
+
+/// The layout unit (CSS pixels per logical unit) at the rider's HUD size.
+/// A larger HUD stops growing where the view would hold fewer than `floor`
+/// logical units across, so the left and right columns of a narrow phone
+/// never meet; it is never smaller than the original because of that.
+pub(super) fn scaled_unit(base: f32, scale: f32, width: f32, floor: f32) -> f32 {
+    if scale > 1. {
+        (base * scale).min(width / floor).max(base)
+    } else {
+        base * scale
+    }
 }
 
 pub(super) struct Logical {
@@ -39,6 +54,7 @@ impl Meter {
             images: HashMap::new(),
             pills: None,
             split: false,
+            scale: 1.,
         }
     }
 
@@ -192,6 +208,7 @@ impl Meter {
         } else {
             height / 448.
         };
+        let unit = scaled_unit(unit, self.scale, width, 340.);
         (
             Logical {
                 unit,

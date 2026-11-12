@@ -13,6 +13,28 @@ window.furyUsage = usage;
 window.furyDecodeWorker = new URL('./decode-worker.js', import.meta.url).href;
 document.addEventListener('visibilitychange', () => { usage.setVisible(!document.hidden); if (document.hidden) usage.report(1); });
 addEventListener('pagehide', () => usage.report(1));
+// Options → Accessibility → Tilt steering (crates/atv-app/src/tilt.rs): the
+// phone's turn in the screen's plane, like a steering wheel (degrees, right
+// positive), from the world's up seen in device axes. iOS grants motion
+// access only from a tap: the menu row's, or the next tap when that is late.
+const tilt = window.furyTilt = { live: false, angle: 0, asking: false };
+const toRadians = Math.PI / 180;
+const orient = event => {
+  if (event.beta == null || event.gamma == null) return;
+  const b = event.beta * toRadians, g = event.gamma * toRadians;
+  const a = (screen.orientation?.angle ?? window.orientation ?? 0) * toRadians;
+  const [ux, uy] = [-Math.sin(g) * Math.cos(b), Math.sin(b)];
+  tilt.angle = -Math.atan2(ux * Math.cos(a) - uy * Math.sin(a), ux * Math.sin(a) + uy * Math.cos(a)) / toRadians;
+  tilt.live = true;
+};
+tilt.enable = () => {
+  if (tilt.listening || tilt.asking) return;
+  const listen = () => { tilt.listening = true; addEventListener('deviceorientation', orient); };
+  const ask = window.DeviceOrientationEvent?.requestPermission;
+  if (typeof ask !== 'function') return listen();
+  tilt.asking = true;
+  ask.call(DeviceOrientationEvent).then(state => { if (state === 'granted') listen(); }, () => addEventListener('pointerup', tilt.enable, { once: true })).finally(() => { tilt.asking = false; });
+};
 // Pointer events drive the game (winit). Cancel native touch gestures so
 // Safari's loupe, selection, scrolling and pinch zoom never take a riding thumb;
 // the install banner, its help dialog and the Host/Join text fields (Rust's

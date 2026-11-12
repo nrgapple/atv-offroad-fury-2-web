@@ -441,9 +441,46 @@ impl SpeedRush {
     }
 }
 
+/// Options → Accessibility → Field of view (authored): the limits and
+/// step of the rider's choice, in percent of the original angle.
+pub const FOV_RANGE: (u8, u8, u8) = (85, 125, 5);
+
+/// `focal` (the 4:3 frame's focal length, any speed-rush widening already
+/// in it) with its horizontal angle scaled to `percent` of itself. 100
+/// returns `focal` untouched, so the original view is bit-identical; the
+/// half angle stays below 80 degrees whatever the inputs.
+pub fn fov_focal(focal: f32, percent: u8) -> f32 {
+    use atv_core::math::Det;
+    if percent == 100 || focal.is_nan() || focal <= 0. {
+        return focal;
+    }
+    let percent = f32::from(percent.clamp(FOV_RANGE.0, FOV_RANGE.1)) / 100.;
+    let half = ((4. / 3.) / focal).atan_d() * percent;
+    (4. / 3.) / half.min(80f32.to_radians()).tan_d()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn field_of_view_scales_the_angle_and_leaves_the_original_alone() {
+        let focal = 1.6;
+        assert_eq!(fov_focal(focal, 100), focal);
+        let angle = |f: f32| 2. * atv_core::math::Det::atan_d((4. / 3.) / f);
+        for percent in [85u8, 90, 110, 125] {
+            let scaled = fov_focal(focal, percent);
+            let want = angle(focal) * f32::from(percent) / 100.;
+            assert!((angle(scaled) - want).abs() < 1e-5, "{percent}%");
+        }
+        // Wider sees more: a shorter focal length.
+        assert!(fov_focal(focal, 125) < focal && fov_focal(focal, 85) > focal);
+        // Out-of-range values clamp; a very wide authored lens stays finite.
+        assert_eq!(fov_focal(focal, 200), fov_focal(focal, 125));
+        assert!(fov_focal(0.3, 125).is_finite() && fov_focal(0.3, 125) > 0.);
+        // Speed rush composes: the same rush on a wider view is still wider.
+        assert!(fov_focal(focal * 0.91, 110) < fov_focal(focal, 110));
+    }
 
     #[test]
     fn landscape_keeps_the_recovered_eye_and_aim() {

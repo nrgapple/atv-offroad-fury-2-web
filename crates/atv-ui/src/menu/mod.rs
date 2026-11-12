@@ -2,6 +2,7 @@
 //! game.css and menu-screens.css pause-panel rules). atv_core::ui_menu owns
 //! the rows, labels, values and choice order exactly as for the browser; this
 //! module owns the responsive panel, selection and pointer handling.
+pub mod access;
 pub mod controller;
 pub mod glyphs;
 pub mod jukebox;

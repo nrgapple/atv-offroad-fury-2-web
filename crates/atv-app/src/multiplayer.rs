@@ -1336,6 +1336,8 @@ impl Net {
                 "directReceivedBytes": c.direct_received_bytes,
             },
             "linkCounts": self.session.link_counts(),
+            "courier": self.session.courier,
+            "bundles": c.bundles,
             "links": self.session.link_states().into_iter().map(|(peer, state)| {
                 serde_json::json!({"peer": peer, "state": state})
             }).collect::<Vec<_>>(),

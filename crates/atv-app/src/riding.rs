@@ -106,6 +106,13 @@ pub struct Riding {
     pub dirt_enabled: bool,
     /// Settings → Chase camera: Assisted (UphillSightline).
     pub chase_assist: bool,
+    /// Options → Accessibility → Field of view, percent of the original
+    /// angle (100 is the original). Riding cameras only: the race intro
+    /// and TV shots keep their authored lenses.
+    pub fov_percent: u8,
+    /// Options → Accessibility → Tilt steering: the phone's turn (degrees)
+    /// that is full lock; `None` off.
+    pub tilt_lock: Option<f32>,
     sightline: atv_game::ride::view::UphillSightline,
     /// Settings → Crash camera: Tight (the default) frames Crazy/Gorn crashes
     /// with crashPresentation; Original keeps the recovered wreck camera.
@@ -242,6 +249,8 @@ impl Riding {
             dirt: atv_game::dirt::DirtBuildup::new(venue.terrain_zones),
             dirt_enabled: false,
             chase_assist: false,
+            fov_percent: 100,
+            tilt_lock: None,
             sightline: Default::default(),
             crash_camera_tight: true,
             crash_bounds: None,
@@ -474,6 +483,13 @@ impl Riding {
             touch_go = t.go;
             merge_touch(&mut read.controls, &t);
         }
+        // Tilt steering steers while no stick, key or thumb does.
+        if let Some(lock) = self.tilt_lock
+            && read.controls.steer.abs() < 0.05
+            && let Some(angle) = crate::tilt::angle()
+        {
+            read.controls.steer = crate::tilt::steer(angle, lock);
+        }
         // Kid difficulty: GO lets the race path driver ride.
         if let Some(state) = self.ride.race_mut().filter(|s| s.kid) {
             state.kid_go = kid_go(input.keys, input.pad, read.controls.throttle, touch_go);
@@ -576,6 +592,38 @@ impl Riding {
     /// `count` fixed steps with one control sample (an op 50 batch).
     pub fn run(&mut self, controls: &Controls, count: u32) -> Result<(), String> {
         self.run_with(controls, count, None)
+    }
+
+    /// One rendered frame of an authored CPU rider (game_cpu.rs): the
+    /// player's accumulator, with `brain` choosing each step's controls.
+    pub fn drive(
+        &mut self,
+        dt: f32,
+        peers: Peers,
+        mut brain: impl FnMut(&Ride) -> Controls,
+    ) -> Result<(), String> {
+        self.clock += f64::from(dt) * 1000.;
+        self.steps_last_frame = 0;
+        self.step_cameras.clear();
+        self.step_rest.clear();
+        self.step_race.clear();
+        self.accumulator = (self.accumulator + dt).min(0.1);
+        let count = ((self.accumulator * 60.).floor() as u32).min(4);
+        for _ in 0..count {
+            self.accumulator -= 1. / 60.;
+            let mut controls = brain(&self.ride);
+            if self.locked {
+                controls = Controls {
+                    brake: 1.,
+                    ..Controls::default()
+                };
+            }
+            self.run_with(&controls, 1, peers)?;
+        }
+        if count > 0 {
+            self.accept_batch(count, true)?;
+        }
+        Ok(())
     }
 
     /// [`Riding::run`] in a room: each step touches the other riders as
@@ -795,6 +843,10 @@ impl Riding {
             &height,
         );
         let assist = self.chase_assist.then_some((&self.sightline, actor.origin));
+        let fov_percent = match camera.1 {
+            ride::CameraMode::Intro | ride::CameraMode::Tv => 100,
+            _ => self.fov_percent,
+        };
         let view = match (&camera.0, camera.1) {
             (frame, ride::CameraMode::Intro | ride::CameraMode::Tv) => {
                 atv_game::ride::view::cinematic(frame, aspect)
@@ -931,7 +983,7 @@ impl Riding {
                 yaw,
                 pitch,
             },
-            focal_length * self.rush.focal_scale(),
+            atv_game::ride::view::fov_focal(focal_length * self.rush.focal_scale(), fov_percent),
             pose,
         ))
     }

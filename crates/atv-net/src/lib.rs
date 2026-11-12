@@ -584,9 +584,20 @@ pub mod signal {
     /// ([`super::LinkReport`] bytes), so the relay can count why riders stay
     /// on it. `peer` is the sender.
     pub const REPORT: u8 = 7;
+    /// Relay to riders that said [`CARRIES`]: `peer` is the room's courier,
+    /// and with `data[0]` = 1 it carries the poses of the riders linked with
+    /// it to riders without those links in [`super::Packet::Bundle`]s
+    /// (research/MULTIPLAYER.md "Courier"); 0 ends that.
+    pub const COURIER: u8 = 8;
     /// Flags bit: the rider can open direct links.
     pub const DIRECT: u8 = 1;
+    /// Hello flags bit: the build can be a courier and follows
+    /// [`COURIER`]. Never forwarded in other riders' flags, which older
+    /// builds accept only as [`DIRECT`].
+    pub const CARRIES: u8 = 2;
 }
+/// Most poses in one [`Packet::Bundle`]: every rider in a full room.
+pub const MAX_BUNDLE: usize = MAX_PLAYERS;
 
 /// What one client's direct links did since it joined the room: counts only,
 /// for the relay's accounting (research/MULTIPLAYER.md "Relay accounting").
@@ -685,11 +696,13 @@ impl Signal {
     pub fn validate(&self) -> Result<()> {
         let valid = valid_peer(self.peer)
             && match self.kind {
-                signal::HELLO
-                | signal::PRESENT
-                | signal::ARRIVED
-                | signal::GONE
-                | signal::DROPPED => self.data.len() == 1 && self.data[0] <= signal::DIRECT,
+                signal::HELLO => {
+                    self.data.len() == 1 && self.data[0] <= signal::DIRECT | signal::CARRIES
+                }
+                signal::PRESENT | signal::ARRIVED | signal::GONE | signal::DROPPED => {
+                    self.data.len() == 1 && self.data[0] <= signal::DIRECT
+                }
+                signal::COURIER => self.data.len() == 1 && self.data[0] <= 1,
                 signal::OFFER | signal::ANSWER => {
                     !self.data.is_empty() && self.data.len() <= MAX_SIGNAL_BYTES
                 }
@@ -757,6 +770,12 @@ pub enum Packet {
     /// once each reports the other.
     Links {
         mask: u32,
+    },
+    /// Courier to relay: the latest pose (an encoded compact `Snapshot`
+    /// packet) of each rider linked with it, and its own, for the relay to
+    /// pass to riders without those links. Never sent to clients.
+    Bundle {
+        poses: Vec<Vec<u8>>,
     },
 }
 
