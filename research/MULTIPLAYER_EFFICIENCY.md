@@ -178,6 +178,14 @@ each client's links did, readable at `/multiplayer/freeride/riders`, so the
 next change can target the actual cause. Details:
 [MULTIPLAYER.md](MULTIPLAYER.md#relay-accounting-2026-11-10).
 
+## Courier (2026-11-11)
+
+One rider without links used to keep every linked rider sending it
+full-rate poses through the relay. Now one linked browser per room (the
+courier) bundles everyone's latest poses for such riders, so they cost one
+stream instead of one per linked rider. Details:
+[MULTIPLAYER.md](MULTIPLAYER.md#courier-2026-11-11).
+
 ## Limits and next gates
 
 The measurement is host-only and used a synthetic browser focus/visibility setup.

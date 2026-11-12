@@ -1,0 +1,16 @@
+{
+  "id": "one-courier-per-room-carries-positions-for-riders-who--9a7cb639efff4ccebc02381dc491d643",
+  "timestamp": "2026-11-12T01:29:25.885422+00:00",
+  "recorded_at": "2026-11-12T01:29:25.885422+00:00",
+  "kind": "build",
+  "title": "One courier per room carries positions for riders who can't connect directly",
+  "summary": "A single rider without direct links (a desktop build, an old tab or a blocked network) used to put every other rider in the room back on the relay at full rate. Now one directly connected browser per room, the courier, bundles everyone's latest positions into one message for those riders, so they cost one stream instead of one per rider.",
+  "details": [
+    "The relay picks the courier: the browser on the course linked with the most other riders. It keeps the job unless another rider has two more links, and it only carries while some rider it covers has a rider on the course without a link to it.",
+    "Riders linked with the courier send the relay only an occasional presence update and hand the courier their positions over the direct link. The courier sends one bundle per 50 ms tick, up to 20 riders within the 8 KB packet limit.",
+    "The relay checks each bundled position belongs to a rider on the course who is the courier or linked with it, then forwards it unchanged, so desktop builds and older tabs need no update and see everyone at the normal rate.",
+    "The public Free Ride rider count adds today's bundle total and how many rooms have an active courier."
+  ],
+  "limitation": "Not yet measured on production traffic, real networks, rooms larger than three, phones, or a courier leaving mid-ride under load. Carried positions arrive up to one 50 ms tick later. The relay cannot verify a carried position is genuine; a modified courier could misplace the riders it carries, as seen only by riders without links.",
+  "verification": "Host only, one Mac with a local relay: in the direct-link browser test with two linked riders and one ?p2p=0 rider, the driving guest sent the relay 2 messages in 4 s while the courier sent 73 bundles, and the third rider drew both. Unit tests cover the wire format, the client hand-off and the relay's courier choice."
+}

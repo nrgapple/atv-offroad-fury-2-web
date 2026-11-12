@@ -55,6 +55,8 @@ pub struct Preferences {
     pub new_profiles_unlocked: bool,
     /// Display → Show FPS (port option, this device; [`crate::fps`]).
     pub show_fps: bool,
+    /// Options → Accessibility ([`super::access`]).
+    pub access: super::access::Access,
 }
 
 /// web/alpha.js `ALPHA_FEATURES`: authored experiments, each off by default.
@@ -140,6 +142,7 @@ impl Preferences {
             ),
             new_profiles_unlocked: crate::settings::new_profiles_unlocked(settings),
             show_fps: get(crate::fps::KEY).as_deref() == Some("on"),
+            access: super::access::Access::load(settings),
         }
     }
 
@@ -338,6 +341,9 @@ impl Preferences {
             "musictoggle" => {
                 self.music_enabled = !self.music_enabled;
                 self.save_music(settings);
+            }
+            _ if action.starts_with("access:") => {
+                return self.access.apply(&action[7..], direction, settings);
             }
             _ if action.starts_with("alpha:") => {
                 let id = &action[6..];

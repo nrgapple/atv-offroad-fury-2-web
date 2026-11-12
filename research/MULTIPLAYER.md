@@ -1242,3 +1242,53 @@ block STUN or hide local addresses. The relay now counts these:
 Limits: the counter sums only shared rooms; clients loaded before this
 release send no reports and count as `oldBuild`; a client's report covers
 its current socket only.
+
+## Courier (2026-11-11)
+
+Port infrastructure. A rider sends the relay full-rate poses while any
+rider on its course lacks a link to it, so one rider without links (a
+desktop build, which has no WebRTC and no update check, an older tab, or a
+blocked network) put every linked rider back on the relay: in a host check
+with three linked riders and one `?p2p=0` rider, 602 of 698 relay messages
+were for or from that one rider. The relay is billed per incoming message,
+so the fix is fewer senders, not fewer recipients.
+
+- **Choice.** Of the riders on the course whose build can carry (`HELLO`
+  flag `CARRIES` = 2, browsers with links), the relay picks the one linked
+  with the most others; the current courier keeps the job unless another
+  has two more links. It is active only while some rider it covers (itself
+  or one linked with it both ways) has a rider on the course without a
+  link to it. The relay re-chooses after HELLO, Ready, Links and
+  departures, and on a bundle from a rider it does not know as the courier
+  (a woken room forgets).
+- **Notice.** `Signal { kind: COURIER (8), peer: courier, data: [1] }`
+  (or `[0]` when it stops) goes only to riders that said `CARRIES`; other
+  riders' flags in `PRESENT`/`ARRIVED` still carry only `DIRECT`.
+- **Covered riders.** A rider linked with an active courier sends the
+  relay presence poses only, and sends the courier its pose at the faster
+  of the link's own rate and the rate its nearest unlinked rider needs.
+- **Bundles.** The courier keeps the latest compact pose from each linked
+  rider and, on every 50 ms tick with something new, sends one
+  `Packet::Bundle` (kind 19; up to 20 whole compact snapshots, within the
+  8 KB packet limit; the rest wait a tick) holding them and its own pose
+  when due. The relay checks each pose's rider is on the course, matches
+  its models and is the courier or linked with it, and forwards it
+  unchanged to riders on the course without a link to that rider. Those
+  riders, older builds included, receive ordinary snapshots.
+- **Cost and delay.** A room's riders without links now cost one stream of
+  up to 20 messages a second (the courier's) plus their own poses, instead
+  of one stream per linked rider. Carried poses arrive up to one tick
+  (50 ms) later than direct relaying.
+- **Trust.** The relay cannot check that a carried pose is genuine: a
+  modified courier could misplace the riders it carries, as seen by riders
+  without links only. Poses grant no authority either way.
+- **Counts.** `/multiplayer/freeride/riders` adds `today.bundles` and
+  `today.now.courier` (live shared rooms with an active courier).
+
+Host verification (2026-11-11, one Mac, local relay):
+`test_engine_multiplayer_links` with two linked riders and one `?p2p=0`
+rider: while the guest drove for 4 s it sent the relay 2 messages and the
+courier (the host) 73 bundles, and the third rider drew both. Not verified:
+real networks, rooms larger than three, a courier leaving mid-ride under
+load, phones.
+

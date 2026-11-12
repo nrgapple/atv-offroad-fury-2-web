@@ -526,7 +526,9 @@ impl GameSession {
             .filter_map(|(m, flag)| {
                 Some((
                     flag.as_ref().copied()?,
-                    m.owner.map(|o| OWNER_COLORS[o % 4]),
+                    m.owner.map(|o| {
+                        atv_ui::hud::palette::slot_rgb((o % 4) as u8, OWNER_COLORS[o % 4])
+                    }),
                 ))
             })
             .collect()
