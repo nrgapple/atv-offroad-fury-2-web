@@ -81,6 +81,7 @@ fn android_main(app: AndroidApp) {
         camera_choice: (true, false),
         capture: None,
         capture_ui: false,
+        capture_menu: None,
         gpu_frames: None,
         ride: true,
         selection: Default::default(),

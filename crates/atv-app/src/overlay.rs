@@ -2101,15 +2101,8 @@ impl Overlay {
         );
         let rect = |id| hits.iter().find(|(_, i)| *i == id).map(|(r, _)| *r);
         if let (Some(panel), Some(content)) = (rect(pause::PANEL), rect(pause::CONTENT)) {
-            // The Jukebox scrolls only its track list (no panel padding).
-            let padding = if state.page == "jukebox" {
-                0.
-            } else if view.width <= 580. || view.height <= 450. {
-                20.
-            } else {
-                30.
-            };
-            self.menu_scroll_max = (content.h - (panel.h - 2. * padding)).max(0.);
+            // Only the rows scroll: the scrolled part has no padding of its own.
+            self.menu_scroll_max = (content.h - panel.h).max(0.);
         }
         // jukebox.js: open with the playing song centred in the list.
         let centre = state.page == "jukebox" && !self.jukebox_centred;

@@ -708,6 +708,14 @@ impl Front {
         }
     }
 
+    /// Captures: Options open over the menu on `page` and `row`.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn open_options(&mut self, page: &str, row: usize) {
+        let mut menu = PauseMenu::settings();
+        menu.open_at(page, row);
+        self.menu = Some(menu);
+    }
+
     fn front_event(&mut self, event: Option<Event>) -> Option<Event> {
         match event {
             Some(Event::Settings) => {
@@ -1731,8 +1739,13 @@ impl Front {
         let rect = |id| hits.iter().find(|(_, i)| *i == id).map(|(r, _)| *r);
         let mut viewport = 400.;
         if let (Some(panel), Some(content)) = (rect(pause::PANEL), rect(pause::CONTENT)) {
-            // Full-screen panel: clamp(12px, 3vh, 28px) above, 20px below.
-            let padding = (view.height * 0.03).clamp(12., 28.) + 20.;
+            // The Jukebox keeps its full-screen allowance: clamp(12px, 3vh,
+            // 28px) above, 20px below. Options scrolls only its rows.
+            let padding = if state.page == "jukebox" {
+                (view.height * 0.03).clamp(12., 28.) + 20.
+            } else {
+                0.
+            };
             self.menu_scroll_max = (content.h - (panel.h - padding)).max(0.);
             viewport = panel.h;
         }
