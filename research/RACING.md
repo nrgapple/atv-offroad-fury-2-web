@@ -1174,6 +1174,64 @@ Checks: `atv-core` `enduro` and `race::tests::enduro_gates_count_in_order_and_la
 env05's short Enduro (13 gates, a one-lap finish) and loads env06's Short
 Track (it skips when the content package predates the variant archives).
 
+## User Created Enduro and the Waypoint Editor — 2026-11-12
+
+Exact-build evidence (strings, page labels and Overlays.pb; not traced):
+
+- **Event types.** "Waypoint Editor" and "User Created Enduro" are event
+  names (`0x32c0e0`, `0x32c0c0`); the event setup reads
+  `NumWaypointEditorTracks`, `WPEditorRaceTypeMask` and
+  `WPEditorPictureResName` (`0x42c6f0`..`0x42c730`) for event types 14 and
+  15. Both read the long Enduro archive (`0021d8b0`, above).
+- **Editor page.** PAGE09 (`QuadzillaUIPageWPEditor`) lists an Environment
+  value and "Race 1 (New)", "Race 2 (New)", "Race 3 (New)": three saved races
+  per venue. Track Select offers User Created Enduro with the same race
+  rows and a "Number of Laps" row.
+- **Saving.** Waypoints are a per-profile memory card file ("Waypoints save
+  file for Profile %s", "Waypoints load for Profile %s failed!",
+  `0x333e70`, `0x3312c0`); both the editor and user-created races need a
+  loaded profile with autosave on (`0x331100`..`0x331280`). A course holds
+  at most 50 records (`0022a240`, the `.wpt` padding).
+- **Editing.** Overlay Set 4 (Type Waypoint) is the editor HUD: object 36's
+  help lists "Place/Edit Gate", "Delete Gate", "Reset Gate", "Move
+  Cursor/Gate" (left stick and d-pad), "Rotate Gate Left/Right (if
+  selected)", "Snap to Previous/Next Gate", "Rotate Camera" (right stick)
+  and Select "Toggle Test/Edit Modes"; object 37 hides it behind Square. The
+  "Waypoint Pause Menu" has Resume Editing, Save Race (item type 25,
+  `QuadzillaMenuItem_SaveWaypointRace`) and Quit. The editor places
+  `waygate.slt` markers and plays `Music\waytune1.vag`.
+- **CPUs.** With the editor open `0020f780` loads no Track, and mode 4 then
+  aims straight at the next gate (CPU driver section below). Whether the
+  User Created Enduro race seats CPUs was not recovered.
+
+Not recovered: the minimum gate count, gate spacing rules, how the cursor
+moves and rotates, the course name (the page shows only "Race n"), and
+whether a user race awards Profile Points or records.
+
+Port (`atv_core::user_course`, `RaceVariant::UserEnduro`):
+
+- A course is a venue (`env01`..`env08`), a name, laps (1-5, default 3) and
+  3-50 gates (authored minimum) each a ground position and race direction,
+  consecutive gates at least 20 ft apart (authored). Positions snap to a
+  half-foot grid and headings to 1/65536 turn so every platform decodes the
+  same `f32`s; the compact code (URL-safe base64, about 6 bytes a gate) is
+  both what a course link carries (`wp=`) and what is saved.
+- A User Created Enduro race reads the long Enduro archive like the
+  original and replaces its `.wpt` with the course's gates, so gate models,
+  banners, fading, "GATE n of m", laps, the 30 s race over and the grid past
+  the last gate are the ordinary Enduro's. Codes are untrusted: the decoder
+  checks version, venue, laps, count, name and spacing, and the venue load
+  rejects gates off its terrain.
+- It races alone (port choice): the port's CPU Enduro driver follows the long
+  Enduro TDF route aimed by its next gate, which arbitrary gates leave; the
+  original's trackless straight-at-the-gate aim is not ported. It earns no
+  Profile Points and keeps no Hall of Fame or profile course records, and
+  it is not offered in online rooms (`RaceVariant::ALL` excludes it).
+
+Checks: `atv-core` `user_course` tests, `atv-game` launch tests,
+`tools/test_engine_user_course.mjs` (a link races three gates alone; a
+tampered code is refused).
+
 ## CPU reset points and the committed station — 2026-10-27
 
 Headless sweeps (determinism example, 1 lap, 3 CPUs, 18,000 frames) left CPUs

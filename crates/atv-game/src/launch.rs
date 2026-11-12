@@ -34,6 +34,11 @@ pub enum RaceVariant {
     EnduroLong,
     EnduroShort,
     ShortTrack,
+    /// A User Created Enduro (`atv_core::user_course`): the long Enduro
+    /// archive with the player's own gates (`0021d8b0` reads `endl` for it).
+    /// Not in [`RaceVariant::ALL`]: menus and rooms list only the shipped
+    /// races.
+    UserEnduro,
 }
 
 impl RaceVariant {
@@ -48,7 +53,7 @@ impl RaceVariant {
     pub fn stem(self) -> &'static str {
         match self {
             RaceVariant::National => "nat",
-            RaceVariant::EnduroLong => "endl",
+            RaceVariant::EnduroLong | RaceVariant::UserEnduro => "endl",
             RaceVariant::EnduroShort => "ends",
             RaceVariant::ShortTrack => "st",
         }
@@ -61,6 +66,7 @@ impl RaceVariant {
             RaceVariant::EnduroLong => "enduro-long",
             RaceVariant::EnduroShort => "enduro-short",
             RaceVariant::ShortTrack => "short-track",
+            RaceVariant::UserEnduro => "user",
         }
     }
 
@@ -75,11 +81,15 @@ impl RaceVariant {
             RaceVariant::EnduroLong => Some("Enduro Long"),
             RaceVariant::EnduroShort => Some("Enduro Short"),
             RaceVariant::ShortTrack => Some("Short Track"),
+            RaceVariant::UserEnduro => Some("User Created Enduro"),
         }
     }
 
     pub fn is_enduro(self) -> bool {
-        matches!(self, RaceVariant::EnduroLong | RaceVariant::EnduroShort)
+        matches!(
+            self,
+            RaceVariant::EnduroLong | RaceVariant::EnduroShort | RaceVariant::UserEnduro
+        )
     }
 
     /// Whether `environment` ships this race.
@@ -87,7 +97,7 @@ impl RaceVariant {
         is_race_course(environment)
             && match self {
                 RaceVariant::National => true,
-                RaceVariant::EnduroLong | RaceVariant::EnduroShort => {
+                RaceVariant::EnduroLong | RaceVariant::EnduroShort | RaceVariant::UserEnduro => {
                     environment.starts_with("env")
                 }
                 RaceVariant::ShortTrack => matches!(environment, "env01" | "env06" | "env07"),
@@ -100,12 +110,18 @@ impl RaceVariant {
 pub fn race_course_id(environment: &str, variant: RaceVariant) -> String {
     match variant {
         RaceVariant::National => environment.to_string(),
+        RaceVariant::UserEnduro => format!("{environment}user"),
         _ => format!("{environment}{}", variant.stem()),
     }
 }
 
 /// The venue and race of a race course id ([`race_course_id`]).
 pub fn split_race_course(id: &str) -> Option<(&str, RaceVariant)> {
+    if let Some(venue) = id.strip_suffix("user")
+        && RaceVariant::UserEnduro.exists(venue)
+    {
+        return Some((venue, RaceVariant::UserEnduro));
+    }
     for variant in [
         RaceVariant::EnduroLong,
         RaceVariant::EnduroShort,
@@ -308,6 +324,9 @@ pub struct Launch {
     pub player_name: String,
     pub room: String,
     pub race: RaceLink,
+    /// `wp=`: a User Created Enduro's validated code
+    /// (`atv_core::user_course`); `race.course` is then its `<venue>user` id.
+    pub user_course: Option<String>,
 }
 
 /// `application/x-www-form-urlencoded` query pairs, as URLSearchParams reads them.
@@ -455,7 +474,7 @@ pub fn ride_url(page: &str, link: &RideLink) -> String {
 
 /// launch.js `parseLaunch`: `tracks` are (id, display name) for map names.
 pub fn parse_launch(search: &str, tracks: &[(String, String)]) -> Launch {
-    const ALIASES: [(&str, &[&str]); 15] = [
+    const ALIASES: [(&str, &[&str]); 16] = [
         ("map", &["map", "environment"]),
         ("quad", &["quad", "vehicle", "atv"]),
         ("rider", &["rider"]),
@@ -471,6 +490,7 @@ pub fn parse_launch(search: &str, tracks: &[(String, String)]) -> Launch {
         ("cheats", &["cheats", "cheat"]),
         ("course", &["course"]),
         ("event", &["event"]),
+        ("wp", &["wp"]),
     ];
     let params = query_pairs(search);
     let mut errors = Vec::new();
@@ -515,6 +535,7 @@ pub fn parse_launch(search: &str, tracks: &[(String, String)]) -> Launch {
             all_out: false,
             event: Default::default(),
         },
+        user_course: None,
     };
     if !launch.requested {
         launch.errors = errors;
@@ -742,8 +763,35 @@ pub fn parse_launch(search: &str, tracks: &[(String, String)]) -> Launch {
         all_out,
         event,
     };
+    // A course link carries its venue, gates and laps; it races alone.
+    if let Some(code) = value("wp") {
+        match atv_core::user_course::UserCourse::decode(&code) {
+            Ok(course) => {
+                if launch.activity != "race" || has("course") || has("cpu") || has("laps") {
+                    errors.push("A course link (wp=) is a race with its own laps and no course, cpu or laps.".into());
+                }
+                if has("map") && launch.map != course.environment {
+                    errors.push("The course link's map does not match its course.".into());
+                }
+                launch.map = course.environment.clone();
+                launch.race.course = race_course_id(&course.environment, RaceVariant::UserEnduro);
+                launch.race.laps = course.laps;
+                launch.race.cpu = 0;
+                launch.user_course = Some(code);
+            }
+            Err(error) => errors.push(error),
+        }
+    }
     launch.errors = errors;
     launch
+}
+
+/// A User Created Enduro's course link: `page` with the course code
+/// (`wp=`, URL-safe as it stands) and the rider's ATV.
+pub fn user_course_url(page: &str, code: &str, environment: &str, quad: u16, rider: u16) -> String {
+    format!(
+        "{page}?mode=single&activity=race&map={environment}&quad={quad}&rider={rider}&wp={code}&play=1"
+    )
 }
 
 /// launch.js `menuShortcut`: `?menu=freeride|race` alone opens that menu.
@@ -766,6 +814,32 @@ pub fn menu_shortcut(search: &str) -> Option<&'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn course_links_open_their_user_course() {
+        let mut course = atv_core::user_course::UserCourse::new("env04");
+        for (x, z) in [(100., 100.), (200., 100.), (200., 200.)] {
+            assert!(course.place(x, z, [1., 0.]));
+        }
+        course.laps = 2;
+        let code = course.encode();
+        let url = user_course_url("https://x/play.html", &code, "env04", 7, 1);
+        let launch = parse_launch(url.split_once('?').unwrap().1, &[]);
+        assert!(launch.errors.is_empty(), "{:?}", launch.errors);
+        assert_eq!(launch.activity, "race");
+        assert_eq!(launch.map, "env04");
+        assert_eq!(launch.race.course, "env04user");
+        assert_eq!((launch.race.laps, launch.race.cpu), (2, 0));
+        assert_eq!((launch.quad_id, launch.rider_id), (7, 1));
+        assert_eq!(launch.user_course.as_deref(), Some(code.as_str()));
+        // Untrusted codes and contradictions are refused.
+        let bad = parse_launch("activity=race&wp=AAAA&play=1", &[]);
+        assert!(!bad.errors.is_empty() && bad.user_course.is_none());
+        let other = parse_launch(&format!("activity=race&map=env01&wp={code}"), &[]);
+        assert!(!other.errors.is_empty());
+        let laps = parse_launch(&format!("activity=race&laps=5&wp={code}"), &[]);
+        assert!(!laps.errors.is_empty());
+    }
 
     #[test]
     fn ride_prefetch_lists_the_ride_archives() {
@@ -944,6 +1018,20 @@ mod tests {
             Some(("nat03", RaceVariant::National))
         );
         assert_eq!(split_race_course("env05st"), None);
+        assert_eq!(
+            race_course_id("env03", RaceVariant::UserEnduro),
+            "env03user"
+        );
+        assert_eq!(
+            split_race_course("env03user"),
+            Some(("env03", RaceVariant::UserEnduro))
+        );
+        assert_eq!(split_race_course("nat03user"), None);
+        assert!(!RaceVariant::ALL.contains(&RaceVariant::UserEnduro));
+        assert_eq!(
+            race_resource("env03", RaceVariant::UserEnduro).unwrap(),
+            race_resource("env03", RaceVariant::EnduroLong).unwrap()
+        );
         assert_eq!(split_race_course("free01"), None);
         assert_eq!(race_venue("env08endl"), "env08");
         let (paths, _) = ride_prefetch("env05", Some(RaceVariant::EnduroShort), 1, 0);
