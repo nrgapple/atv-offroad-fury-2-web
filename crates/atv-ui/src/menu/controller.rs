@@ -32,6 +32,8 @@ pub enum Event {
     Jukebox(super::jukebox::JukeboxAction),
     /// Players → Spawn beside this rider's slot.
     Spawn(u8),
+    /// The Waypoint Editor's Save Course.
+    SaveCourse,
     /// Leave Game: leave the multiplayer room.
     LeaveGame,
     /// Change ATV and Rider: the garage over the held room.
@@ -147,6 +149,8 @@ pub struct PauseMenu {
     pub training_active: bool,
     /// The ride is a mini-game (Restart Game).
     pub game_active: bool,
+    /// The ride is the Waypoint Editor (Save Course).
+    pub editor_active: bool,
     /// Keys held while the menu is open (frontend.js `menuKeys`), for the
     /// rebindable Pause action.
     held: Vec<String>,
@@ -210,6 +214,7 @@ impl PauseMenu {
             race_active: false,
             training_active: false,
             game_active: false,
+            editor_active: false,
             held: Vec::new(),
             shown: crate::transition::next_show(),
             credits_since: 0.,
@@ -333,6 +338,7 @@ impl PauseMenu {
             "race_active": self.race_active,
             "training_active": self.training_active,
             "game_active": self.game_active,
+            "editor_active": self.editor_active,
             "race_overlays_off": p.overlays_off,
             "race_position": p.race_position,
             "funny_crashes": p.crash_mode != "original",
@@ -590,6 +596,7 @@ impl PauseMenu {
             "devlog" => return Some(Event::Leave("devlog.html")),
             "fullscreen" => return Some(Event::Fullscreen),
             "copyride" => return Some(Event::CopyRide),
+            "wpsave" => return Some(Event::SaveCourse),
             "photo" => return Some(Event::Photo),
             "leave" => return Some(Event::LeaveGame),
             "changeride" => return Some(Event::ChangeRide),

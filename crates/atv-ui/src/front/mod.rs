@@ -283,6 +283,8 @@ pub fn stage_page(page: &str) -> bool {
             | "objectives"
             | "objective-courses"
             | "games"
+            | "waypoint"
+            | "waypoint-course"
             | "create-lobby"
             | "join-lobby"
             | "profile"
@@ -863,6 +865,8 @@ fn page_title(page: &str) -> &'static str {
         "objectives" => "Select Objective",
         "objective-courses" => "Freestyle Objectives",
         "games" => "Games",
+        "waypoint" => "Waypoint Editor",
+        "waypoint-course" => "User Created Enduro",
         "store" => "Unlock Items",
         "store-atv" => "ATVs",
         "store-gear" => "Rider Equipment",
@@ -1695,6 +1699,8 @@ fn left(m: &Metrics, s: &Screen) -> El {
                 | "objectives"
                 | "objective-courses"
                 | "games"
+                | "waypoint"
+                | "waypoint-course"
                 | "profile"
                 | "profile-name"
                 | "profile-slots"
@@ -1708,7 +1714,10 @@ fn left(m: &Metrics, s: &Screen) -> El {
         ) || controller::store_page(page)
             || controller::passkey_page::PAGES.contains(&page) =>
         {
-            if matches!(page, "profile-name" | "store-cheats" | "passkey-entry") {
+            if matches!(
+                page,
+                "profile-name" | "store-cheats" | "passkey-entry" | "waypoint-course"
+            ) {
                 left = left.child(form(m, s));
             }
             let mut rows = El::new(column(2.));

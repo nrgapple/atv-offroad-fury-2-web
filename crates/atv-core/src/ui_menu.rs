@@ -198,6 +198,10 @@ pub struct Request {
     /// (`0043a9e8`).
     #[serde(default)]
     pub game_active: bool,
+    /// The Waypoint Editor ride: Pause adds Save Course (the original
+    /// Waypoint Pause Menu's Save Race).
+    #[serde(default)]
+    pub editor_active: bool,
     #[serde(default)]
     pub funny_crashes: bool,
     #[serde(default)]
@@ -1471,6 +1475,10 @@ pub fn layout(request: Request) -> Result<Frame> {
                 ("Options", "settings"),
                 ("Jukebox", "jukebox"),
             ];
+            if request.editor_active {
+                choices[0].0 = "Resume Editing";
+                choices.insert(1, ("Save Course", "wpsave"));
+            }
             let online = !request.lobby_status.is_empty();
             if online {
                 // Original pause rows: change ride in place; the host picks
@@ -2560,6 +2568,7 @@ mod tests {
             race_active: false,
             training_active: false,
             game_active: false,
+            editor_active: false,
         }
     }
     #[test]
