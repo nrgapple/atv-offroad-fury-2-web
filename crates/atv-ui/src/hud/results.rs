@@ -130,6 +130,8 @@ pub struct Results {
     pub no_profile: bool,
     /// Hall of Fame records this race set, and their name.
     pub fame: Option<Fame>,
+    /// The world boards' answer for this race ("World #3 Fastest Lap!").
+    pub world_line: Option<String>,
 }
 
 impl Results {
@@ -173,6 +175,7 @@ impl Results {
         });
         self.profile_total = None;
         self.fame = None;
+        self.world_line = None;
         self.rows = frame
             .standings
             .iter()
@@ -223,6 +226,10 @@ impl Results {
             .championship_line
             .as_deref()
             .map_or(String::new(), |line| format!(" · {line}"));
+        let world = self
+            .world_line
+            .as_deref()
+            .map_or(String::new(), |line| format!(" · {line}"));
         championship
             + &match (self.award, self.profile_total) {
                 (Some((.., points)), Some(total)) => {
@@ -231,6 +238,7 @@ impl Results {
                 (Some((.., points)), None) => format!(" · +{points} Profile Points"),
                 _ => String::new(),
             }
+            + &world
     }
 
     /// The championship line for a recorded round.

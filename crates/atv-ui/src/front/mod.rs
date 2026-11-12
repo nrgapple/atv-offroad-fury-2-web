@@ -871,6 +871,7 @@ fn page_title(page: &str) -> &'static str {
         "store-cheats" => "Enter Cheats",
         "profile" => "Profile Editor",
         "hall-of-fame" => "Hall of Fame",
+        "daily" => "Daily Event",
         "profile-name" => "Profile Name Entry",
         "profile-view" => "View Profile",
         "profile-overview" => "Profile Overview",
@@ -1705,6 +1706,7 @@ fn left(m: &Metrics, s: &Screen) -> El {
                 | "profile-trophies"
                 | "profile-records"
                 | "hall-of-fame"
+                | "daily"
         ) || controller::store_page(page)
             || controller::passkey_page::PAGES.contains(&page) =>
         {

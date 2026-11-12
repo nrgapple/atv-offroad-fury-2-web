@@ -222,6 +222,11 @@ pub struct Overlay {
     /// The finished race's Hall of Fame records, until named.
     /// (and the name they are stored under).
     fame_watch: Option<(atv_core::hall_of_fame::Watch, String)>,
+    /// The finished race the world boards may take (world.rs), until its
+    /// Hall of Fame name is final.
+    world_run: Option<crate::world::Run>,
+    /// A world board submission for the host to send.
+    pub world_outbox: Option<String>,
     /// A split race's records, the players still to name theirs (player
     /// index and records, in entry order) and the player naming now.
     fame_split: Option<SplitNaming>,
@@ -325,6 +330,8 @@ impl Overlay {
             room_race_pending: false,
             race_entry: None,
             fame_watch: None,
+            world_run: None,
+            world_outbox: None,
             fame_name: String::new(),
             fame_split: None,
             transition: Default::default(),
@@ -1788,6 +1795,12 @@ impl Overlay {
 
     /// A results command's host action; the Hall of Fame name is kept here.
     fn command_action(&mut self, command: results::Command) -> Option<Action> {
+        if matches!(
+            command,
+            results::Command::Retry | results::Command::Quit | results::Command::NextRound
+        ) {
+            self.world_submit(None);
+        }
         Some(match command {
             results::Command::Retry => Action::RaceRetry,
             results::Command::Quit => Action::RaceQuit,
@@ -1805,6 +1818,7 @@ impl Overlay {
                     atv_ui::settings::save_hall_of_fame(&mut self.settings, &hall);
                     self.fame_watch = Some((watch.clone(), self.fame_name.clone()));
                 }
+                self.world_submit(Some(self.fame_name.clone()));
                 return None;
             }
         })
@@ -1820,9 +1834,33 @@ impl Overlay {
             self.offer_split_fame(frame);
             return;
         }
+        self.world_run = crate::world::Run::of_race(frame);
         if let Some(watch) = frame.records.clone() {
             self.offer_fame(atv_core::hall_of_fame::Watch::Race(watch));
         }
+        // The world boards take a run that set a local record (sent once
+        // its name is entered) or a daily event time (sent now).
+        if self.fame_watch.is_none() {
+            if self.world_run.as_ref().is_some_and(|r| r.daily.is_some()) {
+                self.world_submit(None);
+            } else {
+                self.world_run = None;
+            }
+        }
+    }
+
+    /// Hands the kept world run to the host under `name`, else the Hall of
+    /// Fame name already stored for it (or the default).
+    fn world_submit(&mut self, name: Option<String>) {
+        let Some(run) = self.world_run.take() else {
+            return;
+        };
+        let name = name.unwrap_or_else(|| match &self.fame_watch {
+            Some((_, stored)) => stored.clone(),
+            None => atv_core::hall_of_fame::clean_name(&self.default_fame_name()),
+        });
+        self.world_outbox = Some(run.body(&name));
+        self.results.world_line = Some("Sending to the World Hall of Fame…".into());
     }
 
     /// A split race or Duel (`001f1740` → `00217e40`): every human's

@@ -266,8 +266,8 @@ pub fn apply(settings: &mut Settings, fetched: &Fetched, choice: Choice) -> Resu
 pub struct Request {
     pub id: u64,
     pub method: &'static str,
-    /// Path on the save API's origin (`/api/save`…).
-    pub path: &'static str,
+    /// Path on the save API's origin (`/api/save`…, `/api/boards/…`).
+    pub path: std::borrow::Cow<'static, str>,
     pub headers: Vec<(&'static str, String)>,
     pub body: Option<String>,
 }
@@ -622,7 +622,7 @@ impl Sync {
         Request {
             id,
             method,
-            path,
+            path: path.into(),
             headers,
             body,
         }
@@ -935,7 +935,7 @@ mod tests {
 
     impl Server {
         fn handle(&mut self, r: &Request) -> Response {
-            self.requests.push((r.method.into(), r.path.into()));
+            self.requests.push((r.method.into(), r.path.to_string()));
             if let Some(status) = self.down {
                 return Response {
                     status,
@@ -955,7 +955,7 @@ mod tests {
                 body: body.to_string(),
                 retry_after: None,
             };
-            match (r.method, r.path) {
+            match (r.method, r.path.as_ref()) {
                 ("GET", "/api/save") => match self.saves.get(&header(KEY_HEADER)) {
                     Some((rev, save)) => reply(
                         200,

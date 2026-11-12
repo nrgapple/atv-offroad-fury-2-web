@@ -1598,6 +1598,9 @@ pub struct Frame {
     /// filled by the host when it merges the races (`split::merge_race`).
     #[serde(skip)]
     pub split_records: Vec<crate::hall_of_fame::RecordWatch>,
+    /// The finished player's world board trace (with `records`).
+    #[serde(skip)]
+    pub trace: Option<std::sync::Arc<crate::world_board::Trace>>,
     /// The player's completed lap times and the best one's index.
     pub lap_times: Vec<f32>,
     pub best_lap: Option<usize>,
@@ -1671,6 +1674,9 @@ pub struct Race {
     player_resets: u32,
     /// The player's Hall of Fame and personal records (`hall_of_fame`).
     records: Option<crate::hall_of_fame::RecordWatch>,
+    /// The record-keeping player's position trace for the world boards
+    /// (`world_board`), shared with the frames once the player finishes.
+    trace: Option<std::sync::Arc<crate::world_board::Trace>>,
     /// Split screen: another local human is still racing, so this race is
     /// not over at the player's finish (RaceStatus `00248b20` waits for
     /// every human): the clock runs on and the CPUs' finishes stay real.
@@ -1775,6 +1781,7 @@ impl Race {
             player_stunts: Default::default(),
             player_resets: 0,
             records: None,
+            trace: None,
             waiting: false,
             over: false,
             practice: false,
@@ -1787,6 +1794,7 @@ impl Race {
     pub fn set_practice(&mut self) {
         self.practice = true;
         self.records = None;
+        self.trace = None;
     }
     pub fn practice(&self) -> bool {
         self.practice
@@ -1925,12 +1933,14 @@ impl Race {
     pub fn set_records(&mut self, records: crate::hall_of_fame::RecordWatch) {
         if !self.practice {
             self.records = Some(records);
+            self.trace = Some(Default::default());
         }
     }
     /// Rider assists acted (Options → Accessibility): this race keeps no
     /// records, like Kid Mode.
     pub fn drop_records(&mut self) {
         self.records = None;
+        self.trace = None;
     }
     pub fn records(&self) -> Option<&crate::hall_of_fame::RecordWatch> {
         self.records.as_ref()
@@ -1972,6 +1982,9 @@ impl Race {
         self.elapsed += dt;
         let judged = self.player.judged_laps;
         self.player.update(p, &self.course, self.elapsed, limit, dt);
+        if let Some(trace) = self.trace.as_mut().and_then(std::sync::Arc::get_mut) {
+            trace.step(self.elapsed, p, self.player.completed);
+        }
         if let Some(records) = &mut self.records {
             if self.player.judged_laps > judged {
                 records.lap(self.player.last_lap);
@@ -2255,6 +2268,11 @@ impl Race {
     pub fn restore_checkpoint(&mut self, cpu: Option<usize>, origin: [f32; 3]) {
         let enduro = self.course.is_enduro();
         let nearest = enduro.then(|| self.course.nearest_station(origin));
+        if cpu.is_none()
+            && let Some(trace) = self.trace.as_mut().and_then(std::sync::Arc::get_mut)
+        {
+            trace.reset();
+        }
         let p = cpu.map_or(&mut self.player, |i| &mut self.progress[i]);
         p.last = origin;
         let Some(kept) = p.checkpoint else {
@@ -2509,8 +2527,10 @@ impl Race {
             player_stunts: self.player_stunts,
             records: self
                 .records
-                .clone()
-                .filter(|_| self.player.finish.is_some()),
+                .as_ref()
+                .filter(|_| self.player.finish.is_some())
+                .cloned(),
+            trace: self.trace.clone().filter(|_| self.player.finish.is_some()),
             split_records: Vec::new(),
             standings: order
                 .into_iter()
