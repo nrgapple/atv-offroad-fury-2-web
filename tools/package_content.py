@@ -86,6 +86,9 @@ STARTUP += tuple(f'/UI/RESOURCE/TP/TP_{group}.RES' for group in ('PNAT','ASX','P
 # music player opens.
 JUKEBOX = '/UI/RESOURCE/PAGEA/PAGE14.RES'
 STARTUP += (JUKEBOX,)
+# The original Credits page (Options -> Credits): its credits.txt script.
+CREDITS = '/UI/RESOURCE/PAGEA/PAGE18.RES'
+STARTUP += (CREDITS,)
 
 # Original loading-screen action shots for every Freestyle venue except Training,
 # which ships only progress-bar art. Each course's file is fetched lazily.
@@ -758,7 +761,7 @@ def main():
                 outfits = ai_outfit_names(Resource(originals['/TRACKS/TRACKSA/ENV01/E01_NAT.RES']).named('airiders.pb'))
                 outfits |= gear_catalog_names(source('/UI/RESOURCE/RIDEINFO.RES'))
                 data = compact_rider_materials(originals['/RIDER/MRIDER.RES'], data, (originals['/RIDER/FRIDER.RES'],), outfits)
-            record = {'path': path, 'lba': by_path[path.lower()]['lba'], 'directory': False, 'lazy': path.startswith(('/QUAD/', '/UI/LOADICON/')) or path in ('/RIDER/FRIDER.RES', JUKEBOX) or path in VARIANTS or path in GAMES or path in OBJECTIVES, **blob(data)}
+            record = {'path': path, 'lba': by_path[path.lower()]['lba'], 'directory': False, 'lazy': path.startswith(('/QUAD/', '/UI/LOADICON/')) or path in ('/RIDER/FRIDER.RES', JUKEBOX, CREDITS) or path in VARIANTS or path in GAMES or path in OBJECTIVES, **blob(data)}
             if data != originals[path]:
                 record.update(repacked=True, member_count=len(Resource(data).members))
             records.append(record)
