@@ -133,6 +133,9 @@ struct Connection {
     /// The client can be the room's courier ([`signal::CARRIES`]).
     #[serde(default)]
     carries: bool,
+    /// The client decodes room-race CPU sound cues ([`signal::CPU_SOUNDS`]).
+    #[serde(default)]
+    cpu_sounds: bool,
     last_seen_ms: f64,
     window_ms: f64,
     messages: u16,
@@ -474,6 +477,18 @@ fn fresh_riders(rooms: &std::collections::BTreeMap<String, RoomRiders>, instant:
         .filter(|r| instant - r.at_ms < STATS_FRESH_MS)
         .map(|r| r.riders)
         .sum()
+}
+
+/// CPU motion for builds that cannot decode its sound cues (None when it
+/// carries none).
+fn without_cues(motion: &atv_net::CpuMotion) -> Option<Box<atv_net::CpuMotion>> {
+    motion.riders.iter().any(|r| r.sound.is_some()).then(|| {
+        let mut m = Box::new(motion.clone());
+        for r in &mut m.riders {
+            r.sound = None;
+        }
+        m
+    })
 }
 
 fn send(ws: &WebSocket, packet: &Packet) -> Result<()> {
@@ -1435,6 +1450,7 @@ impl DurableObject for LobbyRoom {
             links: 0,
             report: None,
             carries: false,
+            cpu_sounds: false,
             last_seen_ms: instant,
             window_ms: instant,
             messages: 0,
@@ -1674,6 +1690,7 @@ impl DurableObject for LobbyRoom {
                     connection.direct = message.data[0] & signal::DIRECT != 0;
                     connection.carries =
                         connection.direct && message.data[0] & signal::CARRIES != 0;
+                    connection.cpu_sounds = message.data[0] & signal::CPU_SOUNDS != 0;
                     ws.serialize_attachment(&connection)?;
                     self.invalidate_recipients();
                     // A rider that follows couriers hears of the current one.
@@ -1849,9 +1866,17 @@ impl DurableObject for LobbyRoom {
                     && connection.ready_map == room.map
                     && self.lobby(None)?.host == connection.peer =>
             {
+                // Older builds cannot decode the CPU sound cues: they get
+                // the motion without them.
+                let plain = without_cues(&motion).map(Packet::Cpus);
+                let full = Packet::Cpus(motion);
                 for (peer, other) in self.connections()? {
                     if peer != ws && other.ready_map == room.map && other.races {
-                        send(&peer, &Packet::Cpus(motion.clone()))?;
+                        let packet = match &plain {
+                            Some(plain) if !other.cpu_sounds => plain,
+                            _ => &full,
+                        };
+                        send(&peer, packet)?;
                     }
                 }
             }
@@ -2030,6 +2055,33 @@ impl DurableObject for LobbyRoom {
 mod tests {
     use super::*;
     #[test]
+    fn older_builds_get_cpu_motion_without_sound_cues() {
+        let rider = atv_net::CpuRider {
+            index: 0,
+            lap: 0,
+            distance: 0.,
+            finish_ms: 0,
+            pose: Default::default(),
+            sound: None,
+        };
+        let mut motion = atv_net::CpuMotion {
+            serial: 1,
+            riders: vec![rider.clone(), rider],
+        };
+        assert!(without_cues(&motion).is_none());
+        motion.riders[1].sound = Some(Default::default());
+        let plain = without_cues(&motion).unwrap();
+        assert!(plain.riders.iter().all(|r| r.sound.is_none()));
+        // A connection saved before the flag existed hears no cues.
+        let connection: Connection = serde_json::from_value(serde_json::json!({
+            "instance":"i", "generation":1, "active":true, "peer":0,
+            "player":null, "sequence":null,"last_seen_ms":0., "window_ms":0.,
+            "messages":0,"bytes":0
+        }))
+        .unwrap();
+        assert!(!connection.cpu_sounds);
+    }
+    #[test]
     fn fresh_identity_rejects_old_callbacks_after_storage_cleanup() {
         let mut room: Room = serde_json::from_value(serde_json::json!({
             "instance":"new-instance", "generation":1, "code":b"ABCD2345",
@@ -2206,6 +2258,7 @@ mod tests {
             links: 0,
             report: None,
             carries: false,
+            cpu_sounds: false,
             last_seen_ms: 0.,
             window_ms: 0.,
             messages: 0,
@@ -2262,6 +2315,7 @@ mod tests {
             links: 0,
             report: None,
             carries: false,
+            cpu_sounds: false,
             sequence: Some(u32::MAX),
             last_seen_ms: 555.,
             window_ms: 500.,

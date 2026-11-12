@@ -76,6 +76,9 @@ pub struct Venue {
     pub ambient: Option<std::rc::Rc<std::cell::RefCell<crate::ambient::Ambient>>>,
     /// A race's National drop gate (drawn as the last scene model).
     pub drop_gate: Option<atv_core::race_gate::DropGate>,
+    /// The Waypoint Editor's first gate model (scene model index); the
+    /// next `MAX_GATES - 1` follow it.
+    pub editor_gates: Option<usize>,
     /// An Enduro race's gates in order, the finish gate last (`0022a340`).
     pub enduro_gates: Vec<atv_core::race::Gate>,
     /// The dense render-grid ground (renderCore.terrainHeight): cameras and
@@ -213,6 +216,10 @@ pub struct LoadOptions {
     /// A User Created Enduro's course (with `race` UserEnduro): its gates
     /// replace the long Enduro's `.wpt`.
     pub user_course: Option<std::rc::Rc<atv_core::user_course::UserCourse>>,
+    /// The Waypoint Editor (with `race` UserEnduro): no race gates, but
+    /// [`atv_core::user_course::MAX_GATES`] hidden `endwgate` models the
+    /// editor poses as gates are dropped (`Venue::editor_gates`).
+    pub waypoint_editor: bool,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -329,11 +336,22 @@ pub async fn load_with(
             .models
             .retain(|model| !model.name.eq_ignore_ascii_case(removed));
     }
-    // National drop gate: its own model from the race TOY, not a scene
-    // model (00222cd0, op 116); the race poses it after GO.
-    let drop_gate = match (&mode, racing) {
-        (Some(mode), true) => atv_core::race_gate::parse(&String::from_utf8_lossy(mode))?,
-        _ => None,
+    // Drop gate: its own model, not a scene model (00222cd0, op 116); the
+    // race poses it after GO. 00222170 reads both TOYs: Nationals declare it
+    // in the race TOY, Supercross venues in the common one (sxNN.toy).
+    let drop_gate = match racing {
+        true => match mode
+            .as_deref()
+            .map(|m| atv_core::race_gate::parse(&String::from_utf8_lossy(m)))
+        {
+            Some(Ok(Some(gate))) => Some(gate),
+            Some(Err(error)) => return Err(error),
+            _ => match &toy {
+                Some(common) => atv_core::race_gate::parse(&String::from_utf8_lossy(common))?,
+                None => None,
+            },
+        },
+        false => None,
     };
     let gate_model = drop_gate.as_ref().map(|gate| {
         let matrix = gate.matrix(0.);
@@ -560,7 +578,32 @@ pub async fn load_with(
     crate::yield_frame().await;
     // Enduro gates (`0022a340`): a `<venue>endwgate` at every waypoint but
     // the last, which holds the `<venue>endfgate` finish gate; both collide.
-    let enduro_gates = if racing && options.race.is_enduro() {
+    let mut editor_gates = None;
+    let enduro_gates = if racing && options.waypoint_editor {
+        // Parked out of sight until the editor poses them; no collision.
+        let name = format!("{environment}endwgate");
+        let mut matrix = atv_core::enduro::model_matrix(&atv_core::race::Gate {
+            center: [0., -10_000., 0.],
+            forward: [0., 0., 1.],
+            facing: [0., 0., 1.],
+            half_width: [1., 0., 0.],
+            width: 2.,
+        });
+        matrix[13] = -10_000.;
+        editor_gates = Some(scene.models.len());
+        for _ in 0..atv_core::user_course::MAX_GATES {
+            scene.models.push(atv_core::scene::StaticModel {
+                name: name.clone(),
+                position: [matrix[12], matrix[13], matrix[14]],
+                look: [0., 0., 1.],
+                up: Some([0., 1., 0.]),
+                use_lighting: true,
+                dynamic_lighting: false,
+                world_matrix: matrix,
+            });
+        }
+        Vec::new()
+    } else if racing && options.race.is_enduro() {
         let stem = &course.mode_stem;
         let waypoints = match (&options.user_course, options.race) {
             (Some(user), crate::launch::RaceVariant::UserEnduro) => {
@@ -618,6 +661,7 @@ pub async fn load_with(
     };
     // Gate banners point at the next gate; the gates are the last scene models.
     let first_gate = scene.models.len() - enduro_gates.len();
+    debug_assert!(editor_gates.is_none() || enduro_gates.is_empty());
     let enduro_dress: Vec<_> = (0..enduro_gates.len())
         .map(|i| {
             let (front, back) = atv_core::enduro::arrow_textures(&enduro_gates, i);
@@ -726,6 +770,7 @@ pub async fn load_with(
             .map(|toy| crate::lingering_dust::dust_zones(&String::from_utf8_lossy(toy)))
             .unwrap_or_default(),
         drop_gate,
+        editor_gates,
         enduro_gates,
         visible: std::rc::Rc::new(ground),
         terrain_zones: toy

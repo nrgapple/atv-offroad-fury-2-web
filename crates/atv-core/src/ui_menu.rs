@@ -198,6 +198,10 @@ pub struct Request {
     /// (`0043a9e8`).
     #[serde(default)]
     pub game_active: bool,
+    /// The Waypoint Editor ride: Pause adds Save Course (the original
+    /// Waypoint Pause Menu's Save Race).
+    #[serde(default)]
+    pub editor_active: bool,
     #[serde(default)]
     pub funny_crashes: bool,
     #[serde(default)]
@@ -1471,6 +1475,10 @@ pub fn layout(request: Request) -> Result<Frame> {
                 ("Options", "settings"),
                 ("Jukebox", "jukebox"),
             ];
+            if request.editor_active {
+                choices[0].0 = "Resume Editing";
+                choices.insert(1, ("Save Course", "wpsave"));
+            }
             let online = !request.lobby_status.is_empty();
             if online {
                 // Original pause rows: change ride in place; the host picks
@@ -1491,6 +1499,7 @@ pub fn layout(request: Request) -> Result<Frame> {
             // Photo mode (#542, a port addition): solo and split screen
             // only; an online ride keeps riding under its pause menu.
             if !online {
+                choices.push(("Replay", "replay"));
                 choices.push(("Photo mode", "photo"));
             }
             // Shared Free Ride rooms have no invite: everyone just drops in.
@@ -2564,6 +2573,7 @@ mod tests {
             race_active: false,
             training_active: false,
             game_active: false,
+            editor_active: false,
         }
     }
     #[test]

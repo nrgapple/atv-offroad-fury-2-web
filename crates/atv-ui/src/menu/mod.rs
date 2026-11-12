@@ -180,10 +180,11 @@ const FOOTER: [&str; 6] = [
     "paddefaults",
 ];
 const PAGER: [&str; 4] = ["bindprev", "bindnext", "musicprev", "musicnext"];
-/// Pause's rows after the ride's own (Resume, Restart and a room's rows):
-/// settings and extras, sharing, then leaving. A rule divides the groups.
+/// Pause's rows after the ride's own (Resume, Restart, Replay, Photo mode
+/// and a room's rows): Options and the Jukebox, sharing, then leaving. A
+/// rule divides the groups.
 const PAUSE_GROUPS: [&[&str]; 3] = [
-    &["settings", "jukebox", "photo"],
+    &["settings", "jukebox"],
     &["copyride", "devlog"],
     &["main", "leave"],
 ];

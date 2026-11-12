@@ -350,6 +350,10 @@ pub fn controls(photo: &Photo, touch: bool, now: f64) -> atv_ui::hud::viewer::St
         },
         hint: photo.hint(touch, now),
         fov: photo.orbit.fov.round() as u32,
+        playing: false,
+        shot: "",
+        speed: "",
+        progress: None,
         pressed: None,
         hovered: None,
     }
@@ -470,7 +474,13 @@ impl crate::App {
         if ready.net.is_some() || riding.online {
             return;
         }
-        let subject = riding.ride.frame().origin;
+        let subject = match &self.replay {
+            Some(replay) => {
+                let w = &replay.moment.player.quad_world;
+                [w[12], w[13], w[14]]
+            }
+            None => riding.ride.frame().origin,
+        };
         self.photo = Some(Photo::new(Orbit::around(
             &ready.camera,
             ready.focal_length,
@@ -492,11 +502,13 @@ impl crate::App {
         if let Some(overlay) = &mut self.overlay {
             overlay.viewer = None;
             overlay.clear_input();
-            let paused = self
-                .ready
-                .as_ref()
-                .and_then(|r| r.riding.as_ref())
-                .is_some_and(|r| r.paused && !r.held);
+            // Over a replay: back to the replay's controls.
+            let paused = self.replay.is_none()
+                && self
+                    .ready
+                    .as_ref()
+                    .and_then(|r| r.riding.as_ref())
+                    .is_some_and(|r| r.paused && !r.held);
             overlay.sync_menu(paused);
         }
         self.wake();
@@ -547,6 +559,9 @@ impl crate::App {
 
     pub(crate) fn viewer_button(&mut self, button: atv_ui::hud::viewer::Button) {
         use atv_ui::hud::viewer::Button;
+        if self.photo.is_none() {
+            return self.replay_button(button);
+        }
         match button {
             Button::Back => self.photo_command(Command::Back),
             Button::Save => self.photo_command(Command::Save),
@@ -557,6 +572,7 @@ impl crate::App {
                         .widen(if button == Button::FovUp { 5. } else { -5. });
                 }
             }
+            _ => {}
         }
     }
 

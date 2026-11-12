@@ -32,6 +32,8 @@ pub enum Event {
     Jukebox(super::jukebox::JukeboxAction),
     /// Players → Spawn beside this rider's slot.
     Spawn(u8),
+    /// The Waypoint Editor's Save Course.
+    SaveCourse,
     /// Leave Game: leave the multiplayer room.
     LeaveGame,
     /// Change ATV and Rider: the garage over the held room.
@@ -52,6 +54,8 @@ pub enum Event {
     PlayFreestyle,
     /// Pause → Photo mode: a free camera around the paused moment.
     Photo,
+    /// Pause → Replay: the last stretch of the ride again.
+    Replay,
 }
 
 /// The multiplayer room as the pause menu shows it (the browser's
@@ -147,6 +151,8 @@ pub struct PauseMenu {
     pub training_active: bool,
     /// The ride is a mini-game (Restart Game).
     pub game_active: bool,
+    /// The ride is the Waypoint Editor (Save Course).
+    pub editor_active: bool,
     /// Keys held while the menu is open (frontend.js `menuKeys`), for the
     /// rebindable Pause action.
     held: Vec<String>,
@@ -219,6 +225,7 @@ impl PauseMenu {
             race_active: false,
             training_active: false,
             game_active: false,
+            editor_active: false,
             held: Vec::new(),
             shown: crate::transition::next_show(),
             credits_since: 0.,
@@ -513,6 +520,7 @@ impl PauseMenu {
         // Past json!'s recursion limit.
         request["new_profiles_unlocked"] = p.new_profiles_unlocked.into();
         request["show_fps"] = p.show_fps.into();
+        request["editor_active"] = self.editor_active.into();
         if page == "accessibility" {
             request["access_fov"] = p.access.fov.into();
             request["access_rows"] = p
@@ -726,7 +734,9 @@ impl PauseMenu {
             "devlog" => return Some(Event::Leave("devlog.html")),
             "fullscreen" => return Some(Event::Fullscreen),
             "copyride" => return Some(Event::CopyRide),
+            "wpsave" => return Some(Event::SaveCourse),
             "photo" => return Some(Event::Photo),
+            "replay" => return Some(Event::Replay),
             "leave" => return Some(Event::LeaveGame),
             "changeride" => return Some(Event::ChangeRide),
             "hosttrack" => return Some(Event::SelectTrack),

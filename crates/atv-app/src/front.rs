@@ -29,6 +29,8 @@ use std::collections::{HashMap, HashSet};
 #[derive(Default)]
 pub struct Art {
     pub backdrop: Option<Rgba>,
+    /// The original gold trophy for the status bar (PAGE05), if hosted.
+    pub trophy: Option<Rgba>,
     pub photos: HashMap<String, Rgba>,
     pub tips: Vec<Vec<String>>,
     pub quads: Option<QuadCatalog>,
@@ -1434,7 +1436,13 @@ impl Front {
         }
         // The coin chip counts to a new Profile Points total, and glows when
         // the unlocks change (Unlock Everything, a purchase).
+        let trophy_art = if screen.status.is_some() {
+            self.image(device, queue, "trophy", |art| art.trophy.clone())
+        } else {
+            None
+        };
         if let Some(status) = &mut screen.status {
+            status.trophy_art = trophy_art;
             let reduced = crate::reduced_motion();
             let (shown, counting) = self.coins.count(status.points, now, reduced);
             let unlocks = &self.state.profile.store;

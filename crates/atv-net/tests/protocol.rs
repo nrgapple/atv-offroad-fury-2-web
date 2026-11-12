@@ -981,6 +981,7 @@ fn race_cpu_fill_and_cpu_motion_round_trip_and_reject_bad_values() {
                 distance: 1500. + f32::from(i),
                 finish_ms: if i == 0 { 70_000 } else { 0 },
                 pose: pose(i),
+                sound: None,
             })
             .collect(),
     };
@@ -1034,6 +1035,52 @@ fn race_cpu_fill_and_cpu_motion_round_trip_and_reject_bad_values() {
     let len = (long.len() - 8) as u16;
     long[6..8].copy_from_slice(&len.to_le_bytes());
     assert!(atv_net::decode(&long).is_err());
+
+    // CPU sound cues (research/AUDIO.md "CPU riders") append one 11-byte
+    // block per rider only when a rider carries them.
+    let cues = CpuSoundCues {
+        flags: cpu_cue::WRECK | cpu_cue::AIRBORNE,
+        quad_contact: 12.5,
+        wreck_impact: 33.0625,
+        impact: 4000.,
+        rider_impact: 0.25,
+        terrain: [3, -1],
+    };
+    let mut heard = motion.clone();
+    heard.riders[1].sound = Some(cues);
+    let with = atv_net::encode(&Packet::Cpus(Box::new(heard))).unwrap();
+    assert_eq!(with.len(), bytes.len() + 3 * 11);
+    match atv_net::decode(&with).unwrap() {
+        Packet::Cpus(m) => {
+            assert_eq!(m.riders[1].sound, Some(cues));
+            assert_eq!(m.riders[0].sound, Some(CpuSoundCues::default()));
+        }
+        other => panic!("{other:?}"),
+    }
+    let mut cut = with.clone();
+    cut.truncate(with.len() - 1);
+    let len = (cut.len() - 8) as u16;
+    cut[6..8].copy_from_slice(&len.to_le_bytes());
+    assert!(atv_net::decode(&cut).is_err());
+    for bad_cues in [
+        CpuSoundCues { flags: 64, ..cues },
+        CpuSoundCues {
+            impact: f32::NAN,
+            ..cues
+        },
+        CpuSoundCues {
+            rider_impact: -1.,
+            ..cues
+        },
+        CpuSoundCues {
+            terrain: [-2, 0],
+            ..cues
+        },
+    ] {
+        let mut bad = motion.clone();
+        bad.riders[0].sound = Some(bad_cues);
+        assert!(atv_net::encode(&Packet::Cpus(Box::new(bad))).is_err());
+    }
 }
 #[test]
 fn direct_link_signalling_roundtrips_and_is_bounded() {
@@ -1041,7 +1088,7 @@ fn direct_link_signalling_roundtrips_and_is_bounded() {
         Packet::Signal(Signal {
             peer: 3,
             kind: signal::HELLO,
-            data: vec![signal::DIRECT],
+            data: vec![signal::DIRECT | signal::CPU_SOUNDS],
         }),
         Packet::Signal(Signal {
             peer: 19,
@@ -1097,7 +1144,7 @@ fn direct_link_signalling_roundtrips_and_is_bounded() {
         signal(20, signal::OFFER, vec![1]),
         signal(1, 9, vec![1]),
         signal(1, signal::COURIER, vec![2]),
-        signal(1, signal::HELLO, vec![4]),
+        signal(1, signal::HELLO, vec![signal::CPU_SOUNDS * 2]),
         // Couriers stay between a client and the relay: older builds accept
         // only the DIRECT bit in another rider's flags.
         signal(1, signal::PRESENT, vec![signal::CARRIES]),
@@ -1105,7 +1152,7 @@ fn direct_link_signalling_roundtrips_and_is_bounded() {
         signal(1, signal::OFFER, vec![]),
         signal(1, signal::OFFER, vec![0; MAX_SIGNAL_BYTES + 1]),
         signal(1, signal::HELLO, vec![]),
-        signal(1, signal::HELLO, vec![8]),
+        signal(1, signal::HELLO, vec![15]),
         signal(1, signal::PRESENT, vec![1, 1]),
         Packet::Links {
             mask: 1 << MAX_PLAYERS,
@@ -1115,7 +1162,7 @@ fn direct_link_signalling_roundtrips_and_is_bounded() {
     }
     // The same bounds hold for bytes that never passed through `encode`.
     let mut bytes = encode(&signal(1, signal::HELLO, vec![1])).unwrap();
-    bytes[10] = 4;
+    bytes[10] = 8;
     assert_eq!(decode(&bytes), Err(Error::InvalidValue));
     let report = atv_net::LinkReport {
         timeouts: 2,

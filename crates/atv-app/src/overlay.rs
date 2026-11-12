@@ -35,8 +35,12 @@ pub enum Action {
     RaceQuit,
     /// Race over → Continue Championship (the next round).
     RaceNextRound,
+    /// Race over → Replay (#542).
+    Replay,
     /// A photo mode or replay control (#542).
     Viewer(atv_ui::hud::viewer::Button),
+    /// The Waypoint Editor's GATE and UNDO.
+    Gate(crate::waypoint_editor::Command),
 }
 
 /// Hit target of the minimap (tap toggles north-up / heading-up).
@@ -221,6 +225,8 @@ pub struct Overlay {
     pub kid: bool,
     /// A User Created Enduro: no Profile Points or records.
     pub user_course: bool,
+    /// The Waypoint Editor ride (toolbar GATE / UNDO, Pause → Save Course).
+    pub editor: bool,
     /// The ride is the Training Course (Pause → Restart Training).
     pub training: bool,
     /// The ride is a mini-game (Pause → Restart Game).
@@ -234,6 +240,11 @@ pub struct Overlay {
     /// The finished race's Hall of Fame records, until named.
     /// (and the name they are stored under).
     fame_watch: Option<(atv_core::hall_of_fame::Watch, String)>,
+    /// The finished race the world boards may take (world.rs), until its
+    /// Hall of Fame name is final.
+    world_run: Option<crate::world::Run>,
+    /// A world board submission for the host to send.
+    pub world_outbox: Option<String>,
     /// A split race's records, the players still to name theirs (player
     /// index and records, in entry order) and the player naming now.
     fame_split: Option<SplitNaming>,
@@ -339,11 +350,14 @@ impl Overlay {
             race: false,
             kid: false,
             user_course: false,
+            editor: false,
             training: false,
             game: false,
             room_race_pending: false,
             race_entry: None,
             fame_watch: None,
+            world_run: None,
+            world_outbox: None,
             fame_name: String::new(),
             fame_split: None,
             transition: Default::default(),
@@ -514,6 +528,7 @@ impl Overlay {
                 menu.race_active = self.race;
                 menu.training_active = self.training;
                 menu.game_active = self.game;
+                menu.editor_active = self.editor;
                 self.menu = Some(menu);
                 self.press = None;
                 self.clear_touch();
@@ -728,6 +743,12 @@ impl Overlay {
                     Some(toolbar::Button::Keys) => {
                         self.toggle_help();
                         None
+                    }
+                    Some(toolbar::Button::Gate) => {
+                        Some(Action::Gate(crate::waypoint_editor::Command::Drop))
+                    }
+                    Some(toolbar::Button::Undo) => {
+                        Some(Action::Gate(crate::waypoint_editor::Command::Undo))
                     }
                     None => None,
                 }
@@ -1134,6 +1155,7 @@ impl Overlay {
             keys_enabled: active,
             keys_visible,
             compact,
+            editor: self.editor,
         };
         let full = |child: layout::El| {
             layout::El::new(taffy::Style {
@@ -1603,6 +1625,7 @@ impl Overlay {
                 // race.js always offers Quit Event; a page without the
                 // engine's frontend leaves for its menus.
                 self.results.can_quit = self.frontend || cfg!(target_arch = "wasm32");
+                self.results.replay = self.lobby.is_none();
                 // Online competition saves neither profile progress nor Hall
                 // of Fame records (USA manual pp. 36–37).
                 if self.results.finish(frame) {
@@ -1817,10 +1840,17 @@ impl Overlay {
 
     /// A results command's host action; the Hall of Fame name is kept here.
     fn command_action(&mut self, command: results::Command) -> Option<Action> {
+        if matches!(
+            command,
+            results::Command::Retry | results::Command::Quit | results::Command::NextRound
+        ) {
+            self.world_submit(None);
+        }
         Some(match command {
             results::Command::Retry => Action::RaceRetry,
             results::Command::Quit => Action::RaceQuit,
             results::Command::NextRound => Action::RaceNextRound,
+            results::Command::Replay => Action::Replay,
             results::Command::FameName if self.fame_split.is_some() => {
                 self.name_split_fame();
                 return None;
@@ -1834,6 +1864,7 @@ impl Overlay {
                     atv_ui::settings::save_hall_of_fame(&mut self.settings, &hall);
                     self.fame_watch = Some((watch.clone(), self.fame_name.clone()));
                 }
+                self.world_submit(Some(self.fame_name.clone()));
                 return None;
             }
         })
@@ -1849,9 +1880,33 @@ impl Overlay {
             self.offer_split_fame(frame);
             return;
         }
+        self.world_run = crate::world::Run::of_race(frame);
         if let Some(watch) = frame.records.clone() {
             self.offer_fame(atv_core::hall_of_fame::Watch::Race(watch));
         }
+        // The world boards take a run that set a local record (sent once
+        // its name is entered) or a daily event time (sent now).
+        if self.fame_watch.is_none() {
+            if self.world_run.as_ref().is_some_and(|r| r.daily.is_some()) {
+                self.world_submit(None);
+            } else {
+                self.world_run = None;
+            }
+        }
+    }
+
+    /// Hands the kept world run to the host under `name`, else the Hall of
+    /// Fame name already stored for it (or the default).
+    fn world_submit(&mut self, name: Option<String>) {
+        let Some(run) = self.world_run.take() else {
+            return;
+        };
+        let name = name.unwrap_or_else(|| match &self.fame_watch {
+            Some((_, stored)) => stored.clone(),
+            None => atv_core::hall_of_fame::clean_name(&self.default_fame_name()),
+        });
+        self.world_outbox = Some(run.body(&name));
+        self.results.world_line = Some("Sending to the World Hall of Fame…".into());
     }
 
     /// A split race or Duel (`001f1740` → `00217e40`): every human's
@@ -2006,6 +2061,14 @@ impl Overlay {
         } else {
             self.renderer.rasterized = 0;
         }
+    }
+
+    /// A photo/replay control's rectangle as last laid out (CSS px).
+    pub fn viewer_rect(&self, button: atv_ui::hud::viewer::Button) -> Option<Rect> {
+        let (.., hits) = self.viewer_cache.as_ref()?;
+        hits.iter()
+            .find(|(_, id)| *id == button as u32)
+            .map(|(r, _)| *r)
     }
 
     /// Photo mode and replay controls (`viewer`), laid out again only when

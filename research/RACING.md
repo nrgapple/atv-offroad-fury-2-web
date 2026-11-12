@@ -87,8 +87,6 @@ for the scalar branches, not whole-race replay):
 - Whole-race PS2 replay parity (firework triggers and their CPU spark
   streams are connected; see "Supercross fireworks"). Championship points
   and series are in `CHAMPIONSHIPS.md` (Nationals and Supercross only).
-- The Supercross start gate rotation. See "Race start and race over" and
-  "Pre-race camera and 321 lights" below.
 - Results show Stunt Score and Profile Points (`001f1e30`, see `PROFILE.md`);
   CPU stunt scores read 0 because the port does not score CPU tricks.
 
@@ -570,8 +568,9 @@ Exact-build evidence (private exports; bounded reading):
   off; steps 1–3 light the three red lamps one per second, each with
   `beep01.vag`; step 4 lights the green lamp with `go.vag` and hides 1s later.
   The lamp art is in every race and Freeride course archive.
-- **Start gate** (`00223bf0`): only National race TOYs declare a `[DropGate]`;
-  see "National drop gate" below. Supercross has none.
+- **Start gate** (`00223bf0`): National race TOYs and Supercross common TOYs
+  declare a `[DropGate]`; see "National drop gate" and "Supercross drop
+  gate" below.
 
 Port:
 
@@ -584,11 +583,10 @@ Port:
 - `Race::frame().lights` gives the lamp step. The HUD draws the original lamps
   centred on wide screens, and the beep, go and gate sounds play from the
   content package (`AUDIO.RES` gains the three samples). Without the lamp
-  art, the countdown digits remain. (An earlier build played `gate.vag` on
-  Supercross; the original plays it only with a National drop gate.)
-- Not reproduced: the fly-by/orbit fallbacks (every course has shots) and
-  the Supercross gate rotation. The race-load cue `00217bb0` is under "Race
-  intro and race-over music".
+  art, the countdown digits remain. `gate.vag` plays only with a drop gate
+  (Nationals and Supercross).
+- Not reproduced: the fly-by/orbit fallbacks (every course has shots). The
+  race-load cue `00217bb0` is under "Race intro and race-over music".
 
 ## After-finish camera director — 2026-10-16
 
@@ -793,6 +791,26 @@ original placement (4.66ft behind the TDF tag-15 box, `001f8410` cases 3–10,
 which use the same box). On most Nationals the gate stands about 7–8ft past
 that box, ~12ft ahead of the riders (nat03, nat05); on nat01 the authored
 gate stands 12ft before the box, so it lies behind the grid there.
+
+## Supercross drop gate — 2026-11-11
+
+Exact-build evidence (private export `00222170`; archive census): the one
+loader reads `[FunnelBlockUp]`, `[TripleLights]`, `[LeaderIndicators]` and
+`[DropGate]` together with `[FireworkTriggers]` and `[PreRaceFireworks]`. On
+SX01 the first group sits only in the common `sx01.toy` and the fireworks
+only in the race `sx01nat.toy`, so the loader sees both TOYs. All sixteen
+Supercross common TOYs (`sxNN.toy`) declare `[DropGate]` with their own
+`sxNNdropgate.slt` (each archive carries `sxNNdropgate.psg`), axis −X,
+RotationRateInSeconds 0.1 and 35–40° (SX01/02 40, SX03/04/05/08 35, SX06 39,
+SX14 38, the rest 37). No Supercross race TOY declares one.
+
+Port: the venue loader takes the race TOY's gate first and otherwise the
+common TOY's, so Supercross races pose their gate with the National
+`race_gate::DropGate` rules and play `gate.vag` at GO. CPU riders wait
+behind it through the same countdown lock as the player; the gate has no
+collision, as on Nationals. Not verified: whether the original merges the two
+TOYs into one document or calls the loader twice (either reaches the same
+sections).
 
 ## CPU difficulty, jumps, track edge and cheats — 2026-10-16
 
@@ -1228,9 +1246,27 @@ Port (`atv_core::user_course`, `RaceVariant::UserEnduro`):
   Profile Points and keeps no Hall of Fame or profile course records, and
   it is not offered in online rooms (`RaceVariant::ALL` excludes it).
 
+- **Editor (port).** Single Player → Waypoint Editor lists an Environment
+  and its three slots (Race 1-3 (New), as PAGE09). A new slot or Edit Gates
+  free-rides the long Enduro scene (no race, no gate collision) with 50
+  hidden `endwgate` models; G, the pad's R3 or the toolbar's GATE drops a
+  gate at the quad's position facing its heading, U, L3 or UNDO takes the
+  last back, tags mark the first and newest gate and the minimap shows them
+  all. Pause adds Save Course (the Waypoint Pause Menu's Save Race) and
+  reads Resume Editing. The original's cursor edit mode, gate rotation and
+  snapping are not reproduced: dropping where the rider stands works with
+  one touch button.
+- **Saving (port).** Courses live in local storage `fury-waypoints` (venue →
+  three course codes) beside `fury-profiles`, not per profile, and need no
+  loaded profile. A saved slot's page offers Race This Course, Edit Gates,
+  Number of Laps, a name field with Save Name, Copy course link and Delete
+  (press twice).
+
 Checks: `atv-core` `user_course` tests, `atv-game` launch tests,
-`tools/test_engine_user_course.mjs` (a link races three gates alone; a
-tampered code is refused).
+`atv-app` `waypoint_editor` and `atv-ui` `waypoint_page` tests;
+`tools/test_engine_user_course.mjs` (a link races three gates alone, a
+tampered code is refused, the editor drops, undoes, saves and races a
+course).
 
 ## CPU reset points and the committed station — 2026-10-27
 

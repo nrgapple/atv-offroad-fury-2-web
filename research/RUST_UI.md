@@ -1033,9 +1033,9 @@ reached; the rows, labels, values and saved keys still come from
 are not the model for this layout.
 
 - **Pause.** One panel with its rows in groups separated by a rule: the
-  ride's own actions (Resume, Reset, restart and multiplayer rows), then
-  Options, Jukebox and Photo mode, then Copy ride link and Dev log, then
-  Main menu or Leave. Each action is drawn once. A short landscape phone
+  ride's own actions (Resume, Reset, restart, Replay, Photo mode and the
+  multiplayer rows), then Options and Jukebox, then Copy ride link and Dev
+  log, then Main menu or Leave. Each action is drawn once. A short landscape phone
   splits the groups into two columns so nothing scrolls.
 - **Row kinds.** A row shows what it does: a switch for On/Off, the value
   between two arrows for a cycled choice, a chevron for a row that opens a

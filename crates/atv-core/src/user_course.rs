@@ -170,6 +170,15 @@ impl UserCourse {
 
     /// Reads a code, checking everything but the terrain.
     pub fn decode(code: &str) -> Result<Self, String> {
+        Self::read(code, MIN_GATES)
+    }
+
+    /// Reads a course still being edited (any gate count up to the limit).
+    pub fn decode_draft(code: &str) -> Result<Self, String> {
+        Self::read(code, 0)
+    }
+
+    fn read(code: &str, min_gates: usize) -> Result<Self, String> {
         // 5 header bytes, a 24-byte name and 50 gates are 439 characters.
         if code.len() > 512 {
             return Err("The course code is too long.".into());
@@ -187,7 +196,7 @@ impl UserCourse {
             return Err("The course lap count is invalid.".into());
         }
         let count = usize::from(*count);
-        if !(MIN_GATES..=MAX_GATES).contains(&count) {
+        if !(min_gates..=MAX_GATES).contains(&count) {
             return Err(format!("A course needs {MIN_GATES} to {MAX_GATES} gates."));
         }
         let name_len = usize::from(*name_len);
@@ -381,6 +390,13 @@ mod tests {
         for bad in ["", "A", "!!!!", "AAAA", &"A".repeat(600)] {
             assert!(UserCourse::decode(bad).is_err(), "{bad}");
         }
+    }
+
+    #[test]
+    fn drafts_may_have_fewer_gates() {
+        let empty = UserCourse::new("env02");
+        assert!(UserCourse::decode(&empty.encode()).is_err());
+        assert_eq!(UserCourse::decode_draft(&empty.encode()).unwrap(), empty);
     }
 
     #[test]
