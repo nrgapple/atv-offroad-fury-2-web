@@ -30,6 +30,7 @@ mod split;
 mod tag;
 #[cfg(target_arch = "wasm32")]
 mod text_inputs;
+mod tilt;
 mod training;
 mod usage;
 mod wake;
@@ -3423,6 +3424,8 @@ impl App {
             // Options → Accessibility (tools/test_engine_accessibility.mjs).
             state["settings"]["access"] = serde_json::json!({
                 "fov": riding.fov_percent, "focal": ready.focal_length,
+                "assists": [riding.ride.options.steering_assist, riding.ride.options.stability_assist],
+                "assisted": riding.ride.assisted(), "tiltLock": riding.tilt_lock,
                 "hudScale": self.overlay.as_ref().and_then(|o| o.hud_scale()),
                 "colour": atv_ui::hud::palette::mode().label(),
             });
@@ -4352,7 +4355,23 @@ impl App {
             // "In i.LINK, LAN, and online play, Ecosystem Collision is
             // always on" (`0020f780` sets +0x674 for network play).
             ecosystem_collision_off: !prefs.ecosystem_collision && !riding.online,
+            // Options → Accessibility assists: online rooms ride without
+            // them, as they treat Kid Mode (research/KID_MODE.md).
+            steering_assist: if riding.online {
+                0
+            } else {
+                prefs.access.assists().0
+            },
+            stability_assist: if riding.online {
+                0
+            } else {
+                prefs.access.assists().1
+            },
         };
+        riding.tilt_lock = prefs.access.tilt_lock();
+        if riding.tilt_lock.is_some() {
+            tilt::enable();
+        }
         // Split screen: player 2 rides the same settings.
         for second in &mut ready.split {
             second.riding.vibration = prefs.vibration;

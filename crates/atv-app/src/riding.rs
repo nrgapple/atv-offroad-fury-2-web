@@ -110,6 +110,9 @@ pub struct Riding {
     /// angle (100 is the original). Riding cameras only: the race intro
     /// and TV shots keep their authored lenses.
     pub fov_percent: u8,
+    /// Options → Accessibility → Tilt steering: the phone's turn (degrees)
+    /// that is full lock; `None` off.
+    pub tilt_lock: Option<f32>,
     sightline: atv_game::ride::view::UphillSightline,
     /// Settings → Crash camera: Tight (the default) frames Crazy/Gorn crashes
     /// with crashPresentation; Original keeps the recovered wreck camera.
@@ -247,6 +250,7 @@ impl Riding {
             dirt_enabled: false,
             chase_assist: false,
             fov_percent: 100,
+            tilt_lock: None,
             sightline: Default::default(),
             crash_camera_tight: true,
             crash_bounds: None,
@@ -478,6 +482,13 @@ impl Riding {
         if let Some(t) = touch() {
             touch_go = t.go;
             merge_touch(&mut read.controls, &t);
+        }
+        // Tilt steering steers while no stick, key or thumb does.
+        if let Some(lock) = self.tilt_lock
+            && read.controls.steer.abs() < 0.05
+            && let Some(angle) = crate::tilt::angle()
+        {
+            read.controls.steer = crate::tilt::steer(angle, lock);
         }
         // Kid difficulty: GO lets the race path driver ride.
         if let Some(state) = self.ride.race_mut().filter(|s| s.kid) {

@@ -1927,6 +1927,11 @@ impl Race {
             self.records = Some(records);
         }
     }
+    /// Rider assists acted (Options → Accessibility): this race keeps no
+    /// records, like Kid Mode.
+    pub fn drop_records(&mut self) {
+        self.records = None;
+    }
     pub fn records(&self) -> Option<&crate::hall_of_fame::RecordWatch> {
         self.records.as_ref()
     }
