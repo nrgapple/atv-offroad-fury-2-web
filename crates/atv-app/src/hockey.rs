@@ -63,6 +63,8 @@ pub struct HockeySession {
     /// Split screen: player 2 skates for Blue on this console
     /// (research/SPLIT_SCREEN.md "Slice 3").
     pub split: bool,
+    /// The humans among the riders (the rest are CPU riders, game_cpu.rs).
+    pub humans: usize,
 }
 
 fn phase_code(state: State) -> (u8, f32) {
@@ -154,6 +156,7 @@ impl HockeySession {
             phase: 0,
             sent_step: 0,
             split: false,
+            humans: 1,
         }
     }
 
@@ -165,6 +168,7 @@ impl HockeySession {
         let teams = (0..players.clamp(2, 4)).map(|i| i % 2).collect();
         session.game = Game::new(session.game.arena, teams, session.game.time_limit);
         session.split = true;
+        session.humans = players.clamp(2, 4);
         session
     }
 
@@ -498,12 +502,12 @@ impl HockeySession {
                     State::SuddenDeath => {
                         format!(
                             "{} {team}. Sudden death: the next goal wins.",
-                            you(self.split, me)
+                            you(self.humans > 1, me)
                         )
                     }
                     _ => format!(
                         "{} {team}. Push the puck into the far goal.",
-                        you(self.split, me)
+                        you(self.humans > 1, me)
                     ),
                 }
             }),
@@ -534,12 +538,14 @@ impl HockeySession {
     fn goal_line(&self) -> String {
         let goals = |i: usize| self.game.goals.get(i).copied().unwrap_or(0);
         if self.split {
+            let cpus = self.game.teams.len().saturating_sub(self.humans);
+            let names = crate::game_cpu::names(self.humans, cpus, "You");
             (0..self.game.teams.len())
                 .map(|i| {
                     let team = atv_core::hockey::TEAMS[self.game.teams[i].min(1)];
                     format!(
                         "{} ({team}) goals: {}",
-                        crate::split::player_name(i as u8 + 1),
+                        names.get(i).map_or("Rider", String::as_str),
                         goals(i)
                     )
                 })

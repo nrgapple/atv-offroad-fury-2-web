@@ -166,6 +166,11 @@ impl TagSession {
         session
     }
 
+    /// Every rider's name in slot order (local CPU riders, game_cpu.rs).
+    pub fn set_names(&mut self, names: Vec<String>) {
+        self.names = names;
+    }
+
     fn name(&self, slot: usize) -> String {
         self.names
             .get(slot)

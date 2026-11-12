@@ -20,6 +20,7 @@ pub mod engine_audio;
 pub mod flip_tricks;
 pub mod fog;
 pub mod freestyle;
+pub mod game_cpu;
 pub mod games;
 pub mod gore;
 pub mod grip;

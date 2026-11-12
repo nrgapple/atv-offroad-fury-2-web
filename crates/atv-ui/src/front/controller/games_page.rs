@@ -24,6 +24,8 @@ pub struct GamesUi {
     /// course instead of riding alone (research/MULTIPLAYER.md "Room
     /// games").
     pub online: bool,
+    /// Authored CPU riders added to a local game (0 = Off, the original).
+    pub cpus: u8,
 }
 
 impl Default for GamesUi {
@@ -34,6 +36,7 @@ impl Default for GamesUi {
             course: 0,
             minutes: DEFAULT_MINUTES,
             online: false,
+            cpus: 0,
         }
     }
 }
@@ -42,7 +45,7 @@ impl Default for GamesUi {
 pub fn game_row(action: &str) -> bool {
     matches!(
         action,
-        "gametype" | "gamecourse" | "gametime" | "gameriders"
+        "gametype" | "gamecourse" | "gametime" | "gameriders" | "gamecpus"
     )
 }
 
@@ -55,6 +58,26 @@ impl Frontend {
                 self.game_kind(),
                 GameKind::KingOfTheHills | GameKind::TreasureHunt
             )
+    }
+
+    /// The CPU riders a local game may add: up to four riders in all
+    /// (none in an online room).
+    fn max_game_cpus(&self) -> u8 {
+        if self.room_game() && self.games.online {
+            return 0;
+        }
+        let humans = if self.split {
+            self.split_launch().0.max(2)
+        } else {
+            1
+        };
+        atv_core::game_cpu::MAX_CPUS.min(4u8.saturating_sub(humans))
+    }
+
+    /// Games Prep's CPU Riders as the game starts with them (an authored
+    /// port option; research/GAMES.md "CPU riders").
+    pub fn game_cpus(&self) -> u8 {
+        self.games.cpus.min(self.max_game_cpus())
     }
 
     pub(super) fn game_kind(&self) -> GameKind {
@@ -136,6 +159,15 @@ impl Frontend {
                 ),
             ));
         }
+        if self.max_game_cpus() > 0 {
+            rows.push((
+                "gamecpus".into(),
+                match self.game_cpus() {
+                    0 => "CPU Riders: Off".into(),
+                    n => format!("CPU Riders: {n}"),
+                },
+            ));
+        }
         rows.push(("gamestart".into(), "Start Game".into()));
         rows.push(("back".into(), "Back".into()));
         rows
@@ -158,6 +190,7 @@ impl Frontend {
             }
             GameKind::Hockey => "Score in the far goal before the time runs out.".into(),
             // Split screen plays it on this console (research/SPLIT_SCREEN.md).
+            GameKind::Tag if self.game_cpus() > 0 => "Keep the ball away; tag the carrier to take it. CPU riders play on this screen.".into(),
             GameKind::Tag if self.split => "Keep the ball away; tag the carrier to take it. Two players on this screen.".into(),
             GameKind::Tag => "Keep the ball away; tag the carrier to take it. Tag needs other riders: Start Game hosts a Multiplayer room on this course (share its invite).".into(),
         })
@@ -176,6 +209,11 @@ impl Frontend {
             }
             "gametime" => self.games.minutes = step_minutes(self.games.minutes, direction),
             "gameriders" => self.games.online = !self.games.online,
+            "gamecpus" => {
+                let n = i32::from(self.max_game_cpus()) + 1;
+                self.games.cpus =
+                    (i32::from(self.game_cpus()) + direction).rem_euclid(n.max(1)) as u8;
+            }
             _ => return,
         }
         self.notice = None;
@@ -336,11 +374,23 @@ mod tests {
             ),
             other => panic!("{other:?}"),
         }
+        // An online room has no CPU riders; Solo offers Off / 1 / 2 / 3.
+        assert!(!front.choices().iter().any(|(a, _)| a == "gamecpus"));
+        front.step("gameriders", 1, &view, &mut settings);
+        assert_eq!(front.choices()[4].1, "CPU Riders: Off");
+        front.step("gamecpus", -1, &view, &mut settings);
+        assert_eq!(front.choices()[4].1, "CPU Riders: 3");
+        front.step("gamecpus", 1, &view, &mut settings);
+        front.step("gamecpus", 1, &view, &mut settings);
+        assert_eq!(front.game_cpus(), 1);
         front.split = true;
         front.step("gametime", 1, &view, &mut settings);
         assert!(!front.choices().iter().any(|(a, _)| a == "gameriders"));
+        // Two seated players leave room for two CPU riders.
+        assert_eq!(front.max_game_cpus(), 2);
         front.step("gametime", -1, &view, &mut settings);
         front.split = false;
+        front.games.cpus = 0;
         // Tag hosts a room on its course with the time limit (no CPU
         // riders); locked Tag courses are refused like the others.
         front.step("gametype", 1, &view, &mut settings);

@@ -394,6 +394,11 @@ pub trait Rules {
         None
     }
     fn markers(&self) -> Vec<Marker>;
+    /// King of the Hills: each hill's touch box (centre, half extents) as
+    /// the rules test it (authored CPU riders aim at it).
+    fn zones(&self) -> Vec<([f32; 3], [f32; 3])> {
+        Vec::new()
+    }
     /// Restart Game (`00220d10`, `002d1450`).
     fn restart(&mut self);
     /// Diagnostics (name, value) for tests.

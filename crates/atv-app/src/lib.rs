@@ -11,6 +11,7 @@ mod content_sync;
 mod context;
 mod fps;
 mod front;
+mod game_cpu;
 mod gamepad;
 mod games;
 mod hockey;
@@ -142,6 +143,8 @@ struct Ready {
     net: Option<multiplayer::Net>,
     /// Local split screen's players 2-4 (split.rs); empty riding alone.
     split: Vec<split::Second>,
+    /// Authored CPU riders in a local mini-game (game_cpu.rs).
+    cpus: Vec<game_cpu::Cpu>,
 }
 
 struct PendingSound {
@@ -806,6 +809,8 @@ struct App {
     /// The frontend's Split Screen branch asked for two local players on
     /// the next rides (kept for Restart Race).
     split_request: Option<split::Request>,
+    /// Games Prep's CPU Riders for the next local game (game_cpu.rs).
+    cpu_request: game_cpu::Request,
     /// `?split=`/`?split2=` on a ride link (the context-loss resume link):
     /// the link's first ride is split; later rides follow the menus.
     split_link: Option<split::Request>,
@@ -1054,6 +1059,8 @@ struct World {
     objective: Option<(String, Option<String>)>,
     /// Two local players in this layout (split.rs).
     split: Option<split::Request>,
+    /// A local mini-game's CPU riders (game_cpu.rs).
+    cpus: game_cpu::Request,
 }
 
 /// Ride prefetch (`?prefetch=off` turns it off for load-time measurement).
@@ -1184,6 +1191,7 @@ async fn prepare_inner(
         game_scene,
         objective,
         split: split_layout,
+        cpus: cpu_request,
     } = world;
     // The decode workers start while the course downloads (offload.rs).
     atv_game::offload::warm();
@@ -1448,6 +1456,26 @@ async fn prepare_inner(
             );
         }
     }
+    // CPU riders take the player numbers after the humans.
+    let mut cpus = Vec::new();
+    if riding.is_some() {
+        let humans = split.len() as u8 + 1;
+        for player in (humans + 1..=split::MAX_PLAYERS).take(usize::from(cpu_request.count)) {
+            progress(&gpu, &format!("Reading CPU rider {}…", player - humans));
+            cpus.push(
+                game_cpu::Cpu::load(
+                    &gpu,
+                    &content,
+                    &venue,
+                    &mut scene,
+                    player,
+                    cpu_request,
+                    (selection, appearance, graphics),
+                )
+                .await?,
+            );
+        }
+    }
     let hud_assets = if riding.is_some() {
         // The radar's tinted racers take the rider's colour assistance.
         atv_ui::hud::palette::set(
@@ -1484,6 +1512,7 @@ async fn prepare_inner(
         hud_assets,
         net: None,
         split,
+        cpus,
     })
 }
 
@@ -1769,6 +1798,7 @@ impl App {
             .split
             .iter()
             .map(|s| split::body(&s.riding.ride, 1.))
+            .chain(game_cpu::human_bodies(&ready.cpus))
             .collect();
         let split_sampler = |_: u64, _: &atv_game::ride::Ride| split_bodies.clone();
         let peers = net
@@ -1793,6 +1823,7 @@ impl App {
                     if let Some(first) = others.first_mut() {
                         *first = first_body;
                     }
+                    others.extend(game_cpu::human_bodies(&ready.cpus));
                     // Each player's own touch controls, in its view.
                     let player = second.player;
                     let mut touch = || {
@@ -1825,6 +1856,30 @@ impl App {
                     .collect();
                 if others.len() + 1 == origins.len() {
                     split::merge_race(first, &mut others, &origins);
+                }
+            }
+        }
+        // A local game's CPU riders ride while the players do, each step
+        // choosing its controls from the game (game_cpu.rs).
+        if !ready.cpus.is_empty() && !riding.paused && !riding.held && focused {
+            let world = game_cpu::World::of(
+                self.tag.as_ref(),
+                self.hockey.as_ref(),
+                self.game.as_ref(),
+                std::iter::once(&riding.ride)
+                    .chain(ready.split.iter().map(|s| &s.riding.ride))
+                    .chain(ready.cpus.iter().map(|c| &c.riding.ride)),
+                riding.ride.terrain(),
+            );
+            let humans: Vec<_> = std::iter::once(&riding.ride)
+                .chain(ready.split.iter().map(|s| &s.riding.ride))
+                .filter(|r| !r.reset_ghosted())
+                .map(|r| split::body(r, -1.))
+                .collect();
+            let bodies = game_cpu::bodies(&humans, &ready.cpus);
+            for (cpu, bodies) in ready.cpus.iter_mut().zip(bodies) {
+                if let Err(error) = cpu.frame(&world, dt, bodies) {
+                    status(&format!("CPU rider {} stopped: {error}", cpu.player));
                 }
             }
         }
@@ -1921,8 +1976,8 @@ impl App {
         }
         // Every other player's rider in one call (pose_peers hides the
         // slots it is not given).
-        if !ready.split.is_empty() {
-            let mut poses = Vec::with_capacity(ready.split.len());
+        if !ready.split.is_empty() || !ready.cpus.is_empty() {
+            let mut poses = Vec::with_capacity(ready.split.len() + ready.cpus.len());
             for second in &mut ready.split {
                 match second.present(&ready.gpu, &ready.venue, dt) {
                     Ok(pose) => poses.push(pose),
@@ -1931,6 +1986,12 @@ impl App {
                 second.riding.pose_ghost(&ready.gpu, &mut ready.scene);
                 let fade = second.riding.reset_fade(&ready.venue);
                 ready.scene.set_peer_fade(&ready.gpu, second.player, fade);
+            }
+            for cpu in &mut ready.cpus {
+                match cpu.present(&ready.gpu, &mut ready.scene, &ready.venue, dt) {
+                    Ok(pose) => poses.push(pose),
+                    Err(error) => status(&format!("CPU rider {}: {error}", cpu.player)),
+                }
             }
             ready.scene.pose_peers(&ready.gpu, &poses);
         }
@@ -2140,6 +2201,7 @@ impl App {
             let motion = riding.ride.frame();
             let mut riders = std::mem::take(&mut room_riders);
             riders.extend(ready.split.iter_mut().map(|s| s.audio_rider()));
+            riders.extend(ready.cpus.iter_mut().map(|c| c.audio_rider()));
             let views: Vec<_> = ready
                 .split
                 .iter()
@@ -2352,11 +2414,18 @@ impl App {
         }
         // Tag: the host starts it from Pause; guests join when its state
         // arrives. Leaving the room ends it.
-        if ready.net.is_none() && !ready.split.is_empty() && self.tag.is_none() {
+        if ready.net.is_none()
+            && (!ready.split.is_empty() || !ready.cpus.is_empty())
+            && self.tag.is_none()
+        {
             // Split screen Tag: every ride is ready.
             if let Some((minutes, _)) = self.split_tag.take() {
-                let mut session = tag::TagSession::new_local(minutes, ready.split.len() + 1);
+                let humans = ready.split.len() + 1;
+                let mut session = tag::TagSession::new_local(minutes, humans + ready.cpus.len());
                 session.model = ready.venue.tag_ball;
+                if !ready.cpus.is_empty() {
+                    session.set_names(game_cpu::names(humans, ready.cpus.len(), "You"));
+                }
                 self.tag = Some(session);
             }
         } else if ready.net.is_none() && !self.tag.as_ref().is_some_and(|t| t.local) {
@@ -2424,8 +2493,7 @@ impl App {
                 }
                 session.start = ready.venue.scene.start_position;
                 session.crowd = ready.venue.scene.crowd_present;
-                let mut others: Vec<_> =
-                    ready.split.iter_mut().map(|s| &mut s.riding.ride).collect();
+                let mut others = game_cpu::rides(&mut ready.split, &mut ready.cpus);
                 if session.update(&mut riding.ride, ready.net.as_mut(), &mut others)
                     && let Some(overlay) = &mut self.overlay
                 {
@@ -2471,8 +2539,7 @@ impl App {
             (None, Some(session)) => {
                 // Game over: the HockeyOver page (Restart Game, Quit to
                 // Main Menu).
-                let mut others: Vec<_> =
-                    ready.split.iter_mut().map(|s| &mut s.riding.ride).collect();
+                let mut others = game_cpu::rides(&mut ready.split, &mut ready.cpus);
                 if session.update(&mut riding.ride, ready.net.as_mut(), &mut others)
                     && let Some(overlay) = &mut self.overlay
                 {
@@ -2484,6 +2551,7 @@ impl App {
                 for second in &mut ready.split {
                     second.riding.locked = session.held();
                 }
+                game_cpu::lock(&mut ready.cpus, session.held());
                 ready.scene.pose_prop(&ready.gpu, &session.puck_matrix());
                 // The hat-trick group (`003368c0` starts it, the next
                 // face-off and Restart Game stop it).
@@ -2513,8 +2581,12 @@ impl App {
                 match (&game.room, ready.net.as_mut()) {
                     (Some(_), Some(net)) => game.room_update(&mut riding.ride, net),
                     _ => {
-                        let mut others: Vec<_> =
-                            ready.split.iter_mut().map(|s| &mut s.riding.ride).collect();
+                        for cpu in &mut ready.cpus {
+                            if let Some(points) = cpu.landed.take() {
+                                game.landed[usize::from(cpu.player) - 1] = Some(points);
+                            }
+                        }
+                        let mut others = game_cpu::rides(&mut ready.split, &mut ready.cpus);
                         game.update(&mut riding.ride, &mut others);
                     }
                 }
@@ -2522,6 +2594,7 @@ impl App {
                 for second in &mut ready.split {
                     second.riding.locked = game.locked();
                 }
+                game_cpu::lock(&mut ready.cpus, game.locked());
                 for (model, rgb) in game.flag_colors(&ready.venue.scene.models) {
                     ready.scene.tint_model(&ready.gpu, model, rgb);
                 }
@@ -2580,18 +2653,15 @@ impl App {
                 // Split screen names the views' players (the race
                 // standings' Player 1 / Player 2); one player keeps the
                 // profile name.
-                let player = if game.players > 1 {
-                    split::PLAYER_1.to_string()
-                } else {
-                    self.front
-                        .as_ref()
-                        .map(|f| f.borrow().state.player_name.trim().to_string())
-                        .filter(|n| !n.is_empty())
-                        .unwrap_or_else(|| "You".into())
-                };
-                let names: Vec<&str> = std::iter::once(player.as_str())
-                    .chain(split::PLAYER_NAMES[1..].iter().copied())
-                    .collect();
+                let player = self
+                    .front
+                    .as_ref()
+                    .map(|f| f.borrow().state.player_name.trim().to_string())
+                    .filter(|n| !n.is_empty())
+                    .unwrap_or_else(|| "You".into());
+                // CPU riders follow the humans ("CPU N").
+                let names = game_cpu::names(ready.split.len() + 1, ready.cpus.len(), &player);
+                let names: Vec<&str> = names.iter().map(String::as_str).collect();
                 let summary = if game.room.is_some() {
                     game.course = course_label(&self.course_names, &game.venue);
                     game.room_results()
@@ -2758,6 +2828,14 @@ impl App {
                 })
                 .or_else(|| self.hockey.as_ref().map(|h| h.markers()))
                 .or(local_tag);
+            // CPU riders' name tags beside the game's markers.
+            let hud_peers = if ready.cpus.is_empty() {
+                hud_peers
+            } else {
+                let mut peers = hud_peers.unwrap_or_default();
+                peers.extend(ready.cpus.iter().enumerate().map(|(i, c)| c.tag(i)));
+                Some(peers)
+            };
             // Split screen: each view projects at its own rectangle's aspect
             // (transposed when turned toward a player at a side edge).
             let rects: Option<Vec<f32>> = ready.split.first().map(|s| {
@@ -3344,6 +3422,7 @@ impl App {
                     .and_then(|o| o.results.fame.as_ref())
                     .map(|f| serde_json::json!({"broken": f.broken, "name": f.name, "player": f.player})),
             });
+            state["ride"]["cpus"] = ready.cpus.iter().map(game_cpu::Cpu::state).collect();
             state["ride"]["practice"] = practice.into();
             state["ride"]["duel"] = duel.into();
             state["ride"]["lapAttack"] = lap_attack.into();
@@ -3831,7 +3910,7 @@ impl App {
         };
         // Split screen: the other players' rides restart a game with
         // player 1's.
-        let mut second: Vec<_> = ready.split.iter_mut().map(|s| &mut s.riding.ride).collect();
+        let mut second = game_cpu::rides(&mut ready.split, &mut ready.cpus);
         match event {
             // Restart Race (frontend.js reset({restart:true})): the whole
             // event reloads, also after the finish.
@@ -4465,7 +4544,7 @@ impl App {
         let Some(riding) = ready.riding.as_mut() else {
             return;
         };
-        let mut second: Vec<_> = ready.split.iter_mut().map(|s| &mut s.riding.ride).collect();
+        let mut second = game_cpu::rides(&mut ready.split, &mut ready.cpus);
         match action {
             overlay::Action::Pause => {
                 if !riding.held {
@@ -5302,6 +5381,7 @@ impl ApplicationHandler<Message> for App {
             // `?split=h|v` (web) or FURY_SPLIT=h|v (desktop): a direct split
             // ride (tests and host measurements).
             split: split_link_param(),
+            cpus: game_cpu::Request::default(),
         };
         // A direct split ride restarts (and reopens after a device loss)
         // split too.
@@ -7088,6 +7168,24 @@ impl App {
                 })
             });
             self.split_request = split;
+            // Games Prep's CPU Riders (local games only).
+            self.cpu_request = self
+                .front
+                .as_ref()
+                .filter(|_| {
+                    matches!(
+                        event,
+                        Event::Game { .. } | Event::Hockey { .. } | Event::TagHost { .. }
+                    )
+                })
+                .map(|f| {
+                    let f = f.borrow();
+                    game_cpu::Request {
+                        count: f.state.game_cpus(),
+                        difficulty: f.state.race_difficulty(),
+                    }
+                })
+                .unwrap_or_default();
         }
         if !matches!(event, Event::Objective { .. }) {
             self.objective = None;
@@ -7149,7 +7247,8 @@ impl App {
                 };
                 let players = self
                     .split_request
-                    .map_or(1, |r| usize::from(r.players.clamp(2, split::MAX_PLAYERS)));
+                    .map_or(1, |r| usize::from(r.players.clamp(2, split::MAX_PLAYERS)))
+                    + usize::from(self.cpu_request.count);
                 self.game = Some(games::GameSession::new(
                     kind,
                     venue.clone(),
@@ -7180,9 +7279,14 @@ impl App {
                 self.start_ride(venue, quad, rider, None, None);
             }
             Event::Hockey { quad, rider } => {
-                self.hockey = Some(match self.split_request {
-                    Some(request) => hockey::HockeySession::new_split(usize::from(request.players)),
-                    None => hockey::HockeySession::new(),
+                let humans = self.split_request.map_or(1, |r| usize::from(r.players));
+                let cpus = usize::from(self.cpu_request.count);
+                self.hockey = Some(if humans + cpus > 1 {
+                    let mut session = hockey::HockeySession::new_split(humans + cpus);
+                    session.humans = humans;
+                    session
+                } else {
+                    hockey::HockeySession::new()
                 });
                 self.start_ride("game01".into(), quad, rider, None, None);
             }
@@ -7365,7 +7469,7 @@ impl App {
                 quad,
                 rider,
                 ..
-            } if self.split_request.is_some() => {
+            } if self.split_request.is_some() || self.cpu_request.count > 0 => {
                 self.split_tag = Some((minutes, environment.clone()));
                 self.start_ride(environment, quad, rider, None, None);
             }
@@ -7793,6 +7897,15 @@ impl App {
                     })
             }),
             split: self.split_request,
+            // Only a local game takes CPU riders (never a room).
+            cpus: if self.split_tag.is_some()
+                || self.hockey.is_some()
+                || self.game.as_ref().is_some_and(|g| g.room.is_none())
+            {
+                self.cpu_request
+            } else {
+                game_cpu::Request::default()
+            },
             selection: atv_game::ride::Selection { quad, rider },
             // The saved Garage appearance dresses the ride (game.js
             // rideAppearance = frontend.appearance).
@@ -7822,6 +7935,10 @@ impl App {
         race: Option<atv_game::ride::race::Settings>,
         room: Option<RoomStart>,
     ) {
+        if room.is_some() {
+            // A room ride has no CPU riders (game_cpu.rs).
+            self.cpu_request = game_cpu::Request::default();
+        }
         let (Some(front), Some(content)) = (self.front.clone(), self.content.clone()) else {
             return;
         };
@@ -9257,9 +9374,15 @@ impl App {
                 status(&format!("Tag restart placement failed: {error}"));
             }
         }
-        for second in &mut ready.split {
-            let player = second.player;
-            let ride = &mut second.riding.ride;
+        let players = ready
+            .split
+            .iter_mut()
+            .map(|s| (s.player, &mut s.riding.ride));
+        let cpus = ready
+            .cpus
+            .iter_mut()
+            .map(|c| (c.player, &mut c.riding.ride));
+        for (player, ride) in players.chain(cpus) {
             tag::TagSession::release(ride);
             let (mut at, yaw) = split::freeride_start_for(start, yaw, player);
             if let Some(ground) = ride.ground(at[0], at[2]) {
@@ -9546,6 +9669,7 @@ impl App {
             game_scene,
             objective: None,
             split: None,
+            cpus: game_cpu::Request::default(),
         };
         let future = async move {
             let mut ready = match prepare(
@@ -9717,6 +9841,7 @@ pub fn run(options: Options) {
             url_flag("uiDiagnostics=1"),
         ),
         split_request: None,
+        cpu_request: game_cpu::Request::default(),
         split_link: split_link_param(),
         held_ride: None,
         objective: None,

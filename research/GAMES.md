@@ -583,6 +583,39 @@ carrier is "it" and scores while holding the ball.
   room on `E05_TG.RES`, and a guest joining by the code follows onto the
   Tag course into the same running game.
 
+## CPU riders (authored)
+
+Port adaptation, not recovered behavior: the original mini-games have no
+CPU riders. Games Prep's "CPU Riders: Off / 1 / 2 / 3" row (Off by
+default; up to four riders with the humans; none for an online room)
+adds them to a solo or split-screen game. Each CPU is a whole player ride
+(player 1's ATV, its own paint) driven through the player's controls, so
+it scores through the same rules: the sessions take it as one more local
+rider after the humans, and standings and results name it "CPU N". The
+brain (`crates/atv-core/src/game_cpu.rs`, seeded and fixed-step) picks a
+goal per mode: Tag chases the carrier (leading it with skill) or the
+loose ball, and the carrier flees, turning in from the boundary; Treasure
+Hunt rides to the cheapest standing treasure (distance, a rival nearer
+it, and a per-CPU taste so CPUs spread out); King of the Hills crosses a
+hill it does not hold, crouches and lets go before the far edge so it
+leaves the box in the air, and a landing after 0.35 s of air reports a
+stunt score drawn from its skill's range through the same chain path the
+rules read (a real airborne exit is still needed, so captures depend on
+the hill's shape); Hockey gets behind the puck on the line to the goal
+it attacks, and a team's later rider hangs back as defender.
+
+Evidence versus authored choices: no CPU logic for any mini-game exists
+in the original (above), so every goal is authored. The driving layer
+reuses the recovered race driver: its steering law (sine of 5 x the
+bearing, clamped) and speed deadband (`race_ai::pedals`), and its 50 ft/s
+target when off its line, which Normal and Expert CPUs ride at. The
+original difficulty changes only the race leader limit (AI flag 0x400,
+`002536b0`), so the per-difficulty lead, aim wander and stunt points, and
+Kid's slower pace, are authored. A near target off to the side slows the
+rider so it turns onto it instead of circling it. Stuck riders (under
+3 ft/s, the port's race CPU rule, never while held) back out twice, then
+turn in place, then reset. `tools/test_engine_game_cpus.mjs` covers the row and each mode.
+
 ## Uncertainty
 
 - Team colours: team 0 is read as Red and team 1 as Blue from the

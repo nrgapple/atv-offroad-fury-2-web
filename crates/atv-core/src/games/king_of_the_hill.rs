@@ -190,6 +190,16 @@ impl Rules for KingOfTheHill {
         )
     }
 
+    fn zones(&self) -> Vec<([f32; 3], [f32; 3])> {
+        self.hills
+            .iter()
+            .map(|h| {
+                let [x, y, z] = h.extents;
+                (h.position, [x + REACH, y + REACH * 0.5, z + REACH])
+            })
+            .collect()
+    }
+
     fn markers(&self) -> Vec<Marker> {
         self.hills
             .iter()

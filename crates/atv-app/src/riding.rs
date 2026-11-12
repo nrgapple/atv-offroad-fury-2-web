@@ -594,6 +594,38 @@ impl Riding {
         self.run_with(controls, count, None)
     }
 
+    /// One rendered frame of an authored CPU rider (game_cpu.rs): the
+    /// player's accumulator, with `brain` choosing each step's controls.
+    pub fn drive(
+        &mut self,
+        dt: f32,
+        peers: Peers,
+        mut brain: impl FnMut(&Ride) -> Controls,
+    ) -> Result<(), String> {
+        self.clock += f64::from(dt) * 1000.;
+        self.steps_last_frame = 0;
+        self.step_cameras.clear();
+        self.step_rest.clear();
+        self.step_race.clear();
+        self.accumulator = (self.accumulator + dt).min(0.1);
+        let count = ((self.accumulator * 60.).floor() as u32).min(4);
+        for _ in 0..count {
+            self.accumulator -= 1. / 60.;
+            let mut controls = brain(&self.ride);
+            if self.locked {
+                controls = Controls {
+                    brake: 1.,
+                    ..Controls::default()
+                };
+            }
+            self.run_with(&controls, 1, peers)?;
+        }
+        if count > 0 {
+            self.accept_batch(count, true)?;
+        }
+        Ok(())
+    }
+
     /// [`Riding::run`] in a room: each step touches the other riders as
     /// sampled at that step's session time, after its train step.
     fn run_with(&mut self, controls: &Controls, count: u32, peers: Peers) -> Result<(), String> {
