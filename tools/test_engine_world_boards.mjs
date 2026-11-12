@@ -22,11 +22,18 @@ async function choose(page, action) {
   for (let i = f.selection; i > at; i--) await key(page, 'ArrowUp');
   await key(page, 'Enter');
 }
-const details = async page => (await ui(page)).details.map(([a, b]) => `${a}|${b}`);
-const waitDetail = (page, pattern) => page.waitForFunction(source => {
-  const front = JSON.parse(document.querySelector('#ui-state')?.textContent || '{}').front;
-  return front?.details?.some(([a, b]) => new RegExp(source).test(`${a}|${b}`));
-}, pattern.source, { timeout: 30000 });
+const details = async page => (await ui(page)).profileBook.details.map(([a, b]) => `${a}|${b}`);
+async function waitDetail(page, pattern) {
+  try {
+    await page.waitForFunction(source => {
+      const front = JSON.parse(document.querySelector('#ui-state')?.textContent || '{}').front;
+      return front?.profileBook?.details?.some(([a, b]) => new RegExp(source).test(`${a}|${b}`));
+    }, pattern.source, { timeout: 30000 });
+  } catch (failure) {
+    const f = await ui(page);
+    throw new Error(`${pattern} not shown on ${f.page}; requests ${requests.join()}; details:\n${(f.profileBook?.details || []).map(d => d.join('|')).join('\n')}`);
+  }
+}
 
 const requests = [];
 async function api(route) {
