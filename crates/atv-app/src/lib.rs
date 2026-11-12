@@ -7077,6 +7077,7 @@ impl App {
             boot.tracks,
             boot.backdrop,
         );
+        front.art.trophy = boot.trophy;
         // Each course's race archive is offered once its record exists
         // (frontend.js `raceCourses`).
         // Enduro and Short Track races follow their venue's National race

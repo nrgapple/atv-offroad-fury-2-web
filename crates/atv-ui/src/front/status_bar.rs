@@ -7,10 +7,12 @@
 //! link to the full page (progressive disclosure). The title page shows the
 //! save chip alone; rides never show the bar (the HUD rules there).
 //!
-//! Icons are vector shapes in the menus' gold. The original's trophy art
-//! (`trophy_goldon` and friends, PAGE26 `ProfileView_Champ`) is not in the
-//! hosted runtime package, so the cup is drawn in its colours instead.
-use super::{Metrics, display, text};
+//! The trophy chip shows the original's lit gold trophy (`trophy_goldon`,
+//! PAGE05 Championship and PAGE26 `ProfileView_Champ`) when the content
+//! package has it, else a vector cup in its colours. The disc has no coin or
+//! points art, so the coin and the other icons are vector shapes in the
+//! menus' gold.
+use super::{Img, Metrics, display, text};
 use crate::{
     color::{Color, Fill, Gradient},
     layout::{Content, El, Paint, px, sides},
@@ -113,6 +115,8 @@ pub struct StatusBar {
     /// and the x its chip is centred on.
     pub open: Option<Popover>,
     pub anchor: f32,
+    /// The original trophy art, once registered (else the drawn cup).
+    pub trophy_art: Option<Img>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -276,6 +280,28 @@ fn trophy(size: f32) -> El {
             ),
         ],
     )
+}
+
+/// The original trophy art, fitted to the icon's height (it is taller than
+/// wide) and centred in the icon's box.
+fn original_trophy(size: f32, art: Img) -> El {
+    let height = size + 2.;
+    let width = (height * art.width / art.height.max(1.)).min(size + 4.);
+    El::new(Style {
+        size: Size {
+            width: length(width),
+            height: length(height),
+        },
+        margin: taffy::Rect {
+            left: LengthPercentageAuto::length((size - width) / 2.),
+            right: LengthPercentageAuto::length((size - width) / 2.),
+            top: LengthPercentageAuto::length(-1.),
+            bottom: LengthPercentageAuto::length(-1.),
+        },
+        flex_shrink: 0.,
+        ..Default::default()
+    })
+    .content(art.content(crate::layout::Fit::Contain))
 }
 
 /// A cloud with the sync state drawn in its colour.
@@ -476,8 +502,12 @@ pub(super) fn bar(m: &Metrics, bar: &StatusBar, hovered: Option<u32>) -> El {
             coins.push(label("Points"));
         }
         row = row.child(chip(m, COINS, hot(COINS), bar.store || bar.counting, coins));
+        let cup = match bar.trophy_art {
+            Some(art) => original_trophy(icon_size, art),
+            None => trophy(icon_size),
+        };
         let mut cups = vec![
-            trophy(icon_size),
+            cup,
             value(m, format!("{}/{}", bar.trophies.0, bar.trophies.1)),
         ];
         if labels {
