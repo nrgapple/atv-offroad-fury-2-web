@@ -1,0 +1,16 @@
+{
+  "id": "from-the-original-instructor-voice-lines-the-race-load-d9d563603bbf4401ac7813cd591bdcbd",
+  "timestamp": "2026-11-12T05:55:09.767847+00:00",
+  "recorded_at": "2026-11-12T05:55:09.767847+00:00",
+  "kind": "build",
+  "title": "From the original: instructor voice lines, the race-load cue and Credits",
+  "summary": "Three things the original game has that the port was missing are back: the Training Course instructor speaks, championship rounds play the original's fixed announcer cue while they load, and Options has the Credits page.",
+  "details": [
+    "Training Course: the 46 original instructor lines play at the triggers the port already used, each line holds the course for its real length, and the captions stay as subtitles. An older content package or muted sound falls back to the old caption timing.",
+    "Race load: championship rounds play a fixed cue, one for Supercross and one for Enduro, Nationals and Short Tracks; Freestyle stays random. The port used to pick one of four at random every time.",
+    "Credits: Options \u2192 Credits scrolls the original credits text, loaded from the content package, then a separate section naming Fury Remastered an unofficial fan port.",
+    "Hockey's crowd sounds on a goal, a hat trick and at Game over were already playing; the note that said otherwise was corrected."
+  ],
+  "limitation": "The original's dialogue volume and channel are not recovered, so the lines use the SFX volume. The Credits page does not reproduce the original logos, backdrop art or font. The Training lines add about 5.8 MB to the audio package. Checked in host browsers only.",
+  "verification": "Host only: unit tests for each part, and the Training and Credits browser tests pass; the Training test required all 46 lines loaded and the first two started."
+}

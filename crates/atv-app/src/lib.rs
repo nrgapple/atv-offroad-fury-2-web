@@ -18,6 +18,7 @@ mod hockey;
 mod multiplayer;
 mod net;
 mod overlay;
+mod photo;
 mod random;
 mod render_scale;
 pub mod replay;
@@ -909,6 +910,8 @@ struct App {
     training: Option<training::TrainingSession>,
     /// A mini-game on the current ride (research/GAMES.md).
     game: Option<games::GameSession>,
+    /// The User Created Enduro a UserEnduro race rides (user_course.rs).
+    user_course: Option<Rc<atv_core::user_course::UserCourse>>,
     /// Hockey on Coonce Arena (`atv_core::hockey`).
     hockey: Option<hockey::HockeySession>,
     /// Tag in a multiplayer room (`atv_core::tag`).
@@ -940,6 +943,8 @@ struct App {
     /// The host's Play Tag reloads the room's venue from its TG archive;
     /// the game starts with these minutes once that ride is ready.
     tag_start: Option<u32>,
+    /// Pause → Photo mode's free camera (#542).
+    photo: Option<photo::Photo>,
     /// Split screen → Games → Tag: a local two-player game starts with
     /// these minutes once both rides are ready (no room).
     split_tag: Option<(u32, String)>,
@@ -1063,6 +1068,8 @@ struct World {
     split: Option<split::Request>,
     /// A local mini-game's CPU riders (game_cpu.rs).
     cpus: game_cpu::Request,
+    /// A User Created Enduro's course (with a UserEnduro race).
+    user_course: Option<Rc<atv_core::user_course::UserCourse>>,
 }
 
 /// Ride prefetch (`?prefetch=off` turns it off for load-time measurement).
@@ -1194,6 +1201,7 @@ async fn prepare_inner(
         objective,
         split: split_layout,
         cpus: cpu_request,
+        user_course,
     } = world;
     // The decode workers start while the course downloads (offload.rs).
     atv_game::offload::warm();
@@ -1233,6 +1241,7 @@ async fn prepare_inner(
             race: race.map(|r| r.course).unwrap_or_default(),
             game_scene,
             objective,
+            user_course,
         },
     )
     .await?;
@@ -1287,7 +1296,11 @@ async fn prepare_inner(
     // CPU riders (manual p. 16: two-player split screen can include them).
     let race = race.map(|r| atv_game::ride::race::Settings {
         intro: r.intro && split_layout.is_none(),
-        cpu: if split_layout.is_some_and(|s| s.players > 2) {
+        // A User Created Enduro races alone: the CPU drivers follow the
+        // long Enduro's TDF route, not arbitrary gates (user_course.rs).
+        cpu: if split_layout.is_some_and(|s| s.players > 2)
+            || r.course == atv_game::launch::RaceVariant::UserEnduro
+        {
             0
         } else {
             r.cpu
@@ -1723,9 +1736,9 @@ impl App {
             overlay.pad_name = self.gamepad.name();
             overlay.pads = self.gamepad.connected();
             overlay.pad_standard = self.gamepad.standard();
-            overlay.sync_menu(riding.paused && !riding.held);
-            riding.menu_open = overlay.menu.is_some();
-            if riding.menu_open
+            overlay.sync_menu(riding.paused && !riding.held && self.photo.is_none());
+            riding.menu_open = overlay.menu.is_some() || self.photo.is_some();
+            if overlay.menu.is_some()
                 && let Some(event) = overlay.menu_pad(pad.as_ref(), Some(&mut riding.bindings))
             {
                 self.menu_event(event);
@@ -1743,6 +1756,7 @@ impl App {
                 None => pad.as_ref(),
             };
             if !riding.menu_open
+                && self.photo.is_none()
                 && let Some(action) = overlay.results_pad(results_pad)
             {
                 self.act(action);
@@ -1908,8 +1922,8 @@ impl App {
         // A Pause binding this frame opens the menu in this same frame (the
         // ride then sleeps until input).
         if let Some(overlay) = &mut self.overlay {
-            overlay.sync_menu(riding.paused && !riding.held);
-            riding.menu_open = overlay.menu.is_some();
+            overlay.sync_menu(riding.paused && !riding.held && self.photo.is_none());
+            riding.menu_open = overlay.menu.is_some() || self.photo.is_some();
             // Audio → Sound shows the mode the ride is actually playing.
             if let Some(sound) = &riding.sound {
                 let playing = match sound.ride.mode {
@@ -2332,6 +2346,10 @@ impl App {
         let ui_started = Instant::now();
         self.update_jukebox();
         self.save_soundtrack();
+        // Photo mode: the free camera replaces the ride's (#542).
+        if self.photo.is_some() {
+            self.photo_frame(dt, pad.as_ref());
+        }
         let Some(ready) = &mut self.ready else { return };
         let Some(riding) = &mut ready.riding else {
             return;
@@ -3326,6 +3344,10 @@ impl App {
             if let Some(overlay) = &self.overlay {
                 state["toolbar"] = overlay.diagnostics();
             }
+            // Photo mode (tools/test_engine_photo.mjs).
+            state["photo"] = self.photo.as_ref().map(photo::Photo::state).into();
+            state["view"] = serde_json::json!({"eye": ready.camera.eye(),
+                "yaw": ready.camera.yaw, "pitch": ready.camera.pitch, "focal": ready.focal_length});
             // The ride's course and championship round, and the results
             // buttons (tools/test_engine_championship.mjs).
             // The Practice event type and the player's race frame
@@ -3442,6 +3464,13 @@ impl App {
             state["ride"]["practice"] = practice.into();
             state["ride"]["duel"] = duel.into();
             state["ride"]["lapAttack"] = lap_attack.into();
+            // A User Created Enduro's gate count (tools/test_engine_user_course.mjs).
+            state["ride"]["userCourseGates"] = riding
+                .ride
+                .race()
+                .filter(|r| r.settings().course == atv_game::launch::RaceVariant::UserEnduro)
+                .map(|_| ready.venue.enduro_gates.len())
+                .into();
             // Post-reset fade (atv_core::reset_fade): player 1's drawn
             // opacity and reset timer, and split screen's other players'.
             state["ride"]["resetFade"] = riding.reset_fade(&ready.venue).into();
@@ -3817,7 +3846,10 @@ impl App {
             .overlay
             .as_ref()
             .is_some_and(|o| o.jukebox_open() || o.sliding());
-        self.effective_focused() && (animating || ready.riding.as_ref().is_none_or(|r| !r.paused))
+        self.effective_focused()
+            && (animating
+                || self.photo.is_some()
+                || ready.riding.as_ref().is_none_or(|r| !r.paused))
     }
 
     /// Schedule one frame: it applies the event, then `awake` decides.
@@ -4036,6 +4068,7 @@ impl App {
                 self.toggle_fullscreen();
             }
             Event::CopyRide => self.copy_ride_link(),
+            Event::Photo => self.open_photo(),
             Event::Spawn(peer) => {
                 let Some(ready) = &mut self.ready else { return };
                 let (Some(net), Some(riding)) = (&mut ready.net, &mut ready.riding) else {
@@ -4339,6 +4372,24 @@ impl App {
                 "Invite link copied.",
             ));
         }
+        // A User Created Enduro shares its course link.
+        if riding
+            .ride
+            .race()
+            .is_some_and(|r| r.settings().course == atv_game::launch::RaceVariant::UserEnduro)
+        {
+            let course = self.user_course.as_ref()?;
+            return Some((
+                atv_game::launch::user_course_url(
+                    &page,
+                    &course.encode(),
+                    &course.environment,
+                    selection.quad,
+                    selection.rider,
+                ),
+                "Course link copied.",
+            ));
+        }
         let url = atv_game::launch::ride_url(
             &page,
             &atv_game::launch::RideLink {
@@ -4555,6 +4606,10 @@ impl App {
     }
 
     fn act(&mut self, action: overlay::Action) {
+        if let overlay::Action::Viewer(button) = action {
+            self.viewer_button(button);
+            return;
+        }
         let Some(ready) = self.ready.as_mut() else {
             return;
         };
@@ -4574,6 +4629,8 @@ impl App {
                 }
             }
             overlay::Action::Camera => riding.cycle_requested = true,
+            // Handled above.
+            overlay::Action::Viewer(_) => {}
             overlay::Action::RaceRetry if self.tag.as_ref().is_some_and(|t| t.local) => {
                 self.restart_split_tag();
             }
@@ -4885,6 +4942,10 @@ impl App {
             .and_then(|r| r.riding.as_ref())
             .is_some_and(|r| !r.paused && !r.held)
             && self.effective_focused();
+        if self.photo.is_some() {
+            self.photo_pointer(touch.id, touch.phase, x, y);
+            return;
+        }
         let Some(overlay) = &mut self.overlay else {
             return;
         };
@@ -5174,6 +5235,10 @@ impl App {
             }
             return;
         }
+        if self.photo.is_some() {
+            self.photo_key(&format!("{code:?}"));
+            return;
+        }
         let bindings = self
             .ready
             .as_mut()
@@ -5399,6 +5464,7 @@ impl ApplicationHandler<Message> for App {
             // ride (tests and host measurements).
             split: split_link_param(),
             cpus: game_cpu::Request::default(),
+            user_course: None,
         };
         // A direct split ride restarts (and reopens after a device loss)
         // split too.
@@ -5749,6 +5815,13 @@ impl ApplicationHandler<Message> for App {
                             .and_then(|r| r.ride.race())
                             .is_some_and(|r| r.kid);
                         overlay.set_kid_touch(overlay.kid);
+                        overlay.user_course = ready
+                            .riding
+                            .as_ref()
+                            .and_then(|r| r.ride.race())
+                            .is_some_and(|r| {
+                                r.settings().course == atv_game::launch::RaceVariant::UserEnduro
+                            });
                         // The profile's course record (`001f1e30` keeps lap
                         // and race times only at the default 3 Enduro / 5
                         // other laps).
@@ -6043,6 +6116,8 @@ impl ApplicationHandler<Message> for App {
                 };
                 if let Some(front) = self.front_input() {
                     front.borrow_mut().wheel(dy);
+                } else if let Some(photo) = &mut self.photo {
+                    photo.wheel(dy);
                 } else if let Some(overlay) = &mut self.overlay {
                     overlay.menu_wheel(dy);
                 }
@@ -6136,6 +6211,20 @@ impl ApplicationHandler<Message> for App {
                 self.visible = !occluded;
                 self.sync_activity();
             }
+            // Photo mode: the right button pans.
+            WindowEvent::MouseInput {
+                state,
+                button: MouseButton::Right,
+                ..
+            } if self.photo.is_some() => {
+                let (x, y) = self.css(self.cursor.unwrap_or_default());
+                let phase = if state == ElementState::Pressed {
+                    winit::event::TouchPhase::Started
+                } else {
+                    winit::event::TouchPhase::Ended
+                };
+                self.photo_pointer(photo::RIGHT_MOUSE, phase, x, y);
+            }
             WindowEvent::MouseInput {
                 state,
                 button: MouseButton::Left,
@@ -6148,6 +6237,10 @@ impl ApplicationHandler<Message> for App {
                     winit::event::TouchPhase::Ended
                 };
                 if self.front_pointer(MOUSE, phase, x, y) {
+                    return;
+                }
+                if self.photo.is_some() {
+                    self.photo_pointer(overlay::MOUSE, phase, x, y);
                     return;
                 }
                 if let Some(overlay) = self.overlay.as_mut().filter(|o| o.menu.is_some()) {
@@ -6196,6 +6289,17 @@ impl ApplicationHandler<Message> for App {
                     self.front_pointer(MOUSE, winit::event::TouchPhase::Moved, x, y);
                     return;
                 }
+                if self.photo.is_some() {
+                    self.cursor = Some((position.x, position.y));
+                    let (x, y) = self.css((position.x, position.y));
+                    let moved = winit::event::TouchPhase::Moved;
+                    self.photo_pointer(overlay::MOUSE, moved, x, y);
+                    self.photo_pointer(photo::RIGHT_MOUSE, moved, x, y);
+                    if let Some(overlay) = &mut self.overlay {
+                        overlay.hover(x, y);
+                    }
+                    return;
+                }
                 if let (true, Some((x, _)), Some(Some(_))) = (
                     self.dragging,
                     self.cursor,
@@ -6226,6 +6330,7 @@ impl ApplicationHandler<Message> for App {
             }
             WindowEvent::RedrawRequested => {
                 self.step();
+                self.finish_photo();
                 // Show FPS counts the frames the surface presented.
                 let gpu = self.gpu.as_ref().or(self.ready.as_ref().map(|r| &r.gpu));
                 if let Some(at) = gpu.and_then(|g| g.take_presented()) {
@@ -7102,6 +7207,19 @@ impl App {
             return;
         }
         let race = setup.activity == "race";
+        // A course link (`wp=`) races its User Created Enduro alone.
+        if let Some(code) = &setup.user_course {
+            let Ok(course) = atv_core::user_course::UserCourse::decode(code) else {
+                return;
+            };
+            f.state.open("single", &view);
+            if !setup.play {
+                return;
+            }
+            drop(f);
+            self.start_user_course(Rc::new(course), setup.quad_id, setup.rider_id);
+            return;
+        }
         if race && !f.state.race_courses.is_empty() {
             // Back from the setup climbs through Single Player.
             f.state.open("single", &view);
@@ -7177,6 +7295,28 @@ impl App {
             self.split_request = Some(link);
         }
         self.start_ride(map, setup.quad_id, setup.rider_id, settings, None);
+    }
+
+    /// Races a User Created Enduro (user_course.rs): alone, its own laps.
+    fn start_user_course(
+        &mut self,
+        course: Rc<atv_core::user_course::UserCourse>,
+        quad: u16,
+        rider: u16,
+    ) {
+        let settings = atv_game::ride::race::Settings {
+            laps: course.laps,
+            cpu: 0,
+            seed: fresh_seed(),
+            course: atv_game::launch::RaceVariant::UserEnduro,
+            ..Default::default()
+        };
+        let id = atv_game::launch::race_course_id(
+            &course.environment,
+            atv_game::launch::RaceVariant::UserEnduro,
+        );
+        self.user_course = Some(course);
+        self.start_ride(id, quad, rider, Some(settings), None);
     }
 
     fn front_event(&mut self, event: atv_ui::front::controller::Event) {
@@ -7959,6 +8099,9 @@ impl App {
                     })
             }),
             split: self.split_request,
+            user_course: race
+                .filter(|r| r.course == atv_game::launch::RaceVariant::UserEnduro)
+                .and(self.user_course.clone()),
             // Only a local game takes CPU riders (never a room).
             cpus: if self.split_tag.is_some()
                 || self.hockey.is_some()
@@ -8075,12 +8218,16 @@ impl App {
         #[cfg(target_os = "android")]
         self.soft_keyboard.follow(false, false);
         let championship = race.as_ref().and_then(|r| r.championship);
-        let fame = race.as_ref().map(|r| {
-            (
-                atv_game::launch::race_course_id(&environment, r.course),
-                r.difficulty == 2,
-            )
-        });
+        // A User Created Enduro keeps no Hall of Fame records.
+        let fame = race
+            .as_ref()
+            .filter(|r| r.course != atv_game::launch::RaceVariant::UserEnduro)
+            .map(|r| {
+                (
+                    atv_game::launch::race_course_id(&environment, r.course),
+                    r.difficulty == 2,
+                )
+            });
         let (world, ride) = self.ride_setup(&front, quad, rider, race);
         {
             let mut f = front.borrow_mut();
@@ -9284,8 +9431,8 @@ pub(crate) fn attach_records(ride: &mut atv_game::ride::Ride, course: &str, play
     };
     let settings = race.settings();
     // Kid races are ridden by the race path driver: they keep no records
-    // (research/KID_MODE.md).
-    if settings.kid {
+    // (research/KID_MODE.md). User Created Enduros stay off the boards.
+    if settings.kid || settings.course == atv_game::launch::RaceVariant::UserEnduro {
         return;
     }
     let enduro = atv_game::launch::split_race_course(course).is_some_and(|(_, v)| v.is_enduro());
@@ -9742,6 +9889,7 @@ impl App {
             objective: None,
             split: None,
             cpus: game_cpu::Request::default(),
+            user_course: None,
         };
         let future = async move {
             let mut ready = match prepare(
@@ -9919,6 +10067,7 @@ pub fn run(options: Options) {
         objective: None,
         training: None,
         game: None,
+        user_course: None,
         hockey: None,
         tag: None,
         room_race: None,
@@ -9931,6 +10080,7 @@ pub fn run(options: Options) {
         room_freestyle_serial: 0,
         room_freestyle_start: false,
         tag_start: None,
+        photo: None,
         split_tag: None,
         tag_reload: None,
         pending_room: None,

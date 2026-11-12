@@ -118,8 +118,8 @@ component implementations. They do not establish original full-scene parity.
   moving attachments, complete lighting/GS behavior and physical-device parity
   remain open. Callback-gated type 9 hockey hats and Arlington train-attached
   smoke are unfinished. Wheel particles remain separate from placed emitters.
-- Stadium crowds: reverse-looping original ATMs display their original first
-  frame; reverse playback remains unimplemented and reported in diagnostics.
+- Stadium crowds: reverse-looping original ATMs ping-pong through their
+  frames (`001bdb60`, see STADIUM_MATERIALS.md).
 - Moving actors: Arlington trains are connected, while other TOY/VUE animation
   families and their interactions remain incomplete; train-attached smoke is
   still unfinished.
@@ -197,7 +197,6 @@ camera view. These are automated Chromium captures, not physical-phone photos.
 
 Public verification proves the listed browser routes and connected venue
 content, not full PS2 or whole-game equivalence. Original race rules, Training
-objectives, hockey mode, complete weather/ambient behavior, crowd reverse
-playback, lighting, water interactions, and remaining rendering fidelity are
+objectives, hockey mode, complete weather/ambient behavior, lighting, water interactions, and remaining rendering fidelity are
 still unfinished. Physical-device and geographically separated network behavior
 remain unverified.
