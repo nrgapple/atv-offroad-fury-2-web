@@ -24,6 +24,10 @@ pub const MAX_NAME_TAGS: usize = 8;
 pub const MAX_EDGE_TAGS: usize = 3;
 
 pub fn color(slot: u8) -> Color {
+    // Colour assistance (Options → Accessibility) swaps the first four.
+    if let Some(color) = super::palette::slot(slot) {
+        return color;
+    }
     Color::hex(PLAYER_COLORS[usize::from(slot) % PLAYER_COLORS.len()])
 }
 

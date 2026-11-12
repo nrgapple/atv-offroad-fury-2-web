@@ -106,6 +106,10 @@ pub struct Riding {
     pub dirt_enabled: bool,
     /// Settings → Chase camera: Assisted (UphillSightline).
     pub chase_assist: bool,
+    /// Options → Accessibility → Field of view, percent of the original
+    /// angle (100 is the original). Riding cameras only: the race intro
+    /// and TV shots keep their authored lenses.
+    pub fov_percent: u8,
     sightline: atv_game::ride::view::UphillSightline,
     /// Settings → Crash camera: Tight (the default) frames Crazy/Gorn crashes
     /// with crashPresentation; Original keeps the recovered wreck camera.
@@ -242,6 +246,7 @@ impl Riding {
             dirt: atv_game::dirt::DirtBuildup::new(venue.terrain_zones),
             dirt_enabled: false,
             chase_assist: false,
+            fov_percent: 100,
             sightline: Default::default(),
             crash_camera_tight: true,
             crash_bounds: None,
@@ -795,6 +800,10 @@ impl Riding {
             &height,
         );
         let assist = self.chase_assist.then_some((&self.sightline, actor.origin));
+        let fov_percent = match camera.1 {
+            ride::CameraMode::Intro | ride::CameraMode::Tv => 100,
+            _ => self.fov_percent,
+        };
         let view = match (&camera.0, camera.1) {
             (frame, ride::CameraMode::Intro | ride::CameraMode::Tv) => {
                 atv_game::ride::view::cinematic(frame, aspect)
@@ -931,7 +940,7 @@ impl Riding {
                 yaw,
                 pitch,
             },
-            focal_length * self.rush.focal_scale(),
+            atv_game::ride::view::fov_focal(focal_length * self.rush.focal_scale(), fov_percent),
             pose,
         ))
     }

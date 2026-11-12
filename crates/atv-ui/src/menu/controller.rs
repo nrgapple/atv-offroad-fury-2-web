@@ -385,6 +385,15 @@ impl PauseMenu {
         // Past json!'s recursion limit.
         request["new_profiles_unlocked"] = p.new_profiles_unlocked.into();
         request["show_fps"] = p.show_fps.into();
+        if self.page == "accessibility" {
+            request["access_fov"] = p.access.fov.into();
+            request["access_rows"] = p
+                .access
+                .rows()
+                .into_iter()
+                .map(|(id, label, value)| json!({"id": id, "label": label, "value": value}))
+                .collect();
+        }
         if let Some(b) = ctx.bindings.as_deref() {
             let t = &b.tuning;
             // gamepads.js controllerLabel: Auto, a pinned pad, or a pinned
@@ -630,8 +639,8 @@ impl PauseMenu {
                 return Some(Event::Jukebox(super::jukebox::JukeboxAction::Select(index)));
             }
             "main" => return Some(Event::Leave("play.html")),
-            "settings" | "extras" | "alpha" | "hud-settings" | "minimap-config"
-            | "race-overlays" | "controls" | "music" | "game-settings" => {
+            "settings" | "extras" | "alpha" | "accessibility" | "hud-settings"
+            | "minimap-config" | "race-overlays" | "controls" | "music" | "game-settings" => {
                 self.show(action);
                 return None;
             }
@@ -780,6 +789,7 @@ impl PauseMenu {
             "minimap-size"
             | "minimap-zoom"
             | "steering-sensitivity"
+            | "access-fov"
             | "pad-steering"
             | "pad-lean"
             | "pad-triggers"
@@ -815,6 +825,7 @@ impl PauseMenu {
                 }
             }
             "musicvolume" | "sfxvolume" => ctx.prefs.set_volume(action, value, ctx.settings),
+            "access-fov" => ctx.prefs.access.set_fov(value, ctx.settings),
             _ => ctx.touch.set_steering_sensitivity(value, ctx.settings),
         }
         if action.starts_with("minimap") {
@@ -1248,10 +1259,11 @@ impl PauseMenu {
     ) -> Option<Event> {
         let at = self.pressed.iter().position(|p| p.pointer == pointer)?;
         let p = self.pressed.remove(at);
-        // The Jukebox ranges apply on release (`onchange`).
+        // The Jukebox ranges apply on release (`onchange`), as does the
+        // ride camera's field of view.
         if p.slider.is_some() {
             return match self.rows.choices.get(p.index).map(String::as_str) {
-                Some("jukevolume") => Some(Event::Changed),
+                Some("jukevolume" | "access-fov") => Some(Event::Changed),
                 Some("jukeseek") => {
                     let t = self.seek_to.take()?;
                     let duration = ctx.music.map_or(0., |m| m.duration);
