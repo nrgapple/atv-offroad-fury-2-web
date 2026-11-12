@@ -219,6 +219,8 @@ pub struct Overlay {
     /// The race is Single Race's Kid difficulty (research/KID_MODE.md):
     /// touches are GO and the race path driver's finish earns nothing.
     pub kid: bool,
+    /// A User Created Enduro: no Profile Points or records.
+    pub user_course: bool,
     /// The ride is the Training Course (Pause → Restart Training).
     pub training: bool,
     /// The ride is a mini-game (Pause → Restart Game).
@@ -336,6 +338,7 @@ impl Overlay {
             frontend: false,
             race: false,
             kid: false,
+            user_course: false,
             training: false,
             game: false,
             room_race_pending: false,
@@ -1603,8 +1606,9 @@ impl Overlay {
                 // Online competition saves neither profile progress nor Hall
                 // of Fame records (USA manual pp. 36–37).
                 if self.results.finish(frame) {
-                    if self.kid {
-                        // The path driver rode: no Profile Points or records.
+                    if self.kid || self.user_course {
+                        // The path driver rode, or the course is the
+                        // player's own: no Profile Points or records.
                         self.results.no_award();
                     } else if self.lobby.is_none() && frame.duel {
                         // A Duel seats two humans: `001f1e30` credits Profile
