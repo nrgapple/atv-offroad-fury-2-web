@@ -109,6 +109,8 @@ pub struct Counters {
     pub direct_sent_bytes: u64,
     pub direct_received: u64,
     pub direct_received_bytes: u64,
+    /// Bundles sent as the room's courier.
+    pub bundles: u64,
 }
 
 /// One 50 ms tick's poses ([`Session::poses`]).
@@ -165,6 +167,12 @@ pub struct Session {
     relayed: u32,
     /// A rider newly depends on the relay: its next pose goes at once.
     relay_due: bool,
+    /// The room's courier (research/MULTIPLAYER.md "Courier"), when one
+    /// carries poses.
+    pub courier: Option<u8>,
+    /// As the courier: the latest pose from each linked rider, not yet
+    /// bundled.
+    carry: BTreeMap<u8, Vec<u8>>,
 }
 
 fn encode(packet: &Packet) -> Result<Vec<u8>> {
@@ -255,10 +263,14 @@ impl Session {
     pub fn hello(&mut self, direct: bool) -> Result<Vec<u8>> {
         let peer = self.peer.ok_or("join multiplayer first")?;
         self.links.announce(direct);
+        // A new socket: the relay names the current courier again.
+        self.courier = None;
+        self.carry.clear();
+        let flags = atv_net::signal::DIRECT | atv_net::signal::CARRIES;
         encode(&Packet::Signal(atv_net::Signal {
             peer,
             kind: atv_net::signal::HELLO,
-            data: vec![if direct { atv_net::signal::DIRECT } else { 0 }],
+            data: vec![if direct { flags } else { 0 }],
         }))
     }
 
@@ -426,6 +438,16 @@ impl Session {
                 self.links.forget(peer);
             }
             // Only sent to a client that said [`Session::hello`].
+            Packet::Signal(message) if message.kind == atv_net::signal::COURIER => {
+                if message.data[0] == 1 {
+                    self.courier = Some(message.peer);
+                } else if self.courier == Some(message.peer) {
+                    self.courier = None;
+                }
+                if self.courier.is_none() || self.courier != self.peer {
+                    self.carry.clear();
+                }
+            }
             Packet::Signal(message) => self.links.signal(message, now_ms),
             Packet::Pong { nonce, server_ms } => {
                 let rtt = (now_ms as u32).wrapping_sub(nonce);
@@ -538,6 +560,10 @@ impl Session {
         }
         self.counters.direct_received += 1;
         self.counters.direct_received_bytes += bytes.len() as u64;
+        // Bundles carry compact poses only (what links send).
+        if self.courier.is_some() && self.courier == self.peer && s.animation.is_some() {
+            self.carry.insert(peer, bytes.to_vec());
+        }
         self.pose(*s, now_ms)
     }
 
@@ -649,13 +675,30 @@ impl Session {
         };
         let every =
             |feet: f32, direct: bool| links::interval(paused, moving, state, s.speed, feet, direct);
+        // The courier carries this rider's poses to riders without a link to
+        // it: linked with the courier, this rider leaves them off the relay
+        // and gives the courier the rate the nearest of them needs.
+        let carrying = self.courier.is_some() && self.courier == Some(s.peer);
+        let courier = self
+            .courier
+            .filter(|c| *c != s.peer && self.links.is_open(*c));
+        let unlinked = self
+            .links
+            .relayed()
+            .map(|peer| feet(peer).unwrap_or(links::UNKNOWN_FT))
+            .fold(f32::INFINITY, f32::min);
         // Linked riders: each at the rate its distance needs, and a change
         // of state at once.
         let car = s.platform.as_ref().map(|p| p.car);
         let direct = self
             .links
             .due(now, (state, s.crash_serial, paused, car), |peer| {
-                every(feet(peer).unwrap_or(links::UNKNOWN_FT), true)
+                let own = every(feet(peer).unwrap_or(links::UNKNOWN_FT), true);
+                if Some(peer) == courier && unlinked.is_finite() {
+                    own.min(every(unlinked, false))
+                } else {
+                    own
+                }
             });
         // The relay: at the rate the nearest rider who depends on it needs.
         // With none (alone, or every rider on the course linked) a presence
@@ -666,9 +709,11 @@ impl Session {
         let (interval, presence) = if self.links.announced() {
             let mut riders = 0;
             let mut nearest = f32::INFINITY;
-            for peer in self.links.relayed() {
-                riders |= 1 << peer;
-                nearest = nearest.min(feet(peer).unwrap_or(links::UNKNOWN_FT));
+            if courier.is_none() {
+                for peer in self.links.relayed() {
+                    riders |= 1 << peer;
+                    nearest = nearest.min(feet(peer).unwrap_or(links::UNKNOWN_FT));
+                }
             }
             // An arrival, or a rider whose link just failed, sees this
             // rider where it is now.
@@ -711,16 +756,42 @@ impl Session {
         let elapsed = now.wrapping_sub(self.last_sent_ms);
         let relay =
             self.force_full || self.relay_due || (!presence && transition) || elapsed >= interval;
+        let bundling = carrying && !self.carry.is_empty();
         if !relay {
             self.counters.suppressed += 1;
-            if direct.is_empty() {
+            if direct.is_empty() && !bundling {
                 return Ok(Poses::default());
             }
         }
         self.sequence = s.sequence;
         let mut poses = Poses::default();
         let mut whole = None;
-        if relay {
+        if carrying {
+            // As the courier, every relayed pose goes in a bundle: this
+            // rider's own (whole, no deltas) and the latest from each linked
+            // rider, as many as fit; the rest go in the next one.
+            let mut poses_out = Vec::new();
+            let mut bytes = 9;
+            if relay {
+                let own = encode(&Packet::Snapshot(Box::new(s.clone())))?;
+                bytes += 2 + own.len();
+                whole = Some(own.clone());
+                poses_out.push(own);
+            }
+            for (peer, pose) in std::mem::take(&mut self.carry) {
+                if bytes + 2 + pose.len() > atv_net::MAX_PACKET_BYTES
+                    || poses_out.len() == atv_net::MAX_BUNDLE
+                {
+                    self.carry.insert(peer, pose);
+                } else {
+                    bytes += 2 + pose.len();
+                    poses_out.push(pose);
+                }
+            }
+            if !poses_out.is_empty() {
+                poses.relay = Some(encode(&Packet::Bundle { poses: poses_out })?);
+            }
+        } else if relay {
             let full = self.force_full
                 || transition
                 || now.wrapping_sub(self.last_full_ms) >= 2000
@@ -762,10 +833,25 @@ impl Session {
     /// Send receipt for [`Session::snapshot`] bytes: the baseline advances
     /// only after an actual send (dropped frames never become a reference).
     pub fn sent(&mut self, bytes: &[u8]) -> Result<()> {
+        let kind = bytes.get(5).copied().unwrap_or(0);
+        if kind == 19 {
+            // A courier's bundle; this rider's own pose in it is whole.
+            self.counters.bundles += 1;
+            self.counters.messages += 1;
+            self.counters.sent_bytes += bytes.len() as u64;
+            if let Some(s) = self.pending.take() {
+                self.last_sent_ms = s.time_ms;
+                self.last_full_ms = s.time_ms;
+                self.counters.full += 1;
+                self.force_full = false;
+                self.relay_due = false;
+                self.baseline = Some(s);
+            }
+            return Ok(());
+        }
         let Some(s) = self.pending.take() else {
             return Ok(());
         };
-        let kind = bytes.get(5).copied().unwrap_or(0);
         if !matches!(kind, 9 | 10) || bytes.len() != self.counters.last_packet_bytes {
             return Err("invalid snapshot send receipt".into());
         }
@@ -1238,6 +1324,59 @@ mod tests {
         };
         s.atv.position[0] = x;
         atv_net::encode(&Packet::Snapshot(Box::new(s))).unwrap()
+    }
+
+    #[test]
+    fn the_courier_carries_linked_riders_poses_to_riders_without_links() {
+        use atv_net::signal::{ANSWER, CARRIES, COURIER, DIRECT, PRESENT};
+        let mut s = Session::new(Profile::new("Ann", 1, 0, Default::default()));
+        welcome(&mut s, 1, lobby(&[(0, 1), (1, 1), (2, 1)], true));
+        let hello = atv_net::decode(&s.hello(true).unwrap()).unwrap();
+        assert!(matches!(hello, Packet::Signal(m) if m.data == [DIRECT | CARRIES]));
+        s.ready().unwrap();
+        // Rider 0 links with this one; rider 2 (a desktop build) cannot.
+        signal(&mut s, 0, PRESENT, &[DIRECT], 0);
+        signal(&mut s, 2, PRESENT, &[0], 0);
+        s.link_commands(0);
+        signal(&mut s, 0, ANSWER, b"v=0", 0);
+        s.link_commands(0);
+        s.link_opened(0, 0);
+        assert_eq!(ride(&mut s, 0, 1000), (10, 10));
+        // Rider 0 is the courier: rider 2 gets this rider's poses through
+        // it, so the relay only hears a presence pose.
+        signal(&mut s, 0, COURIER, &[1], 1000);
+        assert_eq!(s.courier, Some(0));
+        assert_eq!(ride(&mut s, 1000, 4000), (1, 30));
+        // The courier stops: back to the relay at once.
+        signal(&mut s, 0, COURIER, &[0], 4000);
+        assert_eq!(ride(&mut s, 4000, 5000), (10, 10));
+        // This rider is the courier: rider 0's poses ride along with its own.
+        signal(&mut s, 1, COURIER, &[1], 5000);
+        let mut compact = atv_net::decode(&pose_from(0, 1, 5000, 3.)).unwrap();
+        if let Packet::Snapshot(p) = &mut compact {
+            p.animation = Some(Default::default());
+        }
+        s.receive_direct(0, &atv_net::encode(&compact).unwrap(), 5000)
+            .unwrap();
+        let pose = riding(&s, 5050, 101., 20.);
+        let bundle = s.emit(pose, false).unwrap().relay.unwrap();
+        s.sent(&bundle).unwrap();
+        let Packet::Bundle { poses } = atv_net::decode(&bundle).unwrap() else {
+            panic!("a bundle");
+        };
+        let peers: Vec<u8> = poses
+            .iter()
+            .map(|p| match atv_net::decode(p).unwrap() {
+                Packet::Snapshot(s) => s.peer,
+                _ => panic!("a pose"),
+            })
+            .collect();
+        assert_eq!(peers, [1, 0]);
+        assert_eq!(s.counters.bundles, 1);
+        // Nothing new from rider 0: the next ticks carry this rider alone,
+        // at its own rate, still bundled.
+        let (relay, _) = ride(&mut s, 5100, 6100);
+        assert_eq!((relay, s.counters.bundles), (10, 11));
     }
 
     #[test]
