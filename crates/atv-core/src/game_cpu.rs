@@ -55,11 +55,16 @@ impl Rng {
 /// A stable value in [0, 1) for `(seed, index)`: a CPU's lasting taste for
 /// one target, so its choice does not flicker between steps.
 pub fn taste(seed: u32, index: usize) -> f32 {
-    Rng::new(seed ^ (index as u32).wrapping_mul(0x85eb_ca6b).wrapping_add(0x1234_5677)).unit()
+    Rng::new(
+        seed ^ (index as u32)
+            .wrapping_mul(0x85eb_ca6b)
+            .wrapping_add(0x1234_5677),
+    )
+    .unit()
 }
 
-/// How well a CPU rides, from the race difficulty setting (0 Kid, 1 Normal,
-/// 2 Expert).
+/// How well a CPU rides, from the race difficulty setting (1 Normal,
+/// 2 Expert, 3 Kid; 0 also reads as Kid).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Skill {
     /// The speed it rides at (ft/s).
@@ -75,7 +80,7 @@ pub struct Skill {
 impl Skill {
     pub fn for_difficulty(difficulty: u32) -> Self {
         match difficulty {
-            0 => Self {
+            0 | 3 => Self {
                 cruise: 34.,
                 lead: 0.,
                 wander: 10.,
@@ -88,7 +93,7 @@ impl Skill {
                 stunt: (300., 1600.),
             },
             _ => Self {
-                cruise: 62.,
+                cruise: 60.,
                 lead: 0.9,
                 wander: 2.,
                 stunt: (600., 3200.),
@@ -386,10 +391,7 @@ pub fn treasure_goal(
     for (index, t) in treasures.iter().enumerate() {
         let at = [t[0], t[2]];
         let mine = flat(position, at);
-        let rival = rivals
-            .iter()
-            .map(|r| flat(*r, at))
-            .fold(f32::MAX, f32::min);
+        let rival = rivals.iter().map(|r| flat(*r, at)).fold(f32::MAX, f32::min);
         let cost = mine * (1. + 0.5 * taste(seed, index)) + (mine - rival).max(0.) * 0.8;
         if best.is_none_or(|(c, _)| cost < c) {
             best = Some((cost, *t));
@@ -861,7 +863,10 @@ mod tests {
         s.grounded = true;
         let (_, points) = run.step(0, &s, &hills, 1, &skill, &mut rng, DT);
         let points = points.unwrap();
-        assert!((skill.stunt.0..=skill.stunt.1).contains(&points), "{points}");
+        assert!(
+            (skill.stunt.0..=skill.stunt.1).contains(&points),
+            "{points}"
+        );
         // The next run starts over.
         assert_eq!(run, HillRun::default());
     }
@@ -887,7 +892,10 @@ mod tests {
         hills[0].owner = None;
         run.step(0, &s, &hills, 1, &skill, &mut rng, DT);
         s.riding = false;
-        assert_eq!(run.step(0, &s, &hills, 1, &skill, &mut rng, DT), (None, None));
+        assert_eq!(
+            run.step(0, &s, &hills, 1, &skill, &mut rng, DT),
+            (None, None)
+        );
         assert_eq!(run, HillRun::default());
     }
 

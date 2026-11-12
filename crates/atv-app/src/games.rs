@@ -68,6 +68,9 @@ pub struct GameSession {
     /// `gameTest=hill`: a landed chain's points for the next sample (an
     /// ATV placed in the air opens no stunt).
     inject: Option<(usize, f32)>,
+    /// Each CPU rider's landed King of the Hills stunt points for the next
+    /// sample (game_cpu.rs), fed through the same chain as a human's.
+    pub(crate) landed: [Option<f32>; crate::room_game::SLOTS],
     /// `gameTest=hill2`/`hill3`/`hill4`: the hill hook moves that player
     /// (split screen).
     hill_player: usize,
@@ -123,6 +126,7 @@ impl GameSession {
             visits: 0,
             venue_start: None,
             inject: None,
+            landed: [None; crate::room_game::SLOTS],
             hill_player: (2..=4)
                 .find(|n| crate::url_flag(&format!("gameTest=hill{n}")))
                 .map_or(0, |n| n - 1),
@@ -280,10 +284,11 @@ impl GameSession {
             .take(self.players.saturating_sub(1))
         {
             let player = index + 1;
+            let landed = self.landed.get_mut(player).and_then(Option::take);
             let (rider, _) = sample(
                 ride2,
                 &mut self.committed[player],
-                inject(player, &mut self.inject),
+                inject(player, &mut self.inject).or(landed),
             );
             riders.push(rider);
             stunts.push(self.committed[player]);
