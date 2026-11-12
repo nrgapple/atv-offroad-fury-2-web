@@ -77,13 +77,17 @@ try {
   await editor.waitForFunction(() => JSON.parse(document.querySelector('#ui-state')?.textContent || '{}').ride?.editorGates === 0, null, { timeout: 300000 });
   assert.equal((await state(editor)).ride.editorModels, true);
   await nextFrames(editor, 30);
-  for (let i = 0; i < 4; i++) {
+  // Drive on between drops (gates stand at least 20 ft apart).
+  const path = [];
+  for (let i = 0; i < 10 && (await state(editor)).ride.editorGates < 4; i++) {
     await key(editor, 'KeyG');
-    await editor.keyboard.down('KeyW'); await nextFrames(editor, 90); await editor.keyboard.up('KeyW');
-    await nextFrames(editor, 30);
+    const s = (await state(editor)).ride;
+    path.push([s.editorGates, (s.player1?.origin ?? s.origin ?? []).map?.(Math.round)]);
+    await editor.keyboard.down('KeyW'); await nextFrames(editor, 150); await editor.keyboard.up('KeyW');
+    await nextFrames(editor, 20);
   }
   let gates = (await state(editor)).ride.editorGates;
-  assert.ok(gates >= 3, `dropped ${gates} gates`);
+  assert.ok(gates >= 4, `dropped ${gates} gates: ${JSON.stringify(path)}`);
   await key(editor, 'KeyU');
   assert.equal((await state(editor)).ride.editorGates, gates - 1, 'U takes the last gate back');
   gates -= 1;
@@ -92,7 +96,10 @@ try {
   const pause = (await state(editor)).toolbar.menu;
   assert.equal(pause.choices[1], 'wpsave', pause.choices.join());
   await key(editor, 'ArrowDown'); await key(editor, 'Enter');
-  await onPage(editor, 'waypoint-course', 120000);
+  await onPage(editor, 'waypoint-course', 120000).catch(async error => {
+    const s = await state(editor);
+    throw new Error(`Save Course: ${JSON.stringify({ front: s.front?.page, menu: s.toolbar?.menu?.page, notice: s.toolbar?.menu?.notice, selection: s.toolbar?.menu?.selection, gates: s.ride?.editorGates })}: ${error.message}`);
+  });
   const saved = await editor.evaluate(() => JSON.parse(localStorage.getItem('fury-waypoints')));
   const venue = Object.keys(saved)[0];
   assert.equal(typeof saved[venue][0], 'string', JSON.stringify(saved));
