@@ -1228,9 +1228,27 @@ Port (`atv_core::user_course`, `RaceVariant::UserEnduro`):
   Profile Points and keeps no Hall of Fame or profile course records, and
   it is not offered in online rooms (`RaceVariant::ALL` excludes it).
 
+- **Editor (port).** Single Player → Waypoint Editor lists an Environment
+  and its three slots (Race 1-3 (New), as PAGE09). A new slot or Edit Gates
+  free-rides the long Enduro scene (no race, no gate collision) with 50
+  hidden `endwgate` models; G, the pad's R3 or the toolbar's GATE drops a
+  gate at the quad's position facing its heading, U, L3 or UNDO takes the
+  last back, tags mark the first and newest gate and the minimap shows them
+  all. Pause adds Save Course (the Waypoint Pause Menu's Save Race) and
+  reads Resume Editing. The original's cursor edit mode, gate rotation and
+  snapping are not reproduced: dropping where the rider stands works with
+  one touch button.
+- **Saving (port).** Courses live in local storage `fury-waypoints` (venue →
+  three course codes) beside `fury-profiles`, not per profile, and need no
+  loaded profile. A saved slot's page offers Race This Course, Edit Gates,
+  Number of Laps, a name field with Save Name, Copy course link and Delete
+  (press twice).
+
 Checks: `atv-core` `user_course` tests, `atv-game` launch tests,
-`tools/test_engine_user_course.mjs` (a link races three gates alone; a
-tampered code is refused).
+`atv-app` `waypoint_editor` and `atv-ui` `waypoint_page` tests;
+`tools/test_engine_user_course.mjs` (a link races three gates alone, a
+tampered code is refused, the editor drops, undoes, saves and races a
+course).
 
 ## CPU reset points and the committed station — 2026-10-27
 
