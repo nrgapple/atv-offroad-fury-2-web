@@ -264,8 +264,12 @@ pass is not created.
   frame stays 8-bit: no float targets, so it fits WebGL2.
 
 Limits: split screen skips the finish pass and the world shadows (the
-relief, wind and glint still apply). Vehicles and riders do not receive the
-world shadows, and plants cast with their resting rotation and no wind. A
+relief, wind and glint still apply). The player's and CPU racers' vehicles
+and riders receive the world shadows (four taps on the sun term only, added
+2026-11-12; parity for the other presets checked on ENV01 and ENV05, and no
+capture yet shows a rider standing in shade); remote riders and ghosts do
+not. Vehicles cast only the High preset's own vehicle map, not into this
+one, and plants cast with their resting rotation and no wind. A
 redraw of the map costs one depth pass over the nearby world; its frame time
 has not been measured on a phone. Tuned on host captures of ten venues at 960×540;
 no phone or frame-time measurement yet, which is why Auto does not select it.
