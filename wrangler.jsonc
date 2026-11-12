@@ -142,6 +142,22 @@
         "limit": 10,
         "period": 60
       }
+    },
+    {
+      "name": "BOARD_READ_LIMIT",
+      "namespace_id": "82401308",
+      "simple": {
+        "limit": 120,
+        "period": 60
+      }
+    },
+    {
+      "name": "BOARD_SUBMIT_LIMIT",
+      "namespace_id": "82401309",
+      "simple": {
+        "limit": 6,
+        "period": 60
+      }
     }
   ]
 }
