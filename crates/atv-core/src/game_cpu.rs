@@ -37,7 +37,7 @@ impl Rng {
         Self(seed.wrapping_mul(0x9e37_79b9) | 1)
     }
 
-    pub fn next(&mut self) -> u32 {
+    pub fn next_u32(&mut self) -> u32 {
         let mut x = self.0;
         x ^= x << 13;
         x ^= x >> 17;
@@ -48,7 +48,7 @@ impl Rng {
 
     /// A value in [0, 1).
     pub fn unit(&mut self) -> f32 {
-        (self.next() >> 8) as f32 / (1u32 << 24) as f32
+        (self.next_u32() >> 8) as f32 / (1u32 << 24) as f32
     }
 }
 
@@ -460,6 +460,7 @@ impl HillRun {
 
     /// One step. Returns the goal and, on the step a stunt lands, the
     /// chain's points (the rules decide whether they capture the hill).
+    #[allow(clippy::too_many_arguments)]
     pub fn step(
         &mut self,
         me: usize,
@@ -481,7 +482,7 @@ impl HillRun {
         });
         if stale || self.clock > HILL_RUN_SECONDS {
             *self = Self::default();
-            let index = Self::pick(me, sense.position, hills, seed ^ rng.next() % 3);
+            let index = Self::pick(me, sense.position, hills, seed ^ (rng.next_u32() % 3));
             self.hill = index.map(|index| {
                 let c = hills[index].centre;
                 let across =
@@ -662,9 +663,9 @@ mod tests {
         let mut a = Rng::new(7);
         let mut b = Rng::new(7);
         let mut c = Rng::new(8);
-        let va: Vec<u32> = (0..8).map(|_| a.next()).collect();
-        let vb: Vec<u32> = (0..8).map(|_| b.next()).collect();
-        let vc: Vec<u32> = (0..8).map(|_| c.next()).collect();
+        let va: Vec<u32> = (0..8).map(|_| a.next_u32()).collect();
+        let vb: Vec<u32> = (0..8).map(|_| b.next_u32()).collect();
+        let vc: Vec<u32> = (0..8).map(|_| c.next_u32()).collect();
         assert_eq!(va, vb);
         assert_ne!(va, vc);
         let mut zero = Rng::new(0);

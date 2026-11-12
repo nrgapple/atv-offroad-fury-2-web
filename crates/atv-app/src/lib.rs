@@ -7879,9 +7879,9 @@ impl App {
             }),
             split: self.split_request,
             // Only a local game takes CPU riders (never a room).
-            cpus: if (self.split_tag.is_some()
+            cpus: if self.split_tag.is_some()
                 || self.hockey.is_some()
-                || self.game.as_ref().is_some_and(|g| g.room.is_none()))
+                || self.game.as_ref().is_some_and(|g| g.room.is_none())
             {
                 self.cpu_request
             } else {
