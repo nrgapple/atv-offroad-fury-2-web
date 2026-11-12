@@ -1,0 +1,18 @@
+{
+  "id": "a-remastered-graphics-preset-above-high-first-pass-92ad7c08d7294b7fbfc6da2f20cee2b1",
+  "timestamp": "2026-11-12T02:29:12.244323+00:00",
+  "recorded_at": "2026-11-12T02:31:53.164388+00:00",
+  "kind": "build",
+  "title": "A Remastered graphics preset above High: first pass",
+  "summary": "Settings \u2192 Display \u2192 Graphics has a fifth choice, Remastered. It adds sun relief to the terrain, a soft glow and film grade over the frame, wind in nearby plants and sun glint on water. It is opt-in: Auto never picks it, and Original, Enhanced and High draw exactly as before.",
+  "details": [
+    "The original terrain is unlit. Remastered shades it from each venue's own sun: slopes facing the sun brighten and warm, slopes facing away darken, and flat ground keeps its authored brightness.",
+    "A finish pass adds bloom from the brightest parts of the frame, a small exposure lift, a highlight roll-off, a little more colour, a light vignette and dither. The frame stays 8-bit, so it runs on WebGL2.",
+    "Nearby plant meshes lean in a gusting wind, and the venue's sun glints off the water's waves.",
+    "Checked on one Mac: Original, Enhanced and High captures on two venues are byte-identical to a build from before the change; the browser test draws Remastered on WebGL2 without errors and the settings test cycles through it."
+  ],
+  "limitation": "Nothing but vehicles casts shadows yet; world shadows from terrain, scenery and trees are the next step. Split screen skips the glow and grade. Tuned on host captures of ten venues only: no phone test and no frame-time measurement yet.",
+  "verification": "Host only, one Mac (Metal natively, WebGL2 in Chromium): Original, Enhanced and High captures at 960\u00d7540 on env01 and env05 are byte-identical to the previous build. tools/test_engine_remastered.mjs and tools/test_engine_settings.mjs pass.",
+  "image": "/devlog-images/a-remastered-graphics-preset-above-high-first-pass-92ad7c08d7294b7fbfc6da2f20cee2b1.png",
+  "caption": "High (left) and Remastered (right): the sunlit hill gains relief and the sky glows."
+}

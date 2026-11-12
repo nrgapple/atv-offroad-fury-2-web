@@ -9,7 +9,7 @@ use atv_content::{Store, pack};
 use std::path::PathBuf;
 
 const USAGE: &str = "usage: fury [--content DIR | --pack FILE] [--front PAGE] [--venue ID] [--quad 1-46] [--rider 0|1] [--gear H,G,B,S,SL,P,GO] [--paint 0-10] [--free] [--race [--laps N] [--cpu 0|3|4] [--difficulty 1|2] [--seed N]] \
-[--camera x,y,z,yaw,pitch,focal] [--weather on|off] [--steps N] [--graphics original|enhanced|high] \
+[--camera x,y,z,yaw,pitch,focal] [--weather on|off] [--steps N] [--graphics original|enhanced|high|remastered] \
 [--crash original|crazy|gorn] \
 [--script IN.json] [--trace OUT.json] [--present-trace OUT.json [--present-hz 144]] [--capture OUT.png WxH [--ui] [--gpu-frames N]] [--verify-content] [--version] \
 [--host [--room CODE] | --room CODE] [--relay URL] [--name NAME] \

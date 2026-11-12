@@ -12,6 +12,7 @@ mod cull;
 mod lingering_dust;
 pub mod preview;
 mod profile;
+mod remaster;
 mod scenery;
 mod shadows;
 mod sky;
@@ -575,6 +576,9 @@ pub struct Graphics {
     /// (Original/Enhanced follow the recovered LOD and 130 ft multi-pass
     /// cull, research/VISIBILITY.md).
     pub finest_models: bool,
+    /// Remastered (authored, above High): sun relief on the terrain, wind in
+    /// the vegetation, sun glint on water, and a bloom and film-grade finish.
+    pub remaster: bool,
 }
 
 /// A multiplayer rider's look: quad, rider and appearance bytes.
@@ -703,6 +707,10 @@ pub struct SceneRenderer {
     speed_rush: Option<speed_rush::SpeedRushPass>,
     /// Alpha Air dark blur, created at the first blurred frame.
     air_blur: Option<air_blur::AirBlurPass>,
+    /// Remastered finish; split screen skips it.
+    remaster: Option<remaster::RemasterPass>,
+    /// Seconds of world animation, for the Remastered vegetation wind.
+    wind_seconds: f32,
     rush_motion: ([f32; 3], [f32; 3]),
     coarse_pointer: bool,
     /// Gorn blood, created on the first frame with blood.
@@ -772,10 +780,13 @@ impl SceneRenderer {
             .as_ref()
             .map(|sky| sky::SkyPass::new(gpu, &world, sky, graphics.sky_smooth));
         let scenery = scenery::SceneryPass::new(gpu, &world, &venue.scenery, graphics.anisotropy);
-        let vegetation = venue
-            .vegetation
-            .as_ref()
-            .map(|v| vegetation::VegetationPass::new(gpu, &world, v, graphics.anisotropy));
+        let vegetation = venue.vegetation.as_ref().map(|v| {
+            let mut pass = vegetation::VegetationPass::new(gpu, &world, v, graphics.anisotropy);
+            if graphics.remaster {
+                pass.set_wind(gpu, &world, true);
+            }
+            pass
+        });
         let water = venue.water.as_ref().and_then(|shared| {
             match water::WaterPass::new(gpu, &world, &shared.borrow(), graphics.fresnel) {
                 Ok(pass) => Some((pass, shared.clone())),
@@ -880,6 +891,8 @@ impl SceneRenderer {
             rest_lift: None,
             speed_rush: None,
             air_blur: None,
+            remaster: graphics.remaster.then(|| remaster::RemasterPass::new(gpu)),
+            wind_seconds: 0.,
             rush_motion: ([0.; 3], [0.; 3]),
             coarse_pointer: false,
             blood: None,
@@ -888,6 +901,7 @@ impl SceneRenderer {
             tints: Default::default(),
             enduro_next: None,
         };
+        scene.apply_remaster();
         // startSimulation's first follow-camera request (op 46, dt 1/60)
         // already advances the pre-race shots once.
         scene.step_intro();
@@ -959,6 +973,7 @@ impl SceneRenderer {
         self.weather_camera = old.weather_camera;
         self.intro = old.intro;
         self.clock = old.clock;
+        self.wind_seconds = old.wind_seconds;
         self.rest_lift = old.rest_lift;
         self.ride_pose = old.ride_pose;
         self.rush_motion = old.rush_motion;
@@ -968,6 +983,7 @@ impl SceneRenderer {
     /// Advances world animation (scenery UV scroll and ATM clocks) by
     /// `seconds`, in whole 60 Hz simulation steps like the browser.
     pub fn advance(&mut self, seconds: f32) {
+        self.wind_seconds = (self.wind_seconds + seconds.clamp(0., 0.1)) % 4096.;
         self.clock = (self.clock + seconds.clamp(0., 0.1)).min(4. / 60.);
         while self.clock >= 1. / 60. {
             self.clock -= 1. / 60.;
@@ -1151,7 +1167,29 @@ impl SceneRenderer {
                 vegetation.set_anisotropy(gpu, &self.world, graphics.anisotropy);
             }
         }
+        if graphics.remaster != self.graphics.remaster {
+            self.remaster = graphics.remaster.then(|| remaster::RemasterPass::new(gpu));
+            if let Some(vegetation) = &mut self.vegetation {
+                vegetation.set_wind(gpu, &self.world, graphics.remaster);
+            }
+        }
         self.graphics = graphics;
+        self.apply_remaster();
+    }
+
+    /// Remastered lighting from the venue's sun, or the original unlit
+    /// terrain and plain water in every other preset.
+    fn apply_remaster(&mut self) {
+        let on = self.graphics.remaster;
+        let g = &self.world.globals;
+        let (sun, color, ambient) = (g.sun_direction, g.sun_color, g.ambient);
+        let v3 = |v: [f32; 4]| [v[0], v[1], v[2]];
+        self.terrain
+            .set_relief(on.then(|| (v3(sun), v3(color), v3(ambient))));
+        if let Some((water, _)) = &mut self.water {
+            water.set_glint(on.then_some((sun, color)));
+        }
+        self.world.globals.remaster[0] = on as u8 as f32;
     }
 
     /// The presentation options in effect.
@@ -1843,6 +1881,7 @@ impl SceneRenderer {
         self.profiler.mark("prepare.setup");
         let mut stats = self.terrain.prepare(gpu, &view_projection, &cull, eye);
         self.profiler.mark("prepare.terrain");
+        self.world.globals.remaster[1] = self.wind_seconds;
         self.world
             .prepare(gpu, &view_projection, eye, view.camera.yaw);
         self.profiler.mark("prepare.world");
@@ -2057,7 +2096,14 @@ impl SceneRenderer {
             }
             _ => None,
         };
-        let output = blur_scene.as_ref().unwrap_or(target);
+        // Remastered finish: the frame (after rush and blur) renders into
+        // its texture; split views skip it.
+        let remaster_scene = match &mut self.remaster {
+            Some(pass) if region.is_none() => Some(pass.scene_target(gpu, size)),
+            _ => None,
+        };
+        let finished = remaster_scene.as_ref().unwrap_or(target);
+        let output = blur_scene.as_ref().unwrap_or(finished);
         self.profiler.mark("prepare.shadows_rush");
         for (name, n) in [
             ("terrain", stats.terrain_draws),
@@ -2254,8 +2300,11 @@ impl SceneRenderer {
             stats.shadow_draws += 1;
         }
         if let (Some(blur), Some(_)) = (&self.air_blur, &blur_scene) {
-            blur.draw(&mut encoder, target);
+            blur.draw(&mut encoder, finished);
             stats.shadow_draws += 1;
+        }
+        if let (Some(pass), Some(_)) = (&self.remaster, &remaster_scene) {
+            pass.draw(&mut encoder, target);
         }
         (encoder, stats)
     }

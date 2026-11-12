@@ -10,6 +10,7 @@ in `localStorage` as `atv-graphics` (`web/graphics.js`, `GraphicsSettings`).
 | Original | The recovered renderer exactly as before presets existed. |
 | Enhanced | Original plus the cheap authored layers below, tuned for phones. |
 | High | Enhanced with 16× anisotropic filtering, long tire tracks, more lingering dust and a vehicle-only sun shadow map. |
+| Remastered | High plus the authored modern look described under [Remastered](#remastered-2026-11-11). Opt-in only: Auto never picks it. |
 
 Nothing in a preset reaches the Rust simulation, input sampling, the 60 Hz step,
 multiplayer snapshots or race logic. The browser gate checks that the worker
@@ -220,6 +221,43 @@ scaled by strength (70–300 ms). Touch devices without a controller call
 vibration API). One impact cannot chain pulses; a stronger hit can upgrade.
 It is independent of the Graphics preset.
 
+## Remastered (2026-11-11)
+
+Authored, not from the original game. `Graphics::remaster` (Rust engine only)
+adds four things on top of High. Original, Enhanced and High do not run any of
+it: every shader branch is gated by a uniform that stays 0, and the finish
+pass is not created.
+
+- **Terrain sun relief** (`terrain.wgsl` `relief`). The original terrain is
+  unlit. Remastered multiplies it by hemisphere ambient plus the venue's
+  directional light over the same sum for flat ground, so flat sunlit ground
+  keeps its authored brightness, slopes facing the sun brighten and warm, and
+  slopes facing away darken. It is applied at 65 % and clamped to 0.55–1.5
+  because the terrain textures already carry painted shading.
+- **Vegetation wind** (`vegetation.wgsl` `vs_mesh_wind`). Near plant
+  meshes lean with a gusting sine, 2 % of a vertex's height up to 0.8 ft.
+  Distant billboards stay still. It is a separate vertex entry point on its
+  own pipelines: adding the sway to `vs_mesh` behind a uniform changed a few
+  tree pixels by one step in Original on Metal.
+- **Water sun glint** (`water.wgsl`). A tight specular lobe of the venue sun
+  on the wave normals.
+- **Finish pass** (`remaster.rs`, `remaster.wgsl`). The frame renders into a
+  texture after speed rush and air blur. A soft-knee threshold (0.68) keeps
+  its brightest parts at half size, four levels blur down and add back up,
+  and the composite adds 42 % of that glow, lifts exposure 6 %, rolls
+  highlights off above 0.8, then applies a mild contrast curve, 12 % more
+  saturation, warm highlights, a 10 % vignette and one-step dither. The
+  frame stays 8-bit: no float targets, so it fits WebGL2.
+
+Limits: split screen skips the finish pass (the relief, wind and glint still
+apply). Nothing casts shadows yet beyond High's vehicle map; world shadows
+are the next step (#541). Tuned on host captures of ten venues at 960×540;
+no phone or frame-time measurement yet, which is why Auto does not select it.
+
+Parity (2026-11-11, macOS Metal, native captures at 960×540): Original,
+Enhanced and High on `env01` and `env05` are byte-identical to a build from
+before the change.
+
 ## Cost
 
 Measured with `tools/benchmark_graphics_presets.mjs`; see
@@ -237,6 +275,9 @@ numbers.
   Graphics/Vibration rows and labels.
 - `web/graphics.test.mjs` also covers wheel re-projection, the tire-track
   builder, lingering-dust emission and the shadow-map light box.
+- `tools/test_engine_remastered.mjs` (content group): Remastered builds and
+  draws on WebGL2 without errors, keeps High's settings, and its picture
+  differs from High's; `test_engine_settings.mjs` cycles through it.
 - `tools/test_graphics_presets.mjs` (content group): with
   `ATV_GRAPHICS_BASELINE` pointing at the previous main build, Original is
   pixel-identical on five fixed views per map (spawn camera plus four yaws) at

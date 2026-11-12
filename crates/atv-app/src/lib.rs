@@ -3401,7 +3401,7 @@ impl App {
                 "skySmooth": graphics.sky_smooth, "fresnel": graphics.fresnel,
                 "contactShadows": graphics.contact_shadows, "anisotropy": graphics.anisotropy,
                 "dust": graphics.dust, "tireTracks": graphics.tire_tracks.0,
-                "shadowMap": graphics.shadow_map,
+                "shadowMap": graphics.shadow_map, "remaster": graphics.remaster,
                 "wheelReprojection": riding.wheel_reprojection,
                 "hillOrbit": riding.hill_orbit(), "chaseAssist": riding.chase_assist,
                 "crashCameraTight": riding.crash_camera_tight,
@@ -8797,7 +8797,7 @@ fn reduced_motion() -> bool {
 /// detected tier.
 pub fn resolve_graphics(saved: Option<&str>) -> String {
     match saved {
-        Some(p @ ("original" | "enhanced" | "high")) => p.into(),
+        Some(p @ ("original" | "enhanced" | "high" | "remastered")) => p.into(),
         _ => detect_graphics_tier().into(),
     }
 }
@@ -8974,6 +8974,11 @@ fn far_cull_models(
 /// Display -> Graphics preset features (presetFeatures in web/graphics.js).
 pub fn graphics_preset(name: &str) -> Graphics {
     match name {
+        // Authored, above High and never picked by Auto.
+        "remastered" => Graphics {
+            remaster: true,
+            ..graphics_preset("high")
+        },
         "high" => Graphics {
             interpolation: true,
             sky_smooth: true,
@@ -8986,6 +8991,7 @@ pub fn graphics_preset(name: &str) -> Graphics {
             wheel_reprojection: true,
             dirt: true,
             finest_models: true,
+            remaster: false,
         },
         "enhanced" => Graphics {
             interpolation: true,
@@ -8999,6 +9005,7 @@ pub fn graphics_preset(name: &str) -> Graphics {
             wheel_reprojection: true,
             dirt: true,
             finest_models: false,
+            remaster: false,
         },
         _ => Graphics::default(),
     }

@@ -13,6 +13,10 @@ struct Globals {
   eco_direction: vec4<f32>,
   eco_rotation: vec4<f32>,
   sky: vec4<f32>,
+  shadow_matrix: mat4x4<f32>,
+  shadow: vec4<f32>,
+  // Remastered preset (1), seconds
+  remaster: vec4<f32>,
 };
 @group(0) @binding(0) var<uniform> g: Globals;
 @group(1) @binding(0) var tile: texture_2d<f32>;
@@ -79,6 +83,34 @@ fn vs_mesh(@location(0) position: vec3<f32>, @location(1) normal: vec3<f32>, @lo
   biased = min(biased + vec4<f32>(g.eco_sunlight.xyz, g.eco_direction.w) * weight, vec4<f32>(8388863.0));
   let color = vec4<f32>(bitcast<vec4<u32>>(biased) & vec4<u32>(255u));
   return finish(place(eco_position, rotation, scaled), uv, color, trunc(alpha) / 255.0);
+}
+
+// Remastered preset: near plants lean in a gusting wind, more with height.
+fn sway(origin: vec3<f32>, height: f32) -> vec3<f32> {
+  let t = g.remaster.y;
+  let phase = origin.x * 0.13 + origin.z * 0.17;
+  let gust = 0.55 + 0.45 * sin(t * 0.37 + phase * 0.21);
+  let lean = vec2<f32>(sin(t * 1.3 + phase), cos(t * 0.9 + phase * 1.3)) * gust;
+  let reach = min(max(height, 0.0) * 0.02, 0.8);
+  return vec3<f32>(lean.x * reach, 0.0, lean.y * reach);
+}
+
+// vs_mesh with the wind. A separate entry point, so the other presets keep
+// vs_mesh's exact vertex program (pixel parity with Original).
+@vertex
+fn vs_mesh_wind(@location(0) position: vec3<f32>, @location(1) normal: vec3<f32>, @location(2) uv: vec2<f32>,
+    @location(4) eco_position: vec3<f32>, @location(5) eco_scale: vec2<f32>, @location(9) eco_state: vec3<f32>) -> Varyings {
+  let rotation = eco_state.xy;
+  let scaled = position * vec3<f32>(eco_scale.x, eco_scale.y, eco_scale.x);
+  let sun = g.eco_direction.xyz;
+  let local_light = vec3<f32>((rotation.x * eco_scale.x) * sun.x + (rotation.y * eco_scale.x) * sun.z,
+    sun.y * eco_scale.y, (-rotation.y * eco_scale.x) * sun.x + (rotation.x * eco_scale.x) * sun.z);
+  let weight = max((local_light.x * normal.x + local_light.y * normal.y) + local_light.z * normal.z, 0.0);
+  let alpha = min(64.0, 64.0 - (eco_state.z - 16.0) * 1.3333334);
+  var biased = vec4<f32>(8388608.0) + vec4<f32>(g.eco_ambient.xyz, alpha);
+  biased = min(biased + vec4<f32>(g.eco_sunlight.xyz, g.eco_direction.w) * weight, vec4<f32>(8388863.0));
+  let color = vec4<f32>(bitcast<vec4<u32>>(biased) & vec4<u32>(255u));
+  return finish(place(eco_position, rotation, scaled) + sway(eco_position, scaled.y), uv, color, trunc(alpha) / 255.0);
 }
 
 @vertex

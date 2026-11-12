@@ -45,6 +45,7 @@ pub struct Stats {
 
 pub struct VegetationPass {
     pipelines: HashMap<Key, wgpu::RenderPipeline>,
+    shader: wgpu::ShaderModule,
     groups: Vec<Vec<Chunk>>,
     /// Billboard chunk, then its far and transition material slots.
     billboard: Option<(Chunk, u32)>,
@@ -70,6 +71,15 @@ impl VegetationPass {
             .iter()
             .map(|t| world.texture_group(gpu, t, &sampler))
             .collect();
+    }
+
+    /// Remastered wind on the near meshes, or the original still plants.
+    pub fn set_wind(&mut self, gpu: &Gpu, world: &World, wind: bool) {
+        for (key, built) in &mut self.pipelines {
+            if !key.billboard {
+                *built = pipeline(gpu, world, &self.shader, *key, wind);
+            }
+        }
     }
 
     pub fn new(gpu: &Gpu, world: &World, vegetation: &Vegetation, anisotropy: u16) -> Self {
@@ -221,10 +231,11 @@ impl VegetationPass {
         for key in keys {
             pipelines
                 .entry(key)
-                .or_insert_with(|| pipeline(gpu, world, &shader, key));
+                .or_insert_with(|| pipeline(gpu, world, &shader, key, false));
         }
         Self {
             pipelines,
+            shader,
             group_counts: vec![0; groups.len()],
             group_offsets: vec![0; groups.len()],
             groups,
@@ -386,6 +397,7 @@ fn pipeline(
     world: &World,
     shader: &wgpu::ShaderModule,
     key: Key,
+    wind: bool,
 ) -> wgpu::RenderPipeline {
     let vertex = wgpu::VertexBufferLayout {
         array_stride: 32,
@@ -412,6 +424,8 @@ fn pipeline(
             shader,
             vertex: if key.billboard {
                 "vs_billboard"
+            } else if wind {
+                "vs_mesh_wind"
             } else {
                 "vs_mesh"
             },

@@ -9,6 +9,10 @@ struct Globals {
   shadow_matrix: mat4x4<f32>,
   // receive, texel size
   shadow: vec4<f32>,
+  // Remastered relief lighting: direction to the sun, strength (0 off)
+  sun: vec4<f32>,
+  sun_color: vec4<f32>,
+  ambient: vec4<f32>,
 };
 @group(0) @binding(0) var<uniform> g: Globals;
 @group(0) @binding(1) var terrain_colors: texture_2d_array<f32>;
@@ -26,6 +30,7 @@ struct Varyings {
   // like the GS fog (see web/fog.js).
   @location(1) fog: vec2<f32>,
   @location(2) world: vec3<f32>,
+  @location(3) normal: vec3<f32>,
 };
 
 // Original eight-bit GS visibility from the packed bias/coefficient.
@@ -40,6 +45,7 @@ fn vs(@location(0) position: vec3<f32>, @location(1) normal: vec3<f32>) -> Varyi
   out.clip = g.view_projection * vec4<f32>(position, 1.0);
   out.world_xz = position.xz;
   out.world = position;
+  out.normal = normal;
   let coverage = select(1.0, native_fog_coverage(length(position - g.eye.xyz)), g.fog.z > 0.5);
   out.fog = vec2<f32>(coverage * out.clip.w, out.clip.w);
   return out;
@@ -60,6 +66,7 @@ fn fs(in: Varyings) -> @location(0) vec4<f32> {
   let detail = textureSample(terrain_detail, repeat_sampler, in.world_xz / spacing * g.detail_scale.xy);
   // Near terrain VU RGB=127, A=64; GS MODULATE divides by 128.
   base = mix(base, detail.rgb, detail.a * (255.0 / 256.0)) * (127.0 / 128.0);
+  if (g.sun.w > 0.0) { base = base * relief(in.normal); }
   base = base * vehicle_shadow(in.world);
   let coverage = select(1.0, clamp(in.fog.x / in.fog.y, 0.0, 1.0), in.fog.y != 0.0);
   return vec4<f32>(mix(g.fog_color.rgb, base, coverage), 1.0);
@@ -81,4 +88,18 @@ fn vehicle_shadow(p: vec3<f32>) -> f32 {
   }
   let factor = mix(1.0, mix(0.55, 1.0, lit * 0.25), smoothstep(0.0, 0.08, edge));
   return select(factor, 1.0, edge <= 0.0 || s.z >= 1.0);
+}
+
+// Remastered preset: the unlit terrain gains relief from the venue's sun.
+// Relative to flat sunlit ground, so authored brightness holds there: slopes
+// facing the sun brighten and warm, slopes facing away darken and cool.
+fn relief(normal: vec3<f32>) -> vec3<f32> {
+  let n = normalize(normal);
+  let l = normalize(g.sun.xyz);
+  let sun = g.sun_color.rgb * vec3<f32>(1.08, 1.0, 0.9);
+  let sky = g.ambient.rgb * vec3<f32>(0.9, 0.97, 1.1);
+  let ground = g.ambient.rgb * vec3<f32>(0.62, 0.56, 0.5);
+  let level = sky + sun * max(l.y, 0.25);
+  let lit = mix(ground, sky, n.y * 0.5 + 0.5) + sun * max(dot(n, l), 0.0);
+  return clamp(mix(vec3<f32>(1.0), lit / level, g.sun.w), vec3<f32>(0.55), vec3<f32>(1.5));
 }

@@ -6,6 +6,10 @@ use atv_game::{
 };
 use wgpu::util::DeviceExt;
 
+/// How much of the sun relief the Remastered terrain takes: its textures
+/// already carry painted shading.
+const RELIEF: f32 = 0.65;
+
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 struct Globals {
@@ -16,6 +20,10 @@ struct Globals {
     detail_scale: [f32; 4],
     shadow_matrix: [f32; 16],
     shadow: [f32; 4],
+    /// Remastered relief lighting: direction to the sun, then strength (0 off).
+    sun: [f32; 4],
+    sun_color: [f32; 4],
+    ambient: [f32; 4],
 }
 
 /// One tile's range of the shared index buffer.
@@ -181,6 +189,9 @@ impl TerrainPass {
             ],
             shadow_matrix: [0.; 16],
             shadow: [0.; 4],
+            sun: [0.; 4],
+            sun_color: [0.; 4],
+            ambient: [0.; 4],
         };
         let uniforms = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("terrain globals"),
@@ -363,6 +374,19 @@ impl TerrainPass {
     /// Fine patches in the drawn mesh.
     pub fn patches(&self) -> usize {
         self.mesh.patches
+    }
+
+    /// Remastered relief lighting from the venue's sun and ambient light, or
+    /// none (the original terrain is unlit).
+    pub fn set_relief(&mut self, light: Option<([f32; 3], [f32; 3], [f32; 3])>) {
+        match light {
+            Some((to_sun, sun, ambient)) => {
+                self.globals.sun = [to_sun[0], to_sun[1], to_sun[2], RELIEF];
+                self.globals.sun_color = [sun[0], sun[1], sun[2], 0.];
+                self.globals.ambient = [ambient[0], ambient[1], ambient[2], 0.];
+            }
+            None => self.globals.sun = [0.; 4],
+        }
     }
 
     /// The High vehicle shadow map this frame (shadowReceive), or none.
