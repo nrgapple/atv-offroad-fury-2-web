@@ -12,6 +12,7 @@ pub mod cloud_save;
 pub mod collision;
 pub mod contact;
 pub mod crash_effects;
+pub mod credits;
 pub mod drivetrain;
 pub mod echo;
 pub mod ecosystem;

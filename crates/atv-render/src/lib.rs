@@ -22,6 +22,7 @@ mod terrain;
 mod texture;
 mod tire_tracks;
 mod train;
+mod upscale;
 mod vegetation;
 mod vehicle;
 mod water;
@@ -94,6 +95,12 @@ pub struct Gpu {
     scene_targets: bool,
     depth: wgpu::TextureView,
     msaa: Option<wgpu::TextureView>,
+    /// Scene pixels per surface pixel (at most 1): below 1 the 3D scene
+    /// draws into `scene` and is stretched over the surface, so the UI keeps
+    /// the surface's full density (the ride's adaptive render ratio).
+    scene_scale: f64,
+    scene: Option<upscale::SceneColor>,
+    upscale: Option<upscale::Upscale>,
     /// Why the device was lost (driver reset, GPU removed), once it is.
     lost: std::sync::Arc<std::sync::Mutex<Option<String>>>,
     /// When the last frame was handed to the surface (Show FPS counts
@@ -169,7 +176,7 @@ impl Gpu {
         self.config.width = width.max(1);
         self.config.height = height.max(1);
         surface.configure(&self.device, &self.config);
-        (self.depth, self.msaa) = self.make_targets();
+        self.make_targets();
         self.surface = Some(surface);
         self.generation = surface_generation();
         Ok(())
@@ -357,6 +364,9 @@ impl Gpu {
             scene_targets: true,
             depth,
             msaa,
+            scene_scale: 1.,
+            scene: None,
+            upscale: None,
             lost,
             presented: std::cell::Cell::new(None),
         })
@@ -371,7 +381,7 @@ impl Gpu {
         if let Some(surface) = self.live_surface() {
             surface.configure(&self.device, &self.config);
         }
-        (self.depth, self.msaa) = self.make_targets();
+        self.make_targets();
     }
 
     /// Keeps (true) or drops (false) the scene's depth and multisample
@@ -380,20 +390,56 @@ impl Gpu {
     pub fn set_scene_targets(&mut self, on: bool) {
         if self.scene_targets != on {
             self.scene_targets = on;
-            (self.depth, self.msaa) = self.make_targets();
+            self.make_targets();
         }
     }
 
-    fn make_targets(&self) -> (wgpu::TextureView, Option<wgpu::TextureView>) {
-        if self.scene_targets {
-            targets(&self.device, &self.config, self.samples)
-        } else {
-            let tiny = wgpu::SurfaceConfiguration {
-                width: 1,
-                height: 1,
-                ..self.config.clone()
-            };
-            targets(&self.device, &tiny, self.samples)
+    /// Draws the 3D scene at `scale` scene pixels per surface pixel (at
+    /// most 1), stretched over the surface before the UI draws.
+    pub fn set_scene_scale(&mut self, scale: f64) {
+        let scale = scale.clamp(0.1, 1.);
+        if (scale - self.scene_scale).abs() > 1e-6 {
+            self.scene_scale = scale;
+            self.make_targets();
+        }
+    }
+
+    /// The size the 3D scene draws at: the surface's, or smaller (see
+    /// [`Self::set_scene_scale`]).
+    pub fn scene_size(&self) -> (u32, u32) {
+        self.scene
+            .as_ref()
+            .map_or((self.config.width, self.config.height), |s| s.size)
+    }
+
+    /// Remakes the depth, multisample and (when scaled) scene targets for
+    /// the surface size and scene scale.
+    fn make_targets(&mut self) {
+        let scaled = upscale::scene_size(self.config.width, self.config.height, self.scene_scale)
+            .filter(|_| self.scene_targets);
+        self.scene = scaled.map(|size| {
+            let upscale = self
+                .upscale
+                .get_or_insert_with(|| upscale::Upscale::new(&self.device, self.config.format));
+            upscale.scene(&self.device, self.config.format, size)
+        });
+        let (width, height) = match (self.scene_targets, scaled) {
+            (false, _) => (1, 1),
+            (true, Some(size)) => size,
+            (true, None) => (self.config.width, self.config.height),
+        };
+        let config = wgpu::SurfaceConfiguration {
+            width,
+            height,
+            ..self.config.clone()
+        };
+        (self.depth, self.msaa) = targets(&self.device, &config, self.samples);
+    }
+
+    /// Stretches the scaled scene over `target`, if the scene is scaled.
+    fn draw_upscaled(&self, encoder: &mut wgpu::CommandEncoder, target: &wgpu::TextureView) {
+        if let (Some(upscale), Some(scene)) = (&self.upscale, &self.scene) {
+            upscale.draw(encoder, scene, target);
         }
     }
 
@@ -1771,13 +1817,14 @@ impl SceneRenderer {
         let (mut encoder, mut stats) = self.encode(
             gpu,
             view,
-            (gpu.config.width, gpu.config.height),
-            &target,
+            gpu.scene_size(),
+            gpu.scene.as_ref().map_or(&target, |s| &s.view),
             gpu.msaa.as_ref(),
             &gpu.depth,
             None,
         );
         self.profiler.mark("encode.speed_rush");
+        gpu.draw_upscaled(&mut encoder, &target);
         overlay(&mut encoder, &target);
         self.profiler.mark("encode.overlay");
         let commands = encoder.finish();
@@ -1822,16 +1869,19 @@ impl SceneRenderer {
         self.profiler.start();
         let target = frame.texture.create_view(&Default::default());
         let mut total = FrameStats::default();
+        let surface = (gpu.config.width, gpu.config.height);
+        let scene_size = gpu.scene_size();
         for (index, (view, rect)) in views.iter().enumerate() {
+            let rect = upscale::scale_rect(*rect, surface, scene_size);
             let (encoder, stats) = self.encode(
                 gpu,
                 view,
                 (rect[2].max(1), rect[3].max(1)),
-                &target,
+                gpu.scene.as_ref().map_or(&target, |s| &s.view),
                 gpu.msaa.as_ref(),
                 &gpu.depth,
                 Some(Region {
-                    rect: *rect,
+                    rect,
                     clear: index == 0,
                 }),
             );
@@ -1839,6 +1889,7 @@ impl SceneRenderer {
             total.add(&stats);
         }
         let mut encoder = gpu.device.create_command_encoder(&Default::default());
+        gpu.draw_upscaled(&mut encoder, &target);
         overlay(&mut encoder, &target);
         gpu.queue.submit([encoder.finish()]);
         gpu.present(frame);
