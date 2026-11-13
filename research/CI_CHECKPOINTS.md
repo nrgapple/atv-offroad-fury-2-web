@@ -74,10 +74,14 @@ checks. Do not compile Rust for a notes-only change.
 Keep a local build/test task active until its process result is consumed. A
 background shell job does not by itself schedule an agent wake. For delegated
 work follow the returned continuation instruction, and for pending PR checks use
-the supported PR watch. Finish the existing slice before starting more work.
-When parallel work is authorized, default to two implementation agents total
-(including an implementing parent), plus the lighter dev-log agent. The local
-heavy-work guard has one slot and protects host memory; preserve it.
+the supported PR watch. Keep each slice owned through delivery.
+When parallel work is authorized, use independent tasks to size the team; there
+is no fixed two-agent cap. Research, editing, review and documentation can proceed
+concurrently. Stagger heavy checks through the existing single build/test slot
+and reuse valid results. If most agents are waiting or repeatedly conflicting,
+finish the pending slices before adding scope. The slot protects host memory;
+measure headroom before increasing heavy-work concurrency. Agent count and
+compiler concurrency are separate limits.
 
 GitHub validates and deploys code automatically. Confirm the public
 `https://furyremastered.com/deployment.json` once at handoff. Report code, public
