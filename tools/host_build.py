@@ -146,6 +146,35 @@ def checkout_root():
         return Path.cwd().resolve()
 
 
+def compatibility_lock(lock, mode, deadline):
+    """Queue in the kernel for an exclusive/legacy holder, with a bounded wait.
+
+    Polling this lock let older two-second retry loops repeatedly win admission.
+    Never hold the admission mutex while waiting here.
+    """
+    try:
+        fcntl.flock(lock, mode | fcntl.LOCK_NB)
+        return
+    except BlockingIOError:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0 or signal.getitimer(signal.ITIMER_REAL)[0]:
+            raise
+        old = signal.getsignal(signal.SIGALRM)
+        def timeout(_signum, _frame):
+            raise BlockingIOError('timed out waiting for exclusive/legacy work')
+        try:
+            signal.signal(signal.SIGALRM, timeout)
+        except ValueError:  # Library caller in a non-main thread: retain polling.
+            raise BlockingIOError('exclusive/legacy work is busy') from None
+        try:
+            signal.setitimer(signal.ITIMER_REAL, remaining)
+            print('Build waiting for exclusive/legacy work (kernel queue)', file=sys.stderr, flush=True)
+            fcntl.flock(lock, mode)
+        finally:
+            signal.setitimer(signal.ITIMER_REAL, 0)
+            signal.signal(signal.SIGALRM, old)
+
+
 @contextlib.contextmanager
 def lease(wait=1800, poll=2, state_dir=None, check_busy=True, kind='exclusive'):
     if kind not in KINDS:
@@ -167,14 +196,15 @@ def lease(wait=1800, poll=2, state_dir=None, check_busy=True, kind='exclusive'):
     while True:
         stack = contextlib.ExitStack()
         try:
-            # Old guards take heavy.lock exclusively, so new shared leases never
-            # overlap legacy jobs. Hold admission only while acquiring permits.
+            # Queue for legacy/exclusive work before taking the short admission
+            # mutex; old guards still exclude us through the same heavy.lock.
+            heavy = stack.enter_context(open(directory / 'heavy.lock', 'a+'))
+            compatibility_lock(heavy, fcntl.LOCK_EX if kind == 'exclusive' else fcntl.LOCK_SH, deadline)
             with open(directory / 'admission.lock', 'a+') as admission:
                 fcntl.flock(admission, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                paths = [('heavy.lock', fcntl.LOCK_EX if kind == 'exclusive' else fcntl.LOCK_SH)]
-                if kind != 'exclusive':
-                    paths += [(f'checkout-{checkout}.lock', fcntl.LOCK_EX), (f'{kind}.lock', fcntl.LOCK_EX)]
-                locks = []
+                paths = [] if kind == 'exclusive' else [
+                    (f'checkout-{checkout}.lock', fcntl.LOCK_EX), (f'{kind}.lock', fcntl.LOCK_EX)]
+                locks = [heavy]
                 for name, mode in paths:
                     lock = stack.enter_context(open(directory / name, 'a+'))
                     fcntl.flock(lock, mode | fcntl.LOCK_NB)

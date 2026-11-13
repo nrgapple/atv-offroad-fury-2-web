@@ -102,6 +102,19 @@ class GuardTests(unittest.TestCase):
             for kind in ('compile', 'browser'):
                 self.assertNotEqual(self.attempt(kind, 'a')[0], 0)
 
+    def test_legacy_wait_is_bounded_and_restores_alarm(self):
+        import fcntl
+        with open(Path(self.tmp.name) / 'heavy.lock', 'a+') as old:
+            fcntl.flock(old, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            handler = signal.getsignal(signal.SIGALRM)
+            started = time.monotonic()
+            with patch.dict(os.environ, self.env, clear=True), self.assertRaises(BlockingIOError):
+                with guard.lease(kind='browser', wait=.15):
+                    self.fail('legacy job must exclude browser')
+            self.assertLess(time.monotonic() - started, 3)
+            self.assertEqual(signal.getsignal(signal.SIGALRM), handler)
+            self.assertEqual(signal.getitimer(signal.ITIMER_REAL)[0], 0)
+
     def test_shared_work_blocks_exclusive_and_old_guard(self):
         import fcntl
         self.hold('compile', 'a')

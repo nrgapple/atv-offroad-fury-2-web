@@ -5,7 +5,10 @@
 Agent count is independent of build concurrency. Local entry points now admit
 one `compile` job and one `browser` suite together, in different worktrees.
 Cargo build/check/clippy/test/rustc, the web build and relay build use the compile
-permit. The browser runner uses the browser permit. Desktop/Android packaging,
+permit. Ordinary content/content-free browser checks use the browser permit.
+Relay, native, manual, and timing-sensitive checks (marked `exclusive` in the
+browser manifest) stay exclusive, as do mixed selections containing one. Use
+`--exclusive` on the browser runner for other performance measurements. Desktop/Android packaging,
 `cargo run`, unknown commands and older guards remain exclusive. CI is unchanged.
 
 Admission requires normal macOS memory pressure and, for the parallel kinds,
@@ -16,7 +19,8 @@ overlap. Performance measurements should use an exclusive lease to avoid
 contention from the other workload.
 
 A shared lock on the existing `heavy.lock` excludes old exclusive guards; a
-separate lock per kind bounds concurrency. A canonical Git-worktree lock prevents
+separate lock per kind bounds concurrency. Waiting for the legacy/exclusive lock
+uses a bounded kernel wait rather than repeatedly racing older polling guards. A canonical Git-worktree lock prevents
 rebuilding files under a test, including commands launched from subdirectories
 or through symlink paths. `make web` holds it while copying both the page shell
 and compiled engine. Supported direct web/browser entry points normalize their

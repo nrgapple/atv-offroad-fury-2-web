@@ -16,7 +16,6 @@ endif
 endif
 HEAVY = python3 tools/host_build.py --
 FURY_COMPILE_GUARD = python3 tools/host_build.py --kind compile --
-FURY_BROWSER_GUARD = python3 tools/host_build.py --kind browser --
 CARGO ?= $(HOME)/.cargo/bin/cargo
 NODE ?= node
 ISO ?= private/source/ATV Offroad Fury 2 (USA) (v2.00).iso
@@ -100,11 +99,11 @@ native-analyze:
 
 # Browser groups start their own local server on a free port; build web/dist first.
 browser-smoke:
-	$(FURY_BROWSER_GUARD) $(NODE) tools/run_browser_tests.mjs --group content-free $(BROWSER_ARGS)
+	$(NODE) tools/run_browser_tests.mjs --group content-free $(BROWSER_ARGS)
 
 browser-tests:
-	$(FURY_BROWSER_GUARD) $(NODE) tools/run_browser_tests.mjs --group content-free,content $(BROWSER_ARGS)
+	$(NODE) tools/run_browser_tests.mjs --group content-free,content $(BROWSER_ARGS)
 
 browser-native:
-	$(FURY_BROWSER_GUARD) $(NODE) tools/run_browser_tests.mjs --group native $(BROWSER_ARGS)
+	$(NODE) tools/run_browser_tests.mjs --group native $(BROWSER_ARGS)
 
