@@ -9,7 +9,9 @@
     "Same-kind work and work using the same canonical checkout remain serialized. Desktop and Android packaging, unknown commands, and older guards remain exclusive.",
     "Admission requires normal macOS memory pressure and at least 25% reported memory headroom. Synthetic subprocess tests cover overlap, exclusion, nesting, cancellation, legacy locks, and sccache ownership.",
     "The whole web build holds its checkout lock. A guard-only installer updates the Cargo runtime atomically without restarting desktop services. Cleanup inspection found no eligible merged, idle build folders or worktrees.",
-    "Relay, native and timing-sensitive browser checks stay exclusive. Waiting for an older exclusive guard uses a bounded kernel wait instead of a polling race."
+    "Relay, native and timing-sensitive browser checks stay exclusive. Waiting for an older exclusive guard uses a bounded kernel wait instead of a polling race.",
+    "PR #585 merged with web, native compile, Android and determinism CI passing. Workspace Clippy, 37 host guard tests and six browser admission tests passed locally. The installed Cargo guard matches the committed runtime.",
+    "A real Wasm check and public browser boot suite held compiler and browser permits concurrently in separate worktrees with normal sampled memory pressure. Public deployment.json confirmed f67b47cb. Use guarded entry points directly; an outer exclusive lease around a whole pipeline defeats overlap."
   ],
-  "limitation": "Real Clippy and browser integration checks are pending behind pre-existing exclusive work. No end-to-end speedup or physical-phone result is claimed."
+  "limitation": "The browser passed loading-layout and title-startup assertions, then timed out in its simulated content-error check at test_engine_boot.mjs:80. The Wasm probe final exit result was not retained; concurrent admission was observed, but a complete integration pass and end-to-end speedup are not claimed. Full optimized-link peak memory and physical-phone behavior were not measured."
 }
