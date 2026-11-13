@@ -88,8 +88,8 @@ async function ride(browser, errors, front, withPreload, shot) {
   const sounds = page.sounds[0];
   await page.context().close();
   return {
-    racing: Boolean(loaded.ride?.race),
-    cpus: loaded.ride?.cpus?.length ?? 0,
+    racing: Boolean(loaded.ride?.raceLap),
+    cpus: (loaded.ride?.raceLap?.field ?? 1) - 1,
     elapsed: live - pressed,
     loadMs: loaded.decodedCache.loadMs,
     soundMs: after.soundMs ?? (sounds ? sounds.at - live : null),
@@ -112,7 +112,7 @@ try {
     withPreload.push(await ride(browser, errors, 'race', true, round === 0 && process.env.MENU_PRELOAD_RIDE_SHOT));
   }
   const free = await ride(browser, errors, 'tracks', true);
-  const summary = runs => runs.map(r => `${r.loadMs} ms load, ${r.elapsed} ms wall, sounds +${r.soundMs} ms, ${r.hits} hits/${r.misses} misses`).join('; ');
+  const summary = runs => runs.map(r => `${r.loadMs} ms load, ${r.elapsed} ms wall, sounds +${r.soundMs} ms (${r.sound}), ${r.hits} hits/${r.misses} misses`).join('; ');
   console.log(`race without a preload: ${summary(without)}`);
   console.log(`race after a preload: ${summary(withPreload)}`);
   console.log(`free ride after a preload: ${summary([free])}`);

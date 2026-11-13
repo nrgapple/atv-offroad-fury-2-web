@@ -115,23 +115,20 @@ impl Bank {
             return Ok(());
         }
         let sounds = Archive::open(content, "/AUDIO/AUDIO.RES").await?;
-        for key in missing {
-            if self.samples.contains_key(&key) {
-                continue;
-            }
-            let Some(index) = find(&sounds, &key) else {
-                continue;
-            };
-            let vag = sounds.member(index).await?;
-            let started = web_time::Instant::now();
-            let audio = decode_vag(&vag)?;
-            self.rates.insert(key.clone(), audio.info.sample_rate);
-            self.samples
-                .insert(key, Arc::new(Pcm::from_vag(&audio, self.rate)));
-            self.decode_ms += started.elapsed().as_secs_f64() * 1000.;
-            // Race samples decode while the ride runs: keep its frames (web).
-            crate::yield_frame().await;
+        let (keys, vags) = read_samples(&sounds, missing).await?;
+        // Decoded together off the page's thread on the web (and kept in the
+        // decoded cache, which a menu preload fills): race samples decode
+        // while the ride runs, so its frames are kept.
+        let started = web_time::Instant::now();
+        let inputs: Vec<&[u8]> = vags.iter().map(Vec::as_slice).collect();
+        for (key, (source, pcm)) in keys
+            .into_iter()
+            .zip(crate::offload::pcms(&inputs, self.rate).await?)
+        {
+            self.rates.insert(key.clone(), source);
+            self.samples.insert(key, Arc::new(pcm));
         }
+        self.decode_ms += started.elapsed().as_secs_f64() * 1000.;
         Ok(())
     }
 }
@@ -288,24 +285,23 @@ async fn read_samples(
     Ok((keys, vags))
 }
 
-/// Stores the decodes [`load`] makes up front in the persistent cache
-/// without keeping them (menu preload, `crate::preload`), so the ride's bank
-/// reads them instead of decoding. Returns their cache keys, or None once
-/// `live` turns false. A motorcycle's bank decodes on the page's thread
-/// uncached, so it prepares nothing.
-pub async fn prepare(
+/// The VAGs [`load`] decodes up front for an ATV bank, plus the `extra`
+/// samples a ride adds with [`Bank::load_samples`]: the inputs of the
+/// [`crate::offload::VAG_PCM`] jobs a menu preload (`crate::preload`) runs
+/// ahead of the ride so its bank reads them from the decoded cache. A
+/// motorcycle's bank decodes on the page's thread uncached: none.
+pub async fn job_inputs(
     content: &Content,
     course_archive: &str,
     environment: &str,
     quad: u32,
-    rate: u32,
-    live: &dyn Fn() -> bool,
-) -> Result<Option<Vec<String>>> {
+    extra: &[&str],
+) -> Result<Vec<Vec<u8>>> {
     if quad >= 27 {
-        return Ok(Some(Vec::new()));
+        return Ok(Vec::new());
     }
     let tables = atv_tables(content, course_archive, environment, quad).await?;
-    let names = atv_sample_names(
+    let mut names = atv_sample_names(
         &tables.engine,
         &tables.effects,
         &tables.chassis,
@@ -313,14 +309,19 @@ pub async fn prepare(
         &tables.ambient,
         &tables.soultree,
     );
+    names.extend(extra.iter().map(|name| name.to_string()));
     let sounds = Archive::open(content, "/AUDIO/AUDIO.RES").await?;
-    let (_, vags) = read_samples(&sounds, names).await?;
-    if !live() {
-        return Ok(None);
-    }
-    let inputs: Vec<&[u8]> = vags.iter().map(Vec::as_slice).collect();
-    let keys = crate::offload::ensure(crate::offload::VAG_PCM, rate, &inputs, live).await?;
-    Ok(live().then_some(keys))
+    Ok(read_samples(&sounds, names).await?.1)
+}
+
+/// About how many bytes a VAG's decode at `rate` holds (its frames at the
+/// output rate, 32-bit samples per channel); 0 when the header is invalid.
+pub fn pcm_bytes(vag: &[u8], rate: u32) -> u64 {
+    atv_core::audio::VagStream::new(vag, vag.len()).map_or(0, |stream| {
+        let info = stream.info;
+        let frames = info.frames_max as u64 * u64::from(rate) / u64::from(info.sample_rate) + 2;
+        frames * u64::from(info.channels) * 4
+    })
 }
 
 /// Decodes the engine and world samples at `rate`, keeping rider vocals encoded
@@ -579,6 +580,24 @@ mod tests {
         bytes[49] = 1;
         bytes[50..].fill(0x21);
         bytes
+    }
+
+    #[test]
+    fn pcm_estimates_cover_the_decode() {
+        // A mono VAG: 10 ADPCM blocks of 28 frames at 22050 Hz.
+        let mut vag = b"VAGp".to_vec();
+        vag.extend_from_slice(&[0; 8]);
+        vag.extend_from_slice(&160u32.to_be_bytes());
+        vag.extend_from_slice(&22050u32.to_be_bytes());
+        vag.resize(48 + 160, 0);
+        let pcm = Pcm::from_vag(&decode_vag(&vag).unwrap(), 48000);
+        let estimate = pcm_bytes(&vag, 48000);
+        let actual = (pcm.data.len() * 4) as u64;
+        assert!(
+            estimate >= actual && estimate <= actual + 64,
+            "{estimate} vs {actual}"
+        );
+        assert_eq!(pcm_bytes(b"not a vag", 48000), 0);
     }
 
     #[test]

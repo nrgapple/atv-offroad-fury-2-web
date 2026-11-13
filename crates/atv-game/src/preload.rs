@@ -37,11 +37,9 @@ const FORMAT: u32 = 1;
 /// What one course stores at most, about (ENV01: 63 MB,
 /// research/PERFORMANCE.md).
 const COURSE_BYTES: u64 = 64 * 1024 * 1024;
-/// What a ride's sound bank stores at most, about (ENV01's ATV bank at
-/// 48 kHz, research/PERFORMANCE.md).
-const BANK_BYTES: u64 = 32 * 1024 * 1024;
-/// What the CPU quads of one race store at most, about.
-const CPU_BYTES: u64 = 16 * 1024 * 1024;
+/// What the CPU quads of one race store at most, about (ENV01's nine:
+/// 3.7 MB, research/PERFORMANCE.md).
+const CPU_BYTES: u64 = 8 * 1024 * 1024;
 /// Courses a page may prepare from scratch: each costs a few megabytes of
 /// download. A metered connection gets one, the selected course's.
 const COLD_RUNS: u32 = 6;
@@ -119,6 +117,9 @@ struct Report {
     /// and their textures ready in the cache.
     cpu_quads: usize,
     cpu_textures: usize,
+    /// What the last run's bank and CPU quads added to the cache, bytes.
+    bank_bytes: u64,
+    cpu_bytes: u64,
 }
 
 impl Report {
@@ -130,6 +131,7 @@ impl Report {
             "settleMs": self.settle_ms.round(), "runMs": self.run_ms.round(),
             "prepared": self.prepared, "bankSamples": self.bank_samples,
             "cpuQuads": self.cpu_quads, "cpuTextures": self.cpu_textures,
+            "bankBytes": self.bank_bytes, "cpuBytes": self.cpu_bytes,
         })
         .to_string()
     }
@@ -241,6 +243,8 @@ impl Preloader {
                 r.bank_samples = 0;
                 r.cpu_quads = 0;
                 r.cpu_textures = 0;
+                r.bank_bytes = 0;
+                r.cpu_bytes = 0;
                 r.settle_ms = settling.elapsed().as_secs_f64() * 1000.;
             });
             let started = web_time::Instant::now();
@@ -344,21 +348,30 @@ async fn run(
     if !prepare_player(content, target, live).await? {
         return Ok(Outcome::Abandoned);
     }
+    let stored = || decoded::stats().bytes;
     if target.racing {
+        let before = stored();
         let Some((quads, textures)) =
             prepare_cpus(content, target, &course, &key, expanded, live).await?
         else {
             return Ok(Outcome::Abandoned);
         };
+        let added = stored().saturating_sub(before);
         shared.update(|r| {
             r.cpu_quads = quads;
             r.cpu_textures = textures;
+            r.cpu_bytes = added;
         });
     }
+    let before = stored();
     let Some(samples) = prepare_bank(content, target, &environment, live).await? else {
         return Ok(Outcome::Abandoned);
     };
-    shared.update(|r| r.bank_samples = samples);
+    let added = stored().saturating_sub(before);
+    shared.update(|r| {
+        r.bank_samples = samples;
+        r.bank_bytes = added;
+    });
     Ok(outcome)
 }
 
@@ -549,29 +562,46 @@ async fn prepare_bank(
     let course = launch::course_resource(environment, false)?;
     let quad = u32::from(target.quad);
     let marker = format!(
-        "preload/{FORMAT}/bank/{}/{}/{environment}/{quad}/{}",
+        "preload/{FORMAT}/bank/{}/{}/{environment}/{quad}/{}/{}",
         offload::FORMAT,
         course.archive,
-        target.sound_rate
+        target.sound_rate,
+        target.racing
     );
     if let Some(samples) = finished(&marker).await {
         return Ok(Some(samples));
     }
-    if !decoded::room_for(BANK_BYTES) {
-        return Ok(Some(0));
-    }
-    let Some(keys) = bank::prepare(
+    let inputs = bank::job_inputs(
         content,
         &course.archive,
         environment,
         quad,
-        target.sound_rate,
-        live,
+        // A race adds its lamps and IntOut stingers (crowd venues' crowd
+        // samples are left to the ride).
+        if target.racing {
+            &crate::ride::race::RACE_SAMPLES
+        } else {
+            &[]
+        },
     )
-    .await?
-    else {
+    .await?;
+    let inputs: Vec<&[u8]> = inputs.iter().map(Vec::as_slice).collect();
+    // Samples are shared between venues: only those not stored yet count.
+    let rate = target.sound_rate;
+    let needed = offload::missing(offload::VAG_PCM, rate, &inputs)
+        .into_iter()
+        .map(|i| bank::pcm_bytes(inputs[i], rate))
+        .sum();
+    if !live() {
         return Ok(None);
-    };
+    }
+    if !decoded::room_for(needed) {
+        return Ok(Some(0));
+    }
+    let keys = offload::ensure(offload::VAG_PCM, rate, &inputs, live).await?;
+    if !live() {
+        return Ok(None);
+    }
     decoded::put_now(&marker, keys.join("\n").as_bytes());
     Ok(Some(keys.len()))
 }
