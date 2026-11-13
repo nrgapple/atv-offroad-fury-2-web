@@ -941,14 +941,62 @@ that window are the menu's own start-up art except for two it adds, 50-74 ms at
 x4; unthrottled it adds none over 50 ms. `tools/test_engine_menu_preload.mjs`
 repeats the comparison and fails on a long task of 100 ms or more during a run.
 
-Not preloaded: the ride's sound bank (79 decode jobs, which load while the ride
-draws and are cached by the first ride), race CPU vehicles (their roster is drawn
-at Start), and Freestyle objective or mini-game overlays. What remains of a load
-after a preload is the conversion and GPU work listed above, which needs the
-window. The load after a preload is about 0.2 s slower than the same course's
-later visit through `?venue=` (0.80 s); the cause was not investigated.
 Production's cold first load also spends time downloading, which the preload
 removes; that gain is not in this table.
+
+### Sound bank and race CPU quads (issue #515, host, 2026-11-13)
+
+After the course and the player's files, a run now also prepares:
+
+- **the ride's sound bank**: the samples `audio::bank::load` decodes up front
+  (engine, impacts, landing, chassis, drive-on and the venue's world sounds,
+  read from the venue's Free Ride archive as the bank does), plus a race's
+  lamps and IntOut stingers (`ride::race::RACE_SAMPLES`), as `VAG_PCM` jobs at
+  the output rate (48 kHz on the web). Crowd venues' crowd samples, train,
+  rain and actor loops are left to the ride. A motorcycle's bank still decodes
+  on the page's thread uncached, so nothing is prepared for it. Samples are
+  shared between venues, so the budget check counts only the decodes not
+  stored yet (`bank::pcm_bytes`, from each VAG header). ENV01 stored 15.2 MB
+  for a Free Ride bank and 45.9 MB for a race (the stingers are long); a
+  second venue adds only its world sounds.
+- **every quad the race's CPU roster can draw**: the roster is drawn at Start
+  from a fresh seed, so the run prepares the whole pool
+  (`race_roster::candidates`, the ATV groups of 00210d20 for the player's quad
+  or the course's `ChampQuadGroup`): downloads and texture decodes. ENV01 with
+  the default ATV: 9 quads, 99 textures, 3.7 MB, checked against an 8 MB
+  budget.
+
+Each part has its own finished-marker, so returning to a course reads nothing
+again. The selection-change, page-hidden, data-saver, slow-connection,
+low-memory and session limits are unchanged; the run takes longer (ENV01
+race: about 3.0-3.4 s instead of 1.7 s).
+
+Two ride-side changes make the preload's results usable and are output
+identical: the race load decodes CPU quad textures with
+`textures::load_jobs` (worker PST jobs, read from the cache) instead of on
+the page's thread, and `Bank::load_samples` (race samples, train, rain,
+actors) decodes as cached `VAG_PCM` jobs instead of one sample per frame on
+the page's thread.
+
+ENV01 National race from the race setup, default ATV, local server
+(`tools/test_engine_menu_preload_ride.mjs`, host only, no phone measured):
+
+| | before #515, after a preload | after #515, after a preload |
+| --- | --- | --- |
+| Race load | 1.81-1.91 s | 1.65-1.81 s |
+| First frame to sounds ready | 2.09-2.19 s | 0.58-0.66 s |
+| Decoded-cache misses from Start to sounds ready | 124 | 0 |
+
+A cold race (no preload) now has its sounds ready 1.8-2.1 s after the first
+frame (2.2-2.4 s before), from the off-thread race samples. A Free Ride's
+sounds were ready 0.70 s after the first frame after a preload before #515
+and 0.38-0.47 s now, with no cache miss. The CPU quads' share of the race
+load is small on the host (local downloads, small textures); on production
+the preload also removes their downloads.
+
+Still not preloaded: Freestyle objective and mini-game overlays. A load after
+a preload remains slower than a cached `?venue=` load (0.80 s); the cause was
+not investigated.
 
 ## Garage vehicle load (Rust engine, web, host x4 emulation, 2026-11-03)
 
