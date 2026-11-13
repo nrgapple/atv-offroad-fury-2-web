@@ -1801,6 +1801,11 @@ What the port does (`atv_core::race_event`, `atv_core::race_ghost`,
 - `?race=1&event=lapattack` and Copy ride link (`event=lapattack`) start
   it. `tools/test_engine_race_lap_attack.mjs` picks it in the menu, rides
   Supercross laps with the race path driver and checks the ghost plays.
+- **World board ghosts (2026-11-12, a port addition).** Hall of Fame →
+  View: World → Race This Ghost starts Lap Attack with a world lap board
+  row's ghost as the lap to beat from GO (`Ghost::set_rival`). It carries
+  motion only and holds the pose of the player's first key. See
+  WORLD_BOARDS.md "Ghosts".
 
 - **Ghost draw (2026-11-02).** The ghost draws as the player's own quad
   and rider (`atv_render::SceneRenderer::set_ghost`, uploaded at ride
