@@ -1,0 +1,14 @@
+{
+  "id": "menu-preload-now-prepares-the-ride-s-sounds-and-cpu-ve-c54026934e124af49a6aa1f7b8f3872d",
+  "timestamp": "2026-11-13T18:23:05.248270+00:00",
+  "recorded_at": "2026-11-13T18:26:21.972742+00:00",
+  "kind": "build",
+  "title": "Menu preload now prepares the ride's sounds and CPU vehicles",
+  "summary": "PR #598 (part of #515): the menu preload of the likely next course now also prepares the ride's sound bank and, for races, every CPU vehicle the roster could pick, so the first race frame no longer waits on audio or opponent assets.",
+  "details": [
+    "Host-only measurements (M4, headless Chromium, ENV01 race after preload, no phone): race load 1.81-1.91 s to 1.65-1.81 s; first frame to sounds ready 2.09-2.19 s to 0.58-0.66 s; cache misses from Start to sounds ready 124 to 0. Free Ride sounds ready 0.38-0.47 s (was 0.70 s). Race preload itself now takes 3.0-3.4 s (was about 1.7 s) and the race sound bank uses 45.9 MB of cache. Verification: new browser test test_engine_menu_preload_ride.mjs plus the existing preload, audio and cache tests."
+  ],
+  "limitation": "Motorcycle sound bank is not prepared; crowd, train, rain and actor sounds are not preloaded; no physical-phone measurement; a gap of about 0.2 s to a cached ?venue= load remains uninvestigated.",
+  "image": "/devlog-images/menu-preload-now-prepares-the-ride-s-sounds-and-cpu-ve-c54026934e124af49a6aa1f7b8f3872d.png",
+  "caption": "ENV01 race intro camera in snow after menu preload, with a CPU quad in the distance."
+}
