@@ -265,6 +265,8 @@ pub struct BoardEntry {
     pub value: i64,
     pub vehicle: u16,
     pub day: String,
+    /// The row's lap can be raced as a ghost (`world_ghost`; lap boards).
+    pub ghost: bool,
 }
 
 /// Yesterday's daily winner.

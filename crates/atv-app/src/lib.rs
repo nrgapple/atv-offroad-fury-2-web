@@ -3501,6 +3501,8 @@ impl App {
                 .map(|g| {
                     serde_json::json!({
                         "best": g.best, "samples": g.samples, "opacity": g.opacity,
+                        // A world board row's ghost, until the player beats it.
+                        "rival": riding.ride.race().and_then(|r| r.rival.clone()),
                         "playing": g.pose.is_some(),
                         "origin": g.pose.map(|p| p.origin),
                         // Ghost passes the scene drew this frame (one per
@@ -5944,6 +5946,17 @@ impl ApplicationHandler<Message> for App {
                     .map(|l| l.players.len());
                 self.usage.started(players);
                 self.ready = Some(*ready);
+                // Lap Attack against a world board row's ghost (world.rs).
+                if let Some(rival) = self.world.rival.take()
+                    && let Some(race) = self
+                        .ready
+                        .as_mut()
+                        .and_then(|r| r.riding.as_mut())
+                        .and_then(|r| r.ride.race_mut())
+                    && race.settings().lap_attack
+                {
+                    race.set_rival(rival);
+                }
                 // The ride takes over the music bus from the menu tune.
                 self.sync_menu_music();
                 // Rides the saved settings do not reach (direct and held
@@ -7787,6 +7800,23 @@ impl App {
                 };
                 self.start_ride(environment, quad, rider, Some(settings), None);
             }
+            Event::GhostRace {
+                board,
+                name,
+                value,
+                course,
+                expert,
+                quad,
+                rider,
+            } => self.world_ghost_race(world::GhostRace {
+                board,
+                name,
+                value,
+                course,
+                expert,
+                quad,
+                rider,
+            }),
             Event::CopyRaceLink => self.copy_race_link(),
             Event::WaypointEdit {
                 code,

@@ -319,10 +319,8 @@ impl Recorder {
     /// for the best lap. The fastest judged lap's keys are kept. Returns
     /// whether this lap is the new best.
     pub fn lap(&mut self, time: f32, judged: bool) -> bool {
-        let better = judged
-            && self.steps > 0
-            && time > 0.
-            && self.best.is_none_or(|(best, _)| time < best);
+        let better =
+            judged && self.steps > 0 && time > 0. && self.best.is_none_or(|(best, _)| time < best);
         if better {
             self.best = Some((time, self.steps));
             if self.current.len() == keys_for(self.steps) && self.current.len() >= 2 {
@@ -574,7 +572,10 @@ mod tests {
         ride(&mut recorder, 1380, 300.);
         assert!(recorder.lap(23., true));
         let ghost = recorder.ghost("sx01", 3).unwrap();
-        assert_eq!((ghost.lap_ms, ghost.steps, ghost.keys.len()), (23_000, 1380, 230));
+        assert_eq!(
+            (ghost.lap_ms, ghost.steps, ghost.keys.len()),
+            (23_000, 1380, 230)
+        );
         assert_eq!(
             (recorder.current.capacity(), recorder.kept.capacity()),
             capacity
