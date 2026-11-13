@@ -15,6 +15,8 @@ export RUSTC_WRAPPER := $(CURDIR)/tools/sccache-rustc
 endif
 endif
 HEAVY = python3 tools/host_build.py --
+FURY_COMPILE_GUARD = python3 tools/host_build.py --kind compile --
+FURY_BROWSER_GUARD = python3 tools/host_build.py --kind browser --
 CARGO ?= $(HOME)/.cargo/bin/cargo
 NODE ?= node
 ISO ?= private/source/ATV Offroad Fury 2 (USA) (v2.00).iso
@@ -45,15 +47,15 @@ precheck:
 	python3 tools/ci_changes.py --validate
 	python3 tools/check_secrets.py
 	$(CARGO) fmt --all -- --check
-	$(HEAVY) $(CARGO) clippy --locked --workspace --all-targets -- -D warnings
+	$(FURY_COMPILE_GUARD) $(CARGO) clippy --locked --workspace --all-targets -- -D warnings
 
 check:
 	python3 tools/check_secrets.py
 	python3 tools/verify_repository.py
 	python3 -m unittest discover -s tools -p 'test_security.py'
 	$(CARGO) fmt --all -- --check
-	$(HEAVY) $(CARGO) test --locked --workspace
-	$(HEAVY) $(CARGO) clippy --locked --workspace --all-targets -- -D warnings
+	$(FURY_COMPILE_GUARD) $(CARGO) test --locked --workspace
+	$(FURY_COMPILE_GUARD) $(CARGO) clippy --locked --workspace --all-targets -- -D warnings
 	$(NODE) --test --test-timeout=120000 web/install.test.mjs web/analytics.test.mjs web/offline.test.mjs web/sw.test.mjs tools/browser/manifest.test.mjs tools/browser/owned_process.test.mjs
 	python3 -m py_compile tools/*.py
 	python3 -m unittest discover -s tools -p 'test_worker_build_cache.py'
@@ -79,11 +81,10 @@ android:
 	$(HEAVY) python3 tools/build_android.py $(ANDROID_ARGS)
 
 web:
-	python3 tools/build_web.py
-	$(HEAVY) python3 tools/build_engine.py
+	$(FURY_COMPILE_GUARD) sh -c 'python3 tools/build_web.py && python3 tools/build_engine.py'
 
 relay:
-	$(HEAVY) sh -c 'cd crates/atv-relay && PATH="$(dir $(CARGO)):$(PATH)" $(HOME)/.cargo/bin/worker-build --release'
+	$(FURY_COMPILE_GUARD) sh -c 'cd crates/atv-relay && PATH="$(dir $(CARGO)):$(PATH)" $(HOME)/.cargo/bin/worker-build --release'
 
 serve:
 	python3 tools/serve_web.py --bind $(BIND) --port $(PORT)
@@ -99,11 +100,11 @@ native-analyze:
 
 # Browser groups start their own local server on a free port; build web/dist first.
 browser-smoke:
-	$(HEAVY) $(NODE) tools/run_browser_tests.mjs --group content-free $(BROWSER_ARGS)
+	$(FURY_BROWSER_GUARD) $(NODE) tools/run_browser_tests.mjs --group content-free $(BROWSER_ARGS)
 
 browser-tests:
-	$(HEAVY) $(NODE) tools/run_browser_tests.mjs --group content-free,content $(BROWSER_ARGS)
+	$(FURY_BROWSER_GUARD) $(NODE) tools/run_browser_tests.mjs --group content-free,content $(BROWSER_ARGS)
 
 browser-native:
-	$(HEAVY) $(NODE) tools/run_browser_tests.mjs --group native $(BROWSER_ARGS)
+	$(FURY_BROWSER_GUARD) $(NODE) tools/run_browser_tests.mjs --group native $(BROWSER_ARGS)
 

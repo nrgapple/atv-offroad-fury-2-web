@@ -25,9 +25,9 @@ class GuardTests(unittest.TestCase):
         self.env.pop('CI', None)
         self.env.pop(guard.OWNER, None)
 
-    def spawn(self, body):
-        return subprocess.Popen([sys.executable, '-c', 'import host_build as g; g.busy_reason=lambda:None; ' + body],
-                                env=self.env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    def spawn(self, body, cwd=None):
+        return subprocess.Popen([sys.executable, '-c', 'import host_build as g; g.busy_reason=lambda *args:None; ' + body],
+                                env=self.env, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
 
     def test_serialization_and_nesting(self):
         code = "import time; print('ready',flush=True); time.sleep(.5)"
@@ -42,6 +42,130 @@ class GuardTests(unittest.TestCase):
         self.assertEqual(second.returncode, 0, err)
         self.assertIn('nested', out)
 
+    def hold(self, kind, name):
+        directory = Path(self.tmp.name) / name
+        directory.mkdir(exist_ok=True)
+        body = (f"import time; "
+                f"lease=g.lease(kind={kind!r},wait=0); lease.__enter__(); "
+                "print('ready',flush=True); time.sleep(30)")
+        child = self.spawn(body, cwd=directory)
+        self.addCleanup(lambda: self.stop(child))
+        self.assertEqual(child.stdout.readline().strip(), 'ready')
+        return child
+
+    @staticmethod
+    def stop(child):
+        if child.poll() is None:
+            child.terminate()
+        child.communicate(timeout=5)
+
+    def attempt(self, kind, name):
+        directory = Path(self.tmp.name) / name
+        directory.mkdir(exist_ok=True)
+        child = self.spawn(f"lease=g.lease(kind={kind!r},wait=0); lease.__enter__(); print('admitted')", cwd=directory)
+        out, err = child.communicate(timeout=5)
+        return child.returncode, out, err
+
+    def test_compile_and_browser_overlap_in_distinct_checkouts(self):
+        self.hold('compile', 'a')
+        code, out, err = self.attempt('browser', 'b')
+        self.assertEqual(code, 0, err)
+        self.assertIn('admitted', out)
+
+    def test_browser_and_compile_overlap_in_reverse_order(self):
+        self.hold('browser', 'a')
+        self.assertEqual(self.attempt('compile', 'b')[0], 0)
+
+    def test_same_kind_stays_serialized(self):
+        for kind in ('compile', 'browser'):
+            with self.subTest(kind=kind):
+                child = self.hold(kind, 'a')
+                self.assertNotEqual(self.attempt(kind, 'b')[0], 0)
+                self.stop(child)
+
+    def test_same_checkout_cannot_rebuild_under_browser(self):
+        self.hold('browser', 'a')
+        self.assertNotEqual(self.attempt('compile', 'a')[0], 0)
+
+    def test_subdirectory_resolves_to_same_checkout(self):
+        root = Path(self.tmp.name) / 'repo'
+        root.mkdir()
+        subprocess.run(['git', 'init', '-q', str(root)], check=True)
+        (root / 'sub').mkdir()
+        self.hold('browser', 'repo')
+        self.assertNotEqual(self.attempt('compile', 'repo/sub')[0], 0)
+
+    def test_legacy_exclusive_lock_blocks_new_kinds(self):
+        import fcntl
+        with open(Path(self.tmp.name) / 'heavy.lock', 'a+') as old:
+            fcntl.flock(old, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            for kind in ('compile', 'browser'):
+                self.assertNotEqual(self.attempt(kind, 'a')[0], 0)
+
+    def test_shared_work_blocks_exclusive_and_old_guard(self):
+        import fcntl
+        self.hold('compile', 'a')
+        self.assertNotEqual(self.attempt('exclusive', 'b')[0], 0)
+        with open(Path(self.tmp.name) / 'heavy.lock', 'a+') as old:
+            with self.assertRaises(BlockingIOError):
+                fcntl.flock(old, fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+    def test_cross_kind_nesting_fails_instead_of_deadlocking(self):
+        with patch.dict(os.environ, self.env, clear=True), patch.object(guard, 'busy_reason', return_value=None):
+            with guard.lease(kind='browser', wait=0):
+                self.assertTrue(guard.owns_lease('browser'))
+                self.assertFalse(guard.owns_lease('compile'))
+                with self.assertRaisesRegex(ValueError, 'cannot nest compile'):
+                    with guard.lease(kind='compile', wait=0):
+                        self.fail('cross-kind promotion must fail')
+
+    def test_nested_compile_cannot_switch_checkouts_without_a_lock(self):
+        with patch.dict(os.environ, self.env, clear=True), patch.object(guard, 'busy_reason', return_value=None):
+            with guard.lease(kind='compile', wait=0):
+                with patch.object(guard, 'checkout_root', return_value=Path(self.tmp.name)):
+                    self.assertFalse(guard.owns_lease('compile'))
+                    with self.assertRaisesRegex(ValueError, 'across workloads/checkouts'):
+                        with guard.lease(kind='compile', wait=0):
+                            self.fail('must not mutate another unlocked checkout')
+
+    def test_stale_metadata_cannot_hide_unguarded_compiler(self):
+        import json
+        (Path(self.tmp.name) / 'compile.lock').write_text(json.dumps({'pid': 400}))
+        rows = '401 400 rustc foo.rs\n'
+        with patch.dict(os.environ, self.env, clear=True), patch.object(guard.sys, 'platform', 'linux'), \
+                patch.object(guard, 'processes', return_value=({401: 400, 400: 1}, rows)):
+            self.assertIn('401', guard.busy_reason('browser'))
+
+    def test_active_compiler_lease_allows_browser_but_not_unrelated_compiler(self):
+        child = self.hold('compile', 'a')
+        rows = f'401 {child.pid} rustc foo.rs\n'
+        parents = {401: child.pid, child.pid: 1}
+        with patch.dict(os.environ, self.env, clear=True), patch.object(guard.sys, 'platform', 'linux'), \
+                patch.object(guard, 'processes', return_value=(parents, rows)):
+            self.assertIsNone(guard.busy_reason('browser'))
+        with patch.dict(os.environ, self.env, clear=True), patch.object(guard.sys, 'platform', 'linux'), \
+                patch.object(guard, 'processes', return_value=(parents, rows + '402 1 rustc other.rs\n')):
+            self.assertIn('402', guard.busy_reason('browser'))
+
+    def test_only_matching_sccache_request_is_attributed_to_compile_owner(self):
+        child = self.hold('compile', 'a')
+        rows = (f'401 {child.pid} sccache rustc --crate-name game --out-dir /a/target\n'
+                '500 1 /opt/homebrew/bin/sccache\n'
+                '501 500 /rust/bin/rustc --crate-name game --out-dir /a/target\n')
+        parents = {401: child.pid, child.pid: 1, 500: 1, 501: 500, 502: 500}
+        with patch.dict(os.environ, self.env, clear=True), patch.object(guard.sys, 'platform', 'linux'), \
+                patch.object(guard, 'processes', return_value=(parents, rows)):
+            self.assertIsNone(guard.busy_reason('browser'))
+        with patch.dict(os.environ, self.env, clear=True), patch.object(guard.sys, 'platform', 'linux'), \
+                patch.object(guard, 'processes', return_value=(parents, rows + '502 500 /rust/bin/rustc --crate-name game --out-dir /b/target\n')):
+            self.assertIn('502', guard.busy_reason('browser'))
+
+    def test_parallel_admission_requires_memory_headroom(self):
+        for report in ('System-wide memory free percentage: 24%', 'unknown'):
+            with self.subTest(report=report), patch.object(guard.sys, 'platform', 'darwin'), \
+                    patch.object(guard.subprocess, 'check_output', side_effect=['1', report]):
+                self.assertIn('headroom', guard.busy_reason('browser'))
+
     def test_cancellation_releases_slot_and_signals_only_owned_child(self):
         child = "import time; print('ready',flush=True); time.sleep(30)"
         first = self.spawn(f'import sys; sys.exit(g.run([sys.executable,"-c",{child!r}]))')
@@ -52,6 +176,18 @@ class GuardTests(unittest.TestCase):
         out, err = second.communicate(timeout=5)
         self.assertEqual(second.returncode, 0, err)
         self.assertIn('next', out)
+
+    def test_cancellation_releases_compile_and_checkout_permits(self):
+        code = "import time; print('ready',flush=True); time.sleep(30)"
+        directory = Path(self.tmp.name) / 'a'
+        directory.mkdir()
+        first = self.spawn(f'import sys; sys.exit(g.run([sys.executable,"-c",{code!r}],kind="compile"))', cwd=directory)
+        self.addCleanup(lambda: self.stop(first))
+        self.assertEqual(first.stdout.readline().strip(), 'ready')
+        first.send_signal(signal.SIGTERM)
+        first.communicate(timeout=5)
+        self.assertEqual(self.attempt('compile', 'b')[0], 0)
+        self.assertEqual(self.attempt('browser', 'a')[0], 0)
 
     def test_pressure_defers_without_launching(self):
         with patch.dict(os.environ, self.env, clear=True), patch.object(guard, 'busy_reason', return_value='pressure'):
@@ -138,6 +274,13 @@ class GuardTests(unittest.TestCase):
         commands = [call.args[0][1] for call in run.call_args_list]
         self.assertEqual(commands, ['bootout', 'enable', 'bootstrap'])
         self.assertEqual(json.loads((service / 'handoff.json').read_text())['status'], 'installed')
+
+    def test_guard_only_install_does_not_touch_watcher(self):
+        args = ['install_host_build_budget.py', '--repo', self.tmp.name, '--guard-only', '--apply']
+        with patch.object(sys, 'argv', args), patch.object(install, 'cargo_install') as cargo, \
+                patch.object(install.subprocess, 'run', side_effect=AssertionError('must not touch launchd')):
+            install.main()
+        cargo.assert_called_once_with(install.ROOT / 'tools')
 
     def test_launch_interpreter_uses_actual_mac_executable(self):
         actual = Path(self.tmp.name) / 'Python.app/Contents/MacOS/Python'

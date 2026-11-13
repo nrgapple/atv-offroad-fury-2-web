@@ -3,8 +3,10 @@
 import argparse
 import contextlib
 import fcntl
+import hashlib
 import json
 import os
+import re
 from pathlib import Path
 import signal
 import subprocess
@@ -13,6 +15,9 @@ import time
 
 STATE = Path.home() / '.local/share/project-service-data/fury-build-budget'
 OWNER = 'FURY_BUILD_OWNER'
+KIND = 'FURY_BUILD_KIND'
+CHECKOUT = 'FURY_BUILD_CHECKOUT'
+KINDS = ('exclusive', 'compile', 'browser')
 
 
 def processes():
@@ -35,11 +40,14 @@ def ancestors(pid, parents):
     return result
 
 
-def owns_lease():
+def owns_lease(kind=None):
     try:
         owner = int(os.environ.get(OWNER, '0'))
         parents, _ = processes()
-        return owner > 1 and owner in ancestors(os.getpid(), parents)
+        held_kind = os.environ.get(KIND, 'exclusive')
+        return (owner > 1 and owner in ancestors(os.getpid(), parents)
+                and (kind is None or held_kind == 'exclusive'
+                     or (held_kind == kind and os.environ.get(CHECKOUT) == str(checkout_root()))))
     except (ValueError, OSError, subprocess.SubprocessError):
         return False
 
@@ -55,14 +63,52 @@ def _python(command):
     return name.startswith('python') or name == 'Python' or 'Python' in command.split()[0]
 
 
-def busy_reason():
+def active_owners(directory, exclude=None):
+    """Trust metadata only while its kernel lock is held (never stale PID files)."""
+    owners = set()
+    for kind in ('compile', 'browser'):
+        if kind == exclude:
+            continue
+        path = directory / f'{kind}.lock'
+        if not path.exists():
+            continue
+        with open(path, 'r+') as lock:
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                try:
+                    owners.add(int(json.load(lock)['pid']))
+                except (ValueError, KeyError):
+                    pass
+    return owners
+
+
+def busy_reason(kind='exclusive'):
     """Adopt safely alongside older entry points without signalling any process."""
     if sys.platform == 'darwin':
         value = subprocess.check_output(['/usr/sbin/sysctl', '-n', 'kern.memorystatus_vm_pressure_level'], text=True)
         if int(value.strip()) != 1:
             return 'macOS memory pressure is elevated'
+        if kind != 'exclusive':
+            report = subprocess.check_output(['/usr/bin/memory_pressure', '-Q'], text=True)
+            match = re.search(r'System-wide memory free percentage: (\d+)%', report)
+            if not match or int(match[1]) < 25:
+                return 'parallel work needs at least 25% reported memory headroom'
     parents, rows = processes()
     ours = ancestors(os.getpid(), parents)
+    participating = active_owners(Path(os.environ.get('FURY_BUILD_STATE', STATE)), exclude=kind) if kind != 'exclusive' else set()
+    # sccache's daemon, not its client, parents rustc. Match the exact compiler
+    # arguments to a client in an admitted tree; do not exempt unrelated cache jobs.
+    cache_requests = set()
+    executables = {}
+    for row in rows.splitlines():
+        parts = row.split(None, 2)
+        if len(parts) == 3:
+            pid, command = int(parts[0]), parts[2]
+            executables[pid] = _executable(command)
+            suffix = command.partition(' --crate-name ')[2]
+            if executables[pid] == 'sccache' and suffix and participating.intersection(ancestors(pid, parents)):
+                cache_requests.add(suffix)
     guarded_parents = set()
     for row in rows.splitlines():
         parts = row.split(None, 2)
@@ -73,11 +119,13 @@ def busy_reason():
         if len(parts) < 3:
             continue
         pid = int(parts[0])
-        if pid in ours or os.getpid() in ancestors(pid, parents):
+        if pid in ours or os.getpid() in ancestors(pid, parents) or participating.intersection(ancestors(pid, parents)):
             continue
         # Match executable/script signatures, not incidental shell/agent prompt text.
         command = parts[2]
         compiler = _executable(command) in ('rustc', 'clippy-driver', 'rust-lld', 'xcodebuild')
+        if compiler and executables.get(parents.get(pid)) == 'sccache' and command.partition(' --crate-name ')[2] in cache_requests:
+            continue
         script = ((_python(command) or _executable(command).startswith('node'))
                   and 'host_build.py' not in command
                   and any(name in command for name in
@@ -87,59 +135,93 @@ def busy_reason():
     return None
 
 
+def checkout_root():
+    # Commands launched from a repository subdirectory still write the same
+    # checkout outputs. Canonicalize symlink entry points too.
+    try:
+        root = subprocess.check_output(['git', 'rev-parse', '--show-toplevel'],
+                                       text=True, stderr=subprocess.DEVNULL).strip()
+        return Path(root).resolve()
+    except subprocess.CalledProcessError:
+        return Path.cwd().resolve()
+
+
 @contextlib.contextmanager
-def lease(wait=1800, poll=2, state_dir=None, check_busy=True):
-    if os.environ.get('CI') or owns_lease():
-        yield None
+def lease(wait=1800, poll=2, state_dir=None, check_busy=True, kind='exclusive'):
+    if kind not in KINDS:
+        raise ValueError(f'unknown workload: {kind}')
+    if os.environ.get('CI') or owns_lease(kind):
+        yield ()
         return
+    if owns_lease():
+        # Waiting for another resource while holding one can deadlock. A browser
+        # test that compiles must be launched as exclusive from the outset.
+        raise ValueError(f'cannot nest {kind} inside {os.environ.get(KIND)} across workloads/checkouts; use an exclusive outer lease')
     directory = Path(state_dir or os.environ.get('FURY_BUILD_STATE', STATE))
     directory.mkdir(parents=True, exist_ok=True)
+    root = str(checkout_root())
+    checkout = hashlib.sha256(root.encode()).hexdigest()[:24]
     deadline = time.monotonic() + wait
-    with open(directory / 'heavy.lock', 'a+') as lock:
-        last_notice = 0
-        while True:
-            acquired = False
-            try:
-                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                acquired = True
-                reason = busy_reason() if check_busy else None
-            except BlockingIOError:
-                reason = 'another guarded build/test owns the slot'
-            except (OSError, ValueError, subprocess.SubprocessError) as exc:
-                reason = f'cannot verify host availability: {exc}'
-            if acquired and not reason:
-                break
-            if acquired:
-                fcntl.flock(lock, fcntl.LOCK_UN)
-            if time.monotonic() >= deadline:
-                raise BlockingIOError(reason)
-            if time.monotonic() - last_notice >= 30:
-                print(f'Build waiting: {reason}', file=sys.stderr, flush=True)
-                last_notice = time.monotonic()
-            time.sleep(min(poll, max(0, deadline - time.monotonic())))
-        previous = os.environ.get(OWNER)
-        os.environ[OWNER] = str(os.getpid())
-        lock.seek(0)
-        lock.truncate()
-        lock.write(json.dumps({'pid': os.getpid(), 'cwd': str(Path.cwd()), 'started': time.time()}))
-        lock.flush()
+    last_notice = 0
+    queued = time.monotonic()
+    while True:
+        stack = contextlib.ExitStack()
         try:
-            yield lock.fileno()
-        finally:
-            if previous is None:
-                os.environ.pop(OWNER, None)
+            # Old guards take heavy.lock exclusively, so new shared leases never
+            # overlap legacy jobs. Hold admission only while acquiring permits.
+            with open(directory / 'admission.lock', 'a+') as admission:
+                fcntl.flock(admission, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                paths = [('heavy.lock', fcntl.LOCK_EX if kind == 'exclusive' else fcntl.LOCK_SH)]
+                if kind != 'exclusive':
+                    paths += [(f'checkout-{checkout}.lock', fcntl.LOCK_EX), (f'{kind}.lock', fcntl.LOCK_EX)]
+                locks = []
+                for name, mode in paths:
+                    lock = stack.enter_context(open(directory / name, 'a+'))
+                    fcntl.flock(lock, mode | fcntl.LOCK_NB)
+                    locks.append(lock)
+                reason = (busy_reason() if kind == 'exclusive' else busy_reason(kind)) if check_busy else None
+                if reason:
+                    raise BlockingIOError(reason)
+                record = locks[-1]  # Never truncate the shared compatibility lock.
+                record.seek(0)
+                record.truncate()
+                record.write(json.dumps({'pid': os.getpid(), 'cwd': str(Path.cwd()),
+                                         'kind': kind, 'started': time.time()}))
+                record.flush()
+            break
+        except BlockingIOError as exc:
+            reason = str(exc) if exc.errno is None else f'{kind} slot, checkout or exclusive work is busy'
+        except (OSError, ValueError, subprocess.SubprocessError) as exc:
+            reason = f'cannot verify host availability: {exc}'
+        stack.close()
+        if time.monotonic() >= deadline:
+            raise BlockingIOError(reason)
+        if time.monotonic() - last_notice >= 30:
+            print(f'Build waiting ({kind}): {reason}', file=sys.stderr, flush=True)
+            last_notice = time.monotonic()
+        time.sleep(min(poll, max(0, deadline - time.monotonic())))
+    previous = {key: os.environ.get(key) for key in (OWNER, KIND, CHECKOUT)}
+    os.environ[OWNER], os.environ[KIND], os.environ[CHECKOUT] = str(os.getpid()), kind, root
+    print(f'Build admitted ({kind}) after {time.monotonic() - queued:.1f}s', file=sys.stderr, flush=True)
+    try:
+        yield tuple(lock.fileno() for lock in locks)
+    finally:
+        for key, value in previous.items():
+            if value is None:
+                os.environ.pop(key, None)
             else:
-                os.environ[OWNER] = previous
-            # Closing releases this holder; a surviving child retains its inherited fd.
+                os.environ[key] = value
+        # Children inherit every permit, including the per-checkout lock.
+        stack.close()
 
 
-def run(command, wait=1800):
-    with lease(wait=wait) as fd:
+def run(command, wait=1800, kind='exclusive'):
+    with lease(wait=wait, kind=kind) as fds:
         env = dict(os.environ)
         if not env.get('CI'):
             env.setdefault('CARGO_BUILD_JOBS', '2')
         child = subprocess.Popen(command, env=env, start_new_session=True,
-                                 pass_fds=(() if fd is None else (fd,)))
+                                 pass_fds=fds)
         old = {}
         cancelled = [None]
         def forward(signum, _frame):
@@ -164,10 +246,10 @@ def run(command, wait=1800):
                 signal.signal(sig, handler)
 
 
-def ensure_guard(script, args):
-    if not os.environ.get('CI') and not owns_lease():
+def ensure_guard(script, args, kind='exclusive'):
+    if not os.environ.get('CI') and not owns_lease(kind):
         try:
-            raise SystemExit(run([sys.executable, str(script), *args]))
+            raise SystemExit(run([sys.executable, str(script), *args], kind=kind))
         except BlockingIOError as exc:
             raise SystemExit(f'Build deferred: {exc}')
 
@@ -202,25 +284,29 @@ def cargo_proxy(args):
     command = [cargo, *args]
     if not args or args[0] in light or os.environ.get('CI') or grandfathered():
         os.execv(cargo, command)
-    return run(command)
+    # Only known compiler commands use the compile permit. cargo run and custom
+    # aliases/plugins can do arbitrary work and remain exclusive.
+    kind = 'compile' if args[0] in {'build', 'check', 'clippy', 'test', 'rustc'} else 'exclusive'
+    return run(command, kind=kind)
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--wait', type=float, default=1800)
     parser.add_argument('--owns', action='store_true')
+    parser.add_argument('--kind', choices=KINDS, default='exclusive')
     parser.add_argument('--cargo-proxy', action='store_true')
     parser.add_argument('command', nargs=argparse.REMAINDER)
     args = parser.parse_args()
     if args.owns:
-        return 0 if owns_lease() else 1
+        return 0 if owns_lease(args.kind) else 1
     command = args.command[1:] if args.command[:1] == ['--'] else args.command
     try:
         if args.cargo_proxy:
             return cargo_proxy(command)
         if not command:
             parser.error('a command is required')
-        return run(command, wait=args.wait)
+        return run(command, wait=args.wait, kind=args.kind)
     except BlockingIOError as exc:
         print(f'Build deferred: {exc}', file=sys.stderr)
         return 75

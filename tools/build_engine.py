@@ -12,7 +12,8 @@ import subprocess
 import sys
 from host_build import ensure_guard
 
-ensure_guard(__file__, sys.argv[1:])
+os.chdir(Path(__file__).resolve().parents[1])
+ensure_guard(__file__, sys.argv[1:], kind='compile')
 
 ROOT = Path(__file__).resolve().parents[1]
 cargo = shutil.which('cargo') or str(Path.home() / '.cargo/bin/cargo')

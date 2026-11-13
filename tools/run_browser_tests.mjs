@@ -72,9 +72,11 @@ if (args.only) {
 }
 if (!runs.length) { console.log('No tests selected.'); process.exit(0); }
 
+// Key the lease to the checkout whose artifacts/logs this runner uses.
+process.chdir(ROOT);
 // Direct node invocations share the same lease as make and Cargo.
-if (!process.env.CI && spawnSync('python3', [path.join(ROOT, 'tools/host_build.py'), '--owns']).status !== 0) {
-  const child = spawn('python3', [path.join(ROOT, 'tools/host_build.py'), '--', process.execPath,
+if (!process.env.CI && spawnSync('python3', [path.join(ROOT, 'tools/host_build.py'), '--kind', 'browser', '--owns']).status !== 0) {
+  const child = spawn('python3', [path.join(ROOT, 'tools/host_build.py'), '--kind', 'browser', '--', process.execPath,
     ...process.argv.slice(1)], { stdio: 'inherit' });
   for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP']) process.on(signal, () => child.kill(signal));
   child.on('error', error => { console.error(error); process.exit(1); });
