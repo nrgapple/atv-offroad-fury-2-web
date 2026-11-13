@@ -3,8 +3,9 @@
 // - Music Off pauses the song where it is, a pointer or key gesture never
 //   restarts music the player turned off, and Music On resumes the same song
 //   at the same position;
-// - a song that cannot be read stops music reads (Music stays on) until the
-//   next selection, which reads again;
+// - a song that cannot be read (after the content reader's two more tries)
+//   stops music reads (Music stays on) until the next selection, which reads
+//   again;
 // - a race holds the soundtrack through the intro and countdown with the
 //   IntOut stinger (also when sound starts after the intro was skipped),
 //   Pause keeps the hold, and Quit to Main Menu ends it.
@@ -81,21 +82,38 @@ try {
       for (const chunk of record.chunks ?? [record]) songs.add(`/content/${chunk.sha256}.bin`);
     }
     let failing = true;
+    // Reads of each song blob, refused or not.
+    const reads = new Map();
+    const count = () => [...reads.values()].reduce((sum, n) => sum + n, 0);
     const errors = [];
-    const page = await newPage(browser, { viewport: { width: 1280, height: 720 } }, errors);
+    // A release build's service worker would read the blobs itself, past
+    // these routes.
+    const page = await newPage(browser, { viewport: { width: 1280, height: 720 }, serviceWorkers: 'block' }, errors);
     await page.route('**/*.m4a', route => route.abort());
-    await page.route('**/content/*.bin', route =>
-      failing && songs.has(new URL(route.request().url()).pathname) ? route.abort() : route.continue()
-    );
+    await page.route('**/content/*.bin', route => {
+      const blob = new URL(route.request().url()).pathname;
+      if (!songs.has(blob)) return route.continue();
+      reads.set(blob, (reads.get(blob) ?? 0) + 1);
+      return failing ? route.abort() : route.continue();
+    });
     await page.addInitScript(seed);
     await ride(page);
     await until(page, () => JSON.parse(document.documentElement.getAttribute('data-engine-audio')).vagFallback === true, null, 60000);
-    await page.waitForTimeout(1500);
+    // The content reader tries a refused read twice more, 0.4 s and 1.5 s
+    // later (atv-content RETRY_DELAYS_MS); only then is the song unreadable.
+    for (const end = Date.now() + 30000; Math.max(0, ...reads.values()) < 3;) {
+      assert.ok(Date.now() < end, `the song read was tried ${[...reads.values()]} times`);
+      await page.waitForTimeout(50);
+    }
+    await page.waitForTimeout(500);
     let a = await audio(page);
     assert.equal(a.musicQueued, 0, 'nothing decoded from an unreadable song');
     assert.equal(a.musicEnabled, true, 'Music stays on');
     failing = false;
-    await page.waitForTimeout(1000);
+    const refused = count();
+    // Longer than the reader's longest pause: a read still pending would land.
+    await page.waitForTimeout(2500);
+    assert.equal(count(), refused, 'no read until a new selection');
     assert.equal((await audio(page)).musicQueued, 0, 'no retry until a new selection');
     await key(page, 'Escape'); await onMenu(page, 'pause');
     await click(page, 'jukebox'); await onMenu(page, 'jukebox');
@@ -106,7 +124,7 @@ try {
     a = await audio(page);
     assert.equal((await menu(page)).music.playing, 3);
     assertNoErrors(benign(errors));
-    console.log(`  Failed read: retried on selection, ${a.musicTitle} queued ${a.musicQueued.toFixed(2)} s`);
+    console.log(`  Failed read: given up after ${refused} refused reads, read again on selection, ${a.musicTitle} queued ${a.musicQueued.toFixed(2)} s`);
     await page.close();
   }
   {
