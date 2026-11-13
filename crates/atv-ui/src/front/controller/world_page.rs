@@ -12,6 +12,9 @@ use std::collections::BTreeMap;
 pub const DAILY_PAGE: &str = "daily";
 /// Rows of a world board shown on a page.
 pub const SHOWN: usize = 10;
+/// Rows of each board where a page shows two (a race course's lap and race
+/// boards): ten of each run off the panel under the first.
+pub const PAIR_SHOWN: usize = 5;
 
 /// One board's state in the menus.
 #[derive(Clone, Debug, PartialEq)]
@@ -136,9 +139,15 @@ impl Frontend {
                     .is_some_and(|p| p.eq_ignore_ascii_case(&entry.name)))
     }
 
-    /// A board's lines: a title, its top rows (the rider's marked "▶") and
-    /// the rider's own row below them when it ranks lower.
-    fn board_lines(&self, title: &str, id: &str, score: bool) -> Vec<(String, String)> {
+    /// A board's lines: a title, its top `shown` rows (the rider's marked
+    /// "▶") and the rider's own row below them when it ranks lower.
+    fn board_lines(
+        &self,
+        title: &str,
+        id: &str,
+        score: bool,
+        shown: usize,
+    ) -> Vec<(String, String)> {
         let mut lines = vec![(title.to_string(), String::new())];
         let value = |v: i64| {
             if score {
@@ -179,8 +188,8 @@ impl Frontend {
                         value(e.value),
                     )
                 };
-                lines.extend(board.entries.iter().take(SHOWN).map(row));
-                if let Some(own) = board.entries.iter().skip(SHOWN).find(|e| self.mine(e)) {
+                lines.extend(board.entries.iter().take(shown).map(row));
+                if let Some(own) = board.entries.iter().skip(shown).find(|e| self.mine(e)) {
                     lines.push(row(own));
                 }
             }
@@ -200,7 +209,7 @@ impl Frontend {
         let boards = self.fame_boards();
         if atv_core::freestyle::SERIES.iter().any(|s| s.name == *group) {
             let mut lines = vec![(self.course_name(id), format!("World · {group}"))];
-            lines.extend(self.board_lines("Highest Objective Scores", &boards[0], true));
+            lines.extend(self.board_lines("Highest Objective Scores", &boards[0], true, SHOWN));
             return lines;
         }
         let laps = world_board::default_laps(id);
@@ -210,8 +219,13 @@ impl Frontend {
             "Normal"
         };
         let mut lines = vec![(self.course_name(id), format!("World · {difficulty}"))];
-        lines.extend(self.board_lines("Fastest Lap", &boards[0], false));
-        lines.extend(self.board_lines(&format!("Fastest {laps}-Lap Race"), &boards[1], false));
+        lines.extend(self.board_lines("Fastest Lap", &boards[0], false, PAIR_SHOWN));
+        lines.extend(self.board_lines(
+            &format!("Fastest {laps}-Lap Race"),
+            &boards[1],
+            false,
+            PAIR_SHOWN,
+        ));
         lines
     }
 
@@ -259,7 +273,7 @@ impl Frontend {
                 },
             ));
         }
-        lines.extend(self.board_lines("Today's Board", &board, false));
+        lines.extend(self.board_lines("Today's Board", &board, false, SHOWN));
         lines
     }
 
@@ -375,6 +389,9 @@ mod tests {
             details.iter().any(|l| l.0.starts_with("3. ADA")),
             "a house row is an ordinary row: {details:?}"
         );
+        // Two boards share the panel: five rows of each.
+        assert!(details.iter().any(|l| l.0.starts_with("5. R5")));
+        assert!(!details.iter().any(|l| l.0.starts_with("6. R6")));
         assert!(details.iter().any(|l| l.0.starts_with("Offline")));
         // Placing again refetches the boards.
         front.world_placed("ADA", &wants);

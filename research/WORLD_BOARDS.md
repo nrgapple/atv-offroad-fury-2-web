@@ -149,7 +149,11 @@ riders. Authored for the port: nothing in this section is recovered.
   rider's row that the house riders push below 50th stays in D1 unserved (at
   most ten a board) until the riders' own top 50 drops it.
 - **In the game.** `BoardEntry::house`; the rows look like any other, and a
-  house row is never marked as the player's even under the same name.
+  house row is never marked as the player's even under the same name. The
+  Daily Event page and a Freestyle course show a board's top ten; a race
+  course's Hall of Fame view shows the top five of its lap board and of its
+  race board (`PAIR_SHOWN`: ten of each ran off the panel, which does not
+  scroll), each with the rider's own row below when it ranks lower.
 - **Names.** 34 authored names (`RIDERS` in `tools/build_board_seeds.mjs`),
   each with a discipline it rides best. The original's own CPU roster names
   were not used: they exist only in the disc's `AIRiders.pb` (content, which
@@ -268,8 +272,10 @@ accepted, the results show the World line, and the Daily Event page and Hall
 of Fame → View: World show the row among the house riders. The test computes
 each expected rank from the submitted value and the house rows. Host run
 (Chromium, 2026-11-12, the day's pick `env05` on an ATV): the driver's lap
-0:21.35 and race 1:49.59 came back as "World #3 Fastest Lap! · World #4
-Fastest Race! · World #5 Daily Event!" among ten house riders a board.
+0:21.40 and race 1:49.29 came back as "World #3 Fastest Lap! · World #4
+Daily Event! · World #4 Fastest Race!" among ten house riders a board (an
+earlier run: 0:21.35 and 1:49.59, third, fourth and fifth; the browser's
+frame timing varies the ride).
 
 Limits: host Chromium only (no phone, no desktop app run); the deployed
 Worker and D1 are exercised only by read-only GETs; no human lap, race or

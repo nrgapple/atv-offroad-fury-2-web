@@ -179,7 +179,7 @@ try {
   await waitDetail(page, row(expected.daily, sent.raceMs));
   lines = await details(page);
   // The top ten, and the rider's own row below them when it ranks lower.
-  const shown = rank => 10 + (rank > 10 ? 1 : 0);
+  const shown = (rank, top = 10) => top + (rank > top ? 1 : 0);
   assert.equal(lines.filter(l => /^(▶ )?\d+\. /.test(l)).length, shown(expected.daily), lines.join('\n'));
   if (process.env.ATV_WORLD_SUBMIT_SHOTS) { await nextFrames(page, 20); await page.screenshot({ path: `${process.env.ATV_WORLD_SUBMIT_SHOTS}/daily.png` }); }
 
@@ -199,8 +199,9 @@ try {
   await waitDetail(page, row(expected.race, sent.raceMs));
   lines = await details(page);
   assert.ok(lines.some(l => l === 'Fastest Lap|') && lines.some(l => l === 'Fastest 5-Lap Race|'), lines.join('\n'));
-  // Each board's ten rows, the rider's among the house riders'.
-  assert.equal(lines.filter(l => /^(▶ )?\d+\. /.test(l)).length, shown(expected.lap) + shown(expected.race), lines.join('\n'));
+  // Five rows of each board (two share the panel), the rider's among the
+  // house riders' or below them.
+  assert.equal(lines.filter(l => /^(▶ )?\d+\. /.test(l)).length, shown(expected.lap, 5) + shown(expected.race, 5), lines.join('\n'));
   if (process.env.ATV_WORLD_SUBMIT_SHOTS) { await nextFrames(page, 20); await page.screenshot({ path: `${process.env.ATV_WORLD_SUBMIT_SHOTS}/hall-of-fame.png` }); }
 
   assertNoErrors(errors);
