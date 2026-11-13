@@ -1,8 +1,8 @@
 // User Created Enduro and the Waypoint Editor (issue #546, research/RACING.md
 // "User Created Enduro and the Waypoint Editor"): `wp=` carries the venue,
 // laps and gates and races that course alone; an invalid code is refused on
-// the main menu's notice line; the editor drops gates where the quad stands,
-// saves the course and races it.
+// the main menu's notice line; the editor drops gates where the quad stands
+// (ridden in a circle), saves the course and races it.
 import assert from 'node:assert/strict';
 import { assertNoErrors, launch, newPage, nextFrames, optionalScreenshot, url } from './browser/harness.mjs';
 
@@ -77,17 +77,22 @@ try {
   await editor.waitForFunction(() => JSON.parse(document.querySelector('#ui-state')?.textContent || '{}').ride?.editorGates === 0, null, { timeout: 300000 });
   assert.equal((await state(editor)).ride.editorModels, true);
   await nextFrames(editor, 30);
-  // Drive on between drops (gates stand at least 20 ft apart).
-  const path = [];
-  for (let i = 0; i < 10 && (await state(editor)).ride.editorGates < 4; i++) {
+  // Ride a circle beside the start (throttle and left steer held) and drop a
+  // gate each second: a gate must stand 20 ft from the one before. Straight
+  // on from this start stands a tree; a quad that wrecks on it is put back
+  // in front of it, and never gets 20 ft past its last gate.
+  const drops = [];
+  await editor.keyboard.down('KeyA'); await editor.keyboard.down('KeyW');
+  for (let i = 0; i < 12 && (drops.at(-1)?.[0] ?? 0) < 4; i++) {
+    await editor.waitForTimeout(1000);
     await key(editor, 'KeyG');
     const s = (await state(editor)).ride;
-    path.push([s.editorGates, (s.player1?.origin ?? s.origin ?? []).map?.(Math.round)]);
-    await editor.keyboard.down('KeyW'); await nextFrames(editor, 150); await editor.keyboard.up('KeyW');
-    await nextFrames(editor, 20);
+    drops.push([s.editorGates, +s.resetTimer.toFixed(2)]);
   }
+  await editor.keyboard.up('KeyW'); await editor.keyboard.up('KeyA');
+  await nextFrames(editor, 20);
   let gates = (await state(editor)).ride.editorGates;
-  assert.ok(gates >= 4, `dropped ${gates} gates: ${JSON.stringify(path)}`);
+  assert.ok(gates >= 4, `dropped ${gates} gates; [gates, reset timer] after each drop: ${JSON.stringify(drops)}`);
   await key(editor, 'KeyU');
   assert.equal((await state(editor)).ride.editorGates, gates - 1, 'U takes the last gate back');
   gates -= 1;

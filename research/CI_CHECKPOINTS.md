@@ -64,7 +64,8 @@ version is deployed; see [cloud-save operations](CLOUD_SAVE.md#operations).
 ## Routine delivery
 
 Use one task branch, focused checks, and a PR with auto-merge. For runtime changes
-run `make precheck`; for documentation/metadata-only changes run CI's
+run `make precheck` (hygiene, secrets and formatting; clippy runs in CI's required
+check and locally only through `make lint`); for documentation/metadata-only changes run CI's
 "Validate documentation, metadata and repository hygiene" commands, using
 `python3 tools/check_secrets.py` without `--history` locally. CI owns the history
 scan; a notes change does not need to rescan every other local branch. The allowlist
