@@ -9,6 +9,12 @@ import json
 from devlog import read_devlog
 import struct
 import shutil
+import sys
+import os
+from host_build import ensure_guard
+
+os.chdir(Path(__file__).resolve().parents[1])
+ensure_guard(__file__, sys.argv[1:], kind='compile')
 
 ROOT = Path(__file__).resolve().parents[1]
 # Page-shell files copied as authored (play.html comes from build_engine.py).

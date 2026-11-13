@@ -306,6 +306,12 @@ struct ObjectiveSession {
     /// (a restart begins from it again).
     fame: Option<atv_core::hall_of_fame::FreestyleWatch>,
     fame_start: Option<atv_core::hall_of_fame::FreestyleWatch>,
+    /// The run's clock (seconds ridden since it started), its 1 Hz position
+    /// trace for the world boards (research/WORLD_BOARDS.md) and the ride's
+    /// reset count last seen (a reset's move is marked in the trace).
+    elapsed: f32,
+    trace: atv_core::world_board::Trace,
+    resets: u32,
     /// A target run's targets (the OB archive's target TOY).
     targets: Vec<atv_core::freestyle::Target>,
     /// One-shot sounds for the ride's mixer (target hits).
@@ -332,13 +338,18 @@ impl ObjectiveSession {
     /// Advances the run with the ride: simulated time, finished stunt
     /// chains and committed points. Returns the results summary once, when
     /// the run ends (its bits, Profile Points and Freestyle record saved in
-    /// the profile), with the run's Hall of Fame records.
+    /// the profile), with the run's Hall of Fame records and, when its
+    /// score earned a Hall of Fame place, the run for the world boards.
     fn update(
         &mut self,
         ride: &mut atv_game::ride::Ride,
         venue: Option<&atv_game::venue::Objective>,
         player: &str,
-    ) -> Option<(String, atv_core::hall_of_fame::FreestyleWatch)> {
+    ) -> Option<(
+        String,
+        atv_core::hall_of_fame::FreestyleWatch,
+        Option<world::ScoreRun>,
+    )> {
         use atv_core::freestyle::{Run, SERIES, course_objectives};
         let series = SERIES.get(self.series)?;
         if self.run.is_none() {
@@ -403,6 +414,14 @@ impl ObjectiveSession {
             }
             run.messages.extend(fame.take_messages());
         }
+        if !run.finished() {
+            let frame = ride.frame();
+            if std::mem::replace(&mut self.resets, frame.reset_count) != frame.reset_count {
+                self.trace.reset();
+            }
+            self.trace.step(self.elapsed, frame.origin, 0);
+            self.elapsed += dt;
+        }
         run.tick(dt, ride.committed_points());
         if !run.finished() || self.recorded {
             return None;
@@ -412,6 +431,15 @@ impl ObjectiveSession {
         // `002fce00`: score / 1000 plus the combo points.
         let points = fame.finish(run.score);
         run.messages.extend(fame.take_messages());
+        let world = world::ScoreRun::of_objective(
+            series.key,
+            &self.course,
+            &fame,
+            run.score,
+            self.elapsed,
+            ride.assisted(),
+            &self.trace,
+        );
         let mut settings = atv_ui::settings::Settings::load();
         let loaded = atv_ui::settings::profile_loaded(&settings);
         let mut profile = atv_ui::settings::load_profile(&settings);
@@ -460,7 +488,7 @@ impl ObjectiveSession {
             Some(trophy) => format!("{summary} · {}", trophy.line()),
             None => summary,
         };
-        Some((summary, fame))
+        Some((summary, fame, world))
     }
 
     /// Split screen: advances the shared objective with every player's
@@ -645,6 +673,9 @@ impl ObjectiveSession {
         self.fame = self.fame_start.clone();
         self.steps = ride.steps();
         self.recorded = false;
+        self.elapsed = 0.;
+        self.trace.clear();
+        self.resets = ride.frame().reset_count;
     }
 
     /// Test tooling (`objectiveTest=targets`): every 1.5 s of ride time,
@@ -2431,12 +2462,13 @@ impl App {
                         overlay.results.show_objective(summary);
                         overlay.offer_split_objective_fame(&fame);
                     }
-                } else if let Some((summary, fame)) =
+                } else if let Some((summary, fame, world)) =
                     session.update(&mut riding.ride, ready.venue.objective.as_ref(), &player)
                     && let Some(overlay) = &mut self.overlay
                 {
                     overlay.results.show_objective(summary);
                     overlay.offer_fame(atv_core::hall_of_fame::Watch::Freestyle(fame));
+                    overlay.offer_world_score(world);
                 }
                 // The targets' cherries loop their motion; hit ones hide.
                 if let Some(objective) = &ready.venue.objective {
@@ -3354,6 +3386,15 @@ impl App {
                     serde_json::json!({"time": s.time, "activeEmitters": s.active_emitters,
                     "emitted": s.total_emitted, "draws": self.meter.snow_draws})
                 });
+            // Remastered rain (tools/test_engine_remastered_rain.mjs): null
+            // unless the pass exists.
+            state["rain"] = ready
+                .scene
+                .rain_state()
+                .map_or(serde_json::Value::Null, |r| {
+                    serde_json::json!({"clock": r.clock, "streaks": r.streaks,
+                    "splashes": r.splashes, "beads": r.beads})
+                });
             // Keyframed TOY actors (tools/test_engine_toy_actors.mjs): the
             // scene clock, draw statistics and each actor's posed root.
             state["actors"] =
@@ -3534,6 +3575,9 @@ impl App {
                 // A game's results title (`show_game`).
                 "resultsTitle": self.overlay.as_ref().filter(|o| o.results.shown)
                     .and_then(|o| o.results.game.clone()),
+                // The world boards' line on the results (world.rs).
+                "worldLine": self.overlay.as_ref().filter(|o| o.results.shown)
+                    .and_then(|o| o.results.world_line.clone()),
                 // The Hall of Fame name entry: records broken and the name.
                 "fame": self.overlay.as_ref().filter(|o| o.results.shown)
                     .and_then(|o| o.results.fame.as_ref())
@@ -3649,6 +3693,12 @@ impl App {
             state["fps"] = self.fps.state();
             publish_ui_state(&state.to_string());
         }
+        // Remastered rain beads the lens of the live riding view only.
+        ready.scene.set_rain_lens(
+            self.photo.is_none()
+                && self.replay.is_none()
+                && self.overlay.as_ref().is_none_or(|o| o.menu.is_none()),
+        );
         let overlay = self.overlay.as_ref().filter(|_| !self.hide_ui);
         let fps = &self.fps;
         let render_started = Instant::now();
@@ -7680,6 +7730,9 @@ impl App {
                     recorded: false,
                     fame: None,
                     fame_start: None,
+                    elapsed: 0.,
+                    trace: Default::default(),
+                    resets: 0,
                     targets: Vec::new(),
                     sounds: Vec::new(),
                     triggered: Vec::new(),
