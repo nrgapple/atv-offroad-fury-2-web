@@ -73,12 +73,15 @@ pub async fn load_spread(
     Ok(textures)
 }
 
-/// [`load`] with the PST decodes run as jobs (`crate::offload`): the same
-/// textures, with the pixels decoded off the page's thread (garage models).
-pub async fn load_jobs(
-    mesh: &Mesh,
-    archive: &Resource<'_>,
-) -> Result<HashMap<String, MaterialTexture>> {
+type JobPlan = (
+    Vec<(String, Option<MaterialPlan>)>,
+    Vec<usize>,
+    Vec<Result<Vec<u8>>>,
+);
+
+/// [`load_jobs`]' materials, and the PST members it decodes as jobs (each
+/// once: materials share maps) with their bytes, each failing on its own.
+fn job_plan(mesh: &Mesh, archive: &Resource<'_>) -> Result<JobPlan> {
     let lod = mesh.lods.first().ok_or("original mesh has no LOD")?;
     let mut plans = Vec::new();
     for group in &lod.groups {
@@ -91,7 +94,6 @@ pub async fn load_jobs(
         }
         plans.push((material.clone(), material_plan(material, archive)?));
     }
-    // Each PST member once (materials share maps), failing on its own.
     let mut members: Vec<usize> = Vec::new();
     for plan in plans.iter().filter_map(|(_, plan)| plan.as_ref()) {
         let source = match plan.source {
@@ -107,7 +109,27 @@ pub async fn load_jobs(
     let inputs = members
         .iter()
         .map(|&index| archive.extract(index))
-        .collect::<Vec<_>>();
+        .collect();
+    Ok((plans, members, inputs))
+}
+
+/// The PST bytes [`load_jobs`] decodes as [`crate::offload::PST`] jobs (a
+/// menu preload stores their results ahead of the ride).
+pub fn job_inputs(mesh: &Mesh, archive: &Resource<'_>) -> Result<Vec<Vec<u8>>> {
+    Ok(job_plan(mesh, archive)?
+        .2
+        .into_iter()
+        .filter_map(|input| input.ok())
+        .collect())
+}
+
+/// [`load`] with the PST decodes run as jobs (`crate::offload`): the same
+/// textures, with the pixels decoded off the page's thread (garage models).
+pub async fn load_jobs(
+    mesh: &Mesh,
+    archive: &Resource<'_>,
+) -> Result<HashMap<String, MaterialTexture>> {
+    let (plans, members, inputs) = job_plan(mesh, archive)?;
     let readable: Vec<&[u8]> = inputs
         .iter()
         .filter_map(|input| input.as_deref().ok())
