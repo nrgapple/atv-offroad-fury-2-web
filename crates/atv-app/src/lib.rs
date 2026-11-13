@@ -1137,16 +1137,16 @@ static LAST_SOUND_MS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU6
 /// The persistent decoded-content cache's counters and the last ride load's
 /// duration (tools/test_engine_decoded_cache.mjs).
 fn decoded_cache_state() -> serde_json::Value {
-    let s = atv_content::decoded::stats();
-    serde_json::json!({
-        "enabled": s.enabled, "hits": s.hits, "misses": s.misses, "stores": s.stores,
-        "rejected": s.rejected, "failed": s.failed, "hitBytes": s.hit_bytes,
-        "readMs": (s.read_ms * 10.).round() / 10., "pending": s.pending,
-        "background": s.background,
-        "entries": s.entries, "bytes": s.bytes, "limit": s.limit,
-        "loadMs": (f64::from_bits(LAST_LOAD_MS.load(std::sync::atomic::Ordering::Relaxed)) * 10.).round() / 10.,
-        "soundMs": (f64::from_bits(LAST_SOUND_MS.load(std::sync::atomic::Ordering::Relaxed)) * 10.).round() / 10.,
-    })
+    let mut state = atv_content::decoded::stats().json();
+    state["loadMs"] =
+        ((f64::from_bits(LAST_LOAD_MS.load(std::sync::atomic::Ordering::Relaxed)) * 10.).round()
+            / 10.)
+            .into();
+    state["soundMs"] =
+        ((f64::from_bits(LAST_SOUND_MS.load(std::sync::atomic::Ordering::Relaxed)) * 10.).round()
+            / 10.)
+            .into();
+    state
 }
 
 /// A loading progress line (status bar, and the frontend's loader).
@@ -10383,6 +10383,8 @@ pub fn run(options: Options) {
         builder.with_android_app(activity.clone());
     }
     let event_loop = builder.build().expect("event loop");
+    // Live cache counters for tests (`window.atvDecodedCache`).
+    atv_content::decoded::diagnostics(url_flag("uiDiagnostics=1"));
     let app = App {
         cloud: Default::default(),
         world: Default::default(),

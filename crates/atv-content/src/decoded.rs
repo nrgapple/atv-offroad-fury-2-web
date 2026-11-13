@@ -64,6 +64,19 @@ pub struct Stats {
     pub limit: u64,
 }
 
+impl Stats {
+    /// The diagnostics form (`decodedCache`, `window.atvDecodedCache`).
+    pub fn json(&self) -> serde_json::Value {
+        serde_json::json!({
+            "enabled": self.enabled, "hits": self.hits, "misses": self.misses,
+            "stores": self.stores, "rejected": self.rejected, "failed": self.failed,
+            "hitBytes": self.hit_bytes, "readMs": (self.read_ms * 10.).round() / 10.,
+            "pending": self.pending, "background": self.background,
+            "entries": self.entries, "bytes": self.bytes, "limit": self.limit,
+        })
+    }
+}
+
 /// A fast 64-bit hash of `bytes` (not cryptographic): entry checksums and
 /// input keys. Inputs here come from integrity-checked content. Four
 /// independent lanes keep a phone's multiplier busy on large entries.
@@ -296,6 +309,7 @@ mod imp {
         false
     }
     pub fn publish(_name: &str, _json: &str) {}
+    pub fn diagnostics(_on: bool) {}
     /// Whether a background job for `key` should start (never on desktop).
     pub fn claim(_key: &str) -> bool {
         false
@@ -325,6 +339,24 @@ mod imp {
     thread_local! {
         /// Loads in progress ([`loading`]).
         static LOADS: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+        /// [`diagnostics`] is on.
+        static DIAGNOSTICS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    }
+
+    /// Publishes [`stats`] as `window.atvDecodedCache` whenever they change
+    /// (`?uiDiagnostics=1`). Tests read it there: an idle menu draws no
+    /// frames, so the frame-published `#ui-state` copy goes stale while
+    /// background writes finish.
+    pub fn diagnostics(on: bool) {
+        DIAGNOSTICS.with(|d| d.set(on));
+        changed();
+    }
+
+    /// Republishes the stats after a change (diagnostics only).
+    fn changed() {
+        if DIAGNOSTICS.with(|d| d.get()) {
+            publish("atvDecodedCache", &stats().json().to_string());
+        }
     }
 
     /// Marks a load running until the guard drops: background cache work
@@ -583,6 +615,7 @@ mod imp {
                 s.stats.hits += 1;
                 s.stats.hit_bytes += bytes.len() as u64;
             });
+            changed();
             return Some(bytes.to_vec());
         }
         let listed = STATE.with(|s| s.borrow().index.entries.iter().any(|e| e.0 == key));
@@ -604,6 +637,7 @@ mod imp {
                 None => s.stats.misses += 1,
             }
         });
+        changed();
         found
     }
 
@@ -696,6 +730,7 @@ mod imp {
             s.stats.pending += 1;
             (evicted, s.index.namespace.clone())
         });
+        changed();
         let key = key.to_string();
         wasm_bindgen_futures::spawn_local(async move {
             // Written once the load that produced it has finished, so the
@@ -742,6 +777,7 @@ mod imp {
                 }
                 schedule_save(&mut s);
             });
+            changed();
         });
     }
 
@@ -788,6 +824,7 @@ mod imp {
     /// Ends a [`claim`] that stored nothing.
     pub fn release(key: &str) {
         STATE.with(|s| s.borrow_mut().claimed.remove(key));
+        changed();
     }
 
     /// Runs `task` in the background on the page's executor.
