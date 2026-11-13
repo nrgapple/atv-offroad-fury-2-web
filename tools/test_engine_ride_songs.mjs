@@ -24,6 +24,10 @@ async function select(page, action) {
 async function ride(page, previous) {
   await select(page, 'single'); await key(page, 'Enter'); await frontPage(page, 'single');
   await select(page, 'tracks'); await key(page, 'Enter'); await frontPage(page, 'tracks');
+  // The audio diagnostics are a ride's (its sounds load after its first
+  // frame); the previous ride's last report stays on the page until then,
+  // so drop it and wait for this ride's own.
+  await page.evaluate(() => document.documentElement.removeAttribute('data-engine-audio'));
   await key(page, 'Enter');
   await until(page, () => (document.querySelector('#status')?.textContent ?? '').startsWith('ENV'), null, 180000);
   await page.mouse.click(640, 400);
@@ -70,7 +74,11 @@ try {
   const s = await read(page), index = s.front.menu.choices.indexOf('song:4');
   const hit = s.front.menuHits.find(h => h.id === 1000 + index);
   await page.mouse.click(hit.x + hit.width / 2, hit.y + hit.height / 2);
-  await until(page, () => JSON.parse(document.querySelector('#ui-state').textContent).soundtrack?.playing === 4);
+  // The title follows the pick once the song starts.
+  await until(page, () => {
+    const s = JSON.parse(document.querySelector('#ui-state').textContent).soundtrack;
+    return s?.playing === 4 && s.musicTitle;
+  });
   const chosen = (await read(page)).soundtrack.musicTitle;
   await key(page, 'Escape');
   await until(page, () => JSON.parse(document.querySelector('#ui-state').textContent).front.menu?.page === 'settings');
@@ -79,7 +87,9 @@ try {
   const third = await ride(page, chosen);
   assert.notEqual(third, chosen, 'the Jukebox song does not carry into the ride');
   const saved = await page.evaluate(() => JSON.parse(localStorage.getItem('atv-soundtrack-v1')));
-  assert.deepEqual(saved.history.slice(-4).length, 4, JSON.stringify(saved.history));
+  // Two rides, the Jukebox choice and the third ride, each recorded once.
+  assert.equal(saved.history.length, 4, JSON.stringify(saved.history));
+  assert.notEqual(saved.history[3], saved.history[2], JSON.stringify(saved.history));
   assertNoErrors(errors);
   console.log(`  Rides: ${first} → ${second}; Jukebox ${chosen} → ride ${third}`);
   console.log('PASS: each Rust ride starts a new song');
