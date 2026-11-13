@@ -1,0 +1,17 @@
+{
+  "id": "photo-mode-from-pause-f83d3bd7ca99472c91661c0e06404cc3",
+  "timestamp": "2026-11-13T00:21:52.539307+00:00",
+  "recorded_at": "2026-11-13T00:21:52.539307+00:00",
+  "kind": "build",
+  "title": "Photo mode from Pause",
+  "summary": "Pause has a Photo mode. It closes the menu, hides the HUD and controls, and leaves a free camera around the paused moment. Save photo writes one clean frame to a PNG.",
+  "details": [
+    "Orbit with mouse drag, arrow keys, the right stick or one-finger drag. Pan, zoom and field of view have their own keys, pad controls and touch gestures.",
+    "The eye stays above the drawn ground, and the focus point stays within 120 ft of the rider.",
+    "Save photo draws one frame without controls. The browser downloads a PNG. Desktop writes the picture to the Pictures folder.",
+    "Back returns to Pause. The ride stays paused and untouched.",
+    "Split screen: only player 1's view takes the free camera. Online rooms do not show the row."
+  ],
+  "limitation": "There is no roll control, because the scene camera has no roll. Photo mode is not offered in online rooms.",
+  "verification": "Unit tests for the orbit camera, limits, pinch and drag, and controller edges. tools/test_engine_photo.mjs passes locally on desktop (orbit, wheel, field of view, a real PNG download, back to Pause) and on a phone (touch drag, pinch and Back tap). make precheck passes."
+}

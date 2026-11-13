@@ -1,0 +1,17 @@
+{
+  "id": "menus-on-phones-one-row-event-tabs-audio-pager-done-an-dc9c1cb9dc754dd1800823409ae992fa",
+  "timestamp": "2026-11-13T00:21:52.206260+00:00",
+  "recorded_at": "2026-11-13T00:21:52.206260+00:00",
+  "kind": "build",
+  "title": "Menus on phones: one-row event tabs, Audio pager, Done and wordmark fit",
+  "summary": "The event tabs in the Select Track and Single Race course pickers stay on one row on phones. Where they do not fit, the strip scrolls sideways. The landscape picker now shows three and a half course cards instead of one and a half. Small details on the Audio, garage and main menu pages now fit.",
+  "details": [
+    "Event tabs keep one row. Where the row is wider than its column, the strip scrolls sideways under the finger, and the selected tab moves into view when the filter changes. Wide screens are unchanged.",
+    "Landscape pickers show three and a half cards instead of one and a half, because the tabs no longer take extra rows.",
+    "Options → Audio shows no Previous, Next or page count when the songs fit one page.",
+    "Garage Done prefers 180 px but narrows beside Rider gear on a short landscape phone instead of running into the stage.",
+    "The main menu wordmark hides on a portrait stage that is too short for it, instead of shrinking to a speck. It still shows from 390×844 up."
+  ],
+  "limitation": "Dragging the tab strip is not covered by a browser test; it uses the same scroller as the course list. Sizes come from folding-phone and phone screenshots drawn in desktop Chromium, not from a device.",
+  "verification": "New atv-ui unit tests (tabs on one row at seven sizes, Done in its column, wordmark full size or hidden, and the Audio pager) pass with cargo test for atv-ui and atv-core. tools/test_engine_fold_layout.mjs passes; screenshots at four folding-phone cases were inspected before and after."
+}
