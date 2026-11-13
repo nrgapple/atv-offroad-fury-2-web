@@ -1,0 +1,16 @@
+{
+  "id": "world-hall-of-fame-view-and-the-daily-event-cb51da94175041a7a5f5e5362ce33d8f",
+  "timestamp": "2026-11-13T00:21:51.454666+00:00",
+  "recorded_at": "2026-11-13T00:21:51.454666+00:00",
+  "kind": "build",
+  "title": "World Hall of Fame view and the Daily Event",
+  "summary": "Hall of Fame can now show the world boards as well as this device. Single Player has a Daily Event: one track, event, lap count and vehicle class picked from the date, the same for everyone that day. Finished race times can be sent to the world boards.",
+  "details": [
+    "Hall of Fame → View: This Device / World. The world view shows each course's lap and full-length race boards, top 10 plus the rider's own row if it is lower. Each board loads once per menu session.",
+    "Single Player → Daily Event. The pick is computed on the device, so it works offline. The page shows today's board and yesterday's winner when online. Start Daily Event launches the race.",
+    "Submission: a race that keeps records (no Kid mode, rider assists, Practice, split screen, Duel or online) records a position trace from GO. It is sent once, after the name is entered, when it set a local record or is a daily event time.",
+    "The Worker API and its table shipped earlier in #554. This change adds the game side."
+  ],
+  "limitation": "No accepted submission had been made against production when this shipped. Board reads, the daily pick and refusals were checked on production. The accepted submission path was checked only in Worker tests and a browser test with a mocked board API. Freestyle submissions and ghost downloads are not included.",
+  "verification": "Host and production reads: atv-core world_board tests (6), atv-ui tests including the World view and Daily Event controller tests, 46 Cloudflare Worker tests, and tools/test_engine_world_boards.mjs with a mocked board API. Read-only checks on production: board GETs return 200 with a 60 s cache header; the daily pick for 2026-11-12 matches the Rust pick; an implausible submission is refused with 422 before any write; a foreign origin gets 403."
+}

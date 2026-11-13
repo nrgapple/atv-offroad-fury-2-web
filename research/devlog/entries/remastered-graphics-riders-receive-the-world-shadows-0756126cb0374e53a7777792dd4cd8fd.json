@@ -1,0 +1,15 @@
+{
+  "id": "remastered-graphics-riders-receive-the-world-shadows-0756126cb0374e53a7777792dd4cd8fd",
+  "timestamp": "2026-11-13T00:21:52.917267+00:00",
+  "recorded_at": "2026-11-13T00:21:52.917267+00:00",
+  "kind": "build",
+  "title": "Remastered graphics: riders receive the world shadows",
+  "summary": "With Graphics set to Remastered, the player's and CPU racers' vehicles and riders now darken where the world casts shadow. Before, only the ground and scenery took the shadows.",
+  "details": [
+    "The shadow map is the same one the terrain and scenery already use. The rider takes four samples of it.",
+    "Remote riders and ghosts are unchanged.",
+    "Other presets are unchanged: their new branch is turned off by a setting that stays at zero."
+  ],
+  "limitation": "No capture yet shows a rider standing in shade, so the darkening on the rider itself has not been checked by eye.",
+  "verification": "make web, tools/test_engine_remastered.mjs (WebGL2) passes, and make precheck passes. Native captures of ENV01 and ENV05 under Original, Enhanced and High are identical to the build before the change."
+}
