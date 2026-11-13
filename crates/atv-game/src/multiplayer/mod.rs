@@ -896,7 +896,9 @@ impl Session {
         }
         self.sequence = s.sequence;
         let mut whole = None;
-        if carrying {
+        if held {
+            // The courier's next bundle is not due: what it carries waits.
+        } else if carrying {
             // As the courier, every relayed pose goes in a bundle: this
             // rider's own (whole, no deltas) and the latest from each linked
             // rider, as many as fit; the rest go in the next one.
@@ -2192,7 +2194,17 @@ mod tests {
         .unwrap();
         s.receive(&batch, 1000).unwrap();
         assert_eq!(s.counters.batches_received, 1);
-        assert_eq!(s.present(1000, None, &no_cars).len(), 1);
+        assert_eq!(
+            s.present(1000, None, &no_cars).len(),
+            1,
+            "{:?}",
+            (
+                s.buffers.len(),
+                s.buffers.get(&0).map(PoseBuffer::len),
+                s.peer,
+                &s.lobby
+            )
+        );
         assert!((s.delay_ms(0).unwrap() - 308.).abs() < 1.);
         // Shown where it was 308 ms before the newest pose: at the first.
         let shown = s.present(1016, None, &no_cars)[0].1.snapshot.atv.position[0];
