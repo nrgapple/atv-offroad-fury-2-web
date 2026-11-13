@@ -102,6 +102,31 @@ class GuardTests(unittest.TestCase):
             for kind in ('compile', 'browser'):
                 self.assertNotEqual(self.attempt(kind, 'a')[0], 0)
 
+    def test_both_shared_waiters_join_after_legacy_exclusive_release(self):
+        import fcntl
+        import selectors
+        children = []
+        with open(Path(self.tmp.name) / 'heavy.lock', 'a+') as old:
+            fcntl.flock(old, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            for kind in ('compile', 'browser'):
+                directory = Path(self.tmp.name) / kind
+                directory.mkdir()
+                child = self.spawn(f"import time; lease=g.lease(kind={kind!r},wait=5); lease.__enter__(); print('ready',flush=True); time.sleep(30)", cwd=directory)
+                children.append(child)
+                self.addCleanup(lambda child=child: self.stop(child))
+            time.sleep(.3)
+        # Both must enter while the first still holds its shared lock.
+        with selectors.DefaultSelector() as selector:
+            for child in children:
+                selector.register(child.stdout, selectors.EVENT_READ)
+            deadline = time.monotonic() + 6
+            while selector.get_map():
+                events = selector.select(max(0, deadline - time.monotonic()))
+                self.assertTrue(events, 'both shared waiters must wake')
+                for key, _ in events:
+                    self.assertEqual(key.fileobj.readline().strip(), 'ready')
+                    selector.unregister(key.fileobj)
+
     def test_legacy_wait_is_bounded_and_restores_alarm(self):
         import fcntl
         with open(Path(self.tmp.name) / 'heavy.lock', 'a+') as old:

@@ -152,27 +152,37 @@ def compatibility_lock(lock, mode, deadline):
     Polling this lock let older two-second retry loops repeatedly win admission.
     Never hold the admission mutex while waiting here.
     """
-    try:
-        fcntl.flock(lock, mode | fcntl.LOCK_NB)
-        return
-    except BlockingIOError:
-        remaining = deadline - time.monotonic()
-        if remaining <= 0 or signal.getitimer(signal.ITIMER_REAL)[0]:
-            raise
-        old = signal.getsignal(signal.SIGALRM)
-        def timeout(_signum, _frame):
-            raise BlockingIOError('timed out waiting for exclusive/legacy work')
+    announced = False
+    while True:
         try:
-            signal.signal(signal.SIGALRM, timeout)
-        except ValueError:  # Library caller in a non-main thread: retain polling.
-            raise BlockingIOError('exclusive/legacy work is busy') from None
-        try:
-            signal.setitimer(signal.ITIMER_REAL, remaining)
-            print('Build waiting for exclusive/legacy work (kernel queue)', file=sys.stderr, flush=True)
-            fcntl.flock(lock, mode)
-        finally:
-            signal.setitimer(signal.ITIMER_REAL, 0)
-            signal.signal(signal.SIGALRM, old)
+            fcntl.flock(lock, mode | fcntl.LOCK_NB)
+            return
+        except BlockingIOError:
+            if not announced:
+                print('Build waiting for exclusive/legacy work (kernel queue)', file=sys.stderr, flush=True)
+                announced = True
+            remaining = deadline - time.monotonic()
+            if remaining <= 0 or signal.getitimer(signal.ITIMER_REAL)[0]:
+                raise
+            old = signal.getsignal(signal.SIGALRM)
+            def retry(_signum, _frame):
+                raise TimeoutError('retry shared admission')
+            try:
+                signal.signal(signal.SIGALRM, retry)
+            except ValueError:  # Non-main-thread library caller: retain polling.
+                raise BlockingIOError('exclusive/legacy work is busy') from None
+            try:
+                # macOS may wake just one shared waiter after an exclusive
+                # release. Recheck periodically so its peer can join it, even
+                # while that first reader keeps the compatibility lock open.
+                signal.setitimer(signal.ITIMER_REAL, min(2, remaining))
+                fcntl.flock(lock, mode)
+                return
+            except TimeoutError:
+                pass
+            finally:
+                signal.setitimer(signal.ITIMER_REAL, 0)
+                signal.signal(signal.SIGALRM, old)
 
 
 @contextlib.contextmanager
