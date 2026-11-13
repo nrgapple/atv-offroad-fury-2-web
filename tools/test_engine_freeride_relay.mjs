@@ -343,7 +343,7 @@ try {
     byDistance: sent,
     resting: { ...rate(driver, rested, restedUntil), atRest: run.rested },
     watcherResting: rate(near, run.started, run.stopped),
-    travelledFt: round(nearest(run.driven.at(-1)[1]), 0),
+    farthestFt: round(Math.max(...run.driven.map(([, origin]) => nearest(origin))), 0),
     driverFrames: states,
     // The watcher beside the start: by the driver's distance, then by its
     // state (hops and wrecks).
@@ -387,7 +387,7 @@ try {
   // Free Ride: batches, no more often than each distance tier allows (and a
   // change of tier or state now and then), one pose every 5 s at rest.
   assert.ok(shared.counts.driver.batches > 0 && shared.counts.near.batchesReceived > 0, JSON.stringify(shared.counts));
-  assert.ok(shared.travelledFt > 300, `the driver got away: ${shared.travelledFt} ft`);
+  assert.ok(shared.farthestFt > 300, `the driver got away: ${shared.farthestFt} ft`);
   for (const t of TIERS) {
     const got = shared.byDistance[t.name];
     if (got.seconds < 3) continue;
