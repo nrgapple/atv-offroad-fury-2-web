@@ -1,5 +1,53 @@
 # Host build budget
 
+## Bounded overlap (2026-11-12)
+
+Agent count is independent of build concurrency. Local entry points now admit
+one `compile` job and one `browser` suite together, in different worktrees.
+Cargo build/check/clippy/test/rustc, the web build and relay build use the compile
+permit. Ordinary content/content-free browser checks use the browser permit.
+Relay, native, manual, and timing-sensitive checks (marked `exclusive` in the
+browser manifest) stay exclusive, as do mixed selections containing one. Use
+`--exclusive` on the browser runner for other performance measurements. Desktop/Android packaging,
+`cargo run`, unknown commands and older guards remain exclusive. CI is unchanged.
+
+Admission requires normal macOS memory pressure and, for the parallel kinds,
+at least 25% headroom reported by `memory_pressure -Q`. This is an admission
+check, not a hard memory quota or a guarantee about later compiler peaks. It
+never kills existing jobs. Two compiler jobs or two browser suites still cannot
+overlap. Performance measurements should use an exclusive lease to avoid
+contention from the other workload.
+
+A shared lock on the existing `heavy.lock` excludes old exclusive guards; a
+separate lock per kind bounds concurrency. Waiting for the legacy/exclusive lock
+uses a bounded kernel wait rather than repeatedly racing older polling guards. A canonical Git-worktree lock prevents
+rebuilding files under a test, including commands launched from subdirectories
+or through symlink paths. `make web` holds it while copying both the page shell
+and compiled engine. Supported direct web/browser entry points normalize their
+working directory to the checkout they write. Cross-kind nested calls fail with
+an instruction to use an exclusive outer lease instead of waiting in a deadlock.
+Same-kind nesting and children of an exclusive job reuse their parent's permit.
+
+Compiler processes normally belong to the admitted process tree. For sccache,
+whose daemon parents rustc, admission matches the exact compiler arguments to
+an admitted client's request; unrelated compiler processes still defer entry.
+Lock metadata is trusted only while the kernel lock is held. Resource and
+checkout locks are passed to the direct child and released when holders exit.
+
+After tests, update only the installed Cargo guard with:
+
+```sh
+python3 tools/install_host_build_budget.py --repo "$PWD" --guard-only --apply
+```
+
+This atomically replaces its runtime file without restarting the desktop watcher
+or interrupting existing work. New worktrees must incorporate this change to use
+the new make/browser entry points. Already-running and old-worktree jobs keep
+the conservative exclusive behavior. Use `python3 tools/host_build.py -- <command>`
+to request exclusive execution explicitly. Do not use `CI=1` to bypass host limits.
+
+## Original exclusive guard (2026-10-28)
+
 Implementation strategy (2026-10-28): serialize new local heavy build/test commands
 with one advisory host lease; cap Cargo jobs at two; wait for pre-existing compiler,
 desktop-build and browser-test work to finish rather than interrupting it. Defer

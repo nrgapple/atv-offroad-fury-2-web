@@ -77,9 +77,10 @@ work follow the returned continuation instruction, and for pending PR checks use
 the supported PR watch. Keep each slice owned through delivery.
 When parallel work is authorized, use independent tasks to size the team; there
 is no fixed two-agent cap. Research, editing, review and documentation can proceed
-concurrently. Stagger heavy checks through the existing single build/test slot
-and reuse valid results. If most agents are waiting or repeatedly conflicting,
-finish the pending slices before adding scope. The slot protects host memory;
+concurrently. Stagger heavy checks through the bounded host budget (one compiler
+and one browser suite in different worktrees, subject to memory headroom) and
+reuse valid results. If most agents are waiting or repeatedly conflicting,
+finish the pending slices before adding scope. The budget protects host memory;
 measure headroom before increasing heavy-work concurrency. Agent count and
 compiler concurrency are separate limits.
 
