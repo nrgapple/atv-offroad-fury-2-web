@@ -1056,10 +1056,9 @@ impl LobbyRoom {
         // Whether a rider takes batches is told only to builds that do: an
         // older one accepts no other flag than DIRECT.
         let flags = |c: &Connection, to: &Connection| {
-            vec![
-                u8::from(c.direct) * signal::DIRECT
-                    | u8::from(c.batches && to.batches) * signal::BATCHES,
-            ]
+            let direct = u8::from(c.direct) * signal::DIRECT;
+            let batches = u8::from(c.batches && to.batches) * signal::BATCHES;
+            vec![direct | batches]
         };
         for (other, c) in self.connections()? {
             if &other == ws || c.player.is_none() || c.ready_map != map {
