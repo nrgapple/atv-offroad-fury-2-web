@@ -157,10 +157,13 @@ try {
   ]);
   if (process.env.ATV_WORLD_SUBMIT_SHOTS) { await nextFrames(page, 20); await page.screenshot({ path: `${process.env.ATV_WORLD_SUBMIT_SHOTS}/results.png` }); }
 
-  // Continue → Quit: back in the menus the boards show the row.
+  // Continue → Quit (hud/results.rs buttons): back in the menus the boards
+  // show the row.
+  const CONTINUE = 30, QUIT = 33;
+  s = await until(page, s => s.ride?.results?.includes(CONTINUE), 15000, 'the results buttons');
   await key(page, 'Enter');
-  await until(page, s => s.ride?.results?.length === 2 && !s.ride.fame, 15000, 'the Retry / Quit menu');
-  await key(page, 'ArrowDown');
+  s = await until(page, s => s.ride?.results?.includes(QUIT), 15000, 'the Retry / Quit menu');
+  for (let i = 0; i < s.ride.results.indexOf(QUIT); i++) await key(page, 'ArrowDown');
   await key(page, 'Enter');
   await onPage(page, 'main', 120000);
   await choose(page, 'single'); await onPage(page, 'single');

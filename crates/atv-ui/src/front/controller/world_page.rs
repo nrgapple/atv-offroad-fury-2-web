@@ -130,7 +130,7 @@ impl Frontend {
     /// profile's, never a house rider's row of the same name.
     fn mine(&self, entry: &world_board::BoardEntry) -> bool {
         !entry.house
-            && (self.world.names.iter().any(|n| *n == entry.name)
+            && (self.world.names.contains(&entry.name)
                 || self
                     .profile_name()
                     .is_some_and(|p| p.eq_ignore_ascii_case(&entry.name)))

@@ -229,7 +229,10 @@ Daily Event → Start, the driver rides the day's five-lap race to a real
 finish, the name entry names the records, one submission goes out and is
 accepted, the results show the World line, and the Daily Event page and Hall
 of Fame → View: World show the row among the house riders. The test computes
-each expected rank from the submitted value and the house rows.
+each expected rank from the submitted value and the house rows. Host run
+(Chromium, 2026-11-12, the day's pick `env05` on an ATV): the driver's lap
+0:21.35 and race 1:49.59 came back as "World #3 Fastest Lap! · World #4
+Fastest Race! · World #5 Daily Event!" among ten house riders a board.
 
 Limits: host Chromium only (no phone, no desktop app run); the deployed
 Worker and D1 are exercised only by read-only GETs; no human lap, race or
