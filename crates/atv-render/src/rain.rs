@@ -2,9 +2,10 @@
 //! draws rain only as its placed, scrolling rain cards and Freeport's type 8
 //! emitter; its ScreenRain lens/world drops are never created
 //! (research/WEATHER.md). Under the Remastered preset only, rainy venues
-//! gain falling streaks around the camera, splash rings on the ground ahead
-//! of it and beads on the lens. Streaks are placed in the shader from the
-//! instance index; splashes and beads are fixed pools stepped here.
+//! gain falling streaks around the camera, splash rings on the ground and
+//! water ahead of it and, on the live riding view, beads on the lens.
+//! Streaks are placed in the shader from the instance index; splashes and
+//! beads are fixed pools stepped here.
 use crate::{
     Camera, Gpu, texture,
     world::{Blend, PipelineDesc, World},
@@ -52,10 +53,41 @@ struct Bead {
     slide: f32,
 }
 
+/// A splash ring: where it landed, when (seconds on the rain clock), and
+/// the ground's slope there (rise per foot east and north) so the ring lies
+/// on a hillside instead of cutting into it.
+#[repr(C)]
+#[derive(Clone, Copy, PartialEq, Debug, bytemuck::Pod, bytemuck::Zeroable)]
+struct Splash {
+    at: [f32; 3],
+    birth: f32,
+    slope: [f32; 2],
+    unused: [f32; 2],
+}
+
+const HIDDEN: Splash = Splash {
+    at: [0.; 3],
+    birth: -10.,
+    slope: [0.; 2],
+    unused: [0.; 2],
+};
+
+/// What the pass drew last frame (diagnostics and tests).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct RainState {
+    /// The rain clock, seconds. It stops with the world.
+    pub clock: f32,
+    pub streaks: u32,
+    /// Splash rings in their visible life.
+    pub splashes: u32,
+    /// Lens beads drawn (0 when the view takes none).
+    pub beads: u32,
+}
+
 /// The splash and lens-bead pools, stepped on the rain clock.
 pub struct Drops {
     random: Random,
-    splashes: [[f32; 4]; SPLASHES],
+    splashes: [Splash; SPLASHES],
     beads: [Bead; BEADS],
     /// Beads in use: the lens arrives wet, every bead at a random age.
     live: usize,
@@ -66,7 +98,7 @@ impl Drops {
     pub fn new() -> Self {
         Self {
             random: Random(0x9e37_79b9),
-            splashes: [[0., 0., 0., -10.]; SPLASHES],
+            splashes: [HIDDEN; SPLASHES],
             beads: [Bead::default(); BEADS],
             live: 0,
             clock: 0.,
@@ -75,16 +107,22 @@ impl Drops {
 
     /// Advances to `clock` seconds: expired splashes land again on the
     /// ground ahead of the camera, expired beads form again on the lens.
+    /// `ground` is the height a drop lands on (terrain or water).
     pub fn step(&mut self, clock: f32, camera: &Camera, ground: impl Fn(f32, f32) -> f32) {
         let dt = (clock - self.clock).clamp(0., 0.1);
         // The clock wraps (the vegetation wind's 4096 s): start over.
         if clock < self.clock {
-            self.splashes.iter_mut().for_each(|s| s[3] = -10.);
+            self.splashes.iter_mut().for_each(|s| s.birth = -10.);
         }
         self.clock = clock;
+        // A stopped clock (pause, photo mode) keeps every drop where it is,
+        // wherever the camera goes.
+        if dt <= 0. {
+            return;
+        }
         let (sy, cy) = camera.yaw.sin_cos();
         for index in 0..SPLASHES {
-            if clock - self.splashes[index][3] < SPLASH_LIFE {
+            if clock - self.splashes[index].birth < SPLASH_LIFE {
                 continue;
             }
             // Spread over a fan 2-30 ft ahead, staggered so they never
@@ -96,15 +134,23 @@ impl Drops {
             let (x, z) = (camera.x + dx * distance, camera.z + dz * distance);
             let y = ground(x, z);
             let birth = clock + (self.random.next() - 0.5) * SPLASH_LIFE;
-            // Off the terrain the slot stays hidden and tries again.
-            self.splashes[index] = if y.is_finite() {
-                [x, y, z, birth]
+            let slope = [
+                ground(x + 0.5, z) - ground(x - 0.5, z),
+                ground(x, z + 0.5) - ground(x, z - 0.5),
+            ];
+            // Off the terrain, or on a face too steep to hold a ring, the
+            // slot stays hidden and tries again.
+            let lands = y.is_finite() && slope.iter().all(|s| s.abs() <= 1.2);
+            self.splashes[index] = if lands {
+                Splash {
+                    at: [x, y, z],
+                    birth,
+                    slope,
+                    unused: [0.; 2],
+                }
             } else {
-                [0., 0., 0., -10.]
+                HIDDEN
             };
-        }
-        if dt <= 0. {
-            return;
         }
         let fresh = self.live == 0;
         self.live = BEADS;
@@ -132,11 +178,12 @@ impl Drops {
         }
     }
 
-    /// Clip-space bead instances: x, y, radius, opacity.
-    fn bead_instances(&self) -> [[f32; 4]; BEADS] {
+    /// Clip-space bead instances: x, y, radius, opacity. A view that
+    /// takes no beads (`lens` false) gets none.
+    fn bead_instances(&self, lens: bool) -> [[f32; 4]; BEADS] {
         std::array::from_fn(|index| {
             let bead = &self.beads[index];
-            if index >= self.live || bead.life <= 0. {
+            if !lens || index >= self.live || bead.life <= 0. {
                 return [0.; 4];
             }
             let fade_in = (bead.age / 0.15).min(1.);
@@ -161,7 +208,8 @@ pub struct RainPass {
     uniforms: wgpu::Buffer,
     draw_group: wgpu::BindGroup,
     texture_group: wgpu::BindGroup,
-    pub drops: Drops,
+    drops: Drops,
+    state: RainState,
 }
 
 impl RainPass {
@@ -179,10 +227,15 @@ impl RainPass {
             mapped_at_creation: false,
         });
         let shader = device.create_shader_module(wgpu::include_wgsl!("rain.wgsl"));
-        let instance = [Some(wgpu::VertexBufferLayout {
+        let bead = [Some(wgpu::VertexBufferLayout {
             array_stride: 16,
             step_mode: wgpu::VertexStepMode::Instance,
             attributes: &wgpu::vertex_attr_array![0 => Float32x4],
+        })];
+        let splash = [Some(wgpu::VertexBufferLayout {
+            array_stride: std::mem::size_of::<Splash>() as u64,
+            step_mode: wgpu::VertexStepMode::Instance,
+            attributes: &wgpu::vertex_attr_array![0 => Float32x4, 1 => Float32x4],
         })];
         let pipeline = |label, vertex, fragment, buffers, depth_compare| {
             world.pipeline(
@@ -200,10 +253,10 @@ impl RainPass {
                 },
             )
         };
-        let instances = |label, count: usize| {
+        let instances = |label, bytes: usize| {
             device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some(label),
-                contents: &vec![0u8; count * 16],
+                contents: &vec![0u8; bytes],
                 usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             })
         };
@@ -219,18 +272,18 @@ impl RainPass {
                 "rain splashes",
                 "vs_splash",
                 "fs_splash",
-                &instance,
+                &splash,
                 wgpu::CompareFunction::Less,
             ),
             lens: pipeline(
                 "rain lens",
                 "vs_lens",
                 "fs_lens",
-                &instance,
+                &bead,
                 wgpu::CompareFunction::Always,
             ),
-            splash_buffer: instances("rain splashes", SPLASHES),
-            bead_buffer: instances("rain beads", BEADS),
+            splash_buffer: instances("rain splashes", std::mem::size_of::<Splash>() * SPLASHES),
+            bead_buffer: instances("rain beads", 16 * BEADS),
             draw_group: world.draw_group(
                 gpu,
                 &uniforms,
@@ -241,12 +294,21 @@ impl RainPass {
             uniforms,
             texture_group: world.texture_group(gpu, &white, &sampler),
             drops: Drops::new(),
+            state: RainState::default(),
         }
+    }
+
+    /// What the latest prepared frame draws.
+    pub fn state(&self) -> RainState {
+        self.state
     }
 
     /// Steps the pools to `clock` (paused with the world) and uploads them.
     /// `light` is the venue's ambient plus sun colour; drops take a little
-    /// of the sky and fog so night and dusk rain stay dim.
+    /// of the sky and fog so night and dusk rain stay dim. `lens` is false
+    /// for a view that is not the live riding camera (a menu, photo mode, a
+    /// replay, a split-screen view): it gets no beads.
+    #[allow(clippy::too_many_arguments)]
     pub fn prepare(
         &mut self,
         gpu: &Gpu,
@@ -254,6 +316,7 @@ impl RainPass {
         aspect: f32,
         clock: f32,
         light: [f32; 3],
+        lens: bool,
         ground: impl Fn(f32, f32) -> f32,
     ) -> (u32, u32) {
         self.drops.step(clock, camera, ground);
@@ -271,15 +334,28 @@ impl RainPass {
             0,
             bytemuck::cast_slice(&self.drops.splashes),
         );
+        let beads = self.drops.bead_instances(lens);
         gpu.queue.write_buffer(
             &self.bead_buffer,
             0,
-            bytemuck::cast_slice(&self.drops.bead_instances()),
+            bytemuck::cast_slice(&beads),
         );
+        self.state = RainState {
+            clock,
+            streaks: STREAKS,
+            splashes: self
+                .drops
+                .splashes
+                .iter()
+                .filter(|s| (0. ..SPLASH_LIFE).contains(&(clock - s.birth)))
+                .count() as u32,
+            beads: beads.iter().filter(|b| b[3] > 0.).count() as u32,
+        };
         (3, (STREAKS + SPLASHES as u32 + BEADS as u32) * 2)
     }
 
-    /// World streaks and splashes, depth tested against the scene.
+    /// World streaks and splashes, depth tested against the scene, then
+    /// the lens beads over everything.
     pub fn draw(&self, pass: &mut wgpu::RenderPass<'_>, world: &World) {
         pass.set_bind_group(0, &world.globals_group, &[]);
         pass.set_bind_group(1, &self.texture_group, &[]);
@@ -299,36 +375,64 @@ impl RainPass {
 mod tests {
     use super::*;
 
+    const CAMERA: Camera = Camera {
+        x: 100.,
+        y: 20.,
+        z: 50.,
+        yaw: 0.,
+        pitch: 0.,
+    };
+
     #[test]
     fn splashes_land_ahead_on_the_ground_and_beads_fill_the_lens() {
-        let camera = Camera {
-            x: 100.,
-            y: 20.,
-            z: 50.,
-            yaw: 0.,
-            pitch: 0.,
-        };
         let mut drops = Drops::new();
         for step in 1..=40 {
-            drops.step(step as f32 / 60., &camera, |x, _| x * 0.1);
+            drops.step(step as f32 / 60., &CAMERA, |x, _| x * 0.1);
         }
         assert_eq!(drops.live, BEADS);
-        for [x, y, z, birth] in drops.splashes {
+        for splash in drops.splashes {
+            let [x, y, z] = splash.at;
             // yaw 0 looks along +Z: every splash is in front of the camera.
-            assert!(z > camera.z && (x - camera.x).abs() < 31.);
+            assert!(z > CAMERA.z && (x - CAMERA.x).abs() < 31.);
             assert!((y - x * 0.1).abs() < 1e-4);
-            assert!(birth <= 40. / 60. + SPLASH_LIFE);
+            assert!(splash.birth <= 40. / 60. + SPLASH_LIFE);
+            // The ring takes the ground's slope: 0.1 ft per foot east.
+            assert!((splash.slope[0] - 0.1).abs() < 1e-3 && splash.slope[1].abs() < 1e-3);
         }
-        let beads = drops.bead_instances();
+        let beads = drops.bead_instances(true);
         assert!(beads.iter().all(|b| b[0].abs() <= 1. && b[2] > 0.));
         assert!(beads.iter().any(|b| b[3] > 0.));
-        // Paused: the clock does not move, nothing ages.
-        let before = drops.bead_instances();
-        drops.step(40. / 60., &camera, |_, _| 0.);
-        assert_eq!(before, drops.bead_instances());
-        // Off the terrain: splashes are kept away from the view.
+        // A view that is not the live ride takes no beads.
+        assert!(drops.bead_instances(false).iter().all(|b| b == &[0.; 4]));
+    }
+
+    #[test]
+    fn a_stopped_clock_holds_every_drop() {
         let mut drops = Drops::new();
-        drops.step(1., &camera, |_, _| f32::NAN);
-        assert!(drops.splashes.iter().all(|s| s == &[0., 0., 0., -10.]));
+        for step in 1..=40 {
+            drops.step(step as f32 / 60., &CAMERA, |_, _| 0.);
+        }
+        let (beads, splashes) = (drops.bead_instances(true), drops.splashes);
+        // Paused, and the photo camera turned round and moved away: nothing
+        // ages and no splash follows it.
+        let elsewhere = Camera {
+            x: -400.,
+            yaw: 3.,
+            ..CAMERA
+        };
+        drops.step(40. / 60., &elsewhere, |_, _| 5.);
+        assert_eq!(beads, drops.bead_instances(true));
+        assert_eq!(splashes, drops.splashes);
+    }
+
+    #[test]
+    fn nothing_splashes_off_the_terrain_or_on_a_wall() {
+        let mut drops = Drops::new();
+        drops.step(1., &CAMERA, |_, _| f32::NAN);
+        assert!(drops.splashes.iter().all(|s| s == &HIDDEN));
+        // A face steeper than 1.2 ft per foot holds no ring.
+        let mut drops = Drops::new();
+        drops.step(1., &CAMERA, |x, _| x * 3.);
+        assert!(drops.splashes.iter().all(|s| s == &HIDDEN));
     }
 }

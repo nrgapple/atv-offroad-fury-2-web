@@ -100,9 +100,14 @@ fn fs_streak(in: Varyings) -> @location(0) vec4<f32> {
   return vec4<f32>(r.color.rgb, in.alpha * across * ends);
 }
 
-// Splash: x, y, z, birth (seconds on the rain clock).
+// Splash: x, y, z, birth (seconds on the rain clock); then the ground's rise
+// per foot along x and z, so the ring lies on a slope.
 @vertex
-fn vs_splash(@builtin(vertex_index) vertex: u32, @location(0) splash: vec4<f32>) -> Varyings {
+fn vs_splash(
+  @builtin(vertex_index) vertex: u32,
+  @location(0) splash: vec4<f32>,
+  @location(1) slope: vec4<f32>,
+) -> Varyings {
   let corners = array<vec2<f32>, 6>(
     vec2<f32>(-1.0, -1.0), vec2<f32>(1.0, -1.0), vec2<f32>(1.0, 1.0),
     vec2<f32>(-1.0, -1.0), vec2<f32>(1.0, 1.0), vec2<f32>(-1.0, 1.0),
@@ -110,7 +115,8 @@ fn vs_splash(@builtin(vertex_index) vertex: u32, @location(0) splash: vec4<f32>)
   let corner = corners[vertex];
   let age = (r.eye.w - splash.w) / r.shape.w;
   let radius = 0.15 + 0.55 * clamp(age, 0.0, 1.0);
-  let point = splash.xyz + vec3<f32>(corner.x * radius, 0.04, corner.y * radius);
+  let flat = corner * radius;
+  let point = splash.xyz + vec3<f32>(flat.x, 0.04 + dot(flat, slope.xy), flat.y);
   var out: Varyings;
   out.clip = g.view_projection * vec4<f32>(point, 1.0);
   out.uv = corner;
