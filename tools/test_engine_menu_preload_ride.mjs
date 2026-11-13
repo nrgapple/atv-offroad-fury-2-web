@@ -70,10 +70,12 @@ async function ride(browser, errors, front, withPreload, shot) {
     await page.waitForTimeout(1500); // Deliberately wall-clock: the menu art settles as in the preload run.
   }
   await page.waitForFunction(() => {
-    const c = JSON.parse(document.querySelector('#ui-state')?.textContent || '{}').decodedCache;
+    // Live counters: an idle menu draws no frames, so #ui-state's copy goes stale.
+    const c = JSON.parse(window.atvDecodedCache || 'null');
     return !c || c.pending === 0;
   }, null, { timeout: 60000, polling: 100 });
-  const before = (await state(page)).decodedCache ?? { hits: 0, misses: 0 };
+  const cache = page => page.evaluate(() => JSON.parse(window.atvDecodedCache || 'null'));
+  const before = (await cache(page)) ?? { hits: 0, misses: 0 };
   const pressed = Date.now();
   await page.keyboard.press('Enter');
   await page.waitForFunction(() => JSON.parse(document.querySelector('#ui-state')?.textContent || '{}').ride?.environment, null, { timeout: 180000, polling: 16 });
@@ -83,7 +85,7 @@ async function ride(browser, errors, front, withPreload, shot) {
     assert.ok(Date.now() < end, 'the ride\'s sounds load');
     await page.waitForTimeout(16);
   }
-  const after = (await state(page)).decodedCache;
+  const after = { ...(await state(page)).decodedCache, ...(await cache(page)) };
   if (shot) await page.screenshot({ path: shot });
   const sounds = page.sounds[0];
   await page.context().close();

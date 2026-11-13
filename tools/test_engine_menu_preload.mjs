@@ -83,7 +83,8 @@ try {
     assert.ok(report.settleMs >= 700, `it waited for the selection to rest: ${report.settleMs} ms`);
     course = report.course;
     await page.waitForFunction(() => {
-      const c = JSON.parse(document.querySelector('#ui-state')?.textContent || '{}').decodedCache;
+      // Live counters: an idle menu draws no frames, so #ui-state's copy goes stale.
+      const c = JSON.parse(window.atvDecodedCache || 'null');
       return !c || (c.pending === 0);
     }, null, { timeout: 60000, polling: 100 });
     if (round === 0 && process.env.MENU_PRELOAD_SHOT) await page.screenshot({ path: process.env.MENU_PRELOAD_SHOT });
