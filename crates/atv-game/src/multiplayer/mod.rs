@@ -116,6 +116,9 @@ pub struct Counters {
 /// One 50 ms tick's poses ([`Session::poses`]).
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct Poses {
+    /// For the relay, ahead of `relay`: the last tick's pose, when this
+    /// tick's is in another state and that one was not sent.
+    pub before: Option<Vec<u8>>,
     /// For the relay; confirm an actual send with [`Session::sent`].
     pub relay: Option<Vec<u8>>,
     /// A full pose and the linked riders it is due for.
@@ -176,6 +179,8 @@ pub struct Session {
     /// As the courier: the latest pose from each linked rider, not yet
     /// bundled.
     carry: BTreeMap<u8, Vec<u8>>,
+    /// The last tick's pose, in a shared room.
+    previous: Option<Snapshot>,
 }
 
 fn encode(packet: &Packet) -> Result<Vec<u8>> {
@@ -672,7 +677,7 @@ impl Session {
     }
 
     /// Decides who needs pose `s` now and encodes it for them.
-    fn emit(&mut self, s: Snapshot, paused: bool) -> Result<Poses> {
+    fn emit(&mut self, mut s: Snapshot, paused: bool) -> Result<Poses> {
         let now = s.time_ms;
         let state = s.rider_state;
         let moving = s
@@ -771,16 +776,33 @@ impl Session {
         };
         // Slower tiers allow proportionally more travel between poses.
         let reach = 16. * (interval as f32 / 100.).max(1.);
+        // In a shared room a rider at rest waits two seconds between poses:
+        // its first resting pose goes at once, or one stopped dead would be
+        // drawn rolling on from its last moving pose until then.
+        let stopped = shared && !moving && state == RiderState::Riding;
         let transition = self.baseline.as_ref().is_none_or(|b| {
             b.rider_state != state
                 || b.crash_serial != s.crash_serial
                 || b.animation.as_ref().is_some_and(|a| a.paused != paused)
                 || b.platform.as_ref().map(|p| p.car) != car
                 || distance(b.atv.position, s.atv.position) > reach
+                || (stopped && b.velocity.iter().map(|v| v * v).sum::<f32>() > 0.25)
         });
         let elapsed = now.wrapping_sub(self.last_sent_ms);
         let relay =
             self.force_full || self.relay_due || (!presence && transition) || elapsed >= interval;
+        // A receiver does not blend a pose with one in another state (taking
+        // off, landing, a wreck): it holds the earlier pose until the later
+        // one's time. With a shared room's longer intervals that hold would
+        // be seen, so the last tick's pose goes first and it lasts one tick.
+        let previous = if shared {
+            self.previous.replace(s.clone())
+        } else {
+            None
+        };
+        let before = previous.filter(|p| {
+            relay && !carrying && p.rider_state != state && p.time_ms != self.last_sent_ms
+        });
         let bundling = carrying && !self.carry.is_empty();
         if !relay {
             self.counters.suppressed += 1;
@@ -788,8 +810,17 @@ impl Session {
                 return Ok(Poses::default());
             }
         }
-        self.sequence = s.sequence;
         let mut poses = Poses::default();
+        if let Some(mut pose) = before {
+            pose.sequence = s.sequence;
+            s.sequence = s.sequence.wrapping_add(1);
+            let output = encode(&Packet::Snapshot(Box::new(pose)))?;
+            self.counters.full += 1;
+            self.counters.messages += 1;
+            self.counters.sent_bytes += output.len() as u64;
+            poses.before = Some(output);
+        }
+        self.sequence = s.sequence;
         let mut whole = None;
         if carrying {
             // As the courier, every relayed pose goes in a bundle: this
@@ -1674,6 +1705,72 @@ mod tests {
         assert_eq!(counts[0], [30, 10, 1, 6, 6]);
         // Free Ride: about 7 Hz, 0.5 Hz, 0.1 Hz; the far rate is unchanged.
         assert_eq!(counts[1], [20, 5, 1, 3, 6]);
+    }
+
+    #[test]
+    fn a_shared_room_sends_the_tick_before_a_change_of_state_too() {
+        let mut sent = Vec::new();
+        for public in [false, true] {
+            let mut s = Session::new(Profile::new("Ann", 1, 0, Default::default()));
+            welcome(
+                &mut s,
+                1,
+                Lobby {
+                    public,
+                    ..lobby(&[(0, 1), (1, 1)], true)
+                },
+            );
+            s.receive(&pose_from(0, 1, 0, 200.), 0).unwrap();
+            // Riding at 20 ft/s, airborne from 1150 ms to 1450 ms.
+            let mut poses = Vec::new();
+            for time in (0..2000).step_by(50) {
+                let mut pose = riding(&s, time, time as f32 * 0.02, 20.);
+                if (1150..1450).contains(&time) {
+                    pose.rider_state = RiderState::Airborne;
+                }
+                let out = s.emit(pose, false).unwrap();
+                for bytes in out.before.iter().chain(&out.relay) {
+                    let pose = match atv_net::decode(bytes).unwrap() {
+                        Packet::Snapshot(s) => *s,
+                        Packet::Delta(d) => d.snapshot,
+                        _ => panic!("a pose"),
+                    };
+                    poses.push((pose.time_ms, pose.sequence, pose.rider_state));
+                }
+                if let Some(bytes) = out.relay {
+                    s.sent(&bytes).unwrap();
+                }
+            }
+            sent.push(poses);
+        }
+        let around = |poses: &[(u32, u32, RiderState)], from: u32, until: u32| -> Vec<u32> {
+            poses
+                .iter()
+                .filter(|p| (from..=until).contains(&p.0))
+                .map(|p| p.0)
+                .collect()
+        };
+        // A private room sends every 100 ms while riding and every 50 ms in
+        // the air, and each change at once: 50 ms after the pose before it.
+        assert_eq!(
+            around(&sent[0], 900, 1500),
+            [900, 1000, 1100, 1150, 1200, 1250, 1300, 1350, 1400, 1450]
+        );
+        // Free Ride sends every 150 ms (100 ms in the air). The poses before
+        // take-off (1050) and landing (1350) would be 100 ms old: the ticks
+        // at 1100 and 1400 go with the changes.
+        assert_eq!(
+            around(&sent[1], 900, 1500),
+            [900, 1050, 1100, 1150, 1250, 1350, 1400, 1450]
+        );
+        // Sequence numbers still rise with time.
+        for poses in &sent {
+            assert!(
+                poses
+                    .windows(2)
+                    .all(|w| w[1].0 > w[0].0 && w[1].1 == w[0].1 + 1)
+            );
+        }
     }
 
     #[test]
