@@ -3174,6 +3174,8 @@ impl App {
                             "onTrack": state.race.on_track(None),
                             "autopilot": state.autopilot_status().0,
                             "autopilotStuck": state.autopilot_status().1,
+                            // Its recovery: [assists, skips ahead].
+                            "autopilotRecovery": state.autopilot_recovery(),
                             "standings": f.standings.iter().map(|s| serde_json::json!({
                                 "name": s.name, "position": s.position, "time": s.time,
                                 "estimated": s.estimated,

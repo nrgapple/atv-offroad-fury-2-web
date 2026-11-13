@@ -20,8 +20,11 @@
 //!    own last valid position, which put a pinned CPU back where it stood).
 //!
 //! Pure and deterministic (f32 arithmetic on the fixed race step, no clock),
-//! applied to CPU riders only. Recovered logic is untouched; with the layer
-//! never consulted the race runs exactly as before.
+//! applied to CPU riders and to the race path driver while it rides the
+//! player's quad before the finish (Kid Mode, `?autopilot=1`): it is the
+//! same driver and repeats the same failures. A player's own driving is
+//! never moved. Recovered logic is untouched; with the layer never
+//! consulted the race runs exactly as before.
 
 /// Race distance a CPU must gain to count as progress (ft).
 pub const PROGRESS_STEP: f32 = 25.;

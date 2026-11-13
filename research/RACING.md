@@ -1479,8 +1479,11 @@ decisions"). It lives in its own module, `atv_core::cpu_recovery`, with
 the race-side helpers `Race::{recovery_stations, accept_recovery_station,
 race_distance, cpu_finished}`, `Course::retreat` and
 `Vehicle::offer_recovery_checkpoint`, all labelled port adaptation. It
-applies to CPU riders only (never the player or the autopilot); while it
-stays idle the recovered rules run unchanged.
+applies to CPU riders and, since 2026-11-12, to the race path driver while
+it rides the player's quad before the finish (Kid Mode with GO held,
+`?autopilot=1`; see "The path driver on the player's quad" below), never to
+a player's own driving; while it stays idle the recovered rules run
+unchanged.
 
 The rule (per CPU, on the fixed race step):
 
