@@ -978,3 +978,50 @@ load and about 47 ms when the same model is rebuilt later; the extra time is not
 explained yet. An ATV's slowest task is still its preview build. A separate 500-600 ms
 task follows the first tap in a fresh browser process, before any vehicle load, and
 this change does not touch it.
+
+## Remastered rain (host, 2026-11-12)
+
+The authored Remastered rain pass ([WEATHER.md](WEATHER.md)) adds three
+instanced draws (3,200 streaks, 64 splash rings, 20 lens beads; 6,568
+triangles) and three small buffer writes per frame. Every number here is from
+one Apple M4 Mac that other builds and browsers were using at the same time;
+none is a phone result.
+
+**GPU.** `fury --gpu-frames 240` (native Metal, median scene-pass time of 240
+back-to-back frames) on the held starting ride frame of a raining load under
+Remastered, with the pass built and with it skipped by a measurement-only
+switch that is not in the tree. Six alternating runs each; median (min–max)
+in ms:
+
+| Venue | Size | With the pass | Without it |
+| --- | --- | ---: | ---: |
+| Freeport (ENV04) | 1280×720 | 4.38 (3.77–6.15) | 4.31 (3.12–7.65) |
+| NAT06 | 1280×720 | 10.31 (9.49–14.11) | 10.20 (9.41–11.35) |
+| SX13 | 1280×720 | 14.55 (11.28–17.56) | 14.47 (12.95–16.62) |
+| Freeport | 585×1266 | 2.44 (2.06–4.09) | 2.26 (1.84–3.87) |
+| NAT06 | 585×1266 | 5.90 (4.64–7.56) | 5.60 (5.20–7.36) |
+| SX13 | 585×1266 | 8.54 (6.20–11.02) | 9.27 (7.38–11.06) |
+
+The medians differ by −0.7 to +0.3 ms, less than the spread between runs, so
+the pass costs at most a few tenths of a millisecond here and this host
+cannot resolve it further. 585×1266 is the canvas a 390×844 DPR3 phone gets
+at render scale 1.5; it is a size, not a device.
+
+**CPU.** `play.html?autodrive=…&profile=1` (630 frames riding straight on
+NAT06, headless Chromium/Metal, median of three alternating runs). The
+effects prepare and encode marks, which hold the rain pass's work, per frame:
+
+| Profile | Remastered, dry | Remastered, raining | High, dry | High, raining |
+| --- | ---: | ---: | ---: | ---: |
+| Desktop 1280×720 | 0.025 ms | 0.043 ms | 0.029 ms | 0.027 ms |
+| Phone emulation 390×844 DPR3, CPU ×4 | 0.175 ms | 0.328 ms | 0.125 ms | 0.157 ms |
+
+Whole-frame render CPU moved less than its noise (3.56 to 3.65 ms desktop,
+21.7 to 23.7 ms throttled). A raining load also draws the venue's own rain
+model, so these differences are an upper bound for the authored pass.
+
+**Not from this pass.** The venue's own placed rain model is the expensive
+part of a raining NAT06 or SX13 in every preset: on NAT06 the High scene pass
+measured 3.21 ms dry and 7.56 ms raining at 1280×720 (medians of eight runs;
+1.49 and 4.58 ms at 585×1266), and Remastered 5.92 and 10.97 ms. That is the
+original geometry, drawn as on main, and is tracked separately.

@@ -73,9 +73,11 @@ async function boundedBody(request) {
 // The main menu's Free Ride rider count is public and read-only. Each edge
 // location answers it from cache for ten seconds, so menu views across all
 // players reach the relay's single counter only a few times a minute.
-const FREERIDE_RIDERS = '/multiplayer/freeride/riders';
+// The relay's totals for recent days (counts only) are read the same way.
+const FREERIDE_RIDERS = '/multiplayer/freeride/riders', FREERIDE_DAYS = '/multiplayer/freeride/days';
+export const isFreerideCount = path => path === FREERIDE_RIDERS || path === FREERIDE_DAYS;
 async function freerideRiders(request, env) {
-  const cache = globalThis.caches?.default, key = new Request(new URL(FREERIDE_RIDERS, request.url));
+  const cache = globalThis.caches?.default, key = new Request(new URL(new URL(request.url).pathname, request.url));
   const cached = await cache?.match(key);
   if (cached) return cached;
   const response = await env.MULTIPLAYER.fetch(new Request(key));
@@ -85,7 +87,7 @@ async function freerideRiders(request, env) {
 
 export async function multiplayerRequest(request, env) {
   const path = new URL(request.url).pathname;
-  if (path === FREERIDE_RIDERS) return request.method === 'GET' ? freerideRiders(request, env) : new Response('Method not allowed', { status: 405, headers: { Allow: 'GET' } });
+  if (isFreerideCount(path)) return request.method === 'GET' ? freerideRiders(request, env) : new Response('Method not allowed', { status: 405, headers: { Allow: 'GET' } });
   const create = path === '/multiplayer/rooms' && request.method === 'POST';
   // Claiming an Arlington Free Ride slot is admitted like joining a room: the
   // shared rooms are a fixed set, so they never take a room-creation lease.

@@ -17,6 +17,8 @@
 // content group (ATV_NATIVE=skip) and the full comparison only in the explicitly
 // requested `native` group, which fills unset variables from these paths when the
 // files exist; a missing report fails loudly.
+// `exclusive` keeps timing-sensitive checks isolated from host compilation.
+// Relay, manual, broken and native runs are always exclusive.
 // `defaults` lists user-facing defaults the test relies on (crash mode, camera, shake).
 
 export const GROUPS = ['content-free', 'content', 'relay', 'manual', 'broken'];
@@ -37,6 +39,7 @@ export const TESTS = {
   'test_engine_shell.mjs': { group: 'content' },
   'test_engine_sw_update.mjs': { group: 'content' },
   'test_engine_remastered.mjs': { group: 'content' },
+  'test_engine_remastered_rain.mjs': { group: 'content' },
   'test_engine_fold_layout.mjs': { group: 'content' },
   'test_engine_crisp_hud.mjs': { group: 'content' },
   'test_engine_shadows_prefetch.mjs': { group: 'content' },
@@ -65,7 +68,7 @@ export const TESTS = {
   'test_engine_soundtrack.mjs': { group: 'content' },
   'test_engine_weather.mjs': { group: 'content' },
   'test_engine_ride_link.mjs': { group: 'content' },
-  'test_engine_menu_preload.mjs': { group: 'content' },
+  'test_engine_menu_preload.mjs': { exclusive: true, group: 'content' },
   'test_engine_content_retry.mjs': { group: 'content' },
   'test_engine_decoded_cache.mjs': { group: 'content' },
   'test_engine_freeride.mjs': {
@@ -83,13 +86,13 @@ export const TESTS = {
   'test_engine_menu_navigation.mjs': { group: 'content' },
   'test_engine_credits.mjs': { group: 'content' },
   'test_engine_menu_divider.mjs': { group: 'content' },
-  'test_engine_menu_scroll.mjs': { group: 'content' },
+  'test_engine_menu_scroll.mjs': { exclusive: true, group: 'content' },
   'test_engine_status_bar.mjs': { group: 'content' },
-  'test_engine_menu_transitions.mjs': { group: 'content' },
+  'test_engine_menu_transitions.mjs': { exclusive: true, group: 'content' },
   'test_engine_menu_motion.mjs': { group: 'content' },
   'test_engine_menu_phone_layout.mjs': { group: 'content' },
-  'test_engine_selector_latency.mjs': { group: 'content' },
-  'test_engine_garage_load.mjs': { group: 'content' },
+  'test_engine_selector_latency.mjs': { exclusive: true, group: 'content' },
+  'test_engine_garage_load.mjs': { exclusive: true, group: 'content' },
   'test_engine_context_loss.mjs': { group: 'content' },
   'test_engine_menu_music.mjs': { group: 'content' },
   'test_engine_freeride_full.mjs': {
@@ -193,7 +196,7 @@ export const TESTS = {
   'test_engine_preview.mjs': { group: 'content-free' },
   'test_engine_race.mjs': { group: 'content' },
   'test_engine_cpu_audio.mjs': { group: 'content' },
-  'test_engine_split_screen.mjs': { group: 'content', timeout: 900 },
+  'test_engine_split_screen.mjs': { exclusive: true, group: 'content', timeout: 900 },
   'test_engine_split_facing.mjs': { group: 'content', timeout: 600 },
   'test_engine_split_games.mjs': { group: 'content', timeout: 900 },
   'test_engine_split_tag.mjs': { group: 'content', timeout: 600 },
@@ -246,3 +249,11 @@ export const TESTS = {
       'Not a browser test: drives a running Rust relay (ATV_RELAY_URL) through WS_MODULE and the atv-relay codec example build'
   }
 };
+
+// Unknown/heavier runs retain conservative admission. Mixed selections use the
+// strongest requirement so a performance report never includes compiler contention.
+export function hostWorkload(runs) {
+  return runs.length && runs.every(({ name, group }) => TESTS[name]
+    && ['content-free', 'content'].includes(group) && !TESTS[name].exclusive)
+    ? 'browser' : 'exclusive';
+}

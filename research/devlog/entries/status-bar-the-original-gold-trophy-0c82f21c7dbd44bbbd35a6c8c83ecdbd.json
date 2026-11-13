@@ -1,0 +1,16 @@
+{
+  "id": "status-bar-the-original-gold-trophy-0c82f21c7dbd44bbbd35a6c8c83ecdbd",
+  "timestamp": "2026-11-13T00:21:53.076402+00:00",
+  "recorded_at": "2026-11-13T00:21:53.076402+00:00",
+  "kind": "build",
+  "title": "Status bar: the original gold trophy",
+  "summary": "The status bar trophy chip now shows the original gold trophy from the game's championship page, not a drawn stand-in. Without the new content package, the chip keeps the drawn cup.",
+  "details": [
+    "The content package now includes the gold trophy texture from the original Championship page. It is one small file, about 8 KB.",
+    "The frontend reads it at start-up when the manifest lists it, trims the transparent edges and draws it fitted to the chip's height.",
+    "The coin stays drawn: the disc has no coin art for Profile Points.",
+    "The new record is added to the content manifest without changing existing ones, so the current production app ignores it until it updates."
+  ],
+  "limitation": "The coin is not the original art, because the disc has none. Older packages keep the drawn cup.",
+  "verification": "cargo test for atv-ui (185 pass, including the trim test). tools/test_engine_status_bar.mjs passes with the new content. The content manifest was checked live: it lists the record and the blob returns 200 at 8,134 bytes. Crops at phone and desktop sizes were inspected."
+}

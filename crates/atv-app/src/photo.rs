@@ -641,6 +641,8 @@ impl crate::App {
                     turns: 0,
                 };
                 let path = dir.join(&name);
+                // A photograph has no rain on its lens.
+                ready.scene.set_rain_lens(false);
                 ready
                     .scene
                     .capture_with(&ready.gpu, &view, width, height, &mut |_, _| {})

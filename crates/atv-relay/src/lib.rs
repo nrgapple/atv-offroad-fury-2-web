@@ -12,6 +12,8 @@ const ROOT: &str = "/multiplayer/rooms";
 const FREERIDE: &str = "/multiplayer/freeride";
 /// Public, read-only total of riders across shared Free Ride rooms.
 const FREERIDE_RIDERS: &str = "/multiplayer/freeride/riders";
+/// The shared rooms' totals for recent days, public like the rider count.
+const FREERIDE_DAYS: &str = "/multiplayer/freeride/days";
 /// Durable Object name of the rider counter; never a valid room code.
 const STATS: &str = "freeride-stats";
 const STATS_KEY: &str = "riders";
@@ -22,9 +24,12 @@ const ROOM_KEY: &str = "room";
 /// This room's message counts for the day (research/MULTIPLAYER.md "Relay
 /// accounting").
 const BUDGET_KEY: &str = "budget";
-/// The rider counter's per-room counts for the day. The counter is a room
-/// object too, so this must differ from [`BUDGET_KEY`].
-const STATS_BUDGET_KEY: &str = "rooms-today";
+/// The rider counter's per-room counts for the day and its totals for
+/// recent days ([`Counts`]). The counter is a room object too, so this must
+/// differ from [`BUDGET_KEY`].
+const STATS_BUDGET_KEY: &str = "rooms-days";
+/// Days of totals the counter keeps.
+const HISTORY_DAYS: u32 = 30;
 const DAY_MS: f64 = 86_400_000.;
 const ALPHABET: &[u8] = b"ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 const MAX_AGE_MS: f64 = 12. * 60. * 60. * 1000.;
@@ -455,6 +460,69 @@ struct RoomDay {
     at_ms: f64,
 }
 
+/// The shared rooms' day: messages and relayed poses by kind, and their
+/// riders and links (the rooms' `now` counts added up) at the report with
+/// the most riders.
+#[derive(Clone, Default, Serialize, Deserialize, PartialEq, Debug)]
+struct DayTotal {
+    messages: u64,
+    poses: [u64; 7],
+    bundles: u64,
+    busiest: std::collections::BTreeMap<String, u64>,
+}
+
+/// What the rider counter keeps: each room's counts for the current day and
+/// every day's totals for [`HISTORY_DAYS`] (research/MULTIPLAYER.md "Relay
+/// history").
+#[derive(Clone, Default, Serialize, Deserialize, PartialEq, Debug)]
+struct Counts {
+    rooms: std::collections::BTreeMap<String, RoomDay>,
+    days: std::collections::BTreeMap<u32, DayTotal>,
+}
+
+impl Counts {
+    /// Adds a room's report (its counts since its last one) to its day and
+    /// to that day's total.
+    fn add(&mut self, room: &str, report: RoomDay) {
+        let day = report.day;
+        self.days
+            .retain(|d, _| d.saturating_add(HISTORY_DAYS) > day);
+        let total = self.days.entry(day).or_default();
+        total.messages += report.messages;
+        total.bundles += report.bundles;
+        for (sum, n) in total.poses.iter_mut().zip(report.poses) {
+            *sum += n;
+        }
+        let instant = report.at_ms;
+        add_report(&mut self.rooms, room, report);
+        let live = self.live(day, instant);
+        let riders = |counts: &std::collections::BTreeMap<String, u64>| {
+            counts.get("riders").copied().unwrap_or(0)
+        };
+        let total = self.days.entry(day).or_default();
+        if riders(&live) > 0 && riders(&live) >= riders(&total.busiest) {
+            total.busiest = live;
+        }
+    }
+
+    /// The live shared rooms' riders and links, added up.
+    fn live(&self, day: u32, instant: f64) -> std::collections::BTreeMap<String, u64> {
+        let mut riding = std::collections::BTreeMap::new();
+        for d in self.rooms.values() {
+            if d.day == day && instant - d.at_ms < STATS_FRESH_MS {
+                for (k, v) in &d.now {
+                    *riding.entry(k.clone()).or_insert(0) += v;
+                }
+            }
+        }
+        riding
+    }
+}
+
+fn pose_counts(poses: [u64; 7]) -> std::collections::BTreeMap<&'static str, u64> {
+    POSE_KINDS.iter().copied().zip(poses).collect()
+}
+
 /// Adds a room's report to the day's totals; earlier days drop out.
 fn add_report(days: &mut std::collections::BTreeMap<String, RoomDay>, room: &str, report: RoomDay) {
     let day = report.day;
@@ -513,6 +581,20 @@ pub async fn main(mut req: Request, env: Env, _ctx: Context) -> Result<Response>
         response
             .headers_mut()
             .set("Cache-Control", "public, max-age=10")?;
+        return Ok(response);
+    }
+    if req.path() == FREERIDE_DAYS && req.method() == Method::Get {
+        let mut days = env
+            .durable_object("LOBBIES")?
+            .id_from_name(STATS)?
+            .get_stub()?
+            .fetch_with_request(Request::new("https://counter/stats/days", Method::Get)?)
+            .await?;
+        let value: serde_json::Value = days.json().await?;
+        let mut response = Response::from_json(&value)?;
+        response
+            .headers_mut()
+            .set("Cache-Control", "public, max-age=60")?;
         return Ok(response);
     }
     if !same_origin(&req, &env)? {
@@ -1249,12 +1331,11 @@ impl DurableObject for LobbyRoom {
                             .collect()
                     })
                     .unwrap_or_default();
-                let mut days = storage
-                    .get::<std::collections::BTreeMap<String, RoomDay>>(STATS_BUDGET_KEY)
+                let mut counts = storage
+                    .get::<Counts>(STATS_BUDGET_KEY)
                     .await?
                     .unwrap_or_default();
-                add_report(
-                    &mut days,
+                counts.add(
                     room,
                     RoomDay {
                         day,
@@ -1265,7 +1346,7 @@ impl DurableObject for LobbyRoom {
                         at_ms: instant,
                     },
                 );
-                storage.put(STATS_BUDGET_KEY, &days).await?;
+                storage.put(STATS_BUDGET_KEY, &counts).await?;
             }
             return Ok(Response::empty()?.with_status(204));
         }
@@ -1279,9 +1360,10 @@ impl DurableObject for LobbyRoom {
             let days = self
                 .state
                 .storage()
-                .get::<std::collections::BTreeMap<String, RoomDay>>(STATS_BUDGET_KEY)
+                .get::<Counts>(STATS_BUDGET_KEY)
                 .await?
-                .unwrap_or_default();
+                .unwrap_or_default()
+                .rooms;
             let instant = now();
             let today = (instant / DAY_MS) as u32;
             // Counts only (research/MULTIPLAYER.md "Relay accounting"): the
@@ -1308,6 +1390,28 @@ impl DurableObject for LobbyRoom {
                     "now": riding,
                 },
             }));
+        }
+        if req.path() == "/stats/days" && req.method() == Method::Get {
+            // Counts only: each recent day's messages and relayed poses by
+            // reason, and the riders and links at its busiest report.
+            let counts = self
+                .state
+                .storage()
+                .get::<Counts>(STATS_BUDGET_KEY)
+                .await?
+                .unwrap_or_default();
+            let days: Vec<_> = counts
+                .days
+                .iter()
+                .rev()
+                .map(|(day, d)| {
+                    serde_json::json!({
+                        "day": day, "messages": d.messages, "poses": pose_counts(d.poses),
+                        "bundles": d.bundles, "busiest": d.busiest,
+                    })
+                })
+                .collect();
+            return Response::from_json(&serde_json::json!({ "days": days }));
         }
         if req.path() == "/claim" && req.method() == Method::Post {
             let fresh: Room = req.json().await?;
@@ -2411,6 +2515,44 @@ mod tests {
             (budget.day, budget.messages, budget.poses),
             (20_403, 1, [0; 7])
         );
+    }
+
+    #[test]
+    fn the_counter_keeps_each_days_totals_and_its_busiest_moment() {
+        let mut counts = Counts::default();
+        let report = |day, at_ms, messages, riders, linked| RoomDay {
+            day,
+            messages,
+            poses: [0, 0, 0, 0, 0, 0, messages],
+            now: [
+                ("riders".to_string(), riders),
+                ("linkedPairs".to_string(), linked),
+            ]
+            .into(),
+            at_ms,
+            ..RoomDay::default()
+        };
+        counts.add("FREERD01", report(7, 0., 100, 4, 1));
+        counts.add("FREERD02", report(7, 1_000., 20, 3, 0));
+        // Fewer riders later: the busiest moment stays, the messages add up.
+        counts.add("FREERD01", report(7, 31_000., 50, 1, 0));
+        let day = &counts.days[&7];
+        assert_eq!((day.messages, day.poses[6]), (170, 170));
+        assert_eq!((day.busiest["riders"], day.busiest["linkedPairs"]), (7, 1));
+        // A room that stopped reporting is not part of a later moment.
+        counts.add("FREERD02", report(7, 31_000. + STATS_FRESH_MS, 0, 8, 2));
+        assert_eq!(counts.days[&7].busiest["riders"], 8);
+        // The next day starts its own total and yesterday's stays readable.
+        counts.add("FREERD01", report(8, 0., 1, 1, 0));
+        assert_eq!(
+            (counts.days[&7].messages, counts.days[&8].messages),
+            (170, 1)
+        );
+        assert_eq!(counts.rooms.len(), 1);
+        // Old days drop out.
+        counts.add("FREERD01", report(7 + HISTORY_DAYS, 0., 1, 1, 0));
+        assert!(!counts.days.contains_key(&7) && counts.days.contains_key(&8));
+        assert_eq!(pose_counts(counts.days[&8].poses)["forUnlinked"], 1);
     }
 
     #[test]

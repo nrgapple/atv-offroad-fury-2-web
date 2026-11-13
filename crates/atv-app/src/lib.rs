@@ -3356,6 +3356,15 @@ impl App {
                     serde_json::json!({"time": s.time, "activeEmitters": s.active_emitters,
                     "emitted": s.total_emitted, "draws": self.meter.snow_draws})
                 });
+            // Remastered rain (tools/test_engine_remastered_rain.mjs): null
+            // unless the pass exists.
+            state["rain"] = ready
+                .scene
+                .rain_state()
+                .map_or(serde_json::Value::Null, |r| {
+                    serde_json::json!({"clock": r.clock, "streaks": r.streaks,
+                    "splashes": r.splashes, "beads": r.beads})
+                });
             // Keyframed TOY actors (tools/test_engine_toy_actors.mjs): the
             // scene clock, draw statistics and each actor's posed root.
             state["actors"] =
@@ -3651,6 +3660,12 @@ impl App {
             state["fps"] = self.fps.state();
             publish_ui_state(&state.to_string());
         }
+        // Remastered rain beads the lens of the live riding view only.
+        ready.scene.set_rain_lens(
+            self.photo.is_none()
+                && self.replay.is_none()
+                && self.overlay.as_ref().is_none_or(|o| o.menu.is_none()),
+        );
         let overlay = self.overlay.as_ref().filter(|_| !self.hide_ui);
         let fps = &self.fps;
         let render_started = Instant::now();
