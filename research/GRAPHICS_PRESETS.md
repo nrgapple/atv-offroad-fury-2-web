@@ -238,7 +238,9 @@ pass is not created.
   meshes lean with a gusting sine, 2 % of a vertex's height up to 0.8 ft.
   Distant billboards stay still. It is a separate vertex entry point on its
   own pipelines: adding the sway to `vs_mesh` behind a uniform changed a few
-  tree pixels by one step in Original on Metal.
+  tree pixels by one step in Original on Metal. Its clock follows the
+  ride's simulation steps since 2026-11-12; before that it only ran in the
+  free viewer, so (from the code) plants stood still in a ride.
 - **Water sun glint** (`water.wgsl`). A tight specular lobe of the venue sun
   on the wave normals.
 - **World shadows** (`world_shadows.rs`, `world_shadow.wgsl`;
@@ -263,9 +265,10 @@ pass is not created.
   saturation, warm highlights, a 10 % vignette and one-step dither. The
   frame stays 8-bit: no float targets, so it fits WebGL2.
 
-- **Rain** (`rain.rs`, `rain.wgsl`). On venues whose Weather selected rain:
-  falling streaks, splash rings and lens beads (see
-  [WEATHER.md](WEATHER.md#remastered-rain-authored--2026-11-11)).
+- **Rain** (`rain.rs`, `rain.wgsl`). On loads whose Weather selected rain
+  (Freeport always, NAT06 and SX13 by chance): falling streaks, splash rings
+  on the ground and water, and lens beads on the live riding view (see
+  [WEATHER.md](WEATHER.md#remastered-rain-authored--2026-11-11-finished-2026-11-12)).
 
 Limits: split screen skips the finish pass and the world shadows (the
 relief, wind and glint still apply). The player's and CPU racers' vehicles
@@ -302,6 +305,9 @@ numbers.
 - `tools/test_engine_remastered.mjs` (content group): Remastered builds and
   draws on WebGL2 without errors, keeps High's settings, and its picture
   differs from High's; `test_engine_settings.mjs` cycles through it.
+- `tools/test_engine_remastered_rain.mjs` (content group): the rain pass
+  exists only under Remastered on a raining load, runs on the ride's clock
+  and beads only the live riding view.
 - `tools/test_graphics_presets.mjs` (content group): with
   `ATV_GRAPHICS_BASELINE` pointing at the previous main build, Original is
   pixel-identical on five fixed views per map (spawn camera plus four yaws) at

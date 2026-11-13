@@ -207,20 +207,76 @@ shader, texture, buffer or per-frame work exists for it. Freeport rain at
 (render CPU 0.8–1.2 ms vs 1.2–1.7 ms, worker batch 0.46–0.49 ms vs 0.44–0.53 ms,
 96 draws both; host-emulation noise, not a physical-phone result).
 
-## Remastered rain (authored) — 2026-11-11
+## Remastered rain (authored) — 2026-11-11, finished 2026-11-12
 
 Not from the original game. With the Remastered preset (`Graphics::remaster`)
-and a Weather selection whose type is Rain (Freeport, NAT06, SX13), the
-renderer adds `rain::RainPass`: 3,200 thin streaks falling at about 32 ft/s
-with a light wind, wrapped in a 90 × 40 ft world-anchored box around the
-camera and depth tested against the scene; 64 splash rings that land on the
-visible terrain heights 2–30 ft ahead of the camera and widen over 0.4 s; and
-20 lens beads (ScreenRain's `MaxLensDrops` default; the lens arrives wet) that form at random,
-fade, and run down the glass when large. Drop colour follows the venue's
-ambient plus sun light. All of it pauses with the world clock. Original,
-Enhanced and High never create the pass, so they draw exactly what they did.
-Placed rain cards, the type 8 emitter and `rain.vag` are unchanged.
+and a Weather selection whose type is Rain, the renderer adds
+`rain::RainPass` (`rain.rs`, `rain.wgsl`), three instanced draws at the end
+of the scene pass:
+
+- **Streaks.** 3,200 thin quads falling at about 32 ft/s with a light wind,
+  placed in the vertex shader from the instance index, wrapped in a
+  90 × 40 ft world-anchored box around the camera and depth tested against
+  the scene. Turning or moving the camera does not drag them along.
+- **Splash rings.** A pool of 64 that land 4–30 ft ahead of the camera, on
+  the visible terrain or on the water surface where water covers it, and
+  widen over 0.4 s. Each ring takes the ground's slope where it lands, so
+  it lies on a hillside; a face steeper than 1.2 ft per foot holds none.
+- **Lens beads.** A pool of 20 (ScreenRain's `MaxLensDrops` default; the lens
+  arrives wet) that form at random, fade, and run down the glass when
+  large. Each is shaded as a drop: dark high, light low, a soft outline and
+  a small glint. Their size follows the view's shorter side, so a portrait
+  phone's are no larger than a landscape one's.
+
+Drop colour follows the venue's ambient plus sun light.
+
+Which loads: Freeport (ENV04) always, because its `ChanceOfWeather` is 1 and
+even `?weather=off` cannot dry it; NAT06 and SX13 on the loads where their
+chance selects rain. A load that stayed dry builds no pass. Original,
+Enhanced and High never create the pass, at load or after a preset change
+mid-ride. Placed rain cards, the type 8 emitter and `rain.vag` are unchanged
+in every preset.
+
+Clock. The rain shares the Remastered wind clock, which follows the ride's
+60 Hz simulation steps: it stops while paused and slows with slow motion.
+An instant replay plays over a held world, so the replay advances this
+clock alone by the time it plays. A stopped clock holds every streak, ring
+and bead where it is, wherever a photo camera moves.
+
+Lens beads belong to the live riding camera only. A menu over the ride,
+photo mode (and its saved picture), a replay and every split-screen view get
+none; streaks and rings stay.
+
+Found and fixed on 2026-11-12, before this shipped: the wind clock only ran
+in the free viewer (`?free=1`), never in a ride, so the first version's rain
+hung still while riding, its beads never formed, and (from the code, the
+same clock) the Remastered vegetation wind also stood still in rides. Rings
+were flat and cut into slopes, ignored water, and beads showed over menus,
+photos and replays and grew very large on a portrait phone.
+
+Evidence (host Chromium/Metal, 2026-11-12):
+
+- `tools/test_engine_remastered_rain.mjs` (content group): no pass under
+  Original, Enhanced or High on a raining Freeport, none on a dry Remastered
+  NAT06; under Remastered the clock runs with the ride and holds when
+  paused; no beads under the Pause menu, in photo mode or in a replay; the
+  clock runs while a replay plays; cycling the preset mid-ride drops the
+  pass for the three lower presets and rebuilds it for Remastered.
+- Parity: held viewer frames (`?free=1&steps=120&weather=on`, 960×540) of
+  Freeport, NAT06 and SX13 under Original, Enhanced and High are
+  byte-identical between this branch and the deployed main build (nine of
+  nine; two repeated captures of main were identical to each other). A held
+  ride frame is not repeatable in the browser, so the ride path was not
+  compared this way.
+- Captures looked at: Freeport, NAT06 and SX13 riding at 1280×720, Freeport
+  paused, in photo mode and in a replay, and 844×390 and 390×844 touch
+  viewports at DPR3.
+- Cost: [PERFORMANCE.md](PERFORMANCE.md#remastered-rain-host-2026-11-12).
 
 Limits: the beads are drawn shapes, not the framebuffer copy ScreenRain
-uses, and they ignore Face to Face view turns; splashes use terrain heights
-only (no scenery roofs or water), and streaks fall through roofs.
+uses, so they do not refract the scene, and they are drawn inside the scene
+pass, so speed rush and air blur smear them with the picture. Rings follow
+terrain and the flat water level only (no scenery roofs, bridges or waves),
+and streaks fall through roofs. Split-screen views share one ring pool, which
+lands ahead of player 1's camera. Streaks step at 60 Hz, also on a
+faster display. No physical phone has run it.
