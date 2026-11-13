@@ -1349,3 +1349,102 @@ messages counted one each; the free plan bills 20 as one request against
 
 Not verified: the new endpoint on production until its first full day of
 play; anything about the riders' networks.
+
+## Free Ride relay intervals (2026-11-12)
+
+Port infrastructure, and the first of three steps in issue #583. On
+2026-11-12 the relay took 1,902,132 incoming messages, about 95% of the free
+plan's daily allowance (20 messages are billed as one of 100,000 requests),
+1,766,623 of them in one shared Free Ride room. Past the allowance online
+play stops for everyone until 00:00 UTC. The owner decided that the shared
+Free Ride rooms, and only those, send the relay fewer poses. Private rooms,
+room games and races (which shared rooms do not have) and direct links keep
+the intervals under "Direct links" above.
+
+A rider in a shared room (the lobby's `public` flag) now picks its relay
+interval from `links::freeride_interval`:
+
+| Rider, by distance to the nearest rider who needs the relay | Before | Now |
+| --- | --- | --- |
+| Wrecked, airborne, faster than 35 ft/s or within 40 ft | 50 ms | 100 ms |
+| Otherwise moving, within 300 ft | 100 ms | 150 ms |
+| Beyond 300 ft | 200 ms | 300 ms |
+| Beyond 1,000 ft | 350 ms | 350 ms |
+| Stationary | 1 s | 2 s |
+| Paused (hidden page) | 5 s | 10 s |
+
+The same table gives the rate a rider linked with the courier sends it for
+riders without links. Poses over links, presence poses (3 s, 5 s idle) and
+the rule that a change of state, crash, pause or train car is sent at once
+are unchanged, so a rider setting off from rest is still sent on the next
+50 ms tick once the moving interval has passed.
+
+Why these values. Builds from before this change receive the poses too, so
+each interval stays inside what the receiver in `atv-net` `smoothing.rs`
+already does:
+
+- Its playback delay is the pose interval plus twice the jitter plus 8 ms,
+  up to 220 ms, measured over gaps of at most 400 ms. At 100 and 150 ms it
+  interpolates between received poses as before, about 50 ms later. At
+  300 ms the delay is at its cap and each pose is extrapolated for about
+  80 ms (the limit is 250 ms), as riders beyond 1,000 ft already were for
+  130 ms.
+- It calls a rider stale (no minimap dot, engine sound or contact) 2.5 s
+  after a stationary pose and 15 s after a paused one, so stationary riders
+  send every 2 s and paused ones every 10 s. The suggested 3 s and 15 s
+  would have blinked on every receiver.
+- The relay closes a socket only after 60 s without any message, and the
+  client pings every 15 s, so nothing times out on these.
+
+Two things would have shown at the longer intervals and are sent as
+before:
+
+- A receiver does not blend a pose with one in another rider state (riding,
+  airborne, wrecked): it holds the earlier pose until the later one's time.
+  A change of state is still sent at once, and in a shared room the tick
+  before it now goes with it when it was not sent already, so the hold
+  stays one 50 ms tick instead of a whole interval (one more message per
+  take-off, landing or wreck; `Poses::before`).
+- A rider that stops sends its first resting pose at once rather than up to
+  two seconds later; otherwise one stopped dead by an obstacle would be
+  drawn rolling on from its last moving pose.
+
+Host measurement (2026-11-13 UTC, one Mac running other builds, local
+relay, headless Chromium, `tools/test_engine_freeride_relay.mjs`; not
+production and not real networks). Two riders without links (`?p2p=0`); one
+drives off from beside the other for 5 s (about 250 ft, reaching about
+55 ft/s), then rests. The private room uses the previous intervals in the
+same build. Counted: the WebSocket frames the driver's page sent its room.
+
+| Driver | Private room | Shared Free Ride room |
+| --- | --- | --- |
+| Poses a second while driving | 15.7 | 8.5 |
+| Poses a second at rest | 1.0 | 0.5 (5 in 12 s) |
+| Pings | 1 per 15 s | 1 per 15 s |
+
+Two earlier runs, before the tick ahead of a change of state was added,
+gave 16.0 and 15.9 against 8.4 and 8.0 driving. What the watcher drew,
+against the driver's own position at the playback delay that fits best:
+
+| Watcher's view of the driver | Private room | Shared Free Ride room |
+| --- | --- | --- |
+| Playback delay | 120 ms | 200 ms |
+| Position error, RMS / largest | 1.6 / 4.6 ft | 1.7 / 6.0 ft |
+| Longest time drawn still while the driver moved | 45 ms | 83 ms |
+| Largest move in one frame beyond the driver's own | 2.9 ft | 4.7 ft |
+| Frames drawn stale | 0 | 0 |
+
+So the driver is drawn about 80 ms later; it was never stale and never
+stood still for a whole pose interval. Before the tick ahead of a change of
+state was added, the same check measured a 107 ms hold and a 7.1 ft jump in
+the shared room. What is left of the difference in those two rows was not
+traced to a cause (setting off from rest one pose later would fit).
+
+Not verified: real networks, phones, rooms larger than two, a jump or a
+wreck under observation, and the day's total, which needs a weekday of
+play. The message mix by tier in production is not known (the per-reason
+counts say why a pose was relayed, not how fast its rider was sending).
+Every tier but the one beyond 1,000 ft sends a third to a half fewer poses,
+so as an estimate a day like 2026-11-12 would land at roughly 50% to 65% of
+the allowance: this step alone does not make the limit safe.
+
