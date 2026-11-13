@@ -134,6 +134,14 @@ function motion(seen, driven, peer, where = () => 'all') {
     .filter(([, r]) => r)
     .map(([at, r, own]) => ({ at, position: r[1], stale: r[2], delay: r[3], own }));
   const path = driven.map(([at, origin, state]) => [at, origin, state]);
+  // A reset (after a wreck) moves the rider in one step; the watcher draws
+  // the same step one delay later. Frames around it compare a jump with a
+  // jump and are left out of the error figures.
+  const resets = [];
+  for (let i = 1; i < path.length; i++) {
+    if (path[i][0] - path[i - 1][0] < 200 && distance(path[i][1], path[i - 1][1]) > 8) resets.push(path[i][0]);
+  }
+  const reset = at => resets.some(time => Math.abs(time - at) < 300);
   const reported = drawn.every(d => Number.isFinite(d.delay));
   let best = { fit: 0, rms: Infinity };
   for (let fit = 0; fit <= (reported ? 200 : 3000); fit += 10) {
@@ -161,7 +169,10 @@ function motion(seen, driven, peer, where = () => 'all') {
     const state = path.findLast(sample => sample[0] <= d.at - lag)?.[2];
     if (!real || !realBefore) continue;
     const name = where({ real, own: d.own, state });
-    if (!name) continue;
+    if (!name || reset(d.at - lag)) {
+      still = 0;
+      continue;
+    }
     const g = (groups[name] ??= { frames: 0, stale: 0, sum: 0, maxFt: 0, frozenMs: 0, jumpFt: 0, delays: [] });
     const moved = distance(d.position, before.position);
     const expected = distance(real, realBefore);
@@ -188,7 +199,7 @@ function motion(seen, driven, peer, where = () => 'all') {
       jumpFt: round(g.jumpFt, 3),
     };
   }
-  return { fitMs: best.fit, ...groups };
+  return { fitMs: best.fit, resets: resets.length, ...groups };
 }
 const tier = feet => TIERS.find(t => feet < t.below).name;
 
@@ -385,12 +396,14 @@ try {
   assert.ok(shared.driving.posesPerSecond <= before.driving.posesPerSecond * 0.35, JSON.stringify(report));
   assert.ok(sliding(shared.resting) || shared.resting.posesPerSecond <= 0.3, JSON.stringify(shared.resting));
   assert.ok(shared.circling.rate.posesPerSecond <= 5 * 1.25 + 0.6, JSON.stringify(shared.circling.rate));
-  for (const seen of Object.values(shared.circling.seen)) assert.ok(!seen.stale, JSON.stringify(shared.circling.seen));
+  for (const seen of Object.values(shared.circling.seen)) {
+    assert.ok(typeof seen !== 'object' || !seen.stale, JSON.stringify(shared.circling.seen));
+  }
   assert.ok(shared.watcherResting.perSecond <= 0.45, JSON.stringify(shared.watcherResting));
   // The watchers draw the driver all the way: never stale, no freezes, near
   // where it was one playback delay earlier, and later the farther it is.
   for (const [name, seen] of Object.entries(shared.seen)) {
-    if (name === 'fitMs' || seen.frames < 60) continue;
+    if (typeof seen !== 'object' || seen.frames < 60) continue;
     assert.equal(seen.stale, 0, `${name}: never stale: ${JSON.stringify(seen)}`);
     assert.ok(seen.frozenMs <= 150, `${name}: no freeze: ${JSON.stringify(seen)}`);
     assert.ok(seen.rmsFt <= 2.5 && seen.maxFt <= 12, `${name}: near the truth: ${JSON.stringify(seen)}`);

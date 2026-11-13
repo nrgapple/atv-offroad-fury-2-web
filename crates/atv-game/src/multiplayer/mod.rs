@@ -2165,7 +2165,8 @@ mod tests {
         x += 2.;
         let slid = batches(&mut s, &mut x, 31_550, 50, 0.8, Riding);
         assert_eq!((slid.len(), slid[0].0), (1, 1500));
-        assert!((slid[0].1[0].velocity[0] - 0.8).abs() < 0.01);
+        // (Velocities are quantized on the wire.)
+        assert!((slid[0].1[0].velocity[0] - 0.8).abs() < 0.1);
         all.extend(slid);
         // It stops again, then sets off: both sent at once (a stop within
         // 200 ms of the last batch waits that long).
