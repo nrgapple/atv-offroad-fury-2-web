@@ -1,0 +1,16 @@
+{
+  "id": "ride-hud-and-pause-menu-at-full-display-density-0e5f789ce2f249edbaa6a9cadee5c34e",
+  "timestamp": "2026-11-13T00:21:52.054756+00:00",
+  "recorded_at": "2026-11-13T00:21:52.054756+00:00",
+  "kind": "build",
+  "title": "Ride HUD and Pause menu at full display density",
+  "summary": "On high-density phones, the HUD and Pause menu now draw at the screen's full density. Before, they were drawn at a lower resolution and stretched, so their text looked soft. The 3D scene still uses the adaptive render size.",
+  "details": [
+    "The screen surface keeps the display's density, up to 3×, during a ride as well as in menus.",
+    "Only the 3D scene draws at the adaptive render size, into its own texture. It is stretched over the surface, then the HUD, Pause menu and FPS counter draw on top at full density.",
+    "When the scene size already matches the display (desktop and low-density screens), the scene draws straight to the surface as before.",
+    "Split screen scales each view's rectangle into the scene texture, so the views still meet."
+  ],
+  "limitation": "Physical phones were not measured. The host measurements were taken on a busy Mac, so differences were within the noise. The extra full-screen pass and the larger swap chain cost memory: about 9 MB more per buffer on a 3× portrait phone.",
+  "verification": "cargo tests for the scene size and split rectangles, and a ride test for the scene ratio. New tools/test_engine_crisp_hud.mjs at three sizes (surface at device density, scene at 1.5×, Pause) passes. Host Chromium runs at 390×844 (3×) and 1000×704 (2×): the frame-time medians moved within the run-to-run spread of this loaded machine, in both directions. Before and after screenshots were compared by eye."
+}

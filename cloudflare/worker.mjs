@@ -1,4 +1,4 @@
-import { multiplayerRequest, secureResponse } from './security.mjs';
+import { isFreerideCount, multiplayerRequest, secureResponse } from './security.mjs';
 import { usageEvent, webAnalyticsEnabled, withWebAnalytics } from './analytics.mjs';
 import { cloudSaveRequest, isCloudSavePath } from './cloudsave.mjs';
 import { boardRequest, isBoardPath } from './boards.mjs';
@@ -79,8 +79,8 @@ async function route(request, env) {
     if (path === '/api/events') return usageEvent(request, env, allowed);
     if (isCloudSavePath(path)) return cloudSaveRequest(request, env, allowed);
     if (isBoardPath(path)) return boardRequest(request, env, allowed);
-    // The public Free Ride rider count: same-origin GETs carry no Origin header.
-    if (path === '/multiplayer/freeride/riders') return env.MULTIPLAYER ? multiplayerRequest(request, env) : new Response('Multiplayer unavailable', {status:503});
+    // The public Free Ride rider count and daily totals: same-origin GETs carry no Origin header.
+    if (isFreerideCount(path)) return env.MULTIPLAYER ? multiplayerRequest(request, env) : new Response('Multiplayer unavailable', {status:503});
     if (path.startsWith('/multiplayer/')) {
       const origin = request.headers.get('Origin');
       if (!origin || !allowed.includes(origin)) return new Response('Origin denied', {status:403});
