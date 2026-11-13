@@ -186,6 +186,17 @@ courier) bundles everyone's latest poses for such riders, so they cost one
 stream instead of one per linked rider. Details:
 [MULTIPLAYER.md](MULTIPLAYER.md#courier-2026-11-11).
 
+## Free Ride relay intervals (2026-11-12)
+
+Shared Free Ride rooms were 93% of the relay's 1,902,132 messages on
+2026-11-12 (95% of the free daily allowance). A rider in one now waits
+longer between relay poses: 100 ms near, fast, airborne or wrecked (was 50),
+150 ms otherwise moving (100), 300 ms beyond 300 ft (200), 2 s stationary
+(1 s) and 10 s paused (5 s); 350 ms beyond 1,000 ft is unchanged. Private
+rooms and direct links keep the cadences above. Details, the receiver
+limits behind each value and the host measurement:
+[MULTIPLAYER.md](MULTIPLAYER.md#free-ride-relay-intervals-2026-11-12).
+
 ## Limits and next gates
 
 The measurement is host-only and used a synthetic browser focus/visibility setup.

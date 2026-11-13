@@ -1349,3 +1349,63 @@ messages counted one each; the free plan bills 20 as one request against
 
 Not verified: the new endpoint on production until its first full day of
 play; anything about the riders' networks.
+
+## Free Ride relay intervals (2026-11-12)
+
+Port infrastructure, and the first of three steps in issue #583. On
+2026-11-12 the relay took 1,902,132 incoming messages, about 95% of the free
+plan's daily allowance (20 messages are billed as one of 100,000 requests),
+1,766,623 of them in one shared Free Ride room. Past the allowance online
+play stops for everyone until 00:00 UTC. The owner decided that the shared
+Free Ride rooms, and only those, send the relay fewer poses. Private rooms,
+room games and races (which shared rooms do not have) and direct links keep
+the intervals under "Direct links" above.
+
+A rider in a shared room (the lobby's `public` flag) now picks its relay
+interval from `links::freeride_interval`:
+
+| Rider, by distance to the nearest rider who needs the relay | Before | Now |
+| --- | --- | --- |
+| Wrecked, airborne, faster than 35 ft/s or within 40 ft | 50 ms | 100 ms |
+| Otherwise moving, within 300 ft | 100 ms | 150 ms |
+| Beyond 300 ft | 200 ms | 300 ms |
+| Beyond 1,000 ft | 350 ms | 350 ms |
+| Stationary | 1 s | 2 s |
+| Paused (hidden page) | 5 s | 10 s |
+
+The same table gives the rate a rider linked with the courier sends it for
+riders without links. Poses over links, presence poses (3 s, 5 s idle) and
+the rule that a change of state, crash, pause or train car is sent at once
+are unchanged, so a rider setting off from rest is still sent on the next
+50 ms tick once the moving interval has passed.
+
+Why these values. Builds from before this change receive the poses too, so
+each interval stays inside what the receiver in `atv-net` `smoothing.rs`
+already does:
+
+- Its playback delay is the pose interval plus twice the jitter plus 8 ms,
+  up to 220 ms, measured over gaps of at most 400 ms. At 100 and 150 ms it
+  interpolates between received poses as before, about 50 ms later. At
+  300 ms the delay is at its cap and each pose is extrapolated for about
+  80 ms (the limit is 250 ms), as riders beyond 1,000 ft already were for
+  130 ms.
+- It calls a rider stale (no minimap dot, engine sound or contact) 2.5 s
+  after a stationary pose and 15 s after a paused one, so stationary riders
+  send every 2 s and paused ones every 10 s. The suggested 3 s and 15 s
+  would have blinked on every receiver.
+- The relay closes a socket only after 60 s without any message, and the
+  client pings every 15 s, so nothing times out on these.
+
+Known cost: a pose between two different rider states (riding and airborne)
+is not blended by the receiver, which holds the earlier one. At take-off and
+landing a fast rider's quad therefore pauses for up to 100 ms instead of
+50 ms.
+
+MEASURED_STEP1
+
+Not verified: real networks, phones, rooms larger than two, and the day's
+total, which needs a weekday of play. The message mix by tier in production
+is not known (the per-reason counts say why a pose was relayed, not how
+fast its rider was sending), so the saving is between a quarter and a half
+depending on how many riders are stationary or near each other.
+
