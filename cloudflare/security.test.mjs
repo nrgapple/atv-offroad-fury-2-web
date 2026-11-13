@@ -101,6 +101,11 @@ test('the public Free Ride rider count skips admission and is cached at the edge
     assert.equal(relayed, 1);
     assert.equal(g.budget.values.size, 0, 'reading the count never touches the admission budget');
     assert.equal((await worker.fetch(new Request('https://furyremastered.com/multiplayer/freeride/riders', { method: 'POST' }), g.env)).status, 405);
+    // The daily totals are public and cached the same way, under their own key.
+    for (let i = 0; i < 2; i++) assert.equal((await worker.fetch(new Request('https://furyremastered.com/multiplayer/freeride/days'), g.env)).status, 200);
+    assert.equal(relayed, 2);
+    assert.deepEqual([...store.keys()].sort(), ['https://furyremastered.com/multiplayer/freeride/days', 'https://furyremastered.com/multiplayer/freeride/riders']);
+    assert.equal(g.budget.values.size, 0);
   } finally { delete globalThis.caches; }
 });
 
