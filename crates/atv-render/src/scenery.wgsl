@@ -123,6 +123,9 @@ fn fs(in: Varyings) -> @location(0) vec4<f32> {
     let fails = (sampled.a < cutoff);
     let accepted_fails = (sampled.a >= cutoff);
     if (select(fails, accepted_fails, r.m.flags.w > 0.5)) { discard; }
+    // The blended failure pass writes no depth: a transparent fragment leaves
+    // the framebuffer as it was, so it skips the lighting and shadow taps.
+    if (r.m.flags.w > 0.5 && r.m.flags.z > 0.5 && sampled.a <= 0.0) { discard; }
     base = sampled.rgb;
     // GS source alpha uses 128 for unity, while decoded PST bytes use 255.
     source_alpha = select(1.0, clamp(sampled.a * (255.0 / 128.0), 0.0, 1.0), r.m.flags.z > 0.5);

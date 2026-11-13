@@ -1025,3 +1025,61 @@ part of a raining NAT06 or SX13 in every preset: on NAT06 the High scene pass
 measured 3.21 ms dry and 7.56 ms raining at 1280×720 (medians of eight runs;
 1.49 and 4.58 ms at 585×1266), and Remastered 5.92 and 10.97 ms. That is the
 original geometry, drawn as on main, and is tracked separately.
+
+## Venue rain cards (#589, host, 2026-11-13)
+
+The venue's own rain model, not the Remastered pass above, was the expensive
+part of a raining NAT06 or SX13 in every preset. Facts from the loaded
+scene: NAT06 places the model 120 times (240 draws across two LOD levels;
+the LOD 0 card has 72 triangles), material `rain`, microprogram
+`TexTransformPrelitCompressed`, alpha blending, GEQUAL alpha test with
+reference 120 and failure method 1 (FB_ONLY). The renderer therefore drew
+each card twice: an accepted pass with depth write, then the alpha-failure
+pass blended without depth.
+
+The 64×128 rain texture has 38 non-zero alpha texels (values 40, 72 and 97);
+the cards' vertex alpha is 0, 31 or 63. Decoded texture and vertex alpha stay
+in GS units (128 is unity) and the cutoff is the PSM byte over 255, so the
+shader's comparison is the GS comparison and there is no units error. The
+highest modulated alpha is 97 × 63 / 128 ≈ 48, far under 120: the accepted
+pass can pass no fragment, on the PS2 as here, yet it ran the full fragment
+shader over every card. Nearly every fragment of the failure pass has alpha
+exactly 0 and leaves the framebuffer unchanged, but it still paid for
+lighting and both shadow lookups.
+
+Changes (`scenery.rs`, `scenery.wgsl`), all producing the same pixels:
+
+- At load, a chunk whose highest texture alpha (all ATM frames), scaled by
+  its highest vertex alpha when prelit, stays more than one byte under its
+  cutoff skips its accepted pass. Filtering, mipmaps and interpolation only
+  average, so they cannot exceed those maxima.
+- The world shadow map (Remastered) skips chunks whose texture alpha cannot
+  reach its cutout (the cutoff, or 0.25).
+- The blended failure pass, which writes no depth, discards fragments whose
+  alpha is exactly 0 before lighting and shadow taps. Alpha blending and the
+  additive mode leave the destination exactly as it was for such a fragment.
+
+**Same pixels.** `fury --capture` before and after, one warm-up run each
+(the very first capture from the new build differed by one level in 12
+pixels, and its repeat runs match the old binary exactly; the cause is
+assumed to be first-run timing, not the change): NAT06 and SX13 raining in
+High and Remastered, NAT06 dry in High, ENV01 dry in High and Remastered,
+ENV05 dry in High and SX01 dry in Remastered, each at 1280×720 and 585×1266.
+All 18 pairs have 0 differing pixels.
+
+**GPU.** `fury --gpu-frames 240` on one Apple M4 Mac shared with other work,
+alternating runs, median (min–max) scene-pass ms. Host numbers, not phones:
+
+| Venue | Preset | Size | Dry | Raining before | Raining after |
+| --- | --- | --- | ---: | ---: | ---: |
+| NAT06 | High | 1280×720 | 2.26 (1.82–4.91) | 9.00 (6.32–10.13) | 4.27 (2.32–7.25) |
+| NAT06 | High | 585×1266 | 1.48 (1.21–1.49) | 5.13 (3.28–5.68) | 1.85 (1.49–2.53) |
+| SX13 | High | 1280×720 | 6.67 (4.93–8.33) | 13.71 (9.24–14.32) | 9.20 (9.00–10.36) |
+| SX13 | Remastered | 1280×720 | 9.46 (8.60–10.28) | 19.57 (18.34–20.08) | 11.13 (10.11–11.55) |
+
+Seven runs each at 1280×720 High, five otherwise. Dry frames are unchanged
+(NAT06 High 2.24 after). Earlier probes on the same scene attributed the
+cost roughly evenly to the two passes (either alone about 7 ms of the 9).
+What remains is the failure pass rasterizing the large, mostly transparent
+cards and shading the few streak texels; tighter card geometry would cut it
+further but changes the meshes, so it was not done here.
