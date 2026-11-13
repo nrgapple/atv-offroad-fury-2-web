@@ -1300,3 +1300,52 @@ courier (the host) 73 bundles, and the third rider drew both. Not verified:
 real networks, rooms larger than three, a courier leaving mid-ride under
 load, phones.
 
+
+## Relay history (2026-11-12)
+
+Measurement only; gameplay and send rates are unchanged.
+
+The relay accounting above answered only for the current UTC day: the
+counter dropped a day's counts at the first report of the next one, and
+nobody read them during play hours, so the reasons behind 2026-11-12's
+traffic were lost. The counter now keeps every day's totals for 30 days
+(`Counts`, storage key `rooms-days`, still one write per report):
+
+- `GET /multiplayer/freeride/days` (public, counts only, cached 60 s at the
+  edge): for each recent day, newest first, `day` (days since 1970-01-01
+  UTC), `messages`, `poses` by reason, `bundles`, and `busiest`: the shared
+  rooms' `now` counts (riders by build, linked and unlinked pairs, the sum
+  of the clients' link reports) at the report with the most riders.
+- `python3 tools/relay_usage.py` prints both endpoints with each reason's
+  share and the day's share of the free limit.
+
+Production, from Cloudflare's analytics (Durable Object requests, incoming
+messages counted one each; the free plan bills 20 as one request against
+100,000 a day):
+
+| UTC day | Requests | Peak sockets | Note |
+| --- | --- | --- | --- |
+| 2026-11-06 Fri | 1,968,606 | 97 | |
+| 2026-11-07 Sat | 42,409 | 2 | |
+| 2026-11-08 Sun | 3,434 | 1 | |
+| 2026-11-09 Mon | 2,080,374 | 70 | direct links merged that evening |
+| 2026-11-10 Tue | 1,916,982 | 71 | |
+| 2026-11-11 Wed | 705,491 | 70 | US holiday; courier merged that evening |
+| 2026-11-12 Thu | 1,902,132 | 91 | first full day with the courier |
+
+- Play is on US weekdays 14:00-21:00 UTC and almost absent at weekends and
+  on the holiday. One Free Ride room object took 1,766,623 of 2026-11-12's
+  requests. Duration (1,989 GB-s of 13,000) and Worker requests (46,206 of
+  100,000) are not near their limits.
+- Stale builds are not the cause: of 2026-11-12's reported riding time
+  (usage analytics, `ride_time` by release), all was on builds from
+  2026-11-10 22:19 or later, which have direct links, and all but about 2%
+  on builds with the courier.
+- Per socket the relay took 3,000-11,000 messages an hour during play. A
+  fully linked rider sends about 1,000 (presence only), so most poses still
+  go through the relay. Why is not known: the per-reason counts for these
+  days were dropped. School networks blocking WebRTC would fit the weekday
+  hours and desktop browsers (95% of sessions); that is an inference.
+
+Not verified: the new endpoint on production until its first full day of
+play; anything about the riders' networks.

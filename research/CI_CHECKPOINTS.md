@@ -9,7 +9,7 @@ the deployed commit. A named release owner (`tools/release_checkpoint.py`) is
 optional coordination for a combined checkpoint; when one exists, do not repeat
 its completed checks.
 The GitHub Actions application deployment remains automatic when healthy. The
-checked local fallback below is authorized when Actions stalls or fails. No
+local fallback below requires an explicit user request in the current conversation. No
 Mistakes remains disabled. The experimental local release queue (`atv-release`)
 was removed; see `git log -- research/RELEASE_QUEUE.md` for its history.
 
@@ -61,81 +61,63 @@ while the Worker deploy uses the staged config. Applied files are skipped on
 retries. Migrations must remain compatible with the running Worker until the new
 version is deployed; see [cloud-save operations](CLOUD_SAVE.md#operations).
 
-## One owner and four milestones
+## Routine delivery
 
-All receipts are ignored under shared `private/reports/release-checkpoints/`.
-They are local evidence, not a publication queue or an approval step. Use a stable
-combined checkpoint ID and a task/thread name, for example:
+Use one task branch, focused checks, and a PR with auto-merge. For runtime changes
+run `make precheck`; for documentation/metadata-only changes run CI's
+"Validate documentation, metadata and repository hygiene" commands, using
+`python3 tools/check_secrets.py` without `--history` locally. CI owns the history
+scan; a notes change does not need to rescan every other local branch. The allowlist
+in `tools/ci_changes.py` determines the lane; unknown or mixed paths use runtime
+checks. Do not compile Rust for a notes-only change.
 
-```sh
-python3 tools/release_checkpoint.py claim --checkpoint menu-polish --owner menu-release
-python3 tools/release_checkpoint.py record --checkpoint menu-polish --owner menu-release \
-  --stage implementation-ready --commit <tested-sha> --evidence "Relevant checks passed; host evidence paths"
-```
+Keep a local build/test task active until its process result is consumed. A
+background shell job does not by itself schedule an agent wake. For delegated
+work follow the returned continuation instruction, and for pending PR checks use
+the supported PR watch. Keep each slice owned through delivery.
+When parallel work is authorized, use independent tasks to size the team; there
+is no fixed two-agent cap. Research, editing, review and documentation can proceed
+concurrently. Stagger heavy checks through the bounded host budget (one compiler
+and one browser suite in different worktrees, subject to memory headroom) and
+reuse valid results. If most agents are waiting or repeatedly conflicting,
+finish the pending slices before adding scope. The budget protects host memory;
+measure headroom before increasing heavy-work concurrency. Agent count and
+compiler concurrency are separate limits.
 
-Claim before release work. A second owner for the same checkpoint is rejected.
-After merge, record GitHub's actual merge time (rather than the later observation):
+GitHub validates and deploys code automatically. Confirm the public
+`https://furyremastered.com/deployment.json` once at handoff. Report code, public
+verification and pending gallery work separately. Unavailable device checks and
+unrelated failures reproduced on the baseline are recorded limitations, not new
+release gates. Failures introduced by the change and required CI remain gates.
 
-```sh
-python3 tools/release_checkpoint.py record --checkpoint menu-polish --owner menu-release \
-  --stage merged --pr <number> --evidence "Passing PR CI"
-```
+## Content and screenshot publication
 
-The release owner then:
+Any chat may publish required R2 resources; no release claim, owner, or receipt
+is required. `tools/release_checkpoint.py` is optional for a deliberately combined
+checkpoint, not part of routine delivery.
 
-1. Waits for automatic deployment and fetches the **validated live artifact**:
-   `python3 tools/fetch_site_release.py --deployed`. Confirm the exact public
-   `/deployment.json` commit. Later docs merges do not invalidate this live
-   artifact. If another application is deployed meanwhile, its owner takes over
-   publication; do not chase main in every implementation chat.
-2. Runs relevant public browser checks once, then records `--stage live`, the
-   deployed commit and evidence. Host success alone never earns this stage.
-3. If runtime resources or screenshot references changed, inspects new screenshots
-   and uploads the pinned runtime/gallery package:
-   `python3 tools/upload_cloudflare_content.py --release <artifact> --commit <live-sha>`
-   (add `--checkpoint menu-polish --owner menu-release` to enforce a claimed owner).
-   The uploader takes one shared nonblocking publication lock,
-   and checks successful-main provenance and the deployed identity before pointer
-   publication. It never requires unrelated newer docs to rebuild the game.
-   For text-only metadata with unchanged runtime manifest and screenshot references,
-   skip the R2 upload: the checked text publication retains the approved image
-   overlay. Confirm the public text and unchanged image references instead of
-   downloading the unchanged runtime package again.
-   Runtime packages need not wait for the application deploy. Blobs are
-   content-addressed and inert until the manifest names them, so an additive
-   package (one the live app can still load) can go first, in parallel with CI:
-   `python3 tools/upload_cloudflare_content.py --content-only`.
-   Build the package with `python3 tools/package_content.py` followed by
-   `python3 tools/package_motorcycles.py`; the second step appends the `/MX/`
-   motorcycle archives the live manifest already serves.
-   It refuses a manifest that drops any runtime path the live site serves; when
-   it refuses because the local package is behind live, rebuild from the live
-   manifest instead of publishing the stale one. The gallery still follows the
-   deployed commit through the full upload above.
-4. After an R2/resource change, runs `python3 tools/verify_cloudflare.py --url https://furyremastered.com --commit <live-sha> --release <artifact>`
-   and verifies the supported Workers address when required. Record
-   `--stage gallery-complete` with evidence, including when no new PNGs were needed.
-5. Reads `python3 tools/release_checkpoint.py status --checkpoint menu-polish` to
-   report implementation, merge, live and gallery times separately. Unknown stages
-   remain pending. Do not describe gallery waiting as ongoing implementation.
-
-Keep notes about public verification in the existing checkpoint's own entry, or
-batch independent verification entries for the lightweight metadata lane. A note
-must not trigger another gameplay build or another full gameplay test pass when
-runtime bytes have not changed. Verify its metadata publication and new images;
-repeat gameplay checks only for changed code, a failure or a new unresolved risk.
-A feature may be reported live once its public tests pass while its owner finishes
-publication bookkeeping, with the remaining gallery stage stated explicitly.
+- Runtime resources can precede the app deploy. Run `tools/package_content.py`,
+  then `tools/package_motorcycles.py`, then
+  `tools/upload_cloudflare_content.py --content-only`. Uploads are additive and
+  serialized. If the local manifest drops live paths, rebuild it with the current
+  resources; do not override the guard.
+- For new screenshots, fetch `python3 tools/fetch_site_release.py --deployed`,
+  inspect every new image the package will publish, then run
+  `python3 tools/upload_cloudflare_content.py --release <artifact> --commit <live-sha>`.
+  Pin the validated deployed artifact; do not rebuild just to chase newer docs.
+  If older pending images need inspection, inspect them in this publication task
+  or report the specific remaining images. Do not defer the same inspection
+  indefinitely or hold up unrelated code PRs.
+- After an R2 change run
+  `python3 tools/verify_cloudflare.py --url https://furyremastered.com --commit <live-sha> --release <artifact>`.
+  Text-only metadata with unchanged runtime and screenshot references needs no
+  R2 upload or repeat gameplay test; CI reuses checked application bytes.
 
 Primary public HTTPS is https://furyremastered.com/; the Workers address remains
-supported. GitHub's production environment and deployment history remain visible.
-CI verifies authored application hashes and committed dev-log text. Runtime
-resources and inspected PNGs remain in the separate allowlisted private-to-R2
-package, never GitHub source or CI. Zipped desktop builds that embed those resources
-may be GitHub Release assets, built and uploaded locally, never by CI. Merged app changes become desktop
-releases automatically through the owner's-Mac LaunchAgent (`desktop_release_watcher.py
---auto-main`, at most every 12 hours; DESKTOP_RELEASES.md, "Automatic releases"). Never publish WIP, ISO/BIOS/raw executable,
-unrelated disc content, reverse-engineering output or reference repositories.
+supported. Runtime resources and inspected PNGs stay out of Git and CI. Desktop
+archives containing runtime resources are built/uploaded locally by the existing
+owner's-Mac release service (see `DESKTOP_RELEASES.md`). Never publish WIP,
+ISO/BIOS/raw executable, unrelated disc content or reverse-engineering output.
 
 ## Historical checkpoint
 
@@ -156,7 +138,10 @@ step or test named instead of stalling until someone cancels it. Retry a failed
 or timed-out main run with `gh run rerun <run-id> --failed`, or fix forward.
 
 Only when the user explicitly asks for a host deployment, from a clean worktree
-at the exact merged `origin/main` commit, run:
+at the exact merged `origin/main` commit, claim a checkpoint with
+`tools/release_checkpoint.py claim --checkpoint <id> --owner <owner>` and run
+the command below. This exceptional host fallback requires that claim; the
+routine Actions and R2 paths above do not.
 
 ```sh
 python3 tools/deploy_local.py --user-requested --commit <full-main-sha> \
@@ -177,7 +162,7 @@ authored bytes and relay identity on both public HTTPS addresses.
 Successful checked artifacts and receipts persist under ignored shared
 `private/reports/local-releases/<sha>/`. `fetch_site_release.py --deployed`, the
 R2 publication guard, and host metadata reuse accept that verified artifact.
-Continue the same public browser, R2, gallery, and checkpoint milestone steps.
+Continue the same relevant public verification and R2/gallery steps.
 The user-facing game and dev log must still be verified independently of host
 checks. Actions runs use a freshness gate so a delayed older build cannot replace
 newer main/local production. The temporary variable is restored after takeover;

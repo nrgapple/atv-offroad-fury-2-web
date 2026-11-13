@@ -1,0 +1,15 @@
+{
+  "id": "supercross-start-gate-drops-at-go-043e1088315a4f99a9728b7e66bbb518",
+  "timestamp": "2026-11-13T00:21:51.902283+00:00",
+  "recorded_at": "2026-11-13T00:21:51.902283+00:00",
+  "kind": "build",
+  "title": "Supercross start gate drops at GO",
+  "summary": "The Supercross start gate now swings down at GO, as the National start gate already did. Before, Supercross races had no gate at all.",
+  "details": [
+    "All sixteen Supercross venues declare the gate in their common track file, and the original loader reads it there too. The port only read it from the race file, so Supercross never had one.",
+    "The venue loader now falls back to the common file. Supercross races use the same rules as the National gate: upright through the countdown, then a swing about its base over 0.1 s from GO, through the venue's own angle (35 to 40 degrees).",
+    "CPU riders wait behind the gate under the same countdown lock as the player. Like the National gate, it has no collision."
+  ],
+  "limitation": "Not verified whether the original merges the two track files or loads the gate twice; both reach the same sections. The gate has no collision. A clip of the swing has not been inspected by eye on a phone.",
+  "verification": "atv-core unit test for parsing a Supercross gate and its swing. tools/test_engine_race_drop_gate.mjs passes on SX01: 1.4 s past GO the gate stands at its place and has swung 40.00°. A headless trace on SX01 gave 0° at the countdown, 26.7° one step after GO, and 40° from 0.1 s."
+}
