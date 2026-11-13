@@ -45,7 +45,10 @@ def cargo_install(tools, home=Path.home()):
             raise ValueError('Refusing to replace a Cargo entry point that is not the rustup proxy or our shim')
     runtime = home / '.local/share/project-service-data/fury-build-budget'
     runtime.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(tools / 'host_build.py', runtime / 'host_build.py')
+    # Atomic replacement: running guards keep their loaded code and held locks.
+    staged = runtime / f'host_build.{os.getpid()}.new'
+    shutil.copy2(tools / 'host_build.py', staged)
+    os.replace(staged, runtime / 'host_build.py')
     import shlex
     content = '#!/bin/sh\n' + marker + '\nexec ' + shlex.quote(launch_python()) + ' ' + shlex.quote(str(runtime / 'host_build.py')) + ' --cargo-proxy -- "$@"\n'
     if not backup.exists() and not backup.is_symlink():
@@ -102,6 +105,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--repo', type=Path, required=True)
     parser.add_argument('--apply', action='store_true')
+    parser.add_argument('--guard-only', action='store_true',
+                        help='update the Cargo guard only; do not touch the desktop watcher')
     parser.add_argument('--finish-handoff', action='store_true')
     args = parser.parse_args()
     if args.finish_handoff:
@@ -112,7 +117,12 @@ def main():
             raise
         return
     if not args.apply:
-        print('Would install a reversible Cargo guard and stage an idle-only watcher handoff. Pass --apply.')
+        print('Would update only the Cargo guard. Pass --apply.' if args.guard_only else
+              'Would install a reversible Cargo guard and stage an idle-only watcher handoff. Pass --apply.')
+        return
+    if args.guard_only:
+        cargo_install(ROOT / 'tools')
+        print('Cargo guard updated atomically; desktop watcher and active jobs untouched.')
         return
     # Backups only: no live-service restart, no target/cache deletion.
     SERVICE.mkdir(parents=True, exist_ok=True)

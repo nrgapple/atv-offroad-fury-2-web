@@ -17,7 +17,7 @@ import { homedir, tmpdir } from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
 import { parseArgs } from 'node:util';
-import { SELECTABLE, TESTS } from './browser/manifest.mjs';
+import { SELECTABLE, TESTS, hostWorkload } from './browser/manifest.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const CONTENT = path.join(ROOT, 'private/reports/hosted-content');
@@ -31,12 +31,13 @@ const { values: args } = parseArgs({ options: {
   list: { type: 'boolean', default: false },
   verbose: { type: 'boolean', short: 'v', default: false },
   bail: { type: 'boolean', default: false },
+  exclusive: { type: 'boolean', default: false },
   help: { type: 'boolean', short: 'h', default: false },
 } });
 
 if (args.help) {
   console.log(`Usage: run_browser_tests.mjs [--group ${SELECTABLE.join('|')}[,...]] [--only test_x.mjs[,...]]
-  [--url <existing site>] [--list] [--verbose] [--bail]
+  [--url <existing site>] [--list] [--verbose] [--bail] [--exclusive]
 Default group: content-free. Logs: work/verification/browser-tests/<test>.log`);
   process.exit(0);
 }
@@ -72,9 +73,12 @@ if (args.only) {
 }
 if (!runs.length) { console.log('No tests selected.'); process.exit(0); }
 
+// Key the lease to the checkout whose artifacts/logs this runner uses.
+process.chdir(ROOT);
+const workload = args.exclusive ? 'exclusive' : hostWorkload(runs);
 // Direct node invocations share the same lease as make and Cargo.
-if (!process.env.CI && spawnSync('python3', [path.join(ROOT, 'tools/host_build.py'), '--owns']).status !== 0) {
-  const child = spawn('python3', [path.join(ROOT, 'tools/host_build.py'), '--', process.execPath,
+if (!process.env.CI && spawnSync('python3', [path.join(ROOT, 'tools/host_build.py'), '--kind', workload, '--owns']).status !== 0) {
+  const child = spawn('python3', [path.join(ROOT, 'tools/host_build.py'), '--kind', workload, '--', process.execPath,
     ...process.argv.slice(1)], { stdio: 'inherit' });
   for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP']) process.on(signal, () => child.kill(signal));
   child.on('error', error => { console.error(error); process.exit(1); });

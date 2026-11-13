@@ -1,0 +1,15 @@
+{
+  "id": "stadium-crowds-reverse-looping-atm-screens-play-back-a-bbbdf775c7d14e93b92e4be429615783",
+  "timestamp": "2026-11-13T00:21:52.373066+00:00",
+  "recorded_at": "2026-11-13T00:21:52.373066+00:00",
+  "kind": "build",
+  "title": "Stadium crowds: reverse-looping ATM screens play back and forth",
+  "summary": "The animated stadium screens that the original plays backward at the end of a loop now do the same. Before, the port held them on their first frame.",
+  "details": [
+    "The original clock reflects off the last frame and plays backward when the reverse-loop flag is set, then turns forward again below zero. The port ignored this for every stadium crowd sheet.",
+    "Every reverse sheet in the shipped archives is a stadium crowd, on Supercross, the Freestyle stadiums and GAME01. They are now animated.",
+    "Evidence and limits are in research/STADIUM_MATERIALS.md."
+  ],
+  "limitation": "The PR records no check on a phone or against the original hardware. The crowd screens are checked as two still captures four steps apart, not by watching the motion.",
+  "verification": "atv-core unit test of the ping-pong sequence, overshoot reflection, the below-zero mirror and the non-looping sticky stop. Native captures of SX01 and SX09 four steps apart: the stand pixels change, the ground pixels stay identical."
+}
