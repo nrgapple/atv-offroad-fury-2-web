@@ -109,6 +109,13 @@ test('plausibility: floors, traces, names, vehicles and scores', () => {
   assert.deepEqual(judge(freestyle, NOW).entries, [['score:spstunt:free01', -50_000]]);
   assert.equal(judge({ ...freestyle, score: 5_000_000 }, NOW).reason, 'score');
   assert.equal(judge({ ...freestyle, seconds: 600 }, NOW).reason, 'seconds');
+  // A target run gains time with every hit: Hit Every Green Target can run
+  // well past the 120 s limit.
+  assert.deepEqual(judge({ ...freestyle, course: 'free04', seconds: 380, trace: race(1, 380) }, NOW).entries, [['score:spstunt:free04', -50_000]]);
+  // The game's own body for a short run (atv_core::world_board tests).
+  const short = { ...freestyle, score: 26_400, seconds: 3, trace: { points: [[0, 5], [10, 5], [20, 5], [900, 5]], marks: [], resets: [3] } };
+  assert.deepEqual(judge(short, NOW).entries, [['score:spstunt:free01', -26_400]]);
+  assert.equal(judge({ ...short, trace: { ...short.trace, resets: [] } }, NOW).reason, 'trace_speed');
 });
 
 test('the daily board takes only the day\'s pick, today', () => {

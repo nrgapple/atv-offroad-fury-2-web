@@ -232,10 +232,6 @@ impl Results {
             .championship_line
             .as_deref()
             .map_or(String::new(), |line| format!(" · {line}"));
-        let world = self
-            .world_line
-            .as_deref()
-            .map_or(String::new(), |line| format!(" · {line}"));
         championship
             + &match (self.award, self.profile_total) {
                 (Some((.., points)), Some(total)) => {
@@ -244,7 +240,15 @@ impl Results {
                 (Some((.., points)), None) => format!(" · +{points} Profile Points"),
                 _ => String::new(),
             }
-            + &world
+            + &self.world_suffix()
+    }
+
+    /// The world boards' line after a summary (a race's, or a Freestyle
+    /// objective's).
+    pub fn world_suffix(&self) -> String {
+        self.world_line
+            .as_deref()
+            .map_or(String::new(), |line| format!(" · {line}"))
     }
 
     /// The championship line for a recorded round.

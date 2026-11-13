@@ -240,9 +240,9 @@ pub struct Overlay {
     /// The finished race's Hall of Fame records, until named.
     /// (and the name they are stored under).
     fame_watch: Option<(atv_core::hall_of_fame::Watch, String)>,
-    /// The finished race the world boards may take (world.rs), until its
-    /// Hall of Fame name is final.
-    world_run: Option<crate::world::Run>,
+    /// The finished race or Freestyle objective the world boards may take
+    /// (world.rs), until its Hall of Fame name is final.
+    world_run: Option<crate::world::Finished>,
     /// A world board submission for the host to send.
     pub world_outbox: Option<String>,
     /// A split race's records, the players still to name theirs (player
@@ -1629,6 +1629,7 @@ impl Overlay {
                 // Online competition saves neither profile progress nor Hall
                 // of Fame records (USA manual pp. 36–37).
                 if self.results.finish(frame) {
+                    self.world_run = None;
                     if self.kid || self.user_course {
                         // The path driver rode, or the course is the
                         // player's own: no Profile Points or records.
@@ -1733,6 +1734,7 @@ impl Overlay {
             .results
             .objective
             .clone()
+            .map(|line| line + &self.results.world_suffix())
             .or_else(|| {
                 frame.map(|f| {
                     let line = results::summary(f, self.results.error.as_deref());
@@ -1880,14 +1882,14 @@ impl Overlay {
             self.offer_split_fame(frame);
             return;
         }
-        self.world_run = crate::world::Run::of_race(frame);
+        self.world_run = crate::world::Run::of_race(frame).map(crate::world::Finished::Race);
         if let Some(watch) = frame.records.clone() {
             self.offer_fame(atv_core::hall_of_fame::Watch::Race(watch));
         }
         // The world boards take a run that set a local record (sent once
         // its name is entered) or a daily event time (sent now).
         if self.fame_watch.is_none() {
-            if self.world_run.as_ref().is_some_and(|r| r.daily.is_some()) {
+            if self.world_run.as_ref().is_some_and(|r| r.daily()) {
                 self.world_submit(None);
             } else {
                 self.world_run = None;
@@ -1938,6 +1940,7 @@ impl Overlay {
     ) {
         self.fame_watch = None;
         self.fame_split = None;
+        self.world_run = None;
         let hall = atv_ui::settings::load_hall_of_fame(&self.settings);
         if let Some(fame) = atv_core::hall_of_fame::SplitFame::freestyle(&hall, watches) {
             self.open_split_fame(fame);
@@ -2042,6 +2045,15 @@ impl Overlay {
         atv_ui::settings::save_hall_of_fame(&mut self.settings, &hall);
         self.results.enter_fame(broken, &name);
         self.fame_watch = Some((watch, atv_core::hall_of_fame::clean_name(&name)));
+    }
+
+    /// A finished Freestyle objective (after [`Self::offer_fame`]): the
+    /// world boards take the score that earned a local place, once its
+    /// name is entered (or the results are left).
+    pub fn offer_world_score(&mut self, run: Option<crate::world::ScoreRun>) {
+        self.world_run = run
+            .filter(|_| self.fame_watch.is_some())
+            .map(crate::world::Finished::Freestyle);
     }
 
     fn upload(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, width: u32, height: u32) {
