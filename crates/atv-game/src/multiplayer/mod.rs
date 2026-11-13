@@ -111,6 +111,9 @@ pub struct Counters {
     pub direct_received_bytes: u64,
     /// Bundles sent as the room's courier.
     pub bundles: u64,
+    /// Pose batches sent to the relay, and received from it.
+    pub batches: u64,
+    pub batches_received: u64,
 }
 
 /// One 50 ms tick's poses ([`Session::poses`]).
@@ -181,6 +184,22 @@ pub struct Session {
     carry: BTreeMap<u8, Vec<u8>>,
     /// The last tick's pose, in a shared room.
     previous: Option<Snapshot>,
+    /// As the courier: when the last bundle went.
+    last_bundle_ms: u32,
+    /// The relay takes pose batches and this build sends them
+    /// (research/MULTIPLAYER.md "Free Ride pose batches").
+    batching: bool,
+    /// Poses kept for the next batch, encoded, oldest first.
+    batch: Vec<Vec<u8>>,
+    /// The newest pose kept for a batch (sent or not).
+    kept: Option<Snapshot>,
+    /// The newest batch sent showed the rider at rest.
+    sent_resting: bool,
+    /// Where the rider came to rest, while it stays there.
+    rest: Option<[f32; 3]>,
+    /// The relay's pace factor in tenths (research/MULTIPLAYER.md "Free
+    /// Ride pace"); 0 before it sends one.
+    pub pace: u8,
 }
 
 fn encode(packet: &Packet) -> Result<Vec<u8>> {
@@ -268,20 +287,32 @@ impl Session {
     /// Tells a relay that supports them (its room claim says so) that this
     /// build understands direct-link signalling, and with `direct` that it
     /// can open links itself. Send once per socket, after Welcome.
-    pub fn hello(&mut self, direct: bool) -> Result<Vec<u8>> {
+    ///
+    /// `batches`: the relay's room claim says it takes pose batches, which
+    /// this build then sends in shared rooms and accepts from other riders.
+    pub fn hello(&mut self, direct: bool, batches: bool) -> Result<Vec<u8>> {
         let peer = self.peer.ok_or("join multiplayer first")?;
         self.links.announce(direct);
-        // A new socket: the relay names the current courier again.
+        // A new socket: the relay names the current courier and pace again.
         self.courier = None;
         self.carry.clear();
-        let flags = atv_net::signal::DIRECT | atv_net::signal::CARRIES;
+        self.batching = batches;
+        self.pace = 0;
+        let mut flags = if direct {
+            atv_net::signal::DIRECT | atv_net::signal::CARRIES
+        } else {
+            0
+        };
         // Every build hears the host's CPU sound cues (research/AUDIO.md
         // "CPU riders"), links or not.
-        let cues = atv_net::signal::CPU_SOUNDS;
+        flags |= atv_net::signal::CPU_SOUNDS;
+        if batches {
+            flags |= atv_net::signal::BATCHES;
+        }
         encode(&Packet::Signal(atv_net::Signal {
             peer,
             kind: atv_net::signal::HELLO,
-            data: vec![if direct { flags | cues } else { cues }],
+            data: vec![flags],
         }))
     }
 
@@ -360,6 +391,8 @@ impl Session {
         self.force_full = true;
         self.baseline = None;
         self.pending = None;
+        self.batch.clear();
+        self.kept = None;
         encode(&Packet::Profile(participant))
     }
 
@@ -442,7 +475,27 @@ impl Session {
                 self.set_lobby(lobby);
             }
             Packet::Lobby(lobby) => self.set_lobby(lobby),
-            Packet::Snapshot(s) => self.pose(*s, now_ms)?,
+            Packet::Snapshot(s) => self.pose(*s, now_ms, None)?,
+            // Only sent to a client that said it takes batches. Each pose
+            // is timed as if it had come alone, as old as it is in the
+            // batch.
+            Packet::Batch { interval_ms, poses } => {
+                self.counters.batches_received += 1;
+                let mut samples = Vec::with_capacity(poses.len());
+                for bytes in &poses {
+                    if let Ok(Packet::Snapshot(s)) = atv_net::decode(bytes) {
+                        samples.push(*s);
+                    }
+                }
+                let newest = samples.last().map_or(0, |s| s.time_ms);
+                for s in samples {
+                    let age = u64::from(newest.wrapping_sub(s.time_ms));
+                    self.pose(s, now_ms.saturating_sub(age), Some(interval_ms.into()))?;
+                }
+            }
+            Packet::Signal(message) if message.kind == atv_net::signal::PACE => {
+                self.pace = message.data[0];
+            }
             Packet::Leave { peer } => {
                 self.buffers.remove(&peer);
                 self.progress.remove(&peer);
@@ -541,8 +594,9 @@ impl Session {
         Ok(())
     }
 
-    /// A pose from another rider, by the relay or their link.
-    fn pose(&mut self, s: Snapshot, now_ms: u64) -> Result<()> {
+    /// A pose from another rider, by the relay or their link; `batch` is
+    /// the interval of the batch it came in.
+    fn pose(&mut self, s: Snapshot, now_ms: u64, batch: Option<u32>) -> Result<()> {
         let allowed = self.lobby.as_ref().is_some_and(|l| {
             l.started
                 && l.players.iter().any(|p| {
@@ -561,8 +615,14 @@ impl Session {
                 buffer.clear();
                 buffer.push(s, now_ms).map_err(|e| e.to_string())?;
             }
+            buffer.batched(batch);
         }
         Ok(())
+    }
+
+    /// How late this client now draws `peer` (ms), for status and tests.
+    pub fn delay_ms(&self, peer: u8) -> Option<f32> {
+        self.buffers.get(&peer).map(PoseBuffer::presented_delay_ms)
     }
 
     /// Applies one message from `peer`'s direct link: only that rider's own
@@ -585,7 +645,7 @@ impl Session {
         if self.courier.is_some() && self.courier == self.peer && s.animation.is_some() {
             self.carry.insert(peer, bytes.to_vec());
         }
-        self.pose(*s, now_ms)
+        self.pose(*s, now_ms, None)
     }
 
     /// The player's poses for this tick: one for the relay and one for the
@@ -736,9 +796,9 @@ impl Session {
         // arrival on Ready. Without it a host whose tab is in the background
         // (throttled timers) has no pose to meet until long after a guest
         // has loaded, who then starts on top of it.
+        let mut nearest = f32::INFINITY;
         let (interval, presence) = if self.links.announced() {
             let mut riders = 0;
-            let mut nearest = f32::INFINITY;
             if courier.is_none() {
                 for peer in self.links.relayed() {
                     riders |= 1 << peer;
@@ -774,6 +834,16 @@ impl Session {
             let interval = every(nearest, false);
             (if solo { interval.max(1000) } else { interval }, solo)
         };
+        // In a shared room a rider someone needs through the relay sends
+        // its poses in batches, when the relay takes them. The courier's
+        // own poses stay in its bundles and presence poses stay single.
+        if shared && self.batching && !carrying && !presence {
+            let plain = self.links.relayed_plain();
+            return self.emit_batch(s, paused, moving, nearest, plain, direct);
+        }
+        self.batch.clear();
+        self.kept = None;
+        self.rest = None;
         // Slower tiers allow proportionally more travel between poses.
         let reach = 16. * (interval as f32 / 100.).max(1.);
         // In a shared room a rider at rest waits two seconds between poses:
@@ -789,8 +859,15 @@ impl Session {
                 || (stopped && b.velocity.iter().map(|v| v * v).sum::<f32>() > 0.25)
         });
         let elapsed = now.wrapping_sub(self.last_sent_ms);
-        let relay =
-            self.force_full || self.relay_due || (!presence && transition) || elapsed >= interval;
+        // In a shared room the courier bundles at most ten times a second:
+        // it is one more stream of relay messages, and the riders it
+        // carries for are sent no more often themselves.
+        let held = carrying && shared && now.wrapping_sub(self.last_bundle_ms) < 100;
+        let relay = !held
+            && (self.force_full
+                || self.relay_due
+                || (!presence && transition)
+                || elapsed >= interval);
         // A receiver does not blend a pose with one in another state (taking
         // off, landing, a wreck): it holds the earlier pose until the later
         // one's time. With a shared room's longer intervals that hold would
@@ -803,7 +880,7 @@ impl Session {
         let before = previous.filter(|p| {
             relay && !carrying && p.rider_state != state && p.time_ms != self.last_sent_ms
         });
-        let bundling = carrying && !self.carry.is_empty();
+        let bundling = carrying && !held && !self.carry.is_empty();
         if !relay {
             self.counters.suppressed += 1;
             if direct.is_empty() && !bundling {
@@ -822,7 +899,9 @@ impl Session {
         }
         self.sequence = s.sequence;
         let mut whole = None;
-        if carrying {
+        if held {
+            // The courier's next bundle is not due: what it carries waits.
+        } else if carrying {
             // As the courier, every relayed pose goes in a bundle: this
             // rider's own (whole, no deltas) and the latest from each linked
             // rider, as many as fit; the rest go in the next one.
@@ -846,6 +925,7 @@ impl Session {
             }
             if !poses_out.is_empty() {
                 poses.relay = Some(encode(&Packet::Bundle { poses: poses_out })?);
+                self.last_bundle_ms = now;
             }
         } else if relay {
             let full = self.force_full
@@ -886,10 +966,150 @@ impl Session {
         Ok(poses)
     }
 
+    /// Keeps `pose` for the next batch under the next sequence number.
+    fn keep(&mut self, mut pose: Snapshot) -> Result<()> {
+        self.sequence = self.sequence.wrapping_add(1);
+        pose.sequence = self.sequence;
+        self.batch
+            .push(encode(&Packet::Snapshot(Box::new(pose.clone())))?);
+        self.kept = Some(pose);
+        Ok(())
+    }
+
+    /// [`Session::emit`] for a rider who batches its relay poses (research/
+    /// MULTIPLAYER.md "Free Ride pose batches"): keeps this tick's pose when
+    /// the tier's spacing has passed and sends what was kept when its batch
+    /// interval has. `nearest` is the distance to the nearest rider who gets
+    /// them through the relay; `plain` says one of those is on a build
+    /// without batches.
+    fn emit_batch(
+        &mut self,
+        mut s: Snapshot,
+        paused: bool,
+        moving: bool,
+        nearest: f32,
+        plain: bool,
+        direct: Vec<u8>,
+    ) -> Result<Poses> {
+        let now = s.time_ms;
+        let state = s.rider_state;
+        let wrecked = state == RiderState::Wreck;
+        // A rider is at rest from the tick it stands still until it has
+        // moved 1.5 ft from there, goes 3 ft/s or wrecks: one parked on a
+        // slope, creeping or with its wheels leaving the ground and touching
+        // again, stays at rest and is sent as standing (no velocity), so
+        // that every receiver keeps it fresh as a resting rider.
+        let here = s.atv.position;
+        self.rest = self
+            .rest
+            .filter(|at| !wrecked && s.speed.abs() < 3. && distance(*at, here) <= 1.5)
+            .or((!moving && state == RiderState::Riding).then_some(here));
+        let resting = self.rest.is_some();
+        if resting {
+            s.velocity = [0.; 3];
+            s.rider_velocity = [0.; 3];
+            s.angular_velocity = [0.; 3];
+            s.speed = 0.;
+        }
+        let tier_state = if resting { RiderState::Riding } else { state };
+        let (every, spacing) =
+            links::batch_tier(paused, !resting, tier_state, s.speed, nearest, plain);
+        // The relay's pace stretches the wait between batches, not the
+        // poses kept in them.
+        let pace = u32::from(
+            self.pace
+                .clamp(atv_net::signal::PACE_MIN, atv_net::signal::PACE_MAX),
+        );
+        let every = (every * pace / 10).min(u32::from(atv_net::MAX_BATCH_INTERVAL_MS));
+        let car = s.platform.as_ref().map(|p| p.car);
+        let since_sent = now.wrapping_sub(self.last_sent_ms);
+        // A change that matters goes at once: a wreck or its end, a pause,
+        // a train car boarded or left, a reset (farther than a ride goes in
+        // the time), setting off from rest or coming to it, and a new rider
+        // who needs a moving rider's place (the relay's copy of a resting
+        // one is right).
+        let last = self.kept.as_ref().or(self.baseline.as_ref());
+        let kept_ms = last.map(|b| b.time_ms);
+        let changed = last.is_none_or(|b| {
+            (b.rider_state == RiderState::Wreck) != wrecked
+                || b.crash_serial != s.crash_serial
+                || b.animation.as_ref().is_some_and(|a| a.paused != paused)
+                || b.platform.as_ref().map(|p| p.car) != car
+                || distance(b.atv.position, s.atv.position)
+                    > 16. * (now.wrapping_sub(b.time_ms) as f32 / 100.).max(1.)
+        });
+        // (Five times a second at most.)
+        let turned = resting != self.sent_resting && since_sent >= 200;
+        let arrival = self.relay_due && !resting;
+        self.relay_due = false;
+        let flush = changed
+            || turned
+            || arrival
+            || since_sent >= every
+            || self.batch.len() + 2 >= atv_net::MAX_BATCH;
+        // A pose in another state than the one before it is not blended
+        // with it by the receiver, which holds the earlier pose: keep both
+        // ticks, so that hold lasts 50 ms whatever the spacing. (A rider at
+        // rest is one pose.)
+        let previous = self.previous.take();
+        let stepped = !resting && previous.as_ref().is_some_and(|p| p.rider_state != state);
+        if stepped
+            && let Some(p) = previous
+            && kept_ms != Some(p.time_ms)
+        {
+            self.keep(p)?;
+        }
+        let since_kept = kept_ms.map_or(u32::MAX, |at| now.wrapping_sub(at));
+        let keeping = flush || stepped || since_kept >= spacing;
+        if keeping {
+            self.keep(s.clone())?;
+            s.sequence = self.sequence;
+        }
+        let mut poses = Poses::default();
+        if !direct.is_empty() {
+            let output = match (keeping, self.batch.last()) {
+                (true, Some(output)) => output.clone(),
+                _ => {
+                    self.sequence = self.sequence.wrapping_add(1);
+                    s.sequence = self.sequence;
+                    encode(&Packet::Snapshot(Box::new(s.clone())))?
+                }
+            };
+            poses.direct = Some((output, direct));
+        }
+        if flush {
+            let output = encode(&Packet::Batch {
+                interval_ms: every as u16,
+                poses: std::mem::take(&mut self.batch),
+            })?;
+            self.counters.last_packet_bytes = output.len();
+            poses.relay = Some(output);
+            self.pending = self.kept.clone();
+            self.sent_resting = resting;
+        } else {
+            self.counters.suppressed += 1;
+        }
+        self.previous = Some(s);
+        Ok(poses)
+    }
+
     /// Send receipt for [`Session::snapshot`] bytes: the baseline advances
     /// only after an actual send (dropped frames never become a reference).
     pub fn sent(&mut self, bytes: &[u8]) -> Result<()> {
         let kind = bytes.get(5).copied().unwrap_or(0);
+        if kind == 20 {
+            // A batch of whole poses; the newest is the relay's copy.
+            self.counters.batches += 1;
+            self.counters.messages += 1;
+            self.counters.sent_bytes += bytes.len() as u64;
+            if let Some(s) = self.pending.take() {
+                self.last_sent_ms = s.time_ms;
+                self.last_full_ms = s.time_ms;
+                self.force_full = false;
+                self.baseline = Some(s);
+            }
+            return Ok(());
+        }
         if kind == 19 {
             // A courier's bundle; this rider's own pose in it is whole.
             self.counters.bundles += 1;
@@ -1471,7 +1691,7 @@ mod tests {
         use atv_net::signal::{ANSWER, CARRIES, COURIER, CPU_SOUNDS, DIRECT, PRESENT};
         let mut s = Session::new(Profile::new("Ann", 1, 0, Default::default()));
         welcome(&mut s, 1, lobby(&[(0, 1), (1, 1), (2, 1)], true));
-        let hello = atv_net::decode(&s.hello(true).unwrap()).unwrap();
+        let hello = atv_net::decode(&s.hello(true, false).unwrap()).unwrap();
         assert!(matches!(hello, Packet::Signal(m) if m.data == [DIRECT | CARRIES | CPU_SOUNDS]));
         s.ready().unwrap();
         // Rider 0 links with this one; rider 2 (a desktop build) cannot.
@@ -1520,12 +1740,53 @@ mod tests {
     }
 
     #[test]
+    fn a_shared_room_courier_bundles_ten_times_a_second_at_most() {
+        use atv_net::signal::{ANSWER, COURIER, DIRECT, PRESENT};
+        let mut s = Session::new(Profile::new("Ann", 1, 0, Default::default()));
+        let room = Lobby {
+            public: true,
+            ..lobby(&[(0, 1), (1, 1), (2, 1)], true)
+        };
+        welcome(&mut s, 1, room);
+        s.hello(true, false).unwrap();
+        s.ready().unwrap();
+        // Rider 0 is linked with this rider, the courier; rider 2 cannot link.
+        signal(&mut s, 0, PRESENT, &[DIRECT], 0);
+        signal(&mut s, 2, PRESENT, &[0], 0);
+        s.link_commands(0);
+        signal(&mut s, 0, ANSWER, b"v=0", 0);
+        s.link_commands(0);
+        s.link_opened(0, 0);
+        signal(&mut s, 1, COURIER, &[1], 0);
+        // Rider 0's pose arrives on every 50 ms tick for two seconds.
+        let mut bundles = 0;
+        for time in (1000..3000).step_by(50) {
+            let mut carried = atv_net::decode(&pose_from(0, time / 50, time, 3.)).unwrap();
+            if let Packet::Snapshot(p) = &mut carried {
+                p.animation = Some(Default::default());
+            }
+            s.receive_direct(0, &atv_net::encode(&carried).unwrap(), time.into())
+                .unwrap();
+            let pose = riding(&s, time, time as f32 * 0.02, 20.);
+            if let Some(bytes) = s.emit(pose, false).unwrap().relay {
+                assert!(matches!(
+                    atv_net::decode(&bytes).unwrap(),
+                    Packet::Bundle { .. }
+                ));
+                s.sent(&bytes).unwrap();
+                bundles += 1;
+            }
+        }
+        assert_eq!((bundles, s.counters.bundles), (20, 20));
+    }
+
+    #[test]
     fn linked_riders_get_poses_directly_and_the_relay_only_presence() {
         use atv_net::signal::{ANSWER, ARRIVED, DIRECT, DROPPED, PRESENT};
         let mut s = Session::new(Profile::new("Ann", 1, 0, Default::default()));
         welcome(&mut s, 1, lobby(&[(0, 1), (1, 1), (2, 1)], true));
         assert!(!s.signalling());
-        s.hello(true).unwrap();
+        s.hello(true, false).unwrap();
         s.ready().unwrap();
         // Rider 0 can link; rider 2 is on a build that cannot.
         signal(&mut s, 0, PRESENT, &[DIRECT], 0);
@@ -1600,7 +1861,7 @@ mod tests {
         use atv_net::signal::{ARRIVED, DIRECT, OFFER};
         let mut s = Session::new(Profile::new("Ann", 1, 0, Default::default()));
         welcome(&mut s, 1, lobby(&[(0, 1), (1, 1), (2, 1)], true));
-        s.hello(true).unwrap();
+        s.hello(true, false).unwrap();
         signal(&mut s, 0, ARRIVED, &[DIRECT], 0);
         signal(&mut s, 0, OFFER, b"v=0", 0);
         assert_eq!(
@@ -1771,6 +2032,234 @@ mod tests {
                     .all(|w| w[1].0 > w[0].0 && w[1].1 == w[0].1 + 1)
             );
         }
+    }
+
+    /// Rides on from `x` for `ms` and collects the batches for the relay:
+    /// the interval each announces and its poses.
+    fn batches(
+        s: &mut Session,
+        x: &mut f32,
+        from: u32,
+        ms: u32,
+        speed: f32,
+        state: RiderState,
+    ) -> Vec<(u16, Vec<Snapshot>)> {
+        let mut out = Vec::new();
+        for time in (from..from + ms).step_by(50) {
+            *x += speed * 0.05;
+            let mut pose = riding(s, time, *x, speed);
+            pose.rider_state = state;
+            let Some(bytes) = s.emit(pose, false).unwrap().relay else {
+                continue;
+            };
+            s.sent(&bytes).unwrap();
+            let Packet::Batch { interval_ms, poses } = atv_net::decode(&bytes).unwrap() else {
+                panic!("a batch");
+            };
+            let poses = poses
+                .iter()
+                .map(|pose| match atv_net::decode(pose).unwrap() {
+                    Packet::Snapshot(s) => *s,
+                    _ => panic!("a pose"),
+                })
+                .collect();
+            out.push((interval_ms, poses));
+        }
+        out
+    }
+
+    #[test]
+    fn a_shared_room_rider_batches_its_relay_poses_by_distance() {
+        use RiderState::{Airborne, Riding, Wreck};
+        use atv_net::signal::{BATCHES, CPU_SOUNDS, PACE, PRESENT};
+        let mut s = Session::new(Profile::new("Ann", 1, 0, Default::default()));
+        let room = Lobby {
+            public: true,
+            ..lobby(&[(0, 1), (1, 1), (2, 1)], true)
+        };
+        welcome(&mut s, 1, room);
+        let hello = atv_net::decode(&s.hello(false, true).unwrap()).unwrap();
+        assert!(matches!(hello, Packet::Signal(m) if m.data == [CPU_SOUNDS | BATCHES]));
+        s.ready().unwrap();
+        // Rider 0, whose build takes batches, is 20-40 ft away.
+        signal(&mut s, 0, PRESENT, &[BATCHES], 0);
+        s.receive(&pose_from(0, 1, 0, 40.), 0).unwrap();
+        let mut all = Vec::new();
+        let mut x = 0.;
+        let times = |batch: &(u16, Vec<Snapshot>)| -> Vec<u32> {
+            batch.1.iter().map(|p| p.time_ms).collect()
+        };
+        // Near: five batches a second, poses 100 ms apart (the first pose
+        // goes at once).
+        let near = batches(&mut s, &mut x, 1000, 1000, 20., Riding);
+        assert_eq!(near.len(), 5);
+        assert!(near.iter().all(|b| b.0 == 200));
+        assert_eq!(times(&near[0]), [1000]);
+        assert_eq!(times(&near[1]), [1100, 1200]);
+        assert_eq!(times(&near[4]), [1700, 1800]);
+        all.extend(near);
+        // Fast: still five batches, poses 50 ms apart.
+        let fast = batches(&mut s, &mut x, 2000, 1000, 60., Riding);
+        assert_eq!(fast.len(), 5);
+        assert_eq!(times(&fast[0]), [1900, 2000]);
+        assert_eq!(times(&fast[1]), [2050, 2100, 2150, 2200]);
+        all.extend(fast);
+        // Rider 0 is nearly a mile off: a batch every 1.5 s, poses 500 ms
+        // apart.
+        s.receive(&pose_from(0, 2, 50, 5000.), 3000).unwrap();
+        let far = batches(&mut s, &mut x, 3000, 6000, 20., Riding);
+        assert_eq!(far.len(), 4);
+        assert!(far.iter().all(|b| b.0 == 1500));
+        assert_eq!(times(&far[1]), [4800, 5300, 5800]);
+        assert_eq!(times(&far[3]), [7800, 8300, 8800]);
+        all.extend(far);
+        // A jump is not sent at once, but the ticks on both sides of each
+        // change of state are kept, so the receiver holds a pose for 50 ms.
+        let jump = batches(&mut s, &mut x, 9000, 500, 20., Airborne);
+        assert!(jump.is_empty());
+        let landed = batches(&mut s, &mut x, 9500, 1000, 20., Riding);
+        assert_eq!(landed.len(), 1);
+        assert_eq!(times(&landed[0]), [8950, 9000, 9450, 9500, 10_000, 10_300]);
+        assert_eq!(
+            landed[0]
+                .1
+                .iter()
+                .map(|p| p.rider_state)
+                .collect::<Vec<_>>(),
+            [Riding, Airborne, Airborne, Riding, Riding, Riding]
+        );
+        all.extend(landed);
+        // A wreck goes at once, with the tick before it.
+        let wreck = batches(&mut s, &mut x, 10_500, 50, 20., Wreck);
+        assert_eq!(wreck.len(), 1);
+        assert_eq!(times(&wreck[0]), [10_450, 10_500]);
+        all.extend(wreck);
+        // At rest: one pose every five seconds, the first at once.
+        let rest = batches(&mut s, &mut x, 10_550, 11_000, 0., Riding);
+        assert_eq!(rest.len(), 3);
+        assert!(rest.iter().all(|b| b.0 == 5000 && b.1.len() == 1));
+        assert_eq!(times(&rest[2]), [20_550]);
+        all.extend(rest);
+        // Parked on a slope it creeps, and its wheels leave the ground and
+        // touch again: still at rest, sent as standing, until it has slid
+        // 1.5 ft from where it stopped.
+        let mut creep = Vec::new();
+        for (tick, time) in (21_550..31_550).step_by(50).enumerate() {
+            let mut pose = riding(&s, time, x + 0.3 * (tick % 3) as f32, 0.8);
+            if tick % 7 == 0 {
+                pose.rider_state = Airborne;
+            }
+            if let Some(bytes) = s.emit(pose, false).unwrap().relay {
+                s.sent(&bytes).unwrap();
+                let Packet::Batch { poses, .. } = atv_net::decode(&bytes).unwrap() else {
+                    panic!("a batch");
+                };
+                let Packet::Snapshot(pose) = atv_net::decode(&poses[0]).unwrap() else {
+                    panic!("a pose");
+                };
+                assert_eq!((poses.len(), pose.velocity), (1, [0.; 3]));
+                creep.push(time);
+            }
+        }
+        assert_eq!(creep, [25_550, 30_550]);
+        x += 2.;
+        let slid = batches(&mut s, &mut x, 31_550, 50, 0.8, Riding);
+        assert_eq!((slid.len(), slid[0].0), (1, 1500));
+        // (Velocities are quantized on the wire.)
+        assert!((slid[0].1[0].velocity[0] - 0.8).abs() < 0.1);
+        all.extend(slid);
+        // It stops again, then sets off: both sent at once (a stop within
+        // 200 ms of the last batch waits that long).
+        let rest = batches(&mut s, &mut x, 31_600, 4950, 0., Riding);
+        assert_eq!(rest.len(), 1);
+        assert_eq!((rest[0].0, times(&rest[0])), (5000, vec![31_750]));
+        all.extend(rest);
+        let off = batches(&mut s, &mut x, 36_550, 100, 20., Riding);
+        assert_eq!((off.len(), off[0].0), (1, 1500));
+        all.extend(off);
+        // Rider 2 arrives on a build without batches, as far away: it gets
+        // this rider's place at once, and then nothing waits longer than
+        // that build smooths.
+        signal(&mut s, 2, PRESENT, &[0], 36_650);
+        s.receive(&pose_from(2, 1, 0, 5000.), 36_650).unwrap();
+        let plain = batches(&mut s, &mut x, 36_650, 1400, 20., Riding);
+        assert_eq!(plain.len(), 4);
+        assert!(plain.iter().all(|b| b.0 == 350 && b.1.len() == 1));
+        assert_eq!(times(&plain[0]), [36_650]);
+        all.extend(plain);
+        // The relay asks for twice the wait.
+        signal(&mut s, 1, PACE, &[20], 38_050);
+        let paced = batches(&mut s, &mut x, 38_050, 2100, 20., Riding);
+        assert_eq!(paced.len(), 3);
+        assert!(paced.iter().all(|b| b.0 == 700 && b.1.len() == 2));
+        all.extend(paced);
+        // Every pose is newer than the one before it, as the relay demands.
+        let poses: Vec<&Snapshot> = all.iter().flat_map(|b| &b.1).collect();
+        assert!(poses.windows(2).all(|w| {
+            atv_net::sequence_newer(w[1].sequence, w[0].sequence) && w[1].time_ms > w[0].time_ms
+        }));
+        assert_eq!(s.counters.batches as usize, all.len() + creep.len());
+        // A relay that does not take batches gets single poses.
+        let mut old = Session::new(Profile::new("Ann", 1, 0, Default::default()));
+        welcome(
+            &mut old,
+            1,
+            Lobby {
+                public: true,
+                ..lobby(&[(0, 1), (1, 1)], true)
+            },
+        );
+        old.hello(false, false).unwrap();
+        old.ready().unwrap();
+        signal(&mut old, 0, PRESENT, &[0], 0);
+        assert_eq!(ride(&mut old, 0, 3000), (20, 0));
+        assert_eq!(old.counters.batches, 0);
+    }
+
+    #[test]
+    fn batches_from_other_riders_are_shown_one_interval_late() {
+        let mut s = Session::new(Profile::new("Ann", 1, 0, Default::default()));
+        welcome(
+            &mut s,
+            1,
+            Lobby {
+                public: true,
+                ..lobby(&[(0, 1), (1, 1)], true)
+            },
+        );
+        let pose = |sequence: u32| {
+            let mut p = Snapshot {
+                peer: 0,
+                sequence,
+                time_ms: sequence * 100,
+                atv_model: 1,
+                rider_model: 0,
+                velocity: [30., 0., 0.],
+                animation: Some(Default::default()),
+                ..Default::default()
+            };
+            p.atv.position[0] = sequence as f32 * 3.;
+            atv_net::encode(&Packet::Snapshot(Box::new(p))).unwrap()
+        };
+        // Rider 0's poses of the last 300 ms arrive together.
+        let batch = atv_net::encode(&Packet::Batch {
+            interval_ms: 300,
+            poses: vec![pose(1), pose(2), pose(3)],
+        })
+        .unwrap();
+        s.receive(&batch, 1000).unwrap();
+        assert_eq!(s.counters.batches_received, 1);
+        assert_eq!(s.present(1000, None, &no_cars).len(), 1);
+        assert!((s.delay_ms(0).unwrap() - 308.).abs() < 1.);
+        // Shown where it was 308 ms before the newest pose: at the first.
+        let shown = s.present(1016, None, &no_cars)[0].1.snapshot.atv.position[0];
+        assert!(shown < 6., "{shown}");
+        // Single poses again: the ordinary delay, within a few seconds.
+        s.receive(&pose(4), 1100).unwrap();
+        for now in (1116..4000).step_by(16) {
+            s.present(now, None, &no_cars);
+        }
+        assert!(s.delay_ms(0).unwrap() < 130.);
     }
 
     #[test]

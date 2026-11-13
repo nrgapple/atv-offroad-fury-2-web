@@ -1448,3 +1448,249 @@ Every tier but the one beyond 1,000 ft sends a third to a half fewer poses,
 so as an estimate a day like 2026-11-12 would land at roughly 50% to 65% of
 the allowance: this step alone does not make the limit safe.
 
+## Free Ride pose batches (2026-11-13)
+
+Port infrastructure, the second step of issue #583. Cloudflare bills the
+relay per incoming message; a message's size, how many riders receive it
+and what the relay sends cost nothing. So a rider in a shared Free Ride
+room that someone needs through the relay keeps sampling its pose as often
+as before but sends the relay one message per batch interval holding
+several whole compact poses, each with its own sequence number and time
+(`Packet::Batch`, kind 20: the time to the sender's next batch, then up to
+16 poses). Private rooms, room games and races, direct links, presence
+poses (alone, or linked with everyone) and the courier's bundles keep their
+packets.
+
+### Sender
+
+`links::batch_tier` gives the time between batches and between the poses
+kept in one, by the distance to the nearest rider who gets this rider's
+poses through the relay:
+
+| Nearest rider who needs it | Batch every | Poses kept |
+| --- | --- | --- |
+| under 60 ft | 200 ms | every 50 ms when wrecked, airborne or faster than 35 ft/s, else 100 ms |
+| 60-300 ft | 300 ms | every 100 ms |
+| 300-1,000 ft | 600 ms | every 200 ms |
+| beyond 1,000 ft | 1.5 s | every 500 ms |
+| at rest | 5 s | one |
+| paused (hidden page) | 15 s | one |
+
+- **Sent at once.** A wreck or its end, a pause, a train car boarded or
+  left, a reset (a jump farther than 16 ft per 100 ms), setting off from
+  rest or coming to it (at most five times a second, for a rider creeping
+  about the 0.5 ft/s threshold), and a new rider who needs the relay while
+  this one is moving. A new rider does not flush a resting rider's batch:
+  the relay hands arrivals its copy of every rider's newest pose, which for
+  a resting rider is where it is. Other riders joining or leaving the room
+  no longer send anything.
+- **Changes of state.** A receiver holds a pose until the next one's time
+  when the two are in different rider states. The ticks on both sides of
+  every change (take-off, landing) are therefore kept in the batch, so the
+  hold stays 50 ms at any spacing, without an extra message.
+- **Pace.** The relay may send `Signal { kind: PACE (9), data: [tenths] }`
+  (10 to 30); the wait between batches is multiplied by it, the poses kept
+  are not. Nothing sends it yet (step 3).
+- The courier bundles at most ten times a second in a shared room (was
+  twenty), and a shared room pings every 30 s instead of 15 s, with the
+  keep-alive after 25 s without traffic instead of 10 s (the relay's own
+  silence limit is 60 s).
+
+### Receiver
+
+`Session::receive` pushes each pose of a batch into the rider's
+`PoseBuffer` with the receipt time it would have had alone (the batch's
+receipt less the pose's age in it) and tells the buffer the announced
+interval (`PoseBuffer::batched`):
+
+- Playback delay for a batched rider in motion is the batch interval plus
+  twice the jitter plus 8 ms, up to 2 s (220 ms stays the limit for single
+  poses). Every pose is then there before its time is shown: motion is
+  interpolated between real poses, later, instead of extrapolated and
+  corrected. Nearer riders are batched more often and so are shown sooner:
+  about 0.2 s under 60 ft, 0.3 s to 300 ft, 0.6 s to 1,000 ft, 1.5 s beyond.
+- When the interval changes by more than 40 ms (a rider crossing a tier, or
+  batches ending because a link opened) the delay follows at 25% of real
+  time growing and 15% shrinking instead of 5%.
+- A resting rider's batches are not a cadence: its delay stays the single
+  pose value, so when it sets off its first poses are not held back.
+- A batched rider stays fresh for two intervals plus 0.5 s where that is
+  longer than the ordinary 1 s, 2.5 s (at rest) and 15 s (paused).
+- Within 40 ft of the local rider the drawn pose still blends toward the
+  current estimate (the newest pose extrapolated by its velocity, at most
+  250 ms), which is also what rider-to-rider contact uses. With a batch
+  every 200 ms that estimate is up to about 200 ms of extrapolation
+  instead of 50-100 ms.
+
+### Compatibility
+
+Tabs loaded before this release stay open, and a deploy replaces the relay
+and the page at different moments, so nothing assumes the other end is new:
+
+- A relay that takes batches says `"batches": true` in its room claim
+  answers (as `"links": true`). Only then does a client set the HELLO flag
+  `BATCHES` (8) and send batches. An older relay never sees the flag (it
+  would reject the HELLO) or the packet.
+- The relay forwards a batch whole to riders that said `BATCHES` and pose
+  by pose, as ordinary snapshot packets, to the others, who would close
+  their room on an unknown packet kind. Only riders that said `BATCHES`
+  hear which others did (the same bit in `PRESENT`/`ARRIVED`); other builds
+  accept no flag but `DIRECT` there.
+- **What an older build does with poses that arrive together.** Its buffer
+  orders poses by the sender's clock, not by arrival, so the motion stays
+  on the rider's path. Arriving together only reads as jitter (each earlier
+  pose looks late by its age), which takes its playback delay to the 220 ms
+  limit: a 200 ms batch is then covered whole and a 300 ms batch leaves
+  about 80 ms of extrapolation, which it has always done beyond 1,000 ft.
+  The relay therefore sends such a build every pose of the batch in order;
+  the newest alone would give it 3-5 poses a second and a pose held for
+  the whole interval at each change of state. (Unit test
+  `a_build_without_batches_plays_unpacked_poses_at_its_longest_delay`.)
+- An older build cannot wait longer than that, and calls a rider stale
+  1 s after a moving pose, 2.5 s after a resting one and 15 s after a
+  paused one. So while a rider on a build without batches is on the course
+  and needs this rider's poses through the relay, this rider's batches are
+  capped at 300 ms (350 ms beyond 1,000 ft), 2 s at rest and 10 s paused:
+  step 1's intervals, still with the finer poses inside. One such rider in
+  a room costs the others the far tiers until it reloads; desktop builds
+  from before this release have no update check.
+- The relay checks a batch as it checks a pose: the codec bounds its size
+  (8 KB), count (16) and order (one rider, rising sequence and time); the
+  relay keeps the poses stamped with the sender's own slot that are newer
+  than its last, stores the newest as its copy for late joiners and as the
+  sender's delta baseline, and forwards them only from a rider on the
+  room's course with its current models. A batch is one message against
+  the per-connection rate limit and one pose in the per-reason counts;
+  `today.batches`, the days' `batches` and `now.batches` (riders on builds
+  that take them) are new in `/multiplayer/freeride/riders` and `/days`.
+- A linked rider still sends the relay presence poses only, and bundles
+  are unchanged apart from their pace.
+
+### Estimate before building
+
+Relay messages per rider per second by tier, from the interval tables
+(the build of 2026-11-12, step 1, batches):
+
+| Rider | 2026-11-12 | Step 1 | Batches |
+| --- | --- | --- | --- |
+| Under 60 ft: near, fast, airborne or wrecked | 20 | 10 | 5 |
+| Under 60 ft: otherwise | 10 (20 within 40 ft) | 6.7 (10) | 5 |
+| 60-300 ft | 10 (20 fast or airborne) | 6.7 (10) | 3.3 |
+| 300-1,000 ft | 5 | 3.3 | 1.7 |
+| Beyond 1,000 ft | 2.9 | 2.9 | 0.67 |
+| At rest | 1 | 0.5 | 0.2 |
+| Paused | 0.2 | 0.1 | 0.067 |
+| Pings | 0.067 | 0.067 | 0.033 |
+
+Every tier falls to a third of 2026-11-12 or less (a paused rider with its
+pings to 0.1 from 0.27, a little more than a third).
+
+### Host measurement
+
+2026-11-13 UTC, one Mac running other builds, local relay, headless
+Chromium, `tools/test_engine_freeride_relay.mjs`; riders without links
+(`?p2p=0`). Not production, not real networks. Counted: the WebSocket frames
+a page sent its room. The private room uses the 2026-11-12 intervals in the
+same build. Three riders shared the Free Ride room, a fourth joined as a
+build without batches (`?batches=0`).
+
+| Driver | Private room | Free Ride, batches | With a rider without batches |
+| --- | --- | --- | --- |
+| Riding off beside another rider, 5 s (under 25 ft) | 15.7 | 4.2 | |
+| Riding away alone, 5 s | 16.3 | | |
+| 60-300 ft from the nearest rider | | 3.3 | |
+| 300-1,000 ft, 22 s with jumps and two wrecks | | 1.7 | 3.3 |
+| At rest | 1.0 | 0.19 | 0.5 |
+
+(messages a second, pings apart: 1 per 15 s, 1 per 30 s in Free Ride.) Two
+earlier runs of the same build gave 4.2 and 3.7 near, 3.1 and 3.0 at
+60-300 ft, 1.64 and 1.65 at 300-1,000 ft. Nothing was driven beyond
+1,000 ft and no page was hidden: those two tiers are unit-tested only.
+
+What a watcher drew, each frame against the driver's own position one
+playback delay earlier (the delay the watcher reported for that frame plus
+one constant of 10-20 ms fitted for the rest of the pipeline):
+
+| Watcher's view | Delay | Error RMS / largest | Longest still while the driver moved | Stale frames |
+| --- | --- | --- | --- | --- |
+| Private room, alone, 5 s | 89 ms | 0.5 / 2.6 ft | 56 ms | 0 |
+| Batches, 60-300 ft | 339 ms | 0.7 / 2.0 ft | 50 ms | 0 |
+| Batches, 300-1,000 ft | 634 ms | 0.3 / 3.0 ft | 68 ms | 0 |
+| the same while airborne (132 frames) | 634 ms | 0.4 / 2.0 ft | 53 ms | 0 |
+| the same while wrecked (399 frames) | 633 ms | 0.2 / 3.0 ft | 53 ms | 0 |
+| Build without batches, of a batching rider | 230 ms | 0.5 / 2.5 ft | 37 ms | 0 |
+| Batching rider, of the build without batches | 184 ms | 1.3 / 9.4 ft | 27 ms | 0 |
+
+- The delay follows the tiers and motion stays on the driver's path: the
+  errors are those of the private room at five to nine times fewer
+  messages. I read the second run's trace frame by frame around its
+  largest values. The longest still was a landing: the drawn rider held
+  its last airborne pose for three frames (13, 82 and 26 ms; the host was
+  dropping frames) and then moved 7 ft in one. That is the 50 ms hold
+  between the two ticks kept around a change of state, which a private
+  room has as well (56 ms above). A reset after a wreck moved the driver
+  175 ft in one step and the watcher drew the same step one delay later,
+  0.06 ft off afterwards; frames within 0.3 s of a reset are left out of
+  the error columns because the two steps land a frame apart.
+- **Contact.** Two riders rode off side by side for 5 s, under 25 ft
+  apart, where the drawn pose is the extrapolated estimate that contact
+  uses. The neighbour was drawn 0.84 ft RMS (2.7 ft at most) from its true
+  place against 0.49 ft (2.0 ft) in the private room, and the two pages
+  counted 33 and 182 contact steps: they touched and pushed each other as
+  before. So a neighbour's body is about a third of a foot less exact;
+  whether that is felt in play was not judged by a person.
+- **Old and new.** The page without batches received only single poses
+  (`batchesReceived` 0) from riders that sent only batches, drew all three
+  of them, never stale and never closed, and they drew it. With it in the
+  room the others' batches stopped at 300 ms and 2 s at rest, as intended.
+- **A parked rider.** In the second run the driver slid after stopping
+  and, with the first form of the rest rule (speed alone), sent 4.1
+  batches a second while "resting". Rest is now latched: from the tick a
+  rider stands still until it has moved 1.5 ft, goes 3 ft/s or wrecks, and
+  it is sent as standing (no velocity), so every receiver also keeps it
+  fresh as a resting rider. In the third run rest cost 0.19 a second.
+
+`tools/test_multiplayer_relay.mjs` (`ATV_RELAY_ONLY=batches`, against the
+same local relay) passed its new section: flags told only to builds that
+take batches, a batch forwarded whole to them and pose by pose to a rider
+that said HELLO without `BATCHES`, poses the relay already had and poses
+stamped with another slot dropped, and the newest pose handed to a late
+joiner. The rest of that file needs the site Worker in front of the relay
+and was not run.
+
+### What a day like 2026-11-12 would cost
+
+That day: 1,902,132 messages (95.1% of the 2,000,000 allowed), 1,766,623
+(88.3%) in the shared room and 135,509 (6.8%) elsewhere, taken here as not
+reduced at all.
+
+- **Bound.** With the measured rates every tier sends at most 0.33 of
+  what it sent that day (300-1,000 ft: 1.7 against 5; near: 4.2 against
+  15.7; rest: 0.19 against 1.0), and a paused rider with its pings 0.375.
+  Whatever the mix, the shared room is then under 0.375 x 88.3% = 33.1%,
+  and the day under 39.9% with the rest untouched.
+- **Likely.** The mix is not known. Two that reproduce the room's total:
+  20 riders at 3.5 messages a second (22% riding near others at about 12,
+  the rest standing) become 0.22 x 3.5 + 0.78 x 0.19 + 0.03 = 0.95 a
+  second, 27% of before; 91 mostly idle sockets at 0.77 a second (60%
+  paused, 37% standing, 2% riding) become 0.06 + 0.08 + 0.07 = 0.21, 27%.
+  Either way the shared room lands near 24% of the allowance and the day
+  near 31%, under the 35% target. The bound above is not under it: a day of
+  nothing but paused pages would miss the target, at a total far below
+  any limit.
+- **While older builds are about.** A rider on a build without batches
+  holds the riders it needs poses from at step 1's intervals for the far
+  tiers and rest (3.3 against 1.7 a second and 0.5 against 0.19 above).
+  A room where that is always the case saves about half instead of
+  three quarters. On 2026-11-12 all riding time was on builds at most two
+  days old, so this should fade within a day or two of release; step 3
+  (the pace guard) covers the days it does not.
+
+Not verified: real networks and their jitter (the delay adds twice the
+measured jitter; nothing here had more than the host's), phones, rooms
+larger than four, the tier beyond 1,000 ft and paused pages in a browser,
+the courier with batching riders in a browser (unit tests only), a relay
+deployed before or after the page (the claim flag is the only guard, and
+it is unit-tested, not exercised against an old relay), and how contact
+feels to a player.
+

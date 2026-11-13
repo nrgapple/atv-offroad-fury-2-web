@@ -43,7 +43,8 @@ def main():
         messages, poses = day['messages'], day['poses']
         relayed = sum(poses.values())
         print(f"\n{date}: {messages:,} messages from shared rooms "
-              f"({100 * messages / MESSAGES_PER_REQUEST / FREE_REQUESTS:.0f}% of the free daily limit), {day['bundles']:,} courier bundles")
+              f"({100 * messages / MESSAGES_PER_REQUEST / FREE_REQUESTS:.0f}% of the free daily limit), {day['bundles']:,} courier bundles, "
+              f"{day.get('batches', 0):,} pose batches")
         for kind, n in sorted(poses.items(), key=lambda item: -item[1]):
             if n:
                 print(f'  {kind:<14}{share(n, relayed)}')

@@ -101,8 +101,8 @@ export const TESTS = {
   },
   'test_engine_freeride_relay.mjs': {
     group: 'relay',
-    timeout: 600,
-    reason: 'needs the multiplayer relay at the same origin (two Rust riders without links in a private room, then a shared Free Ride room; counts the frames each sends the relay); run with --url'
+    timeout: 900,
+    reason: 'needs the multiplayer relay at the same origin (Rust riders without links in a private room, then a shared Free Ride room, then with a rider on a build without pose batches; counts the frames each sends the relay); run with --url'
   },
   'test_engine_multiplayer_links.mjs': {
     group: 'relay',

@@ -143,7 +143,7 @@ const snapshot = {
   speed: 30,
   crash_serial: 5
 };
-try {
+checks: try {
   assert.equal((await request('/multiplayer/rooms', { method: 'POST', requestOrigin: '' })).status, 403);
   assert.equal(
     (await request('/multiplayer/rooms', { method: 'POST', requestOrigin: 'https://foreign.invalid' })).status,
@@ -155,6 +155,105 @@ try {
   assert.equal(identity.protocol, 6);
   assert.ok(identity.commit && identity.wasmSha256);
   report.identity = identity;
+  // Pose batches (research/MULTIPLAYER.md "Free Ride pose batches"): a rider
+  // sends its poses since the last batch in one message. Riders that said
+  // BATCHES get it whole and hear which other riders take batches; the
+  // others get its poses one by one and only ever see the DIRECT flag.
+  {
+    const [HELLO, PRESENT, ARRIVED, BATCHES] = [0, 3, 4, 8];
+    const signal = (peer, kind, data) => encode({ Signal: { peer, kind, data } });
+    const made = await (await request('/multiplayer/rooms', { method: 'POST' })).json();
+    assert.equal(made.batches, true, 'the room claim says the relay takes batches');
+    const first = await connect(made.code, player('Batch host'), '?host=' + made.hostToken);
+    const sender = await connect(made.code, player('Batch sender'));
+    const plain = await connect(made.code, player('Plain rider'));
+    await wait(first, p => p.Lobby?.players.length === 3);
+    first.send(encode({ SetLobby: { epoch: lastLobby(first).epoch, map: 9, started: true } }));
+    for (const ws of [first, sender, plain]) await wait(ws, p => p.Lobby?.started);
+    first.send(signal(0, HELLO, [BATCHES]));
+    sender.send(signal(0, HELLO, [BATCHES]));
+    plain.send(signal(0, HELLO, [0]));
+    first.send(encode({ Ready: { map: 9 } }));
+    plain.send(encode({ Ready: { map: 9 } }));
+    await sleep(150);
+    let firstAt = first.packets.length;
+    let plainAt = plain.packets.length;
+    const senderAt = sender.packets.length;
+    sender.send(encode({ Ready: { map: 9 } }));
+    assert.deepEqual((await wait(sender, p => p.Signal?.peer === first.peer, senderAt)).Signal, {
+      peer: first.peer,
+      kind: PRESENT,
+      data: [BATCHES]
+    });
+    assert.deepEqual((await wait(sender, p => p.Signal?.peer === plain.peer, senderAt)).Signal, {
+      peer: plain.peer,
+      kind: PRESENT,
+      data: [0]
+    });
+    assert.deepEqual((await wait(first, p => p.Signal?.kind === ARRIVED, firstAt)).Signal, {
+      peer: sender.peer,
+      kind: ARRIVED,
+      data: [BATCHES]
+    });
+    assert.deepEqual((await wait(plain, p => p.Signal?.kind === ARRIVED, plainAt)).Signal, {
+      peer: sender.peer,
+      kind: ARRIVED,
+      data: [0]
+    });
+    const animation = {
+      steering: 0, wheels: [0, 0, 0, 0], compression: [0, 0, 0, 0], clips: [4, 0, 0, 0], count: 1,
+      phase: 0.5, first_weight: 0, pair_weight: 0, look_phase: -1, paused: false
+    };
+    const pose = (sequence, peer = sender.peer) => [
+      ...encode({
+        Snapshot: {
+          ...snapshot, animation, peer, sequence, time_ms: sequence * 100, atv_model: 1, rider_model: 0,
+          atv_nodes: [], rider_nodes: [], rider_state: 'Riding',
+          atv: { ...transform, position: [sequence, 20, 40] }
+        }
+      })
+    ];
+    const sequences = packet => packet.Batch.poses.map(bytes => decode(Buffer.from(bytes)).Snapshot.sequence);
+    firstAt = first.packets.length;
+    plainAt = plain.packets.length;
+    sender.send(encode({ Batch: { interval_ms: 300, poses: [pose(1), pose(2), pose(3)] } }));
+    const whole = await wait(first, p => p.Batch, firstAt);
+    assert.equal(whole.Batch.interval_ms, 300);
+    assert.deepEqual(sequences(whole), [1, 2, 3]);
+    assert.equal(decode(Buffer.from(whole.Batch.poses[0])).Snapshot.peer, sender.peer);
+    await wait(plain, p => p.Snapshot?.sequence === 3, plainAt);
+    assert.deepEqual(
+      plain.packets.slice(plainAt).filter(p => p.Snapshot).map(p => [p.Snapshot.peer, p.Snapshot.sequence]),
+      [1, 2, 3].map(n => [sender.peer, n])
+    );
+    assert.ok(!plain.packets.some(p => p.Batch), 'a rider that did not say BATCHES never gets one');
+    // Poses the relay already has, and poses stamped with another rider's
+    // slot, drop out; the rest go on.
+    firstAt = first.packets.length;
+    plainAt = plain.packets.length;
+    sender.send(encode({ Batch: { interval_ms: 200, poses: [pose(3), pose(4)] } }));
+    assert.deepEqual(sequences(await wait(first, p => p.Batch, firstAt)), [4]);
+    await wait(plain, p => p.Snapshot?.sequence === 4, plainAt);
+    assert.equal(plain.packets.slice(plainAt).filter(p => p.Snapshot).length, 1);
+    firstAt = first.packets.length;
+    sender.send(encode({ Batch: { interval_ms: 200, poses: [pose(5, first.peer)] } }));
+    await sleep(150);
+    assert.equal(first.packets.slice(firstAt).filter(p => p.Batch || p.Snapshot).length, 0);
+    assert.equal(sender.closed, undefined);
+    // A late joiner gets the newest pose of the last batch at once.
+    const late = await connect(made.code, player('Late rider'));
+    late.send(encode({ Ready: { map: 9 } }));
+    assert.equal((await wait(late, p => p.Snapshot?.peer === sender.peer)).Snapshot.sequence, 4);
+    for (const ws of [late, plain, sender, first]) ws.close(1000, 'Left lobby');
+    await closed(first);
+    check('Pose batches: whole to riders that take them, unpacked for the others, stale and foreign poses dropped, newest kept for late joiners');
+  }
+  // ATV_RELAY_ONLY=batches stops here: the section above needs only the
+  // relay itself, the rest also the site Worker in front of it.
+  if (process.env.ATV_RELAY_ONLY === 'batches') {
+    console.log(JSON.stringify(report, null, 2));
+    break checks;
+  }
   await rejectedSocket('ABCD2345', 404);
   check('Missing/foreign origins rejected; unknown code cannot create room');
   const custom = 'T' + Date.now().toString(36).toUpperCase().slice(-7);

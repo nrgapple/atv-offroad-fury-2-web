@@ -9856,6 +9856,14 @@ fn publish_multiplayer(
         let mut report = net.report();
         report["contacts"] = contacts.into();
         report["origin"] = serde_json::json!(ride.frame().origin);
+        report["state"] = if ride.rider_wreck().is_some() {
+            "wreck"
+        } else if ride.frame().grounded.iter().any(|v| *v) {
+            "riding"
+        } else {
+            "airborne"
+        }
+        .into();
         report["trainTime"] = serde_json::json!(ride.train_time());
         report["ownPlatform"] = serde_json::json!(
             ride.train_platform()
@@ -10538,6 +10546,9 @@ pub fn start() {
     }
     if param("p2p").as_deref() == Some("0") {
         multiplayer::P2P.store(false, std::sync::atomic::Ordering::Relaxed);
+    }
+    if param("batches").as_deref() == Some("0") {
+        multiplayer::BATCHES.store(false, std::sync::atomic::Ordering::Relaxed);
     }
     if let Some(ms) = param("joinDelayMs").and_then(|v| v.parse::<u32>().ok()) {
         multiplayer::JOIN_DELAY_MS.store(ms.min(10_000), std::sync::atomic::Ordering::Relaxed);

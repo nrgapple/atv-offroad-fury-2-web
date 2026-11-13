@@ -200,6 +200,24 @@ watcher drew it about 80 ms later, never stale. Details and the receiver
 limits behind each value:
 [MULTIPLAYER.md](MULTIPLAYER.md#free-ride-relay-intervals-2026-11-12).
 
+## Free Ride pose batches (2026-11-13)
+
+A rider in a shared Free Ride room that someone needs through the relay now
+sends one message per batch interval holding several timed poses, the
+interval set by the distance to the nearest such rider: 200 ms under 60 ft,
+300 ms to 300 ft, 600 ms to 1,000 ft, 1.5 s beyond, 5 s at rest, 15 s
+paused. Receivers play a batched rider back one interval late and
+interpolate between real poses. The relay unpacks batches for builds from
+before them, and while such a build needs a rider's poses that rider's
+batches stay within what it smooths (300 ms, 2 s at rest). Host check (one
+Mac, local relay, riders without links): 4.2 messages a second riding
+beside another rider against 15.7 in a private room, 3.3 at 60-300 ft, 1.7
+at 300-1,000 ft and 0.19 at rest against 1.0; watchers drew the rider 0.2
+to 0.6 s late, on its path (0.3-0.8 ft RMS), never stale. Estimated for a
+day like 2026-11-12: about 31% of the free allowance instead of 95%.
+Design, compatibility, measurements and limits:
+[MULTIPLAYER.md](MULTIPLAYER.md#free-ride-pose-batches-2026-11-13).
+
 ## Limits and next gates
 
 The measurement is host-only and used a synthetic browser focus/visibility setup.
