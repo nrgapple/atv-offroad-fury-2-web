@@ -24,6 +24,11 @@ pub static PING_MS: AtomicU32 = AtomicU32::new(15_000);
 /// `?p2p=0` keeps every pose on the relay.
 pub static P2P: AtomicBool = AtomicBool::new(true);
 
+/// Pose batches in shared rooms (research/MULTIPLAYER.md "Free Ride pose
+/// batches"); `?batches=0` sends and takes single poses, as a build from
+/// before them does.
+pub static BATCHES: AtomicBool = AtomicBool::new(true);
+
 /// How a ride starts in a room (`--host`/`--join`, `?host=1`/`?room=`).
 #[derive(Clone, Debug)]
 pub struct RoomStart {
@@ -57,6 +62,8 @@ pub struct Net {
     mesh: net::Mesh,
     /// The relay introduces riders to each other (its room claim said so).
     signalling: bool,
+    /// The relay takes pose batches (its room claim said so).
+    batches: bool,
     /// This socket's session announced its direct-link support.
     greeted: bool,
     content: Rc<Content>,
@@ -212,8 +219,9 @@ fn arrival(clock: Instant, at: Instant, now: u64) -> u64 {
 
 /// Creates (`host`) or opens (`join`, `open`) the room on the relay and
 /// returns its code, the slot key when this rider becomes its creator, and
-/// whether the relay introduces riders for direct links.
-async fn claim(start: &RoomStart) -> Result<(String, Option<String>, bool), String> {
+/// whether the relay introduces riders for direct links and takes pose
+/// batches.
+async fn claim(start: &RoomStart) -> Result<(String, Option<String>, bool, bool), String> {
     let origin = net::origin(&start.relay);
     // Shared Free Ride codes (FREERDnn) are the relay's: hosting one is
     // refused, and opening one (an invite from a shared room) is Free Ride,
@@ -252,7 +260,8 @@ async fn claim(start: &RoomStart) -> Result<(String, Option<String>, bool), Stri
             return Err("Unable to join Free Ride.".into());
         }
         let links = room["links"].as_bool() == Some(true);
-        return Ok((code, Some(key), links));
+        let batches = room["batches"].as_bool() == Some(true);
+        return Ok((code, Some(key), links, batches));
     }
     let url = format!("{}/multiplayer/rooms", start.relay.trim_end_matches('/'));
     let code = start
@@ -288,15 +297,21 @@ async fn claim(start: &RoomStart) -> Result<(String, Option<String>, bool), Stri
         .ok_or("relay returned no room code")?
         .to_string();
     let links = room["links"].as_bool() == Some(true);
+    let batches = room["batches"].as_bool() == Some(true);
     if room["open"].as_bool() == Some(true) {
         let players = room["players"].as_u64().unwrap_or(0);
         if players >= room["max"].as_u64().unwrap_or(4) {
             return Err("Game is full!".into());
         }
         // This tab's kept slot key reclaims its rider after a reload.
-        return Ok((code.clone(), saved_key(&code), links));
+        return Ok((code.clone(), saved_key(&code), links, batches));
     }
-    Ok((code, room["hostToken"].as_str().map(String::from), links))
+    Ok((
+        code,
+        room["hostToken"].as_str().map(String::from),
+        links,
+        batches,
+    ))
 }
 
 /// The kept slot key record `{code, key}`: this browser tab's
@@ -359,7 +374,7 @@ impl Net {
         content: Rc<Content>,
         ride: RoomRide,
     ) -> Result<(Net, String), String> {
-        let (code, key, signalling) = claim(start).await?;
+        let (code, key, signalling, batches) = claim(start).await?;
         let socket = net::Socket::connect(
             &net::room_url(&start.relay, &code, key.as_deref()),
             &net::origin(&start.relay),
@@ -369,6 +384,7 @@ impl Net {
             socket,
             mesh: Default::default(),
             signalling,
+            batches,
             greeted: false,
             content,
             clock: Instant::now(),
@@ -652,10 +668,20 @@ impl Net {
                 self.send_poses(ride, now, paused);
             }
         }
-        // Pings keep the socket warm and refine the shared world clock.
+        // Pings keep the socket warm and refine the shared world clock. In
+        // a shared room every message counts against the relay's daily
+        // allowance (research/MULTIPLAYER.md "Free Ride pose batches"): half
+        // as many pings, and a paused rider's poses keep the socket warm.
         let synced = self.session.server_now(now).is_some() && self.session.rtt_ms.is_some();
-        if (now_f - self.last_traffic >= 10_000.
-            || now_f - self.last_ping >= f64::from(PING_MS.load(Ordering::Relaxed))
+        let ping = f64::from(PING_MS.load(Ordering::Relaxed));
+        let shared = self.session.lobby.as_ref().is_some_and(|l| l.public);
+        let (quiet, ping) = if shared {
+            (25_000., ping * 2.)
+        } else {
+            (10_000., ping)
+        };
+        if (now_f - self.last_traffic >= quiet
+            || now_f - self.last_ping >= ping
             || (!synced && now_f - self.last_ping >= 2000.))
             && self.session.peer.is_some()
             && let Ok(bytes) = self.session.ping(now)
@@ -743,7 +769,8 @@ impl Net {
         if self.greeted || !self.signalling || self.session.peer.is_none() {
             return;
         }
-        if let Ok(bytes) = self.session.hello(direct) {
+        let batches = self.batches && BATCHES.load(Ordering::Relaxed);
+        if let Ok(bytes) = self.session.hello(direct, batches) {
             self.greeted = self.socket.send(bytes);
         }
     }
@@ -1331,7 +1358,10 @@ impl Net {
             "reconnecting": self.reconnect.is_some(),
             "met": self.met.map(|(peer, d)| serde_json::json!({"peer": peer, "distanceFt": d})),
             "remote": self.presented.iter().map(|(peer, position, stale, platform)| {
-                serde_json::json!({"peer": peer, "position": position, "stale": stale, "platform": platform})
+                serde_json::json!({
+                    "peer": peer, "position": position, "stale": stale, "platform": platform,
+                    "delayMs": self.session.delay_ms(*peer),
+                })
             }).collect::<Vec<_>>(),
             "network": {
                 "messages": c.messages, "full": c.full, "delta": c.delta,
@@ -1345,6 +1375,9 @@ impl Net {
             "linkCounts": self.session.link_counts(),
             "courier": self.session.courier,
             "bundles": c.bundles,
+            "batches": c.batches,
+            "batchesReceived": c.batches_received,
+            "pace": self.session.pace,
             "links": self.session.link_states().into_iter().map(|(peer, state)| {
                 serde_json::json!({"peer": peer, "state": state})
             }).collect::<Vec<_>>(),

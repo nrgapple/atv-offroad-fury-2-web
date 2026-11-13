@@ -58,6 +58,8 @@ enum State {
 struct Rider {
     /// Both ends can open direct links.
     direct: bool,
+    /// The rider's build takes pose batches from the relay.
+    batches: bool,
     /// This client arrived after the rider, so it creates the offer.
     offerer: bool,
     state: State,
@@ -158,6 +160,7 @@ impl Links {
                     peer,
                     Rider {
                         direct: self.direct && message.data[0] & signal::DIRECT != 0,
+                        batches: message.data[0] & signal::BATCHES != 0,
                         offerer: message.kind == signal::PRESENT,
                         state: State::Idle,
                         failures: 0,
@@ -368,6 +371,14 @@ impl Links {
             .map(|(peer, _)| *peer)
     }
 
+    /// Whether a rider who gets this client's poses through the relay is on
+    /// a build without pose batches (the relay unpacks them for it).
+    pub fn relayed_plain(&self) -> bool {
+        self.riders
+            .values()
+            .any(|r| !matches!(r.state, State::Open { .. }) && !r.batches)
+    }
+
     /// Linked riders whose next pose is due. `every` gives a rider's
     /// interval; a change of `key` (state, crash, pause, platform) is due
     /// for everyone at once.
@@ -479,6 +490,55 @@ pub fn freeride_interval(
     }
 }
 
+/// How a rider in a shared Free Ride room batches its poses for the relay
+/// (research/MULTIPLAYER.md "Free Ride pose batches"): the time between
+/// batches and between the poses kept in one (ms), by the distance to the
+/// nearest rider who gets them through the relay. One message then carries
+/// motion as fine as before, shown one batch interval late: nearer riders
+/// see less delay.
+///
+/// `plain`: some rider who needs these poses is on a build without batches.
+/// The relay unpacks them for it, so no batch waits longer than that build
+/// smooths and keeps fresh ([`freeride_interval`]).
+pub fn batch_tier(
+    paused: bool,
+    moving: bool,
+    state: RiderState,
+    speed: f32,
+    feet: f32,
+    plain: bool,
+) -> (u32, u32) {
+    let resting = !moving && state == RiderState::Riding;
+    let (every, spacing) = if paused {
+        (15_000, 15_000)
+    } else if resting {
+        (5000, 5000)
+    } else if feet >= 1000. {
+        (1500, 500)
+    } else if feet > 300. {
+        (600, 200)
+    } else if feet >= 60. {
+        (300, 100)
+    } else if state == RiderState::Wreck || state == RiderState::Airborne || speed > 35. {
+        (200, 50)
+    } else {
+        (200, 100)
+    };
+    if !plain {
+        return (every, spacing);
+    }
+    let limit = if paused {
+        10_000
+    } else if resting {
+        2000
+    } else if feet >= 1000. {
+        350
+    } else {
+        300
+    };
+    (every.min(limit), spacing.min(limit))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -511,6 +571,7 @@ mod tests {
         arrival.signal(notice(5, signal::PRESENT, 0), 0);
         assert_eq!(arrival.commands(0), [Command::Offer(2)]);
         assert_eq!(arrival.relayed().collect::<Vec<_>>(), [2, 5]);
+        assert!(arrival.relayed_plain());
         // The rider already there waits for the offer.
         let mut resident = linked();
         resident.signal(notice(9, signal::ARRIVED, signal::DIRECT), 0);
@@ -724,6 +785,63 @@ mod tests {
         assert_eq!(interval(true, false, Riding, 0., 20., false), 5000);
         assert_eq!(interval(true, false, Riding, 0., 20., true), 1000);
         assert!(u64::from(interval(true, false, Riding, 0., 0., true)) < SILENCE_MS);
+    }
+
+    #[test]
+    fn free_ride_batches_wait_longer_the_farther_the_nearest_rider_is() {
+        use RiderState::{Airborne, Recovering, Riding, Wreck};
+        let moving = |state, speed, feet| batch_tier(false, true, state, speed, feet, false);
+        // Under 60 ft: five batches a second, poses 50 ms apart when fast,
+        // airborne or wrecked.
+        assert_eq!(moving(Riding, 20., 20.), (200, 100));
+        assert_eq!(moving(Riding, 60., 59.), (200, 50));
+        assert_eq!(moving(Airborne, 20., 20.), (200, 50));
+        assert_eq!(moving(Wreck, 0., 20.), (200, 50));
+        assert_eq!(moving(Riding, 60., 60.), (300, 100));
+        assert_eq!(moving(Recovering, 0., 300.), (300, 100));
+        assert_eq!(moving(Airborne, 90., 301.), (600, 200));
+        assert_eq!(moving(Riding, 90., 1000.), (1500, 500));
+        assert_eq!(moving(Riding, 90., f32::INFINITY), (1500, 500));
+        // At rest and paused: one pose.
+        assert_eq!(
+            batch_tier(false, false, Riding, 0., 20., false),
+            (5000, 5000)
+        );
+        assert_eq!(
+            batch_tier(true, false, Riding, 0., 20., false),
+            (15_000, 15_000)
+        );
+        // A wrecked rider at rest is still shown as it falls.
+        assert_eq!(batch_tier(false, false, Wreck, 0., 20., false), (200, 50));
+        // For a build without batches nothing waits longer than it smooths
+        // (220 ms of delay, 250 ms of extrapolation) or keeps fresh.
+        let plain = |state, speed, feet| batch_tier(false, true, state, speed, feet, true);
+        assert_eq!(plain(Riding, 60., 20.), (200, 50));
+        assert_eq!(plain(Riding, 20., 100.), (300, 100));
+        assert_eq!(plain(Riding, 20., 500.), (300, 200));
+        assert_eq!(plain(Riding, 20., 5000.), (350, 350));
+        assert_eq!(
+            batch_tier(false, false, Riding, 0., 20., true),
+            (2000, 2000)
+        );
+        assert_eq!(
+            batch_tier(true, false, Riding, 0., 20., true),
+            (10_000, 10_000)
+        );
+        // Every batch fits its poses, also stretched three times by the
+        // relay's pace.
+        for state in [Riding, Airborne, Wreck, Recovering] {
+            for feet in [10., 100., 500., 5000.] {
+                for plain in [false, true] {
+                    let (every, spacing) = batch_tier(false, true, state, 60., feet, plain);
+                    assert!(
+                        every >= spacing && every * 3 / spacing + 2 <= atv_net::MAX_BATCH as u32
+                    );
+                    // Never more messages than single poses would be.
+                    assert!(every >= freeride_interval(false, true, state, 60., feet).min(300));
+                }
+            }
+        }
     }
 
     #[test]

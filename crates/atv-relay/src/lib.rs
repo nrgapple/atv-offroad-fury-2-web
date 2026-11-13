@@ -141,6 +141,10 @@ struct Connection {
     /// The client decodes room-race CPU sound cues ([`signal::CPU_SOUNDS`]).
     #[serde(default)]
     cpu_sounds: bool,
+    /// The client takes pose batches ([`signal::BATCHES`]); the others get
+    /// a batch's poses one by one.
+    #[serde(default)]
+    batches: bool,
     last_seen_ms: f64,
     window_ms: f64,
     messages: u16,
@@ -189,6 +193,8 @@ struct Recipient {
     riding: bool,
     /// Can be the room's courier.
     carries: bool,
+    /// Takes pose batches.
+    batches: bool,
     /// The rider's vehicle and character models.
     models: (u16, u16),
 }
@@ -288,6 +294,38 @@ fn pose_reason(
     }
 }
 
+/// The poses of a rider's batch the relay accepts, the newest of them, and
+/// whether all show the rider's current models (others are kept as the
+/// sender's delta baseline but never relayed, as single poses are). A pose
+/// is accepted when it is stamped with the sender's own slot and is newer
+/// than the last pose it sent (`sequence`); the codec has already checked
+/// that they are whole compact poses in order.
+fn batch_poses(
+    poses: Vec<Vec<u8>>,
+    peer: u8,
+    models: (u16, u16),
+    mut sequence: Option<u32>,
+) -> (Vec<Vec<u8>>, Option<atv_net::Snapshot>, bool) {
+    let mut newest = None;
+    let mut current = true;
+    let mut accepted = Vec::with_capacity(poses.len());
+    for bytes in poses {
+        let Ok(Packet::Snapshot(pose)) = atv_net::decode(&bytes) else {
+            continue;
+        };
+        if pose.peer != peer
+            || sequence.is_some_and(|old| !atv_net::sequence_newer(pose.sequence, old))
+        {
+            continue;
+        }
+        current &= (pose.atv_model, pose.rider_model) == models;
+        sequence = Some(pose.sequence);
+        newest = Some(*pose);
+        accepted.push(bytes);
+    }
+    (accepted, newest, current)
+}
+
 /// Incoming messages a room has seen today (UTC, as Cloudflare's daily
 /// limit), counted in memory per message and saved from the alarm.
 #[derive(Clone, Copy, Default, Serialize, Deserialize, PartialEq, Debug)]
@@ -304,6 +342,9 @@ struct Budget {
     /// Courier bundles, not yet reported.
     #[serde(default)]
     bundles: u64,
+    /// Pose batches, not yet reported (each also counts once in `poses`).
+    #[serde(default)]
+    batches: u64,
 }
 
 impl Budget {
@@ -455,6 +496,8 @@ struct RoomDay {
     #[serde(default)]
     bundles: u64,
     #[serde(default)]
+    batches: u64,
+    #[serde(default)]
     now: std::collections::BTreeMap<String, u64>,
     #[serde(default)]
     at_ms: f64,
@@ -468,6 +511,8 @@ struct DayTotal {
     messages: u64,
     poses: [u64; 7],
     bundles: u64,
+    #[serde(default)]
+    batches: u64,
     busiest: std::collections::BTreeMap<String, u64>,
 }
 
@@ -490,6 +535,7 @@ impl Counts {
         let total = self.days.entry(day).or_default();
         total.messages += report.messages;
         total.bundles += report.bundles;
+        total.batches += report.batches;
         for (sum, n) in total.poses.iter_mut().zip(report.poses) {
             *sum += n;
         }
@@ -532,6 +578,7 @@ fn add_report(days: &mut std::collections::BTreeMap<String, RoomDay>, room: &str
     if let Some(previous) = previous {
         total.messages += previous.messages;
         total.bundles += previous.bundles;
+        total.batches += previous.batches;
         for (sum, earlier) in total.poses.iter_mut().zip(previous.poses) {
             *sum += earlier;
         }
@@ -667,7 +714,7 @@ pub async fn main(mut req: Request, env: Env, _ctx: Context) -> Result<Response>
                 .await?;
             if response.status_code() == 201 {
                 return Ok(Response::from_json(&serde_json::json!({
-                    "code": text, "hostToken": token, "links": true
+                    "code": text, "hostToken": token, "links": true, "batches": true
                 }))?
                 .with_status(201));
             }
@@ -676,7 +723,7 @@ pub async fn main(mut req: Request, env: Env, _ctx: Context) -> Result<Response>
                     let mut response = response;
                     let live: serde_json::Value = response.json().await.unwrap_or_default();
                     return Response::from_json(&serde_json::json!({
-                        "code": text, "open": true, "links": true,
+                        "code": text, "open": true, "links": true, "batches": true,
                         "players": live.get("players"), "max": PRIVATE_CAPACITY,
                     }));
                 }
@@ -708,7 +755,7 @@ pub async fn main(mut req: Request, env: Env, _ctx: Context) -> Result<Response>
                 200 | 201 => {
                     let claim: serde_json::Value = response.json().await?;
                     return Response::from_json(&serde_json::json!({
-                        "code": text, "key": claim.get("key"), "links": true,
+                        "code": text, "key": claim.get("key"), "links": true, "batches": true,
                     }));
                 }
                 409 => continue,
@@ -962,6 +1009,7 @@ impl LobbyRoom {
                         direct: c.direct,
                         riding: Some(c.ready_map) == map,
                         carries: c.carries,
+                        batches: c.batches,
                         models: c
                             .player
                             .as_ref()
@@ -1005,7 +1053,14 @@ impl LobbyRoom {
     /// others keep relaying poses for them. Only builds that announced
     /// signalling receive these packets.
     fn introduce(&self, ws: &WebSocket, connection: &Connection, map: u16) -> Result<()> {
-        let flags = |c: &Connection| vec![u8::from(c.direct) * signal::DIRECT];
+        // Whether a rider takes batches is told only to builds that do: an
+        // older one accepts no other flag than DIRECT.
+        let flags = |c: &Connection, to: &Connection| {
+            vec![
+                u8::from(c.direct) * signal::DIRECT
+                    | u8::from(c.batches && to.batches) * signal::BATCHES,
+            ]
+        };
         for (other, c) in self.connections()? {
             if &other == ws || c.player.is_none() || c.ready_map != map {
                 continue;
@@ -1016,7 +1071,7 @@ impl LobbyRoom {
                     &Packet::Signal(Signal {
                         peer: c.peer,
                         kind: signal::PRESENT,
-                        data: flags(&c),
+                        data: flags(&c, connection),
                     }),
                 )?;
             }
@@ -1026,7 +1081,7 @@ impl LobbyRoom {
                     &Packet::Signal(Signal {
                         peer: connection.peer,
                         kind: signal::ARRIVED,
-                        data: flags(connection),
+                        data: flags(connection, &c),
                     }),
                 );
             }
@@ -1116,7 +1171,7 @@ impl LobbyRoom {
                 serde_json::json!({
                     "room": String::from_utf8_lossy(&room.code), "riders": riders,
                     "day": budget.day, "messages": budget.unreported, "poses": budget.poses,
-                    "bundles": budget.bundles,
+                    "bundles": budget.bundles, "batches": budget.batches,
                     "now": self.rider_counts(),
                 })
                 .to_string()
@@ -1143,6 +1198,7 @@ impl LobbyRoom {
                     *left -= sent.min(*left);
                 }
                 current.bundles -= budget.bundles.min(current.bundles);
+                current.batches -= budget.batches.min(current.batches);
             }
         }
     }
@@ -1164,6 +1220,7 @@ impl LobbyRoom {
             add("oldBuild", u64::from(!c.signals));
             add("noLinks", u64::from(c.signals && !c.direct));
             add("canLink", u64::from(c.direct));
+            add("batches", u64::from(c.batches));
             for (name, value) in atv_net::LinkReport::NAMES
                 .iter()
                 .zip(c.report.unwrap_or_default().values())
@@ -1342,6 +1399,7 @@ impl DurableObject for LobbyRoom {
                         messages: bounded(&value["messages"]),
                         poses,
                         bundles: bounded(&value["bundles"]),
+                        batches: bounded(&value["batches"]),
                         now: now_counts,
                         at_ms: instant,
                     },
@@ -1387,6 +1445,7 @@ impl DurableObject for LobbyRoom {
                     "messages": days.values().filter(|d| d.day == today).map(|d| d.messages).sum::<u64>(),
                     "poses": poses,
                     "bundles": days.values().filter(|d| d.day == today).map(|d| d.bundles).sum::<u64>(),
+                    "batches": days.values().filter(|d| d.day == today).map(|d| d.batches).sum::<u64>(),
                     "now": riding,
                 },
             }));
@@ -1407,7 +1466,7 @@ impl DurableObject for LobbyRoom {
                 .map(|(day, d)| {
                     serde_json::json!({
                         "day": day, "messages": d.messages, "poses": pose_counts(d.poses),
-                        "bundles": d.bundles, "busiest": d.busiest,
+                        "bundles": d.bundles, "batches": d.batches, "busiest": d.busiest,
                     })
                 })
                 .collect();
@@ -1694,6 +1753,7 @@ impl DurableObject for LobbyRoom {
                             direct: connection.direct,
                             riding: true,
                             carries: connection.carries,
+                            batches: connection.batches,
                             models: (0, 0),
                         };
                         self.budget.borrow_mut().poses[pose_kind(&from, recipients.iter())] += 1;
@@ -1762,6 +1822,66 @@ impl DurableObject for LobbyRoom {
                     }
                 }
             }
+            // A rider's poses since its last batch (research/MULTIPLAYER.md
+            // "Free Ride pose batches"): checked as single poses are, counted
+            // as one, and passed whole to riders that take batches and pose
+            // by pose to the others.
+            Packet::Batch { interval_ms, poses } if connection.player.is_some() => {
+                let player = connection
+                    .player
+                    .as_ref()
+                    .expect("matched connected player");
+                let (poses, newest, current) = batch_poses(
+                    poses,
+                    connection.peer,
+                    (player.atv_model, player.rider_model),
+                    connection.sequence,
+                );
+                if let Some(newest) = newest {
+                    connection.sequence = Some(newest.sequence);
+                    connection.snapshot = Some(newest);
+                    // Poses from a previous map or vehicle are never relayed.
+                    if room.started && connection.ready_map == room.map && current {
+                        let recipients = self.recipients()?;
+                        let from = Recipient {
+                            ws: ws.clone(),
+                            peer: connection.peer,
+                            links: connection.links,
+                            signals: connection.signals,
+                            direct: connection.direct,
+                            riding: true,
+                            carries: connection.carries,
+                            batches: connection.batches,
+                            models: (0, 0),
+                        };
+                        {
+                            let mut budget = self.budget.borrow_mut();
+                            budget.poses[pose_kind(&from, recipients.iter())] += 1;
+                            budget.batches += 1;
+                        }
+                        let whole = atv_net::encode(&Packet::Batch {
+                            interval_ms,
+                            poses: poses.clone(),
+                        })
+                        .map_err(|e| Error::RustError(e.to_string()))?;
+                        for to in &recipients {
+                            if to.ws == ws
+                                || linked(connection.peer, connection.links, to.peer, to.links)
+                            {
+                                continue;
+                            }
+                            let sent = if to.batches {
+                                to.ws.send_with_bytes(&whole).is_ok()
+                            } else {
+                                poses.iter().all(|pose| to.ws.send_with_bytes(pose).is_ok())
+                            };
+                            if !sent {
+                                let _ = self.close_socket(&to.ws, 1011, "Send failed");
+                            }
+                        }
+                    }
+                }
+            }
             Packet::Ready { map } if connection.player.is_some() => {
                 if map == room.map {
                     connection.ready_map = map;
@@ -1795,6 +1915,7 @@ impl DurableObject for LobbyRoom {
                     connection.carries =
                         connection.direct && message.data[0] & signal::CARRIES != 0;
                     connection.cpu_sounds = message.data[0] & signal::CPU_SOUNDS != 0;
+                    connection.batches = message.data[0] & signal::BATCHES != 0;
                     ws.serialize_attachment(&connection)?;
                     self.invalidate_recipients();
                     // A rider that follows couriers hears of the current one.
@@ -2458,6 +2579,46 @@ mod tests {
         });
         let loaded: Connection = serde_json::from_value(old).unwrap();
         assert!(!loaded.signals && !loaded.direct && loaded.links == 0);
+    }
+
+    #[test]
+    fn a_batch_keeps_the_senders_own_newer_poses() {
+        let pose = |peer, sequence: u32, quad| {
+            atv_net::encode(&Packet::Snapshot(Box::new(atv_net::Snapshot {
+                peer,
+                sequence,
+                time_ms: sequence * 50,
+                atv_model: quad,
+                animation: Some(Default::default()),
+                ..Default::default()
+            })))
+            .unwrap()
+        };
+        // Rider 3 on ATV 5 last sent pose 10.
+        let check = |poses: Vec<Vec<u8>>| batch_poses(poses, 3, (5, 0), Some(10));
+        let (kept, newest, current) = check(vec![pose(3, 11, 5), pose(3, 12, 5)]);
+        assert_eq!(
+            (kept.len(), newest.unwrap().sequence, current),
+            (2, 12, true)
+        );
+        // Poses it has already sent, or stamped with another slot, drop out.
+        let (kept, newest, _) = check(vec![pose(3, 10, 5), pose(4, 11, 5), pose(3, 12, 5)]);
+        assert_eq!((kept, newest.unwrap().sequence), (vec![pose(3, 12, 5)], 12));
+        let (kept, newest, _) = check(vec![pose(3, 9, 5), pose(3, 10, 5)]);
+        assert!(kept.is_empty() && newest.is_none());
+        // A pose of the vehicle it rode before is kept but marks the batch.
+        let (kept, newest, current) = check(vec![pose(3, 11, 6)]);
+        assert_eq!((kept.len(), newest.is_some(), current), (1, true, false));
+        // An attachment and a day written before batches load without them.
+        let old = serde_json::json!({
+            "active": true, "peer": 1, "player": null, "sequence": null,
+            "last_seen_ms": 0.0, "window_ms": 0.0, "messages": 0, "bytes": 0
+        });
+        assert!(!serde_json::from_value::<Connection>(old).unwrap().batches);
+        let day = serde_json::json!({
+            "messages": 5, "poses": [0, 0, 0, 0, 0, 0, 5], "bundles": 1, "busiest": {}
+        });
+        assert_eq!(serde_json::from_value::<DayTotal>(day).unwrap().batches, 0);
     }
 
     #[test]
