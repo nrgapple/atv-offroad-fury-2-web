@@ -154,9 +154,15 @@ impl Frontend {
                 "The world boards could not be loaded.".into(),
                 String::new(),
             )),
-            Some(BoardState::Ready(board)) if board.entries.is_empty() => {
-                lines.push(("No times yet. Be the first!".into(), String::new()))
-            }
+            Some(BoardState::Ready(board)) if board.entries.is_empty() => lines.push((
+                if score {
+                    "No scores yet. Be the first!"
+                } else {
+                    "No times yet. Be the first!"
+                }
+                .into(),
+                String::new(),
+            )),
             Some(BoardState::Ready(board)) => {
                 let row = |e: &world_board::BoardEntry| {
                     let mark = if self.mine(&e.name) { "▶ " } else { "" };
@@ -368,6 +374,75 @@ mod tests {
         // Placing again refetches the boards.
         front.world_placed("ADA", &wants);
         assert_eq!(front.world_wants(), wants);
+    }
+
+    #[test]
+    fn the_world_view_lists_a_freestyle_course_score_board() {
+        let (mut front, view, mut settings) = front();
+        front.run("halloffame", &view, &mut settings);
+        front.run("fameworld", &view, &mut settings);
+        let pro = front
+            .fame_groups()
+            .iter()
+            .position(|(g, _)| *g == "Pro Freestyle")
+            .unwrap();
+        for _ in 0..pro {
+            front.step_profile("fameevent", 1, &view);
+        }
+        front.step_profile("famecourse", 1, &view);
+        // One board per series and course, whatever the difficulty row says.
+        assert_eq!(front.world_wants(), ["score:spstunt:free04"]);
+        front.step_profile("famedifficulty", 1, &view);
+        let wants = front.world_wants();
+        assert_eq!(wants, ["score:spstunt:free04"]);
+        front.world_loading(&wants[0]);
+        let empty = Board {
+            board: wants[0].clone(),
+            ..Default::default()
+        };
+        front.world_answer(&wants[0], BoardState::Ready(empty), &view);
+        let details = front.profile_details();
+        assert_eq!(details[0].1, "World · Pro Freestyle");
+        assert_eq!(details[1].0, "Highest Objective Scores");
+        assert_eq!(details[2].0, "No scores yet. Be the first!");
+        // A placed score refetches the board; its rows show grouped scores.
+        front.world_placed("ADA", &wants);
+        assert_eq!(front.world_wants(), wants);
+        let entries = vec![
+            BoardEntry {
+                rank: 1,
+                name: "ACE".into(),
+                value: 1_204_500,
+                vehicle: 28,
+                day: "2026-11-12".into(),
+            },
+            BoardEntry {
+                rank: 2,
+                name: "ADA".into(),
+                value: 31_250,
+                vehicle: 4,
+                day: "2026-11-12".into(),
+            },
+        ];
+        let board = Board {
+            board: wants[0].clone(),
+            entries,
+            yesterday: None,
+        };
+        front.world_answer(&wants[0], BoardState::Ready(board), &view);
+        let details = front.profile_details();
+        assert!(
+            details
+                .iter()
+                .any(|l| l.0.starts_with("1. ACE") && l.1 == "1,204,500"),
+            "{details:?}"
+        );
+        assert!(
+            details
+                .iter()
+                .any(|l| l.0.starts_with("▶ 2. ADA") && l.1 == "31,250"),
+            "{details:?}"
+        );
     }
 
     #[test]
