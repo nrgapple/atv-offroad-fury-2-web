@@ -106,6 +106,85 @@ impl Run {
     }
 }
 
+/// A finished Freestyle objective the world boards may take
+/// (`score:<series>:<course>`).
+#[derive(Clone, Debug, PartialEq)]
+pub struct ScoreRun {
+    pub series: &'static str,
+    pub course: String,
+    pub vehicle: u16,
+    pub score: i64,
+    pub seconds: u32,
+    pub trace: world_board::Trace,
+}
+
+impl ScoreRun {
+    /// The run of a finished single-player objective whose score earned a
+    /// local Hall of Fame place (`fame`, after its `finish`), ridden for
+    /// `elapsed` seconds. Like a race, a run an assist acted in sends
+    /// nothing; split screen keeps its own records and never comes here.
+    pub fn of_objective(
+        series: &'static str,
+        course: &str,
+        fame: &atv_core::hall_of_fame::FreestyleWatch,
+        score: f32,
+        elapsed: f32,
+        assisted: bool,
+        trace: &world_board::Trace,
+    ) -> Option<Self> {
+        let tag = fame.tag();
+        let score = score.max(0.) as i64;
+        let placed = fame
+            .fame
+            .objectives
+            .iter()
+            .any(|e| e.name == tag && e.value == score);
+        (placed && score > 0 && !assisted).then(|| Self {
+            series,
+            course: course.to_string(),
+            vehicle: fame.vehicle,
+            score,
+            seconds: world_board::run_seconds(elapsed),
+            trace: trace.clone(),
+        })
+    }
+
+    /// The submission body under `name`.
+    pub fn body(&self, name: &str) -> String {
+        serde_json::to_string(&world_board::FreestyleSubmission {
+            name,
+            vehicle: self.vehicle,
+            series: self.series,
+            course: &self.course,
+            score: self.score,
+            seconds: self.seconds,
+            trace: &self.trace,
+        })
+        .unwrap_or_default()
+    }
+}
+
+/// A finished event waiting for its Hall of Fame name.
+#[derive(Clone, Debug)]
+pub enum Finished {
+    Race(Run),
+    Freestyle(ScoreRun),
+}
+
+impl Finished {
+    /// A daily event time is sent whether or not it set a local record.
+    pub fn daily(&self) -> bool {
+        matches!(self, Self::Race(run) if run.daily.is_some())
+    }
+
+    pub fn body(&self, name: &str) -> String {
+        match self {
+            Self::Race(run) => run.body(name),
+            Self::Freestyle(run) => run.body(name),
+        }
+    }
+}
+
 impl App {
     fn world_send(
         &mut self,
@@ -239,5 +318,73 @@ impl App {
         if let Some(window) = &self.window {
             window.request_redraw();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use atv_core::hall_of_fame::{FreestyleWatch, HallOfFame};
+
+    fn trace(seconds: u32) -> world_board::Trace {
+        let mut trace = world_board::Trace::default();
+        for second in 0..=seconds {
+            trace.step(second as f32, [40. * second as f32, 0., 7.], 0);
+        }
+        trace
+    }
+
+    #[test]
+    fn a_freestyle_score_is_sent_only_when_it_earned_a_local_place() {
+        let mut fame = FreestyleWatch::new("unspstunt", "env05", 4, None, None);
+        fame.finish(31_250.7);
+        let run = ScoreRun::of_objective(
+            "unspstunt",
+            "env05",
+            &fame,
+            31_250.7,
+            96.4,
+            false,
+            &trace(96),
+        )
+        .expect("the first score of a course places");
+        assert_eq!((run.score, run.seconds, run.vehicle), (31_250, 96, 4));
+        let body: serde_json::Value = serde_json::from_str(&run.body("ADA")).unwrap();
+        assert_eq!(body["series"], "unspstunt");
+        assert_eq!(body["course"], "env05");
+        assert_eq!(body["score"], 31_250);
+        assert_eq!(body["trace"]["points"].as_array().unwrap().len(), 97);
+        assert!(body.get("lapMs").is_none() && body.get("expert").is_none());
+        assert!(!Finished::Freestyle(run).daily());
+
+        // An assisted run keeps its local place but stays off the world's.
+        let assisted = ScoreRun::of_objective(
+            "unspstunt",
+            "env05",
+            &fame,
+            31_250.7,
+            96.4,
+            true,
+            &trace(96),
+        );
+        assert_eq!(assisted, None);
+
+        // A score below the course's three places is not sent.
+        let mut hall = HallOfFame::default();
+        for (name, score) in [("A", 90_000.), ("B", 80_000.), ("C", 70_000.)] {
+            let mut run = FreestyleWatch::new("unspstunt", "env05", 2, Some(&hall), None);
+            run.finish(score);
+            hall.commit_run(&atv_core::hall_of_fame::Watch::Freestyle(run), name);
+        }
+        let mut low = FreestyleWatch::new("unspstunt", "env05", 4, Some(&hall), None);
+        low.finish(31_250.);
+        let none =
+            ScoreRun::of_objective("unspstunt", "env05", &low, 31_250., 96., false, &trace(96));
+        assert_eq!(none, None);
+        // A run that scored nothing holds no place.
+        let mut zero = FreestyleWatch::new("spstunt", "free01", 4, None, None);
+        zero.finish(0.);
+        let none = ScoreRun::of_objective("spstunt", "free01", &zero, 0., 120., false, &trace(120));
+        assert_eq!(none, None);
     }
 }

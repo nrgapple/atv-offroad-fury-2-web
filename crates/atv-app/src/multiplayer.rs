@@ -716,6 +716,9 @@ impl Net {
             Ok(poses) => poses,
             Err(error) => return crate::status(&format!("Multiplayer pose: {error}")),
         };
+        if let Some(bytes) = poses.before {
+            self.socket.send(bytes);
+        }
         if let Some(bytes) = poses.relay
             && self.socket.send(bytes.clone())
         {

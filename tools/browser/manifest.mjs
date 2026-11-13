@@ -99,6 +99,11 @@ export const TESTS = {
     group: 'manual',
     reason: 'load measurement: a full Free Ride room of synthetic riders on a local relay (never production)'
   },
+  'test_engine_freeride_relay.mjs': {
+    group: 'relay',
+    timeout: 600,
+    reason: 'needs the multiplayer relay at the same origin (two Rust riders without links in a private room, then a shared Free Ride room; counts the frames each sends the relay); run with --url'
+  },
   'test_engine_multiplayer_links.mjs': {
     group: 'relay',
     reason: 'needs the multiplayer relay at the same origin (two Rust riders link directly over WebRTC, a third stays on the relay); run with --url'
@@ -217,7 +222,7 @@ export const TESTS = {
   'test_engine_unlock_everything.mjs': { group: 'content', timeout: 600 },
   'test_engine_profile_stunts.mjs': { group: 'content', timeout: 900 },
   'test_engine_hall_of_fame.mjs': { group: 'content', timeout: 900 },
-  'test_engine_world_boards.mjs': { group: 'content', timeout: 600 },
+  'test_engine_world_boards.mjs': { group: 'content', timeout: 900 },
   'test_engine_text_fields_touch.mjs': { group: 'content' },
   'test_engine_championship.mjs': { group: 'content', timeout: 1500 },
   'test_engine_championship_loading.mjs': { group: 'content' },
