@@ -251,6 +251,10 @@ pub struct BoardEntry {
     pub value: i64,
     pub vehicle: u16,
     pub day: String,
+    /// A house rider's row (research/WORLD_BOARDS.md "House riders"): an
+    /// authored time the server adds to every board, shown as any other
+    /// row but never the player's own.
+    pub house: bool,
 }
 
 /// Yesterday's daily winner.
@@ -416,6 +420,12 @@ mod tests {
         )
         .unwrap();
         assert_eq!(board.entries[0].name, "BOB");
+        assert!(!board.entries[0].house);
         assert_eq!(board.yesterday.unwrap().name, None);
+        let board: Board = serde_json::from_str(
+            r#"{"board":"lap:nat01:n","entries":[{"rank":1,"name":"RIGGS","value":61000,"vehicle":3,"day":"2026-11-12","house":true}]}"#,
+        )
+        .unwrap();
+        assert!(board.entries[0].house);
     }
 }

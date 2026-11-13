@@ -126,11 +126,14 @@ impl Frontend {
         ]
     }
 
-    fn mine(&self, name: &str) -> bool {
-        self.world.names.iter().any(|n| n == name)
-            || self
-                .profile_name()
-                .is_some_and(|p| p.eq_ignore_ascii_case(name))
+    /// The rider's own row: a name they submitted under or the loaded
+    /// profile's, never a house rider's row of the same name.
+    fn mine(&self, entry: &world_board::BoardEntry) -> bool {
+        !entry.house
+            && (self.world.names.iter().any(|n| *n == entry.name)
+                || self
+                    .profile_name()
+                    .is_some_and(|p| p.eq_ignore_ascii_case(&entry.name)))
     }
 
     /// A board's lines: a title, its top rows (the rider's marked "▶") and
@@ -159,7 +162,7 @@ impl Frontend {
             }
             Some(BoardState::Ready(board)) => {
                 let row = |e: &world_board::BoardEntry| {
-                    let mark = if self.mine(&e.name) { "▶ " } else { "" };
+                    let mark = if self.mine(e) { "▶ " } else { "" };
                     (
                         format!(
                             "{mark}{}. {} · {}",
@@ -171,12 +174,7 @@ impl Frontend {
                     )
                 };
                 lines.extend(board.entries.iter().take(SHOWN).map(row));
-                if let Some(own) = board
-                    .entries
-                    .iter()
-                    .skip(SHOWN)
-                    .find(|e| self.mine(&e.name))
-                {
+                if let Some(own) = board.entries.iter().skip(SHOWN).find(|e| self.mine(e)) {
                     lines.push(row(own));
                 }
             }
@@ -334,7 +332,7 @@ mod tests {
         assert!(front.world_wants().is_empty());
         assert!(front.profile_details().iter().any(|l| l.0 == "Loading…"));
         front.world.names.push("ADA".into());
-        let entries = (1..=12)
+        let mut entries: Vec<BoardEntry> = (1..=12)
             .map(|rank| BoardEntry {
                 rank,
                 name: if rank == 12 {
@@ -345,8 +343,11 @@ mod tests {
                 value: 60_000 + i64::from(rank) * 1000,
                 vehicle: 1,
                 day: "2026-11-11".into(),
+                // A house rider named as the player is not the player's row.
+                house: rank == 3,
             })
             .collect();
+        entries[2].name = "ADA".into();
         let board = Board {
             board: wants[0].clone(),
             entries,
@@ -363,6 +364,10 @@ mod tests {
         assert!(
             details.iter().any(|l| l.0.starts_with("▶ 12. ADA")),
             "{details:?}"
+        );
+        assert!(
+            details.iter().any(|l| l.0.starts_with("3. ADA")),
+            "a house row is an ordinary row: {details:?}"
         );
         assert!(details.iter().any(|l| l.0.starts_with("Offline")));
         // Placing again refetches the boards.
