@@ -4,15 +4,19 @@
 //
 //   cargo run --release -p atv-game --example cpu_times -- CONTENT_DIR OUT.jsonl ...
 //   node tools/build_board_seeds.mjs [--from DIR] [--report FILE]
+//   node tools/build_board_seeds.mjs --verify [--from DIR]
 //
 // DIR (default private/reports/world-boards/cpu-times) holds the example's
 // .jsonl files; they stay private. The table is a pure function of them and
 // of the constants here: rerunning without new measurements changes nothing.
 // --report writes each course's anchors as JSON for the research note.
+// --verify builds nothing: it hands every measured run the driver rode for the
+// player to the server's plausibility checks (as the game would submit it:
+// best flying lap, race time and trace) and lists any the built table refuses.
 import { readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { DAILY_POOL, FREESTYLE, defaultLaps, parseBoard } from '../cloudflare/boards.mjs';
+import { DAILY_POOL, FREESTYLE, defaultLaps, judge, parseBoard } from '../cloudflare/boards.mjs';
 import { HOUSE_ROWS, hashText, spread, stream } from '../cloudflare/house.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -89,6 +93,22 @@ function anchors(course) {
   };
 }
 
+if (args.includes('--verify')) {
+  let accepted = 0;
+  const refused = [];
+  for (const run of [...runs.values()].flat()) {
+    const player = run.riders.find(rider => rider.player);
+    if (!run.trace || !run.autopilot || run.laps !== defaultLaps(run.course) || player.marks.length !== run.laps) continue;
+    const marks = run.trace.marks;
+    const lapMs = Math.min(...marks.slice(1).map((mark, i) => mark - marks[i]));
+    const body = { name: 'DRIVER', vehicle: run.quad, course: run.course, expert: run.difficulty === 2, lapMs, raceMs: marks.at(-1), trace: run.trace };
+    const { reason } = judge(body, Date.now());
+    if (reason) refused.push(`${run.course} d${run.difficulty} quad ${run.quad}: ${reason}`); else accepted += 1;
+  }
+  console.log(`${accepted} measured runs accepted, ${refused.length} refused${refused.length ? `:\n${refused.join('\n')}` : ''}`);
+  process.exit(refused.length ? 1 : 0);
+}
+
 // A rider's standing on a board: a fixed skill, a bonus on its own
 // discipline and the board's own draw, so the leaders change from course
 // to course without being random.
@@ -118,8 +138,8 @@ for (const course of courses) {
     });
     const byLap = [...field].sort((x, y) => y.lapRank - x.lapRank).slice(0, FIELD);
     // The quickest house time is a little under the fastest measured one:
-    // 1-2.5 % on Normal, 2-4 % on Expert (the quicker field is authored).
-    const margin = () => (tag === 'x' ? 0.96 + random() * 0.02 : 0.975 + random() * 0.015);
+    // 1-2.2 % on Normal, 2.5-4 % on Expert (the quicker field is authored).
+    const margin = () => (tag === 'x' ? 0.96 + random() * 0.015 : 0.978 + random() * 0.012);
     const lapTimes = spread(random, ms(a.lap) * margin(), FIELD);
     byLap.forEach((rider, i) => { rider.lap = lapTimes[i]; });
     boards[`lap:${course}:${tag}`] = byLap.slice(0, HOUSE_ROWS).map(rider => row(rider.name, rider.lap, vehicleOf(rider.name)));
