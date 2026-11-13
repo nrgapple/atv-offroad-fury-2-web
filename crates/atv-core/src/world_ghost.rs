@@ -148,7 +148,7 @@ fn unpack(bits: u32) -> [f32; 4] {
 /// motion, a course id the boards do not know).
 pub fn encode(lap: &Lap) -> Option<Vec<u8>> {
     let keys = lap.keys.len();
-    if keys < 2 || keys > MAX_KEYS || keys != keys_for(lap.steps) || !course_ok(&lap.course) {
+    if !(2..=MAX_KEYS).contains(&keys) || keys != keys_for(lap.steps) || !course_ok(&lap.course) {
         return None;
     }
     let mut out = Vec::with_capacity(HEADER + keys * KEY);
@@ -209,8 +209,7 @@ pub fn decode(bytes: &[u8]) -> Result<Lap, Error> {
         .ok_or(Error::Format)?;
     if usize::from(bytes[5]) != STRIDE
         || bytes[19 + name..HEADER].iter().any(|b| *b != 0)
-        || keys < 2
-        || keys > MAX_KEYS
+        || !(2..=MAX_KEYS).contains(&keys)
         || keys != keys_for(steps)
         || bytes.len() != HEADER + keys * KEY
         || !(1..=3_600_000).contains(&lap_ms)
@@ -218,7 +217,7 @@ pub fn decode(bytes: &[u8]) -> Result<Lap, Error> {
         return Err(Error::Format);
     }
     let mut out = Vec::with_capacity(keys);
-    for key in bytes[HEADER..].chunks_exact(KEY) {
+    for key in bytes[HEADER..].as_chunks::<KEY>().0 {
         let mut origin = [0.; 3];
         for (i, c) in origin.iter_mut().enumerate() {
             let units = u32_at(key, i * 4).ok_or(Error::Format)? as i32;
@@ -382,7 +381,7 @@ pub fn from_base64(text: &str) -> Option<Vec<u8>> {
     }
     let mut out = Vec::with_capacity(text.len() / 4 * 3);
     let groups = text.len() / 4;
-    for (g, group) in text.chunks_exact(4).enumerate() {
+    for (g, group) in text.as_chunks::<4>().0.iter().enumerate() {
         let padding = group.iter().rev().take_while(|b| **b == b'=').count();
         if padding > 2 || (padding > 0 && g + 1 != groups) {
             return None;
@@ -475,14 +474,15 @@ impl Rival {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::math::Det;
 
     /// A lap round a circle of `radius` feet in `steps` steps.
     fn ride(recorder: &mut Recorder, steps: u32, radius: f32) {
         for step in 0..steps {
             let angle = std::f32::consts::TAU * step as f32 / steps as f32;
-            let (sin, cos) = (angle / 2.).sin_cos();
+            let (sin, cos) = (angle / 2.).sin_cos_d();
             recorder.record(Sample {
-                origin: [radius * angle.cos(), 12.5, radius * angle.sin()],
+                origin: [radius * angle.cos_d(), 12.5, radius * angle.sin_d()],
                 orientation: [0., sin, 0., cos],
             });
         }
