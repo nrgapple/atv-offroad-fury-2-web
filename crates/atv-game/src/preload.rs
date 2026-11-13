@@ -5,8 +5,9 @@
 //! next Start will load, this does the part of that load which needs no
 //! window or GPU and whose results outlive it: it downloads the archives at
 //! low priority and fills the persistent decoded-content cache
-//! ([`atv_content::decoded`]) through the decode workers. The ride load then
-//! finds every download and decode already done.
+//! ([`atv_content::decoded`]) through the decode workers. That covers the
+//! course, the ride's sound bank and, for a race, every quad its CPU roster
+//! can draw. The ride load then finds those downloads and decodes done.
 //!
 //! The rules that keep it from costing the menus anything:
 //!
@@ -23,7 +24,7 @@
 //!
 //! Desktop builds read local files and have no decoded cache: every call is
 //! a no-op there, and their loads are unchanged.
-use crate::{Result, launch, materials, offload, ride::load};
+use crate::{Result, audio::bank, launch, materials, offload, ride::load, ride::textures};
 use atv_content::{Content, decoded};
 use atv_core::resource::Resource;
 use std::cell::{Cell, RefCell};
@@ -36,6 +37,9 @@ const FORMAT: u32 = 1;
 /// What one course stores at most, about (ENV01: 63 MB,
 /// research/PERFORMANCE.md).
 const COURSE_BYTES: u64 = 64 * 1024 * 1024;
+/// What the CPU quads of one race store at most, about (ENV01's nine:
+/// 3.7 MB, research/PERFORMANCE.md).
+const CPU_BYTES: u64 = 8 * 1024 * 1024;
 /// Courses a page may prepare from scratch: each costs a few megabytes of
 /// download. A metered connection gets one, the selected course's.
 const COLD_RUNS: u32 = 6;
@@ -51,6 +55,8 @@ pub struct Target {
     pub rider: u16,
     /// The graphics setting the sky tiles decode for.
     pub sky_smooth: bool,
+    /// The sound output's rate, which the sound bank decodes for.
+    pub sound_rate: u32,
 }
 
 /// What the device and connection report (all optional in browsers).
@@ -105,6 +111,15 @@ struct Report {
     /// The last finished run's duration, milliseconds.
     run_ms: f64,
     prepared: Vec<String>,
+    /// The last run's sound bank samples ready in the cache.
+    bank_samples: usize,
+    /// The last race run's CPU quads prepared now (0 when found prepared),
+    /// and their textures ready in the cache.
+    cpu_quads: usize,
+    cpu_textures: usize,
+    /// What the last run's bank and CPU quads added to the cache, bytes.
+    bank_bytes: u64,
+    cpu_bytes: u64,
 }
 
 impl Report {
@@ -114,7 +129,9 @@ impl Report {
             "started": self.started, "completed": self.completed, "cached": self.cached,
             "superseded": self.superseded, "stopped": self.stopped,
             "settleMs": self.settle_ms.round(), "runMs": self.run_ms.round(),
-            "prepared": self.prepared,
+            "prepared": self.prepared, "bankSamples": self.bank_samples,
+            "cpuQuads": self.cpu_quads, "cpuTextures": self.cpu_textures,
+            "bankBytes": self.bank_bytes, "cpuBytes": self.cpu_bytes,
         })
         .to_string()
     }
@@ -223,6 +240,11 @@ impl Preloader {
             shared.update(|r| {
                 r.state = "running";
                 r.started += 1;
+                r.bank_samples = 0;
+                r.cpu_quads = 0;
+                r.cpu_textures = 0;
+                r.bank_bytes = 0;
+                r.cpu_bytes = 0;
                 r.settle_ms = settling.elapsed().as_secs_f64() * 1000.;
             });
             let started = web_time::Instant::now();
@@ -298,7 +320,8 @@ async fn run(
         target.sky_smooth
     );
     let mut outcome = Outcome::AlreadyPrepared;
-    if !finished(&marker).await {
+    let mut expanded = None;
+    if finished(&marker).await.is_none() {
         if let Some(reason) = refusal(device, shared.cold_runs.get()) {
             return Ok(Outcome::Refused(reason));
         }
@@ -306,7 +329,7 @@ async fn run(
             return Ok(Outcome::Refused("cache-budget"));
         }
         shared.cold_runs.set(shared.cold_runs.get() + 1);
-        let Some(keys) = prepare_course(
+        let Some((keys, bytes)) = prepare_course(
             content,
             &course,
             &environment,
@@ -319,11 +342,36 @@ async fn run(
             return Ok(Outcome::Abandoned);
         };
         decoded::put_now(&marker, keys.join("\n").as_bytes());
+        expanded = Some(bytes);
         outcome = Outcome::Prepared;
     }
     if !prepare_player(content, target, live).await? {
         return Ok(Outcome::Abandoned);
     }
+    let stored = || decoded::stats().bytes;
+    if target.racing {
+        let before = stored();
+        let Some((quads, textures)) =
+            prepare_cpus(content, target, &course, &key, expanded, live).await?
+        else {
+            return Ok(Outcome::Abandoned);
+        };
+        let added = stored().saturating_sub(before);
+        shared.update(|r| {
+            r.cpu_quads = quads;
+            r.cpu_textures = textures;
+            r.cpu_bytes = added;
+        });
+    }
+    let before = stored();
+    let Some(samples) = prepare_bank(content, target, &environment, live).await? else {
+        return Ok(Outcome::Abandoned);
+    };
+    let added = stored().saturating_sub(before);
+    shared.update(|r| {
+        r.bank_samples = samples;
+        r.bank_bytes = added;
+    });
     Ok(outcome)
 }
 
@@ -341,20 +389,22 @@ fn resource(target: &Target) -> Result<(String, launch::CourseResource)> {
     }
 }
 
-/// Whether a run finished this course and everything it stored is still there.
-async fn finished(marker: &str) -> bool {
+/// Whether a run finished this part and everything it stored is still
+/// there: how many entries it stored, if so.
+async fn finished(marker: &str) -> Option<usize> {
     if !decoded::contains(marker) {
-        return false;
+        return None;
     }
-    decoded::get(marker).await.is_some_and(|list| {
-        String::from_utf8_lossy(&list)
-            .lines()
-            .all(decoded::contains)
-    })
+    let list = decoded::get(marker).await?;
+    let list = String::from_utf8_lossy(&list);
+    list.lines()
+        .all(decoded::contains)
+        .then(|| list.lines().count())
 }
 
 /// Downloads the course, stores its expanded archive and its terrain and sky
-/// decodes; returns the keys of what it stored, or None when abandoned.
+/// decodes; returns the keys of what it stored and the expanded archive, or
+/// None when abandoned.
 async fn prepare_course(
     content: &Content,
     course: &launch::CourseResource,
@@ -362,7 +412,7 @@ async fn prepare_course(
     key: &str,
     sky_smooth: bool,
     live: &dyn Fn() -> bool,
-) -> Result<Option<Vec<String>>> {
+) -> Result<Option<(Vec<String>, Vec<u8>)>> {
     let expanded = match load::cached_expanded(Some(key)).await {
         Some(bytes) => bytes,
         None => {
@@ -436,7 +486,124 @@ async fn prepare_course(
     let sources = crate::sky::tile_sources(&cube, &layout)?;
     let arg = if sky_smooth { offload::SMOOTH } else { 0 };
     keys.extend(offload::ensure(offload::IPUM, arg, &sources, live).await?);
-    Ok(live().then_some(keys))
+    drop(archive);
+    Ok(live().then_some((keys, expanded)))
+}
+
+/// Every quad the race's CPU roster can draw (the roster itself is drawn at
+/// Start): downloads each and stores its texture decodes, which the race
+/// load reads (`ride::load`'s `race_setup`). Returns the quads prepared now
+/// and their textures ready, or None when abandoned. `expanded` is the
+/// course archive when this run just prepared it.
+async fn prepare_cpus(
+    content: &Content,
+    target: &Target,
+    course: &launch::CourseResource,
+    key: &str,
+    expanded: Option<Vec<u8>>,
+    live: &dyn Fn() -> bool,
+) -> Result<Option<(usize, usize)>> {
+    let marker = format!(
+        "preload/{FORMAT}/cpu/{}/{key}/{}/{}",
+        offload::FORMAT,
+        course.mode_stem,
+        atv_core::motorcycle::roster_quad(u32::from(target.quad))
+    );
+    if let Some(textures) = finished(&marker).await {
+        return Ok(Some((0, textures)));
+    }
+    if !decoded::room_for(CPU_BYTES) {
+        return Ok(Some((0, 0)));
+    }
+    let expanded = match expanded {
+        Some(bytes) => bytes,
+        None => load::cached_expanded(Some(key))
+            .await
+            .ok_or("the prepared course is gone")?,
+    };
+    let quads = load::cpu_candidates(&Resource::parse(&expanded)?, &course.mode_stem, target.quad)?;
+    drop(expanded);
+    let mut keys = Vec::new();
+    for &quad in &quads {
+        let selection = atv_core::player_models::selection(quad as u16, target.rider)?;
+        for path in [&selection.quad, &selection.quad_materials] {
+            if !content.warm(path, false, live).await? {
+                return Ok(None);
+            }
+        }
+        let bytes = content.file(&selection.quad).await?;
+        let mesh = atv_core::mesh::decode_psg(&load::member(
+            &Resource::parse(&bytes)?,
+            &selection.quad_mesh,
+            "CPU quad resource",
+        )?)?;
+        let materials = content.file(&selection.quad_materials).await?;
+        let inputs = textures::job_inputs(&mesh, &Resource::parse(&materials)?)?;
+        let inputs: Vec<&[u8]> = inputs.iter().map(Vec::as_slice).collect();
+        keys.extend(offload::ensure(offload::PST, 0, &inputs, live).await?);
+        if !live() {
+            return Ok(None);
+        }
+    }
+    decoded::put_now(&marker, keys.join("\n").as_bytes());
+    Ok(Some((quads.len(), keys.len())))
+}
+
+/// The ride's sound bank (`audio::bank::load`, which the ride starts after
+/// its first frame): stores the samples it decodes. Returns how many are
+/// ready, or None when abandoned.
+async fn prepare_bank(
+    content: &Content,
+    target: &Target,
+    environment: &str,
+    live: &dyn Fn() -> bool,
+) -> Result<Option<usize>> {
+    // The bank reads the venue's sounds from its Free Ride archive, races too.
+    let course = launch::course_resource(environment, false)?;
+    let quad = u32::from(target.quad);
+    let marker = format!(
+        "preload/{FORMAT}/bank/{}/{}/{environment}/{quad}/{}/{}",
+        offload::FORMAT,
+        course.archive,
+        target.sound_rate,
+        target.racing
+    );
+    if let Some(samples) = finished(&marker).await {
+        return Ok(Some(samples));
+    }
+    let inputs = bank::job_inputs(
+        content,
+        &course.archive,
+        environment,
+        quad,
+        // A race adds its lamps and IntOut stingers (crowd venues' crowd
+        // samples are left to the ride).
+        if target.racing {
+            &crate::ride::race::RACE_SAMPLES
+        } else {
+            &[]
+        },
+    )
+    .await?;
+    let inputs: Vec<&[u8]> = inputs.iter().map(Vec::as_slice).collect();
+    // Samples are shared between venues: only those not stored yet count.
+    let rate = target.sound_rate;
+    let needed = offload::missing(offload::VAG_PCM, rate, &inputs)
+        .into_iter()
+        .map(|i| bank::pcm_bytes(inputs[i], rate))
+        .sum();
+    if !live() {
+        return Ok(None);
+    }
+    if !decoded::room_for(needed) {
+        return Ok(Some(0));
+    }
+    let keys = offload::ensure(offload::VAG_PCM, rate, &inputs, live).await?;
+    if !live() {
+        return Ok(None);
+    }
+    decoded::put_now(&marker, keys.join("\n").as_bytes());
+    Ok(Some(keys.len()))
 }
 
 /// The selected vehicle and rider: downloads, and the rider archives the ride
@@ -495,6 +662,7 @@ mod tests {
             quad: 1,
             rider: 0,
             sky_smooth: true,
+            sound_rate: 48000,
         }
     }
 

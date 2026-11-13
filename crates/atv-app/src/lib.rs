@@ -1130,6 +1130,9 @@ static PREFETCH: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::
 /// Milliseconds the last ride load (`prepare`) took, as f64 bits
 /// (`?uiDiagnostics=1` `decodedCache.loadMs`).
 static LAST_LOAD_MS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+/// Milliseconds from the last ride's first frame until its sounds were
+/// ready, as f64 bits (`decodedCache.soundMs`).
+static LAST_SOUND_MS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 /// The persistent decoded-content cache's counters and the last ride load's
 /// duration (tools/test_engine_decoded_cache.mjs).
@@ -1142,6 +1145,7 @@ fn decoded_cache_state() -> serde_json::Value {
         "background": s.background,
         "entries": s.entries, "bytes": s.bytes, "limit": s.limit,
         "loadMs": (f64::from_bits(LAST_LOAD_MS.load(std::sync::atomic::Ordering::Relaxed)) * 10.).round() / 10.,
+        "soundMs": (f64::from_bits(LAST_SOUND_MS.load(std::sync::atomic::Ordering::Relaxed)) * 10.).round() / 10.,
     })
 }
 
@@ -5492,6 +5496,7 @@ impl App {
         };
         let music = self.soundtrack.clone();
         let future = async move {
+            let started = Instant::now();
             let result = sound::Sound::load(
                 pending.content,
                 &pending.environment,
@@ -5500,6 +5505,10 @@ impl App {
                 music,
             )
             .await;
+            LAST_SOUND_MS.store(
+                (started.elapsed().as_secs_f64() * 1000.).to_bits(),
+                std::sync::atomic::Ordering::Relaxed,
+            );
             let _ = proxy.send_event(match result {
                 Ok(sound) => Message::SoundReady(Box::new(sound)),
                 Err(error) => Message::SoundFailed(error),
@@ -8325,6 +8334,7 @@ impl App {
             quad,
             rider,
             sky_smooth: false,
+            sound_rate: sound::RATE,
         });
         drop(f);
         let target = target.map(|mut target| {
@@ -9068,6 +9078,8 @@ impl App {
             publish_ui_state(
                 &serde_json::json!({
                     "front": f.diagnostics(),
+                    // The menu preload's cache work (tests read it before Start).
+                    "decodedCache": decoded_cache_state(),
                     // Frontend frames drawn and the page's focus (tests: idle
                     // menus draw nothing; Host/Join inputs keep the focus).
                     "frontFrames": self.front_frames,
