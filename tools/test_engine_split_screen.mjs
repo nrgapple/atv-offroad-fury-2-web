@@ -93,6 +93,7 @@ function sample(s, wall) {
     wall: Math.round(wall), steps: p?.steps, elapsed: r.elapsed && +r.elapsed.toFixed(1), phase: r.phase,
     lap: r.lap, position: r.position, station: r.station, distance: r.distance?.map(d => Math.round(d)),
     offTrack: r.offTrack && +r.offTrack.toFixed(1), autopilot: r.autopilot, stuck: r.autopilotStuck && +r.autopilotStuck.toFixed(1),
+    recovery: r.autopilotRecovery,
     wreck: p?.wreck, resets: p?.resets, speed: p && +p.speed.toFixed(1), origin: p?.origin?.map(v => Math.round(v)),
     throttle: p && +p.throttle.toFixed(2), steer: p && +p.steer.toFixed(2),
     p1: { phase: one.phase, elapsed: one.elapsed && +one.elapsed.toFixed(1), distance: one.distance?.map(d => Math.round(d)) },
@@ -112,7 +113,7 @@ async function watchRace(page, done, timeout, label) {
     if (!history.length || wall - history.at(-1).wall >= 5) history.push(h);
     if (done(s)) {
       console.log(`  ${label}: done after ${Math.round(wall)} s wall, race ${h.elapsed} s; ` +
-        `${h.resets} resets, longest no-progress ${longest.toFixed(1)} s of race time`);
+        `${h.resets} resets, ${h.recovery?.[1] ?? 0} skips ahead, longest no-progress ${longest.toFixed(1)} s of race time`);
       if (process.env.ATV_SPLIT_TRACE) console.log(dump());
       return { s, history };
     }

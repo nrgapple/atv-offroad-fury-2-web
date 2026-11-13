@@ -2307,16 +2307,17 @@ impl Race {
         self.progress[index].finish.is_some()
     }
     /// Port adaptation ([`crate::cpu_recovery`]): candidate skip-ahead reset
-    /// stations for a CPU, `distances` ft along the racing line from its
-    /// current station, moved past no-reset nodes, with the route distance
-    /// gained. A skip never crosses the finish gate (the lap would not
-    /// count) or, in Enduro, reaches the next gate (it would be missed):
-    /// candidates stop 20ft before either. An Enduro CPU whose station lies
+    /// stations for a CPU (or None: the player's quad under the race path
+    /// driver), `distances` ft along the racing line from its current
+    /// station, moved past no-reset nodes, with the route distance gained.
+    /// A skip never crosses the finish gate (the lap would not count) or,
+    /// in Enduro, reaches the next gate (it would be missed): candidates
+    /// stop 20ft before either. An Enduro rider whose station lies
     /// past its next gate (it missed the gate and has to ride back) gets
     /// one candidate instead: 40ft before that gate on the route.
-    pub fn recovery_stations(&self, index: usize, distances: &[f32]) -> Vec<RecoveryPoint> {
+    pub fn recovery_stations(&self, cpu: Option<usize>, distances: &[f32]) -> Vec<RecoveryPoint> {
         let course = &self.course;
-        let p = &self.progress[index];
+        let p = self.rider(cpu);
         let from = p.station;
         let cycle = course.cycle_length().max(1.);
         let limit = if course.is_enduro() {
@@ -2376,11 +2377,11 @@ impl Race {
         out
     }
     /// Port adaptation: make a skip-ahead station `gained` ft past the
-    /// CPU's current station its accepted reset state, so the following
+    /// rider's current station its accepted reset state, so the following
     /// reset and [`Self::restore_checkpoint`] resume the race there.
-    pub fn accept_recovery_station(&mut self, index: usize, station: Station, gained: f32) {
+    pub fn accept_recovery_station(&mut self, cpu: Option<usize>, station: Station, gained: f32) {
         let course = &self.course;
-        let p = &mut self.progress[index];
+        let p = cpu.map_or(&mut self.player, |i| &mut self.progress[i]);
         // The station enters the circuit if the skip passes its start.
         let mut entered = p.entered;
         let mut segment = p.station.segment;
@@ -2909,7 +2910,7 @@ mod tests {
         r.observe_cpu(0, [0., 0., 100.], 0., None);
         let from = r.station(Some(0));
         assert_eq!(from.segment, 1);
-        let points = r.recovery_stations(0, &crate::cpu_recovery::SKIP_DISTANCES);
+        let points = r.recovery_stations(Some(0), &crate::cpu_recovery::SKIP_DISTANCES);
         assert!(!points.is_empty());
         for p in &points {
             assert!(p.gained >= 10. && p.gained <= 41., "{p:?}");
@@ -2917,7 +2918,7 @@ mod tests {
         // Accepting one moves the race distance on by what it gained.
         let before = r.race_distance(0);
         let last = *points.last().unwrap();
-        r.accept_recovery_station(0, last.station, last.gained);
+        r.accept_recovery_station(Some(0), last.station, last.gained);
         r.restore_checkpoint(Some(0), last.point);
         assert!(
             (r.race_distance(0) - before - last.gained).abs() < 1.,
@@ -2926,13 +2927,34 @@ mod tests {
         );
     }
     #[test]
+    fn recovery_station_moves_the_player_on_too() {
+        let mut r = Race::new(course(), 1, vec!["CPU".into()], 1).unwrap();
+        r.countdown = 0.;
+        for z in [0., 25., 50.] {
+            r.step([0., 0., z], 1. / 60.);
+        }
+        let points = r.recovery_stations(None, &crate::cpu_recovery::SKIP_DISTANCES);
+        assert!(!points.is_empty());
+        let before = r.progress_distances(None)[0];
+        let first = points[0];
+        assert!((first.gained - 80.).abs() < 1., "{first:?}");
+        r.accept_recovery_station(None, first.station, first.gained);
+        r.restore_checkpoint(None, first.point);
+        let after = r.progress_distances(None)[0];
+        assert!(
+            (after - before - first.gained).abs() < 1.,
+            "{before} {after}"
+        );
+        assert_eq!(r.station(None).segment, first.station.segment);
+    }
+    #[test]
     fn enduro_recovery_stations_stop_before_the_next_gate() {
         let mut r = Race::new(enduro_course(), 1, vec!["CPU".into()], 1).unwrap();
         r.countdown = 0.;
         // Starting at (100, 40) heading south: next gate is gate 0 at (0, 50),
         // 190ft along the route (40 + 100 + 50), so skips stop 20ft short.
         r.observe_cpu(0, [100., 0., 40.], 0., None);
-        let points = r.recovery_stations(0, &crate::cpu_recovery::SKIP_DISTANCES);
+        let points = r.recovery_stations(Some(0), &crate::cpu_recovery::SKIP_DISTANCES);
         assert!(!points.is_empty());
         for p in &points {
             assert!(p.gained <= 171., "{p:?}");

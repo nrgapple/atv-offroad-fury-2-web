@@ -25,7 +25,7 @@ PORT ?= 4173
 # Extra runner flags, e.g. BROWSER_ARGS='--only test_race.mjs --verbose'. See research/BROWSER_TESTS.md.
 BROWSER_ARGS ?=
 
-.PHONY: precheck desktop android verify verify-full inventory import check web relay serve audit code-map native-analyze browser-smoke browser-tests browser-native
+.PHONY: precheck lint desktop android verify verify-full inventory import check web relay serve audit code-map native-analyze browser-smoke browser-tests browser-native
 
 verify:
 	python3 tools/verify_setup.py
@@ -40,12 +40,17 @@ import:
 	python3 tools/import_disc.py "private/source/ATV Offroad Fury 2 (USA) (v2.00).zip"
 
 # Fast pre-push gate: the cheap, content-free checks CI's web job fails on first
-# (repository hygiene, secrets, formatting, clippy), without the slow test suites.
+# (repository hygiene, secrets, formatting). It compiles nothing. Clippy runs in
+# CI's required check, not here: on the shared host it held the one compile
+# slot for about ten minutes a push. `make lint` runs it locally when a CI lint
+# failure needs reproducing.
 precheck:
 	python3 tools/verify_repository.py
 	python3 tools/ci_changes.py --validate
 	python3 tools/check_secrets.py
 	$(CARGO) fmt --all -- --check
+
+lint:
 	$(FURY_COMPILE_GUARD) $(CARGO) clippy --locked --workspace --all-targets -- -D warnings
 
 check:
