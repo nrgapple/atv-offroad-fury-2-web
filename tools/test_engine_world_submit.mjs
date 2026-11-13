@@ -47,15 +47,21 @@ async function api(route) {
 const read = page => page.evaluate(() => JSON.parse(document.querySelector('#ui-state')?.textContent || '{}'));
 const front = async page => (await read(page)).front || {};
 const onPage = (page, name, timeout = 90000) =>
-  page.waitForFunction(name => JSON.parse(document.querySelector('#ui-state')?.textContent || '{}').front?.page === name, name, { timeout });
+  page.waitForFunction(name => JSON.parse(document.querySelector('#ui-state')?.textContent || '{}').front?.page === name, name, { timeout })
+    .catch(async () => { const s = await read(page); throw new Error(`page ${name} not shown: on ${s.front?.page}, results ${JSON.stringify(s.ride?.results ?? null)}`); });
 async function key(page, code) { await page.keyboard.down(code); await nextFrames(page, 2); await page.keyboard.up(code); await nextFrames(page, 3); }
-async function choose(page, action) {
+async function focus(page, action) {
   const f = await front(page);
   const at = f.choices.indexOf(action);
   assert.ok(at >= 0, `${action} in ${f.page}: ${f.choices}`);
   for (let i = f.selection; i < at; i++) await key(page, 'ArrowDown');
   for (let i = f.selection; i > at; i--) await key(page, 'ArrowUp');
-  await key(page, 'Enter');
+}
+async function choose(page, action) { await focus(page, action); await key(page, 'Enter'); }
+// Escape until the menus show `name`.
+async function backTo(page, name) {
+  for (let i = 0; i < 4 && (await front(page)).page !== name; i++) { await key(page, 'Escape'); await page.waitForTimeout(300); }
+  assert.equal((await front(page)).page, name);
 }
 async function until(page, predicate, timeout, what) {
   const deadline = realNow() + timeout;
@@ -165,8 +171,9 @@ try {
   s = await until(page, s => s.ride?.results?.includes(QUIT), 15000, 'the Retry / Quit menu');
   for (let i = 0; i < s.ride.results.indexOf(QUIT); i++) await key(page, 'ArrowDown');
   await key(page, 'Enter');
-  await onPage(page, 'main', 120000);
-  await choose(page, 'single'); await onPage(page, 'single');
+  // Quit returns to Single Race's setup page.
+  await onPage(page, 'race', 120000);
+  await backTo(page, 'single');
   await choose(page, 'daily'); await onPage(page, 'daily');
   const row = (rank, ms) => new RegExp(`^▶ ${rank}\\. ACE · .*\\|${escaped(clock(ms))}$`);
   await waitDetail(page, row(expected.daily, sent.raceMs));
@@ -177,14 +184,12 @@ try {
   if (process.env.ATV_WORLD_SUBMIT_SHOTS) { await nextFrames(page, 20); await page.screenshot({ path: `${process.env.ATV_WORLD_SUBMIT_SHOTS}/daily.png` }); }
 
   // Hall of Fame → View: World on the course: its lap and race boards.
-  await key(page, 'Escape'); await onPage(page, 'single');
-  await key(page, 'Escape'); await onPage(page, 'main');
+  await backTo(page, 'main');
   await choose(page, 'halloffame'); await onPage(page, 'hall-of-fame');
   await choose(page, 'fameworld');
   const asked = board => calls.some(c => c.method === 'GET' && c.path === `/api/boards/${board}` && c.status === 200 && JSON.parse(c.body).entries.some(e => e.name === 'ACE' && !e.house));
-  // The second row cycles the course; stop on the event's.
-  let f = await front(page);
-  for (let i = f.selection; i < 1; i++) await key(page, 'ArrowDown');
+  // The Track row cycles the event type's courses; stop on the event's.
+  await focus(page, 'famecourse');
   for (let i = 0; i < 12 && !(asked(BOARDS.lap) && asked(BOARDS.race)); i++) {
     await key(page, 'ArrowRight');
     await page.waitForTimeout(400);
