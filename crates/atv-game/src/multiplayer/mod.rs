@@ -1638,12 +1638,15 @@ mod tests {
             public,
             ..lobby(&[(0, 1), (1, 1)], true)
         };
-        // Rides or rests for `ms` and counts the relay's poses.
-        fn poses(s: &mut Session, from: u32, ms: u32, speed: f32, paused: bool) -> usize {
+        // Rides on from `x` or rests there for `ms`; counts the relay's poses.
+        fn poses(s: &mut Session, x: &mut f32, from: u32, ms: u32, speed: f32) -> usize {
+            let paused = speed < 0.;
+            let speed = speed.max(0.);
             let mut relay = 0;
             for time in (from..from + ms).step_by(50) {
-                let x = if speed > 0. { time as f32 * 0.02 } else { 0. };
-                let pose = riding(s, time, x, if paused { 0. } else { speed });
+                *x += speed * 0.05;
+                let mut pose = riding(s, time, *x, speed);
+                pose.animation.as_mut().unwrap().paused = paused;
                 if let Some(bytes) = s.emit(pose, paused).unwrap().relay {
                     s.sent(&bytes).unwrap();
                     relay += 1;
@@ -1655,21 +1658,22 @@ mod tests {
         for public in [false, true] {
             let mut s = Session::new(Profile::new("Ann", 1, 0, Default::default()));
             welcome(&mut s, 1, room(public));
-            // The other rider is 140-200 ft away, then (below) 2000 ft.
+            // The other rider is 130-200 ft away, then (below) 2000 ft.
             s.receive(&pose_from(0, 1, 0, 200.), 0).unwrap();
-            let moving = poses(&mut s, 0, 3000, 20., false);
-            let resting = poses(&mut s, 3000, 10_000, 0., false);
+            let mut x = 0.;
+            let moving = poses(&mut s, &mut x, 0, 3000, 20.);
+            let resting = poses(&mut s, &mut x, 3000, 10_000, 0.);
             // Setting off again is sent at once.
-            let off = poses(&mut s, 13_000, 150, 20., false);
-            let paused = poses(&mut s, 13_150, 30_000, 0., true);
-            s.receive(&pose_from(0, 2, 50, 2400.), 43_150).unwrap();
-            let far = poses(&mut s, 43_150, 2100, 20., false);
+            let off = poses(&mut s, &mut x, 13_000, 50, 20.);
+            let paused = poses(&mut s, &mut x, 13_050, 30_000, -1.);
+            s.receive(&pose_from(0, 2, 50, 2400.), 43_050).unwrap();
+            let far = poses(&mut s, &mut x, 43_050, 2100, 20.);
             counts.push([moving, resting, off, paused, far]);
         }
         // A private room keeps its rates: 10 Hz, 1 Hz, 0.2 Hz, about 3 Hz far.
-        assert_eq!(counts[0], [30, 10, 1, 7, 6]);
+        assert_eq!(counts[0], [30, 10, 1, 6, 6]);
         // Free Ride: about 7 Hz, 0.5 Hz, 0.1 Hz; the far rate is unchanged.
-        assert_eq!(counts[1], [20, 5, 1, 4, 6]);
+        assert_eq!(counts[1], [20, 5, 1, 3, 6]);
     }
 
     #[test]
