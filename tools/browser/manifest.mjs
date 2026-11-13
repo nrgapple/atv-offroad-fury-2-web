@@ -39,6 +39,7 @@ export const TESTS = {
   'test_engine_shell.mjs': { group: 'content' },
   'test_engine_sw_update.mjs': { group: 'content' },
   'test_engine_remastered.mjs': { group: 'content' },
+  'test_engine_remastered_rain.mjs': { group: 'content' },
   'test_engine_fold_layout.mjs': { group: 'content' },
   'test_engine_crisp_hud.mjs': { group: 'content' },
   'test_engine_shadows_prefetch.mjs': { group: 'content' },
