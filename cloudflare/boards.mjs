@@ -4,6 +4,7 @@
 // plausible (floor times, the run's 1 Hz position trace, score rates). No IP
 // addresses or device identifiers are stored; IPs key only the edge limiters.
 import { browserOriginAllowed } from './security.mjs';
+import { markGhosts, pruneGhosts } from './ghosts.mjs';
 import { houseRows, merge } from './house.mjs';
 import { MEASURED_LAP } from './board_seeds.mjs';
 
@@ -306,6 +307,7 @@ async function readBoard(request, env, db, board) {
   }));
   const body = { board, entries };
   const parsed = parseBoard(board);
+  await markGhosts(db, board, entries);
   if (parsed.kind === 'daily') {
     body.pick = dailyPick(parsed.date);
     const yesterday = dayOf(Date.parse(`${parsed.date}T00:00:00Z`) - DAY_MS);
@@ -345,6 +347,7 @@ export async function boardRequest(request, env, allowedOrigins, nowMs = Date.no
     const verdict = judge(body, nowMs);
     if (verdict.reason) return refused(verdict.reason);
     const ranks = await store(db, verdict, dayOf(nowMs));
+    await pruneGhosts(db, ranks);
     // This location's cached copies of the changed boards.
     const cache = globalThis.caches?.default;
     for (const [id, result] of Object.entries(ranks)) if (result.placed) await cache?.delete(boardKey(request, id));

@@ -92,7 +92,7 @@ pub struct RaceHud {
     pulse_pending: bool,
     pulse: Option<f32>,
 }
-fn time_text(t: f32) -> String {
+pub fn time_text(t: f32) -> String {
     let hundredths = (t * 100. + 0.5) as i64;
     if t == 0. {
         return "--:--.--".into();

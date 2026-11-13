@@ -244,7 +244,7 @@ pub struct Overlay {
     /// (world.rs), until its Hall of Fame name is final.
     world_run: Option<crate::world::Finished>,
     /// A world board submission for the host to send.
-    pub world_outbox: Option<String>,
+    pub world_outbox: Option<crate::world::Outbox>,
     /// A split race's records, the players still to name theirs (player
     /// index and records, in entry order) and the player naming now.
     fame_split: Option<SplitNaming>,
@@ -1907,7 +1907,7 @@ impl Overlay {
             Some((_, stored)) => stored.clone(),
             None => atv_core::hall_of_fame::clean_name(&self.default_fame_name()),
         });
-        self.world_outbox = Some(run.body(&name));
+        self.world_outbox = Some(run.outbox(&name));
         self.results.world_line = Some("Sending to the World Hall of Fame…".into());
     }
 

@@ -18,6 +18,10 @@
 //! rider node matrices every [`KEY_STEPS`] steps and, once a lap completes,
 //! keeps the fastest one and plays it back from each new lap's start. The
 //! renderer draws it as the player's own quad and rider at the opacity.
+//!
+//! A world board row's ghost (`world_ghost`, a port addition) can stand in
+//! as the lap to beat ([`Ghost::set_rival`]): it carries motion only, so it
+//! is drawn in the pose of the player's own first key (seated on the grid).
 use serde::Serialize;
 
 /// GhostOpacity's default (`00209680`: 0x3ecccccd, Environment key
@@ -88,6 +92,9 @@ struct Lap {
     /// The node counts changed mid-lap: the lap replays its motion but
     /// cannot be drawn.
     broken: bool,
+    /// A downloaded lap (motion only): it takes the player's first key as
+    /// its one pose.
+    borrows: bool,
 }
 
 impl Lap {
@@ -99,6 +106,7 @@ impl Lap {
         self.offsets.clear();
         self.widths = None;
         self.broken = false;
+        self.borrows = false;
     }
 
     fn keys(&self) -> usize {
@@ -145,6 +153,23 @@ impl Ghost {
         self.opacity
     }
 
+    /// Starts against another rider's lap of `time` seconds (a world board
+    /// row's ghost, `world_ghost::Lap::samples`): it replays from each lap's
+    /// start until the player laps faster, as the player's own best would.
+    pub fn set_rival(&mut self, time: f32, samples: Vec<Sample>) {
+        if samples.is_empty() || !time.is_finite() || time <= 0. {
+            return;
+        }
+        self.best = Some((
+            time,
+            Lap {
+                samples,
+                borrows: true,
+                ..Default::default()
+            },
+        ));
+    }
+
     /// Whether the next [`Self::record`] keeps node matrices: the lap has
     /// no key yet or the last is [`KEY_STEPS`] old.
     pub fn wants_nodes(&self) -> bool {
@@ -158,6 +183,17 @@ impl Ghost {
     /// Nodes given while [`Self::wants_nodes`] become a key (a step without
     /// them simply leaves the key to a later step).
     pub fn record(&mut self, sample: Sample, nodes: Option<Nodes<'_>>) {
+        // A rival's lap has no pose of its own: it holds the player's.
+        if let (Some(nodes), Some((_, rival))) = (nodes, self.best.as_mut())
+            && rival.borrows
+            && rival.keys() == 0
+        {
+            rival.widths = Some((nodes.quad.len(), nodes.rider.len()));
+            rival.key_steps.push(0);
+            rival.quad.extend_from_slice(nodes.quad);
+            rival.rider.extend_from_slice(nodes.rider);
+            rival.offsets.push(nodes.rider_offset);
+        }
         if let Some(nodes) = nodes.filter(|_| self.wants_nodes()) {
             let lap = &mut self.current;
             let widths = (nodes.quad.len(), nodes.rider.len());
@@ -443,6 +479,43 @@ mod tests {
         ghost.record(sample(0), None);
         assert_eq!(ghost.pose_nodes(&mut out), Some(sample(100)));
         assert!((out.quad[1][12] - 100.).abs() < 1e-4);
+    }
+
+    #[test]
+    fn a_rival_lap_replays_in_the_player_s_first_pose_until_beaten() {
+        let mut ghost = Ghost::default();
+        ghost.set_rival(0., vec![sample(1)]);
+        ghost.set_rival(2., Vec::new());
+        assert!(ghost.frame().is_none(), "no lap, no rival");
+        ghost.set_rival(2., (0..120).map(|i| sample(300 + i)).collect());
+        assert_eq!(ghost.best(), Some(2.));
+        let mut out = PoseNodes::default();
+        // It replays from the first step; it draws once the player's first
+        // key gives it a pose, and holds that pose.
+        ghost.record(sample(0), None);
+        assert_eq!(ghost.pose(), Some(sample(300)));
+        assert!(ghost.pose_nodes(&mut out).is_none());
+        record_lap(&mut ghost, 119, 1);
+        assert_eq!(ghost.pose_nodes(&mut out), Some(sample(419)));
+        assert!((out.quad[1][12] - 1.).abs() < 1e-4, "the first key's pose");
+        assert!((out.rider_offset[14] - 2.).abs() < 1e-4);
+        // A slower lap keeps the rival; it restarts with the next lap.
+        assert!(!ghost.lap(2.5, true));
+        record_lap(&mut ghost, 60, 1000);
+        assert_eq!(ghost.pose_nodes(&mut out), Some(sample(359)));
+        assert!((out.quad[1][12] - 1.).abs() < 1e-4);
+        // A faster lap replaces it with the player's own recording.
+        assert!(ghost.lap(1., true));
+        assert_eq!(ghost.best(), Some(1.));
+        record_lap(&mut ghost, 10, 2000);
+        assert_eq!(ghost.pose_nodes(&mut out), Some(sample(1009)));
+        assert!((out.quad[1][12] - 1009.).abs() < 0.5, "{}", out.quad[1][12]);
+        // The buffers the rival left are recorded into as any lap's.
+        assert!(!ghost.lap(3., true));
+        record_lap(&mut ghost, 8, 3000);
+        assert!(ghost.lap(0.5, true));
+        ghost.record(sample(0), None);
+        assert_eq!(ghost.pose_nodes(&mut out), Some(sample(3000)));
     }
 
     #[test]

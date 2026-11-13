@@ -269,7 +269,7 @@ test('lap floors: half the fastest measured lap (0.4 for Enduro), the event-type
 test('a served board merges the house riders without reading more rows', async () => {
   const env = setup();
   const empty = await call(env, 'GET', '/api/boards/lap:sx01:n');
-  assert.equal(env.SAVES.prepared, 1, 'one D1 query a board read');
+  assert.equal(env.SAVES.prepared, 2, 'the rows and their ghosts: two D1 queries a lap board read');
   assert.equal(empty.body.entries.length, HOUSE_ROWS);
   assert.deepEqual(empty.body.entries.map(e => e.rank), Array.from({ length: HOUSE_ROWS }, (_, i) => i + 1));
   assert.ok(empty.body.entries.every(e => e.house === true && /^\d{4}-\d{2}-\d{2}$/.test(e.day)));

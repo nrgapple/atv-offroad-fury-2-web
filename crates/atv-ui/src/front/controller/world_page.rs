@@ -178,9 +178,10 @@ impl Frontend {
             Some(BoardState::Ready(board)) => {
                 let row = |e: &world_board::BoardEntry| {
                     let mark = if self.mine(e) { "▶ " } else { "" };
+                    let ghost = if e.ghost { " · Ghost" } else { "" };
                     (
                         format!(
-                            "{mark}{}. {} · {}",
+                            "{mark}{}. {} · {}{ghost}",
                             e.rank,
                             e.name,
                             self.quad_label(e.vehicle)
@@ -227,6 +228,84 @@ impl Frontend {
             PAIR_SHOWN,
         ));
         lines
+    }
+
+    /// The World view's lap board and its rows that carry a ghost to race
+    /// (none on a Freestyle course, in the local view or before the board
+    /// loads).
+    pub(super) fn ghost_rows(&self) -> Vec<(String, world_board::BoardEntry)> {
+        if self.page != "hall-of-fame" || !self.profile_ui.fame_world {
+            return Vec::new();
+        }
+        let Some(id) = self
+            .fame_boards()
+            .into_iter()
+            .find(|id| id.starts_with("lap:"))
+        else {
+            return Vec::new();
+        };
+        let Some(BoardState::Ready(board)) = self.world.boards.get(&id) else {
+            return Vec::new();
+        };
+        board
+            .entries
+            .iter()
+            .filter(|e| e.ghost)
+            .map(|e| (id.clone(), e.clone()))
+            .collect()
+    }
+
+    /// The World view's ghost rows: the chosen ghost (Left/Right steps
+    /// through the board's) and Race This Ghost.
+    pub(super) fn ghost_choices(&self) -> Vec<(String, String)> {
+        let rows = self.ghost_rows();
+        let Some((_, entry)) = rows.get(self.profile_ui.fame_ghost.min(rows.len().max(1) - 1))
+        else {
+            return Vec::new();
+        };
+        vec![
+            (
+                "fameghost".into(),
+                format!("Ghost: {} · {}", entry.name, ms_time(entry.value)),
+            ),
+            ("fameghostrace".into(), "Race This Ghost".into()),
+        ]
+    }
+
+    /// Race This Ghost: Lap Attack on the board's course with the garage's
+    /// vehicle, once the host has the ghost.
+    fn ghost_race(&mut self, settings: &mut Settings) -> Option<Event> {
+        let rows = self.ghost_rows();
+        let (board, entry) = rows.get(self.profile_ui.fame_ghost.min(rows.len().max(1) - 1))?;
+        let course = board.split(':').nth(1)?.to_string();
+        if !self.race_courses.contains(&course) {
+            self.notice = Some(format!("{} is not available.", self.course_name(&course)));
+            return None;
+        }
+        if let Some(cost) = self.race_course_cost(&course) {
+            self.notice = Some(Self::locked_course(cost));
+            return None;
+        }
+        self.notice = self
+            .enforce_unlocks(settings)
+            .or_else(|| Some(format!("Loading {}'s ghost…", entry.name)));
+        Some(Event::GhostRace {
+            board: board.clone(),
+            name: entry.name.clone(),
+            value: entry.value,
+            course,
+            expert: self.profile_ui.fame_expert,
+            quad: self.quad_id,
+            rider: self.rider_id,
+        })
+    }
+
+    /// The host could not get a ghost (or read it): the page says why.
+    pub fn ghost_failed(&mut self, message: &str, view: &Viewport) {
+        if self.page == "hall-of-fame" {
+            self.notice = Some(message.to_string());
+            self.refresh(view);
+        }
     }
 
     /// Single Player's Daily Event row is offered once the clock is set and
@@ -289,6 +368,7 @@ impl Frontend {
                 self.show(DAILY_PAGE, view);
                 Some(None)
             }
+            "fameghostrace" => Some(self.ghost_race(settings)),
             "dailystart" => {
                 let pick = self.world.pick()?;
                 let quad = class_vehicle(pick.class, self.quad_id);
@@ -363,6 +443,7 @@ mod tests {
                 value: 60_000 + i64::from(rank) * 1000,
                 vehicle: 1,
                 day: "2026-11-11".into(),
+                ghost: false,
                 // A house rider named as the player is not the player's row.
                 house: rank == 3,
             })
@@ -437,6 +518,7 @@ mod tests {
                 value: 1_204_500,
                 vehicle: 28,
                 day: "2026-11-12".into(),
+                ghost: false,
                 house: false,
             },
             BoardEntry {
@@ -445,6 +527,7 @@ mod tests {
                 value: 31_250,
                 vehicle: 4,
                 day: "2026-11-12".into(),
+                ghost: false,
                 house: false,
             },
         ];
@@ -467,6 +550,85 @@ mod tests {
                 .any(|l| l.0.starts_with("▶ 2. ADA") && l.1 == "31,250"),
             "{details:?}"
         );
+    }
+
+    #[test]
+    fn the_world_view_offers_a_lap_board_row_s_ghost_to_race() {
+        let (mut front, view, mut settings) = front();
+        front.run("halloffame", &view, &mut settings);
+        front.run("fameworld", &view, &mut settings);
+        let wants = front.world_wants();
+        let course = wants[0].split(':').nth(1).unwrap().to_string();
+        let rows = |ghosts: &[u32]| Board {
+            board: wants[0].clone(),
+            entries: (1..=4)
+                .map(|rank| BoardEntry {
+                    rank,
+                    name: format!("R{rank}"),
+                    value: 60_000 + i64::from(rank) * 1230,
+                    vehicle: 1,
+                    day: "2026-11-12".into(),
+                    ghost: ghosts.contains(&rank),
+                    house: false,
+                })
+                .collect(),
+            yesterday: None,
+        };
+        // No ghost rows, no ghost choices.
+        front.world_answer(&wants[0], BoardState::Ready(rows(&[])), &view);
+        assert!(!front.choices.iter().any(|c| c.0.starts_with("fameghost")));
+        front.world_answer(&wants[0], BoardState::Ready(rows(&[2, 4])), &view);
+        let label = |front: &Frontend| {
+            let at = front.choices.iter().position(|c| c.0 == "fameghost");
+            at.map(|i| front.choices[i].1.clone())
+        };
+        assert_eq!(label(&front).as_deref(), Some("Ghost: R2 · 01:02.46"));
+        assert!(front.choices.iter().any(|c| c.0 == "fameghostrace"));
+        let details = front.profile_details();
+        assert!(
+            details
+                .iter()
+                .any(|l| l.0.starts_with("2. R2") && l.0.ends_with("· Ghost"))
+        );
+        assert!(
+            details
+                .iter()
+                .any(|l| l.0.starts_with("1. R1") && !l.0.contains("Ghost"))
+        );
+        // Left/Right steps through the rows with a ghost.
+        front.step_profile("fameghost", 1, &view);
+        assert_eq!(label(&front).as_deref(), Some("Ghost: R4 · 01:04.92"));
+        front.step_profile("fameghost", 1, &view);
+        assert_eq!(label(&front).as_deref(), Some("Ghost: R2 · 01:02.46"));
+        front.step_profile("fameghost", -1, &view);
+        match front.run("fameghostrace", &view, &mut settings) {
+            Some(Event::GhostRace {
+                board,
+                name,
+                value,
+                course: on,
+                expert,
+                ..
+            }) => {
+                assert_eq!(
+                    (board, name, value),
+                    (wants[0].clone(), "R4".into(), 64_920)
+                );
+                assert_eq!((on, expert), (course, false));
+            }
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(front.notice.as_deref(), Some("Loading R4's ghost…"));
+        // A ghost that cannot be used is reported on the page.
+        front.ghost_failed("This ghost could not be read.", &view);
+        assert_eq!(
+            front.notice.as_deref(),
+            Some("This ghost could not be read.")
+        );
+        // This device's view and Freestyle courses offer none.
+        front.run("fameworld", &view, &mut settings);
+        assert!(!front.choices.iter().any(|c| c.0.starts_with("fameghost")));
+        assert_eq!(front.run("fameghostrace", &view, &mut settings), None);
     }
 
     #[test]

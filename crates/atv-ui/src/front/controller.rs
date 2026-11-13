@@ -130,6 +130,19 @@ pub enum Event {
         /// type"): no CPUs, unlimited timed laps and the best-lap ghost.
         lap_attack: bool,
     },
+    /// Hall of Fame → View: World → Race This Ghost: Lap Attack on the
+    /// board's course against a row's ghost, which the host downloads first
+    /// (research/WORLD_BOARDS.md "Ghosts").
+    GhostRace {
+        /// The lap board, the row's name and its lap in milliseconds.
+        board: String,
+        name: String,
+        value: i64,
+        course: String,
+        expert: bool,
+        quad: u16,
+        rider: u16,
+    },
     /// Single Race → Copy ride link: the race setup's link.
     CopyRaceLink,
     /// Waypoint Editor → a slot or Edit Gates: ride the course's venue and
@@ -264,6 +277,7 @@ pub fn stepper(action: &str) -> bool {
             | "famecourse"
             | "famedifficulty"
             | "fameworld"
+            | "fameghost"
             | "storeitem"
             | "codeletter"
             | "hostfstime"
@@ -1251,6 +1265,7 @@ impl Frontend {
                 | "famecourse"
                 | "famedifficulty"
                 | "fameworld"
+                | "fameghost"
         ) {
             // Arrows step; a tap or Enter on the letter row adds its letter
             // (`run`).
