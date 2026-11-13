@@ -43,13 +43,15 @@ checks stop trivial spoofing and impossible values.
   never the `@n` placeholder (the local Hall of Fame's `clean_name` rule).
   Vehicles 1-46 (27+ are motorcycles).
 - Floors per lap: half the course's fastest measured lap (`MEASURED_LAP` ×
-  `LAP_FLOOR_FRACTION` 0.5; "House riders" below has the measurement), from
-  5.6 s (Rockbridge Park's Short Track, `env01st`) to 105 s (`env04endl`). To
-  be refused a rider would have to average twice the race path driver's
-  speed over the lap: its laps average about 63 ft/s and its fastest second
-  in 126 traced races covered 135 ft, so that is over 125 ft/s for a whole
-  lap. Assumption: no strong rider on the fastest vehicle laps in half the
-  driver's time; no human laps were measured. The earlier event-type floors
+  `LAP_FLOOR_FRACTION` 0.5; "House riders" below has the measurement), 0.4
+  of it for Enduro (`ENDURO_LAP_FLOOR_FRACTION`: a rider picks the line
+  between the gates, the driver follows its route): from 5.6 s (`env01st`)
+  to 84 s (`env04endl`). To be refused on a circuit a rider would have to
+  average twice the race path driver's speed over the lap: its laps average
+  about 63 ft/s and its fastest second in 126 traced races covered 135 ft,
+  so that is over 125 ft/s for a whole lap. Assumption: no strong rider on
+  the fastest vehicle laps in half the driver's time (0.4 in Enduro); no
+  human laps were measured. The earlier event-type floors
   (Enduro 45 s, Short Tracks 12 s, Supercross 15 s, Nationals 25 s) remain
   for a course id without a measurement; they were wrong where it mattered:
   the CPU riders' own laps on `env05` (21.4 s against 25 s) and `env01st`
@@ -170,9 +172,9 @@ Facts:
   99.3 s on the motorcycles, where it resets about twice as often. No CPU
   rides a motorcycle, so there is no motorcycle measurement of a rival.
 
-Findings left alone: on `env01st` the CPU on the front row crosses the line
-0.13 s after GO and is credited a lap (it rides four laps and shows a 0.13 s
-best lap); those races are excluded here and the bug has its own issue. On
+Findings left alone: on `env01st` the first CPU of the roster is credited a
+lap 0.13 s after GO (it rides four laps and shows a 0.13 s best lap; issue
+#584); those races are excluded here. On
 `sx15` every CPU needs the authored recovery (`cpu_recovery`) several times a
 race, so its measured times are soft.
 

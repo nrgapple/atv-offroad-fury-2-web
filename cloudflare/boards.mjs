@@ -29,18 +29,22 @@ export const FREESTYLE = {
 // whatever its trace says. A measured course's floor is this fraction of the
 // fastest lap the game's race path driver rode there (MEASURED_LAP, the CPU
 // riders and the driver on the player's vehicle): a rider would have to
-// average twice the driver's speed over the lap to be refused. Courses
-// without a measurement keep the conservative event-type assumptions.
+// average twice the driver's speed over the lap to be refused. Enduro's is
+// lower: a rider picks the line between its gates, the driver follows its
+// route. Courses without a measurement keep the conservative event-type
+// assumptions.
 export const LAP_FLOOR_FRACTION = 0.5;
+export const ENDURO_LAP_FLOOR_FRACTION = 0.4;
 export function eventLapFloorMs(course) {
   if (/end[sl]$/.test(course)) return 45_000;
   if (/st$/.test(course)) return 12_000;
   if (course.startsWith('sx')) return 15_000;
   return 25_000;
 }
+export const lapFloorFraction = course => (/end[sl]$/.test(course) ? ENDURO_LAP_FLOOR_FRACTION : LAP_FLOOR_FRACTION);
 export function lapFloorMs(course) {
   const measured = MEASURED_LAP[course];
-  return measured ? Math.floor(measured * LAP_FLOOR_FRACTION) : eventLapFloorMs(course);
+  return measured ? Math.floor(measured * lapFloorFraction(course)) : eventLapFloorMs(course);
 }
 export const defaultLaps = course => (/end[sl]$/.test(course) ? 3 : 5);
 

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import worker from './worker.mjs';
-import { DAILY_POOL, FIRST_MOTORCYCLE, FREESTYLE, LAP_FLOOR_FRACTION, NAME, TOP, checkTrace, dailyPick, defaultLaps, eventLapFloorMs, judge, lapFloorMs, parseBoard } from './boards.mjs';
+import { DAILY_POOL, ENDURO_LAP_FLOOR_FRACTION, FIRST_MOTORCYCLE, FREESTYLE, LAP_FLOOR_FRACTION, NAME, TOP, checkTrace, dailyPick, defaultLaps, eventLapFloorMs, judge, lapFloorMs, parseBoard } from './boards.mjs';
 import { HOUSE_ROWS, houseRows } from './house.mjs';
 import { DAILY, HOUSE, HOUSE_NAMES, MEASURED_LAP } from './board_seeds.mjs';
 import { d1, limiter } from './testing.mjs';
@@ -222,7 +222,7 @@ test('every board has ten house riders with rider names, irregular times and fit
 test('house laps clear the floors and house races agree with the house laps', () => {
   for (const course of Object.keys(MEASURED_LAP)) {
     const laps = defaultLaps(course);
-    assert.equal(lapFloorMs(course), Math.floor(MEASURED_LAP[course] * LAP_FLOOR_FRACTION));
+    assert.equal(lapFloorMs(course), Math.floor(MEASURED_LAP[course] * (/end[sl]$/.test(course) ? ENDURO_LAP_FLOOR_FRACTION : LAP_FLOOR_FRACTION)));
     for (const tag of ['n', 'x']) {
       const lap = houseRows(`lap:${course}:${tag}`), race = houseRows(`race:${course}:${tag}`);
       // The leader is a little quicker than the fastest measured lap, never
@@ -245,7 +245,7 @@ test('house laps clear the floors and house races agree with the house laps', ()
   }
 });
 
-test('lap floors: half the fastest measured lap, the event-type value elsewhere', () => {
+test('lap floors: half the fastest measured lap (0.4 for Enduro), the event-type value elsewhere', () => {
   // The old event-type floors refused laps the game's own CPU riders set.
   assert.ok(MEASURED_LAP.env05 < eventLapFloorMs('env05') && MEASURED_LAP.env01st < eventLapFloorMs('env01st'));
   assert.equal(lapFloorMs('nat09'), 25_000);
@@ -254,6 +254,9 @@ test('lap floors: half the fastest measured lap, the event-type value elsewhere'
   assert.equal(lap(0.9), undefined);
   assert.equal(lap(0.55), undefined);
   assert.equal(lap(0.45), 'lap_floor');
+  const enduro = fraction => { const lapMs = Math.round(MEASURED_LAP.env05ends * fraction); return judge({ name: 'ADA', vehicle: 3, course: 'env05ends', lapMs, trace: ride(2, lapMs) }, NOW).reason; };
+  assert.equal(enduro(0.45), undefined);
+  assert.equal(enduro(0.35), 'lap_floor');
 });
 
 test('a served board merges the house riders without reading more rows', async () => {
