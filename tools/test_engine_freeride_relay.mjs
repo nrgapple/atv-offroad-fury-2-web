@@ -219,9 +219,7 @@ try {
   // The watcher still sees the driver all the time, never stale. Its
   // motion is judged against the private room's in the same run (a loaded
   // host adds its own jitter to both): no freeze more than a few frames
-  // longer, and about as near to where the driver really was. What remains
-  // is the pose held across a change of state (take-off, landing), which
-  // lasts one pose interval: 100 ms instead of 50.
+  // longer, and about as near to where the driver really was.
   for (const [name, { seen }] of Object.entries(report)) {
     assert.ok(seen.travelledFt > 40, `${name}: the driver drove: ${JSON.stringify(seen)}`);
     assert.equal(seen.stale, 0, `${name}: never stale: ${JSON.stringify(seen)}`);

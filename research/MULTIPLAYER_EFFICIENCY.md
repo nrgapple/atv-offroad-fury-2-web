@@ -193,8 +193,11 @@ Shared Free Ride rooms were 93% of the relay's 1,902,132 messages on
 longer between relay poses: 100 ms near, fast, airborne or wrecked (was 50),
 150 ms otherwise moving (100), 300 ms beyond 300 ft (200), 2 s stationary
 (1 s) and 10 s paused (5 s); 350 ms beyond 1,000 ft is unchanged. Private
-rooms and direct links keep the cadences above. Details, the receiver
-limits behind each value and the host measurement:
+rooms and direct links keep the cadences above. Host check (one Mac, local
+relay, two riders without links): a rider driving off sent 8.5 poses a
+second against 15.7 in a private room, and 0.5 against 1.0 at rest; the
+watcher drew it about 80 ms later, never stale. Details and the receiver
+limits behind each value:
 [MULTIPLAYER.md](MULTIPLAYER.md#free-ride-relay-intervals-2026-11-12).
 
 ## Limits and next gates
