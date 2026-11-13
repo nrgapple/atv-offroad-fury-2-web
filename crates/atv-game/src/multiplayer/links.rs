@@ -443,6 +443,42 @@ pub fn interval(
     }
 }
 
+/// [`interval`] for the relay path in a shared Free Ride room (research/
+/// MULTIPLAYER.md "Free Ride relay intervals"). The relay is billed per
+/// incoming message and those rooms are nearly all of its traffic, so each
+/// tier waits as long as receivers already smooth: their playback delay
+/// follows the cadence up to 220 ms and they call a rider stale 2.5 s after
+/// a stationary pose and 15 s after a paused one. Builds from before this
+/// table receive these poses too.
+///
+/// 10 Hz near, fast, airborne or wrecked; about 7 Hz moving; about 3 Hz
+/// beyond 300 ft; 0.5 Hz stationary; 0.1 Hz paused.
+pub fn freeride_interval(
+    paused: bool,
+    moving: bool,
+    state: RiderState,
+    speed: f32,
+    feet: f32,
+) -> u32 {
+    if paused {
+        10_000
+    } else if !moving && state == RiderState::Riding {
+        2000
+    } else if feet >= 1000. {
+        350
+    } else if feet > 300. {
+        300
+    } else if state == RiderState::Wreck
+        || state == RiderState::Airborne
+        || speed > 35.
+        || feet < 40.
+    {
+        100
+    } else {
+        150
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -688,5 +724,45 @@ mod tests {
         assert_eq!(interval(true, false, Riding, 0., 20., false), 5000);
         assert_eq!(interval(true, false, Riding, 0., 20., true), 1000);
         assert!(u64::from(interval(true, false, Riding, 0., 0., true)) < SILENCE_MS);
+    }
+
+    #[test]
+    fn free_ride_relay_intervals_stay_inside_what_receivers_smooth() {
+        use RiderState::{Airborne, Recovering, Riding, Wreck};
+        let moving = |state, speed, feet| freeride_interval(false, true, state, speed, feet);
+        // Near, fast, airborne or wrecked: 10 Hz.
+        assert_eq!(moving(Riding, 20., 20.), 100);
+        assert_eq!(moving(Riding, 60., 120.), 100);
+        assert_eq!(moving(Airborne, 20., 120.), 100);
+        assert_eq!(moving(Wreck, 0., 120.), 100);
+        // Ordinary riding, and a rider getting back on.
+        assert_eq!(moving(Riding, 20., 120.), 150);
+        assert_eq!(moving(Recovering, 0., 300.), 150);
+        // Distance wins over activity.
+        assert_eq!(moving(Airborne, 90., 400.), 300);
+        assert_eq!(moving(Riding, 90., 1000.), 350);
+        assert_eq!(moving(Wreck, 90., f32::INFINITY), 350);
+        // Stationary and paused riders stay fresh on every receiver: a
+        // stationary pose goes stale after 2.5 s, a paused one after 15 s.
+        assert_eq!(freeride_interval(false, false, Riding, 0., 20.), 2000);
+        assert_eq!(freeride_interval(true, false, Riding, 0., 20.), 10_000);
+        assert_eq!(freeride_interval(true, true, Airborne, 90., 20.), 10_000);
+        // A wrecked rider at rest is still shown as it falls and recovers.
+        assert_eq!(freeride_interval(false, false, Wreck, 0., 20.), 100);
+        // No tier is shorter than the same rider's in a private room, and
+        // every moving tier is inside the receivers' 400 ms cadence window.
+        for state in [Riding, Airborne, Wreck, Recovering] {
+            for speed in [0., 20., 60.] {
+                for feet in [10., 100., 301., 999., 1000., f32::INFINITY] {
+                    for (paused, moves) in [(false, true), (false, false), (true, false)] {
+                        let shared = freeride_interval(paused, moves, state, speed, feet);
+                        assert!(shared >= interval(paused, moves, state, speed, feet, false));
+                        if !paused && (moves || state != Riding) {
+                            assert!(shared <= 350);
+                        }
+                    }
+                }
+            }
+        }
     }
 }

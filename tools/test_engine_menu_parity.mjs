@@ -2,8 +2,9 @@
 // - ride links: a bad link explains itself in the main menu notice; a bare
 //   `?room=` link opens Join Lobby with its code, player and vehicle alias
 //   (launch.js parseLaunch); a race link's cheats survive Copy ride link.
-// - Garage previews: a pressed preview turns with Left/Right (0.25 rad) and
-//   the garage keeps its vehicle; a changed vehicle shows its status first.
+// - Garage previews: a pressed preview turns with Left/Right (0.25 rad, with
+//   the turntable held) and the garage keeps its vehicle; a changed vehicle
+//   shows its status first.
 // - Pause in a race: Restart Race; menus hide the keyboard card and Ctrl+H
 //   leaves it alone; Bindings → Left/Right turn the page and Clear binding
 //   clears the highlighted row.
@@ -102,14 +103,21 @@ try {
   await onFront(page, 'garage');
   await wait(page, () => JSON.parse(document.querySelector('#ui-state').textContent).front.models[0]);
   f = await front(page);
-  const quad = f.quad,
-    yaw = f.modelYaw[0];
+  const quad = f.quad;
   const preview = f.hits.find(h => h.id === MODEL_QUAD);
   await clickHit(page, preview);
+  // The ATV turns on its own (the showroom turntable), so the steps are
+  // measured from the first press: it stops the turntable and holds it for
+  // 2.5 s (front.rs SPIN_HOLD), and the next two presses turn 0.25 rad each.
+  await key(page, 'ArrowRight');
+  f = await front(page);
+  const yaw = f.modelYaw[0];
+  assert.equal(f.modelSpin[0], 0, 'a key turn stops the turntable');
   await key(page, 'ArrowRight');
   await key(page, 'ArrowRight');
   f = await front(page);
   assert.equal(f.quad, quad, 'the focused preview took the arrows');
+  assert.equal(f.modelSpin[0], 0, 'the turntable waits while the keys turn it');
   assert.ok(Math.abs(f.modelYaw[0] - (yaw - 0.5)) < 1e-4, `turned ${yaw} → ${f.modelYaw[0]}`);
   // Another key gives the arrows back to the garage: the next vehicle,
   // which shows "Loading model..." until it is read.
