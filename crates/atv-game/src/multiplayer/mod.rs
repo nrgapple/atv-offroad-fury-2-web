@@ -195,6 +195,8 @@ pub struct Session {
     kept: Option<Snapshot>,
     /// The newest batch sent showed the rider at rest.
     sent_resting: bool,
+    /// Where the rider came to rest, while it stays there.
+    rest: Option<[f32; 3]>,
     /// The relay's pace factor in tenths (research/MULTIPLAYER.md "Free
     /// Ride pace"); 0 before it sends one.
     pub pace: u8,
@@ -841,6 +843,7 @@ impl Session {
         }
         self.batch.clear();
         self.kept = None;
+        self.rest = None;
         // Slower tiers allow proportionally more travel between poses.
         let reach = 16. * (interval as f32 / 100.).max(1.);
         // In a shared room a rider at rest waits two seconds between poses:
@@ -990,7 +993,27 @@ impl Session {
     ) -> Result<Poses> {
         let now = s.time_ms;
         let state = s.rider_state;
-        let (every, spacing) = links::batch_tier(paused, moving, state, s.speed, nearest, plain);
+        let wrecked = state == RiderState::Wreck;
+        // A rider is at rest from the tick it stands still until it has
+        // moved 1.5 ft from there, goes 3 ft/s or wrecks: one parked on a
+        // slope, creeping or with its wheels leaving the ground and touching
+        // again, stays at rest and is sent as standing (no velocity), so
+        // that every receiver keeps it fresh as a resting rider.
+        let here = s.atv.position;
+        self.rest = self
+            .rest
+            .filter(|at| !wrecked && s.speed.abs() < 3. && distance(*at, here) <= 1.5)
+            .or((!moving && state == RiderState::Riding).then_some(here));
+        let resting = self.rest.is_some();
+        if resting {
+            s.velocity = [0.; 3];
+            s.rider_velocity = [0.; 3];
+            s.angular_velocity = [0.; 3];
+            s.speed = 0.;
+        }
+        let tier_state = if resting { RiderState::Riding } else { state };
+        let (every, spacing) =
+            links::batch_tier(paused, !resting, tier_state, s.speed, nearest, plain);
         // The relay's pace stretches the wait between batches, not the
         // poses kept in them.
         let pace = u32::from(
@@ -999,8 +1022,6 @@ impl Session {
         );
         let every = (every * pace / 10).min(u32::from(atv_net::MAX_BATCH_INTERVAL_MS));
         let car = s.platform.as_ref().map(|p| p.car);
-        let wrecked = state == RiderState::Wreck;
-        let resting = !moving && state == RiderState::Riding;
         let since_sent = now.wrapping_sub(self.last_sent_ms);
         // A change that matters goes at once: a wreck or its end, a pause,
         // a train car boarded or left, a reset (farther than a ride goes in
@@ -1017,8 +1038,7 @@ impl Session {
                 || distance(b.atv.position, s.atv.position)
                     > 16. * (now.wrapping_sub(b.time_ms) as f32 / 100.).max(1.)
         });
-        // Creeping about the threshold of rest flushes five times a second
-        // at most.
+        // (Five times a second at most.)
         let turned = resting != self.sent_resting && since_sent >= 200;
         let arrival = self.relay_due && !resting;
         self.relay_due = false;
@@ -1029,9 +1049,10 @@ impl Session {
             || self.batch.len() + 2 >= atv_net::MAX_BATCH;
         // A pose in another state than the one before it is not blended
         // with it by the receiver, which holds the earlier pose: keep both
-        // ticks, so that hold lasts 50 ms whatever the spacing.
+        // ticks, so that hold lasts 50 ms whatever the spacing. (A rider at
+        // rest is one pose.)
         let previous = self.previous.take();
-        let stepped = previous.as_ref().is_some_and(|p| p.rider_state != state);
+        let stepped = !resting && previous.as_ref().is_some_and(|p| p.rider_state != state);
         if stepped
             && let Some(p) = previous
             && kept_ms != Some(p.time_ms)
@@ -2119,23 +2140,55 @@ mod tests {
         assert!(rest.iter().all(|b| b.0 == 5000 && b.1.len() == 1));
         assert_eq!(times(&rest[2]), [20_550]);
         all.extend(rest);
-        // Setting off is sent at once.
-        let off = batches(&mut s, &mut x, 21_550, 100, 20., Riding);
+        // Parked on a slope it creeps, and its wheels leave the ground and
+        // touch again: still at rest, sent as standing, until it has slid
+        // 1.5 ft from where it stopped.
+        let mut creep = Vec::new();
+        for (tick, time) in (21_550..31_550).step_by(50).enumerate() {
+            let mut pose = riding(&s, time, x + 0.3 * (tick % 3) as f32, 0.8);
+            if tick % 7 == 0 {
+                pose.rider_state = Airborne;
+            }
+            if let Some(bytes) = s.emit(pose, false).unwrap().relay {
+                s.sent(&bytes).unwrap();
+                let Packet::Batch { poses, .. } = atv_net::decode(&bytes).unwrap() else {
+                    panic!("a batch");
+                };
+                let Packet::Snapshot(pose) = atv_net::decode(&poses[0]).unwrap() else {
+                    panic!("a pose");
+                };
+                assert_eq!((poses.len(), pose.velocity), (1, [0.; 3]));
+                creep.push(time);
+            }
+        }
+        assert_eq!(creep, [25_550, 30_550]);
+        x += 2.;
+        let slid = batches(&mut s, &mut x, 31_550, 50, 0.8, Riding);
+        assert_eq!((slid.len(), slid[0].0), (1, 1500));
+        assert!((slid[0].1[0].velocity[0] - 0.8).abs() < 0.01);
+        all.extend(slid);
+        // It stops again, then sets off: both sent at once (a stop within
+        // 200 ms of the last batch waits that long).
+        let rest = batches(&mut s, &mut x, 31_600, 4950, 0., Riding);
+        assert_eq!(rest.len(), 1);
+        assert_eq!((rest[0].0, times(&rest[0])), (5000, vec![31_750]));
+        all.extend(rest);
+        let off = batches(&mut s, &mut x, 36_550, 100, 20., Riding);
         assert_eq!((off.len(), off[0].0), (1, 1500));
         all.extend(off);
         // Rider 2 arrives on a build without batches, as far away: it gets
         // this rider's place at once, and then nothing waits longer than
         // that build smooths.
-        signal(&mut s, 2, PRESENT, &[0], 21_650);
-        s.receive(&pose_from(2, 1, 0, 5000.), 21_650).unwrap();
-        let plain = batches(&mut s, &mut x, 21_650, 1400, 20., Riding);
+        signal(&mut s, 2, PRESENT, &[0], 36_650);
+        s.receive(&pose_from(2, 1, 0, 5000.), 36_650).unwrap();
+        let plain = batches(&mut s, &mut x, 36_650, 1400, 20., Riding);
         assert_eq!(plain.len(), 4);
         assert!(plain.iter().all(|b| b.0 == 350 && b.1.len() == 1));
-        assert_eq!(times(&plain[0]), [21_650]);
+        assert_eq!(times(&plain[0]), [36_650]);
         all.extend(plain);
         // The relay asks for twice the wait.
-        signal(&mut s, 1, PACE, &[20], 23_050);
-        let paced = batches(&mut s, &mut x, 23_050, 2100, 20., Riding);
+        signal(&mut s, 1, PACE, &[20], 38_050);
+        let paced = batches(&mut s, &mut x, 38_050, 2100, 20., Riding);
         assert_eq!(paced.len(), 3);
         assert!(paced.iter().all(|b| b.0 == 700 && b.1.len() == 2));
         all.extend(paced);
@@ -2144,7 +2197,7 @@ mod tests {
         assert!(poses.windows(2).all(|w| {
             atv_net::sequence_newer(w[1].sequence, w[0].sequence) && w[1].time_ms > w[0].time_ms
         }));
-        assert_eq!(s.counters.batches as usize, all.len());
+        assert_eq!(s.counters.batches as usize, all.len() + creep.len());
         // A relay that does not take batches gets single poses.
         let mut old = Session::new(Profile::new("Ann", 1, 0, Default::default()));
         welcome(
