@@ -204,12 +204,16 @@ async function rest(page) {
   }
 }
 
-/** The driver drives off for `seconds` (hopping when `hops`), then rests. */
-async function drive(driver, watchers, seconds, hops = false) {
+/**
+ * The driver drives off for `seconds` (hopping when `hops`, in circles when
+ * `circle`), then rests.
+ */
+async function drive(driver, watchers, seconds, { hops = false, circle = false } = {}) {
   await driver.bringToFront();
   const started = Date.now();
   const frames = Promise.all([driver, ...watchers].map(page => trace(page, seconds * 1000 + 2500)));
   await driver.keyboard.down('KeyW');
+  if (circle) await driver.keyboard.down('KeyA');
   for (let elapsed = 0; elapsed < seconds * 1000; elapsed += 1000) {
     // A preload hop every four seconds: take-offs and landings.
     const hop = hops && elapsed % 4000 === 2000;
@@ -221,6 +225,7 @@ async function drive(driver, watchers, seconds, hops = false) {
     }
   }
   await driver.keyboard.up('KeyW');
+  if (circle) await driver.keyboard.up('KeyA');
   const stopped = Date.now();
   const [driven, ...seen] = await frames;
   await rest(driver);
@@ -238,10 +243,15 @@ try {
   await riding(driver, 1);
   await driver.waitForTimeout(4000);
   let peer = (await engine(driver)).peer;
-  let run = await drive(driver, [watcher], 5);
+  // Circling beside the watcher: how a rider in contact range is drawn.
+  const contact = ({ real, own }) => (distance(real, own) < 25 ? 'under25ft' : distance(real, own) < 60 ? 'under60ft' : null);
+  let run = await drive(driver, [watcher], 8, { circle: true });
+  const circling = { rate: rate(driver, run.started, run.stopped), seen: motion(run.seen[0], run.driven, peer, contact) };
+  run = await drive(driver, [watcher], 5);
   let rested = Date.now();
   await driver.waitForTimeout(12_000);
   report.private = {
+    circling,
     driving: rate(driver, run.started, run.stopped),
     resting: rate(driver, rested, Date.now()),
     seen: motion(run.seen[0], run.driven, peer).all,
@@ -265,7 +275,13 @@ try {
     const s = await engine(page);
     return { batches: s.batches, batchesReceived: s.batchesReceived };
   };
-  run = await drive(driver, [near, third], SECONDS, true);
+  run = await drive(driver, [near, third], 8, { circle: true });
+  const sharedCircling = {
+    rate: rate(driver, run.started, run.stopped),
+    seen: motion(run.seen[0], run.driven, peer, contact),
+  };
+  if (process.env.ATV_RELAY_TRACE) traces.circling = { driven: run.driven, seen: run.seen[0] };
+  run = await drive(driver, [near, third], SECONDS, { hops: true });
   rested = Date.now();
   await driver.waitForTimeout(16_000);
   const restedUntil = Date.now();
@@ -292,6 +308,7 @@ try {
   const states = {};
   for (const [, , state] of run.driven) states[state] = (states[state] ?? 0) + 1;
   report.shared = {
+    circling: sharedCircling,
     driving: rate(driver, run.started, run.stopped),
     byDistance: sent,
     resting: rate(driver, rested, restedUntil),
