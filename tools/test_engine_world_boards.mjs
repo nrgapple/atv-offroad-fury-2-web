@@ -57,6 +57,8 @@ async function api(route) {
   const entries = [
     { rank: 1, name: 'ACE', value: 61_230, vehicle: 3, day: '2026-11-11' },
     { rank: 2, name: 'PLAYER1', value: 62_000, vehicle: 3, day: '2026-11-11' },
+    // A house rider (research/WORLD_BOARDS.md "House riders"): an ordinary row.
+    { rank: 3, name: 'RIGGS', value: 62_410, vehicle: 7, day: '2026-11-12', house: true },
   ];
   if (board.startsWith('daily:')) return json({ board, entries, yesterday: { date: '2026-11-11', name: 'WIN', value: 300_120, vehicle: 4 } });
   return json({ board, entries });
@@ -89,6 +91,7 @@ assert.match(f.labels[f.choices.indexOf('fameworld')], /View: This Device/);
 assert.equal(requests.length, 0, 'the local view fetches nothing');
 await choose(page, 'fameworld');
 await waitDetail(page, /^1\. ACE · .*\|01:01\.23$/);
+await waitDetail(page, /^3\. RIGGS · .*\|01:02\.41$/);
 await waitDetail(page, /^Offline/);
 f = await ui(page);
 assert.match(f.labels[f.choices.indexOf('fameworld')], /View: World/);

@@ -137,14 +137,15 @@ test('a ghost is stored for its kept row, marked on the board and downloaded fro
     assert.equal((await submit(env, 'ADA', 60_000)).body.boards[BOARD].placed, true);
     assert.equal((await submit(env, 'BOB', 62_000, 28)).status, 200);
     let board = await call(env, 'GET', `/api/boards/${BOARD}`);
-    assert.deepEqual(board.body.entries.map(e => e.ghost), [undefined, undefined]);
+    assert.deepEqual(board.body.entries.filter(e => !e.house).map(e => e.ghost), [undefined, undefined]);
+    assert.ok(board.body.entries.filter(e => e.house).every(e => !e.ghost), 'house riders have no ghost');
     // The upload names its row by name, lap time and vehicle.
     const lap = ghost();
     assert.deepEqual((await upload(env, 'ada', lap)).body, { board: BOARD, name: 'ADA', kept: true });
     assert.deepEqual(stored(env), ['ADA:60000']);
     // The board's cached copy was dropped: the row now offers its ghost.
     board = await call(env, 'GET', `/api/boards/${BOARD}`);
-    assert.deepEqual(board.body.entries.map(e => [e.name, e.ghost]), [['ADA', true], ['BOB', undefined]]);
+    assert.deepEqual(board.body.entries.filter(e => !e.house).map(e => [e.name, e.ghost]), [['ADA', true], ['BOB', undefined]]);
     const got = await call(env, 'GET', `/api/ghosts/${BOARD}/ADA/60000`);
     assert.equal(got.status, 200);
     assert.deepEqual(got.body, { board: BOARD, name: 'ADA', value: 60_000, vehicle: 3, ghost: text(lap) });

@@ -12,6 +12,9 @@ use std::collections::BTreeMap;
 pub const DAILY_PAGE: &str = "daily";
 /// Rows of a world board shown on a page.
 pub const SHOWN: usize = 10;
+/// Rows of each board where a page shows two (a race course's lap and race
+/// boards): ten of each run off the panel under the first.
+pub const PAIR_SHOWN: usize = 5;
 
 /// One board's state in the menus.
 #[derive(Clone, Debug, PartialEq)]
@@ -126,16 +129,25 @@ impl Frontend {
         ]
     }
 
-    fn mine(&self, name: &str) -> bool {
-        self.world.names.iter().any(|n| n == name)
-            || self
-                .profile_name()
-                .is_some_and(|p| p.eq_ignore_ascii_case(name))
+    /// The rider's own row: a name they submitted under or the loaded
+    /// profile's, never a house rider's row of the same name.
+    fn mine(&self, entry: &world_board::BoardEntry) -> bool {
+        !entry.house
+            && (self.world.names.contains(&entry.name)
+                || self
+                    .profile_name()
+                    .is_some_and(|p| p.eq_ignore_ascii_case(&entry.name)))
     }
 
-    /// A board's lines: a title, its top rows (the rider's marked "▶") and
-    /// the rider's own row below them when it ranks lower.
-    fn board_lines(&self, title: &str, id: &str, score: bool) -> Vec<(String, String)> {
+    /// A board's lines: a title, its top `shown` rows (the rider's marked
+    /// "▶") and the rider's own row below them when it ranks lower.
+    fn board_lines(
+        &self,
+        title: &str,
+        id: &str,
+        score: bool,
+        shown: usize,
+    ) -> Vec<(String, String)> {
         let mut lines = vec![(title.to_string(), String::new())];
         let value = |v: i64| {
             if score {
@@ -165,7 +177,7 @@ impl Frontend {
             )),
             Some(BoardState::Ready(board)) => {
                 let row = |e: &world_board::BoardEntry| {
-                    let mark = if self.mine(&e.name) { "▶ " } else { "" };
+                    let mark = if self.mine(e) { "▶ " } else { "" };
                     let ghost = if e.ghost { " · Ghost" } else { "" };
                     (
                         format!(
@@ -177,13 +189,8 @@ impl Frontend {
                         value(e.value),
                     )
                 };
-                lines.extend(board.entries.iter().take(SHOWN).map(row));
-                if let Some(own) = board
-                    .entries
-                    .iter()
-                    .skip(SHOWN)
-                    .find(|e| self.mine(&e.name))
-                {
+                lines.extend(board.entries.iter().take(shown).map(row));
+                if let Some(own) = board.entries.iter().skip(shown).find(|e| self.mine(e)) {
                     lines.push(row(own));
                 }
             }
@@ -203,7 +210,7 @@ impl Frontend {
         let boards = self.fame_boards();
         if atv_core::freestyle::SERIES.iter().any(|s| s.name == *group) {
             let mut lines = vec![(self.course_name(id), format!("World · {group}"))];
-            lines.extend(self.board_lines("Highest Objective Scores", &boards[0], true));
+            lines.extend(self.board_lines("Highest Objective Scores", &boards[0], true, SHOWN));
             return lines;
         }
         let laps = world_board::default_laps(id);
@@ -213,8 +220,13 @@ impl Frontend {
             "Normal"
         };
         let mut lines = vec![(self.course_name(id), format!("World · {difficulty}"))];
-        lines.extend(self.board_lines("Fastest Lap", &boards[0], false));
-        lines.extend(self.board_lines(&format!("Fastest {laps}-Lap Race"), &boards[1], false));
+        lines.extend(self.board_lines("Fastest Lap", &boards[0], false, PAIR_SHOWN));
+        lines.extend(self.board_lines(
+            &format!("Fastest {laps}-Lap Race"),
+            &boards[1],
+            false,
+            PAIR_SHOWN,
+        ));
         lines
     }
 
@@ -340,7 +352,7 @@ impl Frontend {
                 },
             ));
         }
-        lines.extend(self.board_lines("Today's Board", &board, false));
+        lines.extend(self.board_lines("Today's Board", &board, false, SHOWN));
         lines
     }
 
@@ -420,7 +432,7 @@ mod tests {
         assert!(front.world_wants().is_empty());
         assert!(front.profile_details().iter().any(|l| l.0 == "Loading…"));
         front.world.names.push("ADA".into());
-        let entries = (1..=12)
+        let mut entries: Vec<BoardEntry> = (1..=12)
             .map(|rank| BoardEntry {
                 rank,
                 name: if rank == 12 {
@@ -432,8 +444,11 @@ mod tests {
                 vehicle: 1,
                 day: "2026-11-11".into(),
                 ghost: false,
+                // A house rider named as the player is not the player's row.
+                house: rank == 3,
             })
             .collect();
+        entries[2].name = "ADA".into();
         let board = Board {
             board: wants[0].clone(),
             entries,
@@ -451,6 +466,13 @@ mod tests {
             details.iter().any(|l| l.0.starts_with("▶ 12. ADA")),
             "{details:?}"
         );
+        assert!(
+            details.iter().any(|l| l.0.starts_with("3. ADA")),
+            "a house row is an ordinary row: {details:?}"
+        );
+        // Two boards share the panel: five rows of each.
+        assert!(details.iter().any(|l| l.0.starts_with("5. R5")));
+        assert!(!details.iter().any(|l| l.0.starts_with("6. R6")));
         assert!(details.iter().any(|l| l.0.starts_with("Offline")));
         // Placing again refetches the boards.
         front.world_placed("ADA", &wants);
@@ -497,6 +519,7 @@ mod tests {
                 vehicle: 28,
                 day: "2026-11-12".into(),
                 ghost: false,
+                house: false,
             },
             BoardEntry {
                 rank: 2,
@@ -505,6 +528,7 @@ mod tests {
                 vehicle: 4,
                 day: "2026-11-12".into(),
                 ghost: false,
+                house: false,
             },
         ];
         let board = Board {
@@ -545,6 +569,7 @@ mod tests {
                     vehicle: 1,
                     day: "2026-11-12".into(),
                     ghost: ghosts.contains(&rank),
+                    house: false,
                 })
                 .collect(),
             yesterday: None,

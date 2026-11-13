@@ -3586,6 +3586,9 @@ impl App {
                 "fame": self.overlay.as_ref().filter(|o| o.results.shown)
                     .and_then(|o| o.results.fame.as_ref())
                     .map(|f| serde_json::json!({"broken": f.broken, "name": f.name, "player": f.player})),
+                // The world boards' line on the results (world.rs).
+                "world": self.overlay.as_ref().filter(|o| o.results.shown)
+                    .and_then(|o| o.results.world_line.clone()),
             });
             state["ride"]["trainingSpeech"] = training_speech.into();
             state["ride"]["cpus"] = ready.cpus.iter().map(game_cpu::Cpu::state).collect();
