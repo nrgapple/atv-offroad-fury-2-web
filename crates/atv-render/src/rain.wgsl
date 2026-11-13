@@ -141,8 +141,11 @@ fn vs_lens(@builtin(vertex_index) vertex: u32, @location(0) bead: vec4<f32>) -> 
   );
   let corner = corners[vertex];
   var out: Varyings;
-  // Beads are a little taller than wide, as water hangs on glass.
-  let extent = vec2<f32>(bead.z * 2.0 / r.color.w, bead.z * 2.3);
+  // Beads are a little taller than wide, as water hangs on glass. Their
+  // size follows the view's shorter side, so a portrait phone's are no
+  // larger than a landscape one's.
+  let size = bead.z * min(1.0, r.color.w);
+  let extent = vec2<f32>(size * 2.0 / r.color.w, size * 2.3);
   out.clip = vec4<f32>(bead.xy + corner * extent, 0.0, 1.0);
   out.uv = corner;
   out.alpha = bead.w;
@@ -154,12 +157,17 @@ fn vs_lens(@builtin(vertex_index) vertex: u32, @location(0) bead: vec4<f32>) -> 
 fn fs_lens(in: Varyings) -> @location(0) vec4<f32> {
   let d = length(in.uv);
   if (d >= 1.0) { discard; }
-  // A dark meniscus rim, a clear body and a sky-lit highlight up and left.
-  let rim = smoothstep(0.6, 0.95, d) * (1.0 - smoothstep(0.95, 1.0, d));
-  let glint = 1.0 - smoothstep(0.0, 0.28, length(in.uv - vec2<f32>(-0.32, 0.38)));
-  let body = 0.18 * (1.0 - d);
+  // A drop on glass shows the scene upside down: the sky's light sits low
+  // in it and the dark ground high, strongest towards its edge. The middle
+  // stays nearly clear, the outline is soft, and a small glint of sky sits
+  // up and left.
+  let edge = 1.0 - smoothstep(0.8, 1.0, d);
+  let rim = smoothstep(0.35, 0.95, d);
+  let low = smoothstep(-0.8, 0.8, -in.uv.y);
+  let glint = 1.0 - smoothstep(0.0, 0.2, length(in.uv - vec2<f32>(-0.3, 0.4)));
   let light = mix(r.color.rgb, vec3<f32>(1.0), 0.6);
-  let color = mix(light * (0.55 + body), light, glint);
-  let alpha = max(max(rim * 0.45, glint * 0.8), 0.12);
-  return vec4<f32>(color * (1.0 - rim * 0.6), alpha * in.alpha);
+  let shade = mix(vec3<f32>(0.03, 0.04, 0.05), light, low);
+  let color = mix(shade, vec3<f32>(1.0), glint);
+  let alpha = max(0.05 + rim * (0.08 + 0.24 * abs(low * 2.0 - 1.0)), glint * 0.7) * edge;
+  return vec4<f32>(color, alpha * in.alpha);
 }

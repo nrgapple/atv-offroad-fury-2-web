@@ -125,10 +125,10 @@ impl Drops {
             if clock - self.splashes[index].birth < SPLASH_LIFE {
                 continue;
             }
-            // Spread over a fan 2-30 ft ahead, staggered so they never
+            // Spread over a fan 4-30 ft ahead, staggered so they never
             // land in step.
             let angle = (self.random.next() - 0.5) * 2.2;
-            let distance = 2. + 28. * self.random.next().sqrt();
+            let distance = 4. + 26. * self.random.next().sqrt();
             let (sa, ca) = angle.sin_cos();
             let (dx, dz) = (sy * ca + cy * sa, cy * ca - sy * sa);
             let (x, z) = (camera.x + dx * distance, camera.z + dz * distance);

@@ -1215,6 +1215,12 @@ impl SceneRenderer {
         }
     }
 
+    /// Runs the Remastered wind and rain clock alone: an instant replay
+    /// plays over a held world, and its rain still falls.
+    pub fn advance_weather(&mut self, seconds: f32) {
+        self.wind_seconds = (self.wind_seconds + seconds.clamp(0., 0.1)) % 4096.;
+    }
+
     /// A Display → Graphics change during a ride (graphicsSettings.onChange):
     /// interpolation is the host's, the dust and tire-track pools follow the
     /// wheel effects; this applies the smoothed sky (when the venue decoded
