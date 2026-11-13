@@ -8,7 +8,7 @@ import { DAILY_POOL, TOP, checkTrace, dailyPick, judge, parseBoard } from './boa
 // A D1 stand-in over real SQLite with the production migrations applied.
 function d1() {
   const db = new DatabaseSync(':memory:');
-  for (const file of ['0001_cloud_saves.sql', '0002_world_boards.sql']) db.exec(readFileSync(new URL(`./migrations/${file}`, import.meta.url), 'utf8'));
+  for (const file of ['0001_cloud_saves.sql', '0002_world_boards.sql', '0003_board_ghosts.sql']) db.exec(readFileSync(new URL(`./migrations/${file}`, import.meta.url), 'utf8'));
   const statement = (sql, params = []) => ({
     bind: (...values) => statement(sql, values),
     run: async () => statement(sql, params).exec(),

@@ -119,6 +119,8 @@ pub const KID_RELEASED: VehicleInput = VehicleInput {
 
 /// Lap Attack's new best lap infotext (`00216750`: 0x42bb70).
 const GHOST_BEST: &str = "New Lap Attack Lap Set!";
+/// Seconds a world ghost's name and its beating show (authored).
+const RIVAL_SECONDS: f32 = 4.;
 
 /// A room race's CPU field (see [`Settings::room_cpus`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -366,6 +368,15 @@ pub struct RaceState {
     pub puppets_retired: bool,
     /// Lap Attack's best-lap ghost (none in other event types).
     pub ghost: Option<atv_core::race_ghost::Ghost>,
+    /// Lap Attack against a world board row's ghost (`world_ghost`): the
+    /// rival as the event started (a restart races it again) and, until
+    /// the player laps faster, the name the ghost rides under.
+    rival_start: Option<std::sync::Arc<atv_core::world_ghost::Rival>>,
+    pub rival: Option<String>,
+    /// A race that keeps records: its best lap's motion for a world board
+    /// ghost, and that ghost once the player has finished.
+    world_lap: Option<atv_core::world_ghost::Recorder>,
+    world_ghost: Option<std::sync::Arc<atv_core::world_ghost::Lap>>,
     /// The ghost's drawn pose this step (its buffers reused step to step)
     /// and whether it is shown.
     ghost_pose: (super::Pose, bool),
@@ -410,6 +421,27 @@ impl RaceState {
     pub fn set_records(&mut self, records: atv_core::hall_of_fame::RecordWatch) {
         self.records_start = Some(records.clone());
         self.race.set_records(records);
+    }
+
+    /// Lap Attack against a world board row's ghost: it is the lap to beat
+    /// from the first lap (research/WORLD_BOARDS.md "Ghosts").
+    pub fn set_rival(&mut self, rival: std::sync::Arc<atv_core::world_ghost::Rival>) {
+        let Some(ghost) = &mut self.ghost else {
+            return;
+        };
+        ghost.set_rival(rival.time, rival.lap.samples());
+        if ghost.best() == Some(rival.time) {
+            self.hud.say(
+                format!(
+                    "{}'s Ghost · {}",
+                    rival.name,
+                    atv_core::race_hud::time_text(rival.time)
+                ),
+                RIVAL_SECONDS,
+            );
+            self.rival = Some(rival.name.clone());
+            self.rival_start = Some(rival);
+        }
     }
 }
 
@@ -741,6 +773,10 @@ impl Ride {
             ghost: settings
                 .lap_attack
                 .then(|| atv_core::race_ghost::Ghost::new(ghost_opacity)),
+            rival_start: None,
+            rival: None,
+            world_lap: None,
+            world_ghost: None,
             ghost_pose: Default::default(),
         });
         Ok(())
@@ -776,6 +812,9 @@ impl Ride {
         self.assisted = false;
         if let (Some(records), Some(race)) = (state.records_start, &mut self.race) {
             race.set_records(records);
+        }
+        if let (Some(rival), Some(race)) = (state.rival_start, &mut self.race) {
+            race.set_rival(rival);
         }
         self.step_camera(0.)
     }
@@ -1042,7 +1081,13 @@ impl Ride {
             if race.laps_completed(None) > laps_before[0]
                 && ghost.lap(race.player_last_lap(), race.player_judged_laps() > judged)
             {
-                state.hud.say(GHOST_BEST.into(), 1.5);
+                // The first lap faster than a world ghost beats its rider.
+                match state.rival.take() {
+                    Some(name) => state
+                        .hud
+                        .say(format!("You Beat {name}'s Ghost!"), RIVAL_SECONDS),
+                    None => state.hud.say(GHOST_BEST.into(), 1.5),
+                }
             }
             ghost.record(
                 atv_core::race_ghost::Sample {
@@ -1075,6 +1120,26 @@ impl Ride {
                 pose.quad_world = super::quaternion_world(sample.origin, sample.orientation);
                 pose.rider_world =
                     atv_core::race_ghost::multiply(&pose.quad_world, &nodes.rider_offset);
+            }
+        }
+        // A race that keeps records keeps its best lap's motion too, for a
+        // world board ghost (`world_ghost`; fixed storage, made once).
+        if race.records().is_some() && !race.holding() && state.world_ghost.is_none() {
+            let recorder = state.world_lap.get_or_insert_with(Default::default);
+            if race.laps_completed(None) > laps_before[0] {
+                recorder.lap(race.player_last_lap(), race.player_judged_laps() > judged);
+            }
+            recorder.record(atv_core::race_ghost::Sample {
+                origin: player.origin,
+                orientation: player.orientation,
+            });
+            if race.player_finished()
+                && let Some(records) = race.records()
+            {
+                let course = records.key.strip_suffix(":expert").unwrap_or(&records.key);
+                state.world_ghost = recorder
+                    .ghost(course, records.vehicle)
+                    .map(std::sync::Arc::new);
             }
         }
         race.record_player_stunt(committed);
@@ -1475,6 +1540,10 @@ impl Ride {
         frame.duel = state.settings.duel;
         frame.lap_attack = state.settings.lap_attack;
         frame.ghost = state.ghost.as_ref().and_then(|g| g.frame());
+        frame.lap_ghost = state
+            .world_ghost
+            .clone()
+            .filter(|_| frame.records.is_some());
         frame.hud = Some(state.hud.step(
             STEP,
             &race_hud::Input {
