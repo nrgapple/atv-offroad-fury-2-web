@@ -2592,6 +2592,7 @@ mod tests {
                 sequence,
                 time_ms: sequence * 50,
                 atv_model: quad,
+                rider_model: 0,
                 animation: Some(Default::default()),
                 ..Default::default()
             })))
