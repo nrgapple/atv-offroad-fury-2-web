@@ -1210,7 +1210,7 @@ fn direct_link_signalling_roundtrips_and_is_bounded() {
 #[test]
 fn pose_batches_carry_one_riders_compact_poses_in_order() {
     let compact = |peer: u8, sequence: u32, time_ms: u32| {
-        let mut s = snapshot(sequence, time_ms, sequence as f32);
+        let mut s = snapshot(sequence, time_ms, (sequence % 100) as f32);
         s.peer = peer;
         s.atv_nodes.clear();
         s.rider_nodes.clear();
