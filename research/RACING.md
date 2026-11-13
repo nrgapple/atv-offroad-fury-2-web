@@ -1574,6 +1574,23 @@ does not run on the grid, with Kid Mode's GO released, after the finish, on
 the motorcycle, or for a player's own driving. `ui-state` reports
 `autopilotRecovery` ([assists, skips]) beside the other split diagnostics.
 
+Evidence (local build of this change, host Chromium): the split race alone
+under 3x CPU throttling, three attempts. Two finished with no repeat (1 and
+3 resets). In the third, player 2's driver wrecked at the same climb
+(station 97-100) and was reset there three more times; the assist switched
+on at the fourth reset, the skip ahead followed at the next, and the driver
+rode on from station 100 and finished at 143 s of race time with 7 resets
+and 20.7 s as its longest spell without new distance (the test's guard is
+45 s). `test_engine_split_screen.mjs` unthrottled: 3 passes in 3 runs
+(114-124 s of wall time for player 2, no skips needed). `atv-core`
+`race::tests::recovery_station_moves_the_player_on_too` covers the
+player's stations and race distance.
+
+Limits: one reproduction on one course; the climb itself still wrecks a
+driver that meets it from the reset point, so the skip is a way past, not a
+repair of the line. Kid Mode shares the code path but was not run here. A
+skip moves the quad up to 500 ft along the route without riding it.
+
 ## Practice event type — 2026-10-30
 
 Exact-build evidence (USA v2.00 `SCUS_972.11`, private exports; bounded
