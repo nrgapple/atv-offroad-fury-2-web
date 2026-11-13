@@ -217,6 +217,10 @@ pub struct Request {
     /// Authored train riding relative to the moving support; off is original.
     #[serde(default)]
     pub realistic_train: bool,
+    /// Authored CPU riders in a single-player or split-screen free ride
+    /// (0-3; research/CPU_MINIGAMES.md); 0, off, is original.
+    #[serde(default)]
+    pub free_ride_cpus: u8,
     /// Game Settings (Settings_Game, PAGE15): Measurement Metric,
     /// Ecosystem Collision and Sound Configuration.
     #[serde(default)]
@@ -1643,6 +1647,15 @@ pub fn layout(request: Request) -> Result<Frame> {
                         },
                         "train-riding",
                     ),
+                    (
+                        match request.free_ride_cpus {
+                            0 => "Free Ride CPU riders: Off (original)",
+                            1 => "Free Ride CPU riders: 1",
+                            2 => "Free Ride CPU riders: 2",
+                            _ => "Free Ride CPU riders: 3",
+                        },
+                        "free-ride-cpus",
+                    ),
                     (diagnostics, "diagnostics"),
                 ],
                 "game-settings" => vec![
@@ -2537,6 +2550,7 @@ mod tests {
             chase_assist: false,
             flips: false,
             realistic_train: false,
+            free_ride_cpus: 0,
             metric: false,
             ecosystem_collision: true,
             sound_configuration: String::new(),
@@ -3016,6 +3030,7 @@ mod tests {
                     "chase-camera",
                     "flips",
                     "train-riding",
+                    "free-ride-cpus",
                     "diagnostics",
                     "back"
                 ]
@@ -3030,16 +3045,19 @@ mod tests {
         assert_eq!(original[2], "Chase camera: Original");
         assert_eq!(original[3], "Flips: Off (original)");
         assert_eq!(original[4], "Train riding: Original");
+        assert_eq!(original[5], "Free Ride CPU riders: Off (original)");
         let mut enhanced = request("extras", 390., 844.);
         enhanced.crash_mode = "crazy".into();
         enhanced.chase_assist = true;
         enhanced.flips = true;
         enhanced.realistic_train = true;
+        enhanced.free_ride_cpus = 2;
         let enhanced = labels(enhanced);
         assert_eq!(enhanced[0], "Crashes: Crazy");
         assert_eq!(enhanced[2], "Chase camera: Assisted");
         assert_eq!(enhanced[3], "Flips: Unleashed backflip & 360");
         assert_eq!(enhanced[4], "Train riding: Realistic");
+        assert_eq!(enhanced[5], "Free Ride CPU riders: 2");
     }
     #[test]
     fn accessibility_page_fits_phones_both_ways() {

@@ -465,6 +465,7 @@ impl PauseMenu {
             "chase_assist": p.chase_assist,
             "flips": p.flips,
             "realistic_train": p.realistic_train,
+            "free_ride_cpus": p.free_ride_cpus,
             "metric": p.metric,
             "ecosystem_collision": p.ecosystem_collision,
             "sound_configuration": p.sound_configuration,

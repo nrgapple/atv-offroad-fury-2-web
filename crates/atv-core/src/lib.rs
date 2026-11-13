@@ -52,6 +52,7 @@ pub mod rider_assist;
 pub mod rider_control;
 pub mod rider_ik;
 pub mod rider_pose;
+pub mod roam_cpu;
 pub mod scene;
 pub mod scene_candidates;
 pub mod scene_collision;
