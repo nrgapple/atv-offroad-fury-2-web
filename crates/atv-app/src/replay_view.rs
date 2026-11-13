@@ -425,11 +425,18 @@ impl crate::App {
             return;
         };
         // Photo mode over a replay holds it still.
+        let before = replay.time;
         let command = if self.photo.is_none() {
             replay.frame(dt, pad, span)
         } else {
             None
         };
+        // Remastered rain falls (and plants sway) as the replay plays.
+        if replay.playing {
+            ready
+                .scene
+                .advance_weather(((replay.time - before) / 60.) as f32);
+        }
         if !riding.recorder.sample(replay.time, &mut replay.moment) {
             return;
         }

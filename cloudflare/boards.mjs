@@ -57,8 +57,10 @@ const MAX_POINTS = 1800;
 const MAX_RESETS = 30;
 const MARK_SLACK_MS = 50;
 
-// Freestyle objective runs last 120 s (research/PROFILE.md).
-export const MAX_FREESTYLE_SECONDS = 125;
+// Freestyle objective runs last 120 s (research/PROFILE.md), and a target
+// run gains 10 s a green target: at most 30 hits before the last ends it
+// (St. Croix Sound's 31, atv_core::freestyle::course_objectives).
+export const MAX_FREESTYLE_SECONDS = 425;
 export const MAX_SCORE = 1_000_000;
 export const MAX_SCORE_RATE = 15_000;
 
