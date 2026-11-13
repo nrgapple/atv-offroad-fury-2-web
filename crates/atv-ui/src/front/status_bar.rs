@@ -7,10 +7,12 @@
 //! link to the full page (progressive disclosure). The title page shows the
 //! save chip alone; rides never show the bar (the HUD rules there).
 //!
-//! Icons are vector shapes in the menus' gold. The original's trophy art
-//! (`trophy_goldon` and friends, PAGE26 `ProfileView_Champ`) is not in the
-//! hosted runtime package, so the cup is drawn in its colours instead.
-use super::{Metrics, display, text};
+//! The trophy chip shows the original's lit gold trophy (`trophy_goldon`,
+//! PAGE05 Championship and PAGE26 `ProfileView_Champ`) when the content
+//! package has it, else a vector cup in its colours. The disc has no coin or
+//! points art, so the coin and the other icons are vector shapes in the
+//! menus' gold.
+use super::{Img, Metrics, display, text};
 use crate::{
     color::{Color, Fill, Gradient},
     layout::{Content, El, Paint, px, sides},
@@ -28,6 +30,8 @@ pub const POPOVER_LINK: u32 = 2464;
 pub const POPOVER_CLOSE: u32 = 2465;
 /// The popover's panel (a tap inside it outside the link keeps it open).
 pub const POPOVER_PANEL: u32 = 2466;
+/// The gear: Options from any menu page.
+pub const OPTIONS: u32 = 2467;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Chip {
@@ -113,6 +117,8 @@ pub struct StatusBar {
     /// and the x its chip is centred on.
     pub open: Option<Popover>,
     pub anchor: f32,
+    /// The original trophy art, once registered (else the drawn cup).
+    pub trophy_art: Option<Img>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -278,6 +284,28 @@ fn trophy(size: f32) -> El {
     )
 }
 
+/// The original trophy art, fitted to the icon's height (it is taller than
+/// wide) and centred in the icon's box.
+fn original_trophy(size: f32, art: Img) -> El {
+    let height = size + 2.;
+    let width = (height * art.width / art.height.max(1.)).min(size + 4.);
+    El::new(Style {
+        size: Size {
+            width: length(width),
+            height: length(height),
+        },
+        margin: taffy::Rect {
+            left: LengthPercentageAuto::length((size - width) / 2.),
+            right: LengthPercentageAuto::length((size - width) / 2.),
+            top: LengthPercentageAuto::length(-1.),
+            bottom: LengthPercentageAuto::length(-1.),
+        },
+        flex_shrink: 0.,
+        ..Default::default()
+    })
+    .content(art.content(crate::layout::Fit::Contain))
+}
+
 /// A cloud with the sync state drawn in its colour.
 fn cloud(size: f32, sync: Sync) -> El {
     let color = Color::hex(sync.color());
@@ -312,6 +340,39 @@ fn cloud(size: f32, sync: Sync) -> El {
         ));
     }
     icon(size, layers)
+}
+
+/// A gear: eight teeth around a ring.
+fn gear(size: f32) -> El {
+    let color = Color::hex("#e4e4e4");
+    icon(
+        size,
+        vec![
+            // Teeth: four bars through the centre.
+            shape(
+                "M10 1.6v16.8M1.6 10h16.8M4.06 4.06l11.88 11.88M15.94 4.06 4.06 15.94",
+                size,
+                Color::TRANSPARENT,
+                Some(Stroke {
+                    width: 3.2,
+                    color,
+                    join: Join::Round,
+                }),
+            ),
+            shape(
+                "M10 3.6a6.4 6.4 0 1 1 0 12.8a6.4 6.4 0 1 1 0-12.8z",
+                size,
+                color,
+                None,
+            ),
+            shape(
+                "M10 7.2a2.8 2.8 0 1 1 0 5.6a2.8 2.8 0 1 1 0-5.6z",
+                size,
+                Color::hex("#111111"),
+                None,
+            ),
+        ],
+    )
 }
 
 /// The profile's avatar: a gold disc with the name's initial.
@@ -476,8 +537,12 @@ pub(super) fn bar(m: &Metrics, bar: &StatusBar, hovered: Option<u32>) -> El {
             coins.push(label("Points"));
         }
         row = row.child(chip(m, COINS, hot(COINS), bar.store || bar.counting, coins));
+        let cup = match bar.trophy_art {
+            Some(art) => original_trophy(icon_size, art),
+            None => trophy(icon_size),
+        };
         let mut cups = vec![
-            trophy(icon_size),
+            cup,
             value(m, format!("{}/{}", bar.trophies.0, bar.trophies.1)),
         ];
         if labels {
@@ -489,7 +554,15 @@ pub(super) fn bar(m: &Metrics, bar: &StatusBar, hovered: Option<u32>) -> El {
     if labels || bar.minimal {
         save.push(label(bar.sync.word()));
     }
-    row.child(chip(m, SAVE, hot(SAVE), false, save))
+    row = row.child(chip(m, SAVE, hot(SAVE), false, save));
+    if !bar.minimal {
+        let mut options = vec![gear(icon_size)];
+        if labels {
+            options.push(label("Options"));
+        }
+        row = row.child(chip(m, OPTIONS, hot(OPTIONS), false, options));
+    }
+    row
 }
 
 /// The popover under its chip: a scrim catching taps outside, and the

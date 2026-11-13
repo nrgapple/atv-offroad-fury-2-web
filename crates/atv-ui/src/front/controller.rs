@@ -20,6 +20,8 @@ pub mod passkey_page;
 pub mod profile_pages;
 pub mod seats_page;
 pub mod status_page;
+pub mod waypoint_page;
+pub mod world_page;
 pub use passkey_page::{CloudCommand, CloudView};
 use profile_pages::NO_PROFILE;
 
@@ -130,6 +132,19 @@ pub enum Event {
     },
     /// Single Race → Copy ride link: the race setup's link.
     CopyRaceLink,
+    /// Waypoint Editor → a slot or Edit Gates: ride the course's venue and
+    /// drop gates (`atv_core::user_course` code; the slot Save Course
+    /// writes).
+    WaypointEdit {
+        code: String,
+        slot: usize,
+        quad: u16,
+        rider: u16,
+    },
+    /// Waypoint Editor → Race This Course: a User Created Enduro.
+    UserCourse { code: String, quad: u16, rider: u16 },
+    /// Waypoint Editor → Copy course link.
+    CopyCourseLink { code: String },
     /// Main Menu → Training Course: the original's six lessons on the
     /// Training venue (`atv_core::training`) with the garage selection.
     Training { quad: u16, rider: u16 },
@@ -248,11 +263,13 @@ pub fn stepper(action: &str) -> bool {
             | "fameevent"
             | "famecourse"
             | "famedifficulty"
+            | "fameworld"
             | "storeitem"
             | "codeletter"
             | "hostfstime"
             | "hostcpus"
     ) || games_page::game_row(action)
+        || waypoint_page::waypoint_row(action)
         || GEAR_ROWS.iter().any(|(a, _)| *a == action)
         || action.strip_prefix("seat").is_some_and(|rest| {
             rest.len() > 1
@@ -377,6 +394,8 @@ struct Pressed {
 enum Pane {
     List,
     Rows,
+    /// The event tabs (scrolls sideways: its coordinate is x).
+    Tabs,
 }
 
 /// The course loader's state.
@@ -406,6 +425,8 @@ pub struct Frontend {
     pub list: Scroller,
     /// The rows column's scroll, where a page's rows outgrow it.
     pub rows: Scroller,
+    /// The event tabs' sideways scroll, where the strip outgrows its column.
+    pub tab_strip: Scroller,
     /// Bring the selected row into view after the next layout (keys/pad).
     reveal_row: bool,
     /// The page just opened: its list shows the current card without a glide.
@@ -496,11 +517,15 @@ pub struct Frontend {
     pub store: StoreView,
     /// The Pass Key sync as the host last reported it.
     pub cloud: CloudView,
+    /// The world boards and the daily event's clock, from the host.
+    pub world: world_page::WorldView,
     /// The status bar's open popover and its chip's centre x.
     status_open: Option<super::status_bar::Chip>,
     status_anchor: f32,
     /// The Pass Key pages' working state.
     pub passkey: passkey_page::PassKeyUi,
+    /// The Waypoint Editor pages' working state.
+    pub waypoint: waypoint_page::WaypointUi,
     /// Multiplayer → Split Screen: the next Freestyle or Race rides
     /// `split_players` local players (research/SPLIT_SCREEN.md).
     pub split: bool,
@@ -608,6 +633,7 @@ impl Frontend {
             rider_id,
             list: Scroller::default(),
             rows: Scroller::default(),
+            tab_strip: Scroller::default(),
             reveal_row: false,
             fresh: false,
             hovered: None,
@@ -652,9 +678,11 @@ impl Frontend {
             shift: false,
             store: StoreView::default(),
             cloud: CloudView::default(),
+            world: Default::default(),
             status_open: None,
             status_anchor: 0.,
             passkey: Default::default(),
+            waypoint: Default::default(),
             split: false,
             split_vertical: matches!(
                 settings.get(SPLIT_LAYOUT_KEY).as_deref(),
@@ -742,6 +770,11 @@ impl Frontend {
         }
         if self.page == "games" {
             self.choices = self.game_choices();
+            self.selection = self.selection.min(self.choices.len().saturating_sub(1));
+            return;
+        }
+        if waypoint_page::PAGES.contains(&self.page.as_str()) {
+            self.choices = self.waypoint_choices();
             self.selection = self.selection.min(self.choices.len().saturating_sub(1));
             return;
         }
@@ -888,11 +921,19 @@ impl Frontend {
         // Championships.
         if page == "single" {
             let mut rows = Vec::new();
+            if self.daily_offered() {
+                rows.push((world_page::DAILY_PAGE, "Daily Event"));
+            }
             if !self.objective_courses.is_empty() {
                 rows.push(("objective-courses", "Freestyle Objectives"));
             }
             if !self.race_courses.is_empty() {
                 rows.push(("championship", "Championships"));
+            }
+            // PAGE02's fourth row: the Waypoint Editor (on venues that ship
+            // a long Enduro).
+            if self.race_courses.iter().any(|c| c.ends_with("endl")) {
+                rows.push(("waypoint", "Waypoint Editor"));
             }
             if self.store.courses.iter().any(|l| l.kind == 12) {
                 rows.push(("games", "Games"));
@@ -1209,6 +1250,7 @@ impl Frontend {
                 | "fameevent"
                 | "famecourse"
                 | "famedifficulty"
+                | "fameworld"
         ) {
             // Arrows step; a tap or Enter on the letter row adds its letter
             // (`run`).
@@ -1217,6 +1259,9 @@ impl Frontend {
         }
         match action {
             "codeletter" => return self.step_passkey(direction, view),
+            _ if waypoint_page::waypoint_row(action) => {
+                self.step_waypoint(action, direction, settings)
+            }
             _ if games_page::game_row(action) => self.step_game(action, direction),
             "hostfstime" => {
                 self.host_freestyle_minutes =
@@ -1425,6 +1470,7 @@ impl Frontend {
             },
             "championship" => self.series_line(),
             "games" => self.games_line(),
+            "waypoint" | "waypoint-course" => self.waypoint_line(),
             "objectives" => self.objectives_line(),
             "objective-courses" if self.split => Some(
                 "Ride an objective together: shared targets and clock; only Hall of Fame records are saved."
@@ -1798,6 +1844,12 @@ impl Frontend {
                 value: self.passkey.entry.clone(),
                 max_length: 40,
             }],
+            "waypoint-course" => vec![Field {
+                action: "wpname",
+                label: "Course name:",
+                value: self.waypoint.name.clone(),
+                max_length: atv_core::user_course::MAX_NAME,
+            }],
             "store-cheats" => vec![Field {
                 action: "cheat",
                 label: "Enter Cheat:",
@@ -1835,6 +1887,7 @@ impl Frontend {
                 self.set_passkey_entry(text);
                 return;
             }
+            "wpname" => self.set_waypoint_name(text),
             "create-code" => self.create_code = code(text),
             "room-code" => self.room_code = code(text),
             "cheat" => self.store.cheat = code(text),
@@ -2171,6 +2224,9 @@ impl Frontend {
             return None;
         }
         if let Some(event) = self.passkey_action(action, view, settings) {
+            return event;
+        }
+        if let Some(event) = self.waypoint_action(action, view, settings) {
             return event;
         }
         if let Some(event) = self.profile_action(action, view, settings) {
@@ -2702,7 +2758,7 @@ impl Frontend {
 
     fn hit(hits: &[(Rect, u32)], x: f32, y: f32) -> Option<u32> {
         let pane = |pane: u32| hits.iter().find(|(_, id)| *id == pane).map(|(r, _)| *r);
-        let (list, rows) = (pane(LIST), pane(ROWS));
+        let (list, rows, tabs) = (pane(LIST), pane(ROWS), pane(super::TABS));
         hits.iter()
             .rev()
             // Items scrolled outside their pane are clipped.
@@ -2710,9 +2766,15 @@ impl Frontend {
                 r.contains(x, y)
                     && !(Self::listed(*id) && list.is_some_and(|l| !l.contains(x, y)))
                     && !(Self::in_rows(*id) && rows.is_some_and(|l| !l.contains(x, y)))
+                    && !((TAB..TAB + 100).contains(id) && tabs.is_some_and(|l| !l.contains(x, y)))
             })
             .map(|(_, id)| *id)
-            .find(|id| !matches!(*id, LIST | ROWS | super::STAGE | super::DETAILS))
+            .find(|id| {
+                !matches!(
+                    *id,
+                    LIST | ROWS | super::TABS | super::STAGE | super::DETAILS
+                )
+            })
     }
 
     /// Mouse movement: hover, and a row under a moving mouse takes the
@@ -2742,6 +2804,8 @@ impl Frontend {
             .any(|p| p.pointer != pointer && p.scroll.is_some() && (p.moved || p.caught));
         let scroll = if self.status_open() || other {
             None
+        } else if inside(super::TABS) && self.tab_strip.max() > 0. {
+            Some(Pane::Tabs)
         } else if inside(LIST) {
             Some(Pane::List)
         } else if inside(ROWS) && self.rows.max() > 0. {
@@ -2751,6 +2815,7 @@ impl Frontend {
         };
         let now = crate::scroll::now();
         let caught = match scroll {
+            Some(Pane::Tabs) => self.tab_strip.press(x, now),
             Some(pane) => self.pane(pane).press(y, now),
             None => false,
         };
@@ -2815,6 +2880,7 @@ impl Frontend {
         match pane {
             Pane::List => &mut self.list,
             Pane::Rows => &mut self.rows,
+            Pane::Tabs => &mut self.tab_strip,
         }
     }
 
@@ -2828,8 +2894,9 @@ impl Frontend {
         if (x - p.x).hypot(y - p.y) > 8. {
             p.moved = true;
         }
+        let along = if scroll == Some(Pane::Tabs) { x } else { y };
         if let Some(pane) = scroll
-            && self.pane(pane).drag(y, crate::scroll::now())
+            && self.pane(pane).drag(along, crate::scroll::now())
             && let Some(p) = self.pressed.iter_mut().find(|p| p.pointer == pointer)
         {
             // The content follows the finger: this press is a scroll.
@@ -2840,12 +2907,13 @@ impl Frontend {
     /// Advances list and rows momentum; true while either moves.
     pub fn tick_scroll(&mut self, now: f64) -> bool {
         let list = self.list.tick(now);
-        self.rows.tick(now) || list
+        let tabs = self.tab_strip.tick(now);
+        self.rows.tick(now) || list || tabs
     }
 
     /// Scrolling content is moving (frames must keep coming).
     pub fn scrolling(&self) -> bool {
-        self.list.active() || self.rows.active()
+        self.list.active() || self.rows.active() || self.tab_strip.active()
     }
 
     pub fn cancel_pointer(&mut self) {
@@ -2854,6 +2922,7 @@ impl Frontend {
         self.hovered = None;
         self.list.cancel();
         self.rows.cancel();
+        self.tab_strip.cancel();
     }
 
     /// A menu over the page takes the pad: a button still held when it
@@ -2915,6 +2984,10 @@ impl Frontend {
             .rev()
             .find(|(r, i)| *i == id && r.contains(x, y))
             .map(|(r, _)| *r);
+        if id == super::status_bar::OPTIONS {
+            self.close_status();
+            return Some(Event::Settings);
+        }
         if self.status_click(id, rect, view) {
             return None;
         }
@@ -3086,6 +3159,44 @@ impl Frontend {
         } else {
             self.rows.set_bounds(0., 1.);
         }
+        // The event tabs' strip: its sideways range, and the selected tab
+        // brought into view when the filter changed (or the page opened).
+        if let Some(strip) = rect(super::TABS) {
+            let before = self.tab_strip.offset();
+            let tabs: Vec<Rect> = hits
+                .iter()
+                .filter(|(_, id)| (TAB..TAB + 100).contains(id))
+                .map(|(r, _)| *r)
+                .collect();
+            let right = tabs.iter().map(|r| r.right()).fold(strip.x, f32::max) + before;
+            self.tab_strip
+                .set_bounds((right - strip.right()).max(0.), strip.w);
+            let selected = if self.page == "race" {
+                self.race_tabs()
+                    .iter()
+                    .position(|t| t.0 == self.race_filter)
+            } else {
+                self.tabs().iter().position(|t| t.0 == self.filter)
+            };
+            let animate_tabs = animate && !self.fresh;
+            if self.reveal
+                && let Some(tab) = selected.and_then(|i| tabs.get(i))
+            {
+                let target = self.tab_strip.target();
+                let (left, right) = (tab.x + before, tab.right() + before);
+                let margin = 24.;
+                if left - margin < target + strip.x {
+                    self.tab_strip
+                        .glide_to(left - margin - strip.x, animate_tabs);
+                } else if right + margin > target + strip.right() {
+                    self.tab_strip
+                        .glide_to(right + margin - strip.right(), animate_tabs);
+                }
+            }
+            moved |= self.tab_strip.offset() != before;
+        } else {
+            self.tab_strip.set_bounds(0., 1.);
+        }
         let Some(list) = rect(LIST) else {
             self.list.set_bounds(0., 1.);
             return moved;
@@ -3231,6 +3342,7 @@ impl Frontend {
                 String::new()
             },
             list_scroll: self.list.offset(),
+            tabs_scroll: self.tab_strip.offset(),
             rows_scroll: self.rows.offset(),
             vehicle_label: self.quad_label(self.stage_quad()),
             rider: self.rider_id,

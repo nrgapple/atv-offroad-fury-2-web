@@ -1,5 +1,5 @@
 //! Original terrain: base layers per 64-cell tile, detail blend and GS fog.
-use crate::{DEPTH_FORMAT, FrameStats, Gpu};
+use crate::{DEPTH_FORMAT, FrameStats, Gpu, world::ShadowMaps};
 use atv_game::{
     terrain_mesh,
     venue::{Image, Venue},
@@ -24,6 +24,10 @@ struct Globals {
     sun: [f32; 4],
     sun_color: [f32; 4],
     ambient: [f32; 4],
+    /// Remastered world shadows: world to shadow texture, then receive (1),
+    /// the texel in texture space and in feet.
+    far_matrix: [f32; 16],
+    far: [f32; 4],
 }
 
 /// One tile's range of the shared index buffer.
@@ -65,14 +69,15 @@ pub struct TerrainPass {
 }
 
 /// The terrain bind group: textures, samplers at `anisotropy` (the browser's
-/// anisotropic() on the atlas and detail map) and the vehicle shadow map.
+/// anisotropic() on the atlas and detail map) and the shadow maps
+/// ([`World::shadow_maps`]).
 fn bind(
     gpu: &Gpu,
     layout: &wgpu::BindGroupLayout,
     uniforms: &wgpu::Buffer,
     views: &Views,
     anisotropy: u16,
-    shadow: (&wgpu::TextureView, &wgpu::Sampler),
+    shadow: ShadowMaps<'_>,
 ) -> wgpu::BindGroup {
     let device = &gpu.device;
     let clamp = device.create_sampler(&wgpu::SamplerDescriptor {
@@ -130,6 +135,10 @@ fn bind(
                 binding: 7,
                 resource: wgpu::BindingResource::Sampler(shadow.1),
             },
+            wgpu::BindGroupEntry {
+                binding: 8,
+                resource: wgpu::BindingResource::TextureView(shadow.2),
+            },
         ],
     })
 }
@@ -141,7 +150,7 @@ impl TerrainPass {
         venue: &Venue,
         fine_center: Option<[f32; 2]>,
         samples: u32,
-        shadow: (&wgpu::TextureView, &wgpu::Sampler),
+        shadow: ShadowMaps<'_>,
         anisotropy: u16,
     ) -> Self {
         let device = &gpu.device;
@@ -192,6 +201,8 @@ impl TerrainPass {
             sun: [0.; 4],
             sun_color: [0.; 4],
             ambient: [0.; 4],
+            far_matrix: [0.; 16],
+            far: [0.; 4],
         };
         let uniforms = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("terrain globals"),
@@ -259,6 +270,13 @@ impl TerrainPass {
                 entry(
                     7,
                     wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Comparison),
+                ),
+                entry(
+                    8,
+                    texture(
+                        wgpu::TextureSampleType::Depth,
+                        wgpu::TextureViewDimension::D2,
+                    ),
                 ),
             ],
         });
@@ -335,12 +353,7 @@ impl TerrainPass {
     }
 
     /// applyAnisotropy, or a resized shadow map: the bind group again.
-    pub fn rebind(
-        &mut self,
-        gpu: &Gpu,
-        anisotropy: u16,
-        shadow: (&wgpu::TextureView, &wgpu::Sampler),
-    ) {
+    pub fn rebind(&mut self, gpu: &Gpu, anisotropy: u16, shadow: ShadowMaps<'_>) {
         self.bind_group = bind(
             gpu,
             &self.layout,
@@ -387,6 +400,43 @@ impl TerrainPass {
             }
             None => self.globals.sun = [0.; 4],
         }
+    }
+
+    /// The Remastered world shadow map this frame, or none.
+    pub fn set_far(&mut self, matrix: Option<&[f32; 16]>, texels: [f32; 2]) {
+        match matrix {
+            Some(matrix) => {
+                self.globals.far_matrix = *matrix;
+                self.globals.far = [1., texels[0], texels[1], 0.];
+            }
+            None => self.globals.far = [0.; 4],
+        }
+    }
+
+    /// Depth-only draws of every tile within `reach` of `center` on the
+    /// ground plane, for the world shadow map (its pipeline and light are
+    /// already set). Returns the draws.
+    pub(crate) fn draw_casters(
+        &self,
+        pass: &mut wgpu::RenderPass<'_>,
+        center: [f32; 3],
+        reach: f32,
+    ) -> u32 {
+        pass.set_vertex_buffer(0, self.mesh.vertices.slice(..));
+        pass.set_index_buffer(self.mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
+        let mut draws = 0;
+        for chunk in &self.mesh.chunks {
+            if chunk.min[0] > center[0] + reach
+                || chunk.max[0] < center[0] - reach
+                || chunk.min[2] > center[2] + reach
+                || chunk.max[2] < center[2] - reach
+            {
+                continue;
+            }
+            pass.draw_indexed(chunk.first..chunk.first + chunk.count, 0, 0..1);
+            draws += 1;
+        }
+        draws
     }
 
     /// The High vehicle shadow map this frame (shadowReceive), or none.

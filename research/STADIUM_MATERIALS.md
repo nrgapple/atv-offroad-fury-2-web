@@ -79,3 +79,30 @@ These checks establish component behavior and source-derived visual corrections,
 not complete GS/VU pixel equivalence, crowd animation recovery, live cameras on
 stadium screens, or a completed port. Host evidence is distinct from a public
 release; the responsible release agent verifies the merged deployment.
+
+## Reverse-looping crowd ATMs — 2026-11-11
+
+Exact-build evidence (private exports `001bd8e0`, `001bdb60`):
+
+- `001bd8e0` reads `animatedMapReverseLoopOnEnd` (default 0) into flag bit 0
+  and `animatedMapLooping` (default 1) into bit 1 of the clock's flag byte.
+  Bit 2 is "playing backward" and bit 3 "stopped"; both start clear.
+- `001bdb60` subtracts elapsed × FPS from the phase while bit 2 is set and
+  adds it otherwise. At or past the frame count it takes
+  r = fmodf(phase, frames). With bit 0 set the phase becomes
+  max(0, frames − 1 − r) and bit 2 is set; the loop-to-frame rule applies
+  only without bit 0. Below zero with bit 0 set the phase becomes
+  |fmodf(phase, frames)| and bit 2 clears. Reaching the end without looping
+  sets bit 3, after which the phase is pinned to 0 (backward) or frames − 1.
+- Every reverse declaration in the shipped archives is a stadium crowd:
+  `stpeople`/`stpeopleslow` (the Freestyle stadium archives), `stpeopled`
+  (SX01), `stpeoplec` (SX04–SX08, SX12), `stpeopler` (SX09–SX10),
+  `stpeoplee` (SX11) and `stpeoplerbk` (GAME01). The normal sheets play at
+  15 FPS and the `slow` ones at 12 FPS, all looping; their
+  `animatedMapLoopOnEndToFrame=02` is ignored because reverse is set.
+
+Port: `scenery_material::TextureClock` follows these rules, so the crowds now
+ping-pong through their ATM frames on the shared scenery clock in every
+graphics preset (this is original behaviour). Not verified: the original
+per-frame scheduling of the clock, and a non-looping reverse sheet (none
+ships), whose sticky stop alternates between the two end frames.

@@ -50,6 +50,9 @@ pub const DETAILS: u32 = 2415;
 /// Single Race: the photo, the course name and its "All courses" button
 /// open the course picker.
 pub const COURSES: u32 = 2416;
+/// The event tabs' strip: one row that scrolls sideways where it is wider
+/// than its column (phones).
+pub const TABS: u32 = 2417;
 /// Value rows' Previous/Next arrows, by choice index.
 pub const STEP_PREV: u32 = 2430;
 pub const STEP_NEXT: u32 = 2440;
@@ -185,6 +188,8 @@ pub struct Screen {
     /// Single Race: `.ms-track-mode` ("National race").
     pub hero_mode: String,
     pub list_scroll: f32,
+    /// The event tabs' sideways scroll.
+    pub tabs_scroll: f32,
     /// The rows column's scroll (pages whose rows can outgrow it).
     pub rows_scroll: f32,
     /// Garage.
@@ -283,6 +288,8 @@ pub fn stage_page(page: &str) -> bool {
             | "objectives"
             | "objective-courses"
             | "games"
+            | "waypoint"
+            | "waypoint-course"
             | "create-lobby"
             | "join-lobby"
             | "profile"
@@ -607,7 +614,7 @@ fn page_element(m: &Metrics, s: &Screen) -> El {
         let stage = match page {
             // Seven main rows and the six Profile Editor rows with its
             // status line need more of the height than the others.
-            "main" => stage_share(m, s, if h <= 640. { 0.26 } else { 0.36 }),
+            "main" => portrait_stage_share(m, s),
             "profile" | "profile-view" => {
                 if h <= 640. {
                     0.2
@@ -615,19 +622,7 @@ fn page_element(m: &Metrics, s: &Screen) -> El {
                     0.36
                 }
             }
-            // Phones give the rows the room (Safari's toolbars take ~150px
-            // more): Single Player's six modes stay on screen.
-            page if stage_page(page) => stage_share(
-                m,
-                s,
-                if h <= 640. {
-                    0.28
-                } else if h <= 820. {
-                    0.36
-                } else {
-                    0.5
-                },
-            ),
+            page if stage_page(page) => portrait_stage_share(m, s),
             // The vehicle and rider rows need little room; the picker, when
             // open, takes the rest under a smaller stage.
             "garage" if s.vehicle_sheet => 0.28,
@@ -769,6 +764,22 @@ fn page_element(m: &Metrics, s: &Screen) -> El {
 /// (down to a fifth of the page) rather than scroll while the stage has
 /// room to give: a folding phone, closed or open, falls between the phone
 /// and tablet sizes those shares were chosen on.
+/// A portrait stage page's share of the height. Seven main rows need more
+/// of it than the others; phones give the rows the room (Safari's toolbars
+/// take ~150px more): Single Player's six modes stay on screen.
+fn portrait_stage_share(m: &Metrics, s: &Screen) -> f32 {
+    let most = if s.page == "main" {
+        if m.h <= 640. { 0.26 } else { 0.36 }
+    } else if m.h <= 640. {
+        0.28
+    } else if m.h <= 820. {
+        0.36
+    } else {
+        0.5
+    };
+    stage_share(m, s, most)
+}
+
 fn stage_share(m: &Metrics, s: &Screen, most: f32) -> f32 {
     let rows = s.choices.iter().filter(|(a, _)| a != "back").count().max(1) as f32;
     let heading = clamp(24., m.w * 0.07, 32.) * 1.2 + 14.;
@@ -863,6 +874,8 @@ fn page_title(page: &str) -> &'static str {
         "objectives" => "Select Objective",
         "objective-courses" => "Freestyle Objectives",
         "games" => "Games",
+        "waypoint" => "Waypoint Editor",
+        "waypoint-course" => "User Created Enduro",
         "store" => "Unlock Items",
         "store-atv" => "ATVs",
         "store-gear" => "Rider Equipment",
@@ -871,6 +884,7 @@ fn page_title(page: &str) -> &'static str {
         "store-cheats" => "Enter Cheats",
         "profile" => "Profile Editor",
         "hall-of-fame" => "Hall of Fame",
+        "daily" => "Daily Event",
         "profile-name" => "Profile Name Entry",
         "profile-view" => "View Profile",
         "profile-overview" => "Profile Overview",
@@ -1226,6 +1240,13 @@ fn details(m: &Metrics, s: &Screen) -> El {
 
 fn panel_logo(m: &Metrics, s: &Screen) -> Option<El> {
     let logo = s.logo?;
+    // A short portrait stage would squeeze the wordmark to a speck under
+    // the status bar: the model (72px at least), the vehicle name and the
+    // panel's padding take about 137px, so it shows only when about 44px
+    // are left for it.
+    if m.portrait && stage_page(&s.page) && portrait_stage_share(m, s) * m.h < 181. {
+        return None;
+    }
     // width: min(100%, 460px) (portrait: max-width min(78%, 340px), max-height 24%).
     let (width, height) = if m.portrait {
         let width = (m.w - 2. * m.gutter) * 0.78;
@@ -1695,6 +1716,8 @@ fn left(m: &Metrics, s: &Screen) -> El {
                 | "objectives"
                 | "objective-courses"
                 | "games"
+                | "waypoint"
+                | "waypoint-course"
                 | "profile"
                 | "profile-name"
                 | "profile-slots"
@@ -1705,10 +1728,14 @@ fn left(m: &Metrics, s: &Screen) -> El {
                 | "profile-trophies"
                 | "profile-records"
                 | "hall-of-fame"
+                | "daily"
         ) || controller::store_page(page)
             || controller::passkey_page::PAGES.contains(&page) =>
         {
-            if matches!(page, "profile-name" | "store-cheats" | "passkey-entry") {
+            if matches!(
+                page,
+                "profile-name" | "store-cheats" | "passkey-entry" | "waypoint-course"
+            ) {
                 left = left.child(form(m, s));
             }
             let mut rows = El::new(column(2.));
@@ -2109,18 +2136,24 @@ fn form(m: &Metrics, s: &Screen) -> El {
 }
 
 fn tabs(m: &Metrics, s: &Screen) -> El {
-    let mut style = row(6.);
-    // Wrap everywhere: a portrait row ran its last tabs (Supercross, Arena)
-    // off the screen with no way to scroll to them.
-    style.flex_wrap = FlexWrap::Wrap;
-    style.gap.height = px(6.);
-    style.flex_shrink = 0.;
-    style.padding = if m.portrait {
+    // One row: where it is wider than its column (phones) the strip scrolls
+    // sideways under the finger instead of wrapping onto more lines, which
+    // took the course list's room (#456).
+    let mut strip = column(0.);
+    strip.flex_shrink = 0.;
+    strip.overflow = taffy::Point {
+        x: taffy::Overflow::Hidden,
+        y: taffy::Overflow::Visible,
+    };
+    strip.padding = if m.portrait {
         sides(0., 0., 2., 0.)
     } else {
         sides(0., 12., 0., 0.)
     };
-    let mut el = El::new(style);
+    let mut style = row(6.);
+    style.flex_shrink = 0.;
+    style.align_self = Some(AlignSelf::FLEX_START);
+    let mut el = El::new(style).translate(-s.tabs_scroll, 0.);
     for (index, (key, label, count)) in s.tabs.iter().enumerate() {
         let selected = *key == s.filter;
         let hovered = s.hovered == Some(TAB + index as u32) && !selected;
@@ -2163,7 +2196,8 @@ fn tabs(m: &Metrics, s: &Screen) -> El {
             .child(text(count.to_string(), count_style, 15.)),
         );
     }
-    el
+    // `scroll(0.)` clips the row to the strip; the row itself is moved.
+    El::new(strip).id(TABS).scroll(0.).child(el)
 }
 
 fn course_list(m: &Metrics, s: &Screen) -> El {
@@ -2546,10 +2580,14 @@ fn garage_left(m: &Metrics, s: &Screen, mut left: El) -> El {
         s.hovered == Some(DONE),
         selected_action == Some("back"),
     );
-    done.style.min_size.width = length(180.);
     if m.portrait {
         done.style.flex_grow = 1.;
         done.style.flex_basis = length(0.);
+    } else {
+        // 180px where the column has room; a short landscape phone's column
+        // narrows it beside Rider gear instead of running it into the stage.
+        done.style.flex_basis = length(180.);
+        done.style.flex_shrink = 1.;
     }
     let mut actions = El::new(actions);
     // `.ms-pill-secondary.ms-gear-link`: Rider gear opens its own page.
@@ -3569,7 +3607,7 @@ mod tests {
 
     #[test]
     fn the_status_bar_sits_above_every_page_target() {
-        use status_bar::{COINS, PROFILE, SAVE, StatusBar, TROPHIES};
+        use status_bar::{COINS, OPTIONS, PROFILE, SAVE, StatusBar, TROPHIES};
         let mut fonts = Fonts::new();
         for (w, h, safe) in [
             (390., 844., [47., 0., 34., 0.]),
@@ -3595,13 +3633,13 @@ mod tests {
                 layout::render(&element(&view, &s), &mut fonts, w, h, &mut list, &mut hits);
                 let chips: Vec<_> = hits
                     .iter()
-                    .filter(|(_, id)| [PROFILE, COINS, TROPHIES, SAVE].contains(id))
+                    .filter(|(_, id)| [PROFILE, COINS, TROPHIES, SAVE, OPTIONS].contains(id))
                     .collect();
-                assert_eq!(chips.len(), 4, "{page} {w}");
+                assert_eq!(chips.len(), 5, "{page} {w}");
                 for (c, _) in &chips {
                     assert!(c.y >= safe[0] - 0.5 && c.w >= 44., "{page} {w}: {c:?}");
                     assert!(c.x >= 0. && c.right() <= w + 0.5, "{page} {w}: {c:?}");
-                    for (r, id) in hits.iter().filter(|(_, id)| !(2460..=2466).contains(id)) {
+                    for (r, id) in hits.iter().filter(|(_, id)| !(2460..=2467).contains(id)) {
                         let apart = c.right() <= r.x
                             || r.right() <= c.x
                             || c.bottom() <= r.y
@@ -3703,6 +3741,162 @@ mod tests {
                 let stage = hits.iter().find(|(_, id)| *id == STAGE).expect("stage").0;
                 assert!(stage.h >= 0.19 * (h - 110.), "{page} {w}x{h}: {stage:?}");
             }
+        }
+    }
+
+    #[test]
+    fn event_tabs_keep_one_row_and_the_picker_shows_three_cards() {
+        let mut fonts = Fonts::new();
+        for (w, h, safe) in [
+            (1000., 704., [0., 88., 0., 0.]),
+            (704., 1000., [47., 0., 34., 0.]),
+            (780., 360., [0., 47., 21., 47.]),
+            (360., 780., [47., 0., 34., 0.]),
+            (844., 390., [0., 47., 21., 47.]),
+            (390., 844., [47., 0., 34., 0.]),
+            (1280., 720., [0.; 4]),
+        ] {
+            let view = Viewport {
+                width: w,
+                height: h,
+                scale: 2.,
+                safe,
+                ..Default::default()
+            };
+            for page in ["tracks", "race"] {
+                let mut s = screen(page);
+                s.course_sheet = page == "race";
+                s.tabs = [
+                    ("all", 40),
+                    ("env", 8),
+                    ("free", 6),
+                    ("nat", 8),
+                    ("sx", 16),
+                    ("extra", 2),
+                ]
+                .iter()
+                .map(|(key, count)| {
+                    let label = GROUPS.iter().find(|g| g.0 == *key).unwrap().1;
+                    (key.to_string(), label.to_string(), *count)
+                })
+                .collect();
+                s.filter = "all".into();
+                s.courses = (0..10)
+                    .map(|i| (format!("env0{i}"), format!("Course {i}"), None))
+                    .collect();
+                s.current = Some("env00".into());
+                let (mut list, mut hits) = (DisplayList::default(), Vec::new());
+                layout::render(&element(&view, &s), &mut fonts, w, h, &mut list, &mut hits);
+                let find = |id: u32| hits.iter().find(|(_, i)| *i == id).map(|(r, _)| *r);
+                let strip = find(TABS).expect("tab strip");
+                assert!(
+                    strip.x >= safe[3] - 0.5 && strip.right() <= w - safe[1] + 0.5,
+                    "{page} {w}x{h}: strip {strip:?}"
+                );
+                let tabs: Vec<_> = (0..6).map(|i| find(TAB + i).expect("tab")).collect();
+                assert!(
+                    tabs.iter().all(|t| (t.y - tabs[0].y).abs() < 0.5),
+                    "{page} {w}x{h}: tabs on more than one row {tabs:?}"
+                );
+                // The strip is one tab high, and the list under it shows at
+                // least three whole cards.
+                assert!(strip.h < 60., "{page} {w}x{h}: strip {strip:?}");
+                let pane = find(LIST).expect("list");
+                let whole = (0..10)
+                    .filter_map(|i| find(COURSE + i))
+                    .filter(|r| r.y >= pane.y - 0.5 && r.bottom() <= pane.bottom() + 0.5)
+                    .count();
+                assert!(
+                    whole >= 3,
+                    "{page} {w}x{h}: {whole} whole cards in {pane:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn main_menu_wordmark_is_full_size_or_hidden() {
+        let mut fonts = Fonts::new();
+        let wordmark = Img {
+            id: crate::paint::ImageId(77),
+            width: 1500.,
+            height: 500.,
+        };
+        for (w, h, safe) in [
+            (360., 780., [47., 0., 34., 0.]),
+            (390., 844., [47., 0., 34., 0.]),
+            (375., 667., [20., 0., 0., 0.]),
+            (360., 640., [24., 0., 0., 0.]),
+            (704., 1000., [47., 0., 34., 0.]),
+            (430., 932., [59., 0., 34., 0.]),
+        ] {
+            let view = Viewport {
+                width: w,
+                height: h,
+                scale: 2.,
+                safe,
+                ..Default::default()
+            };
+            for page in ["main", "single"] {
+                let mut s = screen(page);
+                s.choices = (0..if page == "main" { 7 } else { 6 })
+                    .map(|i| (format!("row{i}"), format!("Row {i}")))
+                    .chain([("back".into(), "Back".into())])
+                    .collect();
+                s.logo = Some(wordmark);
+                s.status = Some(status_bar::StatusBar::default());
+                let (mut list, mut hits) = (DisplayList::default(), Vec::new());
+                layout::render(&element(&view, &s), &mut fonts, w, h, &mut list, &mut hits);
+                let drawn = list.items.iter().find_map(|item| match item {
+                    crate::paint::Item::Image { image, dst, .. } if *image == wordmark.id => {
+                        Some(*dst)
+                    }
+                    _ => None,
+                });
+                assert!(
+                    drawn.is_none_or(|r| r.h >= 40.),
+                    "{page} {w}x{h}: a squeezed wordmark {drawn:?}"
+                );
+                if h >= 844. {
+                    assert!(drawn.is_some(), "{page} {w}x{h}: no wordmark");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn garage_done_stays_in_its_column() {
+        let mut fonts = Fonts::new();
+        for (w, h, safe) in [
+            (780., 360., [0., 47., 21., 47.]),
+            (844., 390., [0., 47., 21., 47.]),
+            (1000., 704., [0., 88., 0., 0.]),
+            (1280., 720., [0.; 4]),
+        ] {
+            let view = Viewport {
+                width: w,
+                height: h,
+                scale: 2.,
+                safe,
+                ..Default::default()
+            };
+            let mut s = screen("garage");
+            s.choices = vec![
+                ("quadprev".into(), "ATV: Ravage Talon Black".into()),
+                ("rider".into(), "Rider: Male".into()),
+                ("gear".into(), "Rider gear".into()),
+                ("back".into(), "Done".into()),
+            ];
+            let (mut list, mut hits) = (DisplayList::default(), Vec::new());
+            layout::render(&element(&view, &s), &mut fonts, w, h, &mut list, &mut hits);
+            let find = |id: u32| hits.iter().find(|(_, i)| *i == id).map(|(r, _)| *r);
+            let done = find(DONE).expect("Done");
+            let stage = find(STAGE).expect("stage");
+            assert!(
+                done.right() <= stage.x + 0.5,
+                "{w}x{h}: Done {done:?} under the stage {stage:?}"
+            );
+            assert!(done.w >= 100., "{w}x{h}: Done {done:?}");
         }
     }
 

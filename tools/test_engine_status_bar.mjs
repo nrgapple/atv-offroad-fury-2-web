@@ -10,7 +10,7 @@ import assert from 'node:assert/strict';
 import { mkdir } from 'node:fs/promises';
 import { assertNoErrors, launch, newPage, nextFrames, unlockStore, url } from './browser/harness.mjs';
 
-const CHIPS = { profile: 2460, coins: 2461, trophies: 2462, save: 2463 };
+const CHIPS = { profile: 2460, coins: 2461, trophies: 2462, save: 2463, options: 2467 };
 const LINK = 2464;
 const shots = process.env.ATV_STATUS_SHOTS || '';
 const front = page =>
@@ -37,12 +37,12 @@ async function tap(page, h) {
 function assertBar(f, label, { width, height }) {
   assert.ok(f.status, `${label}: status bar`);
   const chips = Object.values(CHIPS).map(id => hit(f, id));
-  assert.ok(chips.every(Boolean), `${label}: four chips ${JSON.stringify(f.hits.filter(h => h.id >= 2460))}`);
+  assert.ok(chips.every(Boolean), `${label}: five chips ${JSON.stringify(f.hits.filter(h => h.id >= 2460))}`);
   for (const c of chips) {
     assert.ok(c.width >= 44 && c.height >= 40, `${label}: chip target ${JSON.stringify(c)}`);
     assert.ok(c.x >= 0 && c.x + c.width <= width + 0.5 && c.y >= 0 && c.y + c.height <= height, `${label}: on screen`);
   }
-  const page = f.hits.filter(h => h.id < 2460 || h.id > 2466);
+  const page = f.hits.filter(h => h.id < 2460 || h.id > 2467);
   for (const c of chips)
     for (const h of page)
       assert.ok(!overlaps(c, h), `${label}: chip ${c.id} overlaps ${h.id} ${JSON.stringify([c, h])}`);

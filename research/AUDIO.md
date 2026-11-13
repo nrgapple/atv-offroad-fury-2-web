@@ -410,9 +410,47 @@ snapshot's existing throttle field; no wire format change) becomes a CPU
 rider for `assign_sets` (the guest is player 1, then the room's humans,
 then the CPUs) and the range rules. Stale or not yet heard CPUs are
 silent, and retired CPUs (host handoff) stop. Assumption: an older host
-leaves that field at 0, so its CPUs play by speed with no throttle. Guests
-get no CPU vocals, body impacts, chassis, drive-on or splash sounds: the
-motion carries no audio events or terrain bytes.
+leaves that field at 0, so its CPUs play by speed with no throttle.
+
+Guests also hear the host's CPUs' vocals, body impacts, chassis sounds,
+terrain drive-on and splashes (2026-11-12, #500). Design:
+
+- **Host cues, no new messages.** What a guest cannot infer from a pose
+  travels as one 11-byte block per CPU appended to the existing 10 Hz CPU
+  motion (`atv_net::CpuSoundCues`): the interval's events (hard landing,
+  wreck entry with its fall flag and impact, chassis contact), its
+  strongest quad-to-quad contact, sampled quad impact and detached rider
+  contact magnitude (ft/s in sixteenths), and three levels as of the
+  interval's last step: airborne (more than 2 ft above the ground), the
+  rider body touching water, and the two side emitters' terrain bytes.
+  The host merges every fixed step's emitter inputs into the block
+  (`ride::cpu::merge_cue`) and starts the events over after each send.
+  Message count is unchanged (#517); about 33 bytes more per message with
+  three CPUs.
+- **Guest derivation.** Position, velocity, speed (drive-on mph), the wreck
+  state, the crash serial (emitter reset) and the side emitters' wheel
+  positions come from the presented pose and the puppet's own quad
+  linkage. The quad's water entry splash (`001d7280`) is derived as the
+  host's is: the presented origin against the guest's own live water
+  surface, with the presented velocity.
+- **Timing.** The guest queues each motion's cues and plays them when its
+  presented pose (about 80 ms behind) reaches the interval they cover
+  (presented sequence + 1 ≥ the motion's), so a yell or impact lines up
+  with the drawn motion. Each presented frame is one emitter step through
+  the same `audio::cpu` path as local CPUs; events play on one step and the
+  levels hold until the next cues.
+- **Compatibility.** Builds that can decode the block say so with the
+  `CPU_SOUNDS` HELLO flag; the relay strips the block for riders without
+  it, so an older cached guest still gets plain motion. An older host
+  sends no block: its CPUs keep engine-only sound.
+
+Facts versus assumptions: the emitter rules are the local CPUs' (above).
+Assumptions: merging a 100 ms interval into one guest step loses order
+within it (two quad contacts in one interval play once; a landing and a
+lift-off in one interval keep the host's step order only through the
+airborne level), the guest's vocal retrigger sees the rider contact once
+per interval instead of every step, and the guest's own water surface
+(same live field, its own clock) stands in for the host's cached height.
 
 Authored bounds and limitations: engines keep the room riders' six
 nearest voices (`ENGINE_VOICES`; the original has 48 SPU2 voices and its
@@ -431,6 +469,11 @@ race stingers and menu music keep the music volume. The original game had
 separate Music and SFX volumes; the browser control is an adaptation.
 
 ## Content and validation
+
+Training speech (2026-11-11, research/TRAINING.md): the packed `AUDIO.RES`
+gains the 46 `DIALOGUE.AUD` lines unchanged (665 → 711 members, 19,373,248 →
+25,170,818 packed bytes; 7.3 MB of VAG). Only a Training ride reads them;
+other rides read no more of the archive than before.
 
 The R2-only compact `AUDIO.RES` gains 172 members (480 → 652, 14,564,439 →
 18,739,084 packed bytes): the 93 loose rider vocal VAGs both genders reference,

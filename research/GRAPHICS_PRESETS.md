@@ -241,6 +241,20 @@ pass is not created.
   tree pixels by one step in Original on Metal.
 - **Water sun glint** (`water.wgsl`). A tight specular lobe of the venue sun
   on the wave normals.
+- **World shadows** (`world_shadows.rs`, `world_shadow.wgsl`;
+  `Graphics::world_shadows`, 2048² in the browser and 4096² on desktop). One
+  sun shadow map covers 360 ft either side of the rider, in a light box
+  1,440 ft long so hills towards a low sun still cast. The terrain, each
+  scene model's finest solid chunks (not gates, flashes, glows or anything
+  wider than 400 ft, which keeps backdrops and stadium shells from shading
+  the whole course) and every plant mesh within 540 ft cast into it. The
+  terrain and scenery receive it: lit models and the ground lose the sun
+  term and keep the sky's light, and unlit models, whose light is painted,
+  darken by up to 40 % on their sun-facing sides only. The casters do not
+  move, so the map is cached and drawn again only when the rider is 108 ft
+  from its centre, a new fine terrain patch arrives or a model is hidden.
+  Receivers step two texels off the surface along its normal and fade the
+  map out over its last 6 %.
 - **Finish pass** (`remaster.rs`, `remaster.wgsl`). The frame renders into a
   texture after speed rush and air blur. A soft-knee threshold (0.68) keeps
   its brightest parts at half size, four levels blur down and add back up,
@@ -253,9 +267,15 @@ pass is not created.
   falling streaks, splash rings and lens beads (see
   [WEATHER.md](WEATHER.md#remastered-rain-authored--2026-11-11)).
 
-Limits: split screen skips the finish pass (the relief, wind and glint still
-apply). Nothing casts shadows yet beyond High's vehicle map; world shadows
-are the next step (#541). Tuned on host captures of ten venues at 960×540;
+Limits: split screen skips the finish pass and the world shadows (the
+relief, wind and glint still apply). The player's and CPU racers' vehicles
+and riders receive the world shadows (four taps on the sun term only, added
+2026-11-12; parity for the other presets checked on ENV01 and ENV05, and no
+capture yet shows a rider standing in shade); remote riders and ghosts do
+not. Vehicles cast only the High preset's own vehicle map, not into this
+one, and plants cast with their resting rotation and no wind. A
+redraw of the map costs one depth pass over the nearby world; its frame time
+has not been measured on a phone. Tuned on host captures of ten venues at 960×540;
 no phone or frame-time measurement yet, which is why Auto does not select it.
 
 Parity (2026-11-11, macOS Metal, native captures at 960×540): Original,

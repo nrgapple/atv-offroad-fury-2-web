@@ -22,6 +22,8 @@ pub const QUIT: u32 = 33;
 pub const SHOW: u32 = 34;
 pub const NEXT_ROUND: u32 = 35;
 pub const FAME_SELECT: u32 = 36;
+/// Replay (#542, a port addition): the race's last stretch again.
+pub const REPLAY: u32 = 37;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum Menu {
@@ -53,6 +55,8 @@ pub enum Command {
     Retry,
     /// Quit Event: back to Single Player (or the Championship page).
     Quit,
+    /// Replay: the instant replay over the results.
+    Replay,
     /// Continue Championship: the series' next round.
     NextRound,
     /// The Hall of Fame name was entered (`Results::fame`).
@@ -104,6 +108,8 @@ pub struct Results {
     pub error: Option<String>,
     /// The host can return to the menus (Quit Event shown).
     pub can_quit: bool,
+    /// The race-over menu offers Replay (solo and split screen).
+    pub replay: bool,
     /// The player's place, race stunt score and awarded Profile Points.
     pub award: Option<(usize, f32, i32)>,
     /// The profile's Profile Points after this race, once the host saved it.
@@ -130,6 +136,8 @@ pub struct Results {
     pub no_profile: bool,
     /// Hall of Fame records this race set, and their name.
     pub fame: Option<Fame>,
+    /// The world boards' answer for this race ("World #3 Fastest Lap!").
+    pub world_line: Option<String>,
 }
 
 impl Results {
@@ -173,6 +181,7 @@ impl Results {
         });
         self.profile_total = None;
         self.fame = None;
+        self.world_line = None;
         self.rows = frame
             .standings
             .iter()
@@ -223,6 +232,10 @@ impl Results {
             .championship_line
             .as_deref()
             .map_or(String::new(), |line| format!(" · {line}"));
+        let world = self
+            .world_line
+            .as_deref()
+            .map_or(String::new(), |line| format!(" · {line}"));
         championship
             + &match (self.award, self.profile_total) {
                 (Some((.., points)), Some(total)) => {
@@ -231,6 +244,7 @@ impl Results {
                 (Some((.., points)), None) => format!(" · +{points} Profile Points"),
                 _ => String::new(),
             }
+            + &world
     }
 
     /// The championship line for a recorded round.
@@ -339,6 +353,7 @@ impl Results {
         }
         match (self.menu, self.round) {
             (Menu::NameEntry, _) => vec![FAME_SELECT],
+            (Menu::Results, _) if self.replay => vec![CONTINUE, REPLAY, HIDE],
             (Menu::Results, _) => vec![CONTINUE, HIDE],
             // An advanced or finished round cannot be raced again.
             (Menu::Quit, Some(Round::Next)) if self.can_quit => vec![NEXT_ROUND, QUIT],
@@ -370,6 +385,7 @@ impl Results {
             HIDE => self.hidden = true,
             SHOW => self.hidden = false,
             RETRY => return Some(Command::Retry),
+            REPLAY if self.replay => return Some(Command::Replay),
             NEXT_ROUND => return Some(Command::NextRound),
             FAME_SELECT if self.menu == Menu::NameEntry => {
                 self.menu = self.fame.as_ref().map_or(Menu::Results, |f| f.then);
@@ -750,6 +766,7 @@ pub fn element(view: &Viewport, state: &Results, summary: &str, fonts: &mut Font
             let label = match id {
                 CONTINUE => "Continue",
                 HIDE => "Hide Menu",
+                REPLAY => "Replay",
                 RETRY if state.game.is_some() => "Restart Game",
                 RETRY if state.objective.is_some() => "Restart Objective",
                 RETRY => "Restart",
@@ -1045,6 +1062,11 @@ mod tests {
         assert_eq!(r.buttons(), vec![QUIT]);
         r.round = Some(Round::Replay);
         assert_eq!(r.buttons(), vec![RETRY, QUIT]);
+        r.menu = Menu::Results;
+        r.replay = true;
+        assert_eq!(r.buttons(), vec![CONTINUE, REPLAY, HIDE]);
+        assert_eq!(r.act(REPLAY), Some(Command::Replay));
+        r.menu = Menu::Quit;
     }
 
     #[test]

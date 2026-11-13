@@ -23,11 +23,13 @@ mod terrain;
 mod texture;
 mod tire_tracks;
 mod train;
+mod upscale;
 mod vegetation;
 mod vehicle;
 mod water;
 mod wheel_effects;
 mod world;
+mod world_shadows;
 
 use atv_game::venue::Venue;
 pub use camera::Camera;
@@ -94,6 +96,12 @@ pub struct Gpu {
     scene_targets: bool,
     depth: wgpu::TextureView,
     msaa: Option<wgpu::TextureView>,
+    /// Scene pixels per surface pixel (at most 1): below 1 the 3D scene
+    /// draws into `scene` and is stretched over the surface, so the UI keeps
+    /// the surface's full density (the ride's adaptive render ratio).
+    scene_scale: f64,
+    scene: Option<upscale::SceneColor>,
+    upscale: Option<upscale::Upscale>,
     /// Why the device was lost (driver reset, GPU removed), once it is.
     lost: std::sync::Arc<std::sync::Mutex<Option<String>>>,
     /// When the last frame was handed to the surface (Show FPS counts
@@ -169,7 +177,7 @@ impl Gpu {
         self.config.width = width.max(1);
         self.config.height = height.max(1);
         surface.configure(&self.device, &self.config);
-        (self.depth, self.msaa) = self.make_targets();
+        self.make_targets();
         self.surface = Some(surface);
         self.generation = surface_generation();
         Ok(())
@@ -357,6 +365,9 @@ impl Gpu {
             scene_targets: true,
             depth,
             msaa,
+            scene_scale: 1.,
+            scene: None,
+            upscale: None,
             lost,
             presented: std::cell::Cell::new(None),
         })
@@ -371,7 +382,7 @@ impl Gpu {
         if let Some(surface) = self.live_surface() {
             surface.configure(&self.device, &self.config);
         }
-        (self.depth, self.msaa) = self.make_targets();
+        self.make_targets();
     }
 
     /// Keeps (true) or drops (false) the scene's depth and multisample
@@ -380,20 +391,56 @@ impl Gpu {
     pub fn set_scene_targets(&mut self, on: bool) {
         if self.scene_targets != on {
             self.scene_targets = on;
-            (self.depth, self.msaa) = self.make_targets();
+            self.make_targets();
         }
     }
 
-    fn make_targets(&self) -> (wgpu::TextureView, Option<wgpu::TextureView>) {
-        if self.scene_targets {
-            targets(&self.device, &self.config, self.samples)
-        } else {
-            let tiny = wgpu::SurfaceConfiguration {
-                width: 1,
-                height: 1,
-                ..self.config.clone()
-            };
-            targets(&self.device, &tiny, self.samples)
+    /// Draws the 3D scene at `scale` scene pixels per surface pixel (at
+    /// most 1), stretched over the surface before the UI draws.
+    pub fn set_scene_scale(&mut self, scale: f64) {
+        let scale = scale.clamp(0.1, 1.);
+        if (scale - self.scene_scale).abs() > 1e-6 {
+            self.scene_scale = scale;
+            self.make_targets();
+        }
+    }
+
+    /// The size the 3D scene draws at: the surface's, or smaller (see
+    /// [`Self::set_scene_scale`]).
+    pub fn scene_size(&self) -> (u32, u32) {
+        self.scene
+            .as_ref()
+            .map_or((self.config.width, self.config.height), |s| s.size)
+    }
+
+    /// Remakes the depth, multisample and (when scaled) scene targets for
+    /// the surface size and scene scale.
+    fn make_targets(&mut self) {
+        let scaled = upscale::scene_size(self.config.width, self.config.height, self.scene_scale)
+            .filter(|_| self.scene_targets);
+        self.scene = scaled.map(|size| {
+            let upscale = self
+                .upscale
+                .get_or_insert_with(|| upscale::Upscale::new(&self.device, self.config.format));
+            upscale.scene(&self.device, self.config.format, size)
+        });
+        let (width, height) = match (self.scene_targets, scaled) {
+            (false, _) => (1, 1),
+            (true, Some(size)) => size,
+            (true, None) => (self.config.width, self.config.height),
+        };
+        let config = wgpu::SurfaceConfiguration {
+            width,
+            height,
+            ..self.config.clone()
+        };
+        (self.depth, self.msaa) = targets(&self.device, &config, self.samples);
+    }
+
+    /// Stretches the scaled scene over `target`, if the scene is scaled.
+    fn draw_upscaled(&self, encoder: &mut wgpu::CommandEncoder, target: &wgpu::TextureView) {
+        if let (Some(upscale), Some(scene)) = (&self.upscale, &self.scene) {
+            upscale.draw(encoder, scene, target);
         }
     }
 
@@ -581,6 +628,9 @@ pub struct Graphics {
     /// Remastered (authored, above High): sun relief on the terrain, wind in
     /// the vegetation, sun glint on water, and a bloom and film-grade finish.
     pub remaster: bool,
+    /// Remastered: size of the world sun shadow map the terrain, scenery and
+    /// plants cast into (0 off).
+    pub world_shadows: u16,
 }
 
 /// A multiplayer rider's look: quad, rider and appearance bytes.
@@ -714,6 +764,8 @@ pub struct SceneRenderer {
     air_blur: Option<air_blur::AirBlurPass>,
     /// Remastered finish; split screen skips it.
     remaster: Option<remaster::RemasterPass>,
+    /// Remastered world shadow map; split screen skips it.
+    world_shadows: Option<world_shadows::WorldShadows>,
     /// Seconds of world animation, for the Remastered vegetation wind.
     wind_seconds: f32,
     rush_motion: ([f32; 3], [f32; 3]),
@@ -771,12 +823,16 @@ impl SceneRenderer {
             |f| f.end,
         );
         let mut world = world::World::new(gpu, venue, u32::from(graphics.shadow_map));
+        world.set_far_size(gpu, u32::from(graphics.world_shadows));
+        let world_shadows = (graphics.world_shadows > 0).then(|| {
+            world_shadows::WorldShadows::new(gpu, &world, u32::from(graphics.world_shadows))
+        });
         let terrain = terrain::TerrainPass::new(
             gpu,
             venue,
             fine_center,
             gpu.samples,
-            (&world.shadow_view, &world.shadow_sampler),
+            world.shadow_maps(),
             graphics.anisotropy,
         );
         world.globals.sky[3] = graphics.sky_smooth as u8 as f32;
@@ -904,6 +960,7 @@ impl SceneRenderer {
             speed_rush: None,
             air_blur: None,
             remaster: graphics.remaster.then(|| remaster::RemasterPass::new(gpu)),
+            world_shadows,
             wind_seconds: 0.,
             rush_motion: ([0.; 3], [0.; 3]),
             coarse_pointer: false,
@@ -1167,12 +1224,29 @@ impl SceneRenderer {
                 _ => None,
             };
         }
-        if graphics.anisotropy != self.graphics.anisotropy || shadow_changed {
-            self.terrain.rebind(
-                gpu,
-                graphics.anisotropy,
-                (&self.world.shadow_view, &self.world.shadow_sampler),
-            );
+        let far_changed = graphics.world_shadows != self.graphics.world_shadows;
+        if far_changed {
+            let size = u32::from(graphics.world_shadows);
+            self.world.set_far_size(gpu, size);
+            self.world_shadows =
+                (size > 0).then(|| world_shadows::WorldShadows::new(gpu, &self.world, size));
+            // Every rider's pass binds the new map.
+            if let Some(shared) = &mut self.shared_vehicle {
+                shared.set_far(&self.world.far_view);
+                let riders = self
+                    .vehicle
+                    .iter_mut()
+                    .chain(self.cpus.iter_mut().map(|(p, _)| p))
+                    .chain(self.peers.values_mut().map(|(_, p, _)| p))
+                    .chain(self.ghosts.iter_mut().flatten().map(|(p, _)| p));
+                for pass in riders {
+                    pass.rebind(gpu, shared);
+                }
+            }
+        }
+        if graphics.anisotropy != self.graphics.anisotropy || shadow_changed || far_changed {
+            self.terrain
+                .rebind(gpu, graphics.anisotropy, self.world.shadow_maps());
         }
         if graphics.anisotropy != self.graphics.anisotropy {
             self.scenery
@@ -1254,6 +1328,9 @@ impl SceneRenderer {
     /// Hides or shows a scene model (a hit Freestyle target).
     pub fn hide_model(&mut self, model: usize, hidden: bool) {
         self.scenery.hide_model(model, hidden);
+        if let Some(map) = &mut self.world_shadows {
+            map.invalidate();
+        }
     }
 
     /// Poses the venue's posed model outside a race (the Hockey puck),
@@ -1396,7 +1473,13 @@ impl SceneRenderer {
         // rider joining later costs no shader compile.
         let shared = self
             .shared_vehicle
-            .get_or_insert_with(|| vehicle::VehicleShared::new(gpu, gpu.samples))
+            .get_or_insert_with(|| {
+                vehicle::VehicleShared::new(
+                    gpu,
+                    gpu.samples,
+                    (&self.world.far_view, &self.world.shadow_sampler),
+                )
+            })
             .clone();
         let vehicle = vehicle::VehiclePass::with_shared(gpu, venue, quad, rider, &shared, true)?;
         if self.graphics.shadow_map > 0 {
@@ -1418,7 +1501,13 @@ impl SceneRenderer {
     ) -> Result<(), String> {
         let shared = self
             .shared_vehicle
-            .get_or_insert_with(|| vehicle::VehicleShared::new(gpu, gpu.samples))
+            .get_or_insert_with(|| {
+                vehicle::VehicleShared::new(
+                    gpu,
+                    gpu.samples,
+                    (&self.world.far_view, &self.world.shadow_sampler),
+                )
+            })
             .clone();
         self.cpus = models
             .iter()
@@ -1451,9 +1540,13 @@ impl SceneRenderer {
     /// the player and of each race CPU in [`Self::pose_race_cpus`]'s order
     /// (CPUs past the slice draw opaque).
     pub fn set_reset_fades(&mut self, gpu: &Gpu, player: f32, cpus: &[f32]) {
-        let shared = &*self
-            .shared_vehicle
-            .get_or_insert_with(|| vehicle::VehicleShared::new(gpu, gpu.samples));
+        let shared = &*self.shared_vehicle.get_or_insert_with(|| {
+            vehicle::VehicleShared::new(
+                gpu,
+                gpu.samples,
+                (&self.world.far_view, &self.world.shadow_sampler),
+            )
+        });
         if let Some(vehicle) = &mut self.vehicle {
             vehicle.set_fade(gpu, shared, player);
         }
@@ -1468,9 +1561,13 @@ impl SceneRenderer {
         let Some((_, pass, _)) = self.peers.get_mut(&peer) else {
             return;
         };
-        let shared = &*self
-            .shared_vehicle
-            .get_or_insert_with(|| vehicle::VehicleShared::new(gpu, gpu.samples));
+        let shared = &*self.shared_vehicle.get_or_insert_with(|| {
+            vehicle::VehicleShared::new(
+                gpu,
+                gpu.samples,
+                (&self.world.far_view, &self.world.shadow_sampler),
+            )
+        });
         pass.set_fade(gpu, shared, opacity);
     }
 
@@ -1487,7 +1584,13 @@ impl SceneRenderer {
     ) -> Result<(), String> {
         let shared = self
             .shared_vehicle
-            .get_or_insert_with(|| vehicle::VehicleShared::new(gpu, gpu.samples))
+            .get_or_insert_with(|| {
+                vehicle::VehicleShared::new(
+                    gpu,
+                    gpu.samples,
+                    (&self.world.far_view, &self.world.shadow_sampler),
+                )
+            })
             .clone();
         let mut pass = vehicle::VehiclePass::with_shared(gpu, venue, quad, rider, &shared, false)?;
         pass.set_paint(paint);
@@ -1543,7 +1646,13 @@ impl SceneRenderer {
     ) -> Result<(), String> {
         let shared = self
             .shared_vehicle
-            .get_or_insert_with(|| vehicle::VehicleShared::new(gpu, gpu.samples))
+            .get_or_insert_with(|| {
+                vehicle::VehicleShared::new(
+                    gpu,
+                    gpu.samples,
+                    (&self.world.far_view, &self.world.shadow_sampler),
+                )
+            })
             .clone();
         let mut pass = vehicle::VehiclePass::ghost(gpu, venue, quad, rider, &shared, opacity)?;
         pass.set_paint(paint);
@@ -1704,6 +1813,10 @@ impl SceneRenderer {
     /// Rebuilds the fine terrain patch around a new rider position.
     pub fn recenter_terrain(&mut self, gpu: &Gpu, venue: &Venue, center: [f32; 2]) {
         self.terrain.recenter(gpu, venue, center);
+        // The map was drawn from the coarser ground that was here.
+        if let Some(map) = &mut self.world_shadows {
+            map.invalidate();
+        }
     }
 
     /// Fine terrain patches drawn (split screen: one per player apart).
@@ -1765,13 +1878,14 @@ impl SceneRenderer {
         let (mut encoder, mut stats) = self.encode(
             gpu,
             view,
-            (gpu.config.width, gpu.config.height),
-            &target,
+            gpu.scene_size(),
+            gpu.scene.as_ref().map_or(&target, |s| &s.view),
             gpu.msaa.as_ref(),
             &gpu.depth,
             None,
         );
         self.profiler.mark("encode.speed_rush");
+        gpu.draw_upscaled(&mut encoder, &target);
         overlay(&mut encoder, &target);
         self.profiler.mark("encode.overlay");
         let commands = encoder.finish();
@@ -1816,16 +1930,19 @@ impl SceneRenderer {
         self.profiler.start();
         let target = frame.texture.create_view(&Default::default());
         let mut total = FrameStats::default();
+        let surface = (gpu.config.width, gpu.config.height);
+        let scene_size = gpu.scene_size();
         for (index, (view, rect)) in views.iter().enumerate() {
+            let rect = upscale::scale_rect(*rect, surface, scene_size);
             let (encoder, stats) = self.encode(
                 gpu,
                 view,
                 (rect[2].max(1), rect[3].max(1)),
-                &target,
+                gpu.scene.as_ref().map_or(&target, |s| &s.view),
                 gpu.msaa.as_ref(),
                 &gpu.depth,
                 Some(Region {
-                    rect: *rect,
+                    rect,
                     clear: index == 0,
                 }),
             );
@@ -1833,6 +1950,7 @@ impl SceneRenderer {
             total.add(&stats);
         }
         let mut encoder = gpu.device.create_command_encoder(&Default::default());
+        gpu.draw_upscaled(&mut encoder, &target);
         overlay(&mut encoder, &target);
         gpu.queue.submit([encoder.finish()]);
         gpu.present(frame);
@@ -1885,6 +2003,30 @@ impl SceneRenderer {
             }
             _ => None,
         };
+        // Remastered: the world shadow map around the rider (the camera
+        // without one); split views go without.
+        let far = match &mut self.world_shadows {
+            Some(map) if region.is_none() => {
+                let sun = self.world.globals.sun_direction;
+                let center = match &self.ride_pose {
+                    Some((quad, _)) => [quad[12], quad[13], quad[14]],
+                    None => eye,
+                };
+                Some((map.frame(center, [sun[0], sun[1], sun[2]]), map.texels()))
+            }
+            _ => None,
+        };
+        match &far {
+            Some((matrix, texels)) => {
+                self.terrain.set_far(Some(matrix), *texels);
+                self.world.globals.far_matrix = *matrix;
+                self.world.globals.far = [1., texels[0], texels[1], 0.];
+            }
+            None => {
+                self.terrain.set_far(None, [0.; 2]);
+                self.world.globals.far = [0.; 4];
+            }
+        }
         let texel = 1. / self.world.shadow_size as f32;
         self.terrain.set_shadow(light.as_ref().map(|l| &l.1), texel);
         match &light {
@@ -2020,6 +2162,7 @@ impl SceneRenderer {
         }
         self.profiler.mark("prepare.effects");
         if let Some(vehicle) = &mut self.vehicle {
+            vehicle.set_far(far.as_ref());
             vehicle.prepare(gpu, &view_projection, view.camera.eye());
             stats.vehicle_triangles = vehicle.triangles;
         }
@@ -2031,6 +2174,7 @@ impl SceneRenderer {
             .chain(self.ghosts.iter_mut().flatten().map(|(p, v)| (p, *v)))
         {
             if visible {
+                cpu.set_far(far.as_ref());
                 cpu.prepare(gpu, &view_projection, view.camera.eye());
                 stats.vehicle_triangles += cpu.triangles;
             }
@@ -2152,6 +2296,16 @@ impl SceneRenderer {
             self.profiler.count(name, n);
         }
         let mut encoder = gpu.device.create_command_encoder(&Default::default());
+        if let (Some(map), Some(_)) = (&mut self.world_shadows, &far) {
+            map.render(
+                gpu,
+                &mut encoder,
+                &self.world,
+                &self.terrain,
+                &self.scenery,
+                self.vegetation.as_mut(),
+            );
+        }
         if let (Some(map), Some(vehicle), Some((clip, _)), Some((quad, _))) =
             (&self.shadow_map, &self.vehicle, &light, &self.ride_pose)
         {

@@ -35,6 +35,12 @@ pub enum Action {
     RaceQuit,
     /// Race over → Continue Championship (the next round).
     RaceNextRound,
+    /// Race over → Replay (#542).
+    Replay,
+    /// A photo mode or replay control (#542).
+    Viewer(atv_ui::hud::viewer::Button),
+    /// The Waypoint Editor's GATE and UNDO.
+    Gate(crate::waypoint_editor::Command),
 }
 
 /// Hit target of the minimap (tap toggles north-up / heading-up).
@@ -103,6 +109,14 @@ type MenuCache = (Viewport, pause::State, DisplayList, Vec<(Rect, u32)>, f32);
 
 /// Laid-out race results: inputs (view, state, summary), paint and hits.
 type ResultsCache = (Viewport, Results, String, DisplayList, Vec<(Rect, u32)>);
+
+/// Laid-out photo/replay controls: their inputs, paint and hit targets.
+type ViewerCache = (
+    Viewport,
+    atv_ui::hud::viewer::State,
+    DisplayList,
+    Vec<(Rect, u32)>,
+);
 
 /// A laid-out toolbar: its inputs, paint and hit targets.
 type ToolbarCache = (Viewport, toolbar::State, DisplayList, Vec<(Rect, u32)>);
@@ -209,6 +223,10 @@ pub struct Overlay {
     /// The race is Single Race's Kid difficulty (research/KID_MODE.md):
     /// touches are GO and the race path driver's finish earns nothing.
     pub kid: bool,
+    /// A User Created Enduro: no Profile Points or records.
+    pub user_course: bool,
+    /// The Waypoint Editor ride (toolbar GATE / UNDO, Pause → Save Course).
+    pub editor: bool,
     /// The ride is the Training Course (Pause → Restart Training).
     pub training: bool,
     /// The ride is a mini-game (Pause → Restart Game).
@@ -222,6 +240,11 @@ pub struct Overlay {
     /// The finished race's Hall of Fame records, until named.
     /// (and the name they are stored under).
     fame_watch: Option<(atv_core::hall_of_fame::Watch, String)>,
+    /// The finished race the world boards may take (world.rs), until its
+    /// Hall of Fame name is final.
+    world_run: Option<crate::world::Run>,
+    /// A world board submission for the host to send.
+    pub world_outbox: Option<String>,
     /// A split race's records, the players still to name theirs (player
     /// index and records, in entry order) and the player naming now.
     fame_split: Option<SplitNaming>,
@@ -233,6 +256,10 @@ pub struct Overlay {
     menu_motion: Option<atv_ui::transition::Motion>,
     /// The pause page being left, while it slides out.
     exit_menu: Option<pause::State>,
+    /// Photo mode or a replay (#542): only its controls draw (none on
+    /// the frame a photo saves).
+    pub viewer: Option<atv_ui::hud::viewer::State>,
+    viewer_cache: Option<ViewerCache>,
 }
 
 /// Split screen's Hall of Fame naming, one player after another
@@ -294,6 +321,8 @@ impl Overlay {
             help_until: None,
             ride_started: false,
             toolbar_cache: None,
+            viewer: None,
+            viewer_cache: None,
             help_cache: None,
             help_keys: Vec::new(),
             pad_name: None,
@@ -320,11 +349,15 @@ impl Overlay {
             frontend: false,
             race: false,
             kid: false,
+            user_course: false,
+            editor: false,
             training: false,
             game: false,
             room_race_pending: false,
             race_entry: None,
             fame_watch: None,
+            world_run: None,
+            world_outbox: None,
             fame_name: String::new(),
             fame_split: None,
             transition: Default::default(),
@@ -495,6 +528,7 @@ impl Overlay {
                 menu.race_active = self.race;
                 menu.training_active = self.training;
                 menu.game_active = self.game;
+                menu.editor_active = self.editor;
                 self.menu = Some(menu);
                 self.press = None;
                 self.clear_touch();
@@ -700,12 +734,21 @@ impl Overlay {
                     let command = self.results.act(p.button);
                     return Some(command.and_then(|c| self.command_action(c)));
                 }
+                if let Some(button) = atv_ui::hud::viewer::Button::from_id(p.button) {
+                    return Some(Some(Action::Viewer(button)));
+                }
                 match toolbar::Button::from_id(p.button) {
                     Some(toolbar::Button::Pause) => Some(Action::Pause),
                     Some(toolbar::Button::Camera) => Some(Action::Camera),
                     Some(toolbar::Button::Keys) => {
                         self.toggle_help();
                         None
+                    }
+                    Some(toolbar::Button::Gate) => {
+                        Some(Action::Gate(crate::waypoint_editor::Command::Drop))
+                    }
+                    Some(toolbar::Button::Undo) => {
+                        Some(Action::Gate(crate::waypoint_editor::Command::Undo))
                     }
                     None => None,
                 }
@@ -903,6 +946,12 @@ impl Overlay {
                 (None, Some(_)) => self.exit_menu = None,
                 _ => {}
             }
+            self.upload(device, queue, width, height);
+            self.prepare_ms = started.elapsed().as_secs_f64() * 1000.;
+            return;
+        }
+        if self.viewer.is_some() {
+            self.prepare_viewer();
             self.upload(device, queue, width, height);
             self.prepare_ms = started.elapsed().as_secs_f64() * 1000.;
             return;
@@ -1106,6 +1155,7 @@ impl Overlay {
             keys_enabled: active,
             keys_visible,
             compact,
+            editor: self.editor,
         };
         let full = |child: layout::El| {
             layout::El::new(taffy::Style {
@@ -1575,11 +1625,13 @@ impl Overlay {
                 // race.js always offers Quit Event; a page without the
                 // engine's frontend leaves for its menus.
                 self.results.can_quit = self.frontend || cfg!(target_arch = "wasm32");
+                self.results.replay = self.lobby.is_none();
                 // Online competition saves neither profile progress nor Hall
                 // of Fame records (USA manual pp. 36–37).
                 if self.results.finish(frame) {
-                    if self.kid {
-                        // The path driver rode: no Profile Points or records.
+                    if self.kid || self.user_course {
+                        // The path driver rode, or the course is the
+                        // player's own: no Profile Points or records.
                         self.results.no_award();
                     } else if self.lobby.is_none() && frame.duel {
                         // A Duel seats two humans: `001f1e30` credits Profile
@@ -1788,10 +1840,17 @@ impl Overlay {
 
     /// A results command's host action; the Hall of Fame name is kept here.
     fn command_action(&mut self, command: results::Command) -> Option<Action> {
+        if matches!(
+            command,
+            results::Command::Retry | results::Command::Quit | results::Command::NextRound
+        ) {
+            self.world_submit(None);
+        }
         Some(match command {
             results::Command::Retry => Action::RaceRetry,
             results::Command::Quit => Action::RaceQuit,
             results::Command::NextRound => Action::RaceNextRound,
+            results::Command::Replay => Action::Replay,
             results::Command::FameName if self.fame_split.is_some() => {
                 self.name_split_fame();
                 return None;
@@ -1805,6 +1864,7 @@ impl Overlay {
                     atv_ui::settings::save_hall_of_fame(&mut self.settings, &hall);
                     self.fame_watch = Some((watch.clone(), self.fame_name.clone()));
                 }
+                self.world_submit(Some(self.fame_name.clone()));
                 return None;
             }
         })
@@ -1820,9 +1880,33 @@ impl Overlay {
             self.offer_split_fame(frame);
             return;
         }
+        self.world_run = crate::world::Run::of_race(frame);
         if let Some(watch) = frame.records.clone() {
             self.offer_fame(atv_core::hall_of_fame::Watch::Race(watch));
         }
+        // The world boards take a run that set a local record (sent once
+        // its name is entered) or a daily event time (sent now).
+        if self.fame_watch.is_none() {
+            if self.world_run.as_ref().is_some_and(|r| r.daily.is_some()) {
+                self.world_submit(None);
+            } else {
+                self.world_run = None;
+            }
+        }
+    }
+
+    /// Hands the kept world run to the host under `name`, else the Hall of
+    /// Fame name already stored for it (or the default).
+    fn world_submit(&mut self, name: Option<String>) {
+        let Some(run) = self.world_run.take() else {
+            return;
+        };
+        let name = name.unwrap_or_else(|| match &self.fame_watch {
+            Some((_, stored)) => stored.clone(),
+            None => atv_core::hall_of_fame::clean_name(&self.default_fame_name()),
+        });
+        self.world_outbox = Some(run.body(&name));
+        self.results.world_line = Some("Sending to the World Hall of Fame…".into());
     }
 
     /// A split race or Duel (`001f1740` → `00217e40`): every human's
@@ -1979,6 +2063,50 @@ impl Overlay {
         }
     }
 
+    /// A photo/replay control's rectangle as last laid out (CSS px).
+    pub fn viewer_rect(&self, button: atv_ui::hud::viewer::Button) -> Option<Rect> {
+        let (.., hits) = self.viewer_cache.as_ref()?;
+        hits.iter()
+            .find(|(_, id)| *id == button as u32)
+            .map(|(r, _)| *r)
+    }
+
+    /// Photo mode and replay controls (`viewer`), laid out again only when
+    /// they change.
+    fn prepare_viewer(&mut self) {
+        let Some(mut state) = self.viewer.clone() else {
+            return;
+        };
+        let view = self.view;
+        state.hovered = self.hovered.and_then(atv_ui::hud::viewer::Button::from_id);
+        state.pressed = self
+            .press
+            .as_ref()
+            .and_then(|p| atv_ui::hud::viewer::Button::from_id(p.button));
+        if !self
+            .viewer_cache
+            .as_ref()
+            .is_some_and(|(v, s, ..)| *v == view && *s == state)
+        {
+            let (mut list, mut hits) = (DisplayList::default(), Vec::new());
+            if !state.buttons.is_empty() {
+                layout::render(
+                    &atv_ui::hud::viewer::element(&view, &state),
+                    &mut self.fonts,
+                    view.width,
+                    view.height,
+                    &mut list,
+                    &mut hits,
+                );
+            }
+            self.viewer_cache = Some((view, state, list, hits));
+        }
+        if let Some((_, _, list, hits)) = &self.viewer_cache {
+            self.list.items.extend_from_slice(&list.items);
+            self.hits.extend_from_slice(hits);
+        }
+    }
+
     /// The pause layer: the dim backdrop and the panel (the HUD, map, toolbar
     /// and touch controls hide behind menus, as `body.menu-open` does).
     fn prepare_menu(
@@ -2036,15 +2164,8 @@ impl Overlay {
         );
         let rect = |id| hits.iter().find(|(_, i)| *i == id).map(|(r, _)| *r);
         if let (Some(panel), Some(content)) = (rect(pause::PANEL), rect(pause::CONTENT)) {
-            // The Jukebox scrolls only its track list (no panel padding).
-            let padding = if state.page == "jukebox" {
-                0.
-            } else if view.width <= 580. || view.height <= 450. {
-                20.
-            } else {
-                30.
-            };
-            self.menu_scroll_max = (content.h - (panel.h - 2. * padding)).max(0.);
+            // Only the rows scroll: the scrolled part has no padding of its own.
+            self.menu_scroll_max = (content.h - panel.h).max(0.);
         }
         // jukebox.js: open with the playing song centred in the list.
         let centre = state.page == "jukebox" && !self.jukebox_centred;
@@ -2146,6 +2267,18 @@ impl Overlay {
                 })),
                 "hits": self.menu_hits.iter().filter(|(_, id)| *id >= pause::ROW).map(|(r, id)| serde_json::json!({
                     "action": m.rows.choices.get((*id - pause::ROW) as usize),
+                    "x": r.x, "y": r.y, "width": r.w, "height": r.h,
+                })).collect::<Vec<_>>(),
+                // Options beside its rail: the rail's tabs on a category
+                // page, and the rows shown for the highlighted category.
+                "wide": m.wide(),
+                "previewPage": m.preview().map(|(page, _)| page),
+                "tabs": self.menu_hits.iter().filter(|(_, id)| (pause::TAB..pause::PANEL).contains(id)).map(|(r, id)| serde_json::json!({
+                    "action": m.categories().nth((*id - pause::TAB) as usize),
+                    "x": r.x, "y": r.y, "width": r.w, "height": r.h,
+                })).collect::<Vec<_>>(),
+                "preview": self.menu_hits.iter().filter(|(_, id)| (pause::PREVIEW..pause::TAB).contains(id)).map(|(r, id)| serde_json::json!({
+                    "action": m.preview().and_then(|(_, rows)| rows.choices.get((*id - pause::PREVIEW) as usize)),
                     "x": r.x, "y": r.y, "width": r.w, "height": r.h,
                 })).collect::<Vec<_>>(),
             })),

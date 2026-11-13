@@ -124,6 +124,111 @@ pub struct CpuSound {
     pub steps: Vec<CpuSoundStep>,
 }
 
+/// Merges one fixed step into the cues the room race host sends with its
+/// next CPU motion (research/AUDIO.md "CPU riders"): the step's events, its
+/// strongest impacts, and the levels (airborne, rider in water, drive-on
+/// terrain) as of the latest step.
+pub fn merge_cue(cues: &mut atv_net::CpuSoundCues, step: &CpuSoundStep) {
+    use atv_net::cpu_cue;
+    let strongest = |old: f32, new: f32| {
+        if new.is_finite() {
+            old.max(new.clamp(0., atv_net::CUE_MAX))
+        } else {
+            old
+        }
+    };
+    let events = step.events;
+    if events.hard_landing {
+        cues.flags |= cpu_cue::HARD_LANDING;
+    }
+    if let Some(entry) = events.wreck_entry {
+        cues.flags |= cpu_cue::WRECK;
+        if entry.fall {
+            cues.flags |= cpu_cue::FALL;
+        }
+        cues.wreck_impact = strongest(cues.wreck_impact, entry.impact);
+    }
+    cues.quad_contact = strongest(cues.quad_contact, events.quad_contact);
+    cues.impact = strongest(cues.impact, step.chassis.impact);
+    let [x, y, z] = step.rider_impact;
+    cues.rider_impact = strongest(cues.rider_impact, (x * x + y * y + z * z).sqrt());
+    if step.chassis.chassis_contact {
+        cues.flags |= cpu_cue::CHASSIS_CONTACT;
+    }
+    let levels = [
+        (cpu_cue::AIRBORNE, step.chassis.airborne),
+        (cpu_cue::RIDER_WATER, step.rider_water),
+    ];
+    for (bit, on) in levels {
+        cues.flags = (cues.flags & !bit) | if on { bit } else { 0 };
+    }
+    cues.terrain = step.drive.terrain.map(|t| t.clamp(-1, 127) as i8);
+}
+
+/// The cue flags that are levels, not events.
+const LEVELS: u8 = atv_net::cpu_cue::AIRBORNE | atv_net::cpu_cue::RIDER_WATER;
+
+/// The cues were sent (host) or played (guest): the events start over and
+/// the levels stay as of the latest step.
+pub fn sent_cue(cues: &mut atv_net::CpuSoundCues) {
+    *cues = atv_net::CpuSoundCues {
+        flags: cues.flags & LEVELS,
+        terrain: cues.terrain,
+        ..Default::default()
+    };
+}
+
+/// One step of a guest's puppet CPU emitters from the host's cues and its
+/// presented motion: the events, impacts, airborne flag and drive-on
+/// terrain come from the cues; the quad's water entry (`001d7280`) comes
+/// from the presented origin against this guest's own water surface, as
+/// the host's comes from its simulated origin.
+pub fn cue_step(
+    cues: &atv_net::CpuSoundCues,
+    s: &atv_net::Snapshot,
+    rider_position: [f32; 3],
+    wheels: [[f32; 3]; 2],
+    water: Option<f32>,
+) -> CpuSoundStep {
+    use atv_net::cpu_cue;
+    let flag = |bit| cues.flags & bit != 0;
+    let wrecked = matches!(
+        s.rider_state,
+        atv_net::RiderState::Wreck | atv_net::RiderState::Recovering
+    );
+    let wreck_entry = flag(cpu_cue::WRECK).then_some(atv_core::quad_sounds::WreckEntry {
+        fall: flag(cpu_cue::FALL),
+        impact: cues.wreck_impact,
+    });
+    CpuSoundStep {
+        events: atv_core::vehicle::AudioEvents {
+            wreck_entry,
+            hard_landing: flag(cpu_cue::HARD_LANDING),
+            quad_contact: cues.quad_contact,
+            impact: cues.impact,
+        },
+        chassis: atv_core::quad_sounds::ChassisInput {
+            impact: cues.impact,
+            wrecked,
+            airborne: flag(cpu_cue::AIRBORNE),
+            chassis_contact: flag(cpu_cue::CHASSIS_CONTACT),
+        },
+        origin: s.atv.position,
+        velocity: s.velocity,
+        rider_position,
+        rider_impact: [cues.rider_impact, 0., 0.],
+        riding: !wrecked,
+        reset_count: s.crash_serial,
+        drive: atv_core::quad_sounds::DriveInput {
+            terrain: cues.terrain.map(i32::from),
+            mph: (s.speed * atv_core::hud::MPH_FACTOR) as i32,
+        },
+        wheels,
+        water_depth: water.map(|w| s.atv.position[1] - w),
+        rider_water: flag(cpu_cue::RIDER_WATER),
+    }
+}
+
 /// Steps of sound kept for the audio layer between reads (the player's
 /// frontend batch bound); older steps are dropped while nothing reads them.
 pub const SOUND_STEPS: usize = 64;
@@ -132,6 +237,8 @@ pub struct CpuRacer {
     pub vehicle: Vehicle,
     /// Sound inputs since the audio layer last took them.
     sound: Vec<CpuSoundStep>,
+    /// Room race host: the sound cues since its last CPU motion.
+    cues: atv_net::CpuSoundCues,
     /// The throttle the driver applied on the latest step.
     throttle: f32,
     rider_audio_position: [f32; 3],
@@ -187,6 +294,7 @@ impl CpuRacer {
         Ok(Self {
             vehicle,
             sound: Vec::new(),
+            cues: Default::default(),
             throttle: 0.,
             rider_audio_position,
             quad_pose: model.quad_pose.clone(),
@@ -407,7 +515,7 @@ impl CpuRacer {
         if self.sound.len() >= SOUND_STEPS {
             self.sound.remove(0);
         }
-        self.sound.push(CpuSoundStep {
+        let step = CpuSoundStep {
             chassis: quad.chassis,
             events,
             origin: frame.origin,
@@ -420,8 +528,20 @@ impl CpuRacer {
             wheels: quad.wheels,
             water_depth: quad.water_depth,
             rider_water: rider.is_some_and(|r| r.water_touching),
-        });
+        };
+        merge_cue(&mut self.cues, &step);
+        self.sound.push(step);
         Ok(())
+    }
+
+    /// Room race host: the sound cues since its last CPU motion.
+    pub fn cues(&self) -> atv_net::CpuSoundCues {
+        self.cues
+    }
+
+    /// Room race host: its CPU motion carried the cues.
+    pub fn sent_cues(&mut self) {
+        sent_cue(&mut self.cues);
     }
 
     /// The sound steps since the last call, oldest first.
@@ -486,6 +606,12 @@ pub struct Puppet {
     /// The engine inputs of the host's latest presented motion; None until
     /// heard and while stale (research/AUDIO.md "CPU riders").
     pub sound: Option<PuppetSound>,
+    /// The host's sound cue levels as of the latest presented step.
+    held: atv_net::CpuSoundCues,
+    /// The actor sound position (the quad origin until the rider detaches).
+    rider_position: [f32; 3],
+    /// Emitter steps since the audio layer last took them.
+    steps: Vec<CpuSoundStep>,
 }
 
 /// A puppet CPU's engine inputs from the host's motion: the host's CPU
@@ -529,16 +655,31 @@ impl Puppet {
             pose: None,
             body: None,
             sound: None,
+            held: atv_net::CpuSoundCues {
+                terrain: [-1; 2],
+                ..Default::default()
+            },
+            rider_position: [0.; 3],
+            steps: Vec::new(),
         })
     }
 
-    /// Pose from a presented snapshot `dt` seconds after the last.
+    /// The emitter steps since the last call, oldest first.
+    pub fn take_sound(&mut self) -> Vec<CpuSoundStep> {
+        std::mem::take(&mut self.steps)
+    }
+
+    /// Pose from a presented snapshot `dt` seconds after the last, and one
+    /// emitter step from the host's sound `cues` this pose reached and the
+    /// guest's water surface height at the quad (`water`).
     pub fn present(
         &mut self,
         nodes: &[Node],
         s: &atv_net::Snapshot,
         dt: f32,
         stale: bool,
+        cues: Option<atv_net::CpuSoundCues>,
+        water: Option<f32>,
     ) -> Result<()> {
         let a = s.animation.as_ref().ok_or("CPU animation missing")?;
         let quad_nodes = self.quad_pose.sample(a.steering, a.wheels, a.compression)?;
@@ -588,6 +729,28 @@ impl Puppet {
                     .world_matrices,
             )
         };
+        if !stale {
+            let wheels = self
+                .quad_pose
+                .wheel_positions(&quad_nodes)?
+                .map(|point| atv_core::obstacle::transform_point(&quad_world, point));
+            if s.rider_state != atv_net::RiderState::Wreck || self.rider_position == [0.; 3] {
+                self.rider_position = s.atv.position;
+            }
+            let now = cues.unwrap_or(self.held);
+            if self.steps.len() >= SOUND_STEPS {
+                self.steps.remove(0);
+            }
+            self.steps.push(cue_step(
+                &now,
+                s,
+                self.rider_position,
+                [wheels[0], wheels[1]],
+                water,
+            ));
+            self.held = now;
+            sent_cue(&mut self.held);
+        }
         self.pose = Some(super::Pose {
             quad_world,
             quad_nodes,
@@ -602,7 +765,92 @@ impl Puppet {
 
 #[cfg(test)]
 mod tests {
-    use super::{PuppetSound, stuck_clock};
+    use super::{CpuSoundStep, PuppetSound, cue_step, merge_cue, sent_cue, stuck_clock};
+    use atv_net::cpu_cue;
+
+    #[test]
+    fn host_cues_merge_events_and_keep_levels_once_sent() {
+        let mut cues = atv_net::CpuSoundCues::default();
+        let mut step = CpuSoundStep::default();
+        step.events.quad_contact = 14.;
+        step.events.wreck_entry = Some(atv_core::quad_sounds::WreckEntry {
+            fall: false,
+            impact: 25.,
+        });
+        step.chassis.impact = 30.;
+        step.chassis.airborne = true;
+        step.rider_impact = [3., 4., 0.];
+        step.drive.terrain = [2, 300];
+        merge_cue(&mut cues, &step);
+        // A later quiet step keeps the strongest impacts and the wreck, and
+        // its own levels: down, on terrain 5, rider in water.
+        let mut quiet = CpuSoundStep {
+            rider_water: true,
+            ..Default::default()
+        };
+        quiet.drive.terrain = [5, -1];
+        quiet.chassis.impact = f32::NAN;
+        merge_cue(&mut cues, &quiet);
+        assert_eq!(cues.flags, cpu_cue::WRECK | cpu_cue::RIDER_WATER);
+        assert_eq!(
+            (
+                cues.quad_contact,
+                cues.wreck_impact,
+                cues.impact,
+                cues.rider_impact
+            ),
+            (14., 25., 30., 5.)
+        );
+        assert_eq!(cues.terrain, [5, -1]);
+        sent_cue(&mut cues);
+        assert_eq!(cues.flags, cpu_cue::RIDER_WATER);
+        assert_eq!((cues.impact, cues.terrain), (0., [5, -1]));
+        // Terrain bytes saturate to the wire's range.
+        step.drive.terrain = [300, -9];
+        merge_cue(&mut cues, &step);
+        assert_eq!(cues.terrain, [127, -1]);
+    }
+
+    #[test]
+    fn guest_steps_take_host_cues_and_the_presented_motion() {
+        let cues = atv_net::CpuSoundCues {
+            flags: cpu_cue::WRECK | cpu_cue::FALL | cpu_cue::CHASSIS_CONTACT,
+            quad_contact: 2.,
+            wreck_impact: 18.,
+            impact: 12.,
+            rider_impact: 6.,
+            terrain: [4, -1],
+        };
+        let s = atv_net::Snapshot {
+            atv: atv_net::Transform {
+                position: [10., 3., 20.],
+                ..Default::default()
+            },
+            velocity: [0., -9., 1.],
+            speed: 44.,
+            rider_state: atv_net::RiderState::Wreck,
+            crash_serial: 2,
+            ..Default::default()
+        };
+        let step = cue_step(&cues, &s, [9., 3., 20.], [[1.; 3], [2.; 3]], Some(5.));
+        let entry = step.events.wreck_entry.unwrap();
+        assert!(entry.fall && entry.impact == 18.);
+        assert_eq!((step.events.quad_contact, step.events.impact), (2., 12.));
+        assert!(step.chassis.wrecked && step.chassis.chassis_contact && !step.chassis.airborne);
+        assert!(!step.riding && step.reset_count == 2);
+        assert_eq!(step.rider_impact, [6., 0., 0.]);
+        assert_eq!(step.drive.terrain, [4, -1]);
+        assert_eq!(step.drive.mph, 30);
+        // Below this guest's water surface: the quad's splash input.
+        assert_eq!(step.water_depth, Some(-2.));
+        assert_eq!(step.rider_position, [9., 3., 20.]);
+        let riding = atv_net::Snapshot {
+            rider_state: atv_net::RiderState::Airborne,
+            ..s
+        };
+        let step = cue_step(&Default::default(), &riding, [0.; 3], [[0.; 3]; 2], None);
+        assert!(step.riding && step.events.wreck_entry.is_none() && step.water_depth.is_none());
+    }
 
     #[test]
     fn puppet_sound_reads_the_host_motion_until_stale() {

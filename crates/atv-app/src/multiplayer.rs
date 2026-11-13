@@ -894,13 +894,17 @@ impl Net {
         self.session.cpu_progress.values().copied().collect()
     }
 
-    /// The host's CPUs as drawn now: (index, snapshot, stale).
-    pub fn present_cpus(&mut self) -> Vec<(u8, atv_game::multiplayer::Snapshot, bool)> {
+    /// The host's CPUs as drawn now: (index, snapshot, stale, the sound
+    /// cues this pose reached).
+    pub fn present_cpus(&mut self) -> Vec<atv_game::ride::race::PresentedCpu> {
         let now = now_ms(self.clock);
-        self.session
-            .present_cpus(now)
+        let poses = self.session.present_cpus(now);
+        poses
             .into_iter()
-            .map(|(index, pose)| (index, pose.snapshot, pose.stale))
+            .map(|(index, pose)| {
+                let cues = self.session.take_cpu_cues(index, pose.snapshot.sequence);
+                (index, pose.snapshot, pose.stale, cues)
+            })
             .collect()
     }
 
@@ -1369,6 +1373,8 @@ pub fn room_races(environment: &str) -> Vec<(u8, &'static str)> {
                 atv_game::launch::RaceVariant::EnduroLong => "Play Enduro Long",
                 atv_game::launch::RaceVariant::EnduroShort => "Play Enduro Short",
                 atv_game::launch::RaceVariant::ShortTrack => "Play Short Track",
+                // Not in `ALL`: rooms never race a User Created Enduro.
+                atv_game::launch::RaceVariant::UserEnduro => "Play Enduro Long",
             };
             (at as u8, label)
         })

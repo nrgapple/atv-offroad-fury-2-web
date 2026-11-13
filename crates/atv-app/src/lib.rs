@@ -15,12 +15,15 @@ mod game_cpu;
 mod gamepad;
 mod games;
 mod hockey;
+mod instant_replay;
 mod multiplayer;
 mod net;
 mod overlay;
+mod photo;
 mod random;
 mod render_scale;
 pub mod replay;
+mod replay_view;
 mod riding;
 mod room_freestyle;
 mod room_game;
@@ -35,6 +38,8 @@ mod tilt;
 mod training;
 mod usage;
 mod wake;
+mod waypoint_editor;
+mod world;
 use atv_core::math::Det;
 pub use multiplayer::RoomStart;
 use replay::RunScript;
@@ -79,6 +84,11 @@ pub struct Options {
     /// with default in-memory settings.
     #[cfg(not(target_arch = "wasm32"))]
     pub capture_ui: bool,
+    /// Captures with the UI: open the pause menu (or, with `front`, Options
+    /// over the main menu) on this page and row, laid out at this many
+    /// pixels per point.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub capture_menu: Option<(String, usize, f64)>,
     /// Before the capture, time the scene pass on the GPU over this many
     /// offscreen frames (timestamp queries) and print the median.
     #[cfg(not(target_arch = "wasm32"))]
@@ -162,6 +172,8 @@ enum Message {
     SoundReady(Box<sound::Sound>),
     /// The original Jukebox art decoded.
     JukeboxArt(Box<atv_game::jukebox::JukeboxArt>),
+    /// The Credits page script and whether the original text was found.
+    Credits(Box<(atv_core::credits::Credits, bool)>),
     /// A line for the open menu's notice (e.g. the copied ride link).
     #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
     Notice(String),
@@ -225,6 +237,9 @@ enum Message {
     /// Web: a Pass Key save request's answer (cloud.rs).
     #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
     Cloud(u64, atv_ui::cloud::Response),
+    /// Web: a world board request's answer (world.rs).
+    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+    World(u64, atv_ui::cloud::Response),
     /// Web: Import Save read a file (name, text).
     #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
     CloudImport(String, String),
@@ -806,6 +821,8 @@ fn split_objective_summary(run: &atv_core::freestyle::split::SplitRun) -> String
 struct App {
     /// Pass Key cloud saves (cloud.rs).
     cloud: cloud::Cloud,
+    /// World boards and the daily event (world.rs).
+    world: world::World,
     /// The frontend's Split Screen branch asked for two local players on
     /// the next rides (kept for Restart Race).
     split_request: Option<split::Request>,
@@ -907,6 +924,10 @@ struct App {
     training: Option<training::TrainingSession>,
     /// A mini-game on the current ride (research/GAMES.md).
     game: Option<games::GameSession>,
+    /// The User Created Enduro a UserEnduro race rides (user_course.rs).
+    user_course: Option<Rc<atv_core::user_course::UserCourse>>,
+    /// The Waypoint Editor on the current ride (waypoint_editor.rs).
+    editor: Option<waypoint_editor::Session>,
     /// Hockey on Coonce Arena (`atv_core::hockey`).
     hockey: Option<hockey::HockeySession>,
     /// Tag in a multiplayer room (`atv_core::tag`).
@@ -938,6 +959,10 @@ struct App {
     /// The host's Play Tag reloads the room's venue from its TG archive;
     /// the game starts with these minutes once that ride is ready.
     tag_start: Option<u32>,
+    /// Pause → Photo mode's free camera (#542).
+    photo: Option<photo::Photo>,
+    /// Pause → Replay or the results' Replay: instant replay (#542).
+    replay: Option<replay_view::Replay>,
     /// Split screen → Games → Tag: a local two-player game starts with
     /// these minutes once both rides are ready (no room).
     split_tag: Option<(u32, String)>,
@@ -1061,6 +1086,11 @@ struct World {
     split: Option<split::Request>,
     /// A local mini-game's CPU riders (game_cpu.rs).
     cpus: game_cpu::Request,
+    /// A User Created Enduro's course (with a UserEnduro race).
+    user_course: Option<Rc<atv_core::user_course::UserCourse>>,
+    /// A Waypoint Editor ride (no race): the long Enduro scene with the
+    /// editor's gate models.
+    editor: bool,
 }
 
 /// Ride prefetch (`?prefetch=off` turns it off for load-time measurement).
@@ -1192,6 +1222,8 @@ async fn prepare_inner(
         objective,
         split: split_layout,
         cpus: cpu_request,
+        user_course,
+        editor,
     } = world;
     // The decode workers start while the course downloads (offload.rs).
     atv_game::offload::warm();
@@ -1199,7 +1231,8 @@ async fn prepare_inner(
     if ride && PREFETCH.load(std::sync::atomic::Ordering::Relaxed) {
         let (paths, bank) = atv_game::launch::ride_prefetch(
             &environment,
-            race.map(|r| r.course),
+            race.map(|r| r.course)
+                .or(editor.then_some(atv_game::launch::RaceVariant::UserEnduro)),
             selection.quad,
             selection.rider,
         );
@@ -1224,13 +1257,19 @@ async fn prepare_inner(
     let venue = venue::load_with(
         &content,
         &environment,
-        race.is_some(),
+        race.is_some() || editor,
         venue::LoadOptions {
             weather,
             sky_smooth: graphics.sky_smooth,
-            race: race.map(|r| r.course).unwrap_or_default(),
+            race: if editor {
+                atv_game::launch::RaceVariant::UserEnduro
+            } else {
+                race.map(|r| r.course).unwrap_or_default()
+            },
             game_scene,
             objective,
+            user_course,
+            waypoint_editor: editor,
         },
     )
     .await?;
@@ -1285,7 +1324,11 @@ async fn prepare_inner(
     // CPU riders (manual p. 16: two-player split screen can include them).
     let race = race.map(|r| atv_game::ride::race::Settings {
         intro: r.intro && split_layout.is_none(),
-        cpu: if split_layout.is_some_and(|s| s.players > 2) {
+        // A User Created Enduro races alone: the CPU drivers follow the
+        // long Enduro's TDF route, not arbitrary gates (user_course.rs).
+        cpu: if split_layout.is_some_and(|s| s.players > 2)
+            || r.course == atv_game::launch::RaceVariant::UserEnduro
+        {
             0
         } else {
             r.cpu
@@ -1721,9 +1764,12 @@ impl App {
             overlay.pad_name = self.gamepad.name();
             overlay.pads = self.gamepad.connected();
             overlay.pad_standard = self.gamepad.standard();
-            overlay.sync_menu(riding.paused && !riding.held);
-            riding.menu_open = overlay.menu.is_some();
-            if riding.menu_open
+            overlay.sync_menu(
+                riding.paused && !riding.held && self.photo.is_none() && self.replay.is_none(),
+            );
+            riding.menu_open =
+                overlay.menu.is_some() || self.photo.is_some() || self.replay.is_some();
+            if overlay.menu.is_some()
                 && let Some(event) = overlay.menu_pad(pad.as_ref(), Some(&mut riding.bindings))
             {
                 self.menu_event(event);
@@ -1741,6 +1787,8 @@ impl App {
                 None => pad.as_ref(),
             };
             if !riding.menu_open
+                && self.photo.is_none()
+                && self.replay.is_none()
                 && let Some(action) = overlay.results_pad(results_pad)
             {
                 self.act(action);
@@ -1768,6 +1816,18 @@ impl App {
             }
         }
         self.intro_pad_held = pad_pressed;
+        if let Some(editor) = &mut self.editor
+            && let Some(command) = editor.pad(pad.as_ref())
+            && active
+        {
+            let f = riding.ride.frame();
+            editor.apply(
+                command,
+                f.origin,
+                f.orientation,
+                (now - self.started).as_secs_f64(),
+            );
+        }
         let names: HashSet<String> = self.keys.iter().map(|k| format!("{k:?}")).collect();
         let keys = |code: &str| names.contains(code) && (!split_on || split::player_1_key(code));
         let all_keys = |code: &str| names.contains(code);
@@ -1906,8 +1966,11 @@ impl App {
         // A Pause binding this frame opens the menu in this same frame (the
         // ride then sleeps until input).
         if let Some(overlay) = &mut self.overlay {
-            overlay.sync_menu(riding.paused && !riding.held);
-            riding.menu_open = overlay.menu.is_some();
+            overlay.sync_menu(
+                riding.paused && !riding.held && self.photo.is_none() && self.replay.is_none(),
+            );
+            riding.menu_open =
+                overlay.menu.is_some() || self.photo.is_some() || self.replay.is_some();
             // Audio → Sound shows the mode the ride is actually playing.
             if let Some(sound) = &riding.sound {
                 let playing = match sound.ride.mode {
@@ -1994,7 +2057,11 @@ impl App {
                 }
             }
             ready.scene.pose_peers(&ready.gpu, &poses);
+            for (id, pose) in &poses {
+                riding.recorder.add(instant_replay::Kind::Peer(*id), pose);
+            }
         }
+        riding.recorder.end();
         // The speed-rush screen pass shares the FOV kick's amount.
         let motion = riding.ride.frame();
         ready.scene.set_speed_rush(
@@ -2330,6 +2397,14 @@ impl App {
         let ui_started = Instant::now();
         self.update_jukebox();
         self.save_soundtrack();
+        // Instant replay: the recorded riders and the replay camera (#542).
+        if self.replay.is_some() {
+            self.replay_frame(dt, pad.as_ref());
+        }
+        // Photo mode: the free camera replaces the ride's (#542).
+        if self.photo.is_some() {
+            self.photo_frame(dt, pad.as_ref());
+        }
         let Some(ready) = &mut self.ready else { return };
         let Some(riding) = &mut ready.riding else {
             return;
@@ -2518,6 +2593,9 @@ impl App {
             (Some(session), _) => {
                 session.update(&mut riding.ride);
                 riding.locked = session.course.locked();
+                if let Some(sound) = &mut riding.sound {
+                    sound.training_line(session.line());
+                }
                 // The `arrow.slt` pointers bob and turn over the marked
                 // circles (`002ea500`); hidden when not placed.
                 if let Some(models) = ready.venue.training_arrows {
@@ -2570,7 +2648,26 @@ impl App {
             }
             (None, None) => {
                 riding.locked = false;
-                tag_view
+                match &mut self.editor {
+                    // The Waypoint Editor poses its gate models as gates
+                    // come and go.
+                    Some(editor) => {
+                        if let Some(first) = ready.venue.editor_gates {
+                            let (venue, scene, gpu) = (&ready.venue, &mut ready.scene, &ready.gpu);
+                            editor.sync(
+                                |x, z| ground(venue, x, z),
+                                |i, matrix| {
+                                    scene.hide_model(first + i, matrix.is_none());
+                                    if let Some(matrix) = matrix {
+                                        scene.pose_model(gpu, first + i, &matrix);
+                                    }
+                                },
+                            );
+                        }
+                        Some(editor.view((Instant::now() - self.started).as_secs_f64()))
+                    }
+                    None => tag_view,
+                }
             }
         };
         // A mini-game: its rules run on the ride's clock; the ATV is held
@@ -2827,7 +2924,8 @@ impl App {
                         .filter(|m| !m.is_empty())
                 })
                 .or_else(|| self.hockey.as_ref().map(|h| h.markers()))
-                .or(local_tag);
+                .or(local_tag)
+                .or_else(|| self.editor.as_ref().map(|e| e.markers()));
             // CPU riders' name tags beside the game's markers.
             let hud_peers = if ready.cpus.is_empty() {
                 hud_peers
@@ -3047,6 +3145,10 @@ impl App {
             let mut state = replay::record(&riding.ride, riding.ride.steps());
             state["camera"]["preset"] = riding.ride.camera().0.preset.into();
             state["paused"] = riding.paused.into();
+            // The full-density surface and the scene drawn inside it
+            // (tools/test_engine_shell.mjs, test_engine_crisp_hud.mjs).
+            state["surface"] = serde_json::json!([ready.gpu.config.width, ready.gpu.config.height]);
+            state["sceneSize"] = serde_json::json!(ready.gpu.scene_size());
             // Split screen (tools/test_engine_split_screen.mjs).
             if let Some(second) = ready.split.first() {
                 let camera = |c: &atv_render::Camera, focal: f32| {
@@ -3317,6 +3419,15 @@ impl App {
             if let Some(overlay) = &self.overlay {
                 state["toolbar"] = overlay.diagnostics();
             }
+            // Photo mode (tools/test_engine_photo.mjs).
+            state["photo"] = self.photo.as_ref().map(photo::Photo::state).into();
+            state["replay"] = self
+                .replay
+                .as_ref()
+                .map(|r| r.state(riding.recorder.span()))
+                .into();
+            state["view"] = serde_json::json!({"eye": ready.camera.eye(),
+                "yaw": ready.camera.yaw, "pitch": ready.camera.pitch, "focal": ready.focal_length});
             // The ride's course and championship round, and the results
             // buttons (tools/test_engine_championship.mjs).
             // The Practice event type and the player's race frame
@@ -3367,6 +3478,12 @@ impl App {
                 .race()
                 .and_then(|r| r.frame.as_ref())
                 .and_then(|f| f.best);
+            // Added after the large literal below (macro recursion limit).
+            let training_speech = riding.sound.as_ref().map(|s| {
+                serde_json::json!({
+                    "lines": s.speech.lines(), "started": s.speech.started, "last": s.speech.last,
+                })
+            });
             state["ride"] = serde_json::json!({
                 "environment": ready.venue.environment,
                 "championship": riding.ride.race().and_then(|r| r.settings().championship),
@@ -3422,10 +3539,22 @@ impl App {
                     .and_then(|o| o.results.fame.as_ref())
                     .map(|f| serde_json::json!({"broken": f.broken, "name": f.name, "player": f.player})),
             });
+            state["ride"]["trainingSpeech"] = training_speech.into();
             state["ride"]["cpus"] = ready.cpus.iter().map(game_cpu::Cpu::state).collect();
             state["ride"]["practice"] = practice.into();
             state["ride"]["duel"] = duel.into();
             state["ride"]["lapAttack"] = lap_attack.into();
+            // A User Created Enduro's gate count (tools/test_engine_user_course.mjs).
+            state["ride"]["userCourseGates"] = riding
+                .ride
+                .race()
+                .filter(|r| r.settings().course == atv_game::launch::RaceVariant::UserEnduro)
+                .map(|_| ready.venue.enduro_gates.len())
+                .into();
+            // The Waypoint Editor's placed gates and shown gate models.
+            state["ride"]["editorGates"] =
+                self.editor.as_ref().map(|e| e.course.gates.len()).into();
+            state["ride"]["editorModels"] = ready.venue.editor_gates.is_some().into();
             // Post-reset fade (atv_core::reset_fade): player 1's drawn
             // opacity and reset timer, and split screen's other players'.
             state["ride"]["resetFade"] = riding.reset_fade(&ready.venue).into();
@@ -3510,6 +3639,7 @@ impl App {
             });
             // Game Settings (tools/test_engine_game_settings.mjs).
             let game = &mut state["settings"];
+            game["worldShadows"] = graphics.world_shadows.into();
             game["soundConfiguration"] = mixer.as_ref().map(|m| m.2.clone()).into();
             // The streamed soundtrack's routing (web: a graph once not Stereo).
             game["musicRoute"] = riding.sound.as_ref().and_then(|s| s.music_route()).into();
@@ -3800,7 +3930,11 @@ impl App {
             .overlay
             .as_ref()
             .is_some_and(|o| o.jukebox_open() || o.sliding());
-        self.effective_focused() && (animating || ready.riding.as_ref().is_none_or(|r| !r.paused))
+        self.effective_focused()
+            && (animating
+                || self.photo.is_some()
+                || self.replay.is_some()
+                || ready.riding.as_ref().is_none_or(|r| !r.paused))
     }
 
     /// Schedule one frame: it applies the event, then `awake` decides.
@@ -4019,6 +4153,9 @@ impl App {
                 self.toggle_fullscreen();
             }
             Event::CopyRide => self.copy_ride_link(),
+            Event::SaveCourse => self.save_editor_course(),
+            Event::Photo => self.open_photo(),
+            Event::Replay => self.open_replay(false),
             Event::Spawn(peer) => {
                 let Some(ready) = &mut self.ready else { return };
                 let (Some(net), Some(riding)) = (&mut ready.net, &mut ready.riding) else {
@@ -4322,6 +4459,24 @@ impl App {
                 "Invite link copied.",
             ));
         }
+        // A User Created Enduro shares its course link.
+        if riding
+            .ride
+            .race()
+            .is_some_and(|r| r.settings().course == atv_game::launch::RaceVariant::UserEnduro)
+        {
+            let course = self.user_course.as_ref()?;
+            return Some((
+                atv_game::launch::user_course_url(
+                    &page,
+                    &course.encode(),
+                    &course.environment,
+                    selection.quad,
+                    selection.rider,
+                ),
+                "Course link copied.",
+            ));
+        }
         let url = atv_game::launch::ride_url(
             &page,
             &atv_game::launch::RideLink {
@@ -4538,6 +4693,14 @@ impl App {
     }
 
     fn act(&mut self, action: overlay::Action) {
+        if let overlay::Action::Viewer(button) = action {
+            self.viewer_button(button);
+            return;
+        }
+        if action == overlay::Action::Replay {
+            self.open_replay(true);
+            return;
+        }
         let Some(ready) = self.ready.as_mut() else {
             return;
         };
@@ -4557,6 +4720,19 @@ impl App {
                 }
             }
             overlay::Action::Camera => riding.cycle_requested = true,
+            overlay::Action::Gate(command) => {
+                if let Some(editor) = &mut self.editor {
+                    let f = riding.ride.frame();
+                    editor.apply(
+                        command,
+                        f.origin,
+                        f.orientation,
+                        (Instant::now() - self.started).as_secs_f64(),
+                    );
+                }
+            }
+            // Handled above.
+            overlay::Action::Viewer(_) | overlay::Action::Replay => {}
             overlay::Action::RaceRetry if self.tag.as_ref().is_some_and(|t| t.local) => {
                 self.restart_split_tag();
             }
@@ -4868,6 +5044,14 @@ impl App {
             .and_then(|r| r.riding.as_ref())
             .is_some_and(|r| !r.paused && !r.held)
             && self.effective_focused();
+        if self.photo.is_some() {
+            self.photo_pointer(touch.id, touch.phase, x, y);
+            return;
+        }
+        if self.replay.is_some() {
+            self.replay_pointer(touch.id, touch.phase, x, y);
+            return;
+        }
         let Some(overlay) = &mut self.overlay else {
             return;
         };
@@ -5157,6 +5341,14 @@ impl App {
             }
             return;
         }
+        if self.photo.is_some() {
+            self.photo_key(&format!("{code:?}"));
+            return;
+        }
+        if self.replay.is_some() {
+            self.replay_key(&format!("{code:?}"));
+            return;
+        }
         let bindings = self
             .ready
             .as_mut()
@@ -5190,6 +5382,15 @@ impl App {
         let names: HashSet<String> = self.keys.iter().map(|k| format!("{k:?}")).collect();
         if let Some(riding) = self.ready.as_mut().and_then(|r| r.riding.as_mut()) {
             riding.key_pressed(&format!("{code:?}"), now, &|c: &str| names.contains(c));
+            // The Waypoint Editor's G and U (unless the player bound them).
+            let name = format!("{code:?}");
+            if let Some(editor) = &mut self.editor
+                && let Some(command) = waypoint_editor::key_command(&name)
+                && !riding.bindings.uses_key(&name)
+            {
+                let f = riding.ride.frame();
+                editor.apply(command, f.origin, f.orientation, now);
+            }
             // Any key skips the pre-race camera (00212d40).
             riding.ride.skip_intro();
             // Accept skips a Training demonstration or Chase line (00225200).
@@ -5327,7 +5528,14 @@ impl ApplicationHandler<Message> for App {
                     .and_then(|f| f.page)
                     .unwrap_or_else(|| "title".into());
                 match pollster::block_on(future) {
-                    Ok(booted) => capture_front(booted, &page, &path, width, height),
+                    Ok(booted) => capture_front(
+                        booted,
+                        &page,
+                        &path,
+                        width,
+                        height,
+                        options.capture_menu.as_ref(),
+                    ),
                     Err(error) => status(&error),
                 }
                 event_loop.exit();
@@ -5382,6 +5590,8 @@ impl ApplicationHandler<Message> for App {
             // ride (tests and host measurements).
             split: split_link_param(),
             cpus: game_cpu::Request::default(),
+            user_course: None,
+            editor: false,
         };
         // A direct split ride restarts (and reopens after a device loss)
         // split too.
@@ -5497,7 +5707,14 @@ impl ApplicationHandler<Message> for App {
                         None => println!("gpu timing unavailable (no timestamp queries)"),
                     }
                 }
-                capture(ready, &path, width, height, options.capture_ui);
+                capture(
+                    ready,
+                    &path,
+                    width,
+                    height,
+                    options.capture_ui,
+                    options.capture_menu.as_ref(),
+                );
                 event_loop.exit();
                 return;
             }
@@ -5574,6 +5791,9 @@ impl ApplicationHandler<Message> for App {
                             ..Default::default()
                         });
                     }
+                    if let Some(session) = &mut self.training {
+                        session.set_voices(sound.speech.lengths());
+                    }
                     riding.sound = Some(*sound);
                     // A delayed bank can finish after blur/hide. Apply the
                     // live lifecycle before starting the already-unlocked sink.
@@ -5585,7 +5805,12 @@ impl ApplicationHandler<Message> for App {
                 // One frame publishes the new sound state even while asleep.
                 self.wake();
             }
-            Message::SoundFailed(error) => status(&format!("Sound unavailable: {error}")),
+            Message::SoundFailed(error) => {
+                if let Some(session) = &mut self.training {
+                    session.no_voices();
+                }
+                status(&format!("Sound unavailable: {error}"))
+            }
             Message::GameToy(toy) => {
                 if let Some(game) = &mut self.game {
                     game.load(toy);
@@ -5636,6 +5861,13 @@ impl ApplicationHandler<Message> for App {
                 // menu no longer polls the Free Ride count).
                 self.wake();
             }
+            Message::Credits(credits) => {
+                if let Some(front) = &self.front {
+                    let (credits, original) = *credits;
+                    front.borrow_mut().credits = Some((Rc::new(credits), original));
+                }
+                self.wake();
+            }
             Message::JukeboxArt(art) => {
                 if let (Some(overlay), Some(ready)) = (&mut self.overlay, &self.ready) {
                     overlay.set_jukebox_art(&ready.gpu.device, &ready.gpu.queue, *art);
@@ -5677,12 +5909,13 @@ impl ApplicationHandler<Message> for App {
                 }
                 self.last = Instant::now();
                 if let Some(window) = &self.window {
-                    // The ride draws at its render ratio from its first frame.
-                    MENU_SURFACE.with(|m| m.set(false));
+                    // The ride's scene draws at its render ratio from its
+                    // first frame; the surface and UI keep full density.
                     let size = render_size(window);
                     let ready = self.ready.as_mut().unwrap();
                     fit_surface(window, &mut ready.gpu, size, self.suspended);
                     ready.gpu.set_scene_targets(true);
+                    ready.gpu.set_scene_scale(scene_scale(window));
                     if ready.riding.is_some() {
                         let mut overlay = overlay::Overlay::new(
                             &ready.gpu.device,
@@ -5716,6 +5949,21 @@ impl ApplicationHandler<Message> for App {
                             .and_then(|r| r.ride.race())
                             .is_some_and(|r| r.kid);
                         overlay.set_kid_touch(overlay.kid);
+                        overlay.editor = self.editor.is_some()
+                            && ready
+                                .riding
+                                .as_ref()
+                                .is_some_and(|r| r.ride.race().is_none());
+                        if let Some(editor) = &mut self.editor {
+                            editor.restart();
+                        }
+                        overlay.user_course = ready
+                            .riding
+                            .as_ref()
+                            .and_then(|r| r.ride.race())
+                            .is_some_and(|r| {
+                                r.settings().course == atv_game::launch::RaceVariant::UserEnduro
+                            });
                         // The profile's course record (`001f1e30` keeps lap
                         // and race times only at the default 3 Enduro / 5
                         // other laps).
@@ -5788,6 +6036,7 @@ impl ApplicationHandler<Message> for App {
                 self.cloud_tick();
             }
             Message::Cloud(id, response) => self.cloud_response(id, response),
+            Message::World(id, response) => self.world_response(id, response),
             Message::CloudImport(name, text) => self.cloud_import(name, text),
             Message::RoomJoined(result) => self.room_joined(*result),
             Message::LobbyNotice(text) => {
@@ -6010,6 +6259,8 @@ impl ApplicationHandler<Message> for App {
                 };
                 if let Some(front) = self.front_input() {
                     front.borrow_mut().wheel(dy);
+                } else if let Some(photo) = &mut self.photo {
+                    photo.wheel(dy);
                 } else if let Some(overlay) = &mut self.overlay {
                     overlay.menu_wheel(dy);
                 }
@@ -6103,6 +6354,20 @@ impl ApplicationHandler<Message> for App {
                 self.visible = !occluded;
                 self.sync_activity();
             }
+            // Photo mode: the right button pans.
+            WindowEvent::MouseInput {
+                state,
+                button: MouseButton::Right,
+                ..
+            } if self.photo.is_some() => {
+                let (x, y) = self.css(self.cursor.unwrap_or_default());
+                let phase = if state == ElementState::Pressed {
+                    winit::event::TouchPhase::Started
+                } else {
+                    winit::event::TouchPhase::Ended
+                };
+                self.photo_pointer(photo::RIGHT_MOUSE, phase, x, y);
+            }
             WindowEvent::MouseInput {
                 state,
                 button: MouseButton::Left,
@@ -6115,6 +6380,14 @@ impl ApplicationHandler<Message> for App {
                     winit::event::TouchPhase::Ended
                 };
                 if self.front_pointer(MOUSE, phase, x, y) {
+                    return;
+                }
+                if self.photo.is_some() {
+                    self.photo_pointer(overlay::MOUSE, phase, x, y);
+                    return;
+                }
+                if self.replay.is_some() {
+                    self.replay_pointer(overlay::MOUSE, phase, x, y);
                     return;
                 }
                 if let Some(overlay) = self.overlay.as_mut().filter(|o| o.menu.is_some()) {
@@ -6163,6 +6436,21 @@ impl ApplicationHandler<Message> for App {
                     self.front_pointer(MOUSE, winit::event::TouchPhase::Moved, x, y);
                     return;
                 }
+                if self.photo.is_some() || self.replay.is_some() {
+                    self.cursor = Some((position.x, position.y));
+                    let (x, y) = self.css((position.x, position.y));
+                    let moved = winit::event::TouchPhase::Moved;
+                    if self.photo.is_some() {
+                        self.photo_pointer(overlay::MOUSE, moved, x, y);
+                        self.photo_pointer(photo::RIGHT_MOUSE, moved, x, y);
+                    } else {
+                        self.replay_pointer(overlay::MOUSE, moved, x, y);
+                    }
+                    if let Some(overlay) = &mut self.overlay {
+                        overlay.hover(x, y);
+                    }
+                    return;
+                }
                 if let (true, Some((x, _)), Some(Some(_))) = (
                     self.dragging,
                     self.cursor,
@@ -6193,6 +6481,7 @@ impl ApplicationHandler<Message> for App {
             }
             WindowEvent::RedrawRequested => {
                 self.step();
+                self.finish_photo();
                 // Show FPS counts the frames the surface presented.
                 let gpu = self.gpu.as_ref().or(self.ready.as_ref().map(|r| &r.gpu));
                 if let Some(at) = gpu.and_then(|g| g.take_presented()) {
@@ -6322,6 +6611,7 @@ impl App {
             }
         }
         self.poll_riders();
+        self.world_poll();
         #[cfg(not(target_arch = "wasm32"))]
         let cloud = self.cloud_poll();
         // The earliest of every reason to wake without an event.
@@ -6676,6 +6966,7 @@ impl App {
         let focused = self.effective_focused();
         if front_shown {
             self.sync_soundtrack(preview, focused, (enabled, volume));
+            self.load_credits();
         }
         let wanted = front_shown && enabled && focused && !preview;
         if wanted
@@ -6786,6 +7077,30 @@ impl App {
         self.save_soundtrack();
     }
 
+    /// The Credits page's script, read on its first visit (PAGE18).
+    fn load_credits(&mut self) {
+        if self
+            .front
+            .as_ref()
+            .is_some_and(|f| f.borrow().credits_open())
+            && let Some(content) = self.content.clone()
+            && self.requested.insert("front-credits".into())
+        {
+            self.spawn(
+                async move { atv_game::credits::load(&content).await },
+                |result| {
+                    // Unreadable original text: the port's section alone.
+                    Message::Credits(Box::new(result.unwrap_or_else(|error| {
+                        status(&format!("Credits: {error}"));
+                        let mut credits = atv_core::credits::Credits::default();
+                        credits.entries = atv_core::credits::port_section();
+                        (credits, false)
+                    })))
+                },
+            );
+        }
+    }
+
     /// Reads the soundtrack catalog for the frontend (once per page).
     fn load_soundtrack(&mut self) {
         if self.soundtrack_requested {
@@ -6835,6 +7150,7 @@ impl App {
             boot.tracks,
             boot.backdrop,
         );
+        front.art.trophy = boot.trophy;
         // Each course's race archive is offered once its record exists
         // (frontend.js `raceCourses`).
         // Enduro and Short Track races follow their venue's National race
@@ -7044,6 +7360,19 @@ impl App {
             return;
         }
         let race = setup.activity == "race";
+        // A course link (`wp=`) races its User Created Enduro alone.
+        if let Some(code) = &setup.user_course {
+            let Ok(course) = atv_core::user_course::UserCourse::decode(code) else {
+                return;
+            };
+            f.state.open("single", &view);
+            if !setup.play {
+                return;
+            }
+            drop(f);
+            self.start_user_course(Rc::new(course), setup.quad_id, setup.rider_id);
+            return;
+        }
         if race && !f.state.race_courses.is_empty() {
             // Back from the setup climbs through Single Player.
             f.state.open("single", &view);
@@ -7121,6 +7450,29 @@ impl App {
         self.start_ride(map, setup.quad_id, setup.rider_id, settings, None);
     }
 
+    /// Races a User Created Enduro (user_course.rs): alone, its own laps.
+    fn start_user_course(
+        &mut self,
+        course: Rc<atv_core::user_course::UserCourse>,
+        quad: u16,
+        rider: u16,
+    ) {
+        self.editor = None;
+        let settings = atv_game::ride::race::Settings {
+            laps: course.laps,
+            cpu: 0,
+            seed: fresh_seed(),
+            course: atv_game::launch::RaceVariant::UserEnduro,
+            ..Default::default()
+        };
+        let id = atv_game::launch::race_course_id(
+            &course.environment,
+            atv_game::launch::RaceVariant::UserEnduro,
+        );
+        self.user_course = Some(course);
+        self.start_ride(id, quad, rider, Some(settings), None);
+    }
+
     fn front_event(&mut self, event: atv_ui::front::controller::Event) {
         use atv_ui::front::controller::Event;
         // Multiplayer → Split Screen rides Freestyle, races and the Games
@@ -7142,6 +7494,8 @@ impl App {
                 | Event::FreestyleHost { .. }
                 | Event::Objective { .. }
         ) {
+            // Any other ride ends the Waypoint Editor.
+            self.editor = None;
             let split = self.front.as_ref().and_then(|f| {
                 let f = f.borrow();
                 (f.state.split
@@ -7297,7 +7651,11 @@ impl App {
                     .map(|f| f.borrow().state.store.atvs.clone())
                     .unwrap_or_default();
                 let completed = training::completed(&catalog);
-                self.training = Some(training::TrainingSession::new(completed, catalog));
+                let mut session = training::TrainingSession::new(completed, catalog);
+                if self.defaults.as_ref().is_none_or(|d| d.sound.is_none()) {
+                    session.no_voices();
+                }
+                self.training = Some(session);
                 self.start_ride("training".into(), quad, rider, None, None);
             }
             Event::Objective {
@@ -7377,6 +7735,24 @@ impl App {
                 self.start_ride(environment, quad, rider, Some(settings), None);
             }
             Event::CopyRaceLink => self.copy_race_link(),
+            Event::WaypointEdit {
+                code,
+                slot,
+                quad,
+                rider,
+            } => {
+                if let Ok(course) = atv_core::user_course::UserCourse::decode_draft(&code) {
+                    let environment = course.environment.clone();
+                    self.editor = Some(waypoint_editor::Session::new(course, slot));
+                    self.start_ride(environment, quad, rider, None, None);
+                }
+            }
+            Event::UserCourse { code, quad, rider } => {
+                if let Ok(course) = atv_core::user_course::UserCourse::decode(&code) {
+                    self.start_user_course(Rc::new(course), quad, rider);
+                }
+            }
+            Event::CopyCourseLink { code } => self.copy_course_link(&code),
             Event::Cloud(command) => self.cloud_command(command),
             Event::FreeRide { quad, rider, name } => {
                 let Some(relay) = self.defaults.as_ref().map(|d| d.relay.clone()) else {
@@ -7722,6 +8098,72 @@ impl App {
         self.wake();
     }
 
+    /// Waypoint Editor → Copy course link: the course's link with the
+    /// garage choice, on the clipboard or the notice line.
+    fn copy_course_link(&mut self, code: &str) {
+        let Some(front) = self.front.clone() else {
+            return;
+        };
+        let Ok(course) = atv_core::user_course::UserCourse::decode(code) else {
+            return;
+        };
+        let mut f = front.borrow_mut();
+        let url = atv_game::launch::user_course_url(
+            &multiplayer::share_page(&default_relay()),
+            code,
+            &course.environment,
+            f.state.quad_id,
+            f.state.rider_id,
+        );
+        f.state.notice = Some(url.clone());
+        #[cfg(target_arch = "wasm32")]
+        if let Some(clipboard) = web_sys::window().map(|w| w.navigator().clipboard()) {
+            let promise = clipboard.write_text(&url);
+            let proxy = self.proxy.clone();
+            wasm_bindgen_futures::spawn_local(async move {
+                let copied = wasm_bindgen_futures::JsFuture::from(promise).await.is_ok();
+                let _ = proxy.send_event(Message::LobbyNotice(if copied {
+                    "Course link copied.".into()
+                } else {
+                    url
+                }));
+            });
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        if clipboard::copy(&url) {
+            f.state.notice = Some("Course link copied.".into());
+        }
+        drop(f);
+        self.wake();
+    }
+
+    /// Waypoint Editor Pause → Save Course: into the editor's slot, then
+    /// the course's page.
+    fn save_editor_course(&mut self) {
+        let Some(editor) = &self.editor else {
+            return;
+        };
+        if !editor.course.complete() {
+            if let Some(menu) = self.overlay.as_mut().and_then(|o| o.menu.as_mut()) {
+                menu.notice = Some(format!(
+                    "Drop at least {} gates first.",
+                    atv_core::user_course::MIN_GATES
+                ));
+            }
+            return;
+        }
+        let (course, slot) = (editor.course.clone(), editor.slot);
+        if let Some(front) = &self.front {
+            let mut settings = atv_ui::settings::Settings::load();
+            front
+                .borrow_mut()
+                .state
+                .saved_waypoint(&course, slot, &mut settings);
+        }
+        self.editor = None;
+        self.quit_to(Some("waypoint-course"));
+    }
+
     fn copy_lobby_invite(&mut self) {
         let Some(front) = self.front.clone() else {
             return;
@@ -7897,6 +8339,10 @@ impl App {
                     })
             }),
             split: self.split_request,
+            user_course: race
+                .filter(|r| r.course == atv_game::launch::RaceVariant::UserEnduro)
+                .and(self.user_course.clone()),
+            editor: race.is_none() && self.editor.is_some(),
             // Only a local game takes CPU riders (never a room).
             cpus: if self.split_tag.is_some()
                 || self.hockey.is_some()
@@ -8013,12 +8459,16 @@ impl App {
         #[cfg(target_os = "android")]
         self.soft_keyboard.follow(false, false);
         let championship = race.as_ref().and_then(|r| r.championship);
-        let fame = race.as_ref().map(|r| {
-            (
-                atv_game::launch::race_course_id(&environment, r.course),
-                r.difficulty == 2,
-            )
-        });
+        // A User Created Enduro keeps no Hall of Fame records.
+        let fame = race
+            .as_ref()
+            .filter(|r| r.course != atv_game::launch::RaceVariant::UserEnduro)
+            .map(|r| {
+                (
+                    atv_game::launch::race_course_id(&environment, r.course),
+                    r.difficulty == 2,
+                )
+            });
         let (world, ride) = self.ride_setup(&front, quad, rider, race);
         {
             let mut f = front.borrow_mut();
@@ -8318,16 +8768,10 @@ impl App {
         }
     }
 
-    /// The frontend draws at the display's full density and the ride at its
-    /// render ratio: switches the surface when one hands over to the other.
     /// Only a ride draws the 3D scene, so only its device keeps the scene's
     /// depth and multisample targets (at DPR 3 a portrait phone's would be
     /// ~95 MB the menus never touch).
     fn sync_surface_density(&mut self) {
-        let menu = self.ready.is_none();
-        if MENU_SURFACE.with(|m| m.replace(menu)) != menu {
-            self.resize_surface();
-        }
         if let Some(gpu) = &mut self.gpu {
             gpu.set_scene_targets(false);
         }
@@ -8346,6 +8790,7 @@ impl App {
         let view = overlay::viewport(size.width, size.height, surface_scale(&window));
         if let Some(ready) = &mut self.ready {
             fit_surface(&window, &mut ready.gpu, size, self.suspended);
+            ready.gpu.set_scene_scale(scene_scale(&window));
         }
         if let Some(gpu) = &mut self.gpu {
             fit_surface(&window, gpu, size, self.suspended);
@@ -8731,12 +9176,20 @@ fn course_label(names: &std::collections::HashMap<String, String>, venue: &str) 
 
 /// Native parity capture of one frontend page with all its artwork.
 #[cfg(not(target_arch = "wasm32"))]
-fn capture_front(booted: Booted, page: &str, path: &std::path::Path, width: u32, height: u32) {
+fn capture_front(
+    booted: Booted,
+    page: &str,
+    path: &std::path::Path,
+    width: u32,
+    height: u32,
+    menu: Option<&(String, usize, f64)>,
+) {
     let Booted { gpu, content, boot } = booted;
+    let scale = menu.map_or(1., |m| m.2 as f32);
     let view = atv_ui::hud::Viewport {
-        width: width as f32,
-        height: height as f32,
-        scale: 1.,
+        width: width as f32 / scale,
+        height: height as f32 / scale,
+        scale,
         hover: true,
         ..Default::default()
     };
@@ -8751,6 +9204,9 @@ fn capture_front(booted: Booted, page: &str, path: &std::path::Path, width: u32,
     );
     // Captures show the page at rest.
     front.slide = false;
+    if let Some((page, row, _)) = menu {
+        front.open_options(page, *row);
+    }
     pollster::block_on(async {
         front.art.photos.extend(
             atv_ui::front::assets::photos(&content, &tracks)
@@ -8803,7 +9259,14 @@ fn capture_front(booted: Booted, page: &str, path: &std::path::Path, width: u32,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn capture(ready: &mut Ready, path: &std::path::Path, width: u32, height: u32, ui: bool) {
+fn capture(
+    ready: &mut Ready,
+    path: &std::path::Path,
+    width: u32,
+    height: u32,
+    ui: bool,
+    menu: Option<&(String, usize, f64)>,
+) {
     let view = View {
         camera: ready.camera,
         focal_length: ready.focal_length,
@@ -8814,25 +9277,39 @@ fn capture(ready: &mut Ready, path: &std::path::Path, width: u32, height: u32, u
         let mut overlay = overlay::Overlay::with_settings(
             &gpu.device,
             gpu.config.format,
-            overlay::viewport(width, height, 1.),
+            overlay::viewport(width, height, menu.map_or(1., |m| m.2)),
             atv_ui::settings::Settings::memory(),
         );
+        if let Some((page, row, _)) = menu {
+            overlay.sync_menu(true);
+            if let Some(menu) = &mut overlay.menu {
+                menu.open_at(page, *row);
+            }
+        }
         overlay.set_course(&ready.venue);
         overlay.finish_course(&ready.venue.terrain);
         if let Some(assets) = ready.hud_assets.take() {
             overlay.set_meter(&gpu.device, &gpu.queue, assets);
         }
         let ride = &riding.ride;
-        for _ in 0..2 {
+        // The bindings pages list the ride's own.
+        let mut bindings = menu.map(|_| {
+            let mut bindings = atv_game::ride::bindings::Bindings::load(None, None).0;
+            bindings.profile = riding.bindings.profile.clone();
+            bindings
+        });
+        // A menu page slides in over frames of at most
+        // `transition::MAX_STEP`: enough of them leave it at rest.
+        for pass in 0..if menu.is_some() { 40 } else { 2 } {
             overlay.prepare(
                 &gpu.device,
                 &gpu.queue,
                 width,
                 height,
-                0.,
+                pass as f64 * atv_ui::transition::MAX_STEP,
                 true,
                 true,
-                false,
+                menu.is_some(),
                 Some(overlay::HudInput {
                     hud: ride.hud(),
                     rider_world: ride.rider_world(),
@@ -8850,7 +9327,7 @@ fn capture(ready: &mut Ready, path: &std::path::Path, width: u32, height: u32, u
                     others: Vec::new(),
                     split_layout: None,
                 }),
-                None,
+                bindings.as_mut(),
             );
         }
         overlay
@@ -9125,6 +9602,12 @@ pub fn graphics_preset(name: &str) -> Graphics {
         // Authored, above High and never picked by Auto.
         "remastered" => Graphics {
             remaster: true,
+            // The browser's WebGL2 and phones take the smaller map.
+            world_shadows: if cfg!(target_arch = "wasm32") {
+                2048
+            } else {
+                4096
+            },
             ..graphics_preset("high")
         },
         "high" => Graphics {
@@ -9140,6 +9623,7 @@ pub fn graphics_preset(name: &str) -> Graphics {
             dirt: true,
             finest_models: true,
             remaster: false,
+            world_shadows: 0,
         },
         "enhanced" => Graphics {
             interpolation: true,
@@ -9154,6 +9638,7 @@ pub fn graphics_preset(name: &str) -> Graphics {
             dirt: true,
             finest_models: false,
             remaster: false,
+            world_shadows: 0,
         },
         _ => Graphics::default(),
     }
@@ -9219,8 +9704,8 @@ pub(crate) fn attach_records(ride: &mut atv_game::ride::Ride, course: &str, play
     };
     let settings = race.settings();
     // Kid races are ridden by the race path driver: they keep no records
-    // (research/KID_MODE.md).
-    if settings.kid {
+    // (research/KID_MODE.md). User Created Enduros stay off the boards.
+    if settings.kid || settings.course == atv_game::launch::RaceVariant::UserEnduro {
         return;
     }
     let enduro = atv_game::launch::split_race_course(course).is_some_and(|(_, v)| v.is_enduro());
@@ -9677,6 +10162,8 @@ impl App {
             objective: None,
             split: None,
             cpus: game_cpu::Request::default(),
+            user_course: None,
+            editor: false,
         };
         let future = async move {
             let mut ready = match prepare(
@@ -9790,6 +10277,7 @@ pub fn run(options: Options) {
     let event_loop = builder.build().expect("event loop");
     let app = App {
         cloud: Default::default(),
+        world: Default::default(),
         camera_choice: options.camera_choice,
         render_scale: Default::default(),
         usage: Default::default(),
@@ -9854,6 +10342,8 @@ pub fn run(options: Options) {
         objective: None,
         training: None,
         game: None,
+        user_course: None,
+        editor: None,
         hockey: None,
         tag: None,
         room_race: None,
@@ -9866,6 +10356,8 @@ pub fn run(options: Options) {
         room_freestyle_serial: 0,
         room_freestyle_start: false,
         tag_start: None,
+        photo: None,
+        replay: None,
         split_tag: None,
         tag_reload: None,
         pending_room: None,
@@ -10195,10 +10687,6 @@ thread_local! {
     /// The adaptive render ratio (backing pixels per CSS pixel, at most the
     /// display's): render_scale::RenderScale's current step.
     static RENDER_RATIO: std::cell::Cell<f64> = const { std::cell::Cell::new(1.5) };
-    /// The frontend is on screen (no ride): its UI-only frames draw at the
-    /// display's full density (at most MENU_RATIO), not the ride's render
-    /// ratio, so menu text, icons and previews stay sharp on phones.
-    static MENU_SURFACE: std::cell::Cell<bool> = const { std::cell::Cell::new(true) };
     /// Desktop: the GPU backend scales a surface smaller than the window up
     /// to it (Metal, DX12), so the render ratio applies.
     static SURFACE_SCALES: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
@@ -10212,23 +10700,35 @@ fn render_ratio_applies() -> bool {
     cfg!(target_arch = "wasm32") || SURFACE_SCALES.with(|s| s.get())
 }
 
-/// The frontend's backing pixels per CSS pixel: the display's own, up to
-/// a DPR 3 phone (the menus are a few textured quads; no 3D scene).
+/// The surface's backing pixels per CSS pixel: the display's own, up to a
+/// DPR 3 phone. Menus, the HUD and the Pause menu draw at it; only the
+/// ride's 3D scene draws at the adaptive RENDER_RATIO (`scene_scale`).
 const MENU_RATIO: f64 = 3.;
 
-/// The render ratio in force: the frontend's full density, else the ride's
-/// adaptive RENDER_RATIO; never above the display's.
+/// The surface's density: the display's, at most MENU_RATIO.
 fn render_ratio(device: f64) -> f64 {
-    let cap = if MENU_SURFACE.with(|m| m.get()) {
-        MENU_RATIO
-    } else {
-        RENDER_RATIO.with(|r| r.get())
-    };
-    cap.min(device).max(0.1)
+    MENU_RATIO.min(device).max(0.1)
+}
+
+/// The ride's 3D scene in scene pixels per surface pixel: the adaptive
+/// RENDER_RATIO's share of the surface's density, where the render ratio
+/// applies (the scene is then stretched over the surface under the UI).
+fn scene_scale(window: &Window) -> f64 {
+    if !render_ratio_applies() {
+        return 1.;
+    }
+    let device = window.scale_factor();
+    scene_share(RENDER_RATIO.with(|r| r.get()), device)
+}
+
+/// `ratio` (scene backing pixels per CSS pixel) over the surface's density
+/// on a `device` pixel ratio display; never above 1.
+fn scene_share(ratio: f64, device: f64) -> f64 {
+    (ratio.min(device).max(0.1) / render_ratio(device)).min(1.)
 }
 
 /// Backing pixels per logical (CSS) pixel of the surface: the display's,
-/// capped at the render ratio where the render ratio applies.
+/// capped at the surface's density where the render ratio applies.
 fn surface_scale(window: &Window) -> f64 {
     let device = window.scale_factor();
     if render_ratio_applies() {
@@ -10257,7 +10757,8 @@ fn fit_surface(
 }
 
 /// The surface size: the window's physical size, scaled to at most
-/// RENDER_RATIO backing pixels per CSS pixel (game.js renderScale) on the
+/// MENU_RATIO backing pixels per CSS pixel (the ride's scene draws at
+/// RENDER_RATIO inside it, game.js renderScale) on the
 /// web and on desktops whose backend scales the surface. Layout stays in CSS
 /// pixels (overlay::viewport derives its scale from this size).
 fn render_size(window: &Window) -> winit::dpi::PhysicalSize<u32> {
@@ -10473,6 +10974,22 @@ struct MenuMusic {
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
+    #[test]
+    fn ride_scene_takes_the_render_ratios_share_of_a_full_density_surface() {
+        // DPR 3 phone: the surface draws at 3x, the ride's scene at 1.5x.
+        assert_eq!(super::render_ratio(3.), 3.);
+        assert_eq!(super::scene_share(1.5, 3.), 0.5);
+        assert_eq!(super::scene_share(1., 3.), 1. / 3.);
+        // A DPR 2 folding phone: 2x surface, 1.5x scene.
+        assert_eq!(super::scene_share(1.5, 2.), 0.75);
+        // At or below the render ratio the scene draws straight to it.
+        assert_eq!(super::scene_share(1.5, 1.5), 1.);
+        assert_eq!(super::scene_share(1.5, 1.), 1.);
+        // Past a DPR 3 display the surface stays at 3x.
+        assert_eq!(super::render_ratio(4.), 3.);
+        assert_eq!(super::scene_share(1.5, 4.), 0.5);
+    }
+
     #[test]
     fn kid_races_normal_cpus_with_the_kid_controls() {
         use atv_core::race_ai::Options;

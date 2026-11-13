@@ -28,6 +28,8 @@ export const TESTS = {
   'test_engine_touch.mjs': { group: 'content' },
   'test_engine_hud.mjs': { group: 'content' },
   'test_engine_pause.mjs': { group: 'content' },
+  'test_engine_photo.mjs': { group: 'content' },
+  'test_engine_replay.mjs': { group: 'content' },
   'test_engine_alpha.mjs': { group: 'content' },
   'test_engine_alpha_muffle.mjs': { group: 'content' },
   'test_engine_alpha_landing.mjs': { group: 'content' },
@@ -36,6 +38,7 @@ export const TESTS = {
   'test_engine_sw_update.mjs': { group: 'content' },
   'test_engine_remastered.mjs': { group: 'content' },
   'test_engine_fold_layout.mjs': { group: 'content' },
+  'test_engine_crisp_hud.mjs': { group: 'content' },
   'test_engine_shadows_prefetch.mjs': { group: 'content' },
   'test_engine_visibility.mjs': { group: 'content' },
   'test_engine_arcade_touch.mjs': {
@@ -46,6 +49,7 @@ export const TESTS = {
   'test_engine_settings.mjs': { group: 'content' },
   'test_engine_game_settings.mjs': { group: 'content' },
   'test_engine_accessibility.mjs': { group: 'content' },
+  'test_engine_options_layout.mjs': { group: 'content' },
   'test_engine_fps.mjs': { group: 'content' },
   'test_engine_session_settings.mjs': { group: 'content' },
   'test_engine_links.mjs': { group: 'content' },
@@ -77,6 +81,7 @@ export const TESTS = {
   'test_engine_menu_parity.mjs': { group: 'content' },
   'test_engine_menu_flows.mjs': { group: 'content' },
   'test_engine_menu_navigation.mjs': { group: 'content' },
+  'test_engine_credits.mjs': { group: 'content' },
   'test_engine_menu_divider.mjs': { group: 'content' },
   'test_engine_menu_scroll.mjs': { group: 'content' },
   'test_engine_status_bar.mjs': { group: 'content' },
@@ -118,6 +123,10 @@ export const TESTS = {
   'test_engine_multiplayer_race_cpus.mjs': {
     group: 'relay',
     reason: 'needs the multiplayer relay at the same origin (Rust host and guest race a Supercross room filled with host-simulated CPUs); run with --url'
+  },
+  'test_engine_multiplayer_race_cpu_sounds.mjs': {
+    group: 'relay',
+    reason: 'needs the multiplayer relay at the same origin (a Rust guest hears the host CPUs\' drive-on sounds in an ENV01 room race); run with --url'
   },
   'test_engine_multiplayer_race_cpus_handoff.mjs': {
     group: 'relay',
@@ -192,9 +201,11 @@ export const TESTS = {
   'test_engine_split_seats.mjs': { group: 'content', timeout: 900 },
   'test_engine_split_objectives.mjs': { group: 'content', timeout: 900 },
   'test_engine_race_grid.mjs': { group: 'content' },
+  'test_engine_race_drop_gate.mjs': { group: 'content' },
   'test_engine_race_finish_gate.mjs': { group: 'content' },
   'test_engine_race_alternates.mjs': { group: 'content', timeout: 900 },
   'test_engine_enduro_race.mjs': { group: 'content', timeout: 900 },
+  'test_engine_user_course.mjs': { group: 'content', timeout: 900 },
   'test_engine_race_profile_points.mjs': { group: 'content' },
   'test_engine_profile_menu.mjs': { group: 'content' },
   'test_engine_profile_store.mjs': { group: 'content', timeout: 600 },
@@ -203,6 +214,7 @@ export const TESTS = {
   'test_engine_unlock_everything.mjs': { group: 'content', timeout: 600 },
   'test_engine_profile_stunts.mjs': { group: 'content', timeout: 900 },
   'test_engine_hall_of_fame.mjs': { group: 'content', timeout: 900 },
+  'test_engine_world_boards.mjs': { group: 'content', timeout: 600 },
   'test_engine_text_fields_touch.mjs': { group: 'content' },
   'test_engine_championship.mjs': { group: 'content', timeout: 1500 },
   'test_engine_championship_loading.mjs': { group: 'content' },

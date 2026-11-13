@@ -106,7 +106,7 @@ fn random_bytes() -> [u8; 10] {
 }
 
 /// Where links point: the page's own origin on the web.
-fn origin() -> String {
+pub(crate) fn origin() -> String {
     #[cfg(target_arch = "wasm32")]
     if let Some(origin) = web_sys::window().and_then(|w| w.location().origin().ok()) {
         return origin;
@@ -135,7 +135,7 @@ fn send(request: Request, answers: std::sync::mpsc::Sender<Answer>) {
 }
 
 #[cfg(target_arch = "wasm32")]
-async fn fetch(request: Request) -> Option<Response> {
+pub(crate) async fn fetch(request: Request) -> Option<Response> {
     use wasm_bindgen::JsCast;
     use wasm_bindgen_futures::JsFuture;
     let init = web_sys::RequestInit::new();
@@ -151,7 +151,7 @@ async fn fetch(request: Request) -> Option<Response> {
     init.set_headers(&headers);
     let window = web_sys::window()?;
     let response: web_sys::Response =
-        JsFuture::from(window.fetch_with_str_and_init(request.path, &init))
+        JsFuture::from(window.fetch_with_str_and_init(&request.path, &init))
             .await
             .ok()?
             .dyn_into()
@@ -176,7 +176,7 @@ async fn fetch(request: Request) -> Option<Response> {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn native_request(origin: &str, request: Request) -> Response {
+pub(crate) fn native_request(origin: &str, request: Request) -> Response {
     use std::time::Duration;
     let agent: ureq::Agent = ureq::Agent::config_builder()
         .http_status_as_error(false)

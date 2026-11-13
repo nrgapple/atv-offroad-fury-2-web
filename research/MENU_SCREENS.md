@@ -234,8 +234,10 @@ points and progress no longer sit in text under the rows:
   under the rows, where phone portrait needed a scroll to see them. The coin
   chip also glows for 700 ms when the profile's unlocks change (Unlock
   Everything, a purchase) even when the points do not.
-- Icons are vector shapes in the menu gold. The original trophy art
-  (`trophy_goldon`…, PAGE26) is not in the hosted runtime package.
+- The trophy chip draws the original lit gold trophy (`trophy_goldon`, from
+  PAGE05 Championship; the package keeps only that texture, about 8 KB) and
+  falls back to a vector cup without it. The disc has no coin or points art,
+  so the coin and the other icons are vector shapes in the menu gold.
 - Controllers and keyboards reach the same pages through the menus (Profile
   Editor, View Profile, Unlock Items, Pass Key); no button is mapped to the
   bar.

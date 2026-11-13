@@ -86,6 +86,13 @@ STARTUP += tuple(f'/UI/RESOURCE/TP/TP_{group}.RES' for group in ('PNAT','ASX','P
 # music player opens.
 JUKEBOX = '/UI/RESOURCE/PAGEA/PAGE14.RES'
 STARTUP += (JUKEBOX,)
+# The original Credits page (Options -> Credits): its credits.txt script.
+CREDITS = '/UI/RESOURCE/PAGEA/PAGE18.RES'
+STARTUP += (CREDITS,)
+# Original Championship page, reduced to its gold trophy (the menus' status
+# bar draws it in the trophy chip; compact_trophy).
+TROPHY = '/UI/RESOURCE/PAGEA/PAGE05.RES'
+STARTUP += (TROPHY,)
 
 # Original loading-screen action shots for every Freestyle venue except Training,
 # which ships only progress-bar art. Each course's file is fetched lazily.
@@ -690,6 +697,16 @@ def compact_menu_riders(data, materials, audio_definition):
     return pack_resource(selected)
 
 
+def compact_trophy(data):
+    """Only the Championship page's lit gold trophy texture."""
+    archive = Resource(data)
+    name = 'ui/frontend/textures/trophy_goldon.pst'
+    selected = [(n, archive.extract(i)) for i, (n, _, _) in enumerate(archive.members) if n.lower() == name]
+    if len(selected) != 1:
+        raise ValueError('trophy texture missing or duplicated')
+    return pack_resource(selected)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--iso', type=Path, default=ROOT / 'private/source/ATV Offroad Fury 2 (USA) (v2.00).iso')
@@ -744,6 +761,8 @@ def main():
                 data = compact_rider_motions(data, catalogs)
             elif path == '/UI/RESOURCE/RIDEINFO.RES':
                 data = compact_gear_catalog(data)
+            elif path == TROPHY:
+                data = compact_trophy(data)
             elif path.endswith('_ENDL.RES'):
                 data = compact_map_placements(data, path.split('/')[-2], national(path))
             elif path in VARIANTS:
@@ -758,7 +777,7 @@ def main():
                 outfits = ai_outfit_names(Resource(originals['/TRACKS/TRACKSA/ENV01/E01_NAT.RES']).named('airiders.pb'))
                 outfits |= gear_catalog_names(source('/UI/RESOURCE/RIDEINFO.RES'))
                 data = compact_rider_materials(originals['/RIDER/MRIDER.RES'], data, (originals['/RIDER/FRIDER.RES'],), outfits)
-            record = {'path': path, 'lba': by_path[path.lower()]['lba'], 'directory': False, 'lazy': path.startswith(('/QUAD/', '/UI/LOADICON/')) or path in ('/RIDER/FRIDER.RES', JUKEBOX) or path in VARIANTS or path in GAMES or path in OBJECTIVES, **blob(data)}
+            record = {'path': path, 'lba': by_path[path.lower()]['lba'], 'directory': False, 'lazy': path.startswith(('/QUAD/', '/UI/LOADICON/')) or path in ('/RIDER/FRIDER.RES', JUKEBOX, CREDITS) or path in VARIANTS or path in GAMES or path in OBJECTIVES, **blob(data)}
             if data != originals[path]:
                 record.update(repacked=True, member_count=len(Resource(data).members))
             records.append(record)
@@ -823,6 +842,12 @@ def main():
         if len(vocals) != 93 or any(path not in by_path for path in vocals):
             raise ValueError('exact-build rider vocals expected 93 loose clips')
         samples += [(path.removeprefix('/'), source(by_path[path]['path'])) for path in vocals]
+        # Training\dialogue.aud's 46 instructor lines (002275a0; lines 1-19
+        # in LINES1, 20-46 in LINES20), read only by the Training Course.
+        training = sorted(path for path in by_path if re.fullmatch(r'/audio/training/lines(1|20)/line0[0-9]{2}\.vag', path))
+        if len(training) != 46:
+            raise ValueError('exact-build Training dialogue expected 46 lines')
+        samples += [(path.removeprefix('/'), source(by_path[path]['path'])) for path in training]
         packed = pack_resource(samples)
         chunks = [{'offset': offset, **blob(packed[offset:offset + AUDIO_CHUNK])} for offset in range(0, len(packed), AUDIO_CHUNK)]
         records.append({'path': '/AUDIO/AUDIO.RES', 'lba': by_path['/audio/audio.res']['lba'], 'bytes': len(packed), 'sha256': hashlib.sha256(packed).hexdigest(), 'directory': False, 'lazy': False, 'repacked': True, 'member_count': len(samples), 'chunks': chunks})
