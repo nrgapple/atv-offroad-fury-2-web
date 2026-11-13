@@ -2136,12 +2136,9 @@ impl SceneRenderer {
             let light = std::array::from_fn(|i| g.ambient[i] + g.sun_color[i]);
             let ground = &self.ground;
             // Drops land on the water where it covers the ground.
-            let water = self
-                .water
-                .as_ref()
-                .map_or(f32::NEG_INFINITY, |(_, w)| {
-                    w.borrow().field.definition.surface.base_height
-                });
+            let water = self.water.as_ref().map_or(f32::NEG_INFINITY, |(_, w)| {
+                w.borrow().field.definition.surface.base_height
+            });
             let (draws, triangles) = pass.prepare(
                 gpu,
                 &view.camera,

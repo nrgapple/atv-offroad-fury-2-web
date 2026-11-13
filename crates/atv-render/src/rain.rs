@@ -335,11 +335,8 @@ impl RainPass {
             bytemuck::cast_slice(&self.drops.splashes),
         );
         let beads = self.drops.bead_instances(lens);
-        gpu.queue.write_buffer(
-            &self.bead_buffer,
-            0,
-            bytemuck::cast_slice(&beads),
-        );
+        gpu.queue
+            .write_buffer(&self.bead_buffer, 0, bytemuck::cast_slice(&beads));
         self.state = RainState {
             clock,
             streaks: STREAKS,
