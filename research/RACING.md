@@ -1549,6 +1549,31 @@ underlying causes (the leader limit at sx15's jump, the post-reset line at
 sx05 node 44, the Enduro pin at env05endl) are unchanged. A skip moves a CPU
 up to 500ft along the route without riding it.
 
+### The path driver on the player's quad — 2026-11-12 (issue #491)
+
+The race path driver also rides the player's quad: in Kid Mode while GO is
+held, with the `?autopilot=1` test tooling, and after the finish. It had
+the CPUs' off-track and slow-riding resets but not this recovery.
+
+Fact (production, commit 8dd53ab, `tools/test_engine_split_screen.mjs`,
+host at load 10-30): player 2's driver wrecked on a climb of the split race's default course
+near station 100 (race distance 2487 ft, 46.8 s into the race), was reset
+to its accepted point at station 97 about 100 ft before it, rode at the
+climb again from a standing start with the steering straight and wrecked
+again: 8 resets in the next 45 s of race time, no new furthest distance.
+Race time kept pace with the wall clock (92 s of race in 89 s), so the host
+was not starved. Player 1's driver passed the same place 4 s later.
+
+Change: while the driver steers the player's quad before the finish it is
+watched by the same `cpu_recovery::Recovery` (`RaceState::autopilot_recovery`):
+its resets count as repeats, the assist applies to its `Driver`, and a skip
+ahead offers the same candidates (`Race::recovery_stations(None, ..)`),
+accepts one (`accept_recovery_station(None, ..)`) and resets the quad
+there with the off-track reset (`Vehicle::reset_now`) on the next step. It
+does not run on the grid, with Kid Mode's GO released, after the finish, on
+the motorcycle, or for a player's own driving. `ui-state` reports
+`autopilotRecovery` ([assists, skips]) beside the other split diagnostics.
+
 ## Practice event type — 2026-10-30
 
 Exact-build evidence (USA v2.00 `SCUS_972.11`, private exports; bounded
