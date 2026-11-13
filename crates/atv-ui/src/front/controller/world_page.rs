@@ -437,6 +437,7 @@ mod tests {
                 value: 1_204_500,
                 vehicle: 28,
                 day: "2026-11-12".into(),
+                house: false,
             },
             BoardEntry {
                 rank: 2,
@@ -444,6 +445,7 @@ mod tests {
                 value: 31_250,
                 vehicle: 4,
                 day: "2026-11-12".into(),
+                house: false,
             },
         ];
         let board = Board {
