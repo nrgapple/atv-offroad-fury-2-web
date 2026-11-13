@@ -2,6 +2,11 @@
 
 ## Bounded overlap (2026-11-12)
 
+Call the guarded make targets and browser runner directly. Do not wrap a whole
+test/build/release pipeline in an outer `host_build.py -- sh -c ...` lease: its
+exclusive ownership would remain held between steps and suppress parallelism.
+Each normal entry point acquires and releases its own permit.
+
 Agent count is independent of build concurrency. Local entry points now admit
 one `compile` job and one `browser` suite together, in different worktrees.
 Cargo build/check/clippy/test/rustc, the web build and relay build use the compile
@@ -45,6 +50,14 @@ or interrupting existing work. New worktrees must incorporate this change to use
 the new make/browser entry points. Already-running and old-worktree jobs keep
 the conservative exclusive behavior. Use `python3 tools/host_build.py -- <command>`
 to request exclusive execution explicitly. Do not use `CI=1` to bypass host limits.
+
+Verification of the bounded guard: 37 host guard tests, six browser admission
+tests, workspace Clippy and PR #585 CI passed. A real Wasm check and public
+browser boot suite held permits concurrently in separate worktrees, with normal
+sampled memory pressure. The browser passed its loading/title assertions but
+timed out in simulated content-error handling; its full suite did not pass.
+The Wasm probe final exit result was not retained. This confirms concurrent
+admission, not an end-to-end speedup or optimized-link peak memory budget.
 
 ## Original exclusive guard (2026-10-28)
 
