@@ -256,19 +256,18 @@ pub fn mx_surface_source(data: &[u8]) -> Result<SurfaceSource> {
                 seen[n - 1] = true;
                 active = Some(n - 1);
             }
-        } else if let Some(i) = active {
-            if let Some((key, value)) = line.split_once('=') {
-                if key.trim() == "MapZoneFriction" {
-                    if overrides[i] {
-                        return Err("duplicate MapZoneFriction".into());
-                    }
-                    overrides[i] = true;
-                    routing[i] = value
-                        .trim()
-                        .parse()
-                        .map_err(|_| "invalid MapZoneFriction")?;
-                }
+        } else if let Some(i) = active
+            && let Some((key, value)) = line.split_once('=')
+            && key.trim() == "MapZoneFriction"
+        {
+            if overrides[i] {
+                return Err("duplicate MapZoneFriction".into());
             }
+            overrides[i] = true;
+            routing[i] = value
+                .trim()
+                .parse()
+                .map_err(|_| "invalid MapZoneFriction")?;
         }
     }
     SurfaceSource::mx(routing)

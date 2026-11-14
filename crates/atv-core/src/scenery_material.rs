@@ -556,12 +556,11 @@ pub fn describe_mx(
             if get(&section, key).is_none() {
                 if let Some(value) = get(&section, &format!("{key}_1")) {
                     extra.push_str(&format!("{key}={value}\n"));
-                } else if key == "inputAlphaD" {
-                    if let Some(value) =
+                } else if key == "inputAlphaD"
+                    && let Some(value) =
                         get(&section, "inputColorD").or_else(|| get(&section, "inputColorD_1"))
-                    {
-                        extra.push_str(&format!("inputAlphaD={value}\n"));
-                    }
+                {
+                    extra.push_str(&format!("inputAlphaD={value}\n"));
                 }
             }
         }
