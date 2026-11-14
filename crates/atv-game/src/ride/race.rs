@@ -1720,7 +1720,7 @@ impl Ride {
                 .map_or(f32::MIN, |c| c.height)
         };
         let follow = &self.follow_frame;
-        let stop = race_director::stop_action().then(|| race_director::StopInput {
+        let stop = race_director::stop_action().then_some(race_director::StopInput {
             stunt_clock,
             follow: race_director::Pose {
                 position: follow.position,

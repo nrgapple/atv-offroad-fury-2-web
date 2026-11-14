@@ -695,7 +695,7 @@ mod tests {
             ground: &ground,
         };
         let dt = 1. / 60.;
-        let mut tick = |d: &mut Director, rider: V, clock: Option<f32>| {
+        let tick = |d: &mut Director, rider: V, clock: Option<f32>| {
             d.step_with(dt, rider, &[], Some(&input(clock))).unwrap()
         };
         // The TV view, and no stop action outside a main stunt's window.
