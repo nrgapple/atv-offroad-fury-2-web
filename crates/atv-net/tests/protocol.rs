@@ -1295,3 +1295,40 @@ fn courier_bundles_carry_whole_compact_poses_only() {
         assert!(encode(&bad).is_err());
     }
 }
+
+#[test]
+fn server_frames_carry_compact_poses_and_deltas_only() {
+    let compact = |peer: u8, x: f32| {
+        let mut s = snapshot(1, 100, x);
+        s.peer = peer;
+        s.atv_nodes.clear();
+        s.rider_nodes.clear();
+        s.animation = Some(Box::default());
+        encode(&Packet::Snapshot(Box::new(s))).unwrap()
+    };
+    let frame = Packet::Frame {
+        poses: (0..MAX_PLAYERS as u8)
+            .map(|p| compact(p, p as f32))
+            .collect(),
+    };
+    let bytes = encode(&frame).unwrap();
+    assert!(bytes.len() <= atv_net::MAX_PACKET_BYTES);
+    assert_eq!(decode(&bytes).unwrap(), frame);
+    for bad in [
+        Packet::Frame { poses: vec![] },
+        Packet::Frame {
+            poses: vec![compact(0, 0.); atv_net::MAX_FRAME + 1],
+        },
+        Packet::Frame {
+            poses: vec![encode(&Packet::Links { mask: 1 }).unwrap()],
+        },
+        Packet::Frame {
+            poses: vec![encode(&Packet::Snapshot(Box::new(snapshot(1, 1, 0.)))).unwrap()],
+        },
+        Packet::Frame {
+            poses: vec![compact(0, 0.)[..20].to_vec()],
+        },
+    ] {
+        assert!(encode(&bad).is_err());
+    }
+}
