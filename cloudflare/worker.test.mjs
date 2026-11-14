@@ -119,39 +119,6 @@ test('open tabs can request their immutable historical manifest after another re
   assert.equal((await worker.fetch(request('/content/manifests/source.iso'), env)).status, 404);
 });
 
-test('multiplayer requests require same-origin and forward only to Rust service', async () => {
-  let seen;
-  const env = {MULTIPLAYER_GUARDS:"host-only",MULTIPLAYER:{fetch:async req=>{seen=req;return new Response('rust relay');}}};
-  assert.equal((await worker.fetch(request('/multiplayer/rooms',{method:'POST'}),env)).status,403);
-  assert.equal((await worker.fetch(request('/multiplayer/rooms',{method:'POST',headers:{Origin:'https://foreign.example'}}),env)).status,403);
-  const req=request('/multiplayer/rooms',{method:'POST',headers:{Origin:'https://game.example'}});
-  assert.equal(await (await worker.fetch(req,env)).text(),'rust relay');
-  assert.equal(seen.url, req.url); assert.equal(seen.method, req.method);
-  assert.equal((await worker.fetch(request('/multiplayer/rooms',{method:'DELETE',headers:{Origin:'https://game.example'}}),env)).status,405);
-});
-
-
-test('configured game origin remains strict through a local verification proxy', async () => {
-  const env={GAME_ORIGIN:'https://approved.example',MULTIPLAYER:{fetch:async()=>new Response('rust')}};
-  assert.equal((await worker.fetch(request('/multiplayer/version',{headers:{Origin:'https://game.example'}}),env)).status,403);
-  assert.equal(await (await worker.fetch(request('/multiplayer/version',{headers:{Origin:'https://approved.example'}}),env)).text(),'rust');
-});
-
-test('custom and legacy multiplayer origins are exact and missing/foreign origins stay denied', async () => {
-  const env = {
-    GAME_ORIGIN: 'https://furyremastered.com',
-    GAME_ORIGINS: 'https://furyremastered.com, https://atv-offroad-fury-2.champtoday.workers.dev,',
-    MULTIPLAYER: { fetch: async () => new Response('rust') },
-  };
-  for (const origin of ['https://furyremastered.com', 'https://atv-offroad-fury-2.champtoday.workers.dev']) {
-    assert.equal((await worker.fetch(request('/multiplayer/version', { headers: { Origin: origin } }), env)).status, 200);
-  }
-  for (const origin of ['', 'null', 'http://furyremastered.com', 'https://www.furyremastered.com', 'https://furyremastered.com.evil.example', 'https://foreign.example']) {
-    assert.equal((await worker.fetch(request('/multiplayer/rooms', { method: 'POST', headers: { Origin: origin } }), env)).status, 403);
-  }
-  assert.equal((await worker.fetch(request('/multiplayer/rooms', { method: 'POST' }), env)).status, 403);
-});
-
 test('www canonical redirect preserves game path and invite query without redirecting legacy hosts', async () => {
   const env = { CANONICAL_ORIGIN: 'https://furyremastered.com', ASSETS: { fetch: async () => new Response('game') } };
   const response = await worker.fetch(new Request('https://www.furyremastered.com/play.html?room=ABCD2345'), env);

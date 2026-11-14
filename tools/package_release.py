@@ -18,8 +18,7 @@ STATIC_FILES = {'fury-remastered-home-180-v1.png', 'fury-remastered-home-192-v1.
 # (engine.html is play.html under its pre-switch name).
 GENERATED_FILES = {'atv_app.js', 'atv_app_bg.wasm', 'engine.html'}
 RELEASE_STATIC_FILES = STATIC_FILES | {'deployment.json', 'devlog.json'}
-RELAY_FILES = {'index.js', 'index_bg.wasm'}
-EXPECTED_FILES = {'release.json'} | {'static/' + name for name in RELEASE_STATIC_FILES} | {'relay/' + name for name in RELAY_FILES}
+EXPECTED_FILES = {'release.json'} | {'static/' + name for name in RELEASE_STATIC_FILES}
 
 
 def validate_release(root, expected_commit):
@@ -40,8 +39,6 @@ def validate_release(root, expected_commit):
             raise ValueError(f'release file too large: {name}')
         if hashlib.sha256(path.read_bytes()).hexdigest() != digest:
             raise ValueError(f'release checksum mismatch: {name}')
-    if (root / 'relay/index_bg.wasm').read_bytes()[:4] != b'\0asm':
-        raise ValueError('invalid relay WebAssembly header')
     for wasm in ('static/atv_app_bg.wasm',):
         if (root / wasm).read_bytes()[:4] != b'\0asm':
             raise ValueError('invalid WebAssembly header')
@@ -89,9 +86,6 @@ def package(commit, destination, release_scoped=False):
     if release_scoped:
         source = destination / 'static/content.js'
         source.write_text(scoped_content_source(source.read_text(), commit))
-    (destination / 'relay').mkdir()
-    for name in sorted(RELAY_FILES):
-        shutil.copy2(ROOT / 'crates/atv-relay/build' / name, destination / 'relay' / name)
     (destination / 'static/deployment.json').write_text(json.dumps({'commit': commit}) + '\n')
     # The CI artifact excludes checkpoint screenshots. Public Sites can retain
     # an explicitly authorized gallery in their own separate hosting checkout.

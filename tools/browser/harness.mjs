@@ -39,8 +39,8 @@ export const base = (process.env.ATV_TEST_URL || 'http://127.0.0.1:4173').replac
 /** Absolute URL for a site path such as '/play.html?drive=1'. */
 export const url = (pathname = '/') => new URL(pathname, base + '/').href;
 /** The retired JavaScript game for references and JavaScript guests: the pinned
- *  pre-switch build (tools/js_reference.py serve; with a relay, its multiplayer
- *  proxy). Defaults to `base`, which before the switch served both. */
+ *  pre-switch build (tools/js_reference.py serve; for multiplayer, behind its own
+ *  tools/serve_multiplayer.mjs). Defaults to `base`, which before the switch served both. */
 export const jsBase = (process.env.ATV_JS_URL || base).replace(/\/+$/, '');
 /** Absolute URL on the JavaScript reference site. */
 export const jsUrl = (pathname = '/') => new URL(pathname, jsBase + '/').href;
@@ -57,14 +57,14 @@ export function gpuArgs() {
  * Lets two headless Chromium pages on one machine open a direct multiplayer
  * link (research/MULTIPLAYER.md "Direct links"): without it each hides its
  * local address behind an mDNS name the other cannot resolve, and every
- * room stays on the relay.
+ * rider's poses go through the server.
  */
 export const LINK_ARGS = ['--disable-features=WebRtcHideLocalIpsWithMdns'];
 
 /**
  * Launch a headless browser. `engine` is 'chromium' (default), 'webkit' or 'firefox'.
  * Chromium receives gpuArgs() unless `args` already chooses an ANGLE backend, and
- * LINK_ARGS when ATV_LINKS=1 (any relay test, with its riders linked directly).
+ * LINK_ARGS when ATV_LINKS=1 (any multiplayer test, with its riders linked directly).
  */
 export async function launch({ engine = 'chromium', args = [], ...options } = {}) {
   const type = playwright()[engine];

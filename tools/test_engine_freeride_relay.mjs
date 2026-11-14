@@ -1,37 +1,33 @@
-// Host-only gate and measurement: what riders in a shared Free Ride room cost
-// the relay, and what the other riders see (research/MULTIPLAYER.md "Free
-// Ride relay intervals" and "Free Ride pose batches"). The relay is billed
-// per incoming message, so this counts the WebSocket frames each page sends
-// its room and compares the drawn riders with where they really were.
+// Host-only gate and measurement: what riders in a shared Free Ride room send
+// the game server (research/GAME_SERVER.md), and what the other riders see
+// (research/MULTIPLAYER.md "Free Ride relay intervals"). It counts the
+// WebSocket frames each page sends its room and compares the drawn riders
+// with where they really were. fury-server claims rooms without links or
+// batches, so every build sends and gets single poses.
 //   1. Two Rust pages without links (`?p2p=0`) ride a private room on
 //      Arlington: one drives, then rests. A private room keeps the ordinary
-//      relay intervals: the baseline.
+//      intervals: the baseline.
 //   2. Three ride a shared Free Ride room. One drives a long way off, with
-//      a few hops: its batches thin out with distance, and the watchers draw
-//      it later the farther it is, without freezes or jumps.
-//   3. A fourth joins as a build without batches (`?batches=0`): the relay
-//      unpacks batches for it, the others shorten theirs, and old and new
+//      a few hops, and the watchers draw it without freezes or jumps.
+//   3. A fourth joins as a build without batches (`?batches=0`): old and new
 //      see each other move.
 //   PLAYWRIGHT_MODULE=... ATV_TEST_URL=http://127.0.0.1:4187 node tools/test_engine_freeride_relay.mjs
 // ATV_RELAY_SECONDS (default 26) is the long drive; ATV_RELAY_REPORT writes
 // the JSON report and ATV_RELAY_TRACE the watchers' frame-by-frame traces.
-// Local relay only: never point this at the production site.
-// ATV_GAME_SERVER=fury runs it against fury-server (research/GAME_SERVER.md),
-// which claims rooms without batches: the batch tiers are not asserted, and
-// every build must send and get single poses there.
+// Local game server only (make server-run behind tools/serve_multiplayer.mjs):
+// never point this at production.
 import assert from 'node:assert/strict';
 import { assertNoErrors, base, launch, newPage, writeJson } from './browser/harness.mjs';
 
-assert.ok(/127\.0\.0\.1|localhost/.test(base), 'measurement runs only against a local relay');
+assert.ok(/127\.0\.0\.1|localhost/.test(base), 'measurement runs only against a local game server');
 const SECONDS = Number(process.env.ATV_RELAY_SECONDS ?? 26);
-const SERVER = process.env.ATV_GAME_SERVER === 'fury';
 const KINDS = { 6: 'ping', 9: 'pose', 10: 'pose', 12: 'ready', 17: 'signal', 18: 'links', 19: 'bundle', 20: 'batch' };
-// The batch table: ft to the nearest rider who needs the relay, messages/s.
+// Distance tiers (ft to the nearest rider), for the per-tier reports.
 const TIERS = [
-  { name: 'under60ft', below: 60, perSecond: 5 },
-  { name: '60to300ft', below: 300, perSecond: 1000 / 300 },
-  { name: '300to1000ft', below: 1000, perSecond: 1000 / 600 },
-  { name: 'beyond1000ft', below: Infinity, perSecond: 1000 / 1500 },
+  { name: 'under60ft', below: 60 },
+  { name: '60to300ft', below: 300 },
+  { name: '300to1000ft', below: 1000 },
+  { name: 'beyond1000ft', below: Infinity },
 ];
 const report = {};
 const traces = {};
@@ -392,29 +388,10 @@ try {
   // (A rider that kept sliding down a slope never rested: nothing to check.)
   const sliding = resting => !resting.atRest;
   assert.ok(sliding(before.resting) || (before.resting.posesPerSecond >= 0.8 && before.resting.posesPerSecond <= 1.3), JSON.stringify(before.resting));
-  if (SERVER) {
-    // fury-server: no batches either way; single poses at the relay intervals.
-    assert.deepEqual(shared.counts.driver, { batches: 0, batchesReceived: 0 });
-    assert.deepEqual(shared.counts.near, { batches: 0, batchesReceived: 0 });
-    assert.ok(shared.farthestFt > 300, `the driver got away: ${shared.farthestFt} ft`);
-  } else {
-    // Free Ride: batches, no more often than each distance tier allows (and a
-    // change of tier or state now and then), one pose every 5 s at rest.
-    assert.ok(shared.counts.driver.batches > 0 && shared.counts.near.batchesReceived > 0, JSON.stringify(shared.counts));
-    assert.ok(shared.farthestFt > 300, `the driver got away: ${shared.farthestFt} ft`);
-    for (const t of TIERS) {
-      const got = shared.byDistance[t.name];
-      if (got.seconds < 3) continue;
-      assert.ok(got.perSecond <= t.perSecond * 1.25 + 0.6, `${t.name}: ${JSON.stringify(got)}`);
-    }
-    assert.ok(shared.driving.posesPerSecond <= before.driving.posesPerSecond * 0.35, JSON.stringify(report));
-    assert.ok(sliding(shared.resting) || shared.resting.posesPerSecond <= 0.3, JSON.stringify(shared.resting));
-    assert.ok(shared.circling.rate.posesPerSecond <= 5 * 1.25 + 0.6, JSON.stringify(shared.circling.rate));
-    for (const seen of Object.values(shared.circling.seen)) {
-      assert.ok(typeof seen !== 'object' || !seen.stale, JSON.stringify(shared.circling.seen));
-    }
-    assert.ok(shared.watcherResting.perSecond <= 0.45, JSON.stringify(shared.watcherResting));
-  }
+  // No batches either way; single poses at the Free Ride intervals.
+  assert.deepEqual(shared.counts.driver, { batches: 0, batchesReceived: 0 });
+  assert.deepEqual(shared.counts.near, { batches: 0, batchesReceived: 0 });
+  assert.ok(shared.farthestFt > 300, `the driver got away: ${shared.farthestFt} ft`);
   // The watchers draw the driver all the way: never stale, no freezes, near
   // where it was one playback delay earlier, and later the farther it is.
   for (const [name, seen] of Object.entries(shared.seen)) {
@@ -423,14 +400,10 @@ try {
     assert.ok(seen.frozenMs <= 150, `${name}: no freeze: ${JSON.stringify(seen)}`);
     assert.ok(seen.rmsFt <= 2.5 && seen.maxFt <= 12, `${name}: near the truth: ${JSON.stringify(seen)}`);
   }
-  const delays = TIERS.map(t => shared.seen[t.name]).filter(seen => seen?.frames >= 60).map(seen => seen.delayMs);
-  // Batches grow with distance; single poses keep one delay.
-  if (!SERVER) assert.ok(delays.length >= 2 && delays.every((d, i) => i === 0 || d > delays[i - 1]), `delay grows with distance: ${delays}`);
   // The build without batches sends and gets single poses; everyone still
   // sees everyone, and nobody waits longer than that build smooths.
   assert.deepEqual(mixed.counts.old, { batches: 0, batchesReceived: 0 });
   assert.ok(mixed.driving.posesPerSecond >= 2.5, `shorter batches for the old build: ${JSON.stringify(mixed.driving)}`);
-  if (!SERVER) assert.ok(sliding(mixed.resting) || (mixed.resting.posesPerSecond >= 0.4 && mixed.resting.posesPerSecond <= 0.65), JSON.stringify(mixed.resting));
   for (const name of ['seenByOld', 'seenByNear', 'oldSeenByNear', 'oldSeenByDriver']) {
     const seen = mixed[name];
     assert.ok(seen.frames > 60 && seen.stale === 0, `${name}: seen, never stale: ${JSON.stringify(seen)}`);

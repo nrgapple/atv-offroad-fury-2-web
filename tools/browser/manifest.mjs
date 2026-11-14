@@ -6,8 +6,9 @@
 // Groups:
 //   content-free  Runs against web/dist with NO private runtime content (CI smoke).
 //   content       Needs the ignored private hosted-content package served by the runner.
-//   relay         Needs content plus a same-origin multiplayer relay (wrangler/workerd or
-//                 public HTTPS). The static runner server has no relay; pass --url.
+//   multiplayer   Needs content plus a local game server at the same origin (make
+//                 server-run behind tools/serve_multiplayer.mjs). The static runner
+//                 server has none; pass --url.
 //   manual        One-off/paired gates needing untracked baselines, a second server or
 //                 extra tooling. Run by name with the documented environment.
 //   broken        Kept for reference; currently fails for the recorded reason.
@@ -18,10 +19,10 @@
 // requested `native` group, which fills unset variables from these paths when the
 // files exist; a missing report fails loudly.
 // `exclusive` keeps timing-sensitive checks isolated from host compilation.
-// Relay, manual, broken and native runs are always exclusive.
+// Multiplayer, manual, broken and native runs are always exclusive.
 // `defaults` lists user-facing defaults the test relies on (crash mode, camera, shake).
 
-export const GROUPS = ['content-free', 'content', 'relay', 'manual', 'broken'];
+export const GROUPS = ['content-free', 'content', 'multiplayer', 'manual', 'broken'];
 export const SELECTABLE = [...GROUPS, 'native'];
 
 export const TESTS = {
@@ -73,8 +74,8 @@ export const TESTS = {
   'test_engine_content_retry.mjs': { group: 'content' },
   'test_engine_decoded_cache.mjs': { group: 'content' },
   'test_engine_freeride.mjs': {
-    group: 'relay',
-    reason: 'needs the multiplayer relay at the same origin (shared Free Ride rooms, room WebSocket); run with --url'
+    group: 'multiplayer',
+    reason: 'needs a local game server at the same origin (shared Free Ride rooms, room WebSocket); run with --url'
   },
   'test_engine_front.mjs': { group: 'content' },
   'test_engine_race_gear.mjs': { group: 'content' },
@@ -98,106 +99,107 @@ export const TESTS = {
   'test_engine_menu_music.mjs': { group: 'content' },
   'test_engine_freeride_full.mjs': {
     group: 'manual',
-    reason: 'load measurement: a full Free Ride room of synthetic riders on a local relay (never production)'
+    reason: 'load measurement: a full Free Ride room of synthetic riders on a local game server (never production)'
   },
   'test_engine_freeride_relay.mjs': {
-    group: 'relay',
+    group: 'multiplayer',
     timeout: 900,
-    reason: 'needs the multiplayer relay at the same origin (Rust riders without links in a private room, then a shared Free Ride room, then with a rider on a build without pose batches; counts the frames each sends the relay); run with --url'
+    reason: 'needs a local game server at the same origin (Rust riders without links in a private room, then a shared Free Ride room, then with a rider on a build without pose batches; counts the frames each sends the server); run with --url'
   },
   'test_engine_multiplayer_links.mjs': {
-    group: 'relay',
-    reason: 'needs the multiplayer relay at the same origin (two Rust riders link directly over WebRTC, a third stays on the relay); run with --url'
+    group: 'broken',
+    reason:
+      'direct WebRTC links need a server that offers them; only the retired Cloudflare relay did, and fury-server answers links: false (research/GAME_SERVER.md)'
   },
   'test_engine_multiplayer_tag.mjs': {
-    group: 'relay',
-    reason: 'needs the multiplayer relay at the same origin (Rust host and guest Tag room); run with --url'
+    group: 'multiplayer',
+    reason: 'needs a local game server at the same origin (Rust host and guest Tag room); run with --url'
   },
   'test_engine_multiplayer_koth.mjs': {
-    group: 'relay',
-    reason: 'needs the multiplayer relay at the same origin (Rust host and guest King of the Hills room); run with --url'
+    group: 'multiplayer',
+    reason: 'needs a local game server at the same origin (Rust host and guest King of the Hills room); run with --url'
   },
   'test_engine_multiplayer_treasure.mjs': {
-    group: 'relay',
-    reason: 'needs the multiplayer relay at the same origin (Rust host and guest Treasure Hunt room); run with --url'
+    group: 'multiplayer',
+    reason: 'needs a local game server at the same origin (Rust host and guest Treasure Hunt room); run with --url'
   },
   'test_engine_multiplayer_freestyle.mjs': {
-    group: 'relay',
-    reason: 'needs the multiplayer relay at the same origin (Host Game → Room: Freestyle; Rust guest and late spectator, host handoff); run with --url'
+    group: 'multiplayer',
+    reason: 'needs a local game server at the same origin (Host Game → Room: Freestyle; Rust guest and late spectator, host handoff); run with --url'
   },
   'test_engine_multiplayer_race.mjs': {
-    group: 'relay',
-    reason: 'needs the multiplayer relay at the same origin (Rust host and guest race a Supercross room); run with --url'
+    group: 'multiplayer',
+    reason: 'needs a local game server at the same origin (Rust host and guest race a Supercross room); run with --url'
   },
   'test_engine_multiplayer_race_cpus.mjs': {
-    group: 'relay',
-    reason: 'needs the multiplayer relay at the same origin (Rust host and guest race a Supercross room filled with host-simulated CPUs); run with --url'
+    group: 'multiplayer',
+    reason: 'needs a local game server at the same origin (Rust host and guest race a Supercross room filled with host-simulated CPUs); run with --url'
   },
   'test_engine_multiplayer_race_cpu_sounds.mjs': {
-    group: 'relay',
-    reason: 'needs the multiplayer relay at the same origin (a Rust guest hears the host CPUs\' drive-on sounds in an ENV01 room race); run with --url'
+    group: 'multiplayer',
+    reason: 'needs a local game server at the same origin (a Rust guest hears the host CPUs\' drive-on sounds in an ENV01 room race); run with --url'
   },
   'test_engine_multiplayer_race_cpus_handoff.mjs': {
-    group: 'relay',
-    reason: 'needs the multiplayer relay at the same origin (the host of a CPU-filled Supercross room leaves mid-race; two Rust guests retire the CPUs); run with --url'
+    group: 'multiplayer',
+    reason: 'needs a local game server at the same origin (the host of a CPU-filled Supercross room leaves mid-race; two Rust guests retire the CPUs); run with --url'
   },
   'test_engine_games_tag.mjs': {
-    group: 'relay',
-    reason: 'needs the multiplayer relay at the same origin (Games → Tag hosts a room; a Rust guest joins); run with --url'
+    group: 'multiplayer',
+    reason: 'needs a local game server at the same origin (Games → Tag hosts a room; a Rust guest joins); run with --url'
   },
   'test_engine_multiplayer_hockey.mjs': {
-    group: 'relay',
-    reason: 'needs the multiplayer relay at the same origin (Rust host and guest Hockey room); run with --url'
+    group: 'multiplayer',
+    reason: 'needs a local game server at the same origin (Rust host and guest Hockey room); run with --url'
   },
   'test_engine_multiplayer_dropin.mjs': {
-    group: 'relay',
-    reason: 'needs the multiplayer relay at the same origin (Host Game, room WebSocket); run with --url'
+    group: 'multiplayer',
+    reason: 'needs a local game server at the same origin (Host Game, room WebSocket); run with --url'
   },
   'test_engine_multiplayer_context.mjs': {
-    group: 'relay',
-    reason: 'needs the multiplayer relay at the same origin (Host Game, room WebSocket); run with --url'
+    group: 'multiplayer',
+    reason: 'needs a local game server at the same origin (Host Game, room WebSocket); run with --url'
   },
   'test_engine_multiplayer_audio.mjs': {
-    group: 'relay',
-    reason: 'needs the multiplayer relay at the same origin (Host Game, room WebSocket); run with --url'
+    group: 'multiplayer',
+    reason: 'needs a local game server at the same origin (Host Game, room WebSocket); run with --url'
   },
   'test_engine_multiplayer_end.mjs': {
-    group: 'relay',
-    reason: 'needs the multiplayer relay at the same origin (room creation, slot-key reclaim, Free Ride); run with --url'
+    group: 'multiplayer',
+    reason: 'needs a local game server at the same origin (room creation, slot-key reclaim, Free Ride); run with --url'
   },
   'test_engine_multiplayer_menu.mjs': {
-    group: 'relay',
-    reason: 'needs the multiplayer relay at the same origin (room creation, room WebSocket); run with --url'
+    group: 'multiplayer',
+    reason: 'needs a local game server at the same origin (room creation, room WebSocket); run with --url'
   },
   'test_engine_multiplayer_pause.mjs': {
-    group: 'relay',
-    reason: 'needs the multiplayer relay at the same origin (Host Game, room WebSocket); run with --url'
+    group: 'multiplayer',
+    reason: 'needs a local game server at the same origin (Host Game, room WebSocket); run with --url'
   },
   'test_engine_multiplayer_presence.mjs': {
-    group: 'relay',
-    reason: 'needs the multiplayer relay at the same origin (Host Game, room WebSocket); run with --url'
+    group: 'multiplayer',
+    reason: 'needs a local game server at the same origin (Host Game, room WebSocket); run with --url'
   },
   'test_engine_multiplayer_room_front.mjs': {
-    group: 'relay',
-    reason: 'needs the multiplayer relay at the same origin (room creation, room WebSocket); run with --url'
+    group: 'multiplayer',
+    reason: 'needs a local game server at the same origin (room creation, room WebSocket); run with --url'
   },
   'test_engine_multiplayer_tags.mjs': {
-    group: 'relay',
-    reason: 'needs the multiplayer relay at the same origin (Host Game, room WebSocket); run with --url'
+    group: 'multiplayer',
+    reason: 'needs a local game server at the same origin (Host Game, room WebSocket); run with --url'
   },
   'test_engine_multiplayer_train.mjs': {
-    group: 'relay',
-    reason: 'needs the multiplayer relay at the same origin (room WebSocket, ENV08 train); run with --url'
+    group: 'multiplayer',
+    reason: 'needs a local game server at the same origin (room WebSocket, ENV08 train); run with --url'
   },
   'test_engine_multiplayer_idle_host.mjs': {
-    group: 'relay',
+    group: 'multiplayer',
     reason:
-      'needs the multiplayer relay at the same origin plus a native fury build (FURY_BIN) for the stopped host; run with --url'
+      'needs a local game server at the same origin plus a native fury build (FURY_BIN) for the stopped host; run with --url'
   },
   'test_engine_multiplayer.mjs': {
-    group: 'relay',
+    group: 'multiplayer',
     reason:
-      'needs the multiplayer relay at the same origin plus a native fury build (FURY_BIN) for the Rust host; run with --url'
+      'needs a local game server at the same origin plus a native fury build (FURY_BIN) for the Rust host; run with --url'
   },
   'test_engine_preview.mjs': { group: 'content-free' },
   'test_engine_race.mjs': { group: 'content' },
@@ -251,12 +253,7 @@ export const TESTS = {
   'test_rust_audio.mjs': { group: 'content' },
   'test_rust_audio_activation.mjs': { group: 'content' },
   'test_devlog.mjs': { group: 'content-free' },
-  'test_stats.mjs': { group: 'content-free' },
-  'test_multiplayer_relay.mjs': {
-    group: 'manual',
-    reason:
-      'Not a browser test: drives a running Rust relay (ATV_RELAY_URL) through WS_MODULE and the atv-relay codec example build'
-  }
+  'test_stats.mjs': { group: 'content-free' }
 };
 
 // Unknown/heavier runs retain conservative admission. Mixed selections use the

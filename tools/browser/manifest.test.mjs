@@ -21,7 +21,7 @@ test('manifest has no entries for removed files', () => {
 test('entries use known groups and explain non-runnable groups', () => {
   for (const [name, entry] of Object.entries(TESTS)) {
     assert.ok(GROUPS.includes(entry.group), `${name}: unknown group ${entry.group}`);
-    if (['relay', 'manual', 'broken'].includes(entry.group)) assert.ok(entry.reason?.trim(), `${name}: ${entry.group} needs a reason`);
+    if (['multiplayer', 'manual', 'broken'].includes(entry.group)) assert.ok(entry.reason?.trim(), `${name}: ${entry.group} needs a reason`);
     if (entry.timeout !== undefined) assert.ok(Number.isFinite(entry.timeout) && entry.timeout > 0, `${name}: bad timeout`);
   }
 });
