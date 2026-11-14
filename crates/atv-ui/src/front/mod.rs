@@ -298,6 +298,7 @@ pub fn stage_page(page: &str) -> bool {
             | "championship"
             | "objectives"
             | "objective-courses"
+            | "classic-courses"
             | "games"
             | "waypoint"
             | "waypoint-course"
@@ -894,6 +895,7 @@ fn page_title(page: &str) -> &'static str {
         "championship" => "Championship",
         "objectives" => "Select Objective",
         "objective-courses" => "Freestyle Objectives",
+        "classic-courses" => "Classic Freestyle",
         "games" => "Games",
         "waypoint" => "Waypoint Editor",
         "waypoint-course" => "User Created Enduro",
@@ -1793,6 +1795,7 @@ fn left(m: &Metrics, s: &Screen) -> El {
                 | "championship"
                 | "objectives"
                 | "objective-courses"
+                | "classic-courses"
                 | "games"
                 | "waypoint"
                 | "waypoint-course"

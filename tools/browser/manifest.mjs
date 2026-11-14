@@ -26,6 +26,7 @@ export const GROUPS = ['content-free', 'content', 'multiplayer', 'manual', 'brok
 export const SELECTABLE = [...GROUPS, 'native'];
 
 export const TESTS = {
+  'test_engine_classic_freestyle.mjs': { group: 'content' },
   'test_app_identity.mjs': { group: 'content-free' },
   'test_engine_boot_stall.mjs': { group: 'content-free' },
   'test_engine_touch.mjs': { group: 'content' },
@@ -256,9 +257,11 @@ export const TESTS = {
   'test_engine_freestyle_targets.mjs': { group: 'content', timeout: 900 },
   'test_engine_toy_actors.mjs': { group: 'content', timeout: 600 },
   'test_engine_actor_collision.mjs': { group: 'content', timeout: 600 },
+  'test_engine_voice_cues.mjs': { group: 'content', timeout: 360 },
   'test_engine_training.mjs': { group: 'content', timeout: 900 },
   'test_engine_games.mjs': { group: 'content', timeout: 900 },
   'test_engine_game_cpus.mjs': { group: 'content', timeout: 900 },
+  'test_engine_free_cpus.mjs': { group: 'content', timeout: 900 },
   'test_engine_toy_explosions.mjs': { group: 'content', timeout: 900 },
   'test_engine_hockey_tag.mjs': { group: 'content', timeout: 600 },
   'test_engine_sleep.mjs': { group: 'content' },

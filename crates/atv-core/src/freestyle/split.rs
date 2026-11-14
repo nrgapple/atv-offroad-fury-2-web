@@ -81,7 +81,7 @@ impl SplitRun {
         match &self.objective().kind {
             Kind::CherryPick { .. } => self.targets_of(player) as u32,
             Kind::ComboMambo { .. } => self.runs[player].combos(),
-            Kind::Stunt { .. } => 0,
+            Kind::Stunt { .. } | Kind::Classic { .. } => 0,
         }
     }
 
@@ -289,13 +289,14 @@ impl SplitRun {
                 }
             ),
             Kind::ComboMambo { .. } => format!("{} combos", run.combos()),
-            Kind::Stunt { .. } => format!("{} pts", run.score as i64),
+            Kind::Stunt { .. } | Kind::Classic { .. } => format!("{} pts", run.score as i64),
         }
     }
 
     /// The shared progress line.
     pub fn progress(&self) -> String {
         match &self.objective().kind {
+            Kind::Classic { .. } => "Land tricks to score points".into(),
             Kind::Stunt { levels } => match levels.get(self.levels as usize) {
                 Some(next) => format!(
                     "Level {} of {}: {} pts",

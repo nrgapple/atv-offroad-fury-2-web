@@ -885,6 +885,15 @@ impl FreestyleWatch {
     /// `002fce00`: the 120 s objective ended with `score`; the Profile
     /// Points it earns (score / 1000 plus the combo points).
     pub fn finish(&mut self, score: f32) -> i64 {
+        self.finish_timed(score, 120.)
+    }
+
+    /// `002fd590`: only the default two-minute Classic run records its
+    /// total; longer sessions still earn Profile Points and stunt records.
+    pub fn finish_timed(&mut self, score: f32, seconds: f32) -> i64 {
+        if seconds != 120. {
+            return score.max(0.) as i64 / 1000 + i64::from(self.combo_points);
+        }
         let score = score.max(0.) as i64;
         let tag = self.tag();
         let fame = insert_score(&mut self.fame.objectives, score, &tag, self.vehicle);

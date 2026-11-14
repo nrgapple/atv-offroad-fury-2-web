@@ -6,6 +6,10 @@
 //! and standings. `atv_core::game_cpu` chooses its controls.
 //!
 //! Solo and split screen only: an online room has no CPU riders.
+//!
+//! A free ride takes the same riders with Options → Game Settings "Free Ride CPU
+//! riders" (research/CPU_MINIGAMES.md "Free roam"): with no game to play
+//! they roam the venue (`atv_core::roam_cpu`), on no standings.
 use crate::games::GameSession;
 use crate::hockey::HockeySession;
 use crate::riding::Riding;
@@ -13,6 +17,7 @@ use crate::tag::TagSession;
 use atv_core::game_cpu::{self as brain, Driver, Goal, HillRun, Other, Recover, Rng, Sense, Skill};
 use atv_core::games::GameKind;
 use atv_core::math::Det;
+use atv_core::roam_cpu::{self as roam, Roam};
 use atv_game::multiplayer::PeerBody;
 use atv_game::ride::{Controls, Ride};
 
@@ -22,6 +27,20 @@ pub struct Request {
     pub count: u8,
     /// The race setup's difficulty (1 Normal, 2 Expert, 3 Kid).
     pub difficulty: u32,
+    /// A free ride's riders (Game Settings' Free Ride CPU riders): they roam.
+    pub roam: bool,
+}
+
+impl Request {
+    /// A free ride's riders as Game Settings → Free Ride CPU riders saves
+    /// them, at Normal (the race driver's 50 ft/s off its line).
+    pub fn free_ride(settings: &atv_ui::settings::Settings) -> Self {
+        Self {
+            count: atv_ui::menu::prefs::free_ride_cpus(settings),
+            difficulty: 1,
+            roam: true,
+        }
+    }
 }
 
 /// The CPU riders' names on standings and results.
@@ -49,6 +68,13 @@ pub struct Cpu {
     pub riding: Riding,
     driver: Driver,
     hill: HillRun,
+    roam: Roam,
+    /// Diagnostics: wrecks so far, and whether it is wrecked now.
+    wrecks: u32,
+    wrecked: bool,
+    /// A roamer's seconds sitting still, and its returns to the start.
+    still: f32,
+    stalls: u32,
     rng: Rng,
     seed: u32,
     skill: Skill,
@@ -65,6 +91,8 @@ pub struct Cpu {
 pub enum Mode {
     /// No game: hold still.
     Idle,
+    /// A free ride: roam this venue.
+    Roam(std::rc::Rc<roam::Map>),
     Tag {
         carrier: Option<usize>,
         ball: [f32; 3],
@@ -104,6 +132,7 @@ impl World {
         game: Option<&GameSession>,
         rides: impl Iterator<Item = &'a Ride>,
         terrain: &atv_core::terrain::Terrain,
+        roam: Option<&std::rc::Rc<roam::Map>>,
     ) -> Self {
         let riders = rides.map(other).collect();
         let mode = if let Some(tag) = tag.filter(|t| t.local) {
@@ -158,6 +187,8 @@ impl World {
                 }
                 _ => Mode::Idle,
             }
+        } else if let Some(map) = roam {
+            Mode::Roam(map.clone())
         } else {
             Mode::Idle
         };
@@ -180,6 +211,77 @@ pub fn sense(ride: &Ride) -> Sense {
         grounded: f.grounded.iter().any(|g| *g),
         riding: ride.rider_wreck().is_none() && f.wreck.phase == atv_core::wreck::Phase::Riding,
     }
+}
+
+/// Ground a roaming CPU keeps off: off the terrain, water too deep to
+/// ford, or a slope steeper than `roam::STEEP`.
+pub fn hazard(ride: &Ride, p: [f32; 2]) -> bool {
+    ride.ground(p[0], p[1]).is_none()
+        || ride
+            .water_depth(p[0], p[1])
+            .is_some_and(|depth| depth > roam::WADE)
+        || roam::steep(&|x, z| ride.ground(x, z), p)
+}
+
+/// The venue's National race line (`<venue>nate.tdf` in its race archive)
+/// as a roaming CPU follows it: the lap circuit on the ground plane. None
+/// where the venue has no race (the Freeride-only venues).
+async fn course_line(content: &atv_content::Content, environment: &str) -> Option<Vec<[f32; 2]>> {
+    let path = atv_game::launch::course_resource(environment, true)
+        .ok()?
+        .archive;
+    if !content.has(&path) {
+        return None;
+    }
+    let archive = atv_game::archive::Archive::open(content, &path)
+        .await
+        .ok()?;
+    let index = archive.named(&format!("{environment}nate.tdf"))?;
+    let course = atv_core::race::Course::parse(&archive.member(index).await.ok()?).ok()?;
+    let lap = course.points.get(course.loop_start..)?;
+    (lap.len() > 2).then(|| lap.iter().map(|p| [p[0], p[2]]).collect())
+}
+
+/// What the venue offers roaming CPUs: its rideable area (40 ft inside the
+/// boundary launch margin, `0020aec0`), its dry hilltops and its race line.
+pub async fn roam_map(
+    content: &atv_content::Content,
+    venue: &atv_game::venue::Venue,
+    ride: &Ride,
+) -> roam::Map {
+    const INSIDE: f32 = 40.;
+    let terrain = ride.terrain();
+    let bounds = atv_core::tag::Bounds::from_cells(
+        terrain.width_cells,
+        terrain.depth_cells,
+        terrain.spacing,
+    );
+    let margin = atv_core::tag::boundary_margin(venue.scene.crowd_present);
+    let min = [
+        margin * bounds.cell[0] + INSIDE,
+        margin * bounds.cell[1] + INSIDE,
+    ];
+    let max = [
+        bounds.cell[0] * (bounds.tiles[0] * 256. - margin) - INSIDE,
+        bounds.cell[1] * (bounds.tiles[1] * 256. - margin) - INSIDE,
+    ];
+    let start = venue.scene.start_position;
+    let mut map = roam::Map {
+        min,
+        max,
+        points: roam::points_of_interest(
+            min,
+            max,
+            [start[0], start[2]],
+            &|x, z| ride.ground(x, z),
+            &|p| hazard(ride, p),
+        ),
+        ..roam::Map::default()
+    };
+    if let Some(line) = course_line(content, &venue.environment).await {
+        map.set_line(line);
+    }
+    map
 }
 
 /// The player controls for one step's drive (reverse: the Reverse button
@@ -260,6 +362,11 @@ impl Cpu {
             riding,
             driver: Driver::default(),
             hill: HillRun::default(),
+            roam: Roam::default(),
+            wrecks: 0,
+            wrecked: false,
+            still: 0.,
+            stalls: 0,
             rng: Rng::new(seed),
             seed,
             skill: Skill::for_difficulty(request.difficulty),
@@ -281,6 +388,7 @@ impl Cpu {
             riding,
             driver,
             hill,
+            roam,
             rng,
             seed,
             skill,
@@ -299,6 +407,26 @@ impl Cpu {
             let sense = sense(ride);
             let goal = if held {
                 None
+            } else if let Mode::Roam(map) = &world.mode {
+                // The other riders where the frame began (no allocation).
+                let mut others = [Other::default(); 4];
+                let mut count = 0;
+                for (_, other) in world.riders.iter().enumerate().filter(|(i, _)| *i != me) {
+                    if count < others.len() {
+                        others[count] = *other;
+                        count += 1;
+                    }
+                }
+                roam.step(
+                    &sense,
+                    map,
+                    &|p| hazard(ride, p),
+                    &others[..count],
+                    seed,
+                    &skill,
+                    rng,
+                    atv_game::ride::STEP,
+                )
             } else {
                 goal(me, &sense, world, seed, &skill, hill, rng, landed)
             };
@@ -309,11 +437,32 @@ impl Cpu {
             }
             controls(&drive)
         })?;
+        let f = self.riding.ride.frame();
+        let wrecked = f.wreck.phase != atv_core::wreck::Phase::Riding;
+        self.wrecks += u32::from(wrecked && !self.wrecked);
+        self.wrecked = wrecked;
+        // A roamer still for longer than the stuck rule can mend (beached,
+        // or holding on a goal it cannot ride to) goes back to its start.
+        if matches!(world.mode, Mode::Roam(_)) && !held {
+            if !wrecked && f.speed_magnitude < brain::STUCK_SPEED {
+                self.still += dt;
+            } else {
+                self.still = 0.;
+            }
+            if self.still > roam::STALL_SECONDS {
+                self.still = 0.;
+                self.stalls += 1;
+                self.roam.plan = roam::Plan::None;
+                return self.riding.reset();
+            }
+        }
         match recover {
             Recover::None => Ok(()),
             // The rink has no start to return to: turn in place there.
             Recover::Reset if !matches!(world.mode, Mode::Hockey { .. }) => {
                 self.hill = HillRun::default();
+                // A roamer picks somewhere else to go from its start.
+                self.roam.plan = roam::Plan::None;
                 self.riding.reset()
             }
             _ => {
@@ -390,6 +539,28 @@ impl Cpu {
             "escapes": self.driver.escapes,
             "resets": self.driver.resets,
             "locked": self.riding.locked,
+            "riding": f.wreck.phase == atv_core::wreck::Phase::Riding,
+            "wreck": f.wreck.kind,
+            "wrecks": self.wrecks,
+            "stalls": self.stalls,
+            "grounded": f.grounded.iter().any(|g| *g),
+            // A free ride's roaming (`atv_core::roam_cpu`).
+            "roam": {
+                "plan": match self.roam.plan {
+                    roam::Plan::None => "none",
+                    roam::Plan::Point(_) => "point",
+                    roam::Plan::Line { .. } => "line",
+                    roam::Plan::Drift { .. } => "drift",
+                },
+                "visits": self.roam.visits,
+                "turns": self.roam.turns,
+                "lineFeet": self.roam.line_feet,
+                "wet": self
+                    .riding
+                    .ride
+                    .water_depth(f.origin[0], f.origin[2])
+                    .is_some_and(|depth| depth > roam::WADE),
+            },
         })
     }
 
@@ -427,7 +598,8 @@ fn goal(
     }
     let riders = &riders[..count];
     match &world.mode {
-        Mode::Idle => None,
+        // Roaming is stepped by `Cpu::frame` (it reads the ride's ground).
+        Mode::Idle | Mode::Roam(_) => None,
         Mode::Tag {
             carrier,
             ball,
