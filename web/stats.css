@@ -100,7 +100,8 @@ main { width: var(--st-width); margin: auto; padding-top: 18px; display: grid; g
 .total span { color: #cfc7c5; font: 700 13px/1.25 var(--atv-font-display); letter-spacing: .06em; text-transform: uppercase; }
 .total-hero { border-left-color: var(--atv-gold); }
 .total-hero strong { color: var(--atv-gold-light); font-size: clamp(42px, 6vw, 68px); }
-.mini-totals { display: grid; gap: 6px; }
+.mini-totals { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.mini-totals .total { padding: 8px 12px; }
 .mini-totals .total strong { font-size: clamp(28px, 3vw, 36px); }
 
 /* Rides per day: single-series columns, 4px rounded tops on the baseline */
@@ -167,6 +168,9 @@ footer p { margin: 0 0 8px; max-width: 90ch; }
   .bar-track { grid-column: 2 / -1; grid-row: 2; }
 }
 @media (max-width: 600px) {
+  .mini-totals { gap: 6px; }
+  .mini-totals .total { padding: 6px 8px; }
+  .mini-totals .total span { font-size: 12px; }
   :root { font-size: 15px; --st-width: calc(100% - 24px); }
   .topbar { flex-wrap: wrap; gap: 12px; padding-bottom: 12px; }
   h1 { padding-left: 12px; }
