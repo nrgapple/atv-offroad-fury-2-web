@@ -137,3 +137,15 @@ are treated as disabled vegetation to avoid a zero-width fade division.
 The additional maps stay unavailable until source decoding and actual venue,
 vehicle and browser acceptance pass. No public delivery is claimed by this
 checkpoint.
+
+## Signed-byte ecosystem mesh recovery
+
+The actual NAT12 bush packet begins each bounded batch with V4-8 signed
+positions at VU destination 0x8001, followed by V3-8 normals at 0x8001+N
+and V2-8 UVs at 0x8001+2N, then MSCNT. The previous decoder mistook
+V4-8 positions for unsigned colors and reported an ordering error. MX v5
+now accepts this position encoding with signed negative rigid-node magnitudes;
+ATV2 retains its existing accepted forms. Attribute destination/count and
+whole-packet vertex checks remain enforced. A generated two-batch fixture
+covers geometry, restart indices, attributes and malformed count/destination
+rejection without source bytes. Private source acceptance remains required.
