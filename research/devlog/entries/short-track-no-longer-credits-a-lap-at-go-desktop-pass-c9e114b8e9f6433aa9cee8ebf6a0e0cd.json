@@ -1,0 +1,12 @@
+{
+  "id": "short-track-no-longer-credits-a-lap-at-go-desktop-pass-c9e114b8e9f6433aa9cee8ebf6a0e0cd",
+  "timestamp": "2026-11-14T15:50:42+00:00",
+  "recorded_at": "2026-11-14T21:12:25.879170+00:00",
+  "kind": "issue",
+  "title": "Short Track no longer credits a lap at GO; desktop Pass Key cloud draws fully (#625, #624)",
+  "summary": "Two small fixes: a Short Track grid slot behind a skewed finish gate counted a lap 0.13 s after GO, and the desktop Pass Key status cloud rendered as a sliver.",
+  "details": [
+    "#625 (env01st): the outside grid slot stands 0.8 ft behind the skewed gate line while its route station is already 3.8 ft past it, so the authored past-the-gate allowance (up to 75 ft) credited a lap at the first movement. The allowance now applies only once the rider's previous distance has lain within 125 ft before the gate since its last handled crossing. A human in that slot was affected too. Host cpu_times runs: the spurious 0.13 s lap is gone for the affected riders (e.g. Expert seed 7 REICH now laps 14.38, 27.70, 40.45, 53.22, 66.00), and other riders' lap marks and step counts are identical on env01st, env06st, env07st, env01, sx03 and sx13. The new unit test fails without the fix; cargo test -p atv-core --lib passed 776. Seeded house-rider times were not derived from the affected results. #624: the native shape rasteriser (zeno 0.3.3) dropped an SVG path at an implicitly repeated arc segment, which only the status-bar cloud uses; the cloud drew as a ~4x8 px sliver. A normaliser now repeats the arc letter before each implicit segment, for fill and stroke; the web path is unchanged. New unit tests cover the normaliser and all five sync states; atv-ui lib tests passed 195."
+  ],
+  "limitation": "#625: the original's native projection of that grid slot was not traced, so the fix follows a literal reading of the recovered test. #624: no native --ui capture of the desktop main menu was run (it needs a full desktop build); verified by unit tests only."
+}
