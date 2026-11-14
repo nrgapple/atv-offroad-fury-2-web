@@ -12,7 +12,8 @@ export const STATS_PATH = '/api/stats';
 export const MIN_BUCKET = 10;
 const MAX_AGE = 60;
 const REFRESH_MS = 15 * 60_000;
-// Analytics Engine keeps three months; a first run backfills them a chunk per cron run.
+// Analytics Engine keeps three months; a first run backfills them from the first
+// day with events, a chunk per cron run.
 const BACKFILL_DAYS = 90;
 const CHUNK_DAYS = 14;
 const CHART_DAYS = 30;
@@ -61,6 +62,14 @@ async function analytics(env, sql, fetcher) {
   });
   if (!response.ok) throw new Error(`Analytics Engine query: HTTP ${response.status}`);
   return (await response.json())?.data ?? [];
+}
+
+// A first run's backfill starts at the earliest retained day with events.
+async function firstDay(env, fetcher, today) {
+  const [row] = await analytics(env, `SELECT toStartOfDay(timestamp) AS day FROM ${DATASET} WHERE timestamp > NOW() - INTERVAL '${BACKFILL_DAYS}' DAY GROUP BY day ORDER BY day LIMIT 1`, fetcher);
+  const day = String(row?.day ?? '').slice(0, 10);
+  const oldest = shift(today, 1 - BACKFILL_DAYS);
+  return !/^\d{4}-\d{2}-\d{2}$/.test(day) ? today : day < oldest ? oldest : day;
 }
 
 // One query per breakdown for whole UTC days [from, to], weighted by _sample_interval.
@@ -134,9 +143,9 @@ export async function refreshStats(env, { fetcher = fetch, now = Date.now } = {}
 
   let usage = null, from = null, to = null;
   if (token) {
-    from = state?.usage ? (state.usage < yesterday ? state.usage : yesterday) : shift(today, 1 - BACKFILL_DAYS);
-    to = shift(from, CHUNK_DAYS - 1) < today ? shift(from, CHUNK_DAYS - 1) : today;
     try {
+      from = state?.usage ? (state.usage < yesterday ? state.usage : yesterday) : await firstDay(env, fetcher, today);
+      to = shift(from, CHUNK_DAYS - 1) < today ? shift(from, CHUNK_DAYS - 1) : today;
       const queries = usageQueries(from, to);
       const names = Object.keys(queries);
       const rows = await Promise.all(names.map(name => analytics(env, queries[name], fetcher)));

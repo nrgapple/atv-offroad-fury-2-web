@@ -45,7 +45,7 @@ function usage(day) {
   };
 }
 
-const kind = sql => (sql.includes('blob2 AS country') ? 'sessions' : sql.includes('blob9 AS map') ? 'venues' : sql.includes('blob7 AS mode') ? 'splits' : 'totals');
+const kind = sql => (sql.includes('LIMIT 1') ? 'first' : sql.includes('blob2 AS country') ? 'sessions' : sql.includes('blob9 AS map') ? 'venues' : sql.includes('blob7 AS mode') ? 'splits' : 'totals');
 
 // A fetcher answering the Analytics Engine SQL API from `days` and /healthz from `health`.
 function network({ days = [TODAY], health = { ok: true, commit: 'a'.repeat(40), protocol: 6, rooms: 2, riders: 5, connections: 7 }, fail = false } = {}) {
@@ -55,6 +55,7 @@ function network({ days = [TODAY], health = { ok: true, commit: 'a'.repeat(40), 
     if (String(url).includes('/analytics_engine/sql')) {
       if (fail) return new Response('nope', { status: 500 });
       const which = kind(init.body);
+      if (which === 'first') return Response.json({ data: days.length ? [{ day: stamp([...days].sort()[0]) }] : [] });
       return Response.json({ data: days.flatMap(day => usage(day)[which]) });
     }
     if (String(url).endsWith('/healthz')) return health ? Response.json(health) : new Response('down', { status: 502 });
@@ -112,9 +113,10 @@ test('a first refresh backfills in chunks, then refreshes today and yesterday at
   for (let back = 2; back <= 29; back++) check(config.SAVES, NOW - back * DAY, 3, 1);
   const prepared = config.SAVES.prepared;
   const first = await refreshStats(config, { fetcher, now });
-  assert.deepEqual(first.usage, { from: '2026-08-17', to: '2026-08-30' });
+  assert.deepEqual(first.usage, { from: '2026-08-20', to: '2026-09-02' }, 'the backfill starts at the first day with events');
   assert.ok(config.SAVES.prepared - prepared <= 35, 'a run stays well inside the free plan D1 query limit');
-  assert.equal(sql().length, 4);
+  assert.match(sql()[0].init.body, /INTERVAL '90' DAY GROUP BY day ORDER BY day LIMIT 1/);
+  assert.equal(sql().length, 5);
   for (const call of sql()) {
     assert.equal(call.init.method, 'POST');
     assert.equal(call.init.headers.Authorization, 'Bearer test-token');
@@ -204,7 +206,7 @@ test('the endpoint serves totals, splits and venues and suppresses small buckets
   ]);
   // Two countries rode; only the one with at least MIN_BUCKET sessions is named.
   assert.deepEqual(body.countries, { count: 2, top: [{ code: 'US', sessions: 93 }] });
-  assert.equal(body.days.length, 30);
+  assert.equal(body.days.length, 14, 'days since the first recorded day');
   assert.deepEqual(body.days.at(-1), { day: TODAY, rides: 30, hours: 10 });
   assert.equal(body.daily.course, courseName((await import('./boards.mjs')).dailyPick(TODAY).course));
 });
