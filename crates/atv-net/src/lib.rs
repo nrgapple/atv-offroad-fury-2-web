@@ -674,11 +674,19 @@ pub mod signal {
     pub const PACE: u8 = 9;
     pub const PACE_MIN: u8 = 10;
     pub const PACE_MAX: u8 = 30;
+    /// Hello flags bit: the build decodes [`super::Packet::Frame`]. A game
+    /// server (research/GAME_SERVER.md) sends such builds one frame per tick
+    /// instead of each rider's pose separately. Never forwarded in other
+    /// riders' flags.
+    pub const FRAMES: u8 = 16;
 }
 /// Most poses in one [`Packet::Bundle`]: every rider in a full room.
 pub const MAX_BUNDLE: usize = MAX_PLAYERS;
 /// Most samples in one [`Packet::Batch`].
 pub const MAX_BATCH: usize = 16;
+/// Most poses in one [`Packet::Frame`] (a frame is also bounded by
+/// [`MAX_PACKET_BYTES`]; a server splits larger rooms over several frames).
+pub const MAX_FRAME: usize = 64;
 /// Longest interval a [`Packet::Batch`] may announce (ms).
 pub const MAX_BATCH_INTERVAL_MS: u16 = 60_000;
 
@@ -880,6 +888,13 @@ pub enum Packet {
     /// [`signal::BATCHES`] (it sends the others each pose as a `Snapshot`).
     Batch {
         interval_ms: u16,
+        poses: Vec<Vec<u8>>,
+    },
+    /// Game server to client, once per server tick: the latest pose of each
+    /// other rider due for this client (encoded compact `Snapshot` or `Delta`
+    /// packets, at most one per rider). Sent only to builds that said
+    /// [`signal::FRAMES`]; the others get each pose separately.
+    Frame {
         poses: Vec<Vec<u8>>,
     },
 }
