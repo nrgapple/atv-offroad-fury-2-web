@@ -256,6 +256,12 @@ pub struct Screen {
     pub badge: Option<Badge>,
     /// The Pass Key page's QR code: the link it encodes.
     pub qr: Option<String>,
+    /// Course select: each listed course's medal (research/
+    /// GHOST_CHALLENGES.md).
+    pub medals: std::collections::BTreeMap<String, atv_core::medals::Medal>,
+    /// Profile Overview: courses per medal (Bronze first) and weekly
+    /// badges (Top 1 % first).
+    pub medal_strip: Option<([u32; 4], [u32; 5])>,
 }
 
 /// The Press Start overlay's tint at a pulse brightness (ms-pulse 1 → 1.18).
@@ -292,6 +298,7 @@ pub fn stage_page(page: &str) -> bool {
         "main"
             | "single"
             | "multiplayer"
+            | "quickplay"
             | "split"
             | "splitseats"
             | "championship"
@@ -882,6 +889,7 @@ fn page_title(page: &str) -> &'static str {
         "main" => "Main Menu",
         "single" => "Single Player",
         "multiplayer" => "Multiplayer",
+        "quickplay" => "Quick Play",
         "split" => "Split Screen",
         "splitseats" => "Players",
         "create-lobby" => "Create Lobby",
@@ -906,6 +914,7 @@ fn page_title(page: &str) -> &'static str {
         "profile" => "Profile Editor",
         "hall-of-fame" => "Hall of Fame",
         "daily" => "Daily Event",
+        "weekly" => "Weekly Challenge",
         "profile-name" => "Profile Name Entry",
         "profile-view" => "View Profile",
         "profile-overview" => "Profile Overview",
@@ -1177,6 +1186,9 @@ fn panel(m: &Metrics, s: &Screen, loading: bool) -> El {
             || controller::passkey_page::PAGES.contains(&page)
             || controller::online_page::PAGES.contains(&page) =>
         {
+            if let Some(strip) = &s.medal_strip {
+                panel = panel.child(medal_strip(m, strip));
+            }
             panel = panel.child(details(m, s));
             if let Some(link) = &s.qr {
                 panel = panel.child(qr_code(m, link));
@@ -1743,6 +1755,28 @@ fn left(m: &Metrics, s: &Screen) -> El {
     }
     let mut left = El::new(style);
     match s.page.as_str() {
+        "quickplay" => {
+            let mut tiles = El::new(Style {
+                display: Display::Flex,
+                flex_direction: if m.portrait {
+                    FlexDirection::Column
+                } else {
+                    FlexDirection::Row
+                },
+                gap: Size {
+                    width: length(14.),
+                    height: length(14.),
+                },
+                flex_shrink: 0.,
+                ..Default::default()
+            });
+            for (index, (action, label)) in s.choices.iter().enumerate() {
+                if action != "back" {
+                    tiles = tiles.child(quickplay_tile(m, s, index, action, label));
+                }
+            }
+            left = left.child(tiles);
+        }
         "create-lobby" | "join-lobby" => {
             left = left.child(form(m, s));
             let mut rows = El::new(column(2.));
@@ -1786,6 +1820,7 @@ fn left(m: &Metrics, s: &Screen) -> El {
                 | "profile-records"
                 | "hall-of-fame"
                 | "daily"
+                | "weekly"
         ) || controller::store_page(page)
             || controller::passkey_page::PAGES.contains(&page)
             || controller::online_page::PAGES.contains(&page) =>
@@ -1880,7 +1915,12 @@ fn left(m: &Metrics, s: &Screen) -> El {
             for (index, (action, label)) in s.choices.iter().enumerate() {
                 if matches!(
                     action.as_str(),
-                    "racetrack" | "raceevent" | "racelaps" | "racecpu" | "racedifficulty"
+                    "racetrack"
+                        | "raceevent"
+                        | "racelaps"
+                        | "racecpu"
+                        | "racedifficulty"
+                        | "raceghost"
                 ) {
                     settings = settings.child(stepper_row(m, s, index, label));
                 }
@@ -2064,6 +2104,55 @@ fn menu_row(m: &Metrics, s: &Screen, index: usize, action: &str, label: &str) ->
         el = freeride_badges(m, el, selected, s.freeride_riders);
     }
     el
+}
+
+/// Quick Play's big playlist tiles (research/QUICK_PLAY.md): the label and
+/// what the playlist rotates, in two words.
+fn quickplay_tile(m: &Metrics, s: &Screen, index: usize, action: &str, label: &str) -> El {
+    let selected = s.selection == index;
+    let hint = if action == "qp-stunts" {
+        "Freestyle · Treasure"
+    } else {
+        "Races · Hills"
+    };
+    let width = if m.portrait {
+        (m.w - 48.).max(200.)
+    } else {
+        200.
+    };
+    let paint = if selected {
+        Paint::fill(crate::menu::gold_pill()).radius(12.)
+    } else {
+        Paint::fill(Color::hex("#000000a6")).radius(12.)
+    };
+    let ink = if selected { "#0d0b00" } else { "#f2f2f2" };
+    El::new(Style {
+        display: Display::Flex,
+        flex_direction: FlexDirection::Column,
+        justify_content: JustifyContent::CENTER,
+        align_items: AlignItems::CENTER,
+        gap: Size {
+            width: length(6.),
+            height: length(6.),
+        },
+        size: Size {
+            width: length(width),
+            height: length(if m.portrait { 112. } else { 150. }),
+        },
+        ..Default::default()
+    })
+    .id(ROW + index as u32)
+    .paint(paint)
+    .child(text(
+        label,
+        TextStyle::new(display(32., 800, true), Color::hex(ink)),
+        38.,
+    ))
+    .child(text(
+        hint,
+        TextStyle::new(display(16., 700, false), Color::hex(ink)),
+        20.,
+    ))
 }
 
 /// `.ms-new` and `.ms-live`: the NEW tag and the live rider count on the
@@ -2370,15 +2459,55 @@ fn course_list(m: &Metrics, s: &Screen) -> El {
                 .spacing(1.44),
                 15.6,
             ));
-        list = list.child(
-            El::new(card)
-                .paint(paint)
-                .id(COURSE + index as u32)
-                .child(thumb_el)
-                .child(copy),
-        );
+        let mut copy = copy;
+        copy.style.flex_grow = 1.;
+        let mut card_el = El::new(card)
+            .paint(paint)
+            .id(COURSE + index as u32)
+            .child(thumb_el)
+            .child(copy);
+        if let Some(medal) = s.medals.get(id) {
+            card_el = card_el.child(crate::medal::coin(*medal, if m.short { 22. } else { 26. }));
+        }
+        list = list.child(card_el);
     }
     list
+}
+
+/// Profile Overview's medal strip: a coin and a count per medal, then the
+/// weekly badges earned (only those held).
+fn medal_strip(m: &Metrics, (medals, badges): &([u32; 4], [u32; 5])) -> El {
+    let size = if m.short { 22. } else { 28. };
+    let ink = Color::hex("#111");
+    let mut strip = El::new(Style {
+        flex_wrap: FlexWrap::Wrap,
+        align_items: AlignItems::CENTER,
+        padding: sides(if m.portrait { 4. } else { 12. }, 8., 2., 8.),
+        gap: Size {
+            width: px(14.),
+            height: px(6.),
+        },
+        ..row(14.)
+    });
+    for medal in atv_core::medals::Medal::ALL.iter().rev() {
+        strip = strip.child(crate::medal::counted(
+            crate::medal::coin(*medal, size),
+            medals[*medal as usize],
+            size,
+            ink,
+        ));
+    }
+    for (i, badge) in atv_core::medals::Badge::ALL.iter().enumerate() {
+        if badges[i] > 0 {
+            strip = strip.child(crate::medal::counted(
+                crate::medal::badge(*badge, size * 0.8),
+                badges[i],
+                size,
+                ink,
+            ));
+        }
+    }
+    strip
 }
 
 fn garage_left(m: &Metrics, s: &Screen, mut left: El) -> El {

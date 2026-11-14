@@ -140,6 +140,69 @@ pub struct Results {
     pub fame: Option<Fame>,
     /// The world boards' answer for this race ("World #3 Fastest Lap!").
     pub world_line: Option<String>,
+    /// The best lap's course medal and whether it is new
+    /// (research/GHOST_CHALLENGES.md), revealed over `medal_reveal` 0..1.
+    pub medal: Option<(atv_core::medals::Medal, bool)>,
+    pub medal_reveal: f32,
+}
+
+/// Seconds the results' medal takes to pop in.
+pub const MEDAL_REVEAL_SECONDS: f32 = 0.45;
+
+/// The results' medal row: its coin popping in, the medal's name and NEW
+/// when it beat the course's medal before. A fixed height, so the panel
+/// does not move while the coin grows.
+fn medal_row(medal: atv_core::medals::Medal, new: bool, reveal: f32) -> El {
+    let size = 34. * crate::medal::pop(reveal);
+    let color = Color::hex(medal.color());
+    let mut row = El::new(Style {
+        display: Display::Flex,
+        align_items: AlignItems::CENTER,
+        gap: Size {
+            width: length(10.),
+            height: length(0.),
+        },
+        min_size: Size {
+            width: auto(),
+            height: length(42.),
+        },
+        margin: margins(0., 0., 8., 0.),
+        ..Default::default()
+    })
+    .child(
+        El::new(Style {
+            size: Size {
+                width: length(42.),
+                height: length(42.),
+            },
+            display: Display::Flex,
+            align_items: AlignItems::CENTER,
+            justify_content: JustifyContent::CENTER,
+            flex_shrink: 0.,
+            ..Default::default()
+        })
+        .child(crate::medal::coin(medal, size)),
+    )
+    .child(text(
+        medal.label(),
+        TextStyle::new(display(22., 800, true), color).shadow(2., 2., 0., Color::hex("#000a")),
+        24.,
+    ));
+    if new {
+        row = row.child(
+            El::new(Style {
+                padding: sides(2., 8., 2., 8.),
+                ..Default::default()
+            })
+            .paint(Paint::fill(Color::hex("#f6e061")).radius(4.))
+            .child(text(
+                "NEW",
+                TextStyle::new(display(13., 800, false), Color::hex("#0d0b00")).spacing(0.8),
+                15.,
+            )),
+        );
+    }
+    row
 }
 
 impl Results {
@@ -184,6 +247,8 @@ impl Results {
         self.profile_total = None;
         self.fame = None;
         self.world_line = None;
+        self.medal = None;
+        self.medal_reveal = 0.;
         self.rows = frame
             .standings
             .iter()
@@ -872,6 +937,12 @@ pub fn element(view: &Viewport, state: &Results, summary: &str, fonts: &mut Font
             wrap: true,
         })
     }))
+    .children(
+        state
+            .medal
+            .filter(|_| naming.is_none() && state.objective.is_none())
+            .map(|(medal, new)| medal_row(medal, new, state.medal_reveal)),
+    )
     .children(naming.into_iter().flat_map(fame_lines))
     .children(naming.map(|fame| name_field(&fame.name)))
     .children((state.objective.is_none() && naming.is_none()).then_some(table))

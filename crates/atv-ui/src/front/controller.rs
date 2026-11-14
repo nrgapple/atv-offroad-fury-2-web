@@ -110,6 +110,15 @@ pub enum Event {
         rider: u16,
         name: String,
     },
+    /// Main Menu → Quick Play → Race / Stunts: a seat in a server-run room
+    /// of that playlist (0 race, 1 stunts; research/QUICK_PLAY.md) with the
+    /// remembered name and the garage ATV (motorcycles ride ATV01).
+    QuickPlay {
+        playlist: u8,
+        quad: u16,
+        rider: u16,
+        name: String,
+    },
     /// Free Ride Lobby → Copy invite link (while joining).
     CopyInvite,
     /// Free Ride Lobby → Leave Game, or Back: abandon the room being joined.
@@ -138,6 +147,8 @@ pub enum Event {
     /// Hall of Fame → View: World → Race This Ghost: Lap Attack on the
     /// board's course against a row's ghost, which the host downloads first
     /// (research/WORLD_BOARDS.md "Ghosts").
+    /// Lap Attack's ghost picker sends it too (research/GHOST_CHALLENGES.md);
+    /// an empty `board` races this device's personal best ghost.
     GhostRace {
         /// The lap board, the row's name and its lap in milliseconds.
         board: String,
@@ -276,6 +287,7 @@ pub fn stepper(action: &str) -> bool {
             | "racelaps"
             | "racecpu"
             | "racedifficulty"
+            | "raceghost"
             | "champdifficulty"
             | "profileletter"
             | "recordevent"
@@ -470,6 +482,9 @@ pub struct Frontend {
     saved: Value,
     /// Riders in Arlington Free Ride (the main menu's live count).
     pub freeride_riders: Option<u32>,
+    /// The game server runs Quick Play (research/QUICK_PLAY.md): the main
+    /// menu leads with its row.
+    pub quickplay: bool,
     /// The Host/Join forms (frontend.js playerName, createCode, roomCode).
     pub player_name: String,
     pub create_code: String,
@@ -539,6 +554,9 @@ pub struct Frontend {
     pub cloud: CloudView,
     /// The world boards and the daily event's clock, from the host.
     pub world: world_page::WorldView,
+    /// The rider's medals, weekly results and personal best ghosts on this
+    /// device (research/GHOST_CHALLENGES.md), reloaded by the host.
+    pub medals: atv_core::medals::MedalBook,
     /// The status bar's open popover and its chip's centre x.
     status_open: Option<super::status_bar::Chip>,
     status_anchor: f32,
@@ -673,6 +691,7 @@ impl Frontend {
             stats_link: true,
             saved,
             freeride_riders: None,
+            quickplay: false,
             player_name: String::new(),
             create_code: String::new(),
             room_code: String::new(),
@@ -694,6 +713,7 @@ impl Frontend {
             room: None,
             lobby: None,
             race_courses: Vec::new(),
+            medals: crate::settings::load_medals(settings),
             race,
             race_filter: "all".into(),
             course_sheet: false,
@@ -793,6 +813,16 @@ impl Frontend {
         }
         if self.page == "splitseats" {
             self.choices = self.seat_choices();
+            self.selection = self.selection.min(self.choices.len().saturating_sub(1));
+            return;
+        }
+        if self.page == "quickplay" {
+            // Two tiles, one tap each into the queue.
+            self.choices = vec![
+                ("qp-race".into(), "Race".into()),
+                ("qp-stunts".into(), "Stunts".into()),
+                ("back".into(), "Back".into()),
+            ];
             self.selection = self.selection.min(self.choices.len().saturating_sub(1));
             return;
         }
@@ -959,6 +989,11 @@ impl Frontend {
             for (i, (action, label)) in rows.into_iter().enumerate() {
                 self.choices.insert(at + i, (action.into(), label.into()));
             }
+            // Quick Play leads, once the server says it runs it.
+            if self.quickplay {
+                self.choices
+                    .insert(0, ("quickplay".into(), "Quick Play".into()));
+            }
         }
         // Single Player in the original's order (PAGE02: Race, Freestyle,
         // Championships) with the port's rows between Freestyle and the
@@ -967,10 +1002,21 @@ impl Frontend {
         // after Freestyle, and Games
         // (the original's live under Multiplayer → Split Screen) after
         // Championships.
+        // Lap Attack's ghost picker under Difficulty (a port addition).
+        if page == "race"
+            && !self.split
+            && let Some(row) = self.ghost_row()
+            && let Some(at) = self.choices.iter().position(|(a, _)| a == "racedifficulty")
+        {
+            self.choices.insert(at + 1, row);
+        }
         if page == "single" {
             let mut rows = Vec::new();
             if self.daily_offered() {
                 rows.push((world_page::DAILY_PAGE, "Daily Event"));
+            }
+            if self.weekly_offered() {
+                rows.push((world_page::WEEKLY_PAGE, "Weekly Challenge"));
             }
             rows.push(("classic-courses", "Classic Freestyle"));
             if !self.objective_courses.is_empty() {
@@ -1356,6 +1402,7 @@ impl Frontend {
                     .unwrap_or(1) as i32;
                 self.race.cpu = RACE_CPU[(at + direction).rem_euclid(3) as usize];
             }
+            "raceghost" => self.step_ghost(direction),
             "racedifficulty" => {
                 // Normal → Expert → Kid (Kid only where it is offered).
                 let offered: &[u32] = if self.kid_offered() {
@@ -1393,6 +1440,13 @@ impl Frontend {
         // The last started race is remembered (frontend.js `lastRace`).
         self.saved["race"] = self.race.value();
         self.save(settings);
+        // Lap Attack against a picked ghost (research/GHOST_CHALLENGES.md).
+        if self.lap_attack()
+            && !self.split
+            && let Some(event) = self.ghost_start()
+        {
+            return Some(event);
+        }
         Some(Event::Race {
             environment: self.race.course.clone(),
             quad: self.quad_id,
@@ -2542,6 +2596,18 @@ impl Frontend {
             "devlog" => return Some(Event::DevLog),
             "downloads" => return Some(Event::Downloads),
             "stats" => return Some(Event::Stats),
+            "quickplay" => self.show("quickplay", view),
+            "qp-race" | "qp-stunts" => {
+                // Rounds include races with ATV CPU fields: a saved
+                // motorcycle rides ATV01 here.
+                let name = self.room_name();
+                return Some(Event::QuickPlay {
+                    playlist: if action == "qp-stunts" { 1 } else { 0 },
+                    quad: if self.quad_id >= 27 { 1 } else { self.quad_id },
+                    rider: self.rider_id,
+                    name,
+                });
+            }
             "freeride" => {
                 // frontend.js: no setup. The current name rides (also one
                 // typed but not yet saved); the host numbers a blank or
@@ -3376,6 +3442,16 @@ impl Frontend {
             status: self.status_bar(),
             toast: None,
             qr: self.passkey_qr(),
+            medals: if self.page == "race" {
+                self.race_order()
+                    .into_iter()
+                    .filter_map(|id| Some((id.clone(), self.medals.medal(&id)?)))
+                    .collect()
+            } else {
+                Default::default()
+            },
+            medal_strip: (self.page == "profile-overview")
+                .then(|| (self.medals.counts(), self.medals.badge_counts())),
             heading: if self.course_sheet && self.page == "race" {
                 Some("Choose Course".into())
             } else if self.vehicle_sheet && self.page == "garage" {

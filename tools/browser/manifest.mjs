@@ -139,6 +139,10 @@ export const TESTS = {
     group: 'multiplayer',
     reason: 'needs a local game server at the same origin (Host Game → Room: Freestyle; Rust guest and late spectator, host handoff); run with --url'
   },
+  'test_engine_quickplay.mjs': {
+    group: 'multiplayer',
+    reason: 'needs a local game server at the same origin (Quick Play: menu and link queue, vote, driver-started race, server podium, rematch); run with --url'
+  },
   'test_engine_multiplayer_race.mjs': {
     group: 'multiplayer',
     reason: 'needs a local game server at the same origin (Rust host and guest race a Supercross room); run with --url'
@@ -248,6 +252,7 @@ export const TESTS = {
   'test_engine_hall_of_fame.mjs': { group: 'content', timeout: 900 },
   'test_engine_world_boards.mjs': { group: 'content', timeout: 900 },
   'test_engine_world_ghosts.mjs': { group: 'content', timeout: 900 },
+  'test_engine_ghost_challenges.mjs': { group: 'content', timeout: 1200 },
   'test_engine_world_submit.mjs': { group: 'content', timeout: 900 },
   'test_engine_text_fields_touch.mjs': { group: 'content' },
   'test_engine_championship.mjs': { group: 'content', timeout: 1500 },

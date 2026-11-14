@@ -85,6 +85,12 @@ try {
       return !s.counting && s.shown === 1000;
     });
     await shot(page, `store-cheats-${suffix}`);
+    // STOPCAM is a session switch: on, then off again.
+    for (const state of ['Enabled', 'Disabled']) {
+      await page.getByLabel('Enter Cheat:', { exact: true }).fill('stopcam');
+      await clickRow(page, 'Enter');
+      assert.equal((await read(page)).notice, `Stop Action Replay Cam ${state}!`);
+    }
     await page.mouse.click(8, 8);
     await key(page, 'Escape'); await onPage(page, 'store');
     // Back returned to the Cheats row; up to ATVs.
@@ -178,7 +184,7 @@ try {
     await shot(page, `garage-locked-${suffix}`);
     assertNoErrors(errors);
     await page.close();
-    console.log(`${suffix}: store purchase, cheat, persistence and garage gating`);
+    console.log(`${suffix}: store purchase, cheats, persistence and garage gating`);
   }
   console.log('PASS: Rust engine Profile Store');
 } finally {

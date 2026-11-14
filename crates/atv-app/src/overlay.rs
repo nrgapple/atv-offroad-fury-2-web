@@ -41,6 +41,8 @@ pub enum Action {
     Viewer(atv_ui::hud::viewer::Button),
     /// The Waypoint Editor's GATE and UNDO.
     Gate(crate::waypoint_editor::Command),
+    /// A Quick Play panel button (`atv_ui::hud::quickplay` hit id).
+    QuickPlay(u32),
     /// A quick-chat pick (research/QUICK_CHAT.md): kind and id.
     Chat(u8, u8),
 }
@@ -242,9 +244,18 @@ pub struct Overlay {
     /// A room race whose host results have not arrived yet: hold the
     /// race's own results panel (research/MULTIPLAYER.md "Room races").
     pub room_race_pending: bool,
+    /// The Quick Play panel over a server-run room (research/QUICK_PLAY.md).
+    pub quickplay: Option<atv_ui::hud::quickplay::View>,
+    /// Between Quick Play rounds: the round's own results panel stays
+    /// hidden under the vote and podium.
+    pub quickplay_hides_results: bool,
     /// The race's course id, the player's vehicle and whether it runs the
     /// default laps: what the profile's course record keeps (`001f1e30`).
     pub race_entry: Option<(String, u16, bool)>,
+    /// When the results' medal began its reveal.
+    medal_shown: Option<web_time::Instant>,
+    /// The medal book changed: the host reloads the menus' copy.
+    pub medals_saved: bool,
     /// The finished race's Hall of Fame records, until named.
     /// (and the name they are stored under).
     fame_watch: Option<(atv_core::hall_of_fame::Watch, String)>,
@@ -364,7 +375,11 @@ impl Overlay {
             training: false,
             game: false,
             room_race_pending: false,
+            quickplay: None,
+            quickplay_hides_results: false,
             race_entry: None,
+            medal_shown: None,
+            medals_saved: false,
             fame_watch: None,
             world_run: None,
             world_outbox: None,
@@ -749,6 +764,11 @@ impl Overlay {
                 }
                 if let Some(pick) = self.chat.hit(p.button) {
                     return Some(pick);
+                }
+                if (atv_ui::hud::quickplay::CARD..=atv_ui::hud::quickplay::LEAVE)
+                    .contains(&p.button)
+                {
+                    return Some(Some(Action::QuickPlay(p.button)));
                 }
                 match toolbar::Button::from_id(p.button) {
                     Some(toolbar::Button::Pause) => Some(Action::Pause),
@@ -1678,6 +1698,7 @@ impl Overlay {
                     } else if self.lobby.is_none() {
                         self.credit_profile(frame);
                         self.record_fame(frame);
+                        self.record_medal(frame);
                     } else {
                         self.results.no_award();
                     }
@@ -1690,9 +1711,10 @@ impl Overlay {
             }
             _ => {}
         }
-        if self.results.shown && active {
+        if self.results.shown && active && !self.quickplay_hides_results {
             self.paint_results(race.map(|(frame, ..)| frame));
         }
+        self.paint_quickplay();
         if let Some(chat) = chat {
             atv_ui::hud::chat::paint_feed(&mut self.fonts, &mut self.list, &view, &chat.feed);
             self.chat.post = self.results.shown && self.lobby.is_some();
@@ -1782,6 +1804,14 @@ impl Overlay {
     /// centred) and adds their paint and buttons.
     fn paint_results(&mut self, frame: Option<&atv_core::race::Frame>) {
         let view = self.view;
+        // The medal pops in over its first moments (the panel is laid out
+        // again only while it moves).
+        let naming = self.results.fame.is_some() && self.results.menu == results::Menu::NameEntry;
+        if self.results.medal.is_some() && !naming && self.results.medal_reveal < 1. {
+            let at = *self.medal_shown.get_or_insert_with(web_time::Instant::now);
+            self.results.medal_reveal =
+                (at.elapsed().as_secs_f32() / results::MEDAL_REVEAL_SECONDS).min(1.);
+        }
         let summary = self
             .results
             .objective
@@ -1832,6 +1862,31 @@ impl Overlay {
         }
     }
 
+    /// Quick Play's panel over the ride (and the round's results).
+    fn paint_quickplay(&mut self) {
+        let view = self.view;
+        if let Some(state) = self.quickplay.as_ref().filter(|_| self.menu.is_none())
+            && let Some(element) = atv_ui::hud::quickplay::element(&view, state)
+        {
+            let (mut list, mut hits) = (DisplayList::default(), Vec::new());
+            layout::render(
+                &element,
+                &mut self.fonts,
+                view.width,
+                view.height,
+                &mut list,
+                &mut hits,
+            );
+            self.list.items.extend_from_slice(&list.items);
+            self.hits.extend_from_slice(&hits);
+        }
+    }
+
+    /// A portrait phone: the Quick Play panel's narrow layout.
+    pub fn narrow(&self) -> bool {
+        self.view.width < 520.
+    }
+
     /// Registers the original Jukebox art (PAGE14 backdrop and CD frames).
     pub fn set_jukebox_art(
         &mut self,
@@ -1874,7 +1929,7 @@ impl Overlay {
 
     /// Escape/Enter while the race results are up: true when taken.
     pub fn results_key(&mut self, code: &str) -> (bool, Option<Action>) {
-        if self.menu.is_some() {
+        if self.menu.is_some() || self.quickplay_hides_results {
             return (false, None);
         }
         let (taken, command) = self.results.key(code);
@@ -1909,7 +1964,7 @@ impl Overlay {
 
     /// Controller A/B/X and the D-pad while the race results are up.
     pub fn results_pad(&mut self, pad: Option<&atv_game::ride::bindings::Pad>) -> Option<Action> {
-        if self.menu.is_some() {
+        if self.menu.is_some() || self.quickplay_hides_results {
             return None;
         }
         let idle = atv_game::ride::bindings::Pad::default();
@@ -1961,6 +2016,16 @@ impl Overlay {
             return;
         }
         self.world_run = crate::world::Run::of_race(frame).map(crate::world::Finished::Race);
+        // The weekly challenge's best stays on this device for its badge.
+        if let Some(crate::world::Finished::Race(run)) = &self.world_run
+            && let (Some(week), Some(ms)) = (&run.weekly, run.race_ms)
+        {
+            let mut book = atv_ui::settings::load_medals(&self.settings);
+            if book.record_week(week, ms) {
+                atv_ui::settings::save_medals(&mut self.settings, &book);
+                self.medals_saved = true;
+            }
+        }
         if let Some(watch) = frame.records.clone() {
             self.offer_fame(atv_core::hall_of_fame::Watch::Race(watch));
         }
@@ -1973,6 +2038,21 @@ impl Overlay {
                 self.world_run = None;
             }
         }
+    }
+
+    /// A race that keeps records earns its best lap's medal (research/
+    /// GHOST_CHALLENGES.md); the results reveal it.
+    fn record_medal(&mut self, frame: &atv_core::race::Frame) {
+        let (Some(watch), Some(best)) = (frame.records.as_ref(), frame.best) else {
+            return;
+        };
+        let course = watch.key.strip_suffix(":expert").unwrap_or(&watch.key);
+        let lap_ms = atv_core::world_board::millis(best);
+        let ghost = frame.lap_ghost.as_deref();
+        self.results.medal =
+            atv_ui::settings::record_medal_lap(&mut self.settings, course, lap_ms, ghost);
+        self.medal_shown = None;
+        self.medals_saved = true;
     }
 
     /// Hands the kept world run to the host under `name`, else the Hall of
@@ -2332,6 +2412,20 @@ impl Overlay {
                 "emotes": self.chat.emotes, "post": self.chat.post, "focus": self.chat.focus,
             })),
             "touchOwned": self.touch.input.pointer.is_some(),
+            "quickPlay": self.quickplay.as_ref().map(|q| serde_json::json!({
+                "phase": format!("{:?}", q.phase),
+                "seconds": q.seconds,
+                "seats": q.seats.iter().map(|s| serde_json::json!({
+                    "name": s.name, "cpu": s.cpu, "me": s.me, "ping": s.ping,
+                })).collect::<Vec<_>>(),
+                "cards": q.cards.iter().map(|c| serde_json::json!({
+                    "mode": c.mode, "track": c.track, "votes": c.votes, "chosen": c.chosen,
+                })).collect::<Vec<_>>(),
+                "rows": q.rows.iter().map(|r| serde_json::json!({
+                    "name": r.name, "value": r.value, "cpu": r.cpu, "me": r.me,
+                })).collect::<Vec<_>>(),
+                "spectating": q.spectating,
+            })),
             "kidTouch": self.touch.kid(),
             "kidGo": self.touch.kid_go(),
             "flipBuzzes": self.flip_buzzes,

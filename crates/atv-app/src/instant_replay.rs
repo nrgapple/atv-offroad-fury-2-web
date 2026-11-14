@@ -625,6 +625,9 @@ pub enum Shot {
     Trackside,
     /// A slow circle around the rider.
     Orbit,
+    /// A broadcast director: cuts between trackside, crane, low, head-on,
+    /// aerial and onboard vantages as the rider passes each.
+    Broadcast,
 }
 
 impl Shot {
@@ -632,7 +635,8 @@ impl Shot {
         match self {
             Self::Chase => Self::Trackside,
             Self::Trackside => Self::Orbit,
-            Self::Orbit => Self::Chase,
+            Self::Orbit => Self::Broadcast,
+            Self::Broadcast => Self::Chase,
         }
     }
 
@@ -641,6 +645,7 @@ impl Shot {
             Self::Chase => "Chase",
             Self::Trackside => "Trackside",
             Self::Orbit => "Orbit",
+            Self::Broadcast => "Broadcast",
         }
     }
 }
@@ -660,6 +665,19 @@ pub fn look(eye: [f32; 3], target: [f32; 3]) -> Camera {
 /// The trackside vantage for a rider at `now` who will be at `ahead`: off
 /// to the side of the line between them, `height` above `ground`.
 pub fn vantage(now: [f32; 3], ahead: [f32; 3], ground: &dyn Fn(f32, f32) -> f32) -> [f32; 3] {
+    vantage_beside(now, ahead, 28., 7., ground)
+}
+
+/// A vantage `side` units to the left of the line from `now` to `ahead`
+/// (negative: the right), beside `ahead` and `height` above the ground or
+/// the rider there, whichever is higher.
+pub fn vantage_beside(
+    now: [f32; 3],
+    ahead: [f32; 3],
+    side: f32,
+    height: f32,
+    ground: &dyn Fn(f32, f32) -> f32,
+) -> [f32; 3] {
     let (dx, dz) = (ahead[0] - now[0], ahead[2] - now[2]);
     let length = dx.hypot_d(dz);
     let (ux, uz) = if length > 1. {
@@ -667,13 +685,12 @@ pub fn vantage(now: [f32; 3], ahead: [f32; 3], ground: &dyn Fn(f32, f32) -> f32)
     } else {
         (0., 1.)
     };
-    let side = 28.;
     let (x, z) = (ahead[0] - uz * side, ahead[2] + ux * side);
     let floor = ground(x, z);
     let y = if floor.is_finite() {
-        floor.max(ahead[1]) + 7.
+        floor.max(ahead[1]) + height
     } else {
-        ahead[1] + 7.
+        ahead[1] + height
     };
     [x, y, z]
 }
@@ -801,6 +818,35 @@ mod tests {
         r.sample(r.span().unwrap().1 as f64, &mut m);
         assert_eq!(m.cpus.len(), 6);
         assert!(m.ghost.is_some());
+    }
+
+    #[test]
+    fn a_five_lap_race_of_six_riders_fits_at_seven_and_a_half_hertz() {
+        // sx01 laps take about 70 s: five laps, the intro and the tail make
+        // about six minutes. Riders draw about 45 nodes (50 cells each).
+        let mut r = Recorder::default();
+        r.set_whole(true);
+        let steps = (5 * 70 + 13) * 60;
+        for step in 0..steps {
+            if r.begin(step, Camera::default(), 2.) {
+                r.add(Kind::Player, &pose(step as f32, 43));
+                for k in 0..5 {
+                    r.add(Kind::Cpu(k), &pose(step as f32, 43));
+                }
+                r.end();
+            }
+        }
+        assert_eq!(r.stride(), 300);
+        let samples = WHOLE_SAMPLES * std::mem::size_of::<Sample>();
+        assert!(r.bytes() <= WHOLE_BUDGET + samples, "{} bytes", r.bytes());
+        // One thinning: 7.5 Hz from the grid to the finish.
+        assert_eq!(r.interval(), WHOLE_STEPS * 2);
+        assert_eq!(r.span().unwrap().0, 0);
+        eprintln!(
+            "five laps, six riders: {} samples, {:.1} MiB",
+            r.len(),
+            r.bytes() as f64 / 1048576.
+        );
     }
 
     #[test]
