@@ -460,7 +460,13 @@ impl Roam {
             self.blocked = 0.;
         }
         let mut heading = self.heading?;
-        let speed = skill.cruise * self.pace * if self.turning { 0.75 } else { 1. };
+        // Slower while turning away, and slowest for a heading well off the
+        // way the ATV faces, so a sharp turn by a hazard keeps a tight line.
+        let facing = unit(sense.forward).map_or(1., |f| f[0] * heading[0] + f[1] * heading[1]);
+        let speed = skill.cruise
+            * self.pace
+            * if self.turning { 0.75 } else { 1. }
+            * (0.35 + 0.65 * facing.max(0.));
         // The race driver's peer correction on the wanted velocity
         // (`cpu_avoidance::peers`), unless it would turn into a hazard.
         let mut peers = [cpu_avoidance::Peer {
@@ -639,7 +645,7 @@ mod tests {
         let lake = |p: [f32; 2]| flat(p, [1000., 1000.]) < 250.;
         let map = map(&[[400., 1000.], [1600., 1000.], [1000., 300.], [1900., 1900.]]);
         let mut turns = 0;
-        for seed in 1..6 {
+        for seed in 1..13 {
             let mut rider = Rider::new([450., 1000.], seed);
             for _ in 0..(60 * 300) {
                 rider.step(&map, &lake, &[]);

@@ -93,7 +93,9 @@ under more than 2 ft of still water (the deep-water reset needs the ATV
 3 ft under for 5 s, `001e5260`). A blocked heading turns to the smallest
 of 26°, 52°, 77°, 103°, 132° or 180° to either side that is clear, keeping
 the side it chose while it stays blocked, and rides at three quarters of
-its pace.
+its pace. Its speed also falls with the angle between that heading and the
+way the ATV faces (to 35 % at 90° or more), so a sharp turn beside a lake
+keeps a tight line instead of carving into the water.
 
 **Facts and assumptions.** Fact: the steering, pedal, stuck and peer
 rules are the ones the race CPUs already use, and the boundary and
@@ -117,7 +119,7 @@ therefore never loads them (`start_ride` clears the request for a room).
 
 - `atv-core` unit tests (`roam_cpu::tests`): hilltops found and wet ones
   left out; a roamer visits different points and repeats exactly with its
-  seed; five seeds ride five minutes around a lake without entering it or
+  seed; twelve seeds ride five minutes around a lake without entering it or
   leaving the map, with no reset; a roamer follows a circuit (over 90 % of
   its line time within 40 ft of it); it steers round a rider in its way.
 - `atv-core` and `atv-ui`: the Extras row and its saved value.
