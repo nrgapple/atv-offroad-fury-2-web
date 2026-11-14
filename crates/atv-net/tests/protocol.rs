@@ -1344,3 +1344,78 @@ fn server_frames_carry_compact_poses_and_deltas_only() {
         assert!(encode(&bad).is_err());
     }
 }
+
+#[test]
+fn quick_chat_carries_preset_ids_only() {
+    use atv_net::chat::{self, Chat};
+    for c in [
+        Chat {
+            peer: 0,
+            kind: chat::LINE,
+            id: 0,
+        },
+        Chat {
+            peer: 19,
+            kind: chat::LINE,
+            id: 13,
+        },
+        Chat {
+            peer: 3,
+            kind: chat::EMOTE,
+            id: 7,
+        },
+        Chat {
+            peer: 5,
+            kind: chat::HORN,
+            id: 0,
+        },
+    ] {
+        let bytes = encode(&Packet::Chat(c)).unwrap();
+        assert_eq!(bytes.len(), 11);
+        assert_eq!(bytes[5], 24);
+        assert_eq!(decode(&bytes).unwrap(), Packet::Chat(c));
+    }
+    for bad in [
+        Chat {
+            peer: 20,
+            kind: chat::LINE,
+            id: 0,
+        },
+        Chat {
+            peer: 0,
+            kind: chat::LINE,
+            id: 14,
+        },
+        Chat {
+            peer: 0,
+            kind: chat::EMOTE,
+            id: 8,
+        },
+        Chat {
+            peer: 0,
+            kind: chat::HORN,
+            id: 1,
+        },
+        Chat {
+            peer: 0,
+            kind: 3,
+            id: 0,
+        },
+    ] {
+        assert_eq!(encode(&Packet::Chat(bad)), Err(Error::InvalidValue));
+        let mut bytes = encode(&Packet::Chat(Chat {
+            peer: 0,
+            kind: chat::LINE,
+            id: 0,
+        }))
+        .unwrap();
+        bytes[8..].copy_from_slice(&[bad.peer, bad.kind, bad.id]);
+        assert_eq!(decode(&bytes), Err(Error::InvalidValue));
+    }
+    let hello = Packet::Signal(Signal {
+        peer: 1,
+        kind: signal::HELLO,
+        data: vec![signal::FRAMES | signal::CHAT],
+    });
+    assert_eq!(decode(&encode(&hello).unwrap()).unwrap(), hello);
+}

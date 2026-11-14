@@ -9,6 +9,7 @@
 
 use serde::{Deserialize, Serialize};
 
+pub mod chat;
 mod codec;
 mod compact;
 mod names;
@@ -679,6 +680,9 @@ pub mod signal {
     /// instead of each rider's pose separately. Never forwarded in other
     /// riders' flags.
     pub const FRAMES: u8 = 16;
+    /// Hello flags bit: the build takes [`super::Packet::Chat`] quick chat
+    /// (research/QUICK_CHAT.md). The server relays chat only to such builds.
+    pub const CHAT: u8 = 64;
 }
 /// Most poses in one [`Packet::Bundle`]: every rider in a full room.
 pub const MAX_BUNDLE: usize = MAX_PLAYERS;
@@ -790,11 +794,13 @@ impl Signal {
                 signal::HELLO => {
                     self.data.len() == 1
                         && self.data[0]
-                            <= signal::DIRECT
+                            & !(signal::DIRECT
                                 | signal::CARRIES
                                 | signal::CPU_SOUNDS
                                 | signal::BATCHES
                                 | signal::FRAMES
+                                | signal::CHAT)
+                            == 0
                 }
                 signal::PRESENT | signal::ARRIVED => {
                     self.data.len() == 1 && self.data[0] & !(signal::DIRECT | signal::BATCHES) == 0
@@ -898,6 +904,9 @@ pub enum Packet {
     Frame {
         poses: Vec<Vec<u8>>,
     },
+    /// A quick-chat line, emote or horn by id (research/QUICK_CHAT.md);
+    /// to and from the server only for builds that said [`signal::CHAT`].
+    Chat(chat::Chat),
 }
 
 pub(crate) fn bounded(values: &[f32], limit: f32) -> bool {
