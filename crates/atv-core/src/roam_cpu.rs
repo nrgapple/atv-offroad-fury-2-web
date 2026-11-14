@@ -620,7 +620,7 @@ mod tests {
         // Two hills; the second stands in water.
         let ground = |x: f32, z: f32| {
             let hill =
-                |cx: f32, cz: f32| 40. * (-((x - cx).powi(2) + (z - cz).powi(2)) / 20000.).exp();
+                |cx: f32, cz: f32| 40. * (-((x - cx).powi(2) + (z - cz).powi(2)) / 20000.).exp_d();
             Some(hill(500., 500.) + hill(1500., 1400.))
         };
         let wet = |p: [f32; 2]| flat(p, [1500., 1400.]) < 300.;
