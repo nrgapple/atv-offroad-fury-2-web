@@ -187,3 +187,62 @@ Final venue totals with both derived terrain and vegetation dependencies are
 **204,664,076 bytes**, **24,018 members**, 56 venues. The separate 8,497-byte
 adapter is unchanged. The twelve documented source-missing collider records
 remain; there are no unresolved derived terrain or ESB dependencies.
+
+## Publication preparation: acceptance-gated local promotion
+
+Nothing in this checkpoint uploads content. Staging remains the packaging
+default; base regeneration and publication tools use the shared publication
+lock and atomically replace the manifest. Base regeneration first validates the
+existing content package, preserves all approved MX bike/map/adapter records,
+and reassigns retained MX virtual LBAs past all newly generated base extents.
+Invalid existing packages fail without replacing their manifest. Content-addressed
+unreferenced blobs may remain after a failed operation; they are not authorized
+for upload by their presence on disk.
+
+`validated_content` separately routes known bikes, exactly the 56 uppercase
+map IDs, and `/MX/ADAPTER.RES`. Map and adapter validators enforce their source
+build contracts, unique case-insensitive member inventories, required members,
+and source-specific path/extension restrictions. VU shaders, executables, raw
+archives and private paths are excluded. Original THQFinishGate.VUT is a text
+animation binding, allowed only at its original per-venue animation path.
+Each map must additionally match its inspected source package SHA256 in the
+authored catalog's `sha256` field. The adapter is bound to its inspected fixed
+hash and exact five-member set, with both source builds in its metadata and
+record. Source labels or extensions alone never authorize changed bytes.
+Changing runtime package bytes requires updating the authored hash and rerunning
+acceptance. Manifest validation rejects duplicate paths and overlapping extents.
+
+After the parent's actual native two-vehicle sweep **and separate browser
+acceptance**, the explicit local promotion command is:
+
+```
+python3 tools/promote_mx_content.py --staging private/reports/mx-map-staging --acceptance /path/to/actual-native-acceptance.json
+```
+
+The default destination is ignored `private/reports/hosted-content`; `--output`
+can select another ignored private directory with an already valid base
+manifest. The acceptance input schema is exactly:
+
+```
+{version: 1, adapter_sha256: <actual adapter hash>, maps: [
+  {id: <mx ID>, sha256: <actual map hash>, atv: true, motorcycle: true,
+   steps_each: 360, unsupported_models: 0}, ...all 56 unique IDs...
+]}
+```
+
+This describes JSON fields; it is not an acceptance result. Integer steps must
+be at least 360, both boolean vehicle results must be true, and unsupported
+model count must be integer zero. Every hash must match the validated staged
+package. The native example may emit the real input via `ATV_MX_ACCEPTANCE`.
+No acceptance input is created by packaging or promotion, and browser acceptance
+is the parent's additional prerequisite to invoking promotion. This is runtime
+validation input, not a release-owner receipt.
+
+Promotion prevalidates all 57 staged packages and the acceptance input before
+changing the destination. Under the publication lock it revalidates the current
+destination, copies only the 57 authorized content-addressed blobs, preserves
+all other records (including bikes), allocates nonoverlapping virtual LBAs,
+and atomically replaces the manifest. It does not copy diagnostic reports,
+acceptance JSON, source files or arbitrary staging artifacts. It neither invokes
+R2 upload nor starts a deployment. No promotion has been performed during this
+packaging task; parent runtime/browser acceptance is still pending.

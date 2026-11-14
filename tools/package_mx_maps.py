@@ -365,6 +365,7 @@ def package(output):
                 raise ValueError(f'{venue}: missing terrain')
             packed = pack_resource(sorted(members.items()))
             digest = hashlib.sha256(packed).hexdigest()
+            catalog[-1]['sha256'] = digest
             (output / f'{digest}.bin').write_bytes(packed)
             report.append(dict(id='mx_'+venue.lower(), source_stem=venue.lower(), archive=f'/MX/MAPS/{venue.upper()}.RES', sha256=digest, bytes=len(packed), member_count=len(members), missing=sorted(missing), excluded=sorted(excluded), physics_collections=physics_collections, dependency_audit=sorted({json.dumps(e,sort_keys=True):e for e in audit}.values(), key=lambda e:(e['origin'],e['reference'],e['kind']))))
             print(venue, len(packed), 'missing', len(missing), flush=True)

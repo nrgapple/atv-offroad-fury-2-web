@@ -4,391 +4,447 @@
     "source_stem": "fs01",
     "display_name": "Little Rock FMX",
     "group": "Freestyle",
-    "archive": "/MX/MAPS/FS01.RES"
+    "archive": "/MX/MAPS/FS01.RES",
+    "sha256": "6e3ad13c44316d53583ba5ca871ff1631041396fdf697d7ce5cb5413ff302a70"
   },
   {
     "id": "mx_fs02",
     "source_stem": "fs02",
     "display_name": "Austin FMX",
     "group": "Freestyle",
-    "archive": "/MX/MAPS/FS02.RES"
+    "archive": "/MX/MAPS/FS02.RES",
+    "sha256": "aea5fd765276764c22ac51d7e6e5eb628b476978bd1d237386b9da73f5b72d66"
   },
   {
     "id": "mx_fs03",
     "source_stem": "fs03",
     "display_name": "Boston FMX",
     "group": "Freestyle",
-    "archive": "/MX/MAPS/FS03.RES"
+    "archive": "/MX/MAPS/FS03.RES",
+    "sha256": "2efd4767670a10abd408229018822986187724afe650e2308414971f3c5d945a"
   },
   {
     "id": "mx_fs04",
     "source_stem": "fs04",
     "display_name": "St. Paul FMX",
     "group": "Freestyle",
-    "archive": "/MX/MAPS/FS04.RES"
+    "archive": "/MX/MAPS/FS04.RES",
+    "sha256": "e8eedb3b844e4a482f003cb9136fdfa6f3d2e1b72424be83bed2da917e526b2d"
   },
   {
     "id": "mx_fs05",
     "source_stem": "fs05",
     "display_name": "New Orleans FMX",
     "group": "Freestyle",
-    "archive": "/MX/MAPS/FS05.RES"
+    "archive": "/MX/MAPS/FS05.RES",
+    "sha256": "ca6ed2c3c498c2ce76190ffe7fdd69ce42f14c4b014aeba88ed82ea872aad236"
   },
   {
     "id": "mx_fs06",
     "source_stem": "fs06",
     "display_name": "Las Vegas FMX",
     "group": "Freestyle",
-    "archive": "/MX/MAPS/FS06.RES"
+    "archive": "/MX/MAPS/FS06.RES",
+    "sha256": "cd9a1f78a3bb1153b20973024185da888a1bb1ab5b54a756335076ff6dcf0fc1"
   },
   {
     "id": "mx_fs07",
     "source_stem": "fs07",
     "display_name": "Portland FMX",
     "group": "Freestyle",
-    "archive": "/MX/MAPS/FS07.RES"
+    "archive": "/MX/MAPS/FS07.RES",
+    "sha256": "a0241d2ec23dc5e2f37116e6a585255aa5160dec839da8308f66b8d0ecaf88de"
   },
   {
     "id": "mx_fs08",
     "source_stem": "fs08",
     "display_name": "Orlando FMX",
     "group": "Freestyle",
-    "archive": "/MX/MAPS/FS08.RES"
+    "archive": "/MX/MAPS/FS08.RES",
+    "sha256": "77306be9c6fe3dbbbdd1f17fdfd80f1c79541028178456fd3d8e0e71769cb0ef"
   },
   {
     "id": "mx_mc01",
     "source_stem": "mc01",
     "display_name": "Killington",
     "group": "Machine Challenge",
-    "archive": "/MX/MAPS/MC01.RES"
+    "archive": "/MX/MAPS/MC01.RES",
+    "sha256": "d32578ef6f636a98694ca90b06658d9d07660afadc5700e921258d1f36986a8c"
   },
   {
     "id": "mx_mc02",
     "source_stem": "mc02",
     "display_name": "Desert Oasis",
     "group": "Machine Challenge",
-    "archive": "/MX/MAPS/MC02.RES"
+    "archive": "/MX/MAPS/MC02.RES",
+    "sha256": "947e86edc5e94e402fc54349b7182eb20c440ac062fbee4e90fa20acdebcc9e6"
   },
   {
     "id": "mx_mc03",
     "source_stem": "mc03",
     "display_name": "Red Country",
     "group": "Machine Challenge",
-    "archive": "/MX/MAPS/MC03.RES"
+    "archive": "/MX/MAPS/MC03.RES",
+    "sha256": "054577345dc2a3999eb1638704e1a55331bbe369f0c607f618646997009a11ad"
   },
   {
     "id": "mx_mc04",
     "source_stem": "mc04",
     "display_name": "Glamis South",
     "group": "Machine Challenge",
-    "archive": "/MX/MAPS/MC04.RES"
+    "archive": "/MX/MAPS/MC04.RES",
+    "sha256": "37b92cc4bb048e59ed8d5bf0060ea2f95cf9027c259d8a86196790cf2bb4f552"
   },
   {
     "id": "mx_mc05",
     "source_stem": "mc05",
     "display_name": "Woodstock",
     "group": "Machine Challenge",
-    "archive": "/MX/MAPS/MC05.RES"
+    "archive": "/MX/MAPS/MC05.RES",
+    "sha256": "214a13ef2cab033aecc402b794df92dc46572b28440181b50b1a0fc7fcd95972"
   },
   {
     "id": "mx_mc06",
     "source_stem": "mc06",
     "display_name": "Monster Stadium",
     "group": "Machine Challenge",
-    "archive": "/MX/MAPS/MC06.RES"
+    "archive": "/MX/MAPS/MC06.RES",
+    "sha256": "4eaa39aa47328b71d4162f781610ead086347b2f83fc97185ec159e8b36618d8"
   },
   {
     "id": "mx_mc07",
     "source_stem": "mc07",
     "display_name": "Trophy Stadium",
     "group": "Machine Challenge",
-    "archive": "/MX/MAPS/MC07.RES"
+    "archive": "/MX/MAPS/MC07.RES",
+    "sha256": "ac5024e177d5759e97e4cb7717e843d72e2bef6dfb66f96eaa50806b8d75b0e6"
   },
   {
     "id": "mx_mc08",
     "source_stem": "mc08",
     "display_name": "19th Hole",
     "group": "Machine Challenge",
-    "archive": "/MX/MAPS/MC08.RES"
+    "archive": "/MX/MAPS/MC08.RES",
+    "sha256": "8378ede59c9953ed34a2758c3184e2460ecdac4cc43c435ab90bd8985a666bdb"
   },
   {
     "id": "mx_mc09",
     "source_stem": "mc09",
     "display_name": "Quechee Gulch",
     "group": "Machine Challenge",
-    "archive": "/MX/MAPS/MC09.RES"
+    "archive": "/MX/MAPS/MC09.RES",
+    "sha256": "85ad398a1b50b21255e0318c299f687b0622473d9393ed13065baa170f6eb1b5"
   },
   {
     "id": "mx_mc10",
     "source_stem": "mc10",
     "display_name": "Land and Air",
     "group": "Machine Challenge",
-    "archive": "/MX/MAPS/MC10.RES"
+    "archive": "/MX/MAPS/MC10.RES",
+    "sha256": "83e3e4dfdfe929f0c63a027498003b720214535e85851ab08d312ba412fd0790"
   },
   {
     "id": "mx_nat01",
     "source_stem": "nat01",
     "display_name": "Goblin Gulch",
     "group": "National",
-    "archive": "/MX/MAPS/NAT01.RES"
+    "archive": "/MX/MAPS/NAT01.RES",
+    "sha256": "767d7f098bcacffb56a203da2ea884fda4c1efa14128c66be7d4370dcb2c4ad2"
   },
   {
     "id": "mx_nat02",
     "source_stem": "nat02",
     "display_name": "Tipperary",
     "group": "National",
-    "archive": "/MX/MAPS/NAT02.RES"
+    "archive": "/MX/MAPS/NAT02.RES",
+    "sha256": "ae7fa9b38340653107ca9554ccc917b0306868bf853198c410ede7c311b22c12"
   },
   {
     "id": "mx_nat03",
     "source_stem": "nat03",
     "display_name": "Glamis",
     "group": "National",
-    "archive": "/MX/MAPS/NAT03.RES"
+    "archive": "/MX/MAPS/NAT03.RES",
+    "sha256": "c541fbb2b39b97ce93023963516f87de6a35fd79086e16936661de6bf8786f88"
   },
   {
     "id": "mx_nat04",
     "source_stem": "nat04",
     "display_name": "Oceanside",
     "group": "National",
-    "archive": "/MX/MAPS/NAT04.RES"
+    "archive": "/MX/MAPS/NAT04.RES",
+    "sha256": "f9ea01c82aac06527f2a3b945f124fa7cf81301b3b89470bdcdfe45e17276aab"
   },
   {
     "id": "mx_nat05",
     "source_stem": "nat05",
     "display_name": "Lago",
     "group": "National",
-    "archive": "/MX/MAPS/NAT05.RES"
+    "archive": "/MX/MAPS/NAT05.RES",
+    "sha256": "bc8723eb37676bb231e80bca3bfd6917017b39ca81a25096af1d01b74cd44fa6"
   },
   {
     "id": "mx_nat06",
     "source_stem": "nat06",
     "display_name": "Juniper Park",
     "group": "National",
-    "archive": "/MX/MAPS/NAT06.RES"
+    "archive": "/MX/MAPS/NAT06.RES",
+    "sha256": "bee68bd90f1a9a318d8c5fcef65026e8164f649ef1b52b0c50795142015ee672"
   },
   {
     "id": "mx_nat07",
     "source_stem": "nat07",
     "display_name": "Valhalla",
     "group": "National",
-    "archive": "/MX/MAPS/NAT07.RES"
+    "archive": "/MX/MAPS/NAT07.RES",
+    "sha256": "2380872a6e62d0185e3c999c82ad1fce418f8eda5a22d7c4b2afe9c639d50cdd"
   },
   {
     "id": "mx_nat08",
     "source_stem": "nat08",
     "display_name": "Redwood Valley",
     "group": "National",
-    "archive": "/MX/MAPS/NAT08.RES"
+    "archive": "/MX/MAPS/NAT08.RES",
+    "sha256": "418ee5850fea93a4b6e9af0da4888acc5444af0d20718e9c15ebba2a583d289a"
   },
   {
     "id": "mx_nat09",
     "source_stem": "nat09",
     "display_name": "Deadman Wash",
     "group": "National",
-    "archive": "/MX/MAPS/NAT09.RES"
+    "archive": "/MX/MAPS/NAT09.RES",
+    "sha256": "8a56ecee8937725cad05057ad384f59a90a9abf31cb8ec4a066dae6fe37f0b57"
   },
   {
     "id": "mx_nat10",
     "source_stem": "nat10",
     "display_name": "Maple Hill",
     "group": "National",
-    "archive": "/MX/MAPS/NAT10.RES"
+    "archive": "/MX/MAPS/NAT10.RES",
+    "sha256": "f012e716bc4aeb28ea4fca0a175b94d6fdd52195a11bd6f055a9488d2b1a6a91"
   },
   {
     "id": "mx_nat11",
     "source_stem": "nat11",
     "display_name": "Sutter Raceway",
     "group": "National",
-    "archive": "/MX/MAPS/NAT11.RES"
+    "archive": "/MX/MAPS/NAT11.RES",
+    "sha256": "76cf2840f1f4f177190b8768cded2bf77bc4ba0dd888c4a3dd4a95d8b9bb8b7d"
   },
   {
     "id": "mx_nat12",
     "source_stem": "nat12",
     "display_name": "Temple of Apophis",
     "group": "National",
-    "archive": "/MX/MAPS/NAT12.RES"
+    "archive": "/MX/MAPS/NAT12.RES",
+    "sha256": "b75482d16e9ee3c1eba5e6caa4ed700e9cbfbf6469b7582d2ea48e0ef531b2d2"
   },
   {
     "id": "mx_nat13",
     "source_stem": "nat13",
     "display_name": "Sienna Ridge",
     "group": "National",
-    "archive": "/MX/MAPS/NAT13.RES"
+    "archive": "/MX/MAPS/NAT13.RES",
+    "sha256": "a1c2f3600c2ac0685c49cd880f91ddf2ff3e574e9e1684138f607f63bca7abae"
   },
   {
     "id": "mx_nat14",
     "source_stem": "nat14",
     "display_name": "Santiago",
     "group": "National",
-    "archive": "/MX/MAPS/NAT14.RES"
+    "archive": "/MX/MAPS/NAT14.RES",
+    "sha256": "9c6f17c88b53da29c93a23b8c2e2eb23bbc00abf9a331478317195fde54caea4"
   },
   {
     "id": "mx_nat15",
     "source_stem": "nat15",
     "display_name": "Smuggler's Notch",
     "group": "National",
-    "archive": "/MX/MAPS/NAT15.RES"
+    "archive": "/MX/MAPS/NAT15.RES",
+    "sha256": "3e01dc46d2a00493ff9af64f5f8d9697260a6f60d0746a093984540b6eea2b9a"
   },
   {
     "id": "mx_nat16",
     "source_stem": "nat16",
     "display_name": "Northern Lights",
     "group": "National",
-    "archive": "/MX/MAPS/NAT16.RES"
+    "archive": "/MX/MAPS/NAT16.RES",
+    "sha256": "e3c42000e2ac84903feedd1cb8b7c5bfcfdb06ff2007cba8e21d14b32fba8792"
   },
   {
     "id": "mx_nat17",
     "source_stem": "nat17",
     "display_name": "Keweni Falls",
     "group": "National",
-    "archive": "/MX/MAPS/NAT17.RES"
+    "archive": "/MX/MAPS/NAT17.RES",
+    "sha256": "7bbffea7fb92f269fd8128e81a5b000daf6636f92fdd52b90668cf9a68882e8d"
   },
   {
     "id": "mx_sm01",
     "source_stem": "sm01",
     "display_name": "Mesa",
     "group": "Supermoto",
-    "archive": "/MX/MAPS/SM01.RES"
+    "archive": "/MX/MAPS/SM01.RES",
+    "sha256": "00c749a752fd05d54f11c858307056f762d39d85635d87337230ca98787be475"
   },
   {
     "id": "mx_sm02",
     "source_stem": "sm02",
     "display_name": "Highlands",
     "group": "Supermoto",
-    "archive": "/MX/MAPS/SM02.RES"
+    "archive": "/MX/MAPS/SM02.RES",
+    "sha256": "bbfd788594736e081c249fbe4f399bb31e8574c52e0eb854b6db87b2c9185631"
   },
   {
     "id": "mx_sm03",
     "source_stem": "sm03",
     "display_name": "The Glades",
     "group": "Supermoto",
-    "archive": "/MX/MAPS/SM03.RES"
+    "archive": "/MX/MAPS/SM03.RES",
+    "sha256": "cffd8878deac83585725b14ffa2389a35c03f1d5fbb646aa7941a2e371566608"
   },
   {
     "id": "mx_sx01",
     "source_stem": "sx01",
     "display_name": "Los Angeles",
     "group": "Supercross",
-    "archive": "/MX/MAPS/SX01.RES"
+    "archive": "/MX/MAPS/SX01.RES",
+    "sha256": "524e68d31d7cbe7f792ece16540a86e907b683a408cb137aeb89488046ac80a1"
   },
   {
     "id": "mx_sx02",
     "source_stem": "sx02",
     "display_name": "Denver",
     "group": "Supercross",
-    "archive": "/MX/MAPS/SX02.RES"
+    "archive": "/MX/MAPS/SX02.RES",
+    "sha256": "6f95a931272f01b21d41060ddbfeb7b047b337a31c405ca3eeb4baac19b62513"
   },
   {
     "id": "mx_sx03",
     "source_stem": "sx03",
     "display_name": "Savannah",
     "group": "Supercross",
-    "archive": "/MX/MAPS/SX03.RES"
+    "archive": "/MX/MAPS/SX03.RES",
+    "sha256": "88fb35b31fff3d7e7b554ddc1cd754adb49f125882c6975b722b01746ef38c01"
   },
   {
     "id": "mx_sx04",
     "source_stem": "sx04",
     "display_name": "San Diego",
     "group": "Supercross",
-    "archive": "/MX/MAPS/SX04.RES"
+    "archive": "/MX/MAPS/SX04.RES",
+    "sha256": "d684bfa15bd3409091e84ed5958c36942c3dc96a1f355c8761f1b3359fafca55"
   },
   {
     "id": "mx_sx05",
     "source_stem": "sx05",
     "display_name": "Austin",
     "group": "Supercross",
-    "archive": "/MX/MAPS/SX05.RES"
+    "archive": "/MX/MAPS/SX05.RES",
+    "sha256": "a81dc2d1c346faea7797fa311966cb4b6d73dc37175916fe796f375a7d564d6d"
   },
   {
     "id": "mx_sx06",
     "source_stem": "sx06",
     "display_name": "Little Rock",
     "group": "Supercross",
-    "archive": "/MX/MAPS/SX06.RES"
+    "archive": "/MX/MAPS/SX06.RES",
+    "sha256": "bf96dae7bdf0963f40d95a7a38a71a33f58268f8fc9e7881b3e3c1023238fe4e"
   },
   {
     "id": "mx_sx07",
     "source_stem": "sx07",
     "display_name": "St. Paul",
     "group": "Supercross",
-    "archive": "/MX/MAPS/SX07.RES"
+    "archive": "/MX/MAPS/SX07.RES",
+    "sha256": "c521ede14a7f43c56e8f2ee9054b99764392a1dc1fd774b269fe95b062e1eea0"
   },
   {
     "id": "mx_sx08",
     "source_stem": "sx08",
     "display_name": "Boston",
     "group": "Supercross",
-    "archive": "/MX/MAPS/SX08.RES"
+    "archive": "/MX/MAPS/SX08.RES",
+    "sha256": "075a452c18a29101a608533d3ff8e73bb735189af07256a9a824ba1d97592499"
   },
   {
     "id": "mx_sx09",
     "source_stem": "sx09",
     "display_name": "New Orleans",
     "group": "Supercross",
-    "archive": "/MX/MAPS/SX09.RES"
+    "archive": "/MX/MAPS/SX09.RES",
+    "sha256": "0408d0d1a075b6f620a79e0919005f8ba5d10fa1a4f5b9ebe1de7fa1546e3b84"
   },
   {
     "id": "mx_sx10",
     "source_stem": "sx10",
     "display_name": "Toronto",
     "group": "Supercross",
-    "archive": "/MX/MAPS/SX10.RES"
+    "archive": "/MX/MAPS/SX10.RES",
+    "sha256": "326679699dc54ae8ae6cc60e217150bf4eb5c187f527174bee051f6f3f562b60"
   },
   {
     "id": "mx_sx11",
     "source_stem": "sx11",
     "display_name": "Orlando",
     "group": "Supercross",
-    "archive": "/MX/MAPS/SX11.RES"
+    "archive": "/MX/MAPS/SX11.RES",
+    "sha256": "4967b45f49f316ac9ea16074177550c8fa6be631f91f506f4659f6ab02cf3315"
   },
   {
     "id": "mx_sx12",
     "source_stem": "sx12",
     "display_name": "Philadelphia",
     "group": "Supercross",
-    "archive": "/MX/MAPS/SX12.RES"
+    "archive": "/MX/MAPS/SX12.RES",
+    "sha256": "d7b9b49752b7244ea21d33222ff4ae6a0f3681c547662c6c72f68877d4a35c10"
   },
   {
     "id": "mx_sx13",
     "source_stem": "sx13",
     "display_name": "Las Vegas",
     "group": "Supercross",
-    "archive": "/MX/MAPS/SX13.RES"
+    "archive": "/MX/MAPS/SX13.RES",
+    "sha256": "590c0024f6515f2434c9a8b012ddafc5f3d991dd2dfcd85f0be8dc96d00b4954"
   },
   {
     "id": "mx_sx14",
     "source_stem": "sx14",
     "display_name": "Mexico City",
     "group": "Supercross",
-    "archive": "/MX/MAPS/SX14.RES"
+    "archive": "/MX/MAPS/SX14.RES",
+    "sha256": "4897326867505dab5e0820335d26d18ce1fbec6c358fa03a6446aafce2bdaba3"
   },
   {
     "id": "mx_sx15",
     "source_stem": "sx15",
     "display_name": "Portland",
     "group": "Supercross",
-    "archive": "/MX/MAPS/SX15.RES"
+    "archive": "/MX/MAPS/SX15.RES",
+    "sha256": "d0168d31ca8fb840997e7b531ada161097040b61af1918497c973ecb1eb7255d"
   },
   {
     "id": "mx_sx16",
     "source_stem": "sx16",
     "display_name": "Tucson",
     "group": "Supercross",
-    "archive": "/MX/MAPS/SX16.RES"
+    "archive": "/MX/MAPS/SX16.RES",
+    "sha256": "c095299c15c4fad5dd95d760076673371aff92914f42308ab9a92f6e6ce084b4"
   },
   {
     "id": "mx_sx17",
     "source_stem": "sx17",
     "display_name": "Charleston",
     "group": "Supercross",
-    "archive": "/MX/MAPS/SX17.RES"
+    "archive": "/MX/MAPS/SX17.RES",
+    "sha256": "0626130b02bd5779d2c825b9a63847fa8c4098159c75a3ecebe004d3033227f9"
   },
   {
     "id": "mx_sx18",
     "source_stem": "sx18",
     "display_name": "Boulder",
     "group": "Supercross",
-    "archive": "/MX/MAPS/SX18.RES"
+    "archive": "/MX/MAPS/SX18.RES",
+    "sha256": "22f68d42a9c6156f06f13dc3e3fc1448f119cf25fa65c086f12aa028260c0a93"
   }
 ]
