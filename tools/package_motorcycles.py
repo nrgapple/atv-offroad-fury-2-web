@@ -156,9 +156,13 @@ def main():
             report.append({'class': size, 'members': len(members), 'bytes': len(packed)})
         manifest['files'] = records
         manifest['motorcycle_source_build_sha256'] = MX_BUILD
-        manifest_path.write_text(json.dumps(manifest, indent=2) + '\n')
+        temporary = manifest_path.with_suffix('.json.tmp')
+        temporary.write_text(json.dumps(manifest, indent=2) + '\n')
+        temporary.replace(manifest_path)
         print(json.dumps(report))
 
 
 if __name__ == '__main__':
-    main()
+    from release_checkpoint import publication_lock
+    with publication_lock(ROOT):
+        main()

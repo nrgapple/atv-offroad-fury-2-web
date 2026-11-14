@@ -1,0 +1,394 @@
+[
+  {
+    "id": "mx_fs01",
+    "source_stem": "fs01",
+    "display_name": "Little Rock FMX",
+    "group": "Freestyle",
+    "archive": "/MX/MAPS/FS01.RES"
+  },
+  {
+    "id": "mx_fs02",
+    "source_stem": "fs02",
+    "display_name": "Austin FMX",
+    "group": "Freestyle",
+    "archive": "/MX/MAPS/FS02.RES"
+  },
+  {
+    "id": "mx_fs03",
+    "source_stem": "fs03",
+    "display_name": "Boston FMX",
+    "group": "Freestyle",
+    "archive": "/MX/MAPS/FS03.RES"
+  },
+  {
+    "id": "mx_fs04",
+    "source_stem": "fs04",
+    "display_name": "St. Paul FMX",
+    "group": "Freestyle",
+    "archive": "/MX/MAPS/FS04.RES"
+  },
+  {
+    "id": "mx_fs05",
+    "source_stem": "fs05",
+    "display_name": "New Orleans FMX",
+    "group": "Freestyle",
+    "archive": "/MX/MAPS/FS05.RES"
+  },
+  {
+    "id": "mx_fs06",
+    "source_stem": "fs06",
+    "display_name": "Las Vegas FMX",
+    "group": "Freestyle",
+    "archive": "/MX/MAPS/FS06.RES"
+  },
+  {
+    "id": "mx_fs07",
+    "source_stem": "fs07",
+    "display_name": "Portland FMX",
+    "group": "Freestyle",
+    "archive": "/MX/MAPS/FS07.RES"
+  },
+  {
+    "id": "mx_fs08",
+    "source_stem": "fs08",
+    "display_name": "Orlando FMX",
+    "group": "Freestyle",
+    "archive": "/MX/MAPS/FS08.RES"
+  },
+  {
+    "id": "mx_mc01",
+    "source_stem": "mc01",
+    "display_name": "Killington",
+    "group": "Machine Challenge",
+    "archive": "/MX/MAPS/MC01.RES"
+  },
+  {
+    "id": "mx_mc02",
+    "source_stem": "mc02",
+    "display_name": "Desert Oasis",
+    "group": "Machine Challenge",
+    "archive": "/MX/MAPS/MC02.RES"
+  },
+  {
+    "id": "mx_mc03",
+    "source_stem": "mc03",
+    "display_name": "Red Country",
+    "group": "Machine Challenge",
+    "archive": "/MX/MAPS/MC03.RES"
+  },
+  {
+    "id": "mx_mc04",
+    "source_stem": "mc04",
+    "display_name": "Glamis South",
+    "group": "Machine Challenge",
+    "archive": "/MX/MAPS/MC04.RES"
+  },
+  {
+    "id": "mx_mc05",
+    "source_stem": "mc05",
+    "display_name": "Woodstock",
+    "group": "Machine Challenge",
+    "archive": "/MX/MAPS/MC05.RES"
+  },
+  {
+    "id": "mx_mc06",
+    "source_stem": "mc06",
+    "display_name": "Monster Stadium",
+    "group": "Machine Challenge",
+    "archive": "/MX/MAPS/MC06.RES"
+  },
+  {
+    "id": "mx_mc07",
+    "source_stem": "mc07",
+    "display_name": "Trophy Stadium",
+    "group": "Machine Challenge",
+    "archive": "/MX/MAPS/MC07.RES"
+  },
+  {
+    "id": "mx_mc08",
+    "source_stem": "mc08",
+    "display_name": "19th Hole",
+    "group": "Machine Challenge",
+    "archive": "/MX/MAPS/MC08.RES"
+  },
+  {
+    "id": "mx_mc09",
+    "source_stem": "mc09",
+    "display_name": "Quechee Gulch",
+    "group": "Machine Challenge",
+    "archive": "/MX/MAPS/MC09.RES"
+  },
+  {
+    "id": "mx_mc10",
+    "source_stem": "mc10",
+    "display_name": "Land and Air",
+    "group": "Machine Challenge",
+    "archive": "/MX/MAPS/MC10.RES"
+  },
+  {
+    "id": "mx_nat01",
+    "source_stem": "nat01",
+    "display_name": "Goblin Gulch",
+    "group": "National",
+    "archive": "/MX/MAPS/NAT01.RES"
+  },
+  {
+    "id": "mx_nat02",
+    "source_stem": "nat02",
+    "display_name": "Tipperary",
+    "group": "National",
+    "archive": "/MX/MAPS/NAT02.RES"
+  },
+  {
+    "id": "mx_nat03",
+    "source_stem": "nat03",
+    "display_name": "Glamis",
+    "group": "National",
+    "archive": "/MX/MAPS/NAT03.RES"
+  },
+  {
+    "id": "mx_nat04",
+    "source_stem": "nat04",
+    "display_name": "Oceanside",
+    "group": "National",
+    "archive": "/MX/MAPS/NAT04.RES"
+  },
+  {
+    "id": "mx_nat05",
+    "source_stem": "nat05",
+    "display_name": "Lago",
+    "group": "National",
+    "archive": "/MX/MAPS/NAT05.RES"
+  },
+  {
+    "id": "mx_nat06",
+    "source_stem": "nat06",
+    "display_name": "Juniper Park",
+    "group": "National",
+    "archive": "/MX/MAPS/NAT06.RES"
+  },
+  {
+    "id": "mx_nat07",
+    "source_stem": "nat07",
+    "display_name": "Valhalla",
+    "group": "National",
+    "archive": "/MX/MAPS/NAT07.RES"
+  },
+  {
+    "id": "mx_nat08",
+    "source_stem": "nat08",
+    "display_name": "Redwood Valley",
+    "group": "National",
+    "archive": "/MX/MAPS/NAT08.RES"
+  },
+  {
+    "id": "mx_nat09",
+    "source_stem": "nat09",
+    "display_name": "Deadman Wash",
+    "group": "National",
+    "archive": "/MX/MAPS/NAT09.RES"
+  },
+  {
+    "id": "mx_nat10",
+    "source_stem": "nat10",
+    "display_name": "Maple Hill",
+    "group": "National",
+    "archive": "/MX/MAPS/NAT10.RES"
+  },
+  {
+    "id": "mx_nat11",
+    "source_stem": "nat11",
+    "display_name": "Sutter Raceway",
+    "group": "National",
+    "archive": "/MX/MAPS/NAT11.RES"
+  },
+  {
+    "id": "mx_nat12",
+    "source_stem": "nat12",
+    "display_name": "Temple of Apophis",
+    "group": "National",
+    "archive": "/MX/MAPS/NAT12.RES"
+  },
+  {
+    "id": "mx_nat13",
+    "source_stem": "nat13",
+    "display_name": "Sienna Ridge",
+    "group": "National",
+    "archive": "/MX/MAPS/NAT13.RES"
+  },
+  {
+    "id": "mx_nat14",
+    "source_stem": "nat14",
+    "display_name": "Santiago",
+    "group": "National",
+    "archive": "/MX/MAPS/NAT14.RES"
+  },
+  {
+    "id": "mx_nat15",
+    "source_stem": "nat15",
+    "display_name": "Smuggler's Notch",
+    "group": "National",
+    "archive": "/MX/MAPS/NAT15.RES"
+  },
+  {
+    "id": "mx_nat16",
+    "source_stem": "nat16",
+    "display_name": "Northern Lights",
+    "group": "National",
+    "archive": "/MX/MAPS/NAT16.RES"
+  },
+  {
+    "id": "mx_nat17",
+    "source_stem": "nat17",
+    "display_name": "Keweni Falls",
+    "group": "National",
+    "archive": "/MX/MAPS/NAT17.RES"
+  },
+  {
+    "id": "mx_sm01",
+    "source_stem": "sm01",
+    "display_name": "Mesa",
+    "group": "Supermoto",
+    "archive": "/MX/MAPS/SM01.RES"
+  },
+  {
+    "id": "mx_sm02",
+    "source_stem": "sm02",
+    "display_name": "Highlands",
+    "group": "Supermoto",
+    "archive": "/MX/MAPS/SM02.RES"
+  },
+  {
+    "id": "mx_sm03",
+    "source_stem": "sm03",
+    "display_name": "The Glades",
+    "group": "Supermoto",
+    "archive": "/MX/MAPS/SM03.RES"
+  },
+  {
+    "id": "mx_sx01",
+    "source_stem": "sx01",
+    "display_name": "Los Angeles",
+    "group": "Supercross",
+    "archive": "/MX/MAPS/SX01.RES"
+  },
+  {
+    "id": "mx_sx02",
+    "source_stem": "sx02",
+    "display_name": "Denver",
+    "group": "Supercross",
+    "archive": "/MX/MAPS/SX02.RES"
+  },
+  {
+    "id": "mx_sx03",
+    "source_stem": "sx03",
+    "display_name": "Savannah",
+    "group": "Supercross",
+    "archive": "/MX/MAPS/SX03.RES"
+  },
+  {
+    "id": "mx_sx04",
+    "source_stem": "sx04",
+    "display_name": "San Diego",
+    "group": "Supercross",
+    "archive": "/MX/MAPS/SX04.RES"
+  },
+  {
+    "id": "mx_sx05",
+    "source_stem": "sx05",
+    "display_name": "Austin",
+    "group": "Supercross",
+    "archive": "/MX/MAPS/SX05.RES"
+  },
+  {
+    "id": "mx_sx06",
+    "source_stem": "sx06",
+    "display_name": "Little Rock",
+    "group": "Supercross",
+    "archive": "/MX/MAPS/SX06.RES"
+  },
+  {
+    "id": "mx_sx07",
+    "source_stem": "sx07",
+    "display_name": "St. Paul",
+    "group": "Supercross",
+    "archive": "/MX/MAPS/SX07.RES"
+  },
+  {
+    "id": "mx_sx08",
+    "source_stem": "sx08",
+    "display_name": "Boston",
+    "group": "Supercross",
+    "archive": "/MX/MAPS/SX08.RES"
+  },
+  {
+    "id": "mx_sx09",
+    "source_stem": "sx09",
+    "display_name": "New Orleans",
+    "group": "Supercross",
+    "archive": "/MX/MAPS/SX09.RES"
+  },
+  {
+    "id": "mx_sx10",
+    "source_stem": "sx10",
+    "display_name": "Toronto",
+    "group": "Supercross",
+    "archive": "/MX/MAPS/SX10.RES"
+  },
+  {
+    "id": "mx_sx11",
+    "source_stem": "sx11",
+    "display_name": "Orlando",
+    "group": "Supercross",
+    "archive": "/MX/MAPS/SX11.RES"
+  },
+  {
+    "id": "mx_sx12",
+    "source_stem": "sx12",
+    "display_name": "Philadelphia",
+    "group": "Supercross",
+    "archive": "/MX/MAPS/SX12.RES"
+  },
+  {
+    "id": "mx_sx13",
+    "source_stem": "sx13",
+    "display_name": "Las Vegas",
+    "group": "Supercross",
+    "archive": "/MX/MAPS/SX13.RES"
+  },
+  {
+    "id": "mx_sx14",
+    "source_stem": "sx14",
+    "display_name": "Mexico City",
+    "group": "Supercross",
+    "archive": "/MX/MAPS/SX14.RES"
+  },
+  {
+    "id": "mx_sx15",
+    "source_stem": "sx15",
+    "display_name": "Portland",
+    "group": "Supercross",
+    "archive": "/MX/MAPS/SX15.RES"
+  },
+  {
+    "id": "mx_sx16",
+    "source_stem": "sx16",
+    "display_name": "Tucson",
+    "group": "Supercross",
+    "archive": "/MX/MAPS/SX16.RES"
+  },
+  {
+    "id": "mx_sx17",
+    "source_stem": "sx17",
+    "display_name": "Charleston",
+    "group": "Supercross",
+    "archive": "/MX/MAPS/SX17.RES"
+  },
+  {
+    "id": "mx_sx18",
+    "source_stem": "sx18",
+    "display_name": "Boulder",
+    "group": "Supercross",
+    "archive": "/MX/MAPS/SX18.RES"
+  }
+]
