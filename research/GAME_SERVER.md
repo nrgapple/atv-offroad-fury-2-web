@@ -1,8 +1,10 @@
 # Game server
 
 Owner decision, 2026-11-13: multiplayer moves from the Cloudflare Durable Object
-relay (`crates/atv-relay`) to our own Rust game server, first on one Hetzner
-Cloud VPS in Ashburn (about $5–7 a month). There is no fallback to the
+relay (`crates/atv-relay`) to our own Rust game server, first on one
+DigitalOcean droplet in the US (s-1vcpu-1gb, about $6 a month). Hetzner was the
+first choice, but its US prices roughly tripled in 2026 (about $20.50 a month for
+its cheapest US server), so the owner chose DigitalOcean. There is no fallback to the
 Cloudflare relay: once the server is live, clients use it, and the Durable
 Object relay is retired. Why: the free Durable Object plan bills every incoming
 WebSocket message, so one school's Chromebooks reached the daily limit
@@ -40,8 +42,8 @@ flowchart LR
 ## Server agnostic
 
 `fury-server` is one static Linux binary with no host-specific code. It runs on
-any VPS, in a container, or behind any TLS proxy. Hetzner appears only under
-`deploy/hetzner/`.
+any VPS, in a container, or behind any TLS proxy. Provider-specific scripts live
+only under `deploy/digitalocean/`.
 
 | Setting (env) | Meaning | Default |
 |---|---|---|
@@ -92,7 +94,7 @@ brief hitch, not a lost room.
 - A Cloudflare cron (free) checks `/healthz` every five minutes and records it;
   `/status/game-server` reports the latest check and uptime.
 
-Hostname: `mp.furyremastered.com`, a DNS-only record to the server (TLS from
+Hostname: `mp.furyremastered.com`, a DNS-only record to the droplet's reserved IP (TLS from
 Let's Encrypt in the server, so WebTransport can share the certificate later).
 
 ## Later
