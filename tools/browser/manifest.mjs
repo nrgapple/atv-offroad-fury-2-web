@@ -139,6 +139,10 @@ export const TESTS = {
     group: 'multiplayer',
     reason: 'needs a local game server at the same origin (Quick Play: menu and link queue, vote, driver-started race, server podium, rematch); run with --url'
   },
+  'test_engine_private_loop.mjs': {
+    group: 'multiplayer',
+    reason: 'needs a local game server at the same origin (private room loop: ready-up, vote, host-driven race, late joiner follow camera, podium, rematch); run with --url'
+  },
   'test_engine_multiplayer_race.mjs': {
     group: 'multiplayer',
     reason: 'needs a local game server at the same origin (Rust host and guest race a Supercross room); run with --url'

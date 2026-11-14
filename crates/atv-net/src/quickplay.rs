@@ -1,11 +1,15 @@
 //! Server-run room loop (research/QUICK_PLAY.md): Quick Play rooms, and
-//! later private rooms' ready-up, vote and rematch (slice C).
+//! private rooms' host-run ready-up, vote and rematch (slice C).
 //!
 //! Authored for the port; the original's online lobbies are not used.
 //! [`RoomLoop`] (kind 22) goes from the game server to every rider in a
 //! Quick Play room (only new builds reach one, through `POST
-//! /multiplayer/quickplay`); [`Vote`] (kind 23) goes from a client to the
-//! server only. Both are bounded and validated like every other packet.
+//! /multiplayer/quickplay`), and in a private room only to builds that
+//! said [`crate::signal::LOOP`]; [`Vote`] (kind 23) goes from a client to
+//! the server only. Both are bounded and validated like every other
+//! packet. A private room's loop adds an optional tail to each: the host's
+//! settings ([`Hosted`]) on the loop and the host's choices ([`Hosting`])
+//! on its vote; Quick Play packets carry neither.
 
 use crate::{
     CPU_PEER, Error, MAP_ENVIRONMENTS, NO_PEER, PeerId, RACE_CPUS, RACE_RIDERS, Result, RoomCode,
@@ -111,14 +115,7 @@ impl Round {
         crate::map_environment(self.map)
     }
     fn validate(&self) -> Result<()> {
-        let mode_ok = matches!(
-            self.mode,
-            game_kind::RACE
-                | game_kind::KING_OF_THE_HILLS
-                | game_kind::TREASURE_HUNT
-                | game_kind::FREESTYLE
-        );
-        if !mode_ok || !valid_map(self.map) || self.variant > 3 {
+        if !loop_mode(self.mode) || !valid_map(self.map) || self.variant > 3 {
             return Err(Error::InvalidValue);
         }
         Ok(())
@@ -187,6 +184,76 @@ pub struct RoomLoop {
     pub results: Vec<Placing>,
     /// The server could check the results it shows.
     pub verified: bool,
+    /// A private room's host-run loop: the host's settings (encoded after
+    /// `verified` only when set).
+    #[serde(default)]
+    pub hosted: Option<Hosted>,
+}
+
+/// A private room loop's settings, as its host chose them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct Hosted {
+    /// The rounds' [`game_kind`]: the vote deals tracks of this mode.
+    pub mode: u8,
+    /// [`host_flag`] bits ([`host_flag::CPUS`] only).
+    pub flags: u8,
+}
+
+/// [`Hosted::flags`] and [`Hosting::flags`].
+pub mod host_flag {
+    /// Fill a race's empty seats with CPUs.
+    pub const CPUS: u8 = 1;
+    /// Hosting only: start now (the lobby).
+    pub const START: u8 = 2;
+    /// Hosting only: end the vote now; the host's own card wins.
+    pub const SKIP: u8 = 4;
+    pub const ALL: u8 = 7;
+}
+
+/// A private room host's loop choices, on its [`Vote`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct Hosting {
+    /// The rounds' [`game_kind`].
+    pub mode: u8,
+    /// [`host_flag`] bits.
+    pub flags: u8,
+    /// Race laps (1-5), from the host's Race menu.
+    pub laps: u8,
+    /// Games and Freestyle time limit (minutes, 1-20).
+    pub minutes: u8,
+}
+
+/// A mode a loop round can be.
+pub fn loop_mode(mode: u8) -> bool {
+    matches!(
+        mode,
+        game_kind::RACE
+            | game_kind::KING_OF_THE_HILLS
+            | game_kind::TREASURE_HUNT
+            | game_kind::FREESTYLE
+    )
+}
+
+impl Hosted {
+    fn validate(&self) -> Result<()> {
+        if !loop_mode(self.mode) || self.flags & !host_flag::CPUS != 0 {
+            return Err(Error::InvalidValue);
+        }
+        Ok(())
+    }
+}
+
+impl Hosting {
+    fn validate(&self) -> Result<()> {
+        if !loop_mode(self.mode)
+            || self.flags & !host_flag::ALL != 0
+            || !(1..=5).contains(&self.laps)
+            || !(1..=20).contains(&self.minutes)
+        {
+            return Err(Error::InvalidValue);
+        }
+        Ok(())
+    }
 }
 
 /// [`Vote::rematch`].
@@ -209,6 +276,10 @@ pub struct Vote {
     /// Ready to start now (Quick Play's lobby; private rooms' ready-up).
     pub ready: bool,
     pub ping_ms: u16,
+    /// A private room's host: its loop choices (encoded after `ping_ms`
+    /// only when set).
+    #[serde(default)]
+    pub hosting: Option<Hosting>,
 }
 
 fn peer_ok(peer: PeerId) -> bool {
@@ -236,6 +307,9 @@ impl RoomLoop {
         }
         for round in &self.options {
             round.validate()?;
+        }
+        if let Some(hosted) = &self.hosted {
+            hosted.validate()?;
         }
         if self.setup.number > 0 {
             self.setup.round.validate()?;
@@ -297,6 +371,9 @@ impl RoomLoop {
             out.extend_from_slice(&row.value.to_le_bytes());
         }
         out.push(u8::from(self.verified));
+        if let Some(hosted) = &self.hosted {
+            out.extend_from_slice(&[hosted.mode, hosted.flags]);
+        }
         Ok(())
     }
 
@@ -353,9 +430,14 @@ impl RoomLoop {
             1 => true,
             _ => return Err(Error::InvalidValue),
         };
-        if !r.0.is_empty() {
-            return Err(Error::InvalidLength);
-        }
+        let hosted = match r.0.len() {
+            0 => None,
+            2 => Some(Hosted {
+                mode: r.byte()?,
+                flags: r.byte()?,
+            }),
+            _ => return Err(Error::InvalidLength),
+        };
         let value = RoomLoop {
             phase,
             playlist,
@@ -368,6 +450,7 @@ impl RoomLoop {
             seats,
             results,
             verified,
+            hosted,
         };
         value.validate()?;
         Ok(value)
@@ -384,6 +467,9 @@ impl Vote {
         if (self.choice > RANDOM && self.choice != NO_CHOICE) || self.rematch > rematch::LEAVE {
             return Err(Error::InvalidValue);
         }
+        if let Some(hosting) = &self.hosting {
+            hosting.validate()?;
+        }
         Ok(())
     }
     pub(crate) fn encode(&self, out: &mut Vec<u8>) -> Result<()> {
@@ -391,6 +477,9 @@ impl Vote {
         out.extend_from_slice(&self.round.to_le_bytes());
         out.extend_from_slice(&[self.choice, self.rematch, u8::from(self.ready)]);
         out.extend_from_slice(&self.ping_ms.to_le_bytes());
+        if let Some(h) = &self.hosting {
+            out.extend_from_slice(&[h.mode, h.flags, h.laps, h.minutes]);
+        }
         Ok(())
     }
     pub(crate) fn decode(body: &[u8]) -> Result<Self> {
@@ -405,10 +494,21 @@ impl Vote {
                 _ => return Err(Error::InvalidValue),
             },
             ping_ms: r.u16()?,
+            hosting: None,
         };
-        if !r.0.is_empty() {
-            return Err(Error::InvalidLength);
-        }
+        let vote = match r.0.len() {
+            0 => vote,
+            4 => Vote {
+                hosting: Some(Hosting {
+                    mode: r.byte()?,
+                    flags: r.byte()?,
+                    laps: r.byte()?,
+                    minutes: r.byte()?,
+                }),
+                ..vote
+            },
+            _ => return Err(Error::InvalidLength),
+        };
         vote.validate()?;
         Ok(vote)
     }
@@ -514,6 +614,18 @@ pub fn pool(playlist: u8) -> Vec<Round> {
     out
 }
 
+/// A private room loop's rounds of `mode`: [`pool`] of its playlist,
+/// that mode only.
+pub fn mode_pool(mode: u8) -> Vec<Round> {
+    let list = match mode {
+        game_kind::FREESTYLE | game_kind::TREASURE_HUNT => playlist::STUNTS,
+        _ => playlist::RACE,
+    };
+    let mut out = pool(list);
+    out.retain(|r| r.mode == mode);
+    out
+}
+
 /// No rider: [`RoomLoop::driver`] before anyone can drive.
 pub const NO_DRIVER: PeerId = NO_PEER;
 
@@ -575,6 +687,7 @@ mod tests {
                 },
             ],
             verified: true,
+            hosted: None,
         }
     }
 
@@ -589,9 +702,31 @@ mod tests {
             rematch: rematch::STAY,
             ready: true,
             ping_ms: 85,
+            hosting: None,
         };
         let bytes = encode(&Packet::Vote(vote)).unwrap();
         assert_eq!(decode(&bytes).unwrap(), Packet::Vote(vote));
+        // A private room's tails: the host's settings and choices.
+        let hosted = RoomLoop {
+            hosted: Some(Hosted {
+                mode: game_kind::KING_OF_THE_HILLS,
+                flags: host_flag::CPUS,
+            }),
+            ..sample()
+        };
+        let bytes = encode(&Packet::RoomLoop(Box::new(hosted.clone()))).unwrap();
+        assert_eq!(decode(&bytes).unwrap(), Packet::RoomLoop(Box::new(hosted)));
+        let host = Vote {
+            hosting: Some(Hosting {
+                mode: game_kind::RACE,
+                flags: host_flag::CPUS | host_flag::START,
+                laps: 3,
+                minutes: 5,
+            }),
+            ..vote
+        };
+        let bytes = encode(&Packet::Vote(host)).unwrap();
+        assert_eq!(decode(&bytes).unwrap(), Packet::Vote(host));
         // An empty lobby state is valid too.
         let lobby = RoomLoop {
             pick: NO_CHOICE,
@@ -659,6 +794,35 @@ mod tests {
             }))
             .is_err()
         );
+        let hosting = |mode, flags, laps, minutes| {
+            Packet::Vote(Vote {
+                hosting: Some(Hosting {
+                    mode,
+                    flags,
+                    laps,
+                    minutes,
+                }),
+                ..Default::default()
+            })
+        };
+        for bad in [
+            hosting(game_kind::HOCKEY, 0, 3, 5),
+            hosting(game_kind::RACE, 8, 3, 5),
+            hosting(game_kind::RACE, 0, 0, 5),
+            hosting(game_kind::RACE, 0, 3, 21),
+        ] {
+            assert!(encode(&bad).is_err());
+        }
+        assert!(
+            encode(&Packet::RoomLoop(Box::new(RoomLoop {
+                hosted: Some(Hosted {
+                    mode: game_kind::RACE,
+                    flags: host_flag::START,
+                }),
+                ..sample()
+            })))
+            .is_err()
+        );
         // Truncated and padded bodies.
         let bytes = encode(&Packet::RoomLoop(Box::new(sample()))).unwrap();
         let mut short = bytes[..bytes.len() - 1].to_vec();
@@ -683,6 +847,13 @@ mod tests {
         for r in race.iter().chain(&stunts) {
             r.validate().unwrap();
         }
+        assert_eq!(mode_pool(game_kind::KING_OF_THE_HILLS).len(), 14);
+        assert_eq!(mode_pool(game_kind::RACE).len(), 51);
+        assert!(
+            mode_pool(game_kind::TREASURE_HUNT)
+                .iter()
+                .all(|r| r.mode == game_kind::TREASURE_HUNT)
+        );
         assert!(is_quickplay_room_code(b"QPR00001"));
         assert!(!is_quickplay_room_code(b"FREERD01"));
     }

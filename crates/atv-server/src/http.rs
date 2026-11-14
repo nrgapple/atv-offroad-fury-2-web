@@ -36,8 +36,8 @@ const SEND_TIMEOUT: Duration = Duration::from_secs(10);
 /// After the server's close, the client gets this long to answer it.
 const CLOSE_WAIT: Duration = Duration::from_secs(5);
 /// What the server claims for every room: no direct links or batches,
-/// frames for builds that take them, and motorcycle poses for builds that
-/// decode them (`signal::MOTORCYCLES`).
+/// frames for builds that take them, motorcycle poses for builds that
+/// decode them (`signal::MOTORCYCLES`), and private rooms' loop.
 pub(crate) fn features() -> serde_json::Map<String, serde_json::Value> {
     let mut map = serde_json::Map::new();
     map.insert("links".into(), false.into());
@@ -46,6 +46,9 @@ pub(crate) fn features() -> serde_json::Map<String, serde_json::Value> {
     map.insert("identity".into(), true.into());
     map.insert("motorcycles".into(), true.into());
     map.insert("chat".into(), true.into());
+    // Private rooms run a host-run loop for builds that say `signal::LOOP`
+    // (research/QUICK_PLAY.md "Private rooms").
+    map.insert("roomloop".into(), true.into());
     map
 }
 

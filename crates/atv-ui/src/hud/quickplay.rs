@@ -1,6 +1,8 @@
 //! The Quick Play panel over a server-run room (research/QUICK_PLAY.md):
 //! seats filling with a live countdown, the map vote, the picked round's
-//! countdown and the podium with Rematch / Leave. A port addition; no text
+//! countdown and the podium with Rematch / Leave. A private room's loop
+//! uses the same panel: ready ticks, and for its host Start, the mode, CPU
+//! fill and Skip; a rider watching the round cycles the riders it follows. A port addition; no text
 //! walls (research/MULTIPLAYER_EXPERIENCE.md "UI rules"): short labels,
 //! numbers, colors and timers. Touch targets are at least 48 px.
 use super::Viewport;
@@ -18,6 +20,14 @@ pub const CARD: u32 = 80;
 pub const READY: u32 = 84;
 pub const REMATCH: u32 = 85;
 pub const LEAVE: u32 = 86;
+/// Private rooms (slice C): the host's buttons, then the follow camera's.
+pub const START: u32 = 90;
+pub const MODE: u32 = 91;
+pub const CPUS: u32 = 92;
+pub const SKIP: u32 = 93;
+pub const WATCH: u32 = 94;
+/// The panel's hit ids are `CARD..=LAST`.
+pub const LAST: u32 = WATCH;
 
 /// What the panel shows.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
@@ -40,6 +50,8 @@ pub struct SeatView {
     pub ping: Option<u16>,
     pub ready: bool,
     pub voted: bool,
+    /// A private room's host.
+    pub host: bool,
 }
 
 /// A vote card.
@@ -91,14 +103,36 @@ pub struct View {
     pub spectating: bool,
     /// Narrow (portrait phone) layout.
     pub narrow: bool,
+    /// A private room's loop (slice C).
+    pub private: bool,
+    /// This rider hosts it: Start, the mode, CPU fill and Skip.
+    pub host: bool,
+    /// The host's CPU fill (races).
+    pub cpus: bool,
+    /// The rider the follow camera watches while spectating.
+    pub watching: Option<String>,
 }
 
 /// The focusable buttons in order.
 pub fn buttons(view: &View) -> Vec<u32> {
     match view.phase {
+        Phase::Lobby if view.host => {
+            let mut ids = vec![START, MODE];
+            if view.playlist == "Race" {
+                ids.push(CPUS);
+            }
+            ids
+        }
         Phase::Lobby => vec![READY],
-        Phase::Vote => (0..view.cards.len() as u32).map(|i| CARD + i).collect(),
+        Phase::Vote => {
+            let mut ids: Vec<u32> = (0..view.cards.len() as u32).map(|i| CARD + i).collect();
+            if view.host {
+                ids.push(SKIP);
+            }
+            ids
+        }
         Phase::Results => vec![REMATCH, LEAVE],
+        Phase::Play if view.spectating && view.watching.is_some() => vec![WATCH],
         _ => Vec::new(),
     }
 }
@@ -274,6 +308,16 @@ fn chip(seat: Option<&SeatView>, narrow: bool) -> El {
         })
         .child(text(&name, 16., 700, Color::hex("#f4f4f4"))),
     );
+    if seat.host {
+        el = el.child(
+            El::new(Style {
+                padding: sides(1., 6., 1., 6.),
+                ..Default::default()
+            })
+            .paint(Paint::fill(gold_pill()).radius(4.))
+            .child(text("HOST", 12., 800, Color::hex("#0d0b00"))),
+        );
+    }
     if seat.cpu {
         el = el.child(
             El::new(Style {
@@ -436,6 +480,42 @@ pub fn element(viewport: &Viewport, view: &View) -> Option<El> {
                 .paint(Paint::fill(Color::hex("#000000a6")).radius(16.))
                 .child(text("Next round", 17., 800, Color::hex("#f6dc4a"))),
             );
+            if let Some(name) = &view.watching {
+                let name: String = name.chars().take(11).collect();
+                body.push(button(WATCH, &format!("▸ {name}"), false, focused(WATCH)));
+            }
+        }
+        Phase::Lobby if view.private => {
+            body.push(header(&format!("{} · Lobby", view.playlist)));
+            let chips = view
+                .seats
+                .iter()
+                .map(|s| chip(Some(s), view.narrow))
+                .chain((0..view.open).map(|_| chip(None, view.narrow)));
+            body.push(El::new(row(6., true)).children(chips));
+            let buttons = if view.host {
+                let mut b = vec![
+                    button(START, "Start", true, focused(START)),
+                    button(MODE, &format!("{} ▸", view.playlist), false, focused(MODE)),
+                ];
+                if view.playlist == "Race" {
+                    b.push(button(
+                        CPUS,
+                        if view.cpus { "CPUs ✓" } else { "No CPUs" },
+                        false,
+                        focused(CPUS),
+                    ));
+                }
+                b
+            } else {
+                vec![button(
+                    READY,
+                    if view.ready { "Ready ✓" } else { "Ready" },
+                    !view.ready,
+                    focused(READY),
+                )]
+            };
+            body.push(El::new(row(10., true)).children(buttons));
         }
         Phase::Lobby => {
             body.push(header(&format!("{} · Waiting", view.playlist)));
@@ -466,6 +546,9 @@ pub fn element(viewport: &Viewport, view: &View) -> Option<El> {
                 El::new(row(6., true))
                     .children(view.seats.iter().map(|s| chip(Some(s), view.narrow))),
             );
+            if view.host {
+                body.push(button(SKIP, "Skip ▸", false, focused(SKIP)));
+            }
         }
         Phase::Countdown => {
             body.push(header("Next"));
@@ -704,6 +787,53 @@ mod tests {
                 );
             }
         }
+        // A private room's host and guest, and a spectator's follow camera.
+        for phase in [Phase::Lobby, Phase::Vote, Phase::Play] {
+            for host in [true, false] {
+                let state = View {
+                    private: true,
+                    host,
+                    spectating: true,
+                    watching: Some("Mud Hawk".into()),
+                    ..sample(phase)
+                };
+                let el = element(&view, &state).unwrap();
+                let (mut list, mut hits) = (DisplayList::default(), Vec::new());
+                let mut fonts = Fonts::new();
+                crate::layout::render(
+                    &el,
+                    &mut fonts,
+                    view.width,
+                    view.height,
+                    &mut list,
+                    &mut hits,
+                );
+                let ids = buttons(&state);
+                assert!(!ids.is_empty());
+                for id in ids {
+                    let (rect, _) = hits.iter().find(|(_, h)| *h == id).expect("button drawn");
+                    assert!(rect.h >= 48. && rect.w >= 48., "{phase:?} {id}: {rect:?}");
+                    assert!(
+                        rect.x >= 0. && rect.right() <= 360.5,
+                        "{phase:?} {id}: {rect:?}"
+                    );
+                }
+            }
+        }
+        let host = View {
+            private: true,
+            host: true,
+            ..sample(Phase::Lobby)
+        };
+        assert_eq!(buttons(&host), [START, MODE, CPUS]);
+        assert_eq!(
+            buttons(&View {
+                phase: Phase::Vote,
+                ..host.clone()
+            })
+            .last(),
+            Some(&SKIP)
+        );
         // Nothing shows while a round runs, unless spectating.
         assert!(element(&view, &sample(Phase::Play)).is_none());
         let watching = View {

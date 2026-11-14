@@ -185,6 +185,9 @@ pub fn share_page(site: &str) -> String {
     format!("{}/play.html", site.trim_end_matches('/'))
 }
 
+/// A private room's loop is gone after this long without its heartbeat
+/// (the server sends one every 2 s).
+const PRIVATE_LOOP_STALE_MS: u64 = 6_000;
 /// Distinct remote quad/rider models kept loaded: one per possible rider
 /// (web/multiplayer.js `MAX_REMOTE_MODELS`).
 const MAX_REMOTE_MODELS: usize = 20;
@@ -1030,6 +1033,17 @@ impl Net {
         self.serves.quickplay
     }
 
+    /// A private room's host-run loop (research/QUICK_PLAY.md "Private
+    /// rooms"), while its heartbeat keeps coming: it stops when the host's
+    /// build no longer runs one.
+    pub fn private_loop(&self) -> Option<&atv_game::multiplayer::quickplay::RoomLoop> {
+        let (state, at) = self.session.room_loop.as_ref()?;
+        (!self.serves.quickplay
+            && state.hosted.is_some()
+            && now_ms(self.clock).saturating_sub(*at) < PRIVATE_LOOP_STALE_MS)
+            .then_some(state)
+    }
+
     /// This rider's loop choices (research/QUICK_PLAY.md).
     pub fn send_vote(&mut self, vote: atv_game::multiplayer::quickplay::Vote) {
         if self.closed.is_none()
@@ -1579,6 +1593,7 @@ impl Net {
                 "frames": self.serves.frames, "chat": self.serves.chat,
                 "motorcycles": self.serves.motorcycles,
                 "quickplay": self.serves.quickplay,
+                "roomloop": self.serves.roomloop,
             },
             "server": self.server,
             "pace": self.session.pace,

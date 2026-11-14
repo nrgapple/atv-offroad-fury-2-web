@@ -808,3 +808,84 @@ fn a_quick_play_room_runs_its_loop_for_riders_that_follow_it() {
     let back = Room::restore(saved, f.now).unwrap();
     assert!(back.quickplay_loop().is_some());
 }
+
+#[test]
+fn a_private_room_runs_a_host_run_loop_only_for_builds_that_follow_it() {
+    use atv_net::quickplay::{Hosting, NO_CHOICE, Vote, host_flag, loop_phase};
+    let mut f = Fixture::new(false);
+    f.join(1, Some(HOST_KEY), "Host");
+    f.join(2, None, "Old");
+    let loops = |out: &[Out], to| {
+        sent(out, to)
+            .into_iter()
+            .filter_map(|p| match p {
+                Packet::RoomLoop(l) => Some(*l),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+    };
+    let hello_loop = |f: &mut Fixture, id| {
+        let peer = f.room.conns[f.room.index(id).unwrap()].peer;
+        f.send(
+            id,
+            &Packet::Signal(atv_net::Signal {
+                peer,
+                kind: signal::HELLO,
+                data: vec![signal::FRAMES, signal::LOOP],
+            }),
+        )
+    };
+    // No loop until the host's build says it follows one.
+    f.hello(1, signal::FRAMES);
+    f.hello(2, signal::FRAMES);
+    assert!(loops(&f.tick(), 1).is_empty());
+    hello_loop(&mut f, 1);
+    let out = f.tick();
+    let state = loops(&out, 1);
+    assert_eq!(state.len(), 1);
+    assert_eq!(state[0].phase, loop_phase::LOBBY);
+    assert_eq!(state[0].driver, 0);
+    assert!(state[0].hosted.is_some());
+    // An older build in the room never gets it.
+    assert!(loops(&out, 2).is_empty());
+    // The host keeps its Select Track; its Start opens the vote.
+    let epoch = f.room.lobby().epoch;
+    let sx01 = atv_net::quickplay::map_id("sx01").unwrap();
+    f.send(
+        1,
+        &Packet::SetLobby {
+            epoch,
+            map: sx01,
+            started: true,
+        },
+    );
+    assert_eq!(f.room.lobby().map, sx01);
+    let start = Vote {
+        choice: NO_CHOICE,
+        hosting: Some(Hosting {
+            mode: atv_net::game_kind::RACE,
+            flags: host_flag::START,
+            laps: 1,
+            minutes: 2,
+        }),
+        ..Default::default()
+    };
+    f.send(1, &Packet::Vote(start));
+    f.now += 100;
+    let state = loops(&f.tick(), 1);
+    assert_eq!(state[0].phase, loop_phase::VOTE);
+    assert_eq!(state[0].options[0].map, sx01);
+    // A guest's build that follows it gets it too; the host stays host.
+    hello_loop(&mut f, 2);
+    f.now += 2_100;
+    let out = f.tick();
+    assert_eq!(loops(&out, 2).len(), 1);
+    assert_eq!(f.room.lobby().host, 0);
+    // A host build that stops following ends the loop.
+    f.hello(1, signal::FRAMES);
+    f.now += 2_100;
+    assert!(loops(&f.tick(), 2).is_empty());
+    // Private rooms stay private: not saved as Quick Play.
+    let mut out = Vec::new();
+    assert_eq!(f.room.shut_down(f.now, &mut out).quickplay, None);
+}
