@@ -5708,7 +5708,7 @@ impl ApplicationHandler<Message> for App {
         let store = options.store;
         let (environment, fixed) = (options.venue, options.camera);
         let room = options.room.clone();
-        // Rooms ride ATVs: a motorcycle choice falls back to ATV01.
+        // Rooms ride the garage choice, motorcycles included.
         let profile = room.as_ref().map(|room| {
             atv_game::multiplayer::Profile::new(
                 &room.name,
@@ -7492,13 +7492,8 @@ impl App {
         if !setup.requested {
             return;
         }
-        let mut errors = setup.errors.clone();
-        // frontend.js refuses motorcycles online (Free Ride falls back).
-        if setup.mode == "multiplayer" && setup.quad_id >= 27 {
-            errors.push(
-                "Choose an ATV for multiplayer. Motorcycles are available in Single Player.".into(),
-            );
-        }
+        // Motorcycles ride rooms too (frontend.js refused them online).
+        let errors = setup.errors.clone();
         if !errors.is_empty() {
             // frontend.js openLaunch: the main menu's notice line says why.
             let message = format!("Cannot open ride link. {}", errors.join(" "));
@@ -8844,13 +8839,7 @@ impl App {
             let mut f = front.borrow_mut();
             f.state.room = None;
             f.state.hosting = false;
-            // Rooms ride ATVs (frontend.js `onlineGarage`).
-            let quad = if f.state.quad_id >= 27 {
-                1
-            } else {
-                f.state.quad_id
-            };
-            (quad, f.state.rider_id)
+            (f.state.quad_id, f.state.rider_id)
         };
         self.front_event(atv_ui::front::controller::Event::RoomRide {
             quad,
@@ -10734,7 +10723,7 @@ pub fn start() {
     }
     // A room link, `?room=CODE` included, joins through the frontend as
     // launch.js parseLaunch reads it (player name, vehicle aliases, saved
-    // gear, play=0, the motorcycle refusal). Only the engine's test hooks
+    // gear, play=0). Only the engine's test hooks
     // ride straight into a room: `?host=1`, or `room=` with `dropAfter=` or
     // `trainPlace=`.
     let invite = ["mode", "action", "lobby"]

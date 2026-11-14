@@ -1257,15 +1257,18 @@ impl Motorcycle {
         Ok(())
     }
     pub fn matrices(&self) -> Vec<M> {
-        self.model.pose(
-            if self.frame.wreck.phase == crate::wreck::Phase::Riding {
-                self.visual_steer
-            } else {
-                self.steer + self.frame.crossup
-            },
-            self.angles,
-            self.compression,
-        )
+        let (steering, angles, compression) = self.linkage();
+        self.model.pose(steering, angles, compression)
+    }
+    /// What [`Model::pose`] draws the bike from: steering, wheel spin and
+    /// suspension (multiplayer poses carry these).
+    pub fn linkage(&self) -> (f32, [f32; 2], [f32; 2]) {
+        let steering = if self.frame.wreck.phase == crate::wreck::Phase::Riding {
+            self.visual_steer
+        } else {
+            self.steer + self.frame.crossup
+        };
+        (steering, self.angles, self.compression)
     }
     pub fn rider_matrices(&self) -> Result<Vec<M>> {
         if self.stunt_name.is_none()
