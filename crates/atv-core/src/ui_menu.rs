@@ -1122,6 +1122,9 @@ pub fn layout(request: Request) -> Result<Frame> {
                 ("Host Game", "create-lobby"),
                 ("Join Game", "join-lobby"),
                 ("Arlington Free Ride", "freeride"),
+                // Port addition: friends, presence and Join
+                // (research/ONLINE_IDENTITY.md).
+                ("Friends", "friends"),
             ]
             .iter()
             .enumerate()
@@ -2712,7 +2715,7 @@ mod tests {
         assert!(menu.inputs.is_empty());
         assert_eq!(
             menu.choices,
-            ["split", "create-lobby", "join-lobby", "freeride"]
+            ["split", "create-lobby", "join-lobby", "freeride", "friends"]
         );
         assert_eq!(menu.hits[0].label, "Split Screen");
         assert_eq!(menu.hits[1].label, "Host Game");
