@@ -280,7 +280,13 @@ A reset publishes the new physical pose without calling race checkpoint update
 or counting teleport distance; subsequent normal movement can earn progress.
 
 Low-air feedback uses the source 20ft split, terrain normal sampled 0.5 seconds
-ahead, gains 10/0.1 and bounded lean. National trick requests now use the original
+ahead, gains 10/0.1 and bounded lean. Above 20ft the lean is a pitch-rate
+controller: sin(clamp(1.5 × (AI +0x90 − AI +0x200))), where +0x90 is the body's
+local angular velocity x (body +0x2a0, copied by `001eb380`) and +0x200 is
+−0.5 × the angle of the corrected direction from the nose. Until 2026-11-14 the
+port used an Euler pitch for +0x90, which made Supercross CPUs over-rotate
+backwards on big jumps ([CPU_RECOVERY_SWEEP.md](CPU_RECOVERY_SWEEP.md),
+issue #643). National trick requests now use the original
 10-second interval/10% trial, flagged jumps, TDF tag 26 airtime minus elapsed air
 time and 0.5-second margin, and selection among the 24 eligible main clip durations
 (001e9650). The rider accepts the direct request through its native airborne,
