@@ -103,6 +103,7 @@ pub fn title(page: &str) -> &'static str {
         "bindings" => "Keyboard",
         "music" => "Audio",
         "players" => "Players",
+        "rider" => "Rider",
         _ => "Pause",
     }
 }

@@ -157,6 +157,10 @@ export const TESTS = {
     group: 'multiplayer',
     reason: 'needs a local game server at the same origin (Host Game, room WebSocket); run with --url'
   },
+  'test_engine_multiplayer_chat.mjs': {
+    group: 'multiplayer',
+    reason: 'needs a local game server at the same origin (quick chat relay and the report route); run with --url'
+  },
   'test_engine_multiplayer_context.mjs': {
     group: 'multiplayer',
     reason: 'needs a local game server at the same origin (Host Game, room WebSocket); run with --url'
