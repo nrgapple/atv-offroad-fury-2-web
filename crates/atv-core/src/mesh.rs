@@ -21,6 +21,9 @@ pub struct Vertex {
     /// Scaled VIF normal before the node transform, used by reflection passes.
     pub local_normal: [f32; 3],
     pub uv: [f32; 2],
+    /// MX two-layer geometry retains its second stream. The shared renderer's
+    /// shader-specific second-UV consumer is not yet recovered.
+    pub uv2: Option<[f32; 2]>,
     /// Optional unsigned VIF V4-8 color, preserved before original shader scaling.
     pub color: Option<[u8; 4]>,
     pub node: u16,
@@ -146,6 +149,7 @@ fn packet(
     material: u32,
     flags: u32,
     expected_vertices: usize,
+    uv_layers: usize,
     sign_bit_restart: bool,
 ) -> Result<Group> {
     let mut group = Group {
@@ -234,6 +238,7 @@ fn packet(
                             normal: [0.; 3],
                             local_normal: [0.; 3],
                             uv: [0.; 2],
+                            uv2: None,
                             color: None,
                             node: node as u16,
                         });
@@ -254,7 +259,11 @@ fn packet(
                         0x65 | 0x66 => 0x8001 + count as u32 * 2,
                         _ => 0xc001 + count as u32 * 3,
                     };
-                    if address != expected_address {
+                    let second_uv = sign_bit_restart
+                        && uv_layers == 2
+                        && command == 0x65
+                        && address == 0x8001 + count as u32 * 4;
+                    if address != expected_address && !second_uv {
                         return Err("unsupported PSG attribute destination".into());
                     }
                     if positions != count {
@@ -269,10 +278,17 @@ fn packet(
                             vertex.normal =
                                 point(&nodes[vertex.node as usize].world_matrix, normal, false);
                         } else if command == 0x65 {
-                            vertex.uv = [
+                            let uv = [
                                 u16le(raw, i * 4)? as i16 as f32 * scales[2],
                                 u16le(raw, i * 4 + 2)? as i16 as f32 * scales[3],
                             ];
+                            if second_uv {
+                                if vertex.uv2.replace(uv).is_some() {
+                                    return Err("duplicate PSG second UV stream".into());
+                                }
+                            } else {
+                                vertex.uv = uv;
+                            }
                         } else if command == 0x66 {
                             // MX NAT12 gate: signed V2-8 UVs use the same
                             // per-axis scale and destination as V2-16.
@@ -287,6 +303,7 @@ fn packet(
                             .normal
                             .iter()
                             .chain(vertex.uv.iter())
+                            .chain(vertex.uv2.iter().flatten())
                             .any(|v| !v.is_finite())
                         {
                             return Err("PSG vertex attribute overflow".into());
@@ -298,6 +315,9 @@ fn packet(
             }
             _ => return Err(format!("unsupported PSG VIF command {command:#x}")),
         }
+    }
+    if uv_layers == 2 && group.vertices.iter().any(|v| v.uv2.is_none()) {
+        return Err("PSG two-layer packet lacks second UV stream".into());
     }
     if at != data.len() || group.vertices.len() != expected_vertices {
         return Err("PSG vertex/packet extent mismatch".into());
@@ -422,7 +442,7 @@ fn decode_psg_root(data: &[u8], scene_root: bool) -> Result<Mesh> {
         for _ in 0..group_count {
             let material = u32le(data, at)?;
             let flags = u32le(data, at + 4)?;
-            let (vertices, size) = if version == 5 {
+            let (vertices, size, layers) = if version == 5 {
                 // 0019f0c0 reads material; 00166360 reads flags, five bytes,
                 // per-layer source identifiers, two u16 counts and packet size.
                 // Layer identifiers are not node indices or Rust material IDs.
@@ -436,12 +456,12 @@ fn decode_psg_root(data: &[u8], scene_root: bool) -> Result<Mesh> {
                 let vertices = usize::from(u16le(data, counts)?);
                 let size = u32le(data, counts + 4)? as usize;
                 at = counts + 8;
-                (vertices, size)
+                (vertices, size, layers)
             } else {
                 let vertices = (u32le(data, at + 12)? & 65535) as usize;
                 let size = u32le(data, at + 16)? as usize;
                 at += 20;
-                (vertices, size)
+                (vertices, size, 1)
             };
             if material as usize >= materials_count {
                 return Err("PSG group references missing material".into());
@@ -457,6 +477,7 @@ fn decode_psg_root(data: &[u8], scene_root: bool) -> Result<Mesh> {
                 material,
                 flags,
                 vertices,
+                layers,
                 version == 5,
             )?);
             at += size;
@@ -705,20 +726,20 @@ mod tests {
             data.extend(color);
         }
         data.extend(0x17000000u32.to_le_bytes());
-        let mesh = packet(&data, &[identity()], &[0.5, 1., 1., 1.], 0, 0, 4, false).unwrap();
+        let mesh = packet(&data, &[identity()], &[0.5, 1., 1., 1.], 0, 0, 4, 1, false).unwrap();
         assert_eq!(mesh.vertices[2].position, [0., 1., 0.]);
         assert_eq!(mesh.indices, [0, 1, 2, 2, 1, 3]);
         assert_eq!(mesh.vertices[0].color, Some([255, 128, 100, 0]));
         data[color_at..color_at + 4].copy_from_slice(&0x6e04800du32.to_le_bytes());
         assert!(
-            packet(&data, &[identity()], &[0.5, 1., 1., 1.], 0, 0, 4, false)
+            packet(&data, &[identity()], &[0.5, 1., 1., 1.], 0, 0, 4, 1, false)
                 .unwrap_err()
                 .contains("destination")
         );
         data[color_at..color_at + 4].copy_from_slice(&0x6e04c00du32.to_le_bytes());
         data[10..12].copy_from_slice(&(-32i16).to_le_bytes());
         assert!(
-            packet(&data, &[identity()], &[0.5, 1., 1., 1.], 0, 0, 4, false)
+            packet(&data, &[identity()], &[0.5, 1., 1., 1.], 0, 0, 4, 1, false)
                 .unwrap_err()
                 .contains("missing node")
         );
@@ -741,19 +762,19 @@ mod tests {
             words.extend(uv.to_le_bytes());
         }
         let scales = [1., 1., 1. / 127., 1. / 64.];
-        let a = packet(&bytes, &[identity()], &scales, 0, 0, 3, true).unwrap();
-        let b = packet(&words, &[identity()], &scales, 0, 0, 3, true).unwrap();
+        let a = packet(&bytes, &[identity()], &scales, 0, 0, 3, 1, true).unwrap();
+        let b = packet(&words, &[identity()], &scales, 0, 0, 3, 1, true).unwrap();
         for (a, b) in a.vertices.iter().zip(&b.vertices) {
             assert_eq!(a.uv, b.uv);
         }
         bytes[uv_at..uv_at + 4].copy_from_slice(&0x6603c007u32.to_le_bytes());
         assert!(
-            packet(&bytes, &[identity()], &scales, 0, 0, 3, true)
+            packet(&bytes, &[identity()], &scales, 0, 0, 3, 1, true)
                 .unwrap_err()
                 .contains("destination")
         );
         bytes.truncate(uv_at + 5);
-        assert!(packet(&bytes, &[identity()], &scales, 0, 0, 3, true).is_err());
+        assert!(packet(&bytes, &[identity()], &scales, 0, 0, 3, 1, true).is_err());
     }
 
     #[test]
@@ -772,7 +793,7 @@ mod tests {
         batch.extend(0x17000000u32.to_le_bytes());
         let mut data = batch.clone();
         data.extend(&batch);
-        let decode = |data: &[u8], mx| packet(data, &[identity()], &[1.; 4], 0, 0, 6, mx);
+        let decode = |data: &[u8], mx| packet(data, &[identity()], &[1.; 4], 0, 0, 6, 1, mx);
         let mesh = decode(&data, true).unwrap();
         assert_eq!(mesh.vertices.len(), 6);
         assert_eq!(mesh.indices, [0, 1, 2, 3, 4, 5]);
@@ -786,6 +807,39 @@ mod tests {
         data[normals..normals + 4].copy_from_slice(&0x6a028003u32.to_le_bytes());
         assert!(decode(&data, true).unwrap_err().contains("count"));
         assert!(decode(&batch, true).is_err()); // Declared total still enforced.
+    }
+
+    #[test]
+    fn mx_second_uv_stream_requires_declared_layer_and_matching_batch() {
+        let mut data = 0x6d038001u32.to_le_bytes().to_vec();
+        for v in [[0i16, 0, 0, -32752], [1, 0, 0, -32752], [0, 1, 0, 16]] {
+            for c in v {
+                data.extend(c.to_le_bytes());
+            }
+        }
+        data.extend(0x65038007u32.to_le_bytes());
+        data.extend([0; 12]);
+        let second = data.len();
+        data.extend(0x6503800du32.to_le_bytes());
+        for uv in [1i16, 2, 3, 4, 5, 6] {
+            data.extend(uv.to_le_bytes());
+        }
+        let decode =
+            |data: &[u8], layers, mx| packet(data, &[identity()], &[1.; 4], 0, 0, 3, layers, mx);
+        let mesh = decode(&data, 2, true).unwrap();
+        assert_eq!(mesh.vertices[2].uv, [0.; 2]);
+        assert_eq!(mesh.vertices[2].uv2, Some([5., 6.]));
+        assert!(decode(&data, 1, true).unwrap_err().contains("destination"));
+        assert!(decode(&data, 2, false).unwrap_err().contains("destination"));
+        assert!(
+            decode(&data[..second], 2, true)
+                .unwrap_err()
+                .contains("lacks")
+        );
+        data[second..second + 4].copy_from_slice(&0x65028009u32.to_le_bytes());
+        assert!(decode(&data, 2, true).unwrap_err().contains("count"));
+        data[second..second + 4].copy_from_slice(&0x6503800eu32.to_le_bytes());
+        assert!(decode(&data, 2, true).unwrap_err().contains("destination"));
     }
 
     #[test]

@@ -149,3 +149,10 @@ ATV2 retains its existing accepted forms. Attribute destination/count and
 whole-packet vertex checks remain enforced. A generated two-batch fixture
 covers geometry, restart indices, attributes and malformed count/destination
 rejection without source bytes. Private source acceptance remains required.
+
+The subsequent complete 56-package sweep found one additional decoder failure:
+Northern Lights declares two geometry layers and writes signed V2-16 UVs
+at 0x8001+4N after the primary UV and unsigned color arrays. That bounded
+second stream is retained separately as `Vertex::uv2`, with layer declaration,
+matching count/destination, duplicate and completeness checks. It does not
+overwrite primary UVs. Its shader-specific rendering consumer remains a gap.
