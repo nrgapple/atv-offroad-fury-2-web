@@ -7,7 +7,8 @@
 //! room's host does, with the server's setup, and the others follow it as
 //! guests.
 use atv_game::multiplayer::quickplay::{
-    NO_CHOICE, RANDOM, RoomLoop, Setup, Vote, loop_phase, playlist, rematch, result_flag, seat_flag,
+    NO_CHOICE, RANDOM, RoomLoop, Round, Setup, Vote, loop_phase, playlist, rematch, result_flag,
+    seat_flag,
 };
 use atv_game::multiplayer::{CPU_PEER, game_kind};
 use atv_ui::hud::quickplay::{self as panel, CardView, Phase, RowView, SeatView, View};
@@ -225,33 +226,27 @@ impl QuickPlay {
         } else {
             atv_game::multiplayer::quickplay::QUICKPLAY_HUMANS.saturating_sub(seats.len())
         };
-        let card = |mode: u8, map: u16, votes: u8, chosen: bool| CardView {
-            mode: mode_word(mode).into(),
-            track: atv_game::multiplayer::quickplay::Round {
-                mode,
-                map,
-                variant: 0,
+        let card = |round: &Round, votes: u8, chosen: bool| {
+            let mut track = round.environment().map_or_else(String::new, course);
+            if round.mode == game_kind::RACE && round.variant > 0 {
+                track.push_str(match round.variant {
+                    1 => " Long",
+                    2 => " Short",
+                    _ => " ST",
+                });
             }
-            .environment()
-            .map_or_else(String::new, course),
-            votes,
-            chosen,
+            CardView {
+                mode: mode_word(round.mode).into(),
+                track,
+                votes,
+                chosen,
+            }
         };
         let mut cards: Vec<CardView> = state
             .options
             .iter()
             .enumerate()
-            .map(|(i, r)| {
-                let mut c = card(r.mode, r.map, state.votes[i], self.choice == i as u8);
-                if r.mode == game_kind::RACE && r.variant > 0 {
-                    c.track.push_str(match r.variant {
-                        1 => " Long",
-                        2 => " Short",
-                        _ => " ST",
-                    });
-                }
-                c
-            })
+            .map(|(i, r)| card(r, state.votes[i], self.choice == i as u8))
             .collect();
         if phase == Phase::Vote {
             cards.push(CardView {
@@ -261,8 +256,7 @@ impl QuickPlay {
                 chosen: self.choice == RANDOM,
             });
         }
-        let picked = (phase == Phase::Countdown)
-            .then(|| card(state.setup.round.mode, state.setup.round.map, 0, false));
+        let picked = (phase == Phase::Countdown).then(|| card(&state.setup.round, 0, false));
         let since = now - self.phase_at;
         let grow = (since / COUNT_UP_MS).clamp(0., 1.);
         let rows = state
@@ -362,7 +356,7 @@ impl QuickPlay {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use atv_game::multiplayer::quickplay::{Placing, Round, Seat};
+    use atv_game::multiplayer::quickplay::{Placing, Seat};
 
     fn names(peer: u8) -> String {
         if peer >= CPU_PEER {

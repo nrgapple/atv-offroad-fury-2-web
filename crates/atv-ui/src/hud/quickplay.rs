@@ -362,7 +362,8 @@ fn podium(rows: &[RowView]) -> El {
     // 2nd, 1st, 3rd.
     let order = [1usize, 0, 2];
     let heights = [70., 96., 54.];
-    let colors = ["#c9ced6", "#f6dc4a", "#d08a4b"];
+    // Gold, silver, bronze by place.
+    let colors = ["#f6dc4a", "#c9ced6", "#d08a4b"];
     El::new(Style {
         align_items: AlignItems::END,
         ..row(8., false)

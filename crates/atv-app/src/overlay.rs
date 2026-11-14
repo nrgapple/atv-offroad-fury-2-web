@@ -246,6 +246,9 @@ pub struct Overlay {
     pub room_race_pending: bool,
     /// The Quick Play panel over a server-run room (research/QUICK_PLAY.md).
     pub quickplay: Option<atv_ui::hud::quickplay::View>,
+    /// Between Quick Play rounds: the round's own results panel stays
+    /// hidden under the vote and podium.
+    pub quickplay_hides_results: bool,
     /// The race's course id, the player's vehicle and whether it runs the
     /// default laps: what the profile's course record keeps (`001f1e30`).
     pub race_entry: Option<(String, u16, bool)>,
@@ -373,6 +376,7 @@ impl Overlay {
             game: false,
             room_race_pending: false,
             quickplay: None,
+            quickplay_hides_results: false,
             race_entry: None,
             medal_shown: None,
             medals_saved: false,
@@ -1707,7 +1711,7 @@ impl Overlay {
             }
             _ => {}
         }
-        if self.results.shown && active {
+        if self.results.shown && active && !self.quickplay_hides_results {
             self.paint_results(race.map(|(frame, ..)| frame));
         }
         self.paint_quickplay();
@@ -1925,7 +1929,7 @@ impl Overlay {
 
     /// Escape/Enter while the race results are up: true when taken.
     pub fn results_key(&mut self, code: &str) -> (bool, Option<Action>) {
-        if self.menu.is_some() {
+        if self.menu.is_some() || self.quickplay_hides_results {
             return (false, None);
         }
         let (taken, command) = self.results.key(code);
@@ -1960,7 +1964,7 @@ impl Overlay {
 
     /// Controller A/B/X and the D-pad while the race results are up.
     pub fn results_pad(&mut self, pad: Option<&atv_game::ride::bindings::Pad>) -> Option<Action> {
-        if self.menu.is_some() {
+        if self.menu.is_some() || self.quickplay_hides_results {
             return None;
         }
         let idle = atv_game::ride::bindings::Pad::default();

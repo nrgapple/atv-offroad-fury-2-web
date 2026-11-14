@@ -2402,10 +2402,10 @@ impl App {
                 quick_leave = std::mem::take(&mut qp.leave).then(|| (qp.playlist, qp.code.clone()));
                 if let Some(overlay) = &mut self.overlay {
                     // Between rounds the podium and the vote replace the
-                    // round's own results panel.
-                    if state.phase != atv_game::multiplayer::quickplay::loop_phase::PLAY {
-                        overlay.results = Default::default();
-                    }
+                    // round's own results panel (the finished race would
+                    // show it again every frame).
+                    overlay.quickplay_hides_results =
+                        state.phase != atv_game::multiplayer::quickplay::loop_phase::PLAY;
                     overlay.quickplay = Some(qp.view.clone());
                 }
             }
