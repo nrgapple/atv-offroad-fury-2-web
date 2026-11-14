@@ -728,12 +728,17 @@ mod tests {
         let mut b = [0f32; 16];
         b[0] = 1.;
         assert_eq!(pad(&mut state, &b, &mut held), None);
-        b[0] = 0.;
-        b[15] = 1.;
-        pad(&mut state, &b, &mut held);
-        b[15] = 0.;
-        pad(&mut state, &b, &mut held);
-        b[0] = 1.;
-        assert_eq!(pad(&mut state, &b, &mut held), Some(REMATCH));
+        let step = |b: &mut [f32; 16], i: usize, held: &mut [bool; 3], state: &mut View| {
+            *b = [0.; 16];
+            pad(state, b, held);
+            b[i] = 1.;
+            pad(state, b, held)
+        };
+        // Right onto Leave: A never presses it (A is the throttle).
+        assert_eq!(step(&mut b, 15, &mut held, &mut state), None);
+        assert_eq!(step(&mut b, 0, &mut held, &mut state), None);
+        // Right again wraps to Rematch, which A presses.
+        assert_eq!(step(&mut b, 15, &mut held, &mut state), None);
+        assert_eq!(step(&mut b, 0, &mut held, &mut state), Some(REMATCH));
     }
 }

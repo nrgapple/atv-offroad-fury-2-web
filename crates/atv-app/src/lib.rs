@@ -4875,7 +4875,16 @@ impl App {
                 }
             }
             // Handled above.
-            overlay::Action::Viewer(_) | overlay::Action::Replay => {}
+            overlay::Action::Viewer(_)
+            | overlay::Action::Replay
+            | overlay::Action::QuickPlay(_) => {}
+            // Quick Play's server picks the next round: a driver's Race
+            // Again only closes the round's own results.
+            overlay::Action::RaceRetry if self.quick_play.is_some() => {
+                if let Some(overlay) = &mut self.overlay {
+                    overlay.results = Default::default();
+                }
+            }
             overlay::Action::RaceRetry if self.tag.as_ref().is_some_and(|t| t.local) => {
                 self.restart_split_tag();
             }

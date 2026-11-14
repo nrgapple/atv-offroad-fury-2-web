@@ -733,3 +733,74 @@ fn motorcycle_poses_reach_only_builds_that_decode_them() {
     let out = f.send(5, &Packet::Profile(rider));
     assert_eq!(closes(&out)[0].2, "Unknown actor model");
 }
+
+#[test]
+fn a_quick_play_room_runs_its_loop_for_riders_that_follow_it() {
+    use atv_net::quickplay::{Vote, loop_phase, playlist};
+    let mut f = Fixture::new(false);
+    f.room = Room::quickplay(*b"QPR00001", HOST_KEY.into(), playlist::RACE, f.now, 9);
+    assert_eq!(f.room.capacity(), atv_net::quickplay::QUICKPLAY_HUMANS);
+    // Claims fill seats between rounds.
+    assert!(f.room.claim_quickplay(f.now, &mut f.rng, false).is_some());
+    f.join(1, Some(HOST_KEY), "One");
+    f.join(2, None, "Two");
+    // Only a second HELLO flags byte with ROOM_LOOP gets the loop.
+    let peer = f.room.conns[0].peer;
+    f.send(
+        1,
+        &Packet::Signal(atv_net::Signal {
+            peer,
+            kind: signal::HELLO,
+            data: vec![signal::FRAMES, signal::ROOM_LOOP],
+        }),
+    );
+    f.hello(2, signal::FRAMES);
+    let out = f.tick();
+    let loops = |out: &[Out], to| {
+        sent(out, to)
+            .into_iter()
+            .filter_map(|p| match p {
+                Packet::RoomLoop(l) => Some(*l),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+    };
+    let first = loops(&out, 1);
+    assert_eq!(first.len(), 1);
+    assert_eq!(first[0].phase, loop_phase::LOBBY);
+    assert_eq!(first[0].driver, 0);
+    assert!(loops(&out, 2).is_empty());
+    // The driver is the room's host; a private-room map change is refused.
+    assert_eq!(f.room.lobby().host, 0);
+    let map = f.room.lobby().map;
+    let epoch = f.room.lobby().epoch;
+    f.send(
+        1,
+        &Packet::SetLobby {
+            epoch,
+            map: if map == 1 { 2 } else { 1 },
+            started: true,
+        },
+    );
+    assert_eq!(f.room.lobby().map, map);
+    // GO from the only loop rider... and the other (not following) is not
+    // waited for by name, but both are riders: both must be ready.
+    let ready = Vote {
+        ready: true,
+        choice: atv_net::quickplay::NO_CHOICE,
+        ..Default::default()
+    };
+    f.send(1, &Packet::Vote(ready));
+    f.send(2, &Packet::Vote(ready));
+    f.now += 100;
+    let out = f.tick();
+    assert_eq!(loops(&out, 1)[0].phase, loop_phase::VOTE);
+    // Names are filtered for strangers.
+    assert!(f.room.lobby().players.iter().all(|p| !p.name.is_empty()));
+    // A shut-down Quick Play room comes back as one.
+    let mut out = Vec::new();
+    let saved = f.room.shut_down(f.now, &mut out);
+    assert_eq!(saved.quickplay, Some(playlist::RACE));
+    let back = Room::restore(saved, f.now).unwrap();
+    assert!(back.quickplay_loop().is_some());
+}

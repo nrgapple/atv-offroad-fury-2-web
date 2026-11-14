@@ -2170,7 +2170,6 @@ impl Front {
             "focus": self.state.focus,
             "choices": self.state.choices().iter().map(|(a, _)| a).collect::<Vec<_>>(),
             "freerideRiders": self.state.freeride_riders,
-            "quickplay": self.state.quickplay,
             "track": self.state.tracks.get(self.state.track).map(|t| t.id.clone()),
             "filter": self.state.filter,
             "quad": self.state.quad_id,
@@ -2219,6 +2218,7 @@ impl Front {
                 "id": id, "x": r.x, "y": r.y, "width": r.w, "height": r.h,
             })).collect::<Vec<_>>(),
         });
+        out["quickplay"] = self.state.quickplay.into();
         out["kinetic"] = kinetic;
         // Turntable rates and preview images' pixel sizes (they follow the
         // surface density); the UI's backing [width, height, scale]; the

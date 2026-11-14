@@ -2473,6 +2473,8 @@ impl Frontend {
             "stats" => return Some(Event::Stats),
             "quickplay" => self.show("quickplay", view),
             "qp-race" | "qp-stunts" => {
+                // Rounds include races with ATV CPU fields: a saved
+                // motorcycle rides ATV01 here.
                 let name = self.room_name();
                 return Some(Event::QuickPlay {
                     playlist: if action == "qp-stunts" { 1 } else { 0 },
