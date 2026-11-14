@@ -4254,9 +4254,11 @@ impl App {
                 }
             }
             // A rider's safety page (research/QUICK_CHAT.md).
-            Event::Mute(peer) | Event::Block(peer) | Event::MuteAll | Event::Report(peer, _)
-                if self.ready.as_ref().is_some_and(|r| r.net.is_some()) =>
-            {
+            Event::Mute(_) | Event::Block(_) | Event::MuteAll | Event::Report(..) => {
+                let peer = match event {
+                    Event::Mute(peer) | Event::Block(peer) | Event::Report(peer, _) => peer,
+                    _ => 0,
+                };
                 let Some(net) = self.ready.as_mut().and_then(|r| r.net.as_mut()) else {
                     return;
                 };

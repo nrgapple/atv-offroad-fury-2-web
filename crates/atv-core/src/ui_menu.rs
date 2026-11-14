@@ -1562,14 +1562,7 @@ pub fn layout(request: Request) -> Result<Frame> {
                 );
                 y += 56.;
             }
-            f.text(
-                "Report".into(),
-                [24., y + 22.],
-                0.9,
-                FONT,
-                "210,210,210",
-                full,
-            );
+            f.text("Report", [24., y + 22.], 0.9, FONT, "210,210,210", full);
             y += 34.;
             let third = (full - 16.) / 3.;
             for (i, (label, reason)) in [
