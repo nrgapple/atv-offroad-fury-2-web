@@ -16,12 +16,14 @@ pub mod store;
 pub use store::{StoreView, store_page};
 pub mod games_page;
 pub mod navigation;
+pub mod online_page;
 pub mod passkey_page;
 pub mod profile_pages;
 pub mod seats_page;
 pub mod status_page;
 pub mod waypoint_page;
 pub mod world_page;
+pub use online_page::{OnlineCommand, OnlineView};
 pub use passkey_page::{CloudCommand, CloudView};
 use profile_pages::NO_PROFILE;
 
@@ -136,6 +138,8 @@ pub enum Event {
     /// Hall of Fame → View: World → Race This Ghost: Lap Attack on the
     /// board's course against a row's ghost, which the host downloads first
     /// (research/WORLD_BOARDS.md "Ghosts").
+    /// Lap Attack's ghost picker sends it too (research/GHOST_CHALLENGES.md);
+    /// an empty `board` races this device's personal best ghost.
     GhostRace {
         /// The lap board, the row's name and its lap in milliseconds.
         board: String,
@@ -190,6 +194,8 @@ pub enum Event {
     },
     /// A Pass Key page's request: copy, share, look up, save files.
     Cloud(CloudCommand),
+    /// An Online page's request to the game server (friends, code, league).
+    Online(OnlineCommand),
 }
 
 /// Race setup offers 1-5 laps, 0, 3 or 4 CPU riders and the original
@@ -272,6 +278,7 @@ pub fn stepper(action: &str) -> bool {
             | "racelaps"
             | "racecpu"
             | "racedifficulty"
+            | "raceghost"
             | "champdifficulty"
             | "profileletter"
             | "recordevent"
@@ -503,6 +510,7 @@ pub struct Frontend {
     /// Single Player → Freestyle Objectives: the course picked outside a
     /// championship (Freestyle Prep's Objectives event).
     pub objective_course: Option<String>,
+    pub classic_minutes: u32,
     /// The garage ("garage") or course picker ("tracks") is open over a
     /// held room ride; leaving it rides again.
     pub room: Option<&'static str>,
@@ -534,11 +542,18 @@ pub struct Frontend {
     pub cloud: CloudView,
     /// The world boards and the daily event's clock, from the host.
     pub world: world_page::WorldView,
+    /// The rider's medals, weekly results and personal best ghosts on this
+    /// device (research/GHOST_CHALLENGES.md), reloaded by the host.
+    pub medals: atv_core::medals::MedalBook,
     /// The status bar's open popover and its chip's centre x.
     status_open: Option<super::status_bar::Chip>,
     status_anchor: f32,
     /// The Pass Key pages' working state.
     pub passkey: passkey_page::PassKeyUi,
+    /// The rider's online card, friends and league (the host fills it).
+    pub online: OnlineView,
+    /// The Online pages' working state.
+    pub online_ui: online_page::OnlineUi,
     /// The Waypoint Editor pages' working state.
     pub waypoint: waypoint_page::WaypointUi,
     /// Multiplayer → Split Screen: the next Freestyle or Race rides
@@ -681,9 +696,11 @@ impl Frontend {
             freestyle: None,
             objective_courses: Vec::new(),
             objective_course: None,
+            classic_minutes: 2,
             room: None,
             lobby: None,
             race_courses: Vec::new(),
+            medals: crate::settings::load_medals(settings),
             race,
             race_filter: "all".into(),
             course_sheet: false,
@@ -698,6 +715,8 @@ impl Frontend {
             status_open: None,
             status_anchor: 0.,
             passkey: Default::default(),
+            online: Default::default(),
+            online_ui: Default::default(),
             waypoint: Default::default(),
             split: false,
             split_vertical: matches!(
@@ -796,16 +815,34 @@ impl Frontend {
         }
         if matches!(
             self.page.as_str(),
-            "championship" | "objectives" | "objective-courses"
+            "championship" | "objectives" | "objective-courses" | "classic-courses"
         ) {
             self.choices = if self.page == "objectives" {
                 self.objective_choices()
+            } else if self.page == "classic-courses" {
+                let mut rows = vec![(
+                    "classic-time".into(),
+                    format!("Time Limit: {}:00", self.classic_minutes),
+                )];
+                rows.extend(
+                    atv_core::freestyle::CLASSIC_COURSES
+                        .iter()
+                        .filter(|c| self.tracks.iter().any(|t| t.id == **c))
+                        .map(|c| (format!("classic:{c}"), self.course_name(c))),
+                );
+                rows.push(("back".into(), "Back".into()));
+                rows
             } else if self.page == "objective-courses" {
                 self.objective_course_choices()
             } else {
                 self.championship_choices()
             };
 
+            self.selection = self.selection.min(self.choices.len().saturating_sub(1));
+            return;
+        }
+        if Self::is_online_page(&self.page) {
+            self.choices = self.online_choices();
             self.selection = self.selection.min(self.choices.len().saturating_sub(1));
             return;
         }
@@ -932,15 +969,28 @@ impl Frontend {
         }
         // Single Player in the original's order (PAGE02: Race, Freestyle,
         // Championships) with the port's rows between Freestyle and the
-        // Garage: Freestyle Objectives (the original's Freestyle Prep
-        // Objectives event, `26a720`, `26d010`) after Freestyle, and Games
+        // Garage: Classic Freestyle and Freestyle Objectives (the original's
+        // Freestyle Prep Classic and Objectives events, `26a720`, `26d010`)
+        // after Freestyle, and Games
         // (the original's live under Multiplayer → Split Screen) after
         // Championships.
+        // Lap Attack's ghost picker under Difficulty (a port addition).
+        if page == "race"
+            && !self.split
+            && let Some(row) = self.ghost_row()
+            && let Some(at) = self.choices.iter().position(|(a, _)| a == "racedifficulty")
+        {
+            self.choices.insert(at + 1, row);
+        }
         if page == "single" {
             let mut rows = Vec::new();
             if self.daily_offered() {
                 rows.push((world_page::DAILY_PAGE, "Daily Event"));
             }
+            if self.weekly_offered() {
+                rows.push((world_page::WEEKLY_PAGE, "Weekly Challenge"));
+            }
+            rows.push(("classic-courses", "Classic Freestyle"));
             if !self.objective_courses.is_empty() {
                 rows.push(("objective-courses", "Freestyle Objectives"));
             }
@@ -1277,6 +1327,7 @@ impl Frontend {
         }
         match action {
             "codeletter" => return self.step_passkey(direction, view),
+            "friendletter" => return self.step_friend_code(direction, view),
             _ if waypoint_page::waypoint_row(action) => {
                 self.step_waypoint(action, direction, settings)
             }
@@ -1323,6 +1374,7 @@ impl Frontend {
                     .unwrap_or(1) as i32;
                 self.race.cpu = RACE_CPU[(at + direction).rem_euclid(3) as usize];
             }
+            "raceghost" => self.step_ghost(direction),
             "racedifficulty" => {
                 // Normal → Expert → Kid (Kid only where it is offered).
                 let offered: &[u32] = if self.kid_offered() {
@@ -1360,6 +1412,13 @@ impl Frontend {
         // The last started race is remembered (frontend.js `lastRace`).
         self.saved["race"] = self.race.value();
         self.save(settings);
+        // Lap Attack against a picked ghost (research/GHOST_CHALLENGES.md).
+        if self.lap_attack()
+            && !self.split
+            && let Some(event) = self.ghost_start()
+        {
+            return Some(event);
+        }
         Some(Event::Race {
             environment: self.race.course.clone(),
             quad: self.quad_id,
@@ -1862,6 +1921,12 @@ impl Frontend {
                 value: self.passkey.entry.clone(),
                 max_length: 40,
             }],
+            "friend-add" => vec![Field {
+                action: "friend-code",
+                label: "Friend Code:",
+                value: self.online_ui.entry.clone(),
+                max_length: 9,
+            }],
             "waypoint-course" => vec![Field {
                 action: "wpname",
                 label: "Course name:",
@@ -1903,6 +1968,10 @@ impl Frontend {
             }
             "passkey-code" => {
                 self.set_passkey_entry(text);
+                return;
+            }
+            "friend-code" => {
+                self.set_friend_entry(text);
                 return;
             }
             "wpname" => self.set_waypoint_name(text),
@@ -2243,6 +2312,9 @@ impl Frontend {
         if let Some(event) = self.passkey_action(action, view, settings) {
             return event;
         }
+        if let Some(event) = self.online_action(action, view) {
+            return event;
+        }
         if let Some(event) = self.waypoint_action(action, view, settings) {
             return event;
         }
@@ -2355,6 +2427,31 @@ impl Frontend {
             }
             _ if action.starts_with("free:") => {
                 self.freestyle_event(&action["free:".len()..], view);
+            }
+            "classic-courses" => {
+                self.freestyle = None;
+                self.split = false;
+                self.show(action, view);
+            }
+            "classic-time" => {
+                self.classic_minutes = self.classic_minutes % 20 + 2;
+                self.refresh(view);
+            }
+            _ if action.starts_with("classic:") => {
+                let course = &action[8..];
+                if !atv_core::freestyle::CLASSIC_COURSES.contains(&course)
+                    || !self.tracks.iter().any(|t| t.id == course)
+                {
+                    return None;
+                }
+                return Some(Event::Objective {
+                    environment: course.into(),
+                    quad: self.quad_id,
+                    rider: self.rider_id,
+                    series: usize::from(course.starts_with("free")),
+                    expert: false,
+                    objective: atv_core::freestyle::CLASSIC,
+                });
             }
             "objective-courses" => {
                 self.freestyle = None;
@@ -3292,6 +3389,16 @@ impl Frontend {
             status: self.status_bar(),
             toast: None,
             qr: self.passkey_qr(),
+            medals: if self.page == "race" {
+                self.race_order()
+                    .into_iter()
+                    .filter_map(|id| Some((id.clone(), self.medals.medal(&id)?)))
+                    .collect()
+            } else {
+                Default::default()
+            },
+            medal_strip: (self.page == "profile-overview")
+                .then(|| (self.medals.counts(), self.medals.badge_counts())),
             heading: if self.course_sheet && self.page == "race" {
                 Some("Choose Course".into())
             } else if self.vehicle_sheet && self.page == "garage" {
@@ -4198,6 +4305,37 @@ mod tests {
     }
 
     #[test]
+    fn classic_menu_starts_without_objective_archives() {
+        let view = view(1280., 720.);
+        let mut settings = Settings::memory();
+        let mut front = Frontend::new(tracks(), &settings, true);
+        front.show("single", &view);
+        front.selection = front
+            .choices()
+            .iter()
+            .position(|(a, _)| a == "classic-courses")
+            .unwrap();
+        front.key("Enter", &view, &mut settings);
+        assert_eq!(front.choices()[0].1, "Time Limit: 2:00");
+        front.key("Enter", &view, &mut settings);
+        assert_eq!(front.classic_minutes, 4);
+        front.selection = front
+            .choices()
+            .iter()
+            .position(|(a, _)| a == "classic:env01")
+            .unwrap();
+        assert!(matches!(
+            front.key("Enter", &view, &mut settings),
+            Some(Event::Objective {
+                objective: atv_core::freestyle::CLASSIC,
+                ..
+            })
+        ));
+        front.key("Escape", &view, &mut settings);
+        assert_eq!(front.page, "single");
+    }
+
+    #[test]
     fn split_objectives_ride_through_the_players_page() {
         let view = view(1280., 720.);
         let mut settings = Settings::memory();
@@ -4259,7 +4397,7 @@ mod tests {
             .iter()
             .position(|(a, _)| a == "objective-courses")
             .unwrap();
-        assert_eq!(front.choices()[at - 1].0, "tracks");
+        assert_eq!(front.choices()[at - 1].0, "classic-courses");
         front.selection = at;
         assert_eq!(front.key("Enter", &view, &mut settings), None);
         assert_eq!(front.page, "objective-courses");
@@ -4329,8 +4467,17 @@ mod tests {
             &view,
         );
         let choices: Vec<_> = front.choices().iter().map(|(a, _)| a.as_str()).collect();
-        assert_eq!(&choices[..4], ["race", "tracks", "championship", "garage"]);
-        front.selection = 2;
+        assert_eq!(
+            &choices[..5],
+            [
+                "race",
+                "tracks",
+                "classic-courses",
+                "championship",
+                "garage"
+            ]
+        );
+        front.selection = 3;
         front.key("Enter", &view, &mut settings);
         assert_eq!(front.page, "championship");
         assert_eq!(

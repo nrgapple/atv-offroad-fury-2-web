@@ -53,6 +53,8 @@ pub struct World {
     ghost: Option<(String, String)>,
     /// The downloaded ghost the loading Lap Attack races.
     pub rival: Option<std::sync::Arc<Rival>>,
+    /// Lap Attack's best lap already put into the medal book.
+    pb_seen: Option<std::sync::Arc<world_ghost::Lap>>,
     /// Desktop and Android: answers from the request threads.
     #[cfg(not(target_arch = "wasm32"))]
     answers: Option<(
@@ -61,15 +63,20 @@ pub struct World {
     )>,
 }
 
-/// The UTC day number now.
-pub fn today() -> i64 {
+/// Unix milliseconds now.
+pub fn now_ms() -> f64 {
     #[cfg(not(target_arch = "wasm32"))]
     let ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0., |d| d.as_secs_f64() * 1000.);
     #[cfg(target_arch = "wasm32")]
     let ms = js_sys::Date::now();
-    world_board::day_of(ms)
+    ms
+}
+
+/// The UTC day number now.
+pub fn today() -> i64 {
+    world_board::day_of(now_ms())
 }
 
 /// A finished race the world boards may take, kept until its name is final.
@@ -81,6 +88,8 @@ pub struct Run {
     pub lap_ms: Option<u32>,
     pub race_ms: Option<u32>,
     pub daily: Option<String>,
+    /// The weekly challenge's week, for its pick raced without CPUs.
+    pub weekly: Option<String>,
     pub trace: std::sync::Arc<world_board::Trace>,
     /// The best lap's ghost, when the race recorded one for `lap_ms`.
     pub ghost: Option<std::sync::Arc<world_ghost::Lap>>,
@@ -111,6 +120,13 @@ impl Run {
             && pick.course == course
             && pick.class.admits(watch.vehicle))
         .then_some(pick.date);
+        let week = atv_core::medals::weekly(atv_core::medals::week_index(today()));
+        let weekly = (race_ms.is_some()
+            && !expert
+            && frame.standings.len() == 1
+            && week.course == course
+            && week.class.admits(watch.vehicle))
+        .then_some(week.week);
         let ghost = frame.lap_ghost.clone().filter(|g| {
             Some(g.lap_ms) == lap_ms && g.course == course && g.vehicle == watch.vehicle
         });
@@ -121,6 +137,7 @@ impl Run {
             lap_ms,
             race_ms,
             daily,
+            weekly,
             trace,
             ghost,
         })
@@ -145,6 +162,7 @@ impl Run {
             lap_ms: self.lap_ms,
             race_ms: self.race_ms,
             daily: self.daily.as_deref(),
+            weekly: self.weekly.as_deref(),
             trace: &self.trace,
         })
         .unwrap_or_default()
@@ -217,9 +235,10 @@ pub enum Finished {
 }
 
 impl Finished {
-    /// A daily event time is sent whether or not it set a local record.
+    /// A daily event or weekly challenge time is sent whether or not it set
+    /// a local record.
     pub fn daily(&self) -> bool {
-        matches!(self, Self::Race(run) if run.daily.is_some())
+        matches!(self, Self::Race(run) if run.daily.is_some() || run.weekly.is_some())
     }
 
     pub fn body(&self, name: &str) -> String {
@@ -294,6 +313,13 @@ impl App {
         {
             self.world_response(answer.0, answer.1);
         }
+        if self
+            .overlay
+            .as_mut()
+            .is_some_and(|o| std::mem::take(&mut o.medals_saved))
+        {
+            self.medals_reload();
+        }
         if let Some(outbox) = self.overlay.as_mut().and_then(|o| o.world_outbox.take()) {
             self.world.ghost = outbox.ghost;
             self.world_send(
@@ -308,9 +334,13 @@ impl App {
         };
         let wants = {
             let mut f = front.borrow_mut();
-            if !matches!(f.state.page.as_str(), "single" | "daily" | "hall-of-fame") {
+            if !matches!(
+                f.state.page.as_str(),
+                "single" | "daily" | "weekly" | "hall-of-fame" | "race" | "profile-overview"
+            ) {
                 return;
             }
+            f.state.world.now_ms = Some(now_ms());
             let day = Some(today());
             if f.state.world.day != day {
                 f.state.world.day = day;
@@ -342,6 +372,9 @@ impl App {
                         .map_or(BoardState::Failed, BoardState::Ready),
                     _ => BoardState::Failed,
                 };
+                if let BoardState::Ready(b) = &state {
+                    self.weekly_badge(b);
+                }
                 if let Some(front) = &self.front {
                     let mut f = front.borrow_mut();
                     let view = f.view;
@@ -359,6 +392,14 @@ impl App {
                 };
                 if let Some(overlay) = &mut self.overlay {
                     overlay.results.world_line = (!line.is_empty()).then_some(line);
+                }
+                if let Some((week, percent)) = placings.as_ref().and_then(|p| {
+                    p.boards.iter().find_map(|(id, b)| {
+                        Some((id.strip_prefix("weekly:")?.to_string(), b.percentile?))
+                    })
+                }) && let Some(front) = &self.front
+                {
+                    front.borrow_mut().state.world.weekly_percentile = Some((week, percent));
                 }
                 if let (Some(p), Some(front)) = (&placings, &self.front) {
                     let placed: Vec<String> = p
@@ -404,6 +445,135 @@ impl App {
     }
 }
 
+impl App {
+    /// A single-player Lap Attack that keeps records' conditions (no Kid
+    /// Mode, user course or room; Ecosystem Collision on) keeps medals and a
+    /// personal best ghost for its course (research/GHOST_CHALLENGES.md).
+    pub(crate) fn medals_start(&mut self) {
+        self.world.pb_seen = None;
+        let barred = self
+            .overlay
+            .as_ref()
+            .is_none_or(|o| o.kid || o.user_course || o.lobby.is_some());
+        let settings = atv_ui::settings::Settings::load();
+        if barred || !atv_ui::settings::ecosystem_collision(&settings) {
+            return;
+        }
+        let Some(ready) = self.ready.as_mut() else {
+            return;
+        };
+        let course = ready.venue.environment.clone();
+        let Some(riding) = ready.riding.as_mut() else {
+            return;
+        };
+        let vehicle = riding.ride.selection().quad;
+        let best = atv_ui::settings::load_medals(&settings).medal(&course);
+        if let Some(race) = riding.ride.race_mut()
+            && race.settings().lap_attack
+        {
+            race.set_medals(&course, vehicle, best);
+        }
+    }
+
+    /// Each pass: Lap Attack's newest best lap (once per lap, never after
+    /// an assist acted) goes into the medal book and, when quicker, becomes
+    /// the course's personal best ghost.
+    pub(crate) fn medal_poll(&mut self) {
+        let Some(riding) = self.ready.as_ref().and_then(|r| r.riding.as_ref()) else {
+            return;
+        };
+        let Some(race) = riding.ride.race() else {
+            return;
+        };
+        let (Some(course), Some(lap)) = (
+            race.medal_course().map(str::to_string),
+            race.frame.as_ref().and_then(|f| f.pb_lap.clone()),
+        ) else {
+            return;
+        };
+        if riding.ride.assisted()
+            || self
+                .world
+                .pb_seen
+                .as_ref()
+                .is_some_and(|seen| std::sync::Arc::ptr_eq(seen, &lap))
+        {
+            return;
+        }
+        self.world.pb_seen = Some(lap.clone());
+        let mut settings = atv_ui::settings::Settings::load();
+        atv_ui::settings::record_medal_lap(&mut settings, &course, lap.lap_ms, Some(&lap));
+        self.medals_reload();
+    }
+
+    /// The menus' copy of the medal book, after the host saved it.
+    pub(crate) fn medals_reload(&mut self) {
+        if let Some(front) = &self.front {
+            let settings = atv_ui::settings::Settings::load();
+            front.borrow_mut().state.medals = atv_ui::settings::load_medals(&settings);
+        }
+    }
+
+    /// Lap Attack against the course's personal best ghost
+    /// (`Event::PbGhostRace`), when this device keeps one.
+    pub(crate) fn world_pb_race(&mut self, race: GhostRace) {
+        let settings = atv_ui::settings::Settings::load();
+        let Some(rival) = atv_ui::settings::load_pb_ghost(&settings, &race.course) else {
+            if let Some(front) = self.front.clone() {
+                let mut f = front.borrow_mut();
+                let view = f.view;
+                f.state.ghost_failed("This ghost could not be read.", &view);
+            }
+            return;
+        };
+        self.world.rival = Some(std::sync::Arc::new(rival));
+        self.ghost_lap_attack(race);
+    }
+
+    /// Starts Lap Attack on the ghost race's course (its rival is set).
+    fn ghost_lap_attack(&mut self, race: GhostRace) {
+        if let Some(front) = &self.front {
+            front.borrow_mut().state.notice = None;
+        }
+        let laps = world_board::default_laps(&race.course);
+        self.front_event(atv_ui::front::controller::Event::Race {
+            environment: race.course,
+            quad: race.quad,
+            rider: race.rider,
+            laps,
+            cpu: 0,
+            difficulty: if race.expert { 2 } else { 1 },
+            cheats: (false, false),
+            championship: None,
+            practice: false,
+            duel: false,
+            lap_attack: true,
+        });
+    }
+
+    /// A weekly board's answer: the medal book keeps the rider's badge for a
+    /// finished week once its cuts are final.
+    fn weekly_badge(&mut self, board: &Board) {
+        let Some(week) = board.board.strip_prefix("weekly:") else {
+            return;
+        };
+        if !board.settled {
+            return;
+        }
+        let mut settings = atv_ui::settings::Settings::load();
+        let mut book = atv_ui::settings::load_medals(&settings);
+        let Some(result) = book.weeks.get_mut(week).filter(|w| w.badge.is_none()) else {
+            return;
+        };
+        result.badge = Some(atv_core::medals::Badge::of(
+            i64::from(result.value),
+            &board.cuts,
+        ));
+        atv_ui::settings::save_medals(&mut settings, &book);
+        self.medals_reload();
+    }
+}
+
 /// Why a ghost download did not start its race, for the menu.
 fn ghost_refusal(status: u16) -> &'static str {
     match status {
@@ -417,6 +587,9 @@ fn ghost_refusal(status: u16) -> &'static str {
 impl App {
     /// Race This Ghost: asks for the row's ghost (one at a time).
     pub(crate) fn world_ghost_race(&mut self, race: GhostRace) {
+        if race.board.is_empty() {
+            return self.world_pb_race(race);
+        }
         let waiting = |p: &(u64, Purpose)| matches!(p.1, Purpose::Ghost(_));
         if self.world.pending.iter().any(waiting) {
             return;
@@ -436,26 +609,13 @@ impl App {
         let Some(front) = self.front.clone() else {
             return;
         };
-        let waiting = front.borrow().state.page == "hall-of-fame"
+        // Race This Ghost (Hall of Fame) or Lap Attack's ghost picker.
+        let waiting = matches!(front.borrow().state.page.as_str(), "hall-of-fame" | "race")
             && self.ready.as_ref().is_none_or(|r| r.riding.is_none());
         match rival {
             Ok(rival) if waiting => {
                 self.world.rival = Some(std::sync::Arc::new(rival));
-                front.borrow_mut().state.notice = None;
-                let laps = world_board::default_laps(&race.course);
-                self.front_event(atv_ui::front::controller::Event::Race {
-                    environment: race.course,
-                    quad: race.quad,
-                    rider: race.rider,
-                    laps,
-                    cpu: 0,
-                    difficulty: if race.expert { 2 } else { 1 },
-                    cheats: (false, false),
-                    championship: None,
-                    practice: false,
-                    duel: false,
-                    lap_attack: true,
-                });
+                self.ghost_lap_attack(race);
             }
             Ok(_) => {}
             Err(message) => {
@@ -566,6 +726,7 @@ mod tests {
             lap_ms: Some(10_000),
             race_ms: None,
             daily: None,
+            weekly: None,
             trace: Default::default(),
             ghost,
         };

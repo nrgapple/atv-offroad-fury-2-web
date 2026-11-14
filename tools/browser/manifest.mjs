@@ -26,6 +26,7 @@ export const GROUPS = ['content-free', 'content', 'multiplayer', 'manual', 'brok
 export const SELECTABLE = [...GROUPS, 'native'];
 
 export const TESTS = {
+  'test_engine_classic_freestyle.mjs': { group: 'content' },
   'test_app_identity.mjs': { group: 'content-free' },
   'test_engine_boot_stall.mjs': { group: 'content-free' },
   'test_engine_touch.mjs': { group: 'content' },
@@ -99,6 +100,11 @@ export const TESTS = {
   'test_engine_garage_load.mjs': { exclusive: true, group: 'content' },
   'test_engine_context_loss.mjs': { group: 'content' },
   'test_engine_menu_music.mjs': { group: 'content' },
+  'test_engine_online_friends.mjs': {
+    group: 'multiplayer',
+    timeout: 600,
+    reason: 'needs a local game server at the same origin (rider registration, friends, presence and Join into a Free Ride room); run with --url'
+  },
   'test_engine_freeride_full.mjs': {
     group: 'manual',
     reason: 'load measurement: a full Free Ride room of synthetic riders on a local game server (never production)'
@@ -238,6 +244,7 @@ export const TESTS = {
   'test_engine_hall_of_fame.mjs': { group: 'content', timeout: 900 },
   'test_engine_world_boards.mjs': { group: 'content', timeout: 900 },
   'test_engine_world_ghosts.mjs': { group: 'content', timeout: 900 },
+  'test_engine_ghost_challenges.mjs': { group: 'content', timeout: 1200 },
   'test_engine_world_submit.mjs': { group: 'content', timeout: 900 },
   'test_engine_text_fields_touch.mjs': { group: 'content' },
   'test_engine_championship.mjs': { group: 'content', timeout: 1500 },
@@ -247,9 +254,11 @@ export const TESTS = {
   'test_engine_freestyle_targets.mjs': { group: 'content', timeout: 900 },
   'test_engine_toy_actors.mjs': { group: 'content', timeout: 600 },
   'test_engine_actor_collision.mjs': { group: 'content', timeout: 600 },
+  'test_engine_voice_cues.mjs': { group: 'content', timeout: 360 },
   'test_engine_training.mjs': { group: 'content', timeout: 900 },
   'test_engine_games.mjs': { group: 'content', timeout: 900 },
   'test_engine_game_cpus.mjs': { group: 'content', timeout: 900 },
+  'test_engine_free_cpus.mjs': { group: 'content', timeout: 900 },
   'test_engine_toy_explosions.mjs': { group: 'content', timeout: 900 },
   'test_engine_hockey_tag.mjs': { group: 'content', timeout: 600 },
   'test_engine_sleep.mjs': { group: 'content' },

@@ -10,9 +10,10 @@ use atv_core::profile::{BookError, NAME_CHARS, NAME_MAX, Profile, ProfileBook, c
 
 /// Profile pages laid out as the editor's: rows on the left and the
 /// details table on the panel.
-pub const DETAIL_PAGES: [&str; 9] = [
+pub const DETAIL_PAGES: [&str; 10] = [
     "hall-of-fame",
     super::world_page::DAILY_PAGE,
+    super::world_page::WEEKLY_PAGE,
     "profile-name",
     "profile-slots",
     "profile-confirm",
@@ -195,11 +196,17 @@ impl Frontend {
     }
 
     pub(super) fn is_profile_page(page: &str) -> bool {
-        page == "profile" || page == "profile-view" || DETAIL_PAGES.contains(&page)
+        page == "profile"
+            || page == "profile-view"
+            || DETAIL_PAGES.contains(&page)
+            || Self::is_online_page(page)
     }
 
     /// The rows of a Profile Editor page (keyboard order).
     pub(super) fn profile_choices(&self) -> Vec<(String, String)> {
+        if Self::is_online_page(&self.page) {
+            return self.online_choices();
+        }
         let row = |a: &str, l: &str| (a.to_string(), l.to_string());
         let mut rows = match self.page.as_str() {
             // PAGE19 `Profile_Main`. "Save Current Profile" is left out: the
@@ -213,6 +220,8 @@ impl Frontend {
                 row("profile-copy", "Copy Profile"),
                 row("profile-delete", "Delete Profile"),
                 row("passkey", "Pass Key & Saves"),
+                // Online identity (port addition; research/ONLINE_IDENTITY.md).
+                row("online", "Online"),
             ],
             // PAGE21: the name, then the controller's letter row.
             "profile-name" => {
@@ -310,6 +319,7 @@ impl Frontend {
                 rows
             }
             super::world_page::DAILY_PAGE => self.daily_choices(),
+            super::world_page::WEEKLY_PAGE => self.weekly_choices(),
             "profile-records" => {
                 let groups = self.fame_groups();
                 let group = groups.get(self.profile_ui.group);
@@ -339,6 +349,9 @@ impl Frontend {
         if Self::is_passkey_page(&self.page) {
             return self.passkey_heading();
         }
+        if Self::is_online_page(&self.page) {
+            return self.online_heading();
+        }
         if !matches!(self.page.as_str(), "profile-slots" | "profile-confirm") {
             return None;
         }
@@ -357,6 +370,9 @@ impl Frontend {
         if Self::is_passkey_page(&self.page) {
             return self.passkey_status();
         }
+        if Self::is_online_page(&self.page) {
+            return self.online_status();
+        }
         match self.page.as_str() {
             // The status bar shows the current profile and its points.
             "profile" | "profile-view" => match self.book.current_profile() {
@@ -372,6 +388,9 @@ impl Frontend {
     pub fn profile_details(&self) -> Vec<(String, String)> {
         if Self::is_passkey_page(&self.page) {
             return self.passkey_details();
+        }
+        if Self::is_online_page(&self.page) {
+            return self.online_details();
         }
         let line = |l: &str, v: String| (l.to_string(), v);
         let current = self.book.current_profile();
@@ -450,6 +469,7 @@ impl Frontend {
             "hall-of-fame" if self.profile_ui.fame_world => self.world_fame_details(),
             "hall-of-fame" => self.hall_of_fame(),
             super::world_page::DAILY_PAGE => self.daily_details(),
+            super::world_page::WEEKLY_PAGE => self.weekly_details(),
             _ => Vec::new(),
         }
     }
@@ -555,13 +575,27 @@ impl Frontend {
     }
 
     /// The Hall of Fame's event types: the race groups, then Amateur and
-    /// Pro Freestyle (their championship courses).
+    /// Pro Freestyle (including the Classic-only courses).
     pub(super) fn fame_groups(&self) -> Vec<(&'static str, Vec<String>)> {
         let mut groups = record_groups(&self.race_courses);
         for series in &atv_core::freestyle::SERIES {
             groups.push((
                 series.name,
-                series.courses.iter().map(|c| c.to_string()).collect(),
+                series
+                    .courses
+                    .iter()
+                    .copied()
+                    .chain(
+                        atv_core::freestyle::CLASSIC_COURSES
+                            .iter()
+                            .copied()
+                            .filter(|c| {
+                                c.starts_with(if series.pro { "free" } else { "env" })
+                                    && !series.courses.contains(c)
+                            }),
+                    )
+                    .map(str::to_string)
+                    .collect(),
             ));
         }
         groups
@@ -973,9 +1007,12 @@ impl Frontend {
     }
 
     pub(super) fn profile_back(&self) -> Option<&'static str> {
+        if Self::is_online_page(&self.page) {
+            return self.online_back();
+        }
         Some(match self.page.as_str() {
             "profile" | "hall-of-fame" => "main",
-            super::world_page::DAILY_PAGE => "single",
+            super::world_page::DAILY_PAGE | super::world_page::WEEKLY_PAGE => "single",
             "profile-name" => match self.profile_ui.name_for {
                 NameFor::Create => "profile",
                 NameFor::Copy(_) => "profile-slots",

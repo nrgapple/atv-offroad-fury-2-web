@@ -216,6 +216,9 @@ pub struct RaceSubmission<'a> {
     pub race_ms: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub daily: Option<&'a str>,
+    /// The weekly challenge's `YYYY-Www` (`medals::weekly`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub weekly: Option<&'a str>,
     pub trace: &'a Trace,
 }
 
@@ -290,6 +293,14 @@ pub struct Board {
     pub board: String,
     pub entries: Vec<BoardEntry>,
     pub yesterday: Option<Winner>,
+    /// A weekly board's riders, its cuts (`{"1": ms, "10": ms, ...}`, the
+    /// times at the top 1/10/25/50 %), whether they are final (the week is
+    /// over) and its end, Unix ms (research/GHOST_CHALLENGES.md).
+    pub riders: u32,
+    pub cuts: std::collections::BTreeMap<String, i64>,
+    #[serde(rename = "final")]
+    pub settled: bool,
+    pub ends: Option<i64>,
 }
 
 /// One board's placing in a submission's answer.
@@ -298,6 +309,9 @@ pub struct Board {
 pub struct Placing {
     pub rank: Option<u32>,
     pub placed: bool,
+    /// A weekly board's percentile among its riders (1-100).
+    pub percentile: Option<u32>,
+    pub riders: Option<u32>,
 }
 
 /// `POST /api/boards/submit`'s answer.
@@ -315,8 +329,13 @@ impl Placings {
         let mut lines: Vec<(u32, String)> = self
             .boards
             .iter()
-            .filter(|(_, p)| p.placed)
+            // A weekly answer's percentile shows even when the run did not
+            // beat the rider's kept best.
+            .filter(|(id, p)| p.placed || id.starts_with("weekly:"))
             .filter_map(|(id, p)| {
+                if let (true, Some(percent)) = (id.starts_with("weekly:"), p.percentile) {
+                    return Some((0, format!("Weekly Top {percent}%!")));
+                }
                 let what = match id.split(':').next()? {
                     "lap" => "Fastest Lap",
                     "race" => "Fastest Race",
@@ -411,6 +430,7 @@ mod tests {
             lap_ms: Some(millis(61.2345)),
             race_ms: None,
             daily: None,
+            weekly: None,
             trace: &trace,
         })
         .unwrap();
@@ -491,5 +511,22 @@ mod tests {
         )
         .unwrap();
         assert_eq!(score.lines(), ["World #2 Objective Score!"]);
+        let weekly: Placings = serde_json::from_str(
+            r#"{"name":"ADA","boards":{"race:sx08:n":{"rank":4,"placed":true},"weekly:2026-W46":{"rank":null,"placed":false,"percentile":37,"riders":61}}}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            weekly.lines(),
+            ["Weekly Top 37%!", "World #4 Fastest Race!"]
+        );
+        let board: Board = serde_json::from_str(
+            r#"{"board":"weekly:2026-W46","entries":[],"riders":61,"cuts":{"1":300000,"50":400000},"final":true,"ends":1763251200000}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            (board.riders, board.settled, board.ends),
+            (61, true, Some(1_763_251_200_000))
+        );
+        assert_eq!(board.cuts["50"], 400_000);
     }
 }

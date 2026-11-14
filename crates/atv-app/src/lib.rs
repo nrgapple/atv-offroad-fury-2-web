@@ -18,6 +18,7 @@ mod hockey;
 mod instant_replay;
 mod multiplayer;
 mod net;
+mod online;
 mod overlay;
 mod photo;
 pub mod quick_chat;
@@ -161,6 +162,8 @@ struct Ready {
     split: Vec<split::Second>,
     /// Authored CPU riders in a local mini-game (game_cpu.rs).
     cpus: Vec<game_cpu::Cpu>,
+    /// A free ride's CPU riders roam this map (game_cpu.rs).
+    roam: Option<Rc<atv_core::roam_cpu::Map>>,
 }
 
 struct PendingSound {
@@ -249,6 +252,8 @@ enum Message {
     /// Web: Import Save read a file (name, text).
     #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
     CloudImport(String, String),
+    /// A game server answer for the Online pages (online.rs).
+    Online(online::Purpose, Result<(u16, String), String>),
 }
 
 /// A connected room waiting on the lobby page: (room, course, quad, rider,
@@ -306,6 +311,8 @@ struct ObjectiveSession {
     expert: bool,
     course: String,
     objective: usize,
+    classic_seconds: Option<f32>,
+    classic_test: bool,
     run: Option<atv_core::freestyle::Run>,
     /// The ride's step count last counted (the run's clock).
     steps: u64,
@@ -363,19 +370,28 @@ impl ObjectiveSession {
         if self.run.is_none() {
             // The course's own `.obj` when its OB archive loaded (with the
             // objective's start), else the built-in table.
-            let objective = venue
-                .and_then(|v| v.objectives.get(self.objective).cloned())
+            let objective = self
+                .classic_seconds
+                .map(atv_core::freestyle::classic)
                 .or_else(|| {
-                    course_objectives(&self.course)?
-                        .into_iter()
-                        .nth(self.objective)
+                    venue
+                        .and_then(|v| v.objectives.get(self.objective).cloned())
+                        .or_else(|| {
+                            course_objectives(&self.course)?
+                                .into_iter()
+                                .nth(self.objective)
+                        })
                 })?;
             if matches!(objective.kind, atv_core::freestyle::Kind::CherryPick { .. })
                 && venue.is_none_or(|v| v.targets.is_empty())
             {
                 return None;
             }
-            self.targets = venue.map(|v| v.targets.clone()).unwrap_or_default();
+            self.targets = if self.classic_seconds.is_some() {
+                Vec::new()
+            } else {
+                venue.map(|v| v.targets.clone()).unwrap_or_default()
+            };
             self.run = Some(Run::new(objective, self.objective, ride.committed_points()));
             let saved = atv_ui::settings::Settings::load();
             let key = atv_core::hall_of_fame::HallOfFame::freestyle_key(series.key, &self.course);
@@ -427,17 +443,31 @@ impl ObjectiveSession {
             if std::mem::replace(&mut self.resets, frame.reset_count) != frame.reset_count {
                 self.trace.reset();
             }
-            self.trace.step(self.elapsed, frame.origin, 0);
+            if self.classic_seconds.is_none() {
+                self.trace.step(self.elapsed, frame.origin, 0);
+            }
             self.elapsed += dt;
         }
-        run.tick(dt, ride.committed_points());
+        // Deterministic session-boundary fixture, like the room Freestyle
+        // fixture: one landed chain; it does not exercise stunt physics.
+        let fixture = self.classic_test && self.elapsed >= 1.;
+        if fixture
+            && run.score == 0.
+            && let Some(fame) = self.fame.as_mut()
+        {
+            fame.chain(true, 2, 600.);
+        }
+        run.tick(
+            dt,
+            ride.committed_points() + if fixture { 1200. } else { 0. },
+        );
         if !run.finished() || self.recorded {
             return None;
         }
         self.recorded = true;
         let mut fame = self.fame.take()?;
         // `002fce00`: score / 1000 plus the combo points.
-        let points = fame.finish(run.score);
+        let points = fame.finish_timed(run.score, self.classic_seconds.unwrap_or(120.));
         run.messages.extend(fame.take_messages());
         let world = world::ScoreRun::of_objective(
             series.key,
@@ -460,6 +490,8 @@ impl ObjectiveSession {
         let champ = &mut profile.championships;
         let (mask, trophy) = if self.championship {
             champ.award_objective(series, self.expert, &self.course, run.earned_bits())
+        } else if self.classic_seconds.is_some() {
+            (0, None)
         } else {
             let mask = champ.record_objective(series, self.expert, &self.course, run.earned_bits());
             (mask, None)
@@ -496,7 +528,23 @@ impl ObjectiveSession {
             Some(trophy) => format!("{summary} · {}", trophy.line()),
             None => summary,
         };
-        Some((summary, fame, world))
+        let summary = if self.classic_seconds.is_some() {
+            format!(
+                "Classic Freestyle · Final Score {}{award}",
+                atv_ui::hud::objective::grouped(run.score as i64)
+            )
+        } else {
+            summary
+        };
+        Some((
+            summary,
+            fame,
+            if self.classic_seconds.is_some() {
+                None
+            } else {
+                world
+            },
+        ))
     }
 
     /// Split screen: advances the shared objective with every player's
@@ -673,7 +721,7 @@ impl ObjectiveSession {
             let top = levels.last().copied().unwrap_or(0.);
             run.restart(ride.committed_points() - top);
         }
-        if url_flag("objectiveTest=timeout") {
+        if url_flag("objectiveTest=timeout") || self.classic_test {
             run.time_left = 5.;
         }
         ride.take_chains();
@@ -862,6 +910,8 @@ struct App {
     cloud: cloud::Cloud,
     /// World boards and the daily event (world.rs).
     world: world::World,
+    /// Online identity, friends and the league (online.rs).
+    online: online::Online,
     /// The frontend's Split Screen branch asked for two local players on
     /// the next rides (kept for Restart Race).
     split_request: Option<split::Request>,
@@ -1562,6 +1612,16 @@ async fn prepare_inner(
             );
         }
     }
+    // A free ride's CPU riders roam the venue.
+    let roam = match cpus.first() {
+        Some(cpu) if cpu_request.roam => {
+            progress(&gpu, "Reading the venue for CPU riders…");
+            Some(Rc::new(
+                game_cpu::roam_map(&content, &venue, &cpu.riding.ride).await,
+            ))
+        }
+        _ => None,
+    };
     let hud_assets = if riding.is_some() {
         // The radar's tinted racers take the rider's colour assistance.
         atv_ui::hud::palette::set(
@@ -1599,6 +1659,7 @@ async fn prepare_inner(
         net: None,
         split,
         cpus,
+        roam,
     })
 }
 
@@ -1976,6 +2037,7 @@ impl App {
                     .chain(ready.split.iter().map(|s| &s.riding.ride))
                     .chain(ready.cpus.iter().map(|c| &c.riding.ride)),
                 riding.ride.terrain(),
+                ready.roam.as_ref(),
             );
             let humans: Vec<_> = std::iter::once(&riding.ride)
                 .chain(ready.split.iter().map(|s| &s.riding.ride))
@@ -2482,6 +2544,7 @@ impl App {
                     && let Some(overlay) = &mut self.overlay
                 {
                     overlay.results.show_objective(summary);
+                    overlay.results.classic = session.classic_seconds.is_some();
                     overlay.offer_fame(atv_core::hall_of_fame::Watch::Freestyle(fame));
                     overlay.offer_world_score(world);
                 }
@@ -3612,9 +3675,22 @@ impl App {
                 // The world boards' line on the results (world.rs).
                 "world": self.overlay.as_ref().filter(|o| o.results.shown)
                     .and_then(|o| o.results.world_line.clone()),
+                // The best lap's medal (research/GHOST_CHALLENGES.md).
+                "medal": self.overlay.as_ref().filter(|o| o.results.shown)
+                    .and_then(|o| o.results.medal.map(|(m, new)| (m, new, o.results.medal_reveal)))
+                    .map(|(m, new, reveal)| serde_json::json!({"medal": m.label(), "new": new, "reveal": reveal})),
             });
             state["ride"]["trainingSpeech"] = training_speech.into();
             state["ride"]["cpus"] = ready.cpus.iter().map(game_cpu::Cpu::state).collect();
+            state["ride"]["roam"] = ready.roam.as_ref().map_or(serde_json::Value::Null, |m| {
+                serde_json::json!({
+                    "points": m.points.len(),
+                    "line": m.line.len(),
+                    "closed": m.closed,
+                    "min": m.min,
+                    "max": m.max,
+                })
+            });
             state["ride"]["practice"] = practice.into();
             state["ride"]["duel"] = duel.into();
             state["ride"]["lapAttack"] = lap_attack.into();
@@ -5011,8 +5087,17 @@ impl App {
             overlay::Action::RaceRetry if self.objective.is_some() => self.restart_objective(),
             overlay::Action::RaceQuit if self.objective.is_some() => {
                 // Continue: back to Select Objective.
+                let page = if self
+                    .objective
+                    .as_ref()
+                    .is_some_and(|s| s.classic_seconds.is_some())
+                {
+                    "classic-courses"
+                } else {
+                    "objectives"
+                };
                 self.objective = None;
-                self.quit_to(Some("objectives"));
+                self.quit_to(Some(page));
             }
             overlay::Action::RaceRetry => self.restart_race(),
             overlay::Action::RaceNextRound => self.next_round(),
@@ -6062,6 +6147,8 @@ impl ApplicationHandler<Message> for App {
                 {
                     race.set_rival(rival);
                 }
+                // Lap Attack's medals and personal best ghost (world.rs).
+                self.medals_start();
                 // The ride takes over the music bus from the menu tune.
                 self.sync_menu_music();
                 // Rides the saved settings do not reach (direct and held
@@ -6205,6 +6292,7 @@ impl ApplicationHandler<Message> for App {
             }
             Message::Cloud(id, response) => self.cloud_response(id, response),
             Message::World(id, response) => self.world_response(id, response),
+            Message::Online(purpose, result) => self.online_response(purpose, result),
             Message::CloudImport(name, text) => self.cloud_import(name, text),
             Message::RoomJoined(result) => self.room_joined(*result),
             Message::LobbyNotice(text) => {
@@ -6779,7 +6867,9 @@ impl App {
             }
         }
         self.poll_riders();
+        self.medal_poll();
         self.world_poll();
+        self.online_poll();
         #[cfg(not(target_arch = "wasm32"))]
         let cloud = self.cloud_poll();
         // The earliest of every reason to wake without an event.
@@ -7632,7 +7722,14 @@ impl App {
                 ..defaults
             }
         });
+        // A Freestyle link takes Game Settings' Free Ride CPU riders.
+        let cpus = if race {
+            game_cpu::Request::default()
+        } else {
+            game_cpu::Request::free_ride(&f.settings)
+        };
         drop(f);
+        self.cpu_request = cpus;
         // A race starts its course (an Enduro or Short Track id from `course=`).
         let map = if race { setup.race.course } else { setup.map };
         // `?split=` on the link (the context-loss resume link): this ride
@@ -7668,6 +7765,18 @@ impl App {
 
     fn front_event(&mut self, event: atv_ui::front::controller::Event) {
         use atv_ui::front::controller::Event;
+        // Online rooms carry the rider's identity (Free Ride registers in
+        // `free_ride`).
+        if matches!(
+            event,
+            Event::Host { .. }
+                | Event::Join { .. }
+                | Event::TagHost { .. }
+                | Event::GameHost { .. }
+                | Event::FreestyleHost { .. }
+        ) {
+            self.online_wanted();
+        }
         // Multiplayer → Split Screen rides Freestyle, races and the Games
         // King of the Hills, Treasure Hunt and Hockey with two local
         // players; every other ride is one player's.
@@ -7715,21 +7824,23 @@ impl App {
                 })
             });
             self.split_request = split;
-            // Games Prep's CPU Riders (local games only).
+            // Games Prep's CPU Riders (local games only), or Game Settings' Free
+            // Ride CPU riders for a free ride.
             self.cpu_request = self
                 .front
                 .as_ref()
-                .filter(|_| {
-                    matches!(
-                        event,
-                        Event::Game { .. } | Event::Hockey { .. } | Event::TagHost { .. }
-                    )
-                })
-                .map(|f| {
+                .and_then(|f| {
                     let f = f.borrow();
-                    game_cpu::Request {
-                        count: f.state.game_cpus(),
-                        difficulty: f.state.race_difficulty(),
+                    match event {
+                        Event::Game { .. } | Event::Hockey { .. } | Event::TagHost { .. } => {
+                            Some(game_cpu::Request {
+                                count: f.state.game_cpus(),
+                                difficulty: f.state.race_difficulty(),
+                                roam: false,
+                            })
+                        }
+                        Event::Ride { .. } => Some(game_cpu::Request::free_ride(&f.settings)),
+                        _ => None,
                     }
                 })
                 .unwrap_or_default();
@@ -7868,6 +7979,13 @@ impl App {
                     expert,
                     course: environment.clone(),
                     objective,
+                    classic_seconds: (objective == atv_core::freestyle::CLASSIC).then(|| {
+                        self.front
+                            .as_ref()
+                            .map_or(120., |f| f.borrow().state.classic_minutes as f32 * 60.)
+                    }),
+                    classic_test: objective == atv_core::freestyle::CLASSIC
+                        && url_flag("classicTest=score"),
                     run: None,
                     steps: 0,
                     recorded: false,
@@ -7967,44 +8085,8 @@ impl App {
             }
             Event::CopyCourseLink { code } => self.copy_course_link(&code),
             Event::Cloud(command) => self.cloud_command(command),
-            Event::FreeRide { quad, rider, name } => {
-                let Some((site, server)) = self
-                    .defaults
-                    .as_ref()
-                    .map(|d| (d.site.clone(), d.server.clone()))
-                else {
-                    return;
-                };
-                // Many riders keep the default name: number it so strangers
-                // can tell them apart. Like frontend.js `playerName`, the
-                // number stays for the session and the next save keeps it.
-                let name = if name == "Rider" {
-                    let numbered = format!("Rider {}", 1000 + random::below(9000));
-                    if let Some(front) = &self.front {
-                        front.borrow_mut().state.player_name.clone_from(&numbered);
-                    }
-                    numbered
-                } else {
-                    name
-                };
-                let room = RoomStart {
-                    site,
-                    server,
-                    code: None,
-                    host: false,
-                    freeride: true,
-                    name,
-                    drop_after: None,
-                    train_place: None,
-                };
-                self.start_ride(
-                    atv_game::multiplayer::FREERIDE_ENVIRONMENT.into(),
-                    quad,
-                    rider,
-                    None,
-                    Some(room),
-                );
-            }
+            Event::Online(command) => self.online_command(command),
+            Event::FreeRide { quad, rider, name } => self.free_ride(quad, rider, name, None),
             Event::RoomRide {
                 quad,
                 rider,
@@ -8119,7 +8201,7 @@ impl App {
                 name,
                 ..
             } if atv_game::multiplayer::is_shared_room(&code) => {
-                self.front_event(Event::FreeRide { quad, rider, name });
+                self.free_ride(quad, rider, name, Some(code));
             }
             Event::Join {
                 code,
@@ -8185,6 +8267,48 @@ impl App {
                 self.wake();
             }
         }
+    }
+
+    /// Arlington Free Ride; `shard` (a friend's Join) asks for that shared
+    /// room first.
+    fn free_ride(&mut self, quad: u16, rider: u16, name: String, shard: Option<String>) {
+        self.online_wanted();
+        let Some((site, server)) = self
+            .defaults
+            .as_ref()
+            .map(|d| (d.site.clone(), d.server.clone()))
+        else {
+            return;
+        };
+        // Many riders keep the default name: number it so strangers
+        // can tell them apart. Like frontend.js `playerName`, the
+        // number stays for the session and the next save keeps it.
+        let name = if name == "Rider" {
+            let numbered = format!("Rider {}", 1000 + random::below(9000));
+            if let Some(front) = &self.front {
+                front.borrow_mut().state.player_name.clone_from(&numbered);
+            }
+            numbered
+        } else {
+            name
+        };
+        let room = RoomStart {
+            site,
+            server,
+            code: shard,
+            host: false,
+            freeride: true,
+            name,
+            drop_after: None,
+            train_place: None,
+        };
+        self.start_ride(
+            atv_game::multiplayer::FREERIDE_ENVIRONMENT.into(),
+            quad,
+            rider,
+            None,
+            Some(room),
+        );
     }
 
     /// Shows the course loader and loads the ride on the frontend's GPU.
@@ -8549,6 +8673,9 @@ impl App {
             // A Freestyle objective reads the course's OB archive (its
             // `.obj`, and a target run's TOY and cherries).
             objective: self.objective.as_ref().and_then(|o| {
+                if o.classic_seconds.is_some() {
+                    return None;
+                }
                 let path = atv_core::freestyle::objective_archive(&o.course)?;
                 self.content
                     .as_ref()
@@ -8568,8 +8695,23 @@ impl App {
                 .filter(|r| r.course == atv_game::launch::RaceVariant::UserEnduro)
                 .and(self.user_course.clone()),
             editor: race.is_none() && self.editor.is_some(),
-            // Only a local game takes CPU riders (never a room).
-            cpus: if self.split_tag.is_some()
+            // Only a local game or a plain free ride takes CPU riders
+            // (never a room, a race, an objective, Training or the editor).
+            cpus: if self.cpu_request.roam {
+                if race.is_none()
+                    && self.game.is_none()
+                    && self.hockey.is_none()
+                    && self.tag.is_none()
+                    && self.split_tag.is_none()
+                    && self.objective.is_none()
+                    && self.training.is_none()
+                    && self.editor.is_none()
+                {
+                    self.cpu_request
+                } else {
+                    game_cpu::Request::default()
+                }
+            } else if self.split_tag.is_some()
                 || self.hockey.is_some()
                 || self.game.as_ref().is_some_and(|g| g.room.is_none())
             {
@@ -10512,6 +10654,7 @@ pub fn run(options: Options) {
     let app = App {
         cloud: Default::default(),
         world: Default::default(),
+        online: Default::default(),
         camera_choice: options.camera_choice,
         render_scale: Default::default(),
         usage: Default::default(),
