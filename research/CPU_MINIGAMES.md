@@ -10,7 +10,7 @@ split screen. Everything here is authored and off by default.
 
 | Slice | Where it is offered | State |
 | --- | --- | --- |
-| Free roam | Options → Extras → Free Ride CPU riders: Off / 1 / 2 / 3 | this note |
+| Free roam | Options → Game Settings → Free Ride CPU riders: Off / 1 / 2 / 3 | this note |
 | Tag | Games Prep → CPU Riders: Off / 1 / 2 / 3 | shipped in PR #551 |
 | King of the Hills | Games Prep → CPU Riders | shipped in PR #551 |
 | Treasure Hunt | Games Prep → CPU Riders | shipped in PR #551 |
@@ -45,11 +45,13 @@ every CPU code path is skipped, so the ride is the one it was before.
 
 ## Free roam
 
-**Option.** Options → Extras → "Free Ride CPU riders: Off (original) / 1
-/ 2 / 3", saved as `atv-free-ride-cpus`. Extras is where the other
-authored ride changes live (crashes, flips, train riding); the Freestyle
-course picker is a grid with no rows of its own. The choice applies to
-the next free ride, not the one in progress.
+**Option.** Options → Game Settings → "Free Ride CPU riders: Off
+(original) / 1 / 2 / 3", saved as `atv-free-ride-cpus`. It sits under the
+port's other Game Settings row (New Profiles): Extras is full (with the
+iPhone silent-switch row it has eight rows, and a ninth would not fit the
+448-unit landscape page at 44 units), and the Freestyle course picker is a
+grid with no rows of its own. The choice applies to the next free ride, not
+the one in progress.
 
 **Where it applies.** A plain free ride (Single Player → Freestyle, or a
 ride link) alone or in split screen, up to four riders with the humans.
@@ -122,7 +124,7 @@ therefore never loads them (`start_ride` clears the request for a room).
   seed; twelve seeds ride five minutes around a lake without entering it or
   leaving the map, with no reset; a roamer follows a circuit (over 90 % of
   its line time within 40 ft of it); it steers round a rider in its way.
-- `atv-core` and `atv-ui`: the Extras row and its saved value.
+- `atv-core` and `atv-ui`: the Game Settings row and its saved value.
 - `tools/test_engine_free_cpus.mjs` (content group, host Chromium): see
   "Evidence".
 

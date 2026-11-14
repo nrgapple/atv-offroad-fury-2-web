@@ -2,8 +2,8 @@
 // a port adaptation; the original Freestyle has none):
 // - Off by default: a free ride on Prospect Springs loads no CPU riders and
 //   no roam map, with the setting absent and with it saved as 0, and Options
-//   → Extras reads "Free Ride CPU riders: Off (original)";
-// - the Extras row cycles Off / 1 / 2 / 3 and saves; the ride in progress
+//   → Game Settings reads "Free Ride CPU riders: Off (original)";
+// - the Game Settings row cycles Off / 1 / 2 / 3 and saves; the ride in progress
 //   keeps its riders (the next free ride takes the choice);
 // - with 2 saved, the next free ride loads two CPU riders that leave the
 //   start, reach points of interest or follow the venue's race line, keep
@@ -109,15 +109,15 @@ try {
   r = await freeRide(page);
   assert.deepEqual([r.cpus.length, r.roam], [0, null], 'no CPU riders with the option saved off');
 
-  // Options → Extras: the row cycles and saves; this ride is unchanged.
+  // Options → Game Settings: the row cycles and saves; this ride is unchanged.
   await key(page, 'Escape');
   await onMenu(page, 'pause');
   await click(page, 'settings');
   await onMenu(page, 'settings');
-  await click(page, 'extras');
-  await onMenu(page, 'extras');
+  await click(page, 'game-settings');
+  await onMenu(page, 'game-settings');
   assert.equal(await label(page, 'free-ride-cpus'), 'Free Ride CPU riders: Off (original)');
-  await shot(page, 'extras-row');
+  await shot(page, 'game-settings-row');
   await click(page, 'free-ride-cpus');
   assert.equal(await label(page, 'free-ride-cpus'), 'Free Ride CPU riders: 1');
   await click(page, 'free-ride-cpus');
@@ -184,7 +184,7 @@ try {
     timeout: 60000
   });
   assertNoErrors(errors);
-  console.log('Free ride CPU riders: off by default, the Extras row, roaming, hazards and frame times verified');
+  console.log('Free ride CPU riders: off by default, the Game Settings row, roaming, hazards and frame times verified');
 } finally {
   await browser.close();
 }

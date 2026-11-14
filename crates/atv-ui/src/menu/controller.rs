@@ -465,7 +465,6 @@ impl PauseMenu {
             "chase_assist": p.chase_assist,
             "flips": p.flips,
             "realistic_train": p.realistic_train,
-            "free_ride_cpus": p.free_ride_cpus,
             "metric": p.metric,
             "ecosystem_collision": p.ecosystem_collision,
             "sound_configuration": p.sound_configuration,
@@ -522,6 +521,7 @@ impl PauseMenu {
         request["new_profiles_unlocked"] = p.new_profiles_unlocked.into();
         request["show_fps"] = p.show_fps.into();
         request["editor_active"] = self.editor_active.into();
+        request["free_ride_cpus"] = p.free_ride_cpus.into();
         if page == "accessibility" {
             request["access_fov"] = p.access.fov.into();
             request["access_rows"] = p
@@ -1926,6 +1926,7 @@ mod parity_tests {
                 "ecosystem",
                 "sound-configuration",
                 "new-profiles",
+                "free-ride-cpus",
                 "back"
             ]
         );

@@ -7,7 +7,7 @@
 //!
 //! Solo and split screen only: an online room has no CPU riders.
 //!
-//! A free ride takes the same riders with Options → Extras "Free Ride CPU
+//! A free ride takes the same riders with Options → Game Settings "Free Ride CPU
 //! riders" (research/CPU_MINIGAMES.md "Free roam"): with no game to play
 //! they roam the venue (`atv_core::roam_cpu`), on no standings.
 use crate::games::GameSession;
@@ -27,7 +27,7 @@ pub struct Request {
     pub count: u8,
     /// The race setup's difficulty (1 Normal, 2 Expert, 3 Kid).
     pub difficulty: u32,
-    /// A free ride's riders (Extras' Free Ride CPU riders): they roam.
+    /// A free ride's riders (Game Settings' Free Ride CPU riders): they roam.
     pub roam: bool,
 }
 

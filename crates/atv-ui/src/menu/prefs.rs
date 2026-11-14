@@ -15,7 +15,7 @@ pub const SOUND_CONFIGURATIONS: [&str; 4] = ["stereo", "swapped", "dolby", "mono
 /// The saved Free Ride CPU riders count ("0"-"3").
 pub const FREE_RIDE_CPUS_KEY: &str = "atv-free-ride-cpus";
 
-/// Extras → Free Ride CPU riders as saved (0, off, unless chosen).
+/// Game Settings → Free Ride CPU riders as saved (0, off, unless chosen).
 pub fn free_ride_cpus(settings: &Settings) -> u8 {
     settings
         .get(FREE_RIDE_CPUS_KEY)
@@ -35,7 +35,7 @@ pub struct Preferences {
     pub chase_assist: bool,
     pub flips: bool,
     pub realistic_train: bool,
-    /// Extras → Free Ride CPU riders (authored; 0 is off, the original):
+    /// Game Settings → Free Ride CPU riders (authored; 0 is off, the original):
     /// CPU riders added to a single-player or split-screen free ride.
     pub free_ride_cpus: u8,
     pub diagnostics: String,

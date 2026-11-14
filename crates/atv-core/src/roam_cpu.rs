@@ -1,7 +1,7 @@
 //! **Port adaptation, not recovered behavior.** Goal selection for the
 //! authored CPU riders of a free ride (research/CPU_MINIGAMES.md "Free
 //! roam"): the original Freestyle has no CPU riders. Off by default;
-//! Options → Extras "Free Ride CPU riders" adds them.
+//! Options → Game Settings "Free Ride CPU riders" adds them.
 //!
 //! A roaming CPU keeps one [`Plan`] at a time: ride to a point of interest
 //! (a hilltop of the venue, [`points_of_interest`]), follow the venue's
@@ -410,15 +410,22 @@ impl Roam {
                 .or(unit(sense.forward))
                 .unwrap_or([0., 1.]);
             // Clear probes along a heading (the direct one only as far as
-            // the aim: a hilltop by a shore is still reached).
+            // the aim: a hilltop by a shore is still reached), one fewer
+            // when the turn to it from the way the ATV faces would sweep
+            // over blocked ground (the nearest probe, half way round).
+            let facing = unit(sense.forward);
             let clear = |h: [f32; 2], limit: f32| {
-                PROBES
+                let ahead = PROBES
                     .iter()
                     .filter(|d| {
                         let d = d.min(limit);
                         !blocked([p[0] + h[0] * d, p[1] + h[1] * d])
                     })
-                    .count()
+                    .count();
+                let sweep = facing
+                    .and_then(|f| unit([f[0] + h[0], f[1] + h[1]]))
+                    .is_some_and(|m| blocked([p[0] + m[0] * PROBES[0], p[1] + m[1] * PROBES[0]]));
+                ahead - usize::from(sweep && ahead > 0)
             };
             if clear(direct, distance + 5.) == PROBES.len() {
                 self.heading = Some(direct);
@@ -652,7 +659,8 @@ mod tests {
                 let at = rider.at();
                 assert!(
                     flat(at, [1000., 1000.]) > 235.,
-                    "seed {seed} in the lake at {at:?}"
+                    "seed {seed} in the lake at {at:?}: {:?}",
+                    rider.roam
                 );
                 assert!(!map.outside(at), "seed {seed} off the map at {at:?}");
             }

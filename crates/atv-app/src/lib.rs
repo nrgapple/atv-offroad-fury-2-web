@@ -7662,7 +7662,7 @@ impl App {
                 })
             });
             self.split_request = split;
-            // Games Prep's CPU Riders (local games only), or Extras' Free
+            // Games Prep's CPU Riders (local games only), or Game Settings' Free
             // Ride CPU riders for a free ride.
             self.cpu_request = self
                 .front
