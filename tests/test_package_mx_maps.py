@@ -23,6 +23,32 @@ class PackagingTests(unittest.TestCase):
         self.assertEqual(related_source_candidates('nat05_liverystable_detail.dxm.pst', rows), ['Tex/Nat05_liverystable_detail.pst'])
         self.assertEqual(related_source_candidates('nat12 _pillara.pst', rows), ['Tex/Nat12_pillarA.pst'])
 
+    def test_source_count_gate_and_independent_collision_roles(self):
+        from package_mx_maps import apply_binding_semantics
+        members = {
+            'Env/nat01/test.scn': b'[Model1]\nSLT=can01\n[Model2]\nSLT=mailbox\n',
+            'Env/nat01/test.toy': b'[PhysicsCollections]\nNumberOfPhysicsCollections=1\n[PhysicsCollection1]\nName=can*\n[PhysicsCollection2]\nName=mailbox\n',
+        }
+        calls=[]
+        def resolve(ref, origin, kind):
+            calls.append((ref,kind))
+            members['Col/'+ref]=b'collider'
+        audit=[dict(origin='Env/nat01/test.scn',reference='can01.col',kind='configuration',status='ambiguous')]
+        collections=apply_binding_semantics(members,audit,resolve)
+        self.assertEqual(calls,[('can01m.col','actor_whiskers'),('can01f.col','collision_target')])
+        self.assertEqual(collections[1]['status'],'inactive_count_gate')
+        self.assertEqual(collections[1]['models'],[])
+        self.assertEqual(audit[0]['status'],'physics_collection_roles')
+
+    def test_explicit_repairs_do_not_alias_source_colliders(self):
+        from package_mx_maps import apply_binding_semantics
+        members={'Env/mc09/a.scn':b'[Object1]\nFile=Ring_Trigger.col\nHasCol=False\n', 'Tex/Nat12_pillarA.pst':b'original'}
+        audit=[dict(origin='Env/mc09/a.scn',reference='ring_trigger.col',kind='configuration',status='actual_missing'), dict(origin='Env/nat12/a.scn',reference='nat12_sphinx.col',kind='configuration',status='ambiguous'),dict(origin='Tex/Nat12_pillarA.psm',reference='nat12 _pillara.pst',kind='texture',status='actual_missing')]
+        apply_binding_semantics(members,audit,lambda *args:None)
+        self.assertEqual([e['status'] for e in audit],['nonphysical_marker','source_missing','authored_repair'])
+        self.assertFalse(audit[-1]['source_equivalent'])
+        self.assertEqual(members['Tex/Nat12_pillarA.pst'],b'original')
+
     def test_reject_public_output(self):
         with self.assertRaises(ValueError):
             package(Path('/tmp/mx-public-output'))
@@ -41,8 +67,16 @@ class PrivateValidation(unittest.TestCase):
             self.assertEqual(row['source_stem'], row['source_stem'].lower())
             self.assertIn('dependency_audit', row)
             for edge in row['dependency_audit']:
-                self.assertIn(edge['status'], {'resolved','platform_alias','excluded_shader','ambiguous','actual_missing','dynamic_generated_target','false_positive_inactive_template'})
+                self.assertIn(edge['status'], {'resolved','platform_alias','excluded_shader','ambiguous','actual_missing','dynamic_generated_target','false_positive_inactive_template','source_missing','nonphysical_marker','physics_collection_roles','inactive_count_gate','authored_repair'})
                 self.assertFalse(edge['origin'].lower().endswith(('.trn','.pst','.atm','.col')))
+            if row['id'] == 'mx_nat10':
+                self.assertTrue(all(c['status'] == 'inactive_count_gate' and not c['bindings'] for c in row['physics_collections']))
+            if row['id'] in ('mx_nat01','mx_nat06','mx_nat11'):
+                bindings=[b for c in row['physics_collections'] for b in c['bindings']]
+                self.assertTrue(bindings)
+                for binding in bindings:
+                    self.assertEqual(set(binding['roles']), {'actor_whiskers','collision_target'})
+                    self.assertTrue(all(role['status']=='resolved' for role in binding['roles'].values()))
             data = (output / (row['sha256']+'.bin')).read_bytes()
             self.assertEqual(len(data), row['bytes'])
             self.assertEqual(hashlib.sha256(data).hexdigest(), row['sha256'])

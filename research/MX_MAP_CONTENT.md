@@ -7,7 +7,7 @@ python3 tools/package_mx_maps.py --output private/reports/mx-map-staging
 python3 -m unittest discover -s tests -p test_package_mx_maps.py
 ```
 
-The 56 archives total **197,915,253 bytes** and **23,752 members** in the
+The 56 archives total **198,032,437 bytes** and **23,786 members** in the
 validated staging run. Each packed member is round-trip compared to its source
 by `pack_resource`; the independent private test reopens all 56 packages,
 checks SHA256 and length, extracts every member, checks terrain presence and
@@ -47,20 +47,45 @@ textures. The source `Screen.psm` RenderTarget binding is explicitly
 CUB/TRN references resolving to existing `.ps2.cub`/`.ps2.trn` are
 `platform_alias`, as are PST-to-ATM animation bindings.
 
-The final typed audit has 14,454 resolved edges, 205 aliases, 3,026 excluded
-shader references, 29 generated-target markers and 34 inactive TOY template
-markers (`NumberOfStaticModelParams=0`, unused `Model1 SLT=?.slt`). It retains
-18 ambiguous bindings and 7 actual-missing bindings across venues. The latter
-are `ring_trigger.col`, `nat07_churchsnow.col`, `natdropgate.col` (three venues),
-`nat10_tray_water.col` and `nat_tray_runnoff.col`.
+Physics collection metadata lives in each private report row's
+`physics_collections`: origin/section, wildcard pattern, source active count,
+status, matching model stems and `bindings[].roles`. Each active binding has
+independent `actor_whiskers` (M) and `collision_target` (F) references, original
+paths and resolution statuses. Source functions 002171b0/00218280 honor the TOY
+count gate and wildcard prefix matching; 004922a0 derives both suffixes, not
+aliases. Original F/M payloads are included for active matching models.
+NAT01 trash/recycling, NAT06 eggs and NAT11 SingleBale resolve both roles.
+NAT11's active banner pattern has no matching scene models, so no model binding
+is invented. NAT10's twelve authored collection sections have count zero: all
+are explicitly inactive, with no derived role bindings. Existing original
+payloads are preserved without activating those sections. NAT06's actual TOY
+count is ten (three eggs, six wood bodies, Meteor); metadata honors that source
+count rather than truncating the collection list to just the audited eggs.
 
-Ambiguous evidence includes original F/M collider pairs (trash/recycling cans,
-dinosaur eggs, mailboxes, single bale), segmented gate/sphinx colliders,
-`Anaheim_poleCol.col`, and texture naming variants: `.dxm` in the livery stable
-binding and spaces in the Nat12 sandstone/pillar bindings. Related source
-assets remain preserved when already present; the audit never silently assigns
-one candidate's geometry or texture to another binding. Source `.pco` files
-and their connected collider payloads remain available to the runtime.
+The final typed audit has 15,122 resolved edges, 205 aliases, 3,026 excluded
+shader references, 29 generated-target markers, 34 inactive TOY template
+markers, six generic-to-physics-role records, four authored texture repairs,
+two inactive mailbox collision records and one nonphysical marker. No binding
+is left classified as ambiguous. MC09 Ring_Trigger has SCN HasCol=False and is
+marked nonphysical; it does not acquire collision.
+
+Four texture bindings have explicit `authored_repair` metadata, with
+`repair_target` preserving the source PST name and `source_equivalent=false`:
+MC05/NAT05 livery `.dxm` spelling and Nat12's two internal-space spellings.
+Unique original target resources are packaged; neither PSM nor PST is renamed
+or rewritten. Native source equivalence is not claimed.
+
+Twelve records remain `source_missing`: Anaheim whole poles (FS05/SX09),
+whole start/drop gates (Nat08/Nat11/Nat16), Nat12 whole sphinx, Nat07 church
+snow, and Nat10 tray-water/runoff. SCN already places the valid segment
+colliders separately; those are never substituted for missing whole objects.
+Source 00319b40 tolerates individual object-load failure and continues. The
+church and tray/runoff physical gaps remain fidelity limitations. NAT10
+mailbox sections are classified inactive, not repaired by enabling bodies.
+
+The parent may initially consume F targets as static collision compatibility.
+This package establishes payload roles, not movable-body simulation parity;
+that dynamics limitation must remain disclosed at runtime integration.
 
 `classify_previous_warnings(previous, current)` accounts for earlier lexical
 warnings against typed evidence. The private staging run records this as

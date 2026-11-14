@@ -21,6 +21,80 @@ def related_source_candidates(ref, rows):
                   and Path(r['name']).suffix.lower() == Path(ref).suffix.lower())
 
 
+def source_sections(data):
+    from package_content import config
+    return config(data.decode('latin1').encode('utf-8'))
+
+
+def apply_binding_semantics(members, audit, resolve):
+    """Apply source count gates and independently named rigid-body colliders."""
+    scenes = [(n, source_sections(d)) for n,d in members.items() if n.lower().endswith('.scn')]
+    models = set()
+    for _, sections in scenes:
+        for fields in sections.values():
+            if fields.get('slt'):
+                models.add(Path(fields['slt'].replace('\\','/')).stem.lower())
+    collections = []
+    active_models = set()
+    for name, data in list(members.items()):
+        if not name.lower().endswith('.toy'):
+            continue
+        sections = source_sections(data)
+        count = int(sections.get('physicscollections', {}).get('numberofphysicscollections', '0'))
+        for section, fields in sections.items():
+            match = re.fullmatch(r'physicscollection(\d+)', section)
+            if not match:
+                continue
+            pattern = fields.get('name','').lower()
+            active = 1 <= int(match[1]) <= count
+            matched = sorted(model for model in models if (model.startswith(pattern[:-1]) if pattern.endswith('*') else model == pattern)) if active else []
+            record = dict(origin=name, section=section, pattern=pattern, active_count=count, status='active' if active else 'inactive_count_gate', models=matched, bindings=[])
+            for model in matched:
+                active_models.add(model)
+                binding = dict(model=model, roles={})
+                for suffix, role in [('m','actor_whiskers'), ('f','collision_target')]:
+                    ref = model+suffix+'.col'
+                    resolve(ref,name,role)
+                    paths = [n for n in members if n.lower().endswith('/'+ref)]
+                    binding['roles'][role] = dict(reference=ref, path=paths[0] if len(paths)==1 else None, status='resolved' if len(paths)==1 else 'source_missing')
+                record['bindings'].append(binding)
+            collections.append(record)
+    # HasCol=False is an object-level semantic exclusion, regardless of filename.
+    nonphysical = set()
+    for name, sections in scenes:
+        for section, fields in sections.items():
+            if fields.get('hascol','').lower() in ('false','f','0'):
+                for value in fields.values():
+                    if value.lower().endswith('.col'):
+                        nonphysical.add((name,value.lower()))
+    repairs = {
+        'nat05_liverystable_detail.dxm.pst': 'Tex/Nat05_liverystable_detail.pst',
+        'nat12 _genericsandstone.pst': 'Tex/Nat12_genericsandstone.pst',
+        'nat12 _pillara.pst': 'Tex/Nat12_pillarA.pst',
+    }
+    for edge in list(audit):
+        ref = edge['reference']
+        if edge['status'] not in ('actual_missing','ambiguous'):
+            continue
+        stem = Path(ref).stem.lower()
+        if (edge['origin'],ref) in nonphysical:
+            edge.update(status='nonphysical_marker', reason='source SCN HasCol=False; no physical collider required')
+        elif ref.endswith('.col') and stem in active_models:
+            edge.update(status='physics_collection_roles', reason='002171b0 count-gated collection; 004922a0 derives independent m.col/f.col', model=stem)
+        elif ref.endswith('.col') and '/nat10/' in edge['origin'].lower() and stem in ('nat10_mailbox_closed','nat10_mailboxopen'):
+            edge.update(status='inactive_count_gate', reason='TOY NumberOfPhysicsCollections=0; mailbox sections must not activate')
+        elif ref in repairs and edge['kind'] == 'texture':
+            target = repairs[ref]
+            resolve(target,edge['origin'],'authored_texture_repair_target')
+            paths = [n for n in members if n.lower() == target.lower()]
+            if len(paths) != 1:
+                raise ValueError('authored repair target is not unique: '+target)
+            edge.update(status='authored_repair', repair_target=paths[0], source_equivalent=False, reason='explicit spelling repair; original PSM and PST paths/bytes preserved')
+        elif ref.endswith('.col'):
+            edge.update(status='source_missing', reason='unsuffixed source collider absent; segment or similarly named colliders are not aliases; 00319b40 tolerates object load failure')
+    return collections
+
+
 def package(output):
     output = output.resolve()
     if not output.is_relative_to((ROOT / 'private').resolve()):
@@ -154,12 +228,14 @@ def package(output):
                         raise ValueError('invalid MX material table')
                     for mat in [data[at+4+i*64:at+4+(i+1)*64].split(b'\0')[0].decode() for i in range(count)]:
                         resolve(mat+'.psm',name,'material')
+            physics_collections = apply_binding_semantics(members, audit, resolve)
+            missing = {e['origin']+': '+e['reference'] for e in audit if e['status'] in ('actual_missing','ambiguous','source_missing')}
             if not any(n.lower().endswith('.ps2.trn') for n in members):
                 raise ValueError(f'{venue}: missing terrain')
             packed = pack_resource(sorted(members.items()))
             digest = hashlib.sha256(packed).hexdigest()
             (output / f'{digest}.bin').write_bytes(packed)
-            report.append(dict(id='mx_'+venue.lower(), source_stem=venue.lower(), archive=f'/MX/MAPS/{venue.upper()}.RES', sha256=digest, bytes=len(packed), member_count=len(members), missing=sorted(missing), excluded=sorted(excluded), dependency_audit=sorted({json.dumps(e,sort_keys=True):e for e in audit}.values(), key=lambda e:(e['origin'],e['reference'],e['kind']))))
+            report.append(dict(id='mx_'+venue.lower(), source_stem=venue.lower(), archive=f'/MX/MAPS/{venue.upper()}.RES', sha256=digest, bytes=len(packed), member_count=len(members), missing=sorted(missing), excluded=sorted(excluded), physics_collections=physics_collections, dependency_audit=sorted({json.dumps(e,sort_keys=True):e for e in audit}.values(), key=lambda e:(e['origin'],e['reference'],e['kind']))))
             print(venue, len(packed), 'missing', len(missing), flush=True)
     (ROOT / 'research/mx-map-catalog.json').write_text(json.dumps(catalog,indent=2)+'\n')
     (output / 'map-packages.json').write_text(json.dumps(report,indent=2)+'\n')
