@@ -1,11 +1,13 @@
 //! Remote riders: each one's original quad and rider, posed locally from the
-//! replicated recipe (atv-web multiplayer_animation.rs). Receiving never
-//! advances the player's own solver.
+//! replicated recipe (atv-web multiplayer_animation.rs), or a motorcycle and
+//! its MX rider, posed from the replicated linkage and bones
+//! (research/MULTIPLAYER.md "Motorcycles"). Receiving never advances the
+//! player's own solver.
 use crate::Result;
 use crate::ride::{Model, Pose, gear, load, textures};
 use atv_content::Content;
 use atv_core::{
-    animation, mesh, player_models,
+    animation, mesh, motorcycle, player_models,
     quad_pose::QuadPose,
     resource::Resource,
     rider_pose::{Animator, Motion, Recipe},
@@ -32,8 +34,9 @@ thread_local! {
         Default::default();
 }
 
-/// A remote rider's look: quad (1-26), rider (0 male, 1 female) and the
-/// room's appearance bytes (seven gear indices and the quad paint).
+/// A remote rider's look: vehicle (ATV 1-26, motorcycle 27-46), rider (0
+/// male, 1 female) and the room's appearance bytes (seven gear indices and
+/// the quad paint; a motorcycle keeps its original look).
 pub type Key = (u16, u16, [u8; atv_net::APPEARANCE_BYTES]);
 
 /// A loaded remote model: its drawables and the rig poses are sampled from.
@@ -46,11 +49,48 @@ pub struct RemoteModel {
     pub rig: Rc<Rig>,
 }
 
-pub struct Rig {
+// Held once per remote rider behind `Rc`, so the quad variant's size costs
+// nothing per frame and boxing it would only add an indirection.
+#[allow(clippy::large_enum_variant)]
+pub enum Rig {
+    Quad(QuadRig),
+    /// The bike's linkage solver (its meshes, motions and tuning come along).
+    Bike(Box<motorcycle::Model>),
+}
+
+pub struct QuadRig {
     quad: QuadPose,
     nodes: Vec<mesh::Node>,
     rider: Animator,
     wrecks: Vec<Motion>,
+}
+
+/// A remote motorcycle: the bike and its MX rider from the MX archive, drawn
+/// as the player's own bike is (ride/load.rs).
+async fn load_bike(content: &Content, key: Key) -> Result<RemoteModel> {
+    let (vehicle, rider, _) = key;
+    let models = player_models::selection(vehicle, rider)?;
+    let bytes = content.file(&models.quad).await?;
+    crate::yield_frame().await;
+    let model = motorcycle::Model::load(&bytes, vehicle)?;
+    crate::yield_frame().await;
+    let archive = Resource::parse(&bytes)?;
+    let quad = Model {
+        textures: textures::load(&model.mesh, &archive)?,
+        mesh: model.mesh.clone(),
+    };
+    crate::yield_frame().await;
+    let rider = Model {
+        textures: textures::load(&model.rider, &archive)?,
+        mesh: model.rider.clone(),
+    };
+    Ok(RemoteModel {
+        key,
+        quad,
+        rider,
+        paint: [0.; 2],
+        rig: Rc::new(Rig::Bike(Box::new(model))),
+    })
 }
 
 /// Reads a remote rider's original quad, rider mesh, the 78 riding, stunt,
@@ -59,8 +99,11 @@ pub struct Rig {
 /// the quad's paint (remote appearance in game.js).
 pub async fn load_model(content: &Content, key: Key) -> Result<RemoteModel> {
     let (quad, rider, look) = key;
-    if !(1..=26).contains(&quad) || rider > 1 || !atv_net::valid_appearance(&look) {
+    if !atv_net::valid_actor(quad, rider) || !atv_net::valid_appearance(&look) {
         return Err("unsupported remote player model".into());
+    }
+    if atv_net::is_motorcycle(quad) {
+        return load_bike(content, key).await;
     }
     let appearance = gear::Appearance {
         gear: look[..7].try_into().expect("seven gear slots"),
@@ -165,12 +208,12 @@ pub async fn load_model(content: &Content, key: Key) -> Result<RemoteModel> {
             textures
         }
     };
-    let rig = Rig {
+    let rig = Rig::Quad(QuadRig {
         quad: QuadPose::new(&quad_mesh)?,
         nodes: rider_mesh.nodes.clone(),
         rider: animator,
         wrecks,
-    };
+    });
     Ok(RemoteModel {
         key,
         quad: Model {
@@ -192,7 +235,8 @@ pub async fn load_model(content: &Content, key: Key) -> Result<RemoteModel> {
 /// One remote rider's local animation clocks.
 pub struct Local {
     rig: Rc<Rig>,
-    rider: Animator,
+    /// The ATV rider's local animator (a motorcycle's rider is sent posed).
+    rider: Option<Animator>,
     crash: u32,
     wreck_time: f32,
     initialized: bool,
@@ -201,7 +245,10 @@ pub struct Local {
 impl Local {
     pub fn new(rig: Rc<Rig>) -> Result<Self> {
         Ok(Self {
-            rider: rig.rider.fork_racer(&rig.nodes)?,
+            rider: match &*rig {
+                Rig::Quad(quad) => Some(quad.rider.fork_racer(&quad.nodes)?),
+                Rig::Bike(_) => None,
+            },
             rig,
             crash: 0,
             wreck_time: 0.,
@@ -215,8 +262,35 @@ impl Local {
 
     /// The drawn pose of a presented snapshot `dt` seconds after the last.
     pub fn pose(&mut self, s: &Snapshot, dt: f32, stale: bool) -> Result<Pose> {
-        let rig = &self.rig;
         let a = s.animation.as_ref().ok_or("remote animation missing")?;
+        let rig = match &*self.rig {
+            Rig::Quad(rig) => rig,
+            Rig::Bike(bike) => {
+                // The sender's linkage and rider bones, posed as its own
+                // bike draws them; the rider leaves the bike in a wreck.
+                if !atv_net::is_motorcycle(s.atv_model)
+                    || s.rider_nodes.len() != bike.rider.nodes.len()
+                {
+                    return Err("remote motorcycle pose does not fit its rider".into());
+                }
+                let quad_world = s.atv.to_column_major();
+                return Ok(Pose {
+                    quad_world,
+                    quad_nodes: bike.pose(
+                        a.steering,
+                        [a.wheels[0], a.wheels[1]],
+                        [a.compression[0], a.compression[1]],
+                    ),
+                    rider_world: if s.rider_state == RiderState::Wreck {
+                        s.rider.to_column_major()
+                    } else {
+                        quad_world
+                    },
+                    rider_nodes: s.rider_nodes.iter().map(|t| t.to_column_major()).collect(),
+                });
+            }
+        };
+        let rider = self.rider.as_mut().ok_or("remote rider animator missing")?;
         let quad_nodes = rig.quad.sample(a.steering, a.wheels, a.compression)?;
         let step = if a.paused || stale { 0. } else { dt };
         let blend_dt = if self.initialized { dt } else { 0.25 };
@@ -247,7 +321,7 @@ impl Local {
             self.wreck_time = 0.;
             (
                 quad_world,
-                self.rider
+                rider
                     .present(
                         &rig.nodes,
                         Recipe {

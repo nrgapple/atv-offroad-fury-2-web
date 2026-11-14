@@ -198,7 +198,8 @@ impl RemoteAudio {
         for rider in riders {
             let key = rider.key();
             let valid = match key {
-                EngineKey::Quad(quad) => (1..=26).contains(&quad),
+                // ATVs and motorcycles (their MX engine tables).
+                EngineKey::Quad(quad) => atv_net::valid_actor(quad, 0),
                 EngineKey::Set(..) => true,
             };
             if valid && self.requested.insert(key) {

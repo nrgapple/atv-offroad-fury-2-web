@@ -163,6 +163,9 @@ struct Conn {
     cpu_sounds: bool,
     /// Decodes frames.
     frames: bool,
+    /// Decodes motorcycle poses ([`signal::MOTORCYCLES`]); builds without
+    /// it are never sent one (they would reject the whole frame).
+    motorcycles: bool,
     /// Follows the server-run room loop (`signal::ROOM_LOOP`).
     room_loop: bool,
     last_seen_ms: u64,
@@ -187,6 +190,10 @@ impl Conn {
     }
     fn models(&self) -> Option<(u16, u16)> {
         self.player.as_ref().map(|p| (p.atv_model, p.rider_model))
+    }
+    /// Whether this build decodes `pose` (motorcycles need the capability).
+    fn takes(&self, pose: &Pose) -> bool {
+        self.motorcycles || !atv_net::is_motorcycle(pose.models.0)
     }
     /// The newest pose, when it shows the rider's current vehicle.
     fn current_pose(&self) -> Option<&Pose> {
@@ -542,6 +549,7 @@ impl Room {
             signals: false,
             cpu_sounds: false,
             frames: false,
+            motorcycles: false,
             room_loop: false,
             last_seen_ms: now,
             window_ms: now,
@@ -685,7 +693,7 @@ impl Room {
         let on_map = self.started && self.conns[i].ready_map == self.map;
         match packet {
             Packet::Join { code, mut player } if !joined && code == self.code => {
-                if !(1..=26).contains(&player.atv_model) || player.rider_model > 1 {
+                if !atv_net::valid_actor(player.atv_model, player.rider_model) {
                     return self.close(i, 1008, "Unknown actor model", now, out);
                 }
                 let peer = self.conns[i].peer;
@@ -753,6 +761,7 @@ impl Room {
                         if other.id != id
                             && other.ready_map == map
                             && let Some(pose) = other.current_pose()
+                            && self.conns[i].takes(pose)
                         {
                             catch_up.push((other.peer, pose.clone()));
                         }
@@ -771,7 +780,12 @@ impl Room {
                     conn.signals = true;
                     conn.cpu_sounds = flags & signal::CPU_SOUNDS != 0;
                     conn.frames = flags & signal::FRAMES != 0;
-                    conn.room_loop = flags & signal::ROOM_LOOP != 0;
+                    conn.motorcycles = flags & signal::MOTORCYCLES != 0;
+                    // The second flags byte (the first is full).
+                    conn.room_loop = message
+                        .data
+                        .get(1)
+                        .is_some_and(|f| f & signal::ROOM_LOOP != 0);
                     self.loop_dirty = true;
                 }
                 // Session descriptions and link reports: no links here.
@@ -779,7 +793,7 @@ impl Room {
             // Direct links and couriers do not exist on the server.
             Packet::Links { .. } | Packet::Bundle { .. } if joined => {}
             Packet::Profile(mut player) if joined => {
-                if !(1..=26).contains(&player.atv_model) || player.rider_model > 1 {
+                if !atv_net::valid_actor(player.atv_model, player.rider_model) {
                     return self.close(i, 1008, "Unknown actor model", now, out);
                 }
                 let peer = self.conns[i].peer;
@@ -1003,8 +1017,9 @@ impl Room {
             2
         };
         self.counters.poses[kind] += 1;
+        let bike = atv_net::is_motorcycle(sender.models().unwrap_or_default().0);
         for c in &self.conns {
-            if c.id != sender.id && c.player.is_some() && !c.frames {
+            if c.id != sender.id && c.player.is_some() && !c.frames && (c.motorcycles || !bike) {
                 for pose in poses {
                     out.push(Out::Pose(c.id, pose.clone()));
                     self.counters.single_poses += 1;
@@ -1038,7 +1053,7 @@ impl Room {
             let origin = conn.pose.as_ref().map(|p| p.position);
             due.clear();
             for (peer, pose) in &senders {
-                if *peer == conn.peer {
+                if *peer == conn.peer || !conn.takes(pose) {
                     continue;
                 }
                 let slot = &mut conn.sent[usize::from(*peer)];

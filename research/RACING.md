@@ -1487,6 +1487,11 @@ Follow-up on the remaining wreck loops (2026-10-27, no fix found):
 
 ## Authored CPU anti-stuck recovery (port adaptation) — 2026-10-28
 
+The [2026-11-14 sweep](CPU_RECOVERY_SWEEP.md) updates this authored policy
+to assist on the second reset, skip on the third, and try placements from
+320 feet ahead. The original 2026-10-28 investigation and measurements below
+remain historical evidence.
+
 **Not original behavior.** The user approved authored recovery where the
 recovered rules leave a CPU looping or stranded (`status.md` "Product
 decisions"). It lives in its own module, `atv_core::cpu_recovery`, with

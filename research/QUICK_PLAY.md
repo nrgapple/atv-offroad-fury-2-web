@@ -97,7 +97,9 @@ sense. Phases: lobby → vote → countdown → play → results → vote …
 
 ## Protocol (version 6, compatible)
 
-- HELLO flag bit 32 `signal::ROOM_LOOP`: the build follows the loop. The
+- HELLO second flags byte (`data[1]`), bit 1 `signal::ROOM_LOOP`: the
+  build follows the loop (the first byte is full; bit 32 is
+  `MOTORCYCLES`). A HELLO is one or two bytes. The
   client sends it only when its claim said `"quickplay": true`.
 - `POST /multiplayer/quickplay` `{"playlist": "race"|"stunts", "avoid":
   code?}` → `{code, key, quickplay: true, playlist, links, batches,

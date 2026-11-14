@@ -125,7 +125,7 @@ A slice defines only its own.
 
 | Slice | Packet kinds | HELLO bit |
 | --- | --- | --- |
-| A (C reuses them) | 22 `RoomLoop` (server→client: phase, timer, vote options, seats, results); 23 `Vote` (client→server: map vote, rematch, ready) | 32 `ROOM_LOOP` |
+| A (C reuses them) | 22 `RoomLoop` (server→client: phase, timer, vote options, seats, results); 23 `Vote` (client→server: map vote, rematch, ready) | second flags byte, bit 1 `ROOM_LOOP` (bit 32 went to `MOTORCYCLES`, #638) |
 | E | 24 `Chat` (quick-chat line, emote or horn id; server rate-limits and relays) | 64 `CHAT` |
 | B | 26 `Hub` (event announce/join/results); 27 `Challenge` (request/accept/decline/start) | 128 `HUB` |
 | D | none: HTTP routes only | — |

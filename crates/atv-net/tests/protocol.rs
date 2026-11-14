@@ -1151,6 +1151,12 @@ fn direct_link_signalling_roundtrips_and_is_bounded() {
             kind: signal::HELLO,
             data: vec![signal::CPU_SOUNDS | signal::BATCHES],
         }),
+        // Quick Play's bit rides in a second flags byte.
+        Packet::Signal(Signal {
+            peer: 3,
+            kind: signal::HELLO,
+            data: vec![signal::FRAMES | signal::MOTORCYCLES, signal::ROOM_LOOP],
+        }),
         Packet::Signal(Signal {
             peer: 2,
             kind: signal::PRESENT,
@@ -1180,7 +1186,7 @@ fn direct_link_signalling_roundtrips_and_is_bounded() {
         signal(20, signal::OFFER, vec![1]),
         signal(1, 10, vec![1]),
         signal(1, signal::COURIER, vec![2]),
-        signal(1, signal::HELLO, vec![signal::FRAMES * 2]),
+        signal(1, signal::HELLO, vec![signal::MOTORCYCLES * 2]),
         signal(1, signal::PACE, vec![signal::PACE_MIN - 1]),
         signal(1, signal::PACE, vec![signal::PACE_MAX + 1]),
         signal(1, signal::GONE, vec![signal::BATCHES]),
@@ -1191,7 +1197,9 @@ fn direct_link_signalling_roundtrips_and_is_bounded() {
         signal(1, signal::OFFER, vec![]),
         signal(1, signal::OFFER, vec![0; MAX_SIGNAL_BYTES + 1]),
         signal(1, signal::HELLO, vec![]),
-        signal(1, signal::HELLO, vec![32]),
+        signal(1, signal::HELLO, vec![64]),
+        signal(1, signal::HELLO, vec![0, signal::ROOM_LOOP * 2]),
+        signal(1, signal::HELLO, vec![0, 0, 0]),
         signal(1, signal::PRESENT, vec![1, 1]),
         Packet::Links {
             mask: 1 << MAX_PLAYERS,
@@ -1201,7 +1209,7 @@ fn direct_link_signalling_roundtrips_and_is_bounded() {
     }
     // The same bounds hold for bytes that never passed through `encode`.
     let mut bytes = encode(&signal(1, signal::HELLO, vec![1])).unwrap();
-    bytes[10] = 32;
+    bytes[10] = 64;
     assert_eq!(decode(&bytes), Err(Error::InvalidValue));
     // Every hello flag, frames included, is accepted.
     bytes[10] = 31;
