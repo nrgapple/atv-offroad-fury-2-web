@@ -41,6 +41,8 @@ pub enum Action {
     Viewer(atv_ui::hud::viewer::Button),
     /// The Waypoint Editor's GATE and UNDO.
     Gate(crate::waypoint_editor::Command),
+    /// A Free Ride hub button (research/FREERIDE_HUB.md).
+    Hub(atv_ui::hud::hub::Button),
 }
 
 /// Hit target of the minimap (tap toggles north-up / heading-up).
@@ -65,6 +67,9 @@ pub struct HudInput<'a> {
     pub training: Option<atv_ui::hud::training::View>,
     /// A mini-game's panel (research/GAMES.md).
     pub game: Option<atv_ui::hud::games::View>,
+    /// The Free Ride hub's HUD and its ground circle (centre, radius ft;
+    /// research/FREERIDE_HUB.md).
+    pub hub: Option<(atv_ui::hud::hub::View, Option<([f32; 3], f32)>)>,
     /// A target run's or mini-game's compass (Overlay Sets 5-7).
     pub compass: Option<atv_ui::hud::race::CompassView>,
     /// Split screen: players 2-4's instruments, each in its own view
@@ -736,6 +741,9 @@ impl Overlay {
                 }
                 if let Some(button) = atv_ui::hud::viewer::Button::from_id(p.button) {
                     return Some(Some(Action::Viewer(button)));
+                }
+                if let Some(button) = atv_ui::hud::hub::Button::from_id(p.button) {
+                    return Some(Some(Action::Hub(button)));
                 }
                 match toolbar::Button::from_id(p.button) {
                     Some(toolbar::Button::Pause) => Some(Action::Pause),
@@ -1468,6 +1476,15 @@ impl Overlay {
             self.view_tags[index] = drawn;
             self.list.items.extend(place(list, frame));
         }
+        // The hub's glowing circle on the ground, under the HUD.
+        if let (Some(h), Some((_, _, vp))) = (shown, shown.and_then(|h| h.peers))
+            && let Some((_, Some((centre, radius)))) = &h.hub
+        {
+            let pulse = ((now / 250.).sin() * 0.5 + 0.5) as f32;
+            let mut list = DisplayList::default();
+            atv_ui::hud::hub::paint_ring(&mut list, &sub, *centre, *radius, &vp, pulse);
+            self.list.items.extend(place(list, frames[0]));
+        }
         if map_visible {
             self.minimap.paint(&view, &mut self.fonts, &mut self.list);
             self.hits.push((map, MINIMAP));
@@ -1614,6 +1631,24 @@ impl Overlay {
                 &mut Vec::new(),
             );
             self.list.items.extend(place(list, frame));
+        }
+        // The Free Ride hub: Challenge, its prompt, the event chip, the map
+        // vote and toasts, under the toolbar (one view: rooms do not split).
+        if let Some((hub, _)) = shown.and_then(|h| h.hub.as_ref())
+            && !self.results.shown
+        {
+            let mut list = DisplayList::default();
+            let mut hits = Vec::new();
+            layout::render(
+                &atv_ui::hud::hub::element(&view, hub, inset_of(frames[0]) + 8.),
+                &mut self.fonts,
+                view.width,
+                view.height,
+                &mut list,
+                &mut hits,
+            );
+            self.list.items.extend(list.items);
+            self.hits.extend(hits);
         }
         // Race over: the results panel or the Show Results button.
         match race {

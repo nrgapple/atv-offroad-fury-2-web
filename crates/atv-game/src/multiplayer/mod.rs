@@ -13,6 +13,7 @@
 //! smoothing are atv-net's, shared with the JavaScript game and the relay.
 pub mod links;
 pub mod remote;
+pub use atv_net::hub;
 pub use atv_net::{RiderState, Snapshot};
 pub use links::Command as LinkCommand;
 pub mod spawn;
@@ -130,6 +131,9 @@ pub struct Serves {
     /// `frames`: sends builds that say [`atv_net::signal::FRAMES`] one
     /// [`Packet::Frame`] per tick.
     pub frames: bool,
+    /// `hub`: runs the Free Ride hub for builds that say
+    /// [`atv_net::signal::HUB`] (research/FREERIDE_HUB.md).
+    pub hub: bool,
 }
 
 impl Serves {
@@ -139,6 +143,7 @@ impl Serves {
             links: claim["links"].as_bool() == Some(true),
             batches: claim["batches"].as_bool() == Some(true),
             frames: claim["frames"].as_bool() == Some(true),
+            hub: claim["hub"].as_bool() == Some(true),
         }
     }
 
@@ -146,6 +151,13 @@ impl Serves {
     pub fn hello(&self) -> bool {
         self.links || self.frames
     }
+}
+
+/// A Free Ride hub packet (research/FREERIDE_HUB.md).
+#[derive(Clone, Debug, PartialEq)]
+pub enum HubMessage {
+    Hub(atv_net::Hub),
+    Challenge(atv_net::Challenge),
 }
 
 /// One 50 ms tick's poses ([`Session::poses`]).
@@ -194,6 +206,9 @@ pub struct Session {
     /// Riders' room-game reports the host has not taken yet (the relay
     /// forwards them to the host only; bounded).
     pub claims: Vec<atv_net::GameClaim>,
+    /// Free Ride hub messages not yet taken (research/FREERIDE_HUB.md;
+    /// only sent to a build that said [`atv_net::signal::HUB`]; bounded).
+    pub hub: Vec<HubMessage>,
     /// The room-race host's CPU riders (`Packet::Cpus`): the race serial,
     /// each CPU's pose history by index and its latest progress.
     pub cpu_serial: u32,
@@ -349,6 +364,9 @@ impl Session {
         }
         if serves.frames {
             flags |= atv_net::signal::FRAMES;
+        }
+        if serves.hub {
+            flags |= atv_net::signal::HUB;
         }
         encode(&Packet::Signal(atv_net::Signal {
             peer,
@@ -640,6 +658,16 @@ impl Session {
             Packet::Claim(claim) => {
                 if self.claims.len() < 64 {
                     self.claims.push(claim);
+                }
+            }
+            Packet::Hub(message) => {
+                if self.hub.len() < 64 {
+                    self.hub.push(HubMessage::Hub(*message));
+                }
+            }
+            Packet::Challenge(message) => {
+                if self.hub.len() < 64 {
+                    self.hub.push(HubMessage::Challenge(message));
                 }
             }
             _ => return Err("unexpected relay packet".into()),
@@ -1329,6 +1357,15 @@ impl Session {
         encode(&Packet::Claim(atv_net::GameClaim { peer, ..claim }))
     }
 
+    /// A Free Ride hub message from this rider as a packet.
+    pub fn hub_packet(&self, message: &HubMessage) -> Result<Vec<u8>> {
+        self.peer.ok_or("join multiplayer first")?;
+        encode(&match message {
+            HubMessage::Hub(m) => Packet::Hub(Box::new(m.clone())),
+            HubMessage::Challenge(c) => Packet::Challenge(*c),
+        })
+    }
+
     /// The host's mini-game state as a packet.
     pub fn game_packet(&self, state: &atv_net::GameState) -> Result<Vec<u8>> {
         encode(&Packet::Game(Box::new(state.clone())))
@@ -1537,6 +1574,11 @@ pub struct PeerBody {
 }
 
 /// The relay's stable map id for a venue.
+/// A room map id's venue (`env08`).
+pub fn map_environment(map: u16) -> Option<&'static str> {
+    atv_net::map_environment(map)
+}
+
 pub fn map_id(environment: &str) -> Result<u16> {
     atv_net::MAP_ENVIRONMENTS
         .iter()
@@ -1555,6 +1597,7 @@ mod tests {
         links: true,
         batches: false,
         frames: false,
+        hub: false,
     };
 
     fn lobby(players: &[(u8, u16)], started: bool) -> Lobby {
@@ -1586,6 +1629,53 @@ mod tests {
         })
         .unwrap();
         session.receive(&bytes, 0).unwrap();
+    }
+
+    #[test]
+    fn a_hub_server_hears_the_hub_bit_and_its_packets_queue() {
+        let claim = serde_json::json!({"frames": true, "hub": true});
+        let serves = Serves::from_claim(&claim);
+        assert!(serves.hub && serves.hello());
+        assert!(!Serves::from_claim(&serde_json::json!({"frames": true})).hub);
+        let mut s = Session::new(Profile::new("Ann", 1, 0, Default::default()));
+        welcome(&mut s, 1, lobby(&[(0, 1), (1, 1)], true));
+        let hello = atv_net::decode(&s.hello(serves, false).unwrap()).unwrap();
+        assert!(
+            matches!(hello, Packet::Signal(m) if m.data[0] & atv_net::signal::HUB != 0),
+            "the hub bit"
+        );
+        let plain = atv_net::decode(&s.hello(LINKS, false).unwrap()).unwrap();
+        assert!(matches!(plain, Packet::Signal(m) if m.data[0] & atv_net::signal::HUB == 0));
+        let offer = atv_net::Challenge {
+            op: atv_net::challenge_op::OFFER,
+            serial: 4,
+            peer: 0,
+            timer_ms: 8000,
+            ..Default::default()
+        };
+        s.receive(&atv_net::encode(&Packet::Challenge(offer)).unwrap(), 5)
+            .unwrap();
+        let riders = atv_net::Hub {
+            op: atv_net::hub_op::RIDERS,
+            mask: 3,
+            ..Default::default()
+        };
+        s.receive(
+            &atv_net::encode(&Packet::Hub(Box::new(riders.clone()))).unwrap(),
+            6,
+        )
+        .unwrap();
+        assert_eq!(
+            std::mem::take(&mut s.hub),
+            vec![HubMessage::Challenge(offer), HubMessage::Hub(riders)]
+        );
+        let accept = HubMessage::Challenge(atv_net::Challenge {
+            op: atv_net::challenge_op::ACCEPT,
+            serial: 4,
+            ..Default::default()
+        });
+        let bytes = s.hub_packet(&accept).unwrap();
+        assert_eq!(bytes[5], 27);
     }
 
     #[test]
@@ -2157,6 +2247,7 @@ mod tests {
                     links: true,
                     batches: true,
                     frames: false,
+                    hub: false,
                 },
                 false,
             )

@@ -15,6 +15,7 @@ mod game_cpu;
 mod gamepad;
 mod games;
 mod hockey;
+mod hub;
 mod instant_replay;
 mod multiplayer;
 mod net;
@@ -2951,8 +2952,10 @@ impl App {
             let hud_peers = ready
                 .net
                 .as_ref()
-                .map(|net| net.hud_peers())
-                .map(|mut peers| {
+                .map(|net| {
+                    let mut peers = net.hud_peers();
+                    // The Free Ride hub's goal, join circle or hill.
+                    peers.extend(net.hub.markers());
                     if let Some(tag) = &self.tag {
                         peers.extend(tag.markers());
                     }
@@ -3102,6 +3105,17 @@ impl App {
                 })
                 .collect();
             let compass = compass_icons.map(|icons| compass_of(frame, icons));
+            // The Free Ride hub's HUD (research/FREERIDE_HUB.md).
+            let hub = ready.net.as_ref().and_then(|net| {
+                let venue = |map: u16| {
+                    atv_game::multiplayer::map_environment(map).map_or_else(
+                        || format!("Map {map}"),
+                        |v| course_label(&self.course_names, v),
+                    )
+                };
+                net.hub_view(frame.origin, &venue)
+                    .map(|view| (view, net.hub.ring()))
+            });
             // Split screen: the original layout and the mode's overlay set.
             let split_layout = ready.split.first().map(|s| {
                 let name = atv_ui::hud::split::layout_name(
@@ -3163,6 +3177,7 @@ impl App {
                     objective: objective_view,
                     training: training_view,
                     game: game_view,
+                    hub,
                     compass,
                     others,
                     split_layout,
@@ -4799,6 +4814,11 @@ impl App {
                     );
                 }
             }
+            overlay::Action::Hub(button) => {
+                if let Some(net) = &mut ready.net {
+                    net.hub_press(button);
+                }
+            }
             // Handled above.
             overlay::Action::Viewer(_) | overlay::Action::Replay => {}
             overlay::Action::RaceRetry if self.tag.as_ref().is_some_and(|t| t.local) => {
@@ -5445,6 +5465,15 @@ impl App {
             }
             self.wake();
             return;
+        }
+        // Free Ride hub keys (research/FREERIDE_HUB.md), unless bound.
+        if let Some(ready) = self.ready.as_mut()
+            && let (Some(net), Some(riding)) = (ready.net.as_mut(), ready.riding.as_ref())
+            && let Some(button) = hub::key_button(&format!("{code:?}"))
+            && !riding.bindings.uses_key(&format!("{code:?}"))
+            && !net.hub.idle()
+        {
+            net.hub_press(button);
         }
         let now = (Instant::now() - self.started).as_secs_f64();
         let names: HashSet<String> = self.keys.iter().map(|k| format!("{k:?}")).collect();
@@ -9474,6 +9503,7 @@ fn capture(
                     objective: None,
                     training: None,
                     game: None,
+                    hub: None,
                     compass: None,
                     others: Vec::new(),
                     split_layout: None,
@@ -10646,6 +10676,12 @@ pub fn start() {
     }
     if param("batches").as_deref() == Some("0") {
         multiplayer::BATCHES.store(false, std::sync::atomic::Ordering::Relaxed);
+    }
+    if let Some(value) = param("hubTest") {
+        hub::TEST.store(
+            hub::parse_test(&value),
+            std::sync::atomic::Ordering::Relaxed,
+        );
     }
     if let Some(ms) = param("joinDelayMs").and_then(|v| v.parse::<u32>().ok()) {
         multiplayer::JOIN_DELAY_MS.store(ms.min(10_000), std::sync::atomic::Ordering::Relaxed);

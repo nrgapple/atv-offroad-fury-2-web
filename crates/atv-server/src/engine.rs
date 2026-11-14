@@ -158,6 +158,8 @@ struct Conn {
     cpu_sounds: bool,
     /// Decodes frames.
     frames: bool,
+    /// Takes Free Ride hub packets (shared rooms only).
+    hub: bool,
     last_seen_ms: u64,
     window_ms: u64,
     messages: u16,
@@ -231,6 +233,18 @@ pub struct Room {
     /// (`FURY_UNCOUNTED_IPS`): they play normally but stay out of the
     /// public rider counts.
     uncounted: Vec<u8>,
+    /// Shared rooms' challenges, events and rotation (engine/hub.rs).
+    hub: Option<hub::Hub>,
+}
+
+/// A shared room's hub, seeded from its code and opening time.
+fn new_hub(code: &RoomCode, public: bool, now: u64) -> Option<hub::Hub> {
+    public.then(|| {
+        let seed = code
+            .iter()
+            .fold(now, |s, &b| s.rotate_left(8) ^ u64::from(b));
+        hub::Hub::new(seed, now)
+    })
 }
 
 impl Room {
@@ -256,6 +270,7 @@ impl Room {
             conns: Vec::new(),
             counters: Counters::default(),
             uncounted: Vec::new(),
+            hub: new_hub(&code, public, now),
         }
     }
 
@@ -465,6 +480,7 @@ impl Room {
             signals: false,
             cpu_sounds: false,
             frames: false,
+            hub: false,
             last_seen_ms: now,
             window_ms: now,
             messages: 0,
@@ -692,6 +708,7 @@ impl Room {
                     conn.signals = true;
                     conn.cpu_sounds = flags & signal::CPU_SOUNDS != 0;
                     conn.frames = flags & signal::FRAMES != 0;
+                    conn.hub = self.public && flags & signal::HUB != 0;
                 }
                 // Session descriptions and link reports: no links here.
             }
@@ -825,6 +842,25 @@ impl Room {
                     }
                 }
             }
+            // The Free Ride hub (engine/hub.rs); ignored elsewhere.
+            Packet::Hub(message) if joined => {
+                let peer = self.conns[i].peer;
+                if self.conns[i].hub {
+                    let riders = self.hub_riders();
+                    if let Some(hub) = &mut self.hub {
+                        hub.message(peer, *message, &riders, now, out);
+                    }
+                }
+            }
+            Packet::Challenge(message) if joined => {
+                let peer = self.conns[i].peer;
+                if self.conns[i].hub {
+                    let riders = self.hub_riders();
+                    if let Some(hub) = &mut self.hub {
+                        hub.challenge(peer, message, &riders, now, out);
+                    }
+                }
+            }
             Packet::Leave { .. } => self.close(i, 1000, "Left room", now, out),
             // A former host's map command can race a handoff; resynchronize it.
             Packet::SetLobby { .. } if joined => self.send(id, &Packet::Lobby(self.lobby()), out),
@@ -922,6 +958,7 @@ impl Room {
         if !self.started || self.closed {
             return;
         }
+        self.step_hub(now, out);
         let map = self.map;
         let senders: Vec<(u8, Pose)> = self
             .conns
@@ -965,6 +1002,52 @@ impl Room {
                 out.push(Out::Pose(conn.id, frame));
             }
         }
+    }
+
+    /// Joined riders as the hub sees them.
+    fn hub_riders(&self) -> Vec<hub::Rider> {
+        self.conns
+            .iter()
+            .filter(|c| c.player.is_some())
+            .map(|c| {
+                let pose = c.current_pose().filter(|_| c.ready_map == self.map);
+                hub::Rider {
+                    peer: c.peer,
+                    conn: c.id,
+                    hub: c.hub,
+                    position: pose.map(|p| p.position),
+                    moving: pose.is_some_and(|p| p.moving),
+                }
+            })
+            .collect()
+    }
+
+    /// The hub's step; a finished rotation vote moves the room, older
+    /// builds with it (they follow the lobby's map like a host's change).
+    fn step_hub(&mut self, now: u64, out: &mut Vec<Out>) {
+        if self.hub.is_none() {
+            return;
+        }
+        let riders = self.hub_riders();
+        let map = self.map;
+        let moved = self
+            .hub
+            .as_mut()
+            .map(|hub| hub.step(now, map, &riders, out))
+            .unwrap_or_default();
+        if let Some(map) = moved
+            .map
+            .filter(|&m| m != self.map && atv_net::valid_map(m))
+        {
+            self.map = map;
+            self.epoch = self.epoch.wrapping_add(1);
+            self.broadcast_lobby(out);
+        }
+    }
+
+    /// The room's map (shared rooms move with the hub's rotation).
+    pub fn map(&self) -> u16 {
+        self.map
     }
 
     /// Once a second: idle sockets, expired holds, room expiry. Returns why
@@ -1092,6 +1175,7 @@ impl Room {
             closed: false,
             conns: Vec::new(),
             counters: Counters::default(),
+            hub: new_hub(&code, saved.public, now),
             uncounted: saved.uncounted,
         })
     }
@@ -1136,6 +1220,8 @@ fn batch_poses(
     }
     (accepted, newest)
 }
+
+pub mod hub;
 
 #[cfg(test)]
 mod tests;

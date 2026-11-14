@@ -33,6 +33,8 @@ pub fn encode(packet: &Packet) -> Result<Vec<u8>> {
         Packet::Bundle { .. } => 19,
         Packet::Batch { .. } => 20,
         Packet::Frame { .. } => 21,
+        Packet::Hub(_) => 26,
+        Packet::Challenge(_) => 27,
     };
     w.0.extend_from_slice(MAGIC);
     w.byte(VERSION);
@@ -246,6 +248,8 @@ pub fn encode(packet: &Packet) -> Result<Vec<u8>> {
                 w.0.extend_from_slice(pose);
             }
         }
+        Packet::Hub(hub) => hub.write(&mut w.0)?,
+        Packet::Challenge(challenge) => challenge.write(&mut w.0)?,
         Packet::Ping { nonce } => w.u32(*nonce),
         Packet::Pong { nonce, server_ms } => {
             w.u32(*nonce);
@@ -539,6 +543,8 @@ pub fn decode(bytes: &[u8]) -> Result<Packet> {
             }
             Packet::Frame { poses }
         }
+        26 => Packet::Hub(Box::new(crate::Hub::read(r.take(bytes.len() - r.offset)?)?)),
+        27 => Packet::Challenge(crate::Challenge::read(r.take(bytes.len() - r.offset)?)?),
         8 => {
             let epoch = r.u32()?;
             let map = r.u16()?;
