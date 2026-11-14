@@ -82,6 +82,18 @@ class PrivateValidation(unittest.TestCase):
             self.assertEqual(hashlib.sha256(data).hexdigest(), row['sha256'])
             resource = Resource(data)
             self.assertEqual(len(resource.members), row['member_count'])
+            paths = {n for n,_,_ in resource.members}
+            for edge in row['dependency_audit']:
+                if edge['status'] == 'authored_repair':
+                    self.assertIn(edge['repair_target'], paths)
+                    self.assertFalse(edge['source_equivalent'])
+            for collection in row['physics_collections']:
+                if collection['status'] == 'active':
+                    for binding in collection['bindings']:
+                        for role in binding['roles'].values():
+                            if role['status'] == 'resolved':
+                                self.assertIn(role['path'], paths)
+
             self.assertTrue(any(n.lower().endswith('.ps2.trn') for n,_,_ in resource.members))
             self.assertFalse(any(n.lower().endswith(('.vuo','.irx','.elf','.iso')) for n,_,_ in resource.members))
             for i, (_,_,size) in enumerate(resource.members):
@@ -106,6 +118,42 @@ class ManifestTests(unittest.TestCase):
             self.assertEqual(len(result),2)
             self.assertGreater(result[1]['lba'],10)
             self.assertFalse((output/'manifest.json.tmp').exists())
+
+class AdapterTests(unittest.TestCase):
+    @unittest.skipUnless((Path(__file__).resolve().parents[1] / 'private/source/ATV Offroad Fury 2 (USA) (v2.00).iso').exists(), 'private source required')
+    def test_original_adapter_provenance_and_determinism(self):
+        import json, tempfile, hashlib
+        from package_mx_maps import package_adapter, ROOT, MX_BUILD
+        from package_content import Resource, SOURCE_SHA, config
+        with tempfile.TemporaryDirectory(dir=ROOT / 'private/reports') as temporary:
+            output=Path(temporary)
+            first=package_adapter(output)
+            second=package_adapter(output)
+            self.assertEqual(first,second)
+            from package_mx_maps import integrate_manifest
+            retained=[dict(path='/MX/BIKE50.RES',lba=1,bytes=4),dict(path='/MX/MAPS/FS01.RES',lba=3,bytes=4)]
+            (output/'manifest.json').write_text(json.dumps(dict(files=retained)))
+            integrate_manifest(output,[first])
+            integrated=json.loads((output/'manifest.json').read_text())['files']
+            self.assertEqual(integrated[:2],retained)
+            self.assertEqual(len(integrated),3)
+            self.assertEqual(integrated[-1]['source_builds'],first['source_builds'])
+
+            self.assertEqual(first['archive'],'/MX/ADAPTER.RES')
+            self.assertEqual(first['source_builds'],dict(atv2_handling=SOURCE_SHA,mx_venues=MX_BUILD))
+            resource=Resource((output/(first['sha256']+'.bin')).read_bytes())
+            members={n:resource.extract(i) for i,(n,_,_) in enumerate(resource.members)}
+            self.assertEqual(set(members), {'FollowCamPresets.pb','tracks/env01/env01.toy','tracks/env02/env02.toy','tracks/nat05/nat05.toy','mx-adapter.json'})
+            metadata=json.loads(members['mx-adapter.json'])
+            self.assertEqual(metadata['source_builds'],first['source_builds'])
+            for entry in metadata['members']:
+                self.assertEqual(entry['source_build_sha256'],SOURCE_SHA)
+                self.assertEqual(hashlib.sha256(members[entry['path']]).hexdigest(),entry['sha256'])
+            for material in metadata['materials'].values():
+                if 'zone' in material:
+                    zone=config(members[material['path']])['terrainzone'+str(material['zone'])]
+                    self.assertIn('surfacefriction',zone)
+                    self.assertIn('surfacetraction',zone)
 
 if __name__ == '__main__':
     unittest.main()

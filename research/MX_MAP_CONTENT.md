@@ -99,3 +99,49 @@ past retained files, verifies blob hashes, and atomically replaces manifest.json
 under the shared publication lock. Production hosted-content output is refused
 pending runtime acceptance. Bike regeneration uses the same lock and atomic
 replacement and preserves map records. No upload is performed by these tools.
+
+## Small ATV-on-MX runtime adapter
+
+```
+python3 tools/package_mx_maps.py --adapter-only --output private/reports/mx-map-staging
+```
+
+This creates `/MX/ADAPTER.RES`, **8,497 bytes**, five members, independently of
+and additional to the 56 venue archives. `adapter-package.json` is its private
+manifest-integration record; optional staging `--integrate-manifest` preserves
+all bike/map records. Production output remains refused. No upload occurs.
+
+Original members, extracted directly from the verified USA v2.00 ATV2 ISO:
+
+- `FollowCamPresets.pb` from `/TRACKS/TRACKSA/ENV02/E02_FR.RES`.
+- `tracks/env02/env02.toy` from the same archive: zones 1 dirt, 4 grass, 2 mud,
+  6 deep mud.
+- `tracks/nat05/nat05.toy` from `/TRACKS/TRACKSA/NAT05/N05_FR.RES`: zone 7 sand.
+- `tracks/env01/env01.toy` from `/TRACKS/TRACKSA/ENV01/E01_FR.RES`: zone 3 ice.
+
+Authored `mx-adapter.json` identifies original member paths and hashes, source
+archives, both source build IDs, zone selections, and the intentional ATV2
+camera policy. Its `source_builds.atv2_handling` identifies the checked ATV2
+build; `source_builds.mx_venues` identifies the independently checked MX build
+this adapter targets. The adapter contains no MX-origin payload and does not
+claim otherwise. Manifest integration retains both IDs and uses ATV2 as this
+archive's primary `source_build_sha256`. Neither executable is packaged.
+Pavement uses neutral constructor values. All other coefficients remain in the
+original TOYs for the parent's MapZoneFriction/parser path; none are copied into
+Rust constants. Load this small adapter once rather than fetching ATV2 maps.
+
+All 56 staged MX archives were checked for `.pb` members: none contains one.
+Using ATV2's follow-camera presets is an intentional handling baseline, not MX
+camera fidelity. The existing loader's `followcampresets.pb` suffix lookup can
+read the original camera member directly.
+
+The focused private test checks that each explicit authored texture repair
+points to an actual packaged original PST and every resolved active F/M role
+points to an actual packaged collider. Roles are reproducible from packaged
+TOY count gates and SCN model stems using the documented suffix rule; a new
+binding resource is unnecessary. Likewise, texture spelling repairs are three
+explicit authored rules (four venue bindings), not missing source payloads.
+`physics_collections` and `dependency_audit` remain diagnostic metadata in the
+private report. The runtime can recompute them without fetching that report.
+The adapter's small metadata member is solely its camera/material/provenance
+index, not a replacement for source TOY/SCN data.

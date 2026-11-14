@@ -95,6 +95,70 @@ def apply_binding_semantics(members, audit, resolve):
     return collections
 
 
+ADAPTER_SOURCES = (
+    ('/TRACKS/TRACKSA/ENV02/E02_FR.RES', ('FollowCamPresets.pb', 'tracks/env02/env02.toy')),
+    ('/TRACKS/TRACKSA/NAT05/N05_FR.RES', ('tracks/nat05/nat05.toy',)),
+    ('/TRACKS/TRACKSA/ENV01/E01_FR.RES', ('tracks/env01/env01.toy',)),
+)
+
+
+def staging_output(output):
+    output = output.resolve()
+    if not output.is_relative_to((ROOT / 'private').resolve()):
+        raise ValueError('output must remain in ignored private storage')
+    if output == (ROOT / 'private/reports/hosted-content').resolve():
+        raise ValueError('use a staging output until runtime validation')
+    return output
+
+
+def package_adapter(output):
+    """Small original ATV2 camera/material inputs for authored ATV-on-MX handling."""
+    from package_content import SOURCE_SHA
+    output = staging_output(output)
+    entries = json.loads((ROOT / 'private/reports/disc-files.json').read_text())
+    by_path = {r['path'].lower(): r for r in entries if not r['directory']}
+    members = {}
+    provenance = []
+    with (ROOT / 'private/source/ATV Offroad Fury 2 (USA) (v2.00).iso').open('rb') as disc:
+        def read_atv(path):
+            row = by_path[path.lower()]
+            if not 0 < row['bytes'] <= 128*1024*1024:
+                raise ValueError('invalid ATV2 source size')
+            disc.seek(row['lba']*2048)
+            data = disc.read(row['bytes'])
+            if len(data) != row['bytes']:
+                raise ValueError('truncated ATV2 source')
+            return data
+        if hashlib.sha256(read_atv('/SCUS_972.11')).hexdigest() != SOURCE_SHA:
+            raise ValueError('unexpected ATV2 adapter source build')
+        for archive, required in ADAPTER_SOURCES:
+            resource = Resource(read_atv(archive))
+            for name in required:
+                matches = [i for i,(n,_,_) in enumerate(resource.members) if n == name]
+                if len(matches) != 1 or name in members:
+                    raise ValueError('adapter source member is missing or not unique: '+name)
+                data = resource.extract(matches[0])
+                members[name] = data
+                provenance.append(dict(path=name, source_archive=archive, source_build_sha256=SOURCE_SHA, sha256=hashlib.sha256(data).hexdigest()))
+    with (ROOT / 'private/source/MX vs. ATV Unleashed (USA).iso').open('rb') as disc:
+        disc.seek(277*2048)
+        if hashlib.sha256(disc.read(2965120)).hexdigest() != MX_BUILD:
+            raise ValueError('unexpected MX adapter destination build')
+    metadata = dict(version=1, purpose='authored ATV handling on MX venues',
+                    source_builds=dict(atv2_handling=SOURCE_SHA, mx_venues=MX_BUILD),
+                    camera=dict(path='FollowCamPresets.pb', policy='intentional ATV2 handling baseline; not MX camera parity'),
+                    materials=dict(dirt=dict(path='tracks/env02/env02.toy', zone=1), grass=dict(path='tracks/env02/env02.toy', zone=4), mud=dict(path='tracks/env02/env02.toy', zone=2), deepmud=dict(path='tracks/env02/env02.toy', zone=6), sand=dict(path='tracks/nat05/nat05.toy', zone=7), ice=dict(path='tracks/env01/env01.toy', zone=3), pavement=dict(policy='neutral constructor values')),
+                    members=provenance)
+    members['mx-adapter.json'] = (json.dumps(metadata, sort_keys=True, indent=2)+'\n').encode()
+    packed = pack_resource(sorted(members.items()))
+    digest = hashlib.sha256(packed).hexdigest()
+    output.mkdir(parents=True, exist_ok=True)
+    (output / (digest+'.bin')).write_bytes(packed)
+    record = dict(archive='/MX/ADAPTER.RES', sha256=digest, bytes=len(packed), member_count=len(members), source_build_sha256=SOURCE_SHA, source_builds=metadata['source_builds'], members=provenance)
+    (output / 'adapter-package.json').write_text(json.dumps(record,indent=2)+'\n')
+    return record
+
+
 def package(output):
     output = output.resolve()
     if not output.is_relative_to((ROOT / 'private').resolve()):
@@ -273,7 +337,7 @@ def integrate_manifest(output, report):
             blob = output / (row['sha256']+'.bin')
             if hashlib.sha256(blob.read_bytes()).hexdigest() != row['sha256']:
                 raise ValueError('package hash mismatch')
-            records.append(dict(path=row['archive'], lba=sector, bytes=row['bytes'], directory=False, lazy=True, repacked=True, source_build_sha256=MX_BUILD, member_count=row['member_count'], sha256=row['sha256'], url='/content/'+row['sha256']+'.bin'))
+            records.append(dict(path=row['archive'], lba=sector, bytes=row['bytes'], directory=False, lazy=True, repacked=True, source_build_sha256=row.get('source_build_sha256', MX_BUILD), source_builds=row.get('source_builds', {'mx_venues': MX_BUILD}), member_count=row['member_count'], sha256=row['sha256'], url='/content/'+row['sha256']+'.bin'))
             sector += (row['bytes']+2047)//2048+1
         manifest['files'] = records
         temporary = path.with_suffix('.json.tmp')
@@ -287,8 +351,9 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--output',type=Path,required=True)
     parser.add_argument('--integrate-manifest', action='store_true')
+    parser.add_argument('--adapter-only', action='store_true', help='build only the small ATV2 handling adapter, not 56 venues')
     args = parser.parse_args()
-    result = package(args.output)
+    result = [package_adapter(args.output)] if args.adapter_only else package(args.output)
     if args.integrate_manifest:
         integrate_manifest(args.output.resolve(), result)
-    print(json.dumps({'venues':len(result),'bytes':sum(r['bytes'] for r in result)}))
+    print(json.dumps({'archives':len(result),'bytes':sum(r['bytes'] for r in result)}))
