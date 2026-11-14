@@ -78,7 +78,7 @@ finished CPUs while waiting for the last rider.
 | sx12 | 5 | 0 | 0 | 230.32 | 230.32 |
 | env06st | 5 | 0 | 0 | 87.39 | 87.39 |
 
-Sx03's last rider takes 19.87 seconds longer despite two fewer wrecks; this
+Sx03's last rider takes 19.88 seconds longer despite two fewer wrecks; this
 is not an across-the-board race-time improvement. Sx15 and sx05 finish
 103.11 and 40.61 seconds sooner. The three control courses have identical
 recorded riders, lap marks, times, incident logs, roster, recovery counters,
@@ -100,7 +100,8 @@ that exercise progress credit and finish/Enduro gate bounds; `make precheck`;
 `make web`; and `tools/test_engine_cpu_recovery.mjs`, registered in the content
 group. The browser test runs one SX15 lap with four Expert CPUs and an idle
 player on `/play.html`, requiring actual CPU finishes. These are host-native
-and host-Chromium checks, not physical-phone measurements.
+and host-Chromium checks, not physical-phone measurements. All focused gates
+pass on the final policy, including the rebuilt Wasm and SX15 browser test.
 
 Limitations: authored thresholds and placement; substantial remaining wrecks;
 no fresh PS2 execution comparison; one full-length seed; original corner,
