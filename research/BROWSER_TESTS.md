@@ -181,3 +181,8 @@ This leaves `web/dist` untouched and needs no local Rust compiler slot. Re-fetch
 after source changes. Existing `--url` takes precedence over `--root`; multiplayer
 still needs its documented game-server setup. These are host checks, not remotely
 reachable previews or physical-device measurements.
+
+Packaged builds enable service workers. Tests that simulate network faults with
+`page.route` must use `serviceWorkers: 'block'` in those browser contexts so
+worker fetches cannot bypass the interception (as in `test_engine_boot.mjs`).
+Keep service workers enabled in tests specifically covering offline/update behavior.
