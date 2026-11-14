@@ -132,9 +132,9 @@ pub fn unwrap_rider(wrapped: &str, key: &str) -> Option<String> {
     let body = wrapped.strip_prefix("r1:").filter(|b| b.len() == 40)?;
     let pad = digest(&format!("fury-rider-wrap:{key}"));
     let mut secret = String::with_capacity(32);
-    for i in 0..16 {
+    for (i, pad) in pad.iter().take(16).enumerate() {
         let byte = u8::from_str_radix(body.get(i * 2..i * 2 + 2)?, 16).ok()?;
-        secret.push_str(&format!("{:02x}", byte ^ pad[i]));
+        secret.push_str(&format!("{:02x}", byte ^ pad));
     }
     let check = digest(&format!("fury-rider-check:{key}:{secret}"));
     (body[32..] == hex(&check[..4])).then_some(secret)

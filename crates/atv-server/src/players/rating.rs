@@ -46,6 +46,9 @@ pub fn rate(ratings: &mut [Rating], ranks: &[u32]) {
         .map(|r| r.sigma * r.sigma + BETA * BETA)
         .sum::<f64>()
         .sqrt();
+    // Server-only and never part of a simulation, so the platform's exp is
+    // fine here (the determinism rule is for atv_core::math users).
+    #[allow(clippy::disallowed_methods)]
     let strength: Vec<f64> = ratings.iter().map(|r| (r.mu / c).exp()).collect();
     // C_q: the strengths of everyone placed at or behind q.
     let behind: Vec<f64> = (0..n)
@@ -94,8 +97,8 @@ mod tests {
         // openskill.js / openskill.py PlackettLuce defaults for a 1v1.
         let mut r = [Rating::default(); 2];
         rate(&mut r, &[1, 2]);
-        assert!(close(r[0].mu, 27.635_231_383_473_217), "{:?}", r[0]);
-        assert!(close(r[1].mu, 22.364_768_616_526_783), "{:?}", r[1]);
+        assert!(close(r[0].mu, 27.635_231_383_473), "{:?}", r[0]);
+        assert!(close(r[1].mu, 22.364_768_616_527), "{:?}", r[1]);
         assert!(close(r[0].sigma, 8.065_506_316_323_548), "{:?}", r[0]);
         assert!(close(r[1].sigma, r[0].sigma));
     }

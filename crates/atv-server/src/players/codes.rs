@@ -188,8 +188,8 @@ mod tests {
             let code = friend_code(&mut rng);
             assert_eq!(code.len(), 8);
             assert!(code.bytes().all(|b| FRIEND_ALPHABET.contains(&b)));
-            for bad in [b'0', b'1', b'O', b'I', b'L', b'U', b'A', b'E'] {
-                assert!(!code.as_bytes().contains(&bad));
+            for bad in b"01OILUAE" {
+                assert!(!code.as_bytes().contains(bad));
             }
             assert_eq!(parse_code(&format_code(&code)).as_deref(), Some(&*code));
         }

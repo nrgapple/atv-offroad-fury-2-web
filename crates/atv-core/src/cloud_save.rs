@@ -814,8 +814,10 @@ mod tests {
             Some("aa")
         );
         // Progress alone decides whether a save is worth a key.
-        let mut empty = Save::default();
-        empty.rider = Some("aa".into());
+        let empty = Save {
+            rider: Some("aa".into()),
+            ..Save::default()
+        };
         assert_eq!(empty.has_progress(), Save::default().has_progress());
     }
 

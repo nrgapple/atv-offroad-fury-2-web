@@ -187,11 +187,7 @@ fn tier_name(tier: &str) -> String {
 
 /// A ten-step bar for `part` of `whole`.
 pub fn bar(part: u64, whole: u64) -> String {
-    let filled = if whole == 0 {
-        0
-    } else {
-        (part.min(whole) * 10 / whole) as usize
-    };
+    let filled = (part.min(whole) * 10).checked_div(whole).unwrap_or(0) as usize;
     format!("{}{}", "▰".repeat(filled), "▱".repeat(10 - filled))
 }
 
@@ -680,19 +676,15 @@ impl Frontend {
             "riderunblock" => act("unblock", rider(&self.online_ui)),
             "rideradd" => act("add", rider(&self.online_ui)),
             _ => {
-                let (from, id) = if let Some(id) = action.strip_prefix("friend:") {
-                    (From::Friend, id)
-                } else if let Some(id) = action.strip_prefix("request:") {
-                    (From::Request, id)
-                } else if let Some(id) = action.strip_prefix("sent:") {
-                    (From::Sent, id)
-                } else if let Some(id) = action.strip_prefix("recent:") {
-                    (From::Recent, id)
-                } else if let Some(id) = action.strip_prefix("blocked:") {
-                    (From::Blocked, id)
-                } else {
-                    return None;
-                };
+                let (from, id) = [
+                    ("friend:", From::Friend),
+                    ("request:", From::Request),
+                    ("sent:", From::Sent),
+                    ("recent:", From::Recent),
+                    ("blocked:", From::Blocked),
+                ]
+                .into_iter()
+                .find_map(|(prefix, from)| action.strip_prefix(prefix).map(|id| (from, id)))?;
                 self.online_ui.rider = Some((id.to_string(), from));
                 self.notice = None;
                 self.show("friend", view);
