@@ -4,6 +4,12 @@
 //! Attack ghost) and the ride's camera are copied into storage allocated
 //! once, and playback blends neighbouring samples. Nothing feeds back into
 //! the simulation, so a replay cannot change the ride it shows.
+//!
+//! A race keeps the whole of it instead (full-race replay, a port
+//! enhancement): the samples are kept from the first drawn frame, and when
+//! the bounded storage fills every other one is dropped and sampling
+//! halves, so any race length fits in the same memory. Recording stops a
+//! few seconds after race over.
 use atv_core::math::Det;
 use atv_game::ride::Pose;
 use atv_render::Camera;
@@ -14,6 +20,12 @@ pub const SAMPLE_STEPS: u64 = 2;
 pub const CAPACITY: usize = 30 * 60 / SAMPLE_STEPS as usize;
 /// Riders a sample keeps (the player and up to seven others).
 pub const MAX_RIDERS: usize = 8;
+/// Samples a whole race may hold before thinning: ten minutes at 15 Hz.
+pub const WHOLE_CAPACITY: usize = 10 * 60 * 15;
+/// A whole race's sampling before any thinning (15 Hz).
+pub const WHOLE_STEPS: u64 = 4;
+/// A whole race keeps recording this long after race over (steps).
+pub const WHOLE_TAIL: u64 = 3 * 60;
 
 /// Which drawn rider a recorded pose is.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -151,6 +163,12 @@ pub struct Recorder {
     /// The latest sample is still taking riders (this frame's).
     open: bool,
     last_step: Option<u64>,
+    /// Whole-ride mode (a race): kept from the start, thinned when full.
+    whole: bool,
+    /// Steps between samples now (whole mode doubles it per thinning).
+    interval: u64,
+    /// Race over's step (whole mode stops `WHOLE_TAIL` after it).
+    over: Option<u64>,
 }
 
 impl Recorder {
@@ -160,6 +178,53 @@ impl Recorder {
         self.len = 0;
         self.open = false;
         self.last_step = None;
+        self.interval = 0;
+        self.over = None;
+    }
+
+    /// Whole-ride mode (a race) or the 30-second ring; a change starts a
+    /// new recording.
+    pub fn set_whole(&mut self, whole: bool) {
+        if whole != self.whole {
+            self.whole = whole;
+            self.clear();
+            self.samples = Vec::new();
+            self.slab = Vec::new();
+            self.stride = 0;
+        }
+    }
+
+    pub fn is_whole(&self) -> bool {
+        self.whole
+    }
+
+    /// Race over at `step` (whole mode records `WHOLE_TAIL` more).
+    pub fn race_over(&mut self, step: u64) {
+        self.over.get_or_insert(step);
+    }
+
+    fn capacity(&self) -> usize {
+        if self.whole { WHOLE_CAPACITY } else { CAPACITY }
+    }
+
+    /// Steps between samples now.
+    pub fn interval(&self) -> u64 {
+        match self.interval {
+            0 if self.whole => WHOLE_STEPS,
+            0 => SAMPLE_STEPS,
+            n => n,
+        }
+    }
+
+    /// Bytes the recording's storage holds (samples and matrices).
+    pub fn bytes(&self) -> usize {
+        self.samples.capacity() * std::mem::size_of::<Sample>()
+            + self.slab.capacity() * std::mem::size_of::<Affine>()
+    }
+
+    /// Matrices each sample may hold.
+    pub fn stride(&self) -> usize {
+        self.stride
     }
 
     pub fn len(&self) -> usize {
@@ -191,19 +256,26 @@ impl Recorder {
         if let Some(last) = self.last_step {
             if step < last {
                 self.clear();
-            } else if step < last + SAMPLE_STEPS {
+            } else if step < last + self.interval() {
                 return false;
             }
         }
-        if self.samples.is_empty() {
-            self.samples = vec![Sample::default(); CAPACITY];
+        if self.over.is_some_and(|over| step > over + WHOLE_TAIL) {
+            return false;
         }
-        let at = if self.len < CAPACITY {
+        let capacity = self.capacity();
+        if self.samples.is_empty() {
+            self.samples = vec![Sample::default(); capacity];
+        }
+        if self.whole && self.len == capacity {
+            self.thin();
+        }
+        let at = if self.len < capacity {
             self.len += 1;
             self.index(self.len - 1)
         } else {
             let at = self.head;
-            self.head = (self.head + 1) % CAPACITY;
+            self.head = (self.head + 1) % capacity;
             at
         };
         self.samples[at] = Sample {
@@ -258,9 +330,23 @@ impl Recorder {
         s.used += width as u32;
     }
 
+    /// Whole mode, full: keeps every other sample (the first among them)
+    /// and halves the sampling, in place.
+    fn thin(&mut self) {
+        let stride = self.stride;
+        let kept = self.len.div_ceil(2);
+        for i in 1..kept {
+            self.samples[i] = self.samples[2 * i];
+            self.slab
+                .copy_within(2 * i * stride..(2 * i + 1) * stride, i * stride);
+        }
+        self.len = kept;
+        self.interval = self.interval() * 2;
+    }
+
     /// Widens every sample to `stride` matrices, keeping what they hold.
     fn grow(&mut self, stride: usize) {
-        let mut slab = vec![[0.; 12]; CAPACITY * stride];
+        let mut slab = vec![[0.; 12]; self.capacity() * stride];
         for i in 0..self.len {
             let at = self.index(i);
             let used = self.samples[at].used as usize;
@@ -527,6 +613,61 @@ mod tests {
         assert_eq!(r.slab.as_ptr(), slab, "no reallocation once sized");
         let (first, last) = r.span().unwrap();
         assert_eq!(last - first, (CAPACITY as u64 - 1) * SAMPLE_STEPS);
+    }
+
+    #[test]
+    fn a_whole_race_keeps_its_start_and_thins_into_the_same_storage() {
+        let mut r = Recorder::default();
+        r.set_whole(true);
+        let mut step = 0;
+        while r.len() < WHOLE_CAPACITY {
+            record(&mut r, step, step as f32);
+            step += 1;
+        }
+        assert_eq!(
+            r.span(),
+            Some((0, (WHOLE_CAPACITY as u64 - 1) * WHOLE_STEPS))
+        );
+        let (slab, bytes) = (r.slab.as_ptr(), r.bytes());
+        // Past capacity: every other sample goes, sampling halves, the
+        // start stays and nothing is reallocated.
+        for _ in 0..WHOLE_CAPACITY as u64 * WHOLE_STEPS * 3 {
+            record(&mut r, step, step as f32);
+            step += 1;
+        }
+        assert_eq!(r.slab.as_ptr(), slab);
+        assert_eq!(r.bytes(), bytes);
+        assert!(r.interval() >= WHOLE_STEPS * 4);
+        let (first, last) = r.span().unwrap();
+        assert_eq!(first, 0);
+        assert!(step - 1 - last < r.interval());
+        let mut m = Moment::default();
+        let probe = (last / 2) as f64 + 1.;
+        r.sample(probe, &mut m);
+        assert!((m.player.quad_world[12] - probe as f32).abs() < 1e-2);
+        // Evenly spaced after thinning.
+        let steps: Vec<u64> = (0..r.len()).map(|i| r.get(i).step).collect();
+        assert!(steps.windows(2).all(|w| w[1] - w[0] <= r.interval()));
+    }
+
+    #[test]
+    fn a_whole_race_stops_a_little_after_race_over_and_a_restart_records_again() {
+        let mut r = Recorder::default();
+        r.set_whole(true);
+        for step in (0..400).step_by(4) {
+            record(&mut r, step, 0.);
+        }
+        r.race_over(400);
+        for step in (400..2000).step_by(4) {
+            r.race_over(step);
+            record(&mut r, step, 0.);
+        }
+        assert_eq!(r.span(), Some((0, 400 + WHOLE_TAIL)));
+        assert!(record(&mut r, 0, 0.), "a restart records again");
+        assert!(record(&mut r, 2000, 0.));
+        // Leaving the race for a free ride: the 30-second ring.
+        r.set_whole(false);
+        assert!(r.is_empty() && r.interval() == SAMPLE_STEPS);
     }
 
     #[test]

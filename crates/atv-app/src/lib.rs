@@ -3478,7 +3478,7 @@ impl App {
             state["replay"] = self
                 .replay
                 .as_ref()
-                .map(|r| r.state(riding.recorder.span()))
+                .map(|r| r.state(&riding.recorder))
                 .into();
             state["view"] = serde_json::json!({"eye": ready.camera.eye(),
                 "yaw": ready.camera.yaw, "pitch": ready.camera.pitch, "focal": ready.focal_length});
