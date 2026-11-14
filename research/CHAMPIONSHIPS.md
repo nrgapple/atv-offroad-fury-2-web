@@ -290,3 +290,37 @@ and rolls it through, so the real sphere test takes each hit); `tools/test_engin
 shortened clock (`objectiveTest=timeout`, five seconds), restarts it from Pause, completes Score Stunt Points
 (`objectiveTest=score` credits the top level) and finishes Amateur
 Freestyle for silver, its reward and the Pro Freestyle unlock.
+
+## Classic timed Freestyle (2026-11-14, #545)
+
+Evidence (USA v2.00, bounded private exports and extracted data; no PS2
+runtime trace): `0026a720`, `0026d010`, `0026d150` select Freestyle Prep's
+Classic/Objectives/Freeride events. Tracks.dat describes bit 4 as Classic;
+both stunt categories' mask 88 enables it. Its eight unsponsored venues are
+ENV01–ENV08 and its six sponsored venues FREE01–FREE06. The FR course TOYs
+supply their normal start/world; OB targets are unrelated to Classic, so the
+three venues without OB archives remain eligible. `00289d50` initializes
+120 seconds; `0026b7a0` copies selected minutes times 60 into the event limit.
+`002fd590` receives the final stunt score, records it through `00332c50` and
+`00325030` only at 120 seconds, and awards score/1000 plus accumulated combo
+points. `002fd350` and `002fd7c0` retain landed-chain and jump records.
+Classic shares the three Highest Objective Scores slots with objectives;
+it does not introduce a new Hall of Fame category. `002ec310` selects
+ClassicFreeStyleOver, whose extracted overlay says Race Results / Continue.
+
+Implementation strategy: reuse the Rust objective session, HUD, committed
+stunt scoring and Hall of Fame/name entry with a distinct timed Classic kind.
+The clock expires successfully without completion bits or seconds-left bonus.
+Single Player → Classic Freestyle is a port menu adaptation beside Freestyle
+Objectives (the original places the event selector in Freestyle Prep).
+The normal FR spawn is used; no OB archive loads. Time Limit offers 2–20
+minutes in two-minute steps, matching the existing prep reconstruction.
+Only two-minute totals enter the shared local score slots; all lengths retain
+stunt/jump records and Profile Points. No online objective-board submission.
+
+Uncertainty/limits: exact timer-expiry ordering against an airborne chain,
+original solo result table typography and unlimited-clock selection remain
+unverified. Split-screen Classic is not connected by this slice. The browser
+fixture supplies one landed chain at the session boundary and shortens the
+clock to five seconds; it verifies integration, not physical trick execution
+or phone performance. Original trick physics remain the shared engine's.

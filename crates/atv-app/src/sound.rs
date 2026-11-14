@@ -1107,6 +1107,8 @@ impl Sound {
                 "steps": steps, "started": self.output.started.get(),
                 "active": mixer.active, "musicActive": mixer.music_active,
                 "clock": mixer.seconds(), "voices": mixer.voices(),
+                "intOutCues": self.ride.race.stats.int_out_cues,
+                "speech": { "started": self.speech.started, "last": self.speech.last, "playing": self.speech.playing(&mixer) },
                 "intOut": mixer.snapshot().iter().filter(|v| v.0 == "intout").count(),
                 "engineCommands": self.ride.stats.engine_commands,
                 // Race CPUs: engine voices (part of the other riders'),
