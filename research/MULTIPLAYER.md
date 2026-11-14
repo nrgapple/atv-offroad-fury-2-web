@@ -1388,7 +1388,8 @@ already does:
   interpolates between received poses as before, about 50 ms later. At
   300 ms the delay is at its cap and each pose is extrapolated for about
   80 ms (the limit is 250 ms), as riders beyond 1,000 ft already were for
-  130 ms.
+  130 ms. (Builds since the #601 playback fix lift that cap for slow
+  senders: see "Slow senders and the game server" below.)
 - It calls a rider stale (no minimap dot, engine sound or contact) 2.5 s
   after a stationary pose and 15 s after a paused one, so stationary riders
   send every 2 s and paused ones every 10 s. The suggested 3 s and 15 s
@@ -1693,4 +1694,39 @@ the courier with batching riders in a browser (unit tests only), a relay
 deployed before or after the page (the claim flag is the only guard, and
 it is unit-tested, not exercised against an old relay), and how contact
 feels to a player.
+
+## Slow senders and the game server
+
+Through fury-server (research/GAME_SERVER.md) each pose arrives on the
+server's next 50 ms tick, and a Free Ride rider beyond 300 ft sends every
+300 ms (350 ms beyond 1,000 ft, where the server forwards every 500 ms, so
+those poses arrive about 700 ms apart). The 220 ms cap on the single-pose
+playback delay made every such gap an extrapolation, and the 400 ms cadence
+window ignored the 700 ms gaps altogether. `atv-net` `smoothing.rs` now:
+
+- caps the delay at the larger of 220 ms and the rider's measured interval
+  plus 120 ms (one server tick, twice a typical jitter and the margin), so
+  10 Hz riders keep their low delay and slow senders are interpolated
+  between real poses (about 395 ms for 300 ms poses in 50 ms frames, 441 ms
+  for 350 ms, 788 ms for 700 ms; unit test
+  `a_slow_sender_in_server_frames_is_interpolated_not_extrapolated`);
+- measures the interval over gaps up to 800 ms (resting heartbeats are 1 s
+  or more apart and still do not count);
+- treats riding and airborne as one presentation state, so a hop is
+  interpolated instead of the take-off pose being held until the next one
+  and then snapped (`a_hop_between_slow_poses_is_interpolated_not_held`);
+- inside a segment that may not be blended (a wreck, a reset, a new model)
+  moves the earlier pose on with its own velocity until the change, within
+  the extrapolation limit, instead of standing it still for the whole gap
+  (`a_wreck_between_slow_poses_moves_on_until_it_and_never_blends`). A
+  change of state is sent at once, so that motion is what the rider did.
+
+Measured with `test_engine_freeride_relay.mjs` on one host (headless
+Chromium, three or four pages in one browser), the watcher's view of the
+driver at 300-1,000 ft went from 195 ms frozen, 16.5 ft at worst and 1.9 ft
+rms (fury-server without thinning, #604 client) to 0 ms, 1.8-2.7 ft and
+0.4 ft rms (fury-server with its tiers), and from 296 ms frozen and 17.6 ft
+at worst to 27 ms and 3.0 ft (0.4 ft rms) on the local relay. The test's lag
+fit now leaves out the frames around a reset, as its error figures already
+did: a teleport drawn a few frames off pulled the fit by up to 70 ms.
 

@@ -131,7 +131,11 @@ brief hitch, not a lost room.
   in Free Ride it sends about every 300 ms there and plays poses back about
   240 ms late, so it extrapolates across every gap. That is a client fix
   (playback delay at least the rider's send interval plus a tick); 60-300 ft
-  and contact range pass (0.4-0.6 ft rms).
+  and contact range pass (0.4-0.6 ft rms). Clients since that fix size the
+  delay from each rider's measured interval (up to 800 ms gaps, so the
+  500 ms tier's 700 ms arrivals too) and pass the 300-1,000 ft checks at
+  about 0.4 ft rms with no freeze (research/MULTIPLAYER.md "Slow senders
+  and the game server").
 - `rooms`: one task per room, fed by a bounded channel; the registry is a
   mutex touched only to open, find, claim or end rooms. `outbox`: each
   connection's send queue holds 256 KiB / 512 packets; when full the oldest
