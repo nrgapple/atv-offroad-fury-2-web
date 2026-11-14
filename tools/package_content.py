@@ -603,6 +603,82 @@ def validate_motorcycle_resource(record, payload):
             raise ValueError('invalid motorcycle member path')
 
 
+MX_MAP_IDS = tuple(f'{prefix}{i:02}' for prefix,count in [('FS',8),('MC',10),('NAT',17),('SM',3),('SX',18)] for i in range(1,count+1))
+MX_ADAPTER_SHA = '95c5e9ec6f225ef8dc320d088b2406a32eda7114c572c4c8c29b210462fe1083'
+
+
+def mx_map_hashes():
+    rows = json.loads((ROOT / 'research/mx-map-catalog.json').read_text())
+    result = {r['archive']:r['sha256'] for r in rows}
+    if len(rows)!=56 or len(result)!=56 or any(not re.fullmatch(r'[a-f0-9]{64}', value) for value in result.values()) or set(result) != {f'/MX/MAPS/{stem}.RES' for stem in MX_MAP_IDS}:
+        raise ValueError('invalid authored MX package catalog')
+    return result
+
+
+def validate_mx_resource(record, payload):
+    """Separate source contracts for MX bikes, known venues and ATV2 adapter."""
+    path = record['path']
+    if re.fullmatch(r'/MX/BIKE(?:50|125|250|500)\.RES', path):
+        return validate_motorcycle_resource(record, payload)
+    adapter = path == '/MX/ADAPTER.RES'
+    maps = mx_map_hashes()
+    if not adapter and path not in maps:
+        raise ValueError('unapproved MX venue ID')
+    builds = {'atv2_handling':SOURCE_SHA,'mx_venues':MX_SOURCE_SHA} if adapter else {'mx_venues':MX_SOURCE_SHA}
+    if record.get('source_build_sha256') != (SOURCE_SHA if adapter else MX_SOURCE_SHA) or record.get('repacked') is not True:
+        raise ValueError('invalid MX source provenance')
+    if (adapter or 'source_builds' in record) and record.get('source_builds') != builds:
+        raise ValueError('invalid MX source builds')
+    archive = Resource(payload)
+    names = [n.lower() for n,_,_ in archive.members]
+    if not names or len(names) != len(set(names)) or record.get('member_count') != len(names):
+        raise ValueError('invalid MX member inventory')
+    if adapter:
+        required={'followcampresets.pb','tracks/env01/env01.toy','tracks/env02/env02.toy','tracks/nat05/nat05.toy','mx-adapter.json'}
+        if set(names) != required:
+            raise ValueError('unapproved adapter member')
+        metadata=json.loads(archive.named('mx-adapter.json'))
+        if metadata.get('version') != 1 or metadata.get('source_builds') != builds:
+            raise ValueError('invalid adapter member provenance')
+    else:
+        stem=path.split('/')[-1][:-4].lower()
+        required={f'env/{stem}/{stem}.ps2.trn',f'env/{stem}/{stem}.scn',f'env/{stem}/{stem}.toy',f'env/{stem}/{stem}_d.pst',f'env/{stem}/terrainplain.psm',f'env/{stem}/terrainlod.psm'}
+        if not required <= set(names):
+            raise ValueError('required MX runtime members absent')
+        suffixes={'col':{'col'},'geo':{'psg','psm','pst'},'eco':{'psg'},'tex':{'atm','psm','pst'},'part':{'emt','prt','psm','pst'},'skies':{'cub'},'env':{'atylist','aud','col','esb','mcf','mot','pco','psg','psm','pst','scn','toy','trn','vut'}}
+        for name in names:
+            parts=name.split('/')
+            if len(parts)<2 or any(p in ('','..','.','private','reports','work') or p.startswith('.') for p in parts) or not re.fullmatch(r'[a-z0-9_ &/.-]+',name):
+                raise ValueError('invalid MX runtime member path')
+            if parts[0] not in suffixes or name.rsplit('.',1)[-1] not in suffixes[parts[0]] or (parts[0]=='env' and (len(parts)<3 or parts[1]!=stem)):
+                raise ValueError('unapproved MX runtime member')
+            # VUT here is an original text animation binding, not VU shader code.
+            if name.endswith('.vut') and name != f'env/{stem}/anim/thqfinishgate.vut':
+                raise ValueError('unapproved MX animation binding')
+    # Catalog hashes bind each venue to its inspected original source package;
+    # neither extensions nor a caller's build label can authorize new bytes.
+    expected = MX_ADAPTER_SHA if adapter else maps[path]
+    if record.get('sha256',expected) != expected or record.get('bytes',len(payload)) != len(payload) or hashlib.sha256(payload).hexdigest() != expected:
+        raise ValueError('MX payload differs from authored source package')
+
+
+def preserve_mx_records(output, manifest):
+    """Merge validated MX extras into regenerated base content under caller lock."""
+    previous_path=output/'manifest.json'
+    if not previous_path.exists():
+        return manifest
+    validated_content(output)
+    previous=json.loads(previous_path.read_text())
+    retained=[r for r in previous['files'] if r['path'].startswith('/MX/')]
+    records=manifest['files']
+    sector=max(((r['lba']*2048+r['bytes']+2047)//2048 for r in records),default=0)+1
+    for original in retained:
+        row=dict(original,lba=sector)
+        records.append(row)
+        sector+=(row['bytes']+2047)//2048+1
+    return manifest
+
+
 STREAM_BITRATE = '160k'
 
 
@@ -639,9 +715,20 @@ def validated_content(directory):
     records = data.get('files', [])
     if not 1 <= len(records) <= 512:
         raise ValueError('invalid hosted content count')
+    paths=[r['path'] for r in records]
+    if len(paths)!=len(set(paths)):
+        raise ValueError('duplicate hosted resource path')
+    intervals=[]
+    for record in records:
+        if type(record.get('lba')) is not int or record['lba'] < 0 or type(record.get('bytes')) is not int or record['bytes'] <= 0 or record.get('directory') is not False:
+            raise ValueError('invalid hosted resource extent')
+        intervals.append((record['lba']*2048,record['lba']*2048+record['bytes']))
+    intervals.sort()
+    if any(a[1]>b[0] for a,b in zip(intervals,intervals[1:])):
+        raise ValueError('overlapping hosted resource extents')
     allowed = {manifest}
     for record in records:
-        if record['path'] not in STARTUP and record['path'] != '/AUDIO/AUDIO.RES' and not re.fullmatch(r'/MX/BIKE(?:50|125|250|500)\.RES', record['path']) and not re.fullmatch(r'/AUDIO/MUSIC/[A-Z0-9_]+\.VAG', record['path']):
+        if record['path'] not in STARTUP and record['path'] != '/AUDIO/AUDIO.RES' and record['path'] not in mx_map_hashes() and record['path'] != '/MX/ADAPTER.RES' and not re.fullmatch(r'/MX/BIKE(?:50|125|250|500)\.RES', record['path']) and not re.fullmatch(r'/AUDIO/MUSIC/[A-Z0-9_]+\.VAG', record['path']):
             raise ValueError('unapproved hosted resource path')
         chunks = record.get('chunks', [dict(record, offset=0)])
         end = 0
@@ -662,7 +749,7 @@ def validated_content(directory):
         if record['path'].startswith('/MX/'):
             if len(chunks) != 1:
                 raise ValueError('motorcycle runtime archive must be compact')
-            validate_motorcycle_resource(record, payload)
+            validate_mx_resource(record, payload)
         if end != record['bytes'] or whole.hexdigest() != record['sha256']:
             raise ValueError('hosted resource digest mismatch')
         stream = record.get('stream')
@@ -873,11 +960,17 @@ def main():
                 stream = {'url': f'/content/{digest}.m4a', 'bytes': len(encoded), 'sha256': digest, 'type': 'audio/mp4', 'seconds': seconds}
                 records.append({'path': entry['path'], 'lba': entry['lba'], 'bytes': len(data), 'sha256': hashlib.sha256(data).hexdigest(), 'directory': False, 'lazy': True, 'chunks': chunks, 'stream': stream})
         manifest = {'version': 1, 'build': 'USA v2.00', 'source_build_sha256': SOURCE_SHA, 'engine_sample_count': len(engine_names), 'train_sample_count': len(train_names), 'rider_body_sample_count': len(body_names), 'weather_sample_count': len(weather_names), 'rider_vocal_sample_count': len(vocal_names), 'chassis_sample_count': len(chassis_names), 'venue_sound_sample_count': len(venue_names), 'music_song_count': count, 'files': records}
+        manifest = preserve_mx_records(output, manifest)
         temporary = output / 'manifest.json.tmp'
-        temporary.write_text(json.dumps(manifest, indent=2) + '\n')
+        with temporary.open('w') as stream:
+            stream.write(json.dumps(manifest, indent=2) + '\n')
+            stream.flush()
+            os.fsync(stream.fileno())
         temporary.replace(output / 'manifest.json')
         print(json.dumps({'manifest': str(output / 'manifest.json'), 'records': len(records), 'startup_bytes': sum(r['bytes'] for r in records if not r['lazy']), 'music_bytes': sum(r['bytes'] for r in records if r['path'].endswith('.VAG')), 'music_stream_bytes': sum(r['stream']['bytes'] for r in records if 'stream' in r), 'audio_archive_bytes': len(packed), 'blobs': len(list(output.glob('*.bin')))}))
 
 
 if __name__ == '__main__':
-    main()
+    from release_checkpoint import publication_lock
+    with publication_lock(ROOT):
+        main()

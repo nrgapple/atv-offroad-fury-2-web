@@ -12,6 +12,8 @@ pub mod engine;
 pub mod http;
 pub mod interest;
 pub mod outbox;
+pub mod players;
+pub mod reports;
 pub mod rooms;
 pub mod stats;
 
@@ -42,7 +44,10 @@ pub struct Shared {
     pub metrics: stats::Metrics,
     pub usage: Mutex<stats::Usage>,
     pub registry: rooms::Registry,
+    /// Rider identity, friends, stats and the league (research/ONLINE_IDENTITY.md).
+    pub players: players::Players,
     pub admission: Mutex<admission::Admission>,
+    pub reports: Mutex<reports::Reports>,
     pub next_conn: AtomicU64,
     pub shutting_down: AtomicBool,
 }
@@ -55,7 +60,9 @@ impl Shared {
             metrics: stats::Metrics::default(),
             usage: Mutex::default(),
             registry: rooms::Registry::default(),
+            players: players::Players::default(),
             admission: Mutex::default(),
+            reports: Mutex::default(),
             next_conn: AtomicU64::new(1),
             shutting_down: AtomicBool::new(false),
         })
@@ -66,6 +73,9 @@ const ROOMS_FILE: &str = "rooms.json";
 const USAGE_FILE: &str = "usage.json";
 /// Daily usage is saved this often as well as at shutdown.
 const USAGE_SAVE: Duration = Duration::from_secs(300);
+/// New match records are read this often; changed rider state is saved
+/// every fourth pass.
+const PLAYERS_PASS: Duration = Duration::from_secs(15);
 /// Shutdown waits at most this long for rooms to save and sockets to close
 /// (systemd's default stop timeout is far longer; the design asks for 10 s).
 const SHUTDOWN_WAIT: Duration = Duration::from_secs(6);
@@ -78,7 +88,7 @@ struct SavedRooms {
     rooms: Vec<SavedRoom>,
 }
 
-fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+pub(crate) fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     let temporary = path.with_extension("tmp");
     std::fs::write(&temporary, bytes)?;
     std::fs::rename(&temporary, path)
@@ -95,6 +105,7 @@ pub fn restore(shared: &Arc<Shared>) -> usize {
             Err(e) => tracing::warn!(event = "usage_unreadable", error = %e),
         }
     }
+    restore_players(shared);
     let path = dir.join(ROOMS_FILE);
     let Ok(bytes) = std::fs::read(&path) else {
         return 0;
@@ -123,6 +134,34 @@ pub fn restore(shared: &Arc<Shared>) -> usize {
     }
     tracing::info!(event = "rooms_restored", rooms = restored);
     restored
+}
+
+/// The players' signing key and state file. A missing or unreadable file
+/// starts empty (and is kept aside, never overwritten blindly).
+fn restore_players(shared: &Shared) {
+    let dir = &shared.config.state_dir;
+    if let Err(e) = shared.players.load_key(dir) {
+        tracing::error!(event = "players_key_failed", error = %e);
+    }
+    let path = dir.join(players::PLAYERS_FILE);
+    let Ok(bytes) = std::fs::read(&path) else {
+        return;
+    };
+    match shared.players.load(&bytes, now_ms()) {
+        Ok(riders) => tracing::info!(event = "players_restored", riders),
+        Err(e) => {
+            tracing::error!(event = "players_unreadable", error = %e);
+            let _ = std::fs::rename(&path, path.with_extension("unreadable"));
+        }
+    }
+}
+
+fn save_players(shared: &Shared) {
+    if let Some(bytes) = shared.players.snapshot(now_ms())
+        && let Err(e) = write_atomic(&shared.config.state_dir.join(players::PLAYERS_FILE), &bytes)
+    {
+        tracing::warn!(event = "players_save_failed", error = %e);
+    }
 }
 
 fn save_usage(shared: &Shared) {
@@ -165,6 +204,7 @@ pub async fn shut_down(shared: &Arc<Shared>) -> usize {
         Err(e) => tracing::error!(event = "rooms_save_failed", error = %e),
     }
     save_usage(shared);
+    save_players(shared);
     while shared.metrics.connections.load(Ordering::Relaxed) > 0 && Instant::now() < deadline {
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
@@ -189,6 +229,30 @@ pub async fn serve(
             loop {
                 every.tick().await;
                 save_usage(&shared);
+            }
+        })
+    };
+    let riders = {
+        let shared = shared.clone();
+        tokio::spawn(async move {
+            let mut every = tokio::time::interval(PLAYERS_PASS);
+            let mut pass = 0u32;
+            loop {
+                every.tick().await;
+                pass += 1;
+                let save = pass.is_multiple_of(4);
+                let shared = shared.clone();
+                let _ = tokio::task::spawn_blocking(move || {
+                    let matches = shared.config.state_dir.join(players::MATCHES_FILE);
+                    let counted = shared.players.tail(&matches);
+                    if counted > 0 {
+                        tracing::info!(event = "matches_counted", matches = counted);
+                    }
+                    if save {
+                        save_players(&shared);
+                    }
+                })
+                .await;
             }
         })
     };
@@ -240,6 +304,7 @@ pub async fn serve(
     drop(listener);
     shut_down(&shared).await;
     saver.abort();
+    riders.abort();
     Ok(())
 }
 

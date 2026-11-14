@@ -16,12 +16,14 @@ pub mod store;
 pub use store::{StoreView, store_page};
 pub mod games_page;
 pub mod navigation;
+pub mod online_page;
 pub mod passkey_page;
 pub mod profile_pages;
 pub mod seats_page;
 pub mod status_page;
 pub mod waypoint_page;
 pub mod world_page;
+pub use online_page::{OnlineCommand, OnlineView};
 pub use passkey_page::{CloudCommand, CloudView};
 use profile_pages::NO_PROFILE;
 
@@ -51,7 +53,7 @@ pub enum Event {
     /// Display → Fullscreen in Settings.
     Fullscreen,
     /// Arlington Free Ride: join a shared room at once (no setup) with the
-    /// remembered rider name and the garage ATV (motorcycles ride ATV01).
+    /// remembered rider name and the garage vehicle (ATV or motorcycle).
     FreeRide { quad: u16, rider: u16, name: String },
     /// Host Game → Select Track → Ride: create a room on this course with an
     /// optional custom code and start riding at once.
@@ -192,6 +194,8 @@ pub enum Event {
     },
     /// A Pass Key page's request: copy, share, look up, save files.
     Cloud(CloudCommand),
+    /// An Online page's request to the game server (friends, code, league).
+    Online(OnlineCommand),
 }
 
 /// Race setup offers 1-5 laps, 0, 3 or 4 CPU riders and the original
@@ -327,10 +331,6 @@ pub struct Lobby {
     /// `lobby_status`: blank while connecting.
     pub status: String,
 }
-
-/// frontend.js refuses rooms on a motorcycle with this message.
-pub const MOTORCYCLE_ROOM: &str =
-    "Choose an ATV for multiplayer. Motorcycles are available in Single Player.";
 
 /// A text field on the Host/Join forms (`ui_menu::TextInput`).
 #[derive(Clone, Debug, PartialEq)]
@@ -510,6 +510,7 @@ pub struct Frontend {
     /// Single Player → Freestyle Objectives: the course picked outside a
     /// championship (Freestyle Prep's Objectives event).
     pub objective_course: Option<String>,
+    pub classic_minutes: u32,
     /// The garage ("garage") or course picker ("tracks") is open over a
     /// held room ride; leaving it rides again.
     pub room: Option<&'static str>,
@@ -549,6 +550,10 @@ pub struct Frontend {
     status_anchor: f32,
     /// The Pass Key pages' working state.
     pub passkey: passkey_page::PassKeyUi,
+    /// The rider's online card, friends and league (the host fills it).
+    pub online: OnlineView,
+    /// The Online pages' working state.
+    pub online_ui: online_page::OnlineUi,
     /// The Waypoint Editor pages' working state.
     pub waypoint: waypoint_page::WaypointUi,
     /// Multiplayer → Split Screen: the next Freestyle or Race rides
@@ -691,6 +696,7 @@ impl Frontend {
             freestyle: None,
             objective_courses: Vec::new(),
             objective_course: None,
+            classic_minutes: 2,
             room: None,
             lobby: None,
             race_courses: Vec::new(),
@@ -709,6 +715,8 @@ impl Frontend {
             status_open: None,
             status_anchor: 0.,
             passkey: Default::default(),
+            online: Default::default(),
+            online_ui: Default::default(),
             waypoint: Default::default(),
             split: false,
             split_vertical: matches!(
@@ -807,16 +815,34 @@ impl Frontend {
         }
         if matches!(
             self.page.as_str(),
-            "championship" | "objectives" | "objective-courses"
+            "championship" | "objectives" | "objective-courses" | "classic-courses"
         ) {
             self.choices = if self.page == "objectives" {
                 self.objective_choices()
+            } else if self.page == "classic-courses" {
+                let mut rows = vec![(
+                    "classic-time".into(),
+                    format!("Time Limit: {}:00", self.classic_minutes),
+                )];
+                rows.extend(
+                    atv_core::freestyle::CLASSIC_COURSES
+                        .iter()
+                        .filter(|c| self.tracks.iter().any(|t| t.id == **c))
+                        .map(|c| (format!("classic:{c}"), self.course_name(c))),
+                );
+                rows.push(("back".into(), "Back".into()));
+                rows
             } else if self.page == "objective-courses" {
                 self.objective_course_choices()
             } else {
                 self.championship_choices()
             };
 
+            self.selection = self.selection.min(self.choices.len().saturating_sub(1));
+            return;
+        }
+        if Self::is_online_page(&self.page) {
+            self.choices = self.online_choices();
             self.selection = self.selection.min(self.choices.len().saturating_sub(1));
             return;
         }
@@ -943,8 +969,9 @@ impl Frontend {
         }
         // Single Player in the original's order (PAGE02: Race, Freestyle,
         // Championships) with the port's rows between Freestyle and the
-        // Garage: Freestyle Objectives (the original's Freestyle Prep
-        // Objectives event, `26a720`, `26d010`) after Freestyle, and Games
+        // Garage: Classic Freestyle and Freestyle Objectives (the original's
+        // Freestyle Prep Classic and Objectives events, `26a720`, `26d010`)
+        // after Freestyle, and Games
         // (the original's live under Multiplayer → Split Screen) after
         // Championships.
         // Lap Attack's ghost picker under Difficulty (a port addition).
@@ -963,6 +990,7 @@ impl Frontend {
             if self.weekly_offered() {
                 rows.push((world_page::WEEKLY_PAGE, "Weekly Challenge"));
             }
+            rows.push(("classic-courses", "Classic Freestyle"));
             if !self.objective_courses.is_empty() {
                 rows.push(("objective-courses", "Freestyle Objectives"));
             }
@@ -1299,6 +1327,7 @@ impl Frontend {
         }
         match action {
             "codeletter" => return self.step_passkey(direction, view),
+            "friendletter" => return self.step_friend_code(direction, view),
             _ if waypoint_page::waypoint_row(action) => {
                 self.step_waypoint(action, direction, settings)
             }
@@ -1892,6 +1921,12 @@ impl Frontend {
                 value: self.passkey.entry.clone(),
                 max_length: 40,
             }],
+            "friend-add" => vec![Field {
+                action: "friend-code",
+                label: "Friend Code:",
+                value: self.online_ui.entry.clone(),
+                max_length: 9,
+            }],
             "waypoint-course" => vec![Field {
                 action: "wpname",
                 label: "Course name:",
@@ -1933,6 +1968,10 @@ impl Frontend {
             }
             "passkey-code" => {
                 self.set_passkey_entry(text);
+                return;
+            }
+            "friend-code" => {
+                self.set_friend_entry(text);
                 return;
             }
             "wpname" => self.set_waypoint_name(text),
@@ -1997,6 +2036,10 @@ impl Frontend {
     /// Visible course order under the event filter.
     pub fn order(&self) -> Vec<usize> {
         (0..self.tracks.len())
+            .filter(|&i| {
+                !self.tracks[i].id.starts_with("mx_")
+                    || atv_game::launch::mx_courses::available(&self.tracks[i].id, false)
+            })
             .filter(|&i| self.filter == "all" || course_group(&self.tracks[i].id) == self.filter)
             .collect()
     }
@@ -2103,11 +2146,7 @@ impl Frontend {
     }
 
     fn step_quad(&mut self, direction: i32) {
-        let n = if self.online_garage() {
-            26
-        } else {
-            i32::from(VEHICLES)
-        };
+        let n = i32::from(VEHICLES);
         let online = self.online_garage();
         let mut quad = self.quad_id;
         // Single Player skips ATVs the profile has not unlocked.
@@ -2148,7 +2187,6 @@ impl Frontend {
             });
         }
         if self.hosting {
-            // Select Track refused a motorcycle, as frontend.js does.
             return Some(Event::Host {
                 environment: track.id,
                 code: Some(self.create_code.clone()).filter(|c| !c.is_empty()),
@@ -2261,7 +2299,7 @@ impl Frontend {
 
     fn room_ride(&self, environment: Option<String>) -> Event {
         Event::RoomRide {
-            quad: if self.quad_id >= 27 { 1 } else { self.quad_id },
+            quad: self.quad_id,
             rider: self.rider_id,
             environment,
         }
@@ -2272,6 +2310,9 @@ impl Frontend {
             return None;
         }
         if let Some(event) = self.passkey_action(action, view, settings) {
+            return event;
+        }
+        if let Some(event) = self.online_action(action, view) {
             return event;
         }
         if let Some(event) = self.waypoint_action(action, view, settings) {
@@ -2387,6 +2428,31 @@ impl Frontend {
             _ if action.starts_with("free:") => {
                 self.freestyle_event(&action["free:".len()..], view);
             }
+            "classic-courses" => {
+                self.freestyle = None;
+                self.split = false;
+                self.show(action, view);
+            }
+            "classic-time" => {
+                self.classic_minutes = self.classic_minutes % 20 + 2;
+                self.refresh(view);
+            }
+            _ if action.starts_with("classic:") => {
+                let course = &action[8..];
+                if !atv_core::freestyle::CLASSIC_COURSES.contains(&course)
+                    || !self.tracks.iter().any(|t| t.id == course)
+                {
+                    return None;
+                }
+                return Some(Event::Objective {
+                    environment: course.into(),
+                    quad: self.quad_id,
+                    rider: self.rider_id,
+                    series: usize::from(course.starts_with("free")),
+                    expert: false,
+                    objective: atv_core::freestyle::CLASSIC,
+                });
+            }
             "objective-courses" => {
                 self.freestyle = None;
                 self.show(action, view);
@@ -2419,16 +2485,19 @@ impl Frontend {
                 self.host_freestyle = !self.host_freestyle;
                 self.refresh(view);
             }
+            "dicename" => {
+                let roll = web_time::SystemTime::now()
+                    .duration_since(web_time::UNIX_EPOCH)
+                    .map_or(0, |d| d.as_nanos() as u64)
+                    ^ self.player_name.len() as u64;
+                let name = atv_game::multiplayer::dice_name(
+                    roll.wrapping_mul(0x9e37_79b9_7f4a_7c15) >> 20,
+                );
+                self.set_field("player-name", &name);
+                self.refresh(view);
+            }
             "share" if self.page == "lobby" => return Some(Event::CopyInvite),
             "leave" if self.page == "lobby" => return self.leave_lobby(view),
-            "hosttrack" if self.page == "create-lobby" && self.quad_id >= 27 => {
-                self.notice = Some(MOTORCYCLE_ROOM.into());
-                return None;
-            }
-            "join" if self.quad_id >= 27 => {
-                self.notice = Some(MOTORCYCLE_ROOM.into());
-                return None;
-            }
             "hosttrack" => {
                 // Host Game → Select Track; its Ride creates the room.
                 if !self.create_code.is_empty() && self.create_code.len() != 8 {
@@ -2487,12 +2556,13 @@ impl Frontend {
             "downloads" => return Some(Event::Downloads),
             "stats" => return Some(Event::Stats),
             "freeride" => {
-                // frontend.js: no setup; motorcycles fall back to ATV01. The
-                // current name rides (also one typed but not yet saved); the
-                // host numbers a blank or default "Rider" for the session.
+                // frontend.js: no setup. The current name rides (also one
+                // typed but not yet saved); the host numbers a blank or
+                // default "Rider" for the session. Motorcycles ride rooms
+                // too (the JavaScript game fell back to ATV01).
                 let name = self.room_name();
                 return Some(Event::FreeRide {
-                    quad: if self.quad_id >= 27 { 1 } else { self.quad_id },
+                    quad: self.quad_id,
                     rider: self.rider_id,
                     name,
                 });
@@ -3050,6 +3120,7 @@ impl Frontend {
         }
         self.focus = None;
         match id {
+            super::DICE => return self.run("dicename", view, settings),
             BACK | DONE if self.course_sheet => self.close_course_sheet(view),
             BACK | DONE if self.vehicle_sheet => self.close_vehicle_sheet(view),
             BACK | DONE => return self.back(view),
@@ -3150,11 +3221,7 @@ impl Frontend {
                     ));
                     return None;
                 }
-                if self
-                    .catalog
-                    .iter()
-                    .any(|v| v.id == quad && !(online && v.motorcycle))
-                {
+                if self.catalog.iter().any(|v| v.id == quad) {
                     self.quad_id = quad;
                     self.save(settings);
                     if self.vehicle_sheet {
@@ -3409,7 +3476,6 @@ impl Frontend {
                 let online = self.online_garage();
                 self.catalog
                     .iter()
-                    .filter(|v| !online || !v.motorcycle)
                     .map(|v| {
                         let mut v = v.clone();
                         if !online && !self.quad_owned(v.id) {
@@ -3700,22 +3766,27 @@ mod tests {
     }
 
     #[test]
-    fn rooms_refuse_motorcycles_and_online_garages_list_atvs() {
+    fn rooms_take_motorcycles_and_online_garages_list_them() {
         let view = view(1280., 720.);
         let mut settings = Settings::memory();
         settings.set(SELECTION_KEY, r#"{"quadId":29,"riderId":0}"#);
         let mut front = Frontend::new(tracks(), &settings, true);
         front.show("create-lobby", &view);
-        assert_eq!(front.run("hosttrack", &view, &mut settings), None);
-        assert_eq!(front.page, "create-lobby");
-        assert_eq!(front.notice.as_deref(), Some(MOTORCYCLE_ROOM));
-        front.notice = None;
+        front.run("hosttrack", &view, &mut settings);
+        assert_eq!(front.page, "tracks");
+        assert_eq!(front.notice, None);
         front.show("join-lobby", &view);
         front.set_field("room-code", "abcd1234");
-        assert_eq!(front.run("join", &view, &mut settings), None);
-        assert_eq!(front.notice.as_deref(), Some(MOTORCYCLE_ROOM));
-        // The garage opened from the Multiplayer menus lists ATVs only, and
-        // stepping wraps within ATVs 1-26.
+        assert!(matches!(
+            front.run("join", &view, &mut settings),
+            Some(Event::Join { quad: 29, .. })
+        ));
+        assert!(matches!(
+            front.run("freeride", &view, &mut settings),
+            Some(Event::FreeRide { quad: 29, .. })
+        ));
+        // The garage opened from the Multiplayer menus lists the motorcycles
+        // too, unlocked like its ATVs, and stepping wraps over all 46.
         let catalog = |front: &Frontend| {
             front
                 .screen(None, false, None, &|_| None, None, (None, None), 0.)
@@ -3725,13 +3796,15 @@ mod tests {
         front.run("garage", &view, &mut settings);
         assert_eq!(front.page, "garage");
         assert!(front.online_garage());
-        assert!(!catalog(&front).is_empty());
-        assert!(catalog(&front).iter().all(|v| !v.motorcycle));
+        assert!(catalog(&front).iter().any(|v| v.motorcycle));
         front.click(VEHICLE + 30, &view, &mut settings);
-        assert_eq!(front.quad_id, 29);
+        assert_eq!(front.quad_id, 30);
         front.click(VEHICLE + 3, &view, &mut settings);
         assert_eq!(front.quad_id, 3);
         front.quad_id = 26;
+        front.step_quad(1);
+        assert_eq!(front.quad_id, 27);
+        front.quad_id = 46;
         front.step_quad(1);
         assert_eq!(front.quad_id, 1);
         // Single Player's garage keeps the motorcycles.
@@ -3804,7 +3877,7 @@ mod tests {
     }
 
     #[test]
-    fn free_ride_needs_no_setup_and_rides_an_atv() {
+    fn free_ride_needs_no_setup_and_keeps_a_motorcycle() {
         let view = view(1280., 720.);
         let mut settings = Settings::memory();
         settings.set(
@@ -3825,7 +3898,7 @@ mod tests {
         assert_eq!(
             front.key("Enter", &view, &mut settings),
             Some(Event::FreeRide {
-                quad: 1,
+                quad: 29,
                 rider: 1,
                 name: "Ann".into()
             })
@@ -4232,6 +4305,37 @@ mod tests {
     }
 
     #[test]
+    fn classic_menu_starts_without_objective_archives() {
+        let view = view(1280., 720.);
+        let mut settings = Settings::memory();
+        let mut front = Frontend::new(tracks(), &settings, true);
+        front.show("single", &view);
+        front.selection = front
+            .choices()
+            .iter()
+            .position(|(a, _)| a == "classic-courses")
+            .unwrap();
+        front.key("Enter", &view, &mut settings);
+        assert_eq!(front.choices()[0].1, "Time Limit: 2:00");
+        front.key("Enter", &view, &mut settings);
+        assert_eq!(front.classic_minutes, 4);
+        front.selection = front
+            .choices()
+            .iter()
+            .position(|(a, _)| a == "classic:env01")
+            .unwrap();
+        assert!(matches!(
+            front.key("Enter", &view, &mut settings),
+            Some(Event::Objective {
+                objective: atv_core::freestyle::CLASSIC,
+                ..
+            })
+        ));
+        front.key("Escape", &view, &mut settings);
+        assert_eq!(front.page, "single");
+    }
+
+    #[test]
     fn split_objectives_ride_through_the_players_page() {
         let view = view(1280., 720.);
         let mut settings = Settings::memory();
@@ -4293,7 +4397,7 @@ mod tests {
             .iter()
             .position(|(a, _)| a == "objective-courses")
             .unwrap();
-        assert_eq!(front.choices()[at - 1].0, "tracks");
+        assert_eq!(front.choices()[at - 1].0, "classic-courses");
         front.selection = at;
         assert_eq!(front.key("Enter", &view, &mut settings), None);
         assert_eq!(front.page, "objective-courses");
@@ -4363,8 +4467,17 @@ mod tests {
             &view,
         );
         let choices: Vec<_> = front.choices().iter().map(|(a, _)| a.as_str()).collect();
-        assert_eq!(&choices[..4], ["race", "tracks", "championship", "garage"]);
-        front.selection = 2;
+        assert_eq!(
+            &choices[..5],
+            [
+                "race",
+                "tracks",
+                "classic-courses",
+                "championship",
+                "garage"
+            ]
+        );
+        front.selection = 3;
         front.key("Enter", &view, &mut settings);
         assert_eq!(front.page, "championship");
         assert_eq!(
@@ -5151,6 +5264,19 @@ mod tests {
             front.run("freeride", &view, &mut settings),
             Some(Event::FreeRide { ref name, .. }) if name == "Rider"
         ));
+    }
+
+    #[test]
+    fn the_name_dice_sets_a_clean_curated_name() {
+        let view = view(1280., 720.);
+        let mut settings = Settings::memory();
+        let mut front = Frontend::new(tracks(), &settings, true);
+        front.show("create-lobby", &view);
+        front.click(super::super::DICE, &view, &mut settings);
+        let name = front.player_name.clone();
+        assert!(name.len() >= 6 && name.len() <= 16, "{name}");
+        assert!(name.ends_with(|c: char| c.is_ascii_digit()), "{name}");
+        assert_eq!(front.fields()[0].value, name);
     }
 
     #[test]

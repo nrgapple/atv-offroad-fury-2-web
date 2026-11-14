@@ -41,6 +41,8 @@ pub enum Action {
     Viewer(atv_ui::hud::viewer::Button),
     /// The Waypoint Editor's GATE and UNDO.
     Gate(crate::waypoint_editor::Command),
+    /// A quick-chat pick (research/QUICK_CHAT.md): kind and id.
+    Chat(u8, u8),
 }
 
 /// Hit target of the minimap (tap toggles north-up / heading-up).
@@ -74,6 +76,8 @@ pub struct HudInput<'a> {
     /// `3Player`, `4Player`) and the mode's overlay set (1 Race, 2 Stunt,
     /// 6-9 games, 11 Enduro) whose positions place each player's HUD.
     pub split_layout: Option<(&'static str, u32)>,
+    /// A room's quick chat: bubbles, feed and the wheel's budget.
+    pub chat: Option<&'a atv_ui::hud::chat::View>,
 }
 
 /// Player 2, 3 or 4's HUD: its speed and stunt text, its race overlays
@@ -171,6 +175,10 @@ pub struct Overlay {
     /// Keyboard controls card: open, and its first-ride close time.
     help_open: bool,
     help_until: Option<f64>,
+    /// The quick-chat wheel (crate::quick_chat), and whether the last
+    /// frame showed chat.
+    pub chat: crate::quick_chat::Wheel,
+    chat_shown: bool,
     ride_started: bool,
     /// Laid-out toolbar and keyboard card, reused while their inputs are
     /// unchanged (the browser HUD's unchanged-state redraw avoidance).
@@ -317,6 +325,8 @@ impl Overlay {
             results: Results::default(),
             results_cache: None,
             help_open: false,
+            chat: Default::default(),
+            chat_shown: false,
             tags: 0,
             view_tags: Vec::new(),
             compass_icons: None,
@@ -735,13 +745,16 @@ impl Overlay {
                 self.minimap.settings.save(&mut self.settings);
                 None
             } else {
-                if (results::CONTINUE..=results::FAME_SELECT).contains(&p.button) {
+                if (results::CONTINUE..=results::REPLAY).contains(&p.button) {
                     self.results.focus_visible = false;
                     let command = self.results.act(p.button);
                     return Some(command.and_then(|c| self.command_action(c)));
                 }
                 if let Some(button) = atv_ui::hud::viewer::Button::from_id(p.button) {
                     return Some(Some(Action::Viewer(button)));
+                }
+                if let Some(pick) = self.chat.hit(p.button) {
+                    return Some(pick);
                 }
                 match toolbar::Button::from_id(p.button) {
                     Some(toolbar::Button::Pause) => Some(Action::Pause),
@@ -755,6 +768,10 @@ impl Overlay {
                     }
                     Some(toolbar::Button::Undo) => {
                         Some(Action::Gate(crate::waypoint_editor::Command::Undo))
+                    }
+                    Some(toolbar::Button::Chat) => {
+                        self.chat.toggle();
+                        None
                     }
                     None => None,
                 }
@@ -1122,10 +1139,16 @@ impl Overlay {
         let hud_at = self.list.items.len();
         let map_visible = self.minimap.visible() && !paused && race.is_none();
         let keys_visible = !touch_driving;
+        let chat = shown.and_then(|h| h.chat).filter(|c| c.available);
+        self.chat_shown = chat.is_some();
+        if chat.is_none() {
+            self.chat.open = false;
+        }
         // A large top-right map can meet the labelled toolbar: icon-only buttons.
         let labels: f32 = ["PAUSE", "CAMERA", "KEYS"]
             .iter()
             .take(if keys_visible { 3 } else { 2 })
+            .chain(chat.map(|_| &"CHAT"))
             .map(|label| {
                 let style = toolbar::label_style(atv_ui::Color::WHITE);
                 12. + 20.
@@ -1137,7 +1160,7 @@ impl Overlay {
                     + 12.
             })
             .sum();
-        let count = if keys_visible { 3. } else { 2. };
+        let count = if keys_visible { 3. } else { 2. } + if chat.is_some() { 1. } else { 0. };
         let bar_right = view.safe[3].max(14.) + labels + 8. * (count - 1.);
         let bar_top = view.safe[0].max(14.);
         let map = self.minimap.rect(&view);
@@ -1162,6 +1185,7 @@ impl Overlay {
             keys_visible,
             compact,
             editor: self.editor,
+            chat: chat.is_some(),
         };
         let full = |child: layout::El| {
             layout::El::new(taffy::Style {
@@ -1472,6 +1496,17 @@ impl Overlay {
             );
             self.tags += drawn;
             self.view_tags[index] = drawn;
+            if index == 0
+                && let Some(chat) = chat
+            {
+                atv_ui::hud::chat::paint_bubbles(
+                    &mut self.fonts,
+                    &mut list,
+                    &sub_of(frame),
+                    &chat.bubbles,
+                    &vp,
+                );
+            }
             self.list.items.extend(place(list, frame));
         }
         if map_visible {
@@ -1665,6 +1700,23 @@ impl Overlay {
         if self.results.shown && active {
             self.paint_results(race.map(|(frame, ..)| frame));
         }
+        if let Some(chat) = chat {
+            atv_ui::hud::chat::paint_feed(&mut self.fonts, &mut self.list, &view, &chat.feed);
+            self.chat.post = self.results.shown && self.lobby.is_some();
+            if self.chat.open {
+                atv_ui::hud::chat::paint_wheel(
+                    &mut self.fonts,
+                    &mut self.list,
+                    &mut self.hits,
+                    &view,
+                    chat,
+                    &self.chat.lines(),
+                    self.chat.emotes,
+                    self.chat.focus,
+                    self.hovered.filter(|_| view.hover),
+                );
+            }
+        }
         if let Some(t) = fade {
             self.list.rect(
                 Rect::new(0., 0., view.width, view.height),
@@ -1842,6 +1894,32 @@ impl Overlay {
         }
         let (taken, command) = self.results.key(code);
         (taken, command.and_then(|c| self.command_action(c)))
+    }
+
+    /// Quick-chat keys while riding in a chat room (crate::quick_chat).
+    pub fn chat_key(
+        &mut self,
+        code: &str,
+        shift: bool,
+        free: impl Fn(&str) -> bool,
+    ) -> Option<Action> {
+        if !self.chat_shown || self.menu.is_some() {
+            return None;
+        }
+        self.chat.key(code, shift, free)
+    }
+
+    /// The quick-chat wheel on a controller while riding in a chat room.
+    pub fn chat_pad(
+        &mut self,
+        pad: Option<&atv_game::ride::bindings::Pad>,
+        bound: impl Fn(u8) -> bool,
+    ) -> Option<Action> {
+        if !self.chat_shown || self.menu.is_some() {
+            return None;
+        }
+        self.chat
+            .pad(pad.map_or(&[][..], |p| &p.buttons[..]), bound)
     }
 
     /// Controller A/B/X and the D-pad while the race results are up.
@@ -2290,6 +2368,9 @@ impl Overlay {
             "hits": self.hits.iter().map(|(r, id)| serde_json::json!({
                 "id": id, "x": r.x, "y": r.y, "width": r.w, "height": r.h,
             })).collect::<Vec<_>>(),
+            "chatWheel": self.chat.open.then(|| serde_json::json!({
+                "emotes": self.chat.emotes, "post": self.chat.post, "focus": self.chat.focus,
+            })),
             "touchOwned": self.touch.input.pointer.is_some(),
             "kidTouch": self.touch.kid(),
             "kidGo": self.touch.kid_go(),
@@ -2319,18 +2400,6 @@ impl Overlay {
                 })),
                 "hits": self.menu_hits.iter().filter(|(_, id)| *id >= pause::ROW).map(|(r, id)| serde_json::json!({
                     "action": m.rows.choices.get((*id - pause::ROW) as usize),
-                    "x": r.x, "y": r.y, "width": r.w, "height": r.h,
-                })).collect::<Vec<_>>(),
-                // Options beside its rail: the rail's tabs on a category
-                // page, and the rows shown for the highlighted category.
-                "wide": m.wide(),
-                "previewPage": m.preview().map(|(page, _)| page),
-                "tabs": self.menu_hits.iter().filter(|(_, id)| (pause::TAB..pause::PANEL).contains(id)).map(|(r, id)| serde_json::json!({
-                    "action": m.categories().nth((*id - pause::TAB) as usize),
-                    "x": r.x, "y": r.y, "width": r.w, "height": r.h,
-                })).collect::<Vec<_>>(),
-                "preview": self.menu_hits.iter().filter(|(_, id)| (pause::PREVIEW..pause::TAB).contains(id)).map(|(r, id)| serde_json::json!({
-                    "action": m.preview().and_then(|(_, rows)| rows.choices.get((*id - pause::PREVIEW) as usize)),
                     "x": r.x, "y": r.y, "width": r.w, "height": r.h,
                 })).collect::<Vec<_>>(),
             })),

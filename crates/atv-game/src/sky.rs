@@ -30,6 +30,28 @@ pub(crate) fn tile_sources<'a>(bytes: &'a [u8], layout: &sky::Sky) -> Result<Vec
 }
 
 pub async fn load(bytes: &[u8], smooth: bool) -> Result<Sky> {
+    if bytes.get(..16) == Some(&[0, 0, 0, 0, 1, 0, 0, 0, 12, 0, 0, 0, 43, 0, 0, 0]) {
+        let source = atv_core::mx_sky::decode(bytes)?;
+        let mut tiles = Vec::with_capacity(source.tiles.len());
+        for tile in source.tiles {
+            tiles.push(Tile {
+                positions: tile.positions,
+                image: Image {
+                    width: 128,
+                    height: 128,
+                    rgba: tile.rgba()?,
+                },
+                // Source colors are already interpolated; IPUM deblocking does
+                // not apply to these authored geometry samples.
+                smooth: None,
+            });
+            crate::yield_frame().await;
+        }
+        return Ok(Sky {
+            origin: source.origin,
+            tiles,
+        });
+    }
     let layout = sky::layout(bytes)?;
     let sources = tile_sources(bytes, &layout)?;
     // The tiles (and their smoothing) decode in parallel off the page's

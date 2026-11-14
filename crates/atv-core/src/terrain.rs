@@ -196,6 +196,9 @@ pub fn decode_tr2(data: &[u8]) -> Result<Terrain> {
     if data.len() > 128 * 1024 * 1024 {
         return Err("TR2 exceeds 128 MiB limit".into());
     }
+    if data.starts_with(b"PLN\0") {
+        return Err("unsupported MX terrain PLN format: requires a validated PLN adapter".into());
+    }
     if slice(data, 0, 4)? != b"TR2\0" || u32le(data, 4)? != 6 {
         return Err("unsupported TR2 signature/version".into());
     }
@@ -941,5 +944,15 @@ mod tests {
         let last = record.mips[4].offset;
         data[last + 8] = 8;
         assert!(texture_record(&data, 0, data.len()).is_err());
+    }
+}
+
+#[cfg(test)]
+mod mx_format_tests {
+    #[test]
+    fn pln_is_not_interpreted_as_tr2() {
+        let error = super::decode_tr2(b"PLN\x0037ps2\x00UnCompressedPSXPal8\x00").unwrap_err();
+        assert!(error.contains("PLN"));
+        assert!(super::decode_tr2(b"PLN").is_err());
     }
 }

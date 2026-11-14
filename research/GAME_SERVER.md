@@ -111,7 +111,9 @@ brief hitch, not a lost room.
 - Poses: a `Delta` is applied to the sender's baseline as on the relay; the
   newest accepted pose is kept as encoded bytes (re-encoded only when the
   client stamped another slot). Builds without `FRAMES` get each pose at once
-  from those bytes, as from the relay; builds with it get frames.
+  from those bytes, as from the relay; builds with it get frames. Motorcycle
+  poses go only to builds whose HELLO said `MOTORCYCLES`
+  (research/MULTIPLAYER.md "Motorcycles").
 - `interest`: each 20 Hz tick, per recipient on the room's map, the other
   riders' newest poses that are due, assembled into `Frame`s from bytes
   (split at `MAX_FRAME` poses or `MAX_PACKET_BYTES`):
@@ -202,8 +204,10 @@ brief hitch, not a lost room.
 - Production: `deploy/` holds a cloud-init file, a hardened systemd unit
   (`Restart=always`, its own user, `CAP_NET_BIND_SERVICE` for 443), a
   provisioning script and a deploy script (upload, switch, health-check,
-  roll back). The server host rebuilds from the repository with one command; it
-  keeps nothing that needs a backup.
+  roll back). The server host rebuilds from the repository with one command.
+  Since online identity (research/ONLINE_IDENTITY.md) it keeps one thing
+  worth a backup: `FURY_STATE_DIR/players.json` (riders, friends, stats,
+  league); that note has the backup proposal.
 - CI builds and tests the server on every change to it; on main it deploys when
   the deploy secrets exist.
 - A Cloudflare cron (free) checks `/healthz` every five minutes and records it;

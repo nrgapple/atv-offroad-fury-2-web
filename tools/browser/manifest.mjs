@@ -26,6 +26,7 @@ export const GROUPS = ['content-free', 'content', 'multiplayer', 'manual', 'brok
 export const SELECTABLE = [...GROUPS, 'native'];
 
 export const TESTS = {
+  'test_engine_classic_freestyle.mjs': { group: 'content' },
   'test_app_identity.mjs': { group: 'content-free' },
   'test_engine_boot_stall.mjs': { group: 'content-free' },
   'test_engine_touch.mjs': { group: 'content' },
@@ -33,6 +34,7 @@ export const TESTS = {
   'test_engine_pause.mjs': { group: 'content' },
   'test_engine_photo.mjs': { group: 'content' },
   'test_engine_replay.mjs': { group: 'content' },
+  'test_engine_race_replay.mjs': { group: 'content' },
   'test_engine_alpha.mjs': { group: 'content' },
   'test_engine_alpha_muffle.mjs': { group: 'content' },
   'test_engine_alpha_landing.mjs': { group: 'content' },
@@ -98,6 +100,11 @@ export const TESTS = {
   'test_engine_garage_load.mjs': { exclusive: true, group: 'content' },
   'test_engine_context_loss.mjs': { group: 'content' },
   'test_engine_menu_music.mjs': { group: 'content' },
+  'test_engine_online_friends.mjs': {
+    group: 'multiplayer',
+    timeout: 600,
+    reason: 'needs a local game server at the same origin (rider registration, friends, presence and Join into a Free Ride room); run with --url'
+  },
   'test_engine_freeride_full.mjs': {
     group: 'manual',
     reason: 'load measurement: a full Free Ride room of synthetic riders on a local game server (never production)'
@@ -156,6 +163,10 @@ export const TESTS = {
     group: 'multiplayer',
     reason: 'needs a local game server at the same origin (Host Game, room WebSocket); run with --url'
   },
+  'test_engine_multiplayer_chat.mjs': {
+    group: 'multiplayer',
+    reason: 'needs a local game server at the same origin (quick chat relay and the report route); run with --url'
+  },
   'test_engine_multiplayer_context.mjs': {
     group: 'multiplayer',
     reason: 'needs a local game server at the same origin (Host Game, room WebSocket); run with --url'
@@ -175,6 +186,10 @@ export const TESTS = {
   'test_engine_multiplayer_pause.mjs': {
     group: 'multiplayer',
     reason: 'needs a local game server at the same origin (Host Game, room WebSocket); run with --url'
+  },
+  'test_engine_multiplayer_motorcycle.mjs': {
+    group: 'multiplayer',
+    reason: 'needs a local game server at the same origin (a Rust host on a motorcycle and an ATV guest); run with --url'
   },
   'test_engine_multiplayer_presence.mjs': {
     group: 'multiplayer',
@@ -239,9 +254,11 @@ export const TESTS = {
   'test_engine_freestyle_targets.mjs': { group: 'content', timeout: 900 },
   'test_engine_toy_actors.mjs': { group: 'content', timeout: 600 },
   'test_engine_actor_collision.mjs': { group: 'content', timeout: 600 },
+  'test_engine_voice_cues.mjs': { group: 'content', timeout: 360 },
   'test_engine_training.mjs': { group: 'content', timeout: 900 },
   'test_engine_games.mjs': { group: 'content', timeout: 900 },
   'test_engine_game_cpus.mjs': { group: 'content', timeout: 900 },
+  'test_engine_free_cpus.mjs': { group: 'content', timeout: 900 },
   'test_engine_toy_explosions.mjs': { group: 'content', timeout: 900 },
   'test_engine_hockey_tag.mjs': { group: 'content', timeout: 600 },
   'test_engine_sleep.mjs': { group: 'content' },

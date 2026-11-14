@@ -131,6 +131,32 @@ fn rigid(out: &mut Vec<u8>, t: Transform) -> Result<()> {
     }
     Ok(())
 }
+fn wrap(v: f32) -> f32 {
+    (v + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI
+}
+/// A motorcycle rider's model-space bone: position (1/1024 ft, exact
+/// escape), rotation, then 0, or 1 and the scale and shear (1/4096) when
+/// either is off identity. MX rider motions scale bones by up to about 5%
+/// and shear them by up to about 4% (research/MULTIPLAYER.md
+/// "Motorcycles"), so those are kept.
+fn bone(out: &mut Vec<u8>, t: &Transform) -> Result<()> {
+    t.validate()?;
+    for v in t.position {
+        i16q(out, v, 1024.)?;
+    }
+    for v in t.rotation {
+        i16q(out, v, 32767.)?;
+    }
+    let affine =
+        t.scale.iter().any(|v| (v - 1.).abs() > 0.0001) || t.shear.iter().any(|v| v.abs() > 0.0001);
+    out.push(u8::from(affine));
+    if affine {
+        for v in t.scale.iter().chain(&t.shear) {
+            i16q(out, *v, 4096.)?;
+        }
+    }
+    Ok(())
+}
 fn vector(out: &mut Vec<u8>, v: [f32; 3]) -> Result<()> {
     for v in v {
         i16q(out, v, 8.)?;
@@ -159,13 +185,30 @@ fn block(s: &Snapshot, i: u8) -> Result<Vec<u8>> {
             let limit = steering_code_limit();
             let code = (a.steering * STEERING_SCALE).round().clamp(-limit, limit);
             out.extend_from_slice(&(code as i16).to_le_bytes());
+            if crate::is_motorcycle(s.atv_model) {
+                // A motorcycle (research/MULTIPLAYER.md "Motorcycles"): its
+                // linkage (front and rear wheel spin and suspension), then
+                // the MX rider's model-space bones. The rider pose carries
+                // grip/peg IK, stunts and wreck motions, so it is sent rather
+                // than rebuilt from the sender's solver.
+                if s.rider_nodes.is_empty() || s.rider_nodes.len() > crate::MAX_NODES {
+                    return Err(Error::InvalidValue);
+                }
+                for v in &a.wheels[..2] {
+                    i16q(&mut out, wrap(*v), 8192.)?;
+                }
+                for v in &a.compression[..2] {
+                    i16q(&mut out, *v, 1024.)?;
+                }
+                out.push(u8::from(a.paused));
+                out.push(s.rider_nodes.len() as u8);
+                for node in &s.rider_nodes {
+                    bone(&mut out, node)?;
+                }
+                return Ok(out);
+            }
             for v in a.wheels {
-                i16q(
-                    &mut out,
-                    (v + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU)
-                        - std::f32::consts::PI,
-                    8192.,
-                )?;
+                i16q(&mut out, wrap(v), 8192.)?;
             }
             for v in a.compression {
                 i16q(&mut out, v, 1024.)?;
@@ -234,6 +277,23 @@ impl Read<'_> {
         for v in &mut t.position {
             *v = self.float()?;
         }
+        self.rotation(t)
+    }
+    fn bone(&mut self) -> Result<Transform> {
+        let mut t = Transform::default();
+        for v in &mut t.position {
+            *v = self.q(1024.)?;
+        }
+        let mut t = self.rotation(t)?;
+        if self.boolean()? {
+            for v in t.scale.iter_mut().chain(&mut t.shear) {
+                *v = self.q(4096.)?;
+            }
+            t.validate()?;
+        }
+        Ok(t)
+    }
+    fn rotation(&mut self, mut t: Transform) -> Result<Transform> {
         for v in &mut t.rotation {
             *v = self.q(32767.)?;
         }
@@ -276,6 +336,30 @@ fn read_block(s: &mut Snapshot, i: u8, data: &[u8]) -> Result<()> {
                 steering,
                 ..Default::default()
             };
+            if crate::is_motorcycle(s.atv_model) {
+                for v in &mut a.wheels[..2] {
+                    *v = r.q(8192.)?;
+                }
+                for v in &mut a.compression[..2] {
+                    *v = r.q(1024.)?;
+                }
+                a.paused = r.boolean()?;
+                a.validate()?;
+                let count = usize::from(r.byte()?);
+                if count == 0 || count > crate::MAX_NODES {
+                    return Err(Error::InvalidValue);
+                }
+                // Reuses the previous pose's bones (deltas and baselines).
+                s.rider_nodes.clear();
+                for _ in 0..count {
+                    s.rider_nodes.push(r.bone()?);
+                }
+                s.animation = Some(Box::new(a));
+                if r.at != data.len() {
+                    return Err(Error::InvalidLength);
+                }
+                return Ok(());
+            }
             for v in &mut a.wheels {
                 *v = r.q(8192.)?;
             }
@@ -326,6 +410,9 @@ fn read_block(s: &mut Snapshot, i: u8, data: &[u8]) -> Result<()> {
 }
 pub(crate) fn encode(s: &Snapshot, base: Option<&Delta>) -> Result<Vec<u8>> {
     s.validate()?;
+    if !crate::valid_actor(s.atv_model, s.rider_model) {
+        return Err(Error::InvalidValue);
+    }
     let mask = base.map_or(15, |d| d.mask);
     if mask & !15 != 0 {
         return Err(Error::InvalidValue);
@@ -340,7 +427,16 @@ pub(crate) fn encode(s: &Snapshot, base: Option<&Delta>) -> Result<Vec<u8>> {
     for i in 0..4 {
         if mask & (1 << i) != 0 {
             let v = block(s, i)?;
-            out.push(v.len() as u8);
+            // Lengths below 255 keep one byte; 255 escapes to a u16 for a
+            // motorcycle's rider block (only builds that decode motorcycles
+            // are sent those).
+            if v.len() < 255 {
+                out.push(v.len() as u8);
+            } else {
+                out.push(255);
+                let len = u16::try_from(v.len()).map_err(|_| Error::InvalidLength)?;
+                out.extend_from_slice(&len.to_le_bytes());
+            }
             out.extend_from_slice(&v);
         }
     }
@@ -357,6 +453,9 @@ pub(crate) fn decode(data: &[u8], patch: bool) -> Result<crate::Packet> {
         animation: Some(Box::default()),
         ..Default::default()
     };
+    if !crate::valid_actor(s.atv_model, s.rider_model) {
+        return Err(Error::InvalidValue);
+    }
     let base_sequence = u32::from_le_bytes(r.take()?);
     let mask = r.byte()?;
     if mask & !15 != 0 || (!patch && (mask != 15 || base_sequence != 0)) {
@@ -364,7 +463,13 @@ pub(crate) fn decode(data: &[u8], patch: bool) -> Result<crate::Packet> {
     }
     for i in 0..4 {
         if mask & (1 << i) != 0 {
-            let len = usize::from(r.byte()?);
+            let mut len = usize::from(r.byte()?);
+            if len == 255 {
+                len = usize::from(u16::from_le_bytes(r.take()?));
+                if len < 255 {
+                    return Err(Error::InvalidLength);
+                }
+            }
             let b = r.data.get(r.at..r.at + len).ok_or(Error::Truncated)?;
             r.at += len;
             read_block(&mut s, i, b)?;
