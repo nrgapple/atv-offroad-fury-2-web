@@ -61,5 +61,5 @@ class DomainStagingTests(unittest.TestCase):
                 self.assertEqual(staged['observability'], source['observability'])
                 self.assertEqual(staged.get('routes', []), ['legacy.example/*'] if keep_standard_route else [])
                 self.assertEqual(json.loads((root / 'wrangler.jsonc').read_text()), source)
-                self.assertTrue((root / 'work/cloudflare/relay/index_bg.wasm').is_file())
+                self.assertFalse((root / 'work/cloudflare/relay').exists())
                 self.assertTrue((root / 'work/cloudflare/static/play.html').is_file())

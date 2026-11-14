@@ -132,10 +132,6 @@ class DevlogTests(unittest.TestCase):
                 path = root / 'web/dist' / name
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_bytes(b'\0asmfixture' if name.endswith('.wasm') else b'authored')
-            for name in package_release.RELAY_FILES:
-                path = root / 'crates/atv-relay/build' / name
-                path.parent.mkdir(parents=True, exist_ok=True)
-                path.write_bytes(b'\0asmfixture' if name.endswith('.wasm') else b'authored')
             with patch.object(package_release, 'ROOT', root):
                 package_release.package('a' * 40, root / 'work/release')
             log = json.loads((root / 'work/release/static/devlog.json').read_text())

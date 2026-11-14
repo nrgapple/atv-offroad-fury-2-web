@@ -64,8 +64,8 @@ address remains available. Existing browser saves stay on their original origin.
 attached while updating the Worker code. The deployment credential remains
 scoped to the game Worker. `GAME_ORIGIN` and
 `CANONICAL_ORIGIN` use `https://furyremastered.com`; `GAME_ORIGINS` explicitly
-allows that origin and the existing workers.dev origin in both the JavaScript
-gateway and Rust relay. Missing, opaque, HTTP, foreign and lookalike origins remain
+allows that origin and the existing workers.dev origin in the JavaScript
+gateway (and, until its retirement on 2026-11-14, the Rust relay). Missing, opaque, HTTP, foreign and lookalike origins remain
 rejected. No original content is moved or exposed beyond the existing approved
 R2 path allowlist. Main CI deploys and verifies authored files at both addresses.
 The first deployment of `277e26f` uploaded the checked application and origin
@@ -678,6 +678,14 @@ contains authored frontend assets and a compiled Rust room relay. The existing
 game Worker exports its Rust `LobbyRoom` Durable Object and delegates room routes
 to the Rust WorkerEntrypoint; no separate Worker or expanded CI credential is
 required. `/multiplayer/version` reports the checked commit and relay WASM hash.
+
+Retired 2026-11-14: multiplayer is the standalone game server
+(`GAME_SERVER.md`, `https://mp.furyremastered.com`). The site Worker no longer
+embeds the relay or exports `LobbyRoom`/`LobbyAdmission` (the `retire-relay-v1`
+migration deletes both classes), has no room rate limiters, and answers
+`/multiplayer/` only with redirects of the public Free Ride counts to the game
+server. Releases no longer carry `relay/` files, and deployment verification no
+longer checks `/multiplayer/version`.
 
 The private expanded R2 package includes 26 quad mesh/PHY/AO/AR/particle archives,
 both rider body rigs, their union of 140 used MOT clips, connected materials and

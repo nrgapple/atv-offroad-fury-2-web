@@ -75,23 +75,15 @@ fn is_pose(bytes: &[u8]) -> bool {
         && ((bytes[4] == 2 && bytes[5] == 4) || (bytes[4] >= 3 && bytes[5] == 9))
 }
 
-/// The game server public pages use for multiplayer (research/
-/// GAME_SERVER.md). `None` would keep multiplayer on the page's own origin
-/// (the retired Cloudflare relay under `/multiplayer/`).
-pub const GAME_SERVER: Option<&str> = Some("https://mp.furyremastered.com");
-
-/// The public sites whose multiplayer goes to [`GAME_SERVER`]. Any other
-/// page origin (the local test servers) keeps multiplayer on its own.
-const SITES: [&str; 3] = [
-    "https://furyremastered.com",
-    "https://www.furyremastered.com",
-    "https://atv-offroad-fury-2.champtoday.workers.dev",
-];
+/// The multiplayer game server (research/GAME_SERVER.md).
+pub const GAME_SERVER: &str = "https://mp.furyremastered.com";
 
 /// The multiplayer origin (`http(s)://host[:port]`) for the game served on
 /// `site`: `chosen` (the `?server=` page parameter, desktop `FURY_SERVER`)
-/// when it is an http(s) origin, else [`GAME_SERVER`] on a public site,
-/// else the site itself.
+/// when it is an http(s) origin, else [`GAME_SERVER`]. Only a page served
+/// from this machine keeps its own origin: the local test servers, which
+/// pass `/multiplayer/` on to a local fury-server
+/// (tools/serve_multiplayer.mjs).
 pub fn server_for(site: &str, chosen: Option<&str>) -> String {
     if let Some(chosen) = chosen
         .map(|c| c.trim().trim_end_matches('/'))
@@ -100,10 +92,29 @@ pub fn server_for(site: &str, chosen: Option<&str>) -> String {
         return chosen.to_string();
     }
     let site = origin(site);
-    match GAME_SERVER {
-        Some(server) if SITES.contains(&site.as_str()) => server.into(),
-        _ => site,
+    if is_loopback(&site) {
+        site
+    } else {
+        GAME_SERVER.into()
     }
+}
+
+/// An http(s) origin on this machine (`127.x`, `localhost`, `[::1]`).
+fn is_loopback(origin: &str) -> bool {
+    let Some(rest) = origin
+        .strip_prefix("http://")
+        .or_else(|| origin.strip_prefix("https://"))
+    else {
+        return false;
+    };
+    let host = if rest.starts_with('[') {
+        rest.split_inclusive(']').next().unwrap_or(rest)
+    } else {
+        rest.split(':').next().unwrap_or(rest)
+    };
+    host == "localhost"
+        || host == "[::1]"
+        || (host.starts_with("127.") && host.bytes().all(|b| b.is_ascii_digit() || b == b'.'))
 }
 
 /// `http(s)://host[:port]` and nothing more.
@@ -998,19 +1009,26 @@ mod tests {
     }
 
     #[test]
-    fn the_game_server_is_chosen_per_site() {
-        use super::server_for;
-        let public = "https://furyremastered.com";
-        assert_eq!(
-            server_for(public, None),
-            super::GAME_SERVER.unwrap_or(public)
-        );
-        // Local pages keep their own relay.
-        assert_eq!(
-            server_for("http://127.0.0.1:4187", None),
-            "http://127.0.0.1:4187"
-        );
+    fn multiplayer_is_the_game_server() {
+        use super::{GAME_SERVER, server_for};
+        for site in [
+            "https://furyremastered.com",
+            "https://atv-offroad-fury-2.champtoday.workers.dev/play.html",
+            "http://192.168.1.20:4173",
+            "https://127.example.com",
+        ] {
+            assert_eq!(server_for(site, None), GAME_SERVER, "{site}");
+        }
+        // Local test pages keep their own origin (a local fury-server).
+        for site in [
+            "http://127.0.0.1:4187",
+            "http://localhost:4187/play.html",
+            "http://[::1]:4187",
+        ] {
+            assert_eq!(server_for(site, None), super::origin(site), "{site}");
+        }
         // An override wins when it is an origin and only then.
+        let public = "https://furyremastered.com";
         for chosen in ["https://mp.furyremastered.com/", " http://127.0.0.1:8789"] {
             assert_eq!(
                 server_for(public, Some(chosen)),
@@ -1025,6 +1043,7 @@ mod tests {
             "https://u@h",
             "wss://h",
         ] {
+            assert_eq!(server_for(public, Some(bad)), GAME_SERVER);
             assert_eq!(
                 server_for("http://127.0.0.1:4187", Some(bad)),
                 "http://127.0.0.1:4187"

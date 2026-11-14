@@ -61,7 +61,7 @@ During a ride, **Pause → Change ATV and Rider** swaps your ride in place, and 
 
 *Earlier public Vancouver Ridge checkpoint: two riders in the same Freeride room. The current build adds GPS player markers, overhead names and late-join controls.*
 
-This is an authored Rust multiplayer implementation using a Cloudflare room relay. Each rider simulates their own quad locally. Rider contacts use authored owner-local yawed-box collisions with spin and landings; server physics reconciliation, competitive racing and local split-screen remain unfinished. Automated two- and four-client public checks pass, but geographically separated latency and physical-phone sessions remain unverified. See [multiplayer implementation and evidence](research/MULTIPLAYER.md).
+This is an authored Rust multiplayer implementation using our own Rust game server, fury-server ([design](research/GAME_SERVER.md)), at `mp.furyremastered.com`. Each rider simulates their own quad locally. Rider contacts use authored owner-local yawed-box collisions with spin and landings; server physics reconciliation, competitive racing and local split-screen remain unfinished. Automated two- and four-client public checks pass, but geographically separated latency and physical-phone sessions remain unverified. See [multiplayer implementation and evidence](research/MULTIPLAYER.md).
 
 ## Open a shared ride
 
@@ -146,7 +146,7 @@ PLAYWRIGHT_MODULE=/path/to/node_modules/playwright make browser-smoke   # conten
 PLAYWRIGHT_MODULE=/path/to/node_modules/playwright make browser-tests   # adds private-content tests
 ```
 
-See [research/BROWSER_TESTS.md](research/BROWSER_TESTS.md) for the groups, native comparisons, relay tests and running one test. Optional `ATV_TEST_ISO` selects a private local disc for source-content checks. `make audit`, `make code-map`, and `make native-analyze` support deeper recovery work; see [HANDOFF.md](HANDOFF.md) for the local toolchain and commands.
+See [research/BROWSER_TESTS.md](research/BROWSER_TESTS.md) for the groups, native comparisons, multiplayer tests and running one test. Optional `ATV_TEST_ISO` selects a private local disc for source-content checks. `make audit`, `make code-map`, and `make native-analyze` support deeper recovery work; see [HANDOFF.md](HANDOFF.md) for the local toolchain and commands.
 
 | Folder | What's inside |
 | --- | --- |

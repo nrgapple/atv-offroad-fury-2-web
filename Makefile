@@ -25,7 +25,7 @@ PORT ?= 4173
 # Extra runner flags, e.g. BROWSER_ARGS='--only test_race.mjs --verbose'. See research/BROWSER_TESTS.md.
 BROWSER_ARGS ?=
 
-.PHONY: precheck lint desktop android verify verify-full inventory import check web relay server server-run serve audit code-map native-analyze browser-smoke browser-tests browser-native
+.PHONY: precheck lint desktop android verify verify-full inventory import check web server server-run serve audit code-map native-analyze browser-smoke browser-tests browser-native
 
 verify:
 	python3 tools/verify_setup.py
@@ -62,7 +62,6 @@ check:
 	$(FURY_COMPILE_GUARD) $(CARGO) clippy --locked --workspace --all-targets -- -D warnings
 	$(NODE) --test --test-timeout=120000 web/install.test.mjs web/analytics.test.mjs web/offline.test.mjs web/sw.test.mjs tools/browser/manifest.test.mjs tools/browser/owned_process.test.mjs
 	python3 -m py_compile tools/*.py
-	python3 -m unittest discover -s tools -p 'test_worker_build_cache.py'
 	python3 -m unittest discover -s tools -p 'test_playwright_ci.py'
 	python3 -m unittest discover -s tools -p 'test_prune_build_dirs.py'
 	python3 -m unittest discover -s tools -p 'test_devlog.py'
@@ -87,12 +86,10 @@ android:
 web:
 	$(FURY_COMPILE_GUARD) sh -c 'python3 tools/build_web.py && python3 tools/build_engine.py'
 
-relay:
-	$(FURY_COMPILE_GUARD) sh -c 'cd crates/atv-relay && PATH="$(dir $(CARGO)):$(PATH)" $(HOME)/.cargo/bin/worker-build --release'
-
 # fury-server, the multiplayer game server (research/GAME_SERVER.md). server-run
-# serves it on 127.0.0.1:8789, where the relay browser tests expect the local
-# relay, with rooms saved across restarts in an ignored state directory.
+# serves it on 127.0.0.1:8789, where tools/serve_multiplayer.mjs and the
+# multiplayer browser tests expect it, with rooms saved across restarts in an
+# ignored state directory.
 SERVER_STATE ?= work/server-state
 server:
 	$(FURY_COMPILE_GUARD) $(CARGO) build --locked --release -p atv-server

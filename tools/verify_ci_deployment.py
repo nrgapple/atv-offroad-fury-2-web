@@ -38,10 +38,6 @@ def verify(base, release, commit):
               if name.startswith('static/') and name != 'static/devlog.json']
     with ThreadPoolExecutor(max_workers=6) as executor:
         list(executor.map(check, assets))
-    relay, _ = get('multiplayer/version')
-    identity = json.loads(relay)
-    if identity.get('commit') != commit or identity.get('wasmSha256') != metadata['sha256']['relay/index_bg.wasm']:
-        raise ValueError('public Rust multiplayer relay differs from checked artifact')
     body, mime = get('devlog.json')
     if mime != 'application/json':
         raise ValueError('public dev log has incorrect MIME type')

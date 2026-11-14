@@ -103,11 +103,7 @@ def deploy(commit, checkpoint, owner, reason):
             ]
             for command in checks:
                 print('Local gate: ' + ' '.join(command), flush=True); run(*command)
-            from worker_build_cache import VERSION
-            worker_build = Path.home() / '.cargo/bin/worker-build'
-            if subprocess.check_output([str(worker_build), '--version'], text=True).strip() != VERSION:
-                raise ValueError('install the pinned worker-build version before local release')
-            run('make', 'web'); run('make', 'relay')
+            run('make', 'web')
             run('git', 'fetch', 'origin'); require_clean_main(commit)
             run('git', 'merge-base', '--is-ancestor', public_commit(), commit)
             release = ROOT / 'work/local-releases' / commit
