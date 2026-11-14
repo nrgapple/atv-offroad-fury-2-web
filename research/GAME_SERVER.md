@@ -78,6 +78,65 @@ brief hitch, not a lost room.
 - Capacity is measured with the load tester (`crates/atv-loadtest`), not
   guessed.
 
+## Implementation
+
+`crates/atv-server` (binary `fury-server`), tokio and axum, rustls with ring
+(no OpenSSL). Release builds use `opt-level = 3` for this crate only.
+
+- `engine`: one room as a pure state machine, clock and randomness passed
+  in, unit-tested. It is the relay's room code with the Durable Object parts
+  removed: slots, rejoin keys and the 30 s hold, host promotion, lobby,
+  host-only `Game`/`Cpus` (CPU sound cues stripped for builds without
+  `signal::CPU_SOUNDS`), `Progress`, `Claim`, pings with server time, the
+  per-connection rate limit (360 messages and 3 MiB per 3 s), 60 s idle
+  close, 12 h private-room age and the 60 s empty-room expiry. `Signal` other
+  than HELLO, `Links` and `Bundle` are accepted and ignored (older clients
+  still send them); a `Batch` from an older build is unpacked into its poses.
+  No PRESENT/ARRIVED/GONE/COURIER/PACE signals are sent.
+- Poses: a `Delta` is applied to the sender's baseline as on the relay; the
+  newest accepted pose is kept as encoded bytes (re-encoded only when the
+  client stamped another slot). Builds without `FRAMES` get each pose at once
+  from those bytes, as from the relay; builds with it get frames.
+- `interest`: each 20 Hz tick, per recipient on the room's map, the other
+  riders' newest poses that are due, assembled into `Frame`s from bytes
+  (split at `MAX_FRAME` poses or `MAX_PACKET_BYTES`):
+
+  | Rider, by distance to the recipient's own newest pose | Sent |
+  | --- | --- |
+  | under 60 ft | every tick with a new pose |
+  | 60-300 ft | every 200 ms |
+  | 300-1,000 ft | every 500 ms |
+  | beyond 1,000 ft | every 2 s |
+  | at rest (under 0.5 ft/s, riding) | when it moves 0.25 ft, else every 2 s |
+  | a change of rider state, a crash, setting off or stopping | at once |
+
+  A pose a recipient already has is never sent again. Full (non-compact)
+  snapshots cannot travel in frames and are sent on their own. A client that
+  takes frames must hold a far rider fresh for at least 2.5 s.
+- `rooms`: one task per room, fed by a bounded channel; the registry is a
+  mutex touched only to open, find, claim or end rooms. `outbox`: each
+  connection's send queue holds 256 KiB / 512 packets; when full the oldest
+  poses go first, and a queue full of control packets closes the socket with
+  1013 (the slot is held). A send that blocks 10 s closes it too.
+- `admission`: per client address (the peer, or the last
+  `X-Forwarded-For` entry from a loopback proxy), 30 room creations or claims
+  then one per 2 s, 120 sockets then two a second, at most 200 open. Loopback
+  peers are not limited (local tests, the load tester).
+- HTTP: the relay's routes and JSON, with `"links": false, "batches": false,
+  "frames": true` in room creations and claims. Everything but the public
+  rider count, daily usage, `/healthz` and `/metrics` needs an allowed
+  Origin and answers CORS for it (preflights included). The desktop app
+  presents the server's own origin, so `https://mp.furyremastered.com` is in
+  the default list. `/multiplayer/freeride/riders` and `/days` keep the
+  relay's shape (pose kinds, with `senderOld`/`senderNoLinks` meaning a pose
+  from a build with or without HELLO) and add `frames`; usage is kept in
+  `FURY_STATE_DIR/usage.json`.
+- Restarts: SIGTERM or SIGINT stops accepting, saves every room to
+  `FURY_STATE_DIR/rooms.json` (connected riders become held slots), closes
+  sockets with 1012 and exits within about 6 s. At start the file is read
+  once and removed; its riders are held for 30 s from the restart. A file
+  older than two minutes is ignored.
+
 ## Running it
 
 - Locally: `make server` builds it, `make server-run` serves it on 8789; the

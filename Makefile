@@ -25,7 +25,7 @@ PORT ?= 4173
 # Extra runner flags, e.g. BROWSER_ARGS='--only test_race.mjs --verbose'. See research/BROWSER_TESTS.md.
 BROWSER_ARGS ?=
 
-.PHONY: precheck lint desktop android verify verify-full inventory import check web relay serve audit code-map native-analyze browser-smoke browser-tests browser-native
+.PHONY: precheck lint desktop android verify verify-full inventory import check web relay server server-run serve audit code-map native-analyze browser-smoke browser-tests browser-native
 
 verify:
 	python3 tools/verify_setup.py
@@ -89,6 +89,16 @@ web:
 
 relay:
 	$(FURY_COMPILE_GUARD) sh -c 'cd crates/atv-relay && PATH="$(dir $(CARGO)):$(PATH)" $(HOME)/.cargo/bin/worker-build --release'
+
+# fury-server, the multiplayer game server (research/GAME_SERVER.md). server-run
+# serves it on 127.0.0.1:8789, where the relay browser tests expect the local
+# relay, with rooms saved across restarts in an ignored state directory.
+SERVER_STATE ?= work/server-state
+server:
+	$(FURY_COMPILE_GUARD) $(CARGO) build --locked --release -p atv-server
+
+server-run: server
+	FURY_STATE_DIR="$(SERVER_STATE)" "$(CARGO_TARGET_DIR)/release/fury-server"
 
 serve:
 	python3 tools/serve_web.py --bind $(BIND) --port $(PORT)

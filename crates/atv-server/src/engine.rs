@@ -300,6 +300,27 @@ impl Room {
         self.conns.iter().position(|c| c.id == id)
     }
 
+    /// The rider with map authority: the room's host while it is in the
+    /// roster, else the lowest slot in it.
+    fn current_host(&self) -> u8 {
+        let roster = self
+            .conns
+            .iter()
+            .filter(|c| c.player.is_some())
+            .map(|c| c.peer)
+            .chain(
+                self.reserved
+                    .iter()
+                    .filter(|r| r.player.is_some())
+                    .map(|r| r.peer),
+            );
+        if roster.clone().any(|p| p == self.host) {
+            self.host
+        } else {
+            roster.min().unwrap_or(self.host)
+        }
+    }
+
     /// Connected riders plus riders whose slots are held for reconnection.
     pub fn lobby(&self) -> Lobby {
         let mut players: Vec<Participant> =
@@ -312,13 +333,8 @@ impl Room {
             }
         }
         players.sort_by_key(|player| player.id);
-        let host = if players.iter().any(|p| p.id == self.host) {
-            self.host
-        } else {
-            players.first().map_or(self.host, |p| p.id)
-        };
         Lobby {
-            host,
+            host: self.current_host(),
             epoch: self.epoch,
             map: self.map,
             started: self.started,
@@ -527,7 +543,7 @@ impl Room {
     }
 
     /// One message from connection `id`.
-    pub fn receive(&mut self, id: ConnId, bytes: &[u8], now: u64, out: &mut Vec<Out>) {
+    pub fn receive(&mut self, id: ConnId, bytes: Bytes, now: u64, out: &mut Vec<Out>) {
         self.counters.messages += 1;
         self.counters.bytes_in += bytes.len() as u64;
         let Some(i) = self.index(id) else {
@@ -539,7 +555,7 @@ impl Room {
         if !self.conns[i].account(now, bytes.len()) {
             return self.close(i, 1008, "Message rate exceeded", now, out);
         }
-        let packet = match atv_net::decode(bytes) {
+        let packet = match atv_net::decode(&bytes) {
             Ok(packet) => packet,
             Err(atv_net::Error::UnsupportedVersion) => {
                 return self.close(
@@ -553,7 +569,7 @@ impl Room {
             Err(_) => return self.close(i, 1008, "Invalid multiplayer packet", now, out),
         };
         let joined = self.conns[i].player.is_some();
-        let host = self.lobby().host;
+        let host = self.current_host();
         let on_map = self.started && self.conns[i].ready_map == self.map;
         match packet {
             Packet::Join { code, mut player } if !joined && code == self.code => {
@@ -787,7 +803,7 @@ impl Room {
     /// riders whose builds take no frames (as the relay did). `raw` is the
     /// packet as it arrived, reused when already stamped with the sender's
     /// slot.
-    fn pose(&mut self, i: usize, mut snapshot: Snapshot, raw: Option<&[u8]>, out: &mut Vec<Out>) {
+    fn pose(&mut self, i: usize, mut snapshot: Snapshot, raw: Option<Bytes>, out: &mut Vec<Out>) {
         let conn = &mut self.conns[i];
         if conn
             .sequence
@@ -799,7 +815,7 @@ impl Room {
         let stamped = snapshot.peer == conn.peer;
         snapshot.peer = conn.peer;
         let bytes = match raw {
-            Some(raw) if stamped => Bytes::copy_from_slice(raw),
+            Some(raw) if stamped => raw,
             _ => match atv_net::encode(&Packet::Snapshot(Box::new(snapshot.clone()))) {
                 Ok(bytes) => Bytes::from(bytes),
                 Err(_) => return,

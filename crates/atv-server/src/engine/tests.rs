@@ -25,8 +25,8 @@ fn player(name: &str) -> Participant {
     }
 }
 
-fn bytes(packet: &Packet) -> Vec<u8> {
-    encode(packet).unwrap()
+fn bytes(packet: &Packet) -> Bytes {
+    Bytes::from(encode(packet).unwrap())
 }
 
 /// Packets sent to `to`, decoded.
@@ -81,7 +81,7 @@ impl Fixture {
         let code = self.room.code();
         self.room.receive(
             id,
-            &bytes(&Packet::Join {
+            bytes(&Packet::Join {
                 code,
                 player: player(name),
             }),
@@ -92,7 +92,7 @@ impl Fixture {
     }
     fn send(&mut self, id: ConnId, packet: &Packet) -> Vec<Out> {
         let mut out = Vec::new();
-        self.room.receive(id, &bytes(packet), self.now, &mut out);
+        self.room.receive(id, bytes(packet), self.now, &mut out);
         out
     }
     fn ready(&mut self, id: ConnId) -> Vec<Out> {
@@ -490,9 +490,9 @@ fn pings_answer_with_server_time_and_misbehaviour_closes() {
     assert!(f.send(1, &Packet::Links { mask: 2 }).is_empty());
     // An older protocol version is told to reload.
     let mut out = Vec::new();
-    let mut old = bytes(&Packet::Ping { nonce: 1 });
+    let mut old = encode(&Packet::Ping { nonce: 1 }).unwrap();
     old[4] = atv_net::VERSION - 1;
-    f.room.receive(1, &old, f.now, &mut out);
+    f.room.receive(1, Bytes::from(old), f.now, &mut out);
     assert_eq!(
         closes(&out),
         vec![(

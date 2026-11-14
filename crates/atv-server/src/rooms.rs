@@ -252,7 +252,7 @@ async fn run(
                         }
                         let _ = reply.send(admitted);
                     }
-                    RoomMsg::Message { conn, bytes } => room.receive(conn, &bytes, now, &mut out),
+                    RoomMsg::Message { conn, bytes } => room.receive(conn, bytes, now, &mut out),
                     RoomMsg::Closed { conn, code, reason } => {
                         outboxes.remove(&conn);
                         room.disconnected(conn, code, &reason, now, &mut out);

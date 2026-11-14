@@ -203,7 +203,8 @@ pub async fn serve(
                     continue;
                 }
             },
-            _ = stop.wait_for(|stop| *stop) => break,
+            // (The watch guard is not Send: drop it inside.)
+            () = async { let _ = stop.wait_for(|stop| *stop).await; } => break,
         };
         let _ = tcp.set_nodelay(true);
         let router = router.clone();

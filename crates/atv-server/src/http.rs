@@ -100,6 +100,10 @@ async fn origins(State(shared): State<Arc<Shared>>, request: Request, next: Cont
         );
         return response;
     }
+    // A restarting server takes no new rooms or riders.
+    if shared.shutting_down.load(Ordering::Relaxed) {
+        return error(StatusCode::SERVICE_UNAVAILABLE, "Server restarting");
+    }
     let origin = origin(request.headers()).map(str::to_string);
     if !shared.config.origins.allows(origin.as_deref()) {
         shared
