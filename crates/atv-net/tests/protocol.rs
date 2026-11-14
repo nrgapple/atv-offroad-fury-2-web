@@ -354,7 +354,7 @@ fn timestamp_and_sequence_rollover_remain_smooth() {
 fn crash_teleport_and_model_switch_are_discontinuous() {
     for mode in 0..3 {
         let mut buffer = PoseBuffer::default();
-        let mut b = snapshot(2, 50, 1.);
+        let mut b = snapshot(2, 50, 3.);
         match mode {
             0 => {
                 b.crash_serial = 1;
@@ -363,9 +363,18 @@ fn crash_teleport_and_model_switch_are_discontinuous() {
             1 => b.atv.position[0] = 500.,
             _ => b.atv_model = 2,
         }
-        buffer.push(snapshot(1, 0, 0.), 0).unwrap();
+        let a = snapshot(1, 0, 0.);
+        buffer.push(a.clone(), 0).unwrap();
         buffer.push(b.clone(), 50).unwrap();
-        assert_eq!(buffer.sample(105).unwrap().snapshot.atv.position[0], 0.);
+        // Until the change the first pose moves on with its own velocity
+        // (20 ft/s for 25 ms); nothing of the second is blended in.
+        let shown = buffer.sample(105).unwrap().snapshot;
+        assert_eq!(shown.atv.position[0], 0.5);
+        assert_eq!(shown.rider.position[0], 1.5);
+        assert_eq!(
+            (shown.rider_state, shown.crash_serial, shown.atv_model),
+            (a.rider_state, a.crash_serial, a.atv_model)
+        );
         assert_eq!(buffer.sample(130).unwrap().snapshot, b);
     }
 }

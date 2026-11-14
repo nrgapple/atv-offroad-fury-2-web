@@ -140,7 +140,8 @@ function motion(seen, driven, peer, where = () => 'all') {
   const path = driven.map(([at, origin, state]) => [at, origin, state]);
   // A reset (after a wreck) moves the rider in one step; the watcher draws
   // the same step one delay later. Frames around it compare a jump with a
-  // jump and are left out of the error figures.
+  // jump and are left out of the error figures and of the fit (a teleport
+  // drawn a few frames off would otherwise pull the fit by tens of ms).
   const resets = [];
   for (let i = 1; i < path.length; i++) {
     if (path[i][0] - path[i - 1][0] < 200 && distance(path[i][1], path[i - 1][1]) > 8) resets.push(path[i][0]);
@@ -152,8 +153,9 @@ function motion(seen, driven, peer, where = () => 'all') {
     let sum = 0;
     let count = 0;
     for (const d of drawn) {
-      const real = truth(path, d.at - fit - (reported ? d.delay : 0));
-      if (!real) continue;
+      const at = d.at - fit - (reported ? d.delay : 0);
+      const real = truth(path, at);
+      if (!real || reset(at)) continue;
       const error = distance(d.position, real);
       sum += error * error;
       count += 1;
@@ -370,6 +372,7 @@ try {
     seenByOld: motion(run.seen[0], run.driven, peer).all,
     seenByNear: motion(run.seen[1], run.driven, peer).all,
   };
+  if (process.env.ATV_RELAY_TRACE) traces.mixed = { driven: run.driven, seen: run.seen[0], peer };
   rested = Date.now();
   await driver.waitForTimeout(12_000);
   mixed.resting = { ...rate(driver, rested, Date.now()), atRest: run.rested };
@@ -377,6 +380,7 @@ try {
   mixed.oldDriving = rate(old, run.started, run.stopped);
   mixed.oldSeenByNear = motion(run.seen[0], run.driven, oldPeer).all;
   mixed.oldSeenByDriver = motion(run.seen[1], run.driven, oldPeer).all;
+  if (process.env.ATV_RELAY_TRACE) traces.oldDriving = { driven: run.driven, seen: run.seen[1], peer: oldPeer };
   mixed.counts = { driver: await counts(driver), near: await counts(near), old: await counts(old) };
   report.mixed = mixed;
   for (const page of [driver, near, third, old]) assert.equal((await engine(page)).closed, null);

@@ -16,6 +16,11 @@ pub const SENDER_JUMP_MS: u64 = 5000;
 const MIN_DELAY_MS: f64 = 45.;
 const MAX_DELAY_MS: f64 = 220.;
 const DELAY_MARGIN_MS: f64 = 8.;
+/// A rider sending slower than [`MAX_DELAY_MS`] covers (Free Ride's 300 and
+/// 350 ms) may be played back up to its interval plus this late: one 50 ms
+/// game-server tick (fury-server frames), twice a typical jitter and the
+/// margin. Intervals are measured up to [`IDLE_GAP_MS`], so at most 920 ms.
+const SLOW_CADENCE_ALLOWANCE_MS: f64 = 120.;
 /// A rider that sends its poses in batches ([`PoseBuffer::batched`]) is
 /// played back a whole batch interval late, so every pose is there before it
 /// is shown: up to this.
@@ -28,7 +33,9 @@ const BATCH_DELAY_RISE: f64 = 0.25;
 const BATCH_DELAY_FALL: f64 = 0.15;
 const BATCH_DELAY_STEP_MS: f64 = 40.;
 /// Sender gaps beyond this are idle heartbeats (1 Hz) or pauses, not cadence.
-const IDLE_GAP_MS: u64 = 400;
+/// It spans a game server's thinned tiers: a rider sending every 350 ms that
+/// the server forwards every 500 ms arrives every 700 ms.
+const IDLE_GAP_MS: u64 = 800;
 /// Assumed ordinary 10 Hz cadence until two packets have been seen.
 const SEED_INTERVAL_MS: f64 = 100.;
 /// Cadence slowdowns are risky (extrapolation), so they are adopted faster.
@@ -96,11 +103,18 @@ enum Locate {
         alpha: f32,
         continuous: bool,
     },
-    Last {
+    /// A sample carried forward on its velocity: past the newest, or into a
+    /// segment that may not be blended (a wreck, a reset), whose left pose
+    /// moves on until the change instead of standing still.
+    Ahead {
+        index: usize,
         extra_ms: f64,
     },
 }
 /// Discrete presentation state; any change forbids blending or corrections.
+/// Riding and airborne are one state here: the rider stays on the ATV, so a
+/// hop is interpolated instead of held until its next pose (up to 350 ms
+/// later in Free Ride) and then snapped.
 #[derive(Clone, Copy, PartialEq)]
 struct Key {
     rider_state: RiderState,
@@ -112,7 +126,10 @@ struct Key {
 impl Key {
     fn of(s: &Snapshot) -> Self {
         Self {
-            rider_state: s.rider_state,
+            rider_state: match s.rider_state {
+                RiderState::Airborne => RiderState::Riding,
+                state => state,
+            },
             crash_serial: s.crash_serial,
             atv_model: s.atv_model,
             rider_model: s.rider_model,
@@ -362,15 +379,18 @@ impl PoseBuffer {
         self.batch_ms.map(f64::from)
     }
     /// Delay `present` is converging toward: interval + 2 * jitter + 8 ms,
-    /// clamped to 45..=220 ms; for a rider sending batches the interval is
-    /// the batch's and the limit 2 s.
+    /// clamped to 45..=220 ms, or to the interval + 120 ms when that is more
+    /// (a slow sender is interpolated, not extrapolated across every gap);
+    /// for a rider sending batches the interval is the batch's and the
+    /// limit 2 s.
     pub fn target_delay_ms(&self) -> f32 {
         if let Some(batch) = self.batch_cadence() {
             return (batch + 2. * self.jitter_ms + DELAY_MARGIN_MS)
                 .clamp(MIN_DELAY_MS, MAX_BATCH_DELAY_MS) as f32;
         }
         let interval = self.interval_ms.unwrap_or(SEED_INTERVAL_MS);
-        (interval + 2. * self.jitter_ms + DELAY_MARGIN_MS).clamp(MIN_DELAY_MS, MAX_DELAY_MS) as f32
+        let limit = MAX_DELAY_MS.max(interval + SLOW_CADENCE_ALLOWANCE_MS);
+        (interval + 2. * self.jitter_ms + DELAY_MARGIN_MS).clamp(MIN_DELAY_MS, limit) as f32
     }
     /// Effective delay of the last `present` call (after the proximity blend),
     /// or the target before the first call.
@@ -553,11 +573,13 @@ impl PoseBuffer {
         if index == 0 {
             return Locate::First;
         }
+        let ahead = || Locate::Ahead {
+            index: index - 1,
+            extra_ms: (target - self.samples[index - 1].time_ms as f64)
+                .clamp(0., f64::from(limit_ms)),
+        };
         if index == self.samples.len() {
-            let last = self.samples[index - 1].time_ms as f64;
-            return Locate::Last {
-                extra_ms: (target - last).clamp(0., f64::from(limit_ms)),
-            };
+            return ahead();
         }
         let left = &self.samples[index - 1];
         let right = &self.samples[index];
@@ -567,6 +589,10 @@ impl PoseBuffer {
         let continuous = Key::of(&left.snapshot) == Key::of(&right.snapshot)
             && distance_squared(left.snapshot.atv.position, right.snapshot.atv.position)
                 <= 100. * 100.;
+        if !continuous && alpha < 1. {
+            // A change goes at once, so the left pose's motion lasts until it.
+            return ahead();
+        }
         Locate::Segment {
             right: index,
             alpha,
@@ -616,8 +642,8 @@ impl PoseBuffer {
                 core.rider_rotation = slerp(a.rider.rotation, b.rider.rotation, alpha);
                 core
             }
-            Locate::Last { extra_ms } => {
-                let s = &self.samples[self.samples.len() - 1].snapshot;
+            Locate::Ahead { index, extra_ms } => {
+                let s = &self.samples[index].snapshot;
                 let mut core = Core::of(s);
                 if s.platform.is_none() {
                     let dt = extra_ms as f32 / 1000.;
@@ -647,7 +673,7 @@ impl PoseBuffer {
                 }
                 blend(a, b, alpha)
             }
-            Locate::Last { .. } => self.samples[self.samples.len() - 1].snapshot.clone(),
+            Locate::Ahead { index, .. } => self.samples[index].snapshot.clone(),
         };
         snapshot.atv.position = core.atv;
         snapshot.rider.position = core.rider;
@@ -669,7 +695,7 @@ fn idle_freshness(s: &Snapshot) -> Option<u64> {
 }
 fn extrapolated(locate: Locate) -> u32 {
     match locate {
-        Locate::Last { extra_ms } => extra_ms as u32,
+        Locate::Ahead { extra_ms, .. } => extra_ms as u32,
         _ => 0,
     }
 }
