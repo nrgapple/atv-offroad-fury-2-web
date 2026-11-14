@@ -202,6 +202,7 @@ export const TESTS = {
       'needs a local game server at the same origin plus a native fury build (FURY_BIN) for the Rust host; run with --url'
   },
   'test_engine_preview.mjs': { group: 'content-free' },
+  'test_engine_cpu_recovery.mjs': { group: 'content' },
   'test_engine_race.mjs': { group: 'content' },
   'test_engine_cpu_audio.mjs': { group: 'content' },
   'test_engine_split_screen.mjs': { exclusive: true, group: 'content', timeout: 900 },

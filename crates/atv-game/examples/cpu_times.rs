@@ -3,7 +3,9 @@
 //! Runs full-length races headlessly with original content and appends one
 //! JSON line per race: every rider's lap times, best lap and finish time
 //! (estimates marked), the CPU roster and, with `--autopilot`, the player's
-//! world board trace.
+//! world board trace. `wrecks` and bounded `incidents` use CPU seat order
+//! (the roster), while `riders` retains its historical alphabetical order.
+//! `--require-finish` exits nonzero for unfinished races.
 //!
 //!   cargo run --release -p atv-game --example cpu_times -- CONTENT_DIR \
 //!     OUT.jsonl [--courses env01,sx03] [--difficulty 1|2] [--autopilot] \
@@ -20,10 +22,11 @@ use atv_game::ride::{Controls, race::Settings};
 use serde_json::{Value, json};
 use std::io::Write;
 
-const USAGE: &str = "cpu_times CONTENT_DIR OUT.jsonl [--courses a,b] [--difficulty 1|2] [--autopilot] [--quad N] [--seed N] [--minutes N] [--laps N]";
+const USAGE: &str = "cpu_times CONTENT_DIR OUT.jsonl [--courses a,b] [--difficulty 1|2] [--autopilot] [--quad N] [--seed N] [--minutes N] [--laps N] [--require-finish]";
 
 struct Options {
     difficulty: u32,
+    require_finish: bool,
     autopilot: bool,
     quad: u16,
     seed: u64,
@@ -72,11 +75,28 @@ async fn measure(content: &Content, course: &str, options: &Options) -> atv_game
     let controls = Controls::default();
     // Each rider's lap marks (clock seconds), the player first.
     let mut marks: Vec<Vec<f32>> = Vec::new();
+    let mut wrecks = [0u32; 4];
+    let mut wrecked = [false; 4];
+    let mut incidents = Vec::new();
     let mut steps = 0u64;
     let limit = u64::from(options.minutes) * 60 * 60;
     let done = loop {
         ride.step(&controls, 0.)?;
         steps += 1;
+        if let Some(state) = ride.race() {
+            for (index, cpu) in state.cpus.iter().enumerate() {
+                let down = cpu.vehicle.frame().wreck.phase != atv_core::wreck::Phase::Riding;
+                if down && !wrecked[index] {
+                    wrecks[index] += 1;
+                    if incidents.len() < 400 {
+                        let f = cpu.vehicle.frame();
+                        incidents.push(json!({"rider": index, "step": steps,
+                            "position": f.origin, "speed": f.speed_magnitude}));
+                    }
+                }
+                wrecked[index] = down;
+            }
+        }
         let Some(frame) = ride.race().and_then(|r| r.frame.as_ref()) else {
             continue;
         };
@@ -118,7 +138,7 @@ async fn measure(content: &Content, course: &str, options: &Options) -> atv_game
         "course": course, "difficulty": options.difficulty, "autopilot": options.autopilot,
         "quad": options.quad, "seed": options.seed, "laps": laps, "steps": steps,
         "elapsed": frame.elapsed, "done": done, "roster": roster, "riders": riders,
-        "resets": ride.frame().reset_count, "recovery": recovery,
+        "resets": ride.frame().reset_count, "recovery": recovery, "wrecks": wrecks, "incidents": incidents,
         "trace": frame.trace.as_deref(),
     }))
 }
@@ -126,9 +146,14 @@ async fn measure(content: &Content, course: &str, options: &Options) -> atv_game
 fn main() {
     let mut args = std::env::args().skip(1);
     let content = args.next().expect(USAGE);
+    if content == "--help" || content == "-h" {
+        println!("{USAGE}");
+        return;
+    }
     let out = args.next().expect(USAGE);
     let mut options = Options {
         difficulty: 1,
+        require_finish: false,
         autopilot: false,
         quad: 1,
         seed: 7,
@@ -150,6 +175,7 @@ fn main() {
         match arg.as_str() {
             "--courses" => courses = value().split(',').map(String::from).collect(),
             "--difficulty" => options.difficulty = value().parse().expect(USAGE),
+            "--require-finish" => options.require_finish = true,
             "--autopilot" => options.autopilot = true,
             "--quad" => options.quad = value().parse().expect(USAGE),
             "--seed" => options.seed = value().parse().expect(USAGE),
@@ -167,10 +193,12 @@ fn main() {
         let content = Content::open(Store::Directory(content.into()))
             .await
             .expect("content");
+        let mut failed = false;
         for course in &courses {
             let started = std::time::Instant::now();
             match measure(&content, course, &options).await {
                 Ok(run) => {
+                    failed |= options.require_finish && run["done"] != true;
                     writeln!(file, "{run}").expect("write");
                     eprintln!(
                         "{course} d{} {} steps in {:.1}s",
@@ -179,8 +207,14 @@ fn main() {
                         started.elapsed().as_secs_f32()
                     );
                 }
-                Err(error) => eprintln!("{course}: {error}"),
+                Err(error) => {
+                    failed = true;
+                    eprintln!("{course}: {error}");
+                }
             }
+        }
+        if failed {
+            std::process::exit(1);
         }
     });
 }
