@@ -88,6 +88,7 @@ export const TESTS = {
   'test_engine_menu_navigation.mjs': { group: 'content' },
   'test_engine_credits.mjs': { group: 'content' },
   'test_engine_menu_divider.mjs': { group: 'content' },
+  'test_engine_menu_long_frames.mjs': { exclusive: true, group: 'content' },
   'test_engine_menu_scroll.mjs': { exclusive: true, group: 'content' },
   'test_engine_status_bar.mjs': { group: 'content' },
   'test_engine_menu_transitions.mjs': { exclusive: true, group: 'content' },

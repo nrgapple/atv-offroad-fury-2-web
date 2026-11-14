@@ -2,7 +2,7 @@
 //! garage and course loader (atv_ui::front), drawn without a 3D scene. It
 //! owns its UI renderer and the original menu artwork; textures are released
 //! while riding and uploaded again on return.
-use atv_render::preview::{ModelPreview, PreviewTexture};
+use atv_render::preview::{ModelPreview, PreviewPipeline, PreviewTexture};
 use atv_ui::{
     DisplayList, Fonts, Rect, Renderer,
     front::{
@@ -115,8 +115,10 @@ pub struct Front {
     split_ms: [f64; 3],
     /// Full page layouts so far (`?uiDiagnostics=1`).
     page_layouts: u32,
+    layout_trees: [layout::LayoutCache; 2],
     /// Vehicle (0) and garage rider (1) previews.
     previews: [Option<Preview>; 2],
+    preview_pipeline: Option<PreviewPipeline>,
     /// Built previews of pages just left (key, model, animated), newest
     /// last: going back to the garage or a stage page reuses its model's GPU
     /// mesh and textures instead of building it again (a 3x phone frame).
@@ -266,7 +268,9 @@ impl Front {
             diagnostics: Vec::new(),
             split_ms: [0.; 3],
             page_layouts: 0,
+            layout_trees: Default::default(),
             previews: [None, None],
+            preview_pipeline: None,
             stash: Vec::new(),
             preview_counts: [0; 2],
             turning: None,
@@ -1596,15 +1600,16 @@ impl Front {
                 spans: Vec::new(),
             };
             let mut ignored = Vec::new();
-            layout::render(
+            self.layout_trees[0].render(
                 &back,
                 &mut self.fonts,
                 view.width,
                 view.height,
                 &mut cache.back,
                 &mut ignored,
+                &mut Vec::new(),
             );
-            layout::render_scrollable(
+            self.layout_trees[1].render(
                 &content,
                 &mut self.fonts,
                 view.width,
@@ -1902,9 +1907,13 @@ impl Front {
         {
             self.preview_counts[0] += 1;
             built = true;
+            let shared = self
+                .preview_pipeline
+                .get_or_insert_with(|| PreviewPipeline::new(device));
             let preview = ModelPreview::new(
                 device,
                 queue,
+                shared,
                 &model.mesh,
                 &lookup(&model.textures),
                 model.pose.as_deref(),
@@ -1989,9 +1998,13 @@ impl Front {
                 let textures = dressed_textures.as_ref().unwrap_or(&rider.textures);
                 let pose = rider.rider.pose(time).ok().map(|(_, p)| p.world_matrices);
                 self.preview_counts[0] += 1;
+                let shared = self
+                    .preview_pipeline
+                    .get_or_insert_with(|| PreviewPipeline::new(device));
                 let preview = ModelPreview::new(
                     device,
                     queue,
+                    shared,
                     &rider.rider.mesh,
                     &lookup(textures),
                     pose.as_deref(),
@@ -2134,7 +2147,7 @@ impl Front {
                 "spectrum": self.spectrum.as_ref().map(|b| b.iter().copied().max().unwrap_or(0)),
                 "art": self.jukebox_art.is_some(),
                 "credits": self.credits.as_ref().map(|(c, original)| serde_json::json!({
-                    "entries": c.entries.len(), "original": original,
+                    "entries": c.entries.len(), "original": original, "bounds": c.bounds, "nameIndent": c.name_indent,
                     "first": c.entries.iter().find_map(|e| match e {
                         atv_core::credits::Entry::Heading(h) => Some(h.as_str()),
                         _ => None,

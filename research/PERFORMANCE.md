@@ -1131,3 +1131,128 @@ cost roughly evenly to the two passes (either alone about 7 ms of the 9).
 What remains is the failure pass rasterizing the large, mostly transparent
 cards and shading the few streak texels; tighter card geometry would cut it
 further but changes the meshes, so it was not done here.
+
+
+## Remaining ride sound preload (#515, 2026-11-14)
+
+Implementation strategy: share the motorcycle bank input reader with its real
+load; decode/resample using the existing VAG_PCM worker jobs and cache keys.
+Collect venue TOY actor/train loop names and both crowd-table prefixes on a
+worker from the expanded selected course. Include the small rain loop regardless
+of the weather toggle, so changing weather cannot invalidate the preload.
+Preparing both crowd prefixes and all TOYs is a conservative superset; the ride
+still chooses its original active sources. No gameplay or mixer rules change.
+The existing debounce, cancellation generation, cache budget, session limits and
+worker requirement remain. Work happens only when the menu target changes.
+
+Evidence: this is authored loading policy, not a newly recovered PS2 behavior.
+It reuses the existing actor loop reader (00205640) and crowd table reader
+(002cbc20); see AUDIO.md and AMBIENT_ACTORS.md for their exact-build evidence.
+Motorcycle sample selection preserves the MX archive-first, AUDIO.RES fallback
+order. A marker revision invalidates old partial bank preload markers.
+
+Objective and mini-game overlays remain outside this slice: next_course currently
+identifies only regular courses and races, not their objective/game modes.
+Phone timing and the cached direct-load gap remain unmeasured here.
+
+Host validation (headless Chromium, 1280x720, local content, fresh contexts;
+no physical phone): the old and new engine both rested on the menu until the
+preload finished. Each value below is one run, not a statistical estimate.
+
+| Warm menu ride | First frame to sounds ready, old → new | Misses after Start, old → new |
+| --- | --- | --- |
+| Motorcycle 29, ENV01 | 485.5 → 134.9 ms | 0 → 0 (old motorcycle PCM decoded inline without the cache) |
+| ENV08 train | 763.0 → 534.7 ms | 3 → 0 |
+| SX01 race crowd / blimp | 1650.5 → 811.3 ms | 9 → 0 |
+| ENV03 plane actor | 729.7 → 594.3 ms | 1 → 0 |
+
+ENV04 separately verifies an active rain voice: the changed build took 978.3 ms
+cold versus 424.7 ms after preload, with zero misses after the warm Start.
+The cold motorcycle control was 551.4 ms before versus 598.8 ms after; this
+single-run comparison does not establish a cold-start improvement. The warm
+menu preload is the measured benefit.
+Motorcycle preload now stores 27 PCM inputs (26 bank samples plus rain).
+The conservative SX01 bank preparation writes 60.7 MB versus 44.7 MB before;
+it takes 3.81 s versus 3.02 s in these runs. Existing budget checks still gate
+all missing PCM before decoding. Both crowd prefixes are prepared to avoid
+adding difficulty to the per-frame target comparison.
+
+The ride test now waits for the diagnostic frame after the Sounds ready console
+message: that message precedes publication of soundMs, so reading it immediately
+occasionally recorded a stale zero. Cache counters still come from the live
+window.atvDecodedCache diagnostic. The full ride suite passes, including the
+existing ATV race/CPU cases and zero misses on all five added venue cases.
+The worker unit test and make web also pass. These are loading/cache results;
+no new PS2 fidelity or phone performance claim is made.
+
+The menu/cancellation suite passes too: supersession, Start cancellation,
+prepared-course reuse, data saver and a 2 GB device's refusal. Its longest
+preparation task was 52 ms (one task over 50 ms).
+A non-race preload releases its retained expanded archive before the sound-name
+job reads the cached archive, avoiding two course buffers on the page at once.
+Screenshots were captured and inspected locally; gallery/dev-log publication is
+a parent/blogging-agent follow-up after the checked PR deploys.
+
+## Retained menu layout (#511, host, 2026-11-14)
+
+Re-measured the redesigned menus on `58da9aee` using the validated deployed
+artifact, then the local candidate: Chromium, 4x CPU throttle, 390x844 DPR3,
+touch, three fresh contexts, ten Down keys with 100 ms between driver calls
+and one second settling. `test_engine_menu_long_frames.mjs` records long tasks
+and each changed course frame's artwork/layout/upload timings. Host only;
+these are not phone results and the driver is not a precise 10 Hz input clock.
+
+The selection still rebuilt a Taffy tree for the entire page. The frontend now
+retains its background and content trees. Changed text metrics and styles dirty
+the affected nodes; changed structure rebuilds the tree. Color/shadow changes
+repaint using retained geometry. Rasterization, artwork, clipping and hit testing
+keep their existing paths. A unit comparison checks identical display lists,
+hits and scroll spans against fresh layout after paint, text, width and child
+changes. This is an authored renderer optimization, with no new recovered-game
+behavior claim.
+
+| Ten-key burst plus settling, three runs | Before | After |
+| --- | --- | --- |
+| Changed-course layout median per run | 29.2, 27.2, 26.8 ms | 10.5, 12.9, 11.7 ms |
+| Long-task count | 12, 13, 14 | 9, 13, 9 |
+
+Residual: changed-course uploads still have approximately 11–114 ms samples,
+and the fresh-context scenario still includes 467–587 ms tasks. The reduction
+is in layout; this does not close #511 or establish physical-device performance.
+
+## Shared Garage preview pipeline (#512, host, 2026-11-14)
+
+After the redesigned-menu layout checkpoint, re-measured with
+`test_engine_garage_load.mjs`: Chromium at 4x CPU throttle, 390x844 DPR3 touch,
+three fresh contexts per vehicle type, one settled step into a new archive in
+each. Host only, not physical-phone results. Baseline is the local #511 build;
+the candidate changes only preview GPU setup and test instrumentation.
+
+Every preview constructed the same WGSL shader, render pipeline, binding
+layouts and sampler again. `PreviewPipeline` now owns that immutable setup once
+per frontend/device and both slots reuse it. Mesh buffers, uniforms, textures,
+poses, MSAA targets, shader source and rendering settings remain unchanged.
+The test instruments GL program linking and AudioContext construction in
+addition to worker jobs and long tasks.
+
+| Per settled step, three runs | Before | After |
+| --- | --- | --- |
+| Motorcycle slowest post-load long task | 256, 248, 206 ms | 82, 87, 70 ms |
+| ATV slowest post-load long task | 84, 99, 83 ms | 122, 80, 75 ms |
+| New GL programs per ATV / motorcycle step | 1 / 2 | 0 / 0 |
+| First fresh-process tap, whole task | 875 ms | 613 ms |
+| AudioContext constructor within that tap | 706 ms | 519 ms |
+
+The measured motorcycle reduction is substantial; ATV differences do not show
+a reliable improvement on this shared host. The program-link call itself was
+only 0–1.4 ms: the removed work includes the surrounding shader translation and
+pipeline construction, not just the GL link. The test structurally requires no
+new programs during settled steps and retains its archive/texture worker checks.
+
+Residuals keep #512 open: ATV preview construction still makes 75–122 ms tasks,
+motorcycles still reach 87 ms post-load, and a fresh-process audio-context
+constructor still blocks for roughly half a second. Audio construction is now
+located by direct timing, but was not moved into boot or otherwise changed.
+The old unexplained post-load penalty is not separately isolated by these
+whole-task measurements. No physical device, startup-speed improvement or
+pixel comparison is claimed.
