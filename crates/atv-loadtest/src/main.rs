@@ -3,6 +3,8 @@
 //! Each rider claims a Free Ride slot or a private room over the HTTP
 //! routes, joins over the room WebSocket and sends compact poses at an
 //! adaptive cadence while it counts what comes back. The report is JSON.
+// A test tool, not part of the deterministic simulation (clippy.toml).
+#![allow(clippy::disallowed_methods)]
 mod rider;
 mod stats;
 
