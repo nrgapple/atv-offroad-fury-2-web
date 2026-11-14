@@ -138,7 +138,7 @@ mod tests {
         speech.follow(&mut mixer, 48_000, Some((1, 3)));
         assert_eq!((mixer.voices(), speech.started), (1, 1));
         // Finishing a sample must not retrigger it on the next frame.
-        mixer.render(&mut vec![0.; 96_000]);
+        mixer.render(&mut vec![0.; 96_002]);
         assert!(!speech.playing(&mixer));
         speech.follow(&mut mixer, 48_000, Some((1, 3)));
         assert_eq!(speech.started, 1);
