@@ -125,13 +125,13 @@ A slice defines only its own.
 
 | Slice | Packet kinds | HELLO bit |
 | --- | --- | --- |
-| A (C reuses them) | 22 `RoomLoop` (server→client: phase, timer, vote options, seats, results); 23 `Vote` (client→server: map vote, rematch, ready) | second flags byte, bit 1 `ROOM_LOOP` (bit 32 went to `MOTORCYCLES`, #638) |
+| A (C reuses them) | 22 `RoomLoop` (server→client: phase, timer, vote options, seats, results); 23 `Vote` (client→server: map vote, rematch, ready) | none: only clients that call `POST /multiplayer/quickplay` reach a `QP…` room; private rooms (C) use bit 1 `LOOP` of an optional second HELLO data byte |
 | E | 24 `Chat` (quick-chat line, emote or horn id; server rate-limits and relays) | 64 `CHAT` |
 | B | 26 `Hub` (event announce/join/results); 27 `Challenge` (request/accept/decline/start) | 128 `HUB` |
 | D | none: HTTP routes only | — |
 
-Kind 25 is spare. The HELLO flag byte is now full, so the next flag needs a
-second flags byte.
+Kind 25 is spare. Bit 32 of the first HELLO byte is `MOTORCYCLES` (#638),
+so that byte is full. New flags go in an optional second HELLO data byte.
 
 ### Server layout
 

@@ -140,7 +140,7 @@ pub struct Serves {
     /// motorcycle poses only to builds that say it.
     pub motorcycles: bool,
     /// `quickplay`: a server-run Quick Play room (research/QUICK_PLAY.md):
-    /// builds say [`atv_net::signal::ROOM_LOOP`] and follow its loop.
+    /// the client follows its `RoomLoop` and sends `Vote`s.
     pub quickplay: bool,
 }
 
@@ -374,12 +374,7 @@ impl Session {
         encode(&Packet::Signal(atv_net::Signal {
             peer,
             kind: atv_net::signal::HELLO,
-            data: if serves.quickplay {
-                // The first flags byte is full: Quick Play's bit is in a second.
-                vec![flags, atv_net::signal::ROOM_LOOP]
-            } else {
-                vec![flags]
-            },
+            data: vec![flags],
         }))
     }
 

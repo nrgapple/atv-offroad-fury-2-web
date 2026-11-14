@@ -744,16 +744,18 @@ fn a_quick_play_room_runs_its_loop_for_riders_that_follow_it() {
     assert!(f.room.claim_quickplay(f.now, &mut f.rng, false).is_some());
     f.join(1, Some(HOST_KEY), "One");
     f.join(2, None, "Two");
-    // Only a second HELLO flags byte with ROOM_LOOP gets the loop.
+    // Every rider gets the loop, no flag needed; a two-byte HELLO (slice
+    // C's room-loop bit) is accepted.
     let peer = f.room.conns[0].peer;
-    f.send(
+    let out = f.send(
         1,
         &Packet::Signal(atv_net::Signal {
             peer,
             kind: signal::HELLO,
-            data: vec![signal::FRAMES, signal::ROOM_LOOP],
+            data: vec![signal::FRAMES, signal::LOOP],
         }),
     );
+    assert!(closes(&out).is_empty());
     f.hello(2, signal::FRAMES);
     let out = f.tick();
     let loops = |out: &[Out], to| {
@@ -769,7 +771,7 @@ fn a_quick_play_room_runs_its_loop_for_riders_that_follow_it() {
     assert_eq!(first.len(), 1);
     assert_eq!(first[0].phase, loop_phase::LOBBY);
     assert_eq!(first[0].driver, 0);
-    assert!(loops(&out, 2).is_empty());
+    assert_eq!(loops(&out, 2).len(), 1);
     // The driver is the room's host; a private-room map change is refused.
     assert_eq!(f.room.lobby().host, 0);
     let map = f.room.lobby().map;

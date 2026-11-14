@@ -701,12 +701,12 @@ pub mod signal {
     /// bit); such a server sends motorcycle poses only to builds that said
     /// it. Never forwarded in other riders' flags.
     pub const MOTORCYCLES: u8 = 32;
-    /// Second hello flags byte (`data[1]`; the first byte's bits are all
-    /// allocated, research/MULTIPLAYER_EXPERIENCE.md "Protocol") bit: the
-    /// build follows the server-run room loop ([`super::Packet::RoomLoop`],
-    /// research/QUICK_PLAY.md) and may send [`super::Packet::Vote`]. Sent
-    /// only to a server whose claim says `quickplay`. Never forwarded.
-    pub const ROOM_LOOP: u8 = 1;
+    /// Optional second hello flags byte (`data[1]`; the first byte's bits
+    /// are all allocated) bit, reserved for private rooms' room loop
+    /// (research/QUICK_PLAY.md "Private rooms (slice C)"): the build follows
+    /// [`super::Packet::RoomLoop`]. Quick Play rooms need no flag (only new
+    /// builds reach them); no build sends it yet.
+    pub const LOOP: u8 = 1;
 }
 /// Most poses in one [`Packet::Bundle`]: every rider in a full room.
 pub const MAX_BUNDLE: usize = MAX_PLAYERS;
@@ -816,8 +816,7 @@ impl Signal {
         let valid = valid_peer(self.peer)
             && match self.kind {
                 signal::HELLO => {
-                    (self.data.len() == 1
-                        || (self.data.len() == 2 && self.data[1] <= signal::ROOM_LOOP))
+                    (self.data.len() == 1 || (self.data.len() == 2 && self.data[1] <= signal::LOOP))
                         && self.data[0]
                             <= signal::DIRECT
                                 | signal::CARRIES
@@ -928,8 +927,8 @@ pub enum Packet {
     Frame {
         poses: Vec<Vec<u8>>,
     },
-    /// Game server to builds that said [`signal::ROOM_LOOP`]: the
-    /// server-run room loop (research/QUICK_PLAY.md).
+    /// Game server to every rider in a Quick Play room: the server-run room
+    /// loop (research/QUICK_PLAY.md).
     RoomLoop(Box<quickplay::RoomLoop>),
     /// Client to game server: a rider's vote, rematch and ready choices.
     Vote(quickplay::Vote),

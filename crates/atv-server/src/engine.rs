@@ -166,8 +166,6 @@ struct Conn {
     /// Decodes motorcycle poses ([`signal::MOTORCYCLES`]); builds without
     /// it are never sent one (they would reject the whole frame).
     motorcycles: bool,
-    /// Follows the server-run room loop (`signal::ROOM_LOOP`).
-    room_loop: bool,
     last_seen_ms: u64,
     window_ms: u64,
     messages: u16,
@@ -550,7 +548,6 @@ impl Room {
             cpu_sounds: false,
             frames: false,
             motorcycles: false,
-            room_loop: false,
             last_seen_ms: now,
             window_ms: now,
             messages: 0,
@@ -781,12 +778,6 @@ impl Room {
                     conn.cpu_sounds = flags & signal::CPU_SOUNDS != 0;
                     conn.frames = flags & signal::FRAMES != 0;
                     conn.motorcycles = flags & signal::MOTORCYCLES != 0;
-                    // The second flags byte (the first is full).
-                    conn.room_loop = message
-                        .data
-                        .get(1)
-                        .is_some_and(|f| f & signal::ROOM_LOOP != 0);
-                    self.loop_dirty = true;
                 }
                 // Session descriptions and link reports: no links here.
             }
@@ -1094,7 +1085,7 @@ impl Room {
                         .iter()
                         .find(|(p, _)| *p == c.peer)
                         .map(|(_, pid)| pid.clone()),
-                    can_drive: c.room_loop,
+                    can_drive: true,
                 })
             })
             .collect()
@@ -1135,7 +1126,8 @@ impl Room {
             if let Ok(bytes) = atv_net::encode(&packet) {
                 let bytes = Bytes::from(bytes);
                 for c in &self.conns {
-                    if c.player.is_some() && c.room_loop {
+                    // Only new builds reach a Quick Play room: no flag.
+                    if c.player.is_some() {
                         out.push(Out::Send(c.id, bytes.clone()));
                     }
                 }

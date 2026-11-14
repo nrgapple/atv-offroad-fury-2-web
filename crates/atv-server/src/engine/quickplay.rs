@@ -64,8 +64,8 @@ pub struct Human {
     pub name: String,
     /// The socket's `pid` (unverified until slice D).
     pub pid: Option<String>,
-    /// Said HELLO with [`atv_net::signal::ROOM_LOOP`] and announced room
-    /// races and games: it can drive.
+    /// Can run the round as its driver (every rider today: only new
+    /// builds reach a Quick Play room).
     pub can_drive: bool,
 }
 

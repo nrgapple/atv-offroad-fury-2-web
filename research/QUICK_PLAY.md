@@ -97,10 +97,10 @@ sense. Phases: lobby → vote → countdown → play → results → vote …
 
 ## Protocol (version 6, compatible)
 
-- HELLO second flags byte (`data[1]`), bit 1 `signal::ROOM_LOOP`: the
-  build follows the loop (the first byte is full; bit 32 is
-  `MOTORCYCLES`). A HELLO is one or two bytes. The
-  client sends it only when its claim said `"quickplay": true`.
+- No HELLO flag: a `QP…` room is reached only through `POST
+  /multiplayer/quickplay`, which only new clients call, so the server sends
+  `RoomLoop` to every rider in it and accepts `Vote` from any. (The first
+  HELLO flags byte is full: 32 is `MOTORCYCLES`, 64 chat, 128 hub.)
 - `POST /multiplayer/quickplay` `{"playlist": "race"|"stunts", "avoid":
   code?}` → `{code, key, quickplay: true, playlist, links, batches,
   frames}`: a seat in the lowest-numbered room of that playlist that is
@@ -108,7 +108,7 @@ sense. Phases: lobby → vote → countdown → play → results → vote …
   `QPR00001`… and `QPS00001`…; the `QP` prefix is reserved (a private room
   cannot take it). Same admission limit as a Free Ride claim. The socket is
   the usual `/multiplayer/rooms/{code}?key=…` (plus optional `pid`).
-- Kind 22 `RoomLoop` (server → ROOM_LOOP builds; on change and every 2 s):
+- Kind 22 `RoomLoop` (server → every rider in the room; on change and every 2 s):
   phase, playlist, phase deadline in server time (`Pong::server_ms`), up to
   3 cards (mode, map, variant), votes per card and Random, the pick, the
   setup (round, number, laps, minutes, CPU field, difficulty, seed), the
@@ -170,8 +170,14 @@ Two accepted deviations from the spec (epic owner, 2026-11-14):
 
 ## Private rooms (slice C)
 
-Not built here. Slice C reuses kinds 22/23 and `ROOM_LOOP` for private
-rooms: the host keeps authority, `Vote::ready` becomes ready-up, the vote
-and `Vote::rematch` drive the host's next round, and seats/spectators show
-on the same panel. The private room's `Loop` would come from a host-run
-variant of `engine/quickplay.rs` (no records, no server checks needed).
+Not built here. Slice C reuses kinds 22/23 for private rooms. A private
+room's riders can be older builds, so there the capability travels in an
+optional **second HELLO data byte, bit 1 `signal::LOOP`**: the server sends
+`RoomLoop` only to sockets that said it. The codec and the server already
+accept a one- or two-byte HELLO (second byte at most `LOOP`;
+`crates/atv-net/tests/protocol.rs`, the engine's Quick Play test); no
+build sends it yet. The host keeps authority, `Vote::ready` becomes
+ready-up, the vote and `Vote::rematch` drive the host's next round, and
+seats and spectators show on the same panel. The private room's loop would
+be a host-run variant of `engine/quickplay.rs` (no records or server checks
+needed).

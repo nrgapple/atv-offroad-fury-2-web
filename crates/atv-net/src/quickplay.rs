@@ -2,8 +2,9 @@
 //! later private rooms' ready-up, vote and rematch (slice C).
 //!
 //! Authored for the port; the original's online lobbies are not used.
-//! [`RoomLoop`] (kind 22) goes from the game server to builds that said
-//! [`crate::signal::ROOM_LOOP`]; [`Vote`] (kind 23) goes from a client to the
+//! [`RoomLoop`] (kind 22) goes from the game server to every rider in a
+//! Quick Play room (only new builds reach one, through `POST
+//! /multiplayer/quickplay`); [`Vote`] (kind 23) goes from a client to the
 //! server only. Both are bounded and validated like every other packet.
 
 use crate::{
