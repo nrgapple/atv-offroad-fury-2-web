@@ -18,8 +18,10 @@ mod hockey;
 mod instant_replay;
 mod multiplayer;
 mod net;
+mod online;
 mod overlay;
 mod photo;
+pub mod quick_chat;
 mod random;
 mod render_scale;
 pub mod replay;
@@ -248,6 +250,8 @@ enum Message {
     /// Web: Import Save read a file (name, text).
     #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
     CloudImport(String, String),
+    /// A game server answer for the Online pages (online.rs).
+    Online(online::Purpose, Result<(u16, String), String>),
 }
 
 /// A connected room waiting on the lobby page: (room, course, quad, rider,
@@ -861,6 +865,8 @@ struct App {
     cloud: cloud::Cloud,
     /// World boards and the daily event (world.rs).
     world: world::World,
+    /// Online identity, friends and the league (online.rs).
+    online: online::Online,
     /// The frontend's Split Screen branch asked for two local players on
     /// the next rides (kept for Restart Race).
     split_request: Option<split::Request>,
@@ -1828,10 +1834,13 @@ impl App {
                 Some(own) => own.as_ref(),
                 None => pad.as_ref(),
             };
+            let bindings = &riding.bindings;
             if !riding.menu_open
                 && self.photo.is_none()
                 && self.replay.is_none()
-                && let Some(action) = overlay.results_pad(results_pad)
+                && let Some(action) = overlay
+                    .chat_pad(pad.as_ref(), |b| bindings.uses_button(b))
+                    .or_else(|| overlay.results_pad(results_pad))
             {
                 self.act(action);
                 return;
@@ -2948,6 +2957,13 @@ impl App {
                         .filter(|m| !m.is_empty())
                 })
                 .filter(|_| !ready.split.is_empty());
+            // Quick chat (research/QUICK_CHAT.md): what arrived, and the horn.
+            if let Some(net) = ready.net.as_mut()
+                && net.update_chat()
+                && let Some(sound) = &mut riding.sound
+            {
+                sound.horn();
+            }
             let hud_peers = ready
                 .net
                 .as_ref()
@@ -3166,6 +3182,7 @@ impl App {
                     compass,
                     others,
                     split_layout,
+                    chat: ready.net.as_ref().map(|net| &net.chat.view),
                 }),
                 Some(&mut riding.bindings),
             );
@@ -3478,7 +3495,7 @@ impl App {
             state["replay"] = self
                 .replay
                 .as_ref()
-                .map(|r| r.state(riding.recorder.span()))
+                .map(|r| r.state(&riding.recorder))
                 .into();
             state["view"] = serde_json::json!({"eye": ready.camera.eye(),
                 "yaw": ready.camera.yaw, "pitch": ready.camera.pitch, "focal": ready.focal_length});
@@ -4241,6 +4258,56 @@ impl App {
                     }
                 }
             }
+            // A rider's safety page (research/QUICK_CHAT.md).
+            Event::Mute(_) | Event::Block(_) | Event::MuteAll | Event::Report(..) => {
+                let peer = match event {
+                    Event::Mute(peer) | Event::Block(peer) | Event::Report(peer, _) => peer,
+                    _ => 0,
+                };
+                let Some(net) = self.ready.as_mut().and_then(|r| r.net.as_mut()) else {
+                    return;
+                };
+                let mut settings = atv_ui::settings::Settings::load();
+                let notice = match event {
+                    Event::Mute(_) => Some(if net.chat.toggle_mute(peer) {
+                        "Muted."
+                    } else {
+                        "Unmuted."
+                    }),
+                    Event::Block(_) => net.rider_name(peer).map(|name| {
+                        if net.chat.toggle_block(&mut settings, &name, None) {
+                            "Blocked."
+                        } else {
+                            "Unblocked."
+                        }
+                    }),
+                    Event::MuteAll => {
+                        let on = !net.chat.mute_all;
+                        net.chat.set_mute_all(&mut settings, on);
+                        None
+                    }
+                    _ => {
+                        let reason = match event {
+                            Event::Report(_, reason) => reason,
+                            _ => "name",
+                        };
+                        if let Some(request) = net.report_rider(peer, reason) {
+                            self.spawn(request, |result| {
+                                Message::Notice(match result {
+                                    Ok(()) => "Report sent. Thanks!".into(),
+                                    Err(error) => error,
+                                })
+                            });
+                        }
+                        Some("Sending report…")
+                    }
+                };
+                if let Some(notice) = notice
+                    && let Some(menu) = self.overlay.as_mut().and_then(|o| o.menu.as_mut())
+                {
+                    menu.notice = Some(notice.into());
+                }
+            }
             // Play Race (room host): every room rider races this course
             // (research/MULTIPLAYER.md "Room races").
             Event::PlayRace(variant) => {
@@ -4797,6 +4864,11 @@ impl App {
                         f.orientation,
                         (Instant::now() - self.started).as_secs_f64(),
                     );
+                }
+            }
+            overlay::Action::Chat(kind, id) => {
+                if let Some(net) = ready.net.as_mut() {
+                    net.send_chat(kind, id);
                 }
             }
             // Handled above.
@@ -5484,9 +5556,23 @@ impl App {
                         | KeyCode::Meta
                 )
             });
+            let chat_keys = !riding.paused && !riding.held && !modified;
+            let chat_free = |key: &str| !riding.bindings.uses_key(key);
+            let shift = self
+                .keys
+                .iter()
+                .any(|k| matches!(k, KeyCode::ShiftLeft | KeyCode::ShiftRight));
+            let chat = self
+                .overlay
+                .as_mut()
+                .filter(|_| chat_keys)
+                .and_then(|overlay| overlay.chat_key(&format!("{code:?}"), shift, chat_free));
             let riding = !riding.paused && !riding.held && free && !modified;
             if let Some(overlay) = &mut self.overlay {
                 overlay.key(&format!("{code:?}"), riding);
+            }
+            if let Some(action) = chat {
+                self.act(action);
             }
         }
     }
@@ -5627,7 +5713,7 @@ impl ApplicationHandler<Message> for App {
         let store = options.store;
         let (environment, fixed) = (options.venue, options.camera);
         let room = options.room.clone();
-        // Rooms ride ATVs: a motorcycle choice falls back to ATV01.
+        // Rooms ride the garage choice, motorcycles included.
         let profile = room.as_ref().map(|room| {
             atv_game::multiplayer::Profile::new(
                 &room.name,
@@ -6124,6 +6210,7 @@ impl ApplicationHandler<Message> for App {
             }
             Message::Cloud(id, response) => self.cloud_response(id, response),
             Message::World(id, response) => self.world_response(id, response),
+            Message::Online(purpose, result) => self.online_response(purpose, result),
             Message::CloudImport(name, text) => self.cloud_import(name, text),
             Message::RoomJoined(result) => self.room_joined(*result),
             Message::LobbyNotice(text) => {
@@ -6699,6 +6786,7 @@ impl App {
         }
         self.poll_riders();
         self.world_poll();
+        self.online_poll();
         #[cfg(not(target_arch = "wasm32"))]
         let cloud = self.cloud_poll();
         // The earliest of every reason to wake without an event.
@@ -7411,13 +7499,8 @@ impl App {
         if !setup.requested {
             return;
         }
-        let mut errors = setup.errors.clone();
-        // frontend.js refuses motorcycles online (Free Ride falls back).
-        if setup.mode == "multiplayer" && setup.quad_id >= 27 {
-            errors.push(
-                "Choose an ATV for multiplayer. Motorcycles are available in Single Player.".into(),
-            );
-        }
+        // Motorcycles ride rooms too (frontend.js refused them online).
+        let errors = setup.errors.clone();
         if !errors.is_empty() {
             // frontend.js openLaunch: the main menu's notice line says why.
             let message = format!("Cannot open ride link. {}", errors.join(" "));
@@ -7592,6 +7675,18 @@ impl App {
 
     fn front_event(&mut self, event: atv_ui::front::controller::Event) {
         use atv_ui::front::controller::Event;
+        // Online rooms carry the rider's identity (Free Ride registers in
+        // `free_ride`).
+        if matches!(
+            event,
+            Event::Host { .. }
+                | Event::Join { .. }
+                | Event::TagHost { .. }
+                | Event::GameHost { .. }
+                | Event::FreestyleHost { .. }
+        ) {
+            self.online_wanted();
+        }
         // Multiplayer → Split Screen rides Freestyle, races and the Games
         // King of the Hills, Treasure Hunt and Hockey with two local
         // players; every other ride is one player's.
@@ -7891,44 +7986,8 @@ impl App {
             }
             Event::CopyCourseLink { code } => self.copy_course_link(&code),
             Event::Cloud(command) => self.cloud_command(command),
-            Event::FreeRide { quad, rider, name } => {
-                let Some((site, server)) = self
-                    .defaults
-                    .as_ref()
-                    .map(|d| (d.site.clone(), d.server.clone()))
-                else {
-                    return;
-                };
-                // Many riders keep the default name: number it so strangers
-                // can tell them apart. Like frontend.js `playerName`, the
-                // number stays for the session and the next save keeps it.
-                let name = if name == "Rider" {
-                    let numbered = format!("Rider {}", 1000 + random::below(9000));
-                    if let Some(front) = &self.front {
-                        front.borrow_mut().state.player_name.clone_from(&numbered);
-                    }
-                    numbered
-                } else {
-                    name
-                };
-                let room = RoomStart {
-                    site,
-                    server,
-                    code: None,
-                    host: false,
-                    freeride: true,
-                    name,
-                    drop_after: None,
-                    train_place: None,
-                };
-                self.start_ride(
-                    atv_game::multiplayer::FREERIDE_ENVIRONMENT.into(),
-                    quad,
-                    rider,
-                    None,
-                    Some(room),
-                );
-            }
+            Event::Online(command) => self.online_command(command),
+            Event::FreeRide { quad, rider, name } => self.free_ride(quad, rider, name, None),
             Event::RoomRide {
                 quad,
                 rider,
@@ -8043,7 +8102,7 @@ impl App {
                 name,
                 ..
             } if atv_game::multiplayer::is_shared_room(&code) => {
-                self.front_event(Event::FreeRide { quad, rider, name });
+                self.free_ride(quad, rider, name, Some(code));
             }
             Event::Join {
                 code,
@@ -8109,6 +8168,48 @@ impl App {
                 self.wake();
             }
         }
+    }
+
+    /// Arlington Free Ride; `shard` (a friend's Join) asks for that shared
+    /// room first.
+    fn free_ride(&mut self, quad: u16, rider: u16, name: String, shard: Option<String>) {
+        self.online_wanted();
+        let Some((site, server)) = self
+            .defaults
+            .as_ref()
+            .map(|d| (d.site.clone(), d.server.clone()))
+        else {
+            return;
+        };
+        // Many riders keep the default name: number it so strangers
+        // can tell them apart. Like frontend.js `playerName`, the
+        // number stays for the session and the next save keeps it.
+        let name = if name == "Rider" {
+            let numbered = format!("Rider {}", 1000 + random::below(9000));
+            if let Some(front) = &self.front {
+                front.borrow_mut().state.player_name.clone_from(&numbered);
+            }
+            numbered
+        } else {
+            name
+        };
+        let room = RoomStart {
+            site,
+            server,
+            code: shard,
+            host: false,
+            freeride: true,
+            name,
+            drop_after: None,
+            train_place: None,
+        };
+        self.start_ride(
+            atv_game::multiplayer::FREERIDE_ENVIRONMENT.into(),
+            quad,
+            rider,
+            None,
+            Some(room),
+        );
     }
 
     /// Shows the course loader and loads the ride on the frontend's GPU.
@@ -8763,13 +8864,7 @@ impl App {
             let mut f = front.borrow_mut();
             f.state.room = None;
             f.state.hosting = false;
-            // Rooms ride ATVs (frontend.js `onlineGarage`).
-            let quad = if f.state.quad_id >= 27 {
-                1
-            } else {
-                f.state.quad_id
-            };
-            (quad, f.state.rider_id)
+            (f.state.quad_id, f.state.rider_id)
         };
         self.front_event(atv_ui::front::controller::Event::RoomRide {
             quad,
@@ -9477,6 +9572,7 @@ fn capture(
                     compass: None,
                     others: Vec::new(),
                     split_layout: None,
+                    chat: None,
                 }),
                 bindings.as_mut(),
             );
@@ -10441,6 +10537,7 @@ pub fn run(options: Options) {
     let app = App {
         cloud: Default::default(),
         world: Default::default(),
+        online: Default::default(),
         camera_choice: options.camera_choice,
         render_scale: Default::default(),
         usage: Default::default(),
@@ -10652,7 +10749,7 @@ pub fn start() {
     }
     // A room link, `?room=CODE` included, joins through the frontend as
     // launch.js parseLaunch reads it (player name, vehicle aliases, saved
-    // gear, play=0, the motorcycle refusal). Only the engine's test hooks
+    // gear, play=0). Only the engine's test hooks
     // ride straight into a room: `?host=1`, or `room=` with `dropAfter=` or
     // `trainPlace=`.
     let invite = ["mode", "action", "lobby"]

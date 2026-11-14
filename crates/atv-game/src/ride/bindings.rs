@@ -693,6 +693,15 @@ impl Bindings {
         self.apply_controller_preset(next);
     }
 
+    /// Whether any binding uses controller button `button`.
+    pub fn uses_button(&self, button: u8) -> bool {
+        self.profile.controller.iter().flatten().any(|b| {
+            b.atoms()
+                .iter()
+                .any(|a| matches!(a, Atom::Button(x) if *x == button))
+        })
+    }
+
     pub fn uses_key(&self, code: &str) -> bool {
         self.profile.keyboard.iter().flatten().any(|b| {
             b.atoms()

@@ -4,7 +4,7 @@ Use `web/design-system.css` for browser-native app controls. Load it before comp
 
 ## Evidence and visual language
 
-The menu reconstruction in `crates/atv-core/src/ui_menu.rs` retains the recovered condensed Trade Gothic glyphs, red/silver frontend panels and yellow selected rows. Pause uses a translucent charcoal panel with a gray header. The resource-backed speed/preload HUD in `web/hud.js` uses white outlined lettering, dark meter recesses and blue/orange preload artwork. These are the reference for browser additions; the CSS values describe an authored adaptation, not a recovered PS2 theme API.
+The menu reconstruction in `crates/atv-core/src/ui_menu.rs` retains the recovered condensed Trade Gothic glyphs, red/silver frontend panels and yellow selected rows. Pause and Options use the frontend's language (`crates/atv-ui/src/menu/mod.rs`): a left column of gold-bulleted rows with the gold selection pill and the italic title band, Back bottom right, one page at a time and no per-row descriptions. Over a ride the scene darkens behind the column and stays in view beside it; opened from the main menu, Options sits beside the silver stage and wordmark. The resource-backed speed/preload HUD in `web/hud.js` uses white outlined lettering, dark meter recesses and blue/orange preload artwork. These are the reference for browser additions; the CSS values describe an authored adaptation, not a recovered PS2 theme API.
 
 | Role | CSS token | Value / treatment |
 | --- | --- | --- |

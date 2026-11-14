@@ -174,6 +174,8 @@ minute's lap. So a separate recorder was added:
   max-age=3600` and stored in the edge cache. The address names the lap
   time, so a rider's better lap is a new address and cached copies never go
   stale.
+- Since #637 a board also keeps one ghost per band of five ranks below the
+  ten best, down to rank 40 (GHOST_CHALLENGES.md "Retention").
 - A ghost is deleted when its row leaves the board's ten best or changes its
   time: in the same request as the submission that caused it
   (`pruneGhosts`, one `DELETE` per placed lap board) and with every upload.

@@ -1,0 +1,14 @@
+{
+  "id": "cloud-built-pr-artifacts-for-targeted-browser-checks-521bf4c0ed2448a2bc6a3dfc062ecfc6",
+  "timestamp": "2026-11-14T20:11:37.256367+00:00",
+  "recorded_at": "2026-11-14T20:11:37.256367+00:00",
+  "kind": "discovery",
+  "title": "Cloud-built PR artifacts for targeted browser checks",
+  "summary": "Added a cloud-first path for targeted content browser tests, validated it against a real CI artifact, and fixed service-worker interference in a boot fault-injection test. CI passed for 7bc44c6; the boot test now passes against downloaded build bytes without local Rust compilation.",
+  "details": [
+    "tools/fetch_pr_build.py downloads artifacts from successful same-repository ci.yml PR runs and validates checksums, commit identity, and the exact local source tree. The browser runner accepts --root for content tests against the fetched output; CI smoke also exercises --root work/release/static so it checks the same packaged bytes. The local compiler cap is unchanged, and game content stays local.",
+    "Local validation passed: make precheck; 4 PR-build tests; 10 release packaging tests; 10 release workflow tests; 8 Node browser manifest/process tests; and Node syntax checks.",
+    "CI run 43636497603 passed for 7bc44c6. A real tools/fetch_pr_build.py download verified CI merge a4d9ea89ab7d35004d7351212dbf4567f6f19e26 against the clean local source tree. test_engine_boot initially timed out because the packaged service worker bypassed page.route fault injection; route-interception contexts now block service workers, and the focused boot test passed in 9.0 seconds against the downloaded artifact with private content local and no local Rust compilation."
+  ],
+  "limitation": "Fresh CI verification after the boot-test fix is pending. No deployment or throughput benchmark is claimed."
+}

@@ -1,9 +1,8 @@
-// The redesigned Pause and Options in the Rust engine. On a wide screen
-// Options keeps its categories in a rail beside the open one's rows: the
-// rail's highlight previews a category, a press on a previewed row acts on
-// it, a tab turns the category without the panel sliding, and the rail's
-// Back leaves Options. On a portrait phone Options stays a list of pages.
-// The menu status bar's gear opens Options from the main menu.
+// Pause and Options in the Rust engine, laid out like the main menu: a
+// column of rows on the left with the paused ride in view beside it (the
+// whole width on a portrait phone), Back bottom right, and one page at a
+// time. Up and Down follow the rows as drawn. The menu status bar's gear
+// opens Options from the main menu, beside the frontend's stage.
 // Host browser evidence.
 import assert from 'node:assert/strict';
 import { assertNoErrors, launch, newPage, nextFrames, url } from './browser/harness.mjs';
@@ -22,6 +21,7 @@ async function tap(page, hit, what) {
 }
 const row = (m, action) => m.hits.find(h => h.action === action);
 const inside = (h, { width, height }) => h.x >= -0.5 && h.y >= -0.5 && h.x + h.width <= width + 0.5 && h.y + h.height <= height + 0.5;
+const right = h => h.x + h.width;
 
 async function ride(browser, viewport, errors, options = {}) {
   const page = await newPage(browser, { viewport, ...options }, errors);
@@ -32,10 +32,23 @@ async function ride(browser, viewport, errors, options = {}) {
   return page;
 }
 
+// Rows keep to the column on the left of a landscape screen (a scrolled
+// row may sit below it); Back, or Pause's sharing chips, sit bottom right,
+// clear of every row.
+const corner = ['back', 'copyride', 'devlog'];
+function column(m, view) {
+  const back = row(m, 'back');
+  for (const h of m.hits.filter(h => !corner.includes(h.action))) {
+    assert.ok(h.x >= -0.5 && right(h) <= view.width + 0.5, `${m.page} ${h.action} on screen: ${JSON.stringify(h)}`);
+    if (view.width > view.height) assert.ok(right(h) <= view.width * 0.46, `${m.page} ${h.action} in the column: ${JSON.stringify(h)}`);
+    if (back && h.y < view.height) assert.ok(h.y + h.height <= back.y + 0.5 || right(h) <= back.x + 0.5, `${h.action} clear of Back`);
+  }
+  if (back) assert.ok(inside(back, view) && right(back) >= view.width * 0.85, `Back bottom right: ${JSON.stringify(back)}`);
+}
+
 const browser = await launch();
 try {
   const errors = [];
-  // Desktop: the rail beside the rows.
   const wide = { width: 1280, height: 720 };
   let page = await ride(browser, wide, errors);
   await page.mouse.click(640, 400);
@@ -45,80 +58,69 @@ try {
   // Pause lists each action once (Photo mode used to appear twice).
   assert.equal(new Set(m.hits.map(h => h.action)).size, m.hits.length, `Pause rows once: ${m.hits.map(h => h.action)}`);
   assert.deepEqual(m.choices.slice(0, 2), ['resume', 'reset']);
-  await tap(page, row(m, 'settings'), 'Options on Pause');
+  assert.ok(m.hits.every(h => inside(h, wide)), 'Pause fits without scrolling');
+  column(m, wide);
+  // Down walks the rows top to bottom as drawn, then wraps.
+  const drawn = [];
+  for (let i = 0; i < m.choices.length; i++) {
+    const now = await menu(page);
+    drawn.push(row(now, now.choices[now.selection]));
+    await key(page, 'ArrowDown');
+  }
+  for (let i = 1; i < drawn.length; i++) {
+    const [a, b] = [drawn[i - 1], drawn[i]];
+    assert.ok(a.y < b.y || (a.y === b.y && a.x < b.x), `${a.action} then ${b.action}`);
+  }
+  assert.equal((await menu(page)).selection, 0, 'Down wraps to Resume');
+
+  // Options: its categories alone; each opens a page of its own.
+  await tap(page, row(await menu(page), 'settings'), 'Options on Pause');
   await onMenu(page, 'settings');
   m = await menu(page);
-  assert.equal(m.wide, true);
-  const categories = m.choices.filter(c => c !== 'back');
-  assert.equal(m.previewPage, categories[0], 'the highlighted category shows beside the rail');
-  assert.ok(m.preview.length > 1 && m.preview.every(h => inside(h, wide)), JSON.stringify(m.preview));
-  const rail = categories.map(c => row(m, c));
-  assert.ok(rail.every(Boolean), 'every category is a rail row');
-  assert.ok(m.preview.every(p => rail.every(r => r.x + r.width <= p.x)), 'the rows sit right of the rail');
-  await key(page, 'ArrowDown');
-  assert.equal((await menu(page)).previewPage, categories[1], 'the preview follows the highlight');
-  await key(page, 'ArrowUp');
-
-  // A press on a previewed row acts on it and puts the selection there.
-  assert.equal(categories[0], 'game-settings');
-  const before = await page.evaluate(() => localStorage.getItem('atv-measurement'));
-  m = await menu(page);
-  await tap(page, m.preview.find(h => h.action === 'measurement'), `measurement in ${JSON.stringify(m.preview)}`);
-  m = await menu(page);
-  assert.deepEqual([m.page, m.choices[m.selection]], ['game-settings', 'measurement']);
-  assert.notEqual(await page.evaluate(() => localStorage.getItem('atv-measurement')), before, 'the press changed the units');
-  assert.equal(m.motion, null, 'entering a category does not slide the panel');
-
-  // Tabs turn the category in place; E and Q do the same from the keyboard.
-  assert.deepEqual(m.tabs.map(t => t.action), categories);
-  assert.ok(m.tabs.every(t => inside(t, wide) && t.height >= 26));
-  await tap(page, m.tabs.find(t => t.action === 'music'), 'the Audio tab');
-  m = await menu(page);
-  assert.deepEqual([m.page, m.motion], ['music', null]);
-  await key(page, 'KeyE');
-  assert.equal((await menu(page)).page, categories[categories.indexOf('music') + 1]);
-  await key(page, 'KeyQ');
-  assert.equal((await menu(page)).page, 'music');
-  // Escape steps back to the rail on that category; Right steps in again.
-  await key(page, 'Escape');
-  m = await menu(page);
-  assert.deepEqual([m.page, m.choices[m.selection], m.previewPage], ['settings', 'music', 'music']);
+  column(m, wide);
+  assert.equal(m.choices[0], 'game-settings');
   await key(page, 'ArrowRight');
-  assert.equal((await menu(page)).page, 'music');
-  // The rail's Back leaves Options from inside a category.
-  await tap(page, row(await menu(page), 'back'), 'the rail Back');
+  assert.equal((await menu(page)).page, 'settings', 'Right does not open a category');
+  await tap(page, row(m, 'game-settings'), 'Game Settings');
+  await onMenu(page, 'game-settings');
+  const before = await page.evaluate(() => localStorage.getItem('atv-measurement'));
+  await tap(page, row(await menu(page), 'measurement'), 'measurement');
+  assert.notEqual(await page.evaluate(() => localStorage.getItem('atv-measurement')), before, 'the press changed the units');
+  column(await menu(page), wide);
+  // Back returns to Options on the row it left by, then to Pause.
+  await tap(page, row(await menu(page), 'back'), 'Back');
+  await onMenu(page, 'settings');
+  m = await menu(page);
+  assert.equal(m.choices[m.selection], 'game-settings');
+  await key(page, 'Escape');
   await onMenu(page, 'pause');
   await page.close();
 
-  // A landscape phone keeps the rail, every tab on screen.
+  // A landscape phone: the same column.
   const land = { width: 844, height: 390 };
   page = await ride(browser, land, errors, { deviceScaleFactor: 3, hasTouch: true, isMobile: true });
   await key(page, 'Escape');
   await onMenu(page, 'pause');
-  m = await menu(page);
-  assert.ok(m.hits.every(h => inside(h, land)), `Pause fits a landscape phone: ${JSON.stringify(m.hits)}`);
-  await tap(page, row(m, 'settings'), 'Options on Pause');
+  column(await menu(page), land);
+  await tap(page, row(await menu(page), 'settings'), 'Options on Pause');
   await onMenu(page, 'settings');
-  await tap(page, row(await menu(page), 'controls'), 'Controls in the rail');
-  m = await menu(page);
-  assert.deepEqual([m.page, m.wide], ['controls', true]);
-  assert.equal(m.tabs.length, categories.length);
-  assert.ok(m.tabs.every(t => inside(t, land) && t.height >= 26), JSON.stringify(m.tabs));
-  assert.ok(inside(row(m, 'back'), land), 'Back is on screen');
+  await tap(page, row(await menu(page), 'controls'), 'Controls');
+  await onMenu(page, 'controls');
+  column(await menu(page), land);
   await page.close();
 
-  // A portrait phone: a list of categories, each a page of its own.
+  // A portrait phone: the column spans the screen.
   const tall = { width: 390, height: 844 };
   page = await ride(browser, tall, errors, { deviceScaleFactor: 3, hasTouch: true, isMobile: true });
   await key(page, 'Escape');
   await onMenu(page, 'pause');
+  column(await menu(page), tall);
   await tap(page, row(await menu(page), 'settings'), 'Options on Pause');
   await onMenu(page, 'settings');
-  m = await menu(page);
-  assert.deepEqual([m.wide, m.previewPage, m.preview.length, m.tabs.length], [false, null, 0, 0]);
-  assert.ok(m.hits.every(h => inside(h, tall)), `Options fits a portrait phone: ${JSON.stringify(m.hits)}`);
-  await tap(page, row(m, 'controls'), 'Controls');
+  column(await menu(page), tall);
+  await tap(page, row(await menu(page), 'controls'), 'Controls');
   await onMenu(page, 'controls');
+  column(await menu(page), tall);
   await tap(page, row(await menu(page), 'back'), 'Back');
   await onMenu(page, 'settings');
   await page.close();
@@ -143,7 +145,7 @@ try {
   await key(page, 'Escape');
   await until(page, () => JSON.parse(document.querySelector('#ui-state').textContent).front?.menu == null);
   assertNoErrors(errors);
-  console.log('PASS: Options rail, preview, tabs and Back on wide screens; pages on a portrait phone; the main menu gear');
+  console.log('PASS: Pause and Options as a column beside the ride, rows in drawn order, one page at a time; the main menu gear');
 } finally {
   await browser.close();
 }

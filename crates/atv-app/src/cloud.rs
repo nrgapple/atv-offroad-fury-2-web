@@ -505,7 +505,7 @@ impl App {
     }
 
     /// Copies `text`; the notice says so, or shows the text to copy by hand.
-    fn copy_text(&mut self, text: String, done: &'static str) {
+    pub(crate) fn copy_text(&mut self, text: String, done: &'static str) {
         #[cfg(target_arch = "wasm32")]
         if let Some(clipboard) = web_sys::window().map(|w| w.navigator().clipboard()) {
             let promise = clipboard.write_text(&text);
