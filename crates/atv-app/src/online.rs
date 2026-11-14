@@ -207,6 +207,59 @@ impl App {
         }
     }
 
+    /// A registration's answer: the token for requests and room sockets.
+    fn online_token(&mut self, value: &Value) {
+        self.online.failures = 0;
+        self.online.retry_at = None;
+        let token = value["token"].as_str().unwrap_or_default().to_string();
+        if let Ok(mut shared) = TOKEN.lock() {
+            shared.clone_from(&token);
+        }
+        self.online.token = (!token.is_empty()).then_some(token);
+    }
+
+    /// A failed registration waits 10 s, doubling to about 10 minutes.
+    fn online_backoff(&mut self) {
+        self.online.failures += 1;
+        let wait = 5u64 << self.online.failures.min(7);
+        self.online.retry_at = Some(Instant::now() + std::time::Duration::from_secs(wait));
+    }
+
+    /// `/multiplayer/room/riders`' answer: quick chat's verified ids, and
+    /// name-only blocks they upgrade sent to the identity list.
+    fn online_room(&mut self, value: &Value) {
+        let riders: Vec<(u8, String, bool)> = value["riders"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|r| {
+                Some((
+                    u8::try_from(r["slot"].as_u64()?).ok()?,
+                    r["id"].as_str()?.to_string(),
+                    r["blocked"].as_bool().unwrap_or(false),
+                ))
+            })
+            .collect();
+        let Some(net) = self.ready.as_mut().and_then(|r| r.net.as_mut()) else {
+            return;
+        };
+        let mut settings = Settings::load();
+        let names: Vec<(u8, String)> = riders
+            .iter()
+            .filter_map(|(slot, ..)| Some((*slot, net.rider_name(*slot)?)))
+            .collect();
+        let name = |slot: u8| {
+            names
+                .iter()
+                .find(|(s, _)| *s == slot)
+                .map(|(_, n)| n.clone())
+        };
+        let push = net.chat.set_riders(&mut settings, &riders, name);
+        for id in push {
+            self.online_block(&id, true);
+        }
+    }
+
     /// Quick chat's Block on a verified rider is the identity block too
     /// (research/QUICK_CHAT.md "Block"), so it holds on every device on the
     /// Pass Key and in the Friends lists.
@@ -223,9 +276,6 @@ impl App {
     /// secret a Pass Key brought, and keep an open Online page's presence
     /// fresh.
     pub(crate) fn online_poll(&mut self) {
-        let Some(front) = self.front.clone() else {
-            return;
-        };
         if self.defaults.is_none() {
             return;
         }
@@ -264,6 +314,11 @@ impl App {
                 json!({"room": room}),
             );
         }
+        // A ride opened from a room link has no menus: it still registers
+        // (above) and reads its room's riders.
+        let Some(front) = self.front.clone() else {
+            return;
+        };
         let (page, ghosts) = {
             let mut f = front.borrow_mut();
             f.state.online.now_ms = now_ms();
@@ -298,6 +353,12 @@ impl App {
             return;
         }
         let Some(front) = self.front.clone() else {
+            match purpose {
+                Purpose::Register if status == 200 => self.online_token(&value),
+                Purpose::Register => self.online_backoff(),
+                Purpose::Room if status == 200 => self.online_room(&value),
+                _ => {}
+            }
             return;
         };
         let mut f = front.borrow_mut();
@@ -306,10 +367,7 @@ impl App {
         if status != 200 {
             let message = value["error"].as_str().map(str::to_string);
             if purpose == Purpose::Register {
-                // 10 s, doubling to about 10 minutes.
-                self.online.failures += 1;
-                let wait = 5u64 << self.online.failures.min(7);
-                self.online.retry_at = Some(Instant::now() + std::time::Duration::from_secs(wait));
+                self.online_backoff();
             }
             match purpose {
                 Purpose::Register | Purpose::Me | Purpose::Lists
@@ -340,13 +398,7 @@ impl App {
         let mut refresh = false;
         match purpose {
             Purpose::Register => {
-                self.online.failures = 0;
-                self.online.retry_at = None;
-                let token = value["token"].as_str().unwrap_or_default().to_string();
-                if let Ok(mut shared) = TOKEN.lock() {
-                    shared.clone_from(&token);
-                }
-                self.online.token = (!token.is_empty()).then_some(token);
+                self.online_token(&value);
                 refresh =
                     atv_ui::front::controller::online_page::PAGES.contains(&state.page.as_str());
             }
@@ -375,37 +427,9 @@ impl App {
                 state.online_changed(&view);
             }
             Purpose::Room => {
-                let riders: Vec<(u8, String, bool)> = value["riders"]
-                    .as_array()
-                    .into_iter()
-                    .flatten()
-                    .filter_map(|r| {
-                        Some((
-                            u8::try_from(r["slot"].as_u64()?).ok()?,
-                            r["id"].as_str()?.to_string(),
-                            r["blocked"].as_bool().unwrap_or(false),
-                        ))
-                    })
-                    .collect();
-                if let Some(net) = self.ready.as_mut().and_then(|r| r.net.as_mut()) {
-                    let mut settings = Settings::load();
-                    let names: Vec<(u8, String)> = riders
-                        .iter()
-                        .filter_map(|(slot, ..)| Some((*slot, net.rider_name(*slot)?)))
-                        .collect();
-                    let name = |slot: u8| {
-                        names
-                            .iter()
-                            .find(|(s, _)| *s == slot)
-                            .map(|(_, n)| n.clone())
-                    };
-                    let push = net.chat.set_riders(&mut settings, &riders, name);
-                    drop(f);
-                    for id in push {
-                        self.online_block(&id, true);
-                    }
-                    return;
-                }
+                drop(f);
+                self.online_room(&value);
+                return;
             }
             Purpose::Sync => {}
             Purpose::Board => {
