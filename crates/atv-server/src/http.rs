@@ -35,13 +35,16 @@ const PUBLIC: [&str; 4] = [FREERIDE_RIDERS, FREERIDE_DAYS, "/healthz", "/metrics
 const SEND_TIMEOUT: Duration = Duration::from_secs(10);
 /// After the server's close, the client gets this long to answer it.
 const CLOSE_WAIT: Duration = Duration::from_secs(5);
-/// What the server claims for every room: no direct links or batches, and
-/// frames for builds that take them.
+/// What the server claims for every room: no direct links or batches,
+/// frames for builds that take them, and motorcycle poses for builds that
+/// decode them (`signal::MOTORCYCLES`).
 fn features() -> serde_json::Map<String, serde_json::Value> {
     let mut map = serde_json::Map::new();
     map.insert("links".into(), false.into());
     map.insert("batches".into(), false.into());
     map.insert("frames".into(), true.into());
+    map.insert("motorcycles".into(), true.into());
+    map.insert("chat".into(), true.into());
     map
 }
 
@@ -52,6 +55,7 @@ pub fn router(shared: Arc<Shared>) -> Router {
         .route(FREERIDE, post(claim))
         .route(FREERIDE_RIDERS, get(riders))
         .route(FREERIDE_DAYS, get(days))
+        .route(crate::reports::ROUTE, post(crate::reports::report))
         .route("/multiplayer/version", get(version))
         .route("/healthz", get(health))
         .route("/metrics", get(metrics))

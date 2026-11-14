@@ -51,7 +51,7 @@ pub enum Event {
     /// Display → Fullscreen in Settings.
     Fullscreen,
     /// Arlington Free Ride: join a shared room at once (no setup) with the
-    /// remembered rider name and the garage ATV (motorcycles ride ATV01).
+    /// remembered rider name and the garage vehicle (ATV or motorcycle).
     FreeRide { quad: u16, rider: u16, name: String },
     /// Host Game → Select Track → Ride: create a room on this course with an
     /// optional custom code and start riding at once.
@@ -324,10 +324,6 @@ pub struct Lobby {
     /// `lobby_status`: blank while connecting.
     pub status: String,
 }
-
-/// frontend.js refuses rooms on a motorcycle with this message.
-pub const MOTORCYCLE_ROOM: &str =
-    "Choose an ATV for multiplayer. Motorcycles are available in Single Player.";
 
 /// A text field on the Host/Join forms (`ui_menu::TextInput`).
 #[derive(Clone, Debug, PartialEq)]
@@ -1971,6 +1967,10 @@ impl Frontend {
     /// Visible course order under the event filter.
     pub fn order(&self) -> Vec<usize> {
         (0..self.tracks.len())
+            .filter(|&i| {
+                !self.tracks[i].id.starts_with("mx_")
+                    || atv_game::launch::mx_courses::available(&self.tracks[i].id, false)
+            })
             .filter(|&i| self.filter == "all" || course_group(&self.tracks[i].id) == self.filter)
             .collect()
     }
@@ -2077,11 +2077,7 @@ impl Frontend {
     }
 
     fn step_quad(&mut self, direction: i32) {
-        let n = if self.online_garage() {
-            26
-        } else {
-            i32::from(VEHICLES)
-        };
+        let n = i32::from(VEHICLES);
         let online = self.online_garage();
         let mut quad = self.quad_id;
         // Single Player skips ATVs the profile has not unlocked.
@@ -2122,7 +2118,6 @@ impl Frontend {
             });
         }
         if self.hosting {
-            // Select Track refused a motorcycle, as frontend.js does.
             return Some(Event::Host {
                 environment: track.id,
                 code: Some(self.create_code.clone()).filter(|c| !c.is_empty()),
@@ -2235,7 +2230,7 @@ impl Frontend {
 
     fn room_ride(&self, environment: Option<String>) -> Event {
         Event::RoomRide {
-            quad: if self.quad_id >= 27 { 1 } else { self.quad_id },
+            quad: self.quad_id,
             rider: self.rider_id,
             environment,
         }
@@ -2393,16 +2388,19 @@ impl Frontend {
                 self.host_freestyle = !self.host_freestyle;
                 self.refresh(view);
             }
+            "dicename" => {
+                let roll = web_time::SystemTime::now()
+                    .duration_since(web_time::UNIX_EPOCH)
+                    .map_or(0, |d| d.as_nanos() as u64)
+                    ^ self.player_name.len() as u64;
+                let name = atv_game::multiplayer::dice_name(
+                    roll.wrapping_mul(0x9e37_79b9_7f4a_7c15) >> 20,
+                );
+                self.set_field("player-name", &name);
+                self.refresh(view);
+            }
             "share" if self.page == "lobby" => return Some(Event::CopyInvite),
             "leave" if self.page == "lobby" => return self.leave_lobby(view),
-            "hosttrack" if self.page == "create-lobby" && self.quad_id >= 27 => {
-                self.notice = Some(MOTORCYCLE_ROOM.into());
-                return None;
-            }
-            "join" if self.quad_id >= 27 => {
-                self.notice = Some(MOTORCYCLE_ROOM.into());
-                return None;
-            }
             "hosttrack" => {
                 // Host Game → Select Track; its Ride creates the room.
                 if !self.create_code.is_empty() && self.create_code.len() != 8 {
@@ -2461,12 +2459,13 @@ impl Frontend {
             "downloads" => return Some(Event::Downloads),
             "stats" => return Some(Event::Stats),
             "freeride" => {
-                // frontend.js: no setup; motorcycles fall back to ATV01. The
-                // current name rides (also one typed but not yet saved); the
-                // host numbers a blank or default "Rider" for the session.
+                // frontend.js: no setup. The current name rides (also one
+                // typed but not yet saved); the host numbers a blank or
+                // default "Rider" for the session. Motorcycles ride rooms
+                // too (the JavaScript game fell back to ATV01).
                 let name = self.room_name();
                 return Some(Event::FreeRide {
-                    quad: if self.quad_id >= 27 { 1 } else { self.quad_id },
+                    quad: self.quad_id,
                     rider: self.rider_id,
                     name,
                 });
@@ -3024,6 +3023,7 @@ impl Frontend {
         }
         self.focus = None;
         match id {
+            super::DICE => return self.run("dicename", view, settings),
             BACK | DONE if self.course_sheet => self.close_course_sheet(view),
             BACK | DONE if self.vehicle_sheet => self.close_vehicle_sheet(view),
             BACK | DONE => return self.back(view),
@@ -3124,11 +3124,7 @@ impl Frontend {
                     ));
                     return None;
                 }
-                if self
-                    .catalog
-                    .iter()
-                    .any(|v| v.id == quad && !(online && v.motorcycle))
-                {
+                if self.catalog.iter().any(|v| v.id == quad) {
                     self.quad_id = quad;
                     self.save(settings);
                     if self.vehicle_sheet {
@@ -3373,7 +3369,6 @@ impl Frontend {
                 let online = self.online_garage();
                 self.catalog
                     .iter()
-                    .filter(|v| !online || !v.motorcycle)
                     .map(|v| {
                         let mut v = v.clone();
                         if !online && !self.quad_owned(v.id) {
@@ -3664,22 +3659,27 @@ mod tests {
     }
 
     #[test]
-    fn rooms_refuse_motorcycles_and_online_garages_list_atvs() {
+    fn rooms_take_motorcycles_and_online_garages_list_them() {
         let view = view(1280., 720.);
         let mut settings = Settings::memory();
         settings.set(SELECTION_KEY, r#"{"quadId":29,"riderId":0}"#);
         let mut front = Frontend::new(tracks(), &settings, true);
         front.show("create-lobby", &view);
-        assert_eq!(front.run("hosttrack", &view, &mut settings), None);
-        assert_eq!(front.page, "create-lobby");
-        assert_eq!(front.notice.as_deref(), Some(MOTORCYCLE_ROOM));
-        front.notice = None;
+        front.run("hosttrack", &view, &mut settings);
+        assert_eq!(front.page, "tracks");
+        assert_eq!(front.notice, None);
         front.show("join-lobby", &view);
         front.set_field("room-code", "abcd1234");
-        assert_eq!(front.run("join", &view, &mut settings), None);
-        assert_eq!(front.notice.as_deref(), Some(MOTORCYCLE_ROOM));
-        // The garage opened from the Multiplayer menus lists ATVs only, and
-        // stepping wraps within ATVs 1-26.
+        assert!(matches!(
+            front.run("join", &view, &mut settings),
+            Some(Event::Join { quad: 29, .. })
+        ));
+        assert!(matches!(
+            front.run("freeride", &view, &mut settings),
+            Some(Event::FreeRide { quad: 29, .. })
+        ));
+        // The garage opened from the Multiplayer menus lists the motorcycles
+        // too, unlocked like its ATVs, and stepping wraps over all 46.
         let catalog = |front: &Frontend| {
             front
                 .screen(None, false, None, &|_| None, None, (None, None), 0.)
@@ -3689,13 +3689,15 @@ mod tests {
         front.run("garage", &view, &mut settings);
         assert_eq!(front.page, "garage");
         assert!(front.online_garage());
-        assert!(!catalog(&front).is_empty());
-        assert!(catalog(&front).iter().all(|v| !v.motorcycle));
+        assert!(catalog(&front).iter().any(|v| v.motorcycle));
         front.click(VEHICLE + 30, &view, &mut settings);
-        assert_eq!(front.quad_id, 29);
+        assert_eq!(front.quad_id, 30);
         front.click(VEHICLE + 3, &view, &mut settings);
         assert_eq!(front.quad_id, 3);
         front.quad_id = 26;
+        front.step_quad(1);
+        assert_eq!(front.quad_id, 27);
+        front.quad_id = 46;
         front.step_quad(1);
         assert_eq!(front.quad_id, 1);
         // Single Player's garage keeps the motorcycles.
@@ -3768,7 +3770,7 @@ mod tests {
     }
 
     #[test]
-    fn free_ride_needs_no_setup_and_rides_an_atv() {
+    fn free_ride_needs_no_setup_and_keeps_a_motorcycle() {
         let view = view(1280., 720.);
         let mut settings = Settings::memory();
         settings.set(
@@ -3789,7 +3791,7 @@ mod tests {
         assert_eq!(
             front.key("Enter", &view, &mut settings),
             Some(Event::FreeRide {
-                quad: 1,
+                quad: 29,
                 rider: 1,
                 name: "Ann".into()
             })
@@ -5115,6 +5117,19 @@ mod tests {
             front.run("freeride", &view, &mut settings),
             Some(Event::FreeRide { ref name, .. }) if name == "Rider"
         ));
+    }
+
+    #[test]
+    fn the_name_dice_sets_a_clean_curated_name() {
+        let view = view(1280., 720.);
+        let mut settings = Settings::memory();
+        let mut front = Frontend::new(tracks(), &settings, true);
+        front.show("create-lobby", &view);
+        front.click(super::super::DICE, &view, &mut settings);
+        let name = front.player_name.clone();
+        assert!(name.len() >= 6 && name.len() <= 16, "{name}");
+        assert!(name.ends_with(|c: char| c.is_ascii_digit()), "{name}");
+        assert_eq!(front.fields()[0].value, name);
     }
 
     #[test]

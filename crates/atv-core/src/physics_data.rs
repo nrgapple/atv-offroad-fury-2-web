@@ -20,6 +20,8 @@ pub struct Entry {
 #[derive(Debug, Serialize)]
 pub struct PhysicsData {
     pub entries: Vec<Entry>,
+    #[serde(skip)]
+    scene_index: Option<std::collections::HashMap<(String, String), usize>>,
 }
 
 #[derive(Debug, PartialEq, Serialize)]
@@ -32,7 +34,11 @@ impl PhysicsData {
     /// Strictly accepts the section/key syntax observed in this build's .phy files.
     /// Duplicate keys are retained for inspection and explicit lookup policy.
     pub fn parse(data: &[u8]) -> Result<Self> {
-        if data.len() > MAX_BYTES || data.contains(&0) {
+        Self::parse_bounded(data, MAX_BYTES, MAX_ENTRIES)
+    }
+
+    pub(crate) fn parse_bounded(data: &[u8], max_bytes: usize, max_entries: usize) -> Result<Self> {
+        if data.len() > max_bytes || data.contains(&0) {
             return Err("physics text exceeds limit or contains NUL".into());
         }
         let text = std::str::from_utf8(data).map_err(|_| "physics text is not UTF-8")?;
@@ -73,7 +79,7 @@ impl PhysicsData {
             {
                 return Err(format!("unsupported physics assignment at line {line}"));
             }
-            if entries.len() == MAX_ENTRIES {
+            if entries.len() == max_entries {
                 return Err("too many physics entries".into());
             }
             entries.push(Entry {
@@ -86,7 +92,37 @@ impl PhysicsData {
         if entries.is_empty() {
             return Err("empty physics configuration".into());
         }
-        Ok(Self { entries })
+        let mut result = Self::from_entries(entries);
+        if max_entries > MAX_ENTRIES {
+            let mut index = std::collections::HashMap::with_capacity(result.entries.len());
+            for (i, entry) in result.entries.iter().enumerate() {
+                index
+                    .entry((entry.section.clone(), entry.key.to_ascii_lowercase()))
+                    .or_insert(i);
+            }
+            result.scene_index = Some(index);
+        }
+        Ok(result)
+    }
+
+    pub(crate) fn from_entries(entries: Vec<Entry>) -> Self {
+        Self {
+            entries,
+            scene_index: None,
+        }
+    }
+
+    pub(crate) fn scene_value(&self, section: &str, key: &str) -> Option<&str> {
+        if let Some(index) = &self.scene_index {
+            index
+                .get(&(section.to_owned(), key.to_ascii_lowercase()))
+                .map(|&i| self.entries[i].value.as_str())
+        } else {
+            self.entries
+                .iter()
+                .find(|entry| entry.section == section && entry.key.eq_ignore_ascii_case(key))
+                .map(|entry| entry.value.as_str())
+        }
     }
 
     /// Exact spelling only: original case-folding behavior is not yet verified.
@@ -254,5 +290,37 @@ mod tests {
         assert!(data.vector3("A", "y").is_err());
         assert!(PhysicsData::parse(&vec![b' '; MAX_BYTES + 1]).is_err());
         assert!(PhysicsData::parse(b"[A]\nx=1\0").is_err());
+    }
+}
+
+#[cfg(test)]
+mod mx_index_tests {
+    #[test]
+    fn scene_index_preserves_first_key_and_exact_section() {
+        let mut text = String::from("[Exact]\nNaMe=first\nname=second\n[exact]\nName=other\n");
+        for i in 0..5000 {
+            text.push_str(&format!("[Model{i}]\nSLT=model{i}.psg\n"));
+        }
+        let indexed =
+            super::PhysicsData::parse_bounded(text.as_bytes(), 1024 * 1024, 131072).unwrap();
+        let linear = super::PhysicsData::from_entries(indexed.entries.clone());
+        assert_eq!(indexed.scene_value("Exact", "NAME"), Some("first"));
+        assert_eq!(indexed.scene_value("exact", "name"), Some("other"));
+        assert_eq!(indexed.scene_value("EXACT", "name"), None);
+        let names = (0..5000).map(|i| format!("Model{i}")).collect::<Vec<_>>();
+        let start = std::time::Instant::now();
+        let expected = names
+            .iter()
+            .map(|n| linear.scene_value(n, "slt"))
+            .collect::<Vec<_>>();
+        let linear_time = start.elapsed();
+        let start = std::time::Instant::now();
+        let actual = names
+            .iter()
+            .map(|n| indexed.scene_value(n, "slt"))
+            .collect::<Vec<_>>();
+        let indexed_time = start.elapsed();
+        assert_eq!(actual, expected);
+        eprintln!("5000 scene lookups (host): linear {linear_time:?}, indexed {indexed_time:?}");
     }
 }

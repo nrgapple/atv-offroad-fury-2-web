@@ -149,7 +149,8 @@ jobs:
       - name: Content-free browser smoke tests
         if: steps.prepare.outputs.build == 'true' && github.event_name != 'push'
         timeout-minutes: 5
-        run: make browser-smoke
+        # Exercise the same packaged bytes agents download for host tests.
+        run: make browser-smoke BROWSER_ARGS='--root work/release/static'
       - name: Upload asset-free release
         if: steps.plan.outputs.publish == 'true' && github.event_name != 'pull_request' || steps.prepare.outputs.build == 'true'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

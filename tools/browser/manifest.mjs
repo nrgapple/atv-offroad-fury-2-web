@@ -33,6 +33,7 @@ export const TESTS = {
   'test_engine_pause.mjs': { group: 'content' },
   'test_engine_photo.mjs': { group: 'content' },
   'test_engine_replay.mjs': { group: 'content' },
+  'test_engine_race_replay.mjs': { group: 'content' },
   'test_engine_alpha.mjs': { group: 'content' },
   'test_engine_alpha_muffle.mjs': { group: 'content' },
   'test_engine_alpha_landing.mjs': { group: 'content' },
@@ -156,6 +157,10 @@ export const TESTS = {
     group: 'multiplayer',
     reason: 'needs a local game server at the same origin (Host Game, room WebSocket); run with --url'
   },
+  'test_engine_multiplayer_chat.mjs': {
+    group: 'multiplayer',
+    reason: 'needs a local game server at the same origin (quick chat relay and the report route); run with --url'
+  },
   'test_engine_multiplayer_context.mjs': {
     group: 'multiplayer',
     reason: 'needs a local game server at the same origin (Host Game, room WebSocket); run with --url'
@@ -175,6 +180,10 @@ export const TESTS = {
   'test_engine_multiplayer_pause.mjs': {
     group: 'multiplayer',
     reason: 'needs a local game server at the same origin (Host Game, room WebSocket); run with --url'
+  },
+  'test_engine_multiplayer_motorcycle.mjs': {
+    group: 'multiplayer',
+    reason: 'needs a local game server at the same origin (a Rust host on a motorcycle and an ATV guest); run with --url'
   },
   'test_engine_multiplayer_presence.mjs': {
     group: 'multiplayer',
@@ -203,6 +212,7 @@ export const TESTS = {
       'needs a local game server at the same origin plus a native fury build (FURY_BIN) for the Rust host; run with --url'
   },
   'test_engine_preview.mjs': { group: 'content-free' },
+  'test_engine_cpu_recovery.mjs': { group: 'content' },
   'test_engine_race.mjs': { group: 'content' },
   'test_engine_cpu_audio.mjs': { group: 'content' },
   'test_engine_split_screen.mjs': { exclusive: true, group: 'content', timeout: 900 },

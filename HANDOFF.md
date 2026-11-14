@@ -101,6 +101,13 @@ section is authoritative.
 
 ## Build and test
 
+Routine builds run on GitHub Actions: `make precheck`, push and open a draft PR
+before waiting for local content tests. Reuse its checked WASM with
+`tools/fetch_pr_build.py --run <id>` and the browser runner's `--root` option.
+Mark ready and enable auto-merge after required local tests pass. Do not repeat
+CI's full build/check/lint locally; use the commands below for specific debugging
+or native/private-resource needs. See `research/CI_CHECKPOINTS.md`.
+
 Toolchain: Rust (`~/.cargo/bin/cargo`) with `wasm32-unknown-unknown`, rustfmt
 and Clippy; Python 3; Node; Playwright with Chromium for browser tests.
 

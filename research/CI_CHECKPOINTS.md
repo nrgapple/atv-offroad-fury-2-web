@@ -69,6 +69,46 @@ version is deployed; see [cloud-save operations](CLOUD_SAVE.md#operations).
 
 ## Routine delivery
 
+### Cloud-first compilation
+
+As of 2026-11-14, start CI before waiting for local compilation. Each PR has
+its own build concurrency group; different PRs already compile concurrently on
+standard GitHub-hosted runners. No additional runner service or paid runner is
+needed. Keep the Mac's one-compiler/one-browser budget for work needing the host.
+
+1. Run `make precheck`, commit and push a coherent checkpoint. Open a draft PR
+   (`gh pr create --draft`) when focused content tests remain; otherwise open a
+   ready PR and enable auto-merge. Draft PRs run the existing required checks.
+2. Let CI run workspace tests, Clippy, the WASM build and content-free smoke tests.
+   Do not duplicate these locally as a pre-PR gate. Fix CI failures on the branch.
+   Use the supported PR watch while waiting; a draft is not permission to stop
+   owning the work.
+3. When content tests are required, use the successful **Check and build** PR
+   run ID (from the PR checks) to download its artifact:
+
+   ```sh
+   python3 tools/fetch_pr_build.py --run <run-id>
+   make browser-tests BROWSER_ARGS='--root <returned-root> --only <affected-test.mjs>'
+   ```
+
+   The downloader checks same-repository run provenance, success, PR head,
+   artifact allowlist/checksums and the CI merge commit's exact source tree.
+   Local tracked and untracked changes must be committed first. If the merge
+   tree contains newer main changes, merge origin/main and push before retrying
+   with the new run. Downloads stay in ignored `work/pr-builds`; they do not
+   overwrite `web/dist`, deploy, or transfer any private resources to GitHub.
+   Re-fetch after changing source. Keep the local hosted-content link available.
+   Multiplayer tests still require their documented local game server and URL.
+4. Once the focused tests pass, mark the draft ready (`gh pr ready`) and run
+   `gh pr merge --auto --merge --delete-branch`. Report CI and host results
+   separately. A successful cloud build does not establish gameplay fidelity.
+
+Local `make web`, `make check` and `make lint` remain available for debugging or
+CI outages, but are not routine delivery gates. Native resource tools, content
+validation and bundled desktop releases still use the owner machine. This
+changes scheduling and artifact reuse, not the game or local concurrency cap.
+
+
 Use one task branch, focused checks, and a PR with auto-merge. For runtime changes
 run `make precheck` (hygiene, secrets and formatting; clippy runs in CI's required
 check and locally only through `make lint`); for documentation/metadata-only changes run CI's

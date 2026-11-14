@@ -7,6 +7,7 @@ import { browserOriginAllowed } from './security.mjs';
 import { markGhosts, pruneGhosts } from './ghosts.mjs';
 import { houseRows, merge } from './house.mjs';
 import { MEASURED_LAP } from './board_seeds.mjs';
+import { WEEKLY_MAX_AGE, checkWeeklyLaps, isoWeekOf, parseWeek, weeklyExtras, weeklyPercentile, weeklyPick } from './weekly.mjs';
 
 export const TOP = 50;
 export const MAX_SUBMIT_BYTES = 24 * 1024;
@@ -56,7 +57,7 @@ export const MIN_LAP_FEET = 500;
 export const MAX_LAP_GAP_FEET = 400;
 const MAX_POINTS = 1800;
 const MAX_RESETS = 30;
-const MARK_SLACK_MS = 50;
+export const MARK_SLACK_MS = 50;
 
 // Freestyle objective runs last 120 s (research/PROFILE.md), and a target
 // run gains 10 s a green target: at most 30 hits before the last ends it
@@ -92,14 +93,15 @@ export function dailyPick(date) {
   return { date, course: DAILY_POOL[hash % DAILY_POOL.length], vehicleClass: (hash >>> 8) % 4 === 3 ? 'motorcycle' : 'atv' };
 }
 export const dayOf = ms => new Date(ms).toISOString().slice(0, 10);
-const vehicleInClass = (vehicle, kind) => (kind === 'motorcycle' ? vehicle >= FIRST_MOTORCYCLE : vehicle < FIRST_MOTORCYCLE);
+export const vehicleInClass = (vehicle, kind) => (kind === 'motorcycle' ? vehicle >= FIRST_MOTORCYCLE : vehicle < FIRST_MOTORCYCLE);
 
-const BOARD = /^(?:(lap|race):([a-z0-9]{3,10}):([nx])|score:(unspstunt|spstunt):([a-z0-9]{3,10})|daily:(\d{4}-\d{2}-\d{2}))$/;
+const BOARD = /^(?:(lap|race):([a-z0-9]{3,10}):([nx])|score:(unspstunt|spstunt):([a-z0-9]{3,10})|daily:(\d{4}-\d{2}-\d{2})|weekly:(\d{4}-W\d{2}))$/;
 export function parseBoard(id) {
   const m = BOARD.exec(id ?? '');
   if (!m) return null;
   if (m[1]) return RACE_COURSE.test(m[2]) ? { kind: m[1], course: m[2], expert: m[3] === 'x' } : null;
   if (m[4]) return FREESTYLE[m[4]].includes(m[5]) ? { kind: 'score', series: m[4], course: m[5] } : null;
+  if (m[7]) return parseWeek(m[7]) === null ? null : { kind: 'weekly', week: m[7] };
   return Number.isFinite(Date.parse(`${m[6]}T00:00:00Z`)) ? { kind: 'daily', date: m[6] } : null;
 }
 
@@ -137,7 +139,7 @@ async function readBody(request) {
   return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
 }
 
-const isInt = (value, min, max) => Number.isSafeInteger(value) && value >= min && value <= max;
+export const isInt = (value, min, max) => Number.isSafeInteger(value) && value >= min && value <= max;
 const distance = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]);
 
 // The run's trace: `points` one [x, z] (integer feet) per second from GO,
@@ -162,7 +164,7 @@ export function checkTrace(trace, seconds) {
 
 // The ridden ground between two clock times: the points' path, skipping
 // the steps into reset points.
-function ridden(trace, fromMs, toMs) {
+export function ridden(trace, fromMs, toMs) {
   const reset = new Set(trace.resets ?? []);
   const first = Math.max(0, Math.ceil(fromMs / 1000)), last = Math.min(trace.points.length - 1, Math.floor(toMs / 1000));
   let feet = 0;
@@ -251,14 +253,31 @@ export function judge(body, nowMs) {
     if (raceMs === undefined || expert || pick.course !== course || !vehicleInClass(vehicle, pick.vehicleClass)) return { reason: 'daily_pick' };
     entries.push([`daily:${date}`, raceMs]);
   }
+  if (body.weekly !== undefined) {
+    // The week's challenge (weekly.mjs): this ISO week (last week's for 30
+    // minutes after it ends), the pick's course and class, Normal, no CPUs
+    // asked of the client (the board cannot tell), a full-length race and
+    // every lap's trace consistent.
+    const week = body.weekly;
+    if (week !== isoWeekOf(nowMs) && week !== isoWeekOf(nowMs - DAILY_GRACE_MS)) return { reason: 'weekly_week' };
+    const pick = weeklyPick(week);
+    if (raceMs === undefined || expert || pick.course !== course || !vehicleInClass(vehicle, pick.vehicleClass)) return { reason: 'weekly_pick' };
+    const reason = checkWeeklyLaps(trace, course);
+    if (reason) return { reason };
+    entries.push([`weekly:${week}`, raceMs]);
+  }
   return { entries, vehicle, name };
 }
 
 // A board's house riders (house.mjs): no storage is read.
 function houseOf(board) {
   const parsed = parseBoard(board);
+  if (parsed?.kind === 'weekly') return houseRows(board, { ...weeklyPick(parsed.week), date: parsed.week });
   return houseRows(board, parsed?.kind === 'daily' ? dailyPick(parsed.date) : undefined);
 }
+// A weekly board keeps every rider's best (its percentiles count them all);
+// the others keep the top 50.
+const keepsAll = board => board.startsWith('weekly:');
 
 // Keeps the name's best on each board while it ranks in the top 50 of the
 // riders and the house riders together, then drops whatever fell below 50th
@@ -270,13 +289,20 @@ async function store(db, verdict, day) {
   for (const [board, value] of verdict.entries) {
     const house = houseOf(board).map(row => row.value);
     houses.push(house);
+    const all = keepsAll(board);
     statements.push(
-      db.prepare(`INSERT INTO board_entries (board, name, value, vehicle, day)
+      all
+        ? db.prepare(`INSERT INTO board_entries (board, name, value, vehicle, day) VALUES (?1, ?2, ?3, ?4, ?5)
+            ON CONFLICT (board, name) DO UPDATE SET value = excluded.value, vehicle = excluded.vehicle, day = excluded.day WHERE excluded.value < board_entries.value`)
+          .bind(board, verdict.name, value, verdict.vehicle, day)
+        : db.prepare(`INSERT INTO board_entries (board, name, value, vehicle, day)
         SELECT ?1, ?2, ?3, ?4, ?5 WHERE (SELECT COUNT(*) FROM board_entries WHERE board = ?1 AND value <= ?3 AND name <> ?2) + ?7 < ?6
         ON CONFLICT (board, name) DO UPDATE SET value = excluded.value, vehicle = excluded.vehicle, day = excluded.day WHERE excluded.value < board_entries.value`)
-        .bind(board, verdict.name, value, verdict.vehicle, day, TOP, house.filter(other => other < value).length),
-      db.prepare(`DELETE FROM board_entries WHERE board = ?1 AND value > (SELECT value FROM board_entries WHERE board = ?1 ORDER BY value, name LIMIT 1 OFFSET ?2)`)
-        .bind(board, TOP - 1),
+          .bind(board, verdict.name, value, verdict.vehicle, day, TOP, house.filter(other => other < value).length),
+      all
+        ? db.prepare('SELECT 0 WHERE 0')
+        : db.prepare(`DELETE FROM board_entries WHERE board = ?1 AND value > (SELECT value FROM board_entries WHERE board = ?1 ORDER BY value, name LIMIT 1 OFFSET ?2)`)
+          .bind(board, TOP - 1),
       db.prepare(`SELECT 1 + (SELECT COUNT(*) FROM board_entries o WHERE o.board = e.board AND o.value < e.value) AS rank, e.value AS value
         FROM board_entries e WHERE e.board = ?1 AND e.name = ?2`).bind(board, verdict.name),
     );
@@ -288,6 +314,14 @@ async function store(db, verdict, day) {
     const row = results[i * 3 + 2].results?.[0];
     // The name's kept value ranks behind the house riders quicker than it.
     const rank = row ? row.rank + houses[i].filter(other => other < row.value).length : null;
+    if (keepsAll(board)) {
+      // Every finisher stays on a weekly board; its percentile counts the
+      // riders alone (`row.rank` is the riders' rank).
+      ranks[board] = row
+        ? { rank: rank <= TOP ? rank : null, placed: changed && row.value === value, ahead: row.rank - 1, value: row.value }
+        : { rank: null, placed: false };
+      return;
+    }
     ranks[board] = rank !== null && rank <= TOP ? { rank, placed: changed && row.value === value } : { rank: null, placed: false };
   });
   return ranks;
@@ -315,7 +349,9 @@ async function readBoard(request, env, db, board) {
     const [winner] = merge(best ? [best] : [], houseOf(`daily:${yesterday}`), 1);
     body.yesterday = winner ? { date: yesterday, name: winner.name, value: winner.value, vehicle: winner.vehicle, ...(winner.house ? { house: true } : {}) } : { date: yesterday };
   }
-  const response = json(body, 200, { 'Cache-Control': `public, max-age=${BOARD_MAX_AGE}` });
+  if (parsed.kind === 'weekly') Object.assign(body, await weeklyExtras(db, parsed.week));
+  const maxAge = parsed.kind === 'weekly' ? WEEKLY_MAX_AGE : BOARD_MAX_AGE;
+  const response = json(body, 200, { 'Cache-Control': `public, max-age=${maxAge}` });
   await cache?.put(key, response.clone());
   return response;
 }
@@ -348,6 +384,7 @@ export async function boardRequest(request, env, allowedOrigins, nowMs = Date.no
     if (verdict.reason) return refused(verdict.reason);
     const ranks = await store(db, verdict, dayOf(nowMs));
     await pruneGhosts(db, ranks);
+    await weeklyPercentile(db, ranks);
     // This location's cached copies of the changed boards.
     const cache = globalThis.caches?.default;
     for (const [id, result] of Object.entries(ranks)) if (result.placed) await cache?.delete(boardKey(request, id));
