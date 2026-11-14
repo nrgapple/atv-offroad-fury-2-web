@@ -1,7 +1,7 @@
 //! Very simple name filter for shared Free Ride rooms, where strangers see
 //! each other's names. A flagged name is replaced entirely, never partially
 //! masked, so nothing offensive survives as asterisks around it.
-use crate::{MAX_NAME_BYTES, PeerId};
+use crate::PeerId;
 
 /// Flagged anywhere in a name, after folding look-alike characters.
 const ANYWHERE: &[&str] = &[
@@ -88,7 +88,7 @@ mod tests {
         for adjective in 0..32u64 {
             for noun in 0..32u64 {
                 let name = dice_name(adjective + noun * 32 + 7 * 1024);
-                assert!(name.len() <= MAX_NAME_BYTES - 8, "{name}");
+                assert!(name.len() <= crate::MAX_NAME_BYTES - 8, "{name}");
                 assert!(!offensive_name(&name), "{name}");
                 assert!(name.ends_with("07"), "{name}");
                 seen.insert(name);
