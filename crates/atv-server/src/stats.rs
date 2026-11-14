@@ -254,7 +254,7 @@ impl Usage {
         let mut riding = BTreeMap::new();
         for d in self.rooms.values() {
             if d.day == day && now_ms.saturating_sub(d.at_ms) < FRESH_MS {
-                for (k, v) in &d.now {
+                for (k, v) in d.now.iter().filter(|(k, _)| *k != "map") {
                     *riding.entry(k.clone()).or_insert(0) += v;
                 }
             }
@@ -268,8 +268,21 @@ impl Usage {
         let day = (now_ms / DAY_MS) as u32;
         let live = self.live(day, now_ms);
         let today = self.days.get(&day).cloned().unwrap_or_default();
+        // The map of the first fresh shared room with space: where a claim
+        // lands (research/FREERIDE_HUB.md).
+        let map = self
+            .rooms
+            .values()
+            .filter(|d| d.day == day && now_ms.saturating_sub(d.at_ms) < FRESH_MS)
+            .find(|d| {
+                let riders = d.now.get("riders").copied().unwrap_or(0)
+                    + d.now.get("held").copied().unwrap_or(0);
+                riders < atv_net::PUBLIC_CAPACITY as u64
+            })
+            .and_then(|d| d.now.get("map").copied());
         serde_json::json!({
             "riders": live.get("riders").copied().unwrap_or(0) + live.get("held").copied().unwrap_or(0),
+            "map": map,
             "today": {
                 "messages": today.messages,
                 "poses": pose_counts(today.poses),
@@ -341,6 +354,29 @@ mod tests {
         assert!(!usage.days.contains_key(&20_000));
         let saved: Usage = serde_json::from_str(&serde_json::to_string(&usage).unwrap()).unwrap();
         assert_eq!(saved, usage);
+    }
+
+    #[test]
+    fn the_rider_count_names_the_map_a_claim_lands_on() {
+        let mut usage = Usage::default();
+        let day = 20_000 * DAY_MS;
+        let riders = |n: u64, map: u64| {
+            BTreeMap::from([("riders".to_string(), n), ("map".to_string(), map)])
+        };
+        usage.report("FREERD01", &Counters::default(), riders(20, 3), day);
+        usage.report("FREERD02", &Counters::default(), riders(5, 6), day);
+        let json = usage.riders_json(day);
+        assert_eq!(
+            (json["riders"].as_u64(), json["map"].as_u64()),
+            (Some(25), Some(6))
+        );
+        assert!(
+            !json["today"]["now"]
+                .as_object()
+                .unwrap()
+                .contains_key("map")
+        );
+        assert!(Usage::default().riders_json(day)["map"].is_null());
     }
 
     #[test]

@@ -170,8 +170,11 @@ pub struct Screen {
     pub choices: Vec<(String, String)>,
     pub selection: usize,
     pub hovered: Option<u32>,
-    /// Riders in Arlington Free Ride (`N riding` on its main-menu row).
+    /// Riders in Free Ride (`N riding` on its main-menu row).
     pub freeride_riders: Option<u32>,
+    /// The venue Free Ride rides now (the hub rotates it), shown in the
+    /// row's tag instead of NEW.
+    pub freeride_map: Option<String>,
     pub backdrop: Option<Img>,
     /// The backdrop is a course photo (greyed and tinted already).
     pub backdrop_track: bool,
@@ -1999,7 +2002,13 @@ fn menu_row(m: &Metrics, s: &Screen, index: usize, action: &str, label: &str) ->
         .child(bullet)
         .child(text(label, text_style, m.row_font * 1.1));
     if action == "freeride" {
-        el = freeride_badges(m, el, selected, s.freeride_riders);
+        el = freeride_badges(
+            m,
+            el,
+            selected,
+            s.freeride_riders,
+            s.freeride_map.as_deref(),
+        );
     }
     el
 }
@@ -2007,7 +2016,13 @@ fn menu_row(m: &Metrics, s: &Screen, index: usize, action: &str, label: &str) ->
 /// `.ms-new` and `.ms-live`: the NEW tag and the live rider count on the
 /// Arlington Free Ride row (static; the browser's glow/pulse animations are
 /// not drawn).
-fn freeride_badges(m: &Metrics, el: El, selected: bool, riders: Option<u32>) -> El {
+fn freeride_badges(
+    m: &Metrics,
+    el: El,
+    selected: bool,
+    riders: Option<u32>,
+    map: Option<&str>,
+) -> El {
     let tag_font = m.row_font * 0.5;
     let mut tag = El::new(Style {
         flex_shrink: 0.,
@@ -2029,7 +2044,7 @@ fn freeride_badges(m: &Metrics, el: El, selected: bool, riders: Option<u32>) -> 
         .shadow(BoxShadow::outer(0., 0., 12., Color::hex("#ff3a2a88"))),
     );
     tag = tag.child(text(
-        "NEW",
+        map.map_or_else(|| "NEW".to_string(), str::to_uppercase),
         TextStyle::new(display(tag_font, 700, false), Color::WHITE)
             .spacing(tag_font * 0.12)
             .shadow(0., 1., 0., Color::hex("#6008")),

@@ -432,7 +432,7 @@ mod native {
     }
 
     /// The Free Ride rider count (blocking; call off the UI thread).
-    pub fn riders_blocking(server: &str) -> Option<u32> {
+    pub fn riders_blocking(server: &str) -> Option<super::FreeRide> {
         let agent: ureq::Agent = ureq::Agent::config_builder()
             .timeout_global(Some(Duration::from_secs(10)))
             .build()
@@ -935,7 +935,7 @@ mod web {
 
     /// The Free Ride rider count (a GET without credentials, as the menu
     /// polls it).
-    pub async fn riders(server: &str) -> Option<u32> {
+    pub async fn riders(server: &str) -> Option<super::FreeRide> {
         let url = format!(
             "{}/multiplayer/freeride/riders",
             server.trim_end_matches('/')
@@ -975,17 +975,29 @@ pub use native::{Mesh, Socket, post, riders_blocking, sleep};
 #[cfg(target_arch = "wasm32")]
 pub use web::{Mesh, Socket, post, riders, sleep};
 
-/// `{"riders": N}` from `/multiplayer/freeride/riders`.
-fn riders_from(text: &str) -> Option<u32> {
+/// The riders in Free Ride and the map a claim lands on.
+pub type FreeRide = (u32, Option<u16>);
+
+/// `{"riders": N, "map": M}` from `/multiplayer/freeride/riders` (`map`
+/// since the Free Ride hub, research/FREERIDE_HUB.md).
+fn riders_from(text: &str) -> Option<FreeRide> {
     let value: serde_json::Value = serde_json::from_str(text).ok()?;
-    value["riders"].as_u64().and_then(|n| u32::try_from(n).ok())
+    let riders = value["riders"]
+        .as_u64()
+        .and_then(|n| u32::try_from(n).ok())?;
+    let map = value["map"].as_u64().and_then(|m| u16::try_from(m).ok());
+    Some((riders, map))
 }
 
 #[cfg(test)]
 mod tests {
     #[test]
     fn rider_counts_parse_like_the_menu() {
-        assert_eq!(super::riders_from(r#"{"riders":7}"#), Some(7));
+        assert_eq!(super::riders_from(r#"{"riders":7}"#), Some((7, None)));
+        assert_eq!(
+            super::riders_from(r#"{"riders":7,"map":3}"#),
+            Some((7, Some(3)))
+        );
         assert_eq!(super::riders_from(r#"{"riders":-1}"#), None);
         assert_eq!(super::riders_from("nope"), None);
     }

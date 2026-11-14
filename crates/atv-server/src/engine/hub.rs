@@ -631,6 +631,11 @@ impl Hub {
         }))
     }
 
+    /// Whether [`Hub::step`] would do anything now.
+    pub fn due(&self, now: u64) -> bool {
+        now.saturating_sub(self.last_step) >= STEP_MS
+    }
+
     /// The hub's periodic work, at most every [`STEP_MS`]. Returns the map
     /// the room moves to when a rotation vote ends.
     pub fn step(&mut self, now: u64, map: u16, riders: &[Rider], out: &mut Vec<Out>) -> Moved {
@@ -653,7 +658,6 @@ impl Hub {
             .iter()
             .filter(|r| r.hub)
             .fold(0, |mask, r| mask | bit(r.peer));
-        self.greeted &= hub;
         if hub != self.riders {
             self.riders = hub;
             Self::to_hub(
@@ -666,11 +670,12 @@ impl Hub {
                 out,
             );
         }
+        let newcomers = hub & !self.greeted;
+        self.greeted = hub;
         for r in riders
             .iter()
-            .filter(|r| r.hub && self.greeted & bit(r.peer) == 0)
+            .filter(|r| r.hub && newcomers & bit(r.peer) != 0)
         {
-            self.greeted |= bit(r.peer);
             if let Some(event) = &self.event {
                 Self::send(r.conn, &Self::event_packet(event, now), out);
             }
@@ -943,8 +948,9 @@ impl Hub {
         let tied: Vec<u8> = (0..counts.len() as u8)
             .filter(|&i| counts[usize::from(i)] == top)
             .collect();
+        let maps = vote.maps.clone();
         let choice = tied[self.random() as usize % tied.len()];
-        let destination = vote.maps[usize::from(choice)];
+        let destination = maps[usize::from(choice)];
         let packet = self.vote_packet(now, choice);
         Self::to_hub(riders, &packet, out);
         self.vote = None;

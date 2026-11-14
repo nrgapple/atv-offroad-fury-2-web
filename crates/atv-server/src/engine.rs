@@ -1025,7 +1025,7 @@ impl Room {
     /// The hub's step; a finished rotation vote moves the room, older
     /// builds with it (they follow the lobby's map like a host's change).
     fn step_hub(&mut self, now: u64, out: &mut Vec<Out>) {
-        if self.hub.is_none() {
+        if !self.hub.as_ref().is_some_and(|hub| hub.due(now)) {
             return;
         }
         let riders = self.hub_riders();

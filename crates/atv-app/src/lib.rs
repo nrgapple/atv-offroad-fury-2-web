@@ -201,7 +201,7 @@ enum Message {
     /// A remote rider's model finished loading.
     PeerModel(Box<PeerModel>),
     /// The Arlington Free Ride rider count for the main menu.
-    FreeRideRiders(Option<u32>),
+    FreeRideRiders(Option<net::FreeRide>),
     /// A Host/Join form field's text from the browser's input.
     #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
     FrontText(&'static str, String),
@@ -1058,7 +1058,7 @@ struct App {
     context: context::Loss,
     /// Desktop: the rider count request in flight.
     #[cfg(not(target_arch = "wasm32"))]
-    riders_pending: Option<std::sync::mpsc::Receiver<Option<u32>>>,
+    riders_pending: Option<std::sync::mpsc::Receiver<Option<net::FreeRide>>>,
     /// Android: the first-launch content download holding the boot.
     #[cfg(target_os = "android")]
     sync: Option<android::SyncScreen>,
@@ -3110,7 +3110,11 @@ impl App {
                 let venue = |map: u16| {
                     atv_game::multiplayer::map_environment(map).map_or_else(
                         || format!("Map {map}"),
-                        |v| course_label(&self.course_names, v),
+                        |v| match (self.course_names.get(v), hub::venue_name(v)) {
+                            (Some(name), _) => name.clone(),
+                            (None, Some(name)) => name.into(),
+                            (None, None) => v.into(),
+                        },
                     )
                 };
                 net.hub_view(frame.origin, &venue)
@@ -6140,7 +6144,17 @@ impl ApplicationHandler<Message> for App {
             Message::FreeRideRiders(riders) => {
                 if let Some(front) = &self.front {
                     let mut f = front.borrow_mut();
-                    f.state.freeride_riders = riders;
+                    f.state.freeride_riders = riders.map(|r| r.0);
+                    // The venue's Tracks.dat name once known (no bare ids).
+                    f.state.freeride_map = riders
+                        .and_then(|r| r.1)
+                        .and_then(atv_game::multiplayer::map_environment)
+                        .and_then(|v| {
+                            self.course_names
+                                .get(v)
+                                .cloned()
+                                .or_else(|| hub::venue_name(v).map(String::from))
+                        });
                 }
                 self.wake();
                 if let Some(window) = &self.window {

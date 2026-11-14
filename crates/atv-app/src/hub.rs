@@ -38,6 +38,7 @@ pub const TEST_DECLINE: u8 = 4;
 pub const TEST_GOAL: u8 = 8;
 pub const TEST_JOIN: u8 = 16;
 
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 pub fn parse_test(value: &str) -> u8 {
     value.split(',').fold(0, |flags, word| {
         flags
@@ -687,6 +688,22 @@ impl Hub {
             })).collect::<Vec<_>>(),
         })
     }
+}
+
+/// The rotation's venues by name before Tracks.dat's names have loaded
+/// (research/FREESTYLE_MAPS.md "Environments").
+pub fn venue_name(environment: &str) -> Option<&'static str> {
+    Some(match environment {
+        "env01" => "Caribou Peak",
+        "env02" => "Tioga Valley",
+        "env03" => "Sonora Dunes",
+        "env04" => "Freeport Harbor",
+        "env05" => "Prospect Springs",
+        "env06" => "Rockbridge Park",
+        "env07" => "San Jacinto Isles",
+        "env08" => "Arlington Stream",
+        _ => return None,
+    })
 }
 
 /// Keyboard: G challenges, Y accepts, N declines, 1-3 vote.
