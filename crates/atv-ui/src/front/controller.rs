@@ -503,6 +503,7 @@ pub struct Frontend {
     /// Single Player → Freestyle Objectives: the course picked outside a
     /// championship (Freestyle Prep's Objectives event).
     pub objective_course: Option<String>,
+    pub classic_minutes: u32,
     /// The garage ("garage") or course picker ("tracks") is open over a
     /// held room ride; leaving it rides again.
     pub room: Option<&'static str>,
@@ -681,6 +682,7 @@ impl Frontend {
             freestyle: None,
             objective_courses: Vec::new(),
             objective_course: None,
+            classic_minutes: 2,
             room: None,
             lobby: None,
             race_courses: Vec::new(),
@@ -796,10 +798,23 @@ impl Frontend {
         }
         if matches!(
             self.page.as_str(),
-            "championship" | "objectives" | "objective-courses"
+            "championship" | "objectives" | "objective-courses" | "classic-courses"
         ) {
             self.choices = if self.page == "objectives" {
                 self.objective_choices()
+            } else if self.page == "classic-courses" {
+                let mut rows = vec![(
+                    "classic-time".into(),
+                    format!("Time Limit: {}:00", self.classic_minutes),
+                )];
+                rows.extend(
+                    atv_core::freestyle::CLASSIC_COURSES
+                        .iter()
+                        .filter(|c| self.tracks.iter().any(|t| t.id == **c))
+                        .map(|c| (format!("classic:{c}"), self.course_name(c))),
+                );
+                rows.push(("back".into(), "Back".into()));
+                rows
             } else if self.page == "objective-courses" {
                 self.objective_course_choices()
             } else {
@@ -941,6 +956,7 @@ impl Frontend {
             if self.daily_offered() {
                 rows.push((world_page::DAILY_PAGE, "Daily Event"));
             }
+            rows.push(("classic-courses", "Classic Freestyle"));
             if !self.objective_courses.is_empty() {
                 rows.push(("objective-courses", "Freestyle Objectives"));
             }
@@ -2355,6 +2371,31 @@ impl Frontend {
             }
             _ if action.starts_with("free:") => {
                 self.freestyle_event(&action["free:".len()..], view);
+            }
+            "classic-courses" => {
+                self.freestyle = None;
+                self.split = false;
+                self.show(action, view);
+            }
+            "classic-time" => {
+                self.classic_minutes = self.classic_minutes % 20 + 2;
+                self.refresh(view);
+            }
+            _ if action.starts_with("classic:") => {
+                let course = &action[8..];
+                if !atv_core::freestyle::CLASSIC_COURSES.contains(&course)
+                    || !self.tracks.iter().any(|t| t.id == course)
+                {
+                    return None;
+                }
+                return Some(Event::Objective {
+                    environment: course.into(),
+                    quad: self.quad_id,
+                    rider: self.rider_id,
+                    series: usize::from(course.starts_with("free")),
+                    expert: false,
+                    objective: atv_core::freestyle::CLASSIC,
+                });
             }
             "objective-courses" => {
                 self.freestyle = None;
@@ -4195,6 +4236,31 @@ mod tests {
         );
         front.key("Escape", &view, &mut settings);
         assert_eq!(front.page, "championship");
+    }
+
+    #[test]
+    fn classic_menu_starts_without_objective_archives() {
+        let view = view(1280., 720.);
+        let mut settings = Settings::memory();
+        let mut front = Frontend::new(tracks(), &settings, true);
+        front.show("classic-courses", &view);
+        assert_eq!(front.choices()[0].1, "Time Limit: 2:00");
+        front.key("Enter", &view, &mut settings);
+        assert_eq!(front.classic_minutes, 4);
+        front.selection = front
+            .choices()
+            .iter()
+            .position(|(a, _)| a == "classic:env01")
+            .unwrap();
+        assert!(matches!(
+            front.key("Enter", &view, &mut settings),
+            Some(Event::Objective {
+                objective: atv_core::freestyle::CLASSIC,
+                ..
+            })
+        ));
+        front.key("Escape", &view, &mut settings);
+        assert_eq!(front.page, "single");
     }
 
     #[test]

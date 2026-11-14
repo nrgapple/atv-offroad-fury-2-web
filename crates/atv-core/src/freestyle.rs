@@ -38,6 +38,20 @@ use crate::championship::{Championships, Series, Trophy, save_key};
 /// `00289d50` +0x57c: the Freestyle event's time limit, seconds.
 pub const TIME_LIMIT: f32 = 120.0;
 
+/// Menu/session identifier for Classic (not an objective completion bit).
+pub const CLASSIC: usize = usize::MAX;
+pub const CLASSIC_COURSES: [&str; 14] = [
+    "env01", "env02", "env03", "env04", "env05", "env06", "env07", "env08", "free01", "free02",
+    "free03", "free04", "free05", "free06",
+];
+pub fn classic(seconds: f32) -> Objective {
+    Objective {
+        description: "Classic Freestyle".into(),
+        kind: Kind::Classic { seconds },
+        start: None,
+    }
+}
+
 /// `2fd980`: score per whole second left when an objective completes.
 pub const TIME_BONUS_PER_SECOND: f32 = 100.;
 
@@ -91,6 +105,8 @@ pub fn total_objectives(series: &Series) -> u32 {
 /// What an objective asks for.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Kind {
+    /// Classic: landed stunt points against the event clock, no objective bonus.
+    Classic { seconds: f32 },
     /// Hit every target of the objective's TOY file.
     CherryPick {
         targets: u32,
@@ -454,10 +470,14 @@ impl Run {
             Kind::CherryPick { targets, .. } => *targets as usize,
             _ => 0,
         };
+        let time_left = match objective.kind {
+            Kind::Classic { seconds } => seconds,
+            _ => TIME_LIMIT,
+        };
         Self {
             objective,
             index,
-            time_left: TIME_LIMIT,
+            time_left,
             baseline: committed,
             score: 0.,
             bonus: 0.,
@@ -522,7 +542,11 @@ impl Run {
         }
         self.time_left = (self.time_left - dt.max(0.)).max(0.);
         if self.time_left <= 0. {
-            self.outcome = Some(Outcome::Failed);
+            self.outcome = Some(if matches!(self.objective.kind, Kind::Classic { .. }) {
+                Outcome::Completed
+            } else {
+                Outcome::Failed
+            });
         }
     }
 
@@ -624,6 +648,7 @@ impl Run {
     /// The HUD's progress line.
     pub fn progress(&self) -> String {
         match &self.objective.kind {
+            Kind::Classic { .. } => "Land tricks to score points".into(),
             Kind::Stunt { levels } => match levels.get(self.levels as usize) {
                 Some(next) => format!(
                     "Level {} of {}: {} pts",
@@ -645,6 +670,7 @@ impl Run {
     /// the run fails short of the last).
     pub fn earned_bits(&self) -> u8 {
         let bits = match &self.objective.kind {
+            Kind::Classic { .. } => Vec::new(),
             Kind::Stunt { .. } => (0..self.levels).map(|l| 3 + l).collect::<Vec<_>>(),
             _ if self.outcome == Some(Outcome::Completed) => vec![self.index as u32],
             _ => Vec::new(),
@@ -656,6 +682,9 @@ impl Run {
 
     /// `002dde00`: the result line.
     pub fn result_line(&self) -> &'static str {
+        if matches!(self.objective.kind, Kind::Classic { .. }) {
+            return "Final Score";
+        }
         match self.outcome {
             Some(Outcome::Completed) => "You have completed the objective!",
             _ => "You have failed the objective.",
@@ -1193,5 +1222,46 @@ NumberOfActions=2\r\nOneTimeOnly=T\r\nPosition=200,20,300\r\nRadius=5.0\r\n\
         let o = c.finish_freestyle_round(pro, false);
         assert_eq!(o.finished.clone().unwrap().0, None);
         assert_eq!(trophy_line(pro, &o), "You have completed 17/30 objectives.");
+    }
+}
+
+#[cfg(test)]
+mod classic_tests {
+    use super::*;
+    #[test]
+    fn classic_clock_score_restart_and_freeze() {
+        let mut run = Run::new(classic(120.), CLASSIC, 500.);
+        run.tick(-1., 500.);
+        assert_eq!(run.time_left, 120.);
+        run.tick(119., 1700.);
+        assert_eq!(run.score, 1200.);
+        assert!(!run.finished());
+        run.tick(1., 2000.);
+        assert_eq!(run.outcome, Some(Outcome::Completed));
+        assert_eq!(run.score, 1500.); // no seconds-left bonus
+        assert_eq!(run.earned_bits(), 0);
+        run.tick(10., 9000.);
+        assert_eq!(run.score, 1500.);
+        run.restart(9000.);
+        assert_eq!(run.time_left, 120.);
+        assert_eq!(run.score, 0.);
+        assert!(!run.finished());
+    }
+}
+
+#[cfg(test)]
+mod classic_records_tests {
+    use crate::hall_of_fame::FreestyleWatch;
+    #[test]
+    fn classic_total_only_records_at_two_minutes() {
+        let mut normal = FreestyleWatch::new("unspstunt", "env03", 2, None, None);
+        normal.chain(true, 2, 600.);
+        assert!(normal.finish_timed(1200., 120.) >= 1);
+        assert_eq!(normal.fame.objectives[0].value, 1200);
+        let mut longer = FreestyleWatch::new("unspstunt", "env03", 2, None, None);
+        longer.chain(true, 2, 600.);
+        assert!(longer.finish_timed(1200., 240.) >= 1);
+        assert!(longer.fame.objectives.is_empty());
+        assert_eq!(longer.fame.stunts[0].value, 1200);
     }
 }

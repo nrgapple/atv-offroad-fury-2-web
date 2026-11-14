@@ -180,8 +180,8 @@ impl Frontend {
                 "tracks" if self.hosting => "create-lobby",
                 "tracks" | "race" if self.split => "split",
                 "splitseats" => "split",
-                "tracks" | "race" | "championship" | "games" | "objective-courses" | "garage"
-                | "waypoint" => "single",
+                "tracks" | "race" | "championship" | "games" | "objective-courses"
+                | "classic-courses" | "garage" | "waypoint" => "single",
                 "waypoint-course" => "waypoint",
                 "objectives" if self.freestyle.is_none() => "objective-courses",
                 "objectives" => "championship",
