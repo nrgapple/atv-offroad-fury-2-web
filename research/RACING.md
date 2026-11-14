@@ -280,7 +280,13 @@ A reset publishes the new physical pose without calling race checkpoint update
 or counting teleport distance; subsequent normal movement can earn progress.
 
 Low-air feedback uses the source 20ft split, terrain normal sampled 0.5 seconds
-ahead, gains 10/0.1 and bounded lean. National trick requests now use the original
+ahead, gains 10/0.1 and bounded lean. Above 20ft the lean is a pitch-rate
+controller: sin(clamp(1.5 × (AI +0x90 − AI +0x200))), where +0x90 is the body's
+local angular velocity x (body +0x2a0, copied by `001eb380`) and +0x200 is
+−0.5 × the angle of the corrected direction from the nose. Until 2026-11-14 the
+port used an Euler pitch for +0x90, which made Supercross CPUs over-rotate
+backwards on big jumps ([CPU_RECOVERY_SWEEP.md](CPU_RECOVERY_SWEEP.md),
+issue #643). National trick requests now use the original
 10-second interval/10% trial, flagged jumps, TDF tag 26 airtime minus elapsed air
 time and 0.5-second margin, and selection among the 24 eligible main clip durations
 (001e9650). The rider accepts the direct request through its native airborne,
@@ -625,7 +631,54 @@ the follow filters rather than seeding them from the TV pose. The libc `rand`
 stream is replaced by the port's seeded stream. The browser shows TV views as
 authored, like the intro shots. The CPU-driven player also gets the authored
 CPU recovery (5s off the track, or 4s under 3ft/s). Split-screen fallbacks
-and the STOPCAM cheat are not reproduced.
+are not reproduced.
+
+### STOPCAM (Stop Action Replay Cam) — 2026-11-14
+
+Exact-build evidence (private exports; addresses only):
+
+- **Switch.** The cheat dispatcher `0033ede0` (`0033f2dc`–`0033f354`)
+  matches "STOPCAM", shows "Stop Action Replay Cam Disabled!" when the
+  settings word +0x187c is set and "...Enabled!" otherwise, then flips it.
+  `0021b8c8` clears it at initialisation; nothing saves it. The only reader
+  is the after-finish director, `001f3e94` in `001f3bb0`.
+- **Trigger** (`001f3e8c`–`001f3f78`): in the director's TV branch, on a
+  tick where the TV switch (`0031bb50`) made no cut, with the switch on.
+  Further gates read the controller (+0x60 → +0x3c → +0x658 set, +0x6c
+  clear), the current follow preset's +0x50 (clear) and a preset count
+  above one; these are not identified. The player's rider animation
+  (+0x884) must be in mode 4 (the main stunt) with its main stunt clock
+  (+0x3fc) strictly between 0.9 s and 1.1 s. More than 4000 ms of the
+  hardware clock must have passed since the last stop action (the stamp
+  starts at 0, so the first is not held back). Then `rand` × 2, truncated,
+  must be non-zero (50 %). The roll repeats every tick of the window.
+- **Action.** The stamp is taken. The cut-scene camera gets action 6
+  (`0030df00` case 6: its output filters, +0x88, are cleared), the camera
+  controller selects mode 5 (the cut-scene camera, `001f4d80`), and
+  `0030f680` sets a 1.5 s swoop. Its start is the shown camera's position,
+  a look point 30 ft along that camera's forward, and its FOV. Its end is
+  a follow pose from `001f4500`. It arcs about the midpoint, as the
+  pre-race swoop does (`0030bac0` case 5). The TV director's +0xc8 is
+  raised to at least 2.
+- **After.** The swoop rests on its end pose. The camera then stays there,
+  still, while the rider rides on, until the TV director's next cut
+  selects another view.
+
+Port (`race_director::Director::step_with`, `Ride::race_director`): the
+session switch is a process-wide flag (`toggle_stop_action`). Unlock
+Items → Cheats → STOPCAM toggles it with the original messages. Every
+director tick passes the player's main stunt clock (rider mode Stunt, not
+holding) and the follow camera's last pose. The trigger, roll, gap, swoop
+and hold follow the evidence above, without output filters.
+
+Assumptions: the unidentified gates are taken as passing. The 4 s gap uses
+the director's own clock instead of the hardware timer. The swoop's end is
+the follow camera's current pose; `001f4500`'s preset arguments (0, 5) are
+not decoded. The TV director's +0xc8 is taken to be its switch timer.
+The pre-race swoop's countdown request in `0030bac0` case 5 has no
+counterpart after the finish and is not reproduced. The replay's Broadcast
+camera (`REPLAY.md`) has no stunt clock recorded, so STOPCAM affects only
+the live after-finish director.
 
 ## Original race overlays — 2026-10-16
 

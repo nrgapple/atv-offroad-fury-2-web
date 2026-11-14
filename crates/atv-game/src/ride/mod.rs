@@ -227,6 +227,9 @@ pub struct Ride {
     start: ([f32; 3], f32),
     frame: VehicleFrame,
     camera_frame: CameraFrame,
+    /// The follow camera's last frame before any director override
+    /// (STOPCAM's swoop ends there).
+    follow_frame: CameraFrame,
     camera_mode: CameraMode,
     applied: Controls,
     steps: u64,
@@ -448,6 +451,12 @@ impl Ride {
             start,
             frame: bike::placeholder_frame(),
             camera_frame: CameraFrame {
+                position: [0.; 3],
+                target: [0.; 3],
+                fov: 60.,
+                preset: 0,
+            },
+            follow_frame: CameraFrame {
                 position: [0.; 3],
                 target: [0.; 3],
                 fov: 60.,
@@ -1353,6 +1362,7 @@ impl Ride {
         let (rider, forward) = (vehicle.origin, dynamics::basis(vehicle.orientation)[2]);
         let tv = self.race_director(rider)?;
         self.chase_camera(orbit)?;
+        self.follow_frame = self.camera_frame;
         if let Some(pose) = tv {
             self.camera_frame.position = pose.position;
             self.camera_frame.target = pose.target;
