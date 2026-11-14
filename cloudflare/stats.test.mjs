@@ -109,8 +109,11 @@ test('a first refresh backfills in chunks, then refreshes today and yesterday at
   check(config.SAVES, NOW - 10 * MINUTE, 9, 3);
   check(config.SAVES, NOW - DAY, 14, 4);
 
+  for (let back = 2; back <= 29; back++) check(config.SAVES, NOW - back * DAY, 3, 1);
+  const prepared = config.SAVES.prepared;
   const first = await refreshStats(config, { fetcher, now });
   assert.deepEqual(first.usage, { from: '2026-08-17', to: '2026-08-30' });
+  assert.ok(config.SAVES.prepared - prepared <= 35, 'a run stays well inside the free plan D1 query limit');
   assert.equal(sql().length, 4);
   for (const call of sql()) {
     assert.equal(call.init.method, 'POST');

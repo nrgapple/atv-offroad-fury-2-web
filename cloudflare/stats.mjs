@@ -145,8 +145,9 @@ export async function refreshStats(env, { fetcher = fetch, now = Date.now } = {}
       console.error('stats usage query failed', String(failure?.message ?? failure).slice(0, 200));
     }
   }
-  // Peak riders online per day from the health rows (kept 30 days).
-  const peakFrom = state?.days ? yesterday : shift(today, -30);
+  // Peak riders online per day from the health rows. A first run reaches back
+  // CHUNK_DAYS so one run stays well inside the free plan's 50 D1 queries.
+  const peakFrom = state?.days ? yesterday : shift(today, 1 - CHUNK_DAYS);
   const [peaks, existing, boards] = await Promise.all([
     db.prepare(`SELECT strftime('%Y-%m-%d', checked_at / 1000, 'unixepoch') AS day, MAX(riders) AS riders, MAX(rooms) AS rooms
       FROM game_server_checks WHERE ok = 1 AND checked_at >= ? GROUP BY day`).bind(Date.parse(`${peakFrom}T00:00:00Z`)).all(),
