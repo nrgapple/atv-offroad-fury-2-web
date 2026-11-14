@@ -1756,7 +1756,38 @@ impl Ride {
         if *elapsed < race_director::DELAY {
             return Ok(None);
         }
-        let step = director.step(STEP, rider, &racers)?;
+        // STOPCAM: the player's main stunt clock (rider mode 4) and the
+        // follow camera's last pose.
+        let stunt_clock = match &self.mount {
+            Mount::Quad { rig, .. }
+                if self.rider_mode == Some(atv_core::rider_pose::Mode::Stunt) =>
+            {
+                rig.animator
+                    .stunt_frame()
+                    .filter(|f| !f.holding)
+                    .map(|f| f.main_time)
+            }
+            _ => None,
+        };
+        let terrain = &self.sim.terrain;
+        let ground = |x: f32, z: f32| {
+            terrain
+                .contact(x, z)
+                .ok()
+                .flatten()
+                .map_or(f32::MIN, |c| c.height)
+        };
+        let follow = &self.follow_frame;
+        let stop = race_director::stop_action().then_some(race_director::StopInput {
+            stunt_clock,
+            follow: race_director::Pose {
+                position: follow.position,
+                target: follow.target,
+                fov: follow.fov,
+            },
+            ground: &ground,
+        });
+        let step = director.step_with(STEP, rider, &racers, stop.as_ref())?;
         if let Some(race_director::View::Follow { preset, ease }) = step.cut {
             self.sim.camera.direct(preset, ease);
         }

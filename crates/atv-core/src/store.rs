@@ -527,7 +527,15 @@ pub fn enter_cheat(profile: &mut Profile, code: &str) -> Option<(&'static str, &
         "EATDIRT" => ("EATDIRT", "Aggressive AI Enabled!"),
         "BRINGIT" => ("BRINGIT", "All Out AI Enabled!"),
         "GETONUP" => ("GETONUP", "Wheelie For Points Enabled!"),
-        "STOPCAM" => ("STOPCAM", "Stop Action Replay Cam Enabled!"),
+        // A session switch: on, or back off (`0033f2dc`).
+        "STOPCAM" => (
+            "STOPCAM",
+            if crate::race_director::toggle_stop_action() {
+                "Stop Action Replay Cam Enabled!"
+            } else {
+                "Stop Action Replay Cam Disabled!"
+            },
+        ),
         "SYNC30HZ" => ("SYNC30HZ", "Frame Rate Locked To 30Hz!"),
         _ => return None,
     };

@@ -10,7 +10,16 @@
 //! original seeds libc `rand` from the clock; the port uses its own stream.
 //! `Blur` is loaded but unused by the build; `Stationary` (with Look/Up) is
 //! absent from every shipped file and is not reproduced.
+//!
+//! STOPCAM ("Stop Action Replay Cam", cheat `0033ede0` toggling settings
+//! +0x187c, read only at `001f3e94` in the director): while the director
+//! makes no cut, a player about a second into a main stunt may swoop the
+//! camera from the shown view toward the follow pose over 1.5 s
+//! (`0030f680`, the cut-scene camera's swoop), where it then stays still
+//! until the director's next cut.
 use crate::Result;
+use crate::race_intro::{add, cross, length, lerp, normalize, rotate, scale, sub};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 type V = [f32; 3];
 fn distance2(a: V, b: V) -> f32 {
@@ -19,6 +28,26 @@ fn distance2(a: V, b: V) -> f32 {
 
 /// Seconds after race over before the director takes the camera.
 pub const DELAY: f32 = 3.;
+
+/// The STOPCAM session switch (settings +0x187c): off at boot (`0021b8c8`).
+static STOP_ACTION: AtomicBool = AtomicBool::new(false);
+
+/// STOPCAM: flips the switch; true when it is now on ("Stop Action Replay
+/// Cam Enabled!"), false when off ("... Disabled!").
+pub fn toggle_stop_action() -> bool {
+    !STOP_ACTION.fetch_xor(true, Ordering::Relaxed)
+}
+
+pub fn stop_action() -> bool {
+    STOP_ACTION.load(Ordering::Relaxed)
+}
+
+/// The stop action's swoop (`0030f680`: 1.5 s).
+const STOP_SWOOP: f32 = 1.5;
+/// The main stunt clock window that can start it (exclusive, seconds).
+const STOP_WINDOW: (f32, f32) = (0.9, 1.1);
+/// Seconds between stop actions (the build compares 4000 ms of its clock).
+const STOP_GAP: f32 = 4.;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Camera {
@@ -162,8 +191,82 @@ pub struct Racer {
 pub struct Step {
     /// Set on the frame of a cut.
     pub cut: Option<View>,
-    /// The TV view, when it is the shown view.
+    /// The TV view (or the stop action's view), when it is the shown view.
     pub tv: Option<Pose>,
+    /// The STOPCAM stop action shows (`tv` is its view).
+    pub stop_action: bool,
+}
+
+/// What STOPCAM reads each director tick.
+pub struct StopInput<'a> {
+    /// The player's main stunt clock (rider +0x884 +0x3fc) while the rider
+    /// animation is in the main stunt (mode 4); None otherwise.
+    pub stunt_clock: Option<f32>,
+    /// The follow camera's pose: the view when a follow preset shows, and
+    /// the swoop's end.
+    pub follow: Pose,
+    pub ground: &'a dyn Fn(f32, f32) -> f32,
+}
+
+/// The cut-scene camera's swoop as STOPCAM sets it up (`0030f680`): from
+/// the shown view (its position, a look point 30 ft along its forward, its
+/// FOV) about the midpoint to the follow pose, the angle linear in time;
+/// unfiltered (`0030df00` case 6 clears the output filters).
+#[derive(Clone, Copy, Debug)]
+struct StopSwoop {
+    remaining: f32,
+    pivot: V,
+    radius: f32,
+    from: V,
+    axis: V,
+    look_start: V,
+    fov_start: f32,
+    end: Pose,
+    position: V,
+}
+
+impl StopSwoop {
+    fn new(shown: Pose, end: Pose) -> Self {
+        let forward = normalize(sub(shown.target, shown.position));
+        let pivot = scale(add(shown.position, end.position), 0.5);
+        let from = sub(end.position, pivot);
+        let n = normalize(from);
+        Self {
+            remaining: STOP_SWOOP,
+            pivot,
+            radius: length(from),
+            from,
+            // (n × up) × n, unnormalized, as the pre-race swoop.
+            axis: cross(cross(n, [0., 1., 0.]), n),
+            look_start: add(shown.position, scale(forward, 30.)),
+            fov_start: shown.fov,
+            end,
+            position: shown.position,
+        }
+    }
+
+    /// `0030bac0` case 5 without the output filters.
+    fn step(&mut self, dt: f32, ground: &dyn Fn(f32, f32) -> f32) -> Pose {
+        self.remaining = (self.remaining - dt).max(0.);
+        if self.remaining <= 0. {
+            self.position = self.end.position;
+            return self.end;
+        }
+        let angle = std::f32::consts::PI * self.remaining / STOP_SWOOP;
+        let mut p = add(
+            self.pivot,
+            scale(normalize(rotate(self.axis, angle, self.from)), self.radius),
+        );
+        p[1] = p[1].max(ground(p[0], p[2]) + 2.);
+        p[1] = p[1].max(0.7 * self.position[1]);
+        self.position = p;
+        let u = (STOP_SWOOP - self.remaining) / STOP_SWOOP;
+        Pose {
+            position: p,
+            target: lerp(self.look_start, self.end.target, u),
+            fov: self.fov_start + (self.end.fov - self.fov_start) * u,
+        }
+    }
 }
 
 struct Shake {
@@ -184,6 +287,12 @@ pub struct Director {
     shaken: Option<usize>,
     shake_frame: bool,
     random: crate::engine_audio::OriginalRandom,
+    /// The director's running time and its last stop action's.
+    clock: f32,
+    last_stop: Option<f32>,
+    stop: Option<StopSwoop>,
+    /// The last TV pose shown (a stop action starts from it).
+    shown: Option<Pose>,
 }
 impl Director {
     pub fn new(tv: Cameras, seed: u64) -> Self {
@@ -199,6 +308,10 @@ impl Director {
             shaken: None,
             shake_frame: false,
             random: crate::engine_audio::OriginalRandom::with_seed(seed),
+            clock: 0.,
+            last_stop: None,
+            stop: None,
+            shown: None,
         }
     }
     pub fn current(&self) -> Option<usize> {
@@ -217,6 +330,10 @@ impl Director {
         self.shaken = None;
         self.shake_frame = false;
         self.random = crate::engine_audio::OriginalRandom::with_seed(seed);
+        self.clock = 0.;
+        self.last_stop = None;
+        self.stop = None;
+        self.shown = None;
     }
     fn unit(&mut self) -> f32 {
         self.random.next_u31() as f32 * 4.656613e-10
@@ -224,16 +341,75 @@ impl Director {
     /// One director tick: switch cameras, then step the TV view for `rider`
     /// (the player), with every racer able to trigger the fly-by shake.
     pub fn step(&mut self, dt: f32, rider: V, racers: &[Racer]) -> Result<Step> {
+        self.step_with(dt, rider, racers, None)
+    }
+    /// [`Self::step`] with STOPCAM's inputs (`stop`, when the switch is on).
+    pub fn step_with(
+        &mut self,
+        dt: f32,
+        rider: V,
+        racers: &[Racer],
+        stop: Option<&StopInput<'_>>,
+    ) -> Result<Step> {
         if !dt.is_finite() || dt <= 0. || dt > 0.1 {
             return Err("invalid director step".into());
         }
+        self.clock += dt;
         let cut = self.switch(dt, rider).map(|camera| self.cut(camera));
+        if cut.is_some() {
+            self.stop = None;
+        } else if let Some(input) = stop {
+            self.stop_action(input);
+        }
+        if let (Some(swoop), Some(input)) = (&mut self.stop, stop) {
+            let pose = swoop.step(dt, input.ground);
+            self.shown = Some(pose);
+            return Ok(Step {
+                cut,
+                tv: Some(pose),
+                stop_action: true,
+            });
+        }
+        self.stop = None;
         let tv = if self.view == View::Tv {
-            Some(self.tv_pose(dt, rider, racers))
+            let pose = self.tv_pose(dt, rider, racers);
+            self.shown = Some(pose);
+            Some(pose)
         } else {
             None
         };
-        Ok(Step { cut, tv })
+        Ok(Step {
+            cut,
+            tv,
+            stop_action: false,
+        })
+    }
+    /// `001f3e8c`–`001f3f78`: with no cut this tick, a main stunt between
+    /// 0.9 s and 1.1 s in, more than 4 s since the last stop action and a
+    /// 50 % roll start the swoop from the shown view; the switch timer is
+    /// held at 2 s or more. Unidentified gates of the build (the controller's
+    /// +0x60/+0x6c and the follow preset's +0x50) are taken as passing.
+    fn stop_action(&mut self, input: &StopInput<'_>) {
+        let Some(clock) = input.stunt_clock else {
+            return;
+        };
+        if clock <= STOP_WINDOW.0 || clock >= STOP_WINDOW.1 {
+            return;
+        }
+        if self.last_stop.is_some_and(|t| self.clock - t <= STOP_GAP) {
+            return;
+        }
+        if (2. * self.unit()) as i32 == 0 {
+            return;
+        }
+        self.last_stop = Some(self.clock);
+        // The shown view: a stop action's, the TV camera's or the follow's.
+        let shown = match (self.stop.is_some(), self.view) {
+            (true, _) | (_, View::Tv) => self.shown.unwrap_or(input.follow),
+            (false, View::Follow { .. }) => input.follow,
+        };
+        self.stop = Some(StopSwoop::new(shown, input.follow));
+        self.timer = self.timer.max(2.);
     }
     /// `0031bb50`: cut only after the minimum wait; move to a listed next
     /// camera that is closer, and when the maximum wait expires take the
@@ -501,5 +677,68 @@ mod tests {
         assert_ne!(poses[0], [0., 10., 0.]);
         assert_eq!(poses[1], [0., 10., 0.]);
         assert!(poses[0].iter().zip([0., 10., 0.]).all(|(p, c)| *p >= c));
+    }
+
+    #[test]
+    fn stopcam_swoops_from_the_tv_view_to_the_follow_pose_and_holds() {
+        let one = "[CameraPositions]\r\nNumberOfCameras = 1\r\n\r\n[Camera1]\r\nPosition = 0,10,0\r\nFOV = 50\r\nNumNextCameras = 0\r\n";
+        let mut d = Director::new(parse_tv(one).unwrap(), 7);
+        let ground = |_: f32, _: f32| 0.;
+        let follow = Pose {
+            position: [40., 6., -10.],
+            target: [40., 3., 0.],
+            fov: 60.,
+        };
+        let input = |clock: Option<f32>| StopInput {
+            stunt_clock: clock,
+            follow,
+            ground: &ground,
+        };
+        let dt = 1. / 60.;
+        let tick = |d: &mut Director, rider: V, clock: Option<f32>| {
+            d.step_with(dt, rider, &[], Some(&input(clock))).unwrap()
+        };
+        // The TV view, and no stop action outside a main stunt's window.
+        let first = tick(&mut d, [40., 0., 0.], None);
+        assert!(first.cut == Some(View::Tv) && !first.stop_action);
+        for clock in [None, Some(0.5), Some(0.9), Some(1.1), Some(1.4)] {
+            for _ in 0..30 {
+                assert!(!tick(&mut d, [40., 0., 0.], clock).stop_action);
+            }
+        }
+        // About a second into a trick: a 50 % roll each tick starts it.
+        let mut start = None;
+        for _ in 0..12 {
+            let s = tick(&mut d, [40., 0., 0.], Some(1.));
+            if s.stop_action {
+                start = s.tv;
+                break;
+            }
+        }
+        let start = start.expect("a stop action within the window");
+        assert!(length(sub(start.position, [0., 10., 0.])) < 2., "{start:?}");
+        assert!((start.fov - 50.).abs() < 1.);
+        // 1.5 s later it rests on the follow pose and stays there as the
+        // rider rides on, until the next cut.
+        let mut last = start;
+        for i in 0..120 {
+            let s = tick(&mut d, [40. + i as f32, 0., 0.], None);
+            assert!(s.stop_action);
+            last = s.tv.unwrap();
+        }
+        assert_eq!(last, follow);
+        // Another trick within 4 s does not start another.
+        for _ in 0..60 {
+            let s = tick(&mut d, [80., 0., 0.], Some(1.));
+            assert_eq!(s.tv, Some(follow));
+        }
+    }
+
+    #[test]
+    fn stopcam_is_a_session_switch() {
+        let on = toggle_stop_action();
+        assert_eq!(stop_action(), on);
+        assert_eq!(toggle_stop_action(), !on);
+        assert_eq!(stop_action(), !on);
     }
 }
