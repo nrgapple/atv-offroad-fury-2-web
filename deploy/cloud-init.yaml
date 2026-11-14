@@ -1,0 +1,140 @@
+#cloud-config
+# First boot of an Ubuntu 24.04 fury-server host (research/GAME_SERVER.md).
+# Provider neutral: any VPS that accepts cloud-init user data. The at-sign
+# placeholders below are filled by deploy/render-cloud-init.sh:
+# public SSH keys, and the repository's unit, release helper and env file as
+# base64. The binary itself arrives later with deploy/deploy.sh.
+#
+# Users: ops (the owner, sudo, key only; not `admin`, which Ubuntu reserves
+# as a group), deploy (key restricted to
+# /usr/local/bin/fury-release), fury (runs the service, no login).
+hostname: fury-game
+fqdn: mp.furyremastered.com
+timezone: Etc/UTC
+ssh_pwauth: false
+disable_root: true
+
+users:
+  - name: ops
+    gecos: Fury server administrator
+    shell: /bin/bash
+    groups: [sudo, adm, systemd-journal]
+    sudo: "ALL=(ALL) NOPASSWD:ALL"
+    lock_passwd: true
+    ssh_authorized_keys:
+      - "@ADMIN_SSH_KEY@"
+  - name: deploy
+    gecos: Fury release uploads
+    shell: /bin/bash
+    groups: [systemd-journal]
+    lock_passwd: true
+    ssh_authorized_keys:
+      - 'restrict,command="/usr/local/bin/fury-release" @DEPLOY_SSH_KEY@'
+  - name: fury
+    gecos: fury-server service
+    system: true
+    shell: /usr/sbin/nologin
+    homedir: /var/lib/fury-server
+    no_create_home: true
+
+package_update: true
+package_upgrade: true
+packages:
+  - unattended-upgrades
+  - curl
+
+write_files:
+  - path: /usr/local/bin/fury-release
+    permissions: "0755"
+    encoding: b64
+    content: "@FURY_RELEASE_B64@"
+  - path: /etc/systemd/system/fury-server.service
+    permissions: "0644"
+    encoding: b64
+    content: "@FURY_SERVER_UNIT_B64@"
+  - path: /etc/fury-server/env
+    permissions: "0640"
+    encoding: b64
+    content: "@FURY_ENV_B64@"
+  # The deploy user may restart the service and nothing else as root.
+  - path: /etc/sudoers.d/fury-deploy
+    permissions: "0440"
+    content: |
+      deploy ALL=(root) NOPASSWD: /usr/bin/systemctl restart fury-server.service
+  - path: /etc/ssh/sshd_config.d/10-fury.conf
+    permissions: "0644"
+    content: |
+      PermitRootLogin no
+      PasswordAuthentication no
+      KbdInteractiveAuthentication no
+      PubkeyAuthentication yes
+      AuthenticationMethods publickey
+      AllowUsers ops deploy
+      MaxAuthTries 3
+      LoginGraceTime 20
+      X11Forwarding no
+      AllowAgentForwarding no
+      AllowTcpForwarding no
+      ClientAliveInterval 300
+  # Many concurrent sockets, low queueing delay.
+  - path: /etc/sysctl.d/90-fury.conf
+    permissions: "0644"
+    content: |
+      fs.file-max = 1048576
+      net.core.somaxconn = 8192
+      net.core.netdev_max_backlog = 16384
+      net.ipv4.tcp_max_syn_backlog = 8192
+      net.ipv4.ip_local_port_range = 10240 65535
+      net.ipv4.tcp_fin_timeout = 15
+      net.ipv4.tcp_tw_reuse = 1
+      net.ipv4.tcp_slow_start_after_idle = 0
+      net.ipv4.tcp_notsent_lowat = 16384
+      net.ipv4.tcp_keepalive_time = 300
+      net.ipv4.tcp_keepalive_intvl = 30
+      net.ipv4.tcp_keepalive_probes = 5
+      net.core.rmem_max = 7340032
+      net.core.wmem_max = 7340032
+      net.core.default_qdisc = fq
+      net.ipv4.tcp_congestion_control = bbr
+  - path: /etc/modules-load.d/fury-bbr.conf
+    permissions: "0644"
+    content: |
+      tcp_bbr
+  - path: /etc/systemd/journald.conf.d/90-fury.conf
+    permissions: "0644"
+    content: |
+      [Journal]
+      SystemMaxUse=500M
+      SystemMaxFileSize=50M
+      MaxRetentionSec=1month
+  - path: /etc/apt/apt.conf.d/20auto-upgrades
+    permissions: "0644"
+    content: |
+      APT::Periodic::Update-Package-Lists "1";
+      APT::Periodic::Unattended-Upgrade "1";
+      APT::Periodic::AutocleanInterval "7";
+  # Security updates daily; reboot when one needs it at 09:30 UTC
+  # (4:30-5:30 ET, 1:30-2:30 PT). Rooms are saved on SIGTERM.
+  - path: /etc/apt/apt.conf.d/52fury-unattended-upgrades
+    permissions: "0644"
+    content: |
+      Unattended-Upgrade::Automatic-Reboot "true";
+      Unattended-Upgrade::Automatic-Reboot-WithUsers "true";
+      Unattended-Upgrade::Automatic-Reboot-Time "09:30";
+      Unattended-Upgrade::Remove-Unused-Kernel-Packages "true";
+      Unattended-Upgrade::Remove-Unused-Dependencies "true";
+
+runcmd:
+  - [install, -d, -o, deploy, -g, deploy, -m, "0755", /opt/fury-server, /opt/fury-server/releases]
+  - [install, -d, -o, fury, -g, fury, -m, "0750", /var/lib/fury-server, /var/lib/fury-server/state, /var/lib/fury-server/acme]
+  - [chown, "root:fury", /etc/fury-server, /etc/fury-server/env]
+  - [chmod, "0750", /etc/fury-server]
+  - [visudo, -cf, /etc/sudoers.d/fury-deploy]
+  - [modprobe, tcp_bbr]
+  - [sysctl, --system]
+  - [systemctl, restart, systemd-journald]
+  - [systemctl, try-reload-or-restart, ssh.service]
+  - [systemctl, enable, --now, unattended-upgrades.service]
+  - [systemctl, daemon-reload]
+  # Enabled for boot; the first deploy.sh run starts it.
+  - [systemctl, enable, fury-server.service]
