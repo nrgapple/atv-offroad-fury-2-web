@@ -49,6 +49,9 @@ pub struct RemoteModel {
     pub rig: Rc<Rig>,
 }
 
+// Held once per remote rider behind `Rc`, so the quad variant's size costs
+// nothing per frame and boxing it would only add an indirection.
+#[allow(clippy::large_enum_variant)]
 pub enum Rig {
     Quad(QuadRig),
     /// The bike's linkage solver (its meshes, motions and tuning come along).
