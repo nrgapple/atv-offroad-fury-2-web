@@ -251,6 +251,7 @@ export const TESTS = {
   'test_rust_audio.mjs': { group: 'content' },
   'test_rust_audio_activation.mjs': { group: 'content' },
   'test_devlog.mjs': { group: 'content-free' },
+  'test_stats.mjs': { group: 'content-free' },
   'test_multiplayer_relay.mjs': {
     group: 'manual',
     reason:

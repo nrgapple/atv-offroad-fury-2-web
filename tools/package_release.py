@@ -10,7 +10,7 @@ import shutil
 
 ROOT = Path(__file__).resolve().parents[1]
 STATIC_FILES = {'fury-remastered-home-180-v1.png', 'fury-remastered-home-192-v1.png', 'fury-remastered-home-512-v1.png', 'fury-remastered-maskable-192-v1.png', 'fury-remastered-maskable-512-v1.png', 'favicon.ico', 'fury-remastered.svg', 'manifest.webmanifest', 'install.js', 'install.css', 'index.html', 'landing.css', 'landing.js', 'design-system.css', 'analytics.js', 'devlog.html',
-                'devlog.css', 'devlog.js', 'offline.js', 'sw.js',
+                'devlog.css', 'devlog.js', 'stats.html', 'stats.css', 'stats.js', 'offline.js', 'sw.js',
                 # The game: the shared Rust engine (crates/atv-app, tools/build_engine.py).
                 # play.html is its page; engine.html is the same page's pre-switch name.
                 'play.html', 'engine.html', 'engine.css', 'engine.js', 'decode-worker.js', 'atv_app.js', 'atv_app_bg.wasm'}

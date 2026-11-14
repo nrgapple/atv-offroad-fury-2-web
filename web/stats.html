@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#140303">
+  <title>Fury Remastered · Rider stats</title>
+  <meta name="description" content="Live riders, hours ridden, the most popular tracks and where Fury Remastered riders come from.">
+  <meta name="apple-mobile-web-app-title" content="Fury Stats">
+  <link rel="icon" href="/favicon.ico" sizes="16x16 32x32 48x48">
+  <link rel="icon" href="/fury-remastered-home-192-v1.png" type="image/png">
+  <link rel="apple-touch-icon" sizes="180x180" href="/fury-remastered-home-180-v1.png">
+  <link rel="stylesheet" href="design-system.css">
+  <link rel="stylesheet" href="stats.css">
+  <script type="module" src="stats.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <a class="game-name" href="/"><img src="fury-remastered.svg" width="960" height="320" alt="Fury Remastered"></a>
+    <h1>Rider Stats</h1>
+    <nav class="links" aria-label="Site">
+      <a href="/devlog.html">Dev log</a>
+      <a class="game-link" href="/play.html">Play <span aria-hidden="true">▸</span></a>
+    </nav>
+  </header>
+  <main id="stats" aria-busy="true">
+    <p id="stats-status" class="stats-status" role="status">Loading the latest numbers…</p>
+
+    <section class="live" aria-labelledby="live-title">
+      <h2 id="live-title" class="section-label">Right now</h2>
+      <div class="tiles">
+        <div class="tile tile-live" id="tile-riders" hidden>
+          <span class="tile-label"><span class="pulse" aria-hidden="true"></span>Riders online</span>
+          <strong id="live-riders" class="tile-value">0</strong>
+          <span class="tile-note" id="live-riders-note">riding together right now</span>
+        </div>
+        <div class="tile" id="tile-rooms" hidden>
+          <span class="tile-label">Rooms live</span>
+          <strong id="live-rooms" class="tile-value">0</strong>
+          <span class="tile-note">online races and Free Ride</span>
+        </div>
+        <div class="tile" id="tile-peak" hidden>
+          <span class="tile-label">Most riders online</span>
+          <strong id="peak-riders" class="tile-value">0</strong>
+          <span class="tile-note" id="peak-note"></span>
+        </div>
+        <div class="tile tile-daily" id="tile-daily" hidden>
+          <span class="tile-label">Today's daily event</span>
+          <strong id="daily-course" class="tile-course"></strong>
+          <span class="tile-note" id="daily-note"></span>
+        </div>
+      </div>
+      <p class="cta-row"><a class="game-link" href="/play.html">Jump in <span aria-hidden="true">▸</span></a></p>
+    </section>
+
+    <section id="totals-section" class="panel" aria-labelledby="totals-title" hidden>
+      <div class="panel-head">
+        <h2 id="totals-title">Ridden so far</h2>
+        <div class="period" role="radiogroup" aria-label="Period">
+          <button type="button" role="radio" data-period="today" aria-checked="false">Today</button>
+          <button type="button" role="radio" data-period="week" aria-checked="false">This week</button>
+          <button type="button" role="radio" data-period="allTime" aria-checked="true">All time</button>
+        </div>
+      </div>
+      <div class="totals" aria-live="polite">
+        <div class="total total-hero"><strong id="total-hours">0</strong><span>hours ridden</span></div>
+        <div class="total"><strong id="total-rides">0</strong><span>rides</span></div>
+        <div class="total"><strong id="total-races">0</strong><span>races finished</span></div>
+        <div class="total"><strong id="total-sessions">0</strong><span>visits</span></div>
+      </div>
+      <p class="panel-note" id="totals-note"></p>
+    </section>
+
+    <section id="days-section" class="panel" aria-labelledby="days-title" hidden>
+      <div class="panel-head">
+        <h2 id="days-title">Rides per day</h2>
+        <span class="panel-aside">Last 30 days</span>
+      </div>
+      <div class="days-chart" id="days-chart"></div>
+      <table class="visually-hidden" id="days-table"><caption>Rides and hours ridden per day</caption><thead><tr><th scope="col">Day</th><th scope="col">Rides</th><th scope="col">Hours</th></tr></thead><tbody></tbody></table>
+    </section>
+
+    <section id="venues-section" class="panel" aria-labelledby="venues-title" hidden>
+      <div class="panel-head">
+        <h2 id="venues-title">Most ridden tracks</h2>
+        <div class="period" role="radiogroup" aria-label="Rank tracks by">
+          <button type="button" role="radio" data-rank="hours" aria-checked="true">Hours</button>
+          <button type="button" role="radio" data-rank="rides" aria-checked="false">Rides</button>
+        </div>
+      </div>
+      <ol class="bars" id="venues"></ol>
+    </section>
+
+    <section id="splits-section" class="panel" aria-labelledby="splits-title" hidden>
+      <div class="panel-head"><h2 id="splits-title">How people ride</h2><span class="panel-aside">Share of rides</span></div>
+      <div class="splits" id="splits"></div>
+    </section>
+
+    <div class="pair">
+      <section id="boards-section" class="panel" aria-labelledby="boards-title" hidden>
+        <div class="panel-head"><h2 id="boards-title">Hall of Fame</h2></div>
+        <div class="mini-totals">
+          <div class="total"><strong id="board-times">0</strong><span>times on the World boards</span></div>
+          <div class="total"><strong id="board-riders">0</strong><span>riders ranked</span></div>
+          <div class="total"><strong id="board-daily">0</strong><span>daily event entries</span></div>
+        </div>
+        <p class="panel-note">Set a time in World mode to put your name up there.</p>
+      </section>
+
+      <section id="countries-section" class="panel" aria-labelledby="countries-title" hidden>
+        <div class="panel-head"><h2 id="countries-title">Riding worldwide</h2></div>
+        <p class="countries-count"><strong id="country-count">0</strong> <span id="country-count-label">countries</span></p>
+        <ol class="flags" id="countries"></ol>
+        <p class="panel-note" id="countries-note"></p>
+      </section>
+    </div>
+  </main>
+  <footer>
+    <p>All numbers are anonymous totals: no accounts, names, cookies or IP addresses. Countries with fewer than 10 visits and tracks with fewer than 10 rides are not listed. Days follow UTC; totals refresh every 15 minutes and live counts every minute.</p>
+  </footer>
+</body>
+</html>
