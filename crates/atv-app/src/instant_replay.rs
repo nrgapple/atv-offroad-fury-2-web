@@ -12,8 +12,8 @@
 //! fits the same memory. Recording stops a few seconds after race over.
 //!
 //! Storage: each rider's two world matrices exactly (f32 bits), its node
-//! matrices quantised to 16 bits (axes in 1/8192, translations in 1/256 of
-//! a unit from the first node of their part), 24 bytes a node.
+//! matrices quantised to 16 bits (axes in 1/8192, translations in 1/128 of
+//! a unit within 256 of the first node of their part), 24 bytes a node.
 use atv_core::math::Det;
 use atv_game::ride::Pose;
 use atv_render::Camera;
@@ -98,7 +98,7 @@ type Cell = [i16; 12];
 /// Cells before a rider's nodes: two world matrices and the offsets.
 const HEADER: usize = 5;
 const AXIS: f32 = 8192.;
-const PLACE: f32 = 256.;
+const PLACE: f32 = 128.;
 
 fn quantise(v: f32, scale: f32) -> i16 {
     (v * scale)
@@ -384,7 +384,7 @@ impl Recorder {
             return false;
         }
         while self.whole && self.len >= self.capacity() {
-            self.thin();
+            self.thin(false);
         }
         let capacity = self.capacity();
         let at = if self.len < capacity {
@@ -449,10 +449,10 @@ impl Recorder {
     }
 
     /// Whole mode, full: keeps every other sample (the first among them,
-    /// and the latest) and halves the sampling, in place.
-    fn thin(&mut self) {
+    /// and with `keep_last` the open one) and halves the sampling, in place.
+    fn thin(&mut self, keep_last: bool) {
         let stride = self.stride;
-        let last = self.len - 1;
+        let last = if keep_last { self.len - 1 } else { usize::MAX };
         let mut kept = 0;
         for i in (0..self.len).filter(|i| i % 2 == 0 || *i == last) {
             if i != kept {
@@ -470,7 +470,7 @@ impl Recorder {
     /// race thins first if the wider rows would pass its budget).
     fn grow(&mut self, stride: usize) {
         while self.whole && self.len > self.capacity_at(stride) {
-            self.thin();
+            self.thin(true);
         }
         let capacity = self.capacity_at(stride);
         // A full ring uses every row; otherwise rows run 0..len.
@@ -804,11 +804,11 @@ mod tests {
     }
 
     #[test]
-    fn storage_keeps_worlds_exactly_and_nodes_within_a_millimetre() {
+    fn storage_keeps_worlds_exactly_and_nodes_within_a_hundredth() {
         let mut p = pose(1234.567, 2);
         p.quad_world[13] = -87.654_32;
         p.quad_nodes[1] = [
-            0.6, 0.8, 0., 0., -0.8, 0.6, 0., 0., 0., 0., 1., 0., 1530.25, 20.5, -9.75, 1.,
+            0.6, 0.8, 0., 0., -0.8, 0.6, 0., 0., 0., 0., 1., 0., 1434.25, 20.5, -9.75, 1.,
         ];
         p.rider_nodes[0][12] = 0.3;
         let mut cells = vec![[0; 12]; HEADER + 4];
@@ -816,9 +816,9 @@ mod tests {
         assert_eq!(unpack(&decode(&cells, 2, 0)), p.quad_world);
         let node = unpack(&decode(&cells, 2, 3));
         for (a, b) in node.iter().zip(&p.quad_nodes[1]) {
-            assert!((a - b).abs() < 4e-3, "{node:?}");
+            assert!((a - b).abs() < 5e-3, "{node:?}");
         }
-        assert!((decode(&cells, 2, 4)[9] - 0.3).abs() < 4e-3);
+        assert!((decode(&cells, 2, 4)[9] - 0.3).abs() < 5e-3);
     }
 
     #[test]

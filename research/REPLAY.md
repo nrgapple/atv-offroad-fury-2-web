@@ -30,8 +30,8 @@ Implementation (`crates/atv-app/src/instant_replay.rs`, `replay_view.rs`):
   same memory with coarser samples. Rows are allocated as the race goes, so a
   short race uses less.
 - Each rider's two world matrices are stored exactly. Node matrices are
-  quantised to 16 bits: axes to 1/8192, and translations to 1/256 of a unit
-  from the first node of their part (±128 units). This uses 24 bytes per node
+  quantised to 16 bits: axes to 1/8192, and translations to 1/128 of a unit
+  from the first node of their part (±256 units). This uses 24 bytes per node
   instead of 48. The free-ride 30 s ring uses the same encoding.
 - Playback, blending and the cameras are unchanged. Nothing feeds back into
   the simulation. A ride that is not recording or replaying pays nothing new.
