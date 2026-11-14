@@ -94,6 +94,10 @@ impl Speech {
         self.last = Some(id);
     }
 
+    pub fn playing(&self, mixer: &Mixer) -> bool {
+        self.voice.is_some_and(|(_, id)| mixer.playing(Some(id)))
+    }
+
     /// Stops the playing line (leaving the course).
     pub fn stop(&mut self, mixer: &mut Mixer) {
         self.follow(mixer, 0, None);
@@ -133,6 +137,11 @@ mod tests {
         let mut mixer = Mixer::new(48_000);
         speech.follow(&mut mixer, 48_000, Some((1, 3)));
         assert_eq!((mixer.voices(), speech.started), (1, 1));
+        // Finishing a sample must not retrigger it on the next frame.
+        mixer.render(&mut vec![0.; 96_000]);
+        assert!(!speech.playing(&mixer));
+        speech.follow(&mut mixer, 48_000, Some((1, 3)));
+        assert_eq!(speech.started, 1);
         // The same serial keeps the voice; a new one replaces it.
         speech.follow(&mut mixer, 48_000, Some((1, 3)));
         speech.follow(&mut mixer, 48_000, Some((2, 4)));

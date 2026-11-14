@@ -533,3 +533,24 @@ crossfade adds one gain node per engine transition. `tools/test_enhanced_audio.m
 checks the stadium bus with nonzero echo output and engine crossfades on SX01,
 the NAT03 canyon, no bus on ENV04, and switching to Original through the menu,
 which persists and stops crossfading while engine transitions continue.
+
+## Training and race-load voice audit — 2026-11-14 (#545)
+
+The existing race-load cue is the disc's IntOut stream, not an additional invented
+announcer recording. `00217bb0` selects event IDs 1–4 for single races, ID 5 for
+Supercross championships and ID 6 for other racing championships; the disc IntOut
+data maps these to INT001–INT006. `00217590` stops the intro at GO. Training uses
+its separate dialogue stream (see TRAINING.md), whose user volume follows SFX
+(`002852b0`); IntOut follows music. No new content package is needed: all 46
+Training lines and eight IntOut samples are already in the authorized AUDIO.RES.
+The new diagnostics name the scheduled IntOut samples and expose live speech
+voices. Unit tests cover Music Off deferral, exactly-once scheduling and GO
+cancellation of both active and pending IntOut voices. The focused /play.html test
+requires all 46 disc lines, observes actual scheduled Intro/Jumbo/Chase speech,
+restarts during Intro, checks INT001–INT004 selection and its stop at GO.
+
+Evidence is bounded static reading, not an original-console listening comparison.
+The native random seed, IntOut base gain and SPU2 mixer behavior remain uncertain;
+this audit does not establish full acoustic parity. The prior race-load and
+Training implementations are retained, with the restart and caption corrections
+recorded in TRAINING.md.

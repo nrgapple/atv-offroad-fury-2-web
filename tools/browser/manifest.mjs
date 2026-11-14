@@ -247,6 +247,7 @@ export const TESTS = {
   'test_engine_freestyle_targets.mjs': { group: 'content', timeout: 900 },
   'test_engine_toy_actors.mjs': { group: 'content', timeout: 600 },
   'test_engine_actor_collision.mjs': { group: 'content', timeout: 600 },
+  'test_engine_voice_cues.mjs': { group: 'content', timeout: 360 },
   'test_engine_training.mjs': { group: 'content', timeout: 900 },
   'test_engine_games.mjs': { group: 'content', timeout: 900 },
   'test_engine_game_cpus.mjs': { group: 'content', timeout: 900 },

@@ -118,9 +118,12 @@ impl TrainingSession {
     /// Restart Training (`00226d60`): the introduction and lesson 1 again.
     pub fn restart(&mut self, ride: &mut Ride) {
         let completed = self.course.completed_before || self.rewarded;
+        let mut course = std::mem::replace(&mut self.course, Course::new(completed));
+        course.restart_intro(completed);
         let catalog = std::mem::take(&mut self.catalog);
         let (voices, wait) = (std::mem::take(&mut self.voices), self.voice_wait);
         *self = Self::new(completed, catalog);
+        self.course = course;
         self.voice_wait = wait;
         if !voices.is_empty() {
             self.set_voices(voices);
@@ -251,7 +254,9 @@ impl TrainingSession {
         let course = &self.course;
         atv_ui::hud::training::View {
             title: course.title(),
-            caption: course.caption.map(|(line, _)| line.caption.to_string()),
+            // The disc supplies speech, not subtitles. Internal summaries remain
+            // diagnostics only; do not present authored text as disc dialogue.
+            caption: None,
             banner: course.banner.map(|(text, _)| text.to_string()),
             distance: course.goal_distance(origin),
             hint: (course.phase == Phase::Lessons
