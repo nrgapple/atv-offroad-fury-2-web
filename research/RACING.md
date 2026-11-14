@@ -1019,6 +1019,20 @@ its line intersection `0012b6d0`, and RaceStatus reset `00247900` and update
   3-CPU sweep of all 32 courses (seed 7, 150 s): all CPUs finish on 25 courses
   (13 before this and the ramp rule); nat04/06/07 are longer than the window;
   env04, env06, nat02 and sx11 still have CPUs looping off the line.
+- **Allowance only after an approach (2026-11-14, #584).** "Reached" was
+  not enforced: any previous distance within 75ft past the box position
+  counted, including a grid's. On the Short Track `env01st` the scene gate
+  line (`stfgate`) turns across the start row, so the outside slot (slot 5
+  of five) stands 0.8ft behind the line while its route station lies 3.8ft
+  past the box position (0.2ft); driving off the grid crossed the line and
+  counted a lap 0.13s after GO, so that rider raced one lap fewer, a human
+  in the slot as well as a CPU. The allowance now needs a previous distance
+  within 125ft before the box position since the rider's last handled
+  crossing (or the start); the literal [0, 125ft) test is unchanged. Read
+  literally, the original counts nothing on that first crossing either (its
+  forward distance from 3.8ft to 0.2ft is a whole lap less 3.6ft), assuming
+  native `0017be80` also projects that slot past the box position (the
+  grid lies 3.8–6.4ft past it on the route, not traced).
 - **Track flags (TDF tag 41, Track +0x30).** Reset `00247900` sets rider flag
   0x10000 for Track flag 4 and 0x20000 for flag 8. Flag 0x10000 turns the
   next gate crossing into a no-lap crossing that only clears it; flag 0x20000

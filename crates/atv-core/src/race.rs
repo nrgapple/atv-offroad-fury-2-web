@@ -1288,6 +1288,11 @@ struct Progress {
     checkpoint: Option<Kept>,
     /// Finish-gate crossings handled (counted or skipped).
     crossings: u32,
+    /// The rider's previous race distance has lain within Track +0x34
+    /// before the finish gate since its last handled crossing (or the
+    /// start): only then does a crossing slightly past the gate's route
+    /// position count (authored, see [`Progress::update`]).
+    approached: bool,
 }
 /// A skip-ahead reset candidate ([`Race::recovery_stations`], port
 /// adaptation): its route station, the route distance gained, and the pose.
@@ -1358,6 +1363,7 @@ impl Progress {
             },
             checkpoint: None,
             crossings: 0,
+            approached: false,
         }
         .with_enduro_distance(start, course)
     }
@@ -1452,18 +1458,27 @@ impl Progress {
             // off the line crosses a skewed gate a little later on the route
             // (sx03: 0.6ft past `at`, env01 and sx13 similar), and its
             // accumulated distance can lead the station slightly, so once a
-            // rider has reached the gate's distance, a previous distance up
-            // to Track +0x38 past it also counts (authored; read literally
-            // the crossing would wrap to a whole lap ahead and never count).
-            // A grid just past the gate (env01, 4ft) has not reached it.
+            // rider has approached the gate on this lap (a previous distance
+            // within Track +0x34 before it), a previous distance up to Track
+            // +0x38 past it also counts (authored; read literally the
+            // crossing would wrap to a whole lap ahead and never count).
+            // A grid on or just past the gate's route position has not
+            // approached it: on env01st (#584) the gate line turns across
+            // the start row, so the outside slot stands 0.8ft behind the
+            // line though its station lies 3.8ft past `at`, and driving off
+            // the grid would otherwise count a lap at GO. The literal test
+            // counts nothing there either.
             let cycle = course.cycle_length();
-            let near = if previous_distance <= at {
-                at - previous_distance < TRACK_AHEAD
+            let (before, after) = if previous_distance <= at {
+                (at - previous_distance < TRACK_AHEAD, false)
             } else {
                 let past = (previous_distance - at).rem_euclid(cycle);
-                cycle - past < TRACK_AHEAD || past < TRACK_BEHIND
+                (cycle - past < TRACK_AHEAD, past < TRACK_BEHIND)
             };
+            self.approached |= before;
+            let near = before || (after && self.approached);
             if near && gate.crossing(p, previous) == Crossing::Through {
+                self.approached = false;
                 self.crossings += 1;
                 if self.skip_crossing {
                     self.skip_crossing = false;
@@ -2855,6 +2870,55 @@ mod tests {
             r.step([-10., 0., z as f32], 0.1);
         }
         assert!(r.player_finished(), "{}", r.player.distance);
+    }
+    #[test]
+    fn grid_behind_a_skewed_finish_gate_counts_no_lap_at_go() {
+        // env01st (#584): the gate line turns across the start row, so a
+        // slot can stand behind the line while its route station already
+        // lies past the gate (here x = -10: the line is at z = 7.8, `at` 2ft).
+        let mut c = course();
+        let (sin, cos) = (0.5, 0.866_025_4);
+        let matrix = [
+            cos, 0., -sin, 0., 0., 1., 0., 0., sin, 0., cos, 0., 0., 0., 2., 1.,
+        ];
+        assert!(c.set_finish_gate(&matrix, 15.));
+        let at = c.finish_at.unwrap();
+        let mut r = Race::new(c, 1, vec![], 0).unwrap();
+        r.player = Progress::new([-10., 0., 5.], &r.course);
+        assert!(r.course.station_distance(r.player.station) > at + 2.);
+        assert!(!r.player.skip_crossing);
+        r.countdown = 0.;
+        // Riding off the grid crosses the gate line: no lap.
+        for z in 6..=20 {
+            r.step([-10., 0., z as f32], 0.1);
+        }
+        assert_eq!(r.player.crossings, 0);
+        assert_eq!(r.player.completed, 0);
+        // A full circuit on the racing line, then through the gate: lap 1.
+        let corners = [
+            [0., 0., 100.],
+            [100., 0., 100.],
+            [100., 0., 0.],
+            [0., 0., 0.],
+        ];
+        let mut at_point = [0., 0., 20.];
+        for corner in corners {
+            while at_point != corner {
+                let d = distance(at_point, corner);
+                at_point = if d <= 10. {
+                    corner
+                } else {
+                    std::array::from_fn(|n| at_point[n] + (corner[n] - at_point[n]) * 10. / d)
+                };
+                r.step(at_point, 0.1);
+            }
+        }
+        // (A zero previous position never crosses.)
+        r.step([0., 0., 1.], 0.1);
+        assert_eq!(r.player.completed, 0);
+        r.step([0., 0., 10.], 0.1);
+        assert!(r.player_finished(), "{}", r.player.distance);
+        assert!(r.player.lap_times[0] > 4.);
     }
     fn course() -> Course {
         Course {

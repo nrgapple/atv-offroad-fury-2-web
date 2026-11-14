@@ -65,9 +65,9 @@ for (const file of readdirSync(from).filter(name => name.endsWith('.jsonl')).sor
 const flying = rider => rider.marks.slice(1).map((mark, i) => mark - rider.marks[i]);
 const least = values => (values.length ? Math.min(...values) : undefined);
 // A full race the rider really rode: every lap crossed (no race-over
-// estimate) and a first lap that is a lap. On env01st the first roster CPU
-// is credited a lap 0.13 s after GO, so it rides one lap fewer (issue #584);
-// those races are left out.
+// estimate) and a first lap that is a lap. In the measurements on env01st
+// the first roster CPU was credited a lap 0.13 s after GO, so it rode one lap
+// fewer (issue #584, fixed since in the engine); those races are left out.
 const rode = (rider, laps) => !rider.estimated && rider.marks.length === laps && rider.marks[0] >= 0.6 * least(flying(rider));
 
 // One course's measurements, seconds: the fastest flying lap and full-length

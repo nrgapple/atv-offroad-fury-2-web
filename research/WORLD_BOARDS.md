@@ -368,9 +368,11 @@ Facts:
   99.3 s on the motorcycles, where it resets about twice as often. No CPU
   rides a motorcycle, so there is no motorcycle measurement of a rival.
 
-Findings left alone: on `env01st` the first CPU of the roster is credited a
-lap 0.13 s after GO (it rides four laps and shows a 0.13 s best lap; issue
-#584); those races are excluded here. On
+Findings left alone: on `env01st` the first CPU of the roster was credited a
+lap 0.13 s after GO (it rode four laps and showed a 0.13 s best lap; issue
+#584, fixed since: its start slot stood behind the skewed gate line, see
+research/RACING.md "Allowance only after an approach"); those races are
+excluded here, and its flying laps (line to line) are real laps. On
 `sx15` every CPU needs the authored recovery (`cpu_recovery`) several times a
 race, so its measured times are soft.
 
