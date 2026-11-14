@@ -2530,6 +2530,7 @@ impl App {
                     && let Some(overlay) = &mut self.overlay
                 {
                     overlay.results.show_objective(summary);
+                    overlay.results.classic = session.classic_seconds.is_some();
                     overlay.offer_fame(atv_core::hall_of_fame::Watch::Freestyle(fame));
                     overlay.offer_world_score(world);
                 }
