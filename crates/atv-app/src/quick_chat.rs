@@ -208,6 +208,10 @@ pub fn is_blocked(name: &str, pid: Option<&str>) -> bool {
     )
 }
 
+/// A feed line as received: the sender's slot (None for the player), the
+/// shown name, kind, id and when (ms).
+type FeedEvent = (Option<u8>, std::rc::Rc<str>, u8, u8, f64);
+
 /// What the room's riders said, and the player's mute and block choices.
 #[derive(Default)]
 pub struct QuickChat {
@@ -215,7 +219,7 @@ pub struct QuickChat {
     pub view: View,
     /// Latest event per rider (slot, kind, id, when), and the feed.
     latest: BTreeMap<u8, (u8, u8, f64)>,
-    feed: VecDeque<(Option<u8>, std::rc::Rc<str>, u8, u8, f64)>,
+    feed: VecDeque<FeedEvent>,
     /// Riders muted this session, by slot.
     pub muted: BTreeSet<u8>,
     pub blocked: Vec<Blocked>,
