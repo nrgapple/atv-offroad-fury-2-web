@@ -256,6 +256,12 @@ pub struct Screen {
     pub badge: Option<Badge>,
     /// The Pass Key page's QR code: the link it encodes.
     pub qr: Option<String>,
+    /// Course select: each listed course's medal (research/
+    /// GHOST_CHALLENGES.md).
+    pub medals: std::collections::BTreeMap<String, atv_core::medals::Medal>,
+    /// Profile Overview: courses per medal (Bronze first) and weekly
+    /// badges (Top 1 % first).
+    pub medal_strip: Option<([u32; 4], [u32; 5])>,
 }
 
 /// The Press Start overlay's tint at a pulse brightness (ms-pulse 1 → 1.18).
@@ -906,6 +912,7 @@ fn page_title(page: &str) -> &'static str {
         "profile" => "Profile Editor",
         "hall-of-fame" => "Hall of Fame",
         "daily" => "Daily Event",
+        "weekly" => "Weekly Challenge",
         "profile-name" => "Profile Name Entry",
         "profile-view" => "View Profile",
         "profile-overview" => "Profile Overview",
@@ -1177,6 +1184,9 @@ fn panel(m: &Metrics, s: &Screen, loading: bool) -> El {
             || controller::passkey_page::PAGES.contains(&page)
             || controller::online_page::PAGES.contains(&page) =>
         {
+            if let Some(strip) = &s.medal_strip {
+                panel = panel.child(medal_strip(m, strip));
+            }
             panel = panel.child(details(m, s));
             if let Some(link) = &s.qr {
                 panel = panel.child(qr_code(m, link));
@@ -1786,6 +1796,7 @@ fn left(m: &Metrics, s: &Screen) -> El {
                 | "profile-records"
                 | "hall-of-fame"
                 | "daily"
+                | "weekly"
         ) || controller::store_page(page)
             || controller::passkey_page::PAGES.contains(&page)
             || controller::online_page::PAGES.contains(&page) =>
@@ -1880,7 +1891,12 @@ fn left(m: &Metrics, s: &Screen) -> El {
             for (index, (action, label)) in s.choices.iter().enumerate() {
                 if matches!(
                     action.as_str(),
-                    "racetrack" | "raceevent" | "racelaps" | "racecpu" | "racedifficulty"
+                    "racetrack"
+                        | "raceevent"
+                        | "racelaps"
+                        | "racecpu"
+                        | "racedifficulty"
+                        | "raceghost"
                 ) {
                     settings = settings.child(stepper_row(m, s, index, label));
                 }
@@ -2370,15 +2386,55 @@ fn course_list(m: &Metrics, s: &Screen) -> El {
                 .spacing(1.44),
                 15.6,
             ));
-        list = list.child(
-            El::new(card)
-                .paint(paint)
-                .id(COURSE + index as u32)
-                .child(thumb_el)
-                .child(copy),
-        );
+        let mut copy = copy;
+        copy.style.flex_grow = 1.;
+        let mut card_el = El::new(card)
+            .paint(paint)
+            .id(COURSE + index as u32)
+            .child(thumb_el)
+            .child(copy);
+        if let Some(medal) = s.medals.get(id) {
+            card_el = card_el.child(crate::medal::coin(*medal, if m.short { 22. } else { 26. }));
+        }
+        list = list.child(card_el);
     }
     list
+}
+
+/// Profile Overview's medal strip: a coin and a count per medal, then the
+/// weekly badges earned (only those held).
+fn medal_strip(m: &Metrics, (medals, badges): &([u32; 4], [u32; 5])) -> El {
+    let size = if m.short { 22. } else { 28. };
+    let ink = Color::hex("#111");
+    let mut strip = El::new(Style {
+        flex_wrap: FlexWrap::Wrap,
+        align_items: AlignItems::CENTER,
+        padding: sides(if m.portrait { 4. } else { 12. }, 8., 2., 8.),
+        gap: Size {
+            width: px(14.),
+            height: px(6.),
+        },
+        ..row(14.)
+    });
+    for medal in atv_core::medals::Medal::ALL.iter().rev() {
+        strip = strip.child(crate::medal::counted(
+            crate::medal::coin(*medal, size),
+            medals[*medal as usize],
+            size,
+            ink,
+        ));
+    }
+    for (i, badge) in atv_core::medals::Badge::ALL.iter().enumerate() {
+        if badges[i] > 0 {
+            strip = strip.child(crate::medal::counted(
+                crate::medal::badge(*badge, size * 0.8),
+                badges[i],
+                size,
+                ink,
+            ));
+        }
+    }
+    strip
 }
 
 fn garage_left(m: &Metrics, s: &Screen, mut left: El) -> El {

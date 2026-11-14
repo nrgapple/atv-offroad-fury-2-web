@@ -11,6 +11,7 @@ pub mod fps;
 pub mod front;
 pub mod hud;
 pub mod layout;
+pub mod medal;
 pub mod menu;
 pub mod paint;
 pub mod render;

@@ -32,6 +32,7 @@ pub mod ipu;
 pub mod iso;
 pub mod materials;
 pub mod math;
+pub mod medals;
 pub mod menu_preview;
 pub mod mesh;
 pub mod model_lod;

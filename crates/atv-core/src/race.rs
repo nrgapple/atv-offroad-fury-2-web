@@ -1620,6 +1620,10 @@ pub struct Frame {
     /// (`world_ghost`), attached by the simulation.
     #[serde(skip)]
     pub lap_ghost: Option<std::sync::Arc<crate::world_ghost::Lap>>,
+    /// Lap Attack's best lap so far as a ghost (the personal best ghost,
+    /// research/GHOST_CHALLENGES.md), attached by the simulation.
+    #[serde(skip)]
+    pub pb_lap: Option<std::sync::Arc<crate::world_ghost::Lap>>,
     /// The player's completed lap times and the best one's index.
     pub lap_times: Vec<f32>,
     pub best_lap: Option<usize>,
@@ -2552,6 +2556,7 @@ impl Race {
                 .cloned(),
             trace: self.trace.clone().filter(|_| self.player.finish.is_some()),
             lap_ghost: None,
+            pb_lap: None,
             split_records: Vec::new(),
             standings: order
                 .into_iter()
