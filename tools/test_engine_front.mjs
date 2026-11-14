@@ -22,7 +22,7 @@ try {
   await page.goto(url('/play.html?uiDiagnostics=1'));
   await wait(page, () => JSON.parse(document.querySelector('#ui-state')?.textContent || '{}').front?.page === 'title', null, 120000);
   let f = await front(page);
-  assert.deepEqual(f.choices, ['main', 'devlog', 'downloads']);
+  assert.deepEqual(f.choices, ['main', 'devlog', 'downloads', 'stats']);
   assert.equal(f.tracks, 40, 'every venue is listed');
   // Downloads opens the GitHub releases (desktop and Android) in a new tab; the game stays.
   await page.context().route('https://github.com/**', route => route.fulfill({ contentType: 'text/html', body: 'releases' }));
@@ -33,9 +33,18 @@ try {
   assert.equal(popup.url(), 'https://github.com/nrgapple/atv-offroad-fury-2-web/releases');
   await popup.close();
   assert.equal((await front(page)).page, 'title', 'the game stays on the title');
+  // Stats opens the public rider stats page in a new tab too.
+  const site = new URL(page.url()).origin;
+  const stats = (await front(page)).hits.find(h => h.id === 2003);
+  assert.ok(stats, 'the Stats link is drawn');
+  const [statsTab] = await Promise.all([page.waitForEvent('popup'), page.mouse.click(centre(stats).x, centre(stats).y)]);
+  await statsTab.waitForLoadState();
+  assert.equal(statsTab.url(), `${site}/stats.html`);
+  await statsTab.close();
+  assert.equal((await front(page)).page, 'title', 'the game stays on the title');
   // Canvas focus for key events, on an empty part of the title; back up to Start.
   await page.mouse.click(8, 8);
-  await key(page, 'ArrowUp'); await key(page, 'ArrowUp');
+  for (let i = 0; i < 3; i++) await key(page, 'ArrowUp');
   assert.equal((await front(page)).selection, 0, 'Start is selected again');
   await key(page, 'Enter'); await onPage(page, 'main');
   f = await front(page);

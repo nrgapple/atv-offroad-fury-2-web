@@ -727,7 +727,7 @@ pub fn layout(request: Request) -> Result<Frame> {
     match request.page.as_str() {
         "title" => {
             f.choices
-                .extend(["main", "devlog", "downloads"].map(String::from));
+                .extend(["main", "devlog", "downloads", "stats"].map(String::from));
             let y = (h * 0.30).max(95.);
             if request.menu_logo {
                 let width = (w - 60.).min(540.);
@@ -750,22 +750,26 @@ pub fn layout(request: Request) -> Result<Frame> {
                 "Press START",
                 "main",
                 [24., h - 135., list_w.max(290.), 60.],
-                request.selection.is_multiple_of(3),
+                request.selection.is_multiple_of(4),
             );
-            // Dev log and Downloads (the GitHub releases) share the row below Start.
-            let half = (list_w.max(290.) - 8.) / 2.;
-            f.button(
-                "Dev log",
-                "devlog",
-                [24., h - 74., half, 56.],
-                request.selection % 3 == 1,
-            );
-            f.button(
-                "Downloads",
-                "downloads",
-                [32. + half, h - 74., half, 56.],
-                request.selection % 3 == 2,
-            );
+            // Dev log, Downloads (the GitHub releases) and Stats (the public
+            // rider stats page) share the row below Start.
+            let third = (list_w.max(290.) - 16.) / 3.;
+            for (i, (label, action)) in [
+                ("Dev log", "devlog"),
+                ("Downloads", "downloads"),
+                ("Stats", "stats"),
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                f.button(
+                    label,
+                    action,
+                    [24. + i as f32 * (third + 8.), h - 74., third, 56.],
+                    request.selection % 4 == i + 1,
+                );
+            }
         }
         "main" | "single" => {
             // The original's order (PAGE01 Main, PAGE02 SinglePlayer,
