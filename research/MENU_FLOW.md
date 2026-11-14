@@ -184,8 +184,13 @@ page scrolls the script from the bottom at its speed with its colours,
 restarting after the last line, then a separate "Fury Remastered" section
 that names the port an unofficial fan port; Back is its only row. A package
 without PAGE18 shows only the port's section. Not reproduced: the icons
-(space is kept), the backdrop art and 3D camera sets, the right-hand text
-column (the port centres the text on every screen) and the font.
+(space is kept), the backdrop art and 3D camera sets, and the font.
+The script rectangle and name indentation are now read
+from the disc: landscape uses its right-hand column (x 359–640 on the
+640 × 448 page), with left-aligned headings and names indented 10 page
+pixels. Portrait uses an authored full-width column to keep names readable.
+Bounds are validated before layout; scroll speed and colors still come
+from the same script. The header/Back area remains a port adaptation.
 
 ## Verification
 

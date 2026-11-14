@@ -37,60 +37,16 @@ struct Group {
     material: wgpu::BindGroup,
 }
 
-pub struct ModelPreview {
+/// Immutable GPU setup shared by all menu previews on one device.
+pub struct PreviewPipeline {
     pipeline: wgpu::RenderPipeline,
-    globals: wgpu::Buffer,
-    globals_group: wgpu::BindGroup,
-    groups: Vec<Group>,
-    pose: Vec<[f32; 16]>,
-    center: [f32; 3],
-    dimensions: [f32; 3],
-    /// Turn about the vertical axis (browser `-this.yaw`).
-    pub yaw: f32,
-    targets: Option<((u32, u32), wgpu::TextureView, wgpu::TextureView)>,
+    globals_layout: wgpu::BindGroupLayout,
+    material_layout: wgpu::BindGroupLayout,
+    sampler: wgpu::Sampler,
 }
 
-/// The browser's localNormal: a bind-space normal into node space.
-fn local_normal(m: &[f32; 16], v: [f32; 3]) -> [f32; 3] {
-    let (a, b, c) = ([m[0], m[1], m[2]], [m[4], m[5], m[6]], [m[8], m[9], m[10]]);
-    let cross = |a: [f32; 3], b: [f32; 3]| {
-        [
-            a[1] * b[2] - a[2] * b[1],
-            a[2] * b[0] - a[0] * b[2],
-            a[0] * b[1] - a[1] * b[0],
-        ]
-    };
-    let dot = |a: [f32; 3], b: [f32; 3]| a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
-    let determinant = dot(a, cross(b, c));
-    if determinant.abs() < 1e-10 {
-        return v;
-    }
-    [cross(b, c), cross(c, a), cross(a, b)].map(|row| dot(row, v) / determinant)
-}
-
-fn transform(m: &[f32; 16], p: [f32; 3]) -> [f32; 3] {
-    [0, 1, 2].map(|a| m[a] * p[0] + m[a + 4] * p[1] + m[a + 8] * p[2] + m[a + 12])
-}
-
-impl ModelPreview {
-    /// `pose`: node world matrices (the mesh bind pose when None). `paint`:
-    /// the quad paint (mode, hue; PAINT_PALETTE) on paintable body
-    /// materials, as ModelView's `paint` option.
-    pub fn new(
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        mesh: &Mesh,
-        textures: &dyn Fn(&str) -> Option<PreviewTexture>,
-        pose: Option<&[[f32; 16]]>,
-        paint: [f32; 2],
-    ) -> Result<Self, String> {
-        if mesh.nodes.len() > BONES {
-            return Err("preview mesh has too many nodes".into());
-        }
-        let pose: Vec<[f32; 16]> = match pose {
-            Some(p) => p.to_vec(),
-            None => mesh.nodes.iter().map(|n| n.world_matrix).collect(),
-        };
+impl PreviewPipeline {
+    pub fn new(device: &wgpu::Device) -> Self {
         let uniform = |binding, visibility| wgpu::BindGroupLayoutEntry {
             binding,
             visibility,
@@ -184,6 +140,74 @@ impl ModelPreview {
             min_filter: wgpu::FilterMode::Linear,
             ..Default::default()
         });
+        Self {
+            pipeline,
+            globals_layout,
+            material_layout,
+            sampler,
+        }
+    }
+}
+
+pub struct ModelPreview {
+    pipeline: wgpu::RenderPipeline,
+    globals: wgpu::Buffer,
+    globals_group: wgpu::BindGroup,
+    groups: Vec<Group>,
+    pose: Vec<[f32; 16]>,
+    center: [f32; 3],
+    dimensions: [f32; 3],
+    /// Turn about the vertical axis (browser `-this.yaw`).
+    pub yaw: f32,
+    targets: Option<((u32, u32), wgpu::TextureView, wgpu::TextureView)>,
+}
+
+/// The browser's localNormal: a bind-space normal into node space.
+fn local_normal(m: &[f32; 16], v: [f32; 3]) -> [f32; 3] {
+    let (a, b, c) = ([m[0], m[1], m[2]], [m[4], m[5], m[6]], [m[8], m[9], m[10]]);
+    let cross = |a: [f32; 3], b: [f32; 3]| {
+        [
+            a[1] * b[2] - a[2] * b[1],
+            a[2] * b[0] - a[0] * b[2],
+            a[0] * b[1] - a[1] * b[0],
+        ]
+    };
+    let dot = |a: [f32; 3], b: [f32; 3]| a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+    let determinant = dot(a, cross(b, c));
+    if determinant.abs() < 1e-10 {
+        return v;
+    }
+    [cross(b, c), cross(c, a), cross(a, b)].map(|row| dot(row, v) / determinant)
+}
+
+fn transform(m: &[f32; 16], p: [f32; 3]) -> [f32; 3] {
+    [0, 1, 2].map(|a| m[a] * p[0] + m[a + 4] * p[1] + m[a + 8] * p[2] + m[a + 12])
+}
+
+impl ModelPreview {
+    /// `pose`: node world matrices (the mesh bind pose when None). `paint`:
+    /// the quad paint (mode, hue; PAINT_PALETTE) on paintable body
+    /// materials, as ModelView's `paint` option.
+    pub fn new(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        shared: &PreviewPipeline,
+        mesh: &Mesh,
+        textures: &dyn Fn(&str) -> Option<PreviewTexture>,
+        pose: Option<&[[f32; 16]]>,
+        paint: [f32; 2],
+    ) -> Result<Self, String> {
+        if mesh.nodes.len() > BONES {
+            return Err("preview mesh has too many nodes".into());
+        }
+        let pose: Vec<[f32; 16]> = match pose {
+            Some(p) => p.to_vec(),
+            None => mesh.nodes.iter().map(|n| n.world_matrix).collect(),
+        };
+        let pipeline = shared.pipeline.clone();
+        let globals_layout = shared.globals_layout.clone();
+        let material_layout = shared.material_layout.clone();
+        let sampler = shared.sampler.clone();
         let upload = |t: &PreviewTexture| {
             device.create_texture_with_data(
                 queue,

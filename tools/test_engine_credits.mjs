@@ -49,6 +49,8 @@ try {
   assert.deepEqual(s.front.menu.choices, ['back']);
   assert.equal(credits.original, true, 'the original credits.txt was read');
   assert.equal(credits.first, 'Game Designer');
+  assert.deepEqual(credits.bounds, [359, 0, 640, 448], 'disc text rectangle');
+  assert.equal(credits.nameIndent, 10, 'disc name indentation');
   assert.ok(credits.entries > 500, `entries ${credits.entries}`);
   // The scroll moves on its own: the frames differ a second apart.
   await page.waitForTimeout(1500);
@@ -61,6 +63,10 @@ try {
     await page.waitForTimeout(8000);
     await page.screenshot({ path: `${shots}/credits-2.png` });
   }
+  await page.setViewportSize({ width: 390, height: 844 });
+  await nextFrames(page, 5);
+  assert.equal((await state(page)).front.menu.page, 'credits', 'portrait keeps Credits open');
+  if (shots) await page.screenshot({ path: `${shots}/credits-portrait.png` });
   await key(page, 'Escape');
   s = await until(page, s => s.front?.menu?.page === 'settings', 'back to Options');
   assert.equal(s.front.menu.choices[s.front.menu.selection], 'credits', 'Back returns to the Credits row');

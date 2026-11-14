@@ -93,8 +93,8 @@ V operates the motorcycle clutch, J/K/L plus direction selects stunts and
 L plus airborne backward/side input requests backflip/360 torque. Controls are
 remappable; the controller clutch defaults to left-stick press. Existing touch
 riding input reaches the motorcycle controller. Race preview uses the existing
-authored CPU route system. Motorcycles are restricted to Single Player because
-the multiplayer model protocol currently supports the 26 ATVs.
+authored CPU route system. Since 2026-11-14 motorcycles also ride online
+rooms (research/MULTIPLAYER.md "Motorcycles").
 
 Source engine/clutch/impact samples are decoded with the existing audio controller
 as an authored adapter. Bounded dust/chunks/spray/exhaust/wreck particles use

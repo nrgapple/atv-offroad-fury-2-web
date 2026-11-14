@@ -368,6 +368,119 @@ pub struct ScrollSpan {
     pub hits: std::ops::Range<usize>,
 }
 
+/// Retains Taffy's measured geometry across paint-only updates. Text, style,
+/// viewport and tree changes still invalidate the affected layout nodes.
+#[derive(Default)]
+pub struct LayoutCache {
+    saved: Option<(El, TaffyTree<usize>, NodeId)>,
+}
+
+fn same_structure(a: &El, b: &El) -> bool {
+    a.children.len() == b.children.len()
+        && (a.content == Content::None) == (b.content == Content::None)
+        && a.children
+            .iter()
+            .zip(&b.children)
+            .all(|(a, b)| same_structure(a, b))
+}
+
+fn same_measure(a: &Content, b: &Content) -> bool {
+    match (a, b) {
+        (
+            Content::Text {
+                text: a,
+                style: sa,
+                line_height: ha,
+                wrap: wa,
+            },
+            Content::Text {
+                text: b,
+                style: sb,
+                line_height: hb,
+                wrap: wb,
+            },
+        ) => {
+            a == b
+                && sa.font == sb.font
+                && sa.letter_spacing == sb.letter_spacing
+                && ha == hb
+                && wa == wb
+        }
+        (
+            Content::Ellipsis {
+                text: a,
+                style: sa,
+                line_height: ha,
+            },
+            Content::Ellipsis {
+                text: b,
+                style: sb,
+                line_height: hb,
+            },
+        ) => a == b && sa.font == sb.font && sa.letter_spacing == sb.letter_spacing && ha == hb,
+        _ => a == b,
+    }
+}
+
+fn update<'a>(
+    tree: &mut TaffyTree<usize>,
+    node: NodeId,
+    old: &El,
+    new: &'a El,
+    contents: &mut Vec<&'a Content>,
+) {
+    for ((node, old), new) in tree
+        .children(node)
+        .unwrap()
+        .into_iter()
+        .zip(&old.children)
+        .zip(&new.children)
+    {
+        update(tree, node, old, new, contents);
+    }
+    if old.style != new.style {
+        tree.set_style(node, new.style.clone()).unwrap();
+    }
+    if !same_measure(&old.content, &new.content) {
+        tree.mark_dirty(node).unwrap();
+    }
+    if new.children.is_empty() && new.content != Content::None {
+        contents.push(&new.content);
+    }
+}
+
+impl LayoutCache {
+    #[allow(clippy::too_many_arguments)]
+    pub fn render(
+        &mut self,
+        root: &El,
+        fonts: &mut Fonts,
+        width: f32,
+        height: f32,
+        list: &mut DisplayList,
+        hits: &mut Vec<(Rect, u32)>,
+        spans: &mut Vec<ScrollSpan>,
+    ) {
+        let mut contents = Vec::new();
+        let (mut tree, node) = match self.saved.take() {
+            Some((old, mut tree, node)) if same_structure(&old, root) => {
+                update(&mut tree, node, &old, root, &mut contents);
+                (tree, node)
+            }
+            _ => {
+                let mut tree = TaffyTree::new();
+                tree.disable_rounding();
+                let node = build(&mut tree, root, &mut contents);
+                (tree, node)
+            }
+        };
+        compute(&mut tree, node, &contents, fonts, width, height);
+        let base = (list.items.len(), hits.len());
+        paint(&tree, node, root, 0., 0., fonts, list, hits, base, spans);
+        self.saved = Some((root.clone(), tree, node));
+    }
+}
+
 /// [`render`], also recording the identified scrolled elements. Items and hit
 /// boxes are indexed from where `list` and `hits` stood on entry.
 pub fn render_scrollable(
@@ -384,6 +497,19 @@ pub fn render_scrollable(
     tree.disable_rounding();
     let mut contents: Vec<&Content> = Vec::new();
     let node = build(&mut tree, root, &mut contents);
+    compute(&mut tree, node, &contents, fonts, width, height);
+    let base = (list.items.len(), hits.len());
+    paint(&tree, node, root, 0., 0., fonts, list, hits, base, spans);
+}
+
+fn compute(
+    tree: &mut TaffyTree<usize>,
+    node: NodeId,
+    contents: &[&Content],
+    fonts: &mut Fonts,
+    width: f32,
+    height: f32,
+) {
     tree.compute_layout_with_measure(
         node,
         Size {
@@ -454,8 +580,6 @@ pub fn render_scrollable(
         },
     )
     .unwrap();
-    let base = (list.items.len(), hits.len());
-    paint(&tree, node, root, 0., 0., fonts, list, hits, base, spans);
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -695,6 +819,73 @@ pub fn css_baseline(line_height: f32, ascent: f32, descent: f32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn cached_layout_matches_fresh_after_paint_text_size_and_tree_changes() {
+        let mut cache = LayoutCache::default();
+        let mut fonts = Fonts::new();
+        let mut root = El::new(Style {
+            size: Size {
+                width: taffy::prelude::length(200.),
+                height: auto(),
+            },
+            ..Default::default()
+        })
+        .child(
+            El::text(
+                "Course name",
+                TextStyle::new(Font::display(18., 700, false), Color::WHITE),
+                22.,
+            )
+            .id(7),
+        );
+        for step in 0..6 {
+            match step {
+                1 => {
+                    if let Content::Text { style, .. } = &mut root.children[0].content {
+                        style.color = Color::BLACK;
+                    }
+                }
+                2 => {
+                    if let Content::Text { text, .. } = &mut root.children[0].content {
+                        *text = "A much longer course name that wraps".into();
+                    }
+                }
+                3 => root.style.size.width = taffy::prelude::length(100.),
+                4 => root.children.push(El::text(
+                    "New row",
+                    TextStyle::new(Font::display(16., 400, false), Color::WHITE),
+                    20.,
+                )),
+                _ => {}
+            }
+            let (mut actual, mut hits, mut spans) =
+                (DisplayList::default(), Vec::new(), Vec::new());
+            cache.render(
+                &root,
+                &mut fonts,
+                320.,
+                480.,
+                &mut actual,
+                &mut hits,
+                &mut spans,
+            );
+            let (mut expected, mut expected_hits, mut expected_spans) =
+                (DisplayList::default(), Vec::new(), Vec::new());
+            render_scrollable(
+                &root,
+                &mut fonts,
+                320.,
+                480.,
+                &mut expected,
+                &mut expected_hits,
+                &mut expected_spans,
+            );
+            assert_eq!(actual, expected, "step {step}");
+            assert_eq!(hits, expected_hits);
+            assert_eq!(spans, expected_spans);
+        }
+    }
+
     #[test]
     fn absolute_children_use_the_positioned_parent() {
         let track = El::new(Style {

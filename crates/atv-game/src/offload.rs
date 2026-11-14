@@ -35,6 +35,8 @@ pub const EXPAND_OVERLAY: u32 = 6;
 /// The sky cube file a scene names: its text and mode TOY as one buffer whose
 /// first `arg` bytes are the text (menu preload; scene parsing is slow).
 pub const SCENE_SKY: u32 = 7;
+/// Sound names in an expanded course's TOYs and crowd table.
+pub const SCENE_SOUNDS: u32 = 8;
 
 /// Version of every job's output: bump it whenever a job's result for the
 /// same input changes (decoder, smoothing, mip filter, resampler, layout),
@@ -116,6 +118,36 @@ pub fn run(kind: u32, arg: u32, bytes: &[u8]) -> Result<Vec<u8>> {
             let merged = Resource::overlay(&Resource::parse(base)?, &Resource::parse(overlay)?)?;
             Resource::parse(&merged)?.expand()
         }
+        SCENE_SOUNDS => {
+            let archive = atv_core::resource::Resource::parse(bytes)?;
+            let mut names = vec!["rain.vag".to_string()];
+            for (i, member) in archive.members.iter().enumerate() {
+                let name = member.name.to_ascii_lowercase();
+                if name.ends_with(".toy") {
+                    let text = archive.extract(i)?;
+                    names.extend(venue_sample_names(&text));
+                } else if name.ends_with("crowd.aud") {
+                    let text = archive.extract(i)?;
+                    for prefix in ["Am", "Pro"] {
+                        let c = atv_core::race_crowd::parse_crowd(
+                            &String::from_utf8_lossy(&text),
+                            prefix,
+                        )?;
+                        names.extend(
+                            c.boo
+                                .into_iter()
+                                .chain(c.cheer)
+                                .chain(c.oh)
+                                .chain(c.win)
+                                .chain(c.stomp),
+                        );
+                    }
+                }
+            }
+            names.sort();
+            names.dedup();
+            Ok(names.join("\n").into_bytes())
+        }
         SCENE_SKY => {
             let (text, mode) = bytes
                 .split_at_checked(arg as usize)
@@ -127,6 +159,18 @@ pub fn run(kind: u32, arg: u32, bytes: &[u8]) -> Result<Vec<u8>> {
         _ => atv_content::run_job(kind, arg, bytes)
             .unwrap_or_else(|| Err(format!("unknown decode job {kind}"))),
     }
+}
+
+fn venue_sample_names(toy: &[u8]) -> Vec<String> {
+    let mut names: Vec<String> = atv_core::spatial_audio::train_definitions(toy)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|d| d.sample)
+        .collect();
+    for actor in atv_core::toy_actors::parse(&String::from_utf8_lossy(toy)) {
+        names.extend(actor.loop_sounds.into_iter().map(|s| s.sample));
+    }
+    names
 }
 
 fn unpack_ipum(out: Vec<u8>, smooth: bool, mips: bool) -> Result<Decoded> {
@@ -408,6 +452,33 @@ async fn compute(kind: u32, arg: u32, inputs: &[&[u8]]) -> Result<Vec<Vec<u8>>> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn scene_sound_job_collects_actor_crowd_and_rain_once() {
+        let toy = b"[Animations]\nNumberOfAnimations=1\n[Animation1]\nAnimationType=KeyFramed\nMCF=plane.mcf\nNumberOfLoopingSounds=1\n[Animation1LoopSound1]\nSoundResourceFile=plane.vag\nMinDistance=1\nMaxDistance=20\n";
+        let crowd = b"[AmCheer]\nNumSounds=1\nSound_1=cheer.vag\n[ProCheer]\nNumSounds=1\nSound_1=cheer.vag\n";
+        let members: [(&str, &[u8]); 2] = [("test.toy", toy), ("crowd.aud", crowd)];
+        let mut directory = Vec::new();
+        let mut payload = Vec::new();
+        for (name, data) in members {
+            directory.extend_from_slice(&(name.len() as u32).to_le_bytes());
+            directory.extend_from_slice(name.as_bytes());
+            directory.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+            directory.extend_from_slice(&(data.len() as u32).to_le_bytes());
+            payload.extend_from_slice(data);
+        }
+        let mut archive = Vec::new();
+        for word in [3u32, 12, 0x100, 0, 0, 2, directory.len() as u32] {
+            archive.extend_from_slice(&word.to_le_bytes());
+        }
+        archive.extend(directory);
+        archive.extend(payload);
+        assert_eq!(
+            run(SCENE_SOUNDS, 0, &archive).unwrap(),
+            b"cheer.vag\nplane.vag\nrain.vag"
+        );
+        assert!(run(SCENE_SOUNDS, 0, b"short").is_err());
+    }
 
     #[test]
     fn pcm_results_round_trip() {

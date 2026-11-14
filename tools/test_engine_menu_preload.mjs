@@ -166,6 +166,15 @@ try {
   assert.deepEqual([refused.state, refused.reason, refused.completed], ['skipped', 'save-data', 0], JSON.stringify(refused));
   await saver.context().close();
 
+  // The larger sound preload must still refuse a low-memory device.
+  const lowMemory = await context(browser, errors, () => {
+    Object.defineProperty(navigator, 'deviceMemory', { value: 2, configurable: true });
+  });
+  await menu(lowMemory, 'tracks');
+  const limited = await until(lowMemory, r => r.state === 'skipped', 'low memory is honored');
+  assert.deepEqual([limited.reason, limited.completed], ['low-memory', 0]);
+  await lowMemory.context().close();
+
   assertNoErrors(errors);
   console.log(`PASS: menu preload ${course}: Start without ${without.map(r => r.loadMs).join('/')} ms load (${without.map(r => r.elapsed).join('/')} ms wall); after a preload ${withPreload.map(r => r.loadMs).join('/')} ms load (${withPreload.map(r => r.elapsed).join('/')} ms wall); preload ${report.runMs} ms, longest page task ${Math.max(0, ...longTasks)} ms (${longTasks.length} over 50 ms); superseded and refused as expected. Host measurements.`);
 } finally {

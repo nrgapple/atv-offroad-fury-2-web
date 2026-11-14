@@ -3006,7 +3006,9 @@ mod tests {
         assert!(!points.is_empty());
         let before = r.progress_distances(None)[0];
         let first = points[0];
-        assert!((first.gained - 80.).abs() < 1., "{first:?}");
+        // Escalated recovery clears the approach, rather than placing the
+        // driver back inside an 80ft stretch of the same failed jump.
+        assert!((first.gained - 320.).abs() < 1., "{first:?}");
         r.accept_recovery_station(None, first.station, first.gained);
         r.restore_checkpoint(None, first.point);
         let after = r.progress_distances(None)[0];

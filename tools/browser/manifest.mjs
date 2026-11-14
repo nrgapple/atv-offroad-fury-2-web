@@ -88,6 +88,7 @@ export const TESTS = {
   'test_engine_menu_navigation.mjs': { group: 'content' },
   'test_engine_credits.mjs': { group: 'content' },
   'test_engine_menu_divider.mjs': { group: 'content' },
+  'test_engine_menu_long_frames.mjs': { exclusive: true, group: 'content' },
   'test_engine_menu_scroll.mjs': { exclusive: true, group: 'content' },
   'test_engine_status_bar.mjs': { group: 'content' },
   'test_engine_menu_transitions.mjs': { exclusive: true, group: 'content' },
@@ -175,6 +176,10 @@ export const TESTS = {
     group: 'multiplayer',
     reason: 'needs a local game server at the same origin (Host Game, room WebSocket); run with --url'
   },
+  'test_engine_multiplayer_motorcycle.mjs': {
+    group: 'multiplayer',
+    reason: 'needs a local game server at the same origin (a Rust host on a motorcycle and an ATV guest); run with --url'
+  },
   'test_engine_multiplayer_presence.mjs': {
     group: 'multiplayer',
     reason: 'needs a local game server at the same origin (Host Game, room WebSocket); run with --url'
@@ -202,6 +207,7 @@ export const TESTS = {
       'needs a local game server at the same origin plus a native fury build (FURY_BIN) for the Rust host; run with --url'
   },
   'test_engine_preview.mjs': { group: 'content-free' },
+  'test_engine_cpu_recovery.mjs': { group: 'content' },
   'test_engine_race.mjs': { group: 'content' },
   'test_engine_cpu_audio.mjs': { group: 'content' },
   'test_engine_split_screen.mjs': { exclusive: true, group: 'content', timeout: 900 },
