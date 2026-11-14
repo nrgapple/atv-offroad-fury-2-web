@@ -40,6 +40,8 @@ pub mod motorcycle;
 pub mod motorcycle_effects;
 pub mod motorcycle_tire;
 pub mod music;
+pub mod mx_collections;
+pub mod mx_sky;
 pub mod obstacle;
 pub mod physics_data;
 pub mod profile;

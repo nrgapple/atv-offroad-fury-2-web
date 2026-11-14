@@ -30,6 +30,18 @@ pub struct CollisionModel {
     pub material: u8,
 }
 #[derive(Debug, Serialize)]
+pub struct CollisionSource {
+    pub object_index: usize,
+    pub name: String,
+    pub world_matrix: [f32; 16],
+    pub has_col: bool,
+    pub is_trigger: bool,
+    pub invisible: bool,
+    pub hide: bool,
+    pub kind: Option<String>,
+    pub activity: Option<String>,
+}
+#[derive(Debug, Serialize)]
 pub struct Scene {
     pub start_position: [f32; 3],
     pub start_direction: [f32; 3],
@@ -43,6 +55,8 @@ pub struct Scene {
     pub fog: Option<crate::fog::Fog>,
     pub models: Vec<StaticModel>,
     pub collision_models: Vec<CollisionModel>,
+    /// MX source records, including nonphysical triggers excluded above.
+    pub collision_sources: Vec<CollisionSource>,
     /// Original single-region static partition dimensions from Environment.
     pub collision_partition: Option<crate::scene_partition::Config>,
     pub boundary_launch: Option<crate::boundary_launch::Config>,
@@ -73,10 +87,7 @@ fn environment_opacity(data: &PhysicsData, key: &str, default: f32) -> Result<f3
     })
 }
 fn value<'a>(data: &'a PhysicsData, section: &str, key: &str) -> Option<&'a str> {
-    data.entries
-        .iter()
-        .find(|entry| entry.section == section && entry.key.eq_ignore_ascii_case(key))
-        .map(|entry| entry.value.as_str())
+    data.scene_value(section, key)
 }
 fn vector(text: &str) -> Result<[f32; 3]> {
     let values = text
@@ -102,11 +113,14 @@ fn optional_vector(data: &PhysicsData, section: &str, key: &str) -> Result<Optio
     value(data, section, key).map(vector).transpose()
 }
 fn count(data: &PhysicsData, section: &str, key: &str) -> Result<usize> {
+    count_bounded(data, section, key, 4096)
+}
+fn count_bounded(data: &PhysicsData, section: &str, key: &str, limit: usize) -> Result<usize> {
     let count = value(data, section, key)
         .ok_or("missing scene count")?
         .parse::<usize>()
         .map_err(|_| "invalid scene count")?;
-    if count > 4096 {
+    if count > limit {
         return Err("scene count exceeds limit".into());
     }
     Ok(count)
@@ -117,6 +131,26 @@ fn boolean(data: &PhysicsData, section: &str, key: &str, default: bool) -> Resul
         Some("T" | "True" | "1") => Ok(true),
         Some("F" | "False" | "0") => Ok(false),
         Some(_) => Err(format!("unsupported scene boolean {key}")),
+    }
+}
+fn mx_boolean(data: &PhysicsData, section: &str, key: &str, default: bool) -> Result<bool> {
+    match value(data, section, key) {
+        None => Ok(default),
+        Some(text)
+            if ["t", "true", "1"]
+                .iter()
+                .any(|v| text.eq_ignore_ascii_case(v)) =>
+        {
+            Ok(true)
+        }
+        Some(text)
+            if ["f", "false", "0"]
+                .iter()
+                .any(|v| text.eq_ignore_ascii_case(v)) =>
+        {
+            Ok(false)
+        }
+        Some(_) => Err(format!("unsupported MX scene boolean {key}")),
     }
 }
 ///001421b0/00141fc0 accepts legacy boolean words before its numeric path.
@@ -179,7 +213,10 @@ fn color(data: &PhysicsData, section: &str) -> Result<[f32; 3]> {
 
 ///00202bd0: explicit bounds override the terrain dimensions plus border.
 /// Metadata-only documents without terrain bounds have no spatial partition.
-fn collision_partition(data: &PhysicsData) -> Result<Option<crate::scene_partition::Config>> {
+fn collision_partition_profile(
+    data: &PhysicsData,
+    mx: bool,
+) -> Result<Option<crate::scene_partition::Config>> {
     let keys = [
         "TerrainWidth",
         "TerrainBreadth",
@@ -217,7 +254,10 @@ fn collision_partition(data: &PhysicsData) -> Result<Option<crate::scene_partiti
         max_x: number("Xmax", border + (width * width_scale) * 256.)?,
         min_z: number("Zmin", -border)?,
         max_z: number("Zmax", border + (breadth * breadth_scale) * 256.)?,
-        cell_size: number("MinDivisionSize", 96.)?,
+        cell_size: {
+            let size = number("MinDivisionSize", 96.)?;
+            if mx && size == 0. { 96. } else { size }
+        },
     };
     crate::scene_partition::StaticPartition::new(config, &[])?;
     Ok(Some(config))
@@ -375,8 +415,11 @@ pub fn static_models(data: &[u8]) -> Result<Vec<StaticModel>> {
     static_models_from_document(&document(data)?)
 }
 fn static_models_from_document(data: &PhysicsData) -> Result<Vec<StaticModel>> {
+    static_models_profile(data, 4096)
+}
+fn static_models_profile(data: &PhysicsData, limit: usize) -> Result<Vec<StaticModel>> {
     let mut models = Vec::new();
-    for index in 1..=count(data, "StaticModels", "NumberOfStaticModels")? {
+    for index in 1..=count_bounded(data, "StaticModels", "NumberOfStaticModels", limit)? {
         let section = format!("Model{index}");
         if value(data, &section, "StaticType").is_some_and(|value| value != "Standard") {
             return Err("unsupported scene static model type".into());
@@ -412,7 +455,10 @@ pub fn parse(data: &[u8]) -> Result<Scene> {
 }
 
 pub(crate) fn document(data: &[u8]) -> Result<PhysicsData> {
-    if data.len() > 1024 * 1024 || data.contains(&0) {
+    document_profile(data, false)
+}
+fn document_profile(data: &[u8], mx: bool) -> Result<PhysicsData> {
+    if data.len() > if mx { 8 * 1024 * 1024 } else { 1024 * 1024 } || data.contains(&0) {
         return Err("invalid scene text extent".into());
     }
     let source = std::str::from_utf8(data).map_err(|_| "scene text is not UTF-8")?;
@@ -453,14 +499,26 @@ pub(crate) fn document(data: &[u8]) -> Result<PhysicsData> {
         })
         .collect::<Vec<_>>()
         .join("\n");
-    PhysicsData::parse(clean.as_bytes())
+    if mx {
+        PhysicsData::parse_bounded(clean.as_bytes(), 8 * 1024 * 1024, 131072)
+    } else {
+        PhysicsData::parse(clean.as_bytes())
+    }
 }
 
 /// Freestyle TOY SceneInfo supplies the mode's start, independently of the
 /// SCN render/collision metadata (002fa3c0's start-position reader).
 pub fn parse_with_start(data: &[u8], mode: Option<&[u8]>) -> Result<Scene> {
-    let data = document(data)?;
+    parse_profile(data, mode, false)
+}
+/// MX scene profile: bounded larger documents and authored zero partition-size fallback.
+pub fn parse_mx(data: &[u8]) -> Result<Scene> {
+    parse_profile(data, None, true)
+}
+fn parse_profile(data: &[u8], mode: Option<&[u8]>, mx: bool) -> Result<Scene> {
+    let data = document_profile(data, mx)?;
     let mode = mode.map(document).transpose()?;
+    let model_limit = if mx { 8192 } else { 4096 };
     let start = mode
         .as_ref()
         .filter(|mode| value(mode, "SceneInfo", "DefaultStartPosition").is_some())
@@ -478,7 +536,7 @@ pub fn parse_with_start(data: &[u8], mode: Option<&[u8]>) -> Result<Scene> {
     let cube_file = value(&data, "Environment", "CubeFile")
         .ok_or("missing scene cube file")?
         .to_owned();
-    let models = static_models_from_document(&data)?;
+    let models = static_models_profile(&data, model_limit)?;
     let mut lights = Vec::new();
     for index in 1..=count(&data, "Lights", "NumberOfLights")? {
         let section = format!("Light{index}");
@@ -500,10 +558,11 @@ pub fn parse_with_start(data: &[u8], mode: Option<&[u8]>) -> Result<Scene> {
         .transpose()?;
     let override_count = match override_count {
         None | Some(-1) => None,
-        Some(n) if (0..=4096).contains(&n) => Some(n as usize),
+        Some(n) if (0..=model_limit as i32).contains(&n) => Some(n as usize),
         _ => return Err("collision count exceeds limit".into()),
     };
     let mut collision_models = Vec::new();
+    let mut collision_sources = Vec::new();
     for index in 1..=override_count.unwrap_or(models.len()) {
         let section = format!(
             "{}{index}",
@@ -528,13 +587,31 @@ pub fn parse_with_start(data: &[u8], mode: Option<&[u8]>) -> Result<Scene> {
         if name.len() > 50 || name.contains(['/', '\\', ':']) {
             return Err("unsupported scene collision name".into());
         }
+        let world_matrix = collision_placement_matrix(
+            optional_vector(&data, &section, "Position")?.unwrap_or([0.; 3]),
+            optional_vector(&data, &section, "LookVector")?.unwrap_or([0., 0., 1.]),
+            optional_vector(&data, &section, "UpVector")?.unwrap_or([0., 1., 0.]),
+        )?;
+        if mx {
+            let has_col = mx_boolean(&data, &section, "HasCol", true)?;
+            collision_sources.push(CollisionSource {
+                object_index: index,
+                name: name.to_owned(),
+                world_matrix,
+                has_col,
+                is_trigger: mx_boolean(&data, &section, "IsTrigger", false)?,
+                invisible: mx_boolean(&data, &section, "Invisible", false)?,
+                hide: mx_boolean(&data, &section, "Hide", false)?,
+                kind: value(&data, &section, "Type").map(str::to_owned),
+                activity: value(&data, &section, "Activity").map(str::to_owned),
+            });
+            if !has_col {
+                continue;
+            }
+        }
         collision_models.push(CollisionModel {
             name: name.to_owned(),
-            world_matrix: collision_placement_matrix(
-                optional_vector(&data, &section, "Position")?.unwrap_or([0.; 3]),
-                optional_vector(&data, &section, "LookVector")?.unwrap_or([0., 0., 1.]),
-                optional_vector(&data, &section, "UpVector")?.unwrap_or([0., 1., 0.]),
-            )?,
+            world_matrix,
             // 00206900 initializes the collision material to zero;
             // the Standard reader00206940 does not override it.
             material: 0,
@@ -573,8 +650,9 @@ pub fn parse_with_start(data: &[u8], mode: Option<&[u8]>) -> Result<Scene> {
             })
         });
     let ecosystem_distances = [near_distance?, far_distance?];
-    if !ecosystem_distances.iter().all(|v| v.is_finite() && *v > 0.)
-        || ecosystem_distances[0] >= ecosystem_distances[1]
+    if !(mx && ecosystem_distances == [0., 0.])
+        && (!ecosystem_distances.iter().all(|v| v.is_finite() && *v > 0.)
+            || ecosystem_distances[0] >= ecosystem_distances[1])
     {
         return Err("unsupported ecosystem transition distances".into());
     }
@@ -590,7 +668,8 @@ pub fn parse_with_start(data: &[u8], mode: Option<&[u8]>) -> Result<Scene> {
         fog: crate::fog::parse(&data)?,
         models,
         collision_models,
-        collision_partition: collision_partition(&data)?,
+        collision_sources,
+        collision_partition: collision_partition_profile(&data, mx)?,
         boundary_launch: boundary_launch(&data)?,
         crowd_present: crowd_present(&data),
         ghost_opacity: ghost_opacity(&data)?,
@@ -904,5 +983,69 @@ mod tests {
                 .name,
             "sample"
         );
+    }
+}
+
+#[cfg(test)]
+mod mx_scene_tests {
+    #[test]
+    fn mx_nonphysical_triggers_remain_metadata() {
+        let source = b"[SceneInfo]\nDefaultStartPosition=1,2,3\nDefaultStartDirection=0,0,1\n[Environment]\nCubeFile=test.cub\n[Fog]\nColorRGB=0,0,0\n[Lights]\nNumberOfLights=0\n[StaticModels]\nNumberOfStaticModels=0\n[CollisionObjects]\nNumberOfCollisionObjects=2\n[Object1]\nCOL=Ring_Trigger.col\nHasCol=False\nIsTrigger=True\nInvisible=True\nHide=TRUE\nType=Waypoint\nActivity=\"Airplane Race\"\n[Object2]\nCOL=solid.col\nPosition=4,5,6\n";
+        let scene = super::parse_mx(source).unwrap();
+        assert_eq!(scene.collision_models.len(), 1);
+        assert_eq!(scene.collision_models[0].name, "solid");
+        let trigger = &scene.collision_sources[0];
+        assert!(!trigger.has_col && trigger.is_trigger && trigger.invisible && trigger.hide);
+        assert_eq!(trigger.kind.as_deref(), Some("Waypoint"));
+        assert_eq!(trigger.activity.as_deref(), Some("Airplane Race"));
+        assert_eq!(super::parse(source).unwrap().collision_models.len(), 2);
+    }
+
+    #[test]
+    fn bounded_profile_keeps_atv_limits() {
+        let mut source = String::from(
+            "[SceneInfo]\nDefaultStartPosition=1,2,3\nDefaultStartDirection=0,0,1\n[Environment]\nCubeFile=test.cub\nTerrainWidth=1\nTerrainBreadth=1\nTerrainWidthScale=3.5\nTerrainBreadthScale=3.5\nMinDivisionSize=0\n[Fog]\nColorRGB=0,0,0\n[Lights]\nNumberOfLights=0\n[StaticModels]\nNumberOfStaticModels=4874\n",
+        );
+        for i in 1..=4874 {
+            source.push_str(&format!("[Model{i}]\nSLT=test.psg\n"));
+        }
+        assert!(super::parse(source.as_bytes()).is_err());
+        let scene = super::parse_mx(source.as_bytes()).unwrap();
+        assert_eq!(scene.models.len(), 4874);
+        assert_eq!(scene.collision_models.len(), 4874);
+        assert_eq!(scene.collision_partition.unwrap().cell_size, 96.);
+    }
+    #[test]
+    #[ignore = "requires private source audit directory"]
+    fn real_mx_scenes() {
+        let dir = std::env::var("ATV_MX_SCENES").unwrap();
+        let started = std::time::Instant::now();
+        let mut count = 0;
+        for entry in std::fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.extension().is_some_and(|s| s == "scn") {
+                let scene = super::parse_mx(&std::fs::read(&path).unwrap())
+                    .unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+                assert_eq!(
+                    scene.collision_sources.iter().filter(|r| r.has_col).count(),
+                    scene.collision_models.len()
+                );
+                if path.file_stem().is_some_and(|s| s == "MC09") {
+                    let trigger = scene
+                        .collision_sources
+                        .iter()
+                        .find(|r| r.object_index == 52)
+                        .unwrap();
+                    assert!(!trigger.has_col && trigger.is_trigger);
+                    assert_eq!(trigger.kind.as_deref(), Some("Waypoint"));
+                }
+                count += 1;
+            }
+        }
+        eprintln!(
+            "MX scene audit: {count} scenes in {:?} (host)",
+            started.elapsed()
+        );
+        assert_eq!(count, 56);
     }
 }

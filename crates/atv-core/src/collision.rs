@@ -45,26 +45,51 @@ fn packed_coordinate(bits: u16) -> f32 {
 }
 
 pub fn decode_col(data: &[u8]) -> Result<CollisionMesh> {
+    decode_static(data, 1)
+}
+
+/// The extra MX v2 header word is preserved without assigning it unsupported
+/// semantics. Original v1 static meshes also occur on the MX disc.
+pub struct MxCollisionMesh {
+    pub mesh: CollisionMesh,
+    pub source_metadata: Option<u32>,
+}
+
+pub fn decode_mx_col(data: &[u8]) -> Result<MxCollisionMesh> {
+    let version = u32le(data, 8)?;
+    let source_metadata = match version {
+        1 => None,
+        2 => Some(u32le(data, 16)?),
+        _ => return Err("unsupported MX COL version".into()),
+    };
+    Ok(MxCollisionMesh {
+        mesh: decode_static(data, version)?,
+        source_metadata,
+    })
+}
+
+fn decode_static(data: &[u8], version: u32) -> Result<CollisionMesh> {
     if data.len() > 128 * 1024 * 1024 {
         return Err("COL exceeds 128 MiB limit".into());
     }
-    if u32le(data, 0)? != 1234 || slice(data, 4, 4)? != b"col\0" || u32le(data, 8)? != 1 {
+    if u32le(data, 0)? != 1234 || slice(data, 4, 4)? != b"col\0" || u32le(data, 8)? != version {
         return Err("unsupported COL signature/version".into());
     }
     if u32le(data, 12)? != 0 {
         return Err("unsupported COL variant; only type-0 triangle meshes recovered".into());
     }
+    let header_shift = if version == 2 { 4 } else { 0 };
     let mut transform = [0.; 12];
     for (i, value) in transform.iter_mut().enumerate() {
-        *value = float(data, 16 + i * 4)?;
+        *value = float(data, header_shift + 16 + i * 4)?;
     }
-    if u32le(data, 64)? != 0 {
+    if u32le(data, header_shift + 64)? != 0 {
         return Err("unsupported COL transform trailer".into());
     }
-    let vertices_count = u32le(data, 68)? as usize;
-    let broad_phase_nodes = u32le(data, 72)?;
-    let triangles_count = u32le(data, 76)? as usize;
-    let flags = u32le(data, 80)?;
+    let vertices_count = u32le(data, header_shift + 68)? as usize;
+    let broad_phase_nodes = u32le(data, header_shift + 72)?;
+    let triangles_count = u32le(data, header_shift + 76)? as usize;
+    let flags = u32le(data, header_shift + 80)?;
     if flags > 1 {
         return Err("unsupported COL packed vertex flags".into());
     }
@@ -79,7 +104,7 @@ pub fn decode_col(data: &[u8]) -> Result<CollisionMesh> {
     // 0010b800 multiplies by global32767 then its binary32 reciprocal.
     // Preserve that operation order, including its rounding.
     let vertex_stride = if flags == 0 { 12 } else { 6 };
-    let normals_at = 84 + vertices_count * vertex_stride;
+    let normals_at = header_shift + 84 + vertices_count * vertex_stride;
     let normals_present = u32le(data, normals_at)?;
     if normals_present > 1 {
         return Err("unsupported COL vertex-normal marker".into());
@@ -95,7 +120,7 @@ pub fn decode_col(data: &[u8]) -> Result<CollisionMesh> {
     }
     let vertices = (0..vertices_count)
         .map(|i| {
-            let at = 84 + i * vertex_stride;
+            let at = header_shift + 84 + i * vertex_stride;
             if flags == 0 {
                 vector(data, at)
             } else {
@@ -196,6 +221,36 @@ pub fn decode_col(data: &[u8]) -> Result<CollisionMesh> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn mx_v2_header_preserves_geometry_metadata_and_v1_rejection() {
+        let original = triangle();
+        let expected = decode_col(&original).unwrap();
+        let mut mx = original.clone();
+        mx[8..12].copy_from_slice(&2u32.to_le_bytes());
+        mx.splice(16..16, 0x02000016u32.to_le_bytes());
+        assert!(decode_col(&mx).is_err());
+        let decoded = decode_mx_col(&mx).unwrap();
+        assert_eq!(decoded.source_metadata, Some(0x02000016));
+        assert_eq!(decoded.mesh.vertices, expected.vertices);
+        assert_eq!(decoded.mesh.transform, expected.transform);
+        assert_eq!(
+            decoded.mesh.triangles[0].indices,
+            expected.triangles[0].indices
+        );
+        assert_eq!(
+            decoded.mesh.query_normal(0).unwrap(),
+            expected.query_normal(0).unwrap()
+        );
+        assert!(decode_mx_col(&original).unwrap().source_metadata.is_none());
+        for end in 0..mx.len() {
+            assert!(decode_mx_col(&mx[..end]).is_err());
+        }
+        mx[12..16].copy_from_slice(&2u32.to_le_bytes());
+        assert!(
+            decode_mx_col(&mx).is_err(),
+            "actor rays are not static targets"
+        );
+    }
     #[test]
     fn packed_signed_vertices_use_original_expansion_without_changing_planes() {
         let mut data = triangle();
