@@ -146,3 +146,186 @@ mod tests {
         );
     }
 }
+
+/// MX zones retain their raw contact identity; only tire physics follows this routing.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SurfaceSource {
+    Atv2,
+    Mx { friction_zone: [u8; 16] },
+}
+impl SurfaceSource {
+    /// Routing values are one-based source MapZoneFriction indices.
+    pub fn mx(friction_zone: [u8; 16]) -> Result<Self> {
+        if friction_zone.iter().any(|z| !(1..=16).contains(z)) {
+            return Err("MX friction zone must be in 1..=16".into());
+        }
+        Ok(Self::Mx { friction_zone })
+    }
+    /// Grip, traction, braking and additive drag for the motorcycle adapter.
+    pub fn motorcycle_multipliers(self, material: Option<TerrainMaterial>) -> (f32, f32, f32, f32) {
+        match self {
+            Self::Atv2 => {
+                material.map_or((1., 1., 1., 0.), |m| (m.grip, m.drive, m.braking, m.drag))
+            }
+            Self::Mx { .. } => (1., 1., 1., 0.),
+        }
+    }
+    pub fn tire_zone(self, surface: usize) -> usize {
+        match self {
+            Self::Atv2 => 0,
+            Self::Mx { friction_zone } => usize::from(
+                friction_zone
+                    .get(surface)
+                    .copied()
+                    .unwrap_or(1)
+                    .clamp(1, 16)
+                    - 1,
+            ),
+        }
+    }
+}
+
+/// Caller supplies original ATV2 coefficients loaded from labeled source profiles.
+/// Pavement is a provisional neutral adapter, not a recovered MX ATV tire curve.
+#[derive(Clone, Copy, Debug)]
+pub struct AtvAdapterMaterials {
+    /// ENV02 zone 1.
+    pub dirt: TerrainMaterial,
+    pub pavement: TerrainMaterial,
+    /// ENV02 zone 4.
+    pub grass: TerrainMaterial,
+    /// NAT05 zone 7.
+    pub sand: TerrainMaterial,
+    /// ENV01 zone 3.
+    pub ice: TerrainMaterial,
+    /// ENV02 zone 2.
+    pub shallow_mud: TerrainMaterial,
+    /// ENV02 zone 6, also used for sludge.
+    pub deep_mud: TerrainMaterial,
+}
+impl AtvAdapterMaterials {
+    pub fn mx_zones(self, source: SurfaceSource) -> [TerrainMaterial; 16] {
+        let base = [
+            self.dirt,
+            self.pavement,
+            self.deep_mud, // sludge
+            self.grass,
+            self.sand,
+            self.ice,
+            self.shallow_mud,
+            self.deep_mud,
+            self.dirt,
+            self.dirt,
+            self.dirt,
+            self.dirt,
+            self.dirt,
+            self.dirt,
+            self.dirt,
+            self.dirt,
+        ];
+        std::array::from_fn(|raw| base[source.tire_zone(raw)])
+    }
+}
+
+/// Reads only MX TerrainZone metadata from otherwise arbitrary scene TOY text.
+/// Missing overrides retain identity routing; no ATV2 SurfaceFriction is required.
+pub fn mx_surface_source(data: &[u8]) -> Result<SurfaceSource> {
+    if data.len() > 1024 * 1024 || data.contains(&0) {
+        return Err("invalid MX material text".into());
+    }
+    let text = std::str::from_utf8(data).map_err(|_| "MX material text is not UTF-8")?;
+    let mut routing = std::array::from_fn(|i| (i + 1) as u8);
+    let mut active = None;
+    let mut seen = [false; 16];
+    let mut overrides = [false; 16];
+    for raw in text.lines() {
+        if raw.len() > 4096 {
+            return Err("MX material line exceeds limit".into());
+        }
+        let line = raw.split(';').next().unwrap_or("").trim();
+        if line.starts_with('[') {
+            active = None;
+            if let Some(n) = line
+                .strip_prefix("[TerrainZone")
+                .and_then(|s| s.strip_suffix(']'))
+            {
+                let n = n.parse::<usize>().map_err(|_| "invalid MX terrain zone")?;
+                if !(1..=16).contains(&n) || seen[n - 1] {
+                    return Err("invalid or duplicate MX terrain zone".into());
+                }
+                seen[n - 1] = true;
+                active = Some(n - 1);
+            }
+        } else if let Some(i) = active
+            && let Some((key, value)) = line.split_once('=')
+            && key.trim() == "MapZoneFriction"
+        {
+            if overrides[i] {
+                return Err("duplicate MapZoneFriction".into());
+            }
+            overrides[i] = true;
+            routing[i] = value
+                .trim()
+                .parse()
+                .map_err(|_| "invalid MapZoneFriction")?;
+        }
+    }
+    SurfaceSource::mx(routing)
+}
+
+#[cfg(test)]
+mod mx_tests {
+    use super::*;
+    #[test]
+    fn mx_friction_remaps_only_physics_and_keeps_sixteen_slots() {
+        let source=mx_surface_source(b"[Scene]\nnot a physics assignment\n[TerrainZone9]\nMapZoneFriction=3\nIsWater=T\n[TerrainZone16]\nResetTime=5").unwrap();
+        assert_eq!(source.tire_zone(8), 2);
+        assert_eq!(source.tire_zone(15), 15);
+        assert_eq!(SurfaceSource::Atv2.tire_zone(8), 0);
+        let m = |v| TerrainMaterial {
+            grip: v,
+            drag: v,
+            drive: v,
+            powerslide: v,
+            braking: v,
+        };
+        let labels = AtvAdapterMaterials {
+            dirt: m(1.),
+            pavement: m(2.),
+            grass: m(3.),
+            sand: m(4.),
+            ice: m(5.),
+            shallow_mud: m(6.),
+            deep_mud: m(7.),
+        };
+        let zones = labels.mx_zones(source);
+        assert_eq!(zones[8], m(7.)); // raw zone 9 remaps to sludge
+        let identity = SurfaceSource::mx(std::array::from_fn(|i| (i + 1) as u8)).unwrap();
+        assert_eq!(
+            labels.mx_zones(identity).map(|m| m.grip),
+            [
+                1., 2., 7., 3., 4., 5., 6., 7., 1., 1., 1., 1., 1., 1., 1., 1.
+            ]
+        );
+        assert_eq!(zones[15], m(1.));
+        assert_eq!(zones[7], m(7.));
+        assert_eq!(source.motorcycle_multipliers(Some(m(9.))), (1., 1., 1., 0.));
+        assert_eq!(
+            SurfaceSource::Atv2.motorcycle_multipliers(Some(m(9.))),
+            (9., 9., 9., 9.)
+        );
+    }
+    #[test]
+    fn mx_rejects_ambiguous_or_out_of_bounds_routing() {
+        for text in [
+            "[TerrainZone9]\nMapZoneFriction=0",
+            "[TerrainZone1]\nMapZoneFriction=17",
+            "[TerrainZone17]",
+            "[TerrainZone1]\n[TerrainZone1]",
+            "[TerrainZone1]\nMapZoneFriction=3\nMapZoneFriction=4",
+        ] {
+            assert!(mx_surface_source(text.as_bytes()).is_err(), "{text}");
+        }
+        assert!(SurfaceSource::mx([0; 16]).is_err());
+    }
+}

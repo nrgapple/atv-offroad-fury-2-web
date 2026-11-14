@@ -177,13 +177,15 @@ pub fn parse(data: &[u8]) -> Result<Pass> {
     let shader = get("microProgramName").unwrap_or("").to_owned();
     let reflection_plane = match shader.to_ascii_lowercase().as_str() {
         "prelitreflxyenvmapcompressed" => 1,
-        "prelitreflxzenvmapcompressed" => 2,
+        "prelitreflxzenvmapcompressed" | "vu1stripprelitreflxzenvmap.vuo" => 2,
         "prelitreflyzenvmapcompressed" => 3,
         _ => 0,
     };
     let prelit = shader.eq_ignore_ascii_case("PrelitCompressed")
         || shader.eq_ignore_ascii_case("TexTransformPrelitCompressed")
         || shader.eq_ignore_ascii_case("prelit")
+        || shader.eq_ignore_ascii_case("Vu1StripPrelit.vuo")
+        || shader.eq_ignore_ascii_case("Vu1StripPrelitTexTransform.vuo")
         || reflection_plane != 0;
     let enabled = number("alphaBlendingOnOff", 0.)? != 0.;
     let blend_fields = if enabled {
@@ -221,7 +223,9 @@ pub fn parse(data: &[u8]) -> Result<Pass> {
         None
     };
     let uv_scroll = if animate {
-        let observed = shader.eq_ignore_ascii_case("TexTransformPrelitCompressed");
+        let observed = shader.eq_ignore_ascii_case("TexTransformPrelitCompressed")
+            || shader.eq_ignore_ascii_case("Vu1StripPrelitTexTransform.vuo")
+            || shader.eq_ignore_ascii_case("Vu1StripDiffuseTexTransform.vuo");
         let defaults = [
             ("angle", 0.),
             ("uv_angular_rate", 0.),
@@ -296,6 +300,8 @@ pub struct MaterialPass {
     /// pass that declares `PixelAnimation` (for example `dirt250rm1` on the
     /// quad body). Filled only for single-pass (vehicle) descriptions.
     pub dirt_map: Option<String>,
+    /// Authored MX UVAnimation scale applied before the shared UV scroll.
+    pub uv_scale: [f32; 2],
 }
 
 /// Splits ordered ShaderPass_N sections; each result carries the shared
@@ -483,6 +489,7 @@ fn describe_pass(source: String, fallback: Option<&str>) -> Result<MaterialPass>
         scene_alpha_cutoff: if cutout { reference } else { 0. },
         mud_maps,
         dirt_map: None,
+        uv_scale: [1.; 2],
         source,
     })
 }
@@ -503,6 +510,122 @@ pub fn describe(text: &str, multi_pass: bool, fallback: Option<&str>) -> Result<
         first.dirt_map = dirt_map(text);
     }
     Ok(passes)
+}
+
+/// MX material settings use the same GS fields, with optional context-1
+/// suffixes and numbered animator child sections. Keep the source shader
+/// names; only explicitly supported capabilities are shared with ATV2.
+pub fn describe_mx(
+    text: &str,
+    multi_pass: bool,
+    fallback: Option<&str>,
+) -> Result<Vec<MaterialPass>> {
+    if fallback.is_some() {
+        return describe(text, multi_pass, fallback);
+    }
+    let data = scene::document(text.as_bytes())?;
+    let sources = pass_sources(text)?;
+    let mut result = Vec::new();
+    for (index, source) in sources.into_iter().enumerate() {
+        if !multi_pass && index != 0 {
+            break;
+        }
+        let section = format!("ShaderPass_{}", index + 1);
+        let get = |section: &str, key: &str| {
+            data.entries
+                .iter()
+                .find(|e| {
+                    e.section.eq_ignore_ascii_case(section) && e.key.eq_ignore_ascii_case(key)
+                })
+                .map(|e| e.value.as_str())
+        };
+        let mut extra = String::new();
+        for key in [
+            "foggingOnOff",
+            "alphaBlendingOnOff",
+            "inputColorA",
+            "inputColorB",
+            "inputAlphaC",
+            "inputAlphaD",
+            "alphaTestOnOff",
+            "alphaTestMethod",
+            "alphaReferenceValue",
+            "processingMethodWhenFailedInAlphaTest",
+            "ZWriteDisabled",
+        ] {
+            if get(&section, key).is_none() {
+                if let Some(value) = get(&section, &format!("{key}_1")) {
+                    extra.push_str(&format!("{key}={value}\n"));
+                } else if key == "inputAlphaD"
+                    && let Some(value) =
+                        get(&section, "inputColorD").or_else(|| get(&section, "inputColorD_1"))
+                {
+                    extra.push_str(&format!("inputAlphaD={value}\n"));
+                }
+            }
+        }
+        let count = get(&section, "NumAnimators")
+            .unwrap_or("0")
+            .parse::<usize>()
+            .map_err(|_| "invalid MX material animator count")?;
+        if count > 16 {
+            return Err("too many MX material animators".into());
+        }
+        let mut uv_scale = [1.; 2];
+        for animator in 1..=count {
+            let animation = format!("{section}_Animator_{animator}");
+            match get(&animation, "Algorithm")
+                .unwrap_or("")
+                .to_ascii_lowercase()
+                .as_str()
+            {
+                "textureframe" => {
+                    extra.push_str("TextureAnimation=unique\n");
+                    for key in [
+                        "animatedMapFramesPerSecond",
+                        "animatedMapInitialFrame",
+                        "animatedMapLooping",
+                        "animatedMapLoopOnEndToFrame",
+                        "animatedMapReverseLoopOnEnd",
+                    ] {
+                        if let Some(value) = get(&animation, key) {
+                            extra.push_str(&format!("{key}={value}\n"));
+                        }
+                    }
+                }
+                "uvanimation" => {
+                    extra.push_str("uvs_animate=1\n");
+                    for (from, to) in [
+                        ("UVelocity", "u_velocity"),
+                        ("VVelocity", "v_velocity"),
+                        ("Angle", "angle"),
+                        ("AngularVelocity", "uv_angular_rate"),
+                        ("UShear", "u_shear"),
+                        ("VShear", "v_shear"),
+                    ] {
+                        if let Some(value) = get(&animation, from) {
+                            extra.push_str(&format!("{to}={value}\n"));
+                        }
+                    }
+                    for (axis, key) in ["UScale", "VScale"].iter().enumerate() {
+                        let scale = get(&animation, key)
+                            .unwrap_or("1")
+                            .parse::<f32>()
+                            .map_err(|_| "invalid MX material UV scale")?;
+                        if !scale.is_finite() || scale.abs() > 4096. {
+                            return Err("invalid MX material UV scale".into());
+                        }
+                        uv_scale[axis] = scale;
+                    }
+                }
+                _ => {}
+            }
+        }
+        let mut pass = describe_pass(format!("{source}\n[ShaderPass_1]\n{extra}"), None)?;
+        pass.uv_scale = uv_scale;
+        result.push(pass);
+    }
+    Ok(result)
 }
 
 /// Texture of the last non-base pass carrying a `PixelAnimation` assignment.
@@ -526,6 +649,33 @@ fn dirt_map(text: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn mx_animators_stay_with_their_pass_and_context_two_stays_separate() {
+        let source = "[General]\nTotalShaderPasses=2\n[ShaderPass_1]\nmicroProgramName=Vu1StripPrelitTexTransform.vuo\nTextureMap_1=water\nNumAnimators=1\nalphaBlendingOnOff_1=1\ninputColorA_1=0\ninputColorB_1=2\ninputAlphaC_1=0\ninputColorD_1=1\nfoggingOnOff_1=0\nfoggingOnOff_2=1\n[ShaderPass_1_Animator_1]\nAlgorithm=UVAnimation\nUScale=2\nVScale=3\nUVelocity=0.25\nVVelocity=-0.5\n[ShaderPass_2]\nmicroProgramName=Vu1StripPrelitReflXZEnvmap.vuo\nTextureMap_1=sky\nNumAnimators=1\n[ShaderPass_2_Animator_1]\nAlgorithm=TextureFrame\nanimatedMapFramesPerSecond=15\nanimatedMapInitialFrame=2\nanimatedMapReverseLoopOnEnd=1\n";
+        let passes = describe_mx(source, true, None).unwrap();
+        assert_eq!(passes[0].uv_scale, [2., 3.]);
+        let a = passes[0].pass.as_ref().unwrap();
+        assert!(a.prelit && a.blend && a.additive && !a.fog);
+        assert_eq!(a.uv_scroll.as_ref().unwrap().velocity, [0.25, -0.5]);
+        assert!(a.texture_animation.is_none());
+        let b = passes[1].pass.as_ref().unwrap();
+        assert!(b.prelit && b.fog);
+        assert_eq!(b.reflection_plane, 2);
+        assert!(b.uv_scroll.is_none());
+        let animation = b.texture_animation.as_ref().unwrap();
+        assert_eq!(animation.fps, 15.);
+        assert_eq!(animation.initial, 2.);
+        assert!(animation.reverse);
+        assert_eq!(passes[1].uv_scale, [1.; 2]);
+        let unsupported = describe_mx(
+            "[ShaderPass_1]\nmicroProgramName=Vu1StripAmbientReflEnvmap.vuo\nTextureMap_1=sky",
+            true,
+            None,
+        )
+        .unwrap();
+        assert!(unsupported[0].unsupported_reflection);
+    }
+
     #[test]
     fn source_lamp_additive_alpha_is_not_opaque() {
         let source=b"[ShaderPass_1]\nmicroProgramName=PreLitCompressed\nalphaBlendingOnOff=1\ninputColorA=0\ninputColorB=2\ninputAlphaC=0\ninputAlphaD=1";

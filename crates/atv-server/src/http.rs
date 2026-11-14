@@ -35,13 +35,17 @@ const PUBLIC: [&str; 4] = [FREERIDE_RIDERS, FREERIDE_DAYS, "/healthz", "/metrics
 const SEND_TIMEOUT: Duration = Duration::from_secs(10);
 /// After the server's close, the client gets this long to answer it.
 const CLOSE_WAIT: Duration = Duration::from_secs(5);
-/// What the server claims for every room: no direct links or batches, and
-/// frames for builds that take them.
+/// What the server claims for every room: no direct links or batches,
+/// frames for builds that take them, and motorcycle poses for builds that
+/// decode them (`signal::MOTORCYCLES`).
 fn features() -> serde_json::Map<String, serde_json::Value> {
     let mut map = serde_json::Map::new();
     map.insert("links".into(), false.into());
     map.insert("batches".into(), false.into());
     map.insert("frames".into(), true.into());
+    map.insert("identity".into(), true.into());
+    map.insert("motorcycles".into(), true.into());
+    map.insert("chat".into(), true.into());
     map
 }
 
@@ -52,9 +56,11 @@ pub fn router(shared: Arc<Shared>) -> Router {
         .route(FREERIDE, post(claim))
         .route(FREERIDE_RIDERS, get(riders))
         .route(FREERIDE_DAYS, get(days))
+        .route(crate::reports::ROUTE, post(crate::reports::report))
         .route("/multiplayer/version", get(version))
         .route("/healthz", get(health))
         .route("/metrics", get(metrics))
+        .merge(crate::players::routes())
         .fallback(|| async { error(StatusCode::NOT_FOUND, "Unknown multiplayer route") })
         .layer(middleware::from_fn_with_state(shared.clone(), origins))
         .with_state(shared)
@@ -222,11 +228,22 @@ async fn create(
 
 /// Arlington Free Ride: a slot in the lowest-numbered shared room with
 /// space, so riders gather together; a full room opens the next one.
+/// `{"room": "FREERDnn"}` (a friend's Join) tries that room first.
 async fn claim(
     State(shared): State<Arc<Shared>>,
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
+    body: Body,
 ) -> Response {
+    let wanted = (body.len() <= 512)
+        .then(|| serde_json::from_slice::<serde_json::Value>(&body).ok())
+        .flatten()
+        .and_then(|v| v.get("room")?.as_str().map(str::to_string))
+        .and_then(|code| atv_net::parse_room_code(&code).ok())
+        .filter(atv_net::is_public_room_code)
+        .and_then(|code| {
+            (1..=atv_net::PUBLIC_ROOMS).find(|&n| atv_net::public_room_code(n) == Some(code))
+        });
     let ip = client_ip(peer, &headers);
     if !shared
         .admission
@@ -244,7 +261,10 @@ async fn claim(
         );
     }
     let mut rng = OsEntropy;
-    for number in 1..=atv_net::PUBLIC_ROOMS {
+    let order = wanted
+        .into_iter()
+        .chain((1..=atv_net::PUBLIC_ROOMS).filter(|&n| Some(n) != wanted));
+    for number in order {
         let code = atv_net::public_room_code(number).expect("public room number");
         let text = String::from_utf8_lossy(&code).into_owned();
         // A live room reserves a slot; a room that ended is opened again.
@@ -308,6 +328,7 @@ async fn version(State(shared): State<Arc<Shared>>) -> Response {
             "commit": shared.config.commit,
             "wasmSha256": "host-only",
             "protocol": atv_net::VERSION,
+            "identity": true,
         }),
     )
 }
@@ -365,9 +386,12 @@ async fn metrics(
 struct Keys {
     key: Option<String>,
     host: Option<String>,
+    /// The rider token from `/multiplayer/players/register`.
+    rider: Option<String>,
 }
 
-/// A room's WebSocket: `?key=` (or the creator's `?host=`) rejoins a slot.
+/// A room's WebSocket: `?key=` (or the creator's `?host=`) rejoins a slot;
+/// `?rider=` names the verified player (research/ONLINE_IDENTITY.md).
 async fn socket(
     State(shared): State<Arc<Shared>>,
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
@@ -412,6 +436,10 @@ async fn socket(
     let conn = shared.next_conn.fetch_add(1, Ordering::Relaxed);
     let outbox = Arc::new(Outbox::default());
     let key = keys.key.or(keys.host);
+    let pid = keys
+        .rider
+        .as_deref()
+        .and_then(|token| shared.players.verify(token, now_ms()));
     // Uncounted addresses play normally; only the public counts skip them.
     let counted = !shared.config.uncounted.contains(ip);
     let peer_id = match room.admit(conn, key, counted, outbox.clone()).await {
@@ -435,9 +463,21 @@ async fn socket(
         })
         .on_upgrade(move |ws| async move {
             let _guard = guard;
+            let _presence = pid.map(|pid| {
+                shared.players.connected(conn, &pid, code, now_ms());
+                Present(shared.clone(), conn)
+            });
             tracing::debug!(event = "socket_opened", peer = peer_id);
             run_socket(shared, room.tx, conn, counted, outbox, ws).await;
         })
+}
+
+/// Ends a verified socket's presence on every path.
+struct Present(Arc<Shared>, engine::ConnId);
+impl Drop for Present {
+    fn drop(&mut self) {
+        self.0.players.disconnected(self.1, now_ms());
+    }
 }
 
 struct Admitted(Arc<Shared>, IpAddr);

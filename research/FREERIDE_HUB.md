@@ -27,9 +27,9 @@ judges every result; clients show it and send the rider's choices.
   vote is open, within the pair's cooldown, and when the other build has no
   hub ("TOO FAR", "BUSY", "WAIT A BIT").
 - Muted or blocked riders: the client declines their offers at once
-  without showing them (`Hub::blocked`, a slot mask). Slice E (#636,
-  research/QUICK_CHAT.md) owns the block list; until it lands nothing sets
-  the mask. Follow-up: E sets `net.hub.blocked` from its list.
+  without showing them, and shows no Challenge button for them
+  (`Hub::blocked`, a slot mask built each tick from quick chat's mutes and
+  block list, research/QUICK_CHAT.md, matched by name as quick chat does).
 - Result toast: "YOU WIN!" +50 or "SO CLOSE" +10 (hub points, this room).
 
 ### Pop-up events

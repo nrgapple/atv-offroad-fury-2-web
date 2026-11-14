@@ -1,0 +1,14 @@
+{
+  "id": "menus-now-preload-motorcycle-and-venue-sounds-626-1e697851d0f94ac0a9c4758041c6b86f",
+  "timestamp": "2026-11-14T17:19:14+00:00",
+  "recorded_at": "2026-11-14T21:12:24.798945+00:00",
+  "kind": "build",
+  "title": "Menus now preload motorcycle and venue sounds (#626)",
+  "summary": "Menu preload now also prepares motorcycle sound banks and late-added venue clips (crowd, train, rain, actors) on background decode workers, so Start has fewer sounds left to load.",
+  "details": [
+    "Previously motorcycle PCM and late-added venue clips stayed on Start's sound-loading path. They now use the background decode workers and the existing decoded cache; cancellation, debounce, session and memory limits remain, frame-loop code is unchanged, and the retained course buffer is released before the sound-name job reads its cached archive. Host-only Chromium warm-menu samples, first frame to sounds ready: motorcycle ENV01 486 to 106-135 ms; ENV08 train 763 to 535-549 ms with misses after Start 3 to 0; SX01 crowd/blimp 1,651 to 695-811 ms with misses 9 to 0; ENV03 plane 730 to 504-594 ms with misses 1 to 0; ENV04 verifies an active rain voice with zero warm misses. Passed: make precheck, make web, the native worker unit test, test_engine_menu_preload_ride.mjs and test_engine_menu_preload.mjs (longest preparation task 52 ms)."
+  ],
+  "limitation": "Single-run host samples, not phone timing. Cold motorcycle timing is not shown to improve, and SX01 bank cache writes rise from 44.7 to 60.7 MB. Objective and mini-game overlays still need mode-aware preload targets, and the direct-load gap remains. The screenshot shows the ride scene only; the timings above come from the tests.",
+  "image": "/devlog-images/menus-now-preload-motorcycle-and-venue-sounds-626-1e697851d0f94ac0a9c4758041c6b86f.png",
+  "caption": "SX01 ride (stadium crowd and blimp venue) started after the menu preload, host Chromium capture."
+}

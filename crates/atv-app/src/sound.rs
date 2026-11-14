@@ -955,6 +955,26 @@ impl Sound {
         true
     }
 
+    /// The quick-chat horn (research/QUICK_CHAT.md) on the SFX bus of a
+    /// running output.
+    pub fn horn(&mut self) {
+        if !self.output.started.get() {
+            return;
+        }
+        let pcm = atv_game::audio::synth::horn(self.ride.bank.rate());
+        if let Ok(mut mixer) = self.output.mixer.lock() {
+            mixer.play(
+                &std::sync::Arc::new(pcm),
+                atv_game::audio::mixer::Looping::Once,
+                [1., 1.],
+                1.,
+                atv_game::audio::mixer::Bus::Sfx,
+                false,
+                "horn",
+            );
+        }
+    }
+
     /// GameAudio.crashBoom (Crazy/Gorn crashes): a synthesized boom on the
     /// SFX bus for an impact of 40 ft/s or more, at most every 0.3 s.
     pub fn crash_boom(&mut self, severity: f32) {
@@ -1087,6 +1107,8 @@ impl Sound {
                 "steps": steps, "started": self.output.started.get(),
                 "active": mixer.active, "musicActive": mixer.music_active,
                 "clock": mixer.seconds(), "voices": mixer.voices(),
+                "intOutCues": self.ride.race.stats.int_out_cues,
+                "speech": { "started": self.speech.started, "last": self.speech.last, "playing": self.speech.playing(&mixer) },
                 "intOut": mixer.snapshot().iter().filter(|v| v.0 == "intout").count(),
                 "engineCommands": self.ride.stats.engine_commands,
                 // Race CPUs: engine voices (part of the other riders'),

@@ -130,7 +130,7 @@ mod tga_tests {
 }
 
 pub fn decode_pst(data: &[u8]) -> Result<Texture> {
-    if u32le(data, 0)? == 0x00020002 {
+    if matches!(u32le(data, 0)?, 2 | 0x00020002) {
         return decode_mx_pst(data);
     }
     let levels = u32le(data, 8)?;
@@ -200,47 +200,76 @@ pub fn decode_pst(data: &[u8]) -> Result<Texture> {
     })
 }
 
-/// Observed MX v2 indexed8 profile. Its explicit per-level byte count replaces
-/// ATV2's zero field. Other MX pixel profiles remain rejected.
-fn decode_mx_pst(data: &[u8]) -> Result<Texture> {
-    if data.len() > 128 * 1024 * 1024 || u32le(data, 4)? != 40 {
-        return Err("unsupported MX PST flags".into());
+/// The two observed MX v2 headers and indexed8/indexed4 profiles. The
+/// per-level byte count replaces ATV2's zero field. Keep a bounded extent
+/// scanner separate so ATM can locate concatenated v2 frames without copies.
+struct MxPstLayout {
+    end: usize,
+    indexed8: bool,
+    palette_bytes: usize,
+    selected: (u32, u32, usize, usize),
+}
+
+fn mx_pst_layout(data: &[u8]) -> Result<MxPstLayout> {
+    if data.len() > 128 * 1024 * 1024 || !matches!(u32le(data, 0)?, 2 | 0x00020002) {
+        return Err("unsupported MX PST header".into());
     }
-    let palette = slice(data, 8, 1024)?;
-    let levels = u32le(data, 1032)?;
+    let indexed8 = match u32le(data, 4)? {
+        40 => true,
+        46 => false,
+        _ => return Err("unsupported MX PST pixel format".into()),
+    };
+    let palette_bytes = if indexed8 { 1024 } else { 64 };
+    slice(data, 8, palette_bytes)?;
+    let levels = u32le(data, 8 + palette_bytes)?;
     if !(1..=16).contains(&levels) {
         return Err("invalid MX PST mip count".into());
     }
-    let mut at = 1036;
+    let mut at = 12 + palette_bytes;
     let mut selected = (0, 0, 0, 0);
     for _ in 0..levels {
         let height = u32le(data, at)?;
         let width = u32le(data, at + 4)?;
-        let count = u32le(data, at + 8)? as usize;
-        if width == 0
-            || height == 0
-            || width > 4096
-            || height > 4096
-            || count != (width * height) as usize
-            || u32le(data, at + 12)? != 0
+        if width == 0 || height == 0 || width > 4096 || height > 4096 || u32le(data, at + 12)? != 0
         {
+            return Err("invalid MX PST level dimensions".into());
+        }
+        let pixels = (width * height) as usize;
+        let bytes = if indexed8 { pixels } else { pixels.div_ceil(2) };
+        if u32le(data, at + 8)? as usize != bytes {
             return Err("invalid MX PST level extent".into());
         }
         at += 16;
-        slice(data, at, count)?;
-        if count > selected.3 {
-            selected = (width, height, at, count);
+        slice(data, at, bytes)?;
+        if pixels > selected.3 {
+            selected = (width, height, at, pixels);
         }
-        at += count;
+        at += bytes;
     }
-    if at != data.len() {
+    Ok(MxPstLayout {
+        end: at,
+        indexed8,
+        palette_bytes,
+        selected,
+    })
+}
+
+fn decode_mx_pst(data: &[u8]) -> Result<Texture> {
+    let layout = mx_pst_layout(data)?;
+    if layout.end != data.len() {
         return Err("MX PST payload extent mismatch".into());
     }
-    let (width, height, start, count) = selected;
+    let palette = slice(data, 8, layout.palette_bytes)?;
+    let (width, height, start, count) = layout.selected;
     let mut rgba = Vec::with_capacity(count * 4);
-    for &index in &data[start..start + count] {
-        let i = ((index & !24) | ((index & 8) << 1) | ((index & 16) >> 1)) as usize;
-        rgba.extend_from_slice(&palette[i * 4..i * 4 + 4]);
+    for pixel in 0..count {
+        let index = if layout.indexed8 {
+            let index = data[start + pixel];
+            (index & !24) | ((index & 8) << 1) | ((index & 16) >> 1)
+        } else {
+            (data[start + pixel / 2] >> ((pixel % 2) * 4)) & 15
+        } as usize;
+        rgba.extend_from_slice(&palette[index * 4..index * 4 + 4]);
     }
     Ok(Texture {
         info: TextureInfo { width, height },
@@ -251,6 +280,54 @@ fn decode_mx_pst(data: &[u8]) -> Result<Texture> {
 #[cfg(test)]
 mod mx_tests {
     use super::*;
+    fn indexed4(version: u32) -> Vec<u8> {
+        let mut data = Vec::new();
+        data.extend(version.to_le_bytes());
+        data.extend(46u32.to_le_bytes());
+        for i in 0..16 {
+            data.extend([i, 0, 0, 128]);
+        }
+        data.extend(1u32.to_le_bytes());
+        for word in [1u32, 3, 2, 0] {
+            data.extend(word.to_le_bytes());
+        }
+        data.extend([0x81, 0x03]);
+        data
+    }
+    #[test]
+    fn mx_indexed4_keeps_nibble_palette_order_and_odd_extent() {
+        for version in [2, 0x00020002] {
+            let data = indexed4(version);
+            let decoded = decode_pst(&data).unwrap();
+            assert_eq!(decoded.info.width, 3);
+            assert_eq!(decoded.rgba, [1, 0, 0, 128, 8, 0, 0, 128, 3, 0, 0, 128]);
+            for end in 0..data.len() {
+                assert!(decode_pst(&data[..end]).is_err());
+            }
+            let mut invalid = data.clone();
+            invalid.push(0);
+            assert!(decode_pst(&invalid).is_err());
+            invalid[0..4].copy_from_slice(&0x00030002u32.to_le_bytes());
+            assert!(decode_pst(&invalid).is_err());
+        }
+    }
+    #[test]
+    fn mx_atm_scans_v2_frames_and_validates_unselected_frames() {
+        let mut data = Vec::new();
+        for word in [1u32, 2, 0] {
+            data.extend(word.to_le_bytes());
+        }
+        data.extend(indexed4(2));
+        data.extend(indexed4(0x00020002));
+        let (count, image) = decode_atm(&data, 1).unwrap();
+        assert_eq!(count, 2);
+        assert_eq!(image.rgba, decode_pst(&indexed4(2)).unwrap().rgba);
+        assert!(decode_atm(&data, 2).is_err());
+        for end in 0..data.len() {
+            assert!(decode_atm(&data[..end], 0).is_err());
+        }
+    }
+
     #[test]
     fn indexed8_explicit_extents_and_clut_order() {
         let mut data = Vec::new();
@@ -293,6 +370,14 @@ pub fn decode_atm(data: &[u8], frame: usize) -> Result<(usize, Texture)> {
     let mut selected = None;
     for i in 0..count {
         let start = at;
+        if matches!(u32le(data, start)?, 2 | 0x00020002) {
+            let layout = mx_pst_layout(&data[start..])?;
+            at += layout.end;
+            if i == frame {
+                selected = Some(decode_pst(&data[start..at])?);
+            }
+            continue;
+        }
         let bits = match u32le(data, at + 4)? {
             0 => 4,
             1 => 8,

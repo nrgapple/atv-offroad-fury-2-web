@@ -1,0 +1,12 @@
+{
+  "id": "cpu-riders-escape-repeated-ramp-wrecks-sooner-641-e1952cc22b9b4511b8efd64af71edc8f",
+  "timestamp": "2026-11-14T18:23:59+00:00",
+  "recorded_at": "2026-11-14T21:12:25.599759+00:00",
+  "kind": "build",
+  "title": "CPU riders escape repeated ramp wrecks sooner (#641)",
+  "summary": "Escalated CPU recovery now assists after a rider's second return to a checkpoint and relocates it after the third, 320-500 ft ahead, instead of the fourth return and 80 ft.",
+  "details": [
+    "The old placement could drop a rider back into the failed corner or jump approach. Finish and Enduro gate bounds, the maximum skip, clearance checks and stall/clearing rules are unchanged. This is the owner-authorized authored recovery layer, not original driving. Full default-length host races, four CPUs, idle player (wrecks before to after; last CPU finish before to after): sx15 155 to 126, 591.50 s to 488.39 s; sx03 50 to 48, 405.65 s to 425.52 s (19.88 s slower despite fewer wrecks); sx05 58 to 49, 438.67 s to 398.06 s; env05endl 13 to 13, unchanged; nat01, sx12 and env06st had no wrecks and match exactly. The headless example gained per-seat wreck telemetry, working --help and --require-finish, and an SX15 /play.html regression joined the content group."
+  ],
+  "limitation": "One seed per course, host runs only; not an all-seed sweep. Substantial natural wrecks remain, and original-physics parity is not established. The Expert seed-7 sweep already finished through an existing fallback, so this reduces repeated failures and delay rather than fixing a hard stall."
+}

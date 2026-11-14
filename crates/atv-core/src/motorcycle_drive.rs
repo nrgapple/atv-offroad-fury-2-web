@@ -1103,13 +1103,11 @@ impl Motorcycle {
             let tire = &p.tires[i];
             let state = self.drive.tires[i];
             let contact = state.grounded || state.borrowed;
-            // Surface adapter: ATV2 maps number their eight terrain zones per
-            // map, so MX zone 1 (standard track dirt) is scaled by the map's
-            // own SurfaceFriction/Traction/Braking/Drag for this zone.
-            let zone = 0;
+            // Route physics only; state.surface stays raw for effects and water.
+            let zone = self.surface_source.tire_zone(state.surface);
             let material = self.materials.and_then(|m| m.get(state.surface).copied());
             let (grip, traction, braking, surface_drag) =
-                material.map_or((1., 1., 1., 0.), |m| (m.grip, m.drive, m.braking, m.drag));
+                self.surface_source.motorcycle_multipliers(material);
             let brake = if wreck { 0.1 } else { self.drive.brake } * braking;
             let sigma = if contact {
                 (0.3 * v_body).clamp(-1., 1.)

@@ -5,7 +5,7 @@
 import { readFileSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 
-const MIGRATIONS = ['0001_cloud_saves.sql', '0002_world_boards.sql', '0003_board_ghosts.sql', '0004_game_server_health.sql', '0005_stats_days.sql'];
+const MIGRATIONS = ['0001_cloud_saves.sql', '0002_world_boards.sql', '0003_board_ghosts.sql', '0004_game_server_health.sql', '0005_stats_days.sql', '0006_board_stats.sql'];
 
 // `db` is the SQLite handle; `prepared` counts the statements prepared (one
 // per D1 query).

@@ -1431,8 +1431,15 @@ impl Front {
             screen.hero = photos.get(id).and_then(|(_, hero)| *hero);
         }
         screen.shot_fade = art.shot_fade;
-        if self.menu.is_some() {
-            screen.page = "backdrop".into();
+        if let Some(menu) = &self.menu {
+            // Options sits where the main menu's rows were, beside its
+            // stage; the Jukebox and Credits cover the screen.
+            screen.page = if matches!(menu.page.as_str(), "jukebox" | "credits") {
+                "backdrop"
+            } else {
+                "stage"
+            }
+            .into();
             // Options and the Jukebox fill the screen over the frontend; the
             // bar's chips would be out of reach under them.
             screen.status = None;
@@ -2162,6 +2169,19 @@ impl Front {
             "pending": self.state.passkey.pending.is_some(),
             "qr": self.state.passkey_qr(), "entry": self.state.passkey.entry,
         });
+        let online = &self.state.online;
+        let online = serde_json::json!({
+            "reach": format!("{:?}", online.reach),
+            "code": online.me.as_ref().map(|m| m.code.clone()),
+            "hidden": online.me.as_ref().map(|m| m.hidden),
+            "level": online.me.as_ref().map(|m| m.level),
+            "friends": online.lists.as_ref().map(|l| l.friends.iter().map(|f| serde_json::json!({
+                "name": f.name, "online": f.online,
+                "room": f.room.as_ref().and_then(|r| r.code.clone()),
+            })).collect::<Vec<_>>()),
+            "requests": online.lists.as_ref().map(|l| l.requests.len()),
+            "recent": online.lists.as_ref().map(|l| l.recent.len()),
+        });
         let mut out = serde_json::json!({
             "page": self.state.page,
             // The page (or menu panel) slide: [opacity, translateX px].
@@ -2219,6 +2239,7 @@ impl Front {
             })).collect::<Vec<_>>(),
         });
         out["kinetic"] = kinetic;
+        out["online"] = online;
         // Turntable rates and preview images' pixel sizes (they follow the
         // surface density); the UI's backing [width, height, scale]; the
         // wordmark's sway [yaw, pitch].

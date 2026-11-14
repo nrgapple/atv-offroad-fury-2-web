@@ -9,6 +9,7 @@
 
 use serde::{Deserialize, Serialize};
 
+pub mod chat;
 mod codec;
 mod compact;
 pub mod hub;
@@ -17,7 +18,7 @@ pub use hub::{
 };
 mod names;
 pub use compact::{AnimationState, Delta, STEERING_LIMIT, apply_delta, delta};
-pub use names::{offensive_name, public_name};
+pub use names::{dice_name, offensive_name, public_name};
 mod smoothing;
 mod transform;
 
@@ -122,6 +123,20 @@ pub fn next_map(id: u16) -> Option<u16> {
 }
 pub fn valid_map(id: u16) -> bool {
     (1..=MAX_MAP_ID).contains(&id)
+}
+
+/// Garage selections 1-26 are the ATVs; 27-46 are the MX motorcycles
+/// (research/MOTORCYCLES.md). A rider model of 0 or 1 picks the ATV rider;
+/// a motorcycle always carries its MX rider and keeps the value only for
+/// the roster.
+pub const MAX_ATV_MODEL: u16 = 26;
+pub const MAX_VEHICLE_MODEL: u16 = 46;
+pub fn is_motorcycle(model: u16) -> bool {
+    (MAX_ATV_MODEL + 1..=MAX_VEHICLE_MODEL).contains(&model)
+}
+/// A participant's or pose's vehicle and rider identifiers.
+pub fn valid_actor(vehicle: u16, rider: u16) -> bool {
+    (1..=MAX_VEHICLE_MODEL).contains(&vehicle) && rider <= 1
 }
 
 pub fn valid_peer(id: PeerId) -> bool {
@@ -688,6 +703,16 @@ pub mod signal {
     /// research/FREERIDE_HUB.md). Sent only to a server whose room claim
     /// says `"hub": true`; never forwarded in other riders' flags.
     pub const HUB: u8 = 128;
+    /// Hello flags bit: the build decodes motorcycle poses (vehicles 27-46,
+    /// whose compact pose carries the bike's linkage and the MX rider's
+    /// bones; research/MULTIPLAYER.md "Motorcycles"). Sent only to a server
+    /// whose room claim says `motorcycles` (earlier servers refuse the
+    /// bit); such a server sends motorcycle poses only to builds that said
+    /// it. Never forwarded in other riders' flags.
+    pub const MOTORCYCLES: u8 = 32;
+    /// Hello flags bit: the build takes [`super::Packet::Chat`] quick chat
+    /// (research/QUICK_CHAT.md). The server relays chat only to such builds.
+    pub const CHAT: u8 = 64;
 }
 /// Most poses in one [`Packet::Bundle`]: every rider in a full room.
 pub const MAX_BUNDLE: usize = MAX_PLAYERS;
@@ -799,12 +824,15 @@ impl Signal {
                 signal::HELLO => {
                     self.data.len() == 1
                         && self.data[0]
-                            <= signal::DIRECT
+                            & !(signal::DIRECT
                                 | signal::CARRIES
                                 | signal::CPU_SOUNDS
                                 | signal::BATCHES
                                 | signal::FRAMES
-                                | signal::HUB
+                                | signal::MOTORCYCLES
+                                | signal::CHAT
+                                | signal::HUB)
+                            == 0
                 }
                 signal::PRESENT | signal::ARRIVED => {
                     self.data.len() == 1 && self.data[0] & !(signal::DIRECT | signal::BATCHES) == 0
@@ -914,6 +942,9 @@ pub enum Packet {
     /// A challenge between two Free Ride riders (research/FREERIDE_HUB.md);
     /// only to and from builds that said [`signal::HUB`].
     Challenge(Challenge),
+    /// A quick-chat line, emote or horn by id (research/QUICK_CHAT.md);
+    /// to and from the server only for builds that said [`signal::CHAT`].
+    Chat(chat::Chat),
 }
 
 pub(crate) fn bounded(values: &[f32], limit: f32) -> bool {

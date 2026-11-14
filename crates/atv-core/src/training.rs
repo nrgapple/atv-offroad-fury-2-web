@@ -378,6 +378,16 @@ fn distance(a: [f32; 3], b: [f32; 3]) -> f32 {
 }
 
 impl Course {
+    /// Restart Training keeps the speech request sequence unique so the
+    /// mixer interrupts even when restarting the same introductory line.
+    pub fn restart_intro(&mut self, completed_before: bool) {
+        let serial = self.serial;
+        let spoken = self.spoken;
+        *self = Self::new(completed_before);
+        self.serial = serial;
+        self.spoken = spoken;
+    }
+
     pub fn new(completed_before: bool) -> Self {
         Self {
             phase: Phase::Introduction,
@@ -1106,6 +1116,19 @@ mod tests {
         let (line, left) = c.caption.unwrap();
         assert_eq!((line, c.serial), (INTRO_PRIZE, 2));
         assert_eq!(left, INTRO_PRIZE.seconds());
+    }
+
+    #[test]
+    fn restart_intro_interrupts_the_same_line_with_a_new_request() {
+        let mut c = Course::new(false);
+        c.set_spoken(1, 7.5);
+        c.tick(0.01, &Input::default());
+        let serial = c.serial;
+        c.restart_intro(false);
+        c.tick(0.01, &Input::default());
+        assert_eq!(c.caption.unwrap(), (INTRO, 7.5));
+        assert_ne!(c.serial, serial);
+        assert_eq!(c.queue, vec![INTRO_PRIZE]);
     }
 
     #[test]
