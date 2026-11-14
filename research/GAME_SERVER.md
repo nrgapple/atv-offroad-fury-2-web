@@ -1,7 +1,7 @@
 # Game server
 
 Owner decision, 2026-11-13: multiplayer moves from the Cloudflare Durable Object
-relay (`crates/atv-relay`) to our own Rust game server, first on one
+relay (formerly `crates/atv-relay`) to our own Rust game server, first on one
 DigitalOcean droplet in the US (s-1vcpu-1gb, about $6 a month). Hetzner was the
 first choice, but its US prices roughly tripled in 2026 (about $20.50 a month for
 its cheapest US server), so the owner chose DigitalOcean. There is no fallback to the
@@ -10,6 +10,17 @@ Object relay is retired. Why: the free Durable Object plan bills every incoming
 WebSocket message, so one school's Chromebooks reached the daily limit
 (research/MULTIPLAYER.md "What a day like 2026-11-12 would cost"), and direct
 WebRTC links fail on networks like theirs.
+
+Clients switched to the server in #611. On 2026-11-14 the relay was removed
+entirely (owner: no support, no fallback): its crate, the `make relay` target,
+its CI build, the site Worker's `/multiplayer/` proxy, the `LobbyRoom` and
+`LobbyAdmission` Durable Objects (deleted by the `retire-relay-v1` migration)
+and the room rate limiters. The site keeps only redirects of
+`/multiplayer/freeride/riders` and `/days` to this server. `net::GAME_SERVER`
+is no longer optional: every page uses it, except a page served from a
+loopback origin (the local test proxy, `tools/serve_multiplayer.mjs`) or one
+given `?server=<origin>` (desktop: `FURY_SERVER`). Sections below that compare
+with "the relay" describe the behavior the server kept from it.
 
 ## Shape
 
@@ -47,7 +58,7 @@ only under `deploy/digitalocean/`.
 
 | Setting (env) | Meaning | Default |
 |---|---|---|
-| `FURY_LISTEN` | address:port | `127.0.0.1:8789` (the local relay port the browser tests use) |
+| `FURY_LISTEN` | address:port | `127.0.0.1:8789` (the port `tools/serve_multiplayer.mjs` and the browser tests use) |
 | `FURY_ALLOWED_ORIGINS` | comma-separated page origins allowed to open rooms | the production origins plus `http://127.0.0.1:*` when listening on loopback |
 | `FURY_TLS` | `off` (plain, behind a proxy or local), `acme` (Let's Encrypt TLS-ALPN-01 in process), `files` | `off` |
 | `FURY_ACME_DOMAINS`, `FURY_ACME_EMAIL`, `FURY_ACME_CACHE` | certificate names, contact, cache dir | — |
@@ -120,7 +131,7 @@ brief hitch, not a lost room.
   300-1,000 ft), so a Free Ride pose waits at most for the next tick, because
   receivers play poses back with a delay
   sized for those and drop a moving rider after 1 s without a pose. Measured
-  with `test_engine_freeride_relay.mjs` (`ATV_GAME_SERVER=fury`) and the
+  with `test_engine_freeride_relay.mjs` and the
   frames client of #604, the relay-era tiers (200 ms, 500 ms, 2 s) left the
   watcher 3.3 ft rms off at 60-300 ft and 5.9 ft rms (39 ft at worst, frozen
   for 290 ms) at 300-1,000 ft. Thinning further needs receivers that size
@@ -208,8 +219,8 @@ room at 20 riders today); a second region; server-checked race results.
 ## Load testing
 
 `fury-loadtest` (`crates/atv-loadtest`) simulates riders against any server
-that speaks the relay's routes: the local relay, fury-server, or (only with the
-owner's go-ahead) production. Each rider claims a Free Ride slot or a private
+that speaks these routes: a local fury-server or (only with the owner's
+go-ahead) production. Each rider claims a Free Ride slot or a private
 room over HTTP, joins over the room WebSocket, says the hello the game would
 (FRAMES when the claim says `frames`), and sends compact snapshots and deltas
 along a loop: 20 Hz while moving near others (`--clustered` riders ride in
@@ -223,8 +234,8 @@ cargo run --release -p atv-loadtest -- --url http://127.0.0.1:8789 \
 
 `--rooms N` puts the riders in N private rooms (four at most each; the first N
 riders host) instead of Free Ride; `--frames auto|on|off` (default `auto`),
-`--ping-ms`, `--seed`. The local relay admits only its `GAME_ORIGIN`, hence
-`--origin` (or point `--url` at `tools/serve_multiplayer.mjs` on 4187). The
+`--ping-ms`, `--seed`. `--origin` presents a page origin the server allows
+(or point `--url` at `tools/serve_multiplayer.mjs` on 4187). The
 JSON report has connections ok/failed/live/disconnects, messages and bytes in
 and out per second, poses received per rider per second (single, batched,
 bundled or framed), frames per second, round-trip p50/p95/p99, and close or

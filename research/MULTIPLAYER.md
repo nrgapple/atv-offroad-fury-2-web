@@ -4,9 +4,16 @@ This is an authored four-player Freeride baseline, building on the original
 four-player/host-controlled experience documented in [original research](MULTIPLAYER_ORIGINAL.md).
 It does not execute PS2 network code or emulate the disc executable.
 
+Since 2026-11-14 rooms run on our own Rust game server, fury-server
+([GAME_SERVER.md](GAME_SERVER.md), `https://mp.furyremastered.com`). The
+Cloudflare Durable Object relay this page describes was removed then, with no
+fallback; fury-server kept its rooms, slots, keys, host handoff, games and wire
+format, but offers no direct links, couriers or pose batches. Sections below
+are a dated log: where they say "the relay", read the room server.
+
 ```mermaid
 flowchart LR
-    A[Browser A: Rust local simulation] -->|binary snapshot| R[Rust room relay]
+    A[Browser A: Rust local simulation] -->|binary snapshot| R[fury-server room]
     R -->|validated peer state| B[Browser B: Rust interpolation]
     B --> G[WebGL actor / Web Audio sample]
     B -->|its own snapshot| R
@@ -17,7 +24,8 @@ flowchart LR
 
 Each player simulates their own quad in Rust at the established local cadence;
 controls do not wait for a network round trip. The current host owns the room's
-map. A Rust Cloudflare Durable Object authenticates each rider's private slot key,
+map. The room server (originally a Rust Cloudflare Durable Object, now
+fury-server) authenticates each rider's private slot key,
 assigns participant slots, validates shared binary packets and relays snapshots.
 The room code and invite URL contain no credential. A dropped rider's slot is held
 for 30 seconds while the browser retries its key for up to 25 seconds, preserving
@@ -171,8 +179,8 @@ rollover, quaternion/shear reconstruction, discontinuities and stale handling.
 Native private-resource probes cover all 26 quads and both rigs’ 3,276 sampled poses.
 Rust adapter tests cover roster/model authority, pose lifetime and silent rendering.
 Browser bridge tests cover asynchronous session isolation, backpressure, cleanup,
-pause and audio lifecycle. Opt-in `tools/test_multiplayer_relay.mjs` exercises the
-Rust service with the Rust codec; `tools/test_multiplayer.mjs` exercises actual
+pause and audio lifecycle. Opt-in `tools/test_multiplayer_relay.mjs` (removed with the
+relay, 2026-11-14) exercised the Rust service with the Rust codec; `tools/test_multiplayer.mjs` exercises actual
 WASM/content, two-player link admission, different rigs, movement and departure.
 `ATV_MP_WRECK=1` adds a real-touch failed-stunt/detached-rider/recovery check.
 
@@ -1316,8 +1324,9 @@ traffic were lost. The counter now keeps every day's totals for 30 days
   UTC), `messages`, `poses` by reason, `bundles`, and `busiest`: the shared
   rooms' `now` counts (riders by build, linked and unlinked pairs, the sum
   of the clients' link reports) at the report with the most riders.
-- `python3 tools/relay_usage.py` prints both endpoints with each reason's
-  share and the day's share of the free limit.
+- `python3 tools/relay_usage.py` printed both endpoints with each reason's
+  share and the day's share of the free limit (removed with the relay,
+  2026-11-14; fury-server serves the same endpoints).
 
 Production, from Cloudflare's analytics (Durable Object requests, incoming
 messages counted one each; the free plan bills 20 as one request against

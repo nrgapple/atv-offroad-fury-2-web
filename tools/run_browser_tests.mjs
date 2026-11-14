@@ -6,7 +6,7 @@
 //   node tools/run_browser_tests.mjs --group content-free,content
 //   node tools/run_browser_tests.mjs --group native      # needs ATV_*_NATIVE reports
 //   node tools/run_browser_tests.mjs --only test_fog.mjs,test_race.mjs
-//   node tools/run_browser_tests.mjs --group relay --url http://127.0.0.1:8787
+//   node tools/run_browser_tests.mjs --group multiplayer --url http://127.0.0.1:4187
 //   node tools/run_browser_tests.mjs --list
 import { spawn, spawnSync } from 'node:child_process';
 import { spawnOwned, stopOwned } from './browser/owned_process.mjs';
@@ -181,8 +181,8 @@ try {
   for (const run of runs) {
     const entry = TESTS[run.name];
     const mode = run.group === 'content-free' ? 'none' : 'private';
-    if (['relay'].includes(run.group) && !args.url) {
-      console.log(`SKIP ${run.name}: relay tests need --url <site with a multiplayer relay>`);
+    if (run.group === 'multiplayer' && !args.url) {
+      console.log(`SKIP ${run.name}: multiplayer tests need --url <local site with a game server>`);
       results.push({ ...run, status: 'skip' });
       continue;
     }

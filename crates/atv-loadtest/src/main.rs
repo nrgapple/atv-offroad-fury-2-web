@@ -1,5 +1,5 @@
-//! fury-loadtest: simulated riders against a multiplayer server, the
-//! Cloudflare relay or fury-server (research/GAME_SERVER.md "Load testing").
+//! fury-loadtest: simulated riders against the multiplayer game server,
+//! fury-server (research/GAME_SERVER.md "Load testing").
 //! Each rider claims a Free Ride slot or a private room over the HTTP
 //! routes, joins over the room WebSocket and sends compact poses at an
 //! adaptive cadence while it counts what comes back. The report is JSON.
@@ -182,7 +182,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn options_default_to_the_local_relay_and_check_rooms() {
+    fn options_default_to_the_local_server_and_check_rooms() {
         let args = parse(std::iter::empty());
         assert_eq!(args.url, "http://127.0.0.1:8789");
         assert_eq!(args.origin, "http://127.0.0.1:8789");

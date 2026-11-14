@@ -1,9 +1,11 @@
-// Host-only integration proxy: approved static allowlist server plus local Rust relay.
-// No private file access and no public tunnel. Bind is explicit.
+// Host-only integration proxy: approved static allowlist server plus a local game
+// server (fury-server, `make server-run`) under /multiplayer/, so pages on this
+// origin use it (atv_app::server_for). No private file access and no public
+// tunnel. Bind is explicit. RELAY_PORT is the game server's port.
 import http from 'node:http';
 const port=Number(process.env.PORT??4187), relay=Number(process.env.RELAY_PORT??8789), assets=Number(process.env.ASSET_PORT??4177);
-// RELAY_ORIGIN: a second site sharing one local relay (the pinned JavaScript
-// reference for JavaScript guests) presents the relay's admitted game origin.
+// RELAY_ORIGIN: a second site sharing one local game server (the pinned
+// JavaScript reference for JavaScript guests) presents its admitted origin.
 const relayHeaders=headers=>process.env.RELAY_ORIGIN&&headers.origin?{...headers,origin:process.env.RELAY_ORIGIN}:headers;
 const server=http.createServer((req,res)=>{
  const dest=req.url.startsWith('/multiplayer/')?relay:assets;

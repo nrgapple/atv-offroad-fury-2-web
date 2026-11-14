@@ -314,8 +314,9 @@ fn main() {
     if verify {
         return verify_content(store);
     }
-    // `--relay` is the game's site and, unless `FURY_SERVER` names another
-    // origin, its multiplayer server (atv_app::server_for).
+    // `--relay` is the game's site. Multiplayer is the game server, or
+    // `FURY_SERVER` when that names an origin, or a local `--relay` itself
+    // (atv_app::server_for).
     let server = atv_app::server_for(&relay, std::env::var("FURY_SERVER").ok().as_deref());
     // `--host` / `--room` ride in a multiplayer room (a direct ride).
     let room = (host || room_code.is_some()).then(|| atv_app::RoomStart {

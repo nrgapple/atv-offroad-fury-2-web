@@ -26,7 +26,7 @@ The runner starts `tools/serve_web.py` on a free host-only port, sets
 `ATV_TEST_URL`, runs the selected tests one at a time, writes each log to
 `work/verification/browser-tests/<test>.log` and prints a per-group summary. It
 exits non-zero if any selected test fails. `--url <site>` targets an existing
-server instead (for example a relay-capable host or the public site), `--bail`
+server instead (for example the local multiplayer proxy or the public site), `--bail`
 stops at the first failure.
 
 A test can still be run directly: `ATV_TEST_URL=http://127.0.0.1:4173 node tools/test_race.mjs`
@@ -39,7 +39,7 @@ against `make serve`.
 | `content-free` | `web/dist` only; served with an **empty** content directory | CI build lane, `make browser-smoke` |
 | `content` | ignored `private/reports/hosted-content` package | `make browser-tests` |
 | `native` | content plus private original-game reports named by `ATV_*_NATIVE` | only when requested |
-| `relay` | content plus a same-origin multiplayer relay (`--url`) | only when requested |
+| `multiplayer` | content plus a local game server at the same origin (`--url`) | only when requested |
 | `manual` | untracked baselines, a second server, an ISO or other tooling | by name, see the manifest reason |
 | `broken` | kept for reference; the manifest records why it fails | by name |
 
@@ -52,9 +52,9 @@ browser tests (about 100 `tools/test_*.mjs`) were removed with it; they run from
 pinned pre-switch build: `python3 tools/js_reference.py prepare`, then
 `python3 tools/js_reference.py test --group content` (its own runner and server).
 Tools that drive the JavaScript game next to the Rust engine (`compare_engine.mjs`, `compare_audio.mjs`,
-and the JavaScript guests in the `test_engine_multiplayer*` relay tests) load it from
+and the JavaScript guests in the `test_engine_multiplayer*` tests) load it from
 `ATV_JS_URL` (`jsBase`/`jsUrl` in `tools/browser/harness.mjs`), which defaults to
-`ATV_TEST_URL`. For relay tests, serve the reference behind its own relay proxy:
+`ATV_TEST_URL`. For multiplayer tests, serve the reference behind its own proxy:
 `PORT=4188 ASSET_PORT=4178 node tools/serve_multiplayer.mjs`.
 
 Native comparisons (`test_fog`, `test_reflections`, `test_vegetation_billboards`,
@@ -65,27 +65,22 @@ comparison was skipped. The `native` group never sets it; it fills unset
 variables from the manifest's default paths under ignored
 `private/reports/map-fidelity/` when those files exist, and otherwise fails.
 
-Relay tests need the game and a multiplayer relay on one origin. Locally:
-`make relay`; `wrangler@4.149.0 dev --config relay/wrangler.jsonc --port 8789 --local
---var GAME_ORIGIN:http://127.0.0.1:4187` (with `~/.cargo/bin` on `PATH`);
-`python3 tools/serve_web.py --port 4177`; `node tools/serve_multiplayer.mjs`; then
-`node tools/run_browser_tests.mjs --group relay --url http://127.0.0.1:4187`
+Multiplayer tests need the game and the game server (fury-server,
+research/GAME_SERVER.md) on one origin. Locally: `make server-run` serves
+fury-server on 8789 with the loopback test origins allowed;
+`python3 tools/serve_web.py --port 4177`; `node tools/serve_multiplayer.mjs`
+(the page on 4187, `/multiplayer/` passed to 8789); then
+`node tools/run_browser_tests.mjs --group multiplayer --url http://127.0.0.1:4187`
 (`ATV_ALLOW_HOST_WIP=1` lets `test_multiplayer_four` accept a host without
-`/deployment.json`; `ATV_MP_REOPEN=0` skips the 100 s room-expiry step).
+`/deployment.json`; `ATV_MP_REOPEN=0` skips the 100 s room-expiry step). A page
+served from a loopback origin uses its own origin for multiplayer; any other
+page uses `https://mp.furyremastered.com` unless `?server=<origin>` names
+another (desktop: `FURY_SERVER`).
 
-The same tests run against the game server (research/GAME_SERVER.md) in place
-of wrangler: `make server-run` serves fury-server on 8789 with the loopback test
-origins allowed, and nothing else changes. Its rooms claim no links or batches,
-so `ATV_GAME_SERVER=fury` tells `test_engine_freeride_relay.mjs` not to expect
-batch tiers.
-
-Two headless Chromium pages on one machine do not open a direct multiplayer
-link by themselves (each hides its local address behind an mDNS name the other
-cannot resolve), so relay tests exercise the relayed path, as desktop builds and
-blocked networks use it. `ATV_LINKS=1` adds the harness's `LINK_ARGS` to every
-launch and runs the same test with its riders linked directly;
-`test_engine_multiplayer_links.mjs` always does (research/MULTIPLAYER.md
-"Direct links").
+fury-server claims rooms without direct links or batches, so every rider's
+poses go through it. `test_engine_multiplayer_links.mjs` (direct WebRTC links)
+is `broken` since the Cloudflare relay, the only server that offered links, was
+retired on 2026-11-14.
 
 `broken` entries record why they currently fail; every one also failed on unmodified
 `main` when the harness was introduced. Fix the test (or the game) and move it back

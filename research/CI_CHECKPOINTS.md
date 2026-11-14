@@ -22,7 +22,7 @@ was removed; see `git log -- research/RELEASE_QUEUE.md` for its history.
   PRs stop after that fast validation. On main, CI downloads the successful
   artifact for the currently deployed commit, proves that every intervening file
   change is documentation/metadata, and replaces only dev-log text and deployment
-  identity. Game JS, CSS, WASM and relay bytes, including their browser cache keys,
+  identity. Game JS, CSS and WASM bytes, including their browser cache keys,
   stay identical. The artifact records `application_commit` and `reused_from`.
   GitHub deploys and verifies this lightweight publication normally, without Rust
   compilation. An unavailable/expired artifact, changed runtime, invalid ancestry
@@ -44,7 +44,7 @@ merge relies on that PR result. After deploying, CI verifies the commit, hashes 
 dev log on `https://furyremastered.com/` (the same Worker serves the workers.dev
 address). The smoke group serves an empty content directory and uses pinned Playwright 1.58.2 Chromium/WebKit, installed by
 `tools/playwright_ci.py` with bounded retries and trusted caches (`CI_TOOL_CACHE.md`). Content, native
-and relay browser groups stay local; see `BROWSER_TESTS.md`.
+and multiplayer browser groups stay local; see `BROWSER_TESTS.md`.
 
 A newer push cancels the superseded `web` build on a PR branch. On `main` the running
 build finishes (GitHub keeps only the newest pending one) and deploys if it advances
@@ -56,7 +56,6 @@ interrupted, and an older build reaching it after a newer deploy is rejected.
 `main` requires the `web` check, so PRs use `gh pr merge --auto` and merge when it
 passes; branches need not be up to date with `main` first. The trusted main build saves the Rust compilation
 and registry cache, keyed by toolchain, lockfiles and commit; PRs only restore it.
-The separately validated `worker-build` executable cache remains exact-key only.
 No private content, credentials, screenshots or references enter either cache.
 
 The production deployment applies pending D1 cloud-save migrations before the
@@ -162,10 +161,10 @@ back to rerunning Actions. When it does publish, it acquires the shared publicat
 lock, temporarily sets the repository variable
 `FURY_DEPLOYMENT_MODE=local`, cancels competing main runs and requires them to be
 terminal, then runs local implementation/security/release checks, source-resource
-verification, browser WASM and Rust relay builds. It refuses dirty/unmerged/stale
+verification and the browser WASM build. It refuses dirty/unmerged/stale
 checkouts, uses the authored file allowlist, and deploys with pinned Wrangler using
 the existing host login. It preserves existing domain bindings and verifies all
-authored bytes and relay identity on both public HTTPS addresses.
+authored bytes on both public HTTPS addresses.
 
 Successful checked artifacts and receipts persist under ignored shared
 `private/reports/local-releases/<sha>/`. `fetch_site_release.py --deployed`, the

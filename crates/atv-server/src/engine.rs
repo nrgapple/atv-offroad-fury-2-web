@@ -1,7 +1,7 @@
 //! One room as a pure, synchronous state machine (research/GAME_SERVER.md).
 //!
-//! The room behavior is the Durable Object relay's (`crates/atv-relay`,
-//! research/MULTIPLAYER.md): slots and rejoin keys, the 30-second hold, host
+//! The room behavior is the retired Cloudflare Durable Object relay's
+//! (research/MULTIPLAYER.md): slots and rejoin keys, the 30-second hold, host
 //! promotion, the lobby, host-only games and CPUs, race progress, claims,
 //! pings with server time, rate limits and expiry. Poses are new: each is
 //! decoded once and kept as encoded bytes, builds that said
