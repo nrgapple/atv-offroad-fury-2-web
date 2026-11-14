@@ -12,6 +12,17 @@ pub const OVERLAY_GROUPS: [&str; 6] = ["timing", "lap", "score", "info", "speed"
 /// Settings_Game (PAGE15) "Sound Configuration" values, in the page's order.
 pub const SOUND_CONFIGURATIONS: [&str; 4] = ["stereo", "swapped", "dolby", "mono"];
 
+/// The saved Free Ride CPU riders count ("0"-"3").
+pub const FREE_RIDE_CPUS_KEY: &str = "atv-free-ride-cpus";
+
+/// Game Settings → Free Ride CPU riders as saved (0, off, unless chosen).
+pub fn free_ride_cpus(settings: &Settings) -> u8 {
+    settings
+        .get(FREE_RIDE_CPUS_KEY)
+        .and_then(|v| v.parse::<u8>().ok())
+        .map_or(0, |n| n.min(atv_core::game_cpu::MAX_CPUS))
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Preferences {
     pub graphics: String,
@@ -24,6 +35,9 @@ pub struct Preferences {
     pub chase_assist: bool,
     pub flips: bool,
     pub realistic_train: bool,
+    /// Game Settings → Free Ride CPU riders (authored; 0 is off, the original):
+    /// CPU riders added to a single-player or split-screen free ride.
+    pub free_ride_cpus: u8,
     pub diagnostics: String,
     pub sound_mode: String,
     pub sfx_volume: f32,
@@ -104,6 +118,7 @@ impl Preferences {
             chase_assist: get("atv-chase-camera").as_deref() == Some("assisted"),
             flips: get("atv-flips").as_deref() == Some("unleashed"),
             realistic_train: get("atv-train-riding").as_deref() == Some("realistic"),
+            free_ride_cpus: free_ride_cpus(settings),
             diagnostics: one_of(get("atv.diagnostics.v1"), &DIAGNOSTICS, "off"),
             sound_mode: match audio["mode"].as_str() {
                 Some("original") => "original".into(),
@@ -288,6 +303,12 @@ impl Preferences {
                     "original"
                 };
                 settings.set("atv-train-riding", v);
+            }
+            "free-ride-cpus" => {
+                let n = i32::from(atv_core::game_cpu::MAX_CPUS) + 1;
+                self.free_ride_cpus =
+                    (i32::from(self.free_ride_cpus) + direction.signum()).rem_euclid(n) as u8;
+                settings.set(FREE_RIDE_CPUS_KEY, &self.free_ride_cpus.to_string());
             }
             "measurement" => {
                 self.metric = !self.metric;

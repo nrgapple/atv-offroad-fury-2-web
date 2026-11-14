@@ -162,6 +162,8 @@ struct Ready {
     split: Vec<split::Second>,
     /// Authored CPU riders in a local mini-game (game_cpu.rs).
     cpus: Vec<game_cpu::Cpu>,
+    /// A free ride's CPU riders roam this map (game_cpu.rs).
+    roam: Option<Rc<atv_core::roam_cpu::Map>>,
 }
 
 struct PendingSound {
@@ -1567,6 +1569,16 @@ async fn prepare_inner(
             );
         }
     }
+    // A free ride's CPU riders roam the venue.
+    let roam = match cpus.first() {
+        Some(cpu) if cpu_request.roam => {
+            progress(&gpu, "Reading the venue for CPU riders…");
+            Some(Rc::new(
+                game_cpu::roam_map(&content, &venue, &cpu.riding.ride).await,
+            ))
+        }
+        _ => None,
+    };
     let hud_assets = if riding.is_some() {
         // The radar's tinted racers take the rider's colour assistance.
         atv_ui::hud::palette::set(
@@ -1604,6 +1616,7 @@ async fn prepare_inner(
         net: None,
         split,
         cpus,
+        roam,
     })
 }
 
@@ -1981,6 +1994,7 @@ impl App {
                     .chain(ready.split.iter().map(|s| &s.riding.ride))
                     .chain(ready.cpus.iter().map(|c| &c.riding.ride)),
                 riding.ride.terrain(),
+                ready.roam.as_ref(),
             );
             let humans: Vec<_> = std::iter::once(&riding.ride)
                 .chain(ready.split.iter().map(|s| &s.riding.ride))
@@ -3620,6 +3634,15 @@ impl App {
             });
             state["ride"]["trainingSpeech"] = training_speech.into();
             state["ride"]["cpus"] = ready.cpus.iter().map(game_cpu::Cpu::state).collect();
+            state["ride"]["roam"] = ready.roam.as_ref().map_or(serde_json::Value::Null, |m| {
+                serde_json::json!({
+                    "points": m.points.len(),
+                    "line": m.line.len(),
+                    "closed": m.closed,
+                    "min": m.min,
+                    "max": m.max,
+                })
+            });
             state["ride"]["practice"] = practice.into();
             state["ride"]["duel"] = duel.into();
             state["ride"]["lapAttack"] = lap_attack.into();
@@ -7639,7 +7662,14 @@ impl App {
                 ..defaults
             }
         });
+        // A Freestyle link takes Game Settings' Free Ride CPU riders.
+        let cpus = if race {
+            game_cpu::Request::default()
+        } else {
+            game_cpu::Request::free_ride(&f.settings)
+        };
         drop(f);
+        self.cpu_request = cpus;
         // A race starts its course (an Enduro or Short Track id from `course=`).
         let map = if race { setup.race.course } else { setup.map };
         // `?split=` on the link (the context-loss resume link): this ride
@@ -7734,21 +7764,23 @@ impl App {
                 })
             });
             self.split_request = split;
-            // Games Prep's CPU Riders (local games only).
+            // Games Prep's CPU Riders (local games only), or Game Settings' Free
+            // Ride CPU riders for a free ride.
             self.cpu_request = self
                 .front
                 .as_ref()
-                .filter(|_| {
-                    matches!(
-                        event,
-                        Event::Game { .. } | Event::Hockey { .. } | Event::TagHost { .. }
-                    )
-                })
-                .map(|f| {
+                .and_then(|f| {
                     let f = f.borrow();
-                    game_cpu::Request {
-                        count: f.state.game_cpus(),
-                        difficulty: f.state.race_difficulty(),
+                    match event {
+                        Event::Game { .. } | Event::Hockey { .. } | Event::TagHost { .. } => {
+                            Some(game_cpu::Request {
+                                count: f.state.game_cpus(),
+                                difficulty: f.state.race_difficulty(),
+                                roam: false,
+                            })
+                        }
+                        Event::Ride { .. } => Some(game_cpu::Request::free_ride(&f.settings)),
+                        _ => None,
                     }
                 })
                 .unwrap_or_default();
@@ -8593,8 +8625,23 @@ impl App {
                 .filter(|r| r.course == atv_game::launch::RaceVariant::UserEnduro)
                 .and(self.user_course.clone()),
             editor: race.is_none() && self.editor.is_some(),
-            // Only a local game takes CPU riders (never a room).
-            cpus: if self.split_tag.is_some()
+            // Only a local game or a plain free ride takes CPU riders
+            // (never a room, a race, an objective, Training or the editor).
+            cpus: if self.cpu_request.roam {
+                if race.is_none()
+                    && self.game.is_none()
+                    && self.hockey.is_none()
+                    && self.tag.is_none()
+                    && self.split_tag.is_none()
+                    && self.objective.is_none()
+                    && self.training.is_none()
+                    && self.editor.is_none()
+                {
+                    self.cpu_request
+                } else {
+                    game_cpu::Request::default()
+                }
+            } else if self.split_tag.is_some()
                 || self.hockey.is_some()
                 || self.game.as_ref().is_some_and(|g| g.room.is_none())
             {
