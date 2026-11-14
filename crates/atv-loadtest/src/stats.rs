@@ -39,7 +39,7 @@ pub struct Stats {
 /// Counter values at one moment.
 pub struct Mark {
     at: Instant,
-    values: [u64; 8],
+    values: [u64; 9],
 }
 
 impl Stats {
@@ -55,6 +55,7 @@ impl Stats {
                 &self.frames_in,
                 &self.batches_in,
                 &self.disconnects,
+                &self.live,
             ]
             .map(|c| c.load(Ordering::Relaxed)),
         }
@@ -92,7 +93,8 @@ impl Stats {
         let seconds = last.at.duration_since(first.at).as_secs_f64().max(1e-3);
         let delta = |i: usize| last.values[i].saturating_sub(first.values[i]);
         let rate = |i: usize| round(delta(i) as f64 / seconds);
-        let live = self.live.load(Ordering::Relaxed);
+        // Riders connected when the window ended (they leave once it has).
+        let live = last.values[8];
         let mut rtts = self.rtts.lock().map(|r| r.clone()).unwrap_or_default();
         rtts.sort_unstable();
         json!({
