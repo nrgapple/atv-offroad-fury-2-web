@@ -17,6 +17,8 @@ use serde_json::{Value, json};
 pub const PASS_KEY_KEY: &str = "fury-pass-key";
 /// The sync record ([`Record`]).
 pub const CLOUD_KEY: &str = "fury-cloud";
+/// The online rider secret (32 hex digits; research/ONLINE_IDENTITY.md).
+pub const RIDER_KEY: &str = "fury-rider-secret";
 pub const KEY_HEADER: &str = "X-Fury-Pass-Key";
 pub const SHARE_HEADER: &str = "X-Fury-Share-Code";
 /// Save History: which kept revision `GET /api/save/revisions` returns.
@@ -74,16 +76,82 @@ pub fn store_record(settings: &mut Settings, record: &Record) -> bool {
     serde_json::to_string(record).is_ok_and(|t| settings.set(CLOUD_KEY, &t))
 }
 
-/// The progress saved on this device.
+/// The progress saved on this device, with the online rider wrapped for
+/// its Pass Key.
 pub fn local_save(settings: &Settings) -> Save {
-    Save::new(load_book(settings), load_hall_of_fame(settings))
+    let mut save = Save::new(load_book(settings), load_hall_of_fame(settings));
+    if let (Some(secret), Some(key)) = (rider_secret(settings), pass_key(settings)) {
+        save.rider = Some(wrap_rider(&secret, &key));
+    }
+    save
 }
 
 /// Replaces the progress saved on this device; false when it lasts only for
 /// this session.
 pub fn write_save(settings: &mut Settings, save: &Save) -> bool {
+    adopt_rider(settings, save);
     let book = save_book(settings, &save.profiles);
     save_hall_of_fame(settings, &save.hall_of_fame) && book
+}
+
+/// This device's online rider secret, if it has one.
+pub fn rider_secret(settings: &Settings) -> Option<String> {
+    settings.get(RIDER_KEY).filter(|s| valid_secret(s))
+}
+
+fn valid_secret(secret: &str) -> bool {
+    secret.len() == 32
+        && secret
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+}
+
+fn digest(text: &str) -> [u8; 32] {
+    use sha2::Digest;
+    sha2::Sha256::digest(text.as_bytes()).into()
+}
+
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// `r1:` + the secret's 16 bytes XOR a pad drawn from the Pass Key, + a
+/// 4-byte check. Holding the save without its key (a share code's copy)
+/// reveals nothing about the rider.
+pub fn wrap_rider(secret: &str, key: &str) -> String {
+    let pad = digest(&format!("fury-rider-wrap:{key}"));
+    let bytes: Vec<u8> = (0..16)
+        .map(|i| u8::from_str_radix(&secret[i * 2..i * 2 + 2], 16).unwrap_or(0) ^ pad[i])
+        .collect();
+    let check = digest(&format!("fury-rider-check:{key}:{secret}"));
+    format!("r1:{}{}", hex(&bytes), hex(&check[..4]))
+}
+
+/// The rider secret in `wrapped`, when it was wrapped with `key`.
+pub fn unwrap_rider(wrapped: &str, key: &str) -> Option<String> {
+    let body = wrapped.strip_prefix("r1:").filter(|b| b.len() == 40)?;
+    let pad = digest(&format!("fury-rider-wrap:{key}"));
+    let mut secret = String::with_capacity(32);
+    for i in 0..16 {
+        let byte = u8::from_str_radix(body.get(i * 2..i * 2 + 2)?, 16).ok()?;
+        secret.push_str(&format!("{:02x}", byte ^ pad[i]));
+    }
+    let check = digest(&format!("fury-rider-check:{key}:{secret}"));
+    (body[32..] == hex(&check[..4])).then_some(secret)
+}
+
+/// Takes on the rider a save carries for this device's Pass Key, so every
+/// device on the key is the same online rider. True when it changed.
+pub fn adopt_rider(settings: &mut Settings, save: &Save) -> bool {
+    let Some(secret) = save
+        .rider
+        .as_deref()
+        .zip(pass_key(settings))
+        .and_then(|(wrapped, key)| unwrap_rider(wrapped, &key))
+    else {
+        return false;
+    };
+    rider_secret(settings).as_deref() != Some(secret.as_str()) && settings.set(RIDER_KEY, &secret)
 }
 
 /// A save as JSON for a file (Export Save).
@@ -243,6 +311,7 @@ pub fn apply(settings: &mut Settings, fetched: &Fetched, choice: Choice) -> Resu
             .filter(|k| k != key)
             .unwrap_or(old.previous_key);
         settings.set(PASS_KEY_KEY, key);
+        adopt_rider(settings, &save);
         store_record(
             settings,
             &Record {
@@ -1243,6 +1312,52 @@ mod tests {
                 "No save was found for that Pass Key.".into()
             ))
         );
+    }
+
+    #[test]
+    fn the_rider_wraps_with_the_key_only() {
+        let secret = "0123456789abcdef0123456789abcdef";
+        let key = cloud_save::pass_key([1; 10]);
+        let wrapped = wrap_rider(secret, &key);
+        assert!(!wrapped.contains(secret));
+        assert_eq!(unwrap_rider(&wrapped, &key).as_deref(), Some(secret));
+        assert_eq!(unwrap_rider(&wrapped, &cloud_save::pass_key([2; 10])), None);
+        assert_eq!(unwrap_rider("r1:00", &key), None);
+        assert_eq!(unwrap_rider("", &key), None);
+    }
+
+    #[test]
+    fn the_online_rider_follows_the_pass_key() {
+        let mut server = Server::default();
+        let mut a = Device::new(1);
+        let secret = "00112233445566778899aabbccddeeff";
+        a.settings.set(RIDER_KEY, secret);
+        a.earn(10);
+        a.settle(&mut server);
+        let key = pass_key(&a.settings).unwrap();
+        // The server copy carries the wrapped secret, never the secret.
+        let online = server.saves[&key].1.to_string();
+        assert!(
+            online.contains("r1:") && !online.contains(secret),
+            "{online}"
+        );
+        // Another device with its own rider enters the key: it becomes A's.
+        let mut b = Device::new(2);
+        b.settings
+            .set(RIDER_KEY, "ffeeddccbbaa99887766554433221100");
+        b.sync.fetch(&key);
+        b.settle(&mut server);
+        let Some(Notice::Fetched(fetched)) = b.notices.pop() else {
+            panic!("no fetched save");
+        };
+        apply(&mut b.settings, &fetched, Choice::Merge).unwrap();
+        assert_eq!(rider_secret(&b.settings).as_deref(), Some(secret));
+        // A share code's copy gives the loader nothing.
+        let mut c = Device::new(3);
+        let mut shared = fetched.clone();
+        shared.source = Source::Share("SHARE-0000-0000-0000-0000".into());
+        apply(&mut c.settings, &shared, Choice::ShareAsNew).unwrap();
+        assert_eq!(rider_secret(&c.settings), None);
     }
 
     #[test]

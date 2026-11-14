@@ -242,7 +242,15 @@ async fn claim(start: &RoomStart) -> Result<(String, Option<String>, Serves), St
         // POST /multiplayer/freeride reserves a slot in the first shared
         // room with space (web/multiplayer.js `freeride`).
         let url = format!("{server}/multiplayer/freeride");
-        let (status, text) = net::post(&url, &origin, "").await?;
+        // A friend's Join asks for their shared room first.
+        let body = start
+            .code
+            .as_deref()
+            .filter(|_| shared)
+            .map_or(String::new(), |code| {
+                serde_json::json!({ "room": code }).to_string()
+            });
+        let (status, text) = net::post(&url, &origin, &body).await?;
         match status {
             200 => {}
             429 => {
@@ -373,7 +381,7 @@ impl Net {
     ) -> Result<(Net, String), String> {
         let (code, key, serves) = claim(start).await?;
         let socket = net::Socket::connect(
-            &net::room_url(&start.server, &code, key.as_deref()),
+            &crate::online::with_rider(net::room_url(&start.server, &code, key.as_deref())),
             &net::origin(&start.site),
         );
         let mut net = Net {
@@ -525,7 +533,7 @@ impl Net {
                 self.mesh.clear();
                 self.greeted = false;
                 self.socket = net::Socket::connect(
-                    &net::room_url(&self.server, &code, Some(&key)),
+                    &crate::online::with_rider(net::room_url(&self.server, &code, Some(&key))),
                     &net::origin(&self.site),
                 );
                 self.ready_sent = false;

@@ -2162,8 +2162,22 @@ impl Front {
             "pending": self.state.passkey.pending.is_some(),
             "qr": self.state.passkey_qr(), "entry": self.state.passkey.entry,
         });
+        let online = &self.state.online;
+        let online = serde_json::json!({
+            "reach": format!("{:?}", online.reach),
+            "code": online.me.as_ref().map(|m| m.code.clone()),
+            "hidden": online.me.as_ref().map(|m| m.hidden),
+            "level": online.me.as_ref().map(|m| m.level),
+            "friends": online.lists.as_ref().map(|l| l.friends.iter().map(|f| serde_json::json!({
+                "name": f.name, "online": f.online,
+                "room": f.room.as_ref().and_then(|r| r.code.clone()),
+            })).collect::<Vec<_>>()),
+            "requests": online.lists.as_ref().map(|l| l.requests.len()),
+            "recent": online.lists.as_ref().map(|l| l.recent.len()),
+        });
         let mut out = serde_json::json!({
             "page": self.state.page,
+            "online": online,
             // The page (or menu panel) slide: [opacity, translateX px].
             "motion": self.motion.map(|m| [m.opacity, m.dx]),
             "selection": self.state.selection,

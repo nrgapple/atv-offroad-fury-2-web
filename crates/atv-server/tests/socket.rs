@@ -504,3 +504,176 @@ async fn uncounted_addresses_ride_but_stay_out_of_the_public_counts() {
     let _ = tokio::time::timeout(Duration::from_secs(10), server.done).await;
     let _ = std::fs::remove_dir_all(&state);
 }
+
+fn json_of(body: &str) -> serde_json::Value {
+    serde_json::from_str(body).unwrap_or_else(|e| panic!("{e}: {body}"))
+}
+
+/// Registers a rider: its token and friend code.
+async fn register(address: SocketAddr, secret: &str, name: &str) -> (String, String) {
+    let body = serde_json::json!({"secret": secret, "name": name}).to_string();
+    let (status, text) = http(
+        address,
+        "POST",
+        "/multiplayer/players/register",
+        Some(ORIGIN),
+        &body,
+    )
+    .await;
+    assert_eq!(status, 200, "{text}");
+    let value = json_of(&text);
+    (
+        value["token"].as_str().unwrap().to_string(),
+        value["code"].as_str().unwrap().to_string(),
+    )
+}
+
+async fn players_post(
+    address: SocketAddr,
+    path: &str,
+    body: serde_json::Value,
+) -> serde_json::Value {
+    let (status, text) = http(address, "POST", path, Some(ORIGIN), &body.to_string()).await;
+    assert_eq!(status, 200, "{path}: {text}");
+    json_of(&text)
+}
+
+#[tokio::test]
+async fn friends_see_presence_join_a_shard_and_keep_it_across_a_restart() {
+    let state = PathBuf::from(env!("CARGO_TARGET_TMPDIR"))
+        .join(format!("fury-players-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&state);
+    let server = start(&state).await;
+    let address = server.address;
+    let (ann, _) = register(address, &"a1".repeat(16), "Ann").await;
+    let (bo, bo_code) = register(address, &"b2".repeat(16), "Bo").await;
+    // Tokens are required and checked.
+    let (status, _) = http(
+        address,
+        "POST",
+        "/multiplayer/friends",
+        Some(ORIGIN),
+        r#"{"token":"r1.00.1.00"}"#,
+    )
+    .await;
+    assert_eq!(status, 401);
+    let sent = players_post(
+        address,
+        "/multiplayer/friends/add",
+        serde_json::json!({"token": ann, "code": bo_code}),
+    )
+    .await;
+    assert_eq!(sent["state"], "sent");
+    let lists = players_post(
+        address,
+        "/multiplayer/friends",
+        serde_json::json!({"token": bo}),
+    )
+    .await;
+    let id = lists["requests"][0]["id"].as_str().unwrap().to_string();
+    let accepted = players_post(
+        address,
+        "/multiplayer/friends/accept",
+        serde_json::json!({"token": bo, "id": id}),
+    )
+    .await;
+    assert_eq!(accepted["state"], "friends");
+
+    // Bo rides Free Ride shard 2 with the rider token on the socket.
+    let (status, body) = http(
+        address,
+        "POST",
+        "/multiplayer/freeride",
+        Some(ORIGIN),
+        r#"{"room":"FREERD02"}"#,
+    )
+    .await;
+    assert_eq!(status, 200);
+    let (code, key) = claim_of(&body);
+    assert_eq!(code, "FREERD02");
+    assert_eq!(json_of(&body)["identity"], true);
+    let mut b = connect(address, &code, &format!("{key}&rider={bo}")).await;
+    join(&mut b, &code, "Bo").await;
+    let lists = players_post(
+        address,
+        "/multiplayer/friends",
+        serde_json::json!({"token": ann}),
+    )
+    .await;
+    let row = &lists["friends"][0];
+    assert_eq!(row["name"], "Bo");
+    assert_eq!(row["online"], true);
+    assert_eq!(row["room"]["kind"], "freeride");
+    assert_eq!(row["room"]["code"], "FREERD02");
+    // Ann joins that shard and meets Bo as a recent rider.
+    let (_, body) = http(
+        address,
+        "POST",
+        "/multiplayer/freeride",
+        Some(ORIGIN),
+        r#"{"room":"FREERD02"}"#,
+    )
+    .await;
+    let (code_a, key_a) = claim_of(&body);
+    assert_eq!(code_a, "FREERD02");
+    let mut a = connect(address, &code_a, &format!("{key_a}&rider={ann}")).await;
+    join(&mut a, &code_a, "Ann").await;
+    let me = players_post(
+        address,
+        "/multiplayer/players/me",
+        serde_json::json!({"token": ann}),
+    )
+    .await;
+    assert_eq!(me["friends"], 1);
+    assert_eq!(me["level"], 1);
+    assert_eq!(me["league"]["tier"], "bronze");
+    let lists = players_post(
+        address,
+        "/multiplayer/friends",
+        serde_json::json!({"token": ann}),
+    )
+    .await;
+    assert_eq!(lists["recent"][0]["state"], "friend");
+    // Appear offline.
+    players_post(
+        address,
+        "/multiplayer/players/settings",
+        serde_json::json!({"token": bo, "hidden": true}),
+    )
+    .await;
+    let lists = players_post(
+        address,
+        "/multiplayer/friends",
+        serde_json::json!({"token": ann}),
+    )
+    .await;
+    assert_eq!(lists["friends"][0]["online"], false);
+    assert!(lists["friends"][0]["room"].is_null());
+    // The weekly board answers without a token too.
+    let (status, text) = http(address, "POST", "/multiplayer/league", Some(ORIGIN), "").await;
+    assert_eq!(status, 200, "{text}");
+    assert_eq!(json_of(&text)["riders"], 0);
+
+    // A restart keeps riders, friends and the signing key: tokens still work.
+    server.stop.send(true).unwrap();
+    for socket in [&mut a, &mut b] {
+        let _ = close_frame(socket).await;
+    }
+    tokio::time::timeout(Duration::from_secs(10), server.done)
+        .await
+        .expect("shutdown within 10 s")
+        .unwrap()
+        .unwrap();
+    assert!(state.join("players.json").exists() && state.join("players.key").exists());
+    let server = start(&state).await;
+    let lists = players_post(
+        server.address,
+        "/multiplayer/friends",
+        serde_json::json!({"token": ann}),
+    )
+    .await;
+    assert_eq!(lists["friends"][0]["name"], "Bo");
+    server.stop.send(true).unwrap();
+    let _ = tokio::time::timeout(Duration::from_secs(10), server.done).await;
+    let _ = std::fs::remove_dir_all(&state);
+}

@@ -1119,7 +1119,8 @@ fn panel(m: &Metrics, s: &Screen, loading: bool) -> El {
         }
         "loading" => panel = panel.child(loading_info(m, s)),
         page if controller::profile_pages::DETAIL_PAGES.contains(&page)
-            || controller::passkey_page::PAGES.contains(&page) =>
+            || controller::passkey_page::PAGES.contains(&page)
+            || controller::online_page::PAGES.contains(&page) =>
         {
             panel = panel.child(details(m, s));
             if let Some(link) = &s.qr {
@@ -1730,11 +1731,16 @@ fn left(m: &Metrics, s: &Screen) -> El {
                 | "hall-of-fame"
                 | "daily"
         ) || controller::store_page(page)
-            || controller::passkey_page::PAGES.contains(&page) =>
+            || controller::passkey_page::PAGES.contains(&page)
+            || controller::online_page::PAGES.contains(&page) =>
         {
             if matches!(
                 page,
-                "profile-name" | "store-cheats" | "passkey-entry" | "waypoint-course"
+                "profile-name"
+                    | "store-cheats"
+                    | "passkey-entry"
+                    | "friend-add"
+                    | "waypoint-course"
             ) {
                 left = left.child(form(m, s));
             }

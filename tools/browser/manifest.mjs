@@ -98,6 +98,11 @@ export const TESTS = {
   'test_engine_garage_load.mjs': { exclusive: true, group: 'content' },
   'test_engine_context_loss.mjs': { group: 'content' },
   'test_engine_menu_music.mjs': { group: 'content' },
+  'test_engine_online_friends.mjs': {
+    group: 'multiplayer',
+    timeout: 600,
+    reason: 'needs a local game server at the same origin (rider registration, friends, presence and Join into a Free Ride room); run with --url'
+  },
   'test_engine_freeride_full.mjs': {
     group: 'manual',
     reason: 'load measurement: a full Free Ride room of synthetic riders on a local game server (never production)'
