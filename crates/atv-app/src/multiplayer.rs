@@ -1538,6 +1538,7 @@ impl Net {
                 "bubbles": self.chat.view.bubbles.len(), "feed": self.chat.view.feed.len(),
                 "muted": self.chat.muted.iter().collect::<Vec<_>>(),
                 "muteAll": self.chat.mute_all, "blocked": self.chat.blocked.len(),
+                "ids": self.chat.ids.keys().collect::<Vec<_>>(),
             },
             "serves": {
                 "links": self.serves.links, "batches": self.serves.batches,
