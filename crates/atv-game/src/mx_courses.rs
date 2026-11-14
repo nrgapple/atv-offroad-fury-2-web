@@ -479,7 +479,8 @@ mod tests {
         let mut ids = std::collections::HashSet::new();
         for c in COURSES {
             assert!(ids.insert(c.id));
-            assert!(!available(c.id, true));
+            assert!(!available(c.id, false));
+            assert_eq!(available(c.id, true), RUNTIME_SUPPORTED);
             assert_eq!(c.scene_stem, c.mode_stem);
             assert_eq!(
                 c.archive,

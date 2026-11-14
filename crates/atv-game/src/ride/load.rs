@@ -280,9 +280,16 @@ pub async fn load_with(
     mut progress: impl FnMut(&str),
 ) -> Result<Ride> {
     let environment = venue.environment.as_str();
+    let mx = crate::launch::mx_courses::get(environment);
+    let source_stem = mx.map_or(environment, |course| course.scene_stem);
     let course = match race {
         Some(_) => crate::launch::race_resource(environment, venue.race)?,
-        None => course_resource(environment, false)?,
+        // A Venue already passed the launch gate (or host-only candidate
+        // validation); use its source archive without relabeling its ID.
+        None => match crate::launch::mx_course_resource(environment) {
+            Some(course) => course,
+            None => course_resource(environment, false)?,
+        },
     };
     let models = player_models::selection(quad, rider)?;
     let course_bytes = course_archive(content, &course, environment).await?;
@@ -310,7 +317,7 @@ pub async fn load_with(
     };
 
     // Terrain materials: the course's <venue>.toy, else the Endless archive's.
-    let toy = match basename_index(&archive, &format!("{environment}.toy")) {
+    let toy = match basename_index(&archive, &format!("{source_stem}.toy")) {
         Some(index) => archive.extract(index)?,
         None => {
             let path = course
@@ -320,15 +327,23 @@ pub async fn load_with(
             let bytes = required(content, path, "Original terrain materials are missing.").await?;
             member(
                 &Resource::parse(&bytes)?,
-                &format!("{environment}.toy"),
+                &format!("{source_stem}.toy"),
                 "terrain materials",
             )?
         }
     };
 
     progress("Reading original scene collisions…");
-    let terrain =
-        terrain::decode_tr2(&member(&archive, &format!("{environment}.tr2"), "terrain")?)?;
+    let terrain = if mx.is_some() {
+        terrain::decode_pln(&member(
+            &archive,
+            &format!("{source_stem}.ps2.trn"),
+            "terrain",
+        )?)?
+        .terrain
+    } else {
+        terrain::decode_tr2(&member(&archive, &format!("{source_stem}.tr2"), "terrain")?)?
+    };
     // Long decode steps yield to the host's loop between them.
     crate::yield_frame().await;
     let scene = &venue.scene;
@@ -358,7 +373,7 @@ pub async fn load_with(
         }
     };
     crate::yield_frame().await;
-    let ecosystem = basename_index(&archive, &format!("{environment}.esb"))
+    let ecosystem = basename_index(&archive, &format!("{source_stem}.esb"))
         .map(|index| archive.extract(index).and_then(|b| ecosystem::decode(&b)))
         .transpose()?;
     crate::yield_frame().await;
@@ -367,15 +382,46 @@ pub async fn load_with(
     let mut obstacles = Vec::new();
     let mut mud_obstacles = Vec::new();
     let mud_prefix = format!("{}mud", environment.to_ascii_lowercase());
-    for placement in &scene.collision_models {
+    let collection_targets = if mx.is_some() {
+        atv_core::mx_collections::targets(&toy, &scene.models)?
+    } else {
+        Vec::new()
+    };
+    let active_collection = |name: &str| {
+        collection_targets.iter().any(|target| {
+            target
+                .name
+                .strip_suffix('f')
+                .is_some_and(|base| base.eq_ignore_ascii_case(name))
+        })
+    };
+    for placement in scene
+        .collision_models
+        .iter()
+        .filter(|placement| !active_collection(&placement.name))
+        .chain(collection_targets.iter())
+    {
         let name = placement.name.to_ascii_lowercase();
-        let Some(index) = member_path(&archive, &format!("geometry/{name}.col")) else {
+        let path = if mx.is_some() {
+            format!("col/{name}.col")
+        } else {
+            format!("geometry/{name}.col")
+        };
+        let Some(index) = member_path(&archive, &path) else {
+            if mx.is_some() {
+                eprintln!("MX source collider missing: {path}");
+            }
             continue;
         };
         let mesh = match meshes.iter().find(|(n, _)| *n == name) {
             Some((_, mesh)) => mesh.clone(),
             None => {
-                let mesh = collision::decode_col(&archive.extract(index)?)?;
+                let bytes = archive.extract(index)?;
+                let mesh = if mx.is_some() {
+                    collision::decode_mx_col(&bytes)?.mesh
+                } else {
+                    collision::decode_col(&bytes)?
+                };
                 if mesh.transform != IDENTITY_COL {
                     return Err("unsupported static collision header transform".into());
                 }
@@ -392,7 +438,17 @@ pub async fn load_with(
         });
     }
     crate::yield_frame().await;
-    let camera_presets = member(&archive, "followcampresets.pb", "camera presets")?;
+    let adapter_bytes = if mx.is_some() {
+        Some(required(content, "/MX/ADAPTER.RES", "MX driving adapter is missing.").await?)
+    } else {
+        None
+    };
+    let adapter = adapter_bytes.as_deref().map(Resource::parse).transpose()?;
+    let camera_presets = member(
+        adapter.as_ref().unwrap_or(&archive),
+        "followcampresets.pb",
+        "camera presets",
+    )?;
     let presets = camera::presets(&camera_presets, 0)?;
     let follow = camera::FollowCamera::new(presets, super::CAMERA_SPEED_REFERENCE)?;
 
@@ -450,8 +506,45 @@ pub async fn load_with(
     let origin = atv_core::spawn::start_origin(&terrain, position, yaw, race.is_some(), None)?;
     let start = (origin.map(|v| v as f32), yaw as f32);
 
+    let surface_source = if mx.is_some() {
+        materials::mx_surface_source(&toy)?
+    } else {
+        materials::SurfaceSource::Atv2
+    };
+    let mx_materials = adapter
+        .as_ref()
+        .map(|adapter| -> Result<_> {
+            let table = |name| -> Result<_> {
+                materials::terrain_materials(&member(adapter, name, "MX ATV surface adapter")?)
+            };
+            let dirt = table("env02.toy")?;
+            let sand = table("nat05.toy")?;
+            let ice = table("env01.toy")?;
+            Ok(materials::AtvAdapterMaterials {
+                dirt: dirt[0],
+                pavement: materials::TerrainMaterial {
+                    grip: 1.,
+                    drag: 0.,
+                    drive: 1.,
+                    powerslide: 1.,
+                    braking: 1.,
+                },
+                grass: dirt[3],
+                sand: sand[6],
+                ice: ice[2],
+                shallow_mud: dirt[1],
+                deep_mud: dirt[5],
+            }
+            .mx_zones(surface_source))
+        })
+        .transpose()?;
     let simulation = Simulation {
-        materials: materials::terrain_materials(&toy)?,
+        materials: match mx_materials {
+            Some(table) => std::array::from_fn(|i| table[i]),
+            None => materials::terrain_materials(&toy)?,
+        },
+        mx_materials,
+        surface_source,
         terrain,
         obstacles,
         mud_obstacles,

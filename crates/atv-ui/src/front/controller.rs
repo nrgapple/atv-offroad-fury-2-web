@@ -1968,13 +1968,19 @@ impl Frontend {
         self.refresh(view);
     }
 
+    fn visible_course(&self, id: &str) -> bool {
+        if !id.starts_with("mx_") {
+            return true;
+        }
+        atv_game::launch::mx_courses::available(id, true)
+            && !self.hosting
+            && self.room != Some("tracks")
+    }
+
     /// Visible course order under the event filter.
     pub fn order(&self) -> Vec<usize> {
         (0..self.tracks.len())
-            .filter(|&i| {
-                !self.tracks[i].id.starts_with("mx_")
-                    || atv_game::launch::mx_courses::available(&self.tracks[i].id, false)
-            })
+            .filter(|&i| self.visible_course(&self.tracks[i].id))
             .filter(|&i| self.filter == "all" || course_group(&self.tracks[i].id) == self.filter)
             .collect()
     }
@@ -1985,11 +1991,14 @@ impl Frontend {
             .iter()
             .filter_map(|(key, label)| {
                 let count = if *key == "all" {
-                    self.tracks.len()
+                    self.tracks
+                        .iter()
+                        .filter(|t| self.visible_course(&t.id))
+                        .count()
                 } else {
                     self.tracks
                         .iter()
-                        .filter(|t| course_group(&t.id) == *key)
+                        .filter(|t| self.visible_course(&t.id) && course_group(&t.id) == *key)
                         .count()
                 };
                 (count > 0).then(|| (key.to_string(), label.to_string(), count))
@@ -2110,6 +2119,10 @@ impl Frontend {
 
     fn ride(&mut self, settings: &mut Settings) -> Option<Event> {
         let track = self.tracks.get(self.track)?.clone();
+        if !self.visible_course(&track.id) {
+            self.notice = Some("Choose an available course for this mode.".into());
+            return None;
+        }
         self.save(settings);
         if self.room == Some("tracks") {
             // The host's Select Track over a room: move everyone there.

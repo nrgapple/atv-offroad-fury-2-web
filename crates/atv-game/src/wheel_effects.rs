@@ -139,6 +139,12 @@ fn named(archive: &Resource, name: &str) -> Result<Vec<u8>> {
 /// loadWheelEffects + op 74 for the player's `quad` on a loaded venue.
 /// None when the course has no Particles.prt.
 pub async fn load(content: &Content, venue: &Venue, quad: u16) -> Result<Option<WheelEffects>> {
+    // MX atlases use named groups and sixteen surface profiles, unlike the
+    // ATV2 emitter's fixed eight-zone table. Their ATV emitter adaptation
+    // remains separate; never interpret the MX group order as ATV2 effects.
+    if crate::launch::mx_courses::get(&venue.environment).is_some() {
+        return Ok(None);
+    }
     let course = crate::launch::course_resource(&venue.environment, false)?;
     let course_bytes = content.file(&course.archive).await?;
     let archive = Resource::parse(&course_bytes)?;

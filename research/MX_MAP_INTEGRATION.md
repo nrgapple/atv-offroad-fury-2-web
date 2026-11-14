@@ -79,3 +79,61 @@ of ATV2 per-map zone numbers. Preserve original zone IDs for effects.
 
 Original MX terrain LOD and weather equivalence remain unverified. Any authored
 replacement or omitted behavior must be named in the release evidence.
+
+## Runtime integration checkpoint (not yet accepted)
+
+The shared venue and ride loaders now select the source stem independently of
+its `mx_` menu ID. PLN geometry/contact, indexed terrain layers, SCN spawn,
+COL v2, CUB sky baking and PST/ATM textures adapt into the existing interfaces.
+No separate renderer, per-instance mesh copy, or multiplayer ID reassignment
+is introduced. The host-only `mx_venues` acceptance example loads candidate
+maps without opening the public launch/picker gate. It checks each authored
+spawn and runs an ATV and motorcycle for 360 simulation steps each; this is a
+CPU acceptance test, not a browser performance measurement.
+
+Private staging now contains 56 venues, 204,664,076 bytes and 24,018 members.
+Derived terrain detail/material resources and ESB billboard material/image
+edges are included. A separate 8,497-byte `/MX/ADAPTER.RES` supplies original
+ATV2 camera settings and labeled terrain-material profiles. Twelve source
+collision omissions across maps remain documented; seven unique names are
+involved. Missing source objects are reported, not substituted with similarly
+named geometry. Active PhysicsCollections use their independent F collision
+targets at the authored placement as an explicit **static approximation**.
+Their M actor whiskers and movable rigid-body dynamics are not substituted
+for static collision geometry.
+
+The ATV surface adapter draws dirt, grass and shallow/deep mud coefficients
+from ENV02, sand from NAT05 and ice from ENV01; pavement uses neutral
+coefficients provisionally. The sixteen-zone order is dirt, pavement, sludge,
+grass, sand, ice, shallow mud, deep mud, then eight dirt variants. Only friction
+routing follows `MapZoneFriction`; the raw contact index remains unchanged.
+Motorcycles select their source sixteen-zone tire profiles without multiplying
+in ATV2 map coefficients. This is an authored ATV handling adapter, not proof
+of original MX ATV tire-force parity.
+
+Common MX prelit and XZ-reflection shader names retain those capabilities.
+Context-one suffixed GS settings are fallbacks only; context two is not folded
+into them. Numbered UVAnimation and TextureFrame children feed the shared UV
+scroll and texture clocks. Signed V2-8 PSG UVs cover the NAT12 jump gate.
+Three explicit texture spelling repairs match the packager audit and retain
+original resource bytes.
+
+Known presentation gaps remain: ambient environment reflection, glossy/specular
+passes, scaled/constant-color behavior, and the Northern
+Lights material's second UV set are not established as native equivalents.
+Source-generated stadium RenderTarget displays retain their geometry with an
+explicit black texture until a live screen camera is implemented.
+The renderer still uses its existing authored detail UV scale; the MX loader's
+`DetailMapTilingMultiplier` values (6, 8 or 16) are known, but their runtime UV
+consumer is not recovered. No MX scene declares the existing animated water
+heightfield resource; water-looking scenery still uses its source materials.
+SCN fog and sky are retained. Source `IsWater`/`ResetTime` and `CleanVehicle`
+metadata remain in the TOYs but are not yet connected to the shared reset and
+vehicle-cleaning behavior. MX weather selection and an ATV wheel-particle
+adapter remain unresolved; MX particle group order is not fed into ATV2's
+incompatible eight-zone emitter table. Paired zero ecosystem draw distances
+are treated as disabled vegetation to avoid a zero-width fade division.
+
+The additional maps stay unavailable until source decoding and actual venue,
+vehicle and browser acceptance pass. No public delivery is claimed by this
+checkpoint.

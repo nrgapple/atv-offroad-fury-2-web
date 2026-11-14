@@ -26,6 +26,10 @@ export const GROUPS = ['content-free', 'content', 'multiplayer', 'manual', 'brok
 export const SELECTABLE = [...GROUPS, 'native'];
 
 export const TESTS = {
+  'test_engine_mx_maps.mjs': {
+    group: 'manual', timeout: 3600,
+    reason: 'Full MX import acceptance; requires private staged MX packages and a supported runtime, or ATV_MX_MAPS for a focused subset'
+  },
   'test_app_identity.mjs': { group: 'content-free' },
   'test_engine_boot_stall.mjs': { group: 'content-free' },
   'test_engine_touch.mjs': { group: 'content' },

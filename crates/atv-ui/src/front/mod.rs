@@ -4040,9 +4040,13 @@ mod mx_catalog_tests {
         );
         for c in atv_game::launch::mx_courses::COURSES {
             assert_eq!(super::course_group(c.id), c.group);
-            assert!(!atv_game::launch::mx_courses::available(c.id, true));
+            assert!(!atv_game::launch::mx_courses::available(c.id, false));
             assert!(!atv_game::launch::is_race_course(c.id));
-            assert!(atv_game::launch::course_resource(c.id, false).is_err());
+            assert_eq!(
+                atv_game::launch::course_resource(c.id, false).is_ok(),
+                atv_game::launch::mx_courses::RUNTIME_SUPPORTED
+            );
+            assert!(atv_game::launch::course_resource(c.id, true).is_err());
         }
         assert_eq!(super::course_group("nat01"), "nat");
     }

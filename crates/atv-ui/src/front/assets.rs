@@ -83,7 +83,7 @@ pub fn unlocked_courses(
             source.entry(scn.clone()).or_insert(fields);
         }
     }
-    environments
+    let mut available: Vec<Track> = environments
         .iter()
         .filter(|id| {
             source.contains_key(*id)
@@ -101,7 +101,23 @@ pub fn unlocked_courses(
                 },
             }
         })
-        .collect()
+        .collect();
+    available.extend(
+        launch::mx_courses::COURSES
+            .iter()
+            .filter(|course| {
+                launch::mx_courses::available(
+                    course.id,
+                    published(course.archive) && published("/MX/ADAPTER.RES"),
+                )
+            })
+            .map(|course| Track {
+                id: course.id.into(),
+                name: course.name.into(),
+                image: String::new(),
+            }),
+    );
+    available
 }
 
 fn pst(bytes: &[u8]) -> Result<Rgba, String> {
@@ -525,10 +541,27 @@ mod tests {
     use super::*;
 
     #[test]
+    fn imported_courses_need_both_venue_and_driving_adapter_packages() {
+        let venue = launch::mx_courses::COURSES[0];
+        assert!(unlocked_courses(&[], &|path| path == venue.archive).is_empty());
+        assert!(unlocked_courses(&[], &|path| path == "/MX/ADAPTER.RES").is_empty());
+        let imported = unlocked_courses(&[], &|path| {
+            path == venue.archive || path == "/MX/ADAPTER.RES"
+        });
+        if launch::mx_courses::RUNTIME_SUPPORTED {
+            assert_eq!(imported.len(), 1);
+            assert_eq!(imported[0].id, venue.id);
+            assert_eq!(imported[0].name, venue.name);
+        } else {
+            assert!(imported.is_empty());
+        }
+    }
+
+    #[test]
     fn courses_follow_the_first_matching_section() {
         let doc = b"[spnat1]\r\nname = \"Tioga Valley\"\r\nscn = env02\r\nimage = tp_e02\r\n[unspnat2]\r\nname = \"Other\"\r\nscn = env02\r\n[spnat3]\r\nname = \"Caribou Peak\"\r\nscn = env01\r\nimage = tp_e01\r\n[career1]\r\nscn = env03\r\n";
         let tracks = sections(doc).unwrap();
-        let list = unlocked_courses(&tracks, &|_| true);
+        let list = unlocked_courses(&tracks, &|path| !path.starts_with("/MX/"));
         assert_eq!(
             list.iter().map(|t| t.id.as_str()).collect::<Vec<_>>(),
             ["env01", "env02"]

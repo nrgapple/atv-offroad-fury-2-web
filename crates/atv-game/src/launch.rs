@@ -175,6 +175,9 @@ pub fn ride_prefetch(
         paths.push(course.archive);
         paths.extend(course.overlay);
         paths.extend(course.placements);
+        if mx_courses::get(environment).is_some() {
+            paths.push("/MX/ADAPTER.RES".into());
+        }
     }
     if let Ok(model) = atv_core::player_models::selection(quad, rider) {
         paths.push(model.quad);
@@ -214,8 +217,11 @@ pub fn race_resource(environment: &str, variant: RaceVariant) -> crate::Result<C
 }
 
 pub fn course_resource(environment: &str, racing: bool) -> crate::Result<CourseResource> {
-    if mx_courses::get(environment).is_some() {
-        return Err("MX venue requires validated runtime support (free ride only)".into());
+    if let Some(course) = mx_course_resource(environment) {
+        if racing || !mx_courses::RUNTIME_SUPPORTED {
+            return Err("MX venue requires validated runtime support (free ride only)".into());
+        }
+        return Ok(course);
     }
 
     if !environments().iter().any(|id| id == environment)
@@ -817,6 +823,18 @@ pub fn menu_shortcut(search: &str) -> Option<&'static str> {
     }
 }
 
+/// Source mapping for the parent's validated free-ride loader. This does not grant availability.
+pub fn mx_course_resource(id: &str) -> Option<CourseResource> {
+    let c = mx_courses::get(id)?;
+    Some(CourseResource {
+        archive: c.archive.into(),
+        overlay: None,
+        scene_stem: c.scene_stem.into(),
+        mode_stem: c.mode_stem.into(),
+        placements: None,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1216,16 +1234,4 @@ mod tests {
         );
         assert_eq!(loading_shots_resource("training"), None);
     }
-}
-
-/// Source mapping for the parent's validated free-ride loader. This does not grant availability.
-pub fn mx_course_resource(id: &str) -> Option<CourseResource> {
-    let c = mx_courses::get(id)?;
-    Some(CourseResource {
-        archive: c.archive.into(),
-        overlay: None,
-        scene_stem: c.scene_stem.into(),
-        mode_stem: c.mode_stem.into(),
-        placements: None,
-    })
 }

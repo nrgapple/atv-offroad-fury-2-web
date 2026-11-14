@@ -117,6 +117,8 @@ pub(crate) const CAMERA_SPEED_REFERENCE: f32 = 70. * f32::from_bits(0x3fbbbb84);
 struct Simulation {
     terrain: terrain::Terrain,
     materials: [TerrainMaterial; 8],
+    mx_materials: Option<[TerrainMaterial; 16]>,
+    surface_source: atv_core::materials::SurfaceSource,
     water: Option<LiveField>,
     obstacles: Vec<StaticObstacle>,
     mud_obstacles: Vec<bool>,
@@ -505,7 +507,11 @@ impl Ride {
         rig.wreck.reset();
         rig.wreck.set_boundary_flight(false);
         rig.wreck.set_static_obstacles(sim.obstacles.clone());
-        vehicle.set_materials(sim.materials);
+        if let Some(materials) = sim.mx_materials {
+            vehicle.set_materials16(materials);
+        } else {
+            vehicle.set_materials(sim.materials);
+        }
         vehicle.set_chassis_points(&rig.chassis_points)?;
         vehicle.set_wreck_rays(rig.wreck_rays.clone())?;
         vehicle.set_obstacles(rig.obstacle_rays.clone(), sim.obstacles.clone())?;
