@@ -33,6 +33,8 @@ pub fn encode(packet: &Packet) -> Result<Vec<u8>> {
         Packet::Bundle { .. } => 19,
         Packet::Batch { .. } => 20,
         Packet::Frame { .. } => 21,
+        Packet::Hub(_) => 26,
+        Packet::Challenge(_) => 27,
         Packet::Chat(_) => 24,
     };
     w.0.extend_from_slice(MAGIC);
@@ -247,6 +249,8 @@ pub fn encode(packet: &Packet) -> Result<Vec<u8>> {
                 w.0.extend_from_slice(pose);
             }
         }
+        Packet::Hub(hub) => hub.write(&mut w.0)?,
+        Packet::Challenge(challenge) => challenge.write(&mut w.0)?,
         Packet::Chat(c) => {
             c.validate()?;
             w.byte(c.peer);
@@ -546,6 +550,8 @@ pub fn decode(bytes: &[u8]) -> Result<Packet> {
             }
             Packet::Frame { poses }
         }
+        26 => Packet::Hub(Box::new(crate::Hub::read(r.take(bytes.len() - r.offset)?)?)),
+        27 => Packet::Challenge(crate::Challenge::read(r.take(bytes.len() - r.offset)?)?),
         24 => {
             let c = crate::chat::Chat {
                 peer: r.byte()?,

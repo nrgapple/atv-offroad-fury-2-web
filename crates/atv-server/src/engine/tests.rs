@@ -677,6 +677,100 @@ fn uncounted_riders_play_but_stay_out_of_the_counts() {
 }
 
 #[test]
+fn hub_packets_reach_only_hub_builds_in_shared_rooms() {
+    use atv_net::{Challenge, challenge_end, challenge_op};
+    let mut f = Fixture::new(true);
+    f.join(1, Some(HOST_KEY), "Ann");
+    f.join(2, None, "Bo");
+    f.join(3, None, "Old");
+    for id in [1, 2, 3] {
+        f.ready(id);
+    }
+    f.hello(1, signal::FRAMES | signal::HUB);
+    f.hello(2, signal::FRAMES | signal::HUB);
+    f.hello(3, signal::FRAMES);
+    f.send(1, &snapshot(0, 1, 0.));
+    f.send(2, &snapshot(1, 1, 50.));
+    f.send(3, &snapshot(2, 1, 20.));
+    f.now += 200;
+    let out = f.tick();
+    let hub = |p: &Packet| matches!(p, Packet::Hub(_) | Packet::Challenge(_));
+    assert!(
+        sent(&out, 1)
+            .iter()
+            .any(|p| matches!(p, Packet::Hub(h) if h.mask == 0b11))
+    );
+    assert!(
+        !sent(&out, 3).iter().any(hub),
+        "older builds hear nothing new"
+    );
+    let ask = |peer| {
+        Packet::Challenge(Challenge {
+            op: challenge_op::ASK,
+            peer,
+            ..Default::default()
+        })
+    };
+    let out = f.send(1, &ask(1));
+    assert!(
+        matches!(&sent(&out, 2)[0], Packet::Challenge(c) if c.op == challenge_op::OFFER && c.peer == 0)
+    );
+    assert!(!sent(&out, 3).iter().any(hub));
+    // An older build cannot be challenged; its own hub packets are ignored.
+    let out = f.send(2, &ask(2));
+    assert!(
+        matches!(&sent(&out, 2)[0], Packet::Challenge(c) if c.detail == challenge_end::UNAVAILABLE)
+    );
+    let out = f.send(3, &ask(0));
+    assert!(out.is_empty() && closes(&out).is_empty());
+    // Private rooms run no hub.
+    let mut f = Fixture::new(false);
+    f.join(1, Some(HOST_KEY), "Ann");
+    f.hello(1, signal::FRAMES | signal::HUB);
+    let out = f.send(1, &ask(1));
+    assert!(out.is_empty());
+}
+
+#[test]
+fn a_rotation_moves_the_whole_shared_room_older_builds_too() {
+    let mut f = Fixture::new(true);
+    f.join(1, Some(HOST_KEY), "Ann");
+    f.join(2, None, "Old");
+    for id in [1, 2] {
+        f.ready(id);
+    }
+    f.hello(1, signal::FRAMES | signal::HUB);
+    f.hello(2, signal::FRAMES);
+    let start = f.now;
+    f.room.hub.as_mut().unwrap().rotate_at(start + 60_000);
+    let out = f.tick();
+    let vote = sent(&out, 1)
+        .into_iter()
+        .find_map(|p| match p {
+            Packet::Hub(h) if h.op == atv_net::hub_op::VOTE => Some(h),
+            _ => None,
+        })
+        .expect("the vote");
+    assert_eq!(vote.maps.len(), 3);
+    f.now = start + 60_000;
+    let out = f.tick();
+    let map = f.room.map();
+    assert!(vote.maps.contains(&map) && map != atv_net::PUBLIC_MAP);
+    for id in [1, 2] {
+        assert!(
+            sent(&out, id)
+                .iter()
+                .any(|p| matches!(p, Packet::Lobby(l) if l.map == map && l.public)),
+            "rider {id} follows the room"
+        );
+    }
+    // Poses wait for each rider's Ready on the new map.
+    f.now += 100;
+    let out = f.send(1, &snapshot(0, 9, 10.));
+    assert!(sent(&out, 2).is_empty());
+}
+
+#[test]
 fn motorcycle_poses_reach_only_builds_that_decode_them() {
     let mut f = Fixture::new(true);
     let keys: Vec<String> = (0..4)

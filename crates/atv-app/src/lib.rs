@@ -15,6 +15,7 @@ mod game_cpu;
 mod gamepad;
 mod games;
 mod hockey;
+mod hub;
 mod instant_replay;
 mod multiplayer;
 mod net;
@@ -204,7 +205,7 @@ enum Message {
     /// A remote rider's model finished loading.
     PeerModel(Box<PeerModel>),
     /// The Arlington Free Ride rider count for the main menu.
-    FreeRideRiders(Option<u32>),
+    FreeRideRiders(Option<net::FreeRide>),
     /// A Host/Join form field's text from the browser's input.
     #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
     FrontText(&'static str, String),
@@ -1108,7 +1109,7 @@ struct App {
     context: context::Loss,
     /// Desktop: the rider count request in flight.
     #[cfg(not(target_arch = "wasm32"))]
-    riders_pending: Option<std::sync::mpsc::Receiver<Option<u32>>>,
+    riders_pending: Option<std::sync::mpsc::Receiver<Option<net::FreeRide>>>,
     /// Android: the first-launch content download holding the boot.
     #[cfg(target_os = "android")]
     sync: Option<android::SyncScreen>,
@@ -3025,8 +3026,10 @@ impl App {
             let hud_peers = ready
                 .net
                 .as_ref()
-                .map(|net| net.hud_peers())
-                .map(|mut peers| {
+                .map(|net| {
+                    let mut peers = net.hud_peers();
+                    // The Free Ride hub's goal, join circle or hill.
+                    peers.extend(net.hub.markers());
                     if let Some(tag) = &self.tag {
                         peers.extend(tag.markers());
                     }
@@ -3176,6 +3179,21 @@ impl App {
                 })
                 .collect();
             let compass = compass_icons.map(|icons| compass_of(frame, icons));
+            // The Free Ride hub's HUD (research/FREERIDE_HUB.md).
+            let hub = ready.net.as_ref().and_then(|net| {
+                let venue = |map: u16| {
+                    atv_game::multiplayer::map_environment(map).map_or_else(
+                        || format!("Map {map}"),
+                        |v| match (self.course_names.get(v), hub::venue_name(v)) {
+                            (Some(name), _) => name.clone(),
+                            (None, Some(name)) => name.into(),
+                            (None, None) => v.into(),
+                        },
+                    )
+                };
+                net.hub_view(frame.origin, &venue)
+                    .map(|view| (view, net.hub.ring()))
+            });
             // Split screen: the original layout and the mode's overlay set.
             let split_layout = ready.split.first().map(|s| {
                 let name = atv_ui::hud::split::layout_name(
@@ -3237,6 +3255,7 @@ impl App {
                     objective: objective_view,
                     training: training_view,
                     game: game_view,
+                    hub,
                     compass,
                     others,
                     split_layout,
@@ -4933,6 +4952,11 @@ impl App {
                     );
                 }
             }
+            overlay::Action::Hub(button) => {
+                if let Some(net) = &mut ready.net {
+                    net.hub_press(button);
+                }
+            }
             overlay::Action::Chat(kind, id) => {
                 if let Some(net) = ready.net.as_mut() {
                     net.send_chat(kind, id);
@@ -5593,6 +5617,15 @@ impl App {
             }
             self.wake();
             return;
+        }
+        // Free Ride hub keys (research/FREERIDE_HUB.md), unless bound.
+        if let Some(ready) = self.ready.as_mut()
+            && let (Some(net), Some(riding)) = (ready.net.as_mut(), ready.riding.as_ref())
+            && let Some(button) = hub::key_button(&format!("{code:?}"))
+            && !riding.bindings.uses_key(&format!("{code:?}"))
+            && !net.hub.idle()
+        {
+            net.hub_press(button);
         }
         let now = (Instant::now() - self.started).as_secs_f64();
         let names: HashSet<String> = self.keys.iter().map(|k| format!("{k:?}")).collect();
@@ -6273,7 +6306,17 @@ impl ApplicationHandler<Message> for App {
             Message::FreeRideRiders(riders) => {
                 if let Some(front) = &self.front {
                     let mut f = front.borrow_mut();
-                    f.state.freeride_riders = riders;
+                    f.state.freeride_riders = riders.map(|r| r.0);
+                    // The venue's Tracks.dat name once known (no bare ids).
+                    f.state.freeride_map = riders
+                        .and_then(|r| r.1)
+                        .and_then(atv_game::multiplayer::map_environment)
+                        .and_then(|v| {
+                            self.course_names
+                                .get(v)
+                                .cloned()
+                                .or_else(|| hub::venue_name(v).map(String::from))
+                        });
                 }
                 self.wake();
                 if let Some(window) = &self.window {
@@ -9679,6 +9722,7 @@ fn capture(
                     objective: None,
                     training: None,
                     game: None,
+                    hub: None,
                     compass: None,
                     others: Vec::new(),
                     split_layout: None,
@@ -10853,6 +10897,12 @@ pub fn start() {
     }
     if param("batches").as_deref() == Some("0") {
         multiplayer::BATCHES.store(false, std::sync::atomic::Ordering::Relaxed);
+    }
+    if let Some(value) = param("hubTest") {
+        hub::TEST.store(
+            hub::parse_test(&value),
+            std::sync::atomic::Ordering::Relaxed,
+        );
     }
     if let Some(ms) = param("joinDelayMs").and_then(|v| v.parse::<u32>().ok()) {
         multiplayer::JOIN_DELAY_MS.store(ms.min(10_000), std::sync::atomic::Ordering::Relaxed);

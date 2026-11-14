@@ -1119,13 +1119,14 @@ pub fn layout(request: Request) -> Result<Frame> {
         "multiplayer" => {
             // The original Multiplayer page leads with Split Screen (one
             // console, PAGE17 ControllerSelect), then the network games.
-            // Arlington Free Ride (the port's open online room) stands
-            // where the original's Online row was, last.
+            // Free Ride (the port's open online rooms, which rotate between
+            // the Environment venues: research/FREERIDE_HUB.md) stands where
+            // the original's Online row was, last.
             for (i, (label, action)) in [
                 ("Split Screen", "split"),
                 ("Host Game", "create-lobby"),
                 ("Join Game", "join-lobby"),
-                ("Arlington Free Ride", "freeride"),
+                ("Free Ride", "freeride"),
                 // Port addition: friends, presence and Join
                 // (research/ONLINE_IDENTITY.md).
                 ("Friends", "friends"),

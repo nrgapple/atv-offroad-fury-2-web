@@ -119,6 +119,9 @@ pub struct Net {
     public: bool,
     /// Step accumulator of the ride held behind the frontend (s).
     held_accumulator: f32,
+    /// The Free Ride hub (research/FREERIDE_HUB.md): challenges, pop-up
+    /// events and the map vote, when the server runs one.
+    pub hub: crate::hub::Hub,
     /// Quick chat (research/QUICK_CHAT.md).
     pub chat: crate::quick_chat::QuickChat,
 }
@@ -214,6 +217,20 @@ fn distance(a: [f32; 3], b: [f32; 3]) -> f32 {
 fn retryable(code: u16, reason: &str) -> bool {
     matches!(code, 1001 | 1005 | 1006 | 1011 | 1012 | 1013)
         || (code == 1000 && reason == "Connection timed out")
+}
+
+/// A rider's name from [`Net::roster_names`].
+fn peer_name(names: &[(u8, String)], peer: u8) -> String {
+    names
+        .iter()
+        .find(|(id, _)| *id == peer)
+        .map_or_else(|| format!("Rider {}", peer + 1), |(_, name)| name.clone())
+}
+
+/// The heading (radians about +y) of a W,X,Y,Z orientation.
+fn heading(q: [f32; 4]) -> f32 {
+    let [w, x, y, z] = q;
+    atv_core::math::Det::atan2_d(2. * (w * y + x * z), 1. - 2. * (y * y + x * x))
 }
 
 fn now_ms(clock: Instant) -> u64 {
@@ -424,6 +441,7 @@ impl Net {
             met: None,
             public: false,
             held_accumulator: 0.,
+            hub: Default::default(),
             chat: crate::quick_chat::QuickChat::load(&atv_ui::settings::Settings::load()),
         };
         let deadline = Instant::now();
@@ -534,6 +552,7 @@ impl Net {
                 let key = self.session.key.clone();
                 let code = self.session.code.clone();
                 self.session.restart();
+                self.hub.reset();
                 self.session.code = code.clone();
                 self.session.key = key.clone();
                 self.mesh.clear();
@@ -568,6 +587,13 @@ impl Net {
                     }
                     if self.session.peer.is_some() {
                         self.reconnect = None;
+                    }
+                    if !self.session.hub.is_empty() {
+                        let names = self.roster_names();
+                        let name = |peer: u8| peer_name(&names, peer);
+                        for message in std::mem::take(&mut self.session.hub) {
+                            self.hub.receive(message, now_f, &name);
+                        }
                     }
                     // A new Welcome may carry a new slot key (a released slot
                     // rejoined as a new rider): keep the latest.
@@ -672,6 +698,45 @@ impl Net {
                         self.session.ghost(now);
                         break;
                     }
+                }
+            }
+            // The Free Ride hub: the nearby rider, stunt-off reports and
+            // the rider's choices.
+            // Muted or blocked riders (research/QUICK_CHAT.md) cannot
+            // challenge this rider: their offers are declined unseen.
+            if self.hub.riders() != 0 {
+                let me = self.session.peer;
+                self.hub.blocked = self.session.lobby.as_ref().map_or(0, |l| {
+                    l.players
+                        .iter()
+                        .filter(|p| Some(p.id) != me)
+                        .filter(|p| {
+                            self.chat.muted.contains(&p.id) || self.chat.blocked(&p.name, None)
+                        })
+                        .fold(0, |mask, p| mask | 1 << p.id)
+                });
+            }
+            // Others matter only once the server names hub riders.
+            let others = if self.hub.riders() != 0 {
+                self.hud_peers()
+            } else {
+                Vec::new()
+            };
+            let frame = ride.frame();
+            if let Some(spot) = self.hub.update(
+                now_f,
+                self.session.peer,
+                self.ready_sent.then_some(frame.origin),
+                &others,
+                ride.committed_points(),
+            ) && tick.place.is_none()
+            {
+                tick.place = Some((spot, heading(frame.orientation), [0.; 3]));
+            }
+            for message in self.hub.take_outbox() {
+                if let Ok(bytes) = self.session.hub_packet(&message) {
+                    self.socket.send(bytes);
+                    self.last_traffic = now_f;
                 }
             }
             if now_f - self.last_send >= 50. && self.ready_sent && tick.place.is_none() {
@@ -1009,6 +1074,15 @@ impl Net {
     /// (own peer id, roster ids ascending).
     pub fn roster(&self) -> (Option<u8>, Vec<u8>) {
         (self.session.peer, self.session.roster())
+    }
+
+    /// Every roster rider's slot and name.
+    fn roster_names(&self) -> Vec<(u8, String)> {
+        self.session
+            .lobby
+            .iter()
+            .flat_map(|l| l.players.iter().map(|p| (p.id, p.name.clone())))
+            .collect()
     }
 
     /// Riders' names in `roster` order.
@@ -1461,6 +1535,26 @@ impl Net {
             .collect()
     }
 
+    /// The Free Ride hub's HUD this frame; `venue` names a map id.
+    pub fn hub_view(
+        &self,
+        origin: [f32; 3],
+        venue: &dyn Fn(u16) -> String,
+    ) -> Option<atv_ui::hud::hub::View> {
+        if self.hub.idle() {
+            return None;
+        }
+        let names = self.roster_names();
+        let name = |peer: u8| peer_name(&names, peer);
+        self.hub
+            .view(now_ms(self.clock) as f64, Some(origin), &name, venue)
+    }
+
+    /// A Free Ride hub button.
+    pub fn hub_press(&mut self, button: atv_ui::hud::hub::Button) {
+        self.hub.press(button, now_ms(self.clock) as f64);
+    }
+
     /// Status for tests and the diagnostics line (window.furyMultiplayer).
     pub fn report(&self) -> serde_json::Value {
         let c = self.session.counters;
@@ -1512,9 +1606,11 @@ impl Net {
             },
             "serves": {
                 "links": self.serves.links, "batches": self.serves.batches,
-                "frames": self.serves.frames, "chat": self.serves.chat,
+                "frames": self.serves.frames, "hub": self.serves.hub,
+                "chat": self.serves.chat,
                 "motorcycles": self.serves.motorcycles,
             },
+            "hub": self.hub.report(),
             "server": self.server,
             "pace": self.session.pace,
             "links": self.session.link_states().into_iter().map(|(peer, state)| {

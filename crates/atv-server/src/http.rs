@@ -283,6 +283,8 @@ async fn claim(
             };
             if let Some(key) = key {
                 let mut body = features();
+                // Shared rooms run the Free Ride hub (research/FREERIDE_HUB.md).
+                body.insert("hub".into(), true.into());
                 body.insert("code".into(), text.into());
                 body.insert("key".into(), key.into());
                 return json(StatusCode::OK, body.into());

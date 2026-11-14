@@ -109,6 +109,11 @@ export const TESTS = {
     group: 'manual',
     reason: 'load measurement: a full Free Ride room of synthetic riders on a local game server (never production)'
   },
+  'test_engine_freeride_hub.mjs': {
+    group: 'multiplayer',
+    timeout: 600,
+    reason: 'needs a local game server at the same origin started with short hub timers (FURY_HUB_EVENT_SECS=20 FURY_HUB_JOIN_SECS=12 FURY_HUB_ROTATION_SECS=off); challenge accept, race and result, then a pop-up event; run with --url'
+  },
   'test_engine_freeride_relay.mjs': {
     group: 'multiplayer',
     timeout: 900,

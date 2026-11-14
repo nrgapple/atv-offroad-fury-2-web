@@ -255,6 +255,10 @@ fn report(shared: &Shared, room: &mut Room, reported: &mut Reported) {
         } else {
             counters
         };
+        if now.counted_room != 0 {
+            // The venue a claim lands on (the hub rotates it).
+            counts.insert("map".into(), u64::from(room.map()));
+        }
         let code = String::from_utf8_lossy(&room.code()).into_owned();
         shared
             .usage

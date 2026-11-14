@@ -54,6 +54,7 @@ pub struct Shared {
 
 impl Shared {
     pub fn new(config: Config) -> Arc<Self> {
+        engine::hub::configure(config.hub);
         Arc::new(Shared {
             config,
             started: Instant::now(),
