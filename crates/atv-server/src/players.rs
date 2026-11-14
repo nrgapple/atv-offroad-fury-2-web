@@ -788,19 +788,21 @@ impl Players {
                 rider.stats.podiums += 1;
             }
             if finished && h.value > 0 && !record.map.is_empty() {
+                let map: String = record.map.chars().take(16).collect();
                 let best = &mut rider.stats.best;
                 match best
-                    .iter_mut()
-                    .find(|b| b.mode == record.mode && b.map == record.map)
+                    .iter()
+                    .position(|b| b.mode == record.mode && b.map == map)
                 {
-                    Some(b) => {
+                    Some(i) => {
+                        let b = &mut best[i];
                         if (lower && h.value < b.value) || (!lower && h.value > b.value) {
                             b.value = h.value;
                         }
                     }
                     None if best.len() < MAX_BEST => best.push(Best {
                         mode: record.mode,
-                        map: record.map.chars().take(16).collect(),
+                        map,
                         value: h.value,
                     }),
                     None => {}

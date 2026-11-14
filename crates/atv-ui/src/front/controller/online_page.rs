@@ -499,12 +499,11 @@ impl Frontend {
                                 "○ Offline"
                             },
                             r.room.as_ref().map_or(String::new(), |room| {
-                                match room.kind.as_str() {
+                                String::from(match room.kind.as_str() {
                                     "freeride" => "Free Ride",
                                     "quickplay" => "Quick Play",
                                     _ => "Private Room",
-                                }
-                                .into()
+                                })
                             }),
                         )),
                         From::Recent => lines.push(line("Met", span(r.ago * 1000))),
@@ -720,6 +719,145 @@ impl Frontend {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::settings::Settings;
+
+    fn front() -> (Frontend, Viewport, Settings) {
+        let view = Viewport {
+            width: 1280.,
+            height: 720.,
+            scale: 1.,
+            ..Default::default()
+        };
+        let settings = Settings::memory();
+        (Frontend::new(Vec::new(), &settings, true), view, settings)
+    }
+
+    fn rider(id: &str, name: &str, online: bool, room: Option<&str>) -> Rider {
+        Rider {
+            id: id.into(),
+            name: name.into(),
+            level: 3,
+            tier: "silver".into(),
+            online,
+            room: room.map(|code| Room {
+                kind: "freeride".into(),
+                code: Some(code.into()),
+            }),
+            ..Default::default()
+        }
+    }
+
+    fn labels(front: &Frontend) -> Vec<String> {
+        front.choices().iter().map(|(_, l)| l.clone()).collect()
+    }
+
+    #[test]
+    fn pages_show_numbers_icons_and_one_obvious_action() {
+        let (mut front, view, mut settings) = front();
+        front.online.reach = Reach::Ready;
+        front.online.me = Some(Me {
+            code: "KQ7M-3XPZ".into(),
+            level: 2,
+            xp: 150,
+            level_xp: 100,
+            next_xp: 300,
+            league: League {
+                tier: "silver".into(),
+                points: 140,
+                next: Some(250),
+                ends_ms: 0,
+            },
+            ..Default::default()
+        });
+        front.online.lists = Some(Lists {
+            friends: vec![
+                rider("a1", "Ann", true, Some("FREERD03")),
+                rider("b2", "Bo", false, None),
+            ],
+            requests: vec![rider("c3", "Cy", false, None)],
+            max: 100,
+            ..Default::default()
+        });
+        assert_eq!(
+            front.run("online", &view, &mut settings),
+            Some(Event::Online(OnlineCommand::Refresh))
+        );
+        assert_eq!(front.page, "online");
+        let details = front.profile_details();
+        assert_eq!(details[0], ("Friend Code".into(), "KQ7M-3XPZ".into()));
+        assert_eq!(details[1], ("Level 2".into(), "▰▰▱▱▱▱▱▱▱▱ 50/200".into()));
+        assert_eq!(details[2], ("League".into(), "◆ Silver · 140".into()));
+        assert_eq!(labels(&front)[0], "Friends · ● 1 · +1");
+        // Rows are 1-3 words (icons and numbers aside).
+        for label in labels(&front) {
+            let words = label
+                .split_whitespace()
+                .filter(|w| w.chars().any(char::is_alphabetic))
+                .count();
+            assert!(words <= 3, "{label}");
+        }
+        front.run("friends", &view, &mut settings);
+        assert_eq!(
+            labels(&front),
+            [
+                "Add Code",
+                "Recent · 0",
+                "+ Cy",
+                "● Ann · Join",
+                "○ Bo",
+                "Back"
+            ]
+        );
+        // A friend in a joinable room: Join comes first and rides there.
+        front.run("friend:a1", &view, &mut settings);
+        assert_eq!(front.page, "friend");
+        assert_eq!(front.choices()[0].0, "riderjoin");
+        match front.run("riderjoin", &view, &mut settings) {
+            Some(Event::Join { code, .. }) => assert_eq!(code, "FREERD03"),
+            other => panic!("{other:?}"),
+        }
+        // A request: Accept first.
+        front.show("friends", &view);
+        front.run("request:c3", &view, &mut settings);
+        assert_eq!(front.choices()[0].0, "rideraccept");
+        assert_eq!(
+            front.run("rideraccept", &view, &mut settings),
+            Some(Event::Online(OnlineCommand::Act("accept", "c3".into())))
+        );
+        front.online_done(&view);
+        assert_eq!(front.page, "friends");
+    }
+
+    #[test]
+    fn add_code_takes_typing_and_the_symbol_row() {
+        let (mut front, view, mut settings) = front();
+        front.online.reach = Reach::Ready;
+        front.run("friend-add", &view, &mut settings);
+        assert_eq!(front.page, "friend-add");
+        front.set_field("friend-code", "kq7m-3xp");
+        assert_eq!(front.online_ui.entry, "KQ7M3XP");
+        assert_eq!(front.run("friendsend", &view, &mut settings), None);
+        front.run("friendletter", &view, &mut settings);
+        assert_eq!(front.online_ui.entry, "KQ7M3XP2");
+        assert_eq!(
+            front.run("friendsend", &view, &mut settings),
+            Some(Event::Online(OnlineCommand::Add("KQ7M3XP2".into())))
+        );
+        front.run("frienderase", &view, &mut settings);
+        assert_eq!(front.online_ui.entry, "KQ7M3XP");
+    }
+
+    #[test]
+    fn offline_shows_one_line_and_retry() {
+        let (mut front, view, mut settings) = front();
+        front.online.reach = Reach::Offline;
+        front.run("online", &view, &mut settings);
+        assert_eq!(
+            front.profile_details(),
+            [("● Offline".into(), String::new())]
+        );
+        assert_eq!(front.choices()[0].0, "onlineretry");
+    }
 
     #[test]
     fn bars_spans_and_codes() {

@@ -14,6 +14,8 @@ import { assertNoErrors, launch, newPage, nextFrames, url } from './browser/harn
 const shots = process.env.ATV_ONLINE_SHOTS;
 const ui = page => page.evaluate(() => JSON.parse(document.querySelector('#ui-state')?.textContent || '{}').front || {});
 const until = (page, test, arg, timeout = 60000) => page.waitForFunction(test, arg, { timeout });
+const onPage = (page, name, timeout = 90000) =>
+  until(page, name => JSON.parse(document.querySelector('#ui-state')?.textContent || '{}').front?.page === name, name, timeout);
 const engine = page => page.evaluate(() => JSON.parse(window.furyMultiplayer ?? 'null'));
 async function key(page, code) {
   await page.keyboard.down(code);
@@ -28,6 +30,12 @@ async function choose(page, action) {
   for (let i = f.selection; i < at; i++) await key(page, 'ArrowDown');
   for (let i = f.selection; i > at; i--) await key(page, 'ArrowUp');
   await key(page, 'Enter');
+}
+/** Back: the page's Back row, else Escape. */
+async function back(page) {
+  const f = await ui(page);
+  if (f.choices.includes('back')) await choose(page, 'back');
+  else await key(page, 'Escape');
 }
 /** The first row whose label starts with `prefix`. */
 async function chooseLabel(page, prefix) {
@@ -80,9 +88,9 @@ try {
   // 1. Ann registers and reads her code from the Online card.
   const ann = await rider('Ann');
   await friends(ann);
-  await choose(ann, 'back');
+  await back(ann);
   await onPage(ann, 'multiplayer');
-  await choose(ann, 'back');
+  await back(ann);
   await onPage(ann, 'main');
   await choose(ann, 'profile');
   await onPage(ann, 'profile');
@@ -121,11 +129,11 @@ try {
   report.friends = (await ui(ann)).online.friends;
 
   // 3. Ann rides Free Ride; Bo sees her there and joins her shard.
-  await choose(ann, 'back');
+  await back(ann);
   await onPage(ann, 'online');
-  for (const back of ['profile', 'main']) {
-    await choose(ann, 'back');
-    await onPage(ann, back);
+  for (const parent of ['profile', 'main']) {
+    await back(ann);
+    await onPage(ann, parent);
   }
   await choose(ann, 'multiplayer');
   await onPage(ann, 'multiplayer');

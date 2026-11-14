@@ -106,9 +106,9 @@ fn valid_secret(secret: &str) -> bool {
             .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 
-fn digest(text: &str) -> [u8; 32] {
+fn digest(text: &str) -> Vec<u8> {
     use sha2::Digest;
-    sha2::Sha256::digest(text.as_bytes()).into()
+    sha2::Sha256::digest(text.as_bytes()).to_vec()
 }
 
 fn hex(bytes: &[u8]) -> String {

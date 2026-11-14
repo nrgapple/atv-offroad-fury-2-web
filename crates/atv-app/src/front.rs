@@ -2177,7 +2177,6 @@ impl Front {
         });
         let mut out = serde_json::json!({
             "page": self.state.page,
-            "online": online,
             // The page (or menu panel) slide: [opacity, translateX px].
             "motion": self.motion.map(|m| [m.opacity, m.dx]),
             "selection": self.state.selection,
@@ -2233,6 +2232,7 @@ impl Front {
             })).collect::<Vec<_>>(),
         });
         out["kinetic"] = kinetic;
+        out["online"] = online;
         // Turntable rates and preview images' pixel sizes (they follow the
         // surface density); the UI's backing [width, height, scale]; the
         // wordmark's sway [yaw, pitch].

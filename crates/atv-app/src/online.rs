@@ -333,8 +333,8 @@ impl App {
                 state.online_changed(&view);
             }
             Purpose::Act => {
-                state.notice = Some(state_line(value["state"].as_str().unwrap_or("")).into());
                 state.online_done(&view);
+                state.notice = Some(state_line(value["state"].as_str().unwrap_or("")).into());
                 refresh = true;
             }
             Purpose::NewCode => {
