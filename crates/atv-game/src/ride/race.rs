@@ -654,6 +654,11 @@ pub(super) fn place_racer(
 }
 
 impl Ride {
+    /// The course's trackside TV cameras (`<venue>nat.tv`) in a race.
+    pub fn tv_cameras(&self) -> Option<&Cameras> {
+        self.race.as_ref()?.tv.as_ref()
+    }
+
     /// Op 96: a race on the loaded course; CPU riders take the grid and the
     /// pre-race camera starts unless `intro` is false (Restart Race).
     pub(super) fn begin_race(

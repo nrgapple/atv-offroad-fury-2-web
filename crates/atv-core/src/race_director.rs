@@ -204,6 +204,20 @@ impl Director {
     pub fn current(&self) -> Option<usize> {
         self.current
     }
+    /// Starts over from Camera1, as a new director with `seed` would,
+    /// keeping the cameras.
+    pub fn restart(&mut self, seed: u64) {
+        self.current = None;
+        self.timer = -1.;
+        self.next = None;
+        self.view = View::Tv;
+        self.fov = 70.;
+        self.snap = true;
+        self.shake = None;
+        self.shaken = None;
+        self.shake_frame = false;
+        self.random = crate::engine_audio::OriginalRandom::with_seed(seed);
+    }
     fn unit(&mut self) -> f32 {
         self.random.next_u31() as f32 * 4.656613e-10
     }
@@ -293,7 +307,7 @@ impl Director {
                 fov: 70.,
             };
         };
-        let camera = self.tv.cameras[index].clone();
+        let camera = &self.tv.cameras[index];
         let target = [rider[0], rider[1] + 3., rider[2]];
         // `001ac580`: wide near the camera, zoomed in far away (XZ distance).
         let d = ((camera.position[0] - target[0]).powi(2)
@@ -317,7 +331,7 @@ impl Director {
             self.fov + dt.min(0.4) / 0.4 * (fov - self.fov)
         };
         let mut position = camera.position;
-        self.shake_step(dt, &camera, racers);
+        self.shake_step(dt, position, racers);
         if let Some(shake) = &self.shake {
             self.shake_frame = !self.shake_frame;
             if self.shake_frame {
@@ -336,7 +350,7 @@ impl Director {
     /// `0031c2d0`: a racer passing within 55ft of the TV camera above 170 ft/s
     /// shakes it for 0.45·s seconds by 14·s, s = min(1, (v−170)/170 ·
     /// (1 − d²/3025)), on alternate frames, decaying linearly.
-    fn shake_step(&mut self, dt: f32, camera: &Camera, racers: &[Racer]) {
+    fn shake_step(&mut self, dt: f32, camera: V, racers: &[Racer]) {
         if let Some(shake) = &mut self.shake {
             shake.elapsed += dt;
             if shake.elapsed >= shake.duration {
@@ -345,7 +359,7 @@ impl Director {
             return;
         }
         for (i, r) in racers.iter().enumerate() {
-            let d2 = distance2(r.origin, camera.position);
+            let d2 = distance2(r.origin, camera);
             if d2 > 3025. || r.speed < 170. || self.shaken == Some(i) {
                 continue;
             }
