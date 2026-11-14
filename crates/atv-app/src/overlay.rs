@@ -2362,18 +2362,6 @@ impl Overlay {
                     "action": m.rows.choices.get((*id - pause::ROW) as usize),
                     "x": r.x, "y": r.y, "width": r.w, "height": r.h,
                 })).collect::<Vec<_>>(),
-                // Options beside its rail: the rail's tabs on a category
-                // page, and the rows shown for the highlighted category.
-                "wide": m.wide(),
-                "previewPage": m.preview().map(|(page, _)| page),
-                "tabs": self.menu_hits.iter().filter(|(_, id)| (pause::TAB..pause::PANEL).contains(id)).map(|(r, id)| serde_json::json!({
-                    "action": m.categories().nth((*id - pause::TAB) as usize),
-                    "x": r.x, "y": r.y, "width": r.w, "height": r.h,
-                })).collect::<Vec<_>>(),
-                "preview": self.menu_hits.iter().filter(|(_, id)| (pause::PREVIEW..pause::TAB).contains(id)).map(|(r, id)| serde_json::json!({
-                    "action": m.preview().and_then(|(_, rows)| rows.choices.get((*id - pause::PREVIEW) as usize)),
-                    "x": r.x, "y": r.y, "width": r.w, "height": r.h,
-                })).collect::<Vec<_>>(),
             })),
             "hud": {
                 "helpOpen": self.help_open,
