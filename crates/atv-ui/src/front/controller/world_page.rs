@@ -694,6 +694,7 @@ mod tests {
             board: wants[0].clone(),
             entries,
             yesterday: None,
+            ..Default::default()
         };
         front.world_answer(&wants[0], BoardState::Ready(board), &view);
         front.world_answer(&wants[1], BoardState::Offline, &view);
@@ -776,6 +777,7 @@ mod tests {
             board: wants[0].clone(),
             entries,
             yesterday: None,
+            ..Default::default()
         };
         front.world_answer(&wants[0], BoardState::Ready(board), &view);
         let details = front.profile_details();
@@ -814,6 +816,7 @@ mod tests {
                 })
                 .collect(),
             yesterday: None,
+            ..Default::default()
         };
         // No ghost rows, no ghost choices.
         front.world_answer(&wants[0], BoardState::Ready(rows(&[])), &view);
