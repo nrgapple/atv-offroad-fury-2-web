@@ -37,9 +37,12 @@ Implementation (`crates/atv-app/src/instant_replay.rs`, `replay_view.rs`):
   the simulation. A ride that is not recording or replaying pays nothing new.
 
 Measured (host Chromium, `tools/test_engine_race_replay.mjs`, sx01, one lap,
-three CPUs): see the PR for the sample count, row width and storage bytes. The
-worst case is the budget plus the sample bookkeeping, whatever the course
-length. Courses' laps run 1,748–9,974 ft (`RACING.md`). A race longer than
+three CPUs, 1:16 recorded): 1,056 samples at 15 Hz, 200 cells (4.7 KiB) per
+sample (about 45 nodes per rider), 9.6 MiB allocated. Before compaction the
+same race preallocated 78.6 MiB. At that row width the 24 MiB budget holds
+5,242 samples (5.8 min at 15 Hz). Eight riders hold about 2.9 min before the
+first thinning. The worst case is about 25 MiB (the budget plus about 1 MiB of
+sample bookkeeping), whatever the course length. Courses' laps run 1,748–9,974 ft (`RACING.md`). A race longer than
 the 15 Hz capacity is thinned to 7.5 Hz, then 3.75 Hz.
 
 Limitations: no replay sound or particles (the dust, spray and crash effects
