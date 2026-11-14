@@ -263,6 +263,9 @@ pub struct Decisions {
 pub struct DriverPose {
     pub origin: [f32; 3],
     pub orientation: [f32; 4],
+    /// Body-local angular velocity (body +0x2a0), which the racer copies
+    /// into AI +0x90..+0x98 (`001eb380`).
+    pub local_angular_velocity: [f32; 3],
     pub speed_magnitude: f32,
     pub grounded: bool,
     pub riding: bool,
@@ -278,6 +281,7 @@ impl From<&VehicleFrame> for DriverPose {
         Self {
             origin: f.origin,
             orientation: f.orientation,
+            local_angular_velocity: f.local_angular_velocity,
             speed_magnitude: f.speed_magnitude,
             grounded: f.grounded.iter().any(|v| *v),
             riding: f.wreck.phase == crate::wreck::Phase::Riding,
@@ -719,10 +723,12 @@ impl Driver {
                 corrected[2] * 0.9816,
             ];
             let diff = sub(desired, forward);
-            let desired_pitch = -0.5 * dot(diff, up).atan2_d(dot(diff, forward));
-            let [w, x, y, z] = frame.orientation;
-            let pitch = (2. * (w * x + y * z)).atan2_d(1. - 2. * (x * x + y * y));
-            (1.5 * (pitch - desired_pitch))
+            // AI +0x200: the pitch rate wanted, −0.5 (+0x23c) × the angle
+            // from the nose to the corrected direction.
+            let desired_rate = -0.5 * dot(diff, up).atan2_d(dot(diff, forward));
+            // AI +0x90 is the body's local pitch rate (body +0x2a0 x, copied
+            // by 001eb380), not an Euler pitch: the lean tracks a rate.
+            (1.5 * (frame.local_angular_velocity[0] - desired_rate))
                 .clamp(-std::f32::consts::FRAC_PI_2, std::f32::consts::FRAC_PI_2)
                 .sin_d()
         } else if airborne {
@@ -941,6 +947,7 @@ mod tests {
         DriverPose {
             origin: [0., 0., 50.],
             orientation: [1., 0., 0., 0.],
+            local_angular_velocity: [0.; 3],
             speed_magnitude: speed,
             grounded: true,
             riding: true,
@@ -1065,6 +1072,25 @@ mod tests {
             1.,
         );
         assert_eq!((input.lean, input.lean_flick_rate), (0., Some(0.)));
+    }
+    #[test]
+    fn high_air_lean_tracks_the_body_pitch_rate() {
+        // Level nose, corrected direction slightly below it: the wanted rate
+        // is about +0.83 rad/s (nose down) whatever the current rate.
+        let lean = |rate: f32| {
+            let mut driver = Driver::new(0, Options::default());
+            let pose = DriverPose {
+                grounded: false,
+                local_angular_velocity: [rate, 0., 0.],
+                ..pose(60., false, false)
+            };
+            drive(&mut driver, &square(0, -1.), &pose, 0., 30.).0.lean
+        };
+        // Still: lean forward toward the wanted rate.
+        assert!((lean(0.) - (1.5f32 * -0.8335).sin_d()).abs() < 0.01);
+        // Already rotating nose down faster than wanted: lean back, saturated.
+        assert!((lean(2.) - 1.).abs() < 1e-6);
+        assert!((lean(-2.) + 1.).abs() < 1e-6);
     }
     #[test]
     fn jump_hook_arms_then_releases_the_chosen_preload_strength() {

@@ -6,7 +6,13 @@
 //! world board trace. `wrecks` and bounded `incidents` use CPU seat order
 //! (the roster), while `riders` retains its historical alphabetical order.
 //! Wrecks count only through each CPU's finishing tick (finished quads keep
-//! simulating). `--require-finish` exits nonzero for unfinished races.
+//! simulating). Each incident classifies its wreck: kind, race station
+//! node, airborne run (takeoff node and speed, air time, time since
+//! landing), contacts, offset from the racing line and the nearest rider.
+//! `--require-finish` exits nonzero for unfinished races. With
+//! `CPU_TIMES_COURSE_DIR` set, each course's racing line (points, flags,
+//! speeds, air times, preload scales) and static collision placements are
+//! written there as `<course>.json` and `<course>-models.json`.
 //!
 //!   cargo run --release -p atv-game --example cpu_times -- CONTENT_DIR \
 //!     OUT.jsonl [--courses env01,sx03] [--difficulty 1|2] [--autopilot] \
@@ -68,6 +74,21 @@ async fn measure(content: &Content, course: &str, options: &Options) -> atv_game
         None,
         None,
     ));
+    if let Ok(dir) = std::env::var("CPU_TIMES_COURSE_DIR") {
+        let c = &state.race.course;
+        let line = json!({"points": c.points, "widths": c.widths, "flags": c.flags,
+            "speeds": c.speeds, "airtimes": c.airtimes, "preload": c.preload_scales,
+            "loop_start": c.loop_start});
+        let models: Vec<Value> = (venue.scene.collision_models.iter())
+            .map(|m| json!({"name": m.name, "at": &m.world_matrix[12..15]}))
+            .collect();
+        let write = |name: String, value: Value| {
+            std::fs::write(format!("{dir}/{name}.json"), value.to_string())
+                .map_err(|e| e.to_string())
+        };
+        write(course.into(), line)?;
+        write(format!("{course}-models"), models.into())?;
+    }
     let roster: Vec<Value> = state
         .roster
         .iter()
@@ -80,6 +101,10 @@ async fn measure(content: &Content, course: &str, options: &Options) -> atv_game
     let mut wrecked = [false; 4];
     let mut finished = [false; 4];
     let mut incidents = Vec::new();
+    // Per seat: the airborne run (steps, takeoff speed, takeoff station
+    // segment, grounded steps since) and the previous step's speed.
+    let mut air = [(0u32, 0f32, 0usize, u32::MAX / 2); 4];
+    let mut last_speed = [0f32; 4];
     let mut steps = 0u64;
     let limit = u64::from(options.minutes) * 60 * 60;
     let done = loop {
@@ -92,15 +117,67 @@ async fn measure(content: &Content, course: &str, options: &Options) -> atv_game
                 if finished[index] {
                     continue;
                 }
-                let down = cpu.vehicle.frame().wreck.phase != atv_core::wreck::Phase::Riding;
+                let f = cpu.vehicle.frame();
+                let down = f.wreck.phase != atv_core::wreck::Phase::Riding;
+                let station = state.race.station(Some(index));
                 if down && !wrecked[index] {
                     wrecks[index] += 1;
                     if incidents.len() < 400 {
-                        let f = cpu.vehicle.frame();
+                        let course = &state.race.course;
+                        let node = |i: usize| {
+                            json!({"segment": i, "flags": course.flags.get(i),
+                                "speed": course.speeds.get(i), "air": course.airtimes.get(i)})
+                        };
+                        // The nearest other rider (player or CPU), horizontally.
+                        let nearest = std::iter::once(ride.frame().origin)
+                            .chain(
+                                state
+                                    .cpus
+                                    .iter()
+                                    .enumerate()
+                                    .filter(|(i, _)| *i != index)
+                                    .map(|(_, c)| c.vehicle.frame().origin),
+                            )
+                            .map(|o| {
+                                ((o[0] - f.origin[0]).powi(2) + (o[2] - f.origin[2]).powi(2)).sqrt()
+                            })
+                            .fold(f32::MAX, f32::min);
+                        // 00146850 body angles: pitch, yaw, roll.
+                        let angles = atv_core::rider_control::body_angles(
+                            f.orientation,
+                            atv_core::math::atan2f,
+                        );
                         incidents.push(json!({"rider": index, "step": steps,
-                            "position": f.origin, "speed": f.speed_magnitude}));
+                            "position": f.origin, "speed": f.speed_magnitude,
+                            "previous_speed": last_speed[index], "kind": f.wreck.kind,
+                            "grounded": f.grounded.iter().filter(|g| **g).count(),
+                            "pitch": angles[0].to_degrees(), "roll": angles[2].to_degrees(),
+                            "station": node(station.segment),
+                            "air_time": air[index].0 as f32 / 60.,
+                            "since_landing": air[index].3 as f32 / 60.,
+                            "takeoff_speed": air[index].1, "takeoff": node(air[index].2),
+                            "nearest": nearest,
+                            "obstacle_contacts": f.obstacle_contact_count,
+                            "chassis_contacts": f.chassis_contact_count,
+                            "impact_point": f.crash_impact_point,
+                            "impact_speed": f.crash_impact_speed,
+                            "line_error": course.project_near(f.origin, station).error,
+                            "width": course.widths.get(station.segment),
+                            "on_track": state.race.on_track(Some(index))}));
                     }
                 }
+                // An airborne run ends a quarter second (15 steps) after
+                // landing, so a wreck on touchdown reports the jump it ended.
+                if f.grounded.iter().all(|g| !*g) {
+                    if air[index].3 > 15 {
+                        air[index] = (0, last_speed[index], station.segment, 0);
+                    }
+                    air[index].0 += 1;
+                    air[index].3 = 0;
+                } else {
+                    air[index].3 += 1;
+                }
+                last_speed[index] = f.speed_magnitude;
                 wrecked[index] = down;
                 finished[index] = state
                     .frame
