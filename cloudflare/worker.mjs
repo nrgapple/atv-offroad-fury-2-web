@@ -5,6 +5,7 @@ import { boardRequest, isBoardPath } from './boards.mjs';
 import { ghostRequest, isGhostPath } from './ghosts.mjs';
 import { GAME_SERVER_STATUS_PATH, checkGameServer, gameServerStatus } from './gameserver.mjs';
 import { STATS_PATH, refreshStats, statsRequest } from './stats.mjs';
+import { refreshWeekly } from './weekly.mjs';
 const BLOB = /^\/content\/[a-f0-9]{64}\.bin$/;
 const IMAGE = /^\/devlog-images\/[a-z0-9-]+\.png$/;
 const APP_ICON = /^\/app-icons\/[a-f0-9]{64}\.png$/;
@@ -136,9 +137,11 @@ async function route(request, env) {
 
 export default {
   async fetch(request, env) { return secureResponse(await withWebAnalytics(await route(request, env), request, env), request, { webAnalytics: webAnalyticsEnabled(env) }); },
-  // The five-minute cron (wrangler.jsonc triggers): game server health, then the public stats rollup.
+  // The five-minute cron (wrangler.jsonc triggers): game server health, the public stats rollup, then the
+  // weekly challenge's percentiles.
   scheduled(controller, env, ctx) {
     ctx.waitUntil(checkGameServer(env).catch(failure => console.error('game server check failed', failure))
-      .then(() => refreshStats(env)).catch(failure => console.error('stats refresh failed', failure)));
+      .then(() => refreshStats(env)).catch(failure => console.error('stats refresh failed', failure))
+      .then(() => refreshWeekly(env)).catch(failure => console.error('weekly refresh failed', failure)));
   },
 };

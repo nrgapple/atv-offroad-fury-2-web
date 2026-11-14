@@ -4,8 +4,8 @@ import { DatabaseSync } from 'node:sqlite';
 import test from 'node:test';
 import worker from './worker.mjs';
 import {
-  GHOST_HEADER, GHOST_KEY, GHOST_MAX_AGE, GHOST_STRIDE, GHOST_TOP, MAX_GHOST_BYTES, MAX_GHOST_KEYS, MAX_GHOST_TEXT,
-  checkGhost, decodeGhost, ghostHeader,
+  GHOST_HEADER, GHOST_KEY, GHOST_LIMIT, GHOST_MAX_AGE, GHOST_STRIDE, GHOST_TOP, MAX_GHOST_BYTES, MAX_GHOST_KEYS, MAX_GHOST_TEXT,
+  checkGhost, decodeGhost, ghostHeader, keptGhosts,
 } from './ghosts.mjs';
 
 // A D1 stand-in over real SQLite with the production migrations applied.
@@ -187,19 +187,25 @@ test('a ghost needs its row: the name, the exact lap time, the vehicle and the c
   assert.equal((await call(env, 'GET', `/api/ghosts/${BOARD}/%E0%A4%A/1`)).status, 404);
 });
 
-test('ghosts are kept for the ten best rows and dropped when a row leaves them or improves', async () => {
+test('ghosts are kept for the ten best rows and one a band of five ranks, and dropped when a row leaves them or improves', async () => {
   const env = setup();
-  const names = Array.from({ length: GHOST_TOP + 1 }, (_, i) => `R${i}`);
+  const names = Array.from({ length: GHOST_TOP + 7 }, (_, i) => `R${i}`);
   for (const [i, name] of names.entries()) await submit(env, name, 60_000 + i * 1000);
-  // The eleventh row keeps no ghost.
-  assert.equal((await upload(env, 'R10', ghost({ lapMs: 70_000 }))).body.kept, false);
-  for (const [i, name] of names.slice(0, GHOST_TOP).entries()) assert.equal((await upload(env, name, ghost({ lapMs: 60_000 + i * 1000 }))).body.kept, true, name);
-  assert.equal(stored(env).length, GHOST_TOP);
-  // A new fastest lap pushes the tenth row out: its ghost is deleted with
-  // the submission, before any upload.
+  const lapOf = name => ghost({ lapMs: 60_000 + Number(name.slice(1)) * 1000 });
+  for (const name of names.slice(0, GHOST_TOP)) assert.equal((await upload(env, name, lapOf(name))).body.kept, true, name);
+  // Ranks 11-15 are one band: its best-ranked row with a ghost keeps it.
+  assert.equal((await upload(env, 'R11', lapOf('R11'))).body.kept, true, 'the band\'s first ghost');
+  assert.equal((await upload(env, 'R12', lapOf('R12'))).body.kept, false, 'a worse row of the same band');
+  assert.equal((await upload(env, 'R10', lapOf('R10'))).body.kept, true, 'a better row of the band replaces it');
+  assert.ok(!stored(env).some(row => row.startsWith('R11:')));
+  // Ranks 16-20 are the next band.
+  assert.equal((await upload(env, 'R16', lapOf('R16'))).body.kept, true);
+  assert.equal(stored(env).length, GHOST_TOP + 2);
+  // A new fastest lap pushes the tenth row into the band (it ranks ahead of
+  // R10 there) and R10's ghost is deleted with the submission.
   await submit(env, 'NEW', 59_000);
-  assert.deepEqual(stored(env), names.slice(0, GHOST_TOP - 1).map((name, i) => `${name}:${60_000 + i * 1000}`));
-  assert.equal((await call(env, 'GET', `/api/ghosts/${BOARD}/R9/69000`)).status, 404);
+  assert.deepEqual(stored(env), [...names.slice(0, GHOST_TOP), 'R16'].map(name => `${name}:${60_000 + Number(name.slice(1)) * 1000}`));
+  assert.equal((await call(env, 'GET', `/api/ghosts/${BOARD}/R10/70000`)).status, 404);
   // A rider's better lap drops the old lap's ghost; the new one follows.
   await submit(env, 'R3', 58_000);
   assert.ok(!stored(env).some(row => row.startsWith('R3:')));
@@ -208,10 +214,21 @@ test('ghosts are kept for the ten best rows and dropped when a row leaves them o
   assert.equal((await upload(env, 'R3', ghost({ lapMs: 63_000 }))).body.kept, false, 'the old lap');
   assert.equal((await upload(env, 'R3', ghost({ lapMs: 58_000 }))).body.kept, true);
   board = await call(env, 'GET', `/api/boards/${BOARD}`);
-  assert.deepEqual(board.body.entries.filter(e => e.ghost).map(e => e.name), ['R3', 'R0', 'R1', 'R2', 'R4', 'R5', 'R6', 'R7', 'R8']);
+  assert.deepEqual(board.body.entries.filter(e => e.ghost).map(e => e.name), ['R3', 'R0', 'R1', 'R2', 'R4', 'R5', 'R6', 'R7', 'R8', 'R9', 'R16']);
   // A slower lap changes nothing.
   await submit(env, 'R0', 75_000);
   assert.ok(stored(env).includes('R0:60000'));
+});
+
+test('the kept ghosts: ten best, one a band down to rank 40, never more than the limit', () => {
+  const rows = Array.from({ length: 50 }, (_, i) => ({ name: `R${i}`, value: 60_000 + i }));
+  const all = rows.map(({ name, value }) => ({ name, value }));
+  const kept = [...keptGhosts(rows, all)];
+  assert.equal(GHOST_LIMIT, 16);
+  assert.deepEqual(kept, ['R0', 'R1', 'R2', 'R3', 'R4', 'R5', 'R6', 'R7', 'R8', 'R9', 'R10', 'R15', 'R20', 'R25', 'R30', 'R35']);
+  // A band's ghost is its best-ranked row that has one; a stale time keeps none.
+  const some = [{ name: 'R13', value: 60_013 }, { name: 'R14', value: 60_014 }, { name: 'R2', value: 1 }, { name: 'R45', value: 60_045 }];
+  assert.deepEqual([...keptGhosts(rows, some)], ['R13']);
 });
 
 test('ghost refusals: method, size, JSON, origin, rate limit and storage failure', async () => {
