@@ -51,7 +51,7 @@ any VPS, in a container, or behind any TLS proxy. Hetzner appears only under
 | `FURY_ACME_DOMAINS`, `FURY_ACME_EMAIL`, `FURY_ACME_CACHE` | certificate names, contact, cache dir | — |
 | `FURY_TLS_CERT`, `FURY_TLS_KEY` | PEM paths for `files` | — |
 | `FURY_STATE_DIR` | rooms saved at shutdown and restored at start; daily usage | `./state` |
-| `FURY_COMMIT` | build commit shown by `/healthz` and `/multiplayer/version` | `host-only` |
+| `FURY_COMMIT` | build commit shown by `/healthz`, `/multiplayer/version` and `--version`; set at build time it is compiled in, set at run time it overrides | `host-only` |
 | `RUST_LOG` | log filter (JSON logs to stdout) | `info` |
 
 Routes: every relay route under `/multiplayer/` (create/open a private room,
@@ -131,6 +131,9 @@ brief hitch, not a lost room.
   relay's shape (pose kinds, with `senderOld`/`senderNoLinks` meaning a pose
   from a build with or without HELLO) and add `frames`; usage is kept in
   `FURY_STATE_DIR/usage.json`.
+- `fury-server --version` prints `fury-server <version> <commit> protocol <n>`
+  and exits 0 without starting the server or touching the state directory
+  (the deploy script and CI use it). Any other argument is refused.
 - Restarts: SIGTERM or SIGINT stops accepting, saves every room to
   `FURY_STATE_DIR/rooms.json` (connected riders become held slots), closes
   sockets with 1012 and exits within about 6 s. At start the file is read

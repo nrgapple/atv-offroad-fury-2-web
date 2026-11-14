@@ -3,8 +3,29 @@
 
 use tokio::sync::watch;
 
+fn main() -> std::process::ExitCode {
+    // `--version` answers without starting anything or touching the state
+    // directory (the deploy script and CI call it).
+    match std::env::args().nth(1).as_deref() {
+        None => serve(),
+        Some("--version" | "-V") => {
+            println!(
+                "{}",
+                atv_server::config::version_line(std::env::var("FURY_COMMIT").ok())
+            );
+            std::process::ExitCode::SUCCESS
+        }
+        Some(other) => {
+            eprintln!(
+                "fury-server: unknown argument {other:?}; settings come from FURY_* variables (research/GAME_SERVER.md), --version prints the version"
+            );
+            std::process::ExitCode::from(2)
+        }
+    }
+}
+
 #[tokio::main]
-async fn main() -> std::process::ExitCode {
+async fn serve() -> std::process::ExitCode {
     tracing_subscriber::fmt()
         .json()
         .with_env_filter(

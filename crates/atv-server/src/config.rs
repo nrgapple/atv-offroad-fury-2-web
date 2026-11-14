@@ -10,6 +10,31 @@ pub const PRODUCTION_ORIGINS: &str = "https://furyremastered.com,https://www.fur
 /// browser-test pages on any port.
 pub const LOOPBACK_ORIGIN: &str = "http://127.0.0.1:*";
 
+/// The commit this binary was built from, when the build set `FURY_COMMIT`.
+pub const BUILD_COMMIT: Option<&str> = option_env!("FURY_COMMIT");
+
+/// The commit to report: the running environment's `FURY_COMMIT`, else the
+/// build's, else `host-only`.
+pub fn commit(runtime: Option<String>) -> String {
+    runtime
+        .map(|c| c.trim().to_string())
+        .filter(|c| !c.is_empty())
+        .or(BUILD_COMMIT
+            .map(str::to_string)
+            .filter(|c| !c.trim().is_empty()))
+        .unwrap_or_else(|| "host-only".into())
+}
+
+/// `fury-server --version`: version, commit and protocol on one line.
+pub fn version_line(runtime_commit: Option<String>) -> String {
+    format!(
+        "fury-server {} {} protocol {}",
+        env!("CARGO_PKG_VERSION"),
+        commit(runtime_commit),
+        atv_net::VERSION
+    )
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum Tls {
     Off,
@@ -90,7 +115,7 @@ impl Config {
             state_dir: get("FURY_STATE_DIR")
                 .map(PathBuf::from)
                 .unwrap_or_else(|| PathBuf::from("./state")),
-            commit: get("FURY_COMMIT").unwrap_or_else(|| "host-only".into()),
+            commit: commit(get("FURY_COMMIT")),
         })
     }
 }
@@ -146,7 +171,16 @@ mod tests {
         let c = config(&[]).unwrap();
         assert_eq!(c.listen, "127.0.0.1:8789".parse().unwrap());
         assert_eq!(c.tls, Tls::Off);
-        assert_eq!(c.commit, "host-only");
+        assert_eq!(c.commit, commit(None));
+        assert_eq!(
+            config(&[("FURY_COMMIT", "abc1234")]).unwrap().commit,
+            "abc1234"
+        );
+        let line = version_line(Some("abc1234".into()));
+        assert!(
+            line.starts_with("fury-server ") && line.ends_with(" protocol 6"),
+            "{line}"
+        );
         assert_eq!(c.state_dir, PathBuf::from("./state"));
         assert!(c.origins.allows(Some("https://furyremastered.com")));
         assert!(c.origins.allows(Some("http://127.0.0.1:4187")));
