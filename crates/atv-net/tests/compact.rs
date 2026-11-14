@@ -164,7 +164,6 @@ fn bike(nodes: usize) -> Snapshot {
                 } else {
                     [0.; 3]
                 },
-                ..Transform::default()
             }
         })
         .collect();
