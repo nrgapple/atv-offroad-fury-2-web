@@ -572,6 +572,7 @@ pub struct Motorcycle {
     pub time: f32,
     obstacles: Vec<crate::obstacle::StaticObstacle>,
     materials: Option<[crate::materials::TerrainMaterial; 8]>,
+    surface_source: crate::materials::SurfaceSource,
     scene: Option<crate::scene_collision::SceneCollision>,
     /// This frame's physical candidates (static props, plant proxies, train).
     contacts: Vec<(
@@ -646,6 +647,7 @@ impl Motorcycle {
             time: 0.,
             obstacles: Vec::new(),
             materials: None,
+            surface_source: crate::materials::SurfaceSource::Atv2,
             scene: None,
             contacts: Vec::new(),
             chassis_contacts: Vec::new(),
@@ -876,9 +878,14 @@ impl Motorcycle {
         self.frame.dynamic_candidates = self.contacts.iter().filter(|c| c.1.is_some()).count();
         Ok(())
     }
-    /// The map's terrain zone coefficients (`.toy` TerrainZone1..8).
+    /// Select source tire routing without changing raw contact/effect surface indices.
+    pub fn set_surface_source(&mut self, source: crate::materials::SurfaceSource) {
+        self.surface_source = source;
+    }
+    /// ATV2 coefficients; also restores the legacy source mode on map changes.
     pub fn set_materials(&mut self, materials: Option<[crate::materials::TerrainMaterial; 8]>) {
         self.materials = materials;
+        self.surface_source = crate::materials::SurfaceSource::Atv2;
     }
     pub fn frame(&self) -> &Frame {
         &self.frame
