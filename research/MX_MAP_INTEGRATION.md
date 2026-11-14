@@ -204,3 +204,18 @@ The draft runtime capability is enabled for the next private browser validation
 pass after these native gates. Public content has not been promoted/uploaded;
 there is no public or physical-phone acceptance claim. A matching CI artifact,
 all-56 host mobile browser checks and inspected renders remain required.
+
+The first browser attempt exposed a direct-link filter still limited to the
+original 40 maps: MX query URLs silently loaded ENV01. Those observations are
+invalid as MX acceptance and are not counted. Single-player direct links now
+use the same runtime course resolver; direct multiplayer room links retain
+the original environment whitelist. Browser acceptance asserts the actual
+loaded venue ID. Scripted parity steps hold their final pose, so frame timing
+is measured separately with a live-loop 360-step autodrive pass per map;
+paused/scripted-load frame samples are not represented as gameplay timing.
+
+The skipped shader groups resolve to secondary ambient-environment-reflection
+passes on `nat05_window` (NAT04/NAT05) and `SM02_DiaPlat` (SM01–03). Their
+primary diffuse passes remain present; the loader does not drop those models.
+NAT04 water uses the separately supported XZ-reflection path. Screenshot
+inspection still needs to establish the visible impact in the actual venues.

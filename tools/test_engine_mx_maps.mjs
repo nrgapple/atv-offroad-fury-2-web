@@ -54,14 +54,32 @@ try {
     const travelled = Math.hypot(last[0] - first[0], last[2] - first[2]);
     assert.ok(maxSpeed >= 1 && travelled >= 1, `${course.id}: movement from spawn`);
     const state = await page.evaluate(() => JSON.parse(document.querySelector('#ui-state')?.textContent || '{}'));
+    assert.equal(state.ride?.environment, course.id, `${course.id}: actual loaded venue`);
     assert.ok(state.scenery?.triangles > 0, `${course.id}: scenery renders`);
+    const scriptedMs = Date.now() - started;
+    await optionalScreenshot(page, 'ATV_MX_SCREENSHOT', course.id);
+    // Scripted parity steps run synchronously and hold the final pose. Measure
+    // rendering separately through the existing live-loop autodrive benchmark.
+    const liveStarted = Date.now();
+    const drive = encodeURIComponent(JSON.stringify([
+      { frames: 120, input: {} }, { frames: 240, input: { throttle: 0.4 } },
+    ]));
+    await page.goto(url(`/play.html?venue=${course.id}&quad=${quad}&graphics=original&weather=off&uiDiagnostics=1&autodrive=${drive}`));
+    await page.waitForFunction(() => document.querySelector('#trace') || /error|fail/i.test(document.querySelector('#status')?.textContent), null, { timeout: 240000 });
+    assert.ok(await page.locator('#trace').count(), `${course.id}: live benchmark completes`);
+    const live = JSON.parse(await page.locator('#trace').textContent());
+    assert.equal(live.steps, 360, `${course.id}: live steps`);
+    const liveState = await page.evaluate(() => JSON.parse(document.querySelector('#ui-state')?.textContent || '{}'));
+    assert.equal(liveState.ride?.environment, course.id, `${course.id}: live loaded venue`);
     const samples = await page.evaluate(() => window.mxFrameSamples);
+    assert.ok(samples.length >= 120, `${course.id}: enough live rendered frame samples (${samples.length})`);
     const percentile = (column, fraction) => {
       const sorted = samples.map(row => row[column]).sort((a, b) => a - b);
       return sorted.length ? sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * fraction))] : null;
     };
     const { metrics } = await session.send('Performance.getMetrics');
-    const observation = { id: course.id, quad, host_load_and_360_steps_ms: Date.now() - started,
+    const observation = { id: course.id, quad, host_load_and_360_steps_ms: scriptedMs,
+      host_live_load_and_360_steps_ms: Date.now() - liveStarted, host_live_benchmark: live,
       scenery_draws: state.scenery.draws, scenery_triangles: state.scenery.triangles,
       host_frame_samples: samples.length, host_frame_interval_p50_ms: percentile(0, 0.5),
       host_frame_interval_p95_ms: percentile(0, 0.95), host_raf_callback_p95_ms: percentile(1, 0.95),
@@ -71,7 +89,6 @@ try {
     report.push(observation);
     if (process.env.ATV_MX_REPORT) await writeJson(process.env.ATV_MX_REPORT, report);
     console.log(JSON.stringify(observation));
-    await optionalScreenshot(page, 'ATV_MX_SCREENSHOT', course.id);
     assertNoErrors(errors);
   }
   if (process.env.ATV_MX_REPORT) await writeJson(process.env.ATV_MX_REPORT, report);
