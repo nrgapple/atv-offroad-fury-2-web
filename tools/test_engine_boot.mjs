@@ -16,7 +16,8 @@ const browser = await launch();
 try {
   {
     const errors = [];
-    const page = await newPage(browser, { viewport: sizes[0] }, errors);
+    // Packaged CI builds enable the service worker; route faults must reach the page.
+    const page = await newPage(browser, { viewport: sizes[0], serviceWorkers: 'block' }, errors);
     // Hold only the engine's WebAssembly so the boot screen is observable.
     let release;
     const held = new Promise(resolve => (release = resolve));
@@ -74,7 +75,7 @@ try {
     ['abort', route => route.abort(), 'Failed to fetch'],
     ['404', route => route.fulfill({ status: 404, body: 'missing' }), 'Original content package is unavailable (404).']
   ]) {
-    const page = await browser.newPage({ viewport: sizes[0] });
+    const page = await browser.newPage({ viewport: sizes[0], serviceWorkers: 'block' });
     await page.route('**/content/manifest.json', handle);
     await page.goto(url('/play.html'));
     await page.waitForFunction(() => document.querySelector('#frontend').dataset.error === 'true', null, {

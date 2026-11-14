@@ -28,6 +28,7 @@ const { values: args } = parseArgs({ options: {
   group: { type: 'string', default: '' },
   only: { type: 'string', default: '' },
   url: { type: 'string', default: '' },
+  root: { type: 'string', default: 'web/dist' },
   list: { type: 'boolean', default: false },
   verbose: { type: 'boolean', short: 'v', default: false },
   bail: { type: 'boolean', default: false },
@@ -37,7 +38,7 @@ const { values: args } = parseArgs({ options: {
 
 if (args.help) {
   console.log(`Usage: run_browser_tests.mjs [--group ${SELECTABLE.join('|')}[,...]] [--only test_x.mjs[,...]]
-  [--url <existing site>] [--list] [--verbose] [--bail] [--exclusive]
+  [--url <existing site>] [--root <downloaded build/static>] [--list] [--verbose] [--bail] [--exclusive]
 Default group: content-free. Logs: work/verification/browser-tests/<test>.log`);
   process.exit(0);
 }
@@ -107,7 +108,8 @@ let emptyContent = null;
 async function site(mode) {
   if (args.url) return args.url.replace(/\/+$/, '');
   if (servers.has(mode)) return servers.get(mode).url;
-  if (!existsSync(path.join(ROOT, 'web/dist/atv_app_bg.wasm'))) throw new Error('web/dist is missing; run `make web` first.');
+  const webRoot = path.resolve(ROOT, args.root);
+  if (!existsSync(path.join(webRoot, 'atv_app_bg.wasm'))) throw new Error(`${webRoot} is missing; fetch a PR build or run make web.`);
   let content = CONTENT;
   if (mode === 'none') content = emptyContent ??= await mkdtemp(path.join(tmpdir(), 'atv-no-content-'));
   else if (!existsSync(path.join(CONTENT, 'manifest.json'))) {
@@ -115,7 +117,7 @@ async function site(mode) {
       'Content tests need the ignored hosted-content package; see research/BROWSER_TESTS.md.');
   }
   const port = await freePort();
-  const child = spawnOwned('python3', ['tools/serve_web.py', '--bind', '127.0.0.1', '--port', String(port), '--content', content],
+  const child = spawnOwned('python3', ['tools/serve_web.py', '--bind', '127.0.0.1', '--port', String(port), '--content', content, '--root', webRoot],
     { cwd: ROOT, stdio: ['ignore', 'ignore', 'pipe'] });
   let stderr = '';
   child.stderr.on('data', chunk => { stderr += chunk; });
@@ -128,7 +130,7 @@ async function site(mode) {
     await new Promise(resolve => setTimeout(resolve, 100));
   }
   servers.set(mode, { url, child });
-  console.log(`Serving web/dist at ${url} (${mode === 'none' ? 'no private content' : 'private content'})`);
+  console.log(`Serving ${webRoot} at ${url} (${mode === 'none' ? 'no private content' : 'private content'})`);
   return url;
 }
 

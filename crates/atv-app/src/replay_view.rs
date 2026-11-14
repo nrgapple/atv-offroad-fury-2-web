@@ -3,7 +3,9 @@
 //! through three cameras: the ride's own chase camera as it was, a
 //! trackside vantage beside the line ahead that follows the rider, and a
 //! slow orbit. The ride stays paused underneath; leaving resumes it as it
-//! was.
+//! was. A race's recording is the whole race: the results' Replay plays it
+//! from the start (full-race replay); Pause → Replay still opens near the
+//! end.
 use crate::instant_replay::{Moment, Recorder, Shot, look, vantage};
 use atv_core::math::Det;
 use atv_game::ride::bindings::Pad;
@@ -41,12 +43,19 @@ pub struct Replay {
     pub from_results: bool,
     /// The ride's pause before the replay opened (restored after).
     pub was_paused: bool,
+    /// The recording is the whole race (its clock shows from the start).
+    pub whole: bool,
 }
 
 impl Replay {
-    pub fn new(span: (u64, u64), from_results: bool, was_paused: bool) -> Self {
+    /// `whole` with `from_results`: the full race from its start.
+    pub fn new(span: (u64, u64), from_results: bool, was_paused: bool, whole: bool) -> Self {
         Self {
-            time: (span.1 as f64 - LEAD).max(span.0 as f64),
+            time: if whole && from_results {
+                span.0 as f64
+            } else {
+                (span.1 as f64 - LEAD).max(span.0 as f64)
+            },
             playing: true,
             speed: 0,
             shot: Shot::Chase,
@@ -58,16 +67,19 @@ impl Replay {
             scrub: None,
             from_results,
             was_paused,
+            whole,
         }
     }
 
     /// `#ui-state` `replay`.
-    pub fn state(&self, span: Option<(u64, u64)>) -> serde_json::Value {
+    pub fn state(&self, recorder: &Recorder) -> serde_json::Value {
         let m = &self.moment;
         serde_json::json!({
-            "time": self.time, "span": span, "playing": self.playing,
+            "time": self.time, "span": recorder.span(), "playing": self.playing,
+            "samples": recorder.len(), "interval": recorder.interval(),
+            "stride": recorder.stride(), "bytes": recorder.bytes(),
             "speed": self.speed(), "shot": self.shot.label(),
-            "fromResults": self.from_results,
+            "fromResults": self.from_results, "whole": self.whole,
             "origin": [m.player.quad_world[12], m.player.quad_world[13], m.player.quad_world[14]],
             "cpus": m.cpus.len(), "peers": m.peers.len(), "ghost": m.ghost.is_some(),
         })
@@ -126,6 +138,7 @@ impl Replay {
             "ArrowLeft" | "KeyJ" => self.jump(-JUMP, span),
             "ArrowRight" | "KeyL" => self.jump(JUMP, span),
             "Home" => self.time = span.0 as f64,
+            "End" => self.time = span.1 as f64,
             _ => {}
         }
         None
@@ -235,7 +248,19 @@ impl Replay {
 pub fn controls(replay: &Replay, span: (u64, u64), touch: bool) -> atv_ui::hud::viewer::State {
     use atv_ui::hud::viewer::{Button, State};
     let seconds = |steps: f64| steps / 60.;
-    let at = seconds(replay.time - span.1 as f64);
+    let clock = |steps: f64| {
+        let s = seconds(steps.max(0.)) as u32;
+        format!("{}:{:02}", s / 60, s % 60)
+    };
+    let at = if replay.whole {
+        format!(
+            "{} / {}",
+            clock(replay.time - span.0 as f64),
+            clock((span.1 - span.0) as f64)
+        )
+    } else {
+        format!("{:+.1}s", seconds(replay.time - span.1 as f64))
+    };
     State {
         buttons: vec![
             Button::Back,
@@ -247,7 +272,12 @@ pub fn controls(replay: &Replay, span: (u64, u64), touch: bool) -> atv_ui::hud::
             Button::Photo,
         ],
         hint: format!(
-            "REPLAY {at:+.1}s · {}{}",
+            "{} {at} · {}{}",
+            if replay.whole {
+                "RACE REPLAY"
+            } else {
+                "REPLAY"
+            },
             replay.shot.label(),
             if touch {
                 ""
@@ -280,11 +310,12 @@ impl crate::App {
             return;
         };
         let was_paused = riding.paused;
+        let whole = riding.recorder.is_whole();
         riding.paused = true;
         riding.menu_open = true;
         riding.clear_input();
         riding.sync_sound();
-        self.replay = Some(Replay::new(span, from_results, was_paused));
+        self.replay = Some(Replay::new(span, from_results, was_paused, whole));
         if let Some(overlay) = &mut self.overlay {
             overlay.sync_menu(false);
             overlay.clear_input();
@@ -478,7 +509,7 @@ mod tests {
     #[test]
     fn playback_runs_slows_stops_at_the_end_and_restarts() {
         let span = (100, 100 + 20 * 60);
-        let mut r = Replay::new(span, false, true);
+        let mut r = Replay::new(span, false, true, false);
         assert_eq!(r.time, (span.1 - 15 * 60) as f64);
         r.frame(1. / 60., None, span);
         assert!((r.time - (span.1 - 15 * 60 + 1) as f64).abs() < 1e-6);
@@ -498,7 +529,7 @@ mod tests {
     #[test]
     fn keys_and_buttons_held_on_entry() {
         let span = (0, 600);
-        let mut r = Replay::new(span, true, false);
+        let mut r = Replay::new(span, true, false, false);
         let mut pad = Pad {
             id: 1,
             buttons: Default::default(),

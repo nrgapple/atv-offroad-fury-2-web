@@ -92,9 +92,50 @@ pub fn crash_boom(severity: f32, rate: u32) -> Option<Pcm> {
     })
 }
 
+/// The quick-chat horn (research/QUICK_CHAT.md; authored, no original
+/// sample): two detuned square-ish tones a major third apart (392 and
+/// 494 Hz) through a 2.4 kHz lowpass, 25 ms attack, held, then 60 ms
+/// release; 0.32 s long at a quarter level. Mono.
+pub fn horn(rate: u32) -> Pcm {
+    let rate_f = f64::from(rate);
+    let duration = 0.32;
+    let frames = (rate_f * duration).ceil() as usize;
+    let mut lowpass = Lowpass::new(2400., 0.7, rate);
+    let mut phases = [0f64; 2];
+    let mut data = Vec::with_capacity(frames);
+    for i in 0..frames {
+        let time = i as f64 / rate_f;
+        let envelope = (time / 0.025).min(1.) * ((duration - time) / 0.06).clamp(0., 1.);
+        let mut tone = 0.;
+        for (phase, frequency) in phases.iter_mut().zip([392., 494.]) {
+            // A soft square: the sine, clipped.
+            tone += (phase.sin_d() * 4.).clamp(-1., 1.) * 0.5;
+            *phase += std::f64::consts::TAU * frequency / rate_f;
+        }
+        let out = lowpass.process(0, (tone * envelope * 0.25) as f32);
+        data.push(out);
+    }
+    Pcm {
+        channels: 1,
+        frames,
+        data,
+        loop_markers: None,
+        rate,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_horn_is_short_bounded_and_audible() {
+        let pcm = horn(48_000);
+        assert_eq!(pcm.frames, 15_360);
+        let peak = pcm.data.iter().fold(0f32, |m, v| m.max(v.abs()));
+        assert!(peak > 0.1 && peak <= 0.5, "{peak}");
+        assert!(pcm.data[0].abs() < 0.01 && pcm.data[pcm.frames - 1].abs() < 0.01);
+    }
 
     #[test]
     fn soft_landings_are_silent_and_hard_ones_thump() {

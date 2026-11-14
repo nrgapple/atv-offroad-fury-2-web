@@ -13,6 +13,7 @@ pub mod http;
 pub mod interest;
 pub mod outbox;
 pub mod players;
+pub mod reports;
 pub mod rooms;
 pub mod stats;
 
@@ -46,6 +47,7 @@ pub struct Shared {
     /// Rider identity, friends, stats and the league (research/ONLINE_IDENTITY.md).
     pub players: players::Players,
     pub admission: Mutex<admission::Admission>,
+    pub reports: Mutex<reports::Reports>,
     pub next_conn: AtomicU64,
     pub shutting_down: AtomicBool,
 }
@@ -60,6 +62,7 @@ impl Shared {
             registry: rooms::Registry::default(),
             players: players::Players::default(),
             admission: Mutex::default(),
+            reports: Mutex::default(),
             next_conn: AtomicU64::new(1),
             shutting_down: AtomicBool::new(false),
         })

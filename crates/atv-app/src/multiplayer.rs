@@ -119,6 +119,8 @@ pub struct Net {
     public: bool,
     /// Step accumulator of the ride held behind the frontend (s).
     held_accumulator: f32,
+    /// Quick chat (research/QUICK_CHAT.md).
+    pub chat: crate::quick_chat::QuickChat,
 }
 
 /// What the app does after a room tick.
@@ -422,6 +424,7 @@ impl Net {
             met: None,
             public: false,
             held_accumulator: 0.,
+            chat: crate::quick_chat::QuickChat::load(&atv_ui::settings::Settings::load()),
         };
         let deadline = Instant::now();
         let mut set_up = false;
@@ -1273,6 +1276,15 @@ impl Net {
             // Room Freestyle rides every venue a room can (research/
             // MULTIPLAYER.md "Room Freestyle").
             freestyle: !lobby.public,
+            chat: self.chat_available(),
+            mute_all: self.chat.mute_all,
+            muted: self.chat.muted.iter().copied().collect(),
+            blocked: lobby
+                .players
+                .iter()
+                .filter(|p| Some(p.id) != me && self.chat.blocked(&p.name, None))
+                .map(|p| p.id)
+                .collect(),
             players: lobby
                 .players
                 .iter()
@@ -1336,6 +1348,95 @@ impl Net {
         self.socket.close();
         self.mesh.clear();
         self.closed = Some("Left lobby".into());
+    }
+
+    /// The room's server relays quick chat and this rider is in.
+    pub fn chat_available(&self) -> bool {
+        self.serves.chat && self.session.peer.is_some() && self.closed.is_none()
+    }
+
+    /// Sends a quick-chat pick when the budget allows; the server's echo
+    /// shows it.
+    pub fn send_chat(&mut self, kind: u8, id: u8) -> bool {
+        if !self.chat_available() {
+            return false;
+        }
+        let now = now_ms(self.clock);
+        match self.session.chat_packet(kind, id, now) {
+            Ok(bytes) => self.socket.send(bytes),
+            Err(_) => false,
+        }
+    }
+
+    /// Takes the chat that arrived and rebuilds the HUD's view; true when a
+    /// horn should sound.
+    pub fn update_chat(&mut self) -> bool {
+        let now = now_ms(self.clock);
+        let me = self.session.peer;
+        let mut horn = false;
+        for message in self.session.take_chat() {
+            let name = self
+                .session
+                .lobby
+                .as_ref()
+                .and_then(|l| l.players.iter().find(|p| p.id == message.peer))
+                .map_or("", |p| p.name.as_str())
+                .to_string();
+            horn |= self.chat.receive(message, &name, me, now as f64);
+        }
+        let ready = [
+            atv_game::multiplayer::chat::LINE,
+            atv_game::multiplayer::chat::EMOTE,
+            atv_game::multiplayer::chat::HORN,
+        ]
+        .map(|kind| self.session.chat_ready(kind, now));
+        let available = self.chat_available();
+        let presented = &self.presented;
+        let position = |slot: u8| {
+            presented
+                .iter()
+                .find(|(peer, _, stale, _)| *peer == slot && !*stale)
+                .map(|(_, position, ..)| *position)
+        };
+        self.chat.update(available, position, ready, now as f64);
+        horn
+    }
+
+    /// A rider's shown name, by slot.
+    pub fn rider_name(&self, peer: u8) -> Option<String> {
+        self.session
+            .others()
+            .find(|p| p.id == peer)
+            .map(|p| p.name.clone())
+    }
+
+    /// One-tap report of slot `peer` with a fixed reason
+    /// (research/QUICK_CHAT.md "Reports"): the request to run.
+    pub fn report_rider(
+        &self,
+        peer: u8,
+        reason: &'static str,
+    ) -> Option<impl std::future::Future<Output = Result<(), String>> + 'static> {
+        self.rider_name(peer)?;
+        let url = format!("{}/multiplayer/report", self.server);
+        let origin = net::origin(&self.site);
+        let body = serde_json::json!({
+            "room": self.session.code,
+            "key": self.session.key,
+            "target": peer,
+            "reason": reason,
+        })
+        .to_string();
+        Some(async move {
+            let (status, text) = net::post(&url, &origin, &body).await?;
+            if status == 200 {
+                Ok(())
+            } else if text.is_empty() {
+                Err(format!("Report not sent ({status})."))
+            } else {
+                Err(text)
+            }
+        })
     }
 
     /// Other riders for the HUD: roster names at their presented positions.
@@ -1402,9 +1503,16 @@ impl Net {
             "batches": c.batches,
             "batchesReceived": c.batches_received,
             "framesReceived": c.frames_received,
+            "chat": {
+                "available": self.chat_available(),
+                "shown": self.chat.shown, "hidden": self.chat.hidden, "horns": self.chat.horns,
+                "bubbles": self.chat.view.bubbles.len(), "feed": self.chat.view.feed.len(),
+                "muted": self.chat.muted.iter().collect::<Vec<_>>(),
+                "muteAll": self.chat.mute_all, "blocked": self.chat.blocked.len(),
+            },
             "serves": {
                 "links": self.serves.links, "batches": self.serves.batches,
-                "frames": self.serves.frames,
+                "frames": self.serves.frames, "chat": self.serves.chat,
                 "motorcycles": self.serves.motorcycles,
             },
             "server": self.server,

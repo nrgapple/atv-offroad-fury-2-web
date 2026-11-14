@@ -36,6 +36,8 @@ pub const RIDER: u32 = 2407;
 pub const DONE: u32 = 2408;
 /// Host/Join form fields, by index.
 pub const FIELD: u32 = 2420;
+/// The name dice beside the Rider name field (research/QUICK_CHAT.md).
+pub const DICE: u32 = 2430;
 /// 3D preview slots (their rects size the render targets).
 pub const MODEL_QUAD: u32 = 2409;
 pub const MODEL_RIDER: u32 = 2410;
@@ -98,16 +100,24 @@ impl Img {
 }
 
 /// Original event families from tracks.dat ids; labels follow the manual.
-pub const GROUPS: [(&str, &str); 6] = [
+pub const GROUPS: [(&str, &str); 11] = [
     ("all", "All"),
     ("env", "Enduro"),
     ("free", "Stunt"),
     ("nat", "Nationals"),
     ("sx", "Supercross"),
     ("extra", "Arena"),
+    ("mx_fs", "MX Freestyle"),
+    ("mx_mc", "MX Freeride"),
+    ("mx_nat", "MX Nationals"),
+    ("mx_sm", "MX Supermoto"),
+    ("mx_sx", "MX Supercross"),
 ];
 
 pub fn course_group(id: &str) -> &'static str {
+    if let Some(course) = atv_game::launch::mx_courses::get(id) {
+        return course.group;
+    }
     // Enduro and Short Track races list with their Environment venue.
     let id = atv_game::launch::race_venue(id);
     match id.trim_end_matches(|c: char| c.is_ascii_digit()) {
@@ -2085,6 +2095,9 @@ fn freeride_badges(m: &Metrics, el: El, selected: bool, riders: Option<u32>) -> 
 /// `.ms-fields`: the Host/Join text fields (label over a dark input box).
 /// The web build lays a real input over each box for mobile keyboards; the
 /// canvas draws the value and, on desktop, the caret of the focused field.
+/// A die showing five pips (holes cut by drawing the pips the other way).
+const DICE_ICON: &str = "M4 2h12a2 2 0 0 1 2 2v12a2 2 0 0 1 -2 2H4a2 2 0 0 1 -2 -2V4a2 2 0 0 1 2 -2zM6 5a1.5 1.5 0 1 0 0 3a1.5 1.5 0 1 0 0 -3zM14 5a1.5 1.5 0 1 0 0 3a1.5 1.5 0 1 0 0 -3zM10 8.5a1.5 1.5 0 1 0 0 3a1.5 1.5 0 1 0 0 -3zM6 12a1.5 1.5 0 1 0 0 3a1.5 1.5 0 1 0 0 -3zM14 12a1.5 1.5 0 1 0 0 3a1.5 1.5 0 1 0 0 -3z";
+
 fn form(m: &Metrics, s: &Screen) -> El {
     let mut fields = El::new(column(12.));
     fields.style.flex_shrink = 0.;
@@ -2136,6 +2149,40 @@ fn form(m: &Metrics, s: &Screen) -> El {
             TextStyle::new(display(19., 700, false), Color::hex("#f4f4f4")).spacing(1.14),
             23.,
         ));
+        if label == "Rider name" && !s.typing {
+            // A 48 px dice square after the field: a random curated name.
+            input.style.flex_grow = 1.;
+            let dice = El::new(Style {
+                size: Size {
+                    width: length(48.),
+                    height: length(48.),
+                },
+                flex_shrink: 0.,
+                ..Default::default()
+            })
+            .id(DICE)
+            .paint(Paint::fill(Color::hex("#0000008c")).radius(8.))
+            .child(
+                El::new(Style {
+                    size: Size {
+                        width: length(48.),
+                        height: length(48.),
+                    },
+                    ..Default::default()
+                })
+                .content(Content::Shape(Shape {
+                    path: DICE_ICON.into(),
+                    bounds: [0., 0., 20., 20.],
+                    unit: 2.4,
+                    fill: Color::hex("#f4f4f4"),
+                    stroke: None,
+                    drop_shadow: None,
+                })),
+            );
+            let line = El::new(row(8.));
+            fields = fields.child(field.child(line.child(input).child(dice)));
+            continue;
+        }
         fields = fields.child(field.child(input));
     }
     fields
@@ -4018,5 +4065,30 @@ mod tests {
         // The backdrop layer has no hit targets: input goes to the content.
         let (back, _) = layers(&view, &moving);
         assert!(back.id.is_none() && back.children.iter().all(|c| c.id.is_none()));
+    }
+}
+
+#[cfg(test)]
+mod mx_catalog_tests {
+    #[test]
+    fn imported_groups_append_without_changing_original_groups() {
+        assert_eq!(
+            &super::GROUPS[..6],
+            &[
+                ("all", "All"),
+                ("env", "Enduro"),
+                ("free", "Stunt"),
+                ("nat", "Nationals"),
+                ("sx", "Supercross"),
+                ("extra", "Arena")
+            ]
+        );
+        for c in atv_game::launch::mx_courses::COURSES {
+            assert_eq!(super::course_group(c.id), c.group);
+            assert!(!atv_game::launch::mx_courses::available(c.id, true));
+            assert!(!atv_game::launch::is_race_course(c.id));
+            assert!(atv_game::launch::course_resource(c.id, false).is_err());
+        }
+        assert_eq!(super::course_group("nat01"), "nat");
     }
 }

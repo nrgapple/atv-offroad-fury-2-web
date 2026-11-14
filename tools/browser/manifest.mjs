@@ -33,6 +33,7 @@ export const TESTS = {
   'test_engine_pause.mjs': { group: 'content' },
   'test_engine_photo.mjs': { group: 'content' },
   'test_engine_replay.mjs': { group: 'content' },
+  'test_engine_race_replay.mjs': { group: 'content' },
   'test_engine_alpha.mjs': { group: 'content' },
   'test_engine_alpha_muffle.mjs': { group: 'content' },
   'test_engine_alpha_landing.mjs': { group: 'content' },
@@ -160,6 +161,10 @@ export const TESTS = {
   'test_engine_multiplayer_dropin.mjs': {
     group: 'multiplayer',
     reason: 'needs a local game server at the same origin (Host Game, room WebSocket); run with --url'
+  },
+  'test_engine_multiplayer_chat.mjs': {
+    group: 'multiplayer',
+    reason: 'needs a local game server at the same origin (quick chat relay and the report route); run with --url'
   },
   'test_engine_multiplayer_context.mjs': {
     group: 'multiplayer',

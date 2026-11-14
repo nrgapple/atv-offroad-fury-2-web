@@ -1993,6 +1993,10 @@ impl Frontend {
     /// Visible course order under the event filter.
     pub fn order(&self) -> Vec<usize> {
         (0..self.tracks.len())
+            .filter(|&i| {
+                !self.tracks[i].id.starts_with("mx_")
+                    || atv_game::launch::mx_courses::available(&self.tracks[i].id, false)
+            })
             .filter(|&i| self.filter == "all" || course_group(&self.tracks[i].id) == self.filter)
             .collect()
     }
@@ -2411,6 +2415,17 @@ impl Frontend {
             // Host Game's Room row: Free Ride or Freestyle.
             "hostmode" => {
                 self.host_freestyle = !self.host_freestyle;
+                self.refresh(view);
+            }
+            "dicename" => {
+                let roll = web_time::SystemTime::now()
+                    .duration_since(web_time::UNIX_EPOCH)
+                    .map_or(0, |d| d.as_nanos() as u64)
+                    ^ self.player_name.len() as u64;
+                let name = atv_game::multiplayer::dice_name(
+                    roll.wrapping_mul(0x9e37_79b9_7f4a_7c15) >> 20,
+                );
+                self.set_field("player-name", &name);
                 self.refresh(view);
             }
             "share" if self.page == "lobby" => return Some(Event::CopyInvite),
@@ -3037,6 +3052,7 @@ impl Frontend {
         }
         self.focus = None;
         match id {
+            super::DICE => return self.run("dicename", view, settings),
             BACK | DONE if self.course_sheet => self.close_course_sheet(view),
             BACK | DONE if self.vehicle_sheet => self.close_vehicle_sheet(view),
             BACK | DONE => return self.back(view),
@@ -5130,6 +5146,19 @@ mod tests {
             front.run("freeride", &view, &mut settings),
             Some(Event::FreeRide { ref name, .. }) if name == "Rider"
         ));
+    }
+
+    #[test]
+    fn the_name_dice_sets_a_clean_curated_name() {
+        let view = view(1280., 720.);
+        let mut settings = Settings::memory();
+        let mut front = Frontend::new(tracks(), &settings, true);
+        front.show("create-lobby", &view);
+        front.click(super::super::DICE, &view, &mut settings);
+        let name = front.player_name.clone();
+        assert!(name.len() >= 6 && name.len() <= 16, "{name}");
+        assert!(name.ends_with(|c: char| c.is_ascii_digit()), "{name}");
+        assert_eq!(front.fields()[0].value, name);
     }
 
     #[test]

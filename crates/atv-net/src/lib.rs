@@ -9,11 +9,12 @@
 
 use serde::{Deserialize, Serialize};
 
+pub mod chat;
 mod codec;
 mod compact;
 mod names;
 pub use compact::{AnimationState, Delta, STEERING_LIMIT, apply_delta, delta};
-pub use names::{offensive_name, public_name};
+pub use names::{dice_name, offensive_name, public_name};
 mod smoothing;
 mod transform;
 
@@ -700,6 +701,9 @@ pub mod signal {
     /// bit); such a server sends motorcycle poses only to builds that said
     /// it. Never forwarded in other riders' flags.
     pub const MOTORCYCLES: u8 = 32;
+    /// Hello flags bit: the build takes [`super::Packet::Chat`] quick chat
+    /// (research/QUICK_CHAT.md). The server relays chat only to such builds.
+    pub const CHAT: u8 = 64;
 }
 /// Most poses in one [`Packet::Bundle`]: every rider in a full room.
 pub const MAX_BUNDLE: usize = MAX_PLAYERS;
@@ -811,12 +815,14 @@ impl Signal {
                 signal::HELLO => {
                     self.data.len() == 1
                         && self.data[0]
-                            <= signal::DIRECT
+                            & !(signal::DIRECT
                                 | signal::CARRIES
                                 | signal::CPU_SOUNDS
                                 | signal::BATCHES
                                 | signal::FRAMES
                                 | signal::MOTORCYCLES
+                                | signal::CHAT)
+                            == 0
                 }
                 signal::PRESENT | signal::ARRIVED => {
                     self.data.len() == 1 && self.data[0] & !(signal::DIRECT | signal::BATCHES) == 0
@@ -920,6 +926,9 @@ pub enum Packet {
     Frame {
         poses: Vec<Vec<u8>>,
     },
+    /// A quick-chat line, emote or horn by id (research/QUICK_CHAT.md);
+    /// to and from the server only for builds that said [`signal::CHAT`].
+    Chat(chat::Chat),
 }
 
 pub(crate) fn bounded(values: &[f32], limit: f32) -> bool {

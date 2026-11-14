@@ -45,6 +45,7 @@ fn features() -> serde_json::Map<String, serde_json::Value> {
     map.insert("frames".into(), true.into());
     map.insert("identity".into(), true.into());
     map.insert("motorcycles".into(), true.into());
+    map.insert("chat".into(), true.into());
     map
 }
 
@@ -55,6 +56,7 @@ pub fn router(shared: Arc<Shared>) -> Router {
         .route(FREERIDE, post(claim))
         .route(FREERIDE_RIDERS, get(riders))
         .route(FREERIDE_DAYS, get(days))
+        .route(crate::reports::ROUTE, post(crate::reports::report))
         .route("/multiplayer/version", get(version))
         .route("/healthz", get(health))
         .route("/metrics", get(metrics))

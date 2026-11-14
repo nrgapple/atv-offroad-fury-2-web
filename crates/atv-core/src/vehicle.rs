@@ -231,7 +231,7 @@ pub struct Vehicle {
     wheel_contact_points: [Vec3; 4],
     wheel_world_angular_velocity: Vec3,
     supports: [crate::wheel_support::Support; 4],
-    materials: Option<[TerrainMaterial; 8]>,
+    materials: Option<[TerrainMaterial; 16]>,
     tire_friction: f32,
     steering_reduction: f32,
     steering_angle: f32,
@@ -1203,6 +1203,9 @@ impl Vehicle {
         Ok(())
     }
     pub fn set_materials(&mut self, materials: [TerrainMaterial; 8]) {
+        self.materials = Some(std::array::from_fn(|i| materials[i.min(7)]));
+    }
+    pub fn set_materials16(&mut self, materials: [TerrainMaterial; 16]) {
         self.materials = Some(materials);
     }
     ///001e4c90/001ee630 bind the rider to this same cache, including during
@@ -3519,6 +3522,25 @@ mod tests {
         // Off is the original body, bit for bit.
         assert_eq!(tilt(0), off);
     }
+    #[test]
+    fn materials_setters_preserve_legacy_slots_and_accept_all_mx_slots() {
+        let (mut v, _) = fixture();
+        let base = v.materials.unwrap()[0];
+        let eight = std::array::from_fn(|i| TerrainMaterial {
+            grip: i as f32 + 1.,
+            ..base
+        });
+        v.set_materials(eight);
+        assert_eq!(&v.materials.unwrap()[..8], &eight);
+        let sixteen = std::array::from_fn(|i| TerrainMaterial {
+            grip: i as f32 + 10.,
+            ..base
+        });
+        v.set_materials16(sixteen);
+        assert_eq!(v.materials.unwrap(), sixteen);
+        assert_eq!(v.materials.unwrap()[15].grip, 25.);
+    }
+
     fn fixture() -> (Vehicle, Terrain) {
         let text=b"[Physical Properties]\nWeight=600\nCofGX=0\nCofGY=0.2\nCofGZ=0\nCofGRangeX=0.8\nCofGRangeY=0\nCofGRangeZ=1\nPitchInertiaScale=1\nYawInertiaScale=1\nRollInertiaScale=1\nAirborneGravity=1\n[Suspension]\nCompression=1\nDecompressionRate=4\nSpring=0.7\nShock=0.2\n[Tires]\nBrakeFriction=0.2\nBearingFriction=0.05\nBrakeConfiguration=3\nTireFriction=1.5\nStictionSpeed=5\n[Steering]\nSteerSpeed1=1\nSteerSpeed2=80\nSteerScale1=1\nSteerScale2=0.3\nSteeringReduction=0.1\n[Engine]\nNumberOfRPMPoints=3\nRPM1=1000\nHP1=10\nRPM2=5000\nHP2=40\nRPM3=8000\nHP3=20\nNumberOfGears=3\nGearRatio1=2\nGearRatio2=1.5\nGearRatio3=1\nFinalGearRatio=6\nTransmissionLoss=0.8\nRampUpFilter=0.1\nRampDownFilter=0.2\nRampDownSpeed=45\nTopSpeed=60\n[Aerodynamics]\nAeroForce=10\nAeroMoment=40\nAeroDamping=-80\nAeroMomentScaleX=-1\nAeroMomentScaleY=1\nAeroMomentScaleZ=-1\nUnrollGain=2\nMaxWheelieAngle=45\nWheelieGain=2\nTopWheelieSpeed=100\nMaxPreload=100\nPreloadMinAxisRate=1\nPreloadMaxAxisRate=80\n[Joystick]\nXAxisRateLimit=4\nYAxisRateLimit=4\nStuntXAxisRateLimit=2.5\nStuntYAxisRateLimit=2.5\nXAxisDeadZone=0\n[Collisions]\nObstacleReflection=0.002\nDefaultAngularImpulseScale=0\nDefaultFriction=0.3\nDefaultFrictionTorqueScale=0.1\n";
         let mut nodes = Vec::new();

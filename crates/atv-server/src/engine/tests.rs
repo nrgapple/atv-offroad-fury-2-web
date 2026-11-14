@@ -1,4 +1,6 @@
 use super::*;
+
+mod chat;
 use atv_net::{CpuMotion, CpuRider, GameClaim, Packet, Participant, decode, encode};
 
 /// Deterministic randomness: counts up.
