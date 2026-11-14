@@ -13,6 +13,7 @@ pub mod http;
 pub mod interest;
 pub mod outbox;
 pub mod queue;
+pub mod reports;
 pub mod rooms;
 pub mod stats;
 
@@ -44,6 +45,7 @@ pub struct Shared {
     pub usage: Mutex<stats::Usage>,
     pub registry: rooms::Registry,
     pub admission: Mutex<admission::Admission>,
+    pub reports: Mutex<reports::Reports>,
     pub next_conn: AtomicU64,
     pub shutting_down: AtomicBool,
 }
@@ -57,6 +59,7 @@ impl Shared {
             usage: Mutex::default(),
             registry: rooms::Registry::default(),
             admission: Mutex::default(),
+            reports: Mutex::default(),
             next_conn: AtomicU64::new(1),
             shutting_down: AtomicBool::new(false),
         })

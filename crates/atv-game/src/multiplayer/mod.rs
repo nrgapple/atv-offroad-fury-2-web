@@ -15,6 +15,7 @@ pub mod links;
 pub mod remote;
 pub use atv_net::quickplay;
 pub use atv_net::{RiderState, Snapshot};
+pub use atv_net::{RiderState, Snapshot, chat, dice_name};
 pub use links::Command as LinkCommand;
 pub mod spawn;
 
@@ -142,6 +143,9 @@ pub struct Serves {
     /// `quickplay`: a server-run Quick Play room (research/QUICK_PLAY.md):
     /// the client follows its `RoomLoop` and sends `Vote`s.
     pub quickplay: bool,
+    /// `chat`: relays quick chat (research/QUICK_CHAT.md) to builds that
+    /// say [`atv_net::signal::CHAT`].
+    pub chat: bool,
 }
 
 impl Serves {
@@ -153,6 +157,7 @@ impl Serves {
             frames: claim["frames"].as_bool() == Some(true),
             motorcycles: claim["motorcycles"].as_bool() == Some(true),
             quickplay: claim["quickplay"].as_bool() == Some(true),
+            chat: claim["chat"].as_bool() == Some(true),
         }
     }
 
@@ -248,7 +253,15 @@ pub struct Session {
     /// The relay's pace factor in tenths (research/MULTIPLAYER.md "Free
     /// Ride pace"); 0 before it sends one.
     pub pace: u8,
+    /// Quick chat from the server not yet taken ([`Session::take_chat`]),
+    /// oldest first and bounded.
+    chat: Vec<atv_net::chat::Chat>,
+    /// This rider's quick-chat budget, mirroring the server's.
+    chat_limits: atv_net::chat::Limits,
 }
+
+/// Most quick-chat events held for the app between frames.
+const CHAT_INBOX: usize = 32;
 
 fn encode(packet: &Packet) -> Result<Vec<u8>> {
     atv_net::encode(packet).map_err(|e| e.to_string())
@@ -370,6 +383,9 @@ impl Session {
         // them refuses the bit.
         if serves.motorcycles {
             flags |= atv_net::signal::MOTORCYCLES;
+        }
+        if serves.chat {
+            flags |= atv_net::signal::CHAT;
         }
         encode(&Packet::Signal(atv_net::Signal {
             peer,
@@ -615,6 +631,12 @@ impl Session {
             }
             // The relay forwards it only from the host.
             Packet::Game(state) => self.game = Some((*state, now_ms)),
+            Packet::Chat(message) => {
+                if self.chat.len() == CHAT_INBOX {
+                    self.chat.remove(0);
+                }
+                self.chat.push(message);
+            }
             // The relay stamps the sender.
             Packet::Progress(progress) => {
                 self.progress.insert(progress.peer, progress);
@@ -1344,6 +1366,30 @@ impl Session {
     }
 
     /// The host's CPU riders as a packet.
+    /// A quick-chat line, emote or horn (research/QUICK_CHAT.md), when this
+    /// rider's budget allows it; the server's echo shows it.
+    pub fn chat_packet(&mut self, kind: u8, id: u8, now_ms: u64) -> Result<Vec<u8>> {
+        let peer = self.peer.ok_or("join multiplayer first")?;
+        if !atv_net::chat::valid(kind, id) {
+            return Err("unknown quick chat".into());
+        }
+        if !self.chat_limits.take(kind, now_ms) {
+            return Err("quick chat is cooling down".into());
+        }
+        encode(&Packet::Chat(atv_net::chat::Chat { peer, kind, id }))
+    }
+
+    /// Whether a quick-chat `kind` would be sent now (the wheel greys the
+    /// others out).
+    pub fn chat_ready(&self, kind: u8, now_ms: u64) -> bool {
+        self.chat_limits.ready(kind, now_ms)
+    }
+
+    /// Quick chat received since the last call, oldest first.
+    pub fn take_chat(&mut self) -> Vec<atv_net::chat::Chat> {
+        std::mem::take(&mut self.chat)
+    }
+
     pub fn cpu_packet(&self, motion: atv_net::CpuMotion) -> Result<Vec<u8>> {
         encode(&Packet::Cpus(Box::new(motion)))
     }
@@ -1614,6 +1660,7 @@ mod tests {
         frames: false,
         motorcycles: false,
         quickplay: false,
+        chat: false,
     };
 
     fn lobby(players: &[(u8, u16)], started: bool) -> Lobby {
