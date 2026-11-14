@@ -1,7 +1,7 @@
 //! Very simple name filter for shared Free Ride rooms, where strangers see
 //! each other's names. A flagged name is replaced entirely, never partially
 //! masked, so nothing offensive survives as asterisks around it.
-use crate::PeerId;
+use crate::{MAX_NAME_BYTES, PeerId};
 
 /// Flagged anywhere in a name, after folding look-alike characters.
 const ANYWHERE: &[&str] = &[
@@ -49,9 +49,53 @@ pub fn public_name(name: &str, peer: PeerId) -> String {
     }
 }
 
+/// The name dice (research/QUICK_CHAT.md "Name dice"): a curated adjective,
+/// a noun and two digits, e.g. "DustyFox42".
+const ADJECTIVES: [&str; 32] = [
+    "Dusty", "Muddy", "Speedy", "Turbo", "Rapid", "Sunny", "Lucky", "Brave", "Mighty", "Swift",
+    "Rocky", "Jolly", "Clever", "Bouncy", "Zippy", "Wild", "Happy", "Shiny", "Rusty", "Snowy",
+    "Sandy", "Breezy", "Stormy", "Fuzzy", "Nifty", "Plucky", "Daring", "Frosty", "Golden",
+    "Cosmic", "Epic", "Roaring",
+];
+const NOUNS: [&str; 32] = [
+    "Fox", "Hawk", "Otter", "Badger", "Comet", "Rocket", "Moose", "Falcon", "Tiger", "Panda",
+    "Wolf", "Eagle", "Gecko", "Bison", "Coyote", "Lynx", "Beaver", "Raven", "Pony", "Bear",
+    "Cobra", "Shark", "Mantis", "Puma", "Jaguar", "Yak", "Trail", "Canyon", "Boulder", "Ridge",
+    "Thunder", "Racer",
+];
+
+/// A dice name from `roll` (any random number); never one the filter flags.
+pub fn dice_name(roll: u64) -> String {
+    let mut roll = roll;
+    loop {
+        let adjective = ADJECTIVES[(roll % 32) as usize];
+        let noun = NOUNS[((roll / 32) % 32) as usize];
+        let name = format!("{adjective}{noun}{:02}", (roll / 1024) % 100);
+        if !offensive_name(&name) {
+            return name;
+        }
+        roll = roll.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dice_names_are_short_clean_and_varied() {
+        let mut seen = std::collections::BTreeSet::new();
+        for adjective in 0..32u64 {
+            for noun in 0..32u64 {
+                let name = dice_name(adjective + noun * 32 + 7 * 1024);
+                assert!(name.len() <= MAX_NAME_BYTES - 8, "{name}");
+                assert!(!offensive_name(&name), "{name}");
+                assert!(name.ends_with("07"), "{name}");
+                seen.insert(name);
+            }
+        }
+        assert_eq!(seen.len(), 32 * 32);
+    }
 
     #[test]
     fn flags_obvious_words_and_spellings_but_keeps_ordinary_names() {

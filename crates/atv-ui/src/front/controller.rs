@@ -2393,6 +2393,17 @@ impl Frontend {
                 self.host_freestyle = !self.host_freestyle;
                 self.refresh(view);
             }
+            "dicename" => {
+                let roll = web_time::SystemTime::now()
+                    .duration_since(web_time::UNIX_EPOCH)
+                    .map_or(0, |d| d.as_nanos() as u64)
+                    ^ self.player_name.len() as u64;
+                let name = atv_game::multiplayer::dice_name(
+                    roll.wrapping_mul(0x9e37_79b9_7f4a_7c15) >> 20,
+                );
+                self.set_field("player-name", &name);
+                self.refresh(view);
+            }
             "share" if self.page == "lobby" => return Some(Event::CopyInvite),
             "leave" if self.page == "lobby" => return self.leave_lobby(view),
             "hosttrack" if self.page == "create-lobby" && self.quad_id >= 27 => {

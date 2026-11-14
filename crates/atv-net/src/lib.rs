@@ -14,7 +14,7 @@ mod codec;
 mod compact;
 mod names;
 pub use compact::{AnimationState, Delta, STEERING_LIMIT, apply_delta, delta};
-pub use names::{offensive_name, public_name};
+pub use names::{dice_name, offensive_name, public_name};
 mod smoothing;
 mod transform;
 
