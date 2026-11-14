@@ -355,7 +355,7 @@ async fn run(
     if target.racing {
         let before = stored();
         let Some((quads, textures)) =
-            prepare_cpus(content, target, &course, &key, expanded, live).await?
+            prepare_cpus(content, target, &course, &key, expanded.take(), live).await?
         else {
             return Ok(Outcome::Abandoned);
         };
@@ -367,6 +367,9 @@ async fn run(
         });
     }
     let before = stored();
+    // A non-race run still owns the course returned by prepare_course.
+    // Release it before the sound-name worker reads its cached copy.
+    drop(expanded);
     let Some(samples) = prepare_bank(content, target, &environment, shared, live).await? else {
         return Ok(Outcome::Abandoned);
     };

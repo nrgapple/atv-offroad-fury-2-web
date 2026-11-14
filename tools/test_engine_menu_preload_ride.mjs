@@ -50,7 +50,7 @@ async function context(browser, errors) {
 async function ride(browser, errors, front, withPreload, shot, selection) {
   const page = await context(browser, errors);
   if (selection) await page.addInitScript(s => localStorage.setItem('atv-player-selection', JSON.stringify(s)), selection);
-  await page.goto(url(`/play.html?uiDiagnostics=1&weather=${selection ? 'on' : 'off'}&front=${front}${withPreload ? '' : '&preload=0'}`));
+  await page.goto(url(`/play.html?uiDiagnostics=1${selection?.freestyleEnvironment === 'env04' ? '&audioDiagnostics=1' : ''}&weather=${selection ? 'on' : 'off'}&front=${front}${withPreload ? '' : '&preload=0'}`));
   await page.waitForFunction(p => JSON.parse(document.querySelector('#ui-state')?.textContent || '{}').front?.page === p, front, { timeout: 120000 });
   if (front === 'race') {
     // The cursor goes to Start Race (moving rows keeps the course).
@@ -95,6 +95,10 @@ async function ride(browser, errors, front, withPreload, shot, selection) {
   await page.waitForFunction(() => JSON.parse(document.querySelector('#ui-state')?.textContent || '{}').decodedCache?.soundMs > 0,
     null, { timeout: 10000, polling: 16 });
   const after = { ...(await state(page)).decodedCache, ...(await cache(page)) };
+  if (selection?.freestyleEnvironment === 'env04') {
+    await page.waitForFunction(() => JSON.parse(document.documentElement.getAttribute('data-engine-audio') || '{}').events?.rain === 1,
+      null, { timeout: 30000, polling: 16 });
+  }
   if (shot) await page.screenshot({ path: shot });
   const sounds = page.sounds[0];
   await page.context().close();
@@ -123,6 +127,7 @@ try {
       { quadId: 1, freestyleEnvironment: 'env08' },
       { quadId: 1, freestyleEnvironment: 'sx01', race: { course: 'sx01' } },
       { quadId: 1, freestyleEnvironment: 'env03' },
+      { quadId: 1, freestyleEnvironment: 'env04' },
     ]) {
       const runs = [];
       for (const warm of [false, true]) {
