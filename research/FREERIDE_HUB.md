@@ -182,7 +182,10 @@ The browser test runs the server with short timers (below).
   builds moved by a rotation), `cargo test -p atv-game` (HELLO bit, inbox).
 - Browser: `tools/test_engine_freeride_hub.mjs` (multiplayer group) with
   fury-server started as
-  `FURY_HUB_EVENT_SECS=20 FURY_HUB_JOIN_SECS=12 FURY_HUB_ROTATION_SECS=off make server-run`.
+  `FURY_HUB_EVENT_SECS=75 FURY_HUB_JOIN_SECS=12 FURY_HUB_ROTATION_SECS=300 make server-run`:
+  a challenge, a pop-up event, then a rotation with a third rider on a
+  build without the hub (`?hub=0`): all three land on the voted venue and
+  see each other.
 
 ## Limits
 

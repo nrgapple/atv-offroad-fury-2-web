@@ -850,6 +850,7 @@ impl Net {
         }
         let serves = Serves {
             batches: self.serves.batches && BATCHES.load(Ordering::Relaxed),
+            hub: self.serves.hub && crate::hub::ENABLED.load(Ordering::Relaxed),
             ..self.serves
         };
         if let Ok(bytes) = self.session.hello(serves, direct) {

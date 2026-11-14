@@ -10906,6 +10906,9 @@ pub fn start() {
     if param("batches").as_deref() == Some("0") {
         multiplayer::BATCHES.store(false, std::sync::atomic::Ordering::Relaxed);
     }
+    if param("hub").as_deref() == Some("0") {
+        hub::ENABLED.store(false, std::sync::atomic::Ordering::Relaxed);
+    }
     if let Some(value) = param("hubTest") {
         hub::TEST.store(
             hub::parse_test(&value),

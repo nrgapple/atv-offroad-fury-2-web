@@ -3,10 +3,17 @@
 //      asks (G). Bo gets the Accept prompt with its ring timer and accepts (Y).
 //   2. Both race to the server's waypoint; Bo is placed at the goal
 //      (hubTest=goal) and wins once the server's speed check believes it.
-//   3. A pop-up event opens a join circle; both ride into it (hubTest=join);
-//      the event runs and both get the results toast with points.
-// Needs fury-server with short hub timers behind tools/serve_multiplayer.mjs:
-//   FURY_HUB_EVENT_SECS=20 FURY_HUB_JOIN_SECS=12 FURY_HUB_ROTATION_SECS=off make server-run
+//   3. A rider on a build without the hub (?hub=0: no HUB bit) joins and
+//      hears no hub packets. A pop-up event opens a join circle; Ann and Bo
+//      ride into it (hubTest=join); the event runs and both get the results
+//      toast with points.
+//   4. Map rotation: a minute before the move both hub riders vote; the whole
+//      room, the older build included, moves to the voted venue, and every
+//      rider sees the other two there and keeps riding.
+// Needs fury-server with these hub timers behind tools/serve_multiplayer.mjs
+// (first event 75 s after the room opens, after the challenge; the move at
+// 300 s, after the event, with no second event in between):
+//   FURY_HUB_EVENT_SECS=75 FURY_HUB_JOIN_SECS=12 FURY_HUB_ROTATION_SECS=300 make server-run
 //   PLAYWRIGHT_MODULE=... ATV_TEST_URL=http://127.0.0.1:4187 node tools/test_engine_freeride_hub.mjs
 // ATV_MP_SCREENSHOT=dir saves the prompt, the race and the event.
 import assert from 'node:assert/strict';
@@ -38,13 +45,15 @@ async function shot(page, name) {
   if (shots) await page.screenshot({ path: `${shots}/${name}.png` });
 }
 
-async function rider(browser, errors, hooks, viewport) {
+async function rider(browser, errors, hooks, viewport, extra = '') {
   const page = await newPage(browser, { viewport }, errors);
   await page.addInitScript(() => {
     localStorage.setItem('atv2-keyboard-help-seen-v1', '1');
     Object.defineProperty(document, 'hasFocus', { value: () => true });
   });
-  await page.goto(url(`/play.html?uiDiagnostics=1&mode=multiplayer&room=FREERD01&map=env08&play=1&hubTest=${hooks}`));
+  await page.goto(
+    url(`/play.html?uiDiagnostics=1&mode=multiplayer&room=FREERD01&map=env08&play=1&hubTest=${hooks}${extra}`)
+  );
   await wait(page, () => JSON.parse(window.furyMultiplayer ?? 'null')?.environment === 'env08', null, 180000);
   const e = await engine(page);
   assert.equal(e.serves.hub, true, 'the server runs the hub');
@@ -96,7 +105,12 @@ try {
   await shot(bo, 'challenge-win');
   report.challenge = { ann: annResult, bo: boResult };
 
-  // 3. A pop-up event: the join circle, both ride in, the results.
+  // 3. A rider on an older build: no HUB bit, no hub packets.
+  const old = await rider(browser, errors, '', { width: 960, height: 540 }, '&hub=0');
+  const oldPeer = (await engine(old)).peer;
+  report.riders.old = oldPeer;
+
+  // A pop-up event: the join circle, both ride in, the results.
   await hubIs(ann, h => h.event && h.event.phase === 0, null, 120000);
   const open = (await hub(ann)).event;
   await shot(ann, 'event-join');
@@ -119,6 +133,40 @@ try {
   );
   if (open.kind !== 'Stunt-Off') assert.equal(boEvent.points, 100, 'Bo stood on the goal or hill');
   report.eventResults = { ann: annEvent, bo: boEvent };
+
+  // 4. Map rotation: the vote, the move, everyone on the new venue together.
+  await hubIs(ann, h => h.vote && h.vote.maps.length === 3, null, 240000);
+  const vote = (await hub(ann)).vote;
+  await shot(ann, 'rotation-vote');
+  await key(ann, 'Digit1');
+  await key(bo, 'Digit1');
+  await hubIs(ann, h => h.vote && h.vote.votes[0] === 2, null, 10000);
+  const venue = `env0${vote.maps[0]}`;
+  report.rotation = { maps: vote.maps, venue };
+  for (const page of [ann, bo, old]) {
+    await wait(page, venue => JSON.parse(window.furyMultiplayer ?? 'null')?.environment === venue, venue, 150000);
+  }
+  for (const page of [ann, bo, old]) {
+    await wait(
+      page,
+      () => {
+        const e = JSON.parse(window.furyMultiplayer ?? 'null');
+        return e && e.closed === null && e.remote.filter(r => !r.stale).length >= 2;
+      },
+      null,
+      120000
+    );
+  }
+  await nextFrames(ann, 10);
+  await shot(ann, 'rotation-moved');
+  const oldState = await engine(old);
+  assert.equal(oldState.closed, null, 'the older build keeps riding');
+  assert.equal(oldState.hub.riders, 0, 'the older build heard no hub packets');
+  report.rotation.seen = {
+    ann: (await engine(ann)).remote.length,
+    bo: (await engine(bo)).remote.length,
+    old: oldState.remote.length
+  };
   assertNoErrors(errors);
   console.log(JSON.stringify(report, null, 2));
 } finally {

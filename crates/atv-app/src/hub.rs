@@ -13,7 +13,7 @@ use atv_game::multiplayer::hub::{
 };
 use atv_ui::hud::hub::{Banner, Button, Offer, Toast, View, VoteOption};
 use atv_ui::hud::peers::Peer;
-use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
 /// The Challenge button shows within this distance of a hub rider (ft).
 pub const CHALLENGE_RANGE: f32 = 100.;
@@ -40,6 +40,10 @@ pub const TEST_GOAL: u8 = 8;
 pub const TEST_JOIN: u8 = 16;
 
 #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+/// Test hook (`?hub=0`): never say the HUB bit, as a build from before the
+/// hub, so a browser test can ride as one beside hub riders.
+pub static ENABLED: AtomicBool = AtomicBool::new(true);
+
 pub fn parse_test(value: &str) -> u8 {
     value.split(',').fold(0, |flags, word| {
         flags

@@ -111,8 +111,8 @@ export const TESTS = {
   },
   'test_engine_freeride_hub.mjs': {
     group: 'multiplayer',
-    timeout: 600,
-    reason: 'needs a local game server at the same origin started with short hub timers (FURY_HUB_EVENT_SECS=20 FURY_HUB_JOIN_SECS=12 FURY_HUB_ROTATION_SECS=off); challenge accept, race and result, then a pop-up event; run with --url'
+    timeout: 900,
+    reason: 'needs a local game server at the same origin started with short hub timers (FURY_HUB_EVENT_SECS=75 FURY_HUB_JOIN_SECS=12 FURY_HUB_ROTATION_SECS=300); challenge, a pop-up event, then a map rotation with an older build; run with --url'
   },
   'test_engine_freeride_relay.mjs': {
     group: 'multiplayer',
