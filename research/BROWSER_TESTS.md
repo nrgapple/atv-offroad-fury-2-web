@@ -73,6 +73,12 @@ Relay tests need the game and a multiplayer relay on one origin. Locally:
 (`ATV_ALLOW_HOST_WIP=1` lets `test_multiplayer_four` accept a host without
 `/deployment.json`; `ATV_MP_REOPEN=0` skips the 100 s room-expiry step).
 
+The same tests run against the game server (research/GAME_SERVER.md) in place
+of wrangler: `make server-run` serves fury-server on 8789 with the loopback test
+origins allowed, and nothing else changes. Its rooms claim no links or batches,
+so `ATV_GAME_SERVER=fury` tells `test_engine_freeride_relay.mjs` not to expect
+batch tiers.
+
 Two headless Chromium pages on one machine do not open a direct multiplayer
 link by themselves (each hides its local address behind an mDNS name the other
 cannot resolve), so relay tests exercise the relayed path, as desktop builds and
