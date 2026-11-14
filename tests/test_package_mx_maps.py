@@ -49,11 +49,48 @@ class PackagingTests(unittest.TestCase):
         self.assertFalse(audit[-1]['source_equivalent'])
         self.assertEqual(members['Tex/Nat12_pillarA.pst'],b'original')
 
+    def test_esb_species_layout_and_bounds(self):
+        import struct
+        from package_mx_maps import esb_species
+        def string(value):
+            return bytes([len(value)+1])+value+b'\0'
+        species=b'\1'+string(b'Deadaspen')+string(b'Nat01BB.tga')+bytes(23*4)+b'\0'+struct.pack('<I',0)
+        fixture=struct.pack('<I',2)+species+bytes(255)+b'\0'+struct.pack('<I',0)+b'\0'+struct.pack('<I',0)
+        self.assertEqual(esb_species(fixture),[dict(slot=0,model='Deadaspen',billboard='Nat01BB.tga')])
+        for bad in [b'',fixture[:-1],fixture+b'X',struct.pack('<I',3)+fixture[4:]]:
+            with self.assertRaises(ValueError):
+                esb_species(bad)
+
+    def test_derived_terrain_reference_contract(self):
+        from package_mx_maps import derived_terrain_references
+        for venue in VENUES:
+            refs=derived_terrain_references(venue)
+            self.assertEqual(len(refs),3)
+            self.assertEqual(refs[0],(f'Env/{venue}/{venue}_d.pst','derived_terrain_detail'))
+            self.assertEqual({Path(p).name for p,_ in refs[1:]},{'TerrainPlain.psm','TerrainLOD.psm'})
+            self.assertTrue(all(not p.endswith(('.res','.vuo')) for p,_ in refs))
+
     def test_reject_public_output(self):
         with self.assertRaises(ValueError):
             package(Path('/tmp/mx-public-output'))
 
 class PrivateValidation(unittest.TestCase):
+    @unittest.skipUnless((Path(__file__).resolve().parents[1] / 'private/source/MX vs. ATV Unleashed (USA).iso').exists(), 'private source required')
+    def test_all_source_esb_species_layouts(self):
+        import json,hashlib
+        from package_mx_maps import ROOT,MX_BUILD,esb_species
+        rows=json.loads((ROOT/'private/reports/mx-unleashed/psr-directory.json').read_text())
+        count=0
+        with (ROOT/'private/source/MX vs. ATV Unleashed (USA).iso').open('rb') as disc:
+            disc.seek(277*2048)
+            self.assertEqual(hashlib.sha256(disc.read(2965120)).hexdigest(),MX_BUILD)
+            for row in rows:
+                if row['name'].lower().endswith('.esb'):
+                    disc.seek((1400000+row['lba'])*2048)
+                    self.assertTrue(esb_species(disc.read(row['bytes'])))
+                    count+=1
+        self.assertEqual(count,30)
+
     @unittest.skipUnless((Path(__file__).resolve().parents[1] / 'private/reports/mx-map-staging/map-packages.json').exists(), 'run private packaging first')
     def test_all_private_packages(self):
         import json
@@ -63,12 +100,14 @@ class PrivateValidation(unittest.TestCase):
         output = root / 'private/reports/mx-map-staging'
         report = json.loads((output / 'map-packages.json').read_text())
         self.assertEqual(len(report), 56)
+        esb_count=0
         for row in report:
             self.assertEqual(row['source_stem'], row['source_stem'].lower())
             self.assertIn('dependency_audit', row)
             for edge in row['dependency_audit']:
                 self.assertIn(edge['status'], {'resolved','platform_alias','excluded_shader','ambiguous','actual_missing','dynamic_generated_target','false_positive_inactive_template','source_missing','nonphysical_marker','physics_collection_roles','inactive_count_gate','authored_repair'})
-                self.assertFalse(edge['origin'].lower().endswith(('.trn','.pst','.atm','.col')))
+                if not edge['kind'].startswith('derived_terrain_'):
+                    self.assertFalse(edge['origin'].lower().endswith(('.trn','.pst','.atm','.col')))
             if row['id'] == 'mx_nat10':
                 self.assertTrue(all(c['status'] == 'inactive_count_gate' and not c['bindings'] for c in row['physics_collections']))
             if row['id'] in ('mx_nat01','mx_nat06','mx_nat11'):
@@ -83,6 +122,32 @@ class PrivateValidation(unittest.TestCase):
             resource = Resource(data)
             self.assertEqual(len(resource.members), row['member_count'])
             paths = {n for n,_,_ in resource.members}
+            from package_mx_maps import derived_terrain_references
+            expected={p.lower() for p,_ in derived_terrain_references(row['source_stem'])}
+            self.assertTrue(expected <= {p.lower() for p in paths})
+            self.assertFalse(any(p.lower().endswith(('_mst.res','_mat.res')) for p in paths))
+            derived=[edge for edge in row['dependency_audit'] if edge['kind'].startswith('derived_terrain_')]
+            self.assertEqual(len(derived),3)
+            self.assertTrue(all(edge['status']=='resolved' and edge['path'] in paths for edge in derived))
+            self.assertEqual(sum(edge['kind']=='derived_terrain_detail' for edge in derived),1)
+            from package_mx_maps import esb_species
+            for i,(name,_,_) in enumerate(resource.members):
+                if name.lower().endswith('.esb'):
+                    esb_count+=1
+                    species=esb_species(resource.extract(i))
+                    billboard_edges=[edge for edge in row['dependency_audit'] if edge['origin']==name and edge['kind']=='esb_billboard_material']
+                    expected_billboards={str(Path(item['billboard'].replace('\\','/')).with_suffix('.psm')).lower() for item in species if item['billboard']}
+                    self.assertEqual({edge['reference'] for edge in billboard_edges},expected_billboards)
+                    self.assertTrue(all(edge['status']=='resolved' and edge['path'] in paths for edge in billboard_edges))
+                    for edge in billboard_edges:
+                        material=resource.extract(next(j for j,(n,_,_) in enumerate(resource.members) if n==edge['path']))
+                        from package_content import config
+                        for fields in config(material).values():
+                            for key,value in fields.items():
+                                if key.startswith('texturemap_') and value:
+                                    self.assertTrue(any(p.lower().endswith('/'+value.lower()+'.pst') or p.lower().endswith('/'+value.lower()+'.atm') for p in paths))
+
+
             for edge in row['dependency_audit']:
                 if edge['status'] == 'authored_repair':
                     self.assertIn(edge['repair_target'], paths)
@@ -98,6 +163,8 @@ class PrivateValidation(unittest.TestCase):
             self.assertFalse(any(n.lower().endswith(('.vuo','.irx','.elf','.iso')) for n,_,_ in resource.members))
             for i, (_,_,size) in enumerate(resource.members):
                 self.assertEqual(len(resource.extract(i)), size)
+
+        self.assertEqual(esb_count,27)
 
 class ManifestTests(unittest.TestCase):
     def test_additive_atomic_update(self):

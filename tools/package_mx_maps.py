@@ -159,6 +159,59 @@ def package_adapter(output):
     return record
 
 
+def esb_species(data):
+    """Bounded ESB v2 species reader matching atv-core ecosystem's source layout."""
+    if len(data) > 16*1024*1024:
+        raise ValueError('ESB exceeds bound')
+    at = 0
+    def take(count):
+        nonlocal at
+        if count < 0 or at+count > len(data):
+            raise ValueError('truncated ESB')
+        value = data[at:at+count]
+        at += count
+        return value
+    def byte():
+        return take(1)[0]
+    def word():
+        return struct.unpack('<I',take(4))[0]
+    def string():
+        value=take(byte())
+        if not value or value[-1] != 0 or 0 in value[:-1] or any(c < 32 for c in value[:-1]):
+            raise ValueError('invalid ESB species string')
+        return value[:-1].decode('latin1')
+    def optional():
+        return string() if byte() else None
+    if word() != 2:
+        raise ValueError('unsupported ESB version')
+    species=[]
+    for slot in range(256):
+        if not byte():
+            continue
+        model,billboard=string(),string()
+        take(23*4)
+        optional()
+        count=word()
+        if count > 4096:
+            raise ValueError('ESB proxy count exceeds bound')
+        take(count*9*4)
+        species.append(dict(slot=slot,model=model,billboard=billboard))
+    optional()
+    word()
+    optional()
+    count=word()
+    if count > 1_000_000 or at+count*9 != len(data):
+        raise ValueError('invalid ESB placement extent')
+    return species
+
+
+def derived_terrain_references(venue):
+    """Runtime-derived detail image and per-venue terrain material definitions."""
+    return [(f'Env/{venue}/{venue}_d.pst', 'derived_terrain_detail'),
+            (f'Env/{venue}/TerrainPlain.psm', 'derived_terrain_material'),
+            (f'Env/{venue}/TerrainLOD.psm', 'derived_terrain_material')]
+
+
 def package(output):
     output = output.resolve()
     if not output.is_relative_to((ROOT / 'private').resolve()):
@@ -265,12 +318,26 @@ def package(output):
                     related = related_source_candidates(ref, rows)
                     missing.add(origin+': '+ref)
                     record('ambiguous' if related else 'actual_missing', candidates=related, reason='no exact, relative, basename or supported platform/animation alias; similarly named files are evidence, not an automatic substitution')
+            terrain_origin = next(n for n in members if n.lower().endswith('.ps2.trn'))
+            for reference, kind in derived_terrain_references(venue):
+                resolve(reference, terrain_origin, kind)
+            required_terrain = [e for e in audit if e['kind'].startswith('derived_terrain_')]
+            if len(required_terrain) != 3 or any(e['status'] != 'resolved' for e in required_terrain):
+                raise ValueError(venue+': required derived terrain dependency did not resolve')
             while pending:
                 name = pending.pop()
                 if name in seen:
                     continue
                 seen.add(name)
                 data = members[name]
+                if name.lower().endswith('.esb'):
+                    for species in esb_species(data):
+                        billboard = species['billboard'].replace('\\','/')
+                        if billboard:
+                            resolve(str(Path(billboard).with_suffix('.psm')), name, 'esb_billboard_material')
+                        model = species['model'].replace('\\','/')
+                        if model:
+                            resolve('Eco/'+str(Path(model).with_suffix('.psg')), name, 'esb_species_model')
                 # Only textual configuration fields and audited PSG tables create edges.
                 if name.lower().endswith(('.scn','.toy','.pco','.psm','.atylist','.aty')):
                     text = re.sub(rb';[^\r\n]*', b'', data)

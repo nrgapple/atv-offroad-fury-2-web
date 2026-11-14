@@ -7,7 +7,7 @@ python3 tools/package_mx_maps.py --output private/reports/mx-map-staging
 python3 -m unittest discover -s tests -p test_package_mx_maps.py
 ```
 
-The 56 archives total **198,032,437 bytes** and **23,786 members** in the
+The 56 archives total **204,664,076 bytes** and **24,018 members** in the
 validated staging run. Each packed member is round-trip compared to its source
 by `pack_resource`; the independent private test reopens all 56 packages,
 checks SHA256 and length, extracts every member, checks terrain presence and
@@ -62,7 +62,7 @@ payloads are preserved without activating those sections. NAT06's actual TOY
 count is ten (three eggs, six wood bodies, Meteor); metadata honors that source
 count rather than truncating the collection list to just the audited eggs.
 
-The final typed audit has 15,122 resolved edges, 205 aliases, 3,026 excluded
+The final typed audit has 15,666 resolved edges, 205 aliases, 3,165 excluded
 shader references, 29 generated-target markers, 34 inactive TOY template
 markers, six generic-to-physics-role records, four authored texture repairs,
 two inactive mailbox collision records and one nonphysical marker. No binding
@@ -145,3 +145,45 @@ explicit authored rules (four venue bindings), not missing source payloads.
 private report. The runtime can recompute them without fetching that report.
 The adapter's small metadata member is solely its camera/material/provenance
 index, not a replacement for source TOY/SCN data.
+
+
+## Derived terrain and vegetation dependencies
+
+Terrain initialization derives three per-venue inputs not necessarily named
+in SCN: `Env/<ID>/<ID>_d.pst`, `Env/<ID>/TerrainPlain.psm` and
+`Env/<ID>/TerrainLOD.psm`. All 168 source entries exist and resolve into the
+56 staged archives. Typed edges are `derived_terrain_detail` (56) and
+`derived_terrain_material` (112), originating at each original `.ps2.trn`.
+The ordinary material walker handles the new configs and excludes their VU
+programs. No whole `*_mst.res` or `*_mat.res` is imported. Across the 112
+configs the only explicit texture binding is NAT01's TextureMap_2=NAT01_d;
+the per-venue detail naming rule is necessary for the other venues.
+
+The detail PST is separate from terrain's embedded layer images. Original SCN
+`DetailMapTilingMultiplier` is preserved (FS01=8). Packaging does not flatten
+or rewrite terrain textures or coordinates. The parent's shared UV/gutter
+handling remains renderer behavior; no shader executable is shipped.
+
+A bounded ESB v2 species reader follows the existing core ecosystem layout:
+256 presence flags, length-prefixed terminated model/billboard names,
+23 parameter words, optional string and bounded 9-word proxies, then a bounded
+9-byte placement extent. Species create typed `esb_billboard_material` edges
+from the original billboard image stem to its PSM and `esb_species_model`
+edges to Eco PSGs. PSM texture bindings then pull in their original atlas
+images. All 27 active packaged ESBs resolve their billboard materials and
+311 species-model edges; 27 per-venue billboard edges cover 20 distinct atlas
+stems. Every material and its image payload is verified in its venue package.
+Opaque binary substring scanning is not used.
+
+All 30 ESBs in the source directory parse with the bounded reader. The source
+root `Env/nat01.esb` duplicates the packaged `Env/Nat01/nat01.esb` byte for
+byte. MC07/MC08 source ESBs are absent from their main venue archives; their
+SCNs omit EcosystemFile and set both ecosystem draw distances to zero. They
+are not activated or added as unrelated runtime assets. The 27 packaged ESBs
+therefore remain the active venue inventory. Tests cover all 30 source layouts
+and all 27 packaged billboard/material/image closures separately.
+
+Final venue totals with both derived terrain and vegetation dependencies are
+**204,664,076 bytes**, **24,018 members**, 56 venues. The separate 8,497-byte
+adapter is unchanged. The twelve documented source-missing collider records
+remain; there are no unresolved derived terrain or ESB dependencies.
