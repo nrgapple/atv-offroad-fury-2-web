@@ -176,3 +176,11 @@ recovered MX edge rule; shared dimension key names do not establish behavior
 parity. MX therefore leaves the ATV2 launcher inactive. Source MX edge/reset
 behavior remains unresolved, alongside water reset metadata. Acceptance still
 requires actual contact and movement; ejection is not counted as driving.
+
+NAT04's finest geometry covers 896 by 1280 cells while its texture tree retains
+256-cell-wide regions through X=1024. MX texture mapping clips those outer
+cells to the actual geometry footprint, still checking every layer index and
+requiring exactly one mapping per in-bounds cell. ATV2 retains strict region
+coverage. A generated 14-by-20 mapping fixture validates partial edge regions,
+missing coverage, overlapping regions and bad indices. Native acceptance is
+rerun against the actual map after this repair.

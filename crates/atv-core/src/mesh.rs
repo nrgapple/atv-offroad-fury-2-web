@@ -948,17 +948,7 @@ mod tests {
         let mesh = decode(&data, 2, true).unwrap();
         assert_eq!(mesh.vertices[2].uv, [0.; 2]);
         assert_eq!(mesh.vertices[2].uv2, Some([5., 6.]));
-        assert!(
-            decode(
-                &data,
-                PacketLayout {
-                    uv_layers: 1,
-                    sign_bit_restart: true
-                }
-            )
-            .unwrap_err()
-            .contains("destination")
-        );
+        assert!(decode(&data, 1, true).unwrap_err().contains("destination"));
         let mut atv2 = data.clone();
         for i in 0..2 {
             let weight = 4 + i * 8 + 6;

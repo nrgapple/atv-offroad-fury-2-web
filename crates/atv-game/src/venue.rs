@@ -619,29 +619,7 @@ async fn load_selected(
     }
     let mapping_width = (width - 1).div_ceil(64) as u32;
     let mapping_height = (depth - 1).div_ceil(64) as u32;
-    let mut mapping = vec![u16::MAX; (mapping_width * mapping_height) as usize];
-    for region in &layout.regions {
-        if region.span_cells != 256 || region.x % 256 != 0 || region.z % 256 != 0 {
-            return Err("unsupported terrain texture region".into());
-        }
-        for (index, layer) in region.subtextures.iter().enumerate() {
-            let layer = layer.ok_or("unsupported terrain texture region")?;
-            let x = region.x / 64 + index as u32 % 4;
-            let z = region.z / 64 + index as u32 / 4;
-            let slot = (z * mapping_width + x) as usize;
-            if x >= mapping_width
-                || z >= mapping_height
-                || layer as usize >= layers.len()
-                || mapping[slot] != u16::MAX
-            {
-                return Err("invalid terrain texture region coverage".into());
-            }
-            mapping[slot] = layer;
-        }
-    }
-    if mapping.contains(&u16::MAX) {
-        return Err("terrain texture regions do not cover the terrain".into());
-    }
+    let mapping = terrain_mapping(&layout, mapping_width, mapping_height, mx.is_some())?;
     // 002098b0 derives the original detail resource from the terrain basename.
     let detail = texture::decode_pst(&extract(
         &format!("{source_stem}_d.pst"),
@@ -904,4 +882,103 @@ async fn load_selected(
             },
         },
     })
+}
+
+fn terrain_mapping(
+    layout: &terrain::TerrainTextures,
+    mapping_width: u32,
+    mapping_height: u32,
+    mx: bool,
+) -> Result<Vec<u16>> {
+    let mut mapping = vec![u16::MAX; (mapping_width * mapping_height) as usize];
+    for region in &layout.regions {
+        if region.span_cells != 256 || region.x % 256 != 0 || region.z % 256 != 0 {
+            return Err("unsupported terrain texture region".into());
+        }
+        for (index, layer) in region.subtextures.iter().enumerate() {
+            let layer = layer.ok_or("unsupported terrain texture region")?;
+            let x = region.x / 64 + index as u32 % 4;
+            let z = region.z / 64 + index as u32 / 4;
+            if layer as usize >= layout.records.len() {
+                return Err("invalid terrain texture layer".into());
+            }
+            // MX can retain complete 256-cell texture regions over a partial
+            // final terrain region (NAT04: 896 cells across). The unused outer
+            // texels have no geometry; all in-bounds cells remain mandatory.
+            if mx && (x >= mapping_width || z >= mapping_height) {
+                continue;
+            }
+            let slot = (z * mapping_width + x) as usize;
+            if x >= mapping_width
+                || z >= mapping_height
+                || layer as usize >= layout.records.len()
+                || mapping[slot] != u16::MAX
+            {
+                return Err("invalid terrain texture region coverage".into());
+            }
+            mapping[slot] = layer;
+        }
+    }
+    if mapping.contains(&u16::MAX) {
+        return Err("terrain texture regions do not cover the terrain".into());
+    }
+    Ok(mapping)
+}
+
+#[cfg(test)]
+mod mapping_tests {
+    use super::*;
+    #[test]
+    fn mx_partial_edge_regions_clip_only_outside_geometry() {
+        let mut layout = terrain::TerrainTextures {
+            records: vec![terrain::TerrainTextureRecord {
+                width: 256,
+                height: 256,
+                format: 39,
+                mips: Vec::new(),
+            }],
+            regions: Vec::new(),
+        };
+        for z in 0..5 {
+            for x in 0..4 {
+                layout.regions.push(terrain::TerrainTextureRegion {
+                    x: x * 256,
+                    z: z * 256,
+                    span_cells: 256,
+                    base_texture: None,
+                    subtextures: [Some(0); 16],
+                });
+            }
+        }
+        assert_eq!(
+            terrain_mapping(&layout, 14, 20, true).unwrap(),
+            vec![0; 280]
+        );
+        assert!(terrain_mapping(&layout, 14, 20, false).is_err());
+        layout.regions.pop();
+        assert!(
+            terrain_mapping(&layout, 14, 20, true)
+                .unwrap_err()
+                .contains("cover")
+        );
+        layout.regions[0].subtextures[0] = Some(1);
+        assert!(
+            terrain_mapping(&layout, 14, 20, true)
+                .unwrap_err()
+                .contains("layer")
+        );
+        layout.regions[0].subtextures[0] = Some(0);
+        layout.regions.push(terrain::TerrainTextureRegion {
+            x: 0,
+            z: 0,
+            span_cells: 256,
+            base_texture: None,
+            subtextures: [Some(0); 16],
+        });
+        assert!(
+            terrain_mapping(&layout, 14, 20, true)
+                .unwrap_err()
+                .contains("coverage")
+        );
+    }
 }
