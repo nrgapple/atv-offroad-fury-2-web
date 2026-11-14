@@ -141,6 +141,20 @@ sense. Phases: lobby → vote → countdown → play → results → vote …
 
 ## Limits and unverified items
 
+Two accepted deviations from the spec (epic owner, 2026-11-14):
+
+- **A rider drives each round.** The server owns the loop, the vote, the
+  map choice, the podium (checked results) and the match records, but one
+  connected rider (the driver) starts and simulates the round with the
+  existing host code: CPU physics and the King of the Hills / Treasure Hunt
+  rules need data the server does not have. Moving them to the server is
+  later work.
+- **4 humans plus up to 4 CPUs.** Room races and games carry four rider
+  slots, so a room seats at most four humans (eight riders with CPUs), and
+  a lone racer gets a field of five, not six. Rooms of 8 humans move to
+  wave 2 (a wider `GameState`).
+
+
 - The double load: the countdown moves the room to the round's map, then
   the driver's round start reloads it again as the race or game (as a
   private room's Select Track then Play Race does).

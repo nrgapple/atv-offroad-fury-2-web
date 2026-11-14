@@ -270,10 +270,6 @@ fn chip(seat: Option<&SeatView>, narrow: bool) -> El {
                 width: length(0.),
                 height: auto(),
             },
-            overflow: taffy::Point {
-                x: Overflow::Hidden,
-                y: Overflow::Visible,
-            },
             ..Default::default()
         })
         .child(text(&name, 16., 700, Color::hex("#f4f4f4"))),
