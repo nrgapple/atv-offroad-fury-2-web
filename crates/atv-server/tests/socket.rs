@@ -22,7 +22,7 @@ struct Server {
     done: tokio::task::JoinHandle<std::io::Result<()>>,
 }
 
-async fn start(state: &PathBuf) -> Server {
+async fn start(state: &std::path::Path) -> Server {
     let state = state.to_string_lossy().into_owned();
     let config = Config::from_vars(|name| match name {
         "FURY_LISTEN" => Some("127.0.0.1:0".into()),
