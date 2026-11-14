@@ -962,8 +962,9 @@ impl Frontend {
         }
         // Single Player in the original's order (PAGE02: Race, Freestyle,
         // Championships) with the port's rows between Freestyle and the
-        // Garage: Freestyle Objectives (the original's Freestyle Prep
-        // Objectives event, `26a720`, `26d010`) after Freestyle, and Games
+        // Garage: Classic Freestyle and Freestyle Objectives (the original's
+        // Freestyle Prep Classic and Objectives events, `26a720`, `26d010`)
+        // after Freestyle, and Games
         // (the original's live under Multiplayer → Split Screen) after
         // Championships.
         if page == "single" {
@@ -4360,7 +4361,7 @@ mod tests {
             .iter()
             .position(|(a, _)| a == "objective-courses")
             .unwrap();
-        assert_eq!(front.choices()[at - 1].0, "tracks");
+        assert_eq!(front.choices()[at - 1].0, "classic-courses");
         front.selection = at;
         assert_eq!(front.key("Enter", &view, &mut settings), None);
         assert_eq!(front.page, "objective-courses");
@@ -4430,8 +4431,17 @@ mod tests {
             &view,
         );
         let choices: Vec<_> = front.choices().iter().map(|(a, _)| a.as_str()).collect();
-        assert_eq!(&choices[..4], ["race", "tracks", "championship", "garage"]);
-        front.selection = 2;
+        assert_eq!(
+            &choices[..5],
+            [
+                "race",
+                "tracks",
+                "classic-courses",
+                "championship",
+                "garage"
+            ]
+        );
+        front.selection = 3;
         front.key("Enter", &view, &mut settings);
         assert_eq!(front.page, "championship");
         assert_eq!(

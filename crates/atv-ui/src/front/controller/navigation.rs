@@ -417,11 +417,21 @@ mod tests {
             ]
         );
         assert_eq!(front.choices()[4].1, "Options");
-        // PAGE02 Single Player: Race, Freestyle, Championships, then the
+        // PAGE02 Single Player: Race, Freestyle, the port's Classic
+        // Freestyle (Freestyle Prep's Classic event), Championships, then the
         // port's Garage.
         front.show("single", &view);
-        assert_eq!(rows(&front), ["race", "tracks", "championship", "garage"]);
-        assert_eq!(front.choices()[2].1, "Championships");
+        assert_eq!(
+            rows(&front),
+            [
+                "race",
+                "tracks",
+                "classic-courses",
+                "championship",
+                "garage"
+            ]
+        );
+        assert_eq!(front.choices()[3].1, "Championships");
         // PAGE03 Multiplayer: Split Screen, the hosted games, and Free Ride
         // where the original's Online row was.
         front.show("multiplayer", &view);
