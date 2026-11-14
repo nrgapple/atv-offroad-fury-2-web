@@ -384,6 +384,14 @@ pub struct RaceState {
     /// ghost, and that ghost once the player has finished.
     world_lap: Option<atv_core::world_ghost::Recorder>,
     world_ghost: Option<std::sync::Arc<atv_core::world_ghost::Lap>>,
+    /// Lap Attack's medals (research/GHOST_CHALLENGES.md): the course and
+    /// vehicle they are kept for, set by the host, and the best medal held
+    /// so far (a better lap's medal is announced).
+    medal_course: Option<(String, u16)>,
+    medal_best: Option<atv_core::medals::Medal>,
+    /// Lap Attack's newest best lap as a ghost, for the host's personal
+    /// best ghost (made only after [`RaceState::set_medals`]).
+    pb_lap: Option<std::sync::Arc<atv_core::world_ghost::Lap>>,
     /// The ghost's drawn pose this step (its buffers reused step to step)
     /// and whether it is shown.
     ghost_pose: (super::Pose, bool),
@@ -449,6 +457,27 @@ impl RaceState {
             self.rival = Some(rival.name.clone());
             self.rival_start = Some(rival);
         }
+    }
+}
+
+impl RaceState {
+    /// Lap Attack keeps medals and a personal best ghost for `course` on
+    /// `vehicle`; `best` is the medal the rider already holds there.
+    pub fn set_medals(
+        &mut self,
+        course: &str,
+        vehicle: u16,
+        best: Option<atv_core::medals::Medal>,
+    ) {
+        if self.settings.lap_attack {
+            self.medal_course = Some((course.to_string(), vehicle));
+            self.medal_best = best;
+        }
+    }
+
+    /// The medal course set for this event.
+    pub fn medal_course(&self) -> Option<&str> {
+        self.medal_course.as_ref().map(|(c, _)| c.as_str())
     }
 }
 
@@ -625,6 +654,11 @@ pub(super) fn place_racer(
 }
 
 impl Ride {
+    /// The course's trackside TV cameras (`<venue>nat.tv`) in a race.
+    pub fn tv_cameras(&self) -> Option<&Cameras> {
+        self.race.as_ref()?.tv.as_ref()
+    }
+
     /// Op 96: a race on the loaded course; CPU riders take the grid and the
     /// pre-race camera starts unless `intro` is false (Restart Race).
     pub(super) fn begin_race(
@@ -795,6 +829,9 @@ impl Ride {
             rival: None,
             world_lap: None,
             world_ghost: None,
+            medal_course: None,
+            medal_best: None,
+            pb_lap: None,
             ghost_pose: Default::default(),
         });
         Ok(())
@@ -1107,16 +1144,41 @@ impl Ride {
             && !race.holding()
         {
             // Only a lap judged for the best lap can become the ghost.
-            if race.laps_completed(None) > laps_before[0]
-                && ghost.lap(race.player_last_lap(), race.player_judged_laps() > judged)
-            {
+            let lapped = race.laps_completed(None) > laps_before[0];
+            let judged_lap = race.player_judged_laps() > judged;
+            if lapped && ghost.lap(race.player_last_lap(), judged_lap) {
+                // A better medal than the rider held (authored).
+                let lap_ms = atv_core::world_board::millis(race.player_last_lap());
+                let medal = state
+                    .medal_course
+                    .as_ref()
+                    .and_then(|(course, _)| atv_core::medals::earned(course, lap_ms))
+                    .filter(|m| state.medal_best.is_none_or(|b| *m > b));
+                if medal.is_some() {
+                    state.medal_best = medal;
+                }
                 // The first lap faster than a world ghost beats its rider.
-                match state.rival.take() {
-                    Some(name) => state
+                match (state.rival.take(), medal) {
+                    (Some(name), _) => state
                         .hud
                         .say(format!("You Beat {name}'s Ghost!"), RIVAL_SECONDS),
-                    None => state.hud.say(GHOST_BEST.into(), 1.5),
+                    (None, Some(m)) => state
+                        .hud
+                        .say(format!("{} Medal!", m.label()), RIVAL_SECONDS),
+                    (None, None) => state.hud.say(GHOST_BEST.into(), 1.5),
                 }
+            }
+            // The personal best ghost: the world ghost's recorder (fixed
+            // storage, made once) keeps the best judged lap.
+            if let Some((course, vehicle)) = &state.medal_course {
+                let recorder = state.world_lap.get_or_insert_with(Default::default);
+                if lapped && recorder.lap(race.player_last_lap(), judged_lap) {
+                    state.pb_lap = recorder.ghost(course, *vehicle).map(std::sync::Arc::new);
+                }
+                recorder.record(atv_core::race_ghost::Sample {
+                    origin: player.origin,
+                    orientation: player.orientation,
+                });
             }
             ghost.record(
                 atv_core::race_ghost::Sample {
@@ -1620,6 +1682,7 @@ impl Ride {
             .world_ghost
             .clone()
             .filter(|_| frame.records.is_some());
+        frame.pb_lap = state.pb_lap.clone();
         frame.hud = Some(state.hud.step(
             STEP,
             &race_hud::Input {

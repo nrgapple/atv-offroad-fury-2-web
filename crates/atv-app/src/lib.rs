@@ -2,6 +2,7 @@
 //! renderer run natively (Metal/DX12/Vulkan) and in browsers (WebGL2).
 #[cfg(target_os = "android")]
 mod android;
+mod broadcast;
 #[cfg(not(target_arch = "wasm32"))]
 mod clipboard;
 mod cloud;
@@ -3743,6 +3744,10 @@ impl App {
                 // The world boards' line on the results (world.rs).
                 "world": self.overlay.as_ref().filter(|o| o.results.shown)
                     .and_then(|o| o.results.world_line.clone()),
+                // The best lap's medal (research/GHOST_CHALLENGES.md).
+                "medal": self.overlay.as_ref().filter(|o| o.results.shown)
+                    .and_then(|o| o.results.medal.map(|(m, new)| (m, new, o.results.medal_reveal)))
+                    .map(|(m, new, reveal)| serde_json::json!({"medal": m.label(), "new": new, "reveal": reveal})),
             });
             state["ride"]["trainingSpeech"] = training_speech.into();
             state["ride"]["cpus"] = ready.cpus.iter().map(game_cpu::Cpu::state).collect();
@@ -6235,6 +6240,8 @@ impl ApplicationHandler<Message> for App {
                 {
                     race.set_rival(rival);
                 }
+                // Lap Attack's medals and personal best ghost (world.rs).
+                self.medals_start();
                 // The ride takes over the music bus from the menu tune.
                 self.sync_menu_music();
                 // Rides the saved settings do not reach (direct and held
@@ -6960,6 +6967,7 @@ impl App {
             }
         }
         self.poll_riders();
+        self.medal_poll();
         self.world_poll();
         self.online_poll();
         #[cfg(not(target_arch = "wasm32"))]
