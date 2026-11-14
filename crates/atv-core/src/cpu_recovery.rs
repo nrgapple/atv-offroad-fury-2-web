@@ -7,13 +7,11 @@
 //! It watches each CPU's race distance (progress along the route, not
 //! speed) and its resets, and escalates only when the CPU repeats itself:
 //!
-//! 1. **Assist** after the third reset near the same race distance without
-//!    clearing it ([`ASSIST_REPEATS`]; two resets to one accepted point are
-//!    common in ordinary races and are left to the recovered rules): the
-//!    leader speed limit is lifted (a CPU held to 75ft/s at sx15 takes a
-//!    220ft/s jump too slowly) and the lane goal is held on the racing
-//!    line, until the CPU is [`CLEAR`] past that reset.
-//! 2. **Skip ahead** after the fourth such reset ([`SKIP_REPEATS`]), or
+//! 1. **Assist** after the second reset near the same race distance without
+//!    clearing it ([`ASSIST_REPEATS`]): Normal's leader speed limit is lifted
+//!    and the lane goal is held on the racing line, until the CPU is
+//!    [`CLEAR`] past that reset. Expert already has no leader speed limit.
+//! 2. **Skip ahead** after the third such reset ([`SKIP_REPEATS`]), or
 //!    when the race distance has not advanced [`PROGRESS_STEP`] for
 //!    [`STALL_SECONDS`] while riding: the caller resets the CPU to a validated point further along
 //!    the route (instead of the accepted point, or in Enduro the rider's
@@ -34,8 +32,8 @@ pub const STALL_SECONDS: f32 = 15.;
 pub const SAME_PLACE: f32 = 80.;
 /// Repeats (resets after the first near one race distance) that switch the
 /// assist on, and that request a skip ahead.
-pub const ASSIST_REPEATS: u32 = 2;
-pub const SKIP_REPEATS: u32 = 3;
+pub const ASSIST_REPEATS: u32 = 1;
+pub const SKIP_REPEATS: u32 = 2;
 /// Race distance past a repeated reset that clears the escalation.
 pub const CLEAR: f32 = 400.;
 /// Route distances tried, in order, for a skip-ahead reset point.
@@ -159,17 +157,15 @@ mod tests {
         let mut r = Recovery::default();
         r.reset(1000.);
         r.observe(1000., true, DT);
-        // Two resets to about one place: still the recovered rules alone.
+        // The second return gets one attempt with the assist.
         r.reset(1020.);
-        assert_eq!(r.assist(), Assist::default());
-        assert_eq!(r.observe(1020., true, DT), Action::None);
-        r.reset(1010.);
         assert!(r.assist().no_leader_limit && r.assist().centre_lane);
-        assert_eq!(r.observe(1010., true, DT), Action::None);
-        r.reset(995.);
-        assert_eq!(r.observe(995., true, DT), Action::SkipAhead);
+        assert_eq!(r.observe(1020., true, DT), Action::None);
+        // A third return escapes, rather than repeating a fourth wreck.
+        r.reset(1010.);
+        assert_eq!(r.observe(1010., true, DT), Action::SkipAhead);
         // Not while wrecked: the skip waits for the rider.
-        assert_eq!(r.observe(995., false, DT), Action::None);
+        assert_eq!(r.observe(1010., false, DT), Action::None);
         r.skipped(1200.);
         assert_eq!(r.assist(), Assist::default());
         assert_eq!(r.observe(1200., true, DT), Action::None);

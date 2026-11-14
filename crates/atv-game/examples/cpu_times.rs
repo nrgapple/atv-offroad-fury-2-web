@@ -5,7 +5,8 @@
 //! (estimates marked), the CPU roster and, with `--autopilot`, the player's
 //! world board trace. `wrecks` and bounded `incidents` use CPU seat order
 //! (the roster), while `riders` retains its historical alphabetical order.
-//! `--require-finish` exits nonzero for unfinished races.
+//! Wrecks count only through each CPU's finishing tick (finished quads keep
+//! simulating). `--require-finish` exits nonzero for unfinished races.
 //!
 //!   cargo run --release -p atv-game --example cpu_times -- CONTENT_DIR \
 //!     OUT.jsonl [--courses env01,sx03] [--difficulty 1|2] [--autopilot] \
@@ -77,6 +78,7 @@ async fn measure(content: &Content, course: &str, options: &Options) -> atv_game
     let mut marks: Vec<Vec<f32>> = Vec::new();
     let mut wrecks = [0u32; 4];
     let mut wrecked = [false; 4];
+    let mut finished = [false; 4];
     let mut incidents = Vec::new();
     let mut steps = 0u64;
     let limit = u64::from(options.minutes) * 60 * 60;
@@ -85,6 +87,11 @@ async fn measure(content: &Content, course: &str, options: &Options) -> atv_game
         steps += 1;
         if let Some(state) = ride.race() {
             for (index, cpu) in state.cpus.iter().enumerate() {
+                // Finished CPUs still simulate while the player waits. Count
+                // race incidents only, not their post-finish driving.
+                if finished[index] {
+                    continue;
+                }
                 let down = cpu.vehicle.frame().wreck.phase != atv_core::wreck::Phase::Riding;
                 if down && !wrecked[index] {
                     wrecks[index] += 1;
@@ -95,6 +102,10 @@ async fn measure(content: &Content, course: &str, options: &Options) -> atv_game
                     }
                 }
                 wrecked[index] = down;
+                finished[index] = state
+                    .frame
+                    .as_ref()
+                    .is_some_and(|f| f.opponents.get(index).is_some_and(|r| r.finished));
             }
         }
         let Some(frame) = ride.race().and_then(|r| r.frame.as_ref()) else {
