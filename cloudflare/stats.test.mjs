@@ -278,8 +278,12 @@ test('through the Worker: GET and HEAD only, cached for a minute at the edge', a
     assert.equal(response.headers.get('Cache-Control'), 'public, max-age=60');
     assert.ok(response.headers.get('Content-Security-Policy'));
     assert.deepEqual((await response.json()).live, { riders: 2, rooms: 1 });
-    await worker.fetch(new Request('https://furyremastered.com/api/stats'), config);
+    // The edge hands cached responses back with the zone's browser TTL; the hit restores a minute.
+    for (const [url, stored] of store) { const aged = new Response(stored.body, stored); aged.headers.set('Cache-Control', 'public, max-age=14400'); store.set(url, aged); }
+    const hit = await worker.fetch(new Request('https://furyremastered.com/api/stats'), config);
     assert.equal(healthReads, 1, 'the second read comes from the cache');
+    assert.equal(hit.headers.get('Cache-Control'), 'public, max-age=60');
+    assert.deepEqual((await hit.json()).live, { riders: 2, rooms: 1 });
     const head = await worker.fetch(new Request('https://furyremastered.com/api/stats', { method: 'HEAD' }), config);
     assert.equal(await head.text(), '');
     assert.equal((await worker.fetch(new Request('https://furyremastered.com/api/stats', { method: 'POST' }), config)).status, 405);
