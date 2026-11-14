@@ -1158,3 +1158,40 @@ behavior claim.
 Residual: changed-course uploads still have approximately 11–114 ms samples,
 and the fresh-context scenario still includes 467–587 ms tasks. The reduction
 is in layout; this does not close #511 or establish physical-device performance.
+
+## Shared Garage preview pipeline (#512, host, 2026-11-14)
+
+After the redesigned-menu layout checkpoint, re-measured with
+`test_engine_garage_load.mjs`: Chromium at 4x CPU throttle, 390x844 DPR3 touch,
+three fresh contexts per vehicle type, one settled step into a new archive in
+each. Host only, not physical-phone results. Baseline is the local #511 build;
+the candidate changes only preview GPU setup and test instrumentation.
+
+Every preview constructed the same WGSL shader, render pipeline, binding
+layouts and sampler again. `PreviewPipeline` now owns that immutable setup once
+per frontend/device and both slots reuse it. Mesh buffers, uniforms, textures,
+poses, MSAA targets, shader source and rendering settings remain unchanged.
+The test instruments GL program linking and AudioContext construction in
+addition to worker jobs and long tasks.
+
+| Per settled step, three runs | Before | After |
+| --- | --- | --- |
+| Motorcycle slowest post-load long task | 256, 248, 206 ms | 82, 87, 70 ms |
+| ATV slowest post-load long task | 84, 99, 83 ms | 122, 80, 75 ms |
+| New GL programs per ATV / motorcycle step | 1 / 2 | 0 / 0 |
+| First fresh-process tap, whole task | 875 ms | 613 ms |
+| AudioContext constructor within that tap | 706 ms | 519 ms |
+
+The measured motorcycle reduction is substantial; ATV differences do not show
+a reliable improvement on this shared host. The program-link call itself was
+only 0–1.4 ms: the removed work includes the surrounding shader translation and
+pipeline construction, not just the GL link. The test structurally requires no
+new programs during settled steps and retains its archive/texture worker checks.
+
+Residuals keep #512 open: ATV preview construction still makes 75–122 ms tasks,
+motorcycles still reach 87 ms post-load, and a fresh-process audio-context
+constructor still blocks for roughly half a second. Audio construction is now
+located by direct timing, but was not moved into boot or otherwise changed.
+The old unexplained post-load penalty is not separately isolated by these
+whole-task measurements. No physical device, startup-speed improvement or
+pixel comparison is claimed.
