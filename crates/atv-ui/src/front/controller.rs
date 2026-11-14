@@ -38,6 +38,9 @@ pub enum Event {
     DevLog,
     /// Open the desktop and Android downloads (GitHub Releases) in a new tab (web).
     Downloads,
+    /// Open the public rider stats page (a new tab on the web, the system
+    /// browser on desktop).
+    Stats,
     /// Open Settings over the frontend.
     Settings,
     /// Main menu → Jukebox: the soundtrack player over the frontend.
@@ -461,6 +464,8 @@ pub struct Frontend {
     pub loading: Option<Loading>,
     /// The browser dev log is a web page; the desktop build hides it.
     pub web: bool,
+    /// Title → Stats: false where the app cannot open a browser (Android).
+    pub stats_link: bool,
     /// Saved selection fields other than the ones this port changes.
     saved: Value,
     /// Riders in Arlington Free Ride (the main menu's live count).
@@ -660,6 +665,7 @@ impl Frontend {
             reveal: false,
             loading: None,
             web,
+            stats_link: true,
             saved,
             freeride_riders: None,
             player_name: String::new(),
@@ -905,6 +911,7 @@ impl Frontend {
             .iter()
             .filter(|a| !UNSUPPORTED.contains(&a.as_str()))
             .filter(|a| self.web || !matches!(a.as_str(), "devlog" | "downloads"))
+            .filter(|a| self.stats_link || *a != "stats")
             .map(|a| (a.clone(), label(a)))
             .collect();
         // Main Menu in the original's order (PAGE01: Single Player,
@@ -2452,6 +2459,7 @@ impl Frontend {
             "back" => return self.back(view),
             "devlog" => return Some(Event::DevLog),
             "downloads" => return Some(Event::Downloads),
+            "stats" => return Some(Event::Stats),
             "freeride" => {
                 // frontend.js: no setup; motorcycles fall back to ATV01. The
                 // current name rides (also one typed but not yet saved); the
@@ -3422,6 +3430,29 @@ mod tests {
             height,
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn title_stats_opens_the_rider_stats_page_where_a_browser_can() {
+        let view = view(390., 844.);
+        let mut settings = Settings::memory();
+        let rows = |front: &Frontend| -> Vec<String> {
+            front.choices().iter().map(|(a, _)| a.clone()).collect()
+        };
+        // Web: after the Dev log and Downloads links.
+        let mut front = Frontend::new(tracks(), &settings, true);
+        assert_eq!(rows(&front), ["main", "devlog", "downloads", "stats"]);
+        front.key("ArrowDown", &view, &mut settings);
+        front.key("ArrowDown", &view, &mut settings);
+        assert_eq!(front.key("ArrowDown", &view, &mut settings), None);
+        assert_eq!(front.key("Enter", &view, &mut settings), Some(Event::Stats));
+        assert_eq!(front.page, "title", "the game stays on the title");
+        // Desktop keeps it (the system browser opens it); Android hides it.
+        let mut front = Frontend::new(tracks(), &settings, false);
+        assert_eq!(rows(&front), ["main", "stats"]);
+        front.stats_link = false;
+        front.refresh(&view);
+        assert_eq!(rows(&front), ["main"]);
     }
 
     #[test]

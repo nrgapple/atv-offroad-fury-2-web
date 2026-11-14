@@ -3084,6 +3084,7 @@ fn title(m: &Metrics, s: &Screen, mut root: El) -> El {
     let start_index = s.choices.iter().position(|(a, _)| a == "main");
     let devlog_index = s.choices.iter().position(|(a, _)| a == "devlog");
     let downloads_index = s.choices.iter().position(|(a, _)| a == "downloads");
+    let stats_index = s.choices.iter().position(|(a, _)| a == "stats");
     let mut actions = El::new(Style {
         grid_row: taffy::Line {
             start: line(2),
@@ -3130,11 +3131,16 @@ fn title(m: &Metrics, s: &Screen, mut root: El) -> El {
         }
         actions = actions.child(start);
     }
-    // DEV LOG and DOWNLOADS (the desktop and Android releases) share a row under Start.
-    let links: Vec<El> = [(devlog_index, "DEV LOG"), (downloads_index, "DOWNLOADS")]
-        .into_iter()
-        .filter_map(|(index, label)| index.map(|index| title_link(s, index, label)))
-        .collect();
+    // DEV LOG, DOWNLOADS (the desktop and Android releases) and STATS (the
+    // public rider stats page) share a row under Start, wrapping on phones.
+    let links: Vec<El> = [
+        (devlog_index, "DEV LOG"),
+        (downloads_index, "DOWNLOADS"),
+        (stats_index, "STATS"),
+    ]
+    .into_iter()
+    .filter_map(|(index, label)| index.map(|index| title_link(s, index, label)))
+    .collect();
     if !links.is_empty() {
         let mut row = El::new(Style {
             display: Display::Flex,
@@ -3143,7 +3149,7 @@ fn title(m: &Metrics, s: &Screen, mut root: El) -> El {
             justify_content: JustifyContent::CENTER,
             gap: Size {
                 width: px(6.),
-                height: px(0.),
+                height: px(6.),
             },
             ..Default::default()
         });
