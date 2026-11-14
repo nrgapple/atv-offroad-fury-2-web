@@ -76,10 +76,9 @@ fn is_pose(bytes: &[u8]) -> bool {
 }
 
 /// The game server public pages use for multiplayer (research/
-/// GAME_SERVER.md). `None` keeps multiplayer on the page's own origin (the
-/// Cloudflare relay under `/multiplayer/`); the cutover makes this
-/// `Some("https://mp.furyremastered.com")`.
-pub const GAME_SERVER: Option<&str> = None;
+/// GAME_SERVER.md). `None` would keep multiplayer on the page's own origin
+/// (the retired Cloudflare relay under `/multiplayer/`).
+pub const GAME_SERVER: Option<&str> = Some("https://mp.furyremastered.com");
 
 /// The public sites whose multiplayer goes to [`GAME_SERVER`]. Any other
 /// page origin (the local test servers) keeps multiplayer on its own.
