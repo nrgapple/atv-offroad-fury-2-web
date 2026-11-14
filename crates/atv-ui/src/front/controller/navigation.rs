@@ -427,7 +427,7 @@ mod tests {
         front.show("multiplayer", &view);
         assert_eq!(
             rows(&front),
-            ["split", "create-lobby", "join-lobby", "freeride"]
+            ["split", "create-lobby", "join-lobby", "freeride", "friends"]
         );
     }
 
