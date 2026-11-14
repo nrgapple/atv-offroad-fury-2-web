@@ -41,6 +41,11 @@ pub const WADE: f32 = 2.;
 pub const STEEP: f32 = 0.5;
 /// Half the span the slope is measured over (ft).
 pub const SLOPE_SPAN: f32 = 6.;
+/// Seconds a roamer may sit still (under the stuck speed) before it is
+/// returned to the start: longer than the driver's whole stuck escalation
+/// (back out twice, turn, reset), so this only catches what that cannot,
+/// such as an ATV beached with its wheels off the ground.
+pub const STALL_SECONDS: f32 = 12.;
 /// The most points of interest a venue keeps.
 pub const MAX_POINTS: usize = 24;
 /// The share of new plans that follow the course line, and that drift.

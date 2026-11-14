@@ -1,13 +1,14 @@
 // Authored CPU riders in a free ride (research/CPU_MINIGAMES.md "Free roam",
 // a port adaptation; the original Freestyle has none):
-// - Off by default: a free ride on Prospect Springs loads no CPU riders and
+// - Off by default: a free ride link on Prospect Springs loads no CPU riders and
 //   no roam map, with the setting absent and with it saved as 0, and Options
 //   → Game Settings reads "Free Ride CPU riders: Off (original)";
 // - the Game Settings row cycles Off / 1 / 2 / 3 and saves; the ride in progress
 //   keeps its riders (the next free ride takes the choice);
 // - with 2 saved, the next free ride loads two CPU riders that leave the
 //   start, reach points of interest or follow the venue's race line, keep
-//   out of deep water and inside the map, and are on no standings; Pause →
+//   out of deep water and inside the map, rarely wreck, and are on no
+//   standings; Pause →
 //   Main menu still leaves the ride;
 // - with 3 saved, frame times are sampled beside the option-off ride's.
 // ATV_FREE_CPUS_SHOTS=<dir> saves captures.
@@ -137,6 +138,7 @@ try {
   await shot(page, 'roaming');
   // They get somewhere: a point of interest reached or the line followed.
   r = await until(page, r => r.cpus.every(c => c.roam.visits >= 1 || c.roam.lineFeet > 300), 240000);
+  console.log(`Stalls so far: ${r.cpus.map(c => c.stalls)}`);
   console.log(`Objectives: ${r.cpus.map(c => `CPU ${c.player - 1} visits ${c.roam.visits}, line ${c.roam.lineFeet.toFixed(0)} ft`).join('; ')}`);
   // A minute of roaming: inside the map, out of deep water, not stranded.
   const wet = r.cpus.map(() => 0);
@@ -158,9 +160,11 @@ try {
     last = r.cpus.map(c => c.origin);
   }
   console.log(
-    `A minute of roaming: ${r.cpus.map((c, n) => `CPU ${n + 1} rode ${far[n].toFixed(0)} ft, visits ${c.roam.visits}, turns ${c.roam.turns}, back-outs ${c.escapes}, resets ${c.resets}`).join('; ')}`
+    `A minute of roaming: ${r.cpus.map((c, n) => `CPU ${n + 1} rode ${far[n].toFixed(0)} ft, visits ${c.roam.visits}, turns ${c.roam.turns}, back-outs ${c.escapes}, resets ${c.resets}, wrecks ${c.wrecks}, stalls ${c.stalls}`).join('; ')}`
   );
   assert.ok(far.every(feet => feet > 600), `each CPU keeps riding: ${far}`);
+  // Steep ground is kept off, so a roamer rarely wrecks.
+  assert.ok(r.cpus.every(c => c.wrecks <= 3), `wrecks: ${r.cpus.map(c => c.wrecks)}`);
   await shot(page, 'roaming-later');
   assert.deepEqual([r.game, r.tag, r.hockey], [null, null, null]);
   const twoCpus = await frames(page, 10);

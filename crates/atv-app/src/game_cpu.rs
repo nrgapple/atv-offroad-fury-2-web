@@ -72,6 +72,9 @@ pub struct Cpu {
     /// Diagnostics: wrecks so far, and whether it is wrecked now.
     wrecks: u32,
     wrecked: bool,
+    /// A roamer's seconds sitting still, and its returns to the start.
+    still: f32,
+    stalls: u32,
     rng: Rng,
     seed: u32,
     skill: Skill,
@@ -362,6 +365,8 @@ impl Cpu {
             roam: Roam::default(),
             wrecks: 0,
             wrecked: false,
+            still: 0.,
+            stalls: 0,
             rng: Rng::new(seed),
             seed,
             skill: Skill::for_difficulty(request.difficulty),
@@ -432,9 +437,25 @@ impl Cpu {
             }
             controls(&drive)
         })?;
-        let wrecked = self.riding.ride.frame().wreck.phase != atv_core::wreck::Phase::Riding;
+        let f = self.riding.ride.frame();
+        let wrecked = f.wreck.phase != atv_core::wreck::Phase::Riding;
         self.wrecks += u32::from(wrecked && !self.wrecked);
         self.wrecked = wrecked;
+        // A roamer still for longer than the stuck rule can mend (beached,
+        // or holding on a goal it cannot ride to) goes back to its start.
+        if matches!(world.mode, Mode::Roam(_)) && !held {
+            if !wrecked && f.speed_magnitude < brain::STUCK_SPEED {
+                self.still += dt;
+            } else {
+                self.still = 0.;
+            }
+            if self.still > roam::STALL_SECONDS {
+                self.still = 0.;
+                self.stalls += 1;
+                self.roam.plan = roam::Plan::None;
+                return self.riding.reset();
+            }
+        }
         match recover {
             Recover::None => Ok(()),
             // The rink has no start to return to: turn in place there.
@@ -521,6 +542,8 @@ impl Cpu {
             "riding": f.wreck.phase == atv_core::wreck::Phase::Riding,
             "wreck": f.wreck.kind,
             "wrecks": self.wrecks,
+            "stalls": self.stalls,
+            "grounded": f.grounded.iter().any(|g| *g),
             // A free ride's roaming (`atv_core::roam_cpu`).
             "roam": {
                 "plan": match self.roam.plan {

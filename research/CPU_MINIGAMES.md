@@ -67,7 +67,7 @@ contact bodies, so they can bump the player as a split-screen player can.
 **Goal selection** (`crates/atv-core/src/roam_cpu.rs`, pure, seeded,
 fixed-step, no allocation per step). A roamer keeps one plan at a time:
 
-- **Point of interest** (most plans): ride to a hilltop some way off (150
+- **Point of interest** (most plans): ride to a dry, not-steep hilltop some way off (150
   to 600 ft preferred, not one of its last three, weighted by a taste of
   its own so riders spread out). The venue's points are found once at
   load (`points_of_interest`): the start, then the most prominent dry
@@ -87,12 +87,24 @@ fixed-step, no allocation per step). A roamer keeps one plan at a time:
 A plan ends at its point, after its line distance, after 50 s, or after
 8 s of being turned away from it.
 
+**Stalls.** The race CPUs' stuck rule only counts while the ATV has a
+wheel on the ground and a goal, so a roamer beached on a crest with its
+wheels off the ground sat still for minutes on Prospect Springs. A roamer
+still (under 3 ft/s, not wrecked) for 12 s, longer than the stuck rule's
+whole escalation, is returned to the start and picks a new plan.
+
 **Hazards.** Every quarter second the roamer tests the ground 25, 50 and
 80 ft along its heading. Ground counts as blocked when it is outside the
 rideable area (40 ft inside the boundary launch margin of `0020aec0`: 110
-cells, or the heightfield's edge on a stadium venue), off the terrain, or
+cells, or the heightfield's edge on a stadium venue), off the terrain,
 under more than 2 ft of still water (the deep-water reset needs the ATV
-3 ft under for 5 s, `001e5260`). A blocked heading turns to the smallest
+3 ft under for 5 s, `001e5260`), or steeper than a rise of 0.5 over its
+run (about 27°, measured over 12 ft). Before the steepness test, both
+CPUs on Prospect Springs wrecked within 5 s of the start, again and again:
+one rolled (`Right`) crossing the hillside by the start, the other flew
+off its crest at 49 ft/s and landed on its back. A heading also loses a
+probe when the turn to it from the way the ATV faces would sweep over
+blocked ground. A blocked heading turns to the smallest
 of 26°, 52°, 77°, 103°, 132° or 180° to either side that is clear, keeping
 the side it chose while it stays blocked, and rides at three quarters of
 its pace. Its speed also falls with the angle between that heading and the
@@ -120,7 +132,7 @@ therefore never loads them (`start_ride` clears the request for a room).
 ## Tests
 
 - `atv-core` unit tests (`roam_cpu::tests`): hilltops found and wet ones
-  left out; a roamer visits different points and repeats exactly with its
+  left out; steep ground is a hazard; a roamer visits different points and repeats exactly with its
   seed; twelve seeds ride five minutes around a lake without entering it or
   leaving the map, with no reset; a roamer follows a circuit (over 90 % of
   its line time within 40 ft of it); it steers round a rider in its way.
@@ -130,7 +142,22 @@ therefore never loads them (`start_ride` clears the request for a room).
 
 ## Evidence
 
-Filled in below from the host run of `tools/test_engine_free_cpus.mjs`.
+Host run of `tools/test_engine_free_cpus.mjs` on 2026-11-14 (Apple
+Silicon Mac mini, host Chromium with Metal, 1280 × 720, Prospect Springs
+`env05`; host measurements, not phone results):
+
+- Off by default and with `0` saved: no CPU ride and no roam map loads.
+- The roam map: 10 points of interest (the start and the dry hilltops not
+  on steep ground) and the 45-point National line, closed.
+- With 2 CPU riders, a minute of roaming sampled every half second: CPU 1
+  rode 2413 ft, CPU 2 1351 ft; each reached a point of interest; neither
+  wrecked, entered deep water or left the map; one stall was returned to
+  the start; no back-outs or stuck resets.
+- Frame times over 10 s (requestAnimationFrame intervals): option off
+  mean 20.1 ms, median 17.5 ms, p95 32.6 ms; 2 CPU riders mean 19.0 ms,
+  median 16.8 ms, p95 33.7 ms; 3 CPU riders mean 19.3 ms, median 16.8 ms,
+  p95 33.4 ms. No measurable cost on this host; the shared host was busy
+  with other builds, so the spread is wide.
 
 ## Left to do
 
