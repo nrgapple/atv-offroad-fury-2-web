@@ -33,7 +33,7 @@ use std::rc::Rc;
 /// How long a selection must rest before anything starts.
 pub const DEBOUNCE_MS: i32 = 800;
 /// Version of the finished-course markers.
-const FORMAT: u32 = 1;
+const FORMAT: u32 = 2;
 /// What one course stores at most, about (ENV01: 63 MB,
 /// research/PERFORMANCE.md).
 const COURSE_BYTES: u64 = 64 * 1024 * 1024;
@@ -113,6 +113,7 @@ struct Report {
     prepared: Vec<String>,
     /// The last run's sound bank samples ready in the cache.
     bank_samples: usize,
+    venue_sounds: Vec<String>,
     /// The last race run's CPU quads prepared now (0 when found prepared),
     /// and their textures ready in the cache.
     cpu_quads: usize,
@@ -132,6 +133,7 @@ impl Report {
             "prepared": self.prepared, "bankSamples": self.bank_samples,
             "cpuQuads": self.cpu_quads, "cpuTextures": self.cpu_textures,
             "bankBytes": self.bank_bytes, "cpuBytes": self.cpu_bytes,
+            "venueSounds": self.venue_sounds,
         })
         .to_string()
     }
@@ -241,6 +243,7 @@ impl Preloader {
                 r.state = "running";
                 r.started += 1;
                 r.bank_samples = 0;
+                r.venue_sounds.clear();
                 r.cpu_quads = 0;
                 r.cpu_textures = 0;
                 r.bank_bytes = 0;
@@ -364,7 +367,7 @@ async fn run(
         });
     }
     let before = stored();
-    let Some(samples) = prepare_bank(content, target, &environment, live).await? else {
+    let Some(samples) = prepare_bank(content, target, &environment, shared, live).await? else {
         return Ok(Outcome::Abandoned);
     };
     let added = stored().saturating_sub(before);
@@ -556,35 +559,50 @@ async fn prepare_bank(
     content: &Content,
     target: &Target,
     environment: &str,
+    shared: &Shared,
     live: &dyn Fn() -> bool,
 ) -> Result<Option<usize>> {
     // The bank reads the venue's sounds from its Free Ride archive, races too.
     let course = launch::course_resource(environment, false)?;
     let quad = u32::from(target.quad);
+    let (_, selected) = resource(target)?;
+    let key = load::course_key(content, &selected).ok_or("no decoded cache")?;
+    let names_key = format!("preload/{FORMAT}/sounds/{key}");
+    let names = if decoded::contains(&names_key) {
+        decoded::get(&names_key)
+            .await
+            .ok_or("prepared sound names are gone")?
+    } else {
+        let expanded = load::cached_expanded(Some(&key))
+            .await
+            .ok_or("prepared course is gone")?;
+        let names = offload::uncached(offload::SCENE_SOUNDS, 0, &expanded).await?;
+        drop(expanded);
+        if !live() {
+            return Ok(None);
+        }
+        decoded::put_now(&names_key, &names);
+        names
+    };
+    if !live() {
+        return Ok(None);
+    }
+    let names = String::from_utf8(names).map_err(|_| "invalid sound names")?;
+    shared.update(|r| r.venue_sounds = names.lines().map(str::to_string).collect());
     let marker = format!(
-        "preload/{FORMAT}/bank/{}/{}/{environment}/{quad}/{}/{}",
+        "preload/{FORMAT}/bank/{}/{key}/{quad}/{}/{}",
         offload::FORMAT,
-        course.archive,
         target.sound_rate,
         target.racing
     );
     if let Some(samples) = finished(&marker).await {
         return Ok(Some(samples));
     }
-    let inputs = bank::job_inputs(
-        content,
-        &course.archive,
-        environment,
-        quad,
-        // A race adds its lamps and IntOut stingers (crowd venues' crowd
-        // samples are left to the ride).
-        if target.racing {
-            &crate::ride::race::RACE_SAMPLES
-        } else {
-            &[]
-        },
-    )
-    .await?;
+    let mut extra: Vec<&str> = names.lines().collect();
+    if target.racing {
+        extra.extend(crate::ride::race::RACE_SAMPLES);
+    }
+    let inputs = bank::job_inputs(content, &course.archive, environment, quad, &extra).await?;
     let inputs: Vec<&[u8]> = inputs.iter().map(Vec::as_slice).collect();
     // Samples are shared between venues: only those not stored yet count.
     let rate = target.sound_rate;

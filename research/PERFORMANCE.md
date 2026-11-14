@@ -1131,3 +1131,26 @@ cost roughly evenly to the two passes (either alone about 7 ms of the 9).
 What remains is the failure pass rasterizing the large, mostly transparent
 cards and shading the few streak texels; tighter card geometry would cut it
 further but changes the meshes, so it was not done here.
+
+
+## Remaining ride sound preload (#515, 2026-11-14)
+
+Implementation strategy: share the motorcycle bank input reader with its real
+load; decode/resample using the existing VAG_PCM worker jobs and cache keys.
+Collect venue TOY actor/train loop names and both crowd-table prefixes on a
+worker from the expanded selected course. Include the small rain loop regardless
+of the weather toggle, so changing weather cannot invalidate the preload.
+Preparing both crowd prefixes and all TOYs is a conservative superset; the ride
+still chooses its original active sources. No gameplay or mixer rules change.
+The existing debounce, cancellation generation, cache budget, session limits and
+worker requirement remain. Work happens only when the menu target changes.
+
+Evidence: this is authored loading policy, not a newly recovered PS2 behavior.
+It reuses the existing actor loop reader (00205640) and crowd table reader
+(002cbc20); see AUDIO.md and AMBIENT_ACTORS.md for their exact-build evidence.
+Motorcycle sample selection preserves the MX archive-first, AUDIO.RES fallback
+order. A marker revision invalidates old partial bank preload markers.
+
+Objective and mini-game overlays remain outside this slice: next_course currently
+identifies only regular courses and races, not their objective/game modes.
+Phone timing and the cached direct-load gap remain unmeasured here.
