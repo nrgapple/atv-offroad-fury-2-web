@@ -2165,8 +2165,7 @@ fn form(m: &Metrics, s: &Screen) -> El {
                     drop_shadow: None,
                 })),
             );
-            let mut line = El::new(row(8.));
-            line.style.align_items = Some(AlignItems::CENTER);
+            let line = El::new(row(8.));
             fields = fields.child(field.child(line.child(input).child(dice)));
             continue;
         }
