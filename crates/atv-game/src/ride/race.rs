@@ -936,6 +936,7 @@ impl Ride {
                     DriverPose {
                         origin: f.origin,
                         orientation: f.orientation,
+                        local_angular_velocity: f.local_angular_velocity,
                         speed_magnitude: f.speed_magnitude,
                         grounded: f.grounded.iter().any(|g| *g),
                         riding: f.wreck.phase == Phase::Riding,
