@@ -17,6 +17,8 @@ axum = { version = "0.8", default-features = false, features = ["http1", "json",
 bytes = "1"
 futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
 getrandom = "0.3"
+# HMAC-SHA256 rider tokens and SHA-256 ids (already built for rustls).
+ring = "0.17"
 hyper = { version = "1", features = ["server", "http1"] }
 hyper-util = { version = "0.1", features = ["server", "http1", "tokio", "service"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }

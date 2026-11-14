@@ -151,7 +151,8 @@ impl App {
                 | Message::RemoteEngine(..)
                 | Message::PeerModel(_)
                 | Message::FrontText(..)
-                | Message::FrontFocus(_) => Some(message),
+                | Message::FrontFocus(_)
+                | Message::Online(..) => Some(message),
                 message => {
                     self.context.deferred.push(message);
                     None
