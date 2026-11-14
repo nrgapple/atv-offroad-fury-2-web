@@ -594,7 +594,13 @@ fn a_slow_sender_in_server_frames_is_interpolated_not_extrapolated() {
     // server's 500 ms tier beyond 1,000 ft): its playback delay grows past
     // the 220 ms single-pose limit to cover the whole gap, while a 10 Hz
     // rider keeps the low one.
-    for (cadence, limit) in [(100u32, 220f32), (150, 270.), (300, 420.), (350, 470.), (700, 820.)] {
+    for (cadence, limit) in [
+        (100u32, 220f32),
+        (150, 270.),
+        (300, 420.),
+        (350, 470.),
+        (700, 820.),
+    ] {
         let mut rng = Lcg(5);
         let mut packets: Vec<(Snapshot, u64)> = Vec::new();
         let mut t = 0f64;
@@ -614,7 +620,11 @@ fn a_slow_sender_in_server_frames_is_interpolated_not_extrapolated() {
         let mut now = 5000;
         while now < 35_000 {
             while next < packets.len() && packets[next].1 <= now {
-                assert!(buffer.push(packets[next].0.clone(), packets[next].1).unwrap());
+                assert!(
+                    buffer
+                        .push(packets[next].0.clone(), packets[next].1)
+                        .unwrap()
+                );
                 next += 1;
             }
             if let Some(pose) = buffer.present(now, 0.) {
@@ -668,7 +678,9 @@ fn a_hop_between_slow_poses_is_interpolated_not_held() {
     let mut now = 5000;
     while now < 17_000 {
         while next < packets.len() && packets[next].1 <= now {
-            buffer.push(packets[next].0.clone(), packets[next].1).unwrap();
+            buffer
+                .push(packets[next].0.clone(), packets[next].1)
+                .unwrap();
             next += 1;
         }
         if let Some(pose) = buffer.present(now, 0.) {
@@ -715,7 +727,9 @@ fn a_wreck_between_slow_poses_moves_on_until_it_and_never_blends() {
     let mut now = 5000;
     while now < 11_000 {
         while next < packets.len() && packets[next].1 <= now {
-            buffer.push(packets[next].0.clone(), packets[next].1).unwrap();
+            buffer
+                .push(packets[next].0.clone(), packets[next].1)
+                .unwrap();
             next += 1;
         }
         if let Some(pose) = buffer.present(now, 0.) {
@@ -727,7 +741,11 @@ fn a_wreck_between_slow_poses_moves_on_until_it_and_never_blends() {
             } else {
                 assert!(x <= 126. + 1e-3, "{x} past the wreck at {now}");
                 if now > 6000 {
-                    still_ms = if x - last_x < 0.1 { still_ms + FRAME_MS } else { 0 };
+                    still_ms = if x - last_x < 0.1 {
+                        still_ms + FRAME_MS
+                    } else {
+                        0
+                    };
                     worst_still = worst_still.max(still_ms);
                 }
             }
@@ -736,5 +754,8 @@ fn a_wreck_between_slow_poses_moves_on_until_it_and_never_blends() {
         now += FRAME_MS;
     }
     assert!(worst_still <= FRAME_MS, "riding pose held {worst_still} ms");
-    assert_eq!(buffer.present(now, 0.).unwrap().snapshot.rider_state, RiderState::Wreck);
+    assert_eq!(
+        buffer.present(now, 0.).unwrap().snapshot.rider_state,
+        RiderState::Wreck
+    );
 }
