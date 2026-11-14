@@ -23,7 +23,13 @@
     "GAME_ORIGIN": "https://furyremastered.com",
     "GAME_ORIGINS": "https://furyremastered.com,https://atv-offroad-fury-2.champtoday.workers.dev",
     "CANONICAL_ORIGIN": "https://furyremastered.com",
-    "MULTIPLAYER_GUARDS": "required"
+    "MULTIPLAYER_GUARDS": "required",
+    "GAME_SERVER_URL": ""
+  },
+  "triggers": {
+    "crons": [
+      "*/5 * * * *"
+    ]
   },
   "analytics_engine_datasets": [
     {

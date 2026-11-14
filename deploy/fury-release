@@ -1,0 +1,127 @@
+#!/usr/bin/env bash
+# Server side of deploy/deploy.sh. cloud-init installs it as
+# /usr/local/bin/fury-release and makes it the only command the deploy SSH key
+# may run (authorized_keys `restrict,command=...`), so that key can upload,
+# switch and restart releases and nothing else.
+#
+#   upload <commit> <sha256>   binary on stdin -> releases/<commit>, then --version
+#   activate <commit>          point current at it (previous kept) and restart
+#   rollback                   point current back at previous and restart
+#   prune [keep]               keep the newest releases (default 5), current and previous
+#   current                    print the active commit
+#   logs                       recent service log lines
+#
+# FURY_ROOT and FURY_RESTART exist for tests (deploy/test_deploy.py).
+set -euo pipefail
+
+root=${FURY_ROOT:-/opt/fury-server}
+releases=$root/releases
+read -r -a restart <<<"${FURY_RESTART:-sudo -n /usr/bin/systemctl restart fury-server.service}"
+
+die() { echo "fury-release: $*" >&2; exit 1; }
+
+valid_commit() { [[ $1 =~ ^[0-9a-f]{7,40}$ ]] || die "invalid commit: $1"; }
+
+# The commit a link (current/previous) points at, or nothing.
+target() {
+  local link
+  link=$(readlink "$root/$1" 2>/dev/null) || return 0
+  basename "$link"
+}
+
+# Atomically repoint a link at releases/<commit> (rename over the old link;
+# -T is GNU, -h the BSD spelling used when testing on macOS).
+point() {
+  ln -sfn "releases/$2" "$root/.$1.tmp"
+  if mv --version >/dev/null 2>&1; then mv -Tf "$root/.$1.tmp" "$root/$1"
+  else mv -fh "$root/.$1.tmp" "$root/$1"; fi
+}
+
+limit() {
+  if command -v timeout >/dev/null; then timeout "$@"; else shift; "$@"; fi
+}
+
+sha256() {
+  if command -v sha256sum >/dev/null; then sha256sum "$1" | cut -d' ' -f1
+  else shasum -a 256 "$1" | cut -d' ' -f1; fi
+}
+
+upload() {
+  local commit=$1 expected=$2 dir tmp actual version
+  valid_commit "$commit"
+  [[ $expected =~ ^[0-9a-f]{64}$ ]] || die "invalid sha256"
+  dir=$releases/$commit
+  mkdir -p "$dir"
+  tmp=$(mktemp "$dir/.upload.XXXXXX")
+  trap 'rm -f "$tmp"' EXIT
+  cat >"$tmp"
+  actual=$(sha256 "$tmp")
+  [[ $actual == "$expected" ]] || die "checksum mismatch: got $actual"
+  chmod 755 "$tmp"
+  # A dry run of the new binary before anything points at it.
+  if ! version=$(limit 10 "$tmp" --version 2>&1); then
+    die "binary does not run: ${version:-no output}"
+  fi
+  mv -f "$tmp" "$dir/fury-server"
+  trap - EXIT
+  printf 'FURY_COMMIT=%s\n' "$commit" >"$dir/release.env"
+  chmod 644 "$dir/release.env"
+  touch "$dir"
+  echo "uploaded $commit: $version"
+}
+
+activate() {
+  local commit=$1 now
+  valid_commit "$commit"
+  [[ -x $releases/$commit/fury-server ]] || die "release $commit is not uploaded"
+  now=$(target current)
+  if [[ -n $now && $now != "$commit" ]]; then point previous "$now"; fi
+  point current "$commit"
+  "${restart[@]}"
+  echo "activated $commit (previous: ${now:-none})"
+}
+
+rollback() {
+  local back
+  back=$(target previous)
+  [[ -n $back && -x $releases/$back/fury-server ]] || die "no previous release to roll back to"
+  point current "$back"
+  "${restart[@]}"
+  echo "rolled back to $back"
+}
+
+# Keep the newest <keep> releases, and current and previous whatever their age.
+prune() {
+  local keep=${1:-5} current previous seen=0 dir name
+  [[ $keep =~ ^[0-9]+$ && $keep -ge 1 ]] || die "invalid keep count"
+  current=$(target current)
+  previous=$(target previous)
+  # Newest first by modification time (upload touches the directory).
+  # shellcheck disable=SC2012 # names are validated commits
+  while IFS= read -r dir; do
+    name=$(basename "$dir")
+    seen=$((seen + 1))
+    if ((seen <= keep)) || [[ $name == "$current" || $name == "$previous" ]]; then continue; fi
+    rm -rf "${releases:?}/$name"
+    echo "pruned $name"
+  done < <(ls -1dt "$releases"/*/ 2>/dev/null)
+}
+
+logs() { journalctl --unit fury-server.service --lines 80 --no-pager --output short-iso || true; }
+
+# Forced-command use passes the request in SSH_ORIGINAL_COMMAND.
+if [[ $# -eq 0 && -n ${SSH_ORIGINAL_COMMAND:-} ]]; then
+  read -r -a args <<<"$SSH_ORIGINAL_COMMAND"
+  set -- "${args[@]}"
+fi
+
+mkdir -p "$releases"
+case ${1:-} in
+  upload) [[ $# -eq 3 ]] || die "usage: upload <commit> <sha256>"; upload "$2" "$3" ;;
+  activate) [[ $# -eq 2 ]] || die "usage: activate <commit>"; activate "$2" ;;
+  rollback) [[ $# -eq 1 ]] || die "usage: rollback"; rollback ;;
+  prune) [[ $# -le 2 ]] || die "usage: prune [keep]"; prune "${2:-5}" ;;
+  current) target current ;;
+  logs) logs ;;
+  *) die "unknown command: ${1:-none} (upload|activate|rollback|prune|current|logs)" ;;
+esac

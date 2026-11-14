@@ -11,4 +11,7 @@ export default class GameWorker extends RustRelay {
       MULTIPLAYER: { fetch: forwarded => super.fetch(forwarded) },
     }, this.ctx);
   }
+  scheduled(controller) {
+    return app.scheduled(controller, this.env, this.ctx);
+  }
 }

@@ -118,6 +118,7 @@ class WorkflowTests(unittest.TestCase):
         with patch('reuse_site_release.public_commit', side_effect=AssertionError('no network')):
             self.assertEqual(prepare('metadata', 'pull_request', COMMIT)['build'], False)
             self.assertEqual(prepare('docs', 'push', COMMIT)['build'], False)
+            self.assertEqual(prepare('server', 'push', COMMIT), {'build': False, 'reused': False})
             self.assertEqual(prepare('runtime', 'push', COMMIT)['build'], True)
         with patch('reuse_site_release.public_commit', side_effect=OSError('unavailable')):
             self.assertEqual(prepare('metadata', 'push', COMMIT), {'build': True, 'reused': False})
