@@ -117,7 +117,7 @@ def main():
                     result[name] = source(name)
             result[stunt_ini] = source(stunt_ini)
             return result
-        records = [r for r in manifest['files'] if not r['path'].startswith('/MX/')]
+        records = [r for r in manifest['files'] if r['path'] not in {f'/MX/BIKE{size}.RES' for size in DEFINITIONS}]
         sector = max((r['lba'] * 2048 + r['bytes'] + 2047) // 2048 for r in records) + 1
         report = []
         for size, definitions in DEFINITIONS.items():
