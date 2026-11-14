@@ -654,6 +654,11 @@ pub(super) fn place_racer(
 }
 
 impl Ride {
+    /// The course's trackside TV cameras (`<venue>nat.tv`) in a race.
+    pub fn tv_cameras(&self) -> Option<&Cameras> {
+        self.race.as_ref()?.tv.as_ref()
+    }
+
     /// Op 96: a race on the loaded course; CPU riders take the grid and the
     /// pre-race camera starts unless `intro` is false (Restart Race).
     pub(super) fn begin_race(
@@ -931,6 +936,7 @@ impl Ride {
                     DriverPose {
                         origin: f.origin,
                         orientation: f.orientation,
+                        local_angular_velocity: f.local_angular_velocity,
                         speed_magnitude: f.speed_magnitude,
                         grounded: f.grounded.iter().any(|g| *g),
                         riding: f.wreck.phase == Phase::Riding,
@@ -1751,7 +1757,38 @@ impl Ride {
         if *elapsed < race_director::DELAY {
             return Ok(None);
         }
-        let step = director.step(STEP, rider, &racers)?;
+        // STOPCAM: the player's main stunt clock (rider mode 4) and the
+        // follow camera's last pose.
+        let stunt_clock = match &self.mount {
+            Mount::Quad { rig, .. }
+                if self.rider_mode == Some(atv_core::rider_pose::Mode::Stunt) =>
+            {
+                rig.animator
+                    .stunt_frame()
+                    .filter(|f| !f.holding)
+                    .map(|f| f.main_time)
+            }
+            _ => None,
+        };
+        let terrain = &self.sim.terrain;
+        let ground = |x: f32, z: f32| {
+            terrain
+                .contact(x, z)
+                .ok()
+                .flatten()
+                .map_or(f32::MIN, |c| c.height)
+        };
+        let follow = &self.follow_frame;
+        let stop = race_director::stop_action().then_some(race_director::StopInput {
+            stunt_clock,
+            follow: race_director::Pose {
+                position: follow.position,
+                target: follow.target,
+                fov: follow.fov,
+            },
+            ground: &ground,
+        });
+        let step = director.step_with(STEP, rider, &racers, stop.as_ref())?;
         if let Some(race_director::View::Follow { preset, ease }) = step.cut {
             self.sim.camera.direct(preset, ease);
         }

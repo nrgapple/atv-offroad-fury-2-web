@@ -107,3 +107,134 @@ Limitations: authored thresholds and placement; substantial remaining wrecks;
 no fresh PS2 execution comparison; one full-length seed; original corner,
 preload and landing fidelity remain open. A recovery can credit up to 500
 feet of route that the rider did not drive, while still requiring the gate.
+
+# Supercross wreck causes — issue #643, 2026-11-14
+
+Strategy: classify where and how the CPUs wreck, compare the driver with
+the exact build, and correct the driver only where it differs. The
+recovery layer above is unchanged.
+
+## Where the wrecks were
+
+`cpu_times` now records, for every wreck, its kind, the race station's
+node, the airborne run (takeoff node and speed, air time, time since
+landing), contact counts and impact point, the offset from the racing
+line and the nearest rider. Expert, seed 7, four CPUs, idle player, five
+laps, before this change (host observations, not PS2 traces):
+
+- **Airborne back wrecks on the big jumps** (pitch above the 85° air
+  limit before touchdown): sx03 node 122 (18 of 48, takeoff at node 118 at
+  about 75 ft/s, 1.6 s in the air), sx05 nodes 184–185 (16 of 49, takeoff
+  at node 181 at 78–82 ft/s), sx15 nodes 159–162 and 32–33 (about 20 of
+  126).
+- **Grounded front impacts against the infield hay bales of hairpins**:
+  sx15 nodes 26–27, 43–45 and 135–137 (`hay_tit`, `hay_hbm`, `hay_sho`),
+  sx05 nodes 42–43 (`hay_rkc`), sx03 nodes 77–85 (`hay_one`). The rider
+  is 12–33 ft inside the line, still within the track polygon (half
+  widths 33–44 ft; the two legs of each hairpin are closer together than
+  their widths), at 40–65 ft/s, with 1–11 static obstacle contacts. Every
+  hit lands on the same bale each lap.
+- **Rider contacts** at the same corners (no obstacle contact, another
+  rider within 8 ft).
+
+## Exact-build reading
+
+Private Ghidra exports of SCUS_972.11, bounded reading; nothing traced or
+executed.
+
+Facts:
+
+- **Speed and throttle (`0024f9d0`).** The target speed is the aim node's
+  (+0x278) TDF tag 18 (−1 means 150 ft/s), blended with the next node's
+  (+0x54) by the aim fraction +0x27c under AI flag 0x40000, which race
+  creation `001f9690` sets for every CPU. Throttle and brake are 1 or 0
+  around 1 ft/s deadbands (+0x2b4/+0x2b8 = 1, `001f9690`). The speed
+  compared is the body velocity magnitude (`001eb380`: AI +0xa0 =
+  |body +0x270|). No other Supercross or jump speed rule exists in the
+  driver; the flag-0x40 preload and the Normal leader limit are as already
+  ported. The port matches. On sx15 the jump nodes ask 58.7–88 ft/s and
+  most others 150 or 220 ft/s, so the CPUs run flat out between jumps.
+- **Heading gain.** The constructor `0024ef20` stores 2.5 at +0x238 and race
+  creation overwrites it with 5, the port's value. `001ab8f0` is atan2,
+  built on the acos table at `001ab720`.
+- **Air lean.** Above 20 ft (+0x3d8) the lean is
+  sin(clamp(+0x24c × (+0x90 − +0x200), ±π/2)) with +0x24c = 1.5 and
+  +0x200 = −+0x23c × atan2(d·up, d·forward), +0x23c = 0.5, where d is the
+  corrected direction minus the nose. `001eb380` copies body +0x2a0..+0x2a8
+  into AI +0x90..+0x98, and `001469e0` integrates body +0x2a0 into the
+  orientation quaternion (q̇ = ½ q ω) after clamping it as a rate. +0x90 is
+  therefore the body-local pitch rate, not an angle.
+- **Wreck limits.** `001e8690` scales the vertical impact limit by 1.25 only
+  for track kinds 0–2 (Enduro, Freestyle); race courses use 1.0, as the
+  port does. The port never applies the 1.25 (#660).
+- The hay bales are ordinary static collision models (material 0).
+
+Not established: whether the original CPUs strike the same bales; the
+aim/route locator `0017b9d0` called by `0017cf10` is not in the exports;
+the original lookahead measures the distance to RaceStatus's station point
+(+0xb8), where the port re-projects the rider within its station window.
+
+## Change
+
+The port compared an Euler pitch, atan2(2(wx + yz), 1 − 2(x² + y²)), with
+the wanted rate +0x200. That angle also depends on the heading (the same
+30° pitch reads 30°, 90° and −150° at headings 0°, 90° and 180°), so a CPU
+in the air received a lean unrelated to its rotation and could rotate
+backwards past the limit. `race_ai::Driver` now
+uses the body's local angular velocity x (`DriverPose::local_angular_velocity`),
+as `0024f9d0` does. It also drives the path driver on the player's quad
+(autopilot, after the finish). Nothing else changes.
+
+## Measurements
+
+Before is this branch's base (origin/main 88d4f02b) with the new
+telemetry; after adds the lean change. Same setup as above: four original
+CPU seats, idle player, weather off, five laps, hosted content, host-native
+`cpu_times`. Wrecks are summed over the four CPUs up to each one's finish;
+times are the last CPU's finish in simulation seconds; every race finishes.
+
+| Course | Difficulty | Seed | Wrecks before | After | Last finish before | After |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| sx15 | Expert | 7 | 126 | 56 | 488.4 | 393.7 |
+| sx15 | Expert | 11 | 122 | 60 | 468.5 | 429.1 |
+| sx15 | Expert | 23 | 135 | 61 | 478.6 | 446.2 |
+| sx03 | Expert | 7 | 48 | 43 | 425.5 | 408.9 |
+| sx03 | Expert | 11 | 50 | 38 | 413.8 | 404.0 |
+| sx03 | Expert | 23 | 59 | 41 | 436.6 | 380.5 |
+| sx05 | Expert | 7 | 49 | 39 | 398.1 | 380.9 |
+| sx05 | Expert | 11 | 52 | 35 | 405.9 | 370.4 |
+| sx05 | Expert | 23 | 53 | 37 | 398.3 | 352.6 |
+| sx15 | Normal | 7 | 169 | 119 | 557.1 | 528.3 |
+| sx15 | Normal | 11 | 168 | 137 | 562.0 | 524.8 |
+| sx15 | Normal | 23 | 168 | 115 | 573.9 | 527.2 |
+| sx03 | Normal | 7 | 36 | 42 | 447.6 | 432.6 |
+| sx03 | Normal | 11 | 36 | 28 | 468.7 | 433.7 |
+| sx03 | Normal | 23 | 34 | 42 | 452.4 | 437.1 |
+| sx05 | Normal | 7 | 50 | 46 | 422.9 | 421.4 |
+| sx05 | Normal | 11 | 50 | 45 | 430.9 | 491.8 |
+| sx05 | Normal | 23 | 40 | 49 | 422.5 | 429.8 |
+
+All 51 race courses, Expert, seed 7: 1,369 CPU wrecks before, 887 after;
+the 16 Supercross courses 615 → 330. Large drops: sx14 65 → 16, sx02
+82 → 48, sx16 66 → 29, sx04 21 → 2, sx09 22 → 1, env07 92 → 33,
+env04ends 89 → 43, nat07 62 → 34. Rises: env04 13 → 23, env01endl
+30 → 37, nat06 34 → 40, env03 9 → 11. nat01, sx08, sx12, env05, env06st
+stay at 0; env05endl and the other unchanged courses ride identically.
+Best CPU laps fall on several courses (sx15 80.9 → 64.2 s, sx02 82.0 →
+62.9, sx14 77.7 → 64.6, sx04 59.3 → 49.8, env07 107.4 → 89.7), below the
+world-board house-rider anchors measured with the old driver (#665).
+
+What is left (Expert, seed 7, after): on sx15 25 of 56 wrecks are the
+hairpin hay bales, 18 airborne or landing, 7 rider contacts; on Normal with
+the idle player 77 of 119 are bale and rhythm-section obstacle hits, made
+worse by the leader limit's slow approaches. sx03's landing at node 123
+after the node-118 jump is now a front impact on touchdown (12 of 43). The
+counts are far above nat01/sx12's zero, so #643 stays open for the
+hairpin bales, which need exact-build evidence (does the original CPU
+cut the hairpin the same way, and does `0017b9d0` change the aim) before
+any driving change.
+
+Validation: `race_ai` unit tests (including the new pitch-rate case),
+`make precheck`, `make web`, and `tools/test_engine_cpu_recovery.mjs`
+(one SX15 lap, four Expert CPUs, idle player on `/play.html`). Host-native
+and host-Chromium results only; no PS2 comparison.

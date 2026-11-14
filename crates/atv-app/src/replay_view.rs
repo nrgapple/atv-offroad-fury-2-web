@@ -2,10 +2,12 @@
 //! (`instant_replay::Recorder`) with pause, slow motion and scrubbing,
 //! through three cameras: the ride's own chase camera as it was, a
 //! trackside vantage beside the line ahead that follows the rider, and a
-//! slow orbit. The ride stays paused underneath; leaving resumes it as it
+//! slow orbit, and a broadcast director that cuts between vantages
+//! (`broadcast`; a full race from the results opens on it). The ride stays paused underneath; leaving resumes it as it
 //! was. A race's recording is the whole race: the results' Replay plays it
 //! from the start (full-race replay); Pause → Replay still opens near the
 //! end.
+use crate::broadcast::Broadcast;
 use crate::instant_replay::{Moment, Recorder, Shot, look, vantage};
 use atv_core::math::Det;
 use atv_game::ride::bindings::Pad;
@@ -36,6 +38,8 @@ pub struct Replay {
     vantage: Option<[f32; 3]>,
     /// The orbit camera's angle (radians).
     orbit: f32,
+    /// The broadcast camera's director.
+    pub director: Broadcast,
     pad_held: u32,
     /// The pointer holding the scrub bar.
     pub scrub: Option<u64>,
@@ -58,10 +62,15 @@ impl Replay {
             },
             playing: true,
             speed: 0,
-            shot: Shot::Chase,
+            shot: if whole && from_results {
+                Shot::Broadcast
+            } else {
+                Shot::Chase
+            },
             moment: Moment::default(),
             vantage: None,
             orbit: 0.,
+            director: Broadcast::new(None),
             // Buttons held as the replay opens are not presses.
             pad_held: u32::MAX,
             scrub: None,
@@ -79,6 +88,8 @@ impl Replay {
             "samples": recorder.len(), "interval": recorder.interval(),
             "stride": recorder.stride(), "bytes": recorder.bytes(),
             "speed": self.speed(), "shot": self.shot.label(),
+            "cuts": self.director.cuts(), "setup": self.director.setup().0,
+            "tvCamera": self.director.setup().1, "authored": self.director.authored(),
             "fromResults": self.from_results, "whole": self.whole,
             "origin": [m.player.quad_world[12], m.player.quad_world[13], m.player.quad_world[14]],
             "cpus": m.cpus.len(), "peers": m.peers.len(), "ghost": m.ghost.is_some(),
@@ -108,6 +119,7 @@ impl Replay {
     pub fn cycle(&mut self) {
         self.shot = self.shot.next();
         self.vantage = None;
+        self.director.restart();
     }
 
     pub fn jump(&mut self, steps: f64, span: (u64, u64)) {
@@ -205,6 +217,7 @@ impl Replay {
         recorder: &Recorder,
         dt: f32,
         ground: &dyn Fn(f32, f32) -> f32,
+        aspect: f32,
     ) -> (Camera, f32) {
         let w = &self.moment.player.quad_world;
         let subject = [w[12], w[13] + 2., w[14]];
@@ -239,6 +252,10 @@ impl Replay {
                     f32::MIN
                 });
                 (look([x, y, z], subject), 1. / 30f32.to_radians().tan_d())
+            }
+            Shot::Broadcast => {
+                self.director
+                    .camera(self.time, &self.moment, recorder, ground, aspect)
             }
         }
     }
@@ -315,7 +332,9 @@ impl crate::App {
         riding.menu_open = true;
         riding.clear_input();
         riding.sync_sound();
-        self.replay = Some(Replay::new(span, from_results, was_paused, whole));
+        let mut replay = Replay::new(span, from_results, was_paused, whole);
+        replay.director = Broadcast::new(riding.ride.tv_cameras());
+        self.replay = Some(replay);
         if let Some(overlay) = &mut self.overlay {
             overlay.sync_menu(false);
             overlay.clear_input();
@@ -481,7 +500,8 @@ impl crate::App {
         // Photo mode over a replay keeps its own camera.
         if self.photo.is_none() {
             let ground = |x: f32, z: f32| riding.visible_ground(x, z);
-            let (camera, focal) = replay.camera(&riding.recorder, dt, &ground);
+            let aspect = ready.gpu.aspect();
+            let (camera, focal) = replay.camera(&riding.recorder, dt, &ground, aspect);
             ready.camera = camera;
             ready.focal_length = focal;
             if let Some(overlay) = &mut self.overlay {
@@ -545,5 +565,15 @@ mod tests {
         assert_eq!(r.shot, Shot::Trackside);
         assert_eq!(r.key("KeyP", span), Some(Command::Photo));
         assert!(!r.playing);
+    }
+
+    #[test]
+    fn a_full_race_from_the_results_opens_on_the_broadcast() {
+        let span = (0, 600);
+        assert_eq!(Replay::new(span, true, false, true).shot, Shot::Broadcast);
+        assert_eq!(Replay::new(span, false, true, true).shot, Shot::Chase);
+        let mut r = Replay::new(span, true, false, true);
+        r.cycle();
+        assert_eq!(r.shot, Shot::Chase);
     }
 }
