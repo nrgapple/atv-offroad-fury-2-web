@@ -1087,7 +1087,7 @@ mod tests {
             drive(&mut driver, &square(0, -1.), &pose, 0., 30.).0.lean
         };
         // Still: lean forward toward the wanted rate.
-        assert!((lean(0.) - (1.5f32 * -0.8335).sin()).abs() < 0.01);
+        assert!((lean(0.) - (1.5f32 * -0.8335).sin_d()).abs() < 0.01);
         // Already rotating nose down faster than wanted: lean back, saturated.
         assert!((lean(2.) - 1.).abs() < 1e-6);
         assert!((lean(-2.) + 1.).abs() < 1e-6);

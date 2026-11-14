@@ -143,8 +143,10 @@ async fn measure(content: &Content, course: &str, options: &Options) -> atv_game
                             })
                             .fold(f32::MAX, f32::min);
                         // 00146850 body angles: pitch, yaw, roll.
-                        let angles =
-                            atv_core::rider_control::body_angles(f.orientation, f32::atan2);
+                        let angles = atv_core::rider_control::body_angles(
+                            f.orientation,
+                            atv_core::math::atan2f,
+                        );
                         incidents.push(json!({"rider": index, "step": steps,
                             "position": f.origin, "speed": f.speed_magnitude,
                             "previous_speed": last_speed[index], "kind": f.wreck.kind,
