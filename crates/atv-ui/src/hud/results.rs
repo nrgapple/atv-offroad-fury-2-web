@@ -22,7 +22,7 @@ pub const QUIT: u32 = 33;
 pub const SHOW: u32 = 34;
 pub const NEXT_ROUND: u32 = 35;
 pub const FAME_SELECT: u32 = 36;
-/// Replay (#542, a port addition): the race's last stretch again.
+/// Replay (#542, a port addition): the whole race again from its start.
 pub const REPLAY: u32 = 37;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
