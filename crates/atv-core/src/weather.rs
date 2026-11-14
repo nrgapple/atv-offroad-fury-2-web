@@ -78,7 +78,7 @@ impl Definition {
         if !mode.is_empty() && common != mode {
             entries.extend(weather_entries(mode)?);
         }
-        let data = PhysicsData { entries };
+        let data = PhysicsData::from_entries(entries);
         if !data.entries.iter().any(|entry| entry.section == "Weather") {
             return Ok(None);
         }
