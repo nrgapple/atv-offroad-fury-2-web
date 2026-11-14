@@ -326,10 +326,10 @@ impl Loop {
                     changed |= self.votes.remove(&peer).is_some();
                 }
             }
-            loop_phase::RESULTS if vote.round == self.setup.number => {
-                if vote.rematch != rematch::UNDECIDED {
-                    changed |= self.rematch.insert(peer, vote.rematch) != Some(vote.rematch);
-                }
+            loop_phase::RESULTS
+                if vote.round == self.setup.number && vote.rematch != rematch::UNDECIDED =>
+            {
+                changed |= self.rematch.insert(peer, vote.rematch) != Some(vote.rematch);
             }
             _ => {}
         }
@@ -524,7 +524,7 @@ impl Loop {
                 };
                 let stalled =
                     self.watched.serial.is_none() && now >= self.watched.started_at + START_MS;
-                let racing = self.watched.racers.iter().any(|p| here(p));
+                let racing = self.watched.racers.iter().any(here);
                 if over || stalled || !racing || now >= self.watched.started_at + limit {
                     self.finish(now, humans, room, !stalled && racing);
                     self.rematch.clear();
