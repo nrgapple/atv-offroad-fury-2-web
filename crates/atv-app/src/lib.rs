@@ -6907,6 +6907,36 @@ const MOUSE: u64 = overlay::MOUSE;
 #[cfg(target_arch = "wasm32")]
 const DOWNLOADS_URL: &str = "https://github.com/nrgapple/atv-offroad-fury-2-web/releases";
 
+/// Opens a page outside the game: a new tab on the web, so the game keeps
+/// running behind it; the system browser on desktop (the platform's URL
+/// opener, no dependency). Android has no opener yet and hides the links.
+fn open_link(url: &str) {
+    #[cfg(target_arch = "wasm32")]
+    if let Some(window) = web_sys::window() {
+        window.open_with_url_and_target(url, "_blank").ok();
+    }
+    #[cfg(not(any(target_arch = "wasm32", target_os = "android")))]
+    {
+        #[cfg(target_os = "macos")]
+        let mut command = std::process::Command::new("open");
+        #[cfg(target_os = "windows")]
+        let mut command = std::process::Command::new("rundll32");
+        #[cfg(target_os = "windows")]
+        command.arg("url.dll,FileProtocolHandler");
+        #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+        let mut command = std::process::Command::new("xdg-open");
+        match command.arg(url).spawn() {
+            // Reaped off the frame loop; the opener exits once the browser has the URL.
+            Ok(mut child) => {
+                std::thread::spawn(move || child.wait());
+            }
+            Err(error) => eprintln!("fury: could not open {url}: {error}"),
+        }
+    }
+    #[cfg(target_os = "android")]
+    let _ = url;
+}
+
 impl App {
     /// Loads that must not hold up a ride frame (another rider's model or
     /// engine bank): polled a slice at a time from the frame loop, on both
@@ -8058,14 +8088,10 @@ impl App {
                 }
             }
             Event::Downloads => {
-                // A new tab, so the game keeps running behind it.
                 #[cfg(target_arch = "wasm32")]
-                if let Some(window) = web_sys::window() {
-                    window
-                        .open_with_url_and_target(DOWNLOADS_URL, "_blank")
-                        .ok();
-                }
+                open_link(DOWNLOADS_URL);
             }
+            Event::Stats => open_link(&format!("{}/stats.html", default_site())),
             Event::Fullscreen => {
                 self.toggle_fullscreen();
             }
