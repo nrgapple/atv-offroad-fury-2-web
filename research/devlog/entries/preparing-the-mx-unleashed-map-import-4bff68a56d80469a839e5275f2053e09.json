@@ -1,0 +1,14 @@
+{
+  "id": "preparing-the-mx-unleashed-map-import-4bff68a56d80469a839e5275f2053e09",
+  "timestamp": "2026-11-14T20:09:26.864618+00:00",
+  "recorded_at": "2026-11-14T20:09:26.864618+00:00",
+  "kind": "build",
+  "title": "Preparing the MX Unleashed map import",
+  "summary": "The Rust port now has a tested foundation for importing 56 MX vs. ATV Unleashed venue families. Imported maps remain disabled and are not selectable or publicly playable.",
+  "details": [
+    "Foundation checkpoint 186cd9e7 includes scene/index integration 9c987bce and packaging/publication validation a4982bc2. The recovered focused core test log records 19 passed, one private-scene test ignored and 784 tests filtered out; this is not a full core-suite run. The all-56 scene audit passed separately in its owner checkpoint, and make precheck completed successfully.",
+    "The packaging owner reports 29 packaging/publication tests passing and all 57 real packages validating: 56 venue packages plus their adapter resources. Safe local promotion requires the actual successful all-56 native acceptance report; browser acceptance is an additional prerequisite. Generated game resources and private analysis remain outside Git.",
+    "The source inventory contains eight Freestyle, ten Machine Challenge, seventeen National, three Supermoto and eighteen Supercross venue families. Independent Python research validated all 112 source sky files structurally; that evidence does not establish a Rust source-content sweep or integrated gameplay acceptance."
+  ],
+  "limitation": "No successful corrected terrain handoff, real Rust sky/texture/model sweep, runtime driving acceptance or browser acceptance is established at this checkpoint. Imported maps remain disabled and unselectable; no gameplay screenshot or public map release is included. Pending uncommitted runtime integration is not covered. Both ATVs and motorcycles still need to drive from spawn on every venue. Browser measurements will cover host frame timing and JavaScript heap, not total process, Wasm or GPU memory; physical-mobile performance and future multiplayer compatibility remain unverified. Detail scaling remains authored while the source multiplier connection is unresolved. Remaining fidelity work includes weather, ATV wheel particles, ambient reflection, glossy/specular effects, constant-color programs, dynamic screens and the second UV set."
+}
