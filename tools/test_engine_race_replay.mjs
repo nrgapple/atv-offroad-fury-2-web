@@ -3,8 +3,9 @@
 // the finish. The race path driver (`autopilot=1`) rides a one-lap sx01
 // race with three CPUs; at the results Replay opens the race at its start
 // (the grid, before GO) with the CPUs drawn, plays it, and the scrub bar and
-// End reach the finish line. The recording's storage is reported for the
-// memory budget. REPLAY_SHOTS=dir saves the start and the finish.
+// End reach the finish line. It opens on the Broadcast camera: the
+// original's after-finish director cutting between the course's TV cameras.
+// The recording's storage is reported for the memory budget. REPLAY_SHOTS=dir saves the start and the finish.
 import assert from 'node:assert/strict';
 import { assertNoErrors, launch, newPage, nextFrames, url } from './browser/harness.mjs';
 
@@ -50,6 +51,8 @@ try {
   console.log(`recording ${first}..${last} (GO ${go.step}, finish ${finish.step}): ${memory}`);
   assert.equal(s.replay.whole, true);
   assert.equal(s.replay.fromResults, true);
+  assert.equal(s.replay.shot, 'Broadcast');
+  assert.equal(s.replay.authored, true, 'the course TV cameras direct the broadcast');
   // From the race start: the grid, before GO, with the CPUs.
   assert.ok(first <= go.step - 60, `recording starts before GO (${first} vs ${go.step})`);
   assert.ok(s.replay.time - first < 10, `opens at the start (${s.replay.time})`);
@@ -62,6 +65,31 @@ try {
   await shoot(page, 'start');
   s = await read(page);
   assert.ok(s.replay.playing && s.replay.time > first + 5, `plays from the start (${s.replay.time})`);
+  assert.ok(s.replay.cuts >= 1 && (s.replay.setup === 'Onboard' || s.replay.tvCamera === 1), `the director opens on Camera1 (${s.replay.setup} ${s.replay.tvCamera})`);
+  // Mid-race the director cuts as the rider passes the TV cameras.
+  {
+    const bar = await hit(page, 60);
+    await page.mouse.click(bar.x + bar.width * 0.3, bar.y + bar.height / 2);
+    await nextFrames(page, 3);
+    const seen = new Set();
+    let tvEye = null;
+    await wait(page, () => JSON.parse(document.querySelector('#ui-state').textContent).replay?.cuts >= 3, null, 45000).catch(async e => {
+      console.log('broadcast', JSON.stringify((await read(page)).replay));
+      throw e;
+    });
+    s = await read(page);
+    seen.add(`${s.replay.setup}${s.replay.tvCamera ?? ''}`);
+    // Most of sx01's 13 cameras are TV views (the rest roll follow presets,
+    // shown as the recorded ride camera): one shows the rider from its
+    // authored trackside position.
+    await wait(page, () => JSON.parse(document.querySelector('#ui-state').textContent).replay?.setup === 'TV', null, 40000);
+    s = await read(page);
+    seen.add(`${s.replay.setup}${s.replay.tvCamera}`);
+    tvEye = s.view.eye;
+    assert.ok(distance(tvEye, s.replay.origin) > 5, `the TV camera stands off the rider (${tvEye} vs ${s.replay.origin})`);
+    console.log(`broadcast: ${s.replay.cuts} cuts after the scrub, seen ${[...seen]}, TV eye ${tvEye.map(v => v.toFixed(0))}`);
+    await shoot(page, 'broadcast');
+  }
   // The scrub bar to the finish line: the player crossing it.
   await key(page, 'Space');
   const bar = await hit(page, 60);
@@ -71,7 +99,10 @@ try {
   s = await read(page);
   assert.ok(Math.abs(s.replay.time - finish.step) < 30, `scrubbed to the finish (${s.replay.time} vs ${finish.step})`);
   assert.ok(distance(s.replay.origin, finish.origin) < 8, `at the finish line (${s.replay.origin} vs ${finish.origin})`);
+  // Broadcast → Chase → Trackside.
   await key(page, 'KeyC');
+  await key(page, 'KeyC');
+  assert.equal((await read(page)).replay.shot, 'Trackside');
   await shoot(page, 'finish-trackside');
   // End reaches the end; Back returns to the results.
   await key(page, 'End');
@@ -79,7 +110,7 @@ try {
   await key(page, 'Escape');
   await wait(page, () => { const s = JSON.parse(document.querySelector('#ui-state').textContent); return !s.replay && s.ride?.results?.includes(37); });
   assertNoErrors(errors);
-  console.log(`PASS: full-race replay from the results: grid start, CPUs, scrub to the finish, End and Back (${memory})`);
+  console.log(`PASS: full-race replay from the results: grid start, CPUs, TV broadcast cuts, scrub to the finish, End and Back (${memory})`);
 } finally {
   await browser.close();
 }

@@ -1,5 +1,53 @@
 # Replays (#542)
 
+## Broadcast camera — 2026-11-14
+
+A fourth replay camera, **Broadcast**, after Chase, Trackside and Orbit. A
+full race opened from the results starts on it; Pause → Replay still starts
+on Chase.
+
+Evidence (facts, from `RACING.md` "After-finish camera director"): the
+original has a TV director only after the finish. Three seconds after race
+over it follows the player between the course's authored trackside cameras
+(`<venue>nat.tv`, loader `0031b550`), switching by `0031bb50` (2 s minimum,
+8 s maximum wait, the closest listed next camera), rolling each cut's
+weights for a follow preset or the TV view (`001f3bb0`), with the distance
+FOV (`001ac580`) and the fly-by shake (`0031c2d0`). The port already has it
+as `atv_core::race_director::Director`.
+
+Implementation (`crates/atv-app/src/broadcast.rs`):
+- In a race the replay runs that same director over replay time, on the
+  replayed player's origin, from the live race's seed. A scrub, jump or
+  camera change starts it afresh from Camera1, as the original's director
+  does when it takes over. Its follow-preset cuts show the recorded ride
+  camera (the replay has no live follow camera to set a preset on). The TV
+  pose goes through the same cinematic view as the live TV camera. The
+  fly-by shake uses the player's recorded speed only (CPU speeds are not
+  recorded).
+- A ride without TV cameras (a free ride's instant replay) gets built-in
+  cuts: a wide crane, trackside, low, head-on, an aerial that flies alongside,
+  and the ride camera, placed from the recorded line ahead. Each holds until
+  the rider has passed and pulls away, its hold (3–7 s) runs out, or the
+  terrain hides the rider (the other side, then a high vantage, is tried).
+  These are a port invention, not original behavior.
+- Nothing is allocated per frame. The course cameras are cloned once as a
+  replay opens. The live director's per-step clone of the current camera
+  (`tv_pose`) was removed at the same time; it now borrows it.
+
+Memory for a five-lap race with six riders (unit test
+`a_five_lap_race_of_six_riders_fits_at_seven_and_a_half_hertz`: about
+six minutes, 50 cells a rider as measured on sx01): the rows are 300 cells
+(7.0 KiB). The 24 MiB budget holds 3,495 of them at 15 Hz (3.9 min), so the
+race thins once and plays at 7.5 Hz from the grid to the finish, in about
+25 MiB including sample bookkeeping (the fixed worst case; see below).
+
+Limitations: replay sound is not added. The ride's audio is a stateful model
+fed one simulation step at a time (`AudioStep`: engine voices, placement
+resets, train and actor emitters). Driving it from reconstructed replay
+steps, at slow motion and across scrubs, would need a second audio model and
+recorded engine inputs. That is not a clean fit with the current recorder,
+so the replay stays silent as before. No particles either.
+
 ## Full-race replay — 2026-11-14
 
 A port enhancement. The results' **Replay** plays the whole race from its
