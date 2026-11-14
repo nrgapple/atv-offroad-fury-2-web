@@ -106,15 +106,32 @@ brief hitch, not a lost room.
   | Rider, by distance to the recipient's own newest pose | Sent |
   | --- | --- |
   | under 60 ft | every tick with a new pose |
-  | 60-300 ft | every 200 ms |
-  | 300-1,000 ft | every 500 ms |
-  | beyond 1,000 ft | every 2 s |
+  | 60-300 ft | every 100 ms |
+  | 300-1,000 ft | every 200 ms |
+  | beyond 1,000 ft | every 500 ms |
   | at rest (under 0.5 ft/s, riding) | when it moves 0.25 ft, else every 2 s |
   | a change of rider state, a crash, setting off or stopping | at once |
 
   A pose a recipient already has is never sent again. Full (non-compact)
-  snapshots cannot travel in frames and are sent on their own. A client that
-  takes frames must hold a far rider fresh for at least 2.5 s.
+  snapshots cannot travel in frames and are sent on their own.
+
+  The tiers sit a tick or more under a Free Ride rider's own send intervals
+  (`links::freeride_interval`, 150 and 300 ms; about 240 ms measured at
+  300-1,000 ft), so a Free Ride pose waits at most for the next tick, because
+  receivers play poses back with a delay
+  sized for those and drop a moving rider after 1 s without a pose. Measured
+  with `test_engine_freeride_relay.mjs` (`ATV_GAME_SERVER=fury`) and the
+  frames client of #604, the relay-era tiers (200 ms, 500 ms, 2 s) left the
+  watcher 3.3 ft rms off at 60-300 ft and 5.9 ft rms (39 ft at worst, frozen
+  for 290 ms) at 300-1,000 ft. Thinning further needs receivers that size
+  their delay from each rider's arrival interval.
+
+  Even with no thinning at all, the #604 client fails that test's 300-1,000 ft
+  checks (195 ms frozen against 150, 16.5 ft at worst against 12; 1.9 ft rms):
+  in Free Ride it sends about every 300 ms there and plays poses back about
+  240 ms late, so it extrapolates across every gap. That is a client fix
+  (playback delay at least the rider's send interval plus a tick); 60-300 ft
+  and contact range pass (0.4-0.6 ft rms).
 - `rooms`: one task per room, fed by a bounded channel; the registry is a
   mutex touched only to open, find, claim or end rooms. `outbox`: each
   connection's send queue holds 256 KiB / 512 packets; when full the oldest

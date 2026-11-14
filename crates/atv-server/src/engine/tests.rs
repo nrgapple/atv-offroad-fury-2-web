@@ -338,7 +338,7 @@ fn builds_without_frames_get_each_pose_and_frame_builds_get_one_frame_per_tick()
     f.send(3, &snapshot(2, 11, 0.));
     f.now += 50;
     assert!(sent(&f.tick(), 2).is_empty());
-    f.now += 450;
+    f.now += 150;
     assert_eq!(sent(&f.tick(), 2).len(), 1);
     assert_eq!(f.room.take_counters().frames, 2);
 }

@@ -21,17 +21,23 @@ pub const REST_MOVE_FT: f32 = 0.25;
 pub const KEEPALIVE_MS: u64 = 2000;
 
 /// Time between poses of a moving rider `distance` feet from the recipient:
-/// under 60 ft every tick, to 300 ft about 5 Hz, to 1,000 ft about 2 Hz,
-/// beyond that about 0.5 Hz.
+/// under 60 ft every tick, then under a Free Ride rider's own send interval
+/// (`links::freeride_interval`: 150 ms to 300 ft, 300 ms to 1,000 ft; about
+/// 240 ms measured) by a tick, so a Free Ride pose waits at most for the
+/// next tick, and 500 ms beyond. Receivers play poses back with a delay sized for those
+/// intervals and drop a moving rider after 1 s without one; measured in a
+/// browser, the relay-era 200/500/2,000 ms tiers left the watcher up to
+/// 39 ft off (research/GAME_SERVER.md). The savings are on faster senders
+/// (private rooms, riders near someone else) seen from farther away.
 pub fn tier_ms(distance: f32) -> u64 {
     if distance < 60. {
         0
     } else if distance < 300. {
-        200
+        100
     } else if distance < 1000. {
-        500
+        200
     } else {
-        2000
+        500
     }
 }
 
@@ -227,12 +233,12 @@ mod tests {
         let mut next = moving.clone();
         next.sequence = 11;
         assert!(due(Some(&sent), &next, 10., 1050));
-        assert!(!due(Some(&sent), &next, 100., 1100));
-        assert!(due(Some(&sent), &next, 100., 1175));
-        assert!(!due(Some(&sent), &next, 500., 1400));
-        assert!(due(Some(&sent), &next, 500., 1500));
-        assert!(!due(Some(&sent), &next, 2000., 2500));
-        assert!(due(Some(&sent), &next, 2000., 3000));
+        assert!(!due(Some(&sent), &next, 100., 1050));
+        assert!(due(Some(&sent), &next, 100., 1100));
+        assert!(!due(Some(&sent), &next, 500., 1150));
+        assert!(due(Some(&sent), &next, 500., 1200));
+        assert!(!due(Some(&sent), &next, 2000., 1450));
+        assert!(due(Some(&sent), &next, 2000., 1500));
         // A wreck goes out at once, however far.
         next.state = RiderState::Wreck;
         assert!(due(Some(&sent), &next, 5000., 1001));
