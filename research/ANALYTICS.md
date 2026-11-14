@@ -69,7 +69,7 @@ With a valid 32-character hex token, the Worker adds the beacon to HTML response
 
 ## Public stats page
 
-`/stats.html` shows players anonymous totals: riders online and rooms live right now, the most riders online at once, today's daily event, hours ridden, rides, race finishes and visits (today, this week, all time), rides per day for the last 30 days, the most ridden tracks, the single player / multiplayer / Free Ride, Race / Freestyle, ATV / motorcycle and phone / computer splits, World board totals and the countries riders come from. `web/stats.js` renders `GET /api/stats` (`cloudflare/stats.mjs`).
+`/stats.html` shows players anonymous totals. It leads with three big numbers, riders online now, hours ridden and rides (today, this week or all time), with races finished and visits on one line, the rooms live and the most riders online at once (shown from two riders up) under the live count, and today's daily event as one strip. Rides per day for the last 30 days and the top five tracks (all of them behind "Show all") follow; the single player / multiplayer / Free Ride, Race / Freestyle, ATV / motorcycle and phone / computer splits and the countries riders come from are summary rows that open on demand, and World board totals are one row. `web/stats.js` renders `GET /api/stats` (`cloudflare/stats.mjs`).
 
 ### Data flow
 
@@ -98,4 +98,4 @@ Everything after `since` is absent until Analytics Engine data has been rolled u
 
 ### Privacy
 
-The answer contains aggregates only: no rider names (board totals are counts), IP addresses, room codes, identifiers, release or build commits, or details about the multiplayer service beyond riders and rooms. Venues and countries below 10 rides or sessions (`MIN_BUCKET`) are not listed; the country count still includes them. `cloudflare/stats.test.mjs` checks the suppression, the missing-token and missing-database paths and that no forbidden field appears. `tools/test_stats.mjs` (content-free browser group) covers the page with full data, without the token and with the endpoint down.
+The answer contains aggregates only: no rider names (board totals are counts), IP addresses, room codes, identifiers, release or build commits, or details about the multiplayer service beyond riders and rooms. Venues and countries below 10 rides or sessions (`MIN_BUCKET`) are not listed; the country count still includes them. `cloudflare/stats.test.mjs` checks the suppression, the missing-token and missing-database paths and that no forbidden field appears. `tools/test_stats.mjs` (content-free browser group) covers the page with full data at desktop and phone widths (320 and 390 px), the keyboard-operable expanders, without the token, with the endpoint down, without JavaScript and the `?stats=off` opt-out.
