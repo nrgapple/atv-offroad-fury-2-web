@@ -26,6 +26,8 @@ pub enum Button {
     /// The Waypoint Editor's drop and take-back.
     Gate = 4,
     Undo = 5,
+    /// Quick chat in a room whose server relays it (hud::chat).
+    Chat = 6,
 }
 
 impl Button {
@@ -36,6 +38,7 @@ impl Button {
             Self::Keys,
             Self::Gate,
             Self::Undo,
+            Self::Chat,
         ]
         .into_iter()
         .find(|b| *b as u32 == id)
@@ -54,6 +57,8 @@ pub struct State {
     pub compact: bool,
     /// The Waypoint Editor ride: GATE and UNDO follow.
     pub editor: bool,
+    /// A room with quick chat: CHAT follows.
+    pub chat: bool,
 }
 
 /// `#toolbar .atv-control` label: italic 800 14px/1, .05em tracking.
@@ -95,6 +100,9 @@ pub fn element(view: &Viewport, state: &State) -> El {
     buttons.push((Button::Camera, CAMERA_ICON, "CAMERA", state.camera_enabled));
     if state.keys_visible {
         buttons.push((Button::Keys, KEYS_ICON, "KEYS", state.keys_enabled));
+    }
+    if state.chat {
+        buttons.push((Button::Chat, super::chat::CHAT_ICON, "CHAT", !state.paused));
     }
     if state.editor {
         buttons.push((Button::Gate, GATE_ICON, "GATE", !state.paused));

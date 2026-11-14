@@ -33,6 +33,7 @@ pub fn encode(packet: &Packet) -> Result<Vec<u8>> {
         Packet::Bundle { .. } => 19,
         Packet::Batch { .. } => 20,
         Packet::Frame { .. } => 21,
+        Packet::Chat(_) => 24,
     };
     w.0.extend_from_slice(MAGIC);
     w.byte(VERSION);
@@ -245,6 +246,12 @@ pub fn encode(packet: &Packet) -> Result<Vec<u8>> {
                 w.u16(pose.len() as u16);
                 w.0.extend_from_slice(pose);
             }
+        }
+        Packet::Chat(c) => {
+            c.validate()?;
+            w.byte(c.peer);
+            w.byte(c.kind);
+            w.byte(c.id);
         }
         Packet::Ping { nonce } => w.u32(*nonce),
         Packet::Pong { nonce, server_ms } => {
@@ -538,6 +545,15 @@ pub fn decode(bytes: &[u8]) -> Result<Packet> {
                 poses.push(pose.to_vec());
             }
             Packet::Frame { poses }
+        }
+        24 => {
+            let c = crate::chat::Chat {
+                peer: r.byte()?,
+                kind: r.byte()?,
+                id: r.byte()?,
+            };
+            c.validate()?;
+            Packet::Chat(c)
         }
         8 => {
             let epoch = r.u32()?;

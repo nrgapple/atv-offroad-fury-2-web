@@ -1180,7 +1180,7 @@ fn direct_link_signalling_roundtrips_and_is_bounded() {
         signal(20, signal::OFFER, vec![1]),
         signal(1, 10, vec![1]),
         signal(1, signal::COURIER, vec![2]),
-        signal(1, signal::HELLO, vec![signal::MOTORCYCLES * 2]),
+        signal(1, signal::HELLO, vec![signal::CHAT * 2]),
         signal(1, signal::PACE, vec![signal::PACE_MIN - 1]),
         signal(1, signal::PACE, vec![signal::PACE_MAX + 1]),
         signal(1, signal::GONE, vec![signal::BATCHES]),
@@ -1191,7 +1191,7 @@ fn direct_link_signalling_roundtrips_and_is_bounded() {
         signal(1, signal::OFFER, vec![]),
         signal(1, signal::OFFER, vec![0; MAX_SIGNAL_BYTES + 1]),
         signal(1, signal::HELLO, vec![]),
-        signal(1, signal::HELLO, vec![64]),
+        signal(1, signal::HELLO, vec![128]),
         signal(1, signal::PRESENT, vec![1, 1]),
         Packet::Links {
             mask: 1 << MAX_PLAYERS,
@@ -1201,10 +1201,10 @@ fn direct_link_signalling_roundtrips_and_is_bounded() {
     }
     // The same bounds hold for bytes that never passed through `encode`.
     let mut bytes = encode(&signal(1, signal::HELLO, vec![1])).unwrap();
-    bytes[10] = 64;
+    bytes[10] = 128;
     assert_eq!(decode(&bytes), Err(Error::InvalidValue));
-    // Every hello flag, frames included, is accepted.
-    bytes[10] = 31;
+    // Every hello flag, frames, motorcycles and chat included, is accepted.
+    bytes[10] = 127;
     assert!(decode(&bytes).is_ok());
     let report = atv_net::LinkReport {
         timeouts: 2,
@@ -1343,4 +1343,79 @@ fn server_frames_carry_compact_poses_and_deltas_only() {
     ] {
         assert!(encode(&bad).is_err());
     }
+}
+
+#[test]
+fn quick_chat_carries_preset_ids_only() {
+    use atv_net::chat::{self, Chat};
+    for c in [
+        Chat {
+            peer: 0,
+            kind: chat::LINE,
+            id: 0,
+        },
+        Chat {
+            peer: 19,
+            kind: chat::LINE,
+            id: 13,
+        },
+        Chat {
+            peer: 3,
+            kind: chat::EMOTE,
+            id: 7,
+        },
+        Chat {
+            peer: 5,
+            kind: chat::HORN,
+            id: 0,
+        },
+    ] {
+        let bytes = encode(&Packet::Chat(c)).unwrap();
+        assert_eq!(bytes.len(), 11);
+        assert_eq!(bytes[5], 24);
+        assert_eq!(decode(&bytes).unwrap(), Packet::Chat(c));
+    }
+    for bad in [
+        Chat {
+            peer: 20,
+            kind: chat::LINE,
+            id: 0,
+        },
+        Chat {
+            peer: 0,
+            kind: chat::LINE,
+            id: 14,
+        },
+        Chat {
+            peer: 0,
+            kind: chat::EMOTE,
+            id: 8,
+        },
+        Chat {
+            peer: 0,
+            kind: chat::HORN,
+            id: 1,
+        },
+        Chat {
+            peer: 0,
+            kind: 3,
+            id: 0,
+        },
+    ] {
+        assert_eq!(encode(&Packet::Chat(bad)), Err(Error::InvalidValue));
+        let mut bytes = encode(&Packet::Chat(Chat {
+            peer: 0,
+            kind: chat::LINE,
+            id: 0,
+        }))
+        .unwrap();
+        bytes[8..].copy_from_slice(&[bad.peer, bad.kind, bad.id]);
+        assert_eq!(decode(&bytes), Err(Error::InvalidValue));
+    }
+    let hello = Packet::Signal(Signal {
+        peer: 1,
+        kind: signal::HELLO,
+        data: vec![signal::FRAMES | signal::CHAT],
+    });
+    assert_eq!(decode(&encode(&hello).unwrap()).unwrap(), hello);
 }
