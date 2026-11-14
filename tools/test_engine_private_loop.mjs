@@ -5,8 +5,9 @@
 // track leads three race cards and Random; both vote it, so it is picked
 // at once. The host drives the race (one lap with `raceLaps=1` and the
 // race path driver). A third rider joins mid-race, watches it with the
-// follow camera ("Next round", cycling riders), sees the podium, and after
-// everyone's Rematch takes a seat in the next vote.
+// follow camera ("Next round", cycling riders) while parked (no steps,
+// drawn by no racer), sees the podium, and after everyone's Rematch takes a
+// seat in the next vote.
 //   PLAYWRIGHT_MODULE=... ATV_TEST_URL=http://127.0.0.1:4187 node tools/test_engine_private_loop.mjs
 // ATV_PL_SHOTS=<dir> saves a capture of each screen.
 import assert from 'node:assert/strict';
@@ -122,6 +123,16 @@ try {
   await late.goto(`${base}/play.html?room=${code}&name=PLLate&${flags}`);
   const watching = await until(late, panel, s => s.phase === 'Play' && s.spectating && s.watching, 240000, 'spectating');
   assert.ok(['PLHost', 'PLGuest'].includes(watching.watching), `follows a racer: ${watching.watching}`);
+  // Parked meanwhile: no steps, and no racer draws (or touches) it.
+  const parked = await until(late, ui, s => s.ride?.parked, 10000, 'parked');
+  await late.waitForTimeout(1500);
+  const still = await ui(late);
+  assert.equal(still.ride.step, parked.ride.step, 'a parked ride takes no steps');
+  assert.deepEqual(still.ride.origin, parked.ride.origin, 'nor moves');
+  for (const p of [host, guest]) {
+    const m = await mp(p);
+    assert.ok(m.drawn <= 1, `racers draw only each other: ${m.drawn}`);
+  }
   await shot(late, 'pl-spectate-follow');
   await tap(late, WATCH);
   await until(late, panel, s => s.watching && s.watching !== watching.watching, 10000, 'next rider');
@@ -144,6 +155,7 @@ try {
   const seated = next.seats.filter(s => !(s.flags & 1));
   assert.equal(seated.length, 3, `three riders: ${JSON.stringify(next.seats)}`);
   assert.ok(seated.every(s => !(s.flags & SPECTATING)), 'nobody watching');
+  await until(late, ui, s => s.ride && !s.ride.parked, 10000, 'unparked for the next round');
   assert.equal((await mp(late)).code, code, 'the room stays together');
   await until(late, panel, s => s.phase === 'Vote' && s.cards.length === 4, 15000, 'late joiner votes');
   await shot(late, 'pl-rematch-vote-late');

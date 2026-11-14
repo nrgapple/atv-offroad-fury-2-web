@@ -278,6 +278,11 @@ impl Loop {
     pub fn take_records(&mut self) -> Vec<Record> {
         std::mem::take(&mut self.records)
     }
+    /// `peer` watches the round under way (joined after it started): its
+    /// pose is relayed to nobody, so racers neither draw nor touch it.
+    pub fn watching(&self, peer: u8) -> bool {
+        self.phase == loop_phase::PLAY && !self.watched.racers.contains(&peer)
+    }
     /// A newcomer can take a seat for the next round without waiting long.
     pub fn joinable(&self) -> bool {
         self.phase <= loop_phase::VOTE || self.phase == loop_phase::RESULTS
@@ -1621,6 +1626,7 @@ mod tests {
             seat_flag::SPECTATING
         );
         assert_eq!(s.seat(0).unwrap().flags & seat_flag::SPECTATING, 0);
+        assert!(l.watching(2) && !l.watching(0) && !l.watching(1));
         let mut over = race_state(9, race_phase::RESULTS, 0.);
         over.scores = [50_000, RACE_DNF, 0, 0];
         l.game(&over, 60_000);

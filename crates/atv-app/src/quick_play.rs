@@ -11,6 +11,7 @@
 //! is the same panel: the room's host is the driver and also sends its
 //! choices (Start, the mode, CPU fill, Skip); Leave leaves the room. A
 //! rider watching a round it joined late follows a racer with a camera.
+use atv_core::math::Det;
 use atv_game::multiplayer::quickplay::{
     Hosting, NO_CHOICE, RANDOM, RoomLoop, Round, Setup, Vote, host_flag, loop_phase, playlist,
     rematch, result_flag, seat_flag,
@@ -275,7 +276,7 @@ impl QuickPlay {
         dt: f32,
         ground: &dyn Fn(f32, f32) -> f32,
     ) -> ([f32; 3], [f32; 3]) {
-        let speed = velocity[0].hypot(velocity[2]);
+        let speed = velocity[0].hypot_d(velocity[2]);
         let heading = match self.follow {
             _ if speed > 3. => [velocity[0] / speed, velocity[2] / speed],
             Some(f) => f.heading,

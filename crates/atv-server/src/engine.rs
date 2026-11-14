@@ -776,6 +776,7 @@ impl Room {
                     for other in &self.conns {
                         if other.id != id
                             && other.ready_map == map
+                            && !self.watching(other.peer)
                             && let Some(pose) = other.current_pose()
                             && self.conns[i].takes(pose)
                         {
@@ -1016,7 +1017,9 @@ impl Room {
     /// its current vehicle.
     fn forward(&mut self, i: usize, poses: &[Bytes], out: &mut Vec<Out>) {
         let sender = &self.conns[i];
-        if !(self.started && sender.ready_map == self.map && sender.current_pose().is_some()) {
+        if !(self.started && sender.ready_map == self.map && sender.current_pose().is_some())
+            || self.watching(sender.peer)
+        {
             return;
         }
         let alone = !self
@@ -1053,7 +1056,7 @@ impl Room {
         let senders: Vec<(u8, Pose)> = self
             .conns
             .iter()
-            .filter(|c| c.ready_map == map)
+            .filter(|c| c.ready_map == map && !self.watching(c.peer))
             .filter_map(|c| c.current_pose().map(|p| (c.peer, p.clone())))
             .collect();
         if senders.is_empty() {
@@ -1097,6 +1100,15 @@ impl Room {
     /// The room's loop: Quick Play's, else a private room's.
     fn room_loop(&mut self) -> Option<&mut quickplay::Loop> {
         self.qp.as_mut().or(self.private_loop.as_mut())
+    }
+
+    /// `peer` watches the room loop's round under way: a parked spectator
+    /// whose pose nobody gets (racers would draw it and collide with it).
+    fn watching(&self, peer: u8) -> bool {
+        self.qp
+            .as_ref()
+            .or(self.private_loop.as_ref())
+            .is_some_and(|l| l.watching(peer))
     }
 
     /// A private room has a loop while its host's build follows one: made

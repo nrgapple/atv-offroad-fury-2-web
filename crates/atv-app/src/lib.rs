@@ -2384,6 +2384,7 @@ impl App {
             };
             if room_loop.is_none() && !net.quickplay() && self.quick_play.take().is_some() {
                 // The host's build stopped running the loop.
+                riding.parked = false;
                 if let Some(overlay) = &mut self.overlay {
                     overlay.quickplay = None;
                     overlay.quickplay_hides_results = false;
@@ -2433,6 +2434,12 @@ impl App {
                 }
                 quick_start = start;
                 quick_leave = std::mem::take(&mut qp.leave).then(|| (qp.playlist, qp.code.clone()));
+                // Watching a round it joined late, the rider is parked (the
+                // server relays its pose to nobody meanwhile).
+                if riding.parked != qp.view.spectating {
+                    riding.parked = qp.view.spectating;
+                    riding.clear_input();
+                }
                 if let Some(overlay) = &mut self.overlay {
                     // Between rounds the podium and the vote replace the
                     // round's own results panel (the finished race would
@@ -3370,6 +3377,7 @@ impl App {
             let mut state = replay::record(&riding.ride, riding.ride.steps());
             state["camera"]["preset"] = riding.ride.camera().0.preset.into();
             state["paused"] = riding.paused.into();
+            state["parked"] = riding.parked.into();
             // The full-density surface and the scene drawn inside it
             // (tools/test_engine_shell.mjs, test_engine_crisp_hud.mjs).
             state["surface"] = serde_json::json!([ready.gpu.config.width, ready.gpu.config.height]);

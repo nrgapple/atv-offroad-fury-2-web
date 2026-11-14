@@ -194,8 +194,11 @@ Nothing here is recovered behavior.
   path), not into a queue.
 - **Late joiners.** A rider who joins mid-round sees **Next round** and a
   **▸ name** button: a follow camera behind a racer (26 ft back, 10 ft up,
-  eased), cycling the racers on each press. It takes a seat at the next
-  vote.
+  eased), cycling the racers on each press. Meanwhile its own ATV is
+  parked (no input, no simulation steps) and the server relays its pose to
+  nobody (`Loop::watching`: in play and not a racer; frames, single poses
+  and arrival catch-ups alike), so racers neither draw nor collide with it.
+  This holds in Quick Play rooms too. It takes a seat at the next vote.
 - **Existing flows stay.** Pause host rows (Select Track, Play Race, the
   games, Freestyle), invite links and room codes are unchanged. A round the
   host starts from Pause is followed by the loop (straight to play, then
@@ -250,8 +253,7 @@ Nothing here is recovered behavior.
 - Rooms still seat four humans (`RACE_RIDERS`); 8 riders needs the wider
   `GameState` (#670 may widen it).
 - The follow camera does not recentre the fine terrain patch on the watched
-  rider, so a far-away racer is seen over coarser ground. The watcher's own
-  ATV stays in the room and keeps taking input.
+  rider, so a far-away racer is seen over coarser ground.
 - The host's laps and minutes are read from its menus each frame; changing
   them mid-vote changes the coming round.
 - Not measured on production or physical phones.
