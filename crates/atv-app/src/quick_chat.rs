@@ -156,10 +156,9 @@ impl Wheel {
 
 /// A blocked rider: by its verified player id when the server gives one,
 /// else by its shown name.
-#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Blocked {
     pub name: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pid: Option<String>,
 }
 
@@ -169,10 +168,23 @@ fn fold(name: &str) -> String {
 
 /// The blocked list as saved in the settings.
 pub fn load_blocked(settings: &atv_ui::settings::Settings) -> Vec<Blocked> {
-    settings
+    let Some(list) = settings
         .get(BLOCKED_KEY)
-        .and_then(|text| serde_json::from_str(&text).ok())
-        .unwrap_or_default()
+        .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
+    else {
+        return Vec::new();
+    };
+    list.as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|b| {
+            Some(Blocked {
+                name: b["name"].as_str()?.to_string(),
+                pid: b["pid"].as_str().map(str::to_string),
+            })
+        })
+        .take(MAX_BLOCKED)
+        .collect()
 }
 
 /// Whether `blocked` holds a rider (by `pid` when both have one, else by
@@ -294,9 +306,15 @@ impl QuickChat {
                 pid: pid.map(str::to_string),
             });
         }
-        if let Ok(text) = serde_json::to_string(&self.blocked) {
-            settings.set(BLOCKED_KEY, &text);
-        }
+        let list: Vec<serde_json::Value> = self
+            .blocked
+            .iter()
+            .map(|b| match &b.pid {
+                Some(pid) => serde_json::json!({"name": b.name, "pid": pid}),
+                None => serde_json::json!({"name": b.name}),
+            })
+            .collect();
+        settings.set(BLOCKED_KEY, &serde_json::Value::from(list).to_string());
         !was
     }
 
@@ -392,6 +410,18 @@ mod tests {
         // Bubbles and the feed fade out.
         c.update(true, |_| Some([0.; 3]), [true; 3], 10_000.);
         assert!(c.view.bubbles.is_empty() && c.view.feed.is_empty());
+    }
+
+    #[test]
+    fn blocks_persist_in_the_settings() {
+        let mut settings = atv_ui::settings::Settings::memory();
+        let mut c = QuickChat::default();
+        assert!(c.toggle_block(&mut settings, " Bo ", None));
+        assert!(c.toggle_block(&mut settings, "Cy", Some("p9")));
+        let loaded = QuickChat::load(&settings);
+        assert!(loaded.blocked("bo", None) && loaded.blocked("x", Some("p9")));
+        assert!(!c.toggle_block(&mut settings, "BO", None));
+        assert!(!QuickChat::load(&settings).blocked("Bo", None));
     }
 
     #[test]
