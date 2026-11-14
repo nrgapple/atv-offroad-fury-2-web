@@ -1190,6 +1190,9 @@ fn direct_link_signalling_roundtrips_and_is_bounded() {
         signal(1, signal::OFFER, vec![]),
         signal(1, signal::OFFER, vec![0; MAX_SIGNAL_BYTES + 1]),
         signal(1, signal::HELLO, vec![]),
+        // Every bit of the flags byte is allocated since the hub took 128
+        // (no flag value is invalid any more); a second flags byte is not
+        // defined yet, so a two-byte hello is still refused.
         signal(1, signal::HELLO, vec![1, 1]),
         signal(1, signal::PRESENT, vec![1, 1]),
         Packet::Links {
