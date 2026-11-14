@@ -79,8 +79,15 @@ try {
     });
     s = await read(page);
     seen.add(`${s.replay.setup}${s.replay.tvCamera ?? ''}`);
-    if (s.replay.setup === 'TV') tvEye = s.view.eye;
-    console.log(`broadcast: ${s.replay.cuts} cuts after the scrub, now ${[...seen]}${tvEye ? ` at ${tvEye.map(v => v.toFixed(0))}` : ''}`);
+    // Most of sx01's 13 cameras are TV views (the rest roll follow presets,
+    // shown as the recorded ride camera): one shows the rider from its
+    // authored trackside position.
+    await wait(page, () => JSON.parse(document.querySelector('#ui-state').textContent).replay?.setup === 'TV', null, 40000);
+    s = await read(page);
+    seen.add(`${s.replay.setup}${s.replay.tvCamera}`);
+    tvEye = s.view.eye;
+    assert.ok(distance(tvEye, s.replay.origin) > 5, `the TV camera stands off the rider (${tvEye} vs ${s.replay.origin})`);
+    console.log(`broadcast: ${s.replay.cuts} cuts after the scrub, seen ${[...seen]}, TV eye ${tvEye.map(v => v.toFixed(0))}`);
     await shoot(page, 'broadcast');
   }
   // The scrub bar to the finish line: the player crossing it.
