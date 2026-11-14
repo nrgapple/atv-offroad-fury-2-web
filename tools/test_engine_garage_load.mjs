@@ -19,7 +19,22 @@ const front = page => page.evaluate(() => JSON.parse(document.getElementById('ui
 function instrument(quadId) {
   localStorage.setItem('atv2-keyboard-help-seen-v1', '1');
   localStorage.setItem('atv-player-selection', JSON.stringify({ quadId, riderId: 0 }));
-  const log = (window.__load = { jobs: [], tasks: [] });
+  const log = (window.__load = { jobs: [], tasks: [], links: [], audio: [] });
+  const link = WebGL2RenderingContext.prototype.linkProgram;
+  WebGL2RenderingContext.prototype.linkProgram = function (...args) {
+    const start = performance.now();
+    const result = link.apply(this, args);
+    log.links.push([start, performance.now() - start]);
+    return result;
+  };
+  const Audio = window.AudioContext;
+  window.AudioContext = class extends Audio {
+    constructor(...args) {
+      const start = performance.now();
+      super(...args);
+      log.audio.push([start, performance.now() - start]);
+    }
+  };
   const post = Worker.prototype.postMessage;
   Worker.prototype.postMessage = function (data, ...rest) {
     if (data?.kind) log.jobs.push([performance.now(), data.kind]);
@@ -35,7 +50,7 @@ const browser = await launch({ engine: 'chromium' });
 const report = {};
 try {
   // A step within one archive would reuse it: each of these reads a new one.
-  for (const { name, start, builds } of [{ name: 'atv', start: 1, builds: 1 }, { name: 'motorcycle', start: 28, builds: 2 }]) {
+  for (const { name, start, builds } of Array.from({ length: 3 }, () => [{ name: 'atv', start: 1, builds: 1 }, { name: 'motorcycle', start: 28, builds: 2 }]).flat()) {
     const page = await newPage(browser, { viewport: { width: 390, height: 844 }, deviceScaleFactor: 3, hasTouch: true, isMobile: true }, errors);
     await unlockStore(page);
     await page.addInitScript(instrument, start);
@@ -65,16 +80,21 @@ try {
     );
     const log = await page.evaluate(from => ({
       jobs: window.__load.jobs.filter(j => j[0] >= from),
+      links: window.__load.links.filter(t => t[0] >= from),
+      audio: window.__load.audio.filter(t => t[0] >= from),
       tasks: window.__load.tasks
     }), from);
     assert.ok(log.jobs.some(j => j[1] === EXPAND), `${name}: the archive inflates as a job`);
     assert.ok(log.jobs.filter(j => j[1] === PST).length >= 3, `${name}: the textures decode as jobs`);
+    assert.equal(log.links.length, 0, `${name}: settled steps reuse the preview pipeline`);
     // Long tasks of the load itself, from its archive job: a fresh browser's first
     // tap holds a separate 500 ms task before any load (research/PERFORMANCE.md).
     const first = log.jobs.find(j => j[1] === EXPAND)[0];
     const worst = Math.max(0, ...log.tasks.filter(t => t[0] >= first).map(t => t[1]));
     assert.ok(worst < LONG_TASK_BOUND, `${name}: slowest long task ${worst.toFixed(0)} ms (bound ${LONG_TASK_BOUND})`);
-    report[name] = { jobs: log.jobs.length, worstLongTaskMs: Math.round(worst) };
+    (report[name] ??= []).push({ jobs: log.jobs.length, worstLongTaskMs: Math.round(worst),
+      worstFromTapMs: Math.max(0, ...log.tasks.filter(t => t[0] >= from).map(t => t[1])),
+      links: log.links, audio: log.audio });
     await page.context().close();
   }
 } finally {
