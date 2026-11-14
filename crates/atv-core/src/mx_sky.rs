@@ -115,7 +115,7 @@ fn strips(packet: &[u8], vertices: usize, count: usize) -> Result<Vec<Vec<Vertex
                 if address != 0xc001 || n < 3 || xy.is_some() || raw.iter().any(|v| *v > 128) {
                     return Err("invalid MX sky strip coordinates".into());
                 }
-                xy = Some(raw.chunks_exact(2).map(|p| [p[0], p[1]]).collect());
+                xy = Some(raw.as_chunks::<2>().0.to_vec());
             }
             0x6a => {
                 let points = xy.take().ok_or("MX sky colors have no coordinates")?;
@@ -129,11 +129,8 @@ fn strips(packet: &[u8], vertices: usize, count: usize) -> Result<Vec<Vec<Vertex
                 result.push(
                     points
                         .into_iter()
-                        .zip(raw.chunks_exact(3))
-                        .map(|(xy, c)| Vertex {
-                            xy,
-                            rgb: [c[0], c[1], c[2]],
-                        })
+                        .zip(raw.as_chunks::<3>().0.iter())
+                        .map(|(xy, c)| Vertex { xy, rgb: *c })
                         .collect(),
                 );
             }
@@ -192,7 +189,7 @@ impl Tile {
                 }
             }
         }
-        if rgba.chunks_exact(4).any(|pixel| pixel[3] != 255) {
+        if rgba.as_chunks::<4>().0.iter().any(|pixel| pixel[3] != 255) {
             return Err("MX sky strips leave uncovered pixels".into());
         }
         Ok(rgba)
@@ -254,8 +251,10 @@ mod tests {
         assert!(
             tile.rgba()
                 .unwrap()
-                .chunks_exact(4)
-                .all(|p| p == [40, 90, 170, 255])
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .all(|p| *p == [40, 90, 170, 255])
         );
         tile.strips[0].pop();
         assert!(tile.rgba().is_err());
