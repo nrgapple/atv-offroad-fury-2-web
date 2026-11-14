@@ -6,13 +6,19 @@ import json
 import re
 import os
 import struct
-import fcntl
-from package_content import mesh_material_names
 from pathlib import Path
 from package_content import ROOT, Resource, pack_resource
 from package_motorcycles import MX_BUILD
 
 VENUES = tuple(f'{prefix}{i:02}' for prefix, count in [('FS',8),('MC',10),('Nat',17),('SM',3),('SX',18)] for i in range(1,count+1))
+
+
+def related_source_candidates(ref, rows):
+    """Suggest source naming variants without asserting runtime equivalence."""
+    stem = Path(ref).stem.lower().replace('_', '').replace(' ', '').replace('.dxm', '')
+    return sorted(r['name'] for r in rows
+                  if stem in Path(r['name']).stem.lower().replace('_', '').replace(' ', '')
+                  and Path(r['name']).suffix.lower() == Path(ref).suffix.lower())
 
 
 def package(output):
@@ -38,6 +44,13 @@ def package(output):
             if len(data) != row['bytes']:
                 raise ValueError('truncated source')
             return data
+        # Index nested venue members too; do not assume the PSR lists every payload.
+        nested = {}
+        for stem in VENUES:
+            archive = f'Env/{stem}/{stem}.res'
+            container = Resource(read(archive))
+            for position, (name, _, _) in enumerate(container.members):
+                nested.setdefault(name.lower(), []).append((archive, position, name))
         track_resource = Resource(read('TrackList.res'))
         track_members = {n.lower(): track_resource.extract(i) for i,(n,_,_) in enumerate(track_resource.members)}
         catalog = []
@@ -53,63 +66,123 @@ def package(output):
             catalog.append(dict(id='mx_'+venue.lower(), source_stem=venue.lower(), display_name=title, group=groups[re.sub(r'\d','',venue.lower())], archive=f'/MX/MAPS/{venue.upper()}.RES'))
             pending = list(members)
             seen = set()
+            audit = []
             missing = set()
             excluded = set()
-            def resolve(ref, origin):
+            requested = set()
+            def resolve(ref, origin, kind='file'):
                 ref = ref.replace('\\','/').strip('"').lower()
-                candidates = [ref, str(Path(origin).parent / ref).lower()]
-                matches = [index[c]['name'] for c in candidates if c in index]
-                if not matches:
-                    matches = [r['name'] for r in rows if r['name'].lower().endswith('/'+ref)]
-                existing = next((n for n in members if n.lower() in candidates or n.lower().endswith('/'+ref)), None)
-                if existing:
+                identity = (origin, ref, kind)
+                if identity in requested:
                     return
-                if ref.endswith('.cub') and any(n.lower().endswith('/'+ref[:-4]+'.ps2.cub') for n in members):
+                requested.add(identity)
+                entry = dict(origin=origin, reference=ref, kind=kind)
+                def record(status, **extra):
+                    audit.append(dict(entry, status=status, **extra))
+                if ref == '?.slt.psg' and re.search(rb'NumberOfStaticModelParams\s*=\s*0\b', members[origin], re.I):
+                    record('false_positive_inactive_template', reason='TOY NumberOfStaticModelParams=0; unused Model1 example')
                     return
-                if len(matches) != 1:
-                    if not origin.lower().endswith('.trn'):
-                        missing.add(origin+': '+ref)
-                    return
-                name = matches[0]
-                if name.lower().endswith('.vuo'):
-                    excluded.add(name)
-                    return
-                if name.lower().endswith(('.res','.irx','.elf','.vag')):
-                    missing.add(origin+': unsupported '+name)
-                    return
-                members[name] = read(name)
-                pending.append(name)
+                variants = [ref]
+                if ref.endswith(('.cub','.trn')) and '.ps2.' not in ref:
+                    variants.append(ref.rsplit('.',1)[0]+'.ps2.'+ref.rsplit('.',1)[1])
+                if kind == 'texture':
+                    variants.append(ref.rsplit('.',1)[0]+'.atm')
+                for variant in variants:
+                    exact = [variant, str(Path(origin).parent / variant).lower()]
+                    matches = [n for n in members if n.lower() in exact]
+                    if not matches:
+                        matches = [n for n in members if n.lower().endswith('/'+variant)]
+                    if len(matches) == 1:
+                        record('resolved' if variant == ref else 'platform_alias', path=matches[0])
+                        return
+                    candidates = [r['name'] for r in rows if r['name'].lower() in exact]
+                    if not candidates:
+                        candidates = [r['name'] for r in rows if r['name'].lower().endswith('/'+variant)]
+                    if len(candidates) == 1:
+                        name = candidates[0]
+                        if name.lower().endswith('.vuo'):
+                            excluded.add(name)
+                            record('excluded_shader', path=name)
+                            return
+                        members[name] = read(name)
+                        pending.append(name)
+                        record('resolved' if variant == ref else 'platform_alias', path=name)
+                        return
+                    nested_matches = [key for key in nested if key in exact]
+                    if not nested_matches:
+                        nested_matches = [key for key in nested if key.endswith('/'+variant)]
+                    if not candidates and len(nested_matches) == 1:
+                        archive, position, name = sorted(nested[nested_matches[0]])[0]
+                        if not name.lower().endswith('.vuo'):
+                            members[name] = Resource(read(archive)).extract(position)
+                            pending.append(name)
+                            record('resolved' if variant == ref else 'platform_alias', path=name, source_archive=archive)
+                            return
+                    if len(candidates) > 1 or len(matches) > 1 or len(nested_matches) > 1:
+                        record('ambiguous', candidates=sorted(set(candidates+matches)))
+                        return
+                if kind == 'texture' and ref == 'rendertarget.pst':
+                    record('dynamic_generated_target', reason='Screen.psm RenderTarget binding')
+                else:
+                    related = related_source_candidates(ref, rows)
+                    missing.add(origin+': '+ref)
+                    record('ambiguous' if related else 'actual_missing', candidates=related, reason='no exact, relative, basename or supported platform/animation alias; similarly named files are evidence, not an automatic substitution')
             while pending:
                 name = pending.pop()
                 if name in seen:
                     continue
                 seen.add(name)
                 data = members[name]
-                if name.lower().endswith(('.atylist','.psm','.scn','.toy','.pco')):
-                    data = re.sub(rb';[^\r\n]*', b'', data)
-                for ref in re.findall(rb'[A-Za-z0-9_][A-Za-z0-9_./\\-]*\.(?:psg|psm|pst|col|toy|cub|pco|trn|vuo|emt|prt|tdf|aty|cs)\b', data, re.I):
-                    resolve(ref.decode(),name)
+                # Only textual configuration fields and audited PSG tables create edges.
+                if name.lower().endswith(('.scn','.toy','.pco','.psm','.atylist','.aty')):
+                    text = re.sub(rb';[^\r\n]*', b'', data)
+                    for key, value in re.findall(rb'^\s*([A-Za-z0-9_]+)\s*=\s*([^\r\n]+)', text, re.M):
+                        key = key.decode().lower()
+                        value = value.decode('latin1').strip().strip('"')
+                        if key == 'slt':
+                            resolve(value+'.psg',name,'model')
+                        elif key.startswith('texturemap_'):
+                            resolve(value if value.lower().endswith('.pst') else value+'.pst',name,'texture')
+                        elif key.startswith('dependentmaterial_'):
+                            resolve(value+'.psm',name,'material')
+                        elif re.fullmatch(r'[^\s]+\.(?:col|cub|trn|toy|pco|psg|psm|vuo)',value,re.I):
+                            resolve(value,name,'shader' if value.lower().endswith('.vuo') else 'configuration')
                 if name.lower().endswith('.psg'):
                     at = 12 + struct.unpack_from('<I', data, 8)[0] * 224
                     count = struct.unpack_from('<I', data, at)[0]
                     if count > 4096 or at+4+count*64 > len(data):
                         raise ValueError('invalid MX material table')
                     for mat in [data[at+4+i*64:at+4+(i+1)*64].split(b'\0')[0].decode() for i in range(count)]:
-                        resolve(mat+'.psm',name)
-                if name.lower().endswith('.psm'):
-                    for texture in re.findall(rb'TextureMap_\d+\s*=\s*([^;\r\n]+)',data,re.I):
-                        stem=texture.decode().strip().strip('"')
-                        resolve(stem if stem.lower().endswith('.pst') else stem+'.pst',name)
+                        resolve(mat+'.psm',name,'material')
             if not any(n.lower().endswith('.ps2.trn') for n in members):
                 raise ValueError(f'{venue}: missing terrain')
             packed = pack_resource(sorted(members.items()))
             digest = hashlib.sha256(packed).hexdigest()
             (output / f'{digest}.bin').write_bytes(packed)
-            report.append(dict(id='mx_'+venue.lower(), source_stem=venue, archive=f'/MX/MAPS/{venue.upper()}.RES', sha256=digest, bytes=len(packed), member_count=len(members), missing=sorted(missing), excluded=sorted(excluded)))
+            report.append(dict(id='mx_'+venue.lower(), source_stem=venue.lower(), archive=f'/MX/MAPS/{venue.upper()}.RES', sha256=digest, bytes=len(packed), member_count=len(members), missing=sorted(missing), excluded=sorted(excluded), dependency_audit=sorted({json.dumps(e,sort_keys=True):e for e in audit}.values(), key=lambda e:(e['origin'],e['reference'],e['kind']))))
             print(venue, len(packed), 'missing', len(missing), flush=True)
     (ROOT / 'research/mx-map-catalog.json').write_text(json.dumps(catalog,indent=2)+'\n')
     (output / 'map-packages.json').write_text(json.dumps(report,indent=2)+'\n')
     return report
+
+def classify_previous_warnings(previous, current):
+    """Account for warnings from the retired opaque-byte lexical scan."""
+    by_id = {row['id']: row for row in current}
+    result = []
+    for row in previous:
+        edges = by_id[row['id']]['dependency_audit']
+        for warning in row.get('missing', []):
+            origin, ref = warning.split(': ', 1)
+            matches = [edge for edge in edges if edge['origin'] == origin and edge['reference'] == ref]
+            if matches:
+                classification = matches[0]['status']
+                evidence = matches
+            else:
+                classification = 'false_positive_binary_token' if origin.lower().endswith(('.trn','.psg','.pst','.atm','.col')) else 'false_positive_untyped_or_commented_field'
+                evidence = []
+            result.append(dict(id=row['id'], origin=origin, reference=ref, classification=classification, typed_evidence=evidence))
+    return result
+
 
 def integrate_manifest(output, report):
     """Serialize additive map updates, assigning nonoverlapping virtual sectors."""
