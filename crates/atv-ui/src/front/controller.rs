@@ -1971,6 +1971,10 @@ impl Frontend {
     /// Visible course order under the event filter.
     pub fn order(&self) -> Vec<usize> {
         (0..self.tracks.len())
+            .filter(|&i| {
+                !self.tracks[i].id.starts_with("mx_")
+                    || atv_game::launch::mx_courses::available(&self.tracks[i].id, false)
+            })
             .filter(|&i| self.filter == "all" || course_group(&self.tracks[i].id) == self.filter)
             .collect()
     }
