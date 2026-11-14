@@ -426,7 +426,7 @@ impl Links {
 ///
 /// Up to 20 Hz near, fast, airborne or wrecked; 10 Hz moving; 5 Hz beyond
 /// 300 ft; about 3 Hz beyond 1000 ft (still inside the smoothing buffer's
-/// 400 ms cadence window); 1 Hz stationary; 0.2 Hz paused.
+/// 800 ms cadence window); 1 Hz stationary; 0.2 Hz paused.
 pub fn interval(
     paused: bool,
     moving: bool,
@@ -458,8 +458,9 @@ pub fn interval(
 /// MULTIPLAYER.md "Free Ride relay intervals"). The relay is billed per
 /// incoming message and those rooms are nearly all of its traffic, so each
 /// tier waits as long as receivers already smooth: their playback delay
-/// follows the cadence up to 220 ms and they call a rider stale 2.5 s after
-/// a stationary pose and 15 s after a paused one. Builds from before this
+/// follows the cadence (builds before #601's fix cap it at 220 ms, so they
+/// extrapolate the 300 ms tier) and they call a rider stale 2.5 s after a
+/// stationary pose and 15 s after a paused one. Builds from before this
 /// table receive these poses too.
 ///
 /// 10 Hz near, fast, airborne or wrecked; about 7 Hz moving; about 3 Hz
