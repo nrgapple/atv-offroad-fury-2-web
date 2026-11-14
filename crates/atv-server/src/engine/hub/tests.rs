@@ -300,7 +300,8 @@ fn a_pop_up_event_opens_a_join_circle_and_runs_a_hill_for_its_joiners() {
         results.rows
     );
     assert_eq!(results.rows[0].points, 100);
-    assert_eq!((results.rows[1].peer, results.rows[1].points), (0, 60));
+    // Rider 0 never stood on the hill: taking part, not second place.
+    assert_eq!((results.rows[1].peer, results.rows[1].points), (0, 10));
     assert!(hub.event.is_none());
     assert!(hub.next_event >= now + 4 * 60_000);
 }
@@ -509,4 +510,33 @@ fn hub_settings_parse_ranges_and_off() {
             "{name}={value}"
         );
     }
+}
+
+#[test]
+fn only_riders_who_scored_take_podium_places_and_ties_share_one() {
+    let row = |peer, value: f32, finished| HubRow {
+        peer,
+        value,
+        points: 0,
+        finished,
+    };
+    let points = |kind, rows: &mut Vec<HubRow>| {
+        award(false, kind, rows);
+        rows.iter().map(|r| (r.peer, r.points)).collect::<Vec<_>>()
+    };
+    // Nobody held the hill: everyone gets the 10 for taking part.
+    let mut rows = vec![row(0, 0., false), row(1, 0., false)];
+    assert_eq!(points(event_kind::HILL, &mut rows), vec![(0, 10), (1, 10)]);
+    // A tie shares first; the next rider is third.
+    let mut rows = vec![row(2, 12., false), row(0, 12., false), row(1, 3., false)];
+    assert_eq!(
+        points(event_kind::STUNTS, &mut rows),
+        vec![(2, 100), (0, 100), (1, 30)]
+    );
+    // Sprint: only finishers place.
+    let mut rows = vec![row(1, 20., true), row(0, 0., false)];
+    assert_eq!(
+        points(event_kind::SPRINT, &mut rows),
+        vec![(1, 100), (0, 10)]
+    );
 }

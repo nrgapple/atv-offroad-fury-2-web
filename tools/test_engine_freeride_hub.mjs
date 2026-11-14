@@ -126,12 +126,18 @@ try {
   const boEvent = (await hub(bo)).outcomes.find(o => o.kind !== 'challenge');
   assert.equal(annEvent.serial, boEvent.serial);
   assert.deepEqual(annEvent.winners.slice().sort(), [annPeer, boPeer].sort());
-  assert.deepEqual(
-    [annEvent.points, boEvent.points].sort((a, b) => a - b),
-    [60, 100],
-    'two joiners: 100 and 60 points'
-  );
-  if (open.kind !== 'Stunt-Off') assert.equal(boEvent.points, 100, 'Bo stood on the goal or hill');
+  // Ann stays in the circle and Bo is placed on the goal or hill
+  // (hubTest=goal): only a rider who scored takes a podium place, so Bo gets
+  // 100 and Ann the 10 for taking part. Nobody lands stunts in a Stunt-Off,
+  // so both get 10. (Before the scoring fix, and while the join and goal
+  // hooks shared one placement per event, Bo never reached the hill and Ann
+  // won a Hill King on slot order with 0 s held.)
+  if (open.kind === 'Stunt-Off') {
+    assert.deepEqual([annEvent.points, boEvent.points], [10, 10], 'no stunts, no podium');
+  } else {
+    assert.equal(boEvent.points, 100, 'Bo reached the goal or held the hill');
+    assert.equal(annEvent.points, 10, 'Ann took part');
+  }
   report.eventResults = { ann: annEvent, bo: boEvent };
 
   // 4. Map rotation: the vote, the move, everyone on the new venue together.

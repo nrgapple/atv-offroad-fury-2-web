@@ -1013,9 +1013,23 @@ fn rank(kind: u8, entries: &[Entry], rows: &mut [HubRow]) {
 }
 
 /// Hub points: 100/60/30 for the podium and 10 for taking part; a solo run
-/// scores against itself.
+/// scores against itself. Only a rider who scored (finished the sprint,
+/// held the hill, landed stunts) takes a podium place, and equal results
+/// share one: nobody wins an event by slot order with nothing to show.
 fn award(solo: bool, kind: u8, rows: &mut [HubRow]) {
-    for (place, row) in rows.iter_mut().enumerate() {
+    let mut place = 0;
+    let mut previous: Option<(bool, f32)> = None;
+    for (i, row) in rows.iter_mut().enumerate() {
+        let scored = if kind == event_kind::SPRINT {
+            row.finished
+        } else {
+            row.value > 0.
+        };
+        // Rows are ranked: a different result starts the next place.
+        if previous != Some((row.finished, row.value)) {
+            place = i;
+        }
+        previous = Some((row.finished, row.value));
         row.points = if solo {
             match kind {
                 event_kind::SPRINT if row.finished => 50,
@@ -1023,8 +1037,10 @@ fn award(solo: bool, kind: u8, rows: &mut [HubRow]) {
                 event_kind::HILL => (row.value as u16).clamp(PLAYED_POINTS, 60),
                 _ => ((row.value / 1000.) as u16).clamp(PLAYED_POINTS, 100),
             }
-        } else {
+        } else if scored {
             PLACE_POINTS.get(place).copied().unwrap_or(PLAYED_POINTS)
+        } else {
+            PLAYED_POINTS
         };
     }
 }

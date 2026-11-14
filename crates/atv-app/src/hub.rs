@@ -129,8 +129,9 @@ pub struct Hub {
     outbox: Vec<HubMessage>,
     /// The nearest hub rider in Challenge range.
     nearby: Option<u8>,
-    /// A test placement (goal or circle) already made for this serial.
-    placed: u32,
+    /// The last test placement: serial and phase (255 a challenge), so an
+    /// event's circle and its goal or hill are each placed once.
+    placed: (u32, u8),
     pub outcomes: Vec<Outcome>,
     /// Hub points earned in this room.
     pub points: u32,
@@ -480,13 +481,13 @@ impl Hub {
         // Test hooks: stand at the goal or in the circle, once per serial.
         if let Some(Duel::Racing { serial, target, .. }) = self.duel
             && test(TEST_GOAL)
-            && self.placed != serial
+            && self.placed != (serial, 255)
         {
-            self.placed = serial;
+            self.placed = (serial, 255);
             return Some(target);
         }
         if let Some((event, _)) = &self.event
-            && self.placed != event.serial
+            && self.placed != (event.serial, event.phase)
         {
             let place = match event.phase {
                 event_phase::JOIN if test(TEST_JOIN) => Some(event.point),
@@ -500,7 +501,7 @@ impl Hub {
                 _ => None,
             };
             if place.is_some() {
-                self.placed = event.serial;
+                self.placed = (event.serial, event.phase);
                 return place;
             }
         }

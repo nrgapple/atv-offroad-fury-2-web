@@ -50,8 +50,11 @@ judges every result; clients show it and send the rider's choices.
   (the same event, scored against itself: a sprint finish 50, Hill King 1
   point a second up to 60, Stunt-Off 1 point per 1,000 up to 100, at least
   10).
-- Two or more: top 3 get 100 / 60 / 30, everyone else 10. Every joiner gets
-  a toast with the top 3 and their points.
+- Two or more: top 3 get 100 / 60 / 30, everyone else 10. Only a rider who
+  scored (finished the sprint, held the hill, landed stunts) takes a podium
+  place, and equal results share one; nobody wins on slot order with
+  nothing to show. Every joiner gets a toast with the top 3 and their
+  points.
 - A rider who leaves drops out of the standings. Live standings go out once
   a second while an event runs.
 - No event starts within 2 min (plus the join window) of a rotation.
