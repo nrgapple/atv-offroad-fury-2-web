@@ -199,6 +199,7 @@ fn claim_of(body: &str) -> (String, String) {
     assert_eq!(value["links"], false);
     assert_eq!(value["batches"], false);
     assert_eq!(value["frames"], true);
+    assert_eq!(value["motorcycles"], true);
     (
         value["code"].as_str().unwrap().to_string(),
         value["key"].as_str().unwrap().to_string(),

@@ -1,7 +1,8 @@
 // World board ghosts (research/WORLD_BOARDS.md "Ghosts"): the recorded lap of
 // a lap board's top rows, so another rider can race it in Lap Attack. A ghost
 // is uploaded after its lap placed (`POST /api/ghosts/<board>`), kept only
-// while its row is one of the board's ten best with exactly its time, and
+// while its row is one of the board's ten best, or the best-ranked row with
+// one in its band of five ranks down to 40, with exactly its time, and
 // downloaded by board, name and time (`GET /api/ghosts/<board>/<name>/<ms>`,
 // cached at the edge). It is checked for what is cheap to check: size, format
 // version, a length that fits the lap time, the row's course and vehicle and
@@ -124,20 +125,55 @@ export function checkGhost(bytes, row) {
   return null;
 }
 
-// The board's rows that keep a ghost: its ten best riders.
-const KEPT = `SELECT name, value, vehicle FROM board_entries WHERE board = ?1 ORDER BY value, name LIMIT ${GHOST_TOP}`;
+// Rows of a lap board that keep a ghost: every one of the ten best riders,
+// then one a band of five ranks (11-15, 16-20, ... 36-40), the best-ranked
+// row of the band that has one, so a rider far down the board still has a
+// rival just ahead (research/GHOST_CHALLENGES.md "Rival"). Rank 40 is the
+// last band's end: a served board's top 50 holds at most ten house riders,
+// so every kept ghost's row is served. At most GHOST_LIMIT (16) a board.
+export const GHOST_BAND = 5;
+export const GHOST_RANKS = 40;
+export const GHOST_LIMIT = GHOST_TOP + (GHOST_RANKS - GHOST_TOP) / GHOST_BAND;
+const TOP_ROWS = `SELECT name, value, vehicle FROM board_entries WHERE board = ?1 ORDER BY value, name LIMIT ${GHOST_RANKS}`;
 
-// Drops a board's ghosts whose row left the ten best or changed its time
-// (the rider improved; the new lap's ghost follows in its own upload).
-const prune = (db, board) => db.prepare(
-  `DELETE FROM board_ghosts WHERE board = ?1 AND NOT EXISTS (SELECT 1 FROM (${KEPT}) kept WHERE kept.name = board_ghosts.name AND kept.value = board_ghosts.value)`,
-).bind(board);
+// The names whose ghost stays: `rows` the board's best riders in rank order,
+// `ghosts` the stored {name, value}. A ghost needs its row with exactly its
+// time.
+export function keptGhosts(rows, ghosts) {
+  const held = new Map(ghosts.map(ghost => [ghost.name, ghost.value]));
+  const kept = new Set(), bands = new Set();
+  rows.slice(0, GHOST_RANKS).forEach((row, i) => {
+    if (held.get(row.name) !== row.value) return;
+    const band = i < GHOST_TOP ? `top${i}` : Math.floor((i - GHOST_TOP) / GHOST_BAND);
+    if (bands.has(band)) return;
+    bands.add(band);
+    kept.add(row.name);
+  });
+  return kept;
+}
+
+const readKept = async (db, board) => {
+  const [rows, ghosts] = await db.batch([
+    db.prepare(TOP_ROWS).bind(board),
+    db.prepare('SELECT name, value FROM board_ghosts WHERE board = ?1').bind(board),
+  ]);
+  return { rows: rows.results ?? [], ghosts: ghosts.results ?? [] };
+};
+
+// Drops a board's ghosts that are not kept (their row left the kept ranks,
+// changed its time, or a better-ranked row of its band has one).
+const drop = (db, board, kept) => db.prepare(
+  'DELETE FROM board_ghosts WHERE board = ?1 AND name NOT IN (SELECT value FROM json_each(?2))',
+).bind(board, JSON.stringify([...kept]));
 
 // After a submission stored rows (boards.mjs): the lap boards it changed drop
 // the ghosts that no longer belong to a kept row.
 export async function pruneGhosts(db, ranks) {
   const boards = Object.entries(ranks).filter(([board, result]) => result.placed && board.startsWith('lap:')).map(([board]) => board);
-  if (boards.length) await db.batch(boards.map(board => prune(db, board)));
+  for (const board of boards) {
+    const { rows, ghosts } = await readKept(db, board);
+    await drop(db, board, keptGhosts(rows, ghosts)).run();
+  }
 }
 
 // Marks a lap board's entries that have a ghost to race (boards.mjs's read).
@@ -164,14 +200,20 @@ async function upload(request, db, board, course) {
   if (!header) return error('implausible', 422, { reason: 'ghost_format' });
   const reason = checkGhost(bytes, { course, vehicle: header.vehicle, lapMs: header.lapMs });
   if (reason) return error('implausible', 422, { reason });
-  // Stored only for the kept row with this name, time and vehicle; a ghost
-  // already stored for that time is not replaced.
+  // Stored only for a row that would keep it, with this name, time and
+  // vehicle; a ghost already stored for that time is not replaced.
+  const { rows, ghosts } = await readKept(db, board);
+  const row = rows.find(r => r.name === name && r.value === header.lapMs && r.vehicle === header.vehicle);
+  const others = ghosts.filter(g => g.name !== name);
+  const candidate = row ? keptGhosts(rows, [...others, { name, value: header.lapMs }]) : null;
+  const keep = candidate?.has(name) ? candidate : keptGhosts(rows, ghosts);
   const results = await db.batch([
-    db.prepare(`INSERT INTO board_ghosts (board, name, value, data)
-      SELECT ?1, ?2, ?3, ?4 WHERE EXISTS (SELECT 1 FROM (${KEPT}) kept WHERE kept.name = ?2 AND kept.value = ?3 AND kept.vehicle = ?5)
-      ON CONFLICT (board, name) DO UPDATE SET value = excluded.value, data = excluded.data WHERE excluded.value < board_ghosts.value`)
-      .bind(board, name, header.lapMs, body.ghost, header.vehicle),
-    prune(db, board),
+    keep.has(name) && row
+      ? db.prepare(`INSERT INTO board_ghosts (board, name, value, data) VALUES (?1, ?2, ?3, ?4)
+        ON CONFLICT (board, name) DO UPDATE SET value = excluded.value, data = excluded.data WHERE excluded.value <> board_ghosts.value`)
+        .bind(board, name, header.lapMs, body.ghost)
+      : db.prepare('SELECT 0 WHERE 0'),
+    drop(db, board, keep),
   ]);
   const kept = (results[0].meta?.changes ?? 0) > 0;
   // This location's cached copy of the board now lacks the row's ghost mark.
