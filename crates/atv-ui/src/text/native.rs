@@ -301,13 +301,14 @@ impl Backend {
         let unit = shape.unit * scale;
         let transform = Some(Transform::scale(unit, unit));
         let offset = Vector::new(fraction[0], fraction[1]);
+        let path = explicit_arcs(&shape.path);
         let fill = {
-            let mut mask = zeno::Mask::new(shape.path.as_str());
+            let mut mask = zeno::Mask::new(path.as_ref());
             mask.transform(transform).offset(offset);
             part(mask.render())
         };
         let stroke = shape.stroke.map(|stroke| {
-            let mut mask = zeno::Mask::new(shape.path.as_str());
+            let mut mask = zeno::Mask::new(path.as_ref());
             let mut style = zeno::Stroke::new(stroke.width / shape.unit);
             style.join(match stroke.join {
                 Join::Round => zeno::Join::Round,
@@ -349,6 +350,85 @@ impl Backend {
         over(&mut out, &fill_layer, shape.fill);
         layers.bitmap(&out)
     }
+}
+
+/// Repeats the letter before every implicit arc segment
+/// (`a1 1 0 0 1 2 2 1 1 0 0 1 2 2` becomes `... 2 2a1 1 ...`).
+///
+/// zeno 0.3.3 ends the path at an implicit repeat: it reads the repeated
+/// arc's rx, then reads ry without skipping the separator after rx, so the
+/// rest of the path is dropped (#580). Browsers accept the shorthand, so the
+/// geometry is unchanged.
+fn explicit_arcs(path: &str) -> std::borrow::Cow<'_, str> {
+    let b = path.as_bytes();
+    if !b.iter().any(|c| matches!(c, b'a' | b'A')) {
+        return path.into();
+    }
+    let mut out = String::with_capacity(path.len() + 8);
+    let (mut i, mut command, mut args) = (0, 0u8, 0);
+    while i < b.len() {
+        let c = b[i];
+        if c.is_ascii_whitespace() || c == b',' {
+            out.push(c as char);
+            i += 1;
+        } else if c.is_ascii_alphabetic() {
+            out.push(c as char);
+            (command, args) = (c, 0);
+            i += 1;
+        } else if !matches!(command, b'a' | b'A') {
+            // Other commands' numbers pass through (their exponents included).
+            let start = i;
+            i += 1;
+            while i < b.len() && !(b[i].is_ascii_alphabetic() && !matches!(b[i], b'e' | b'E')) {
+                i += 1;
+            }
+            out.push_str(&path[start..i]);
+        } else {
+            if args == 7 {
+                out.push(command as char);
+                args = 0;
+            }
+            let start = i;
+            if args == 3 || args == 4 {
+                // Flags are single digits and may be packed ("011").
+                i += 1;
+            } else {
+                i += number_len(&b[i..]).max(1);
+            }
+            out.push_str(&path[start..i]);
+            args += 1;
+        }
+    }
+    out.into()
+}
+
+/// Length of the SVG number at the start of `b`.
+fn number_len(b: &[u8]) -> usize {
+    let mut i = 0;
+    if matches!(b.first(), Some(b'+' | b'-')) {
+        i += 1;
+    }
+    let digits = |i: &mut usize| {
+        while b.get(*i).is_some_and(u8::is_ascii_digit) {
+            *i += 1;
+        }
+    };
+    digits(&mut i);
+    if b.get(i) == Some(&b'.') {
+        i += 1;
+        digits(&mut i);
+    }
+    if matches!(b.get(i), Some(b'e' | b'E')) {
+        let mut j = i + 1;
+        if matches!(b.get(j), Some(b'+' | b'-')) {
+            j += 1;
+        }
+        if b.get(j).is_some_and(u8::is_ascii_digit) {
+            i = j;
+            digits(&mut i);
+        }
+    }
+    i
 }
 
 /// Some faces (macOS Avenir Next Condensed Heavy Italic) declare a normal
@@ -718,5 +798,33 @@ mod font_choice {
                 report.join("\n  ")
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod shapes {
+    use super::*;
+
+    #[test]
+    fn implicit_arcs_get_their_letter() {
+        let cloud = "M6 16.5a4.2 4.2 0 0 1-.6-8.4 5.3 5.3 0 0 1 10.1-.9A3.7 3.7 0 0 1 15 16.5z";
+        assert_eq!(
+            explicit_arcs(cloud),
+            "M6 16.5a4.2 4.2 0 0 1-.6-8.4 a5.3 5.3 0 0 1 10.1-.9A3.7 3.7 0 0 1 15 16.5z"
+        );
+        assert_eq!(
+            explicit_arcs("M0 0A1,1 0 011,1 1,1 0 01 2,2"),
+            "M0 0A1,1 0 011,1 A1,1 0 01 2,2"
+        );
+        assert_eq!(
+            explicit_arcs("M1e-1 2a1 1 0 0 1 1e1 0"),
+            "M1e-1 2a1 1 0 0 1 1e1 0"
+        );
+        let plain = "M10 1.5a8.5 8.5 0 1 1 0 17a8.5 8.5 0 1 1 0-17z";
+        assert_eq!(explicit_arcs(plain), plain);
+        assert!(matches!(
+            explicit_arcs("M0 0h4v4z"),
+            std::borrow::Cow::Borrowed(_)
+        ));
     }
 }
