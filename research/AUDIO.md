@@ -541,8 +541,10 @@ announcer recording. `00217bb0` selects event IDs 1–4 for single races, ID 5 f
 Supercross championships and ID 6 for other racing championships; the disc IntOut
 data maps these to INT001–INT006. `00217590` stops the intro at GO. Training uses
 its separate dialogue stream (see TRAINING.md), whose user volume follows SFX
-(`002852b0`); IntOut follows music. No new content package is needed: all 46
-Training lines and eight IntOut samples are already in the authorized AUDIO.RES.
+(`002852b0`); IntOut follows music. The packager already selects all 46 Training lines and eight IntOut samples,
+but the published bank had no Training members. A new additive content package
+is required; the 711-member replacement and publication finding are recorded
+in TRAINING.md.
 The new diagnostics name the scheduled IntOut samples and expose live speech
 voices. Unit tests cover Music Off deferral, exactly-once scheduling and GO
 cancellation of both active and pending IntOut voices. The focused /play.html test

@@ -186,3 +186,11 @@ and the event music to 30 during Training (`00224a80`); that relative mix is not
 yet reproduced by the port's shared SFX/music controls. SPU2 group gain and timing
 have not been compared in native execution. Marker-driven demo/preload effects
 and the jumbotron replay remain open; the race-load cue audit is in AUDIO.md.
+
+Publication finding: the 2026-11-14 public and shared local bank still had 665
+members and **zero** Training lines, despite the packager already selecting them.
+The required-speech browser test exposed this; silent caption fallback had hidden
+it. The additive replacement retains all published resource paths and adds the
+46 exact-disc lines (711 members, 25,170,818 bytes). Existing music streams and MX
+records are retained byte-for-byte. Publication uses the validated content-only
+R2 path; no game data enters the PR.

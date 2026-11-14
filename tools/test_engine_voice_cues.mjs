@@ -8,7 +8,8 @@ async function key(page, code) {
   await page.keyboard.up(code); await nextFrames(page, 3);
 }
 async function wait(page, predicate, arg, timeout = 180000) {
-  await page.waitForFunction(predicate, arg, { timeout });
+  try { await page.waitForFunction(predicate, arg, { timeout }); }
+  catch (error) { console.error(JSON.stringify({ state: await read(page), audio: await audio(page) })); throw error; }
 }
 const browser = await launch({ args: ['--autoplay-policy=no-user-gesture-required'] });
 try {
@@ -22,6 +23,7 @@ try {
   await wait(page, () => JSON.parse(document.querySelector('#ui-state')?.textContent || '{}').front?.page === 'title');
   await page.mouse.click(8, 8); await key(page, 'Enter');
   await wait(page, () => JSON.parse(document.querySelector('#ui-state')?.textContent || '{}').front?.choices?.includes('training'));
+  await wait(page, () => (JSON.parse(document.querySelector('#ui-state')?.textContent || '{}').front?.store?.atvs ?? 0) > 20);
   const front = (await read(page)).front;
   for (let i = front.selection; i < front.choices.indexOf('training'); i++) await key(page, 'ArrowDown');
   await key(page, 'Enter');
@@ -29,7 +31,7 @@ try {
     const s = JSON.parse(document.querySelector('#ui-state')?.textContent || '{}');
     const a = JSON.parse(document.documentElement.getAttribute('data-engine-audio') || '{}');
     return s.ride?.trainingSpeech?.lines === 46 && a.speech?.last === 1 && a.speech?.playing;
-  });
+  }, null, 30000);
   const first = await audio(page);
   // Restart in the first introduction line used to reuse serial 1, leaving
   // the first voice running instead of scheduling the restarted line.
