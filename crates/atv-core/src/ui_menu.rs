@@ -227,6 +227,10 @@ pub struct Request {
     /// Authored train riding relative to the moving support; off is original.
     #[serde(default)]
     pub realistic_train: bool,
+    /// Authored CPU riders in a single-player or split-screen free ride
+    /// (0-3; research/CPU_MINIGAMES.md); 0, off, is original.
+    #[serde(default)]
+    pub free_ride_cpus: u8,
     /// Game Settings (Settings_Game, PAGE15): Measurement Metric,
     /// Ecosystem Collision and Sound Configuration.
     #[serde(default)]
@@ -1122,6 +1126,9 @@ pub fn layout(request: Request) -> Result<Frame> {
                 ("Host Game", "create-lobby"),
                 ("Join Game", "join-lobby"),
                 ("Arlington Free Ride", "freeride"),
+                // Port addition: friends, presence and Join
+                // (research/ONLINE_IDENTITY.md).
+                ("Friends", "friends"),
             ]
             .iter()
             .enumerate()
@@ -1805,6 +1812,15 @@ pub fn layout(request: Request) -> Result<Frame> {
                             "New Profiles: Locked (original)"
                         },
                         "new-profiles",
+                    ),
+                    (
+                        match request.free_ride_cpus {
+                            0 => "Free Ride CPU riders: Off (original)",
+                            1 => "Free Ride CPU riders: 1",
+                            2 => "Free Ride CPU riders: 2",
+                            _ => "Free Ride CPU riders: 3",
+                        },
+                        "free-ride-cpus",
                     ),
                 ],
                 _ => vec![
@@ -2520,10 +2536,14 @@ mod tests {
             "Ecosystem Collision: On",
             "Sound Configuration: Stereo (Swapped)",
             "New Profiles: Locked (original)",
+            "Free Ride CPU riders: Off (original)",
             "Back",
         ] {
             assert!(game.iter().any(|t| t == row), "{row}: {game:?}");
         }
+        let mut r = request("game-settings", 390., 844.);
+        r.free_ride_cpus = 2;
+        assert!(labels(r).iter().any(|t| t == "Free Ride CPU riders: 2"));
         let warning = layout(request("ecosystem-warning", 390., 844.)).unwrap();
         assert_eq!(warning.choices, ["ecosystem-yes", "ecosystem-no"]);
         let text = labels(request("ecosystem-warning", 640., 448.));
@@ -2667,6 +2687,7 @@ mod tests {
             chase_assist: false,
             flips: false,
             realistic_train: false,
+            free_ride_cpus: 0,
             metric: false,
             ecosystem_collision: true,
             sound_configuration: String::new(),
@@ -2712,7 +2733,7 @@ mod tests {
         assert!(menu.inputs.is_empty());
         assert_eq!(
             menu.choices,
-            ["split", "create-lobby", "join-lobby", "freeride"]
+            ["split", "create-lobby", "join-lobby", "freeride", "friends"]
         );
         assert_eq!(menu.hits[0].label, "Split Screen");
         assert_eq!(menu.hits[1].label, "Host Game");

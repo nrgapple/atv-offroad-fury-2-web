@@ -167,6 +167,12 @@ pub struct Save {
     /// The profile book: the profiles and which one is loaded.
     pub profiles: ProfileBook,
     pub hall_of_fame: HallOfFame,
+    /// The online rider secret, wrapped with the Pass Key so the rider's
+    /// friends and stats follow the save to another device while a share
+    /// code's copy cannot be read (research/ONLINE_IDENTITY.md). Opaque
+    /// here; older builds keep it out of the merge but never break on it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rider: Option<String>,
 }
 
 impl Default for Save {
@@ -175,6 +181,7 @@ impl Default for Save {
             v: VERSION,
             profiles: ProfileBook::default(),
             hall_of_fame: HallOfFame::default(),
+            rider: None,
         }
     }
 }
@@ -185,6 +192,7 @@ impl Save {
             v: VERSION,
             profiles,
             hall_of_fame,
+            rider: None,
         }
     }
 
@@ -329,6 +337,9 @@ pub fn merge(local: &Save, remote: &Save, base: Option<&Save>) -> Save {
         v: VERSION,
         profiles: merge_books(&local.profiles, &remote.profiles, mode),
         hall_of_fame: merge_hall(&local.hall_of_fame, &remote.hall_of_fame),
+        // The online save's rider wins, so every device on a key rides as
+        // one rider.
+        rider: remote.rider.clone().or_else(|| local.rider.clone()),
     }
 }
 
@@ -784,6 +795,30 @@ mod tests {
         watch.finish(212.25);
         hall.commit(&watch, "ACE");
         Save::new(book, hall)
+    }
+
+    #[test]
+    fn the_wrapped_rider_travels_and_the_online_one_wins() {
+        let plain = sample();
+        let text = serde_json::to_string(&plain).unwrap();
+        assert!(!text.contains("rider"), "absent until set: {text}");
+        let mut mine = sample();
+        mine.rider = Some("aa".into());
+        let mut online = sample();
+        online.rider = Some("bb".into());
+        let back = Save::parse(&serde_json::to_string(&mine).unwrap()).unwrap();
+        assert_eq!(back.rider.as_deref(), Some("aa"));
+        assert_eq!(merge(&mine, &online, None).rider.as_deref(), Some("bb"));
+        assert_eq!(
+            merge(&mine, &plain, Some(&plain)).rider.as_deref(),
+            Some("aa")
+        );
+        // Progress alone decides whether a save is worth a key.
+        let empty = Save {
+            rider: Some("aa".into()),
+            ..Save::default()
+        };
+        assert_eq!(empty.has_progress(), Save::default().has_progress());
     }
 
     #[test]

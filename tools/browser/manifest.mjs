@@ -99,6 +99,11 @@ export const TESTS = {
   'test_engine_garage_load.mjs': { exclusive: true, group: 'content' },
   'test_engine_context_loss.mjs': { group: 'content' },
   'test_engine_menu_music.mjs': { group: 'content' },
+  'test_engine_online_friends.mjs': {
+    group: 'multiplayer',
+    timeout: 600,
+    reason: 'needs a local game server at the same origin (rider registration, friends, presence and Join into a Free Ride room); run with --url'
+  },
   'test_engine_freeride_full.mjs': {
     group: 'manual',
     reason: 'load measurement: a full Free Ride room of synthetic riders on a local game server (never production)'
@@ -250,6 +255,7 @@ export const TESTS = {
   'test_engine_training.mjs': { group: 'content', timeout: 900 },
   'test_engine_games.mjs': { group: 'content', timeout: 900 },
   'test_engine_game_cpus.mjs': { group: 'content', timeout: 900 },
+  'test_engine_free_cpus.mjs': { group: 'content', timeout: 900 },
   'test_engine_toy_explosions.mjs': { group: 'content', timeout: 900 },
   'test_engine_hockey_tag.mjs': { group: 'content', timeout: 600 },
   'test_engine_sleep.mjs': { group: 'content' },

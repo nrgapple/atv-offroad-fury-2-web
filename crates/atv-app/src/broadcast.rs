@@ -327,7 +327,7 @@ impl Director {
     }
 
     fn sign(&self) -> f32 {
-        if self.cuts % 2 == 0 { 1. } else { -1. }
+        if self.cuts.is_multiple_of(2) { 1. } else { -1. }
     }
 
     /// The current setup has had its moment.
