@@ -234,7 +234,8 @@ impl Front {
         backdrop: Option<Rgba>,
         mut settings: Settings,
     ) -> Self {
-        let state = Frontend::new(tracks, &settings, cfg!(target_arch = "wasm32"));
+        let mut state = Frontend::new(tracks, &settings, cfg!(target_arch = "wasm32"));
+        state.stats_link = !cfg!(target_os = "android");
         let mut touch = TouchControls::new(&settings, view.coarse);
         touch.set_viewport(view.width, view.height);
         let minimap = MinimapSettings::load(&settings);
