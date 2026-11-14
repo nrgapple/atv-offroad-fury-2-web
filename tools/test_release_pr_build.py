@@ -34,6 +34,18 @@ class PrBuildTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 fetcher.require_tree(commit, head, tree)
 
+    def test_local_source_is_the_pr_head_or_its_exact_ci_merge(self):
+        merge, main = 'd' * 40, 'e' * 40
+        built = {'tree': {'sha': TREE}, 'parents': [{'sha': main}, {'sha': HEAD}]}
+        fetcher.require_source(built, merge, HEAD, HEAD, TREE)
+        fetcher.require_source(built, merge, HEAD, merge, TREE)
+        for head, tree in [(merge, 'c' * 40), ('c' * 40, TREE), (HEAD, 'c' * 40)]:
+            with self.subTest(head=head, tree=tree), self.assertRaises(ValueError):
+                fetcher.require_source(built, merge, HEAD, head, tree)
+        other = {'tree': {'sha': TREE}, 'parents': [{'sha': main}, {'sha': 'f' * 40}]}
+        with self.assertRaises(ValueError):
+            fetcher.require_source(other, merge, HEAD, merge, TREE)
+
     def test_download_validates_bytes_and_never_installs_bad_artifacts(self):
         for corrupt in [False, True]:
             with self.subTest(corrupt=corrupt), tempfile.TemporaryDirectory() as directory:
