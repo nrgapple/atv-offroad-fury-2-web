@@ -6195,7 +6195,13 @@ impl ApplicationHandler<Message> for App {
                 if let Some(front) = &self.front {
                     let mut f = front.borrow_mut();
                     f.state.freeride_riders = riders;
-                    f.state.quickplay = net::QUICKPLAY.load(std::sync::atomic::Ordering::Relaxed);
+                    let quickplay = net::QUICKPLAY.load(std::sync::atomic::Ordering::Relaxed);
+                    if f.state.quickplay != quickplay {
+                        // The main menu gains (or loses) its Quick Play row.
+                        f.state.quickplay = quickplay;
+                        let view = f.view;
+                        f.state.refresh(&view);
+                    }
                 }
                 self.wake();
                 if let Some(window) = &self.window {
@@ -8937,12 +8943,14 @@ impl App {
     }
 
     /// Multiplayer's Free Ride count, at most every 15 s while it shows
-    /// (watchFreerideRiders in frontend.js).
+    /// (watchFreerideRiders in frontend.js), and on the main menu, whose
+    /// Quick Play row shows when the server says it runs Quick Play.
     fn poll_riders(&mut self) {
         let Some(front) = &self.front else {
             return;
         };
-        if self.ready.is_some() || front.borrow().state.page != "multiplayer" {
+        let page = front.borrow().state.page.clone();
+        if self.ready.is_some() || !matches!(page.as_str(), "multiplayer" | "main") {
             return;
         }
         if self

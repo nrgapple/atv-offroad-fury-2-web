@@ -1290,8 +1290,13 @@ impl Net {
             .map(|(peer, ..)| *peer)
             .collect();
         let me = self.session.peer;
+        // A Quick Play room's server runs the loop: its driver gets no host
+        // rows (Select Track, Play Race…) and nobody gets invites.
+        let quickplay = self.serves.quickplay;
         Some(atv_ui::menu::controller::Lobby {
-            status: if lobby.public {
+            status: if quickplay {
+                format!("Quick Play / {}/4 riders", lobby.players.len())
+            } else if lobby.public {
                 format!("Arlington Free Ride / {}/20 riders", lobby.players.len())
             } else {
                 format!(
@@ -1305,8 +1310,8 @@ impl Net {
                         .join(", ")
                 )
             },
-            host: me == Some(lobby.host),
-            public: lobby.public,
+            host: me == Some(lobby.host) && !quickplay,
+            public: lobby.public || quickplay,
             started: lobby.started,
             races: room_races(&self.environment),
             games: room_games(&self.environment, &self.content()),
