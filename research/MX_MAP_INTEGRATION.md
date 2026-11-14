@@ -184,3 +184,23 @@ requiring exactly one mapping per in-bounds cell. ATV2 retains strict region
 coverage. A generated 14-by-20 mapping fixture validates partial edge regions,
 missing coverage, overlapping regions and bad indices. Native acceptance is
 rerun against the actual map after this repair.
+
+## Actual native acceptance checkpoint
+
+The full guarded venue loader pass completed all 56 maps with ATV selection 1
+and motorcycle selection 29, 360 steps each: 112 runs and 40,320 steps.
+Every run retained finite simulation values, actual wheel contact and movement;
+minimum grounded count was 235/360 and minimum horizontal travel 38.12 world
+units. No scenery models were unsupported. The private actual acceptance JSON
+was written only after the complete sweep, with exact package/adapter digests.
+
+Host debug venue-only load times ranged from 2,922 to 7,385 ms (median 4,893.5
+ms). These exclude vehicle loading and are not browser startup measurements.
+Five maps retain skipped shader groups: NAT04 (5), NAT05 (2), SM01 (1), SM02 (2)
+and SM03 (1). The largest authored scene has 4,874 models. Source-missing
+colliders and all previously documented fidelity gaps remain explicit.
+
+The draft runtime capability is enabled for the next private browser validation
+pass after these native gates. Public content has not been promoted/uploaded;
+there is no public or physical-phone acceptance claim. A matching CI artifact,
+all-56 host mobile browser checks and inspected renders remain required.

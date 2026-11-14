@@ -48,6 +48,11 @@ try {
     assert.equal(trace.length, 360, course.id);
     assert.ok(trace.every(f => f.origin.every(Number.isFinite) && Number.isFinite(f.speed)), `${course.id}: finite simulation`);
     assert.ok(trace.some(f => f.grounded.some(Boolean)), `${course.id}: grounded contact`);
+    const maxSpeed = Math.max(...trace.map(f => Math.abs(f.speed)));
+    const first = trace[0].origin;
+    const last = trace.at(-1).origin;
+    const travelled = Math.hypot(last[0] - first[0], last[2] - first[2]);
+    assert.ok(maxSpeed >= 1 && travelled >= 1, `${course.id}: movement from spawn`);
     const state = await page.evaluate(() => JSON.parse(document.querySelector('#ui-state')?.textContent || '{}'));
     assert.ok(state.scenery?.triangles > 0, `${course.id}: scenery renders`);
     const samples = await page.evaluate(() => window.mxFrameSamples);
@@ -62,8 +67,9 @@ try {
       host_frame_interval_p95_ms: percentile(0, 0.95), host_raf_callback_p95_ms: percentile(1, 0.95),
       // JS heap excludes GPU allocations and is not total process/Wasm memory.
       host_js_heap_bytes: metrics.find(m => m.name === 'JSHeapUsedSize')?.value ?? null,
-      max_speed: Math.max(...trace.map(f => f.speed)), final: trace.at(-1).origin };
+      max_speed: maxSpeed, travelled, final: last };
     report.push(observation);
+    if (process.env.ATV_MX_REPORT) await writeJson(process.env.ATV_MX_REPORT, report);
     console.log(JSON.stringify(observation));
     await optionalScreenshot(page, 'ATV_MX_SCREENSHOT', course.id);
     assertNoErrors(errors);
