@@ -3019,6 +3019,7 @@ impl Frontend {
         }
         self.focus = None;
         match id {
+            super::DICE => return self.run("dicename", view, settings),
             BACK | DONE if self.course_sheet => self.close_course_sheet(view),
             BACK | DONE if self.vehicle_sheet => self.close_vehicle_sheet(view),
             BACK | DONE => return self.back(view),
@@ -5112,6 +5113,19 @@ mod tests {
             front.run("freeride", &view, &mut settings),
             Some(Event::FreeRide { ref name, .. }) if name == "Rider"
         ));
+    }
+
+    #[test]
+    fn the_name_dice_sets_a_clean_curated_name() {
+        let view = view(1280., 720.);
+        let mut settings = Settings::memory();
+        let mut front = Frontend::new(tracks(), &settings, true);
+        front.show("create-lobby", &view);
+        front.click(super::super::DICE, &view, &mut settings);
+        let name = front.player_name.clone();
+        assert!(name.len() >= 6 && name.len() <= 16, "{name}");
+        assert!(name.ends_with(|c: char| c.is_ascii_digit()), "{name}");
+        assert_eq!(front.fields()[0].value, name);
     }
 
     #[test]

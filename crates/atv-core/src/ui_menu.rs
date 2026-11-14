@@ -1214,20 +1214,13 @@ pub fn layout(request: Request) -> Result<Frame> {
                 ),
             ] {
                 f.text(label, [30., y - 23.], 0.8, FONT, "215,215,215", list_w);
-                // The name dice (research/QUICK_CHAT.md): a 48 px button
-                // beside the rider name.
-                let dice = action == "player-name";
                 f.inputs.push(TextInput {
                     action,
                     label,
                     value,
-                    rect: [30., y, list_w - if dice { 68. } else { 12. }, 40.],
+                    rect: [30., y, list_w - 12., 40.],
                     max_length,
                 });
-                if dice {
-                    f.button("Dice", "dicename", [list_w - 30., y - 4., 48., 48.], false);
-                    f.hits.last_mut().unwrap().label = "Random name".into();
-                }
             }
             // Hosting continues to the original track picker; its Ride starts
             // the game at once so friends can drop in from the invite.
