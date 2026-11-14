@@ -100,16 +100,24 @@ impl Img {
 }
 
 /// Original event families from tracks.dat ids; labels follow the manual.
-pub const GROUPS: [(&str, &str); 6] = [
+pub const GROUPS: [(&str, &str); 11] = [
     ("all", "All"),
     ("env", "Enduro"),
     ("free", "Stunt"),
     ("nat", "Nationals"),
     ("sx", "Supercross"),
     ("extra", "Arena"),
+    ("mx_fs", "MX Freestyle"),
+    ("mx_mc", "MX Freeride"),
+    ("mx_nat", "MX Nationals"),
+    ("mx_sm", "MX Supermoto"),
+    ("mx_sx", "MX Supercross"),
 ];
 
 pub fn course_group(id: &str) -> &'static str {
+    if let Some(course) = atv_game::launch::mx_courses::get(id) {
+        return course.group;
+    }
     // Enduro and Short Track races list with their Environment venue.
     let id = atv_game::launch::race_venue(id);
     match id.trim_end_matches(|c: char| c.is_ascii_digit()) {
@@ -4051,5 +4059,30 @@ mod tests {
         // The backdrop layer has no hit targets: input goes to the content.
         let (back, _) = layers(&view, &moving);
         assert!(back.id.is_none() && back.children.iter().all(|c| c.id.is_none()));
+    }
+}
+
+#[cfg(test)]
+mod mx_catalog_tests {
+    #[test]
+    fn imported_groups_append_without_changing_original_groups() {
+        assert_eq!(
+            &super::GROUPS[..6],
+            &[
+                ("all", "All"),
+                ("env", "Enduro"),
+                ("free", "Stunt"),
+                ("nat", "Nationals"),
+                ("sx", "Supercross"),
+                ("extra", "Arena")
+            ]
+        );
+        for c in atv_game::launch::mx_courses::COURSES {
+            assert_eq!(super::course_group(c.id), c.group);
+            assert!(!atv_game::launch::mx_courses::available(c.id, true));
+            assert!(!atv_game::launch::is_race_course(c.id));
+            assert!(atv_game::launch::course_resource(c.id, false).is_err());
+        }
+        assert_eq!(super::course_group("nat01"), "nat");
     }
 }

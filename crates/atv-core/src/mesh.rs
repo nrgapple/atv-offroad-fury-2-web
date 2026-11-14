@@ -167,7 +167,7 @@ fn packet(
             0x17 => {
                 batch = None;
             }
-            0x6c | 0x6d | 0x6a | 0x65 | 0x6e => {
+            0x6c | 0x6d | 0x6a | 0x65 | 0x66 | 0x6e => {
                 if count == 0 {
                     return Err("unsupported zero-count PSG VIF unpack".into());
                 }
@@ -175,6 +175,7 @@ fn packet(
                     0x6c => 16,
                     0x6d => 8,
                     0x6a => 3,
+                    0x66 => 2,
                     _ => 4,
                 };
                 let raw = slice(data, at, count * stride)?;
@@ -238,11 +239,11 @@ fn packet(
                         }
                     }
                     batch = Some((base, count));
-                } else if matches!(command, 0x6a | 0x65 | 0x6e) {
+                } else if matches!(command, 0x6a | 0x65 | 0x66 | 0x6e) {
                     let (base, positions) = batch.ok_or("PSG attributes precede positions")?;
                     let expected_address = match command {
                         0x6a => 0x8001 + count as u32,
-                        0x65 => 0x8001 + count as u32 * 2,
+                        0x65 | 0x66 => 0x8001 + count as u32 * 2,
                         _ => 0xc001 + count as u32 * 3,
                     };
                     if address != expected_address {
@@ -263,6 +264,13 @@ fn packet(
                             vertex.uv = [
                                 u16le(raw, i * 4)? as i16 as f32 * scales[2],
                                 u16le(raw, i * 4 + 2)? as i16 as f32 * scales[3],
+                            ];
+                        } else if command == 0x66 {
+                            // MX NAT12 gate: signed V2-8 UVs use the same
+                            // per-axis scale and destination as V2-16.
+                            vertex.uv = [
+                                raw[i * 2] as i8 as f32 * scales[2],
+                                raw[i * 2 + 1] as i8 as f32 * scales[3],
                             ];
                         } else {
                             vertex.color = Some(raw[i * 4..i * 4 + 4].try_into().unwrap());
@@ -707,6 +715,39 @@ mod tests {
                 .contains("missing node")
         );
     }
+    #[test]
+    fn mx_signed_byte_uvs_match_halfword_uvs_and_validate_destination() {
+        let mut positions = 0x6d038001u32.to_le_bytes().to_vec();
+        for v in [[0i16, 0, 0, -32752], [1, 0, 0, -32752], [0, 1, 0, 16]] {
+            for c in v {
+                positions.extend(c.to_le_bytes());
+            }
+        }
+        let uv_at = positions.len();
+        let mut bytes = positions.clone();
+        bytes.extend(0x66038007u32.to_le_bytes());
+        bytes.extend([128, 127, 0, 255, 64, 192, 0, 0]);
+        let mut words = positions;
+        words.extend(0x65038007u32.to_le_bytes());
+        for uv in [-128i16, 127, 0, -1, 64, -64] {
+            words.extend(uv.to_le_bytes());
+        }
+        let scales = [1., 1., 1. / 127., 1. / 64.];
+        let a = packet(&bytes, &[identity()], &scales, 0, 0, 3, true).unwrap();
+        let b = packet(&words, &[identity()], &scales, 0, 0, 3, true).unwrap();
+        for (a, b) in a.vertices.iter().zip(&b.vertices) {
+            assert_eq!(a.uv, b.uv);
+        }
+        bytes[uv_at..uv_at + 4].copy_from_slice(&0x6603c007u32.to_le_bytes());
+        assert!(
+            packet(&bytes, &[identity()], &scales, 0, 0, 3, true)
+                .unwrap_err()
+                .contains("destination")
+        );
+        bytes.truncate(uv_at + 5);
+        assert!(packet(&bytes, &[identity()], &scales, 0, 0, 3, true).is_err());
+    }
+
     #[test]
     fn parent_transform_composition_column_major() {
         let mut matrix = identity().world_matrix;
