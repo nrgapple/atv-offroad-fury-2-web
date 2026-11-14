@@ -20,6 +20,33 @@ class ChangePlanTests(unittest.TestCase):
             with self.subTest(path=path):
                 self.assertEqual(classify(['research/devlog/entries/new.json', path]), 'runtime')
 
+    def test_game_server_paths_take_their_own_lane(self):
+        server = ['crates/atv-server/src/main.rs', 'deploy/deploy.sh', 'deploy/digitalocean/provision.sh',
+                  '.github/workflows/game-server.yml']
+        self.assertEqual(classify(server), 'server')
+        self.assertEqual(classify(server + ['research/GAME_SERVER.md']), 'server')
+        # A dev-log entry still publishes; the server files leave site bytes alone.
+        self.assertEqual(classify(server + ['research/devlog/entries/server.json']), 'metadata')
+        # Inputs the game shares, and anything else, keep the full site build.
+        for path in ['crates/atv-net/src/lib.rs', 'Cargo.lock', 'Cargo.toml', 'cloudflare/gameserver.mjs',
+                     'wrangler.jsonc', '.github/workflows/ci.yml', 'crates/atv-server-extra/lib.rs', 'deployment.json']:
+            with self.subTest(path=path):
+                self.assertEqual(classify(server + [path]), 'runtime')
+
+    def test_server_lane_neither_builds_nor_publishes_the_site(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            git(root, 'init', '-b', 'main')
+            git(root, 'config', 'user.name', 'CI tests')
+            git(root, 'config', 'user.email', 'ci@example.test')
+            (root / 'README.md').write_text('base')
+            git(root, 'add', '.'); git(root, 'commit', '-m', 'base')
+            base = git(root, 'rev-parse', 'HEAD')
+            (root / 'deploy').mkdir()
+            (root / 'deploy/deploy.sh').write_text('#!/bin/sh')
+            git(root, 'add', '.'); git(root, 'commit', '-m', 'server')
+            self.assertEqual(plan({'before': base}, 'push', root), {'lane': 'server', 'publish': False})
+
     def test_git_diff_includes_deleted_and_renamed_runtime_inputs(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

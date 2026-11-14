@@ -13,7 +13,7 @@ local fallback below requires an explicit user request in the current conversati
 Mistakes remains disabled. The experimental local release queue (`atv-release`)
 was removed; see `git log -- research/RELEASE_QUEUE.md` for its history.
 
-## Three CI lanes
+## CI lanes
 
 - **Documentation:** README, AGENTS, HANDOFF and research Markdown use repository
   hygiene, credential scans and metadata tests. They do not install Rust, compile,
@@ -27,6 +27,13 @@ was removed; see `git log -- research/RELEASE_QUEUE.md` for its history.
   GitHub deploys and verifies this lightweight publication normally, without Rust
   compilation. An unavailable/expired artifact, changed runtime, invalid ancestry
   or unavailable production identity falls back to full checks/builds.
+- **Game server:** `crates/atv-server/`, `deploy/` and
+  `.github/workflows/game-server.yml`, alone or with documentation, change no
+  site bytes: `ci.yml` validates hygiene only and neither builds nor deploys the
+  site. `game-server.yml` formats, lints, tests, builds and (on main, when its
+  secrets exist) deploys the server; see `deploy/README.md`. With a dev-log
+  entry the change takes the metadata lane. Shared inputs (`crates/atv-net`,
+  `Cargo.toml`, `Cargo.lock`) stay runtime and run both workflows.
 - **Runtime or unknown files:** code, frontend, tooling, dependencies, workflow and
   mixed changes retain full tests, lint and release builds. Manual dispatch also
   forces this path. The explicit allowlist is in `tools/ci_changes.py`.
