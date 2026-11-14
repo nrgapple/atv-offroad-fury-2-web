@@ -42,6 +42,7 @@ mod waypoint_editor;
 mod world;
 use atv_core::math::Det;
 pub use multiplayer::RoomStart;
+pub use net::server_for;
 use replay::RunScript;
 
 use atv_content::{Content, Store};
@@ -121,9 +122,13 @@ pub struct Options {
     pub front: Option<FrontStart>,
     /// Ride in a multiplayer room (host or join) on the relay.
     pub room: Option<RoomStart>,
-    /// The multiplayer relay origin for menu rides (Arlington Free Ride);
-    /// None: the page origin on the web, furyremastered.com on desktop.
-    pub relay: Option<String>,
+    /// The game's site for menu rides (the page origin the multiplayer
+    /// server admits, desktop invite links); None: the page origin on the
+    /// web, furyremastered.com on desktop.
+    pub site: Option<String>,
+    /// The multiplayer origin for menu rides (Arlington Free Ride, lobbies,
+    /// the rider count); None: [`server_for`] the site.
+    pub server: Option<String>,
 }
 
 /// How the frontend opens.
@@ -287,8 +292,10 @@ struct Defaults {
     crash: atv_game::crash::CrashMode,
     sound: Option<(atv_game::audio::ride::SoundMode, bool)>,
     start: FrontStart,
-    /// The multiplayer relay origin.
-    relay: String,
+    /// The game's site and the multiplayer origin ([`Options::site`],
+    /// [`Options::server`]).
+    site: String,
+    server: String,
 }
 
 /// A Freestyle objective attempt (`atv_core::freestyle`): the series,
@@ -4512,7 +4519,7 @@ impl App {
         });
         // This page; desktop links open the site's play.html (buildRideUrl),
         // as its invites do.
-        let page = multiplayer::share_page(&default_relay());
+        let page = multiplayer::share_page(&default_site());
         // In a room the row is Copy invite link (buildRideUrl's invite).
         if let Some(net) = &ready.net {
             return Some((
@@ -5571,7 +5578,10 @@ impl ApplicationHandler<Message> for App {
         context::watch(&window, self.proxy.clone());
         if let Some(start) = options.front.clone() {
             self.defaults = Some(Defaults {
-                relay: options.relay.clone().unwrap_or_else(default_relay),
+                site: options.site.clone().unwrap_or_else(default_site),
+                server: options.server.clone().unwrap_or_else(|| {
+                    server_for(&options.site.clone().unwrap_or_else(default_site), None)
+                }),
                 graphics: options.graphics,
                 graphics_set: options.graphics_set,
                 weather: options.weather,
@@ -7852,7 +7862,11 @@ impl App {
             Event::CopyCourseLink { code } => self.copy_course_link(&code),
             Event::Cloud(command) => self.cloud_command(command),
             Event::FreeRide { quad, rider, name } => {
-                let Some(relay) = self.defaults.as_ref().map(|d| d.relay.clone()) else {
+                let Some((site, server)) = self
+                    .defaults
+                    .as_ref()
+                    .map(|d| (d.site.clone(), d.server.clone()))
+                else {
                     return;
                 };
                 // Many riders keep the default name: number it so strangers
@@ -7868,7 +7882,8 @@ impl App {
                     name
                 };
                 let room = RoomStart {
-                    relay,
+                    site,
+                    server,
                     code: None,
                     host: false,
                     freeride: true,
@@ -7970,11 +7985,16 @@ impl App {
                 rider,
                 name,
             } => {
-                let Some(relay) = self.defaults.as_ref().map(|d| d.relay.clone()) else {
+                let Some((site, server)) = self
+                    .defaults
+                    .as_ref()
+                    .map(|d| (d.site.clone(), d.server.clone()))
+                else {
                     return;
                 };
                 let room = RoomStart {
-                    relay,
+                    site,
+                    server,
                     code,
                     host: true,
                     freeride: false,
@@ -8002,11 +8022,16 @@ impl App {
                 rider,
                 name,
             } => {
-                let Some(relay) = self.defaults.as_ref().map(|d| d.relay.clone()) else {
+                let Some((site, server)) = self
+                    .defaults
+                    .as_ref()
+                    .map(|d| (d.site.clone(), d.server.clone()))
+                else {
                     return;
                 };
                 let room = RoomStart {
-                    relay,
+                    site,
+                    server,
                     code: Some(code),
                     host: false,
                     freeride: false,
@@ -8151,7 +8176,7 @@ impl App {
         } else {
             player
         };
-        let page = multiplayer::share_page(&default_relay());
+        let page = multiplayer::share_page(&default_site());
         let race = f.state.race.clone();
         let url = atv_game::launch::ride_url(
             &page,
@@ -8206,7 +8231,7 @@ impl App {
         };
         let mut f = front.borrow_mut();
         let url = atv_game::launch::user_course_url(
-            &multiplayer::share_page(&default_relay()),
+            &multiplayer::share_page(&default_site()),
             code,
             &course.environment,
             f.state.quad_id,
@@ -8272,7 +8297,7 @@ impl App {
         if code.is_empty() {
             return;
         }
-        let Some(relay) = self.defaults.as_ref().map(|d| d.relay.clone()) else {
+        let Some(site) = self.defaults.as_ref().map(|d| d.site.clone()) else {
             return;
         };
         let environment = f
@@ -8281,7 +8306,7 @@ impl App {
             .get(f.state.track)
             .map_or("env01".to_string(), |t| t.id.clone());
         let url = multiplayer::invite_url(
-            &relay,
+            &site,
             &environment,
             f.state.quad_id,
             f.state.rider_id,
@@ -8806,13 +8831,13 @@ impl App {
         {
             return;
         }
-        let Some(relay) = self.defaults.as_ref().map(|d| d.relay.clone()) else {
+        let Some(server) = self.defaults.as_ref().map(|d| d.server.clone()) else {
             return;
         };
         self.riders_polled = Some(Instant::now());
         #[cfg(target_arch = "wasm32")]
         self.spawn(
-            async move { net::riders(&relay).await },
+            async move { net::riders(&server).await },
             Message::FreeRideRiders,
         );
         // Desktop: a short-lived thread (the event-loop proxy is not Send),
@@ -8821,7 +8846,7 @@ impl App {
         {
             let (send, receive) = std::sync::mpsc::channel();
             std::thread::spawn(move || {
-                let _ = send.send(net::riders_blocking(&relay));
+                let _ = send.send(net::riders_blocking(&server));
             });
             self.riders_pending = Some(receive);
         }
@@ -9867,7 +9892,9 @@ fn room_page(_shared: bool) -> &'static str {
     "multiplayer"
 }
 
-fn default_relay() -> String {
+/// The game's site: the page origin on the web, furyremastered.com on
+/// desktop.
+fn default_site() -> String {
     #[cfg(target_arch = "wasm32")]
     {
         web_sys::window()
@@ -10722,13 +10749,15 @@ pub fn start() {
                 ..defaults
             }
         }),
-        relay: None,
+        site: None,
+        // `?server=<origin>`: multiplayer on that server instead
+        // ([`server_for`]).
+        server: Some(server_for(&default_site(), param("server").as_deref())),
         // `?host=1` hosts a room (`room=` an optional custom code) and
-        // `?room=CODE` joins one, on this page's relay.
+        // `?room=CODE` joins one, on this page's multiplayer server.
         room: direct_room.then(|| RoomStart {
-            relay: web_sys::window()
-                .and_then(|w| w.location().origin().ok())
-                .unwrap_or_default(),
+            site: default_site(),
+            server: server_for(&default_site(), param("server").as_deref()),
             code: param("room"),
             host: param("host").is_some_and(|v| v == "1"),
             name: param("name")

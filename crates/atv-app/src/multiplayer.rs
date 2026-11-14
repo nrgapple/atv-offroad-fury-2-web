@@ -4,7 +4,7 @@
 use crate::net::{self, Event, MeshEvent};
 use atv_content::Content;
 use atv_game::multiplayer::{
-    LinkCommand, Profile, Session,
+    LinkCommand, Profile, Serves, Session,
     remote::{self, Key, Local, RemoteModel},
 };
 use atv_game::ride::{Pose, Ride};
@@ -32,8 +32,12 @@ pub static BATCHES: AtomicBool = AtomicBool::new(true);
 /// How a ride starts in a room (`--host`/`--join`, `?host=1`/`?room=`).
 #[derive(Clone, Debug)]
 pub struct RoomStart {
-    /// The relay origin (`http(s)://host[:port]`), the page origin on the web.
-    pub relay: String,
+    /// The game's site (`http(s)://host[:port]`): the page origin the
+    /// server admits, and where desktop invite links point.
+    pub site: String,
+    /// The multiplayer origin: every room route and the room socket
+    /// ([`net::server_for`]).
+    pub server: String,
     /// The room code: required to join; optional custom code to host.
     pub code: Option<String>,
     pub host: bool,
@@ -60,15 +64,15 @@ pub struct Net {
     socket: net::Socket,
     /// Direct links to the other riders' browsers.
     mesh: net::Mesh,
-    /// The relay introduces riders to each other (its room claim said so).
-    signalling: bool,
-    /// The relay takes pose batches (its room claim said so).
-    batches: bool,
+    /// What the room's claim said its server does: introduce riders for
+    /// direct links, take pose batches, send frames.
+    serves: Serves,
     /// This socket's session announced its direct-link support.
     greeted: bool,
     content: Rc<Content>,
     clock: Instant,
-    relay: String,
+    site: String,
+    server: String,
     last_send: f64,
     last_ping: f64,
     last_traffic: f64,
@@ -145,10 +149,10 @@ pub struct RoomRide {
 pub static JOIN_DELAY_MS: AtomicU32 = AtomicU32::new(0);
 
 /// A room's invite link (multiplayer.js `inviteUrl`): the browser game's
-/// join link on the relay's origin.
-pub fn invite_url(relay: &str, environment: &str, quad: u16, rider: u16, code: &str) -> String {
+/// join link on the game's site (never the game server).
+pub fn invite_url(site: &str, environment: &str, quad: u16, rider: u16, code: &str) -> String {
     atv_game::launch::ride_url(
-        &share_page(relay),
+        &share_page(site),
         &atv_game::launch::RideLink {
             map: environment,
             quad,
@@ -162,8 +166,8 @@ pub fn invite_url(relay: &str, environment: &str, quad: u16, rider: u16, code: &
 }
 
 /// The page a shared link opens: this page in the browser (buildRideUrl
-/// uses the game's own page), the relay's site on desktop.
-pub fn share_page(relay: &str) -> String {
+/// uses the game's own page), the game's site on desktop.
+pub fn share_page(site: &str) -> String {
     #[cfg(target_arch = "wasm32")]
     if let Some(page) = web_sys::window().and_then(|w| {
         let l = w.location();
@@ -171,7 +175,7 @@ pub fn share_page(relay: &str) -> String {
     }) {
         return page;
     }
-    format!("{}/play.html", relay.trim_end_matches('/'))
+    format!("{}/play.html", site.trim_end_matches('/'))
 }
 
 /// Distinct remote quad/rider models kept loaded: one per possible rider
@@ -217,12 +221,13 @@ fn arrival(clock: Instant, at: Instant, now: u64) -> u64 {
     (at.saturating_duration_since(clock).as_millis() as u64).min(now)
 }
 
-/// Creates (`host`) or opens (`join`, `open`) the room on the relay and
+/// Creates (`host`) or opens (`join`, `open`) the room on the server and
 /// returns its code, the slot key when this rider becomes its creator, and
-/// whether the relay introduces riders for direct links and takes pose
-/// batches.
-async fn claim(start: &RoomStart) -> Result<(String, Option<String>, bool, bool), String> {
-    let origin = net::origin(&start.relay);
+/// what the server does (introduce riders for direct links, take pose
+/// batches, send frames).
+async fn claim(start: &RoomStart) -> Result<(String, Option<String>, Serves), String> {
+    let origin = net::origin(&start.site);
+    let server = start.server.trim_end_matches('/');
     // Shared Free Ride codes (FREERDnn) are the relay's: hosting one is
     // refused, and opening one (an invite from a shared room) is Free Ride,
     // which finds a shared room with space (multiplayer.js `host`).
@@ -236,7 +241,7 @@ async fn claim(start: &RoomStart) -> Result<(String, Option<String>, bool, bool)
     if start.freeride || shared {
         // POST /multiplayer/freeride reserves a slot in the first shared
         // room with space (web/multiplayer.js `freeride`).
-        let url = format!("{}/multiplayer/freeride", start.relay.trim_end_matches('/'));
+        let url = format!("{server}/multiplayer/freeride");
         let (status, text) = net::post(&url, &origin, "").await?;
         match status {
             200 => {}
@@ -259,11 +264,9 @@ async fn claim(start: &RoomStart) -> Result<(String, Option<String>, bool, bool)
         if !shared || key.len() != 32 || !key.bytes().all(|b| b.is_ascii_hexdigit()) {
             return Err("Unable to join Free Ride.".into());
         }
-        let links = room["links"].as_bool() == Some(true);
-        let batches = room["batches"].as_bool() == Some(true);
-        return Ok((code, Some(key), links, batches));
+        return Ok((code, Some(key), Serves::from_claim(&room)));
     }
-    let url = format!("{}/multiplayer/rooms", start.relay.trim_end_matches('/'));
+    let url = format!("{server}/multiplayer/rooms");
     let code = start
         .code
         .as_deref()
@@ -296,22 +299,16 @@ async fn claim(start: &RoomStart) -> Result<(String, Option<String>, bool, bool)
         .as_str()
         .ok_or("relay returned no room code")?
         .to_string();
-    let links = room["links"].as_bool() == Some(true);
-    let batches = room["batches"].as_bool() == Some(true);
+    let serves = Serves::from_claim(&room);
     if room["open"].as_bool() == Some(true) {
         let players = room["players"].as_u64().unwrap_or(0);
         if players >= room["max"].as_u64().unwrap_or(4) {
             return Err("Game is full!".into());
         }
         // This tab's kept slot key reclaims its rider after a reload.
-        return Ok((code.clone(), saved_key(&code), links, batches));
+        return Ok((code.clone(), saved_key(&code), serves));
     }
-    Ok((
-        code,
-        room["hostToken"].as_str().map(String::from),
-        links,
-        batches,
-    ))
+    Ok((code, room["hostToken"].as_str().map(String::from), serves))
 }
 
 /// The kept slot key record `{code, key}`: this browser tab's
@@ -374,21 +371,21 @@ impl Net {
         content: Rc<Content>,
         ride: RoomRide,
     ) -> Result<(Net, String), String> {
-        let (code, key, signalling, batches) = claim(start).await?;
+        let (code, key, serves) = claim(start).await?;
         let socket = net::Socket::connect(
-            &net::room_url(&start.relay, &code, key.as_deref()),
-            &net::origin(&start.relay),
+            &net::room_url(&start.server, &code, key.as_deref()),
+            &net::origin(&start.site),
         );
         let mut net = Net {
             session: Session::new(profile),
             socket,
             mesh: Default::default(),
-            signalling,
-            batches,
+            serves,
             greeted: false,
             content,
             clock: Instant::now(),
-            relay: start.relay.clone(),
+            site: start.site.clone(),
+            server: start.server.clone(),
             last_send: 0.,
             last_ping: 0.,
             last_traffic: 0.,
@@ -478,7 +475,7 @@ impl Net {
     /// ATV and rider, without the player's name).
     pub fn invite(&self, quad: u16, rider: u16) -> String {
         invite_url(
-            &self.relay,
+            &self.site,
             self.session.environment().unwrap_or("env01"),
             quad,
             rider,
@@ -528,8 +525,8 @@ impl Net {
                 self.mesh.clear();
                 self.greeted = false;
                 self.socket = net::Socket::connect(
-                    &net::room_url(&self.relay, &code, Some(&key)),
-                    &net::origin(&self.relay),
+                    &net::room_url(&self.server, &code, Some(&key)),
+                    &net::origin(&self.site),
                 );
                 self.ready_sent = false;
                 self.reconnect = Some((f64::INFINITY, until, attempts));
@@ -761,16 +758,22 @@ impl Net {
         }
     }
 
-    /// Once admitted, tells a relay that introduces riders whether this
-    /// browser opens direct links. Desktop builds and `?p2p=0` open none and
-    /// keep every pose on the relay; saying so lets the relay count them.
+    /// Once admitted, tells a server that takes a hello what this build
+    /// does: a relay that introduces riders hears whether this browser
+    /// opens direct links (desktop builds and `?p2p=0` open none and keep
+    /// every pose on the relay; saying so lets the relay count them), and a
+    /// game server that it decodes frames. The relay never hears FRAMES and
+    /// the game server, which says no links and no batches, gets neither.
     fn greet(&mut self) {
         let direct = cfg!(target_arch = "wasm32") && P2P.load(Ordering::Relaxed);
-        if self.greeted || !self.signalling || self.session.peer.is_none() {
+        if self.greeted || !self.serves.hello() || self.session.peer.is_none() {
             return;
         }
-        let batches = self.batches && BATCHES.load(Ordering::Relaxed);
-        if let Ok(bytes) = self.session.hello(direct, batches) {
+        let serves = Serves {
+            batches: self.serves.batches && BATCHES.load(Ordering::Relaxed),
+            ..self.serves
+        };
+        if let Ok(bytes) = self.session.hello(serves, direct) {
             self.greeted = self.socket.send(bytes);
         }
     }
@@ -1377,6 +1380,12 @@ impl Net {
             "bundles": c.bundles,
             "batches": c.batches,
             "batchesReceived": c.batches_received,
+            "framesReceived": c.frames_received,
+            "serves": {
+                "links": self.serves.links, "batches": self.serves.batches,
+                "frames": self.serves.frames,
+            },
+            "server": self.server,
             "pace": self.session.pace,
             "links": self.session.link_states().into_iter().map(|(peer, state)| {
                 serde_json::json!({"peer": peer, "state": state})

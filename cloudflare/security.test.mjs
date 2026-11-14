@@ -119,6 +119,8 @@ test('security headers protect assets/errors/redirects and permit browser WASM a
     assert.match(r.headers.get('Strict-Transport-Security'), /max-age=31536000/);
     assert.match(r.headers.get('Content-Security-Policy'), /'wasm-unsafe-eval'/);
     assert.match(r.headers.get('Content-Security-Policy'), /wss:\/\//);
+    // The game server's routes and room sockets (research/GAME_SERVER.md).
+    assert.match(r.headers.get('Content-Security-Policy'), /connect-src 'self' wss:\/\/[^;]*https:\/\/mp\.furyremastered\.com wss:\/\/mp\.furyremastered\.com[;\s]/);
     assert.match(r.headers.get('Content-Security-Policy'), /frame-ancestors 'none'/);
   }
 });

@@ -95,7 +95,8 @@ fn android_main(app: AndroidApp) {
         bench: None,
         front: Some(crate::FrontStart::default()),
         room: None,
-        relay: Some("https://furyremastered.com".into()),
+        site: Some("https://furyremastered.com".into()),
+        server: None,
     });
 }
 

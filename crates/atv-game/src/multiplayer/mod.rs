@@ -114,6 +114,38 @@ pub struct Counters {
     /// Pose batches sent to the relay, and received from it.
     pub batches: u64,
     pub batches_received: u64,
+    /// Frames received from a game server.
+    pub frames_received: u64,
+}
+
+/// What a room's claim (create, open or Free Ride) says its server does
+/// (research/GAME_SERVER.md): the relay introduces riders for direct links
+/// and takes pose batches; the game server does neither and sends frames.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Serves {
+    /// `links`: introduces riders on a course for direct links.
+    pub links: bool,
+    /// `batches`: takes pose batches in shared rooms.
+    pub batches: bool,
+    /// `frames`: sends builds that say [`atv_net::signal::FRAMES`] one
+    /// [`Packet::Frame`] per tick.
+    pub frames: bool,
+}
+
+impl Serves {
+    /// The flags of a room claim's JSON; absent ones are false.
+    pub fn from_claim(claim: &serde_json::Value) -> Serves {
+        Serves {
+            links: claim["links"].as_bool() == Some(true),
+            batches: claim["batches"].as_bool() == Some(true),
+            frames: claim["frames"].as_bool() == Some(true),
+        }
+    }
+
+    /// Whether this server hears a [`Session::hello`].
+    pub fn hello(&self) -> bool {
+        self.links || self.frames
+    }
 }
 
 /// One 50 ms tick's poses ([`Session::poses`]).
@@ -284,19 +316,25 @@ impl Session {
         encode(&Packet::Ready { map })
     }
 
-    /// Tells a relay that supports them (its room claim says so) that this
-    /// build understands direct-link signalling, and with `direct` that it
-    /// can open links itself. Send once per socket, after Welcome.
+    /// Tells a server that takes one ([`Serves::hello`]) what this build
+    /// understands. Send once per socket, after Welcome.
     ///
-    /// `batches`: the relay's room claim says it takes pose batches, which
-    /// this build then sends in shared rooms and accepts from other riders.
-    pub fn hello(&mut self, direct: bool, batches: bool) -> Result<Vec<u8>> {
+    /// With `links`, the build follows direct-link signalling, and with
+    /// `direct` it can open links itself. With `batches` it sends pose
+    /// batches in shared rooms and accepts them from other riders. With
+    /// `frames` it decodes [`Packet::Frame`]s. A server without `links`
+    /// introduces no riders, so the session keeps sending its poses for
+    /// every rider in the room, as without a hello.
+    pub fn hello(&mut self, serves: Serves, direct: bool) -> Result<Vec<u8>> {
         let peer = self.peer.ok_or("join multiplayer first")?;
-        self.links.announce(direct);
+        let direct = direct && serves.links;
+        if serves.links {
+            self.links.announce(direct);
+        }
         // A new socket: the relay names the current courier and pace again.
         self.courier = None;
         self.carry.clear();
-        self.batching = batches;
+        self.batching = serves.batches;
         self.pace = 0;
         let mut flags = if direct {
             atv_net::signal::DIRECT | atv_net::signal::CARRIES
@@ -306,8 +344,11 @@ impl Session {
         // Every build hears the host's CPU sound cues (research/AUDIO.md
         // "CPU riders"), links or not.
         flags |= atv_net::signal::CPU_SOUNDS;
-        if batches {
+        if serves.batches {
             flags |= atv_net::signal::BATCHES;
+        }
+        if serves.frames {
+            flags |= atv_net::signal::FRAMES;
         }
         encode(&Packet::Signal(atv_net::Signal {
             peer,
@@ -493,6 +534,18 @@ impl Session {
                     self.pose(s, now_ms.saturating_sub(age), Some(interval_ms.into()))?;
                 }
             }
+            // Only sent to a client that said frames (research/GAME_SERVER.md):
+            // each pose as if it had come alone.
+            Packet::Frame { poses } => {
+                self.counters.frames_received += 1;
+                for bytes in &poses {
+                    match atv_net::decode(bytes) {
+                        Ok(Packet::Snapshot(s)) => self.pose(*s, now_ms, None)?,
+                        Ok(Packet::Delta(d)) => self.frame_delta(*d, now_ms)?,
+                        _ => {}
+                    }
+                }
+            }
             Packet::Signal(message) if message.kind == atv_net::signal::PACE => {
                 self.pace = message.data[0];
             }
@@ -618,6 +671,19 @@ impl Session {
             buffer.batched(batch);
         }
         Ok(())
+    }
+
+    /// A baseline delta in a frame, against the rider's latest pose here. A
+    /// delta on another baseline (a pose this client never got) waits for
+    /// the rider's next full pose, as the relay does with a sender's.
+    fn frame_delta(&mut self, d: atv_net::Delta, now_ms: u64) -> Result<()> {
+        let Some((base, _)) = self.buffers.get(&d.snapshot.peer).and_then(|b| b.latest()) else {
+            return Ok(());
+        };
+        match atv_net::apply_delta(&d, base) {
+            Ok(s) => self.pose(s, now_ms, None),
+            Err(_) => Ok(()),
+        }
     }
 
     /// How late this client now draws `peer` (ms), for status and tests.
@@ -1484,6 +1550,13 @@ mod tests {
     use super::*;
     use atv_net::Participant;
 
+    /// The relay's claims: links and batches.
+    const LINKS: Serves = Serves {
+        links: true,
+        batches: false,
+        frames: false,
+    };
+
     fn lobby(players: &[(u8, u16)], started: bool) -> Lobby {
         Lobby {
             host: 0,
@@ -1691,7 +1764,7 @@ mod tests {
         use atv_net::signal::{ANSWER, CARRIES, COURIER, CPU_SOUNDS, DIRECT, PRESENT};
         let mut s = Session::new(Profile::new("Ann", 1, 0, Default::default()));
         welcome(&mut s, 1, lobby(&[(0, 1), (1, 1), (2, 1)], true));
-        let hello = atv_net::decode(&s.hello(true, false).unwrap()).unwrap();
+        let hello = atv_net::decode(&s.hello(LINKS, true).unwrap()).unwrap();
         assert!(matches!(hello, Packet::Signal(m) if m.data == [DIRECT | CARRIES | CPU_SOUNDS]));
         s.ready().unwrap();
         // Rider 0 links with this one; rider 2 (a desktop build) cannot.
@@ -1748,7 +1821,7 @@ mod tests {
             ..lobby(&[(0, 1), (1, 1), (2, 1)], true)
         };
         welcome(&mut s, 1, room);
-        s.hello(true, false).unwrap();
+        s.hello(LINKS, true).unwrap();
         s.ready().unwrap();
         // Rider 0 is linked with this rider, the courier; rider 2 cannot link.
         signal(&mut s, 0, PRESENT, &[DIRECT], 0);
@@ -1786,7 +1859,7 @@ mod tests {
         let mut s = Session::new(Profile::new("Ann", 1, 0, Default::default()));
         welcome(&mut s, 1, lobby(&[(0, 1), (1, 1), (2, 1)], true));
         assert!(!s.signalling());
-        s.hello(true, false).unwrap();
+        s.hello(LINKS, true).unwrap();
         s.ready().unwrap();
         // Rider 0 can link; rider 2 is on a build that cannot.
         signal(&mut s, 0, PRESENT, &[DIRECT], 0);
@@ -1861,7 +1934,7 @@ mod tests {
         use atv_net::signal::{ARRIVED, DIRECT, OFFER};
         let mut s = Session::new(Profile::new("Ann", 1, 0, Default::default()));
         welcome(&mut s, 1, lobby(&[(0, 1), (1, 1), (2, 1)], true));
-        s.hello(true, false).unwrap();
+        s.hello(LINKS, true).unwrap();
         signal(&mut s, 0, ARRIVED, &[DIRECT], 0);
         signal(&mut s, 0, OFFER, b"v=0", 0);
         assert_eq!(
@@ -2078,7 +2151,18 @@ mod tests {
             ..lobby(&[(0, 1), (1, 1), (2, 1)], true)
         };
         welcome(&mut s, 1, room);
-        let hello = atv_net::decode(&s.hello(false, true).unwrap()).unwrap();
+        let hello = atv_net::decode(
+            &s.hello(
+                Serves {
+                    links: true,
+                    batches: true,
+                    frames: false,
+                },
+                false,
+            )
+            .unwrap(),
+        )
+        .unwrap();
         assert!(matches!(hello, Packet::Signal(m) if m.data == [CPU_SOUNDS | BATCHES]));
         s.ready().unwrap();
         // Rider 0, whose build takes batches, is 20-40 ft away.
@@ -2209,7 +2293,7 @@ mod tests {
                 ..lobby(&[(0, 1), (1, 1)], true)
             },
         );
-        old.hello(false, false).unwrap();
+        old.hello(LINKS, false).unwrap();
         old.ready().unwrap();
         signal(&mut old, 0, PRESENT, &[0], 0);
         assert_eq!(ride(&mut old, 0, 3000), (20, 0));
@@ -2260,6 +2344,158 @@ mod tests {
             s.present(now, None, &no_cars);
         }
         assert!(s.delay_ms(0).unwrap() < 130.);
+    }
+
+    #[test]
+    fn hello_flags_follow_the_room_claim() {
+        use atv_net::signal::{BATCHES, CPU_SOUNDS, DIRECT, FRAMES, PRESENT};
+        let relay = serde_json::json!({"code": "ABCD1234", "links": true, "batches": true});
+        let server = serde_json::json!({"code": "ABCD1234", "links": false, "batches": false, "frames": true});
+        let relay = Serves::from_claim(&relay);
+        let server = Serves::from_claim(&server);
+        assert!(relay.links && relay.batches && !relay.frames && relay.hello());
+        assert!(!server.links && !server.batches && server.frames && server.hello());
+        assert!(!Serves::from_claim(&serde_json::json!({"code": "X"})).hello());
+        let flags = |serves: Serves, direct: bool| {
+            let mut s = Session::new(Profile::new("Ann", 1, 0, Default::default()));
+            welcome(&mut s, 1, lobby(&[(0, 1), (1, 1)], true));
+            let Packet::Signal(m) = atv_net::decode(&s.hello(serves, direct).unwrap()).unwrap()
+            else {
+                panic!("hello")
+            };
+            (m.data[0], s.signalling(), s)
+        };
+        // The relay never hears FRAMES.
+        let (bits, signalling, _) = flags(relay, false);
+        assert_eq!((bits, signalling), (CPU_SOUNDS | BATCHES, true));
+        assert_eq!(flags(relay, true).0 & FRAMES, 0);
+        // The game server: frames, no links even where the browser could
+        // open them, and no signalling, so poses keep going to every rider.
+        let (bits, signalling, mut s) = flags(server, true);
+        assert_eq!((bits, signalling), (CPU_SOUNDS | FRAMES, false));
+        s.ready().unwrap();
+        signal(&mut s, 0, PRESENT, &[DIRECT], 0);
+        assert!(s.link_commands(10_000).is_empty());
+    }
+
+    #[test]
+    fn a_server_without_links_or_batches_gets_single_poses() {
+        let serves = Serves {
+            frames: true,
+            ..Default::default()
+        };
+        // In Free Ride, where the relay takes batches: the same poses as a
+        // build that never said hello.
+        let mut plain = Session::new(Profile::new("Ann", 1, 0, Default::default()));
+        let mut framed = Session::new(Profile::new("Ann", 1, 0, Default::default()));
+        for s in [&mut plain, &mut framed] {
+            welcome(
+                s,
+                1,
+                Lobby {
+                    public: true,
+                    ..lobby(&[(0, 1), (1, 1)], true)
+                },
+            );
+        }
+        framed.hello(serves, true).unwrap();
+        for s in [&mut plain, &mut framed] {
+            s.ready().unwrap();
+            s.receive(&compact_pose(0, 1, 50, 0.), 0).unwrap();
+        }
+        let sent = ride(&mut framed, 0, 3000);
+        assert_eq!(sent, ride(&mut plain, 0, 3000));
+        assert!(sent.0 > 0 && sent.1 == 0, "{sent:?}");
+        assert_eq!(framed.counters.batches, 0);
+        assert!(framed.link_commands(10_000).is_empty());
+    }
+
+    /// Rider `peer`'s compact pose (what frames carry).
+    fn compact_pose(peer: u8, sequence: u32, time_ms: u32, x: f32) -> Vec<u8> {
+        atv_net::encode(&Packet::Snapshot(Box::new(compact(
+            peer, sequence, time_ms, x,
+        ))))
+        .unwrap()
+    }
+
+    fn compact(peer: u8, sequence: u32, time_ms: u32, x: f32) -> Snapshot {
+        let mut p = Snapshot {
+            peer,
+            sequence,
+            time_ms,
+            atv_model: 1,
+            rider_model: 0,
+            velocity: [20., 0., 0.],
+            animation: Some(Default::default()),
+            ..Default::default()
+        };
+        p.atv.position[0] = x;
+        p.rider.position[0] = x;
+        p
+    }
+
+    #[test]
+    fn frames_feed_each_pose_as_if_it_had_come_alone() {
+        let room = || {
+            let mut s = Session::new(Profile::new("Ann", 1, 0, Default::default()));
+            welcome(&mut s, 1, lobby(&[(0, 1), (1, 1), (2, 1)], true));
+            s
+        };
+        let (mut single, mut framed) = (room(), room());
+        for tick in 1..=20u32 {
+            let now = u64::from(tick) * 50;
+            let poses: Vec<Vec<u8>> = [0, 2]
+                .iter()
+                .map(|&peer| compact_pose(peer, tick, tick * 50, tick as f32 + f32::from(peer)))
+                .collect();
+            for pose in &poses {
+                single.receive(pose, now).unwrap();
+            }
+            let frame = atv_net::encode(&Packet::Frame { poses }).unwrap();
+            framed.receive(&frame, now).unwrap();
+        }
+        assert_eq!(framed.counters.frames_received, 20);
+        for now in (1000..1400).step_by(16) {
+            let a = single.present(now, None, &no_cars);
+            let b = framed.present(now, None, &no_cars);
+            assert_eq!(a.len(), 2);
+            assert_eq!(
+                a.iter()
+                    .map(|(p, r)| (*p, r.snapshot.atv.position))
+                    .collect::<Vec<_>>(),
+                b.iter()
+                    .map(|(p, r)| (*p, r.snapshot.atv.position))
+                    .collect::<Vec<_>>(),
+            );
+        }
+        assert_eq!(single.delay_ms(0), framed.delay_ms(0));
+        // A delta on the rider's latest pose here applies; one on a pose
+        // this client never got waits for the next full one. This rider's
+        // own pose and a stranger's are ignored, as from the relay.
+        let base = compact(0, 20, 1000, 20.);
+        let delta = |base: &Snapshot, sequence: u32, x: f32| {
+            let next = compact(0, sequence, sequence * 50, x);
+            atv_net::encode(&Packet::Delta(Box::new(
+                atv_net::delta(&next, base).unwrap(),
+            )))
+            .unwrap()
+        };
+        let mut missed = base.clone();
+        missed.sequence = 19;
+        let frame = atv_net::encode(&Packet::Frame {
+            poses: vec![
+                delta(&missed, 23, 99.),
+                delta(&base, 21, 21.5),
+                compact_pose(1, 50, 2000, 7.),
+                compact_pose(9, 50, 2000, 7.),
+            ],
+        })
+        .unwrap();
+        framed.receive(&frame, 1050).unwrap();
+        let latest = framed.buffers[&0].latest().unwrap().0;
+        assert_eq!(latest.sequence, 21);
+        assert!((latest.atv.position[0] - 21.5).abs() < 0.01);
+        assert!(!framed.buffers.contains_key(&1) && !framed.buffers.contains_key(&9));
     }
 
     #[test]

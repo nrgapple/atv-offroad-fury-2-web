@@ -314,10 +314,13 @@ fn main() {
     if verify {
         return verify_content(store);
     }
-    let menu_relay = relay.clone();
+    // `--relay` is the game's site and, unless `FURY_SERVER` names another
+    // origin, its multiplayer server (atv_app::server_for).
+    let server = atv_app::server_for(&relay, std::env::var("FURY_SERVER").ok().as_deref());
     // `--host` / `--room` ride in a multiplayer room (a direct ride).
-    let room = (host || room_code.is_some()).then_some(atv_app::RoomStart {
-        relay,
+    let room = (host || room_code.is_some()).then(|| atv_app::RoomStart {
+        site: relay.clone(),
+        server: server.clone(),
         code: room_code,
         host,
         freeride: false,
@@ -364,7 +367,8 @@ fn main() {
         profile,
         front,
         room,
-        relay: Some(menu_relay),
+        site: Some(relay),
+        server: Some(server),
     });
 }
 
