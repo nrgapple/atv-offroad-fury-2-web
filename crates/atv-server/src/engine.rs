@@ -208,6 +208,9 @@ pub struct SavedRoom {
     pub started: bool,
     /// Connected riders and held slots, all held again on restore.
     pub reserved: Vec<Reserved>,
+    /// Slots left out of the public counts.
+    #[serde(default)]
+    pub uncounted: Vec<u8>,
 }
 
 pub struct Room {
@@ -224,6 +227,10 @@ pub struct Room {
     closed: bool,
     conns: Vec<Conn>,
     counters: Counters,
+    /// Slots whose riders connected from an uncounted address
+    /// (`FURY_UNCOUNTED_IPS`): they play normally but stay out of the
+    /// public rider counts.
+    uncounted: Vec<u8>,
 }
 
 impl Room {
@@ -248,6 +255,7 @@ impl Room {
             closed: false,
             conns: Vec::new(),
             counters: Counters::default(),
+            uncounted: Vec::new(),
         }
     }
 
@@ -275,11 +283,34 @@ impl Room {
     pub fn riders(&self) -> usize {
         self.lobby().players.len()
     }
-    /// The room's riders right now, by build: counts only.
+    /// Marks the rider now in `peer`'s slot as counted or not; set on every
+    /// admission, so a slot taken over by someone else follows its new rider.
+    pub fn set_counted(&mut self, peer: u8, counted: bool) {
+        self.uncounted.retain(|&p| p != peer);
+        if !counted {
+            self.uncounted.push(peer);
+        }
+    }
+    fn counted(&self, peer: u8) -> bool {
+        !self.uncounted.contains(&peer)
+    }
+    /// [`Self::riders`] without uncounted riders.
+    pub fn counted_riders(&self) -> usize {
+        self.lobby()
+            .players
+            .iter()
+            .filter(|p| self.counted(p.id))
+            .count()
+    }
+    /// The room's counted riders right now, by build: counts only.
     pub fn rider_counts(&self) -> std::collections::BTreeMap<String, u64> {
         let mut counts = std::collections::BTreeMap::new();
         let mut add = |key: &str, n: u64| *counts.entry(key.to_string()).or_insert(0) += n;
-        let joined: Vec<&Conn> = self.conns.iter().filter(|c| c.player.is_some()).collect();
+        let joined: Vec<&Conn> = self
+            .conns
+            .iter()
+            .filter(|c| c.player.is_some() && self.counted(c.peer))
+            .collect();
         add("riders", joined.len() as u64);
         for c in joined {
             add("oldBuild", u64::from(!c.signals));
@@ -287,7 +318,10 @@ impl Room {
         }
         add(
             "held",
-            self.reserved.iter().filter(|r| r.player.is_some()).count() as u64,
+            self.reserved
+                .iter()
+                .filter(|r| r.player.is_some() && self.counted(r.peer))
+                .count() as u64,
         );
         counts
     }
@@ -1023,6 +1057,7 @@ impl Room {
             map: self.map,
             started: self.started,
             reserved,
+            uncounted: self.uncounted.clone(),
         }
     }
 
@@ -1057,6 +1092,7 @@ impl Room {
             closed: false,
             conns: Vec::new(),
             counters: Counters::default(),
+            uncounted: saved.uncounted,
         })
     }
 }

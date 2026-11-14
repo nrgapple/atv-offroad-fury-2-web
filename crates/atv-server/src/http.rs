@@ -331,7 +331,10 @@ async fn health(State(shared): State<Arc<Shared>>) -> Response {
         uptime_seconds: shared.started.elapsed().as_secs(),
         rooms: m.rooms.load(Ordering::Relaxed),
         riders: m.riders.load(Ordering::Relaxed),
-        connections: m.connections.load(Ordering::Relaxed),
+        connections: m
+            .connections
+            .load(Ordering::Relaxed)
+            .saturating_sub(m.uncounted_connections.load(Ordering::Relaxed)),
     })
     .into_response();
     response
@@ -407,7 +410,9 @@ async fn socket(
     let conn = shared.next_conn.fetch_add(1, Ordering::Relaxed);
     let outbox = Arc::new(Outbox::default());
     let key = keys.key.or(keys.host);
-    let peer_id = match room.admit(conn, key, outbox.clone()).await {
+    // Uncounted addresses play normally; only the public counts skip them.
+    let counted = !shared.config.uncounted.contains(ip);
+    let peer_id = match room.admit(conn, key, counted, outbox.clone()).await {
         Some(Ok(peer)) => peer,
         Some(Err(refused)) => {
             let status = StatusCode::from_u16(refused.status).unwrap_or(StatusCode::CONFLICT);
@@ -429,7 +434,7 @@ async fn socket(
         .on_upgrade(move |ws| async move {
             let _guard = guard;
             tracing::debug!(event = "socket_opened", peer = peer_id);
-            run_socket(shared, room.tx, conn, outbox, ws).await;
+            run_socket(shared, room.tx, conn, counted, outbox, ws).await;
         })
 }
 
@@ -448,10 +453,17 @@ async fn run_socket(
     shared: Arc<Shared>,
     room: tokio::sync::mpsc::Sender<RoomMsg>,
     conn: engine::ConnId,
+    counted: bool,
     outbox: Arc<Outbox>,
     ws: WebSocket,
 ) {
     shared.metrics.connections.fetch_add(1, Ordering::Relaxed);
+    if !counted {
+        shared
+            .metrics
+            .uncounted_connections
+            .fetch_add(1, Ordering::Relaxed);
+    }
     let (mut sink, mut stream) = ws.split();
     let writer_outbox = outbox.clone();
     let mut writer = tokio::spawn(async move {
@@ -533,5 +545,11 @@ async fn run_socket(
         }
     }
     writer.abort();
+    if !counted {
+        shared
+            .metrics
+            .uncounted_connections
+            .fetch_sub(1, Ordering::Relaxed);
+    }
     shared.metrics.connections.fetch_sub(1, Ordering::Relaxed);
 }

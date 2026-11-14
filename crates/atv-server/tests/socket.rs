@@ -23,12 +23,19 @@ struct Server {
 }
 
 async fn start(state: &std::path::Path) -> Server {
+    start_with(state, &[]).await
+}
+
+async fn start_with(state: &std::path::Path, extra: &[(&str, &str)]) -> Server {
     let state = state.to_string_lossy().into_owned();
     let config = Config::from_vars(|name| match name {
         "FURY_LISTEN" => Some("127.0.0.1:0".into()),
         "FURY_STATE_DIR" => Some(state.clone()),
         "FURY_COMMIT" => Some("test-commit".into()),
-        _ => None,
+        _ => extra
+            .iter()
+            .find(|(k, _)| *k == name)
+            .map(|(_, v)| v.to_string()),
     })
     .unwrap();
     let listener = tokio::net::TcpListener::bind(config.listen).await.unwrap();
@@ -90,12 +97,27 @@ async fn preflight(address: SocketAddr, path: &str, origin: &str) -> (u16, Strin
 }
 
 async fn connect(address: SocketAddr, code: &str, key: &str) -> Socket {
+    connect_from(address, code, key, None).await
+}
+
+/// Connects as a local proxy forwarding for `forwarded`, when given.
+async fn connect_from(
+    address: SocketAddr,
+    code: &str,
+    key: &str,
+    forwarded: Option<&str>,
+) -> Socket {
     let mut request = format!("ws://{address}/multiplayer/rooms/{code}?key={key}")
         .into_client_request()
         .unwrap();
     request
         .headers_mut()
         .insert("Origin", ORIGIN.parse().unwrap());
+    if let Some(forwarded) = forwarded {
+        request
+            .headers_mut()
+            .insert("X-Forwarded-For", forwarded.parse().unwrap());
+    }
     tokio_tungstenite::connect_async(request).await.unwrap().0
 }
 
@@ -394,6 +416,90 @@ async fn riders_meet_in_free_ride_get_frames_and_survive_a_restart() {
         unreachable!()
     };
     assert_eq!(lobby.players.len(), 2);
+    server.stop.send(true).unwrap();
+    let _ = tokio::time::timeout(Duration::from_secs(10), server.done).await;
+    let _ = std::fs::remove_dir_all(&state);
+}
+
+/// Waits until `/metrics` shows `line` (rooms report every few seconds).
+async fn metric(address: SocketAddr, line: &str) {
+    let deadline = std::time::Instant::now() + Duration::from_secs(15);
+    loop {
+        let (_, body) = http(address, "GET", "/metrics", None, "").await;
+        if body.lines().any(|l| l == line) {
+            return;
+        }
+        assert!(std::time::Instant::now() < deadline, "{line} in {body}");
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+}
+
+#[tokio::test]
+async fn uncounted_addresses_ride_but_stay_out_of_the_public_counts() {
+    let state = PathBuf::from(env!("CARGO_TARGET_TMPDIR"))
+        .join(format!("fury-uncounted-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&state);
+    let server = start_with(&state, &[("FURY_UNCOUNTED_IPS", "198.51.100.0/24")]).await;
+    let address = server.address;
+    let public = |path: &'static str| async move {
+        let (_, body) = http(address, "GET", path, None, "").await;
+        serde_json::from_str::<serde_json::Value>(&body).unwrap()
+    };
+
+    // A tester behind the local proxy, at an uncounted address, rides alone.
+    let (_, body) = http(address, "POST", "/multiplayer/freeride", Some(ORIGIN), "").await;
+    let (code, key) = claim_of(&body);
+    let mut tester = connect_from(address, &code, &key, Some("198.51.100.5")).await;
+    let tester_peer = join(&mut tester, &code, "Tester").await;
+    metric(address, "fury_riders_all 1").await;
+    let health = public("/healthz").await;
+    assert_eq!(
+        (&health["riders"], &health["rooms"], &health["connections"]),
+        (&0.into(), &0.into(), &0.into()),
+        "{health}"
+    );
+    assert_eq!(public("/multiplayer/freeride/riders").await["riders"], 0);
+    assert!(
+        http(address, "GET", "/metrics", None, "")
+            .await
+            .1
+            .contains("fury_uncounted_connections 1\n")
+    );
+
+    // A counted rider joins: the room and that rider count; the tester
+    // still plays with them.
+    let (_, body) = http(address, "POST", "/multiplayer/freeride", Some(ORIGIN), "").await;
+    let (same, key) = claim_of(&body);
+    assert_eq!(same, code);
+    let mut rider = connect(address, &code, &key).await;
+    join(&mut rider, &code, "Rider").await;
+    metric(address, "fury_riders_all 2").await;
+    metric(address, "fury_riders 1").await;
+    let health = public("/healthz").await;
+    assert_eq!(
+        (&health["riders"], &health["rooms"], &health["connections"]),
+        (&1.into(), &1.into(), &1.into()),
+        "{health}"
+    );
+    assert_eq!(public("/multiplayer/freeride/riders").await["riders"], 1);
+    let days = public("/multiplayer/freeride/days").await;
+    assert_eq!(days["days"][0]["busiest"]["riders"], 1, "{days}");
+    for socket in [&mut tester, &mut rider] {
+        send(
+            socket,
+            &Packet::Ready {
+                map: atv_net::PUBLIC_MAP,
+            },
+        )
+        .await;
+    }
+    send(&mut tester, &pose(tester_peer, 1)).await;
+    expect(
+        &mut rider,
+        |p| matches!(p, Packet::Snapshot(s) if s.peer == tester_peer),
+    )
+    .await;
+
     server.stop.send(true).unwrap();
     let _ = tokio::time::timeout(Duration::from_secs(10), server.done).await;
     let _ = std::fs::remove_dir_all(&state);

@@ -1,6 +1,9 @@
 //! Settings from the environment (research/GAME_SERVER.md "Server agnostic").
 
-use std::{net::SocketAddr, path::PathBuf};
+use std::{
+    net::{IpAddr, SocketAddr},
+    path::PathBuf,
+};
 
 /// Page origins that open rooms in production: the site, its old workers.dev
 /// name and the server's own name (the desktop app presents the server's
@@ -56,6 +59,8 @@ pub struct Config {
     pub tls: Tls,
     pub state_dir: PathBuf,
     pub commit: String,
+    /// Clients left out of the public rider and room counts.
+    pub uncounted: Networks,
 }
 
 impl Config {
@@ -116,6 +121,12 @@ impl Config {
                 .map(PathBuf::from)
                 .unwrap_or_else(|| PathBuf::from("./state")),
             commit: commit(get("FURY_COMMIT")),
+            uncounted: match get("FURY_UNCOUNTED_IPS") {
+                Some(list) => Networks::parse(&list).ok_or(
+                    "FURY_UNCOUNTED_IPS must be comma-separated addresses or address/prefix blocks",
+                )?,
+                None => Networks::default(),
+            },
         })
     }
 }
@@ -151,6 +162,61 @@ impl Origins {
                     }),
                 None => allowed == origin,
             })
+    }
+}
+
+/// Addresses and CIDR blocks (IPv4 or IPv6), e.g. the owner's test
+/// machines, whose riders play normally but are left out of the public
+/// counts. IPv4-mapped IPv6 addresses match their IPv4 entries. Debug shows
+/// only how many entries there are, so settings never log an address.
+#[derive(Clone, Default, PartialEq)]
+pub struct Networks(Vec<(IpAddr, u8)>);
+
+impl std::fmt::Debug for Networks {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Networks({} entries)", self.0.len())
+    }
+}
+
+impl Networks {
+    /// Comma-separated `address` or `address/prefix` entries; None if any
+    /// entry is invalid.
+    pub fn parse(list: &str) -> Option<Self> {
+        list.split(',')
+            .map(str::trim)
+            .filter(|entry| !entry.is_empty())
+            .map(|entry| {
+                let (host, prefix) = entry.split_once('/').unwrap_or((entry, ""));
+                let ip = host.parse::<IpAddr>().ok()?.to_canonical();
+                let bits = if ip.is_ipv4() { 32 } else { 128 };
+                let prefix = match prefix {
+                    "" => bits,
+                    p if p.bytes().all(|b| b.is_ascii_digit()) => p.parse().ok()?,
+                    _ => return None,
+                };
+                (prefix <= bits).then_some((ip, prefix))
+            })
+            .collect::<Option<Vec<_>>>()
+            .map(Networks)
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    pub fn contains(&self, ip: IpAddr) -> bool {
+        let value = |ip: IpAddr| match ip {
+            IpAddr::V4(v4) => u128::from(u32::from(v4)),
+            IpAddr::V6(v6) => u128::from(v6),
+        };
+        let ip = ip.to_canonical();
+        self.0.iter().any(|&(net, prefix)| {
+            let bits = if net.is_ipv4() { 32 } else { 128 };
+            let shift = u32::from(bits - prefix);
+            net.is_ipv4() == ip.is_ipv4()
+                && value(net).checked_shr(shift).unwrap_or(0)
+                    == value(ip).checked_shr(shift).unwrap_or(0)
+        })
     }
 }
 
@@ -212,6 +278,46 @@ mod tests {
             Some("http://127.0.0.10:80"),
         ] {
             assert!(!o.allows(bad), "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn uncounted_networks_match_addresses_and_blocks() {
+        assert!(config(&[]).unwrap().uncounted.is_empty());
+        let c = config(&[(
+            "FURY_UNCOUNTED_IPS",
+            "192.0.2.44, 198.51.100.0/24, 2001:db8:aa:bb::/64,",
+        )])
+        .unwrap();
+        let n = &c.uncounted;
+        for ip in [
+            "192.0.2.44",
+            "198.51.100.7",
+            "2001:db8:aa:bb:1:2:3:4",
+            "::ffff:192.0.2.44",
+        ] {
+            assert!(n.contains(ip.parse().unwrap()), "{ip}");
+        }
+        for ip in ["192.0.2.45", "198.51.101.7", "2001:db8:aa:bc::1", "::1"] {
+            assert!(!n.contains(ip.parse().unwrap()), "{ip}");
+        }
+        assert!(
+            !format!("{c:?}").contains("192.0.2"),
+            "settings never log addresses"
+        );
+        let all = Networks::parse("0.0.0.0/0, ::/0").unwrap();
+        assert!(
+            all.contains("203.0.113.1".parse().unwrap())
+                && all.contains("2001:db8::1".parse().unwrap())
+        );
+        for bad in [
+            "192.0.2.1/33",
+            "2001:db8::/129",
+            "example.com",
+            "192.0.2.1/x",
+            "192.0.2.1/-1",
+        ] {
+            assert!(config(&[("FURY_UNCOUNTED_IPS", bad)]).is_err(), "{bad}");
         }
     }
 

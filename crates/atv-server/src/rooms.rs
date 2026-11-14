@@ -12,7 +12,7 @@ use atv_net::RoomCode;
 use bytes::Bytes;
 use tokio::sync::{mpsc, oneshot};
 
-use crate::engine::{ConnId, Entropy, Out, Refused, Room, SavedRoom};
+use crate::engine::{ConnId, Counters, Entropy, Out, Refused, Room, SavedRoom};
 use crate::interest::TICK_MS;
 use crate::outbox::{Outbox, Pushed};
 use crate::stats::Metrics;
@@ -34,6 +34,8 @@ pub enum RoomMsg {
     Admit {
         conn: ConnId,
         key: Option<String>,
+        /// False for a client at an uncounted address.
+        counted: bool,
         outbox: Arc<Outbox>,
         reply: oneshot::Sender<Result<u8, Refused>>,
     },
@@ -76,11 +78,13 @@ impl RoomHandle {
         &self,
         conn: ConnId,
         key: Option<String>,
+        counted: bool,
         outbox: Arc<Outbox>,
     ) -> Option<Result<u8, Refused>> {
         self.ask(|reply| RoomMsg::Admit {
             conn,
             key,
+            counted,
             outbox,
             reply,
         })
@@ -125,7 +129,7 @@ impl Registry {
         rooms.insert(code, handle.clone());
         shared
             .metrics
-            .rooms
+            .rooms_open
             .store(rooms.len() as u64, Ordering::Relaxed);
         shared.metrics.rooms_created.fetch_add(1, Ordering::Relaxed);
         tokio::spawn(run(shared.clone(), room, handle.generation, rx));
@@ -137,7 +141,9 @@ impl Registry {
         if rooms.get(code).is_some_and(|h| h.generation == generation) {
             rooms.remove(code);
         }
-        metrics.rooms.store(rooms.len() as u64, Ordering::Relaxed);
+        metrics
+            .rooms_open
+            .store(rooms.len() as u64, Ordering::Relaxed);
     }
 
     pub fn all(&self) -> Vec<RoomHandle> {
@@ -191,29 +197,51 @@ fn deliver(
     }
 }
 
+/// What a room last added to the rider and room gauges.
+#[derive(Clone, Copy, Default, PartialEq)]
+struct Reported {
+    riders: u64,
+    counted_riders: u64,
+    counted_room: u64,
+}
+
 /// Reports a room's counts to the metrics, and a shared room's to the
-/// daily usage, with its riders now.
-fn report(shared: &Shared, room: &mut Room, riders_reported: &mut u64) {
+/// daily usage, with its riders now. Only riders from counted addresses
+/// reach the public gauges, and a room is public only while one of them is
+/// in it; a room without one adds nothing to the daily usage.
+fn report(shared: &Shared, room: &mut Room, reported: &mut Reported) {
     let counters = room.take_counters();
     shared.metrics.add(&counters);
-    let riders = if room.closed() {
-        0
+    let now = if room.closed() {
+        Reported::default()
     } else {
-        room.riders() as u64
+        let counted_riders = room.counted_riders() as u64;
+        Reported {
+            riders: room.riders() as u64,
+            counted_riders,
+            counted_room: u64::from(counted_riders > 0),
+        }
     };
-    if riders != *riders_reported {
-        shared.metrics.riders.fetch_add(riders, Ordering::Relaxed);
-        shared
-            .metrics
-            .riders
-            .fetch_sub(*riders_reported, Ordering::Relaxed);
-        *riders_reported = riders;
+    if now != *reported {
+        let m = &shared.metrics;
+        for (gauge, new, old) in [
+            (&m.riders_all, now.riders, reported.riders),
+            (&m.riders, now.counted_riders, reported.counted_riders),
+            (&m.rooms, now.counted_room, reported.counted_room),
+        ] {
+            gauge.fetch_add(new, Ordering::Relaxed);
+            gauge.fetch_sub(old, Ordering::Relaxed);
+        }
+        *reported = now;
     }
     if room.public() {
         let mut counts = room.rider_counts();
-        if room.closed() {
+        let counters = if now.counted_room == 0 {
             counts.clear();
-        }
+            Counters::default()
+        } else {
+            counters
+        };
         let code = String::from_utf8_lossy(&room.code()).into_owned();
         shared
             .usage
@@ -237,7 +265,7 @@ async fn run(
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut housekeep_at = now_ms() + HOUSEKEEP_MS;
     let mut report_at = now_ms() + REPORT_MS;
-    let mut riders_reported = 0;
+    let mut reported = Reported::default();
     tracing::info!(event = "room_opened", room = %String::from_utf8_lossy(&code), public = room.public());
     let ended = loop {
         tokio::select! {
@@ -245,9 +273,10 @@ async fn run(
                 let Some(msg) = msg else { break "Room ended" };
                 let now = now_ms();
                 match msg {
-                    RoomMsg::Admit { conn, key, outbox, reply } => {
+                    RoomMsg::Admit { conn, key, counted, outbox, reply } => {
                         let admitted = room.admit(conn, key.as_deref(), now, &mut rng, &mut out);
-                        if admitted.is_ok() {
+                        if let Ok(peer) = admitted {
+                            room.set_counted(peer, counted);
                             outboxes.insert(conn, outbox);
                         }
                         let _ = reply.send(admitted);
@@ -283,7 +312,7 @@ async fn run(
                 }
                 if now >= report_at {
                     report_at = now + REPORT_MS;
-                    report(&shared, &mut room, &mut riders_reported);
+                    report(&shared, &mut room, &mut reported);
                 }
             }
         }
@@ -296,6 +325,6 @@ async fn run(
         room.finish("Room ended", &mut out);
         deliver(&mut room, &mut out, &mut outboxes, &shared.metrics);
     }
-    report(&shared, &mut room, &mut riders_reported);
+    report(&shared, &mut room, &mut reported);
     tracing::info!(event = "room_closed", room = %String::from_utf8_lossy(&code), reason = ended);
 }
