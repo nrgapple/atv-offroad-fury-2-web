@@ -115,6 +115,7 @@ pub struct Front {
     split_ms: [f64; 3],
     /// Full page layouts so far (`?uiDiagnostics=1`).
     page_layouts: u32,
+    layout_trees: [layout::LayoutCache; 2],
     /// Vehicle (0) and garage rider (1) previews.
     previews: [Option<Preview>; 2],
     /// Built previews of pages just left (key, model, animated), newest
@@ -266,6 +267,7 @@ impl Front {
             diagnostics: Vec::new(),
             split_ms: [0.; 3],
             page_layouts: 0,
+            layout_trees: Default::default(),
             previews: [None, None],
             stash: Vec::new(),
             preview_counts: [0; 2],
@@ -1596,15 +1598,16 @@ impl Front {
                 spans: Vec::new(),
             };
             let mut ignored = Vec::new();
-            layout::render(
+            self.layout_trees[0].render(
                 &back,
                 &mut self.fonts,
                 view.width,
                 view.height,
                 &mut cache.back,
                 &mut ignored,
+                &mut Vec::new(),
             );
-            layout::render_scrollable(
+            self.layout_trees[1].render(
                 &content,
                 &mut self.fonts,
                 view.width,
@@ -2134,7 +2137,7 @@ impl Front {
                 "spectrum": self.spectrum.as_ref().map(|b| b.iter().copied().max().unwrap_or(0)),
                 "art": self.jukebox_art.is_some(),
                 "credits": self.credits.as_ref().map(|(c, original)| serde_json::json!({
-                    "entries": c.entries.len(), "original": original,
+                    "entries": c.entries.len(), "original": original, "bounds": c.bounds, "nameIndent": c.name_indent,
                     "first": c.entries.iter().find_map(|e| match e {
                         atv_core::credits::Entry::Heading(h) => Some(h.as_str()),
                         _ => None,

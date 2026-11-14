@@ -1186,8 +1186,36 @@ The worker unit test and make web also pass. These are loading/cache results;
 no new PS2 fidelity or phone performance claim is made.
 
 The menu/cancellation suite passes too: supersession, Start cancellation,
-prepared-course reuse, data saver and a 2 GB device's refusal. Its longest preparation task was 52 ms (one task over 50 ms).
+prepared-course reuse, data saver and a 2 GB device's refusal. Its longest
+preparation task was 52 ms (one task over 50 ms).
 A non-race preload releases its retained expanded archive before the sound-name
 job reads the cached archive, avoiding two course buffers on the page at once.
 Screenshots were captured and inspected locally; gallery/dev-log publication is
 a parent/blogging-agent follow-up after the checked PR deploys.
+
+## Retained menu layout (#511, host, 2026-11-14)
+
+Re-measured the redesigned menus on `58da9aee` using the validated deployed
+artifact, then the local candidate: Chromium, 4x CPU throttle, 390x844 DPR3,
+touch, three fresh contexts, ten Down keys with 100 ms between driver calls
+and one second settling. `test_engine_menu_long_frames.mjs` records long tasks
+and each changed course frame's artwork/layout/upload timings. Host only;
+these are not phone results and the driver is not a precise 10 Hz input clock.
+
+The selection still rebuilt a Taffy tree for the entire page. The frontend now
+retains its background and content trees. Changed text metrics and styles dirty
+the affected nodes; changed structure rebuilds the tree. Color/shadow changes
+repaint using retained geometry. Rasterization, artwork, clipping and hit testing
+keep their existing paths. A unit comparison checks identical display lists,
+hits and scroll spans against fresh layout after paint, text, width and child
+changes. This is an authored renderer optimization, with no new recovered-game
+behavior claim.
+
+| Ten-key burst plus settling, three runs | Before | After |
+| --- | --- | --- |
+| Changed-course layout median per run | 29.2, 27.2, 26.8 ms | 10.5, 12.9, 11.7 ms |
+| Long-task count | 12, 13, 14 | 9, 13, 9 |
+
+Residual: changed-course uploads still have approximately 11–114 ms samples,
+and the fresh-context scenario still includes 467–587 ms tasks. The reduction
+is in layout; this does not close #511 or establish physical-device performance.
