@@ -1,16 +1,20 @@
 //! Validate decoded static collisions and textures in private MX packages.
 //! Takes package paths; source resource bytes are never embedded in the tool.
-use atv_core::{collision, resource::Resource, texture};
+use atv_core::{collision, mesh, resource::Resource, texture};
 
 fn main() -> Result<(), String> {
-    let mut counts = [0usize; 4];
+    let mut counts = [0usize; 5];
     for path in std::env::args().skip(1) {
         let bytes = std::fs::read(&path).map_err(|e| format!("{path}: {e}"))?;
         let archive = Resource::parse(&bytes)?;
         counts[0] += 1;
         for (index, member) in archive.members.iter().enumerate() {
             let name = member.name.to_ascii_lowercase();
-            if !name.ends_with(".pst") && !name.ends_with(".atm") && !name.ends_with(".col") {
+            if !name.ends_with(".pst")
+                && !name.ends_with(".atm")
+                && !name.ends_with(".col")
+                && !name.ends_with(".psg")
+            {
                 continue;
             }
             let data = archive.extract(index)?;
@@ -27,6 +31,9 @@ fn main() -> Result<(), String> {
                     }
                     Ok(())
                 })
+            } else if name.ends_with(".psg") {
+                counts[4] += 1;
+                mesh::decode_psg(&data).map(|_| ())
             } else if data.get(12..16) == Some(&[0, 0, 0, 0]) {
                 counts[3] += 1;
                 collision::decode_mx_col(&data).map(|_| ())
@@ -41,8 +48,8 @@ fn main() -> Result<(), String> {
         return Err("provide private MX package paths".into());
     }
     println!(
-        "Validated {} packages, {} PSTs, {} ATMs, {} static COLs",
-        counts[0], counts[1], counts[2], counts[3]
+        "Validated {} packages, {} PSTs, {} ATMs, {} static COLs, {} PSGs",
+        counts[0], counts[1], counts[2], counts[3], counts[4]
     );
     Ok(())
 }
