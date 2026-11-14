@@ -20,8 +20,14 @@ pub const FRESH_MS: u64 = 90_000;
 #[derive(Default)]
 pub struct Metrics {
     pub connections: AtomicU64,
+    /// Open sockets from uncounted addresses (`FURY_UNCOUNTED_IPS`).
+    pub uncounted_connections: AtomicU64,
+    /// Public gauges: rooms with a counted rider, and counted riders.
     pub rooms: AtomicU64,
     pub riders: AtomicU64,
+    /// Every running room and every rider, uncounted ones included.
+    pub rooms_open: AtomicU64,
+    pub riders_all: AtomicU64,
     pub rooms_created: AtomicU64,
     pub messages: AtomicU64,
     pub bytes_in: AtomicU64,
@@ -72,12 +78,35 @@ impl Metrics {
             "Open room sockets.",
             get(&self.connections),
         );
-        metric("rooms", "gauge", "Live rooms.", get(&self.rooms));
+        metric(
+            "uncounted_connections",
+            "gauge",
+            "Open room sockets from uncounted addresses.",
+            get(&self.uncounted_connections),
+        );
+        metric(
+            "rooms",
+            "gauge",
+            "Live rooms with a counted rider.",
+            get(&self.rooms),
+        );
+        metric(
+            "rooms_open",
+            "gauge",
+            "Running rooms, empty or uncounted ones included.",
+            get(&self.rooms_open),
+        );
         metric(
             "riders",
             "gauge",
-            "Riders in rooms, held slots included.",
+            "Counted riders in rooms, held slots included.",
             get(&self.riders),
+        );
+        metric(
+            "riders_all",
+            "gauge",
+            "Riders in rooms, uncounted ones included.",
+            get(&self.riders_all),
         );
         let counters = [
             ("rooms_created_total", "Rooms opened.", &self.rooms_created),

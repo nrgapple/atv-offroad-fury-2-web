@@ -40,10 +40,26 @@ export function dataPoint(event, { country = '', release = '' } = {}) {
   };
 }
 
-// Automated browsers, local servers and visitors asking not to be tracked send nothing.
+// Per-device opt-out that survives address changes (the owner's test devices):
+// any page opened with ?stats=off stores it, ?stats=on clears it. Returns
+// whether this device is opted out.
+export const OPT_OUT_KEY = 'fury.stats.off';
+export function statsOptOut(scope = globalThis) {
+  try {
+    const store = scope.localStorage;
+    const choice = new URLSearchParams(scope.location?.search ?? '').get('stats');
+    if (choice === 'off') store.setItem(OPT_OUT_KEY, '1');
+    else if (choice === 'on') store.removeItem(OPT_OUT_KEY);
+    return store.getItem(OPT_OUT_KEY) === '1';
+  } catch { return false; }
+}
+
+// Automated browsers, local servers, opted-out devices and visitors asking not
+// to be tracked send nothing.
 export function analyticsAllowed(scope = globalThis) {
   const nav = scope.navigator, host = scope.location?.hostname ?? '';
   if (!nav || nav.webdriver || nav.doNotTrack === '1' || nav.globalPrivacyControl === true) return false;
+  if (statsOptOut(scope)) return false;
   return scope.location?.protocol === 'https:' && !/^(localhost|127\.|\[::1\]|.*\.local$)/.test(host);
 }
 

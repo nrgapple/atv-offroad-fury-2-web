@@ -645,3 +645,31 @@ fn a_saved_room_comes_back_with_its_riders_held() {
     room.housekeep(later + GRACE_MS, &mut out);
     assert_eq!(room.riders(), 0);
 }
+
+#[test]
+fn uncounted_riders_play_but_stay_out_of_the_counts() {
+    let mut f = Fixture::new(true);
+    let (tester, _) = f.join(1, Some(HOST_KEY), "Tester");
+    f.room.set_counted(tester, false);
+    let (rider, _) = f.join(2, None, "Rider");
+    f.room.set_counted(rider, true);
+    assert_eq!((f.room.riders(), f.room.counted_riders()), (2, 1));
+    assert_eq!(f.room.rider_counts()["riders"], 1);
+    // A held uncounted slot stays uncounted, and survives a restart.
+    let mut out = Vec::new();
+    f.room.disconnected(1, 1006, "", f.now, &mut out);
+    assert_eq!((f.room.riders(), f.room.counted_riders()), (2, 1));
+    assert_eq!(f.room.rider_counts()["held"], 0);
+    let saved = f.room.shut_down(f.now, &mut out);
+    assert_eq!(saved.uncounted, vec![tester]);
+    let room = Room::restore(saved, f.now).unwrap();
+    assert_eq!((room.riders(), room.counted_riders()), (2, 1));
+    // Saved rooms from before the field restore with everyone counted.
+    let mut old = serde_json::to_value(f.room.shut_down(f.now, &mut out)).unwrap();
+    old.as_object_mut().unwrap().remove("uncounted");
+    let room = Room::restore(serde_json::from_value(old).unwrap(), f.now).unwrap();
+    assert_eq!(room.counted_riders(), room.riders());
+    // A counted rider taking the slot over is counted.
+    f.room.set_counted(tester, true);
+    assert_eq!(f.room.counted_riders(), f.room.riders());
+}

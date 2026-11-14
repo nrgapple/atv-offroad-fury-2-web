@@ -14,6 +14,9 @@ Built-in zone traffic analytics for `furyremastered.com` and Worker metrics/logs
 - Events contain only the enumerated fields below. Unknown fields and values are dropped by `normalizeEvent` in `web/analytics.js`. The Worker runs the same validation again.
 - Events never contain cookies, client or session identifiers, player names, room codes, invite links, URLs, error messages or free text. The Worker adds a two-letter country from Cloudflare (`request.cf.country`) and the release commit. The IP address keys only the in-memory `EVENT_LIMIT` rate limiter (60 events per minute) and is never written.
 - Nothing is sent from automated browsers (`navigator.webdriver`), from local or non-HTTPS hosts, or when the visitor sends Do Not Track or Global Privacy Control.
+- **Device opt-out.** Opening any page with `?stats=off` (for example `https://furyremastered.com/stats.html?stats=off`) stores `fury.stats.off` in that browser's `localStorage`, and `analyticsAllowed` then sends nothing from that device, whatever its address; `?stats=on` clears it. Blocked storage counts as not opted out. The stats page's "About these numbers" says when the device is opted out.
+- **Excluded addresses.** The Worker secret `ANALYTICS_EXCLUDED_IPS` (comma-separated addresses or CIDR blocks, IPv4 or IPv6, such as an IPv6 `/64`) lists the owner's test machines. `usageEvent` answers their events with `204` and writes nothing. The address is compared in memory only and never stored or logged; invalid entries are ignored, and without the secret nothing is excluded. The game server's `FURY_UNCOUNTED_IPS` (research/GAME_SERVER.md) does the same for live riders and rooms, so the peak-online history the health cron records leaves them out too.
+- Exclusion applies from 2026-11-14 (UTC) on. Events never carried addresses, so earlier events and the daily rollups built from them cannot be filtered retroactively; they still include the owner's testing.
 - Analytics is best effort. Missing bindings, rate limits and write errors return `204` and drop the event, so play is never blocked.
 
 ## Events
@@ -66,7 +69,7 @@ With a valid 32-character hex token, the Worker adds the beacon to HTML response
 
 ## Public stats page
 
-`/stats.html` shows players anonymous totals: riders online and rooms live right now, the most riders online at once, today's daily event, hours ridden, rides, race finishes and visits (today, this week, all time), rides per day for the last 30 days, the most ridden tracks, the single player / multiplayer / Free Ride, Race / Freestyle, ATV / motorcycle and phone / computer splits, World board totals and the countries riders come from. `web/stats.js` renders `GET /api/stats` (`cloudflare/stats.mjs`).
+`/stats.html` shows players anonymous totals. It leads with three big numbers, riders online now, hours ridden and rides (today, this week or all time), with races finished and visits on one line, the rooms live and the most riders online at once (shown from two riders up) under the live count, and today's daily event as one strip. Rides per day for the last 30 days and the top five tracks (all of them behind "Show all") follow; the single player / multiplayer / Free Ride, Race / Freestyle, ATV / motorcycle and phone / computer splits and the countries riders come from are summary rows that open on demand, and World board totals are one row. `web/stats.js` renders `GET /api/stats` (`cloudflare/stats.mjs`).
 
 ### Data flow
 
@@ -95,4 +98,4 @@ Everything after `since` is absent until Analytics Engine data has been rolled u
 
 ### Privacy
 
-The answer contains aggregates only: no rider names (board totals are counts), IP addresses, room codes, identifiers, release or build commits, or details about the multiplayer service beyond riders and rooms. Venues and countries below 10 rides or sessions (`MIN_BUCKET`) are not listed; the country count still includes them. `cloudflare/stats.test.mjs` checks the suppression, the missing-token and missing-database paths and that no forbidden field appears. `tools/test_stats.mjs` (content-free browser group) covers the page with full data, without the token and with the endpoint down.
+The answer contains aggregates only: no rider names (board totals are counts), IP addresses, room codes, identifiers, release or build commits, or details about the multiplayer service beyond riders and rooms. Venues and countries below 10 rides or sessions (`MIN_BUCKET`) are not listed; the country count still includes them. `cloudflare/stats.test.mjs` checks the suppression, the missing-token and missing-database paths and that no forbidden field appears. `tools/test_stats.mjs` (content-free browser group) covers the page with full data at desktop and phone widths (320 and 390 px), the keyboard-operable expanders, without the token, with the endpoint down, without JavaScript and the `?stats=off` opt-out.

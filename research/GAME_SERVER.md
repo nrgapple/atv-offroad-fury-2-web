@@ -65,11 +65,13 @@ only under `deploy/digitalocean/`.
 | `FURY_TLS_CERT`, `FURY_TLS_KEY` | PEM paths for `files` | — |
 | `FURY_STATE_DIR` | rooms saved at shutdown and restored at start; daily usage | `./state` |
 | `FURY_COMMIT` | build commit shown by `/healthz`, `/multiplayer/version` and `--version`; set at build time it is compiled in, set at run time it overrides | `host-only` |
+| `FURY_UNCOUNTED_IPS` | comma-separated client addresses or CIDR blocks (IPv4 or IPv6, e.g. an IPv6 `/64`; matched against the peer, or the `X-Forwarded-For` a loopback proxy sends, as admission does) left out of the public counts: the owner's test machines. Their riders play normally but do not count toward `/healthz` riders, rooms and connections, `/multiplayer/freeride/riders` or the daily `busiest` riders, and a room counts only while it has a counted rider (a room without one adds nothing to the daily usage). `/metrics` keeps the totals (`fury_riders_all`, `fury_rooms_open`, `fury_uncounted_connections`). An invalid entry stops the server at start; settings never log the addresses | — |
 | `RUST_LOG` | log filter (JSON logs to stdout) | `info` |
 
 Routes: every relay route under `/multiplayer/` (create/open a private room,
 Free Ride claim, room WebSocket, rider count, daily usage, version), plus
-`/healthz` (JSON: ok, commit, protocol, uptime, rooms, riders, connections) and
+`/healthz` (JSON: ok, commit, protocol, uptime, rooms, riders, connections;
+counted riders only, see `FURY_UNCOUNTED_IPS`) and
 `/metrics` (Prometheus text, loopback only). CORS and Origin checks replace the
 same-origin rule the relay had behind the site Worker.
 

@@ -1,14 +1,17 @@
 // Public rider stats page: renders GET /api/stats (cloudflare/stats.mjs).
 // Sections without data stay hidden; live counts refresh every minute while visible.
+import { statsOptOut } from './analytics.js';
+
 const ENDPOINT = '/api/stats';
 const REFRESH_MS = 60_000;
+// Tracks listed before "Show all".
+const TOP_TRACKS = 5;
 const LABELS = {
-  modes: ['Single player vs online', { single: 'Single player', multiplayer: 'Multiplayer', freeride: 'Free Ride' }],
-  activities: ['Race vs Freestyle', { race: 'Race', freestyle: 'Freestyle' }],
-  vehicles: ['Quads vs bikes', { atv: 'ATV', motorcycle: 'Motorcycle' }],
-  devices: ['Where people play', { touch: 'Phone & tablet', desktop: 'Computer' }],
+  modes: ['Single player, multiplayer or Free Ride', { single: 'Single player', multiplayer: 'Multiplayer', freeride: 'Free Ride' }],
+  activities: ['Race or Freestyle', { race: 'Race', freestyle: 'Freestyle' }],
+  vehicles: ['ATV or motorcycle', { atv: 'ATV', motorcycle: 'Motorcycle' }],
+  devices: ['Phone or computer', { touch: 'Phone & tablet', desktop: 'Computer' }],
 };
-const PERIOD_NOTES = { today: 'Today so far (UTC).', week: 'The last 7 days.', allTime: '' };
 
 const $ = id => document.getElementById(id);
 const number = new Intl.NumberFormat('en');
@@ -24,40 +27,33 @@ function element(tag, props = {}, children = []) {
   return node;
 }
 
-let stats = null, period = 'allTime', rank = 'hours';
+let stats = null, period = 'allTime', rank = 'hours', allTracks = false;
 
 function renderLive() {
   const { live, peak, daily } = stats;
   show('tile-riders', Boolean(live));
-  show('tile-rooms', Boolean(live));
   if (live) {
     $('live-riders').textContent = count(live.riders);
-    $('live-rooms').textContent = count(live.rooms);
-    $('live-riders-note').textContent = live.riders === 0 ? 'the tracks are open: be the first online' : live.riders === 1 ? 'rider online right now' : 'riding online right now';
-  }
-  show('tile-peak', Boolean(peak?.riders));
-  if (peak?.riders) {
-    $('peak-riders').textContent = count(peak.riders);
-    $('peak-note').textContent = `riders at once, on ${date(peak.day)}${peak.today && peak.day !== stats.updated.slice(0, 10) ? ` · ${count(peak.today)} today` : ''}`;
+    // The record shows once it means something: two riders at once.
+    const notes = [live.rooms > 0 ? plural(live.rooms, 'room') : '', peak?.riders >= 2 ? `record ${count(peak.riders)}` : ''];
+    $('live-note').textContent = notes.filter(Boolean).join(' · ');
   }
   show('tile-daily', Boolean(daily?.course));
   if (daily?.course) {
     $('daily-course').textContent = daily.course;
-    const vehicle = daily.vehicle === 'motorcycle' ? 'Motorcycles' : 'ATVs';
-    $('daily-note').textContent = daily.entries == null ? `${vehicle} only · new course every day`
-      : daily.entries === 0 ? `${vehicle} only · no times yet: set the first` : `${vehicle} only · ${plural(daily.entries, 'rider')} entered`;
+    $('daily-note').textContent = [daily.vehicle === 'motorcycle' ? 'Motorcycles' : 'ATVs', daily.entries ? plural(daily.entries, 'rider') : ''].filter(Boolean).join(' · ');
   }
 }
 
 function renderTotals() {
   const totals = stats.totals?.[period];
-  show('totals-section', Boolean(totals));
+  for (const id of ['period', 'tile-hours', 'tile-rides', 'hero-more']) show(id, Boolean(totals));
+  show('hero', Boolean(totals || stats.live));
   if (!totals) return;
   $('total-hours').textContent = hours(totals.hours);
   $('total-rides').textContent = count(totals.rides);
   $('total-races').textContent = count(totals.racesFinished);
   $('total-sessions').textContent = count(totals.sessions);
-  $('totals-note').textContent = PERIOD_NOTES[period] || (stats.since ? `Since ${date(stats.since, { month: 'long', day: 'numeric', year: 'numeric' })}.` : '');
 }
 
 function renderDays() {
@@ -92,18 +88,23 @@ function renderVenues() {
   show('venues-section', venues.length > 0);
   if (!venues.length) return;
   const max = Math.max(...venues.map(venue => venue[rank])) || 1;
-  $('venues').replaceChildren(...venues.map(venue => {
+  $('venues').replaceChildren(...venues.map((venue, i) => {
     const fill = element('span', { className: 'bar-fill' });
     fill.style.setProperty('--w', `${Math.max(1, (100 * venue[rank]) / max)}%`);
-    return element('li', {}, [
+    return element('li', { hidden: !allTracks && i >= TOP_TRACKS }, [
       element('span', { className: 'bar-name', textContent: venue.name, title: venue.name }),
-      element('span', { className: 'bar-track', ariaHidden: 'true' }, [fill]),
       element('span', { className: 'bar-value', textContent: rank === 'hours' ? `${hours(venue.hours)} h` : plural(venue.rides, 'ride') }),
+      element('span', { className: 'bar-track', ariaHidden: 'true' }, [fill]),
     ]);
   }));
+  const more = $('venues-more');
+  more.hidden = venues.length <= TOP_TRACKS;
+  more.setAttribute('aria-expanded', String(allTracks));
+  more.textContent = allTracks ? `Top ${TOP_TRACKS}` : `Show all ${venues.length}`;
 }
 
 function renderSplits() {
+  const leaders = [];
   const splits = Object.entries(LABELS).flatMap(([field, [title, names]]) => {
     const items = stats[field];
     if (!items) return [];
@@ -113,8 +114,9 @@ function renderSplits() {
     const shown = items.filter(item => value(item) > 0);
     const share = item => Math.round((100 * value(item)) / total);
     const series = item => String(items.indexOf(item) + 1);
-    return [element('div', { className: 'split' }, [
-      element('h3', { textContent: title }),
+    const top = shown.reduce((a, b) => (value(b) > value(a) ? b : a));
+    leaders.push(`${share(top)}% ${names[top.id]}`);
+    return [element('div', { className: 'split', role: 'group', ariaLabel: title }, [
       element('div', { className: 'split-bar', ariaHidden: 'true' }, shown.map(item => {
         const part = element('span');
         part.dataset.series = series(item);
@@ -130,6 +132,8 @@ function renderSplits() {
   });
   show('splits-section', splits.length > 0);
   $('splits').replaceChildren(...splits);
+  // Race or Freestyle and the vehicle say the most in one line.
+  $('splits-teaser').textContent = leaders.slice(1, 3).join(' · ') || leaders[0] || '';
 }
 
 function renderBoards() {
@@ -146,23 +150,22 @@ function renderCountries() {
   show('countries-section', Boolean(countries?.count));
   if (!countries?.count) return;
   $('country-count').textContent = count(countries.count);
-  $('country-count-label').textContent = countries.count === 1 ? 'country' : 'countries';
   let names = null;
   try { names = new Intl.DisplayNames(['en'], { type: 'region' }); } catch { /* Codes only. */ }
   const flag = code => String.fromCodePoint(...[...code].map(letter => 0x1f1a5 + letter.charCodeAt(0)));
+  $('country-flags').textContent = countries.top.slice(0, 3).map(({ code }) => flag(code)).join(' ');
+  const rest = countries.count - countries.top.length;
   $('countries').replaceChildren(...countries.top.map(({ code }) => element('li', {}, [
     element('span', { className: 'flag', ariaHidden: 'true', textContent: flag(code) }),
     element('span', { className: 'name', textContent: names?.of(code) ?? code }),
-  ])));
-  const rest = countries.count - countries.top.length;
-  $('countries-note').textContent = !countries.top.length ? 'Countries appear here once they reach 10 visits.'
-    : rest > 0 ? `…and riders in ${plural(rest, 'more country', 'more countries')}.` : '';
+  ])), ...(rest > 0 ? [element('li', { className: 'flags-rest', textContent: `+${count(rest)} more` })] : []));
 }
 
 function render() {
   for (const step of [renderLive, renderTotals, renderDays, renderVenues, renderSplits, renderBoards, renderCountries]) {
     try { step(); } catch (failure) { console.warn('stats section failed', failure); }
   }
+  show('more', ['splits-section', 'countries-section', 'boards-section'].some(id => !$(id).hidden));
 }
 
 async function load() {
@@ -206,6 +209,9 @@ function choose(attribute, apply) {
 
 choose('period', value => { period = value; if (stats) renderTotals(); });
 choose('rank', value => { rank = value; if (stats) renderVenues(); });
+$('venues-more').addEventListener('click', () => { allTracks = !allTracks; renderVenues(); });
+show('opted-out', statsOptOut());
 
+$('stats-status').textContent = 'Loading…';
 load();
 setInterval(() => { if (!document.hidden) load(); }, REFRESH_MS);
