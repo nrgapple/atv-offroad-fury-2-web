@@ -975,6 +975,11 @@ pub use native::{Mesh, Socket, post, riders_blocking, sleep};
 #[cfg(target_arch = "wasm32")]
 pub use web::{Mesh, Socket, post, riders, sleep};
 
+/// The game server said it runs Quick Play (`"quickplay": true` beside the
+/// rider count; research/QUICK_PLAY.md). The main menu shows its row only
+/// then.
+pub static QUICKPLAY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 /// The riders in Free Ride and the map a claim lands on.
 pub type FreeRide = (u32, Option<u16>);
 
@@ -982,6 +987,10 @@ pub type FreeRide = (u32, Option<u16>);
 /// since the Free Ride hub, research/FREERIDE_HUB.md).
 fn riders_from(text: &str) -> Option<FreeRide> {
     let value: serde_json::Value = serde_json::from_str(text).ok()?;
+    QUICKPLAY.store(
+        value["quickplay"].as_bool() == Some(true),
+        std::sync::atomic::Ordering::Relaxed,
+    );
     let riders = value["riders"]
         .as_u64()
         .and_then(|n| u32::try_from(n).ok())?;
@@ -1000,6 +1009,10 @@ mod tests {
         );
         assert_eq!(super::riders_from(r#"{"riders":-1}"#), None);
         assert_eq!(super::riders_from("nope"), None);
+        super::riders_from(r#"{"riders":2,"quickplay":true}"#);
+        assert!(super::QUICKPLAY.load(std::sync::atomic::Ordering::Relaxed));
+        super::riders_from(r#"{"riders":2}"#);
+        assert!(!super::QUICKPLAY.load(std::sync::atomic::Ordering::Relaxed));
     }
 
     #[test]

@@ -595,6 +595,11 @@ impl RoomRace {
         )
     }
 
+    /// A racer's name as this race knows it (riders and CPUs).
+    pub fn name_of(&self, id: u8) -> Option<String> {
+        self.names.get(&id).cloned()
+    }
+
     /// The race's own results panel waits for the host's.
     pub fn pending(&self) -> bool {
         self.loaded && self.field.phase != race_phase::RESULTS

@@ -17,6 +17,7 @@ pub use hub::{
     Challenge, Hub, HubRow, challenge_end, challenge_op, event_kind, event_phase, hub_op,
 };
 mod names;
+pub mod quickplay;
 pub use compact::{AnimationState, Delta, STEERING_LIMIT, apply_delta, delta};
 pub use names::{dice_name, offensive_name, public_name};
 mod smoothing;
@@ -710,6 +711,12 @@ pub mod signal {
     /// bit); such a server sends motorcycle poses only to builds that said
     /// it. Never forwarded in other riders' flags.
     pub const MOTORCYCLES: u8 = 32;
+    /// Optional second hello flags byte (`data[1]`; the first byte's bits
+    /// are all allocated) bit, reserved for private rooms' room loop
+    /// (research/QUICK_PLAY.md "Private rooms (slice C)"): the build follows
+    /// [`super::Packet::RoomLoop`]. Quick Play rooms need no flag (only new
+    /// builds reach them); no build sends it yet.
+    pub const LOOP: u8 = 1;
     /// Hello flags bit: the build takes [`super::Packet::Chat`] quick chat
     /// (research/QUICK_CHAT.md). The server relays chat only to such builds.
     pub const CHAT: u8 = 64;
@@ -821,10 +828,12 @@ impl Signal {
     pub fn validate(&self) -> Result<()> {
         let valid = valid_peer(self.peer)
             && match self.kind {
-                // Every bit of the flags byte is allocated (DIRECT, CARRIES,
-                // CPU_SOUNDS, BATCHES, FRAMES, MOTORCYCLES, CHAT, HUB), so any
-                // value is valid; a further flag needs a second byte.
-                signal::HELLO => self.data.len() == 1,
+                // Every bit of the first flags byte is allocated (DIRECT,
+                // CARRIES, CPU_SOUNDS, BATCHES, FRAMES, MOTORCYCLES, CHAT,
+                // HUB), so any value is valid; the second byte holds LOOP.
+                signal::HELLO => {
+                    self.data.len() == 1 || (self.data.len() == 2 && self.data[1] <= signal::LOOP)
+                }
                 signal::PRESENT | signal::ARRIVED => {
                     self.data.len() == 1 && self.data[0] & !(signal::DIRECT | signal::BATCHES) == 0
                 }
@@ -933,6 +942,11 @@ pub enum Packet {
     /// A challenge between two Free Ride riders (research/FREERIDE_HUB.md);
     /// only to and from builds that said [`signal::HUB`].
     Challenge(Challenge),
+    /// Game server to every rider in a Quick Play room: the server-run room
+    /// loop (research/QUICK_PLAY.md).
+    RoomLoop(Box<quickplay::RoomLoop>),
+    /// Client to game server: a rider's vote, rematch and ready choices.
+    Vote(quickplay::Vote),
     /// A quick-chat line, emote or horn by id (research/QUICK_CHAT.md);
     /// to and from the server only for builds that said [`signal::CHAT`].
     Chat(chat::Chat),

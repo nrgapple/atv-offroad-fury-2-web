@@ -2238,6 +2238,7 @@ impl Front {
                 "id": id, "x": r.x, "y": r.y, "width": r.w, "height": r.h,
             })).collect::<Vec<_>>(),
         });
+        out["quickplay"] = self.state.quickplay.into();
         out["kinetic"] = kinetic;
         out["online"] = online;
         // Turntable rates and preview images' pixel sizes (they follow the

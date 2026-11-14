@@ -94,8 +94,11 @@ needed. Keep the Mac's one-compiler/one-browser budget for work needing the host
    The downloader checks same-repository run provenance, success, PR head,
    artifact allowlist/checksums and the CI merge commit's exact source tree.
    Local tracked and untracked changes must be committed first. If the merge
-   tree contains newer main changes, merge origin/main and push before retrying
-   with the new run. Downloads stay in ignored `work/pr-builds`; they do not
+   tree contains newer main changes, either merge origin/main and push before
+   retrying with the new run, or (when main keeps moving during runs) test the
+   exact build: `git fetch origin <merge-commit>`, `git worktree add --detach
+   <dir> <merge-commit>` (link `private/` there), and fetch from that checkout.
+   The refusal message names the merge commit. Downloads stay in ignored `work/pr-builds`; they do not
    overwrite `web/dist`, deploy, or transfer any private resources to GitHub.
    Re-fetch after changing source. Keep the local hosted-content link available.
    Multiplayer tests still require their documented local game server and URL.

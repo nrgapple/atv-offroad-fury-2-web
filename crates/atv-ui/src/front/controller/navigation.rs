@@ -176,7 +176,7 @@ impl Frontend {
             match page {
                 "title" | "loading" => return None,
                 "main" => "title",
-                "single" | "multiplayer" | "profile" | "hall-of-fame" => "main",
+                "single" | "multiplayer" | "profile" | "hall-of-fame" | "quickplay" => "main",
                 "tracks" if self.hosting => "create-lobby",
                 "tracks" | "race" if self.split => "split",
                 "splitseats" => "split",

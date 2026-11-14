@@ -14,6 +14,7 @@
 pub mod links;
 pub mod remote;
 pub use atv_net::hub;
+pub use atv_net::quickplay;
 pub use atv_net::{RiderState, Snapshot, chat, dice_name};
 pub use links::Command as LinkCommand;
 pub mod spawn;
@@ -142,6 +143,9 @@ pub struct Serves {
     /// `motorcycles`: takes [`atv_net::signal::MOTORCYCLES`] and sends
     /// motorcycle poses only to builds that say it.
     pub motorcycles: bool,
+    /// `quickplay`: a server-run Quick Play room (research/QUICK_PLAY.md):
+    /// the client follows its `RoomLoop` and sends `Vote`s.
+    pub quickplay: bool,
     /// `chat`: relays quick chat (research/QUICK_CHAT.md) to builds that
     /// say [`atv_net::signal::CHAT`].
     pub chat: bool,
@@ -156,6 +160,7 @@ impl Serves {
             frames: claim["frames"].as_bool() == Some(true),
             hub: claim["hub"].as_bool() == Some(true),
             motorcycles: claim["motorcycles"].as_bool() == Some(true),
+            quickplay: claim["quickplay"].as_bool() == Some(true),
             chat: claim["chat"].as_bool() == Some(true),
         }
     }
@@ -222,6 +227,8 @@ pub struct Session {
     /// Free Ride hub messages not yet taken (research/FREERIDE_HUB.md;
     /// only sent to a build that said [`atv_net::signal::HUB`]; bounded).
     pub hub: Vec<HubMessage>,
+    /// The server-run room loop (`Packet::RoomLoop`) and when it came.
+    pub room_loop: Option<(atv_net::quickplay::RoomLoop, u64)>,
     /// The room-race host's CPU riders (`Packet::Cpus`): the race serial,
     /// each CPU's pose history by index and its latest progress.
     pub cpu_serial: u32,
@@ -705,6 +712,7 @@ impl Session {
                     self.hub.push(HubMessage::Challenge(message));
                 }
             }
+            Packet::RoomLoop(state) => self.room_loop = Some((*state, now_ms)),
             _ => return Err("unexpected relay packet".into()),
         }
         Ok(())
@@ -1455,6 +1463,11 @@ impl Session {
         })
     }
 
+    /// This rider's room-loop choices as a packet.
+    pub fn vote_packet(&self, vote: atv_net::quickplay::Vote) -> Result<Vec<u8>> {
+        encode(&Packet::Vote(vote))
+    }
+
     /// The host's mini-game state as a packet.
     pub fn game_packet(&self, state: &atv_net::GameState) -> Result<Vec<u8>> {
         encode(&Packet::Game(Box::new(state.clone())))
@@ -1688,6 +1701,7 @@ mod tests {
         frames: false,
         hub: false,
         motorcycles: false,
+        quickplay: false,
         chat: false,
     };
 
@@ -2341,10 +2355,7 @@ mod tests {
                 Serves {
                     links: true,
                     batches: true,
-                    frames: false,
-                    hub: false,
-                    motorcycles: false,
-                    chat: false,
+                    ..Default::default()
                 },
                 false,
             )
