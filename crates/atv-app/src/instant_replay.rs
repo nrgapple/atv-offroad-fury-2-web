@@ -1,9 +1,19 @@
 //! Instant replay (#542): a ring buffer of the drawn moments. Presentation
 //! only: every other fixed step (30 Hz) the poses the scene just drew
 //! (the player, race CPUs, split-screen players and game CPUs, the Lap
-//! Attack ghost) and the ride's camera are copied into storage allocated
-//! once, and playback blends neighbouring samples. Nothing feeds back into
-//! the simulation, so a replay cannot change the ride it shows.
+//! Attack ghost) and the ride's camera are copied into reused storage, and
+//! playback blends neighbouring samples. Nothing feeds back into the
+//! simulation, so a replay cannot change the ride it shows.
+//!
+//! A race keeps the whole of it instead (full-race replay, a port
+//! enhancement; no exact-build replay is known): samples from the first
+//! drawn frame at 15 Hz in a fixed byte budget. When the budget fills,
+//! every other sample is dropped and sampling halves, so any race length
+//! fits the same memory. Recording stops a few seconds after race over.
+//!
+//! Storage: each rider's two world matrices exactly (f32 bits), its node
+//! matrices quantised to 16 bits (axes in 1/8192, translations in 1/128 of
+//! a unit within 256 of the first node of their part), 24 bytes a node.
 use atv_core::math::Det;
 use atv_game::ride::Pose;
 use atv_render::Camera;
@@ -14,6 +24,14 @@ pub const SAMPLE_STEPS: u64 = 2;
 pub const CAPACITY: usize = 30 * 60 / SAMPLE_STEPS as usize;
 /// Riders a sample keeps (the player and up to seven others).
 pub const MAX_RIDERS: usize = 8;
+/// A whole race's sampling before any thinning (15 Hz).
+pub const WHOLE_STEPS: u64 = 4;
+/// A whole race's matrix storage (bytes): its samples are thinned to fit.
+pub const WHOLE_BUDGET: usize = 24 << 20;
+/// A whole race's most samples (ten minutes at 15 Hz).
+pub const WHOLE_SAMPLES: usize = 10 * 60 * 15;
+/// A whole race keeps recording this long after race over (steps).
+pub const WHOLE_TAIL: u64 = 3 * 60;
 
 /// Which drawn rider a recorded pose is.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -74,20 +92,108 @@ fn blend(a: &Affine, b: &Affine, t: f32) -> [f32; 16] {
     out
 }
 
-/// One recorded rider: its kind and its node counts (its matrices follow
-/// in the sample's slab: quad world, rider world, quad nodes, rider nodes).
+/// One storage cell: a quantised node matrix, half a world matrix, or a
+/// rider's two part offsets.
+type Cell = [i16; 12];
+/// Cells before a rider's nodes: two world matrices and the offsets.
+const HEADER: usize = 5;
+const AXIS: f32 = 8192.;
+const PLACE: f32 = 128.;
+
+fn quantise(v: f32, scale: f32) -> i16 {
+    (v * scale)
+        .round()
+        .clamp(f32::from(i16::MIN), f32::from(i16::MAX)) as i16
+}
+
+/// Six f32s exactly, as twelve 16-bit halves.
+fn put_exact(cell: &mut Cell, values: &[f32]) {
+    for (i, v) in values.iter().enumerate() {
+        let bits = v.to_bits();
+        cell[2 * i] = (bits >> 16) as u16 as i16;
+        cell[2 * i + 1] = bits as u16 as i16;
+    }
+}
+
+fn get_exact(cell: &Cell, out: &mut [f32]) {
+    for (i, v) in out.iter_mut().enumerate() {
+        let bits = (u32::from(cell[2 * i] as u16) << 16) | u32::from(cell[2 * i + 1] as u16);
+        *v = f32::from_bits(bits);
+    }
+}
+
+/// Writes one rider's matrices into its cells.
+fn encode(cells: &mut [Cell], pose: &Pose) {
+    let mut world = [0.; 12];
+    for (k, m) in [&pose.quad_world, &pose.rider_world]
+        .into_iter()
+        .enumerate()
+    {
+        world = pack(m);
+        put_exact(&mut cells[2 * k], &world[..6]);
+        put_exact(&mut cells[2 * k + 1], &world[6..]);
+    }
+    let origin = |nodes: &[[f32; 16]]| nodes.first().map_or([0.; 3], |m| [m[12], m[13], m[14]]);
+    let (quad, rider) = (origin(&pose.quad_nodes), origin(&pose.rider_nodes));
+    world[..3].copy_from_slice(&quad);
+    world[3..6].copy_from_slice(&rider);
+    put_exact(&mut cells[4], &world[..6]);
+    let parts = pose
+        .quad_nodes
+        .iter()
+        .map(|m| (m, quad))
+        .chain(pose.rider_nodes.iter().map(|m| (m, rider)));
+    for (cell, (m, offset)) in cells[HEADER..].iter_mut().zip(parts) {
+        let a = pack(m);
+        for i in 0..9 {
+            cell[i] = quantise(a[i], AXIS);
+        }
+        for i in 0..3 {
+            cell[9 + i] = quantise(a[9 + i] - offset[i], PLACE);
+        }
+    }
+}
+
+/// Matrix `i` of a rider's cells (0 quad world, 1 rider world, then the
+/// quad's nodes and the rider's).
+fn decode(cells: &[Cell], quad: usize, i: usize) -> Affine {
+    let mut a = [0.; 12];
+    if i < 2 {
+        get_exact(&cells[2 * i], &mut a[..6]);
+        get_exact(&cells[2 * i + 1], &mut a[6..]);
+        return a;
+    }
+    let mut offsets = [0.; 6];
+    get_exact(&cells[4], &mut offsets);
+    let offset = if i - 2 < quad {
+        &offsets[..3]
+    } else {
+        &offsets[3..]
+    };
+    let cell = &cells[HEADER + i - 2];
+    for k in 0..9 {
+        a[k] = f32::from(cell[k]) / AXIS;
+    }
+    for k in 0..3 {
+        a[9 + k] = f32::from(cell[9 + k]) / PLACE + offset[k];
+    }
+    a
+}
+
+/// One recorded rider: its kind and its node counts (its cells follow in
+/// the sample's row: the header, quad nodes, rider nodes).
 #[derive(Clone, Copy, Debug, Default)]
 struct Slot {
     kind: Kind,
     quad: u16,
     rider: u16,
-    /// First matrix in the sample's slab.
+    /// First cell in the sample's row.
     at: u32,
 }
 
 impl Slot {
     fn width(&self) -> usize {
-        2 + usize::from(self.quad) + usize::from(self.rider)
+        HEADER + usize::from(self.quad) + usize::from(self.rider)
     }
 }
 
@@ -98,7 +204,7 @@ struct Sample {
     focal: f32,
     riders: [Slot; MAX_RIDERS],
     count: u8,
-    /// Matrices used of the slab.
+    /// Cells used of the row.
     used: u32,
 }
 
@@ -114,20 +220,20 @@ pub struct Moment {
     pub focal: f32,
 }
 
-/// Fills `pose` from a slot's matrices, blended toward `next` (the same
-/// rider in the following sample) by `t`.
-fn fill(pose: &mut Pose, slab: &[Affine], slot: &Slot, next: Option<(&[Affine], &Slot)>, t: f32) {
-    let own = &slab[slot.at as usize..][..slot.width()];
+/// Fills `pose` from a slot's cells, blended toward `next` (the same rider
+/// in the following sample) by `t`.
+fn fill(pose: &mut Pose, row: &[Cell], slot: &Slot, next: Option<(&[Cell], &Slot)>, t: f32) {
+    let own = &row[slot.at as usize..][..slot.width()];
     let other = next
         .filter(|(_, n)| n.quad == slot.quad && n.rider == slot.rider)
         .map(|(s, n)| &s[n.at as usize..][..n.width()]);
+    let quad = usize::from(slot.quad);
     let matrix = |i: usize| match other {
-        Some(other) => blend(&own[i], &other[i], t),
-        None => unpack(&own[i]),
+        Some(other) => blend(&decode(own, quad, i), &decode(other, quad, i), t),
+        None => unpack(&decode(own, quad, i)),
     };
     pose.quad_world = matrix(0);
     pose.rider_world = matrix(1);
-    let quad = usize::from(slot.quad);
     pose.quad_nodes.resize(quad, [0.; 16]);
     for (i, node) in pose.quad_nodes.iter_mut().enumerate() {
         *node = matrix(2 + i);
@@ -138,12 +244,24 @@ fn fill(pose: &mut Pose, slab: &[Affine], slot: &Slot, next: Option<(&[Affine], 
     }
 }
 
-/// The recorded stretch: a ring of samples over one matrix slab.
+/// Grows `v` to at least `len` (doubling, at most `limit`), allocating
+/// only when it must.
+fn reserve<T: Clone>(v: &mut Vec<T>, len: usize, limit: usize, fill: T) {
+    if v.len() >= len {
+        return;
+    }
+    let want = (v.len() * 2).max(len).max(64).min(limit.max(len));
+    v.reserve_exact(want - v.len());
+    v.resize(want, fill);
+}
+
+/// The recorded stretch: a ring (or a whole race) of samples over rows of
+/// one cell slab.
 #[derive(Default)]
 pub struct Recorder {
     samples: Vec<Sample>,
-    slab: Vec<Affine>,
-    /// Matrices each sample may hold.
+    slab: Vec<Cell>,
+    /// Cells each sample's row holds.
     stride: usize,
     /// The oldest sample's index and the samples held.
     head: usize,
@@ -151,6 +269,12 @@ pub struct Recorder {
     /// The latest sample is still taking riders (this frame's).
     open: bool,
     last_step: Option<u64>,
+    /// Whole-ride mode (a race): kept from the start, thinned when full.
+    whole: bool,
+    /// Steps between samples now (whole mode doubles it per thinning).
+    interval: u64,
+    /// Race over's step (whole mode stops `WHOLE_TAIL` after it).
+    over: Option<u64>,
 }
 
 impl Recorder {
@@ -160,6 +284,62 @@ impl Recorder {
         self.len = 0;
         self.open = false;
         self.last_step = None;
+        self.interval = 0;
+        self.over = None;
+    }
+
+    /// Whole-ride mode (a race) or the 30-second ring; a change starts a
+    /// new recording in new storage.
+    pub fn set_whole(&mut self, whole: bool) {
+        if whole != self.whole {
+            *self = Self {
+                whole,
+                ..Self::default()
+            };
+        }
+    }
+
+    pub fn is_whole(&self) -> bool {
+        self.whole
+    }
+
+    /// Race over at `step` (whole mode records `WHOLE_TAIL` more).
+    pub fn race_over(&mut self, step: u64) {
+        self.over.get_or_insert(step);
+    }
+
+    /// Samples the storage may hold at `stride` cells a sample.
+    fn capacity_at(&self, stride: usize) -> usize {
+        if self.whole {
+            let fit = WHOLE_BUDGET / (stride.max(1) * std::mem::size_of::<Cell>());
+            fit.clamp(2, WHOLE_SAMPLES)
+        } else {
+            CAPACITY
+        }
+    }
+
+    fn capacity(&self) -> usize {
+        self.capacity_at(self.stride)
+    }
+
+    /// Steps between samples now.
+    pub fn interval(&self) -> u64 {
+        match self.interval {
+            0 if self.whole => WHOLE_STEPS,
+            0 => SAMPLE_STEPS,
+            n => n,
+        }
+    }
+
+    /// Bytes the recording's storage holds (samples and matrices).
+    pub fn bytes(&self) -> usize {
+        self.samples.capacity() * std::mem::size_of::<Sample>()
+            + self.slab.capacity() * std::mem::size_of::<Cell>()
+    }
+
+    /// Cells each sample's row holds.
+    pub fn stride(&self) -> usize {
+        self.stride
     }
 
     pub fn len(&self) -> usize {
@@ -176,11 +356,16 @@ impl Recorder {
     }
 
     fn index(&self, i: usize) -> usize {
-        (self.head + i) % self.samples.len()
+        (self.head + i) % self.capacity()
     }
 
     fn get(&self, i: usize) -> &Sample {
         &self.samples[self.index(i)]
+    }
+
+    fn row(&self, i: usize) -> &[Cell] {
+        let index = self.index(i);
+        &self.slab[index * self.stride..][..self.samples[index].used as usize]
     }
 
     /// Starts a sample at `step` with the ride's camera when a sample is
@@ -191,21 +376,33 @@ impl Recorder {
         if let Some(last) = self.last_step {
             if step < last {
                 self.clear();
-            } else if step < last + SAMPLE_STEPS {
+            } else if step < last + self.interval() {
                 return false;
             }
         }
-        if self.samples.is_empty() {
-            self.samples = vec![Sample::default(); CAPACITY];
+        if self.over.is_some_and(|over| step > over + WHOLE_TAIL) {
+            return false;
         }
-        let at = if self.len < CAPACITY {
+        while self.whole && self.len >= self.capacity() {
+            self.thin(false);
+        }
+        let capacity = self.capacity();
+        let at = if self.len < capacity {
             self.len += 1;
             self.index(self.len - 1)
         } else {
             let at = self.head;
-            self.head = (self.head + 1) % CAPACITY;
+            self.head = (self.head + 1) % capacity;
             at
         };
+        reserve(&mut self.samples, at + 1, capacity, Sample::default());
+        let stride = self.stride;
+        reserve(
+            &mut self.slab,
+            (at + 1) * stride,
+            capacity * stride,
+            [0; 12],
+        );
         self.samples[at] = Sample {
             step,
             camera,
@@ -222,9 +419,8 @@ impl Recorder {
         if !self.open || self.len == 0 {
             return;
         }
-        let at = self.index(self.len - 1);
-        let sample = self.samples[at];
-        let width = 2 + pose.quad_nodes.len() + pose.rider_nodes.len();
+        let sample = self.samples[self.index(self.len - 1)];
+        let width = HEADER + pose.quad_nodes.len() + pose.rider_nodes.len();
         if usize::from(sample.count) >= MAX_RIDERS
             || pose.quad_nodes.len() > usize::from(u16::MAX)
             || pose.rider_nodes.len() > usize::from(u16::MAX)
@@ -233,20 +429,14 @@ impl Recorder {
         }
         if sample.used as usize + width > self.stride {
             // The first riders, or more of them than before (a race's CPUs,
-            // a ghost's first lap): grow, with room for one more like it.
-            self.grow(sample.used as usize + 2 * width);
+            // a ghost's first lap): widen the rows. A ring keeps room for
+            // one more like it; a whole race widens exactly.
+            let extra = if self.whole { width } else { 2 * width };
+            self.grow(sample.used as usize + extra);
         }
         let at = self.index(self.len - 1);
         let base = at * self.stride + sample.used as usize;
-        let slab = &mut self.slab[base..base + width];
-        slab[0] = pack(&pose.quad_world);
-        slab[1] = pack(&pose.rider_world);
-        for (dst, src) in slab[2..]
-            .iter_mut()
-            .zip(pose.quad_nodes.iter().chain(&pose.rider_nodes))
-        {
-            *dst = pack(src);
-        }
+        encode(&mut self.slab[base..base + width], pose);
         let s = &mut self.samples[at];
         s.riders[usize::from(s.count)] = Slot {
             kind,
@@ -258,9 +448,39 @@ impl Recorder {
         s.used += width as u32;
     }
 
-    /// Widens every sample to `stride` matrices, keeping what they hold.
+    /// Whole mode, full: keeps every other sample (the first among them,
+    /// and with `keep_last` the open one) and halves the sampling, in place.
+    fn thin(&mut self, keep_last: bool) {
+        let stride = self.stride;
+        let last = if keep_last { self.len - 1 } else { usize::MAX };
+        let mut kept = 0;
+        for i in (0..self.len).filter(|i| i % 2 == 0 || *i == last) {
+            if i != kept {
+                self.samples[kept] = self.samples[i];
+                self.slab
+                    .copy_within(i * stride..(i + 1) * stride, kept * stride);
+            }
+            kept += 1;
+        }
+        self.len = kept;
+        self.interval = self.interval() * 2;
+    }
+
+    /// Widens every row to `stride` cells, keeping what they hold (a whole
+    /// race thins first if the wider rows would pass its budget).
     fn grow(&mut self, stride: usize) {
-        let mut slab = vec![[0.; 12]; CAPACITY * stride];
+        while self.whole && self.len > self.capacity_at(stride) {
+            self.thin(true);
+        }
+        let capacity = self.capacity_at(stride);
+        // A full ring uses every row; otherwise rows run 0..len.
+        let rows = if self.len >= capacity {
+            capacity
+        } else {
+            self.len
+        };
+        let mut slab = Vec::new();
+        reserve(&mut slab, rows * stride, capacity * stride, [0; 12]);
         for i in 0..self.len {
             let at = self.index(i);
             let used = self.samples[at].used as usize;
@@ -277,12 +497,11 @@ impl Recorder {
 
     /// The player's origin at sample `i` (camera placement).
     fn origin(&self, i: usize) -> Option<[f32; 3]> {
-        let index = self.index(i);
-        let sample = &self.samples[index];
+        let sample = self.get(i);
         let slot = sample.riders[..usize::from(sample.count)]
             .iter()
             .find(|s| s.kind == Kind::Player)?;
-        let m = &self.slab[index * self.stride + slot.at as usize];
+        let m = decode(&self.row(i)[slot.at as usize..], 0, 0);
         Some([m[9], m[10], m[11]])
     }
 
@@ -303,7 +522,7 @@ impl Recorder {
         if self.len == 0 {
             return None;
         }
-        // Binary search over the ring's increasing steps.
+        // Binary search over the samples' increasing steps.
         let (mut lo, mut hi) = (0, self.len - 1);
         if step <= self.get(0).step as f64 {
             return Some((0, 0.));
@@ -328,16 +547,9 @@ impl Recorder {
         let Some((i, t)) = self.locate(step) else {
             return false;
         };
-        let index = self.index(i);
-        let sample = &self.samples[index];
-        let slab = &self.slab[index * self.stride..][..sample.used as usize];
-        let next = (i + 1 < self.len).then(|| {
-            let n = self.index(i + 1);
-            (
-                &self.slab[n * self.stride..][..self.samples[n].used as usize],
-                &self.samples[n],
-            )
-        });
+        let sample = self.get(i);
+        let row = self.row(i);
+        let next = (i + 1 < self.len).then(|| (self.row(i + 1), self.get(i + 1)));
         let mut cpus = 0;
         let mut peers = 0;
         let mut ghost = false;
@@ -349,12 +561,12 @@ impl Recorder {
                     .map(|o| (s, o))
             });
             match slot.kind {
-                Kind::Player => fill(&mut out.player, slab, slot, other, t),
+                Kind::Player => fill(&mut out.player, row, slot, other, t),
                 Kind::Cpu(_) => {
                     if out.cpus.len() <= cpus {
                         out.cpus.push(Pose::default());
                     }
-                    fill(&mut out.cpus[cpus], slab, slot, other, t);
+                    fill(&mut out.cpus[cpus], row, slot, other, t);
                     cpus += 1;
                 }
                 Kind::Peer(id) => {
@@ -362,13 +574,13 @@ impl Recorder {
                         out.peers.push((id, Pose::default()));
                     }
                     out.peers[peers].0 = id;
-                    fill(&mut out.peers[peers].1, slab, slot, other, t);
+                    fill(&mut out.peers[peers].1, row, slot, other, t);
                     peers += 1;
                 }
                 Kind::Ghost => {
                     fill(
                         out.ghost.get_or_insert_with(Pose::default),
-                        slab,
+                        row,
                         slot,
                         other,
                         t,
@@ -527,6 +739,106 @@ mod tests {
         assert_eq!(r.slab.as_ptr(), slab, "no reallocation once sized");
         let (first, last) = r.span().unwrap();
         assert_eq!(last - first, (CAPACITY as u64 - 1) * SAMPLE_STEPS);
+    }
+
+    #[test]
+    fn a_whole_race_keeps_its_start_and_thins_into_the_same_storage() {
+        let mut r = Recorder::default();
+        r.set_whole(true);
+        let mut step = 0;
+        while r.len() < WHOLE_SAMPLES {
+            record(&mut r, step, step as f32);
+            step += 1;
+        }
+        assert_eq!(r.capacity(), WHOLE_SAMPLES);
+        assert_eq!(
+            r.span(),
+            Some((0, (WHOLE_SAMPLES as u64 - 1) * WHOLE_STEPS))
+        );
+        let (slab, bytes) = (r.slab.as_ptr(), r.bytes());
+        // Past capacity: every other sample goes, sampling halves, the
+        // start stays and nothing is reallocated.
+        for _ in 0..WHOLE_SAMPLES as u64 * WHOLE_STEPS * 3 {
+            record(&mut r, step, step as f32);
+            step += 1;
+        }
+        assert_eq!(r.slab.as_ptr(), slab);
+        assert_eq!(r.bytes(), bytes);
+        assert!(r.interval() >= WHOLE_STEPS * 4);
+        let (first, last) = r.span().unwrap();
+        assert_eq!(first, 0);
+        assert!(step - 1 - last < r.interval());
+        let mut m = Moment::default();
+        let probe = (last / 2) as f64 + 1.;
+        r.sample(probe, &mut m);
+        assert!((m.player.quad_world[12] - probe as f32).abs() < 1e-2);
+        // Evenly spaced after thinning.
+        let steps: Vec<u64> = (0..r.len()).map(|i| r.get(i).step).collect();
+        assert!(steps.windows(2).all(|w| w[1] - w[0] <= r.interval()));
+    }
+
+    #[test]
+    fn a_whole_race_of_wide_riders_stays_in_its_budget() {
+        let mut r = Recorder::default();
+        r.set_whole(true);
+        let wide = |x: f32| pose(x, 40);
+        for i in 0..20_000u64 {
+            if r.begin(i * WHOLE_STEPS, Camera::default(), 2.) {
+                for k in 0..6 {
+                    r.add(Kind::Cpu(k), &wide(i as f32));
+                }
+                // A ghost joins halfway: the rows widen, thinning to fit.
+                if i >= 10_000 {
+                    r.add(Kind::Ghost, &wide(0.));
+                }
+                r.end();
+            }
+        }
+        let samples = WHOLE_SAMPLES * std::mem::size_of::<Sample>();
+        assert!(r.bytes() <= WHOLE_BUDGET + samples, "{} bytes", r.bytes());
+        assert_eq!(r.span().unwrap().0, 0);
+        let mut m = Moment::default();
+        r.sample(r.span().unwrap().1 as f64, &mut m);
+        assert_eq!(m.cpus.len(), 6);
+        assert!(m.ghost.is_some());
+    }
+
+    #[test]
+    fn storage_keeps_worlds_exactly_and_nodes_within_a_hundredth() {
+        let mut p = pose(1234.567, 2);
+        p.quad_world[13] = -87.654_32;
+        p.quad_nodes[1] = [
+            0.6, 0.8, 0., 0., -0.8, 0.6, 0., 0., 0., 0., 1., 0., 1434.25, 20.5, -9.75, 1.,
+        ];
+        p.rider_nodes[0][12] = 0.3;
+        let mut cells = vec![[0; 12]; HEADER + 4];
+        encode(&mut cells, &p);
+        assert_eq!(unpack(&decode(&cells, 2, 0)), p.quad_world);
+        let node = unpack(&decode(&cells, 2, 3));
+        for (a, b) in node.iter().zip(&p.quad_nodes[1]) {
+            assert!((a - b).abs() < 5e-3, "{node:?}");
+        }
+        assert!((decode(&cells, 2, 4)[9] - 0.3).abs() < 5e-3);
+    }
+
+    #[test]
+    fn a_whole_race_stops_a_little_after_race_over_and_a_restart_records_again() {
+        let mut r = Recorder::default();
+        r.set_whole(true);
+        for step in (0..400).step_by(4) {
+            record(&mut r, step, 0.);
+        }
+        r.race_over(400);
+        for step in (400..2000).step_by(4) {
+            r.race_over(step);
+            record(&mut r, step, 0.);
+        }
+        assert_eq!(r.span(), Some((0, 400 + WHOLE_TAIL)));
+        assert!(record(&mut r, 0, 0.), "a restart records again");
+        assert!(record(&mut r, 2000, 0.));
+        // Leaving the race for a free ride: the 30-second ring.
+        r.set_whole(false);
+        assert!(r.is_empty() && r.interval() == SAMPLE_STEPS);
     }
 
     #[test]

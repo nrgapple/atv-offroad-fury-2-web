@@ -739,7 +739,7 @@ impl Overlay {
                 self.minimap.settings.save(&mut self.settings);
                 None
             } else {
-                if (results::CONTINUE..=results::FAME_SELECT).contains(&p.button) {
+                if (results::CONTINUE..=results::REPLAY).contains(&p.button) {
                     self.results.focus_visible = false;
                     let command = self.results.act(p.button);
                     return Some(command.and_then(|c| self.command_action(c)));

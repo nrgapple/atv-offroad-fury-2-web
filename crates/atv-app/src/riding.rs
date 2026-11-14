@@ -991,6 +991,15 @@ impl Riding {
             atv_game::ride::view::fov_focal(focal_length * self.rush.focal_scale(), fov_percent);
         // Instant replay (#542): player 1's drawn riders, every other step
         // (the host adds split players and game CPUs, then ends it).
+        // A race keeps the whole of it (full-race replay), to a little
+        // after race over (every local human finished).
+        if drawing && !self.online {
+            let race = self.ride.race().map(|r| &r.race);
+            self.recorder.set_whole(race.is_some());
+            if race.is_some_and(|r| r.player_finished() && !r.waiting) {
+                self.recorder.race_over(self.ride.steps());
+            }
+        }
         if drawing && !self.online && self.recorder.begin(self.ride.steps(), camera, focal) {
             use crate::instant_replay::Kind;
             self.recorder.add(Kind::Player, &pose);
