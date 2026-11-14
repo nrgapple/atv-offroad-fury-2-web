@@ -4,7 +4,8 @@
 //   2. Choosing it claims a shared-room slot and rides Arlington (env08).
 //   3. A JavaScript player taps Arlington Free Ride; both see each other.
 //      A shared room's invite link (FREERDnn) opens Free Ride too.
-//   4. Pause → Leave Game leaves the room; the JavaScript player sees it go.
+//   4. Pause → Leave Game leaves the room for the Multiplayer page; the
+//      JavaScript player sees it go.
 //   PLAYWRIGHT_MODULE=... ATV_TEST_URL=http://127.0.0.1:4187 node tools/test_engine_freeride.mjs
 // ATV_MP_SCREENSHOT=out.png saves the menu and both rides.
 import assert from 'node:assert/strict';
@@ -112,7 +113,8 @@ try {
   const quit = (await read(rust)).toolbar.menu.hits.find(h => h.action === 'leave');
   assert.ok(quit, 'Leave Game');
   await rust.mouse.click(centre(quit).x, centre(quit).y);
-  await onPage(rust, 'main');
+  // Leaving a room returns to the Multiplayer page (MENU_FLOW.md).
+  await onPage(rust, 'multiplayer');
   await js.waitForFunction(
     peer => !(window.atvTerrainStatus.multiplayer?.state?.lobby?.players ?? []).some(p => p.id === peer),
     rustPeer,

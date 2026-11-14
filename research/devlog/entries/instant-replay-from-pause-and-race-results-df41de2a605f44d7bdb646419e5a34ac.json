@@ -1,0 +1,19 @@
+{
+  "id": "instant-replay-from-pause-and-race-results-df41de2a605f44d7bdb646419e5a34ac",
+  "timestamp": "2026-11-12T21:05:33.451289+00:00",
+  "recorded_at": "2026-11-13T00:21:51.603132+00:00",
+  "kind": "build",
+  "title": "Instant replay from Pause and race results",
+  "summary": "Solo and split-screen riders can replay the last 30 seconds from Pause or from the results screen. Replay has play and pause, slow motion, skips, a draggable scrub bar and three cameras: Chase, Trackside and Orbit. Photo mode opens from a paused replay.",
+  "details": [
+    "Replay plays the last 30 seconds and opens 15 s before the pause. Speeds: 1×, ½× and ¼×. Skips are 2 s. Keys, pad and touch controls are all wired up.",
+    "Chase is the ride's own camera as it was. Trackside sits beside the line the rider takes. Orbit circles the rider slowly.",
+    "Back returns to Pause or to the results. The ride resumes exactly where it was.",
+    "It works by replaying stored draw positions, not by re-running the simulation. So the race itself cannot change, and every rider plays back without re-running the CPUs.",
+    "Cost: about 1.3 MB for 30 s solo and about 8 MB in a six-rider race."
+  ],
+  "limitation": "No sound during replay. Wheel dust, crash debris, blood and other particles stay as they were at the pause. Online rooms have no replay. There is no full-race replay and no freeze camera yet.",
+  "image": "/devlog-images/instant-replay-from-pause-and-race-results-df41de2a605f44d7bdb646419e5a34ac.png",
+  "caption": "Replay in the Chase camera, 4.8 s before the pause, with the controls along the bottom.",
+  "verification": "Unit tests for the recorder (30 Hz sampling, blending, ring wrap, restart, rider growth) and for playback (speeds, end, seek, controller input), and a scrub bar layout test. tools/test_engine_replay.mjs passes locally on desktop and phone sizes. make precheck passes. Screenshots were checked by eye."
+}

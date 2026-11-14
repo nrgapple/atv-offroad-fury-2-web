@@ -955,3 +955,11 @@ recovery (`atv_core::cpu_recovery`), so a repeated wreck at one spot could
 hold player 2 indefinitely. A starved host would need under about 4
 rendered frames per second (each frame runs at most four 1/60 s ride steps)
 to stretch a 120 s race past 420 s. The next failure's history decides.
+
+Resolved 2026-11-12: it reproduced against production (commit 8dd53ab)
+with the host at load 10-30, and the history showed the stuck rider, not a
+starved host (92 s of race time in 89 s of wall time). Player 2's driver
+wrecked on a climb near station 100, was reset about 100 ft before it and
+wrecked there again, 8 times in 45 s. The path driver on a player's quad
+now has the CPUs' skip-ahead recovery; see RACING.md "The path driver on
+the player's quad". The test's finish line also prints the skips ahead.

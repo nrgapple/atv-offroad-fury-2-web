@@ -1,12 +1,18 @@
-import { multiplayerRequest, secureResponse } from './security.mjs';
+import { secureResponse } from './security.mjs';
 import { usageEvent, webAnalyticsEnabled, withWebAnalytics } from './analytics.mjs';
 import { cloudSaveRequest, isCloudSavePath } from './cloudsave.mjs';
 import { boardRequest, isBoardPath } from './boards.mjs';
+import { ghostRequest, isGhostPath } from './ghosts.mjs';
+import { GAME_SERVER_STATUS_PATH, checkGameServer, gameServerStatus } from './gameserver.mjs';
+import { STATS_PATH, refreshStats, statsRequest } from './stats.mjs';
 const BLOB = /^\/content\/[a-f0-9]{64}\.bin$/;
 const IMAGE = /^\/devlog-images\/[a-z0-9-]+\.png$/;
 const APP_ICON = /^\/app-icons\/[a-f0-9]{64}\.png$/;
 const MANIFEST = /^\/content\/manifests\/([a-f0-9]{40})\.json$/;
 const STREAM = /^\/content\/[a-f0-9]{64}\.m4a$/;
+// Multiplayer is the game server's (research/GAME_SERVER.md). Its public Free
+// Ride counts keep their old site URLs as redirects there.
+const FREERIDE_COUNTS = new Set(['/multiplayer/freeride/riders', '/multiplayer/freeride/days']);
 
 // Soundtrack streams play through a media element, which reads byte ranges
 // (iOS Safari requires them). One range per request; anything else gets the
@@ -79,15 +85,13 @@ async function route(request, env) {
     if (path === '/api/events') return usageEvent(request, env, allowed);
     if (isCloudSavePath(path)) return cloudSaveRequest(request, env, allowed);
     if (isBoardPath(path)) return boardRequest(request, env, allowed);
-    // The public Free Ride rider count: same-origin GETs carry no Origin header.
-    if (path === '/multiplayer/freeride/riders') return env.MULTIPLAYER ? multiplayerRequest(request, env) : new Response('Multiplayer unavailable', {status:503});
-    if (path.startsWith('/multiplayer/')) {
-      const origin = request.headers.get('Origin');
-      if (!origin || !allowed.includes(origin)) return new Response('Origin denied', {status:403});
-      if (request.method !== 'GET' && request.method !== 'POST') return new Response('Method not allowed', {status:405});
-      if (!env.MULTIPLAYER) return new Response('Multiplayer unavailable', {status:503});
-      return multiplayerRequest(request, env);
+    if (isGhostPath(path)) return ghostRequest(request, env, allowed);
+    if (path === GAME_SERVER_STATUS_PATH) return gameServerStatus(request, env);
+    if (path === STATS_PATH) return statsRequest(request, env);
+    if (FREERIDE_COUNTS.has(path) && env.GAME_SERVER_URL && (request.method === 'GET' || request.method === 'HEAD')) {
+      return Response.redirect(new URL(path, env.GAME_SERVER_URL).href, 302);
     }
+    if (path.startsWith('/multiplayer/')) return new Response('Not found', { status: 404 });
     if (request.method !== 'GET' && request.method !== 'HEAD') return new Response('Method not allowed', { status: 405, headers: { Allow: 'GET, HEAD' } });
     if (path === '/') {
       const index = new URL(request.url);
@@ -130,4 +134,11 @@ async function route(request, env) {
     return response;
 }
 
-export default { async fetch(request, env) { return secureResponse(await withWebAnalytics(await route(request, env), request, env), request, { webAnalytics: webAnalyticsEnabled(env) }); } };
+export default {
+  async fetch(request, env) { return secureResponse(await withWebAnalytics(await route(request, env), request, env), request, { webAnalytics: webAnalyticsEnabled(env) }); },
+  // The five-minute cron (wrangler.jsonc triggers): game server health, then the public stats rollup.
+  scheduled(controller, env, ctx) {
+    ctx.waitUntil(checkGameServer(env).catch(failure => console.error('game server check failed', failure))
+      .then(() => refreshStats(env)).catch(failure => console.error('stats refresh failed', failure)));
+  },
+};

@@ -663,9 +663,32 @@ pub mod signal {
     /// [`super::CpuMotion`]; the relay strips them for riders without it.
     /// Never forwarded in other riders' flags.
     pub const CPU_SOUNDS: u8 = 4;
+    /// Flags bit: the build decodes [`super::Packet::Batch`] and follows
+    /// [`PACE`] (research/MULTIPLAYER.md "Free Ride pose batches"). Sent
+    /// only to a relay whose room claim says it accepts batches, and
+    /// forwarded in other riders' flags only to builds that said it.
+    pub const BATCHES: u8 = 8;
+    /// Relay to riders that said [`BATCHES`], in a shared room: stretch
+    /// batch intervals by `data[0]` tenths ([`PACE_MIN`]..=[`PACE_MAX`];
+    /// 10 is the ordinary pace). `peer` is the rider it is sent to.
+    pub const PACE: u8 = 9;
+    pub const PACE_MIN: u8 = 10;
+    pub const PACE_MAX: u8 = 30;
+    /// Hello flags bit: the build decodes [`super::Packet::Frame`]. A game
+    /// server (research/GAME_SERVER.md) sends such builds one frame per tick
+    /// instead of each rider's pose separately. Never forwarded in other
+    /// riders' flags.
+    pub const FRAMES: u8 = 16;
 }
 /// Most poses in one [`Packet::Bundle`]: every rider in a full room.
 pub const MAX_BUNDLE: usize = MAX_PLAYERS;
+/// Most samples in one [`Packet::Batch`].
+pub const MAX_BATCH: usize = 16;
+/// Most poses in one [`Packet::Frame`] (a frame is also bounded by
+/// [`MAX_PACKET_BYTES`]; a server splits larger rooms over several frames).
+pub const MAX_FRAME: usize = 64;
+/// Longest interval a [`Packet::Batch`] may announce (ms).
+pub const MAX_BATCH_INTERVAL_MS: u16 = 60_000;
 
 /// What one client's direct links did since it joined the room: counts only,
 /// for the relay's accounting (research/MULTIPLAYER.md "Relay accounting").
@@ -766,12 +789,24 @@ impl Signal {
             && match self.kind {
                 signal::HELLO => {
                     self.data.len() == 1
-                        && self.data[0] <= signal::DIRECT | signal::CARRIES | signal::CPU_SOUNDS
+                        && self.data[0]
+                            <= signal::DIRECT
+                                | signal::CARRIES
+                                | signal::CPU_SOUNDS
+                                | signal::BATCHES
+                                | signal::FRAMES
                 }
-                signal::PRESENT | signal::ARRIVED | signal::GONE | signal::DROPPED => {
+                signal::PRESENT | signal::ARRIVED => {
+                    self.data.len() == 1 && self.data[0] & !(signal::DIRECT | signal::BATCHES) == 0
+                }
+                signal::GONE | signal::DROPPED => {
                     self.data.len() == 1 && self.data[0] <= signal::DIRECT
                 }
                 signal::COURIER => self.data.len() == 1 && self.data[0] <= 1,
+                signal::PACE => {
+                    self.data.len() == 1
+                        && (signal::PACE_MIN..=signal::PACE_MAX).contains(&self.data[0])
+                }
                 signal::OFFER | signal::ANSWER => {
                     !self.data.is_empty() && self.data.len() <= MAX_SIGNAL_BYTES
                 }
@@ -844,6 +879,23 @@ pub enum Packet {
     /// packet) of each rider linked with it, and its own, for the relay to
     /// pass to riders without those links. Never sent to clients.
     Bundle {
+        poses: Vec<Vec<u8>>,
+    },
+    /// One rider's poses since its last batch, oldest first (encoded compact
+    /// `Snapshot` packets, each with its own sequence and time), and how
+    /// long until its next batch at this rate (research/MULTIPLAYER.md
+    /// "Free Ride pose batches"). To the relay only when its room claim
+    /// accepts batches; from the relay only to builds that said
+    /// [`signal::BATCHES`] (it sends the others each pose as a `Snapshot`).
+    Batch {
+        interval_ms: u16,
+        poses: Vec<Vec<u8>>,
+    },
+    /// Game server to client, once per server tick: the latest pose of each
+    /// other rider due for this client (encoded compact `Snapshot` or `Delta`
+    /// packets, at most one per rider). Sent only to builds that said
+    /// [`signal::FRAMES`]; the others get each pose separately.
+    Frame {
         poses: Vec<Vec<u8>>,
     },
 }

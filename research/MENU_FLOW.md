@@ -113,7 +113,7 @@ row shown (its canonical parent).
 
 | Page | Rows → page | Back |
 | --- | --- | --- |
-| Title | Press Start → Main, *Dev log*, *Downloads* (web) | nothing |
+| Title | Press Start → Main, *Dev log*, *Downloads* (web), *Stats* | nothing |
 | Main Menu | Single Player, Multiplayer, Training Course (ride), Profile Editor, Hall of Fame, Options (overlay), *Dev log* (web) | Title |
 | Single Player | Race → Single Race, Freestyle → Select Track, *Freestyle Objectives*, Championships → Championship, *Games*, *Garage* → Select ATV & Rider | Main |
 | Single Race | Course, Laps, CPU riders, Difficulty, Start Race (ride), *Copy ride link* | Single Player |
@@ -133,9 +133,13 @@ row shown (its canonical parent).
 
 ## Deviations kept on purpose
 
-- **Title.** The port opens on a title page (Press Start, Dev log, Downloads)
-  and Back on the main menu returns to it; the original main menu ignores
-  Triangle. The main menu keeps a Dev log row on the web.
+- **Title.** The port opens on a title page (Press Start, Dev log, Downloads,
+  Stats) and Back on the main menu returns to it; the original main menu ignores
+  Triangle. The main menu keeps a Dev log row on the web. Stats opens the
+  public rider stats page (`/stats.html`) in a new tab on the web and in the
+  system browser on desktop; Android, which has no URL opener yet, hides it.
+  It sits with the other site links under Press Start rather than in PAGE01,
+  whose original rows (plus the web Dev log) already fill a phone's height.
 - **Rides start from their setup page.** Freestyle rides from Select Track and
   Single Race from its setup page with the Garage choice; the original goes
   Track Select → Next → ATV & Rider → Start Event. The Garage stays a

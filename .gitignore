@@ -12,6 +12,3 @@ __pycache__/
 /.env*
 
 
-/crates/atv-relay/build/
-/relay/.wrangler/
-/relay/node_modules/

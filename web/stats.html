@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#140303">
+  <title>Fury Remastered · Rider stats</title>
+  <meta name="description" content="Live riders, hours ridden, the most popular tracks and where Fury Remastered riders come from.">
+  <meta name="apple-mobile-web-app-title" content="Fury Stats">
+  <link rel="icon" href="/favicon.ico" sizes="16x16 32x32 48x48">
+  <link rel="icon" href="/fury-remastered-home-192-v1.png" type="image/png">
+  <link rel="apple-touch-icon" sizes="180x180" href="/fury-remastered-home-180-v1.png">
+  <link rel="stylesheet" href="design-system.css">
+  <link rel="stylesheet" href="stats.css">
+  <script type="module" src="stats.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <a class="game-name" href="/"><img src="fury-remastered.svg" width="960" height="320" alt="Fury Remastered"></a>
+    <h1>Rider Stats</h1>
+    <nav class="links" aria-label="Site">
+      <a href="/devlog.html">Dev log</a>
+      <a class="game-link" href="/play.html">Play <span aria-hidden="true">▸</span></a>
+    </nav>
+  </header>
+  <main id="stats" aria-busy="true">
+    <p id="stats-status" class="stats-status" role="status"></p>
+    <noscript><p class="stats-status">Turn on JavaScript to see the numbers.</p></noscript>
+
+    <section id="hero" class="hero" aria-label="Riders" hidden>
+      <div class="big big-live" id="tile-riders" hidden>
+        <strong id="live-riders">0</strong>
+        <span class="big-label"><span class="pulse" aria-hidden="true"></span>Online now</span>
+        <span class="big-note" id="live-note"></span>
+      </div>
+      <div class="period" id="period" role="radiogroup" aria-label="Period" hidden>
+        <button type="button" role="radio" data-period="today" aria-checked="false">Today</button>
+        <button type="button" role="radio" data-period="week" aria-checked="false">This week</button>
+        <button type="button" role="radio" data-period="allTime" aria-checked="true">All time</button>
+      </div>
+      <div class="big" id="tile-hours" hidden aria-live="polite">
+        <strong id="total-hours">0</strong>
+        <span class="big-label">Hours ridden</span>
+      </div>
+      <div class="big" id="tile-rides" hidden aria-live="polite">
+        <strong id="total-rides">0</strong>
+        <span class="big-label">Rides</span>
+      </div>
+      <p class="hero-more" id="hero-more" hidden><b id="total-races">0</b> races finished · <b id="total-sessions">0</b> visits</p>
+    </section>
+
+    <section id="tile-daily" class="daily" aria-labelledby="daily-label" hidden>
+      <span class="daily-label" id="daily-label">Daily event</span>
+      <strong id="daily-course"></strong>
+      <span class="daily-note" id="daily-note"></span>
+      <a class="game-link" href="/play.html">Ride it <span aria-hidden="true">▸</span></a>
+    </section>
+
+    <div class="pair">
+      <section id="days-section" class="panel" aria-labelledby="days-title" hidden>
+        <h2 id="days-title">Rides per day</h2>
+        <div class="days-chart" id="days-chart"></div>
+        <div class="visually-hidden"><table id="days-table"><caption>Rides and hours ridden per day</caption><thead><tr><th scope="col">Day</th><th scope="col">Rides</th><th scope="col">Hours</th></tr></thead><tbody></tbody></table></div>
+      </section>
+
+      <section id="venues-section" class="panel" aria-labelledby="venues-title" hidden>
+        <div class="panel-head">
+          <h2 id="venues-title">Top tracks</h2>
+          <div class="period period-small" role="radiogroup" aria-label="Rank tracks by">
+            <button type="button" role="radio" data-rank="hours" aria-checked="true">Hours</button>
+            <button type="button" role="radio" data-rank="rides" aria-checked="false">Rides</button>
+          </div>
+        </div>
+        <ol class="bars" id="venues"></ol>
+        <button type="button" class="show-more" id="venues-more" aria-expanded="false" aria-controls="venues" hidden></button>
+      </section>
+    </div>
+
+    <section id="more" class="rows" aria-label="More stats" hidden>
+      <details id="splits-section" class="row" hidden>
+        <summary><span class="row-title">How people ride</span><span class="row-teaser" id="splits-teaser"></span></summary>
+        <div class="splits" id="splits"></div>
+      </details>
+      <details id="countries-section" class="row" hidden>
+        <summary><span class="row-title">Countries</span><span class="row-teaser"><b id="country-count">0</b><span id="country-flags" aria-hidden="true"></span></span></summary>
+        <ol class="flags" id="countries"></ol>
+      </details>
+      <div id="boards-section" class="row row-static" hidden>
+        <span class="row-title">Hall of Fame</span>
+        <span class="row-teaser"><span><b id="board-times">0</b> times</span><span><b id="board-riders">0</b> riders</span><span><b id="board-daily">0</b> daily</span></span>
+      </div>
+    </section>
+  </main>
+  <footer>
+    <details class="about">
+      <summary>About these numbers</summary>
+      <p>Anonymous totals: no accounts, names, cookies or IP addresses. Days are UTC.</p>
+      <p id="opted-out" hidden>This device isn't counted. <a href="?stats=on">Count it again</a></p>
+    </details>
+  </footer>
+</body>
+</html>

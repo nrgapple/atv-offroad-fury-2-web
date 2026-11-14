@@ -58,9 +58,32 @@ test('web analytics beacon and CSP origins appear only with a valid site token',
   assert.match(body, new RegExp(`static\\.cloudflareinsights\\.com/beacon\\.min\\.js" data-cf-beacon='\\{"token":"${token}"\\}'></script>\\n</body>`));
   assert.equal(on.headers.get('ETag'), null);
   assert.match(on.headers.get('Content-Security-Policy'), /script-src 'self' 'wasm-unsafe-eval' https:\/\/static\.cloudflareinsights\.com;/);
-  assert.match(on.headers.get('Content-Security-Policy'), /connect-src 'self' wss:\/\/furyremastered\.com https:\/\/cloudflareinsights\.com;/);
+  assert.match(on.headers.get('Content-Security-Policy'), /connect-src 'self' https:\/\/mp\.furyremastered\.com wss:\/\/mp\.furyremastered\.com https:\/\/cloudflareinsights\.com;/);
   const head = await worker.fetch(new Request(`${ORIGIN}/play.html`, { method: 'HEAD' }), { ASSETS: { fetch: async () => new Response(null, { headers: { 'Content-Type': 'text/html' } }) }, WEB_ANALYTICS_TOKEN: token });
   assert.equal(await head.text(), '');
   const script = await worker.fetch(new Request(`${ORIGIN}/game.js`), { ASSETS: { fetch: async () => new Response('code', { headers: { 'Content-Type': 'text/javascript' } }) }, WEB_ANALYTICS_TOKEN: token });
   assert.equal(await script.text(), 'code');
+});
+
+test('excluded addresses drop events silently; others are written', async () => {
+  const { excludedAddress } = await import('./analytics.mjs');
+  const list = '192.0.2.44, 198.51.100.0/24, 2001:db8:aa:bb::/64, ::ffff:203.0.113.0/120, bogus, 10.0.0.0/33';
+  for (const ip of ['192.0.2.44', '198.51.100.7', '2001:db8:aa:bb:1:2:3:4', '2001:DB8:AA:BB::9', '203.0.113.200', '::ffff:192.0.2.44']) assert.ok(excludedAddress(ip, list), ip);
+  for (const ip of ['192.0.2.45', '198.51.101.7', '2001:db8:aa:bc::1', '10.0.0.1', '::1', 'not an ip', '', null]) assert.ok(!excludedAddress(ip, list), String(ip));
+  assert.ok(!excludedAddress('192.0.2.44', undefined) && !excludedAddress('192.0.2.44', ''));
+  assert.ok(excludedAddress('::', '::/0') && excludedAddress('0.0.0.0', '0.0.0.0/0') && !excludedAddress('0.0.0.0', '::/0'));
+
+  const USAGE = dataset(), limited = [];
+  const env = { GAME_ORIGINS: ORIGIN, USAGE, ANALYTICS_EXCLUDED_IPS: list, EVENT_LIMIT: { limit: async ({ key }) => { limited.push(key); return { success: true }; } } };
+  const send = ip => worker.fetch(post({ name: 'session_start' }, { Origin: ORIGIN, 'CF-Connecting-IP': ip }), env);
+  assert.equal((await send('198.51.100.9')).status, 204);
+  assert.equal((await send('2001:db8:aa:bb::1')).status, 204);
+  assert.equal(USAGE.points.length, 0, 'excluded events are not written');
+  assert.deepEqual(limited, [], 'excluded events never reach the limiter');
+  assert.equal((await send('198.51.99.9')).status, 204);
+  assert.equal(USAGE.points.length, 1);
+  assert.ok(!JSON.stringify(USAGE.points).includes('198.51'));
+  // Without the secret nothing is excluded.
+  assert.equal((await worker.fetch(post({ name: 'session_start' }, { Origin: ORIGIN, 'CF-Connecting-IP': '198.51.100.9' }), { ...env, ANALYTICS_EXCLUDED_IPS: undefined })).status, 204);
+  assert.equal(USAGE.points.length, 2);
 });

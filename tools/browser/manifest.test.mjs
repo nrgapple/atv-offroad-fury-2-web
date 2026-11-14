@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
-import { GROUPS, TESTS } from './manifest.mjs';
+import { GROUPS, TESTS, hostWorkload } from './manifest.mjs';
 
 const TOOLS = path.resolve(import.meta.dirname, '..');
 const files = readdirSync(TOOLS).filter(name => /^test_.*\.mjs$/.test(name)).sort();
@@ -21,7 +21,7 @@ test('manifest has no entries for removed files', () => {
 test('entries use known groups and explain non-runnable groups', () => {
   for (const [name, entry] of Object.entries(TESTS)) {
     assert.ok(GROUPS.includes(entry.group), `${name}: unknown group ${entry.group}`);
-    if (['relay', 'manual', 'broken'].includes(entry.group)) assert.ok(entry.reason?.trim(), `${name}: ${entry.group} needs a reason`);
+    if (['multiplayer', 'manual', 'broken'].includes(entry.group)) assert.ok(entry.reason?.trim(), `${name}: ${entry.group} needs a reason`);
     if (entry.timeout !== undefined) assert.ok(Number.isFinite(entry.timeout) && entry.timeout > 0, `${name}: bad timeout`);
   }
 });
@@ -45,4 +45,17 @@ test('browser tests stay readable (format with the command in research/BROWSER_T
       .map((line, index) => [index + 1, line.length]).filter(([, length]) => length > 500);
     assert.deepEqual(long, [], `${name}: lines over 500 characters [line, length]`);
   }
+});
+
+test('host admission keeps heavy and timing runs exclusive, including mixed selections', () => {
+  const boot = { name: 'test_engine_boot.mjs', group: 'content' };
+  assert.equal(hostWorkload([boot]), 'browser');
+  for (const [name, entry] of Object.entries(TESTS)) {
+    if (entry.exclusive || !['content-free', 'content'].includes(entry.group)) {
+      assert.equal(hostWorkload([boot, { name, group: entry.group }]), 'exclusive', name);
+    }
+  }
+  assert.equal(hostWorkload([{ ...boot, group: 'native' }]), 'exclusive');
+  assert.equal(hostWorkload([{ name: 'missing', group: 'content' }]), 'exclusive');
+  assert.equal(hostWorkload([]), 'exclusive');
 });

@@ -4,6 +4,9 @@
 // plausible (floor times, the run's 1 Hz position trace, score rates). No IP
 // addresses or device identifiers are stored; IPs key only the edge limiters.
 import { browserOriginAllowed } from './security.mjs';
+import { markGhosts, pruneGhosts } from './ghosts.mjs';
+import { houseRows, merge } from './house.mjs';
+import { MEASURED_LAP } from './board_seeds.mjs';
 
 export const TOP = 50;
 export const MAX_SUBMIT_BYTES = 24 * 1024;
@@ -23,14 +26,26 @@ export const FREESTYLE = {
   spstunt: ['free01', 'free04', 'free02', 'free06', 'free03'],
 };
 
-// The fastest plausible lap per event family, milliseconds. Conservative
-// assumptions (no measured world-class laps yet): a lap below the floor is
-// refused, whatever its trace says.
-export function lapFloorMs(course) {
+// The fastest plausible lap, milliseconds: a lap below the floor is refused,
+// whatever its trace says. A measured course's floor is this fraction of the
+// fastest lap the game's race path driver rode there (MEASURED_LAP, the CPU
+// riders and the driver on the player's vehicle): a rider would have to
+// average twice the driver's speed over the lap to be refused. Enduro's is
+// lower: a rider picks the line between its gates, the driver follows its
+// route. Courses without a measurement keep the conservative event-type
+// assumptions.
+export const LAP_FLOOR_FRACTION = 0.5;
+export const ENDURO_LAP_FLOOR_FRACTION = 0.4;
+export function eventLapFloorMs(course) {
   if (/end[sl]$/.test(course)) return 45_000;
   if (/st$/.test(course)) return 12_000;
   if (course.startsWith('sx')) return 15_000;
   return 25_000;
+}
+export const lapFloorFraction = course => (/end[sl]$/.test(course) ? ENDURO_LAP_FLOOR_FRACTION : LAP_FLOOR_FRACTION);
+export function lapFloorMs(course) {
+  const measured = MEASURED_LAP[course];
+  return measured ? Math.floor(measured * lapFloorFraction(course)) : eventLapFloorMs(course);
 }
 export const defaultLaps = course => (/end[sl]$/.test(course) ? 3 : 5);
 
@@ -43,8 +58,10 @@ const MAX_POINTS = 1800;
 const MAX_RESETS = 30;
 const MARK_SLACK_MS = 50;
 
-// Freestyle objective runs last 120 s (research/PROFILE.md).
-export const MAX_FREESTYLE_SECONDS = 125;
+// Freestyle objective runs last 120 s (research/PROFILE.md), and a target
+// run gains 10 s a green target: at most 30 hits before the last ends it
+// (St. Croix Sound's 31, atv_core::freestyle::course_objectives).
+export const MAX_FREESTYLE_SECONDS = 425;
 export const MAX_SCORE = 1_000_000;
 export const MAX_SCORE_RATE = 15_000;
 
@@ -237,28 +254,41 @@ export function judge(body, nowMs) {
   return { entries, vehicle, name };
 }
 
-// Keeps the name's best on each board while it ranks in the top 50, then
-// drops whatever fell below 50th. Returns each board's new rank (or null).
+// A board's house riders (house.mjs): no storage is read.
+function houseOf(board) {
+  const parsed = parseBoard(board);
+  return houseRows(board, parsed?.kind === 'daily' ? dailyPick(parsed.date) : undefined);
+}
+
+// Keeps the name's best on each board while it ranks in the top 50 of the
+// riders and the house riders together, then drops whatever fell below 50th
+// of the riders. Returns each board's new rank (or null). The house riders
+// ahead of a value are counted here, so they cost no rows read; a rider's
+// row the house riders push below 50th stays stored but is not served.
 async function store(db, verdict, day) {
-  const statements = [];
+  const statements = [], houses = [];
   for (const [board, value] of verdict.entries) {
+    const house = houseOf(board).map(row => row.value);
+    houses.push(house);
     statements.push(
       db.prepare(`INSERT INTO board_entries (board, name, value, vehicle, day)
-        SELECT ?1, ?2, ?3, ?4, ?5 WHERE (SELECT COUNT(*) FROM board_entries WHERE board = ?1 AND value <= ?3 AND name <> ?2) < ?6
+        SELECT ?1, ?2, ?3, ?4, ?5 WHERE (SELECT COUNT(*) FROM board_entries WHERE board = ?1 AND value <= ?3 AND name <> ?2) + ?7 < ?6
         ON CONFLICT (board, name) DO UPDATE SET value = excluded.value, vehicle = excluded.vehicle, day = excluded.day WHERE excluded.value < board_entries.value`)
-        .bind(board, verdict.name, value, verdict.vehicle, day, TOP),
+        .bind(board, verdict.name, value, verdict.vehicle, day, TOP, house.filter(other => other < value).length),
       db.prepare(`DELETE FROM board_entries WHERE board = ?1 AND value > (SELECT value FROM board_entries WHERE board = ?1 ORDER BY value, name LIMIT 1 OFFSET ?2)`)
         .bind(board, TOP - 1),
-      db.prepare(`SELECT 1 + (SELECT COUNT(*) FROM board_entries o WHERE o.board = e.board AND o.value < e.value) AS rank, e.value = ?3 AS mine
-        FROM board_entries e WHERE e.board = ?1 AND e.name = ?2`).bind(board, verdict.name, value),
+      db.prepare(`SELECT 1 + (SELECT COUNT(*) FROM board_entries o WHERE o.board = e.board AND o.value < e.value) AS rank, e.value AS value
+        FROM board_entries e WHERE e.board = ?1 AND e.name = ?2`).bind(board, verdict.name),
     );
   }
   const results = await db.batch(statements);
   const ranks = {};
-  verdict.entries.forEach(([board], i) => {
+  verdict.entries.forEach(([board, value], i) => {
     const changed = (results[i * 3].meta?.changes ?? 0) > 0;
     const row = results[i * 3 + 2].results?.[0];
-    ranks[board] = { rank: row?.rank ?? null, placed: changed && Boolean(row?.mine) };
+    // The name's kept value ranks behind the house riders quicker than it.
+    const rank = row ? row.rank + houses[i].filter(other => other < row.value).length : null;
+    ranks[board] = rank !== null && rank <= TOP ? { rank, placed: changed && row.value === value } : { rank: null, placed: false };
   });
   return ranks;
 }
@@ -271,14 +301,19 @@ async function readBoard(request, env, db, board) {
   if (cached) return cached;
   const { results } = await db.prepare('SELECT name, value, vehicle, day FROM board_entries WHERE board = ?1 ORDER BY value, name LIMIT ?2').bind(board, TOP).all();
   const score = board.startsWith('score:');
-  const entries = (results ?? []).map((row, i) => ({ rank: i + 1, name: row.name, value: score ? -row.value : row.value, vehicle: row.vehicle, day: row.day }));
+  // The riders' rows and the house riders as one board; house rows are marked.
+  const entries = merge(results ?? [], houseOf(board), TOP).map((row, i) => ({
+    rank: i + 1, name: row.name, value: score ? -row.value : row.value, vehicle: row.vehicle, day: row.day, ...(row.house ? { house: true } : {}),
+  }));
   const body = { board, entries };
   const parsed = parseBoard(board);
+  await markGhosts(db, board, entries);
   if (parsed.kind === 'daily') {
     body.pick = dailyPick(parsed.date);
     const yesterday = dayOf(Date.parse(`${parsed.date}T00:00:00Z`) - DAY_MS);
-    const winner = await db.prepare('SELECT name, value, vehicle FROM board_entries WHERE board = ?1 ORDER BY value, name LIMIT 1').bind(`daily:${yesterday}`).first();
-    body.yesterday = winner ? { date: yesterday, name: winner.name, value: winner.value, vehicle: winner.vehicle } : { date: yesterday };
+    const best = await db.prepare('SELECT name, value, vehicle FROM board_entries WHERE board = ?1 ORDER BY value, name LIMIT 1').bind(`daily:${yesterday}`).first();
+    const [winner] = merge(best ? [best] : [], houseOf(`daily:${yesterday}`), 1);
+    body.yesterday = winner ? { date: yesterday, name: winner.name, value: winner.value, vehicle: winner.vehicle, ...(winner.house ? { house: true } : {}) } : { date: yesterday };
   }
   const response = json(body, 200, { 'Cache-Control': `public, max-age=${BOARD_MAX_AGE}` });
   await cache?.put(key, response.clone());
@@ -312,6 +347,7 @@ export async function boardRequest(request, env, allowedOrigins, nowMs = Date.no
     const verdict = judge(body, nowMs);
     if (verdict.reason) return refused(verdict.reason);
     const ranks = await store(db, verdict, dayOf(nowMs));
+    await pruneGhosts(db, ranks);
     // This location's cached copies of the changed boards.
     const cache = globalThis.caches?.default;
     for (const [id, result] of Object.entries(ranks)) if (result.placed) await cache?.delete(boardKey(request, id));

@@ -186,6 +186,38 @@ courier) bundles everyone's latest poses for such riders, so they cost one
 stream instead of one per linked rider. Details:
 [MULTIPLAYER.md](MULTIPLAYER.md#courier-2026-11-11).
 
+## Free Ride relay intervals (2026-11-12)
+
+Shared Free Ride rooms were 93% of the relay's 1,902,132 messages on
+2026-11-12 (95% of the free daily allowance). A rider in one now waits
+longer between relay poses: 100 ms near, fast, airborne or wrecked (was 50),
+150 ms otherwise moving (100), 300 ms beyond 300 ft (200), 2 s stationary
+(1 s) and 10 s paused (5 s); 350 ms beyond 1,000 ft is unchanged. Private
+rooms and direct links keep the cadences above. Host check (one Mac, local
+relay, two riders without links): a rider driving off sent 8.5 poses a
+second against 15.7 in a private room, and 0.5 against 1.0 at rest; the
+watcher drew it about 80 ms later, never stale. Details and the receiver
+limits behind each value:
+[MULTIPLAYER.md](MULTIPLAYER.md#free-ride-relay-intervals-2026-11-12).
+
+## Free Ride pose batches (2026-11-13)
+
+A rider in a shared Free Ride room that someone needs through the relay now
+sends one message per batch interval holding several timed poses, the
+interval set by the distance to the nearest such rider: 200 ms under 60 ft,
+300 ms to 300 ft, 600 ms to 1,000 ft, 1.5 s beyond, 5 s at rest, 15 s
+paused. Receivers play a batched rider back one interval late and
+interpolate between real poses. The relay unpacks batches for builds from
+before them, and while such a build needs a rider's poses that rider's
+batches stay within what it smooths (300 ms, 2 s at rest). Host check (one
+Mac, local relay, riders without links): 4.2 messages a second riding
+beside another rider against 15.7 in a private room, 3.3 at 60-300 ft, 1.7
+at 300-1,000 ft and 0.19 at rest against 1.0; watchers drew the rider 0.2
+to 0.6 s late, on its path (0.3-0.8 ft RMS), never stale. Estimated for a
+day like 2026-11-12: about 31% of the free allowance instead of 95%.
+Design, compatibility, measurements and limits:
+[MULTIPLAYER.md](MULTIPLAYER.md#free-ride-pose-batches-2026-11-13).
+
 ## Limits and next gates
 
 The measurement is host-only and used a synthetic browser focus/visibility setup.

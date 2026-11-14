@@ -667,36 +667,15 @@ async fn race_setup(
     // player's ATV group, and AI riders with their names and outfits.
     let riders = member(archive, "airiders.pb", "CPU roster")?;
     let roster = match basename_index(archive, "atvgroups.pb") {
-        Some(index) => {
-            let champ = mode
-                .as_deref()
-                .and_then(|text| {
-                    text.lines().find_map(|line| {
-                        let (key, value) = line.split_once('=')?;
-                        key.trim()
-                            .eq_ignore_ascii_case("ChampQuadGroup")
-                            .then(|| {
-                                let value = value.trim_start();
-                                let end = value
-                                    .char_indices()
-                                    .find(|(i, c)| !(c.is_ascii_digit() || (*i == 0 && *c == '-')))
-                                    .map_or(value.len(), |(i, _)| i);
-                                value[..end].parse::<i64>().ok()
-                            })
-                            .flatten()
-                    })
-                })
-                .unwrap_or(-1);
-            atv_core::race_roster::select(
-                &archive.extract(index)?,
-                &riders,
-                atv_core::motorcycle::roster_quad(u32::from(quad)),
-                rider == 1,
-                champ,
-                4,
-                settings.seed,
-            )?
-        }
+        Some(index) => atv_core::race_roster::select(
+            &archive.extract(index)?,
+            &riders,
+            atv_core::motorcycle::roster_quad(u32::from(quad)),
+            rider == 1,
+            champ_quad_group(mode.as_deref()),
+            4,
+            settings.seed,
+        )?,
         None => Vec::new(),
     };
     if roster.len() < settings.cpu {
@@ -722,7 +701,10 @@ async fn race_setup(
         // in the roster outfit (remoteAssets + outfitTextures in game.js).
         let quad_mesh = mesh::decode_psg(&mesh_bytes)?;
         let material_bytes = content.file(&selection.quad_materials).await?;
-        let quad_textures = textures::load(&quad_mesh, &Resource::parse(&material_bytes)?)?;
+        // Decoded as jobs, so a menu preload's results serve them
+        // (crate::preload); the same textures as `textures::load`.
+        let quad_textures =
+            textures::load_jobs(&quad_mesh, &Resource::parse(&material_bytes)?).await?;
         let rider_bytes = content.file(&selection.rider).await?;
         let rider_mesh = mesh::decode_psg(&member_suffix(
             &Resource::parse(&rider_bytes)?,
@@ -793,6 +775,45 @@ async fn race_setup(
             ghost_opacity: venue.scene.ghost_opacity,
         },
     })
+}
+
+/// The race mode TOY's `ChampQuadGroup`, -1 when it sets none.
+fn champ_quad_group(mode: Option<&str>) -> i64 {
+    mode.and_then(|text| {
+        text.lines().find_map(|line| {
+            let (key, value) = line.split_once('=')?;
+            key.trim()
+                .eq_ignore_ascii_case("ChampQuadGroup")
+                .then(|| {
+                    let value = value.trim_start();
+                    let end = value
+                        .char_indices()
+                        .find(|(i, c)| !(c.is_ascii_digit() || (*i == 0 && *c == '-')))
+                        .map_or(value.len(), |(i, _)| i);
+                    value[..end].parse::<i64>().ok()
+                })
+                .flatten()
+        })
+    })
+    .unwrap_or(-1)
+}
+
+/// Every quad the race's CPU roster can draw for a player on `quad`, from the
+/// race course archive (as [`race_setup`] reads it; `mode_stem` names the
+/// race mode TOY): what a menu preload prepares before Start draws the roster.
+pub(crate) fn cpu_candidates(archive: &Resource, mode_stem: &str, quad: u16) -> Result<Vec<u32>> {
+    let Some(index) = basename_index(archive, "atvgroups.pb") else {
+        return Ok(Vec::new());
+    };
+    let mode = basename_index(archive, &format!("{mode_stem}.toy"))
+        .map(|index| archive.extract(index))
+        .transpose()?
+        .map(|bytes| String::from_utf8_lossy(&bytes).into_owned());
+    atv_core::race_roster::candidates(
+        &archive.extract(index)?,
+        atv_core::motorcycle::roster_quad(u32::from(quad)),
+        champ_quad_group(mode.as_deref()),
+    )
 }
 
 /// Tracks.dat lists the venue under a Pro Supercross (`prosxN`) section

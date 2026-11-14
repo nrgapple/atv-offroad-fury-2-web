@@ -33,10 +33,6 @@ def verify(base, commit, release=None):
         if hashlib.sha256(body).hexdigest() != digest:
             raise ValueError(f'public authored asset differs: {name}')
         static_files += 1
-    body, _ = get('/multiplayer/version')
-    identity = json.loads(body)
-    if identity.get('commit') != commit or identity.get('wasmSha256') != metadata['sha256']['relay/index_bg.wasm']:
-        raise ValueError('public Rust multiplayer relay differs from checked artifact')
     report = json.loads((ROOT / 'private/reports/cloudflare-upload.json').read_text())
     if report['commit'] != commit:
         raise ValueError('upload receipt belongs to a different commit')

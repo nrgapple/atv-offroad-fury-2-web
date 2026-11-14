@@ -115,23 +115,20 @@ impl Bank {
             return Ok(());
         }
         let sounds = Archive::open(content, "/AUDIO/AUDIO.RES").await?;
-        for key in missing {
-            if self.samples.contains_key(&key) {
-                continue;
-            }
-            let Some(index) = find(&sounds, &key) else {
-                continue;
-            };
-            let vag = sounds.member(index).await?;
-            let started = web_time::Instant::now();
-            let audio = decode_vag(&vag)?;
-            self.rates.insert(key.clone(), audio.info.sample_rate);
-            self.samples
-                .insert(key, Arc::new(Pcm::from_vag(&audio, self.rate)));
-            self.decode_ms += started.elapsed().as_secs_f64() * 1000.;
-            // Race samples decode while the ride runs: keep its frames (web).
-            crate::yield_frame().await;
+        let (keys, vags) = read_samples(&sounds, missing).await?;
+        // Decoded together off the page's thread on the web (and kept in the
+        // decoded cache, which a menu preload fills): race samples decode
+        // while the ride runs, so its frames are kept.
+        let started = web_time::Instant::now();
+        let inputs: Vec<&[u8]> = vags.iter().map(Vec::as_slice).collect();
+        for (key, (source, pcm)) in keys
+            .into_iter()
+            .zip(crate::offload::pcms(&inputs, self.rate).await?)
+        {
+            self.rates.insert(key.clone(), source);
+            self.samples.insert(key, Arc::new(pcm));
         }
+        self.decode_ms += started.elapsed().as_secs_f64() * 1000.;
         Ok(())
     }
 }
@@ -182,19 +179,24 @@ fn find(archive: &Archive, key: &str) -> Option<usize> {
     })
 }
 
-/// Decodes the engine and world samples at `rate`, keeping rider vocals encoded
-/// until selected. Missing optional samples (older packages) stay silent.
-pub async fn load(
+/// An ATV bank's tables: the vehicle and rider tables and the venue's sounds.
+struct AtvTables {
+    engine: EngineAudioConfig,
+    effects: Option<sound_effects::Config>,
+    vocal_banks: Option<qs::VocalBanks>,
+    chassis: Option<qs::ChassisBanks>,
+    engine_sets: Vec<(u32, u32)>,
+    drive: Vec<qs::DriveOnSound>,
+    ambient: Vec<world_sounds::Ambient>,
+    soultree: Vec<world_sounds::Soultree>,
+}
+
+async fn atv_tables(
     content: &Content,
     course_archive: &str,
     environment: &str,
     quad: u32,
-    female: bool,
-    rate: u32,
-) -> Result<Bank> {
-    if quad >= 27 {
-        return load_motorcycle(content, course_archive, environment, quad, rate).await;
-    }
+) -> Result<AtvTables> {
     let table = Archive::open(content, "/AUDIOTBL.RES").await?;
     let vehicle_index = table
         .members
@@ -217,20 +219,30 @@ pub async fn load(
     let vocal_banks = rider
         .as_deref()
         .and_then(|bytes| qs::VocalBanks::parse(bytes).ok());
-    let vocals = vocal_banks
-        .as_ref()
-        .map(|banks| banks.lists(female).clone());
     let chassis = qs::ChassisBanks::parse(&vehicle).ok();
     let engine_sets = atv_core::engine_audio::engine_sets(&vehicle).unwrap_or_default();
+    let (drive, ambient, soultree) = venue_sounds(content, course_archive, environment).await?;
+    Ok(AtvTables {
+        engine,
+        effects,
+        vocal_banks,
+        chassis,
+        engine_sets,
+        drive,
+        ambient,
+        soultree,
+    })
+}
 
-    let course = Archive::open(content, course_archive).await?;
-    let (mut drive, mut ambient, mut soultree) = (Vec::new(), Vec::new(), Vec::new());
-    if let Some(index) = course.named(&format!("{environment}.aud")) {
-        let aud = VenueAud::parse(&course.member(index).await?)?;
-        drive = aud.terrain_drive_on()?;
-        (ambient, soultree) = world_sounds::parse(&aud)?;
-    }
-
+/// The samples an ATV bank decodes up front (vocals stay encoded).
+fn atv_sample_names(
+    engine: &EngineAudioConfig,
+    effects: &Option<sound_effects::Config>,
+    chassis: &Option<qs::ChassisBanks>,
+    drive: &[qs::DriveOnSound],
+    ambient: &[world_sounds::Ambient],
+    soultree: &[world_sounds::Soultree],
+) -> Vec<String> {
     let mut names: Vec<String> = engine
         .samples
         .iter()
@@ -248,12 +260,15 @@ pub async fn load(
     names.extend(drive.iter().map(|d| d.sample.clone()));
     names.extend(ambient.iter().map(|a| a.sample.clone()));
     names.extend(soultree.iter().map(|s| s.sample.clone()));
+    names
+}
 
-    let sounds = Archive::open(content, "/AUDIO/AUDIO.RES").await?;
-    let mut samples = HashMap::new();
-    let mut rates = HashMap::new();
-    // Read every sample, then decode them together (in parallel off the
-    // page's thread on the web: the bank loads while the ride draws).
+/// Each named sample's bank key and VAG, once, in order; ones the bank
+/// lacks (an older package) are left out.
+async fn read_samples(
+    sounds: &Archive<'_>,
+    names: Vec<String>,
+) -> Result<(Vec<String>, Vec<Vec<u8>>)> {
     let mut keys = Vec::new();
     let mut vags = Vec::new();
     for name in names {
@@ -261,12 +276,88 @@ pub async fn load(
         if keys.contains(&key) {
             continue;
         }
-        let Some(index) = find(&sounds, &key) else {
+        let Some(index) = find(sounds, &key) else {
             continue;
         };
         vags.push(sounds.member(index).await?);
         keys.push(key);
     }
+    Ok((keys, vags))
+}
+
+/// The VAGs [`load`] decodes up front for an ATV bank, plus the `extra`
+/// samples a ride adds with [`Bank::load_samples`]: the inputs of the
+/// [`crate::offload::VAG_PCM`] jobs a menu preload (`crate::preload`) runs
+/// ahead of the ride so its bank reads them from the decoded cache. A
+/// motorcycle's bank decodes on the page's thread uncached: none.
+pub async fn job_inputs(
+    content: &Content,
+    course_archive: &str,
+    environment: &str,
+    quad: u32,
+    extra: &[&str],
+) -> Result<Vec<Vec<u8>>> {
+    if quad >= 27 {
+        return Ok(Vec::new());
+    }
+    let tables = atv_tables(content, course_archive, environment, quad).await?;
+    let mut names = atv_sample_names(
+        &tables.engine,
+        &tables.effects,
+        &tables.chassis,
+        &tables.drive,
+        &tables.ambient,
+        &tables.soultree,
+    );
+    names.extend(extra.iter().map(|name| name.to_string()));
+    let sounds = Archive::open(content, "/AUDIO/AUDIO.RES").await?;
+    Ok(read_samples(&sounds, names).await?.1)
+}
+
+/// About how many bytes a VAG's decode at `rate` holds (its frames at the
+/// output rate, 32-bit samples per channel); 0 when the header is invalid.
+pub fn pcm_bytes(vag: &[u8], rate: u32) -> u64 {
+    atv_core::audio::VagStream::new(vag, vag.len()).map_or(0, |stream| {
+        let info = stream.info;
+        let frames = info.frames_max as u64 * u64::from(rate) / u64::from(info.sample_rate) + 2;
+        frames * u64::from(info.channels) * 4
+    })
+}
+
+/// Decodes the engine and world samples at `rate`, keeping rider vocals encoded
+/// until selected. Missing optional samples (older packages) stay silent.
+pub async fn load(
+    content: &Content,
+    course_archive: &str,
+    environment: &str,
+    quad: u32,
+    female: bool,
+    rate: u32,
+) -> Result<Bank> {
+    if quad >= 27 {
+        return load_motorcycle(content, course_archive, environment, quad, rate).await;
+    }
+    let AtvTables {
+        engine,
+        effects,
+        vocal_banks,
+        chassis,
+        engine_sets,
+        drive,
+        mut ambient,
+        mut soultree,
+    } = atv_tables(content, course_archive, environment, quad).await?;
+    let vocals = vocal_banks
+        .as_ref()
+        .map(|banks| banks.lists(female).clone());
+    let names = atv_sample_names(&engine, &effects, &chassis, &drive, &ambient, &soultree);
+
+    let sounds = Archive::open(content, "/AUDIO/AUDIO.RES").await?;
+    let mut samples = HashMap::new();
+    let mut rates = HashMap::new();
+    // Read every sample, then decode them together (in parallel off the
+    // page's thread on the web: the bank loads while the ride draws).
+    let (keys, vags) = read_samples(&sounds, names).await?;
     let started = web_time::Instant::now();
     let inputs: Vec<&[u8]> = vags.iter().map(Vec::as_slice).collect();
     for (key, (source, pcm)) in keys
@@ -489,6 +580,24 @@ mod tests {
         bytes[49] = 1;
         bytes[50..].fill(0x21);
         bytes
+    }
+
+    #[test]
+    fn pcm_estimates_cover_the_decode() {
+        // A mono VAG: 10 ADPCM blocks of 28 frames at 22050 Hz.
+        let mut vag = b"VAGp".to_vec();
+        vag.extend_from_slice(&[0; 8]);
+        vag.extend_from_slice(&160u32.to_be_bytes());
+        vag.extend_from_slice(&22050u32.to_be_bytes());
+        vag.resize(48 + 160, 0);
+        let pcm = Pcm::from_vag(&decode_vag(&vag).unwrap(), 48000);
+        let estimate = pcm_bytes(&vag, 48000);
+        let actual = (pcm.data.len() * 4) as u64;
+        assert!(
+            estimate >= actual && estimate <= actual + 64,
+            "{estimate} vs {actual}"
+        );
+        assert_eq!(pcm_bytes(b"not a vag", 48000), 0);
     }
 
     #[test]

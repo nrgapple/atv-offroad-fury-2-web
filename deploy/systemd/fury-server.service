@@ -1,0 +1,65 @@
+# fury-server, the multiplayer game server (research/GAME_SERVER.md).
+# Installed by deploy/cloud-init.yaml; releases are switched by deploy/deploy.sh.
+[Unit]
+Description=ATV Offroad Fury 2 Remastered game server
+Documentation=https://github.com/nrgapple/atv-offroad-fury-2-web/blob/main/research/GAME_SERVER.md
+Wants=network-online.target
+After=network-online.target
+# Keep restarting a crashing server instead of giving up after five tries.
+StartLimitIntervalSec=0
+
+[Service]
+Type=exec
+User=fury
+Group=fury
+EnvironmentFile=/etc/fury-server/env
+# FURY_COMMIT=<commit>, written by fury-release next to each binary.
+EnvironmentFile=-/opt/fury-server/current/release.env
+ExecStart=/opt/fury-server/current/fury-server
+WorkingDirectory=/var/lib/fury-server
+Restart=always
+RestartSec=1
+# A crash loop backs off to one start every 30 s.
+RestartSteps=5
+RestartMaxDelaySec=30
+# The server saves rooms on SIGTERM and exits within 10 s.
+KillSignal=SIGTERM
+TimeoutStopSec=15
+LimitNOFILE=65536
+
+# Bind 443 without root, and nothing else.
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+NoNewPrivileges=yes
+
+# Read-only system; state (saved rooms, ACME certificates) is the only writable path.
+StateDirectory=fury-server
+StateDirectoryMode=0750
+ProtectSystem=strict
+ReadWritePaths=/var/lib/fury-server
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+ProcSubset=pid
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RemoveIPC=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged
+SystemCallErrorNumber=EPERM
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

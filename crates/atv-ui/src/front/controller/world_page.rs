@@ -12,6 +12,9 @@ use std::collections::BTreeMap;
 pub const DAILY_PAGE: &str = "daily";
 /// Rows of a world board shown on a page.
 pub const SHOWN: usize = 10;
+/// Rows of each board where a page shows two (a race course's lap and race
+/// boards): ten of each run off the panel under the first.
+pub const PAIR_SHOWN: usize = 5;
 
 /// One board's state in the menus.
 #[derive(Clone, Debug, PartialEq)]
@@ -126,16 +129,25 @@ impl Frontend {
         ]
     }
 
-    fn mine(&self, name: &str) -> bool {
-        self.world.names.iter().any(|n| n == name)
-            || self
-                .profile_name()
-                .is_some_and(|p| p.eq_ignore_ascii_case(name))
+    /// The rider's own row: a name they submitted under or the loaded
+    /// profile's, never a house rider's row of the same name.
+    fn mine(&self, entry: &world_board::BoardEntry) -> bool {
+        !entry.house
+            && (self.world.names.contains(&entry.name)
+                || self
+                    .profile_name()
+                    .is_some_and(|p| p.eq_ignore_ascii_case(&entry.name)))
     }
 
-    /// A board's lines: a title, its top rows (the rider's marked "▶") and
-    /// the rider's own row below them when it ranks lower.
-    fn board_lines(&self, title: &str, id: &str, score: bool) -> Vec<(String, String)> {
+    /// A board's lines: a title, its top `shown` rows (the rider's marked
+    /// "▶") and the rider's own row below them when it ranks lower.
+    fn board_lines(
+        &self,
+        title: &str,
+        id: &str,
+        score: bool,
+        shown: usize,
+    ) -> Vec<(String, String)> {
         let mut lines = vec![(title.to_string(), String::new())];
         let value = |v: i64| {
             if score {
@@ -154,15 +166,22 @@ impl Frontend {
                 "The world boards could not be loaded.".into(),
                 String::new(),
             )),
-            Some(BoardState::Ready(board)) if board.entries.is_empty() => {
-                lines.push(("No times yet. Be the first!".into(), String::new()))
-            }
+            Some(BoardState::Ready(board)) if board.entries.is_empty() => lines.push((
+                if score {
+                    "No scores yet. Be the first!"
+                } else {
+                    "No times yet. Be the first!"
+                }
+                .into(),
+                String::new(),
+            )),
             Some(BoardState::Ready(board)) => {
                 let row = |e: &world_board::BoardEntry| {
-                    let mark = if self.mine(&e.name) { "▶ " } else { "" };
+                    let mark = if self.mine(e) { "▶ " } else { "" };
+                    let ghost = if e.ghost { " · Ghost" } else { "" };
                     (
                         format!(
-                            "{mark}{}. {} · {}",
+                            "{mark}{}. {} · {}{ghost}",
                             e.rank,
                             e.name,
                             self.quad_label(e.vehicle)
@@ -170,13 +189,8 @@ impl Frontend {
                         value(e.value),
                     )
                 };
-                lines.extend(board.entries.iter().take(SHOWN).map(row));
-                if let Some(own) = board
-                    .entries
-                    .iter()
-                    .skip(SHOWN)
-                    .find(|e| self.mine(&e.name))
-                {
+                lines.extend(board.entries.iter().take(shown).map(row));
+                if let Some(own) = board.entries.iter().skip(shown).find(|e| self.mine(e)) {
                     lines.push(row(own));
                 }
             }
@@ -196,7 +210,7 @@ impl Frontend {
         let boards = self.fame_boards();
         if atv_core::freestyle::SERIES.iter().any(|s| s.name == *group) {
             let mut lines = vec![(self.course_name(id), format!("World · {group}"))];
-            lines.extend(self.board_lines("Highest Objective Scores", &boards[0], true));
+            lines.extend(self.board_lines("Highest Objective Scores", &boards[0], true, SHOWN));
             return lines;
         }
         let laps = world_board::default_laps(id);
@@ -206,9 +220,92 @@ impl Frontend {
             "Normal"
         };
         let mut lines = vec![(self.course_name(id), format!("World · {difficulty}"))];
-        lines.extend(self.board_lines("Fastest Lap", &boards[0], false));
-        lines.extend(self.board_lines(&format!("Fastest {laps}-Lap Race"), &boards[1], false));
+        lines.extend(self.board_lines("Fastest Lap", &boards[0], false, PAIR_SHOWN));
+        lines.extend(self.board_lines(
+            &format!("Fastest {laps}-Lap Race"),
+            &boards[1],
+            false,
+            PAIR_SHOWN,
+        ));
         lines
+    }
+
+    /// The World view's lap board and its rows that carry a ghost to race
+    /// (none on a Freestyle course, in the local view or before the board
+    /// loads).
+    pub(super) fn ghost_rows(&self) -> Vec<(String, world_board::BoardEntry)> {
+        if self.page != "hall-of-fame" || !self.profile_ui.fame_world {
+            return Vec::new();
+        }
+        let Some(id) = self
+            .fame_boards()
+            .into_iter()
+            .find(|id| id.starts_with("lap:"))
+        else {
+            return Vec::new();
+        };
+        let Some(BoardState::Ready(board)) = self.world.boards.get(&id) else {
+            return Vec::new();
+        };
+        board
+            .entries
+            .iter()
+            .filter(|e| e.ghost)
+            .map(|e| (id.clone(), e.clone()))
+            .collect()
+    }
+
+    /// The World view's ghost rows: the chosen ghost (Left/Right steps
+    /// through the board's) and Race This Ghost.
+    pub(super) fn ghost_choices(&self) -> Vec<(String, String)> {
+        let rows = self.ghost_rows();
+        let Some((_, entry)) = rows.get(self.profile_ui.fame_ghost.min(rows.len().max(1) - 1))
+        else {
+            return Vec::new();
+        };
+        vec![
+            (
+                "fameghost".into(),
+                format!("Ghost: {} · {}", entry.name, ms_time(entry.value)),
+            ),
+            ("fameghostrace".into(), "Race This Ghost".into()),
+        ]
+    }
+
+    /// Race This Ghost: Lap Attack on the board's course with the garage's
+    /// vehicle, once the host has the ghost.
+    fn ghost_race(&mut self, settings: &mut Settings) -> Option<Event> {
+        let rows = self.ghost_rows();
+        let (board, entry) = rows.get(self.profile_ui.fame_ghost.min(rows.len().max(1) - 1))?;
+        let course = board.split(':').nth(1)?.to_string();
+        if !self.race_courses.contains(&course) {
+            self.notice = Some(format!("{} is not available.", self.course_name(&course)));
+            return None;
+        }
+        if let Some(cost) = self.race_course_cost(&course) {
+            self.notice = Some(Self::locked_course(cost));
+            return None;
+        }
+        self.notice = self
+            .enforce_unlocks(settings)
+            .or_else(|| Some(format!("Loading {}'s ghost…", entry.name)));
+        Some(Event::GhostRace {
+            board: board.clone(),
+            name: entry.name.clone(),
+            value: entry.value,
+            course,
+            expert: self.profile_ui.fame_expert,
+            quad: self.quad_id,
+            rider: self.rider_id,
+        })
+    }
+
+    /// The host could not get a ghost (or read it): the page says why.
+    pub fn ghost_failed(&mut self, message: &str, view: &Viewport) {
+        if self.page == "hall-of-fame" {
+            self.notice = Some(message.to_string());
+            self.refresh(view);
+        }
     }
 
     /// Single Player's Daily Event row is offered once the clock is set and
@@ -255,7 +352,7 @@ impl Frontend {
                 },
             ));
         }
-        lines.extend(self.board_lines("Today's Board", &board, false));
+        lines.extend(self.board_lines("Today's Board", &board, false, SHOWN));
         lines
     }
 
@@ -271,6 +368,7 @@ impl Frontend {
                 self.show(DAILY_PAGE, view);
                 Some(None)
             }
+            "fameghostrace" => Some(self.ghost_race(settings)),
             "dailystart" => {
                 let pick = self.world.pick()?;
                 let quad = class_vehicle(pick.class, self.quad_id);
@@ -334,7 +432,7 @@ mod tests {
         assert!(front.world_wants().is_empty());
         assert!(front.profile_details().iter().any(|l| l.0 == "Loading…"));
         front.world.names.push("ADA".into());
-        let entries = (1..=12)
+        let mut entries: Vec<BoardEntry> = (1..=12)
             .map(|rank| BoardEntry {
                 rank,
                 name: if rank == 12 {
@@ -345,8 +443,12 @@ mod tests {
                 value: 60_000 + i64::from(rank) * 1000,
                 vehicle: 1,
                 day: "2026-11-11".into(),
+                ghost: false,
+                // A house rider named as the player is not the player's row.
+                house: rank == 3,
             })
             .collect();
+        entries[2].name = "ADA".into();
         let board = Board {
             board: wants[0].clone(),
             entries,
@@ -364,10 +466,169 @@ mod tests {
             details.iter().any(|l| l.0.starts_with("▶ 12. ADA")),
             "{details:?}"
         );
+        assert!(
+            details.iter().any(|l| l.0.starts_with("3. ADA")),
+            "a house row is an ordinary row: {details:?}"
+        );
+        // Two boards share the panel: five rows of each.
+        assert!(details.iter().any(|l| l.0.starts_with("5. R5")));
+        assert!(!details.iter().any(|l| l.0.starts_with("6. R6")));
         assert!(details.iter().any(|l| l.0.starts_with("Offline")));
         // Placing again refetches the boards.
         front.world_placed("ADA", &wants);
         assert_eq!(front.world_wants(), wants);
+    }
+
+    #[test]
+    fn the_world_view_lists_a_freestyle_course_score_board() {
+        let (mut front, view, mut settings) = front();
+        front.run("halloffame", &view, &mut settings);
+        front.run("fameworld", &view, &mut settings);
+        let pro = front
+            .fame_groups()
+            .iter()
+            .position(|(g, _)| *g == "Pro Freestyle")
+            .unwrap();
+        for _ in 0..pro {
+            front.step_profile("fameevent", 1, &view);
+        }
+        front.step_profile("famecourse", 1, &view);
+        // One board per series and course, whatever the difficulty row says.
+        assert_eq!(front.world_wants(), ["score:spstunt:free04"]);
+        front.step_profile("famedifficulty", 1, &view);
+        let wants = front.world_wants();
+        assert_eq!(wants, ["score:spstunt:free04"]);
+        front.world_loading(&wants[0]);
+        let empty = Board {
+            board: wants[0].clone(),
+            ..Default::default()
+        };
+        front.world_answer(&wants[0], BoardState::Ready(empty), &view);
+        let details = front.profile_details();
+        assert_eq!(details[0].1, "World · Pro Freestyle");
+        assert_eq!(details[1].0, "Highest Objective Scores");
+        assert_eq!(details[2].0, "No scores yet. Be the first!");
+        // A placed score refetches the board; its rows show grouped scores.
+        front.world_placed("ADA", &wants);
+        assert_eq!(front.world_wants(), wants);
+        let entries = vec![
+            BoardEntry {
+                rank: 1,
+                name: "ACE".into(),
+                value: 1_204_500,
+                vehicle: 28,
+                day: "2026-11-12".into(),
+                ghost: false,
+                house: false,
+            },
+            BoardEntry {
+                rank: 2,
+                name: "ADA".into(),
+                value: 31_250,
+                vehicle: 4,
+                day: "2026-11-12".into(),
+                ghost: false,
+                house: false,
+            },
+        ];
+        let board = Board {
+            board: wants[0].clone(),
+            entries,
+            yesterday: None,
+        };
+        front.world_answer(&wants[0], BoardState::Ready(board), &view);
+        let details = front.profile_details();
+        assert!(
+            details
+                .iter()
+                .any(|l| l.0.starts_with("1. ACE") && l.1 == "1,204,500"),
+            "{details:?}"
+        );
+        assert!(
+            details
+                .iter()
+                .any(|l| l.0.starts_with("▶ 2. ADA") && l.1 == "31,250"),
+            "{details:?}"
+        );
+    }
+
+    #[test]
+    fn the_world_view_offers_a_lap_board_row_s_ghost_to_race() {
+        let (mut front, view, mut settings) = front();
+        front.run("halloffame", &view, &mut settings);
+        front.run("fameworld", &view, &mut settings);
+        let wants = front.world_wants();
+        let course = wants[0].split(':').nth(1).unwrap().to_string();
+        let rows = |ghosts: &[u32]| Board {
+            board: wants[0].clone(),
+            entries: (1..=4)
+                .map(|rank| BoardEntry {
+                    rank,
+                    name: format!("R{rank}"),
+                    value: 60_000 + i64::from(rank) * 1230,
+                    vehicle: 1,
+                    day: "2026-11-12".into(),
+                    ghost: ghosts.contains(&rank),
+                    house: false,
+                })
+                .collect(),
+            yesterday: None,
+        };
+        // No ghost rows, no ghost choices.
+        front.world_answer(&wants[0], BoardState::Ready(rows(&[])), &view);
+        assert!(!front.choices.iter().any(|c| c.0.starts_with("fameghost")));
+        front.world_answer(&wants[0], BoardState::Ready(rows(&[2, 4])), &view);
+        let label = |front: &Frontend| {
+            let at = front.choices.iter().position(|c| c.0 == "fameghost");
+            at.map(|i| front.choices[i].1.clone())
+        };
+        assert_eq!(label(&front).as_deref(), Some("Ghost: R2 · 01:02.46"));
+        assert!(front.choices.iter().any(|c| c.0 == "fameghostrace"));
+        let details = front.profile_details();
+        assert!(
+            details
+                .iter()
+                .any(|l| l.0.starts_with("2. R2") && l.0.ends_with("· Ghost"))
+        );
+        assert!(
+            details
+                .iter()
+                .any(|l| l.0.starts_with("1. R1") && !l.0.contains("Ghost"))
+        );
+        // Left/Right steps through the rows with a ghost.
+        front.step_profile("fameghost", 1, &view);
+        assert_eq!(label(&front).as_deref(), Some("Ghost: R4 · 01:04.92"));
+        front.step_profile("fameghost", 1, &view);
+        assert_eq!(label(&front).as_deref(), Some("Ghost: R2 · 01:02.46"));
+        front.step_profile("fameghost", -1, &view);
+        match front.run("fameghostrace", &view, &mut settings) {
+            Some(Event::GhostRace {
+                board,
+                name,
+                value,
+                course: on,
+                expert,
+                ..
+            }) => {
+                assert_eq!(
+                    (board, name, value),
+                    (wants[0].clone(), "R4".into(), 64_920)
+                );
+                assert_eq!((on, expert), (course, false));
+            }
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(front.notice.as_deref(), Some("Loading R4's ghost…"));
+        // A ghost that cannot be used is reported on the page.
+        front.ghost_failed("This ghost could not be read.", &view);
+        assert_eq!(
+            front.notice.as_deref(),
+            Some("This ghost could not be read.")
+        );
+        // This device's view and Freestyle courses offer none.
+        front.run("fameworld", &view, &mut settings);
+        assert!(!front.choices.iter().any(|c| c.0.starts_with("fameghost")));
+        assert_eq!(front.run("fameghostrace", &view, &mut settings), None);
     }
 
     #[test]

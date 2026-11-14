@@ -65,6 +65,8 @@ pub struct ProfileUi {
     pub fame_expert: bool,
     /// The World boards (`world_page`) instead of this device's.
     pub fame_world: bool,
+    /// The World view's chosen ghost, among the lap board's rows with one.
+    pub fame_ghost: usize,
 }
 
 /// Records' event groups (the ProfileView_* event pages the port has
@@ -269,7 +271,7 @@ impl Frontend {
                 let groups = self.fame_groups();
                 let group = groups.get(self.profile_ui.fame_group);
                 let course = group.and_then(|(_, c)| c.get(self.profile_ui.fame_course));
-                vec![
+                let mut rows = vec![
                     (
                         "fameevent".into(),
                         format!("Event Type: {}", group.map_or("None", |g| g.0)),
@@ -303,7 +305,9 @@ impl Frontend {
                             }
                         ),
                     ),
-                ]
+                ];
+                rows.extend(self.ghost_choices());
+                rows
             }
             super::world_page::DAILY_PAGE => self.daily_choices(),
             "profile-records" => {
@@ -678,6 +682,7 @@ impl Frontend {
                 self.profile_ui.fame_group = 0;
                 self.profile_ui.fame_course = 0;
                 self.profile_ui.fame_expert = false;
+                self.profile_ui.fame_ghost = 0;
                 self.show("hall-of-fame", view);
             }
             "profile-create" => {
@@ -857,6 +862,7 @@ impl Frontend {
                 let n = self.fame_groups().len();
                 self.profile_ui.fame_group = wrap(self.profile_ui.fame_group, n);
                 self.profile_ui.fame_course = 0;
+                self.profile_ui.fame_ghost = 0;
             }
             "famecourse" => {
                 let groups = self.fame_groups();
@@ -864,9 +870,17 @@ impl Frontend {
                     .get(self.profile_ui.fame_group)
                     .map_or(0, |g| g.1.len());
                 self.profile_ui.fame_course = wrap(self.profile_ui.fame_course, n);
+                self.profile_ui.fame_ghost = 0;
             }
-            "famedifficulty" => self.profile_ui.fame_expert = !self.profile_ui.fame_expert,
+            "famedifficulty" => {
+                self.profile_ui.fame_expert = !self.profile_ui.fame_expert;
+                self.profile_ui.fame_ghost = 0;
+            }
             "fameworld" => self.profile_ui.fame_world = !self.profile_ui.fame_world,
+            "fameghost" => {
+                let n = self.ghost_rows().len();
+                self.profile_ui.fame_ghost = wrap(self.profile_ui.fame_ghost.min(n), n);
+            }
             _ => return,
         }
         self.refresh(view);

@@ -9,10 +9,16 @@ import json
 from devlog import read_devlog
 import struct
 import shutil
+import sys
+import os
+from host_build import ensure_guard
+
+os.chdir(Path(__file__).resolve().parents[1])
+ensure_guard(__file__, sys.argv[1:], kind='compile')
 
 ROOT = Path(__file__).resolve().parents[1]
 # Page-shell files copied as authored (play.html comes from build_engine.py).
-SHELL_FILES = ['fury-remastered.svg', 'manifest.webmanifest', 'install.js', 'install.css', 'index.html', 'landing.css', 'landing.js', 'design-system.css', 'analytics.js', 'devlog.html', 'devlog.css', 'devlog.js', 'offline.js', 'sw.js']
+SHELL_FILES = ['fury-remastered.svg', 'manifest.webmanifest', 'install.js', 'install.css', 'index.html', 'landing.css', 'landing.js', 'design-system.css', 'analytics.js', 'devlog.html', 'devlog.css', 'devlog.js', 'stats.html', 'stats.css', 'stats.js', 'offline.js', 'sw.js']
 dist = ROOT / 'web/dist'
 dist.mkdir(exist_ok=True)
 log = read_devlog(ROOT)

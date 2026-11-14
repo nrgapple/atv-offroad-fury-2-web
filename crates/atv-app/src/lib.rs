@@ -42,6 +42,7 @@ mod waypoint_editor;
 mod world;
 use atv_core::math::Det;
 pub use multiplayer::RoomStart;
+pub use net::server_for;
 use replay::RunScript;
 
 use atv_content::{Content, Store};
@@ -121,9 +122,13 @@ pub struct Options {
     pub front: Option<FrontStart>,
     /// Ride in a multiplayer room (host or join) on the relay.
     pub room: Option<RoomStart>,
-    /// The multiplayer relay origin for menu rides (Arlington Free Ride);
-    /// None: the page origin on the web, furyremastered.com on desktop.
-    pub relay: Option<String>,
+    /// The game's site for menu rides (the page origin the multiplayer
+    /// server admits, desktop invite links); None: the page origin on the
+    /// web, furyremastered.com on desktop.
+    pub site: Option<String>,
+    /// The multiplayer origin for menu rides (Arlington Free Ride, lobbies,
+    /// the rider count); None: [`server_for`] the site.
+    pub server: Option<String>,
 }
 
 /// How the frontend opens.
@@ -289,8 +294,10 @@ struct Defaults {
     crash: atv_game::crash::CrashMode,
     sound: Option<(atv_game::audio::ride::SoundMode, bool)>,
     start: FrontStart,
-    /// The multiplayer relay origin.
-    relay: String,
+    /// The game's site and the multiplayer origin ([`Options::site`],
+    /// [`Options::server`]).
+    site: String,
+    server: String,
 }
 
 /// A Freestyle objective attempt (`atv_core::freestyle`): the series,
@@ -308,6 +315,12 @@ struct ObjectiveSession {
     /// (a restart begins from it again).
     fame: Option<atv_core::hall_of_fame::FreestyleWatch>,
     fame_start: Option<atv_core::hall_of_fame::FreestyleWatch>,
+    /// The run's clock (seconds ridden since it started), its 1 Hz position
+    /// trace for the world boards (research/WORLD_BOARDS.md) and the ride's
+    /// reset count last seen (a reset's move is marked in the trace).
+    elapsed: f32,
+    trace: atv_core::world_board::Trace,
+    resets: u32,
     /// A target run's targets (the OB archive's target TOY).
     targets: Vec<atv_core::freestyle::Target>,
     /// One-shot sounds for the ride's mixer (target hits).
@@ -334,13 +347,18 @@ impl ObjectiveSession {
     /// Advances the run with the ride: simulated time, finished stunt
     /// chains and committed points. Returns the results summary once, when
     /// the run ends (its bits, Profile Points and Freestyle record saved in
-    /// the profile), with the run's Hall of Fame records.
+    /// the profile), with the run's Hall of Fame records and, when its
+    /// score earned a Hall of Fame place, the run for the world boards.
     fn update(
         &mut self,
         ride: &mut atv_game::ride::Ride,
         venue: Option<&atv_game::venue::Objective>,
         player: &str,
-    ) -> Option<(String, atv_core::hall_of_fame::FreestyleWatch)> {
+    ) -> Option<(
+        String,
+        atv_core::hall_of_fame::FreestyleWatch,
+        Option<world::ScoreRun>,
+    )> {
         use atv_core::freestyle::{Run, SERIES, course_objectives};
         let series = SERIES.get(self.series)?;
         if self.run.is_none() {
@@ -405,6 +423,14 @@ impl ObjectiveSession {
             }
             run.messages.extend(fame.take_messages());
         }
+        if !run.finished() {
+            let frame = ride.frame();
+            if std::mem::replace(&mut self.resets, frame.reset_count) != frame.reset_count {
+                self.trace.reset();
+            }
+            self.trace.step(self.elapsed, frame.origin, 0);
+            self.elapsed += dt;
+        }
         run.tick(dt, ride.committed_points());
         if !run.finished() || self.recorded {
             return None;
@@ -414,6 +440,15 @@ impl ObjectiveSession {
         // `002fce00`: score / 1000 plus the combo points.
         let points = fame.finish(run.score);
         run.messages.extend(fame.take_messages());
+        let world = world::ScoreRun::of_objective(
+            series.key,
+            &self.course,
+            &fame,
+            run.score,
+            self.elapsed,
+            ride.assisted(),
+            &self.trace,
+        );
         let mut settings = atv_ui::settings::Settings::load();
         let loaded = atv_ui::settings::profile_loaded(&settings);
         let mut profile = atv_ui::settings::load_profile(&settings);
@@ -462,7 +497,7 @@ impl ObjectiveSession {
             Some(trophy) => format!("{summary} · {}", trophy.line()),
             None => summary,
         };
-        Some((summary, fame))
+        Some((summary, fame, world))
     }
 
     /// Split screen: advances the shared objective with every player's
@@ -647,6 +682,9 @@ impl ObjectiveSession {
         self.fame = self.fame_start.clone();
         self.steps = ride.steps();
         self.recorded = false;
+        self.elapsed = 0.;
+        self.trace.clear();
+        self.resets = ride.frame().reset_count;
     }
 
     /// Test tooling (`objectiveTest=targets`): every 1.5 s of ride time,
@@ -1101,19 +1139,23 @@ static PREFETCH: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::
 /// Milliseconds the last ride load (`prepare`) took, as f64 bits
 /// (`?uiDiagnostics=1` `decodedCache.loadMs`).
 static LAST_LOAD_MS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+/// Milliseconds from the last ride's first frame until its sounds were
+/// ready, as f64 bits (`decodedCache.soundMs`).
+static LAST_SOUND_MS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 /// The persistent decoded-content cache's counters and the last ride load's
 /// duration (tools/test_engine_decoded_cache.mjs).
 fn decoded_cache_state() -> serde_json::Value {
-    let s = atv_content::decoded::stats();
-    serde_json::json!({
-        "enabled": s.enabled, "hits": s.hits, "misses": s.misses, "stores": s.stores,
-        "rejected": s.rejected, "failed": s.failed, "hitBytes": s.hit_bytes,
-        "readMs": (s.read_ms * 10.).round() / 10., "pending": s.pending,
-        "background": s.background,
-        "entries": s.entries, "bytes": s.bytes, "limit": s.limit,
-        "loadMs": (f64::from_bits(LAST_LOAD_MS.load(std::sync::atomic::Ordering::Relaxed)) * 10.).round() / 10.,
-    })
+    let mut state = atv_content::decoded::stats().json();
+    state["loadMs"] =
+        ((f64::from_bits(LAST_LOAD_MS.load(std::sync::atomic::Ordering::Relaxed)) * 10.).round()
+            / 10.)
+            .into();
+    state["soundMs"] =
+        ((f64::from_bits(LAST_SOUND_MS.load(std::sync::atomic::Ordering::Relaxed)) * 10.).round()
+            / 10.)
+            .into();
+    state
 }
 
 /// A loading progress line (status bar, and the frontend's loader).
@@ -2445,12 +2487,13 @@ impl App {
                         overlay.results.show_objective(summary);
                         overlay.offer_split_objective_fame(&fame);
                     }
-                } else if let Some((summary, fame)) =
+                } else if let Some((summary, fame, world)) =
                     session.update(&mut riding.ride, ready.venue.objective.as_ref(), &player)
                     && let Some(overlay) = &mut self.overlay
                 {
                     overlay.results.show_objective(summary);
                     overlay.offer_fame(atv_core::hall_of_fame::Watch::Freestyle(fame));
+                    overlay.offer_world_score(world);
                 }
                 // The targets' cherries loop their motion; hit ones hide.
                 if let Some(objective) = &ready.venue.objective {
@@ -3188,6 +3231,8 @@ impl App {
                             "onTrack": state.race.on_track(None),
                             "autopilot": state.autopilot_status().0,
                             "autopilotStuck": state.autopilot_status().1,
+                            // Its recovery: [assists, skips ahead].
+                            "autopilotRecovery": state.autopilot_recovery(),
                             "standings": f.standings.iter().map(|s| serde_json::json!({
                                 "name": s.name, "position": s.position, "time": s.time,
                                 "estimated": s.estimated,
@@ -3368,6 +3413,15 @@ impl App {
                     serde_json::json!({"time": s.time, "activeEmitters": s.active_emitters,
                     "emitted": s.total_emitted, "draws": self.meter.snow_draws})
                 });
+            // Remastered rain (tools/test_engine_remastered_rain.mjs): null
+            // unless the pass exists.
+            state["rain"] = ready
+                .scene
+                .rain_state()
+                .map_or(serde_json::Value::Null, |r| {
+                    serde_json::json!({"clock": r.clock, "streaks": r.streaks,
+                    "splashes": r.splashes, "beads": r.beads})
+                });
             // Keyframed TOY actors (tools/test_engine_toy_actors.mjs): the
             // scene clock, draw statistics and each actor's posed root.
             state["actors"] =
@@ -3474,6 +3528,8 @@ impl App {
                 .map(|g| {
                     serde_json::json!({
                         "best": g.best, "samples": g.samples, "opacity": g.opacity,
+                        // A world board row's ghost, until the player beats it.
+                        "rival": riding.ride.race().and_then(|r| r.rival.clone()),
                         "playing": g.pose.is_some(),
                         "origin": g.pose.map(|p| p.origin),
                         // Ghost passes the scene drew this frame (one per
@@ -3548,10 +3604,16 @@ impl App {
                 // A game's results title (`show_game`).
                 "resultsTitle": self.overlay.as_ref().filter(|o| o.results.shown)
                     .and_then(|o| o.results.game.clone()),
+                // The world boards' line on the results (world.rs).
+                "worldLine": self.overlay.as_ref().filter(|o| o.results.shown)
+                    .and_then(|o| o.results.world_line.clone()),
                 // The Hall of Fame name entry: records broken and the name.
                 "fame": self.overlay.as_ref().filter(|o| o.results.shown)
                     .and_then(|o| o.results.fame.as_ref())
                     .map(|f| serde_json::json!({"broken": f.broken, "name": f.name, "player": f.player})),
+                // The world boards' line on the results (world.rs).
+                "world": self.overlay.as_ref().filter(|o| o.results.shown)
+                    .and_then(|o| o.results.world_line.clone()),
             });
             state["ride"]["trainingSpeech"] = training_speech.into();
             state["ride"]["cpus"] = ready.cpus.iter().map(game_cpu::Cpu::state).collect();
@@ -3672,6 +3734,12 @@ impl App {
             state["fps"] = self.fps.state();
             publish_ui_state(&state.to_string());
         }
+        // Remastered rain beads the lens of the live riding view only.
+        ready.scene.set_rain_lens(
+            self.photo.is_none()
+                && self.replay.is_none()
+                && self.overlay.as_ref().is_none_or(|o| o.menu.is_none()),
+        );
         let overlay = self.overlay.as_ref().filter(|_| !self.hide_ui);
         let fps = &self.fps;
         let render_started = Instant::now();
@@ -4474,7 +4542,7 @@ impl App {
         });
         // This page; desktop links open the site's play.html (buildRideUrl),
         // as its invites do.
-        let page = multiplayer::share_page(&default_relay());
+        let page = multiplayer::share_page(&default_site());
         // In a room the row is Copy invite link (buildRideUrl's invite).
         if let Some(net) = &ready.net {
             return Some((
@@ -5458,6 +5526,7 @@ impl App {
         };
         let music = self.soundtrack.clone();
         let future = async move {
+            let started = Instant::now();
             let result = sound::Sound::load(
                 pending.content,
                 &pending.environment,
@@ -5466,6 +5535,10 @@ impl App {
                 music,
             )
             .await;
+            LAST_SOUND_MS.store(
+                (started.elapsed().as_secs_f64() * 1000.).to_bits(),
+                std::sync::atomic::Ordering::Relaxed,
+            );
             let _ = proxy.send_event(match result {
                 Ok(sound) => Message::SoundReady(Box::new(sound)),
                 Err(error) => Message::SoundFailed(error),
@@ -5528,7 +5601,10 @@ impl ApplicationHandler<Message> for App {
         context::watch(&window, self.proxy.clone());
         if let Some(start) = options.front.clone() {
             self.defaults = Some(Defaults {
-                relay: options.relay.clone().unwrap_or_else(default_relay),
+                site: options.site.clone().unwrap_or_else(default_site),
+                server: options.server.clone().unwrap_or_else(|| {
+                    server_for(&options.site.clone().unwrap_or_else(default_site), None)
+                }),
                 graphics: options.graphics,
                 graphics_set: options.graphics_set,
                 weather: options.weather,
@@ -5917,6 +5993,17 @@ impl ApplicationHandler<Message> for App {
                     .map(|l| l.players.len());
                 self.usage.started(players);
                 self.ready = Some(*ready);
+                // Lap Attack against a world board row's ghost (world.rs).
+                if let Some(rival) = self.world.rival.take()
+                    && let Some(race) = self
+                        .ready
+                        .as_mut()
+                        .and_then(|r| r.riding.as_mut())
+                        .and_then(|r| r.ride.race_mut())
+                    && race.settings().lap_attack
+                {
+                    race.set_rival(rival);
+                }
                 // The ride takes over the music bus from the menu tune.
                 self.sync_menu_music();
                 // Rides the saved settings do not reach (direct and held
@@ -6843,6 +6930,36 @@ const MOUSE: u64 = overlay::MOUSE;
 #[cfg(target_arch = "wasm32")]
 const DOWNLOADS_URL: &str = "https://github.com/nrgapple/atv-offroad-fury-2-web/releases";
 
+/// Opens a page outside the game: a new tab on the web, so the game keeps
+/// running behind it; the system browser on desktop (the platform's URL
+/// opener, no dependency). Android has no opener yet and hides the links.
+fn open_link(url: &str) {
+    #[cfg(target_arch = "wasm32")]
+    if let Some(window) = web_sys::window() {
+        window.open_with_url_and_target(url, "_blank").ok();
+    }
+    #[cfg(not(any(target_arch = "wasm32", target_os = "android")))]
+    {
+        #[cfg(target_os = "macos")]
+        let mut command = std::process::Command::new("open");
+        #[cfg(target_os = "windows")]
+        let mut command = std::process::Command::new("rundll32");
+        #[cfg(target_os = "windows")]
+        command.arg("url.dll,FileProtocolHandler");
+        #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+        let mut command = std::process::Command::new("xdg-open");
+        match command.arg(url).spawn() {
+            // Reaped off the frame loop; the opener exits once the browser has the URL.
+            Ok(mut child) => {
+                std::thread::spawn(move || child.wait());
+            }
+            Err(error) => eprintln!("fury: could not open {url}: {error}"),
+        }
+    }
+    #[cfg(target_os = "android")]
+    let _ = url;
+}
+
 impl App {
     /// Loads that must not hold up a ride frame (another rider's model or
     /// engine bank): polled a slice at a time from the frame loop, on both
@@ -7710,6 +7827,9 @@ impl App {
                     recorded: false,
                     fame: None,
                     fame_start: None,
+                    elapsed: 0.,
+                    trace: Default::default(),
+                    resets: 0,
                     targets: Vec::new(),
                     sounds: Vec::new(),
                     triggered: Vec::new(),
@@ -7764,6 +7884,23 @@ impl App {
                 };
                 self.start_ride(environment, quad, rider, Some(settings), None);
             }
+            Event::GhostRace {
+                board,
+                name,
+                value,
+                course,
+                expert,
+                quad,
+                rider,
+            } => self.world_ghost_race(world::GhostRace {
+                board,
+                name,
+                value,
+                course,
+                expert,
+                quad,
+                rider,
+            }),
             Event::CopyRaceLink => self.copy_race_link(),
             Event::WaypointEdit {
                 code,
@@ -7785,7 +7922,11 @@ impl App {
             Event::CopyCourseLink { code } => self.copy_course_link(&code),
             Event::Cloud(command) => self.cloud_command(command),
             Event::FreeRide { quad, rider, name } => {
-                let Some(relay) = self.defaults.as_ref().map(|d| d.relay.clone()) else {
+                let Some((site, server)) = self
+                    .defaults
+                    .as_ref()
+                    .map(|d| (d.site.clone(), d.server.clone()))
+                else {
                     return;
                 };
                 // Many riders keep the default name: number it so strangers
@@ -7801,7 +7942,8 @@ impl App {
                     name
                 };
                 let room = RoomStart {
-                    relay,
+                    site,
+                    server,
                     code: None,
                     host: false,
                     freeride: true,
@@ -7903,11 +8045,16 @@ impl App {
                 rider,
                 name,
             } => {
-                let Some(relay) = self.defaults.as_ref().map(|d| d.relay.clone()) else {
+                let Some((site, server)) = self
+                    .defaults
+                    .as_ref()
+                    .map(|d| (d.site.clone(), d.server.clone()))
+                else {
                     return;
                 };
                 let room = RoomStart {
-                    relay,
+                    site,
+                    server,
                     code,
                     host: true,
                     freeride: false,
@@ -7935,11 +8082,16 @@ impl App {
                 rider,
                 name,
             } => {
-                let Some(relay) = self.defaults.as_ref().map(|d| d.relay.clone()) else {
+                let Some((site, server)) = self
+                    .defaults
+                    .as_ref()
+                    .map(|d| (d.site.clone(), d.server.clone()))
+                else {
                     return;
                 };
                 let room = RoomStart {
-                    relay,
+                    site,
+                    server,
                     code: Some(code),
                     host: false,
                     freeride: false,
@@ -7966,14 +8118,10 @@ impl App {
                 }
             }
             Event::Downloads => {
-                // A new tab, so the game keeps running behind it.
                 #[cfg(target_arch = "wasm32")]
-                if let Some(window) = web_sys::window() {
-                    window
-                        .open_with_url_and_target(DOWNLOADS_URL, "_blank")
-                        .ok();
-                }
+                open_link(DOWNLOADS_URL);
             }
+            Event::Stats => open_link(&format!("{}/stats.html", default_site())),
             Event::Fullscreen => {
                 self.toggle_fullscreen();
             }
@@ -8084,7 +8232,7 @@ impl App {
         } else {
             player
         };
-        let page = multiplayer::share_page(&default_relay());
+        let page = multiplayer::share_page(&default_site());
         let race = f.state.race.clone();
         let url = atv_game::launch::ride_url(
             &page,
@@ -8139,7 +8287,7 @@ impl App {
         };
         let mut f = front.borrow_mut();
         let url = atv_game::launch::user_course_url(
-            &multiplayer::share_page(&default_relay()),
+            &multiplayer::share_page(&default_site()),
             code,
             &course.environment,
             f.state.quad_id,
@@ -8205,7 +8353,7 @@ impl App {
         if code.is_empty() {
             return;
         }
-        let Some(relay) = self.defaults.as_ref().map(|d| d.relay.clone()) else {
+        let Some(site) = self.defaults.as_ref().map(|d| d.site.clone()) else {
             return;
         };
         let environment = f
@@ -8214,7 +8362,7 @@ impl App {
             .get(f.state.track)
             .map_or("env01".to_string(), |t| t.id.clone());
         let url = multiplayer::invite_url(
-            &relay,
+            &site,
             &environment,
             f.state.quad_id,
             f.state.rider_id,
@@ -8267,6 +8415,7 @@ impl App {
             quad,
             rider,
             sky_smooth: false,
+            sound_rate: sound::RATE,
         });
         drop(f);
         let target = target.map(|mut target| {
@@ -8753,13 +8902,13 @@ impl App {
         {
             return;
         }
-        let Some(relay) = self.defaults.as_ref().map(|d| d.relay.clone()) else {
+        let Some(server) = self.defaults.as_ref().map(|d| d.server.clone()) else {
             return;
         };
         self.riders_polled = Some(Instant::now());
         #[cfg(target_arch = "wasm32")]
         self.spawn(
-            async move { net::riders(&relay).await },
+            async move { net::riders(&server).await },
             Message::FreeRideRiders,
         );
         // Desktop: a short-lived thread (the event-loop proxy is not Send),
@@ -8768,7 +8917,7 @@ impl App {
         {
             let (send, receive) = std::sync::mpsc::channel();
             std::thread::spawn(move || {
-                let _ = send.send(net::riders_blocking(&relay));
+                let _ = send.send(net::riders_blocking(&server));
             });
             self.riders_pending = Some(receive);
         }
@@ -9025,6 +9174,8 @@ impl App {
             publish_ui_state(
                 &serde_json::json!({
                     "front": f.diagnostics(),
+                    // The menu preload's cache work (tests read it before Start).
+                    "decodedCache": decoded_cache_state(),
                     // Frontend frames drawn and the page's focus (tests: idle
                     // menus draw nothing; Host/Join inputs keep the focus).
                     "frontFrames": self.front_frames,
@@ -9812,7 +9963,9 @@ fn room_page(_shared: bool) -> &'static str {
     "multiplayer"
 }
 
-fn default_relay() -> String {
+/// The game's site: the page origin on the web, furyremastered.com on
+/// desktop.
+fn default_site() -> String {
     #[cfg(target_arch = "wasm32")]
     {
         web_sys::window()
@@ -9843,6 +9996,14 @@ fn publish_multiplayer(
         let mut report = net.report();
         report["contacts"] = contacts.into();
         report["origin"] = serde_json::json!(ride.frame().origin);
+        report["state"] = if ride.rider_wreck().is_some() {
+            "wreck"
+        } else if ride.frame().grounded.iter().any(|v| *v) {
+            "riding"
+        } else {
+            "airborne"
+        }
+        .into();
         report["trainTime"] = serde_json::json!(ride.train_time());
         report["ownPlatform"] = serde_json::json!(
             ride.train_platform()
@@ -10320,6 +10481,8 @@ pub fn run(options: Options) {
         builder.with_android_app(activity.clone());
     }
     let event_loop = builder.build().expect("event loop");
+    // Live cache counters for tests (`window.atvDecodedCache`).
+    atv_content::decoded::diagnostics(url_flag("uiDiagnostics=1"));
     let app = App {
         cloud: Default::default(),
         world: Default::default(),
@@ -10526,6 +10689,9 @@ pub fn start() {
     if param("p2p").as_deref() == Some("0") {
         multiplayer::P2P.store(false, std::sync::atomic::Ordering::Relaxed);
     }
+    if param("batches").as_deref() == Some("0") {
+        multiplayer::BATCHES.store(false, std::sync::atomic::Ordering::Relaxed);
+    }
     if let Some(ms) = param("joinDelayMs").and_then(|v| v.parse::<u32>().ok()) {
         multiplayer::JOIN_DELAY_MS.store(ms.min(10_000), std::sync::atomic::Ordering::Relaxed);
     }
@@ -10654,13 +10820,15 @@ pub fn start() {
                 ..defaults
             }
         }),
-        relay: None,
+        site: None,
+        // `?server=<origin>`: multiplayer on that server instead
+        // ([`server_for`]).
+        server: Some(server_for(&default_site(), param("server").as_deref())),
         // `?host=1` hosts a room (`room=` an optional custom code) and
-        // `?room=CODE` joins one, on this page's relay.
+        // `?room=CODE` joins one, on this page's multiplayer server.
         room: direct_room.then(|| RoomStart {
-            relay: web_sys::window()
-                .and_then(|w| w.location().origin().ok())
-                .unwrap_or_default(),
+            site: default_site(),
+            server: server_for(&default_site(), param("server").as_deref()),
             code: param("room"),
             host: param("host").is_some_and(|v| v == "1"),
             name: param("name")

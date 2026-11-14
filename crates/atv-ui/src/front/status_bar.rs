@@ -745,3 +745,69 @@ pub(super) fn toast(m: &Metrics, notice: &str) -> El {
         }),
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn shapes(el: &El, into: &mut Vec<Shape>) {
+        if let Content::Shape(shape) = &el.content {
+            into.push(shape.clone());
+        }
+        for child in &el.children {
+            shapes(child, into);
+        }
+    }
+
+    /// Opaque ink box `[x0, y0, x1, y1]` of a rasterised shape, in CSS pixels.
+    fn ink(fonts: &mut crate::text::Fonts, shape: &Shape) -> [i32; 4] {
+        let b = fonts.raster_shape(shape, 1., [0, 0]);
+        let mut ink = [i32::MAX, i32::MAX, i32::MIN, i32::MIN];
+        for (i, p) in b.rgba.chunks(4).enumerate() {
+            if p[3] > 127 {
+                let x = (i as u32 % b.width) as i32 + b.left;
+                let y = (i as u32 / b.width) as i32 + b.top;
+                ink = [
+                    ink[0].min(x),
+                    ink[1].min(y),
+                    ink[2].max(x + 1),
+                    ink[3].max(y + 1),
+                ];
+            }
+        }
+        ink
+    }
+
+    /// The whole cloud rasterises in every sync state (#580: the native
+    /// backend dropped everything after the first arc, leaving a sliver).
+    #[test]
+    fn cloud_draws_its_whole_body() {
+        let mut fonts = crate::text::Fonts::new();
+        for sync in [
+            Sync::NoKey,
+            Sync::Syncing,
+            Sync::Synced,
+            Sync::Offline,
+            Sync::Error,
+        ] {
+            let mut layers = Vec::new();
+            shapes(&cloud(24., sync), &mut layers);
+            assert_eq!(layers.len(), 1 + (sync != Sync::NoKey) as usize, "{sync:?}");
+            // The body spans x 1.5-19.9, y 3.9-16.5 of 20 units (x1.2 here).
+            let [x0, y0, x1, y1] = ink(&mut fonts, &layers[0]);
+            assert!(
+                x0 <= 3 && x1 >= 23 && y0 <= 6 && y1 >= 20,
+                "{sync:?}: {:?}",
+                [x0, y0, x1, y1]
+            );
+            if let Some(mark) = layers.get(1) {
+                let [x0, y0, x1, y1] = ink(&mut fonts, mark);
+                assert!(
+                    (x1 - x0).max(y1 - y0) >= 4,
+                    "{sync:?} mark: {:?}",
+                    [x0, y0, x1, y1]
+                );
+            }
+        }
+    }
+}

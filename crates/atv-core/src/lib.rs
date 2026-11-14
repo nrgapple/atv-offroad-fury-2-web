@@ -101,6 +101,7 @@ pub mod wheel_effects;
 pub mod wheel_stop;
 pub mod wheel_support;
 pub mod world_board;
+pub mod world_ghost;
 pub mod world_sounds;
 pub mod wreck;
 pub mod zones;

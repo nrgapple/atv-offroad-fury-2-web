@@ -87,8 +87,11 @@ fn adaptive_delay_converges_for_common_cadences_and_stays_bounded() {
             buffer.presented_delay_ms()
         );
     }
-    // Extreme jitter and very fast cadence stay inside the clamp.
-    for (cadence, jitter, bound) in [(100u32, 200., 220f32), (20, 0., 45.)] {
+    // Extreme jitter and very fast cadence stay inside the clamp. Late
+    // reordered packets are rejected, so the accepted poses of the jittery
+    // rider are further apart than 100 ms and its limit is that interval
+    // plus 120 ms (at most 920 ms).
+    for (cadence, jitter, bounds) in [(100u32, 200., 220f32..=330.), (20, 0., 45. ..=45.)] {
         let packets = stream(cadence, 6000 / cadence, jitter, 0., 20., 3);
         let mut buffer = PoseBuffer::default();
         let mut previous = None;
@@ -96,13 +99,15 @@ fn adaptive_delay_converges_for_common_cadences_and_stays_bounded() {
             // Late reordered packets are rejected, exactly as on the wire.
             let _ = buffer.push(snapshot, arrival);
             let pose = buffer.present(arrival, 0.).unwrap();
-            assert!((45. ..=220.).contains(&buffer.presented_delay_ms()));
+            assert!((45. ..=920.).contains(&buffer.presented_delay_ms()));
             if let Some(previous) = previous {
                 assert!(pose.snapshot.atv.position[0] >= previous - 1e-3);
             }
             previous = Some(pose.snapshot.atv.position[0]);
         }
-        assert!((buffer.target_delay_ms() - bound).abs() < 1., "{cadence}");
+        let target = buffer.target_delay_ms();
+        println!("{cadence} ms cadence, {jitter} ms jitter: target delay {target:.1} ms");
+        assert!(bounds.contains(&target), "{cadence}: {target}");
     }
 }
 
@@ -388,4 +393,369 @@ fn clear_resets_presentation_and_platform_poses_never_keep_offsets() {
     buffer.clear();
     assert!(buffer.present(200, 0.).is_none());
     assert!((buffer.presented_delay_ms() - buffer.target_delay_ms()).abs() < 1e-6);
+}
+
+/// A rider circling at 40 ft/s (radius 100 ft): its pose at `t` ms.
+fn circling(sequence: u32, t: u32) -> Snapshot {
+    let angle = 0.4 * t as f32 / 1000.;
+    let (sin, cos) = angle.sin_cos();
+    moving(
+        sequence,
+        t,
+        [100. * cos, 0., 100. * sin],
+        [-40. * sin, 0., 40. * cos],
+    )
+}
+/// Where on the circle a presented pose is (the rider's own clock, ms) and
+/// how far off the circle (ft).
+fn on_circle(pose: &SampledPose, near_ms: f64) -> (f64, f32) {
+    let [x, _, z] = pose.snapshot.atv.position;
+    let turn = std::f64::consts::TAU / 0.4 * 1000.;
+    let mut at = f64::from(z.atan2(x)) / 0.4 * 1000.;
+    while at < near_ms - turn / 2. {
+        at += turn;
+    }
+    (at, ((x * x + z * z).sqrt() - 100.).abs())
+}
+/// Batches of the circling rider's poses: (poses, arrival ms). Poses are
+/// `spacing` apart and a batch goes every `every`, 30 ms (+-`jitter`) on
+/// the way; the two clocks start 5 s apart.
+fn batches(every: u32, spacing: u32, seconds: u32, jitter: f64) -> Vec<(Vec<Snapshot>, u64)> {
+    let mut rng = Lcg(11);
+    let mut out = Vec::new();
+    let mut sequence = 0;
+    for end in (every..seconds * 1000).step_by(every as usize) {
+        let poses = (end - every + spacing..=end)
+            .step_by(spacing as usize)
+            .map(|t| {
+                sequence += 1;
+                circling(sequence, t)
+            })
+            .collect();
+        let arrival = (5000. + f64::from(end) + 30. + jitter * rng.next()).round() as u64;
+        out.push((poses, arrival));
+    }
+    out
+}
+
+#[test]
+fn a_batched_rider_is_shown_one_interval_late_without_extrapolating() {
+    // The Free Ride tiers: (ms between batches, ms between poses in one).
+    for (every, spacing) in [(200u32, 50u32), (300, 100), (600, 200), (1500, 500)] {
+        let packets = batches(every, spacing, 30, 8.);
+        let mut buffer = PoseBuffer::default();
+        let mut next = 0;
+        let mut last_at = f64::MIN;
+        let (mut extrapolated, mut worst_ft, mut worst_step) = (0, 0f32, 0f64);
+        let mut now = 5000;
+        while now < 34_000 {
+            while next < packets.len() && packets[next].1 <= now {
+                let (poses, arrival) = &packets[next];
+                let newest = poses.last().unwrap().time_ms;
+                for pose in poses {
+                    // Each pose as if it had come alone.
+                    let at = arrival - u64::from(newest - pose.time_ms);
+                    assert!(buffer.push(pose.clone(), at).unwrap());
+                }
+                buffer.batched(Some(every));
+                next += 1;
+            }
+            if let Some(pose) = buffer.present(now, 0.) {
+                assert!(!pose.stale, "{every}: stale at {now}");
+                let (at, off) = on_circle(&pose, now as f64 - 5000.);
+                // Settled: the delay has reached the batch interval.
+                if now > 5000 + 8 * u64::from(every) + 3000 {
+                    extrapolated = extrapolated.max(pose.extrapolated_ms);
+                    worst_ft = worst_ft.max(off);
+                    worst_step = worst_step.max((at - last_at - FRAME_MS as f64).abs());
+                    let late = now as f64 - 5030. - at;
+                    assert!(
+                        (f64::from(every) - 10. ..=f64::from(every) + 70.).contains(&late),
+                        "{every}: shown {late:.0} ms late"
+                    );
+                }
+                assert!(at >= last_at - 1e-3, "{every}: went back at {now}");
+                last_at = at;
+            }
+            now += FRAME_MS;
+        }
+        println!(
+            "{every}/{spacing} ms batches: delay {:.0} ms, off the path {worst_ft:.3} ft, \
+             frame step off by {worst_step:.2} ms",
+            buffer.presented_delay_ms()
+        );
+        // Every pose is there before it is shown: nothing is guessed, the
+        // rider stays on its path and moves at its own speed every frame.
+        assert_eq!(extrapolated, 0, "{every}");
+        assert!(worst_ft < 0.05, "{every}: {worst_ft} ft off the path");
+        assert!(
+            worst_step < 2.5,
+            "{every}: frame step off by {worst_step} ms"
+        );
+    }
+}
+
+#[test]
+fn a_build_without_batches_plays_unpacked_poses_at_its_longest_delay() {
+    // The relay hands such a build a batch's poses one after another: they
+    // arrive together. It orders them by the rider's clock, not by arrival,
+    // so motion stays on the path; arriving together only reads as jitter,
+    // which takes its delay to the 220 ms limit. That covers a 200 ms batch
+    // whole and leaves a 300 ms batch about 80 ms of extrapolation.
+    for (every, spacing, guessed) in [(200u32, 50u32, 20u32), (300, 100, 110)] {
+        let packets = batches(every, spacing, 30, 8.);
+        let mut buffer = PoseBuffer::default();
+        let mut next = 0;
+        let mut last_at = f64::MIN;
+        let (mut extrapolated, mut worst_ft) = (0, 0f32);
+        let mut now = 5000;
+        while now < 34_000 {
+            while next < packets.len() && packets[next].1 <= now {
+                for pose in &packets[next].0 {
+                    assert!(buffer.push(pose.clone(), packets[next].1).unwrap());
+                }
+                next += 1;
+            }
+            if let Some(pose) = buffer.present(now, 0.) {
+                assert!(!pose.stale, "{every}: stale at {now}");
+                let (at, off) = on_circle(&pose, now as f64 - 5000.);
+                if now > 10_000 {
+                    extrapolated = extrapolated.max(pose.extrapolated_ms);
+                    worst_ft = worst_ft.max(off);
+                }
+                assert!(at >= last_at - 1e-3, "{every}: went back at {now}");
+                last_at = at;
+            }
+            now += FRAME_MS;
+        }
+        println!(
+            "{every}/{spacing} ms batches unpacked: delay {:.0} ms, extrapolated up to \
+             {extrapolated} ms, off the path {worst_ft:.3} ft",
+            buffer.presented_delay_ms()
+        );
+        assert!(buffer.target_delay_ms() > 200., "{every}");
+        assert!(extrapolated <= guessed, "{every}: {extrapolated} ms");
+        assert!(worst_ft < 0.3, "{every}: {worst_ft} ft off the path");
+    }
+}
+
+#[test]
+fn a_batched_rider_at_rest_stays_fresh_and_is_not_delayed() {
+    let resting = |sequence, time_ms| {
+        let mut s = moving(sequence, time_ms, [5., 0., 5.], [0.; 3]);
+        s.animation = Some(Default::default());
+        s
+    };
+    let mut buffer = PoseBuffer::default();
+    buffer.push(resting(1, 0), 1000).unwrap();
+    buffer.batched(Some(5000));
+    buffer.push(resting(2, 5000), 6000).unwrap();
+    buffer.batched(Some(5000));
+    // Nothing moves, so nothing waits for a batch: when the rider sets off
+    // its first poses are shown at once.
+    assert!(buffer.target_delay_ms() <= 220.);
+    // Its next pose is five seconds away: fresh for two intervals.
+    assert!(!buffer.present(6000 + 9000, 0.).unwrap().stale);
+    assert!(buffer.present(6000 + 10_500, 0.).unwrap().stale);
+    // Single poses again: the ordinary 2.5 s.
+    buffer.push(resting(3, 20_000), 21_000).unwrap();
+    buffer.batched(None);
+    assert!(!buffer.present(21_000 + 2400, 0.).unwrap().stale);
+    assert!(buffer.present(21_000 + 2500, 0.).unwrap().stale);
+    // It sets off in 200 ms batches: the delay follows within a second.
+    let mut sequence = 3;
+    let mut now = 26_000;
+    for batch in 0..10u32 {
+        for pose in 1..=4u32 {
+            sequence += 1;
+            let t = 25_000 + batch * 200 + pose * 50;
+            let at = 26_000 + u64::from(batch * 200 + pose * 50);
+            let x = 5. + 30. * (t - 25_000) as f32 / 1000.;
+            buffer
+                .push(moving(sequence, t, [x, 0., 5.], [30., 0., 0.]), at)
+                .unwrap();
+        }
+        buffer.batched(Some(200));
+        while now < 26_000 + u64::from((batch + 1) * 200) {
+            buffer.present(now, 0.);
+            now += FRAME_MS;
+        }
+    }
+    // (The long gaps at rest left a few ms in the jitter estimate.)
+    let target = buffer.target_delay_ms();
+    assert!((208. ..216.).contains(&target), "{target}");
+    assert!((buffer.presented_delay_ms() - target).abs() < 5.);
+}
+
+#[test]
+fn a_slow_sender_in_server_frames_is_interpolated_not_extrapolated() {
+    // fury-server forwards each pose on its next 50 ms tick. A Free Ride
+    // rider beyond 300 ft sends every 300 or 350 ms (700 ms after the
+    // server's 500 ms tier beyond 1,000 ft): its playback delay grows past
+    // the 220 ms single-pose limit to cover the whole gap, while a 10 Hz
+    // rider keeps the low one.
+    for (cadence, limit) in [
+        (100u32, 220f32),
+        (150, 270.),
+        (300, 420.),
+        (350, 470.),
+        (700, 820.),
+    ] {
+        let mut rng = Lcg(5);
+        let mut packets: Vec<(Snapshot, u64)> = Vec::new();
+        let mut t = 0f64;
+        while t < 30_000. {
+            // Sent on the first 59 Hz frame once the interval has passed (so
+            // its phase against the server ticks drifts), 30 ms (+-10) on the
+            // way, out on the next server tick.
+            t = ((t + f64::from(cadence)) * 0.059).ceil() / 0.059;
+            let sent = 5000. + t + 30. + 10. * rng.next();
+            let arrival = (sent / 50.).ceil() as u64 * 50;
+            packets.push((circling(packets.len() as u32 + 1, t as u32), arrival));
+        }
+        let mut buffer = PoseBuffer::default();
+        let mut next = 0;
+        let mut last_at = f64::MIN;
+        let (mut extrapolated, mut worst_ft) = (0, 0f32);
+        let mut now = 5000;
+        while now < 35_000 {
+            while next < packets.len() && packets[next].1 <= now {
+                assert!(
+                    buffer
+                        .push(packets[next].0.clone(), packets[next].1)
+                        .unwrap()
+                );
+                next += 1;
+            }
+            if let Some(pose) = buffer.present(now, 0.) {
+                assert!(!pose.stale, "{cadence}: stale at {now}");
+                let (at, off) = on_circle(&pose, now as f64 - 5000.);
+                // Settled: the delay slews at 5% from its first estimate.
+                if now > 25_000 {
+                    extrapolated = extrapolated.max(pose.extrapolated_ms);
+                    worst_ft = worst_ft.max(off);
+                }
+                assert!(at >= last_at - 1e-3, "{cadence}: went back at {now}");
+                last_at = at;
+            }
+            now += FRAME_MS;
+        }
+        let delay = buffer.presented_delay_ms();
+        println!(
+            "{cadence} ms poses in 50 ms frames: delay {delay:.0} ms (target {:.0}), \
+             extrapolated up to {extrapolated} ms, off the path {worst_ft:.3} ft",
+            buffer.target_delay_ms()
+        );
+        assert!(delay <= limit, "{cadence}: delay {delay}");
+        assert!(delay >= cadence as f32, "{cadence}: delay {delay}");
+        if cadence < 300 {
+            assert!(extrapolated <= 40, "{cadence}: {extrapolated} ms");
+        } else {
+            assert_eq!(extrapolated, 0, "{cadence}");
+        }
+        assert!(worst_ft < 0.1, "{cadence}: {worst_ft} ft off the path");
+    }
+}
+
+#[test]
+fn a_hop_between_slow_poses_is_interpolated_not_held() {
+    // A Free Ride rider beyond 300 ft at 60 ft/s sends every 300 ms and hops:
+    // riding, airborne, riding. Taking off or landing keeps the rider on the
+    // ATV, so the segment across it is followed like any other.
+    let mut buffer = PoseBuffer::default();
+    let mut sequence = 0;
+    let mut packets = Vec::new();
+    for t in (0..12_000u32).step_by(300) {
+        sequence += 1;
+        let mut s = moving(sequence, t, [60. * t as f32 / 1000., 0., 0.], [60., 0., 0.]);
+        if (t / 300) % 4 == 2 {
+            s.rider_state = RiderState::Airborne;
+        }
+        packets.push((s, 5000 + u64::from(t) + 40));
+    }
+    let mut next = 0;
+    let (mut last_x, mut worst_step, mut held) = (f32::MIN, 0f32, 0);
+    let mut now = 5000;
+    while now < 17_000 {
+        while next < packets.len() && packets[next].1 <= now {
+            buffer
+                .push(packets[next].0.clone(), packets[next].1)
+                .unwrap();
+            next += 1;
+        }
+        if let Some(pose) = buffer.present(now, 0.) {
+            let x = pose.snapshot.atv.position[0];
+            if now > 8000 {
+                let step = x - last_x;
+                worst_step = worst_step.max(step);
+                held += u32::from(step < 0.1);
+            }
+            last_x = x;
+        }
+        now += FRAME_MS;
+    }
+    // 60 ft/s is about 1 ft a 16 ms frame.
+    println!("hops at 300 ms: largest frame step {worst_step:.2} ft, {held} held frames");
+    assert!(worst_step < 1.5, "{worst_step} ft in one frame");
+    assert_eq!(held, 0);
+}
+
+#[test]
+fn a_wreck_between_slow_poses_moves_on_until_it_and_never_blends() {
+    // Riding at 40 ft/s with poses 300 ms apart, the rider wrecks at 3,150 ms
+    // (a change of state is sent at once). Up to the wreck the last riding
+    // pose moves on with its velocity instead of standing still for the
+    // whole gap; from the wreck pose on the wreck is shown, unblended.
+    let mut buffer = PoseBuffer::default();
+    let mut packets = Vec::new();
+    let mut times: Vec<u32> = (0..=3000).step_by(300).collect();
+    times.push(3150);
+    times.extend((3450..=6000).step_by(300));
+    for (n, &t) in times.iter().enumerate() {
+        let x = 40. * t.min(3150) as f32 / 1000.;
+        let mut s = moving(n as u32 + 1, t, [x, 0., 0.], [40., 0., 0.]);
+        if t >= 3150 {
+            s.rider_state = RiderState::Wreck;
+            s.crash_serial = 1;
+            s.velocity = [0.; 3];
+            s.rider_velocity = [0.; 3];
+        }
+        packets.push((s, 5000 + u64::from(t) + 40));
+    }
+    let mut next = 0;
+    let (mut last_x, mut still_ms, mut worst_still) = (f32::MIN, 0, 0);
+    let mut now = 5000;
+    while now < 11_000 {
+        while next < packets.len() && packets[next].1 <= now {
+            buffer
+                .push(packets[next].0.clone(), packets[next].1)
+                .unwrap();
+            next += 1;
+        }
+        if let Some(pose) = buffer.present(now, 0.) {
+            let s = &pose.snapshot;
+            let x = s.atv.position[0];
+            // Never a riding pose blended toward the wreck or past it.
+            if s.rider_state == RiderState::Wreck {
+                assert_eq!(x, 126., "wreck pose at {now}");
+            } else {
+                assert!(x <= 126. + 1e-3, "{x} past the wreck at {now}");
+                if now > 6000 {
+                    still_ms = if x - last_x < 0.1 {
+                        still_ms + FRAME_MS
+                    } else {
+                        0
+                    };
+                    worst_still = worst_still.max(still_ms);
+                }
+            }
+            last_x = x;
+        }
+        now += FRAME_MS;
+    }
+    assert!(worst_still <= FRAME_MS, "riding pose held {worst_still} ms");
+    assert_eq!(
+        buffer.present(now, 0.).unwrap().snapshot.rider_state,
+        RiderState::Wreck
+    );
 }

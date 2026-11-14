@@ -192,6 +192,14 @@ impl Trace {
     pub fn reset(&mut self) {
         self.reset_pending = true;
     }
+
+    /// The run starts over: an empty trace in the same storage.
+    pub fn clear(&mut self) {
+        self.points.clear();
+        self.marks.clear();
+        self.resets.clear();
+        self.reset_pending = false;
+    }
 }
 
 /// What a finished race sends (`POST /api/boards/submit`).
@@ -223,6 +231,12 @@ pub struct FreestyleSubmission<'a> {
     pub trace: &'a Trace,
 }
 
+/// A Freestyle run of `elapsed` seconds as the whole seconds the server
+/// matches the trace's length against (at least one).
+pub fn run_seconds(elapsed: f32) -> u32 {
+    (elapsed.max(0.).round() as u32).max(1)
+}
+
 /// Seconds to the milliseconds the boards keep: the lap's mark difference,
 /// so the server can match it.
 pub fn millis(seconds: f32) -> u32 {
@@ -251,6 +265,12 @@ pub struct BoardEntry {
     pub value: i64,
     pub vehicle: u16,
     pub day: String,
+    /// The row's lap can be raced as a ghost (`world_ghost`; lap boards).
+    pub ghost: bool,
+    /// A house rider's row (research/WORLD_BOARDS.md "House riders"): an
+    /// authored time the server adds to every board, shown as any other
+    /// row but never the player's own.
+    pub house: bool,
 }
 
 /// Yesterday's daily winner.
@@ -402,6 +422,49 @@ mod tests {
     }
 
     #[test]
+    fn a_freestyle_submission_serializes_as_the_server_reads_it() {
+        let mut trace = Trace::default();
+        for second in 0..3 {
+            trace.step(second as f32, [10. * second as f32, 0., 5.], 0);
+        }
+        trace.reset();
+        trace.step(3., [900., 0., 5.], 0);
+        let body = serde_json::to_value(FreestyleSubmission {
+            name: "ADA",
+            vehicle: 28,
+            series: "spstunt",
+            course: "free01",
+            score: 26_400,
+            seconds: run_seconds(3.4),
+            trace: &trace,
+        })
+        .unwrap();
+        assert_eq!(
+            body,
+            serde_json::json!({"name": "ADA", "vehicle": 28, "series": "spstunt", "course": "free01",
+                "score": 26400, "seconds": 3,
+                "trace": {"points": [[0, 5], [10, 5], [20, 5], [900, 5]], "marks": [], "resets": [3]}})
+        );
+        assert_eq!(run_seconds(0.2), 1, "the server takes one second at least");
+        assert_eq!(run_seconds(119.98), 120);
+        let capacity = trace.points.capacity();
+        trace.reset();
+        trace.clear();
+        assert!(trace.points.is_empty() && trace.resets.is_empty());
+        assert_eq!(
+            trace.points.capacity(),
+            capacity,
+            "a restart reuses the storage"
+        );
+        trace.step(0., [1., 0., 1.], 0);
+        trace.step(1., [2., 0., 1.], 0);
+        assert!(
+            trace.resets.is_empty(),
+            "a cleared trace forgets a pending reset"
+        );
+    }
+
+    #[test]
     fn placings_name_the_boards_entered() {
         let answer: Placings = serde_json::from_str(
             r#"{"name":"ADA","boards":{"lap:nat01:n":{"rank":3,"placed":true},"race:nat01:n":{"rank":9,"placed":false},"daily:2026-11-11":{"rank":1,"placed":true}}}"#,
@@ -416,6 +479,17 @@ mod tests {
         )
         .unwrap();
         assert_eq!(board.entries[0].name, "BOB");
+        assert!(!board.entries[0].house);
         assert_eq!(board.yesterday.unwrap().name, None);
+        let board: Board = serde_json::from_str(
+            r#"{"board":"lap:nat01:n","entries":[{"rank":1,"name":"RIGGS","value":61000,"vehicle":3,"day":"2026-11-12","house":true}]}"#,
+        )
+        .unwrap();
+        assert!(board.entries[0].house);
+        let score: Placings = serde_json::from_str(
+            r#"{"name":"ADA","boards":{"score:spstunt:free01":{"rank":2,"placed":true}}}"#,
+        )
+        .unwrap();
+        assert_eq!(score.lines(), ["World #2 Objective Score!"]);
     }
 }

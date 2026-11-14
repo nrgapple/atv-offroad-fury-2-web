@@ -75,6 +75,62 @@ fn is_pose(bytes: &[u8]) -> bool {
         && ((bytes[4] == 2 && bytes[5] == 4) || (bytes[4] >= 3 && bytes[5] == 9))
 }
 
+/// The multiplayer game server (research/GAME_SERVER.md).
+pub const GAME_SERVER: &str = "https://mp.furyremastered.com";
+
+/// The multiplayer origin (`http(s)://host[:port]`) for the game served on
+/// `site`: `chosen` (the `?server=` page parameter, desktop `FURY_SERVER`)
+/// when it is an http(s) origin, else [`GAME_SERVER`]. Only a page served
+/// from this machine keeps its own origin: the local test servers, which
+/// pass `/multiplayer/` on to a local fury-server
+/// (tools/serve_multiplayer.mjs).
+pub fn server_for(site: &str, chosen: Option<&str>) -> String {
+    if let Some(chosen) = chosen
+        .map(|c| c.trim().trim_end_matches('/'))
+        .filter(|c| is_origin(c))
+    {
+        return chosen.to_string();
+    }
+    let site = origin(site);
+    if is_loopback(&site) {
+        site
+    } else {
+        GAME_SERVER.into()
+    }
+}
+
+/// An http(s) origin on this machine (`127.x`, `localhost`, `[::1]`).
+fn is_loopback(origin: &str) -> bool {
+    let Some(rest) = origin
+        .strip_prefix("http://")
+        .or_else(|| origin.strip_prefix("https://"))
+    else {
+        return false;
+    };
+    let host = if rest.starts_with('[') {
+        rest.split_inclusive(']').next().unwrap_or(rest)
+    } else {
+        rest.split(':').next().unwrap_or(rest)
+    };
+    host == "localhost"
+        || host == "[::1]"
+        || (host.starts_with("127.") && host.bytes().all(|b| b.is_ascii_digit() || b == b'.'))
+}
+
+/// `http(s)://host[:port]` and nothing more.
+fn is_origin(text: &str) -> bool {
+    let Some(host) = text
+        .strip_prefix("https://")
+        .or_else(|| text.strip_prefix("http://"))
+    else {
+        return false;
+    };
+    !host.is_empty()
+        && host
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-' | b':' | b'[' | b']'))
+}
+
 /// `http(s)://host[:port]` to the matching `ws(s)://` room URL.
 pub fn room_url(relay: &str, code: &str, key: Option<&str>) -> String {
     let base = relay.trim_end_matches('/');
@@ -91,7 +147,7 @@ pub fn room_url(relay: &str, code: &str, key: Option<&str>) -> String {
     }
 }
 
-/// The page origin the relay admits: the relay's own scheme and host.
+/// A URL's origin: its scheme and host (the page origin a server admits).
 pub fn origin(relay: &str) -> String {
     let base = relay.trim_end_matches('/');
     let scheme_end = base.find("://").map_or(0, |i| i + 3);
@@ -376,14 +432,14 @@ mod native {
     }
 
     /// The Free Ride rider count (blocking; call off the UI thread).
-    pub fn riders_blocking(relay: &str) -> Option<u32> {
+    pub fn riders_blocking(server: &str) -> Option<u32> {
         let agent: ureq::Agent = ureq::Agent::config_builder()
             .timeout_global(Some(Duration::from_secs(10)))
             .build()
             .into();
         let url = format!(
             "{}/multiplayer/freeride/riders",
-            relay.trim_end_matches('/')
+            server.trim_end_matches('/')
         );
         let text = agent
             .get(&url)
@@ -848,6 +904,9 @@ mod web {
     pub async fn post(url: &str, _origin: &str, body: &str) -> Result<(u16, String), String> {
         let init = web_sys::RequestInit::new();
         init.set_method("POST");
+        // The game server is another origin than the page: no cookies.
+        init.set_mode(web_sys::RequestMode::Cors);
+        init.set_credentials(web_sys::RequestCredentials::Omit);
         init.set_body(&wasm_bindgen::JsValue::from_str(body));
         let headers = web_sys::Headers::new().map_err(|_| "headers")?;
         headers
@@ -874,16 +933,21 @@ mod web {
         Ok((response.status(), text))
     }
 
-    /// The Free Ride rider count (a same-origin GET, as the menu polls it).
-    pub async fn riders(relay: &str) -> Option<u32> {
+    /// The Free Ride rider count (a GET without credentials, as the menu
+    /// polls it).
+    pub async fn riders(server: &str) -> Option<u32> {
         let url = format!(
             "{}/multiplayer/freeride/riders",
-            relay.trim_end_matches('/')
+            server.trim_end_matches('/')
         );
         let window = web_sys::window()?;
-        let response = wasm_bindgen_futures::JsFuture::from(window.fetch_with_str(&url))
-            .await
-            .ok()?;
+        let init = web_sys::RequestInit::new();
+        init.set_mode(web_sys::RequestMode::Cors);
+        init.set_credentials(web_sys::RequestCredentials::Omit);
+        let response =
+            wasm_bindgen_futures::JsFuture::from(window.fetch_with_str_and_init(&url, &init))
+                .await
+                .ok()?;
         let response: web_sys::Response = response.dyn_into().ok()?;
         if !response.ok() {
             return None;
@@ -942,6 +1006,49 @@ mod tests {
         // Beyond 256: the session is stuck.
         assert_eq!(admit(256, &control), Admit::Close);
         assert_eq!(admit(300, &pose), Admit::Drop);
+    }
+
+    #[test]
+    fn multiplayer_is_the_game_server() {
+        use super::{GAME_SERVER, server_for};
+        for site in [
+            "https://furyremastered.com",
+            "https://atv-offroad-fury-2.champtoday.workers.dev/play.html",
+            "http://192.168.1.20:4173",
+            "https://127.example.com",
+        ] {
+            assert_eq!(server_for(site, None), GAME_SERVER, "{site}");
+        }
+        // Local test pages keep their own origin (a local fury-server).
+        for site in [
+            "http://127.0.0.1:4187",
+            "http://localhost:4187/play.html",
+            "http://[::1]:4187",
+        ] {
+            assert_eq!(server_for(site, None), super::origin(site), "{site}");
+        }
+        // An override wins when it is an origin and only then.
+        let public = "https://furyremastered.com";
+        for chosen in ["https://mp.furyremastered.com/", " http://127.0.0.1:8789"] {
+            assert_eq!(
+                server_for(public, Some(chosen)),
+                chosen.trim().trim_end_matches('/')
+            );
+        }
+        for bad in [
+            "",
+            "mp.furyremastered.com",
+            "javascript:alert(1)",
+            "https://a/b",
+            "https://u@h",
+            "wss://h",
+        ] {
+            assert_eq!(server_for(public, Some(bad)), GAME_SERVER);
+            assert_eq!(
+                server_for("http://127.0.0.1:4187", Some(bad)),
+                "http://127.0.0.1:4187"
+            );
+        }
     }
 
     #[test]

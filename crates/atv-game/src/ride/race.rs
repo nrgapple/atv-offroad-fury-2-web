@@ -119,6 +119,8 @@ pub const KID_RELEASED: VehicleInput = VehicleInput {
 
 /// Lap Attack's new best lap infotext (`00216750`: 0x42bb70).
 const GHOST_BEST: &str = "New Lap Attack Lap Set!";
+/// Seconds a world ghost's name and its beating show (authored).
+const RIVAL_SECONDS: f32 = 4.;
 
 /// A room race's CPU field (see [`Settings::room_cpus`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -313,6 +315,13 @@ pub struct RaceState {
     director: Option<(f32, Director, usize)>,
     autopilot: Option<Driver>,
     autopilot_stuck: f32,
+    /// Port adaptation: the CPUs' authored repeat/stall recovery for the
+    /// race path driver on the player's quad, whether the driver steered
+    /// this step (not on the grid, nor with Kid Mode's GO released), and
+    /// whether the reset now due is its skip ahead.
+    autopilot_recovery: cpu_recovery::Recovery,
+    autopilot_driving: bool,
+    autopilot_skip: bool,
     /// The player's vehicle reset count at the last race update.
     player_resets: Option<u32>,
     pub(super) autopilot_reset: bool,
@@ -366,6 +375,15 @@ pub struct RaceState {
     pub puppets_retired: bool,
     /// Lap Attack's best-lap ghost (none in other event types).
     pub ghost: Option<atv_core::race_ghost::Ghost>,
+    /// Lap Attack against a world board row's ghost (`world_ghost`): the
+    /// rival as the event started (a restart races it again) and, until
+    /// the player laps faster, the name the ghost rides under.
+    rival_start: Option<std::sync::Arc<atv_core::world_ghost::Rival>>,
+    pub rival: Option<String>,
+    /// A race that keeps records: its best lap's motion for a world board
+    /// ghost, and that ghost once the player has finished.
+    world_lap: Option<atv_core::world_ghost::Recorder>,
+    world_ghost: Option<std::sync::Arc<atv_core::world_ghost::Lap>>,
     /// The ghost's drawn pose this step (its buffers reused step to step)
     /// and whether it is shown.
     ghost_pose: (super::Pose, bool),
@@ -411,6 +429,27 @@ impl RaceState {
         self.records_start = Some(records.clone());
         self.race.set_records(records);
     }
+
+    /// Lap Attack against a world board row's ghost: it is the lap to beat
+    /// from the first lap (research/WORLD_BOARDS.md "Ghosts").
+    pub fn set_rival(&mut self, rival: std::sync::Arc<atv_core::world_ghost::Rival>) {
+        let Some(ghost) = &mut self.ghost else {
+            return;
+        };
+        ghost.set_rival(rival.time, rival.lap.samples());
+        if ghost.best() == Some(rival.time) {
+            self.hud.say(
+                format!(
+                    "{}'s Ghost · {}",
+                    rival.name,
+                    atv_core::race_hud::time_text(rival.time)
+                ),
+                RIVAL_SECONDS,
+            );
+            self.rival = Some(rival.name.clone());
+            self.rival_start = Some(rival);
+        }
+    }
 }
 
 impl RaceState {
@@ -418,6 +457,14 @@ impl RaceState {
     /// slow while riding (the stuck reset counter; diagnostics).
     pub fn autopilot_status(&self) -> (bool, f32) {
         (self.autopilot.is_some(), self.autopilot_stuck)
+    }
+    /// The path driver's recovery on the player's quad: times the assist
+    /// switched on and skip-ahead resets (diagnostics).
+    pub fn autopilot_recovery(&self) -> (u32, u32) {
+        (
+            self.autopilot_recovery.assists,
+            self.autopilot_recovery.skips,
+        )
     }
     /// The race setup this race loaded with.
     pub fn settings(&self) -> Settings {
@@ -704,6 +751,9 @@ impl Ride {
             director: None,
             autopilot: None,
             autopilot_stuck: 0.,
+            autopilot_recovery: Default::default(),
+            autopilot_driving: false,
+            autopilot_skip: false,
             player_resets: None,
             autopilot_reset: false,
             hud: RaceHud::default(),
@@ -741,6 +791,10 @@ impl Ride {
             ghost: settings
                 .lap_attack
                 .then(|| atv_core::race_ghost::Ghost::new(ghost_opacity)),
+            rival_start: None,
+            rival: None,
+            world_lap: None,
+            world_ghost: None,
             ghost_pose: Default::default(),
         });
         Ok(())
@@ -777,6 +831,9 @@ impl Ride {
         if let (Some(records), Some(race)) = (state.records_start, &mut self.race) {
             race.set_records(records);
         }
+        if let (Some(rival), Some(race)) = (state.rival_start, &mut self.race) {
+            race.set_rival(rival);
+        }
         self.step_camera(0.)
     }
 
@@ -795,6 +852,7 @@ impl Ride {
         let Some(state) = &mut self.race else {
             return Ok(None);
         };
+        state.autopilot_driving = false;
         let race = &state.race;
         if race.holding() {
             return Ok(Some(VehicleInput {
@@ -812,7 +870,8 @@ impl Ride {
             // GO released: the driver is off and the quad brakes. The
             // player's own Off Track rule still returns it to the course.
             state.autopilot_stuck = 0.;
-            state.autopilot_reset = race.off_track_time(None) > race_hud::RESET_SECONDS;
+            state.autopilot_reset =
+                state.autopilot_skip || race.off_track_time(None) > race_hud::RESET_SECONDS;
             return Ok(Some(KID_RELEASED));
         }
         if !race.player_finished()
@@ -881,6 +940,8 @@ impl Ride {
         let driver = state
             .autopilot
             .get_or_insert_with(|| Driver::new(4, Default::default()));
+        driver.assist = state.autopilot_recovery.assist();
+        state.autopilot_driving = true;
         let (input, _) = driver.step(
             &race.course,
             &pose,
@@ -1028,6 +1089,13 @@ impl Ride {
             .is_some_and(|count| count != player.reset_count)
         {
             race.restore_checkpoint(None, player.origin);
+            // The race path driver's resets count towards its recovery.
+            let distance = race.progress_distances(None)[0];
+            if std::mem::take(&mut state.autopilot_skip) {
+                state.autopilot_recovery.skipped(distance);
+            } else if state.autopilot_driving {
+                state.autopilot_recovery.reset(distance);
+            }
         }
         race.waiting = state.split.waiting;
         let judged = race.player_judged_laps();
@@ -1042,7 +1110,13 @@ impl Ride {
             if race.laps_completed(None) > laps_before[0]
                 && ghost.lap(race.player_last_lap(), race.player_judged_laps() > judged)
             {
-                state.hud.say(GHOST_BEST.into(), 1.5);
+                // The first lap faster than a world ghost beats its rider.
+                match state.rival.take() {
+                    Some(name) => state
+                        .hud
+                        .say(format!("You Beat {name}'s Ghost!"), RIVAL_SECONDS),
+                    None => state.hud.say(GHOST_BEST.into(), 1.5),
+                }
             }
             ghost.record(
                 atv_core::race_ghost::Sample {
@@ -1075,6 +1149,26 @@ impl Ride {
                 pose.quad_world = super::quaternion_world(sample.origin, sample.orientation);
                 pose.rider_world =
                     atv_core::race_ghost::multiply(&pose.quad_world, &nodes.rider_offset);
+            }
+        }
+        // A race that keeps records keeps its best lap's motion too, for a
+        // world board ghost (`world_ghost`; fixed storage, made once).
+        if race.records().is_some() && !race.holding() && state.world_ghost.is_none() {
+            let recorder = state.world_lap.get_or_insert_with(Default::default);
+            if race.laps_completed(None) > laps_before[0] {
+                recorder.lap(race.player_last_lap(), race.player_judged_laps() > judged);
+            }
+            recorder.record(atv_core::race_ghost::Sample {
+                origin: player.origin,
+                orientation: player.orientation,
+            });
+            if race.player_finished()
+                && let Some(records) = race.records()
+            {
+                let course = records.key.strip_suffix(":expert").unwrap_or(&records.key);
+                state.world_ghost = recorder
+                    .ghost(course, records.vehicle)
+                    .map(std::sync::Arc::new);
             }
         }
         race.record_player_stunt(committed);
@@ -1168,6 +1262,53 @@ impl Ride {
             Player::Quad(v) => {
                 v.set_reset_peers(others(0));
                 offer(v, race, None)?;
+                // Port adaptation (atv_core::cpu_recovery): the race path
+                // driver on the player's quad (Kid Mode, `?autopilot=1`)
+                // wrecks where a CPU would, and like a CPU that keeps
+                // returning to one reset point, or makes no route progress
+                // while riding, it is reset to a validated point further
+                // on. A player's own driving is never moved.
+                if state.autopilot_driving
+                    && !state.autopilot_skip
+                    && race.running()
+                    && !race.player_finished()
+                    && state.autopilot_recovery.observe(
+                        race.progress_distances(None)[0],
+                        player.wreck.phase == Phase::Riding,
+                        STEP,
+                    ) == cpu_recovery::Action::SkipAhead
+                {
+                    let candidates = race.recovery_stations(None, &cpu_recovery::SKIP_DISTANCES);
+                    let mut chosen = None;
+                    for candidate in &candidates {
+                        let (point, heading) = on_line((candidate.point, candidate.heading))?;
+                        if v.offer_recovery_checkpoint(terrain, point, heading)? {
+                            chosen = Some((candidate.station, candidate.gained));
+                            break;
+                        }
+                    }
+                    // None clear: the furthest candidate, placed by the
+                    // ring search of the off-track reset.
+                    if chosen.is_none()
+                        && let Some(last) = candidates.last()
+                    {
+                        v.set_race_checkpoint(Some(on_line((last.point, last.heading))?));
+                        chosen = Some((last.station, last.gained));
+                    }
+                    match chosen {
+                        // The reset itself is the next step's (reset_now),
+                        // which the reset bookkeeping above then records.
+                        Some((station, gained)) => {
+                            race.accept_recovery_station(None, station, gained);
+                            state.autopilot_reset = true;
+                            state.autopilot_skip = true;
+                        }
+                        // Nowhere ahead to go (at the gate): count afresh.
+                        None => state
+                            .autopilot_recovery
+                            .skipped(race.progress_distances(None)[0]),
+                    }
+                }
             }
             // The motorcycle reset keeps the authored 2.5ft course drop.
             Player::Bike(bike) => bike.set_race_checkpoint(Some((
@@ -1249,7 +1390,7 @@ impl Ride {
                     STEP,
                 ) == cpu_recovery::Action::SkipAhead
             {
-                let candidates = race.recovery_stations(index, &cpu_recovery::SKIP_DISTANCES);
+                let candidates = race.recovery_stations(Some(index), &cpu_recovery::SKIP_DISTANCES);
                 let mut chosen = None;
                 for candidate in &candidates {
                     let (point, heading) = on_line((candidate.point, candidate.heading))?;
@@ -1271,7 +1412,7 @@ impl Ride {
                     chosen = Some((last.station, last.gained));
                 }
                 if let Some((station, gained)) = chosen {
-                    race.accept_recovery_station(index, station, gained);
+                    race.accept_recovery_station(Some(index), station, gained);
                     cpu.respawn(nodes)?;
                     let reset = cpu.vehicle.frame();
                     race.reposition_cpu(
@@ -1475,6 +1616,10 @@ impl Ride {
         frame.duel = state.settings.duel;
         frame.lap_attack = state.settings.lap_attack;
         frame.ghost = state.ghost.as_ref().and_then(|g| g.frame());
+        frame.lap_ghost = state
+            .world_ghost
+            .clone()
+            .filter(|_| frame.records.is_some());
         frame.hud = Some(state.hud.step(
             STEP,
             &race_hud::Input {

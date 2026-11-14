@@ -1,0 +1,17 @@
+{
+  "id": "waypoint-editor-drop-gates-save-and-share-courses-5c760e43720147c28617f444ca60def3",
+  "timestamp": "2026-11-13T00:21:51.754651+00:00",
+  "recorded_at": "2026-11-13T00:21:51.754651+00:00",
+  "kind": "build",
+  "title": "Waypoint Editor: drop gates, save and share courses",
+  "summary": "Single Player has a Waypoint Editor. Drop gates while riding a free ride on the long Enduro course, then save the course and race it. Saved courses stay on the device and can be shared as a link.",
+  "details": [
+    "The editor is a free ride. G, the pad's R3 or the GATE button drops a gate where the rider stands, facing the same way. U, L3 or UNDO removes the last one. A course holds 3 to 50 gates, at least 20 ft apart.",
+    "Pause in the editor has Save Course and Resume Editing. Saved courses are stored in local storage as the same short codes that links use.",
+    "A saved course's page offers Race This Course, Edit Gates, Number of Laps, a name, Copy course link and Delete.",
+    "Deviation from the original: the original moves a cursor gate in a separate mode with rotation and snapping. The port drops a gate where the rider is, so a phone needs one button. Both choices are written up in research/RACING.md.",
+    "Courses are kept on the device, and no profile is needed. Courses are raced alone, keep no records and are not offered in online rooms."
+  ],
+  "limitation": "tools/test_engine_user_course.mjs has been flaky. It failed once in a later run while driving to drop gates and passed on a rerun. PR #571 changed the test to drive on until four gates are down, which fixed one cause. Courses are local to the device, so they do not follow a player to another device unless shared as a link.",
+  "verification": "Unit tests for waypoint_editor (atv-app), waypoint_page (atv-ui), user_course and ui_menu (atv-core) pass. tools/test_engine_user_course.mjs runs the link race, a tampered-link refusal, and the editor flow: drop, undo, save, then race the saved course. Passed locally; make precheck passes."
+}

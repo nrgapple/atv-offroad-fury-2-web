@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { UsageAnalytics, analyticsAllowed, dataPoint, normalizeEvent } from './analytics.js';
+import { UsageAnalytics, analyticsAllowed, dataPoint, normalizeEvent, statsOptOut } from './analytics.js';
 
 test('events keep only enumerated fields and bounded numbers', () => {
   assert.equal(normalizeEvent({ name: 'unknown' }), null);
@@ -51,4 +51,20 @@ test('disabled analytics never sends', () => {
   const usage = new UsageAnalytics({ send: event => sent.push(event), enabled: false });
   usage.track('session_start'); usage.rideStarted({ map: 'env01' }); usage.report(0);
   assert.equal(sent.length, 0);
+});
+
+test('?stats=off opts this device out until ?stats=on', () => {
+  const storage = () => { const items = new Map(); return { getItem: key => items.get(key) ?? null, setItem: (key, value) => items.set(key, String(value)), removeItem: key => items.delete(key) }; };
+  const localStorage = storage();
+  const scope = search => ({ navigator: {}, localStorage, location: { hostname: 'furyremastered.com', protocol: 'https:', search } });
+  assert.equal(analyticsAllowed(scope('')), true);
+  assert.equal(analyticsAllowed(scope('?stats=off')), false);
+  assert.equal(statsOptOut(scope('')), true);
+  assert.equal(analyticsAllowed(scope('?other=1')), false, 'the flag outlives the URL');
+  assert.equal(analyticsAllowed(scope('?stats=on')), true);
+  assert.equal(analyticsAllowed(scope('')), true);
+  // Blocked storage never breaks the page or opts out.
+  const blocked = { navigator: {}, location: { hostname: 'furyremastered.com', protocol: 'https:', search: '?stats=off' }, get localStorage() { throw new Error('SecurityError'); } };
+  assert.equal(analyticsAllowed(blocked), true);
+  assert.equal(statsOptOut({ location: { search: '?stats=off' } }), false);
 });

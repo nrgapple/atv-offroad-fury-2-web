@@ -78,6 +78,38 @@ fn groups(doc: &Document, player_quad: u32, champ_group: i64) -> Vec<i64> {
     chosen
 }
 
+/// The ATVs 00210d20 pools for a CPU field, in its order (repeats kept).
+fn pool_source(groups_doc: &Document, player_quad: u32, champ_group: i64) -> Vec<u32> {
+    let mut pool = Vec::new();
+    for g in groups(groups_doc, player_quad, champ_group) {
+        let section = format!("ATVGroup{g}");
+        for n in 1..=integer(groups_doc, &section, "NumATVs").unwrap_or(0) {
+            if let Some(atv) = integer(groups_doc, &section, &format!("ATV{n}"))
+                && (1..=26).contains(&atv)
+            {
+                pool.push(atv as u32);
+            }
+        }
+    }
+    if pool.is_empty() {
+        pool.push(player_quad);
+    }
+    pool
+}
+
+/// Every ATV [`select`] can draw for these groups, whatever the seed: what a
+/// menu preload prepares before the roster is drawn at Start.
+pub fn candidates(atv_groups: &[u8], player_quad: u32, champ_group: i64) -> Result<Vec<u32>> {
+    let mut quads = pool_source(&Document::parse(atv_groups)?, player_quad, champ_group);
+    let mut seen = Vec::with_capacity(quads.len());
+    quads.retain(|q| {
+        let new = !seen.contains(q);
+        seen.push(*q);
+        new
+    });
+    Ok(quads)
+}
+
 pub fn select(
     atv_groups: &[u8],
     ai_riders: &[u8],
@@ -90,23 +122,9 @@ pub fn select(
     if count > 4 {
         return Err("roster supports four CPU riders".into());
     }
-    let groups_doc = Document::parse(atv_groups)?;
+    let pool_source = pool_source(&Document::parse(atv_groups)?, player_quad, champ_group);
     let riders = Document::parse(ai_riders)?;
     let mut random = OriginalRandom::with_seed(seed);
-    let mut pool_source = Vec::new();
-    for g in groups(&groups_doc, player_quad, champ_group) {
-        let section = format!("ATVGroup{g}");
-        for n in 1..=integer(&groups_doc, &section, "NumATVs").unwrap_or(0) {
-            if let Some(atv) = integer(&groups_doc, &section, &format!("ATV{n}"))
-                && (1..=26).contains(&atv)
-            {
-                pool_source.push(atv as u32);
-            }
-        }
-    }
-    if pool_source.is_empty() {
-        pool_source.push(player_quad);
-    }
     let mut pool = pool_source.clone();
     let mut used = Vec::new();
     let mut roster = Vec::with_capacity(count);
@@ -207,6 +225,28 @@ mod tests {
         }
         text.into_bytes()
     }
+    #[test]
+    fn candidates_cover_every_seed_draw() {
+        for (quad, champ) in [(1, -1), (14, -1), (23, -1), (9, 2), (2, -1)] {
+            let pool = candidates(GROUPS, quad, champ).unwrap();
+            let mut unique = pool.clone();
+            unique.dedup();
+            assert_eq!(unique.len(), pool.len(), "no repeats: {pool:?}");
+            for seed in 0..200 {
+                for entry in select(GROUPS, &riders(), quad, false, champ, 4, seed).unwrap() {
+                    assert!(
+                        pool.contains(&entry.quad),
+                        "{quad}/{champ}: {} not in {pool:?}",
+                        entry.quad
+                    );
+                }
+            }
+        }
+        // Group 4 falls back to group 2; group 5 folds into 3.
+        assert_eq!(candidates(GROUPS, 23, -1).unwrap(), [23, 11, 4]);
+        assert_eq!(candidates(GROUPS, 1, -1).unwrap(), [9, 10]);
+    }
+
     #[test]
     #[ignore = "requires privately extracted AIRiders.pb and ATVGroups.pb"]
     fn original_roster_files_select_named_riders_for_every_quad() {

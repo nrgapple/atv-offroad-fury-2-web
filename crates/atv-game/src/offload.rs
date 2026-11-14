@@ -286,6 +286,14 @@ pub fn off_thread() -> bool {
     true
 }
 
+/// Which of `inputs`' results the persistent cache lacks, by index (a menu
+/// preload checks they fit before [`ensure`] produces them).
+pub fn missing(kind: u32, arg: u32, inputs: &[&[u8]]) -> Vec<usize> {
+    (0..inputs.len())
+        .filter(|&i| !atv_content::decoded::contains(&job_key(kind, arg, inputs[i])))
+        .collect()
+}
+
 /// Produces and stores whichever of `inputs`' results the persistent cache
 /// lacks, without reading those it has, and returns all their keys (menu
 /// preload; [`many`] then reads them). Stops early when `live` turns false.

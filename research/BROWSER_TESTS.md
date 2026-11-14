@@ -26,7 +26,7 @@ The runner starts `tools/serve_web.py` on a free host-only port, sets
 `ATV_TEST_URL`, runs the selected tests one at a time, writes each log to
 `work/verification/browser-tests/<test>.log` and prints a per-group summary. It
 exits non-zero if any selected test fails. `--url <site>` targets an existing
-server instead (for example a relay-capable host or the public site), `--bail`
+server instead (for example the local multiplayer proxy or the public site), `--bail`
 stops at the first failure.
 
 A test can still be run directly: `ATV_TEST_URL=http://127.0.0.1:4173 node tools/test_race.mjs`
@@ -39,7 +39,7 @@ against `make serve`.
 | `content-free` | `web/dist` only; served with an **empty** content directory | CI build lane, `make browser-smoke` |
 | `content` | ignored `private/reports/hosted-content` package | `make browser-tests` |
 | `native` | content plus private original-game reports named by `ATV_*_NATIVE` | only when requested |
-| `relay` | content plus a same-origin multiplayer relay (`--url`) | only when requested |
+| `multiplayer` | content plus a local game server at the same origin (`--url`) | only when requested |
 | `manual` | untracked baselines, a second server, an ISO or other tooling | by name, see the manifest reason |
 | `broken` | kept for reference; the manifest records why it fails | by name |
 
@@ -52,9 +52,9 @@ browser tests (about 100 `tools/test_*.mjs`) were removed with it; they run from
 pinned pre-switch build: `python3 tools/js_reference.py prepare`, then
 `python3 tools/js_reference.py test --group content` (its own runner and server).
 Tools that drive the JavaScript game next to the Rust engine (`compare_engine.mjs`, `compare_audio.mjs`,
-and the JavaScript guests in the `test_engine_multiplayer*` relay tests) load it from
+and the JavaScript guests in the `test_engine_multiplayer*` tests) load it from
 `ATV_JS_URL` (`jsBase`/`jsUrl` in `tools/browser/harness.mjs`), which defaults to
-`ATV_TEST_URL`. For relay tests, serve the reference behind its own relay proxy:
+`ATV_TEST_URL`. For multiplayer tests, serve the reference behind its own proxy:
 `PORT=4188 ASSET_PORT=4178 node tools/serve_multiplayer.mjs`.
 
 Native comparisons (`test_fog`, `test_reflections`, `test_vegetation_billboards`,
@@ -65,21 +65,22 @@ comparison was skipped. The `native` group never sets it; it fills unset
 variables from the manifest's default paths under ignored
 `private/reports/map-fidelity/` when those files exist, and otherwise fails.
 
-Relay tests need the game and a multiplayer relay on one origin. Locally:
-`make relay`; `wrangler@4.149.0 dev --config relay/wrangler.jsonc --port 8789 --local
---var GAME_ORIGIN:http://127.0.0.1:4187` (with `~/.cargo/bin` on `PATH`);
-`python3 tools/serve_web.py --port 4177`; `node tools/serve_multiplayer.mjs`; then
-`node tools/run_browser_tests.mjs --group relay --url http://127.0.0.1:4187`
+Multiplayer tests need the game and the game server (fury-server,
+research/GAME_SERVER.md) on one origin. Locally: `make server-run` serves
+fury-server on 8789 with the loopback test origins allowed;
+`python3 tools/serve_web.py --port 4177`; `node tools/serve_multiplayer.mjs`
+(the page on 4187, `/multiplayer/` passed to 8789); then
+`node tools/run_browser_tests.mjs --group multiplayer --url http://127.0.0.1:4187`
 (`ATV_ALLOW_HOST_WIP=1` lets `test_multiplayer_four` accept a host without
-`/deployment.json`; `ATV_MP_REOPEN=0` skips the 100 s room-expiry step).
+`/deployment.json`; `ATV_MP_REOPEN=0` skips the 100 s room-expiry step). A page
+served from a loopback origin uses its own origin for multiplayer; any other
+page uses `https://mp.furyremastered.com` unless `?server=<origin>` names
+another (desktop: `FURY_SERVER`).
 
-Two headless Chromium pages on one machine do not open a direct multiplayer
-link by themselves (each hides its local address behind an mDNS name the other
-cannot resolve), so relay tests exercise the relayed path, as desktop builds and
-blocked networks use it. `ATV_LINKS=1` adds the harness's `LINK_ARGS` to every
-launch and runs the same test with its riders linked directly;
-`test_engine_multiplayer_links.mjs` always does (research/MULTIPLAYER.md
-"Direct links").
+fury-server claims rooms without direct links or batches, so every rider's
+poses go through it. `test_engine_multiplayer_links.mjs` (direct WebRTC links)
+is `broken` since the Cloudflare relay, the only server that offered links, was
+retired on 2026-11-14.
 
 `broken` entries record why they currently fail; every one also failed on unmodified
 `main` when the harness was introduced. Fix the test (or the game) and move it back
@@ -117,3 +118,53 @@ lines over 500 characters.
 Screenshot and report outputs stay opt-in through each test's existing
 `ATV_*_SCREENSHOT(S)`/`ATV_*_REPORT` variables and belong in ignored `work/` or
 `private/` paths.
+
+## Failures traced on 2026-11-12 (issue #575)
+
+Four content tests failed on main and against production. None was a game
+regression; each test had outlived a deliberate change or relied on timing.
+Facts are from reading the code and from runs against production
+(`ATV_TEST_URL=https://furyremastered.com`, commit 8dd53ab) and a local
+build of the same commit.
+
+- `test_engine_menu_parity.mjs` (garage yaw 0.497 for 0.5). The showroom
+  turntable (24f4409, 2026-10-28) turns the garage ATV at 0.45 rad/s. The
+  test read the yaw, clicked the preview and then pressed the arrows, so
+  the yaw moved on by a few milliradians between the read and the first
+  press. A key turn stops the turntable and holds it for 2.5 s
+  (`front.rs` `SPIN_HOLD`), so the test now reads the yaw after the first
+  press and measures the next two (0.25 rad each, `modelSpin` 0).
+- `test_engine_ride_songs.mjs` (history 3 for 4). `data-engine-audio` is
+  written only by a ride's sounds, which load after the ride's first frame
+  (cc56027), so the previous ride's last report stays on the page until
+  the next ride's sounds arrive. The third ride's wait compared the title
+  with the Jukebox song, which the stale report (the second ride's song,
+  playing) satisfied at once; the saved history was then read before the
+  ride picked its song. The hole dates from the test's first version
+  (e1ac140); which change moved the timing far enough to lose the race was
+  not identified. The test now removes the attribute before each ride and
+  waits for the Jukebox title (it trails `playing` by a frame or more).
+- `test_engine_soundtrack.mjs` (`musicQueued` about 2 s for 0). The content
+  reader tries a refused read twice more, 0.4 s and 1.5 s later (ea7e27f,
+  2026-11-10, `atv-content` `RETRY_DELAYS_MS`). The test restored the
+  network 1.5 s after the fallback began, so the third try succeeded. It
+  now waits for the third refusal of one blob, checks nothing is queued,
+  restores the network and checks no song blob is read for 2.5 s. Against
+  a release build the page's service worker reads the blobs itself, past
+  `page.route`, which is why production failed one assertion earlier; that
+  page now blocks service workers.
+- `test_engine_user_course.mjs` ("dropped 3 gates", intermittent).
+  Straight on from the env05 start stands a tree. The test drove 150
+  rendered frames between drops, which is more simulated time on a busy
+  host; the quad then reached the tree at speed, wrecked, was put back in
+  front of it by wreck recovery and wrecked again on every following
+  drive, never 20 ft past its last gate (three runs in three against
+  production with the host at load 8-10; the reset timer read 1.23 s after
+  every drive). The editor was right to refuse those drops. The test now
+  rides a circle beside the start (throttle and left steer held) and drops
+  a gate each second.
+
+Limits. Against production the soundtrack test's last block (the race hold)
+still fails with a cold cache: the sounds arrive after the 3.5 s countdown,
+so there is no hold left to observe. It passes on a local server. The
+circle in the user course test was checked on env05 only.

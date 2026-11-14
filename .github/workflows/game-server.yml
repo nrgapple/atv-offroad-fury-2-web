@@ -1,0 +1,196 @@
+name: Game server
+
+# fury-server (research/GAME_SERVER.md): build, test and, on main, deploy the
+# Linux binary with deploy/deploy.sh. Site changes are ci.yml's; server-only
+# changes take ci.yml's `server` lane (tools/ci_changes.py) and do not rebuild
+# or redeploy the site. No game content is used here.
+on:
+  pull_request:
+    paths: &paths
+      - 'crates/atv-server/**'
+      - 'crates/atv-net/**'
+      - 'deploy/**'
+      - 'Cargo.lock'
+      - 'Cargo.toml'
+      - '.github/workflows/game-server.yml'
+  push:
+    branches: [main]
+    paths: *paths
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  TARGET: x86_64-unknown-linux-musl
+
+jobs:
+  build:
+    concurrency:
+      group: game-server-build-${{ github.ref }}
+      cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    outputs:
+      built: ${{ steps.crate.outputs.present }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Check deployment scripts
+        run: |
+          shellcheck deploy/deploy.sh deploy/fury-release deploy/render-cloud-init.sh deploy/digitalocean/provision.sh
+          python3 deploy/test_deploy.py
+      # Until the server crate lands, this workflow only checks deploy/.
+      - name: Find the server crate
+        id: crate
+        run: |
+          if [ -f crates/atv-server/Cargo.toml ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::crates/atv-server is not on this commit yet; only deploy/ was checked."
+          fi
+      - name: Install Rust toolchain
+        if: steps.crate.outputs.present == 'true'
+        run: |
+          rustup toolchain install stable --profile minimal --component rustfmt,clippy --target "$TARGET"
+          sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends musl-tools
+      - name: Restore trusted server build cache
+        if: steps.crate.outputs.present == 'true'
+        continue-on-error: true
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: |
+            target
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/registry/src
+          key: fury-server-v1-${{ hashFiles('Cargo.lock', 'Cargo.toml') }}-${{ github.sha }}
+          restore-keys: |
+            fury-server-v1-${{ hashFiles('Cargo.lock', 'Cargo.toml') }}-
+            fury-server-v1-
+      # Server-only changes skip ci.yml's workspace lint, so lint the server here.
+      - name: Format, lint and test
+        if: steps.crate.outputs.present == 'true'
+        timeout-minutes: 15
+        run: |
+          cargo fmt -p atv-server -- --check
+          cargo clippy --locked -p atv-server --all-targets -- -D warnings
+          cargo test --locked -p atv-server
+      - name: Build static release binary
+        if: steps.crate.outputs.present == 'true'
+        timeout-minutes: 15
+        run: |
+          cargo build --locked --release -p atv-server --bin fury-server --target "$TARGET"
+          mkdir -p work/fury-server
+          install -m 755 "target/$TARGET/release/fury-server" work/fury-server/fury-server
+          file work/fury-server/fury-server
+          work/fury-server/fury-server --version
+          (cd work/fury-server && sha256sum fury-server > fury-server.sha256)
+          echo "$GITHUB_SHA" > work/fury-server/commit
+      - name: Upload binary
+        if: steps.crate.outputs.present == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: fury-server
+          path: work/fury-server/
+          if-no-files-found: error
+          retention-days: 14
+      - name: Save trusted server build cache
+        continue-on-error: true
+        if: >-
+          success() && steps.crate.outputs.present == 'true' && github.ref == 'refs/heads/main' &&
+          (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: |
+            target
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/registry/src
+          key: fury-server-v1-${{ hashFiles('Cargo.lock', 'Cargo.toml') }}-${{ github.sha }}
+
+  deploy:
+    name: Deploy game server
+    needs: build
+    # One deploy at a time, never interrupted; an older build that reaches this
+    # job after a newer deploy is skipped below.
+    concurrency:
+      group: deploy-game-server
+      cancel-in-progress: false
+    if: >-
+      needs.build.outputs.built == 'true' && github.ref == 'refs/heads/main' && github.event_name != 'pull_request' &&
+      github.repository == 'nrgapple/atv-offroad-fury-2-web'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment:
+      name: game-server
+      url: https://mp.furyremastered.com/healthz
+    steps:
+      - name: Check deploy secrets
+        id: secrets
+        env:
+          HOST: ${{ secrets.GAME_SERVER_HOST }}
+          KEY: ${{ secrets.GAME_SERVER_SSH_KEY }}
+          KNOWN_HOSTS: ${{ secrets.GAME_SERVER_KNOWN_HOSTS }}
+        run: |
+          if [ -n "$HOST" ] && [ -n "$KEY" ] && [ -n "$KNOWN_HOSTS" ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Game server deploy skipped: set GAME_SERVER_HOST, GAME_SERVER_SSH_KEY and GAME_SERVER_KNOWN_HOSTS (deploy/README.md)."
+          fi
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        if: steps.secrets.outputs.ready == 'true'
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Download binary from this run
+        if: steps.secrets.outputs.ready == 'true'
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: fury-server
+          path: work/fury-server/
+      - name: Skip builds older than the live server
+        if: steps.secrets.outputs.ready == 'true'
+        id: fresh
+        env:
+          HOST: ${{ secrets.GAME_SERVER_HOST }}
+        run: |
+          live=$(curl -fsS --max-time 10 "https://$HOST/healthz" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("commit",""))' || true)
+          if [ -n "$live" ] && [ "$live" != "$GITHUB_SHA" ] && git merge-base --is-ancestor "$GITHUB_SHA" "$live" 2>/dev/null; then
+            echo "deploy=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::The live game server ($live) already contains $GITHUB_SHA; not deploying an older build."
+          else
+            echo "deploy=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Deploy with health check and rollback
+        if: steps.secrets.outputs.ready == 'true' && steps.fresh.outputs.deploy == 'true'
+        timeout-minutes: 6
+        env:
+          HOST: ${{ secrets.GAME_SERVER_HOST }}
+          SSH_KEY: ${{ secrets.GAME_SERVER_SSH_KEY }}
+          KNOWN_HOSTS: ${{ secrets.GAME_SERVER_KNOWN_HOSTS }}
+        run: |
+          umask 077
+          printf '%s\n' "$SSH_KEY" > "$RUNNER_TEMP/deploy_key"
+          printf '%s\n' "$KNOWN_HOSTS" > "$RUNNER_TEMP/known_hosts"
+          (cd work/fury-server && sha256sum -c fury-server.sha256)
+          FURY_SSH_KEY="$RUNNER_TEMP/deploy_key" FURY_KNOWN_HOSTS="$RUNNER_TEMP/known_hosts" \
+            deploy/deploy.sh "$HOST" work/fury-server/fury-server "$GITHUB_SHA"
+      - name: Remove deploy key
+        if: always()
+        run: rm -f "$RUNNER_TEMP/deploy_key" "$RUNNER_TEMP/known_hosts"
+      - name: Record result
+        if: always()
+        env:
+          RESULT: ${{ job.status }}
+          READY: ${{ steps.secrets.outputs.ready }}
+        run: |
+          {
+            echo "## Game server deploy: $RESULT"
+            echo "Commit: $GITHUB_SHA; secrets present: ${READY:-false}"
+            echo ""
+            echo "[Health](https://mp.furyremastered.com/healthz) · [Uptime](https://furyremastered.com/status/game-server)"
+          } >> "$GITHUB_STEP_SUMMARY"

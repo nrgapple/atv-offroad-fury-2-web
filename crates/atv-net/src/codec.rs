@@ -31,6 +31,8 @@ pub fn encode(packet: &Packet) -> Result<Vec<u8>> {
         Packet::Signal(_) => 17,
         Packet::Links { .. } => 18,
         Packet::Bundle { .. } => 19,
+        Packet::Batch { .. } => 20,
+        Packet::Frame { .. } => 21,
     };
     w.0.extend_from_slice(MAGIC);
     w.byte(VERSION);
@@ -220,6 +222,26 @@ pub fn encode(packet: &Packet) -> Result<Vec<u8>> {
             w.byte(poses.len() as u8);
             for pose in poses {
                 bundled(pose)?;
+                w.u16(pose.len() as u16);
+                w.0.extend_from_slice(pose);
+            }
+        }
+        Packet::Batch { interval_ms, poses } => {
+            batch(*interval_ms, poses)?;
+            w.u16(*interval_ms);
+            w.byte(poses.len() as u8);
+            for pose in poses {
+                w.u16(pose.len() as u16);
+                w.0.extend_from_slice(pose);
+            }
+        }
+        Packet::Frame { poses } => {
+            if poses.is_empty() || poses.len() > MAX_FRAME {
+                return Err(Error::InvalidValue);
+            }
+            w.byte(poses.len() as u8);
+            for pose in poses {
+                framed(pose)?;
                 w.u16(pose.len() as u16);
                 w.0.extend_from_slice(pose);
             }
@@ -489,6 +511,34 @@ pub fn decode(bytes: &[u8]) -> Result<Packet> {
             }
             Packet::Bundle { poses }
         }
+        20 => {
+            let interval_ms = r.u16()?;
+            let count = r.byte()? as usize;
+            if count == 0 || count > MAX_BATCH {
+                return Err(Error::InvalidValue);
+            }
+            let mut poses = Vec::with_capacity(count);
+            for _ in 0..count {
+                let len = r.u16()? as usize;
+                poses.push(r.take(len)?.to_vec());
+            }
+            batch(interval_ms, &poses)?;
+            Packet::Batch { interval_ms, poses }
+        }
+        21 => {
+            let count = r.byte()? as usize;
+            if count == 0 || count > MAX_FRAME {
+                return Err(Error::InvalidValue);
+            }
+            let mut poses = Vec::with_capacity(count);
+            for _ in 0..count {
+                let len = r.u16()? as usize;
+                let pose = r.take(len)?;
+                framed(pose)?;
+                poses.push(pose.to_vec());
+            }
+            Packet::Frame { poses }
+        }
         8 => {
             let epoch = r.u32()?;
             let map = r.u16()?;
@@ -519,6 +569,42 @@ fn bundled(pose: &[u8]) -> Result<()> {
         Packet::Snapshot(s) if s.animation.is_some() => Ok(()),
         _ => Err(Error::InvalidValue),
     }
+}
+
+/// A frame carries poses only: compact snapshots or baseline deltas.
+fn framed(pose: &[u8]) -> Result<()> {
+    match decode(pose)? {
+        Packet::Snapshot(s) if s.animation.is_some() => Ok(()),
+        Packet::Delta(_) => Ok(()),
+        _ => Err(Error::InvalidValue),
+    }
+}
+
+/// A batch is one rider's whole compact snapshots, each newer than the one
+/// before it in sequence and in the rider's clock.
+fn batch(interval_ms: u16, poses: &[Vec<u8>]) -> Result<()> {
+    if interval_ms > MAX_BATCH_INTERVAL_MS || poses.is_empty() || poses.len() > MAX_BATCH {
+        return Err(Error::InvalidValue);
+    }
+    let mut last: Option<(PeerId, u32, u32)> = None;
+    for pose in poses {
+        let s = match decode(pose)? {
+            Packet::Snapshot(s) if s.animation.is_some() => s,
+            _ => return Err(Error::InvalidValue),
+        };
+        if let Some((peer, sequence, time_ms)) = last {
+            let elapsed = s.time_ms.wrapping_sub(time_ms);
+            if s.peer != peer
+                || !sequence_newer(s.sequence, sequence)
+                || elapsed == 0
+                || elapsed >= 0x8000_0000
+            {
+                return Err(Error::InvalidValue);
+            }
+        }
+        last = Some((s.peer, s.sequence, s.time_ms));
+    }
+    Ok(())
 }
 
 fn links(mask: u32) -> Result<()> {

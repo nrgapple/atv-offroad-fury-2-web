@@ -57,6 +57,11 @@ struct Chunk {
     count: u32,
     key: Key,
     alpha_fail: bool,
+    /// The alpha-tested pass can pass no fragment ([`passes_nothing`]): it is
+    /// skipped, leaving the alpha-failure pass (or nothing) to draw.
+    accept_empty: bool,
+    /// The world shadow map's cutout discards every fragment.
+    casts_nothing: bool,
     /// Bind groups per ATM frame (one for still textures; fallback when untextured).
     textures: Vec<usize>,
     uniform: MaterialUniform,
@@ -144,6 +149,17 @@ pub struct SceneryPass {
 }
 
 pub(crate) const STRIDE: u64 = 36;
+
+/// Whether a GEQUAL alpha test at `cutoff` (decoded bytes / 255) rejects
+/// every fragment of a texture whose highest alpha byte is `texture`,
+/// modulated by vertex alpha up to `vertex` (128 is unity). Filtering,
+/// mipmaps and interpolation only average, so they never exceed those
+/// maxima; a byte of margin covers sampling precision. The NAT06 and SX13
+/// rain cards (97 × 63/128 against 120) are the case this finds.
+fn passes_nothing(texture: u8, vertex: u8, cutoff: f32) -> bool {
+    let highest = f32::from(texture) * f32::from(vertex) / 128.;
+    cutoff > 0. && highest + 1. < cutoff * 255.
+}
 const REFLECTION_STRIDE: u64 = 72;
 
 impl SceneryPass {
@@ -164,6 +180,8 @@ impl SceneryPass {
         let mut groups = vec![world.texture_group(gpu, &fallback, &sampler)];
         let mut images = vec![fallback];
         let mut uploaded: HashMap<*const atv_game::materials::MaterialImage, Vec<usize>> =
+            HashMap::new();
+        let mut highest_alpha: HashMap<*const atv_game::materials::MaterialImage, u8> =
             HashMap::new();
         let record_slot = world.slot(std::mem::size_of::<Record>());
         let mut chunks = Vec::with_capacity(scenery.chunks.len());
@@ -225,6 +243,32 @@ impl SceneryPass {
                 uv_offset: [0.; 4],
             };
             let alpha_fail = pass.scene_alpha_failure == 1. && pass.scene_alpha_cutoff > 0.;
+            let texture_alpha = pass.texture.as_ref().map(|image| {
+                *highest_alpha
+                    .entry(std::rc::Rc::as_ptr(image))
+                    .or_insert_with(|| {
+                        let alpha = |rgba: &[u8]| rgba.iter().skip(3).step_by(4).copied().max();
+                        image
+                            .frames
+                            .iter()
+                            .map(|f| alpha(f))
+                            .chain([alpha(&image.image.rgba)])
+                            .flatten()
+                            .max()
+                            .unwrap_or(0)
+                    })
+            });
+            // Prelit chunks modulate by vertex alpha, 128 for unity.
+            let vertex_alpha = if state.is_some_and(|p| p.prelit) {
+                source.colors.iter().map(|c| c[3]).max().unwrap_or(0)
+            } else {
+                128
+            };
+            let accept_empty = texture_alpha
+                .is_some_and(|t| passes_nothing(t, vertex_alpha, pass.scene_alpha_cutoff));
+            // world_shadow.wgsl samples the texture alone against at least 0.25.
+            let casts_nothing = texture_alpha
+                .is_some_and(|t| passes_nothing(t, 128, pass.scene_alpha_cutoff.max(0.25)));
             if clocks.animated(index) {
                 animated.push(index);
             }
@@ -257,6 +301,8 @@ impl SceneryPass {
                 count: source.indices.len() as u32,
                 key,
                 alpha_fail,
+                accept_empty,
+                casts_nothing,
                 textures,
                 uniform,
             });
@@ -652,7 +698,7 @@ impl SceneryPass {
             self.visible.push(index);
             stats.levels[usize::from(draw.lod).min(3)] += 1;
             let chunk = &self.chunks[draw.chunk];
-            let passes = 1 + chunk.alpha_fail as u32;
+            let passes = u32::from(!chunk.accept_empty) + u32::from(chunk.alpha_fail);
             stats.draws += passes;
             stats.triangles += chunk.count / 3 * passes;
         }
@@ -678,6 +724,7 @@ impl SceneryPass {
         for draw in &self.draws {
             let chunk = &self.chunks[draw.chunk];
             if draw.lod != 0
+                || chunk.casts_nothing
                 || !chunk.key.depth_write
                 || chunk.key.blend == Blend::Additive
                 || draw.flash.is_some()
@@ -742,6 +789,9 @@ impl SceneryPass {
                 if fail && !chunk.alpha_fail {
                     break;
                 }
+                if !fail && chunk.accept_empty {
+                    continue;
+                }
                 // GS FB_ONLY keeps failed fragments in the framebuffer without
                 // writing Z; the predicates are exclusive, each pixel blends once.
                 let key = Key {
@@ -798,4 +848,22 @@ fn pipeline(
         &world.texture_layout,
         records,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::passes_nothing;
+
+    #[test]
+    fn alpha_test_that_can_never_pass() {
+        // The rain cards: texture 97, vertex alpha 63, reference 120.
+        assert!(passes_nothing(97, 63, 120. / 255.));
+        assert!(passes_nothing(97, 128, 120. / 255.));
+        // Vertex alpha above unity can lift the texture over the cutoff.
+        assert!(!passes_nothing(97, 255, 120. / 255.));
+        assert!(!passes_nothing(128, 128, 120. / 255.));
+        // Within a byte of the cutoff stays drawn; no test never skips.
+        assert!(!passes_nothing(119, 128, 120. / 255.));
+        assert!(!passes_nothing(0, 128, 0.));
+    }
 }

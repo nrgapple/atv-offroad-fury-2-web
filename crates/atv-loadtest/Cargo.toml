@@ -1,0 +1,19 @@
+[package]
+name = "atv-loadtest"
+edition.workspace = true
+version.workspace = true
+publish.workspace = true
+description = "fury-loadtest: simulated riders against a multiplayer server (research/GAME_SERVER.md)"
+
+[[bin]]
+name = "fury-loadtest"
+path = "src/main.rs"
+
+[dependencies]
+atv-net = { path = "../atv-net" }
+serde_json.workspace = true
+futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "sync", "time"] }
+tokio-tungstenite = { version = "0.28", features = ["rustls-tls-webpki-roots"] }
+ureq = { version = "3", default-features = false, features = ["rustls"] }

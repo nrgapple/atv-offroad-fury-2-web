@@ -1,0 +1,16 @@
+{
+  "id": "user-created-enduro-race-a-course-of-your-own-gates-fr-7108faeb584b42ad8e055237f94c4e29",
+  "timestamp": "2026-11-13T00:21:52.730270+00:00",
+  "recorded_at": "2026-11-13T00:21:52.730270+00:00",
+  "kind": "build",
+  "title": "User Created Enduro: race a course of your own gates from a link",
+  "summary": "A User Created Enduro is a course of 3 to 50 gates on one of eight environments. It can be shared as a link, which opens the course straight into a race. This is the first slice of the Waypoint Editor.",
+  "details": [
+    "A course has a name, 1 to 5 laps and its gates. Gate positions snap to a half-foot grid and headings to a fixed step, so every platform reads the same numbers.",
+    "The compact code is about 6 bytes per gate. A link with wp=CODE opens the course. Pause → Copy ride link copies it.",
+    "Codes are untrusted. The version, venue, laps, gate count, name and gate spacing are checked when decoded, and every gate must lie on the venue's terrain at load.",
+    "The race uses the long Enduro's scenery and rules with the course's gates. It races alone: no CPU riders, no profile points, no records, and not offered in online rooms."
+  ],
+  "limitation": "Races alone. CPU riders follow the long Enduro route, not the new gates. Earns no points and keeps no records. Not offered in rooms.",
+  "verification": "atv-core user_course tests (5) and atv-game launch tests (6) pass; make precheck passes. tools/test_engine_user_course.mjs was added (it runs with the editor PR); its link race and tampered-link refusal are covered there. Choices are recorded in research/RACING.md."
+}

@@ -1,5 +1,10 @@
 # Pinned Worker build tool cache
 
+Retired 2026-11-14 with the Cloudflare multiplayer relay, the only thing built
+with `worker-build` (research/GAME_SERVER.md). CI's Rust cache key is now the
+toolchain identity (`rustc -vV`, Cargo version, runner OS and architecture)
+alone. The rest of this section is history.
+
 The PWA release's PR CI spent 259 seconds installing `worker-build 0.8.7`
 ([38438794714](https://github.com/nrgapple/atv-offroad-fury-2-web/actions/runs/38438794714));
 main spent 260 seconds on the same compilation
@@ -159,7 +164,7 @@ config, `~/Library/Application Support/Mozilla.sccache/config`, puts the disk ca
 no `.cargo/config.toml` is committed, so other clones and platforms are unaffected.
 Recipes and the Python build scripts they run inherit it: `make check` (test and
 clippy), `make web` (wasm), `make desktop` (macOS host builds; the Docker Linux and
-Windows builds do not pass it in), `make relay` and `make android` (not yet
+Windows builds do not pass it in), `make server` and `make android` (not yet
 exercised with sccache). Direct `cargo` commands need
 `RUSTC_WRAPPER="$PWD/tools/sccache-rustc"`.
 

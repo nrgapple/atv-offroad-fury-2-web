@@ -1,7 +1,7 @@
 {
   "$schema": "https://unpkg.com/wrangler@4.149.0/config-schema.json",
   "name": "atv-offroad-fury-2",
-  "main": "cloudflare/entry.mjs",
+  "main": "cloudflare/worker.mjs",
   "compatibility_date": "2026-10-01",
   "account_id": "92b7e16fd24d5fb585f866f5832a032b",
   "workers_dev": true,
@@ -23,7 +23,12 @@
     "GAME_ORIGIN": "https://furyremastered.com",
     "GAME_ORIGINS": "https://furyremastered.com,https://atv-offroad-fury-2.champtoday.workers.dev",
     "CANONICAL_ORIGIN": "https://furyremastered.com",
-    "MULTIPLAYER_GUARDS": "required"
+    "GAME_SERVER_URL": "https://mp.furyremastered.com"
+  },
+  "triggers": {
+    "crons": [
+      "*/5 * * * *"
+    ]
   },
   "analytics_engine_datasets": [
     {
@@ -39,18 +44,6 @@
       "migrations_dir": "cloudflare/migrations"
     }
   ],
-  "durable_objects": {
-    "bindings": [
-      {
-        "name": "LOBBIES",
-        "class_name": "LobbyRoom"
-      },
-      {
-        "name": "ADMISSION",
-        "class_name": "LobbyAdmission"
-      }
-    ]
-  },
   "migrations": [
     {
       "tag": "rust-lobbies-v1",
@@ -61,6 +54,13 @@
     {
       "tag": "admission-budget-v1",
       "new_sqlite_classes": [
+        "LobbyAdmission"
+      ]
+    },
+    {
+      "tag": "retire-relay-v1",
+      "deleted_classes": [
+        "LobbyRoom",
         "LobbyAdmission"
       ]
     }
@@ -87,22 +87,6 @@
     "redact_query_string": true
   },
   "ratelimits": [
-    {
-      "name": "ROOM_CREATE_LIMIT",
-      "namespace_id": "82401301",
-      "simple": {
-        "limit": 12,
-        "period": 60
-      }
-    },
-    {
-      "name": "ROOM_CONNECT_LIMIT",
-      "namespace_id": "82401302",
-      "simple": {
-        "limit": 120,
-        "period": 60
-      }
-    },
     {
       "name": "EVENT_LIMIT",
       "namespace_id": "82401303",

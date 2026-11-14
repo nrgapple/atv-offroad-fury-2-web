@@ -1,0 +1,21 @@
+{
+  "id": "pause-and-options-redesign-grouped-pause-options-rail--f21d433541184cc39cf57c47552b7ced",
+  "timestamp": "2026-11-13T00:19:23.667624+00:00",
+  "recorded_at": "2026-11-13T00:21:51.307516+00:00",
+  "kind": "build",
+  "title": "Pause and Options redesign: grouped Pause, Options rail, gear on the menu bar",
+  "summary": "The Pause menu is one panel with its rows grouped by purpose. Options has a side rail with live preview on wide screens and a plain list of categories on a portrait phone. The main menu status bar has a gear that opens Options from any page with the bar.",
+  "details": [
+    "Pause: the ride's own actions come first, then Options and Jukebox, then sharing, then leaving. A landscape phone shows the groups in two columns so nothing scrolls.",
+    "Rows show what they do: a switch for On/Off, the value between arrows for a choice, and a chevron for a row that opens a page. Back and the list pagers sit in a footer that does not scroll.",
+    "Options on wide screens (640 px or more between the side safe areas) keeps the categories in a rail beside the open category's rows. Q/E and the pad's shoulder buttons change category. Escape steps back to the rail.",
+    "Options on a portrait phone is a list of categories, each with a line saying what it holds.",
+    "Options opened over a menu page uses the same panel. The status bar gear opens it from any page that shows the bar.",
+    "Labels, values and saved keys still come from the shared menu definitions, so the rules did not change.",
+    "Also in this change: a launch flag opens Pause or Options for a native capture, and the menu diagnostics report the layout."
+  ],
+  "limitation": "Checked in desktop captures and browser tests at 1280×720, 844×390 and 390×844. Not checked on a physical phone or with a real controller. The shoulder-button category switch has no automated test. Three older browser tests (menu parity, ride songs, soundtrack) fail the same way on production and are tracked separately.",
+  "image": "/devlog-images/pause-and-options-redesign-grouped-pause-options-rail--f21d433541184cc39cf57c47552b7ced.png",
+  "caption": "Pause on desktop: the rows are grouped into ride actions, Options and Jukebox, sharing (Copy ride link, Dev log) and Quit.",
+  "verification": "Host only: 191 atv-ui tests pass, including controller tests for the wide and narrow paths. tools/test_engine_options_layout.mjs passes on desktop, landscape phone, portrait phone and the gear. Of 30 existing browser tests that drive these menus, 27 pass; the 3 failures match production. After merging main, the menu, pause, photo, replay and layout tests pass. Native captures of every page were inspected."
+}

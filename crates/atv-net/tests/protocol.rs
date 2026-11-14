@@ -354,7 +354,7 @@ fn timestamp_and_sequence_rollover_remain_smooth() {
 fn crash_teleport_and_model_switch_are_discontinuous() {
     for mode in 0..3 {
         let mut buffer = PoseBuffer::default();
-        let mut b = snapshot(2, 50, 1.);
+        let mut b = snapshot(2, 50, 3.);
         match mode {
             0 => {
                 b.crash_serial = 1;
@@ -363,9 +363,18 @@ fn crash_teleport_and_model_switch_are_discontinuous() {
             1 => b.atv.position[0] = 500.,
             _ => b.atv_model = 2,
         }
-        buffer.push(snapshot(1, 0, 0.), 0).unwrap();
+        let a = snapshot(1, 0, 0.);
+        buffer.push(a.clone(), 0).unwrap();
         buffer.push(b.clone(), 50).unwrap();
-        assert_eq!(buffer.sample(105).unwrap().snapshot.atv.position[0], 0.);
+        // Until the change the first pose moves on with its own velocity
+        // (20 ft/s for 25 ms); nothing of the second is blended in.
+        let shown = buffer.sample(105).unwrap().snapshot;
+        assert_eq!(shown.atv.position[0], 0.5);
+        assert_eq!(shown.rider.position[0], 1.5);
+        assert_eq!(
+            (shown.rider_state, shown.crash_serial, shown.atv_model),
+            (a.rider_state, a.crash_serial, a.atv_model)
+        );
         assert_eq!(buffer.sample(130).unwrap().snapshot, b);
     }
 }
@@ -1135,6 +1144,33 @@ fn direct_link_signalling_roundtrips_and_is_bounded() {
         Packet::Links {
             mask: (1 << MAX_PLAYERS) - 1,
         },
+        // Pose batches: a build says it takes them, hears which riders do,
+        // and follows the relay's pace.
+        Packet::Signal(Signal {
+            peer: 3,
+            kind: signal::HELLO,
+            data: vec![signal::CPU_SOUNDS | signal::BATCHES],
+        }),
+        Packet::Signal(Signal {
+            peer: 2,
+            kind: signal::PRESENT,
+            data: vec![signal::DIRECT | signal::BATCHES],
+        }),
+        Packet::Signal(Signal {
+            peer: 2,
+            kind: signal::ARRIVED,
+            data: vec![signal::BATCHES],
+        }),
+        Packet::Signal(Signal {
+            peer: 4,
+            kind: signal::PACE,
+            data: vec![signal::PACE_MIN],
+        }),
+        Packet::Signal(Signal {
+            peer: 4,
+            kind: signal::PACE,
+            data: vec![signal::PACE_MAX],
+        }),
     ];
     for packet in packets {
         assert_eq!(decode(&encode(&packet).unwrap()).unwrap(), packet);
@@ -1142,9 +1178,12 @@ fn direct_link_signalling_roundtrips_and_is_bounded() {
     let signal = |peer, kind, data: Vec<u8>| Packet::Signal(Signal { peer, kind, data });
     for bad in [
         signal(20, signal::OFFER, vec![1]),
-        signal(1, 9, vec![1]),
+        signal(1, 10, vec![1]),
         signal(1, signal::COURIER, vec![2]),
-        signal(1, signal::HELLO, vec![signal::CPU_SOUNDS * 2]),
+        signal(1, signal::HELLO, vec![signal::FRAMES * 2]),
+        signal(1, signal::PACE, vec![signal::PACE_MIN - 1]),
+        signal(1, signal::PACE, vec![signal::PACE_MAX + 1]),
+        signal(1, signal::GONE, vec![signal::BATCHES]),
         // Couriers stay between a client and the relay: older builds accept
         // only the DIRECT bit in another rider's flags.
         signal(1, signal::PRESENT, vec![signal::CARRIES]),
@@ -1152,7 +1191,7 @@ fn direct_link_signalling_roundtrips_and_is_bounded() {
         signal(1, signal::OFFER, vec![]),
         signal(1, signal::OFFER, vec![0; MAX_SIGNAL_BYTES + 1]),
         signal(1, signal::HELLO, vec![]),
-        signal(1, signal::HELLO, vec![15]),
+        signal(1, signal::HELLO, vec![32]),
         signal(1, signal::PRESENT, vec![1, 1]),
         Packet::Links {
             mask: 1 << MAX_PLAYERS,
@@ -1162,8 +1201,11 @@ fn direct_link_signalling_roundtrips_and_is_bounded() {
     }
     // The same bounds hold for bytes that never passed through `encode`.
     let mut bytes = encode(&signal(1, signal::HELLO, vec![1])).unwrap();
-    bytes[10] = 8;
+    bytes[10] = 32;
     assert_eq!(decode(&bytes), Err(Error::InvalidValue));
+    // Every hello flag, frames included, is accepted.
+    bytes[10] = 31;
+    assert!(decode(&bytes).is_ok());
     let report = atv_net::LinkReport {
         timeouts: 2,
         hidden: 4,
@@ -1176,6 +1218,57 @@ fn direct_link_signalling_roundtrips_and_is_bounded() {
     let mut bytes = encode(&Packet::Links { mask: 1 }).unwrap();
     bytes[11] = 0xff;
     assert_eq!(decode(&bytes), Err(Error::InvalidValue));
+}
+#[test]
+fn pose_batches_carry_one_riders_compact_poses_in_order() {
+    let compact = |peer: u8, sequence: u32, time_ms: u32| {
+        let mut s = snapshot(sequence, time_ms, (sequence % 100) as f32);
+        s.peer = peer;
+        s.atv_nodes.clear();
+        s.rider_nodes.clear();
+        s.animation = Some(Box::default());
+        encode(&Packet::Snapshot(Box::new(s))).unwrap()
+    };
+    let batch = |interval_ms, poses| Packet::Batch { interval_ms, poses };
+    let full = batch(
+        1500,
+        (1..=atv_net::MAX_BATCH as u32)
+            .map(|n| compact(4, n, n * 50))
+            .collect(),
+    );
+    let bytes = encode(&full).unwrap();
+    assert_eq!(bytes[5], 20);
+    assert!(bytes.len() <= atv_net::MAX_PACKET_BYTES);
+    assert_eq!(decode(&bytes).unwrap(), full);
+    let one = batch(atv_net::MAX_BATCH_INTERVAL_MS, vec![compact(0, 9, 5)]);
+    assert_eq!(decode(&encode(&one).unwrap()).unwrap(), one);
+    // Sequence numbers may wrap inside a batch.
+    let wrapped = batch(200, vec![compact(1, u32::MAX, 50), compact(1, 0, 100)]);
+    assert_eq!(decode(&encode(&wrapped).unwrap()).unwrap(), wrapped);
+    for bad in [
+        batch(200, vec![]),
+        batch(200, vec![compact(0, 1, 50); atv_net::MAX_BATCH + 1]),
+        batch(atv_net::MAX_BATCH_INTERVAL_MS + 1, vec![compact(0, 1, 50)]),
+        // One rider's poses, each newer in sequence and time.
+        batch(200, vec![compact(0, 1, 50), compact(1, 2, 100)]),
+        batch(200, vec![compact(0, 2, 50), compact(0, 2, 100)]),
+        batch(200, vec![compact(0, 2, 50), compact(0, 1, 100)]),
+        batch(200, vec![compact(0, 1, 100), compact(0, 2, 100)]),
+        batch(200, vec![compact(0, 1, 100), compact(0, 2, 50)]),
+        // Only compact snapshots, never other packets or node poses.
+        batch(200, vec![encode(&Packet::Links { mask: 1 }).unwrap()]),
+        batch(
+            200,
+            vec![encode(&Packet::Snapshot(Box::new(snapshot(1, 1, 0.)))).unwrap()],
+        ),
+        batch(200, vec![compact(0, 1, 50)[..20].to_vec()]),
+    ] {
+        assert!(encode(&bad).is_err());
+    }
+    // The same bounds hold for bytes that never passed through `encode`.
+    let mut bytes = encode(&batch(200, vec![compact(0, 1, 50)])).unwrap();
+    bytes[10] = 0;
+    assert!(decode(&bytes).is_err());
 }
 #[test]
 fn courier_bundles_carry_whole_compact_poses_only() {
@@ -1208,6 +1301,43 @@ fn courier_bundles_carry_whole_compact_poses_only() {
             poses: vec![encode(&Packet::Snapshot(Box::new(snapshot(1, 1, 0.)))).unwrap()],
         },
         Packet::Bundle {
+            poses: vec![compact(0, 0.)[..20].to_vec()],
+        },
+    ] {
+        assert!(encode(&bad).is_err());
+    }
+}
+
+#[test]
+fn server_frames_carry_compact_poses_and_deltas_only() {
+    let compact = |peer: u8, x: f32| {
+        let mut s = snapshot(1, 100, x);
+        s.peer = peer;
+        s.atv_nodes.clear();
+        s.rider_nodes.clear();
+        s.animation = Some(Box::default());
+        encode(&Packet::Snapshot(Box::new(s))).unwrap()
+    };
+    let frame = Packet::Frame {
+        poses: (0..MAX_PLAYERS as u8)
+            .map(|p| compact(p, p as f32))
+            .collect(),
+    };
+    let bytes = encode(&frame).unwrap();
+    assert!(bytes.len() <= atv_net::MAX_PACKET_BYTES);
+    assert_eq!(decode(&bytes).unwrap(), frame);
+    for bad in [
+        Packet::Frame { poses: vec![] },
+        Packet::Frame {
+            poses: vec![compact(0, 0.); atv_net::MAX_FRAME + 1],
+        },
+        Packet::Frame {
+            poses: vec![encode(&Packet::Links { mask: 1 }).unwrap()],
+        },
+        Packet::Frame {
+            poses: vec![encode(&Packet::Snapshot(Box::new(snapshot(1, 1, 0.)))).unwrap()],
+        },
+        Packet::Frame {
             poses: vec![compact(0, 0.)[..20].to_vec()],
         },
     ] {

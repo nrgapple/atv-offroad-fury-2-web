@@ -12,7 +12,7 @@ from urllib.parse import unquote, urlsplit
 ROOT = Path(__file__).resolve().parents[1] / 'web/dist'
 PROJECT = Path(__file__).resolve().parents[1]
 CONTENT = PROJECT / 'private/reports/hosted-content'
-ALLOWED = {'play.html', 'engine.html', 'engine.css', 'engine.js', 'decode-worker.js', 'atv_app.js', 'atv_app_bg.wasm', 'fury-remastered-home-180-v1.png', 'fury-remastered-home-192-v1.png', 'fury-remastered-home-512-v1.png', 'fury-remastered-maskable-192-v1.png', 'fury-remastered-maskable-512-v1.png', 'favicon.ico', 'app-icon.svg', 'apple-touch-icon.png', 'app-icon-512.png', 'fury-remastered.svg', 'manifest.webmanifest', 'install.js', 'install.css', 'index.html', 'landing.css', 'landing.js', 'design-system.css', 'analytics.js', 'deployment.json', 'devlog.html', 'devlog.css', 'devlog.js', 'devlog.json', 'offline.js', 'sw.js'}
+ALLOWED = {'play.html', 'engine.html', 'engine.css', 'engine.js', 'decode-worker.js', 'atv_app.js', 'atv_app_bg.wasm', 'fury-remastered-home-180-v1.png', 'fury-remastered-home-192-v1.png', 'fury-remastered-home-512-v1.png', 'fury-remastered-maskable-192-v1.png', 'fury-remastered-maskable-512-v1.png', 'favicon.ico', 'app-icon.svg', 'apple-touch-icon.png', 'app-icon-512.png', 'fury-remastered.svg', 'manifest.webmanifest', 'install.js', 'install.css', 'index.html', 'landing.css', 'landing.js', 'design-system.css', 'analytics.js', 'deployment.json', 'devlog.html', 'devlog.css', 'devlog.js', 'devlog.json', 'stats.html', 'stats.css', 'stats.js', 'offline.js', 'sw.js'}
 
 class StaticServer(ThreadingHTTPServer):
     # ES-module startup opens more connections than Python's default five-slot
@@ -89,7 +89,7 @@ class Handler(SimpleHTTPRequestHandler):
     def end_headers(self):
         self.send_header('Cache-Control', 'no-store')
         self.send_header('X-Content-Type-Options', 'nosniff')
-        self.send_header('Content-Security-Policy', "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self'; style-src 'self'; media-src 'self' blob:; img-src 'self' blob:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'")
+        self.send_header('Content-Security-Policy', "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self'; style-src 'self'; media-src 'self' blob:; img-src 'self' blob:; connect-src 'self' https://mp.furyremastered.com wss://mp.furyremastered.com; object-src 'none'; base-uri 'none'; frame-ancestors 'none'")
         super().end_headers()
 
 def main():
