@@ -7579,7 +7579,14 @@ impl App {
                 ..defaults
             }
         });
+        // A Freestyle link takes Game Settings' Free Ride CPU riders.
+        let cpus = if race {
+            game_cpu::Request::default()
+        } else {
+            game_cpu::Request::free_ride(&f.settings)
+        };
         drop(f);
+        self.cpu_request = cpus;
         // A race starts its course (an Enduro or Short Track id from `course=`).
         let map = if race { setup.race.course } else { setup.map };
         // `?split=` on the link (the context-loss resume link): this ride
@@ -7677,12 +7684,7 @@ impl App {
                                 roam: false,
                             })
                         }
-                        Event::Ride { .. } => Some(game_cpu::Request {
-                            count: atv_ui::menu::prefs::free_ride_cpus(&f.settings),
-                            // Normal: the race driver's 50 ft/s off its line.
-                            difficulty: 1,
-                            roam: true,
-                        }),
+                        Event::Ride { .. } => Some(game_cpu::Request::free_ride(&f.settings)),
                         _ => None,
                     }
                 })

@@ -31,6 +31,18 @@ pub struct Request {
     pub roam: bool,
 }
 
+impl Request {
+    /// A free ride's riders as Game Settings → Free Ride CPU riders saves
+    /// them, at Normal (the race driver's 50 ft/s off its line).
+    pub fn free_ride(settings: &atv_ui::settings::Settings) -> Self {
+        Self {
+            count: atv_ui::menu::prefs::free_ride_cpus(settings),
+            difficulty: 1,
+            roam: true,
+        }
+    }
+}
+
 /// The CPU riders' names on standings and results.
 pub const NAMES: [&str; 3] = ["CPU 1", "CPU 2", "CPU 3"];
 
@@ -57,6 +69,9 @@ pub struct Cpu {
     driver: Driver,
     hill: HillRun,
     roam: Roam,
+    /// Diagnostics: wrecks so far, and whether it is wrecked now.
+    wrecks: u32,
+    wrecked: bool,
     rng: Rng,
     seed: u32,
     skill: Skill,
@@ -195,13 +210,14 @@ pub fn sense(ride: &Ride) -> Sense {
     }
 }
 
-/// Ground a roaming CPU keeps off: off the terrain, or water too deep to
-/// ford.
+/// Ground a roaming CPU keeps off: off the terrain, water too deep to
+/// ford, or a slope steeper than `roam::STEEP`.
 pub fn hazard(ride: &Ride, p: [f32; 2]) -> bool {
     ride.ground(p[0], p[1]).is_none()
         || ride
             .water_depth(p[0], p[1])
             .is_some_and(|depth| depth > roam::WADE)
+        || roam::steep(&|x, z| ride.ground(x, z), p)
 }
 
 /// The venue's National race line (`<venue>nate.tdf` in its race archive)
@@ -231,7 +247,7 @@ pub async fn roam_map(
     ride: &Ride,
 ) -> roam::Map {
     const INSIDE: f32 = 40.;
-    let terrain = &venue.terrain;
+    let terrain = ride.terrain();
     let bounds = atv_core::tag::Bounds::from_cells(
         terrain.width_cells,
         terrain.depth_cells,
@@ -344,6 +360,8 @@ impl Cpu {
             driver: Driver::default(),
             hill: HillRun::default(),
             roam: Roam::default(),
+            wrecks: 0,
+            wrecked: false,
             rng: Rng::new(seed),
             seed,
             skill: Skill::for_difficulty(request.difficulty),
@@ -414,6 +432,9 @@ impl Cpu {
             }
             controls(&drive)
         })?;
+        let wrecked = self.riding.ride.frame().wreck.phase != atv_core::wreck::Phase::Riding;
+        self.wrecks += u32::from(wrecked && !self.wrecked);
+        self.wrecked = wrecked;
         match recover {
             Recover::None => Ok(()),
             // The rink has no start to return to: turn in place there.
@@ -498,6 +519,8 @@ impl Cpu {
             "resets": self.driver.resets,
             "locked": self.riding.locked,
             "riding": f.wreck.phase == atv_core::wreck::Phase::Riding,
+            "wreck": f.wreck.kind,
+            "wrecks": self.wrecks,
             // A free ride's roaming (`atv_core::roam_cpu`).
             "roam": {
                 "plan": match self.roam.plan {
@@ -509,7 +532,11 @@ impl Cpu {
                 "visits": self.roam.visits,
                 "turns": self.roam.turns,
                 "lineFeet": self.roam.line_feet,
-                "wet": hazard(&self.riding.ride, [f.origin[0], f.origin[2]]),
+                "wet": self
+                    .riding
+                    .ride
+                    .water_depth(f.origin[0], f.origin[2])
+                    .is_some_and(|depth| depth > roam::WADE),
             },
         })
     }

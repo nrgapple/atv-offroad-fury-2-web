@@ -35,6 +35,12 @@ pub const LINE_AHEAD: f32 = 60.;
 /// Water deeper than this over the ground is not ridden into (ft; the
 /// deep-water reset needs the ATV 3 ft under for 5 s, `water_failure`).
 pub const WADE: f32 = 2.;
+/// Ground steeper than this (rise over run, about 27°) is not ridden onto:
+/// across it the ATV rolls, and straight at a crest over it it flies off
+/// and lands on its back.
+pub const STEEP: f32 = 0.5;
+/// Half the span the slope is measured over (ft).
+pub const SLOPE_SPAN: f32 = 6.;
 /// The most points of interest a venue keeps.
 pub const MAX_POINTS: usize = 24;
 /// The share of new plans that follow the course line, and that drift.
@@ -88,6 +94,23 @@ fn flat(a: [f32; 2], b: [f32; 2]) -> f32 {
 fn unit(v: [f32; 2]) -> Option<[f32; 2]> {
     let len = v[0].hypot_d(v[1]);
     (len > 1e-4).then(|| [v[0] / len, v[1] / len])
+}
+
+/// Whether the ground around `p` is steeper than [`STEEP`] (or partly off
+/// the terrain), from `ground`'s heights [`SLOPE_SPAN`] to each side.
+pub fn steep(ground: &dyn Fn(f32, f32) -> Option<f32>, p: [f32; 2]) -> bool {
+    let d = SLOPE_SPAN;
+    match (
+        ground(p[0] + d, p[1]),
+        ground(p[0] - d, p[1]),
+        ground(p[0], p[1] + d),
+        ground(p[0], p[1] - d),
+    ) {
+        (Some(east), Some(west), Some(north), Some(south)) => {
+            ((east - west) / (2. * d)).hypot_d((north - south) / (2. * d)) > STEEP
+        }
+        _ => true,
+    }
 }
 
 /// `h` turned by `angle` radians (positive to the right, as
@@ -616,6 +639,19 @@ mod tests {
         // Off the terrain there is nothing but the start.
         let none = points_of_interest([0., 0.], [2000., 2000.], [100., 100.], &|_, _| None, DRY);
         assert_eq!(none, [[100., 100.]]);
+    }
+
+    #[test]
+    fn steep_ground_is_a_hazard() {
+        // A 30° ramp along x, level beyond x = 100.
+        let ground = |x: f32, _: f32| Some(x.min(100.) * 0.577);
+        assert!(steep(&ground, [50., 0.]));
+        assert!(!steep(&ground, [200., 0.]));
+        // Gentle in both directions (about 20° overall) is rideable.
+        let gentle = |x: f32, z: f32| Some(0.25 * x + 0.25 * z);
+        assert!(!steep(&gentle, [0., 0.]));
+        // The terrain's edge counts as steep.
+        assert!(steep(&|x, _| (x < 3.).then_some(0.), [0., 0.]));
     }
 
     #[test]
