@@ -28,6 +28,10 @@ pub struct Credits {
     pub blank_pixels: f32,
     pub heading_color: [u8; 3],
     pub name_color: [u8; 3],
+    /// Script rectangle [left, top, right, bottom] on the 640 × 448 page.
+    pub bounds: [f32; 4],
+    /// Names are indented from headings, in page pixels.
+    pub name_indent: f32,
     pub entries: Vec<Entry>,
 }
 
@@ -38,6 +42,8 @@ impl Default for Credits {
             blank_pixels: 30.,
             heading_color: [218, 192, 31],
             name_color: [200, 200, 200],
+            bounds: [359., 0., 640., 448.],
+            name_indent: 10.,
             entries: Vec::new(),
         }
     }
@@ -79,6 +85,29 @@ pub fn parse(text: &str) -> Credits {
             };
             let (key, value) = (key.trim(), value.trim());
             match key.to_ascii_lowercase().as_str() {
+                "leftx" | "topy" | "rightx" | "bottomy" => {
+                    let index = match key.to_ascii_lowercase().as_str() {
+                        "leftx" => 0,
+                        "topy" => 1,
+                        "rightx" => 2,
+                        _ => 3,
+                    };
+                    let limit = if matches!(index, 0 | 2) { 640. } else { 448. };
+                    if let Ok(v) = value.parse::<f32>()
+                        && v.is_finite()
+                        && (0. ..=limit).contains(&v)
+                    {
+                        credits.bounds[index] = v;
+                    }
+                }
+                "nameoffsetfromheadingx" => {
+                    if let Ok(v) = value.parse::<f32>()
+                        && v.is_finite()
+                        && (0. ..=100.).contains(&v)
+                    {
+                        credits.name_indent = v;
+                    }
+                }
                 "scrollspeed" => {
                     if let Ok(v) = value.parse::<f32>()
                         && v.is_finite()
@@ -121,6 +150,9 @@ pub fn parse(text: &str) -> Credits {
     }
     while credits.entries.last() == Some(&Entry::Blank) {
         credits.entries.pop();
+    }
+    if credits.bounds[2] <= credits.bounds[0] || credits.bounds[3] <= credits.bounds[1] {
+        credits.bounds = Credits::default().bounds;
     }
     credits
 }
@@ -190,5 +222,21 @@ mod tests {
                 .iter()
                 .any(|e| matches!(e, Entry::Name(n) if n.contains("unofficial fan port")))
         );
+    }
+}
+
+#[cfg(test)]
+mod geometry_tests {
+    use super::*;
+    #[test]
+    fn reads_disc_rectangle_and_name_indent() {
+        let c = parse(
+            "LeftX=350\nTopY=2\nRightX=630\nBottomY=440\nNameOffsetFromHeadingX=12\n--credits start--\n@Team\nName",
+        );
+        assert_eq!(c.bounds, [350., 2., 630., 440.]);
+        assert_eq!(c.name_indent, 12.);
+        let c = parse("LeftX=640\nRightX=20\nNameOffsetFromHeadingX=NaN\n--credits start--");
+        assert_eq!(c.bounds, Credits::default().bounds);
+        assert_eq!(c.name_indent, 10.);
     }
 }
