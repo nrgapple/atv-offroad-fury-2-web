@@ -36,6 +36,8 @@ pub enum RoomMsg {
         key: Option<String>,
         /// False for a client at an uncounted address.
         counted: bool,
+        /// The socket's `pid` query (unverified).
+        pid: Option<String>,
         outbox: Arc<Outbox>,
         reply: oneshot::Sender<Result<u8, Refused>>,
     },
@@ -49,6 +51,11 @@ pub enum RoomMsg {
         reason: String,
     },
     Claim {
+        reply: oneshot::Sender<Option<String>>,
+    },
+    /// A Quick Play seat (research/QUICK_PLAY.md).
+    QuickClaim {
+        any_phase: bool,
         reply: oneshot::Sender<Option<String>>,
     },
     Riders {
@@ -79,12 +86,14 @@ impl RoomHandle {
         conn: ConnId,
         key: Option<String>,
         counted: bool,
+        pid: Option<String>,
         outbox: Arc<Outbox>,
     ) -> Option<Result<u8, Refused>> {
         self.ask(|reply| RoomMsg::Admit {
             conn,
             key,
             counted,
+            pid,
             outbox,
             reply,
         })
@@ -92,6 +101,10 @@ impl RoomHandle {
     }
     pub async fn claim(&self) -> Option<Option<String>> {
         self.ask(|reply| RoomMsg::Claim { reply }).await
+    }
+    pub async fn claim_quickplay(&self, any_phase: bool) -> Option<Option<String>> {
+        self.ask(|reply| RoomMsg::QuickClaim { any_phase, reply })
+            .await
     }
     pub async fn riders(&self) -> Option<usize> {
         self.ask(|reply| RoomMsg::Riders { reply }).await
@@ -273,10 +286,11 @@ async fn run(
                 let Some(msg) = msg else { break "Room ended" };
                 let now = now_ms();
                 match msg {
-                    RoomMsg::Admit { conn, key, counted, outbox, reply } => {
+                    RoomMsg::Admit { conn, key, counted, pid, outbox, reply } => {
                         let admitted = room.admit(conn, key.as_deref(), now, &mut rng, &mut out);
                         if let Ok(peer) = admitted {
                             room.set_counted(peer, counted);
+                            room.set_pid(peer, pid);
                             outboxes.insert(conn, outbox);
                         }
                         let _ = reply.send(admitted);
@@ -288,6 +302,9 @@ async fn run(
                     }
                     RoomMsg::Claim { reply } => {
                         let _ = reply.send(room.claim(now, &mut rng));
+                    }
+                    RoomMsg::QuickClaim { any_phase, reply } => {
+                        let _ = reply.send(room.claim_quickplay(now, &mut rng, any_phase));
                     }
                     RoomMsg::Riders { reply } => {
                         let _ = reply.send(room.riders());
@@ -303,6 +320,7 @@ async fn run(
             _ = tick.tick() => {
                 let now = now_ms();
                 room.tick(now, &mut out);
+                crate::queue::save_records(&shared, room.take_records());
                 if now >= housekeep_at {
                     housekeep_at = now + HOUSEKEEP_MS;
                     if let Some(reason) = room.housekeep(now, &mut out) {

@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 mod codec;
 mod compact;
 mod names;
+pub mod quickplay;
 pub use compact::{AnimationState, Delta, STEERING_LIMIT, apply_delta, delta};
 pub use names::{offensive_name, public_name};
 mod smoothing;
@@ -679,6 +680,10 @@ pub mod signal {
     /// instead of each rider's pose separately. Never forwarded in other
     /// riders' flags.
     pub const FRAMES: u8 = 16;
+    /// Hello flags bit: the build follows the server-run room loop
+    /// ([`super::Packet::RoomLoop`], research/QUICK_PLAY.md) and may send
+    /// [`super::Packet::Vote`]. Never forwarded in other riders' flags.
+    pub const ROOM_LOOP: u8 = 32;
 }
 /// Most poses in one [`Packet::Bundle`]: every rider in a full room.
 pub const MAX_BUNDLE: usize = MAX_PLAYERS;
@@ -898,6 +903,11 @@ pub enum Packet {
     Frame {
         poses: Vec<Vec<u8>>,
     },
+    /// Game server to builds that said [`signal::ROOM_LOOP`]: the
+    /// server-run room loop (research/QUICK_PLAY.md).
+    RoomLoop(Box<quickplay::RoomLoop>),
+    /// Client to game server: a rider's vote, rematch and ready choices.
+    Vote(quickplay::Vote),
 }
 
 pub(crate) fn bounded(values: &[f32], limit: f32) -> bool {

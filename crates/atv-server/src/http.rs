@@ -37,7 +37,7 @@ const SEND_TIMEOUT: Duration = Duration::from_secs(10);
 const CLOSE_WAIT: Duration = Duration::from_secs(5);
 /// What the server claims for every room: no direct links or batches, and
 /// frames for builds that take them.
-fn features() -> serde_json::Map<String, serde_json::Value> {
+pub(crate) fn features() -> serde_json::Map<String, serde_json::Value> {
     let mut map = serde_json::Map::new();
     map.insert("links".into(), false.into());
     map.insert("batches".into(), false.into());
@@ -52,6 +52,7 @@ pub fn router(shared: Arc<Shared>) -> Router {
         .route(FREERIDE, post(claim))
         .route(FREERIDE_RIDERS, get(riders))
         .route(FREERIDE_DAYS, get(days))
+        .route(crate::queue::ROUTE, post(crate::queue::claim))
         .route("/multiplayer/version", get(version))
         .route("/healthz", get(health))
         .route("/metrics", get(metrics))
@@ -60,11 +61,11 @@ pub fn router(shared: Arc<Shared>) -> Router {
         .with_state(shared)
 }
 
-fn error(status: StatusCode, message: &str) -> Response {
+pub(crate) fn error(status: StatusCode, message: &str) -> Response {
     (status, message.to_string()).into_response()
 }
 
-fn json(status: StatusCode, value: serde_json::Value) -> Response {
+pub(crate) fn json(status: StatusCode, value: serde_json::Value) -> Response {
     (status, axum::Json(value)).into_response()
 }
 
@@ -161,7 +162,10 @@ async fn create(
         match value.get("code").and_then(|v| v.as_str()) {
             None | Some("") => None,
             Some(code) => match atv_net::parse_room_code(code) {
-                Ok(code) if atv_net::is_public_room_code(&code) => {
+                Ok(code)
+                    if atv_net::is_public_room_code(&code)
+                        || atv_net::quickplay::is_quickplay_room_code(&code) =>
+                {
                     return error(StatusCode::BAD_REQUEST, "That code is reserved");
                 }
                 Ok(code) => Some(code),
@@ -281,6 +285,14 @@ async fn riders(State(shared): State<Arc<Shared>>) -> Response {
         .lock()
         .expect("usage lock")
         .riders_json(now_ms());
+    // Clients show Quick Play only when the server says it runs it.
+    let value = match value {
+        serde_json::Value::Object(mut map) => {
+            map.insert("quickplay".into(), true.into());
+            serde_json::Value::Object(map)
+        }
+        value => value,
+    };
     let mut response = json(StatusCode::OK, value);
     response.headers_mut().insert(
         header::CACHE_CONTROL,
@@ -306,6 +318,7 @@ async fn version(State(shared): State<Arc<Shared>>) -> Response {
             "commit": shared.config.commit,
             "wasmSha256": "host-only",
             "protocol": atv_net::VERSION,
+            "quickplay": true,
         }),
     )
 }
@@ -363,6 +376,9 @@ async fn metrics(
 struct Keys {
     key: Option<String>,
     host: Option<String>,
+    /// The rider's player id for match records (unverified; at most 32
+    /// characters, research/MULTIPLAYER_EXPERIENCE.md "Match records").
+    pid: Option<String>,
 }
 
 /// A room's WebSocket: `?key=` (or the creator's `?host=`) rejoins a slot.
@@ -412,7 +428,10 @@ async fn socket(
     let key = keys.key.or(keys.host);
     // Uncounted addresses play normally; only the public counts skip them.
     let counted = !shared.config.uncounted.contains(ip);
-    let peer_id = match room.admit(conn, key, counted, outbox.clone()).await {
+    let pid = keys
+        .pid
+        .filter(|p| !p.is_empty() && p.len() <= 32 && p.bytes().all(|b| b.is_ascii_graphic()));
+    let peer_id = match room.admit(conn, key, counted, pid, outbox.clone()).await {
         Some(Ok(peer)) => peer,
         Some(Err(refused)) => {
             let status = StatusCode::from_u16(refused.status).unwrap_or(StatusCode::CONFLICT);

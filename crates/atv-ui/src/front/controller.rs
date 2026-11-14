@@ -108,6 +108,15 @@ pub enum Event {
         rider: u16,
         name: String,
     },
+    /// Main Menu → Quick Play → Race / Stunts: a seat in a server-run room
+    /// of that playlist (0 race, 1 stunts; research/QUICK_PLAY.md) with the
+    /// remembered name and the garage ATV (motorcycles ride ATV01).
+    QuickPlay {
+        playlist: u8,
+        quad: u16,
+        rider: u16,
+        name: String,
+    },
     /// Free Ride Lobby → Copy invite link (while joining).
     CopyInvite,
     /// Free Ride Lobby → Leave Game, or Back: abandon the room being joined.
@@ -470,6 +479,9 @@ pub struct Frontend {
     saved: Value,
     /// Riders in Arlington Free Ride (the main menu's live count).
     pub freeride_riders: Option<u32>,
+    /// The game server runs Quick Play (research/QUICK_PLAY.md): the main
+    /// menu leads with its row.
+    pub quickplay: bool,
     /// The Host/Join forms (frontend.js playerName, createCode, roomCode).
     pub player_name: String,
     pub create_code: String,
@@ -668,6 +680,7 @@ impl Frontend {
             stats_link: true,
             saved,
             freeride_riders: None,
+            quickplay: false,
             player_name: String::new(),
             create_code: String::new(),
             room_code: String::new(),
@@ -785,6 +798,16 @@ impl Frontend {
         }
         if self.page == "splitseats" {
             self.choices = self.seat_choices();
+            self.selection = self.selection.min(self.choices.len().saturating_sub(1));
+            return;
+        }
+        if self.page == "quickplay" {
+            // Two tiles, one tap each into the queue.
+            self.choices = vec![
+                ("qp-race".into(), "Race".into()),
+                ("qp-stunts".into(), "Stunts".into()),
+                ("back".into(), "Back".into()),
+            ];
             self.selection = self.selection.min(self.choices.len().saturating_sub(1));
             return;
         }
@@ -932,6 +955,11 @@ impl Frontend {
             }
             for (i, (action, label)) in rows.into_iter().enumerate() {
                 self.choices.insert(at + i, (action.into(), label.into()));
+            }
+            // Quick Play leads, once the server says it runs it.
+            if self.quickplay {
+                self.choices
+                    .insert(0, ("quickplay".into(), "Quick Play".into()));
             }
         }
         // Single Player in the original's order (PAGE02: Race, Freestyle,
@@ -2460,6 +2488,16 @@ impl Frontend {
             "devlog" => return Some(Event::DevLog),
             "downloads" => return Some(Event::Downloads),
             "stats" => return Some(Event::Stats),
+            "quickplay" => self.show("quickplay", view),
+            "qp-race" | "qp-stunts" => {
+                let name = self.room_name();
+                return Some(Event::QuickPlay {
+                    playlist: if action == "qp-stunts" { 1 } else { 0 },
+                    quad: if self.quad_id >= 27 { 1 } else { self.quad_id },
+                    rider: self.rider_id,
+                    name,
+                });
+            }
             "freeride" => {
                 // frontend.js: no setup; motorcycles fall back to ATV01. The
                 // current name rides (also one typed but not yet saved); the

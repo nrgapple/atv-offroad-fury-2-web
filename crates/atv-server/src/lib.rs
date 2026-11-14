@@ -12,6 +12,7 @@ pub mod engine;
 pub mod http;
 pub mod interest;
 pub mod outbox;
+pub mod queue;
 pub mod rooms;
 pub mod stats;
 

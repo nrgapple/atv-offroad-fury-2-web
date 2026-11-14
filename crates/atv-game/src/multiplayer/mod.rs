@@ -13,6 +13,7 @@
 //! smoothing are atv-net's, shared with the JavaScript game and the relay.
 pub mod links;
 pub mod remote;
+pub use atv_net::quickplay;
 pub use atv_net::{RiderState, Snapshot};
 pub use links::Command as LinkCommand;
 pub mod spawn;
@@ -130,6 +131,9 @@ pub struct Serves {
     /// `frames`: sends builds that say [`atv_net::signal::FRAMES`] one
     /// [`Packet::Frame`] per tick.
     pub frames: bool,
+    /// `quickplay`: a server-run Quick Play room (research/QUICK_PLAY.md):
+    /// builds say [`atv_net::signal::ROOM_LOOP`] and follow its loop.
+    pub quickplay: bool,
 }
 
 impl Serves {
@@ -139,6 +143,7 @@ impl Serves {
             links: claim["links"].as_bool() == Some(true),
             batches: claim["batches"].as_bool() == Some(true),
             frames: claim["frames"].as_bool() == Some(true),
+            quickplay: claim["quickplay"].as_bool() == Some(true),
         }
     }
 
@@ -194,6 +199,8 @@ pub struct Session {
     /// Riders' room-game reports the host has not taken yet (the relay
     /// forwards them to the host only; bounded).
     pub claims: Vec<atv_net::GameClaim>,
+    /// The server-run room loop (`Packet::RoomLoop`) and when it came.
+    pub room_loop: Option<(atv_net::quickplay::RoomLoop, u64)>,
     /// The room-race host's CPU riders (`Packet::Cpus`): the race serial,
     /// each CPU's pose history by index and its latest progress.
     pub cpu_serial: u32,
@@ -349,6 +356,9 @@ impl Session {
         }
         if serves.frames {
             flags |= atv_net::signal::FRAMES;
+        }
+        if serves.quickplay {
+            flags |= atv_net::signal::ROOM_LOOP;
         }
         encode(&Packet::Signal(atv_net::Signal {
             peer,
@@ -642,6 +652,7 @@ impl Session {
                     self.claims.push(claim);
                 }
             }
+            Packet::RoomLoop(state) => self.room_loop = Some((*state, now_ms)),
             _ => return Err("unexpected relay packet".into()),
         }
         Ok(())
@@ -1329,6 +1340,11 @@ impl Session {
         encode(&Packet::Claim(atv_net::GameClaim { peer, ..claim }))
     }
 
+    /// This rider's room-loop choices as a packet.
+    pub fn vote_packet(&self, vote: atv_net::quickplay::Vote) -> Result<Vec<u8>> {
+        encode(&Packet::Vote(vote))
+    }
+
     /// The host's mini-game state as a packet.
     pub fn game_packet(&self, state: &atv_net::GameState) -> Result<Vec<u8>> {
         encode(&Packet::Game(Box::new(state.clone())))
@@ -1555,6 +1571,7 @@ mod tests {
         links: true,
         batches: false,
         frames: false,
+        quickplay: false,
     };
 
     fn lobby(players: &[(u8, u16)], started: bool) -> Lobby {
@@ -2156,7 +2173,7 @@ mod tests {
                 Serves {
                     links: true,
                     batches: true,
-                    frames: false,
+                    ..Default::default()
                 },
                 false,
             )

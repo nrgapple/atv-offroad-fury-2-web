@@ -7,6 +7,7 @@ pub mod minimap;
 pub mod objective;
 pub mod palette;
 pub mod peers;
+pub mod quickplay;
 pub mod race;
 pub mod results;
 pub mod split;

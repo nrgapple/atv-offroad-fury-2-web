@@ -43,6 +43,9 @@ pub struct RoomStart {
     pub host: bool,
     /// Arlington Free Ride: the relay reserves a slot in a shared room.
     pub freeride: bool,
+    /// Quick Play (research/QUICK_PLAY.md): a seat in a server-run room of
+    /// this playlist, never the room code `avoid` (the room just left).
+    pub quickplay: Option<(u8, Option<String>)>,
     pub name: String,
     /// Test hook (`?dropAfter=S`): close the socket once after S seconds of
     /// riding, exercising the slot-key reconnect.
@@ -237,6 +240,31 @@ async fn claim(start: &RoomStart) -> Result<(String, Option<String>, Serves), St
         .is_some_and(atv_game::multiplayer::is_shared_room);
     if shared && start.host {
         return Err(RESERVED_CODE.into());
+    }
+    if let Some((list, avoid)) = &start.quickplay {
+        let url = format!("{server}/multiplayer/quickplay");
+        let body = serde_json::json!({
+            "playlist": atv_game::multiplayer::quickplay::playlist::name(*list).unwrap_or("race"),
+            "avoid": avoid,
+        });
+        let (status, text) = net::post(&url, &origin, &body.to_string()).await?;
+        match status {
+            200 => {}
+            429 => return Err("Too many attempts. Try again shortly.".into()),
+            503 => return Err("Quick Play is full. Try again shortly.".into()),
+            status => return Err(format!("Unable to join Quick Play ({status}).")),
+        }
+        let room: serde_json::Value = serde_json::from_str(&text).map_err(|e| e.to_string())?;
+        let code = room["code"].as_str().unwrap_or_default().to_string();
+        let key = room["key"].as_str().unwrap_or_default().to_string();
+        let valid = atv_game::multiplayer::room_code(&code).is_ok()
+            && code.starts_with("QP")
+            && key.len() == 32
+            && key.bytes().all(|b| b.is_ascii_hexdigit());
+        if !valid || room["quickplay"].as_bool() != Some(true) {
+            return Err("Unable to join Quick Play.".into());
+        }
+        return Ok((code, Some(key), Serves::from_claim(&room)));
     }
     if start.freeride || shared {
         // POST /multiplayer/freeride reserves a slot in the first shared
@@ -978,6 +1006,36 @@ impl Net {
         &self.session.progress
     }
 
+    /// The server-run room loop (Quick Play), when the room has one.
+    pub fn room_loop(&self) -> Option<&atv_game::multiplayer::quickplay::RoomLoop> {
+        self.session.room_loop.as_ref().map(|(l, _)| l)
+    }
+
+    /// The room's server runs a Quick Play loop.
+    pub fn quickplay(&self) -> bool {
+        self.serves.quickplay
+    }
+
+    /// This rider's loop choices (research/QUICK_PLAY.md).
+    pub fn send_vote(&mut self, vote: atv_game::multiplayer::quickplay::Vote) {
+        if self.closed.is_none()
+            && self.session.peer.is_some()
+            && let Ok(bytes) = self.session.vote_packet(vote)
+        {
+            self.socket.send(bytes);
+        }
+    }
+
+    /// This client has loaded the room's course and said Ready.
+    pub fn ready(&self) -> bool {
+        self.ready_sent
+    }
+
+    /// The server's clock now (ms), once a ping has set it.
+    pub fn server_ms(&self) -> Option<f64> {
+        self.session.server_now(now_ms(self.clock))
+    }
+
     /// The latest relay round trip (ms).
     pub fn rtt_ms(&self) -> Option<u32> {
         self.session.rtt_ms
@@ -1356,6 +1414,7 @@ impl Net {
             "rttMs": self.session.rtt_ms,
             "rttSamples": self.session.rtt_history.iter().collect::<Vec<_>>(),
             "clockSynced": self.session.server_now(0).is_some(),
+            "roomLoop": self.room_loop(),
             "closed": self.closed,
             "reconnects": self.reconnects,
             "reconnecting": self.reconnect.is_some(),
@@ -1384,6 +1443,7 @@ impl Net {
             "serves": {
                 "links": self.serves.links, "batches": self.serves.batches,
                 "frames": self.serves.frames,
+                "quickplay": self.serves.quickplay,
             },
             "server": self.server,
             "pace": self.session.pace,
