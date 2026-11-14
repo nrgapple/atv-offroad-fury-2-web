@@ -58,7 +58,7 @@ test('web analytics beacon and CSP origins appear only with a valid site token',
   assert.match(body, new RegExp(`static\\.cloudflareinsights\\.com/beacon\\.min\\.js" data-cf-beacon='\\{"token":"${token}"\\}'></script>\\n</body>`));
   assert.equal(on.headers.get('ETag'), null);
   assert.match(on.headers.get('Content-Security-Policy'), /script-src 'self' 'wasm-unsafe-eval' https:\/\/static\.cloudflareinsights\.com;/);
-  assert.match(on.headers.get('Content-Security-Policy'), /connect-src 'self' wss:\/\/furyremastered\.com https:\/\/cloudflareinsights\.com;/);
+  assert.match(on.headers.get('Content-Security-Policy'), /connect-src 'self' wss:\/\/furyremastered\.com https:\/\/mp\.furyremastered\.com wss:\/\/mp\.furyremastered\.com https:\/\/cloudflareinsights\.com;/);
   const head = await worker.fetch(new Request(`${ORIGIN}/play.html`, { method: 'HEAD' }), { ASSETS: { fetch: async () => new Response(null, { headers: { 'Content-Type': 'text/html' } }) }, WEB_ANALYTICS_TOKEN: token });
   assert.equal(await head.text(), '');
   const script = await worker.fetch(new Request(`${ORIGIN}/game.js`), { ASSETS: { fetch: async () => new Response('code', { headers: { 'Content-Type': 'text/javascript' } }) }, WEB_ANALYTICS_TOKEN: token });

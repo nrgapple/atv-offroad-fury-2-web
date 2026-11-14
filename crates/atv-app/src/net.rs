@@ -75,6 +75,52 @@ fn is_pose(bytes: &[u8]) -> bool {
         && ((bytes[4] == 2 && bytes[5] == 4) || (bytes[4] >= 3 && bytes[5] == 9))
 }
 
+/// The game server public pages use for multiplayer (research/
+/// GAME_SERVER.md). `None` keeps multiplayer on the page's own origin (the
+/// Cloudflare relay under `/multiplayer/`); the cutover makes this
+/// `Some("https://mp.furyremastered.com")`.
+pub const GAME_SERVER: Option<&str> = None;
+
+/// The public sites whose multiplayer goes to [`GAME_SERVER`]. Any other
+/// page origin (the local test servers) keeps multiplayer on its own.
+const SITES: [&str; 3] = [
+    "https://furyremastered.com",
+    "https://www.furyremastered.com",
+    "https://atv-offroad-fury-2.champtoday.workers.dev",
+];
+
+/// The multiplayer origin (`http(s)://host[:port]`) for the game served on
+/// `site`: `chosen` (the `?server=` page parameter, desktop `FURY_SERVER`)
+/// when it is an http(s) origin, else [`GAME_SERVER`] on a public site,
+/// else the site itself.
+pub fn server_for(site: &str, chosen: Option<&str>) -> String {
+    if let Some(chosen) = chosen
+        .map(|c| c.trim().trim_end_matches('/'))
+        .filter(|c| is_origin(c))
+    {
+        return chosen.to_string();
+    }
+    let site = origin(site);
+    match GAME_SERVER {
+        Some(server) if SITES.contains(&site.as_str()) => server.into(),
+        _ => site,
+    }
+}
+
+/// `http(s)://host[:port]` and nothing more.
+fn is_origin(text: &str) -> bool {
+    let Some(host) = text
+        .strip_prefix("https://")
+        .or_else(|| text.strip_prefix("http://"))
+    else {
+        return false;
+    };
+    !host.is_empty()
+        && host
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-' | b':' | b'[' | b']'))
+}
+
 /// `http(s)://host[:port]` to the matching `ws(s)://` room URL.
 pub fn room_url(relay: &str, code: &str, key: Option<&str>) -> String {
     let base = relay.trim_end_matches('/');
@@ -91,7 +137,7 @@ pub fn room_url(relay: &str, code: &str, key: Option<&str>) -> String {
     }
 }
 
-/// The page origin the relay admits: the relay's own scheme and host.
+/// A URL's origin: its scheme and host (the page origin a server admits).
 pub fn origin(relay: &str) -> String {
     let base = relay.trim_end_matches('/');
     let scheme_end = base.find("://").map_or(0, |i| i + 3);
@@ -376,14 +422,14 @@ mod native {
     }
 
     /// The Free Ride rider count (blocking; call off the UI thread).
-    pub fn riders_blocking(relay: &str) -> Option<u32> {
+    pub fn riders_blocking(server: &str) -> Option<u32> {
         let agent: ureq::Agent = ureq::Agent::config_builder()
             .timeout_global(Some(Duration::from_secs(10)))
             .build()
             .into();
         let url = format!(
             "{}/multiplayer/freeride/riders",
-            relay.trim_end_matches('/')
+            server.trim_end_matches('/')
         );
         let text = agent
             .get(&url)
@@ -848,6 +894,9 @@ mod web {
     pub async fn post(url: &str, _origin: &str, body: &str) -> Result<(u16, String), String> {
         let init = web_sys::RequestInit::new();
         init.set_method("POST");
+        // The game server is another origin than the page: no cookies.
+        init.set_mode(web_sys::RequestMode::Cors);
+        init.set_credentials(web_sys::RequestCredentials::Omit);
         init.set_body(&wasm_bindgen::JsValue::from_str(body));
         let headers = web_sys::Headers::new().map_err(|_| "headers")?;
         headers
@@ -874,16 +923,21 @@ mod web {
         Ok((response.status(), text))
     }
 
-    /// The Free Ride rider count (a same-origin GET, as the menu polls it).
-    pub async fn riders(relay: &str) -> Option<u32> {
+    /// The Free Ride rider count (a GET without credentials, as the menu
+    /// polls it).
+    pub async fn riders(server: &str) -> Option<u32> {
         let url = format!(
             "{}/multiplayer/freeride/riders",
-            relay.trim_end_matches('/')
+            server.trim_end_matches('/')
         );
         let window = web_sys::window()?;
-        let response = wasm_bindgen_futures::JsFuture::from(window.fetch_with_str(&url))
-            .await
-            .ok()?;
+        let init = web_sys::RequestInit::new();
+        init.set_mode(web_sys::RequestMode::Cors);
+        init.set_credentials(web_sys::RequestCredentials::Omit);
+        let response =
+            wasm_bindgen_futures::JsFuture::from(window.fetch_with_str_and_init(&url, &init))
+                .await
+                .ok()?;
         let response: web_sys::Response = response.dyn_into().ok()?;
         if !response.ok() {
             return None;
@@ -942,6 +996,41 @@ mod tests {
         // Beyond 256: the session is stuck.
         assert_eq!(admit(256, &control), Admit::Close);
         assert_eq!(admit(300, &pose), Admit::Drop);
+    }
+
+    #[test]
+    fn the_game_server_is_chosen_per_site() {
+        use super::server_for;
+        let public = "https://furyremastered.com";
+        assert_eq!(
+            server_for(public, None),
+            super::GAME_SERVER.unwrap_or(public)
+        );
+        // Local pages keep their own relay.
+        assert_eq!(
+            server_for("http://127.0.0.1:4187", None),
+            "http://127.0.0.1:4187"
+        );
+        // An override wins when it is an origin and only then.
+        for chosen in ["https://mp.furyremastered.com/", " http://127.0.0.1:8789"] {
+            assert_eq!(
+                server_for(public, Some(chosen)),
+                chosen.trim().trim_end_matches('/')
+            );
+        }
+        for bad in [
+            "",
+            "mp.furyremastered.com",
+            "javascript:alert(1)",
+            "https://a/b",
+            "https://u@h",
+            "wss://h",
+        ] {
+            assert_eq!(
+                server_for("http://127.0.0.1:4187", Some(bad)),
+                "http://127.0.0.1:4187"
+            );
+        }
     }
 
     #[test]

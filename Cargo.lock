@@ -445,6 +445,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "atv-loadtest"
+version = "0.3.0"
+dependencies = [
+ "atv-net",
+ "futures-util",
+ "rustls",
+ "serde_json",
+ "tokio",
+ "tokio-tungstenite 0.28.0",
+ "ureq",
+]
+
+[[package]]
 name = "atv-net"
 version = "0.3.0"
 dependencies = [
@@ -4029,8 +4042,12 @@ checksum = "d25a406cddcc431a75d3d9afc6a7c0f7428d4891dd973e4d54c56b46127bf857"
 dependencies = [
  "futures-util",
  "log",
+ "rustls",
+ "rustls-pki-types",
  "tokio",
+ "tokio-rustls",
  "tungstenite 0.28.0",
+ "webpki-roots 0.26.11",
 ]
 
 [[package]]
