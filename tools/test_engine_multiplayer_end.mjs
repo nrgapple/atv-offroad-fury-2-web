@@ -4,7 +4,7 @@
 //   and in Arlington Free Ride too (Free Ride sits under Multiplayer,
 //   research/MENU_FLOW.md);
 // - a room that closes for good (here: another tab reclaims this rider's slot
-//   key, so the relay closes the socket with "Connection replaced") ends the
+//   key, so the game server closes the socket with "Connection replaced") ends the
 //   ride on the Multiplayer page with the reason on the notice line
 //   (multiplayer.js onclose → game.js onLeave).
 //   PLAYWRIGHT_MODULE=... ATV_TEST_URL=http://127.0.0.1:4187 node tools/test_engine_multiplayer_end.mjs
@@ -16,7 +16,12 @@ const stamp = String(Date.now()).slice(-6);
 const read = page => page.evaluate(() => JSON.parse(document.querySelector('#ui-state')?.textContent || '{}'));
 const wait = (page, predicate, arg, timeout = 180000) => page.waitForFunction(predicate, arg, { timeout });
 const onPage = (page, name) =>
-  wait(page, name => JSON.parse(document.querySelector('#ui-state')?.textContent || '{}').front?.page === name, name, 60000);
+  wait(
+    page,
+    name => JSON.parse(document.querySelector('#ui-state')?.textContent || '{}').front?.page === name,
+    name,
+    60000
+  );
 async function key(page, code) {
   await page.keyboard.down(code);
   await nextFrames(page, 2);
@@ -31,13 +36,20 @@ async function choose(page, action) {
   for (let i = f.selection; i > at; i--) await key(page, 'ArrowUp');
   await key(page, 'Enter');
 }
-// Riding in the room: the pause menu's Leave Game.
+// Riding in the room: the pause menu's Leave Game. A room host's pause menu
+// runs past 720 px (#615), so Leave Game is chosen by keyboard, which scrolls
+// the menu to the selection.
 async function leaveGame(page) {
   await key(page, 'Escape');
   await wait(page, () => JSON.parse(document.querySelector('#ui-state').textContent).toolbar?.menu?.page === 'pause');
-  const hit = (await read(page)).toolbar.menu.hits.find(h => h.action === 'leave');
-  assert.ok(hit, 'Leave Game in the pause menu');
-  await page.mouse.click(hit.x + hit.width / 2, hit.y + hit.height / 2);
+  let menu = (await read(page)).toolbar.menu;
+  assert.ok(menu.choices.includes('leave'), `Leave Game in the pause menu: ${menu.choices}`);
+  for (let i = 0; i < menu.choices.length && menu.choices[menu.selection] !== 'leave'; i++) {
+    await key(page, 'ArrowDown');
+    menu = (await read(page)).toolbar.menu;
+  }
+  assert.equal(menu.choices[menu.selection], 'leave', 'Leave Game selected');
+  await key(page, 'Enter');
 }
 async function host(page, code) {
   await choose(page, 'create-lobby');
