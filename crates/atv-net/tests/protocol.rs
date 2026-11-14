@@ -1201,10 +1201,10 @@ fn direct_link_signalling_roundtrips_and_is_bounded() {
     }
     // The same bounds hold for bytes that never passed through `encode`.
     let mut bytes = encode(&signal(1, signal::HELLO, vec![1])).unwrap();
-    bytes[10] = 64;
+    bytes[10] = 128;
     assert_eq!(decode(&bytes), Err(Error::InvalidValue));
-    // Every hello flag, frames included, is accepted.
-    bytes[10] = 31;
+    // Every hello flag, frames, motorcycles and chat included, is accepted.
+    bytes[10] = 127;
     assert!(decode(&bytes).is_ok());
     let report = atv_net::LinkReport {
         timeouts: 2,
