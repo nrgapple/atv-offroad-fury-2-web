@@ -61,7 +61,7 @@ def refresh(base, destination, commit, root=ROOT):
 def prepare(lane, event, commit, root=ROOT):
     if lane == 'runtime':
         return {'build': True, 'reused': False}
-    if lane == 'docs' or event == 'pull_request':
+    if lane in ('docs', 'server') or event == 'pull_request':
         return {'build': False, 'reused': False}
     try:
         source = public_commit()
@@ -93,7 +93,7 @@ def prepare(lane, event, commit, root=ROOT):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--lane', required=True, choices=['runtime', 'metadata', 'docs'])
+    parser.add_argument('--lane', required=True, choices=['runtime', 'metadata', 'docs', 'server'])
     parser.add_argument('--event', default=os.environ.get('GITHUB_EVENT_NAME', 'pull_request'))
     parser.add_argument('--commit', default=os.environ.get('GITHUB_SHA', 'HEAD'))
     args = parser.parse_args()

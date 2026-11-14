@@ -3,6 +3,7 @@ import { usageEvent, webAnalyticsEnabled, withWebAnalytics } from './analytics.m
 import { cloudSaveRequest, isCloudSavePath } from './cloudsave.mjs';
 import { boardRequest, isBoardPath } from './boards.mjs';
 import { ghostRequest, isGhostPath } from './ghosts.mjs';
+import { GAME_SERVER_STATUS_PATH, checkGameServer, gameServerStatus } from './gameserver.mjs';
 const BLOB = /^\/content\/[a-f0-9]{64}\.bin$/;
 const IMAGE = /^\/devlog-images\/[a-z0-9-]+\.png$/;
 const APP_ICON = /^\/app-icons\/[a-f0-9]{64}\.png$/;
@@ -81,6 +82,7 @@ async function route(request, env) {
     if (isCloudSavePath(path)) return cloudSaveRequest(request, env, allowed);
     if (isBoardPath(path)) return boardRequest(request, env, allowed);
     if (isGhostPath(path)) return ghostRequest(request, env, allowed);
+    if (path === GAME_SERVER_STATUS_PATH) return gameServerStatus(request, env);
     // The public Free Ride rider count and daily totals: same-origin GETs carry no Origin header.
     if (isFreerideCount(path)) return env.MULTIPLAYER ? multiplayerRequest(request, env) : new Response('Multiplayer unavailable', {status:503});
     if (path.startsWith('/multiplayer/')) {
@@ -132,4 +134,8 @@ async function route(request, env) {
     return response;
 }
 
-export default { async fetch(request, env) { return secureResponse(await withWebAnalytics(await route(request, env), request, env), request, { webAnalytics: webAnalyticsEnabled(env) }); } };
+export default {
+  async fetch(request, env) { return secureResponse(await withWebAnalytics(await route(request, env), request, env), request, { webAnalytics: webAnalyticsEnabled(env) }); },
+  // The five-minute cron (wrangler.jsonc triggers): game server health.
+  scheduled(controller, env, ctx) { ctx.waitUntil(checkGameServer(env).catch(failure => console.error('game server check failed', failure))); },
+};

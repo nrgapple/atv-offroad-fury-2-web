@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""Choose a cheap metadata lane only for an explicit documentation allowlist."""
+"""Choose a cheap metadata lane only for an explicit documentation allowlist.
+
+Game server and its deployment files (research/GAME_SERVER.md) are built,
+tested and deployed by .github/workflows/game-server.yml; they never change the
+site's application bytes, so on their own they take the `server` lane: no site
+build and no site deploy. Shared inputs (crates/atv-net, Cargo.toml/lock) stay
+runtime, because the game uses them too."""
 import argparse
 import json
 import os
@@ -15,16 +21,23 @@ def metadata_path(name):
             or (name.startswith('research/devlog/entries/') and name.endswith('.json')))
 
 
+def server_path(name):
+    return (name.startswith(('crates/atv-server/', 'deploy/'))
+            or name == '.github/workflows/game-server.yml')
+
+
 def changed_paths(root, base, head):
     return subprocess.check_output(['git', 'diff', '--no-renames', '--name-only', '-z',
                                     base, head, '--'], cwd=root).decode().split('\0')[:-1]
 
 
 def classify(paths):
-    if any(not metadata_path(name) for name in paths):
+    if any(not metadata_path(name) and not server_path(name) for name in paths):
         return 'runtime'
     if any(name == 'research/devlog.json' or name.startswith('research/devlog/entries/') for name in paths):
         return 'metadata'
+    if any(server_path(name) for name in paths):
+        return 'server'
     return 'docs'
 
 
@@ -44,7 +57,7 @@ def plan(event, event_name, root=ROOT, head='HEAD'):
         return {'lane': 'runtime', 'publish': True}
     # For a PR, HEAD is GitHub's merge tree: include the result actually tested.
     lane = classify(changed_paths(root, base, head))
-    return {'lane': lane, 'publish': lane != 'docs'}
+    return {'lane': lane, 'publish': lane in ('runtime', 'metadata')}
 
 
 def validate_metadata(root=ROOT):
