@@ -1,3 +1,5 @@
+// Rider lists stay vectors so steps can add and remove riders.
+#![allow(clippy::useless_vec)]
 use super::*;
 use atv_net::decode;
 

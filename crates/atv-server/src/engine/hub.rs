@@ -111,7 +111,8 @@ pub struct Rider {
 }
 
 fn flat(a: [f32; 3], b: [f32; 3]) -> f32 {
-    (a[0] - b[0]).hypot(a[2] - b[2])
+    let (x, z) = (a[0] - b[0], a[2] - b[2]);
+    (x * x + z * z).sqrt()
 }
 
 fn bit(peer: u8) -> u32 {
@@ -509,19 +510,24 @@ impl Hub {
             if (near..=far).contains(&d) {
                 return spot;
             }
-            if d >= near / 2. && d <= far && farthest.is_none_or(|(_, best)| d > best) {
+            if (near / 2. ..=far).contains(&d) && farthest.is_none_or(|(_, best)| d > best) {
                 farthest = Some((spot, d));
             }
         }
         if let Some((spot, _)) = farthest {
             return spot;
         }
-        let angle = (self.random() % 3600) as f32 / 3600. * std::f32::consts::TAU;
-        [
-            from[0] + near * angle.cos(),
-            from[1],
-            from[2] + near * angle.sin(),
-        ]
+        // A random direction: a point in the unit square, normalized
+        // (no trigonometry: clippy.toml keeps platform libm out).
+        let mut unit = || (self.random() % 2001) as f32 / 1000. - 1.;
+        let (x, z) = (unit(), unit());
+        let length = (x * x + z * z).sqrt();
+        let (x, z) = if length < 0.01 {
+            (1., 0.)
+        } else {
+            (x / length, z / length)
+        };
+        [from[0] + near * x, from[1], from[2] + near * z]
     }
 
     /// The highest spot within `range` ft of `from`, else `from`.
@@ -834,13 +840,12 @@ impl Hub {
                                 changed = true;
                             }
                         }
-                        event_kind::HILL => {
+                        event_kind::HILL
                             if believed
                                 && flat(p, event.target) <= HILL_RADIUS
-                                && (p[1] - event.target[1]).abs() <= HILL_BAND
-                            {
-                                entry.value += dt as f32 / 1000.;
-                            }
+                                && (p[1] - event.target[1]).abs() <= HILL_BAND =>
+                        {
+                            entry.value += dt as f32 / 1000.;
                         }
                         _ => {}
                     }

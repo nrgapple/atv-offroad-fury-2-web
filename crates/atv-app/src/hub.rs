@@ -4,6 +4,7 @@
 //! The server owns every timer and judges the results; this side shows
 //! them, counts down locally between packets and sends the rider's
 //! choices. Authored for the port.
+use atv_core::math::Det;
 use atv_game::multiplayer::HubMessage;
 use atv_game::multiplayer::NO_PEER;
 use atv_game::multiplayer::hub::{
@@ -58,7 +59,7 @@ fn test(flag: u8) -> bool {
 }
 
 fn flat(a: [f32; 3], b: [f32; 3]) -> f32 {
-    (a[0] - b[0]).hypot(a[2] - b[2])
+    (a[0] - b[0]).hypot_d(a[2] - b[2])
 }
 
 /// `M:SS`, rounded up.

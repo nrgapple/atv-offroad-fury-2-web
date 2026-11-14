@@ -230,7 +230,7 @@ fn peer_name(names: &[(u8, String)], peer: u8) -> String {
 /// The heading (radians about +y) of a W,X,Y,Z orientation.
 fn heading(q: [f32; 4]) -> f32 {
     let [w, x, y, z] = q;
-    (2. * (w * y + x * z)).atan2(1. - 2. * (y * y + x * x))
+    atv_core::math::Det::atan2_d(2. * (w * y + x * z), 1. - 2. * (y * y + x * x))
 }
 
 fn now_ms(clock: Instant) -> u64 {

@@ -50,6 +50,9 @@ pub enum Action {
 /// Hit target of the minimap (tap toggles north-up / heading-up).
 const MINIMAP: u32 = 10;
 
+/// The Free Ride hub's HUD and its ground circle (centre, radius ft).
+pub type HubHud = (atv_ui::hud::hub::View, Option<([f32; 3], f32)>);
+
 /// What the HUD shows this frame.
 pub struct HudInput<'a> {
     pub hud: atv_core::hud::Frame,
@@ -71,7 +74,7 @@ pub struct HudInput<'a> {
     pub game: Option<atv_ui::hud::games::View>,
     /// The Free Ride hub's HUD and its ground circle (centre, radius ft;
     /// research/FREERIDE_HUB.md).
-    pub hub: Option<(atv_ui::hud::hub::View, Option<([f32; 3], f32)>)>,
+    pub hub: Option<HubHud>,
     /// A target run's or mini-game's compass (Overlay Sets 5-7).
     pub compass: Option<atv_ui::hud::race::CompassView>,
     /// Split screen: players 2-4's instruments, each in its own view
@@ -1515,7 +1518,8 @@ impl Overlay {
         if let (Some(h), Some((_, _, vp))) = (shown, shown.and_then(|h| h.peers))
             && let Some((_, Some((centre, radius)))) = &h.hub
         {
-            let pulse = ((now / 250.).sin() * 0.5 + 0.5) as f32;
+            let phase = ((now / 250.) % std::f64::consts::TAU) as f32;
+            let pulse = phase.sin_d() * 0.5 + 0.5;
             let mut list = DisplayList::default();
             atv_ui::hud::hub::paint_ring(&mut list, &sub, *centre, *radius, &vp, pulse);
             self.list.items.extend(place(list, frames[0]));
