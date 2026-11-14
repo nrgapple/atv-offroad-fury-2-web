@@ -100,3 +100,30 @@ Let's Encrypt in the server, so WebTransport can share the certificate later).
 WebTransport datagrams with WebSocket kept for networks that block UDP; per
 recipient delta compression in frames; larger lobbies (the protocol caps a
 room at 20 riders today); a second region; server-checked race results.
+
+## Load testing
+
+`fury-loadtest` (`crates/atv-loadtest`) simulates riders against any server
+that speaks the relay's routes: the local relay, fury-server, or (only with the
+owner's go-ahead) production. Each rider claims a Free Ride slot or a private
+room over HTTP, joins over the room WebSocket, says the hello the game would
+(FRAMES when the claim says `frames`), and sends compact snapshots and deltas
+along a loop: 20 Hz while moving near others (`--clustered` riders ride in
+groups of six), 10 Hz while moving far apart, 1 Hz at rest. It pings for round
+trips and counts what comes back. Counters cover the window after ramp-up.
+
+```sh
+cargo run --release -p atv-loadtest -- --url http://127.0.0.1:8789 \
+  --origin http://127.0.0.1:4187 --riders 200 --duration 60 --ramp 10 --out load.json
+```
+
+`--rooms N` puts the riders in N private rooms (four at most each; the first N
+riders host) instead of Free Ride; `--frames auto|on|off` (default `auto`),
+`--ping-ms`, `--seed`. The local relay admits only its `GAME_ORIGIN`, hence
+`--origin` (or point `--url` at `tools/serve_multiplayer.mjs` on 4187). The
+JSON report has connections ok/failed/live/disconnects, messages and bytes in
+and out per second, poses received per rider per second (single, batched,
+bundled or framed), frames per second, round-trip p50/p95/p99, and close or
+failure reasons. Thousands of riders need a raised open-file limit
+(`ulimit -n`) on the load machine; run it from another host than the server
+for capacity numbers.
