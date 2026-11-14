@@ -72,6 +72,23 @@ async fn http(
     (status, body)
 }
 
+/// A CORS preflight for a POST from `origin`; the status and lowercased
+/// response headers.
+async fn preflight(address: SocketAddr, path: &str, origin: &str) -> (u16, String) {
+    let mut stream = TcpStream::connect(address).await.unwrap();
+    let request = format!(
+        "OPTIONS {path} HTTP/1.1\r\nHost: {address}\r\nOrigin: {origin}\r\nAccess-Control-Request-Method: POST\r\nAccess-Control-Request-Headers: content-type\r\nConnection: close\r\n\r\n"
+    );
+    stream.write_all(request.as_bytes()).await.unwrap();
+    let mut response = String::new();
+    stream.read_to_string(&mut response).await.unwrap();
+    let status = response[9..12].parse().unwrap();
+    let head = response
+        .split_once("\r\n\r\n")
+        .map_or(response.as_str(), |(h, _)| h);
+    (status, head.to_ascii_lowercase())
+}
+
 async fn connect(address: SocketAddr, code: &str, key: &str) -> Socket {
     let mut request = format!("ws://{address}/multiplayer/rooms/{code}?key={key}")
         .into_client_request()
@@ -214,6 +231,25 @@ async fn riders_meet_in_free_ride_get_frames_and_survive_a_restart() {
         .0,
         403
     );
+    // Cross-origin pages preflight their JSON POSTs: allowed origins are
+    // echoed, without credentials; others are refused.
+    for path in ["/multiplayer/rooms", "/multiplayer/freeride"] {
+        let (status, head) = preflight(address, path, ORIGIN).await;
+        assert_eq!(status, 204, "{path}: {head}");
+        for header in [
+            "access-control-allow-origin: http://127.0.0.1:4187",
+            "access-control-allow-methods: get, post, options",
+            "access-control-allow-headers: content-type",
+            "vary: origin",
+        ] {
+            assert!(head.contains(header), "{path}: {header} in {head}");
+        }
+        assert!(!head.contains("access-control-allow-credentials"), "{head}");
+        assert_eq!(
+            preflight(address, path, "https://evil.example").await.0,
+            403
+        );
+    }
     let (status, body) = http(address, "GET", "/multiplayer/version", Some(ORIGIN), "").await;
     assert_eq!(status, 200);
     assert!(body.contains(r#""commit":"test-commit""#), "{body}");
