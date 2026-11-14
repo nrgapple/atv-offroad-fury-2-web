@@ -2,7 +2,7 @@
 //! garage and course loader (atv_ui::front), drawn without a 3D scene. It
 //! owns its UI renderer and the original menu artwork; textures are released
 //! while riding and uploaded again on return.
-use atv_render::preview::{ModelPreview, PreviewTexture};
+use atv_render::preview::{ModelPreview, PreviewPipeline, PreviewTexture};
 use atv_ui::{
     DisplayList, Fonts, Rect, Renderer,
     front::{
@@ -118,6 +118,7 @@ pub struct Front {
     layout_trees: [layout::LayoutCache; 2],
     /// Vehicle (0) and garage rider (1) previews.
     previews: [Option<Preview>; 2],
+    preview_pipeline: Option<PreviewPipeline>,
     /// Built previews of pages just left (key, model, animated), newest
     /// last: going back to the garage or a stage page reuses its model's GPU
     /// mesh and textures instead of building it again (a 3x phone frame).
@@ -269,6 +270,7 @@ impl Front {
             page_layouts: 0,
             layout_trees: Default::default(),
             previews: [None, None],
+            preview_pipeline: None,
             stash: Vec::new(),
             preview_counts: [0; 2],
             turning: None,
@@ -1905,9 +1907,13 @@ impl Front {
         {
             self.preview_counts[0] += 1;
             built = true;
+            let shared = self
+                .preview_pipeline
+                .get_or_insert_with(|| PreviewPipeline::new(device));
             let preview = ModelPreview::new(
                 device,
                 queue,
+                shared,
                 &model.mesh,
                 &lookup(&model.textures),
                 model.pose.as_deref(),
@@ -1992,9 +1998,13 @@ impl Front {
                 let textures = dressed_textures.as_ref().unwrap_or(&rider.textures);
                 let pose = rider.rider.pose(time).ok().map(|(_, p)| p.world_matrices);
                 self.preview_counts[0] += 1;
+                let shared = self
+                    .preview_pipeline
+                    .get_or_insert_with(|| PreviewPipeline::new(device));
                 let preview = ModelPreview::new(
                     device,
                     queue,
+                    shared,
                     &rider.rider.mesh,
                     &lookup(textures),
                     pose.as_deref(),
