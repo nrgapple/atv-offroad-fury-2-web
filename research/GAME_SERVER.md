@@ -108,7 +108,7 @@ brief hitch, not a lost room.
   | under 60 ft | every tick with a new pose |
   | 60-300 ft | every 100 ms |
   | 300-1,000 ft | every 200 ms |
-  | beyond 1,000 ft | every 500 ms |
+  | beyond 1,000 ft | every 300 ms |
   | at rest (under 0.5 ft/s, riding) | when it moves 0.25 ft, else every 2 s |
   | a change of rider state, a crash, setting off or stopping | at once |
 
@@ -116,7 +116,7 @@ brief hitch, not a lost room.
   snapshots cannot travel in frames and are sent on their own.
 
   The tiers sit a tick or more under a Free Ride rider's own send intervals
-  (`links::freeride_interval`, 150 and 300 ms; about 240 ms measured at
+  (`links::freeride_interval`: 150, 300 and 350 ms; about 240 ms measured at
   300-1,000 ft), so a Free Ride pose waits at most for the next tick, because
   receivers play poses back with a delay
   sized for those and drop a moving rider after 1 s without a pose. Measured
@@ -136,6 +136,25 @@ brief hitch, not a lost room.
   500 ms tier's 700 ms arrivals too) and pass the 300-1,000 ft checks at
   about 0.4 ft rms with no freeze (research/MULTIPLAYER.md "Slow senders
   and the game server").
+
+  The far tier was 500 ms until 2026-11-14. It passed only every other
+  pose of a rider sending every 350 ms, so poses came 700 ms apart and
+  watchers beyond 1,000 ft drew the rider frozen: in the same test's mixed
+  phase (a rider joins while the driver is far off, then the driver sets
+  off), 221-258 ms for both watchers in one run and 310-518 ms for the
+  newcomer in an earlier one. It was not a missing delta baseline: like the
+  relay, the server applies each `Delta` to the sender's baseline and
+  passes on the resulting compact snapshot (kind 9), in catch-up, single
+  poses and frames, so a rider that joined later never needs an earlier
+  pose. 300 ms passes every far pose (picked up 350 or 400 ms after the
+  last) with a tick to spare for network jitter. Measured after the change
+  (two runs): the mixed watcher beyond 1,000 ft froze 38 and 155 ms, and
+  the shared phase's beyond-1,000 ft watcher 197 and 172 ms (430 ms, 12.2 ft
+  rms and 72 ft at worst before; 3.9 and 3.6 ft rms after), with clients
+  from before that playback-delay fix, which still played far poses
+  back about 240 ms late against a 350 ms send interval. Clients with that
+  fix ride out the 700 ms gaps too, but only by drawing far riders about
+  twice as late; the 300 ms tier keeps far poses as fresh as they are sent.
 - `rooms`: one task per room, fed by a bounded channel; the registry is a
   mutex touched only to open, find, claim or end rooms. `outbox`: each
   connection's send queue holds 256 KiB / 512 packets; when full the oldest

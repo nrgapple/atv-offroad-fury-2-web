@@ -376,6 +376,56 @@ fn arrivals_catch_up_on_every_rider_and_deltas_apply_to_the_baseline() {
 }
 
 #[test]
+fn riders_that_never_got_a_baseline_get_whole_poses_built_from_deltas() {
+    // A delta is relative to the sender's own last pose, which a rider that
+    // joins (or comes into range) later never got. The server applies it
+    // and sends the resulting compact snapshot, in catch-up and in frames.
+    let mut f = Fixture::new(true);
+    let k1 = f.room.claim(f.now, &mut f.rng).unwrap();
+    let k2 = f.room.claim(f.now, &mut f.rng).unwrap();
+    f.join(1, Some(HOST_KEY), "Sender");
+    f.ready(1);
+    let base = pose(0, 1, 0., true);
+    f.send(1, &Packet::Snapshot(Box::new(base.clone())));
+    let first = pose(0, 2, 7., true);
+    f.send(
+        1,
+        &Packet::Delta(Box::new(atv_net::delta(&first, &base).unwrap())),
+    );
+    f.join(2, Some(&k1), "Late");
+    f.hello(2, signal::FRAMES);
+    let out = f.ready(2);
+    let Some(Out::Pose(_, raw)) = out.iter().find(|o| matches!(o, Out::Pose(2, _))) else {
+        panic!("no catch-up");
+    };
+    assert_eq!(raw[5], 9, "catch-up is a compact snapshot");
+    assert!(
+        matches!(decode(raw).unwrap(), Packet::Snapshot(s) if s.sequence == 2 && s.atv.position[0] == 7.)
+    );
+    f.join(3, Some(&k2), "Later");
+    f.hello(3, signal::FRAMES);
+    f.ready(3);
+    let second = pose(0, 3, 9., true);
+    f.send(
+        1,
+        &Packet::Delta(Box::new(atv_net::delta(&second, &first).unwrap())),
+    );
+    let out = f.tick();
+    for id in [2, 3] {
+        let Packet::Frame { poses } = &sent(&out, id)[0] else {
+            panic!("no frame for {id}");
+        };
+        assert_eq!(
+            poses[0][5], 9,
+            "a frame carries a compact snapshot, not a delta"
+        );
+        assert!(
+            matches!(decode(&poses[0]).unwrap(), Packet::Snapshot(s) if s.sequence == 3 && s.atv.position[0] == 9.)
+        );
+    }
+}
+
+#[test]
 fn poses_from_a_previous_vehicle_or_before_ready_are_not_passed_on() {
     let mut f = Fixture::new(true);
     let k1 = f.room.claim(f.now, &mut f.rng).unwrap();
