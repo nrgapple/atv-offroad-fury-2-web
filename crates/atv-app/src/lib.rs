@@ -8307,6 +8307,7 @@ impl App {
             code: shard,
             host: false,
             freeride: true,
+            quickplay: None,
             name,
             drop_after: None,
             train_place: None,
