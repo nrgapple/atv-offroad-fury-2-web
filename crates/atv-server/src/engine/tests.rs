@@ -673,3 +673,63 @@ fn uncounted_riders_play_but_stay_out_of_the_counts() {
     f.room.set_counted(tester, true);
     assert_eq!(f.room.counted_riders(), f.room.riders());
 }
+
+#[test]
+fn motorcycle_poses_reach_only_builds_that_decode_them() {
+    let mut f = Fixture::new(true);
+    let keys: Vec<String> = (0..4)
+        .map(|_| f.room.claim(f.now, &mut f.rng).unwrap())
+        .collect();
+    f.join(1, Some(HOST_KEY), "Old");
+    f.join(2, Some(&keys[0]), "OldFrames");
+    f.join(3, Some(&keys[1]), "New");
+    f.join(4, Some(&keys[2]), "NewFrames");
+    f.hello(2, signal::FRAMES);
+    f.hello(3, signal::MOTORCYCLES);
+    f.hello(4, signal::FRAMES | signal::MOTORCYCLES);
+    // A motorcycle rider joins (vehicles 27-46 are accepted).
+    let mut out = Vec::new();
+    let peer = f
+        .room
+        .admit(5, Some(&keys[3]), f.now, &mut f.rng, &mut out)
+        .unwrap();
+    let code = f.room.code();
+    let mut rider = player("Bike");
+    rider.atv_model = 30;
+    f.send(
+        5,
+        &Packet::Join {
+            code,
+            player: rider,
+        },
+    );
+    assert!(closes(&out).is_empty());
+    for id in 1..=5 {
+        f.ready(id);
+    }
+    let mut bike = pose(peer, 10, 0., true);
+    bike.atv_model = 30;
+    bike.rider_nodes = vec![atv_net::Transform::default(); 24];
+    let out = f.send(5, &Packet::Snapshot(Box::new(bike.clone())));
+    // Builds without frames: only the new one gets it.
+    assert!(sent(&out, 1).is_empty());
+    assert!(
+        matches!(&sent(&out, 3)[0], Packet::Snapshot(s) if s.atv_model == 30 && s.rider_nodes.len() == 24)
+    );
+    let out = f.tick();
+    assert!(sent(&out, 2).is_empty());
+    let Packet::Frame { poses } = &sent(&out, 4)[0] else {
+        panic!("no frame")
+    };
+    assert!(matches!(decode(&poses[0]).unwrap(), Packet::Snapshot(s) if s.atv_model == 30));
+    // An old arrival's catch-up leaves the motorcycle out; ATV poses still
+    // reach every build.
+    assert!(sent(&f.ready(1), 1).is_empty());
+    let out = f.send(3, &snapshot(2, 1, 0.));
+    assert!(!sent(&out, 1).is_empty());
+    // Unknown vehicles are still refused.
+    let mut rider = player("Bad");
+    rider.atv_model = 47;
+    let out = f.send(5, &Packet::Profile(rider));
+    assert_eq!(closes(&out)[0].2, "Unknown actor model");
+}

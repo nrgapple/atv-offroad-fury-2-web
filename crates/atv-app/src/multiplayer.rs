@@ -86,6 +86,8 @@ pub struct Net {
     pub drawn: usize,
     /// Each presented rider's slot, ATV position and staleness (tests).
     presented: Vec<(u8, [f32; 3], bool, Option<u8>)>,
+    /// Each posed rider's slot, vehicle and rider bone count (tests).
+    posed: Vec<(u8, u16, usize)>,
     /// This frame's remote riders for their engine and impact sounds.
     pub riders: Vec<atv_game::audio::remote::Rider>,
     /// The course this client has loaded (the room may move on).
@@ -396,6 +398,7 @@ impl Net {
             closed: None,
             drawn: 0,
             presented: Vec::new(),
+            posed: Vec::new(),
             riders: Vec::new(),
             environment: String::new(),
             ride,
@@ -1086,6 +1089,7 @@ impl Net {
         self.greeted = false;
         self.locals.clear();
         self.presented.clear();
+        self.posed.clear();
         self.riders.clear();
         self.meet = None;
         self.meet_wait = None;
@@ -1112,6 +1116,7 @@ impl Net {
             scene.retain_peers(|_, _| false);
             self.locals.clear();
             self.presented.clear();
+            self.posed.clear();
             self.riders.clear();
             self.drawn = 0;
             return;
@@ -1158,6 +1163,7 @@ impl Net {
         }
         let mut poses: Vec<(u8, Pose)> = Vec::new();
         self.presented.clear();
+        self.posed.clear();
         self.riders.clear();
         let cars = |car| ride.train_car(car);
         let mut forked = false;
@@ -1215,7 +1221,11 @@ impl Net {
             }
             let local = self.locals.get_mut(&peer).expect("remote rig");
             match local.pose(&sampled.snapshot, dt, sampled.stale) {
-                Ok(pose) => poses.push((peer, pose)),
+                Ok(pose) => {
+                    self.posed
+                        .push((peer, sampled.snapshot.atv_model, pose.rider_nodes.len()));
+                    poses.push((peer, pose));
+                }
                 Err(error) => crate::status(&format!("Remote rider pose: {error}")),
             }
         }
@@ -1366,6 +1376,9 @@ impl Net {
                     "delayMs": self.session.delay_ms(*peer),
                 })
             }).collect::<Vec<_>>(),
+            "posed": self.posed.iter().map(|(peer, vehicle, bones)| {
+                serde_json::json!({"peer": peer, "vehicle": vehicle, "riderNodes": bones})
+            }).collect::<Vec<_>>(),
             "network": {
                 "messages": c.messages, "full": c.full, "delta": c.delta,
                 "suppressed": c.suppressed, "sentBytes": c.sent_bytes,
@@ -1384,6 +1397,7 @@ impl Net {
             "serves": {
                 "links": self.serves.links, "batches": self.serves.batches,
                 "frames": self.serves.frames,
+                "motorcycles": self.serves.motorcycles,
             },
             "server": self.server,
             "pace": self.session.pace,
