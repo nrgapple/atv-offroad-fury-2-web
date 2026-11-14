@@ -252,7 +252,8 @@ export const TESTS = {
   'test_engine_rumble.mjs': { group: 'content' },
   'test_rust_audio.mjs': { group: 'content' },
   'test_rust_audio_activation.mjs': { group: 'content' },
-  'test_devlog.mjs': { group: 'content-free' }
+  'test_devlog.mjs': { group: 'content-free' },
+  'test_stats.mjs': { group: 'content-free' }
 };
 
 // Unknown/heavier runs retain conservative admission. Mixed selections use the

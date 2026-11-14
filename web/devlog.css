@@ -72,6 +72,19 @@ h1 {
   touch-action: manipulation;
 }
 .game-link:hover { filter: brightness(1.08); }
+.stats-link {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  color: #e6e6e6;
+  font: italic 800 17px/1 var(--atv-font-display);
+  letter-spacing: .06em;
+  text-decoration: none;
+  text-transform: uppercase;
+}
+.stats-link + .game-link { margin-left: 0; }
+@media (hover: hover) { .stats-link:hover { color: var(--atv-gold-light); } }
 
 
 /* Tabs: gold-pill selection, sticky so they stay reachable on long pages. */
@@ -232,6 +245,9 @@ footer { width: var(--dl-width); margin: auto; padding: 28px 0 max(36px, env(saf
   .topbar { gap: 12px; padding-bottom: 12px; }
   h1 { padding-left: 12px; }
   .game-link { padding: 0 16px; font-size: 16px; }
+  .stats-link { font-size: 15px; }
+  .stats-wide { display: none; }
+  .stats-link + .game-link { padding: 0 12px; }
   .port-status-heading p { font-size: 13.5px; line-height: 1.5; }
   .tabs { padding: 8px 12px; }
   .tabs button { max-width: none; font-size: 16px; padding: 0 10px; }
@@ -244,5 +260,5 @@ footer { width: var(--dl-width); margin: auto; padding: 28px 0 max(36px, env(saf
   .status-filters select { min-width: 0; width: 100%; font-size: 16px; }
   #feature-count { grid-column: 1 / -1; margin: 0; padding: 0; }
 }
-@media (max-width: 380px) { .game-name { width: 110px; } h1 { font-size: 22px; } }
+@media (max-width: 380px) { .game-name { width: 110px; } h1 { font-size: 22px; } .topbar { gap: 8px; } h1 { padding-left: 8px; } .stats-link { font-size: 14px; } .stats-link + .game-link { padding: 0 10px; font-size: 15px; } }
 footer p { margin: 0 0 8px; }

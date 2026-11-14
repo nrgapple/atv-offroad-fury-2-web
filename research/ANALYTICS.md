@@ -63,3 +63,36 @@ The report covers daily activity, sessions by device and entry, rides by mode, r
 3. Add `"WEB_ANALYTICS_TOKEN": "<token>"` to `vars` in `wrangler.jsonc` and merge the change so CI deploys it.
 
 With a valid 32-character hex token, the Worker adds the beacon to HTML responses and allows `https://static.cloudflareinsights.com` (script) and `https://cloudflareinsights.com` (connect) in the CSP. Without a token, the HTML and CSP stay unchanged. Automatic injection would be blocked by the CSP, so it is not used.
+
+## Public stats page
+
+`/stats.html` shows players anonymous totals: riders online and rooms live right now, the most riders online at once, today's daily event, hours ridden, rides, race finishes and visits (today, this week, all time), rides per day for the last 30 days, the most ridden tracks, the single player / multiplayer / Free Ride, Race / Freestyle, ATV / motorcycle and phone / computer splits, World board totals and the countries riders come from. `web/stats.js` renders `GET /api/stats` (`cloudflare/stats.mjs`).
+
+### Data flow
+
+- **Rollup.** After the game server health check, the five-minute cron runs `refreshStats`. At most every 15 minutes it queries `fury_usage` through the Analytics Engine SQL API for whole UTC days (yesterday and today; a first run backfills the retained 90 days from the first day with events, 14 days a run) and writes one row per day to the D1 table `stats_days` (migration `0005_stats_days.sql`). Each row holds aggregate counts only: sessions, rides, riding seconds, race finishes, rides and seconds by mode, activity, vehicle and venue, sessions by device and country, that day's peak riders and rooms online (from `game_server_checks`) and, on today's row, a count snapshot of the World boards. Rows are never pruned, so all-time totals keep growing after Analytics Engine drops old events.
+- **Token.** The Worker reads Analytics Engine with the Worker secret `ANALYTICS_API_TOKEN` (Account → Account Analytics → Read). It is never logged; a failed query logs only its HTTP status. Without the secret the cron still records peaks and board counts.
+- **Endpoint.** `GET /api/stats` sums the rows, adds live riders and rooms from the game server's `/healthz` (3 s timeout; falls back to a health check from the last 15 minutes) and answers with `Cache-Control: public, max-age=60`, also kept in the edge cache. One request costs one D1 batch and one `/healthz` fetch a minute per edge location.
+
+### Response
+
+| Field | Content |
+| --- | --- |
+| `updated` | When the answer was built |
+| `live` | `{riders, rooms}` or `null` |
+| `peak` | `{riders, day, today}`: the most riders online at once and its UTC day, or `null` |
+| `daily` | Today's daily event: `{course, vehicle, entries}` (`entries` is `null` before today's rollup) |
+| `boards` | `{times, riders, boards, dailyEntries}`: World board rows and distinct names ranked, or `null` |
+| `since` | First UTC day with recorded riding |
+| `totals` | `today`, `week` (last 7 UTC days) and `allTime`, each `{rides, hours, sessions, racesFinished}` |
+| `modes`, `activities`, `vehicles` | `[{id, rides, hours}]`, or `null` below 10 rides |
+| `devices` | `[{id, sessions}]`, or `null` below 10 sessions |
+| `venues` | Up to 12 `{id, name, rides, hours, racesFinished}` with at least 10 rides, by hours |
+| `countries` | `{count, top}`: how many countries visited and up to 12 `{code, sessions}` with at least 10 sessions |
+| `days` | Last 30 UTC days: `[{day, rides, hours}]` |
+
+Everything after `since` is absent until Analytics Engine data has been rolled up; the page then hides those sections and still shows the live numbers, peak, daily event and boards. If the endpoint fails, the page shows a short note.
+
+### Privacy
+
+The answer contains aggregates only: no rider names (board totals are counts), IP addresses, room codes, identifiers, release or build commits, or details about the multiplayer service beyond riders and rooms. Venues and countries below 10 rides or sessions (`MIN_BUCKET`) are not listed; the country count still includes them. `cloudflare/stats.test.mjs` checks the suppression, the missing-token and missing-database paths and that no forbidden field appears. `tools/test_stats.mjs` (content-free browser group) covers the page with full data, without the token and with the endpoint down.
