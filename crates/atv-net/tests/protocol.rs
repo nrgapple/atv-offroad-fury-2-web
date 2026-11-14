@@ -1180,7 +1180,7 @@ fn direct_link_signalling_roundtrips_and_is_bounded() {
         signal(20, signal::OFFER, vec![1]),
         signal(1, 10, vec![1]),
         signal(1, signal::COURIER, vec![2]),
-        signal(1, signal::HELLO, vec![signal::FRAMES * 2]),
+        signal(1, signal::HELLO, vec![signal::MOTORCYCLES * 2]),
         signal(1, signal::PACE, vec![signal::PACE_MIN - 1]),
         signal(1, signal::PACE, vec![signal::PACE_MAX + 1]),
         signal(1, signal::GONE, vec![signal::BATCHES]),
