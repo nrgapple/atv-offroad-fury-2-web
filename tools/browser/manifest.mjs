@@ -228,6 +228,7 @@ export const TESTS = {
   'test_engine_hall_of_fame.mjs': { group: 'content', timeout: 900 },
   'test_engine_world_boards.mjs': { group: 'content', timeout: 900 },
   'test_engine_world_ghosts.mjs': { group: 'content', timeout: 900 },
+  'test_engine_ghost_challenges.mjs': { group: 'content', timeout: 1200 },
   'test_engine_world_submit.mjs': { group: 'content', timeout: 900 },
   'test_engine_text_fields_touch.mjs': { group: 'content' },
   'test_engine_championship.mjs': { group: 'content', timeout: 1500 },

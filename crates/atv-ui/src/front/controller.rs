@@ -136,6 +136,8 @@ pub enum Event {
     /// Hall of Fame → View: World → Race This Ghost: Lap Attack on the
     /// board's course against a row's ghost, which the host downloads first
     /// (research/WORLD_BOARDS.md "Ghosts").
+    /// Lap Attack's ghost picker sends it too (research/GHOST_CHALLENGES.md);
+    /// an empty `board` races this device's personal best ghost.
     GhostRace {
         /// The lap board, the row's name and its lap in milliseconds.
         board: String,
@@ -272,6 +274,7 @@ pub fn stepper(action: &str) -> bool {
             | "racelaps"
             | "racecpu"
             | "racedifficulty"
+            | "raceghost"
             | "champdifficulty"
             | "profileletter"
             | "recordevent"
@@ -538,6 +541,9 @@ pub struct Frontend {
     pub cloud: CloudView,
     /// The world boards and the daily event's clock, from the host.
     pub world: world_page::WorldView,
+    /// The rider's medals, weekly results and personal best ghosts on this
+    /// device (research/GHOST_CHALLENGES.md), reloaded by the host.
+    pub medals: atv_core::medals::MedalBook,
     /// The status bar's open popover and its chip's centre x.
     status_open: Option<super::status_bar::Chip>,
     status_anchor: f32,
@@ -688,6 +694,7 @@ impl Frontend {
             room: None,
             lobby: None,
             race_courses: Vec::new(),
+            medals: crate::settings::load_medals(settings),
             race,
             race_filter: "all".into(),
             course_sheet: false,
@@ -940,10 +947,21 @@ impl Frontend {
         // Objectives event, `26a720`, `26d010`) after Freestyle, and Games
         // (the original's live under Multiplayer → Split Screen) after
         // Championships.
+        // Lap Attack's ghost picker under Difficulty (a port addition).
+        if page == "race"
+            && !self.split
+            && let Some(row) = self.ghost_row()
+            && let Some(at) = self.choices.iter().position(|(a, _)| a == "racedifficulty")
+        {
+            self.choices.insert(at + 1, row);
+        }
         if page == "single" {
             let mut rows = Vec::new();
             if self.daily_offered() {
                 rows.push((world_page::DAILY_PAGE, "Daily Event"));
+            }
+            if self.weekly_offered() {
+                rows.push((world_page::WEEKLY_PAGE, "Weekly Challenge"));
             }
             if !self.objective_courses.is_empty() {
                 rows.push(("objective-courses", "Freestyle Objectives"));
@@ -1327,6 +1345,7 @@ impl Frontend {
                     .unwrap_or(1) as i32;
                 self.race.cpu = RACE_CPU[(at + direction).rem_euclid(3) as usize];
             }
+            "raceghost" => self.step_ghost(direction),
             "racedifficulty" => {
                 // Normal → Expert → Kid (Kid only where it is offered).
                 let offered: &[u32] = if self.kid_offered() {
@@ -1364,6 +1383,13 @@ impl Frontend {
         // The last started race is remembered (frontend.js `lastRace`).
         self.saved["race"] = self.race.value();
         self.save(settings);
+        // Lap Attack against a picked ghost (research/GHOST_CHALLENGES.md).
+        if self.lap_attack()
+            && !self.split
+            && let Some(event) = self.ghost_start()
+        {
+            return Some(event);
+        }
         Some(Event::Race {
             environment: self.race.course.clone(),
             quad: self.quad_id,
@@ -3296,6 +3322,16 @@ impl Frontend {
             status: self.status_bar(),
             toast: None,
             qr: self.passkey_qr(),
+            medals: if self.page == "race" {
+                self.race_order()
+                    .into_iter()
+                    .filter_map(|id| Some((id.clone(), self.medals.medal(&id)?)))
+                    .collect()
+            } else {
+                Default::default()
+            },
+            medal_strip: (self.page == "profile-overview")
+                .then(|| (self.medals.counts(), self.medals.badge_counts())),
             heading: if self.course_sheet && self.page == "race" {
                 Some("Choose Course".into())
             } else if self.vehicle_sheet && self.page == "garage" {

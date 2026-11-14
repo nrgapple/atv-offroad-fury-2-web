@@ -10,9 +10,10 @@ use atv_core::profile::{BookError, NAME_CHARS, NAME_MAX, Profile, ProfileBook, c
 
 /// Profile pages laid out as the editor's: rows on the left and the
 /// details table on the panel.
-pub const DETAIL_PAGES: [&str; 9] = [
+pub const DETAIL_PAGES: [&str; 10] = [
     "hall-of-fame",
     super::world_page::DAILY_PAGE,
+    super::world_page::WEEKLY_PAGE,
     "profile-name",
     "profile-slots",
     "profile-confirm",
@@ -310,6 +311,7 @@ impl Frontend {
                 rows
             }
             super::world_page::DAILY_PAGE => self.daily_choices(),
+            super::world_page::WEEKLY_PAGE => self.weekly_choices(),
             "profile-records" => {
                 let groups = self.fame_groups();
                 let group = groups.get(self.profile_ui.group);
@@ -450,6 +452,7 @@ impl Frontend {
             "hall-of-fame" if self.profile_ui.fame_world => self.world_fame_details(),
             "hall-of-fame" => self.hall_of_fame(),
             super::world_page::DAILY_PAGE => self.daily_details(),
+            super::world_page::WEEKLY_PAGE => self.weekly_details(),
             _ => Vec::new(),
         }
     }
@@ -975,7 +978,7 @@ impl Frontend {
     pub(super) fn profile_back(&self) -> Option<&'static str> {
         Some(match self.page.as_str() {
             "profile" | "hall-of-fame" => "main",
-            super::world_page::DAILY_PAGE => "single",
+            super::world_page::DAILY_PAGE | super::world_page::WEEKLY_PAGE => "single",
             "profile-name" => match self.profile_ui.name_for {
                 NameFor::Create => "profile",
                 NameFor::Copy(_) => "profile-slots",

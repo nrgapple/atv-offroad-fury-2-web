@@ -10,6 +10,8 @@ use std::collections::BTreeMap;
 
 /// The Daily Event page.
 pub const DAILY_PAGE: &str = "daily";
+/// The Weekly Challenge page (research/GHOST_CHALLENGES.md).
+pub const WEEKLY_PAGE: &str = "weekly";
 /// Rows of a world board shown on a page.
 pub const SHOWN: usize = 10;
 /// Rows of each board where a page shows two (a race course's lap and race
@@ -35,12 +37,43 @@ pub struct WorldView {
     pub boards: BTreeMap<String, BoardState>,
     /// Names this rider submitted under (their rows are marked).
     pub names: Vec<String>,
+    /// Unix milliseconds, from the host clock (the weekly's time left).
+    pub now_ms: Option<f64>,
+    /// The last weekly submission's answer: its week and percentile.
+    pub weekly_percentile: Option<(String, u32)>,
+    /// Lap Attack's ghost picker: the chosen row.
+    pub ghost_pick: usize,
+}
+
+/// One choice of Lap Attack's ghost picker.
+#[derive(Clone, Debug, PartialEq)]
+pub struct GhostPick {
+    /// "PB 1:02.33", "~Gold 0:45.70", "Rival R4 0:50.00"…
+    pub label: String,
+    /// The lap board, row name and lap ms of a world ghost; an empty board
+    /// for this device's personal best ghost; `None` for Off.
+    pub ghost: Option<(String, String, i64)>,
 }
 
 impl WorldView {
     /// Today's event, once the host set the clock.
     pub fn pick(&self) -> Option<DailyPick> {
         self.day.map(world_board::daily)
+    }
+    /// This week's challenge, once the host set the clock.
+    pub fn weekly(&self) -> Option<atv_core::medals::WeeklyPick> {
+        self.day
+            .map(|d| atv_core::medals::weekly(atv_core::medals::week_index(d)))
+    }
+}
+
+/// "2d 4h", "5h 12m" or "12m" until `ends_ms`.
+fn time_left(now_ms: f64, ends_ms: i64) -> String {
+    let minutes = ((ends_ms as f64 - now_ms) / 60_000.).max(0.) as i64;
+    match (minutes / 1440, minutes / 60 % 24, minutes % 60) {
+        (0, 0, m) => format!("{m}m"),
+        (0, h, m) => format!("{h}h {m}m"),
+        (d, h, _) => format!("{d}d {h}h"),
     }
 }
 
@@ -69,9 +102,26 @@ fn class_vehicle(class: VehicleClass, current: u16) -> u16 {
 impl Frontend {
     /// The board ids the open page shows that the host has not fetched.
     pub fn world_wants(&self) -> Vec<String> {
+        let past = || {
+            self.world.weekly().map_or_else(Vec::new, |w| {
+                self.medals
+                    .unbadged(&w.week)
+                    .into_iter()
+                    .map(|week| format!("weekly:{week}"))
+                    .collect()
+            })
+        };
         let wanted = match self.page.as_str() {
             "hall-of-fame" if self.profile_ui.fame_world => self.fame_boards(),
             DAILY_PAGE => self.world.pick().map_or_else(Vec::new, |p| vec![p.board()]),
+            WEEKLY_PAGE => {
+                let mut ids: Vec<String> =
+                    self.world.weekly().map(|w| w.board()).into_iter().collect();
+                ids.extend(past());
+                ids
+            }
+            "profile-overview" => past(),
+            "race" if self.lap_attack() => vec![self.lap_attack_board()],
             _ => Vec::new(),
         };
         wanted
@@ -90,7 +140,10 @@ impl Frontend {
     /// The host's answer for `board`; the page redraws when it shows it.
     pub fn world_answer(&mut self, board: &str, state: BoardState, view: &Viewport) {
         self.world.boards.insert(board.to_string(), state);
-        if self.page == DAILY_PAGE || self.page == "hall-of-fame" {
+        if matches!(
+            self.page.as_str(),
+            DAILY_PAGE | WEEKLY_PAGE | "hall-of-fame" | "race" | "profile-overview"
+        ) {
             self.refresh(view);
         }
     }
@@ -300,9 +353,175 @@ impl Frontend {
         })
     }
 
+    /// Lap Attack is the race setup's event.
+    pub(super) fn lap_attack(&self) -> bool {
+        self.race_event_type() == atv_core::race_event::EventType::LapAttack
+    }
+
+    /// The lap board Lap Attack's world ghosts come from.
+    fn lap_attack_board(&self) -> String {
+        world_board::lap_board(&self.race.course, self.race_difficulty() == 2)
+    }
+
+    /// Lap Attack's ghost picker (research/GHOST_CHALLENGES.md): Off (the
+    /// original's own best-lap ghost), then the choices that exist: this
+    /// device's personal best, the next medal's ghost, the rival just
+    /// above the rider and the board's #1.
+    pub fn ghost_picks(&self) -> Vec<GhostPick> {
+        use atv_core::medals;
+        let course = &self.race.course;
+        let mut picks = vec![GhostPick {
+            label: "Off".into(),
+            ghost: None,
+        }];
+        if let Some(ms) = self.medals.ghosts.get(course) {
+            picks.push(GhostPick {
+                label: format!("PB {}", ms_time(i64::from(*ms))),
+                ghost: Some((String::new(), "PB".into(), i64::from(*ms))),
+            });
+        }
+        let board = self.lap_attack_board();
+        let Some(BoardState::Ready(rows)) = self.world.boards.get(&board) else {
+            return picks;
+        };
+        let world = |label: String, e: &world_board::BoardEntry| GhostPick {
+            label: format!("{label} {}", ms_time(e.value)),
+            ghost: Some((board.clone(), e.name.clone(), e.value)),
+        };
+        let best = self.medals.best(course);
+        if let Some(medal) = medals::next_medal(course, best)
+            && let Some(target) = medals::medal_ms(course, medal)
+            && let Some((entry, approx)) = medals::medal_ghost(&rows.entries, target)
+        {
+            let tilde = if approx { "~" } else { "" };
+            picks.push(world(format!("{tilde}{}", medal.label()), entry));
+        }
+        // The rider's best: their board row, else this device's best lap.
+        let mine = rows
+            .entries
+            .iter()
+            .filter(|e| self.mine(e))
+            .map(|e| e.value)
+            .min()
+            .or(best.map(i64::from));
+        if let Some(rival) = medals::rival_ghost(&rows.entries, mine) {
+            picks.push(world("Rival".into(), rival));
+        }
+        if let Some(top) = medals::top_ghost(&rows.entries) {
+            picks.push(world("#1".into(), top));
+        }
+        picks
+    }
+
+    /// The race setup's Ghost row (Lap Attack only).
+    pub(super) fn ghost_row(&self) -> Option<(String, String)> {
+        if !self.lap_attack() {
+            return None;
+        }
+        let picks = self.ghost_picks();
+        let pick = &picks[self.world.ghost_pick.min(picks.len() - 1)];
+        Some(("raceghost".into(), format!("Ghost: {}", pick.label)))
+    }
+
+    /// Left/Right on the Ghost row.
+    pub(super) fn step_ghost(&mut self, direction: i32) {
+        let n = self.ghost_picks().len() as i32;
+        let at = (self.world.ghost_pick as i32).min(n - 1);
+        self.world.ghost_pick = (at + direction).rem_euclid(n) as usize;
+    }
+
+    /// Start Race with a ghost picked: the host fetches it (or reads the
+    /// personal best) and starts Lap Attack against it.
+    pub(super) fn ghost_start(&self) -> Option<Event> {
+        let picks = self.ghost_picks();
+        let (board, name, value) = picks
+            .get(self.world.ghost_pick.min(picks.len() - 1))?
+            .ghost
+            .clone()?;
+        Some(Event::GhostRace {
+            board,
+            name,
+            value,
+            course: self.race.course.clone(),
+            expert: self.race_difficulty() == 2,
+            quad: self.quad_id,
+            rider: self.rider_id,
+        })
+    }
+
+    /// Single Player's Weekly Challenge row: once the clock is set and the
+    /// week's course is loaded.
+    pub(super) fn weekly_offered(&self) -> bool {
+        self.world
+            .weekly()
+            .is_some_and(|p| self.race_courses.iter().any(|c| c == p.course))
+    }
+
+    pub(super) fn weekly_choices(&self) -> Vec<(String, String)> {
+        vec![("weeklystart".into(), "Start Weekly".into())]
+    }
+
+    /// The Weekly Challenge page: the course, the time left, the rider's
+    /// best with its live band, and the board's top ten.
+    pub(super) fn weekly_details(&self) -> Vec<(String, String)> {
+        let Some(pick) = self.world.weekly() else {
+            return vec![(
+                "The weekly challenge needs the clock.".into(),
+                String::new(),
+            )];
+        };
+        let left = self.world.now_ms.map_or(String::new(), |now| {
+            format!("{} left", time_left(now, pick.ends_ms))
+        });
+        let mut lines = vec![
+            (format!("Weekly · {}", pick.week), left),
+            ("Track:".into(), self.course_name(pick.course)),
+            (
+                "Event:".into(),
+                format!("Time Trial · {} Laps · No CPUs", pick.laps()),
+            ),
+            ("Vehicle:".into(), format!("Any {}", pick.class.label())),
+        ];
+        let board = pick.board();
+        let ready = match self.world.boards.get(&board) {
+            Some(BoardState::Ready(b)) => Some(b),
+            _ => None,
+        };
+        if let Some(mine) = self.medals.weeks.get(&pick.week) {
+            // The submission's exact percentile, else the band from the cuts.
+            let percent = self
+                .world
+                .weekly_percentile
+                .as_ref()
+                .filter(|(week, _)| *week == pick.week)
+                .map(|(_, p)| format!("Top {p}%"));
+            let band = ready.filter(|b| !b.cuts.is_empty()).map(|b| {
+                atv_core::medals::Badge::of(i64::from(mine.value), &b.cuts)
+                    .label()
+                    .to_string()
+            });
+            let riders = ready.map_or(String::new(), |b| {
+                if b.riders > 0 {
+                    format!(" · {} riders", b.riders)
+                } else {
+                    String::new()
+                }
+            });
+            lines.push((
+                "Your Best:".into(),
+                match percent.or(band) {
+                    Some(p) => format!("{} · {p}{riders}", ms_time(i64::from(mine.value))),
+                    None => ms_time(i64::from(mine.value)),
+                },
+            ));
+        }
+        lines.extend(self.board_lines("This Week", &board, false, SHOWN));
+        lines
+    }
+
     /// The host could not get a ghost (or read it): the page says why.
     pub fn ghost_failed(&mut self, message: &str, view: &Viewport) {
-        if self.page == "hall-of-fame" {
+        if self.page == "hall-of-fame" || self.page == "race" {
             self.notice = Some(message.to_string());
             self.refresh(view);
         }
@@ -369,6 +588,28 @@ impl Frontend {
                 Some(None)
             }
             "fameghostrace" => Some(self.ghost_race(settings)),
+            WEEKLY_PAGE => {
+                self.show(WEEKLY_PAGE, view);
+                Some(None)
+            }
+            "weeklystart" => {
+                let pick = self.world.weekly()?;
+                let quad = class_vehicle(pick.class, self.quad_id);
+                self.notice = self.enforce_unlocks(settings);
+                Some(Some(Event::Race {
+                    environment: pick.course.to_string(),
+                    quad,
+                    rider: self.rider_id,
+                    laps: pick.laps(),
+                    cpu: 0,
+                    difficulty: 1,
+                    cheats: (false, false),
+                    championship: None,
+                    practice: false,
+                    duel: false,
+                    lap_attack: false,
+                }))
+            }
             "dailystart" => {
                 let pick = self.world.pick()?;
                 let quad = class_vehicle(pick.class, self.quad_id);
@@ -669,5 +910,212 @@ mod tests {
             }
             other => panic!("{other:?}"),
         }
+    }
+
+    fn ghost_row(rank: u32, name: &str, value: i64, ghost: bool) -> BoardEntry {
+        BoardEntry {
+            rank,
+            name: name.into(),
+            value,
+            vehicle: 1,
+            day: "2026-11-14".into(),
+            ghost,
+            house: false,
+        }
+    }
+
+    #[test]
+    fn lap_attack_picks_a_pb_medal_rival_or_top_ghost() {
+        use atv_core::race_event::EventType;
+        let (mut front, view, mut settings) = front();
+        front.race.course = "nat01".into();
+        front.show("race", &view);
+        assert!(
+            !front.choices.iter().any(|c| c.0 == "raceghost"),
+            "Single Race has none"
+        );
+        assert!(front.world_wants().is_empty());
+        front.race.event = EventType::LapAttack;
+        front.show("race", &view);
+        let label = |f: &Frontend| {
+            f.choices
+                .iter()
+                .find(|c| c.0 == "raceghost")
+                .map(|c| c.1.clone())
+        };
+        assert_eq!(label(&front).as_deref(), Some("Ghost: Off"));
+        assert_eq!(front.world_wants(), ["lap:nat01:n"]);
+        // Silver on this device (51,000 ms) and its personal best ghost.
+        front.medals.record_lap("nat01", 51_000);
+        front.medals.ghosts.insert("nat01".into(), 51_000);
+        let board = Board {
+            board: "lap:nat01:n".into(),
+            entries: vec![
+                ghost_row(1, "TOP", 42_000, true),
+                ghost_row(2, "GLD", 45_600, true),
+                ghost_row(3, "MID", 49_000, true),
+                ghost_row(4, "NOG", 50_000, false),
+                ghost_row(5, "SLO", 60_000, true),
+            ],
+            ..Default::default()
+        };
+        front.world_answer("lap:nat01:n", BoardState::Ready(board), &view);
+        let picks: Vec<String> = front.ghost_picks().into_iter().map(|p| p.label).collect();
+        assert_eq!(
+            picks,
+            [
+                "Off",
+                "PB 00:51.00",
+                "Gold 00:45.60",
+                "Rival 00:49.00",
+                "#1 00:42.00"
+            ]
+        );
+        front.selection = front
+            .choices
+            .iter()
+            .position(|c| c.0 == "raceghost")
+            .unwrap();
+        front.step_ghost(3);
+        front.refresh(&view);
+        assert_eq!(label(&front).as_deref(), Some("Ghost: Rival 00:49.00"));
+        match front.run("racestart", &view, &mut settings) {
+            Some(Event::GhostRace {
+                board,
+                name,
+                value,
+                course,
+                ..
+            }) => assert_eq!(
+                (board.as_str(), name.as_str(), value, course.as_str()),
+                ("lap:nat01:n", "MID", 49_000, "nat01")
+            ),
+            other => panic!("{other:?}"),
+        }
+        // PB starts against this device's ghost: an empty board.
+        front.world.ghost_pick = 1;
+        match front.run("racestart", &view, &mut settings) {
+            Some(Event::GhostRace { board, value, .. }) => {
+                assert_eq!((board.as_str(), value), ("", 51_000))
+            }
+            other => panic!("{other:?}"),
+        }
+        // Off is the original's Lap Attack.
+        front.world.ghost_pick = 0;
+        assert!(matches!(
+            front.run("racestart", &view, &mut settings),
+            Some(Event::Race {
+                lap_attack: true,
+                ..
+            })
+        ));
+        // The course list shows the course's medal.
+        let screen = front.screen(None, false, None, &|_| None, None, (None, None), 0.);
+        assert_eq!(
+            screen.medals.get("nat01"),
+            Some(&atv_core::medals::Medal::Silver)
+        );
+    }
+
+    #[test]
+    fn the_weekly_challenge_offers_its_pick_and_the_rider_s_band() {
+        let (mut front, view, mut settings) = front();
+        front.show("single", &view);
+        assert!(
+            !front.choices.iter().any(|c| c.0 == WEEKLY_PAGE),
+            "no clock yet"
+        );
+        let day = 20_771; // 2026-11-14
+        front.world.day = Some(day);
+        front.world.now_ms = Some(day as f64 * 86_400_000. + 12. * 3_600_000.);
+        front.show("single", &view);
+        let at = |f: &Frontend, a: &str| f.choices.iter().position(|c| c.0 == a);
+        assert_eq!(
+            at(&front, WEEKLY_PAGE),
+            at(&front, DAILY_PAGE).map(|i| i + 1)
+        );
+        front.run(WEEKLY_PAGE, &view, &mut settings);
+        assert_eq!(front.page, WEEKLY_PAGE);
+        let pick = front.world.weekly().unwrap();
+        assert_eq!(pick.week, "2026-W46");
+        let details = front.profile_details();
+        assert_eq!(
+            details[0],
+            ("Weekly · 2026-W46".into(), "1d 12h left".into())
+        );
+        assert!(details.iter().any(|l| l.1.contains("No CPUs")));
+        assert_eq!(front.world_wants(), ["weekly:2026-W46"]);
+        // A best time this week, a finished unbadged one before it.
+        front.medals.record_week("2026-W46", 300_000);
+        front.medals.record_week("2026-W45", 280_000);
+        assert_eq!(front.world_wants(), ["weekly:2026-W46", "weekly:2026-W45"]);
+        let cuts = [
+            ("1", 250_000),
+            ("10", 270_000),
+            ("25", 290_000),
+            ("50", 310_000),
+        ]
+        .into_iter()
+        .map(|(k, v)| (k.to_string(), v))
+        .collect();
+        let board = Board {
+            board: pick.board(),
+            riders: 40,
+            cuts,
+            ..Default::default()
+        };
+        front.world_answer(&pick.board(), BoardState::Ready(board), &view);
+        assert!(
+            front
+                .profile_details()
+                .iter()
+                .any(|l| l.0 == "Your Best:" && l.1 == "05:00.00 · Top 50% · 40 riders"),
+            "{:?}",
+            front.profile_details()
+        );
+        // The submission's exact percentile wins over the band.
+        front.world.weekly_percentile = Some(("2026-W46".into(), 37));
+        assert!(
+            front
+                .profile_details()
+                .iter()
+                .any(|l| l.1 == "05:00.00 · Top 37% · 40 riders")
+        );
+        match front.run("weeklystart", &view, &mut settings) {
+            Some(Event::Race {
+                environment,
+                quad,
+                laps,
+                cpu,
+                difficulty,
+                lap_attack,
+                ..
+            }) => {
+                assert_eq!(environment, pick.course);
+                assert!(pick.class.admits(quad));
+                assert_eq!(
+                    (laps, cpu, difficulty, lap_attack),
+                    (pick.laps(), 0, 1, false)
+                );
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn the_profile_overview_shows_medal_and_badge_counts() {
+        let (mut front, view, _) = front();
+        front.medals.record_lap("nat01", 43_000);
+        front.medals.record_lap("sx01", 100_000);
+        front.medals.weeks.insert(
+            "2026-W45".into(),
+            atv_core::medals::WeekResult {
+                value: 1,
+                badge: Some(atv_core::medals::Badge::Top10),
+            },
+        );
+        front.show("profile-overview", &view);
+        let screen = front.screen(None, false, None, &|_| None, None, (None, None), 0.);
+        assert_eq!(screen.medal_strip, Some(([1, 0, 0, 1], [0, 1, 0, 0, 0])));
     }
 }

@@ -237,6 +237,10 @@ pub struct Overlay {
     /// The race's course id, the player's vehicle and whether it runs the
     /// default laps: what the profile's course record keeps (`001f1e30`).
     pub race_entry: Option<(String, u16, bool)>,
+    /// When the results' medal began its reveal.
+    medal_shown: Option<web_time::Instant>,
+    /// The medal book changed: the host reloads the menus' copy.
+    pub medals_saved: bool,
     /// The finished race's Hall of Fame records, until named.
     /// (and the name they are stored under).
     fame_watch: Option<(atv_core::hall_of_fame::Watch, String)>,
@@ -355,6 +359,8 @@ impl Overlay {
             game: false,
             room_race_pending: false,
             race_entry: None,
+            medal_shown: None,
+            medals_saved: false,
             fame_watch: None,
             world_run: None,
             world_outbox: None,
@@ -1643,6 +1649,7 @@ impl Overlay {
                     } else if self.lobby.is_none() {
                         self.credit_profile(frame);
                         self.record_fame(frame);
+                        self.record_medal(frame);
                     } else {
                         self.results.no_award();
                     }
@@ -1730,6 +1737,14 @@ impl Overlay {
     /// centred) and adds their paint and buttons.
     fn paint_results(&mut self, frame: Option<&atv_core::race::Frame>) {
         let view = self.view;
+        // The medal pops in over its first moments (the panel is laid out
+        // again only while it moves).
+        let naming = self.results.fame.is_some() && self.results.menu == results::Menu::NameEntry;
+        if self.results.medal.is_some() && !naming && self.results.medal_reveal < 1. {
+            let at = *self.medal_shown.get_or_insert_with(web_time::Instant::now);
+            self.results.medal_reveal =
+                (at.elapsed().as_secs_f32() / results::MEDAL_REVEAL_SECONDS).min(1.);
+        }
         let summary = self
             .results
             .objective
@@ -1883,6 +1898,16 @@ impl Overlay {
             return;
         }
         self.world_run = crate::world::Run::of_race(frame).map(crate::world::Finished::Race);
+        // The weekly challenge's best stays on this device for its badge.
+        if let Some(crate::world::Finished::Race(run)) = &self.world_run
+            && let (Some(week), Some(ms)) = (&run.weekly, run.race_ms)
+        {
+            let mut book = atv_ui::settings::load_medals(&self.settings);
+            if book.record_week(week, ms) {
+                atv_ui::settings::save_medals(&mut self.settings, &book);
+                self.medals_saved = true;
+            }
+        }
         if let Some(watch) = frame.records.clone() {
             self.offer_fame(atv_core::hall_of_fame::Watch::Race(watch));
         }
@@ -1895,6 +1920,21 @@ impl Overlay {
                 self.world_run = None;
             }
         }
+    }
+
+    /// A race that keeps records earns its best lap's medal (research/
+    /// GHOST_CHALLENGES.md); the results reveal it.
+    fn record_medal(&mut self, frame: &atv_core::race::Frame) {
+        let (Some(watch), Some(best)) = (frame.records.as_ref(), frame.best) else {
+            return;
+        };
+        let course = watch.key.strip_suffix(":expert").unwrap_or(&watch.key);
+        let lap_ms = atv_core::world_board::millis(best);
+        let ghost = frame.lap_ghost.as_deref();
+        self.results.medal =
+            atv_ui::settings::record_medal_lap(&mut self.settings, course, lap_ms, ghost);
+        self.medal_shown = None;
+        self.medals_saved = true;
     }
 
     /// Hands the kept world run to the host under `name`, else the Hall of
