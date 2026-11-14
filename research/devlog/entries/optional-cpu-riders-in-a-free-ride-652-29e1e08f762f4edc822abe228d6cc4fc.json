@@ -1,0 +1,15 @@
+{
+  "id": "optional-cpu-riders-in-a-free-ride-652-29e1e08f762f4edc822abe228d6cc4fc",
+  "timestamp": "2026-11-14T21:11:03+00:00",
+  "recorded_at": "2026-11-14T21:12:24.473239+00:00",
+  "kind": "build",
+  "title": "Optional CPU riders in a free ride (#652)",
+  "summary": "A new, off-by-default option adds one to three roaming CPU riders to single-player and split-screen free rides. The original game has none.",
+  "details": [
+    "Options > Game Settings > Free Ride CPU riders: Off (original) / 1 / 2 / 3, saved as atv-free-ride-cpus. It applies to menu Freestyle rides and ?play=1 ride links, never to races, objectives, Training, the editor, mini-games or online rooms. The roam brain (atv-core roam_cpu.rs, authored, seeded, fixed step, no per-step allocation) gives each CPU one plan at a time: a dry hilltop point of interest, a stretch of the venue's National race line, or a short drift. It probes ahead and steers clear of the map edge, deep water and steep ground, and the race driver's peer correction steers it round other riders. A roamer that stays still for 12 s returns to its start.",
+    "Verification (host): atv-core and atv-ui unit tests for the roam brain and the settings row; the new content-group tools/test_engine_free_cpus.mjs confirmed the option is off by default, the row cycles and saves, two CPUs roam a minute without wrecking or leaving the map, and three-CPU frame times match option-off. test_engine_game_settings.mjs updated and passing."
+  ],
+  "limitation": "CPUs ride player 1's ATV with no roster of their own, and online rooms get none. Frame times are host measurements, not from a phone. The screenshot shows the settings row; CPU riders are not claimed from the image.",
+  "image": "/devlog-images/optional-cpu-riders-in-a-free-ride-652-29e1e08f762f4edc822abe228d6cc4fc.png",
+  "caption": "Options > Game Settings with the new 'Free Ride CPU riders' row, set to Off (original). Host Chromium capture."
+}

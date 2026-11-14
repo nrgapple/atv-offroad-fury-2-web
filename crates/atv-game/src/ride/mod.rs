@@ -1567,6 +1567,15 @@ impl Ride {
             .map(|c| c.height)
     }
 
+    /// The still water's depth over the ground at a point (negative where
+    /// the ground stands above it); None off the terrain or on a venue
+    /// without water.
+    pub fn water_depth(&self, x: f32, z: f32) -> Option<f32> {
+        let ground = self.ground(x, z)?;
+        let water = self.sim.water.as_ref()?;
+        water.height([x, ground, z], true).ok().map(|h| h - ground)
+    }
+
     /// The rider's world matrix: the wreck root while wrecking, else the
     /// vehicle's (mapPose in web/minimap.js reads this for the GPS marker).
     pub fn rider_world(&self) -> [f32; 16] {

@@ -26,6 +26,7 @@ pub struct RaceStats {
     pub one_shots: Vec<String>,
     pub crowd_cues: u32,
     pub int_out_starts: u32,
+    pub int_out_cues: Vec<String>,
 }
 
 impl RaceAudio {
@@ -96,6 +97,7 @@ impl RaceAudio {
                 .map(|(name, looping)| bank.get(name).map(|p| (p.clone(), *looping)))
                 .collect();
             if let Some(found) = found {
+                self.stats.int_out_cues = cues.iter().map(|(name, _)| name.clone()).collect();
                 self.pending = None;
                 let mut at = mixer.seconds();
                 for (pcm, looping) in found {
@@ -134,5 +136,41 @@ impl RaceAudio {
         if let Some((id, _)) = self.crowd.take() {
             mixer.stop(id);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::audio::bank::test_bank;
+
+    #[test]
+    fn race_load_waits_for_music_and_go_cancels_even_pending_cues() {
+        let pcm = Arc::new(Pcm {
+            channels: 1,
+            frames: 48000,
+            data: vec![0.5; 48000],
+            loop_markers: None,
+            rate: 48000,
+        });
+        let bank = test_bank(&[("intout/int001.vag", pcm)], None);
+        let mut mixer = Mixer::new(48000);
+        let mut race = RaceAudio::default();
+        let cue = || vec![("intout/int001.vag".into(), false)];
+        race.set_int_out(&mut mixer, cue());
+        race.update(&bank, &mut mixer, false);
+        assert_eq!(mixer.voices(), 0);
+        race.update(&bank, &mut mixer, true);
+        assert_eq!(race.stats.int_out_cues, ["intout/int001.vag"]);
+        assert_eq!(race.stats.int_out_starts, 1);
+        race.update(&bank, &mut mixer, true);
+        assert_eq!(mixer.voices(), 1);
+        race.stop_int_out(&mut mixer);
+        assert_eq!(mixer.voices(), 0);
+        race.set_int_out(&mut mixer, cue());
+        race.stop_int_out(&mut mixer);
+        race.update(&bank, &mut mixer, true);
+        assert_eq!(mixer.voices(), 0);
+        assert_eq!(race.stats.int_out_starts, 1);
     }
 }

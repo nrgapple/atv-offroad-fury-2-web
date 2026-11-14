@@ -153,3 +153,44 @@ Quit to Main Menu), and every other lesson ridden from its start
 (lean forward), Stunt (a stunt button) and Preload pass, plain jumps fail the
 last three with lines 20, 26 and 34. These are host Chromium checks; the
 public deployment and physical devices are separate gates.
+
+## Voice trigger audit — 2026-11-14 (#545)
+
+Strategy: retain the shared Rust course and disc VAG player, rather than add a
+second instruction system. The disc has no subtitle text. The HUD now omits the
+port-authored instruction summaries (retained only in diagnostics); no invented
+spoken text or replacement recordings are shipped. Restart Training preserves
+monotonically advancing speech request serials so restarting during Intro actually
+interrupts and restarts that sample instead of retaining the previous voice.
+
+Facts from bounded exact-build reading: `001508e0` maps one-based dialogue numbers
+1–19 to the first folder and 20–46 to the second. `002275a0` reads the disc dialogue
+configuration. Intro is 1, optional prize 2; lessons' Jumbo/Chase are 3/4, 7/8,
+11/12, 16/17, 22/23, and 28–29/30–31. Success randomly selects 5/9/13/18/24,
+last success is 32; idle reminders select 6/10/14/19/25/33; wrecks select 38–44.
+Special failures are 46, 45, 15, 20/21, 26/27, 34/35; endings are 36/37.
+These values agree with the disc dialogue data and the existing Rust tables.
+`00150a20` queues a line when requested while busy, `00150e20` can stop and clear
+the old queue before a failure. `00225980` queues introduction, demonstration,
+Chase and reminder speech and interrupts for failures. `00150bd0` clears both the
+playing handle and queued lines. The course already implements those transitions;
+the mixer follows its current line, replaces the previous voice and hushes on skip.
+The new audio tests also assert that a naturally ended sample never restarts merely
+because its request is still current.
+
+Volume evidence: `00224a80` supplies the dialogue group to `00150660`;
+`00150a20` passes that group's handle to `002f2720`. `002852b0` applies the same
+profile SFX slider value to dialogue and effects groups, separately from music.
+This supports the existing SFX routing. The original also reduces other effects
+and the event music to 30 during Training (`00224a80`); that relative mix is not
+yet reproduced by the port's shared SFX/music controls. SPU2 group gain and timing
+have not been compared in native execution. Marker-driven demo/preload effects
+and the jumbotron replay remain open; the race-load cue audit is in AUDIO.md.
+
+Publication finding: the 2026-11-14 public and shared local bank still had 665
+members and **zero** Training lines, despite the packager already selecting them.
+The required-speech browser test exposed this; silent caption fallback had hidden
+it. The additive replacement retains all published resource paths and adds the
+46 exact-disc lines (711 members, 25,170,818 bytes). Existing music streams and MX
+records are retained byte-for-byte. Publication uses the validated content-only
+R2 path; no game data enters the PR.
